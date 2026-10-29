@@ -1,16 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { type Fetch, memoryStore } from "./index.js";
+import { type Fetch, memoryStore, stackId } from "./index.js";
 import { type Bundled, createStackReader } from "./reader.js";
 import {
-  cases,
   file,
   pointer,
   pointerOf,
   publishedAt as at,
+  refreshCases,
 } from "./test-fixtures.js";
 import { wasm } from "./wasm.js";
 
-/** One step of a refresh vector: the one action it names, and what the reader must answer. */
+/** One step of a refresh case: the one action it names, and what the reader answers. */
 type Step = {
   get?: number;
   refresh?: number;
@@ -58,7 +58,7 @@ async function run(vector: {
     } else if (step.refresh !== undefined) {
       outcome = { fetch: fetchOf(reader.refresh(pointer, step.refresh)) };
     } else if (step.due !== undefined) {
-      outcome = reader.due(step.due).length > 0;
+      outcome = reader.due(step.due).includes(stackId(pointer));
     } else if (step.fetched) {
       const { document, etag, notModified } = step.fetched;
       try {
@@ -90,9 +90,9 @@ async function run(vector: {
   }
 }
 
-// The same files the Rust crate runs, so the wasm build cannot drift from the native one.
-describe("refresh conformance vectors", () => {
-  for (const vector of cases.refresh) test(vector.name, () => run(vector));
+// The same cases the Rust crate runs, so the wasm build cannot drift from the native one.
+describe("reference reader refresh cases", () => {
+  for (const vector of refreshCases) test(vector.name, () => run(vector));
 });
 
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
@@ -113,7 +113,7 @@ const down = () =>
     throw new TypeError("connection refused");
   });
 
-const bundle = async (document: Uint8Array): Promise<Bundled> => ({
+const bundle = (document: Uint8Array): Bundled => ({
   pointer,
   document: text(document),
 });
@@ -121,7 +121,7 @@ const bundle = async (document: Uint8Array): Promise<Bundled> => ({
 describe("createStackReader", () => {
   test("once: callers share the first fetch and run on the build copy when the server is down", async () => {
     const { fetch, requests } = down();
-    const build = await bundle(await at(100));
+    const build = bundle(await at(100));
     const reader = createStackReader({
       bundled: [build],
       refresh: "once",
@@ -146,7 +146,7 @@ describe("createStackReader", () => {
         : new Response(newer, { headers: { etag: "e1" } }),
     );
     const reader = createStackReader({
-      bundled: { local: await bundle(await at(100)) },
+      bundled: { local: bundle(await at(100)) },
       refresh: { maxAgeMs: 60_000 },
       fetch,
       now: () => clock,
@@ -164,25 +164,44 @@ describe("createStackReader", () => {
     reader.close();
   });
 
+  test("a conditional fetch the server's CORS refuses is retried at once without the ETag, every time", async () => {
+    const newer = await at(200);
+    const { fetch, requests } = server((request) => {
+      if (request.headers.has("if-none-match"))
+        throw new TypeError("preflight refused");
+      return new Response(newer, { headers: { etag: "e1" } });
+    });
+    const reader = createStackReader({
+      bundled: [bundle(await at(100))],
+      refresh: "never",
+      fetch,
+    });
+    for (let round = 0; round < 3; round++)
+      expect((await reader.refresh(pointer)).descriptor.sequence).toBe(200);
+    expect(
+      requests.map((request) => request.headers.get("if-none-match")),
+    ).toEqual([null, "e1", null, "e1", null]);
+  });
+
   test("a store starts the next run from the newer copy, never an older one", async () => {
     const store = memoryStore();
     const newer = await at(200);
     const first = createStackReader({
-      bundled: [await bundle(await at(100))],
+      bundled: [bundle(await at(100))],
       store,
       fetch: server(() => new Response(newer)).fetch,
     });
     expect((await first.get(pointer)).descriptor.sequence).toBe(200);
     const { fetch, requests } = down();
     const restarted = createStackReader({
-      bundled: [await bundle(await at(100))],
+      bundled: [bundle(await at(100))],
       refresh: "never",
       store,
       fetch,
     });
     expect((await restarted.get(pointer)).descriptor.sequence).toBe(200);
     const rebuilt = createStackReader({
-      bundled: [await bundle(await at(300))],
+      bundled: [bundle(await at(300))],
       refresh: "never",
       store,
       fetch,
@@ -206,7 +225,7 @@ describe("createStackReader", () => {
         set: () => {},
       },
     });
-    const build = await bundle(await at(100));
+    const build = bundle(await at(100));
     await expect(reader.get(build)).rejects.toThrow("store is closing");
     expect((await reader.get(build)).descriptor.sequence).toBe(100);
     expect(requests.length).toBe(0);
@@ -227,7 +246,7 @@ describe("createStackReader", () => {
 
   test("require names every chain and service the stack lacks", async () => {
     const reader = createStackReader({
-      bundled: [await bundle(await at(100))],
+      bundled: [bundle(await at(100))],
       refresh: "never",
     });
     expect(
@@ -260,14 +279,14 @@ describe("createStackReader", () => {
   test("a max age under a second, or not finite, is refused rather than fetching on every call", () => {
     for (const maxAgeMs of [500, Infinity, Number.NaN])
       expect(() => createStackReader({ refresh: { maxAgeMs } })).toThrow(
-        "maxAgeSeconds of at least 1",
+        "maxAgeMs must be a finite number of at least 1000",
       );
   });
 
   test("a listener that throws neither fails the fetch nor stops the others", async () => {
     const newer = await at(200);
     const reader = createStackReader({
-      bundled: [await bundle(await at(100))],
+      bundled: [bundle(await at(100))],
       refresh: "once",
       fetch: server(() => new Response(newer)).fetch,
     });

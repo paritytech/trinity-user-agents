@@ -161,7 +161,8 @@ They keep one directory in the project, committed with it:
   index.js, index.d.ts    generated: the stacks above, ready to import
 ```
 
-- **`add`** records the link, then does what `update` does for that stack.
+- **`add`** does what `update` does for that stack, then records the link, so a stack that fails to add leaves nothing
+  behind.
 - **`update`** fetches each stack and runs `accept` with the committed copy as stored, so it refuses an unsigned stack,
   an expired one and anything that would lower `sequence`, as `truapi-host stack bundle` does. It then regenerates the
   module. It exits 0 with nothing changed, 1 on an error and 2 when it wrote something, so a scheduled CI job can open a
@@ -227,8 +228,8 @@ never connects to a chain itself, so it leaves that check to the client, which a
   nothing fetches per request. A server sees one request per process with `"once"`, one per reader per `maxAgeMs` with
   `{ maxAgeMs }`, and none with `"never"` until the project asks.
 - **Refreshes are conditional.** The reader keeps the `ETag` it was served and sends `If-None-Match`, so an unchanged
-  stack costs a `304` with no body. After a conditional fetch fails it fetches without the header once, since a browser
-  cannot send it cross-origin to a server whose CORS does not allow it, and would otherwise never refresh.
+  stack costs a `304` with no body. A conditional fetch that fails is retried at once without the header, since a
+  browser cannot send it cross-origin to a server whose CORS does not allow it, and would otherwise never refresh.
 - **The copy it starts from** is the store's when it has a higher `sequence` than the build's, or the same content, and
   otherwise the build's, signed or not: the store can only move a stack forward from the build copy, never back.
 - **The store is the project's own, and optional.** A web app passes one over `localStorage` or IndexedDB, so a reload
@@ -249,9 +250,9 @@ never connects to a chain itself, so it leaves that check to the client, which a
 
 - **dotns-sdk, polkadot-cli and other CLIs.** `.trinity/` in the repository, refreshed by a scheduled `update` job that
   opens a pull request. Each release ships the stacks it was built with. At run time `refresh: "once"`, so a stack wiped
-  since the release still works, at the cost of one small request per run. A `--pinned` flag, or
-  `TRINITY_STACK_REFRESH=never`, gives a reproducible run. `--stack <link>` reads any other stack. Nothing is kept
-  between runs.
+  since the release still works, at the cost of one small request per run. Such a CLI can offer a `--pinned` flag, or
+  `TRINITY_STACK_REFRESH=never`, for a reproducible run. `--stack <link>` reads any other stack. Nothing is kept between
+  runs.
 - **bulletin-deploy and other deploy jobs.** `refresh: "once"`, since deploying to a wiped stack is the failure that
   matters. A job that must be reproducible pins instead and fails when the chain no longer matches its copy.
 - **triangle-status and other web apps.** `.trinity/` built into the page, a store over `localStorage`, and
@@ -260,8 +261,8 @@ never connects to a chain itself, so it leaves that check to the client, which a
 - **polkadot-pop-e2e and other test suites.** `"once"`, read at the start of the run. A suite that must not move during
   a run pins.
 - **Hosts.** `truapi-host stack bundle` in the build, as the hosts RFC describes. The core drives the crate's
-  `StackReader` with `{ maxAgeMs }` over its platform's HTTP and storage, starting from the bundled copy. A host shows a
-  stale or unreachable stack and keeps running on it.
+  `StackReader` with `Refresh::MaxAge` over its platform's HTTP and storage, starting from the bundled copy. A host
+  shows a stale or unreachable stack and keeps running on it.
 
 ## CLI
 
@@ -290,8 +291,9 @@ generates, so they cannot drift. Each case names the expected verdict or rule co
   cofactored equation.
 - **Reader**: each status for signed and unsigned stacks, a new generation, past `validUntil`, past `expiresAt`.
 - **Links**: the RFC's example, other schemes, a missing or repeated `url`, bad URLs and keys.
-- **Refresh**: a policy, a clock and a sequence of fetch results in, and the reader's answers out: when it fetches,
-  which copy it serves, what it stores and which changes it reports.
+- **Refresh**, in `vectors/refresh.json`: a policy, a clock and a sequence of fetch results in, and the reference
+  reader's answers out: when it fetches, which copy it serves, what it stores and which changes it reports. They pin
+  choices the RFC leaves to each reader, so they are informative.
 
 The Rust tests and the package's bun tests both run the committed files. A reader outside this repository can run them
 too. `schema/trinity-stack.v1.schema.json` describes the shape; rules that span fields stay with the vectors.

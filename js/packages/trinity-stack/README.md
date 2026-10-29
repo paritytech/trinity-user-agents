@@ -53,8 +53,8 @@ reader.onChange(({ newGeneration }) => {
 ```
 
 It never fetches per request. A fetch that fails leaves the copy it has in use, and a `store` of the project's own lets
-a restart start from the last copy fetched. Every decision is the crate's `StackReader`, so the host core behaves the
-same way.
+a restart start from the last copy fetched. Every decision is the crate's `StackReader`, so a host that drives the same
+reader behaves the same way.
 
 ## Publishing a stack
 

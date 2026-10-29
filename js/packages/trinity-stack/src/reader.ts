@@ -9,7 +9,8 @@ import type {
   Pointer,
   Service,
 } from "../wasm/trinity_stack.js";
-import { type Fetch, type Store, fetchServed, stackId } from "./index.js";
+import { type Fetch, fetchServed } from "./fetch.js";
+import { type Store, stackId } from "./index.js";
 import { unixSeconds } from "./time.js";
 import { wasm } from "./wasm.js";
 
@@ -20,7 +21,7 @@ export type Bundled = {
   document: string;
 };
 
-/** When the reader fetches a stack it holds a copy of. */
+/** When the reader fetches a stack it holds a copy of. `maxAgeMs` is at least 1000. */
 export type RefreshPolicy = "never" | "once" | { maxAgeMs: number };
 
 /** A stack the reader moved to a newer descriptor. */
@@ -70,6 +71,11 @@ export function createStackReader(
   } = {},
 ): StackReader {
   const policy = options.refresh ?? "once";
+  if (
+    typeof policy === "object" &&
+    !(Number.isFinite(policy.maxAgeMs) && policy.maxAgeMs >= 1000)
+  )
+    throw new TypeError("maxAgeMs must be a finite number of at least 1000");
   const reader =
     typeof policy === "string"
       ? new wasm.StackReader(policy)
@@ -114,11 +120,18 @@ export function createStackReader(
     const fetching = (async () => {
       let served;
       try {
-        served = await fetchServed(request.url, {
+        const fetchOptions = {
           fetch: options.fetch,
           timeoutMs: options.timeoutMs,
+        };
+        served = await fetchServed(request.url, {
+          ...fetchOptions,
           ifNoneMatch: request.ifNoneMatch,
         });
+        // A browser cannot send `If-None-Match` to a server whose CORS does not allow it, so a
+        // conditional fetch that failed is retried at once without it.
+        if (request.ifNoneMatch && !served.document && !served.notModified)
+          served = await fetchServed(request.url, fetchOptions);
       } catch (error) {
         // A custom fetch's own bug: answer the reader so the stack does not stay pending.
         try {
@@ -133,7 +146,7 @@ export function createStackReader(
         served.notModified,
         now(),
       );
-      if (stored) await options.store?.set(storeKey(id), stored);
+      // Before the store, so a store that fails cannot hide the change from listeners.
       if (accepted.status === "updated")
         for (const listener of listeners) {
           try {
@@ -143,19 +156,18 @@ export function createStackReader(
               newGeneration: accepted.newGeneration,
             });
           } catch (error) {
-            // Reported as a browser reports an event listener's error, never failing the fetch.
-            if (typeof reportError === "function") reportError(error);
-            else console.error(error);
+            report(error);
           }
         }
+      if (stored) await options.store?.set(storeKey(id), stored);
       const { descriptor, signed, stale, expired } = accepted;
       return { descriptor, signed, stale, expired };
     })();
     fetches.set(id, fetching);
-    const settle = () => {
+    const forget = () => {
       if (fetches.get(id) === fetching) fetches.delete(id);
     };
-    fetching.then(settle, settle);
+    fetching.then(forget, forget);
     return fetching;
   };
 
@@ -195,7 +207,7 @@ export function createStackReader(
           () => {
             for (const id of reader.due(now())) {
               const started = loads.get(id);
-              if (started) api.refresh(started.pointer).catch(() => {});
+              if (started) api.refresh(started.pointer).catch(report);
             }
           },
           Math.min(policy.maxAgeMs, 60_000),
@@ -237,4 +249,10 @@ function check(descriptor: Descriptor, require: Requirements) {
 
 function pointerOf(stack: Pointer | Bundled): Pointer {
   return "document" in stack ? stack.pointer : stack;
+}
+
+/** Reports an error nothing awaits, as a browser reports an event listener's error. */
+function report(error: unknown) {
+  if (typeof reportError === "function") reportError(error);
+  else console.error(error);
 }
