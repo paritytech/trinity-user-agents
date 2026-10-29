@@ -418,6 +418,20 @@ pub struct FundingOptions {
 	/// The amounts the selection takes across every provider. The minimum
 	/// is never below [`FUNDING_MIN_AMOUNT`].
 	pub limits: FundingAmountLimits,
+	/// For a crypto selection, the amounts each network a candidate's route
+	/// declares takes, for the network picker: for the picked asset, or the
+	/// widest range across the network's assets before one is picked.
+	pub networks: Vec<FundingNetworkLimits>,
+}
+
+/// The amounts one network takes for a crypto selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingNetworkLimits {
+	/// The network, as routes declare it.
+	pub network: String,
+	/// The amounts the selection takes on it.
+	pub limits: FundingAmountLimits,
 }
 
 /// What `providers`' manifests and recent quote answers say about each
