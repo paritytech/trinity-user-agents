@@ -699,12 +699,18 @@ mod tests {
 		assert_eq!(read_at.elapsed(), READ_TIMEOUT);
 	}
 
-	/// A WebSocket server on loopback that keeps every connection open.
-	async fn websocket_server() -> std::net::SocketAddr {
+	/// A listener on a free loopback port, and the address it listens on.
+	async fn loopback_listener() -> (tokio::net::TcpListener, std::net::SocketAddr) {
 		let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
 			.await
 			.expect("bind a loopback listener");
 		let address = listener.local_addr().expect("listener address");
+		(listener, address)
+	}
+
+	/// A WebSocket server on loopback that keeps every connection open.
+	async fn websocket_server() -> std::net::SocketAddr {
+		let (listener, address) = loopback_listener().await;
 		tokio::spawn(async move {
 			while let Ok((socket, _)) = listener.accept().await {
 				tokio::spawn(async move {
@@ -722,10 +728,7 @@ mod tests {
 	async fn raw_server(response: String) -> std::net::SocketAddr {
 		use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-		let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-			.await
-			.expect("bind a loopback listener");
-		let address = listener.local_addr().expect("listener address");
+		let (listener, address) = loopback_listener().await;
 		tokio::spawn(async move {
 			while let Ok((mut socket, _)) = listener.accept().await {
 				let mut request = [0; 1024];
@@ -738,10 +741,8 @@ mod tests {
 
 	/// An address nothing listens on.
 	async fn refusing_address() -> std::net::SocketAddr {
-		let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-			.await
-			.expect("bind a loopback listener");
-		listener.local_addr().expect("listener address")
+		let (_, address) = loopback_listener().await;
+		address
 	}
 
 	fn ws_url(address: std::net::SocketAddr) -> url::Url {
