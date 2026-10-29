@@ -117,7 +117,7 @@ describe("trinity-stack add and update", () => {
 
   test("update writes nothing when only the block moved, and exits on a change otherwise", async () => {
     await add("local", link, undefined, options());
-    expect(await update([], options(2))).toEqual({ changed: [] });
+    expect(await update([], options(2))).toEqual({ changed: [], failures: [] });
     served = await at(200);
     expect((await update([], options(3))).changed.sort()).toEqual([
       "index.js",
@@ -138,11 +138,16 @@ describe("trinity-stack add and update", () => {
     await add("local", link, undefined, options());
     const before = await readFile(join(dir, "local.json"));
     served = await at(50);
-    await expect(update([], options())).rejects.toThrow(
-      "local: https://stack.example/.well-known/trinity-stack.json serves a lower sequence",
-    );
+    expect(await update([], options())).toEqual({
+      changed: [],
+      failures: [
+        "local: https://stack.example/.well-known/trinity-stack.json serves a lower sequence than the committed copy",
+      ],
+    });
     served = undefined;
-    await expect(update(["local"], options())).rejects.toThrow("unreachable");
+    expect((await update(["local"], options())).failures).toEqual([
+      "local: https://stack.example/.well-known/trinity-stack.json is unreachable",
+    ]);
     expect(await readFile(join(dir, "local.json"))).toEqual(before);
     await expect(add("open", URL_, undefined, options())).rejects.toThrow(
       "must be signed",
@@ -150,6 +155,25 @@ describe("trinity-stack add and update", () => {
     await expect(update(["missing"], options())).rejects.toThrow(
       "no stack named missing",
     );
+  });
+
+  test("a stack whose Asset Hub is down keeps its copies, not a new descriptor beside an old record", async () => {
+    await add("local", link, undefined, options());
+    const before = await readFile(join(dir, "local.json"));
+    served = await at(200, "g2");
+    const down: ProjectOptions = {
+      ...options(),
+      transport: () => ({
+        ...chainAt(1)(),
+        at: () => Promise.reject(new Error("Asset Hub is down")),
+      }),
+    };
+    const outcome = await update([], down);
+    expect(outcome).toEqual({
+      changed: [],
+      failures: ["local: Asset Hub is down"],
+    });
+    expect(await readFile(join(dir, "local.json"))).toEqual(before);
   });
 
   test("a stack without an Asset Hub keeps no dotNS record", async () => {

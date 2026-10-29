@@ -84,7 +84,7 @@ export function createStackReader(
   const reader =
     typeof policy === "string"
       ? new wasm.StackReader(policy)
-      : new wasm.StackReader("maxAge", Math.floor(policy.maxAgeMs / 1000));
+      : new wasm.StackReader("maxAge", policy.maxAgeMs / 1000);
   const now = () => unixSeconds(options.now?.() ?? new Date());
   const bundled = new Map(
     Object.values(options.bundled ?? {}).map((stack) => [
@@ -95,7 +95,7 @@ export function createStackReader(
   const pointers = new Map<string, Pointer>();
   const loads = new Map<string, Promise<void>>();
   const fetches = new Map<string, Promise<CurrentStack>>();
-  const lookups = new Map<string, Promise<DotnsRecord>>();
+  const lookups = new Map<string, Promise<DotnsRecord | undefined>>();
   const listeners = new Set<(change: StackChange) => void>();
   const storeKey = (id: string) => `${id}#reader`;
 
@@ -112,7 +112,6 @@ export function createStackReader(
           build && new TextEncoder().encode(build.document),
           build?.dotns ?? undefined,
           await options.store?.get(storeKey(id)),
-          now(),
         );
       })();
       loads.set(id, loading);
@@ -175,7 +174,15 @@ export function createStackReader(
     );
   };
 
-  const lookUp = (pointer: Pointer, descriptor: Descriptor) => {
+  /**
+   * Runs the lookup the reader handed out for `generation`. Resolves to the record now in use,
+   * undefined when the reader has moved to another generation meanwhile.
+   */
+  const lookUp = (
+    pointer: Pointer,
+    descriptor: Descriptor,
+    generation: string,
+  ) => {
     const id = stackId(pointer);
     return track(
       lookups,
@@ -183,6 +190,9 @@ export function createStackReader(
       (async () => {
         let record;
         try {
+          // The descriptor in hand is for another generation when a fetch landed in between.
+          if (descriptor.generation !== generation)
+            return reader.lookedUp(pointer, undefined, now()).record;
           record = await readDotns(descriptor, {
             transport: options.transport?.(descriptor),
             fetch: options.fetch,
@@ -193,13 +203,10 @@ export function createStackReader(
           if (kept) return kept;
           throw error;
         }
-        const { record: kept, stored } = reader.lookedUp(
-          pointer,
-          record,
-          now(),
-        );
-        if (stored) await options.store?.set(storeKey(id), stored);
-        return kept ?? record;
+        const looked = reader.lookedUp(pointer, record, now());
+        if (looked.stored)
+          await options.store?.set(storeKey(id), looked.stored);
+        return looked.record;
       })(),
     );
   };
@@ -219,15 +226,18 @@ export function createStackReader(
     },
     async dotns(stack) {
       const pointer = pointerOf(stack);
-      const { descriptor } = await api.get(stack);
-      const read = reader.dotns(pointer, now());
-      const looking = read?.lookUp
-        ? lookUp(pointer, descriptor)
-        : lookups.get(stackId(pointer));
-      const record = read?.record ?? (await looking);
-      if (!record)
-        throw new Error(`no dotNS record of ${pointer.url} and no lookup`);
-      return record.dotns;
+      // Again whenever the descriptor moved to another generation while a lookup ran.
+      for (;;) {
+        const { descriptor } = await api.get(stack);
+        const read = reader.dotns(pointer, now());
+        const looking = read?.lookUp
+          ? lookUp(pointer, descriptor, read.lookUp)
+          : lookups.get(stackId(pointer));
+        const record = read?.record ?? (await looking);
+        if (record) return record.dotns;
+        if (!looking)
+          throw new Error(`no dotNS record of ${pointer.url} and no lookup`);
+      }
     },
     async refresh(stack) {
       const pointer = pointerOf(stack);

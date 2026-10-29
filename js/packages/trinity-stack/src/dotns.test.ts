@@ -65,14 +65,19 @@ function descriptor(
 }
 
 /** The answers a chain gives, keyed `to:data`; null is a revert. */
-type Chain = { storage: string | null; calls: Record<string, string | null> };
+type Chain = {
+  storageKey: string;
+  storage: string | null;
+  calls: Record<string, string | null>;
+};
 
 /** A transport over `chain` that records the block of every read. */
 function over(chain: Chain, at = AT) {
   const blocks: unknown[] = [];
   const transport: DotnsTransport = {
     at: async () => at,
-    storage: async (_key, block) => {
+    storage: async (key, block) => {
+      if (key !== chain.storageKey) throw new Error(`unexpected key ${key}`);
       blocks.push(block);
       return chain.storage;
     },
@@ -115,7 +120,7 @@ describe("readDotns", () => {
   });
 
   test("a call that fails keeps its own error rather than reading as a revert", async () => {
-    const { transport } = over({ storage: DISPATCHER, calls: {} });
+    const { transport } = over({ ...cases.dotns[0], calls: {} });
     const failing = {
       ...transport,
       call: () => Promise.reject(new Error("connection reset")),

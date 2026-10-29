@@ -12,7 +12,9 @@ const USAGE = `usage:
 options:
   --dir <path>  where the stacks live, .trinity by default
 
-update exits 0 when nothing changed, 2 when it wrote something and 1 on an error.`;
+update exits 0 when nothing changed, 2 when it wrote something and 1 when a stack failed,
+which keeps its copies while the others update. It reads dotNS over the stack's eth-rpc, so a
+stack with a dotNS gateway and no eth-rpc fails.`;
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
@@ -32,11 +34,12 @@ try {
     const { changed } = await add(rest[0], rest[1], values.key, options);
     console.log(`wrote ${changed.join(", ")}`);
   } else if (command === "update") {
-    const { changed } = await update(rest, options);
+    const { changed, failures } = await update(rest, options);
     console.log(
       changed.length > 0 ? `wrote ${changed.join(", ")}` : "nothing changed",
     );
-    process.exitCode = changed.length > 0 ? 2 : 0;
+    for (const failure of failures) console.error(failure);
+    process.exitCode = failures.length > 0 ? 1 : changed.length > 0 ? 2 : 0;
   } else if (command === "list" && rest.length === 0) {
     for (const { name, link, descriptor, dotns } of await list(options)) {
       const copy = descriptor

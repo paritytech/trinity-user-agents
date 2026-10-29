@@ -67,12 +67,13 @@ export async function add(
 /**
  * Fetches each stack, or those `names` lists, and writes what moved: a newer signed copy, and
  * its dotNS record read at Asset Hub's latest finalized block. Refuses an unsigned or expired
- * stack, and anything that would lower `sequence`.
+ * stack, and anything that would lower `sequence`. A stack that fails keeps its copies and is
+ * named in `failures`, while the others still update.
  */
 export async function update(
   names: string[],
   options: ProjectOptions = {},
-): Promise<Outcome> {
+): Promise<Outcome & { failures: string[] }> {
   const stacks = await readStacks(options);
   const unknown = names.filter((name) => !stacks[name]);
   if (unknown.length > 0)
@@ -89,8 +90,7 @@ export async function update(
     }
   }
   changed.push(...(await generate(options)));
-  if (failures.length > 0) throw new Error(failures.join("\n"));
-  return { changed };
+  return { changed, failures };
 }
 
 /** Each stack's name, link and the copy the project holds. */
@@ -148,27 +148,30 @@ async function refresh(
   if (refusal) throw new Error(refusal);
   if (accepted.expired)
     throw new Error(`the stack expired at ${accepted.descriptor.expiresAt}`);
+  // Read before writing anything, so a stack whose Asset Hub is down keeps its copies as they were.
+  const record = accepted.descriptor.chains.some(
+    (chain) => chain.role === "AssetHub",
+  )
+    ? await readDotns(accepted.descriptor, {
+        transport: options.transport?.(accepted.descriptor),
+        fetch: options.fetch,
+        timeoutMs: options.timeoutMs,
+      })
+    : undefined;
   const changed: string[] = [];
   if (!committed || !same(committed, accepted.document)) {
     await write(documentFile, accepted.document, options);
     changed.push(documentFile);
   }
   const recordFile = `${name}.dotns.json`;
-  if (!accepted.descriptor.chains.some((chain) => chain.role === "AssetHub")) {
+  const kept = await readRecord(name, options);
+  if (!record) {
     if (await readOptional(join(dir(options), recordFile))) {
       await rm(join(dir(options), recordFile));
       changed.push(recordFile);
     }
-    return changed;
-  }
-  const record = await readDotns(accepted.descriptor, {
-    transport: options.transport?.(accepted.descriptor),
-    fetch: options.fetch,
-    timeoutMs: options.timeoutMs,
-  });
-  const kept = await readRecord(name, options);
-  // A record of the same contracts stays as committed, so a new block alone is no change.
-  if (
+  } else if (
+    // A record of the same contracts stays as committed, so a new block alone is no change.
     kept?.generation !== record.generation ||
     JSON.stringify(kept.dotns) !== JSON.stringify(record.dotns)
   ) {

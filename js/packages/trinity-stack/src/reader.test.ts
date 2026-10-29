@@ -57,24 +57,16 @@ async function run(vector: {
   steps: Step[];
 }) {
   const pointer = pointerOf(vector.pointer);
-  const start = async (
-    build: string | null,
-    dotns: DotnsRecord | null,
-    now: number,
-  ) => {
+  const start = async (build: string | null, dotns: DotnsRecord | null) => {
     const reader =
       typeof vector.refresh === "string"
         ? new wasm.StackReader(vector.refresh)
         : new wasm.StackReader("maxAge", vector.refresh.maxAge);
-    reader.load(pointer, await file(build), dotns ?? undefined, stored, now);
+    reader.load(pointer, await file(build), dotns ?? undefined, stored);
     return reader;
   };
   let stored: Uint8Array | undefined;
-  let reader = await start(
-    vector.build,
-    vector.buildDotns,
-    cases.reader[0].now,
-  );
+  let reader = await start(vector.build, vector.buildDotns);
   const fetchOf = (request?: { ifNoneMatch?: string }) =>
     request ? { ifNoneMatch: request.ifNoneMatch ?? null } : null;
   for (const [index, step] of vector.steps.entries()) {
@@ -110,7 +102,7 @@ async function run(vector: {
         outcome = { error: (error as { code: string }).code };
       }
     } else if (step.restart !== undefined) {
-      reader = await start(step.build, step.buildDotns, step.restart);
+      reader = await start(step.build, step.buildDotns);
       continue;
     } else if (step.dotns !== undefined) {
       const read = reader.dotns(pointer, step.dotns)!;
@@ -184,6 +176,27 @@ const down = () =>
   server(() => {
     throw new TypeError("connection refused");
   });
+
+/** Asset Hub as a dotNS vector has it; `before` runs ahead of each lookup's block read. */
+const chainOf = (
+  vector: {
+    at: { number: number; hash: string };
+    storage: string | null;
+    calls: Record<string, string | null>;
+  },
+  before: () => Promise<void> = async () => {},
+): DotnsTransport => ({
+  at: async () => {
+    await before();
+    return vector.at;
+  },
+  storage: async () => vector.storage,
+  call: async (to, data) => {
+    const answer = vector.calls[`${to}:${data}`];
+    if (answer === null) throw new DotnsRevert("execution reverted");
+    return answer;
+  },
+});
 
 const bundle = async (
   document: Uint8Array,
@@ -311,18 +324,10 @@ describe("createStackReader", () => {
   test("dotNS: the build's record serves until the generation changes, then the chain is read", async () => {
     const vector = cases.dotns[0];
     let lookups = 0;
-    const transport = (): DotnsTransport => ({
-      at: async () => vector.at,
-      storage: async () => {
+    const transport = () =>
+      chainOf(vector, async () => {
         lookups++;
-        return vector.storage;
-      },
-      call: async (to, data) => {
-        const answer = vector.calls[`${to}:${data}`];
-        if (answer === null) throw new DotnsRevert("execution reverted");
-        return answer;
-      },
-    });
+      });
     const restarted = await at(200, "g2");
     const reader = createStackReader({
       bundled: [
@@ -345,6 +350,36 @@ describe("createStackReader", () => {
     expect(lookups).toBe(1);
     await reader.dotns(pointer);
     expect(lookups).toBe(1);
+  });
+
+  test("dotNS: a lookup the descriptor outran never answers for the new generation", async () => {
+    const [g2Chain, g1Chain] = cases.dotns;
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const restarted = await at(200, "g2");
+    const reader = createStackReader({
+      bundled: [await bundle(await at(100))],
+      refresh: "never",
+      fetch: server(() => new Response(restarted)).fetch,
+      transport: (descriptor) =>
+        descriptor.generation === "g1"
+          ? chainOf(g1Chain, () => gate)
+          : chainOf(g2Chain),
+    });
+    const first = reader.dotns(pointer);
+    await reader.refresh(pointer);
+    const second = reader.dotns(pointer);
+    release();
+    const g2 = g2Chain.expect.dotns.dispatcher;
+    expect((await first)?.dispatcher).toBe(g2);
+    expect((await second)?.dispatcher).toBe(g2);
+  });
+
+  test("a max age under a second, or not finite, is refused rather than fetching on every call", () => {
+    for (const maxAgeMs of [500, Infinity, Number.NaN])
+      expect(() => createStackReader({ refresh: { maxAgeMs } })).toThrow(
+        "maxAgeSeconds of at least 1",
+      );
   });
 
   test("dotNS: a failed lookup keeps the record of the same generation", async () => {
