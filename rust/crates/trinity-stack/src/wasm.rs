@@ -2,8 +2,10 @@
 //! crate's own types, and errors as a `TrinityStackError` carrying the rule's [`Error::code`].
 
 use crate::{
-	Accepted, DEFAULT_LINK_BASE, Descriptor, Document, Error, Fetched, Pointer, PublishState,
-	Rendered, SpecFile, Verified, accept as accept_fetched, format, open as open_bytes,
+	Accepted, Block, DEFAULT_LINK_BASE, Descriptor, Document, DotnsAnswer, DotnsCall,
+	DotnsLookedUp, DotnsRead, DotnsRecord, DotnsStep, Error, FetchRequest, Fetched, Pointer,
+	PublishState, Refresh, Refreshed, Rendered, Served, SpecFile, StackRead, Verified,
+	accept as accept_fetched, format, open as open_bytes,
 };
 use serde::Serialize;
 use tsify::{Ts, Tsify};
@@ -169,4 +171,205 @@ pub fn check_spec(spec: Ts<SpecFile>, bytes: &[u8]) -> Result<(), JsValue> {
 #[wasm_bindgen(js_name = lightSpecGenesis)]
 pub fn light_spec_genesis(bytes: &[u8]) -> Result<String, JsValue> {
 	Ok(format::to_hex(&crate::light_spec_genesis(bytes).map_err(to_js_error)?))
+}
+
+fn hex_value(value: &str) -> Result<Vec<u8>, JsValue> {
+	value
+		.strip_prefix("0x")
+		.and_then(|digits| hex::decode(digits).ok())
+		.ok_or_else(|| type_error(&format!("{value:?} is not 0x-prefixed hex")))
+}
+
+/// Reads a dotNS record as `encodeDotnsRecord` wrote it, checking every address.
+#[wasm_bindgen(js_name = decodeDotnsRecord)]
+pub fn decode_dotns_record(bytes: &[u8]) -> Result<Ts<DotnsRecord>, JsValue> {
+	to_js(&DotnsRecord::parse(bytes).map_err(to_js_error)?)
+}
+
+/// A dotNS record as a project commits it.
+#[wasm_bindgen(js_name = encodeDotnsRecord)]
+pub fn encode_dotns_record(record: Ts<DotnsRecord>) -> Result<Vec<u8>, JsValue> {
+	let record = self::record(Some(record))?.expect("a record was given");
+	record.check().map_err(to_js_error)?;
+	Ok(record.to_json())
+}
+
+fn record(record: Option<Ts<DotnsRecord>>) -> Result<Option<DotnsRecord>, JsValue> {
+	record
+		.map(|record| record.to_rust())
+		.transpose()
+		.map_err(|_| type_error("a dotNS record needs generation, at and dotns"))
+}
+
+/// What a lookup needs next, as JS sees it: hex where Rust has bytes.
+#[derive(Serialize, Tsify)]
+#[serde(rename_all = "camelCase")]
+pub enum LookupStep {
+	/// The 0x-prefixed Asset Hub storage key to read.
+	Storage(String),
+	/// The calls to make, answered in order.
+	Calls(Vec<DotnsCall>),
+	/// The lookup's record.
+	Done(DotnsRecord),
+}
+
+/// [`crate::DotnsLookup`] for JS.
+#[wasm_bindgen(js_name = DotnsLookup)]
+pub struct JsDotnsLookup(crate::DotnsLookup);
+
+#[wasm_bindgen(js_class = DotnsLookup)]
+impl JsDotnsLookup {
+	/// A lookup for a descriptor of `generation`, read at Asset Hub block `at`.
+	#[wasm_bindgen(constructor)]
+	pub fn new(generation: String, at: Ts<Block>) -> Result<JsDotnsLookup, JsValue> {
+		let at = at.to_rust().map_err(|_| type_error("a block needs number and hash"))?;
+		Ok(Self(crate::DotnsLookup::new(generation, at)))
+	}
+
+	/// What the lookup needs next.
+	pub fn next(&self) -> Result<Ts<LookupStep>, JsValue> {
+		to_js(&match self.0.next() {
+			DotnsStep::Storage(key) => LookupStep::Storage(format::to_hex(&key)),
+			DotnsStep::Calls(calls) => LookupStep::Calls(calls),
+			DotnsStep::Done(record) => LookupStep::Done(record),
+		})
+	}
+
+	/// Takes the hex value at the storage key, undefined when it is unset.
+	pub fn storage(&mut self, value: Option<String>) -> Result<(), JsValue> {
+		let value = value.as_deref().map(hex_value).transpose()?;
+		self.0.storage(value.as_deref()).map_err(to_js_error)
+	}
+
+	/// Takes the calls' answers in order: the hex data a call returned, or null when it
+	/// reverted.
+	pub fn answer(
+		&mut self,
+		#[wasm_bindgen(unchecked_param_type = "(string | null)[]")] answers: Vec<JsValue>,
+	) -> Result<(), JsValue> {
+		let answers = answers
+			.iter()
+			.map(|answer| match answer.as_string() {
+				Some(data) => Ok(DotnsAnswer::Returned(hex_value(&data)?)),
+				None if answer.is_null() => Ok(DotnsAnswer::Reverted),
+				None => Err(type_error("an answer is hex data, or null for a revert")),
+			})
+			.collect::<Result<Vec<_>, _>>()?;
+		self.0.answer(&answers).map_err(to_js_error)
+	}
+}
+
+/// [`crate::StackReader`] for JS.
+#[wasm_bindgen(js_name = StackReader)]
+pub struct JsStackReader(crate::StackReader);
+
+#[wasm_bindgen(js_class = StackReader)]
+impl JsStackReader {
+	/// A reader that refreshes by `refresh`: `"never"`, `"once"` or `"maxAge"`, the last
+	/// with `maxAgeSeconds`.
+	#[wasm_bindgen(constructor)]
+	pub fn new(refresh: &str, max_age_seconds: Option<f64>) -> Result<JsStackReader, JsValue> {
+		let refresh = match (refresh, max_age_seconds) {
+			("never", None) => Refresh::Never,
+			("once", None) => Refresh::Once,
+			("maxAge", Some(seconds)) if seconds >= 0.0 => Refresh::MaxAge(seconds as u64),
+			_ => return Err(type_error("refresh is never, once, or maxAge with maxAgeSeconds")),
+		};
+		Ok(Self(crate::StackReader::new(refresh)))
+	}
+
+	/// Starts a stack from its build copy and the record the caller stored.
+	pub fn load(
+		&mut self,
+		pointer: Ts<Pointer>,
+		build: Option<Vec<u8>>,
+		build_dotns: Option<Ts<DotnsRecord>>,
+		stored: Option<Vec<u8>>,
+		now_unix_seconds: f64,
+	) -> Result<(), JsValue> {
+		self.0
+			.load(
+				&self::pointer(&pointer)?,
+				build.as_deref(),
+				record(build_dotns)?,
+				stored.as_deref(),
+				now_unix_seconds as i64,
+			)
+			.map_err(to_js_error)
+	}
+
+	/// The copy to use now, and a fetch to make.
+	pub fn get(
+		&mut self,
+		pointer: Ts<Pointer>,
+		now_unix_seconds: f64,
+	) -> Result<Ts<StackRead>, JsValue> {
+		to_js(&self.0.get(&self::pointer(&pointer)?, now_unix_seconds as i64))
+	}
+
+	/// A fetch whatever the policy, unless one is out already.
+	pub fn refresh(
+		&mut self,
+		pointer: Ts<Pointer>,
+		now_unix_seconds: f64,
+	) -> Result<Option<Ts<FetchRequest>>, JsValue> {
+		self.0
+			.refresh(&self::pointer(&pointer)?, now_unix_seconds as i64)
+			.map(|request| to_js(&request))
+			.transpose()
+	}
+
+	/// The `stackId`s whose background refresh is due.
+	pub fn due(&self, now_unix_seconds: f64) -> Vec<String> {
+		self.0.due(now_unix_seconds as i64)
+	}
+
+	/// Takes the answer to a fetch: the bytes and `ETag` served, `notModified` for a `304`, or
+	/// no bytes when it failed.
+	pub fn fetched(
+		&mut self,
+		pointer: Ts<Pointer>,
+		document: Option<Vec<u8>>,
+		etag: Option<String>,
+		not_modified: bool,
+		now_unix_seconds: f64,
+	) -> Result<Ts<Refreshed>, JsValue> {
+		let served = match (&document, not_modified) {
+			(_, true) => Served::NotModified,
+			(Some(bytes), false) => Served::Document { bytes, etag: etag.as_deref() },
+			(None, false) => Served::Unreachable,
+		};
+		let refreshed = self
+			.0
+			.fetched(&self::pointer(&pointer)?, served, now_unix_seconds as i64)
+			.map_err(to_js_error)?;
+		to_js(&refreshed)
+	}
+
+	/// The dotNS record to use and a lookup to run; undefined until a descriptor is held.
+	pub fn dotns(
+		&mut self,
+		pointer: Ts<Pointer>,
+		now_unix_seconds: f64,
+	) -> Result<Option<Ts<DotnsRead>>, JsValue> {
+		self.0
+			.dotns(&self::pointer(&pointer)?, now_unix_seconds as i64)
+			.map(|read| to_js(&read))
+			.transpose()
+	}
+
+	/// Takes a lookup's record, undefined when it failed.
+	#[wasm_bindgen(js_name = lookedUp)]
+	pub fn looked_up(
+		&mut self,
+		pointer: Ts<Pointer>,
+		record: Option<Ts<DotnsRecord>>,
+		now_unix_seconds: f64,
+	) -> Result<Ts<DotnsLookedUp>, JsValue> {
+		let looked_up = self
+			.0
+			.looked_up(&self::pointer(&pointer)?, self::record(record)?, now_unix_seconds as i64)
+			.map_err(to_js_error)?;
+		to_js(&looked_up)
+	}
 }
