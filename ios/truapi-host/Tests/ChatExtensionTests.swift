@@ -12,7 +12,7 @@ struct ChatHostBridgeDefaultsTests {
         try await bridge.setRoomConfig(roomId: "room", config: .hostDefault)
         try await bridge.setRoomMetadata(
             roomId: "room",
-            metadata: ChatRoomMetadata(name: "Room", description: nil, icon: nil)
+            metadata: ChatRoomMetadata(name: "Room", description: nil, icon: nil, placeholder: nil)
         )
 
         #expect(try await bridge.roomConfig(roomId: "room") == .hostDefault)

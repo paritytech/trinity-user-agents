@@ -995,6 +995,8 @@ mod tests {
 						last_message: None,
 						last_reaction: None,
 						unseen_reactions: 0,
+						pinned: false,
+						activity: None,
 					},
 				}),
 			))
