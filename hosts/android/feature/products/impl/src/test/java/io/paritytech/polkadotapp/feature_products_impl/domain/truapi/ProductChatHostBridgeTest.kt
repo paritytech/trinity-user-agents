@@ -240,7 +240,7 @@ class ProductChatHostBridgeTest {
         coVerify { messaging.deleteRoom(room) }
     }
 
-    // The room keeps a new icon in the form the core screens it to, as it keeps the icon of createRoom.
+    // The room keeps a new icon as the core screens it, the same as the icon of createRoom.
     @Test
     fun `a metadata icon replaces the room icon in the screened form`() = runTest {
         val messaging = mockk<ProductChatMessaging>()
