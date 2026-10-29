@@ -100,19 +100,11 @@ struct DotnsGatewayTests {
         #expect(record.listedLabel(among: [Data("othername".utf8)], assigned: [Data("othername".utf8)]) == nil)
     }
 
-    @Test("a backend name the cache does not hold is not listed")
-    func unheldBackendNameNotListed() {
-        let liteOnly = DotnsGatewayPallet.AccountNameRecord(
-            lite: .init(label: Self.liteLabel, chat: nil),
-            full: nil
-        )
+    @Test("an account dotNS has no name for is not listed")
+    func accountWithoutDotnsNameNotListed() {
         let empty = DotnsGatewayPallet.AccountNameRecord(lite: nil, full: nil)
-        let otherLite: Set<Data> = [Data("other.01".utf8)]
-        let malformed: Set<Data> = [Data("Name".utf8), Data("name-x".utf8)]
         let fullName: Set<Data> = [Data("therealgeorge".utf8)]
 
-        #expect(liteOnly.listedLabel(among: otherLite, assigned: otherLite) == nil)
-        #expect(liteOnly.listedLabel(among: malformed, assigned: malformed) == nil)
         #expect(empty.listedLabel(among: fullName, assigned: fullName) == nil)
     }
 

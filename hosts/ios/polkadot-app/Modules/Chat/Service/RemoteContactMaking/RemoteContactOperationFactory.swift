@@ -19,16 +19,25 @@ final class RemoteContactOperationFactory {
     private let usernameOperationFactory: UsernameOperationFactoryProtocol
 
     init(
+        dotnsGatewayOperationMaker: DotnsGatewayOperationMaking,
+        usernameOperationFactory: UsernameOperationFactoryProtocol
+    ) {
+        self.dotnsGatewayOperationMaker = dotnsGatewayOperationMaker
+        self.usernameOperationFactory = usernameOperationFactory
+    }
+
+    convenience init(
         chainRegistry: ChainRegistryProtocol = ChainRegistryFacade.sharedRegistry,
         connectionChainId: ChainModel.Id = AppConfig.Chains.assethubChain,
         operationQueue: OperationQueue = OperationManagerFacade.sharedDefaultQueue
     ) {
-        usernameOperationFactory = UsernameOperationFactory(tokenProvider: JWTTokenManager.shared)
-
-        dotnsGatewayOperationMaker = DotnsGatewayOperationFactory(
-            chainId: connectionChainId,
-            chainRegistry: chainRegistry,
-            operationQueue: operationQueue
+        self.init(
+            dotnsGatewayOperationMaker: DotnsGatewayOperationFactory(
+                chainId: connectionChainId,
+                chainRegistry: chainRegistry,
+                operationQueue: operationQueue
+            ),
+            usernameOperationFactory: UsernameOperationFactory(tokenProvider: JWTTokenManager.shared)
         )
     }
 }
