@@ -252,8 +252,10 @@ fn extrinsic_status(status: &Value) -> ExtrinsicStatus {
 			return ExtrinsicStatus::Included(hash.to_string());
 		}
 	}
+	// The pool sends `"dropped"` and `"invalid"` as bare strings and the rest
+	// as objects keyed by the status.
 	for key in ["invalid", "dropped", "usurped", "retracted", "finalityTimeout"] {
-		if status.get(key).is_some() {
+		if status.as_str() == Some(key) || status.get(key).is_some() {
 			return ExtrinsicStatus::Rejected(key.to_string());
 		}
 	}
@@ -425,13 +427,22 @@ mod tests {
 		assert!(matches!(status, ExtrinsicStatus::Included(hash) if hash == "0xabcd"));
 	}
 
+	/// Each status in the form the pool sends it. A rejection that is not
+	/// recognised waits out the whole submit timeout before it surfaces.
 	#[test]
 	fn terminal_pool_statuses_reject_the_submission() {
-		let statuses: Vec<ExtrinsicStatus> =
-			["invalid", "dropped", "usurped", "retracted", "finalityTimeout"]
-				.into_iter()
-				.map(|key| extrinsic_status(&json!({key: "0x1234"})))
-				.collect();
+		let statuses: Vec<ExtrinsicStatus> = [
+			json!("invalid"),
+			json!("dropped"),
+			json!({"usurped": "0x1234"}),
+			json!({"retracted": "0x1234"}),
+			json!({"finalityTimeout": "0x1234"}),
+			json!("ready"),
+			json!({"broadcast": ["12D3KooW"]}),
+		]
+		.iter()
+		.map(extrinsic_status)
+		.collect();
 
 		assert_eq!(
 			statuses,
@@ -441,6 +452,8 @@ mod tests {
 				ExtrinsicStatus::Rejected("usurped".to_string()),
 				ExtrinsicStatus::Rejected("retracted".to_string()),
 				ExtrinsicStatus::Rejected("finalityTimeout".to_string()),
+				ExtrinsicStatus::Pending,
+				ExtrinsicStatus::Pending,
 			],
 		);
 	}
