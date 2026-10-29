@@ -116,10 +116,6 @@ impl CliChainProvider {
 
 	/// The routed endpoint that answers `genesis_hash`: its own, otherwise
 	/// People's, and none when People is not routed either.
-	///
-	/// Only routed hashes reach the provider. The light-client provider would
-	/// resolve any other bundled hash from its catalog and start that network,
-	/// and so would an RPC provider with no endpoint registered.
 	fn chain_for(&self, genesis_hash: [u8; 32]) -> Option<&'static ChainEndpoint> {
 		let routed = |genesis| {
 			routed_endpoints(&self.network, self.live_chain_routing)
@@ -364,8 +360,7 @@ mod tests {
 		assert_eq!(first.as_deref(), Some("open"));
 	}
 
-	/// Without a People route there is nothing to fall back to. Passing People's
-	/// unregistered genesis on would start the light client from the catalog.
+	/// Without a People route there is nothing to fall back to.
 	#[tokio::test]
 	async fn a_network_without_a_people_route_refuses_the_sentinel() {
 		let mut network = Network::default().config();

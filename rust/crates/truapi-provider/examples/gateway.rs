@@ -62,38 +62,27 @@ mod imp {
 		let listen = config["listen"].as_str().unwrap_or("127.0.0.1:9944").to_owned();
 		let chains = config["chains"].as_object().expect("config.chains must be an object");
 
-		let mut remote = EmbeddedChainProvider::builder();
-		let mut entries = Vec::new();
+		let mut builder = EmbeddedChainProvider::builder().catalog();
+		let mut routes = HashMap::new();
 		for (name, entry) in chains {
 			let genesis =
 				parse_genesis(entry["genesis"].as_str().expect("chain.genesis is required"));
 			// A `url` entry is proxied to a remote node; every other entry is a
 			// light client the catalog resolves from its genesis hash — relay
 			// wiring for parachains comes from the catalog, not this config.
-			let url = entry["url"].as_str();
-			if let Some(url) = url {
+			if let Some(url) = entry["url"].as_str() {
 				println!("[gateway] /{name}: proxy to {url}");
-				remote = remote.chain(
+				builder = builder.chain(
 					genesis,
 					ChainSource::rpc_node(url::Url::parse(url).expect("chain.url must parse")),
 				);
 			} else {
 				println!("[gateway] /{name}: catalog light client");
 			}
-			entries.push((format!("/{name}"), genesis, url.is_some()));
+			routes.insert(format!("/{name}"), genesis);
 		}
 
-		// A provider with a remote node registered never resolves a chain from
-		// the catalog, so the light clients get a provider of their own.
-		let remote = Arc::new(remote.build());
-		let light = Arc::new(EmbeddedChainProvider::builder().build());
-		let routes: HashMap<String, Route> = entries
-			.into_iter()
-			.map(|(path, genesis, proxied)| {
-				let provider = if proxied { &remote } else { &light };
-				(path, (genesis, Arc::clone(provider)))
-			})
-			.collect();
+		let provider = Arc::new(builder.build());
 		let routes = Arc::new(routes);
 		let listener = TcpListener::bind(&listen)
 			.await
@@ -102,15 +91,17 @@ mod imp {
 
 		loop {
 			let (stream, peer) = listener.accept().await.expect("accept must succeed");
-			tokio::spawn(serve(stream, peer, Arc::clone(&routes)));
+			tokio::spawn(serve(stream, peer, Arc::clone(&provider), Arc::clone(&routes)));
 		}
 	}
 
-	/// A chain's genesis hash and the provider that serves it.
-	type Route = ([u8; 32], Arc<EmbeddedChainProvider>);
-
 	/// Bridge one WebSocket connection to one provider connection.
-	async fn serve(stream: TcpStream, peer: SocketAddr, routes: Arc<HashMap<String, Route>>) {
+	async fn serve(
+		stream: TcpStream,
+		peer: SocketAddr,
+		provider: Arc<EmbeddedChainProvider>,
+		routes: Arc<HashMap<String, [u8; 32]>>,
+	) {
 		let mut path = String::new();
 		let websocket = match tokio_tungstenite::accept_hdr_async(
 			stream,
@@ -131,7 +122,7 @@ mod imp {
 			},
 		};
 
-		let Some((genesis, provider)) = routes.get(&path) else {
+		let Some(genesis) = routes.get(&path) else {
 			eprintln!("[gateway] {peer}: unknown route {path}");
 			return;
 		};

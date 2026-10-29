@@ -113,7 +113,7 @@ type NetworkSources = (NetworkChains, Vec<([u8; 32], ChainSource)>);
 
 /// A resolved catalog network: chains keyed by genesis hash, plus the relay the
 /// queried chain syncs through (`None` when it is itself the relay).
-type ResolvedNetwork = (HashMap<[u8; 32], ChainSource>, Option<[u8; 32]>);
+pub type ResolvedNetwork = (HashMap<[u8; 32], ChainSource>, Option<[u8; 32]>);
 
 /// Genesis hashes and standalone per-chain [`ChainSource`]s of one network; the
 /// caller pairs each parachain with the network's relay genesis.
@@ -326,10 +326,10 @@ mod tests {
 		use crate::platform::ChainProvider;
 		use futures::{executor::block_on, stream::StreamExt};
 
-		// An empty provider — no explicit registration — still connects to a
-		// catalog chain from its genesis hash alone.
+		// A provider built with the catalog and nothing registered connects to
+		// a catalog chain from its genesis hash alone.
 		let relay = genesis(&CATALOG[0].relay).expect("catalog genesis parses");
-		let provider = crate::EmbeddedChainProvider::builder().build();
+		let provider = crate::EmbeddedChainProvider::builder().catalog().build();
 		let connection = block_on(provider.connect(relay))
 			.expect("catalog resolves the relay genesis without registration");
 		let mut responses = connection.responses();

@@ -38,6 +38,9 @@ pub struct EmbeddedChainProviderBuilder {
 	/// Set by [`keep_chains_running`](Self::keep_chains_running).
 	#[cfg(feature = "smoldot")]
 	keep_chains_running: bool,
+	/// Set by [`catalog`](Self::catalog).
+	#[cfg(feature = "networks")]
+	catalog: bool,
 }
 
 impl core::fmt::Debug for EmbeddedChainProviderBuilder {
@@ -51,6 +54,8 @@ impl core::fmt::Debug for EmbeddedChainProviderBuilder {
 			.field("storage", &self.storage.is_some())
 			.field("connection_types", &self.connection_types)
 			.field("keep_chains_running", &self.keep_chains_running);
+		#[cfg(feature = "networks")]
+		builder.field("catalog", &self.catalog);
 		builder.finish()
 	}
 }
@@ -125,6 +130,16 @@ impl EmbeddedChainProviderBuilder {
 		self
 	}
 
+	/// Resolve a genesis nobody registered from the bundled catalog, so
+	/// `connect` reaches every bundled network from its genesis hash alone. A
+	/// provider built without it answers only for the chains registered on it,
+	/// and so never starts the light client for a chain its host did not name.
+	#[cfg(feature = "networks")]
+	pub fn catalog(mut self) -> Self {
+		self.catalog = true;
+		self
+	}
+
 	/// Build the provider. Light-client resources start lazily on the first
 	/// light-client connect.
 	pub fn build(self) -> EmbeddedChainProvider {
@@ -140,6 +155,8 @@ impl EmbeddedChainProviderBuilder {
 			stored_quality: Mutex::new(HashMap::new()),
 			#[cfg(feature = "smoldot")]
 			light: crate::light::LightState::new(self.connection_types, self.keep_chains_running),
+			#[cfg(feature = "networks")]
+			catalog: self.catalog,
 		}
 	}
 }
@@ -157,10 +174,8 @@ impl EmbeddedChainProviderBuilder {
 /// The `responses()` stream of returned connections is take-once: the first
 /// call yields the live stream, later calls yield an ended stream.
 ///
-/// A genesis nobody registered is resolved from the bundled catalog (the
-/// `networks` feature) only while no remote node is registered, so a host on
-/// RPC nodes never starts the light client by asking for a chain it did not
-/// register.
+/// A genesis nobody registered is resolved from the bundled catalog only on a
+/// provider built with [`catalog`](EmbeddedChainProviderBuilder::catalog).
 pub struct EmbeddedChainProvider {
 	chains: HashMap<[u8; 32], ChainSource>,
 	/// The relay each explicitly-registered parachain syncs through; catalog
@@ -182,6 +197,8 @@ pub struct EmbeddedChainProvider {
 	stored_quality: Mutex<HashMap<[u8; 32], bool>>,
 	#[cfg(feature = "smoldot")]
 	light: crate::light::LightState,
+	#[cfg(feature = "networks")]
+	catalog: bool,
 }
 
 impl EmbeddedChainProvider {
@@ -190,16 +207,24 @@ impl EmbeddedChainProvider {
 		EmbeddedChainProviderBuilder::new()
 	}
 
-	/// Whether a genesis nobody registered may be resolved from the bundled
-	/// catalog. A provider with a remote node registered answers only for what
-	/// was registered on it, so it never starts the light client for a chain
-	/// its host did not name.
+	/// The chains of the bundled network `genesis_hash` belongs to and the relay
+	/// it syncs through, on a provider built with
+	/// [`catalog`](EmbeddedChainProviderBuilder::catalog).
 	#[cfg(feature = "networks")]
-	fn resolves_from_catalog(&self) -> bool {
-		#[cfg(feature = "ws")]
-		return !self.chains.values().any(|source| matches!(source, ChainSource::RpcNode { .. }));
-		#[cfg(not(feature = "ws"))]
-		true
+	fn catalog_network(&self, genesis_hash: [u8; 32]) -> Option<crate::networks::ResolvedNetwork> {
+		self.catalog
+			.then(|| crate::networks::catalog_network_chains(genesis_hash))
+			.flatten()
+	}
+
+	/// Whether [`connect`](ChainProvider::connect) can reach `genesis_hash`.
+	#[cfg(feature = "smoldot")]
+	fn serves(&self, genesis_hash: [u8; 32]) -> bool {
+		#[cfg(feature = "networks")]
+		if self.catalog_network(genesis_hash).is_some() {
+			return true;
+		}
+		self.chains.contains_key(&genesis_hash)
 	}
 
 	/// Open a connection for `source`; for a parachain, `relay`/`chains` give
@@ -332,7 +357,7 @@ impl EmbeddedChainProvider {
 			return Some(*relay);
 		}
 		#[cfg(feature = "networks")]
-		if let Some((_, relay)) = crate::networks::catalog_network_chains(genesis_hash) {
+		if let Some((_, relay)) = self.catalog_network(genesis_hash) {
 			return relay;
 		}
 		None
@@ -374,8 +399,12 @@ impl EmbeddedChainProvider {
 	/// A chain that silently never resumes is indistinguishable from one that
 	/// has nothing stored yet, so missing configuration is reported rather than
 	/// swallowed. A chain that is already running, or already holds a blob,
-	/// answers without consulting storage at all.
+	/// answers without consulting storage at all, and so does one this provider
+	/// cannot connect to, which has nothing to load.
 	pub async fn load_database(&self, genesis_hash: [u8; 32]) -> Result<bool, ProviderError> {
+		if !self.serves(genesis_hash) {
+			return Ok(false);
+		}
 		// A parachain is only as cold as the relay under it, and the relay is
 		// the one that warp syncs, so it is seeded first.
 		if let Some(relay) = self.relay_of(genesis_hash) &&
@@ -586,9 +615,7 @@ impl ChainProvider for EmbeddedChainProvider {
 			return connected;
 		}
 		#[cfg(feature = "networks")]
-		if self.resolves_from_catalog() &&
-			let Some((catalog, relay)) = crate::networks::catalog_network_chains(genesis_hash)
-		{
+		if let Some((catalog, relay)) = self.catalog_network(genesis_hash) {
 			if let Some((network, service)) = crate::networks::catalog_service(genesis_hash) {
 				tracing::info!(network, service, "connecting via light client");
 			}
@@ -623,28 +650,57 @@ mod tests {
 		assert!(error.to_string().contains(&"ab".repeat(32)));
 	}
 
-	/// A host on remote nodes that asks for a chain it did not register, such
-	/// as a relay, must be told so rather than have the catalog start that
-	/// network on a light client it never chose.
+	/// A host that asks for a chain it did not register, such as a relay, must
+	/// be told so rather than have the catalog start that network on a light
+	/// client it never chose. That holds for a provider with nothing registered
+	/// too, which cannot tell its host meant remote nodes.
 	#[cfg(all(feature = "ws", feature = "networks"))]
 	#[test]
-	fn a_provider_with_a_remote_node_does_not_resolve_from_the_catalog() {
+	fn a_provider_without_the_catalog_does_not_resolve_from_it() {
 		let (_, catalog) = EmbeddedChainProvider::builder()
 			.add_network("paseo-next-v2")
 			.expect("the network is bundled");
 		let url = url::Url::parse("ws://people.invalid").expect("static URL parses");
-		let provider = EmbeddedChainProvider::builder()
+		let empty = EmbeddedChainProvider::builder().build();
+		let remote = EmbeddedChainProvider::builder()
 			.chain(catalog.people, ChainSource::rpc_node(url))
 			.build();
 
-		let Err(error) = futures::executor::block_on(provider.connect(catalog.relay)) else {
-			panic!("an unregistered genesis must not connect");
-		};
+		for provider in [empty, remote] {
+			let Err(error) = futures::executor::block_on(provider.connect(catalog.relay)) else {
+				panic!("an unregistered genesis must not connect");
+			};
+			assert!(
+				matches!(error, crate::ProviderError::UnknownGenesis { genesis } if genesis == catalog.relay),
+				"{error}"
+			);
+			assert!(!provider.is_connected(catalog.relay), "the light client never started");
+		}
+	}
+
+	/// A chain `connect` would refuse has nothing to load. Reading its stored
+	/// blob, or its relay's, would hold megabytes nothing can ever consume.
+	#[cfg(feature = "networks")]
+	#[test]
+	fn load_database_reads_nothing_for_a_chain_the_provider_cannot_connect_to() {
+		let (_, catalog) = EmbeddedChainProvider::builder()
+			.add_network("paseo-next-v2")
+			.expect("the network is bundled");
+		let store = std::sync::Arc::new(MemoryStorageClient::default());
+		for genesis in [catalog.bulletin, catalog.relay] {
+			store
+				.stored
+				.lock()
+				.expect("test store")
+				.insert(genesis, "stored-blob".to_owned());
+		}
+		let provider = EmbeddedChainProvider::builder().storage(store.clone()).build();
+
 		assert!(
-			matches!(error, crate::ProviderError::UnknownGenesis { genesis } if genesis == catalog.relay),
-			"{error}"
+			!futures::executor::block_on(provider.load_database(catalog.bulletin))
+				.expect("nothing is read")
 		);
-		assert!(!provider.is_connected(catalog.relay), "the light client never started the relay");
+		assert_eq!(store.loads.load(std::sync::atomic::Ordering::Relaxed), 0);
 	}
 
 	/// A blob registered for a relay reaches it even when the relay is never

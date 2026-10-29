@@ -270,7 +270,7 @@ impl ChainProvider {
 	/// keeps for it.
 	#[uniffi::constructor]
 	pub fn new() -> Arc<Self> {
-		Arc::new(Self { inner: EmbeddedChainProvider::builder().build() })
+		Arc::new(Self { inner: EmbeddedChainProvider::builder().catalog().build() })
 	}
 
 	/// Create a provider that reads and writes database blobs through `client`.
@@ -281,7 +281,7 @@ impl ChainProvider {
 	/// are backed up, encrypted, or excluded from cloud sync.
 	#[uniffi::constructor(name = "with_storage")]
 	pub fn with_storage(client: Arc<dyn StorageClient>) -> Arc<Self> {
-		Arc::new(Self { inner: EmbeddedChainProvider::builder().storage(client).build() })
+		Arc::new(Self { inner: EmbeddedChainProvider::builder().catalog().storage(client).build() })
 	}
 
 	/// Read the stored blob for `genesis_hash` into this provider, so the next

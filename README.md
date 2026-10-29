@@ -231,9 +231,9 @@ genesis hash, so the host ships no chain specs and never refreshes them. The lig
 client holds at most 32 connections at once and refuses a `connect` past that, so a
 consumer that leaks them fails instead of growing; closing one hands its slot back.
 The limit covers only light-client connections; connections to a remote node are
-not capped. A provider with a remote node registered answers only for the chains
-registered on it, so it never starts the light client for a chain its host did not
-name. Built with `keep_chains_running()`, a provider keeps each light-client chain
+not capped. Only a provider built with `catalog()` resolves a genesis nobody
+registered from the catalog, so one for remote nodes never starts the light client
+for a chain its host did not name. Built with `keep_chains_running()`, a provider keeps each light-client chain
 running after its last connection closes. A light-client connection holds its requests until the chain first
 syncs and then forwards them in order; chain-spec queries, statement-store and
 Bitswap calls, and the `lifecycle_unstable_*` subscription that reports the sync are forwarded at

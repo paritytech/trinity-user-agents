@@ -63,9 +63,17 @@ pub fn set_log_level(level: &str) {
 }
 
 /// Collects genesis-hash to chain-source registrations from JS.
+///
+/// A built provider resolves a genesis nobody registered from the bundled
+/// catalog until a remote node is registered with `addRpcChain`. From then on it
+/// answers only for the chains registered on it, so a host on remote nodes
+/// never starts the light client by accident.
 #[wasm_bindgen]
 pub struct ChainProviderBuilder {
 	inner: Option<EmbeddedChainProviderBuilder>,
+	/// Cleared by the first `addRpcChain`.
+	#[cfg(feature = "networks")]
+	catalog: bool,
 }
 
 #[wasm_bindgen]
@@ -73,12 +81,17 @@ impl ChainProviderBuilder {
 	/// Create an empty builder.
 	#[wasm_bindgen(constructor)]
 	pub fn new() -> Self {
-		ChainProviderBuilder { inner: Some(EmbeddedChainProviderBuilder::new()) }
+		ChainProviderBuilder {
+			inner: Some(EmbeddedChainProviderBuilder::new()),
+			#[cfg(feature = "networks")]
+			catalog: true,
+		}
 	}
 
 	/// Register a remote JSON-RPC node for the chain identified by the
 	/// `0x`-prefixed genesis hash. A later registration for the same hash
-	/// replaces the earlier one.
+	/// replaces the earlier one, and the built provider no longer resolves
+	/// other genesis hashes from the catalog.
 	#[wasm_bindgen(js_name = addRpcChain)]
 	pub fn add_rpc_chain(&mut self, genesis_hash: &str, url: &str) -> Result<(), JsError> {
 		let genesis = parse_genesis(genesis_hash)?;
@@ -89,6 +102,10 @@ impl ChainProviderBuilder {
 			.take()
 			.ok_or_else(|| JsError::new("builder was already consumed by build()"))?;
 		self.inner = Some(builder.chain(genesis, ChainSource::rpc_node(url)));
+		#[cfg(feature = "networks")]
+		{
+			self.catalog = false;
+		}
 		Ok(())
 	}
 
@@ -214,6 +231,8 @@ impl ChainProviderBuilder {
 			.inner
 			.take()
 			.ok_or_else(|| JsError::new("builder was already consumed by build()"))?;
+		#[cfg(feature = "networks")]
+		let builder = if self.catalog { builder.catalog() } else { builder };
 		Ok(ChainProviderHandle {
 			inner: Arc::new(builder.build()),
 			#[cfg(feature = "smoldot")]
