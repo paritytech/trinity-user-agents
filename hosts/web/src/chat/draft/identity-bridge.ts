@@ -1,4 +1,5 @@
 import type { NovaIdentity } from "../nova/identity.js";
+import type { DeviceInfo } from "../nova/protocol.js";
 
 /**
  * DRAFT, NOT TRUAPI. The page-local bridge over which the host lends one
@@ -16,7 +17,7 @@ import type { NovaIdentity } from "../nova/identity.js";
  */
 
 /** Version of the bridge. Bumped on any change to its messages. */
-export const NOVA_IDENTITY_DRAFT = "truapi-nova-identity-draft/0";
+export const NOVA_IDENTITY_DRAFT = "truapi-nova-identity-draft/1";
 /** `type` of the window message a product frame sends to hand the host its port. */
 export const NOVA_IDENTITY_CONNECT = "truapi-nova-identity-draft";
 
@@ -29,7 +30,7 @@ export interface NovaIdentityConnect {
 export interface IdentityCalls {
   hello: [
     Record<string, never>,
-    { identity: Uint8Array; chatPublic: Uint8Array },
+    { identity: Uint8Array; chatPublic: Uint8Array; device: DeviceInfo },
   ];
   openRequest: [{ data: Uint8Array }, Uint8Array];
   identityProofMatches: [
@@ -45,11 +46,29 @@ export interface IdentityCalls {
     { peer: Uint8Array; peerChatKey: Uint8Array },
     { incoming: Uint8Array; outgoing: Uint8Array },
   ];
+  deviceTopics: [
+    { peer: Uint8Array; peerChatKey: Uint8Array; peerDevice: DeviceInfo },
+    { incoming: Uint8Array; outgoing: Uint8Array },
+  ];
   openSession: [{ peerChatKey: Uint8Array; sealed: Uint8Array }, Uint8Array];
+  openDeviceSession: [
+    { peerDevice: DeviceInfo; sealed: Uint8Array },
+    Uint8Array,
+  ];
   sessionStatement: [
     {
       peer: Uint8Array;
       peerChatKey: Uint8Array;
+      plaintext: Uint8Array;
+      expiry: bigint;
+    },
+    Uint8Array,
+  ];
+  deviceSessionStatement: [
+    {
+      peer: Uint8Array;
+      peerChatKey: Uint8Array;
+      devices: DeviceInfo[];
       plaintext: Uint8Array;
       expiry: bigint;
     },
@@ -136,6 +155,25 @@ function big(request: unknown, name: string): bigint {
   return value;
 }
 
+/** A device of the peer: its account and its key, 32 bytes each. */
+function device(request: unknown, name: string): DeviceInfo {
+  const value = field(request, name);
+  return {
+    statementAccount: bytes(value, "statementAccount", 32),
+    encryptionKey: bytes(value, "encryptionKey", 32),
+  };
+}
+
+/** The peer's devices, at least one and at most {@link MAX_DEVICES}. */
+function devices(request: unknown, name: string): DeviceInfo[] {
+  const value = field(request, name);
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_DEVICES)
+    throw new Error(`${name} must hold 1 to ${MAX_DEVICES} devices.`);
+  return value.map((entry) => device({ entry }, "entry"));
+}
+
+const MAX_DEVICES = 16;
+
 function textOf(request: unknown, name: string): string {
   const value = field(request, name);
   if (typeof value !== "string") throw new Error(`${name} must be text.`);
@@ -176,6 +214,7 @@ export function serveNovaIdentity(
         return Promise.resolve({
           identity: identity.identity,
           chatPublic: identity.chatPublic,
+          device: identity.device,
         });
       case "openRequest":
         return identity.openRequest(bytes(request, "data"));
@@ -193,15 +232,34 @@ export function serveNovaIdentity(
           bytes(request, "peer", 32),
           bytes(request, "peerChatKey", 32),
         );
+      case "deviceTopics":
+        return identity.deviceTopics(
+          bytes(request, "peer", 32),
+          bytes(request, "peerChatKey", 32),
+          device(request, "peerDevice"),
+        );
       case "openSession":
         return identity.openSession(
           bytes(request, "peerChatKey", 32),
+          bytes(request, "sealed"),
+        );
+      case "openDeviceSession":
+        return identity.openDeviceSession(
+          device(request, "peerDevice"),
           bytes(request, "sealed"),
         );
       case "sessionStatement":
         return identity.sessionStatement({
           peer: bytes(request, "peer", 32),
           peerChatKey: bytes(request, "peerChatKey", 32),
+          plaintext: bytes(request, "plaintext"),
+          expiry: big(request, "expiry"),
+        });
+      case "deviceSessionStatement":
+        return identity.deviceSessionStatement({
+          peer: bytes(request, "peer", 32),
+          peerChatKey: bytes(request, "peerChatKey", 32),
+          devices: devices(request, "devices"),
           plaintext: bytes(request, "plaintext"),
           expiry: big(request, "expiry"),
         });
@@ -338,14 +396,21 @@ export async function connectNovaIdentity(
     identity: {
       identity: keys.identity,
       chatPublic: keys.chatPublic,
+      device: keys.device,
       openRequest: (data) => call("openRequest", { data }),
       identityProofMatches: (peerChatKey, proof) =>
         call("identityProofMatches", { peerChatKey, ...proof }),
       sessionTopics: (peer, peerChatKey) =>
         call("sessionTopics", { peer, peerChatKey }),
+      deviceTopics: (peer, peerChatKey, peerDevice) =>
+        call("deviceTopics", { peer, peerChatKey, peerDevice }),
       openSession: (peerChatKey, sealed) =>
         call("openSession", { peerChatKey, sealed }),
+      openDeviceSession: (peerDevice, sealed) =>
+        call("openDeviceSession", { peerDevice, sealed }),
       sessionStatement: (request) => call("sessionStatement", request),
+      deviceSessionStatement: (request) =>
+        call("deviceSessionStatement", request),
       requestStatement: (request) => call("requestStatement", request),
     },
     takeHistory: () => call("takeHistory", {}),

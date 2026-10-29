@@ -359,7 +359,7 @@ describe("the Nova chat worker", () => {
               parent.postMessage(
                 {
                   type: "truapi-nova-identity-draft",
-                  protocol: "truapi-nova-identity-draft/0",
+                  protocol: "truapi-nova-identity-draft/1",
                 },
                 location.origin,
                 [channel.port2],

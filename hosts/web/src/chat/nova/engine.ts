@@ -38,6 +38,7 @@ import {
   withoutTickets,
   type ChatMessage,
   type Attachment,
+  type DeviceInfo,
   type MessageContent,
   type OpenedRequest,
   type SessionData,
@@ -63,6 +64,7 @@ import {
   type IncomingRequest,
   type PendingMessage,
   type StoredAttachment,
+  type StoredDevice,
   type StoredMessage,
 } from "./store.js";
 
@@ -76,8 +78,14 @@ import {
  * Every write (accepting, sending a request or text, acknowledging) needs
  * {@link ChatEngineDeps.writes} to answer true at the time of the write; when
  * it does not, the engine publishes nothing, acknowledges nothing, and
- * refuses user actions that would publish. It announces no device key, so a
- * peer talks to it pairwise.
+ * refuses user actions that would publish.
+ *
+ * A chat has one of two routes (`./identity.ts`). A chat opened by a version 2
+ * request, sent or accepted here, announces this host's one device and runs on
+ * the device route once the peer's device is known. A chat from before, or
+ * opened by a version 1 request, stays on the identity route, which the
+ * engine still reads and answers for every contact. Statements are signed
+ * with the identity account and bound to a contact by topic, never by signer.
  */
 
 export interface StatementStoreLike {
@@ -146,6 +154,17 @@ interface SubmitContext {
   peer: string;
   requestId?: string;
   messages?: number;
+  route?: Route;
+}
+
+/** The two routes of a chat; see `./identity.ts`. */
+export type Route = "identity" | "device";
+
+/** Where a received session statement came from. */
+interface Inbound {
+  contact: Contact;
+  /** The peer device it came from, on the device route. */
+  device?: StoredDevice;
 }
 
 export type EngineStatus =
@@ -182,6 +201,8 @@ export const WRITES_OFF =
 const NO_ALLOWANCE =
   "This identity has no statement allowance on the People chain, so it cannot publish chat statements.";
 const SKIPPED_LIMIT = 20;
+/** Requests answered for a contact already accepted, kept to recognise one delivered again. */
+const ANSWERED_REQUESTS_LIMIT = 20;
 /** Reaction and call signal ids kept per contact to recognise one delivered again. */
 const SEEN_SIGNALS_LIMIT = 500;
 /** Call signals older than this are not sent again: the call is long over. */
@@ -233,6 +254,10 @@ export class ChatEngine {
   private sessionTopics = "";
   /** Session topics per peer and chat key; public, so kept for the engine's life. */
   private readonly topics = new Map<string, PairTopics>();
+  /** The same for each peer device, keyed by peer, chat key and device. */
+  private readonly deviceTopics = new Map<string, PairTopics>();
+  /** Set when a peer's device list changed, so the sessions are followed again. */
+  private devicesChanged = false;
   private queue: Promise<void> = Promise.resolve();
   /** Bumped by every start and stop, so work from an earlier run ends quietly. */
   private run = 0;
@@ -344,6 +369,7 @@ export class ChatEngine {
       this.status = { state: "listening" };
       this.emit({ type: "lifecycle", state: "listening" });
       this.changed();
+      void this.serial(() => this.renewAcceptances());
     } catch (error) {
       if (run !== this.run) return;
       this.dropConnection();
@@ -508,12 +534,22 @@ export class ChatEngine {
         // A request whose sender's key could not be found is looked up again
         // each time the store delivers it, so a key read later is picked up.
         if (known !== -1) {
-          if (this.record.requests[known].peerChatKey === null) {
+          const stored = this.record.requests[known];
+          if (stored.peerChatKey === null) {
             this.record.requests[known] = await this.describeRequest(
               request,
               peer,
             );
             seen("looked up again", this.record.requests[known].problem);
+          } else if (stored.version === 2 && stored.device === undefined) {
+            // A request kept before this host read the sender's device. It is
+            // read again until the device checks out.
+            // A request id is not secret, so the device is taken only from
+            // the same person's request.
+            const described = await this.describeRequest(request, peer);
+            if (described.problem === null && described.peer === stored.peer)
+              stored.device = described.device;
+            seen("known", described.problem);
           } else seen("known");
           continue;
         }
@@ -528,17 +564,48 @@ export class ChatEngine {
         }
         // A peer who left and asks again is a new request, as on the apps.
         if (existing?.state === "active" && existing.peerLeft !== true) {
-          seen("contact active");
+          // A version 2 request from someone already chatted with, as a peer
+          // does after its app moved to the device route, answers the same way
+          // a request does and moves the chat there: the identity proof ties
+          // it to the person already accepted, so nothing is asked again.
+          const described =
+            request.content.version === 2
+              ? await this.describeRequest(request, peer)
+              : null;
+          if (
+            described?.device !== undefined &&
+            described.problem === null &&
+            !(existing.answeredRequests ?? []).includes(request.id)
+          ) {
+            await this.moveToDeviceRoute(
+              existing,
+              request.id,
+              described.device,
+            );
+            seen("device route");
+          } else seen("contact active");
           continue;
         }
         const waiting = existing?.state === "requested" ? existing : undefined;
+        let described: IncomingRequest | null = null;
         if (waiting !== undefined) {
           // Both sides asked at once; the peer's request answers this host's.
-          waiting.state = "active";
-          seen("answers ours");
-          continue;
+          // A version 2 request does so only when its identity proof holds.
+          if (request.content.version === 2)
+            described = await this.describeRequest(request, peer);
+          if (described === null || described.problem === null) {
+            waiting.state = "active";
+            if (waiting.deviceRoute === true && described?.device !== undefined)
+              await this.moveToDeviceRoute(
+                waiting,
+                request.id,
+                described.device,
+              );
+            seen("answers ours");
+            continue;
+          }
         }
-        const described = await this.describeRequest(request, peer);
+        described ??= await this.describeRequest(request, peer);
         this.record.requests.push(described);
         seen("new", described.problem);
       } catch (error) {
@@ -568,6 +635,11 @@ export class ChatEngine {
       version: request.content.version,
       problem: null,
     };
+    if (request.content.version === 2)
+      described.device = {
+        statementAccount: bytesToHex(request.signer),
+        encryptionKey: bytesToHex(request.content.deviceKey),
+      };
     try {
       const identity = await lookupChatIdentity(
         this.deps.directory,
@@ -596,16 +668,28 @@ export class ChatEngine {
         return described;
       }
       described.peerChatKey = bytesToHex(chatKey);
-      if (
-        request.content.version === 2 &&
-        !(await this.deps.identity.identityProofMatches(chatKey, {
-          identity: request.content.identity,
-          signer: request.signer,
-          proof: request.content.identityProof,
-        }))
-      )
-        described.problem =
-          "The request's identity proof does not match the sender's chat key.";
+      if (request.content.version === 2) {
+        if (
+          !(await this.deps.identity.identityProofMatches(chatKey, {
+            identity: request.content.identity,
+            signer: request.signer,
+            proof: request.content.identityProof,
+          }))
+        )
+          described.problem =
+            "The request's identity proof does not match the sender's chat key.";
+        else
+          try {
+            await this.deps.identity.deviceTopics(
+              request.peer,
+              chatKey,
+              fromStoredDevice(described.device!),
+            );
+          } catch {
+            described.problem =
+              "The sender's device key cannot be used to open a session.";
+          }
+      }
     } catch (error) {
       described.problem = `The sender's chat key could not be read: ${errorText(error)}`;
       this.emit({
@@ -636,14 +720,93 @@ export class ChatEngine {
     return topics;
   }
 
-  /** Subscribe to every contact's incoming session, again whenever the contacts change. */
+  /** The device-route topics with one peer device, asked of the identity once per device. */
+  private async deviceTopicsOf(
+    contact: Contact,
+    device: StoredDevice,
+  ): Promise<PairTopics> {
+    const key = `${contact.account}:${contact.chatKey}:${device.statementAccount}:${device.encryptionKey}`;
+    let topics = this.deviceTopics.get(key);
+    if (topics === undefined) {
+      topics = await this.deps.identity.deviceTopics(
+        hexToBytes(contact.account),
+        hexToBytes(contact.chatKey),
+        fromStoredDevice(device),
+      );
+      this.deviceTopics.set(key, topics);
+    }
+    return topics;
+  }
+
+  /** The devices of a chat on the device route, none for any other. */
+  private devicesOf(contact: Contact): StoredDevice[] {
+    return contact.deviceRoute === true ? (contact.devices ?? []) : [];
+  }
+
+  /** Whether this host writes to the contact on the device route. */
+  private usesDeviceRoute(contact: Contact): boolean {
+    return this.devicesOf(contact).length > 0;
+  }
+
+  /**
+   * Remember a device of the peer, once, when its key can open a session. A
+   * device whose key cannot is set aside, so one bad key never stops the
+   * engine from following its contacts.
+   */
+  private async learnDevice(
+    contact: Contact,
+    device: StoredDevice,
+  ): Promise<void> {
+    try {
+      await this.deviceTopicsOf(contact, device);
+    } catch {
+      this.skip(
+        `${contact.name ?? contact.account} named a device whose key cannot open a session, which was set aside.`,
+      );
+      return;
+    }
+    const known = contact.devices ?? [];
+    const at = known.findIndex(
+      (candidate) => candidate.statementAccount === device.statementAccount,
+    );
+    if (at !== -1 && known[at].encryptionKey === device.encryptionKey) return;
+    contact.devices =
+      at === -1
+        ? [...known, device]
+        : known.map((candidate, index) => (index === at ? device : candidate));
+    this.devicesChanged = true;
+  }
+
+  /** Every topic a contact's statements can arrive on, with where each leads. */
+  private async inboundTopics(
+    contact: Contact,
+  ): Promise<{ topic: Uint8Array; device?: StoredDevice }[]> {
+    const inbound: { topic: Uint8Array; device?: StoredDevice }[] = [
+      { topic: (await this.topicsOf(contact)).incoming },
+    ];
+    for (const device of this.devicesOf(contact))
+      try {
+        inbound.push({
+          topic: (await this.deviceTopicsOf(contact, device)).incoming,
+          device,
+        });
+      } catch {
+        this.skip(
+          `${contact.name ?? contact.account} has a stored device whose key cannot open a session, which is not followed.`,
+        );
+      }
+    return inbound;
+  }
+
+  /** Subscribe to every contact's incoming sessions, again whenever the contacts change. */
   private async listenToSessions(): Promise<void> {
     const store = this.store;
     if (store === null) return;
     const topics: Uint8Array[] = [];
     for (const contact of this.record.contacts)
       if (contact.blocked !== true)
-        topics.push((await this.topicsOf(contact)).incoming);
+        for (const { topic } of await this.inboundTopics(contact))
+          topics.push(topic);
     if (this.store !== store) return;
     const topicIds = topics.map(bytesToHex);
     const fingerprint = topicIds.join();
@@ -668,6 +831,20 @@ export class ChatEngine {
     this.emit(subscriptionEvent("sessions", "subscribe", topicIds));
   }
 
+  /** The contact and device a topic belongs to, or undefined when it is no contact's. */
+  private async inboundOf(
+    topic: Uint8Array | undefined,
+  ): Promise<Inbound | undefined> {
+    if (topic === undefined) return undefined;
+    for (const contact of this.record.contacts) {
+      if (contact.blocked === true) continue;
+      for (const candidate of await this.inboundTopics(contact))
+        if (equalBytes(candidate.topic, topic))
+          return { contact, device: candidate.device };
+    }
+    return undefined;
+  }
+
   private async receiveSessions(statements: Uint8Array[]): Promise<void> {
     for (const encoded of statements) {
       const hash = this.received("sessions", encoded);
@@ -675,18 +852,8 @@ export class ChatEngine {
         const statement = decodeStatement(encoded);
         if (!verifyStatement(statement))
           throw new Error("its proof does not verify");
-        const topic = statement.topics[0];
-        let contact: Contact | undefined;
-        for (const candidate of this.record.contacts)
-          if (
-            candidate.blocked !== true &&
-            topic !== undefined &&
-            equalBytes((await this.topicsOf(candidate)).incoming, topic)
-          ) {
-            contact = candidate;
-            break;
-          }
-        if (contact === undefined) {
+        const inbound = await this.inboundOf(statement.topics[0]);
+        if (inbound === undefined) {
           this.deps.payloads?.gap(
             hash,
             "no contact's session topic matches, so there is no key to decrypt with",
@@ -699,16 +866,24 @@ export class ChatEngine {
           });
           continue;
         }
+        const { contact, device } = inbound;
         const plaintext = await this.decrypt(hash, () =>
-          this.deps.identity.openSession(
-            hexToBytes(contact.chatKey),
-            statement.data,
-          ),
+          device === undefined
+            ? this.deps.identity.openSession(
+                hexToBytes(contact.chatKey),
+                statement.data,
+              )
+            : this.deps.identity.openDeviceSession(
+                fromStoredDevice(device),
+                statement.data,
+              ),
         );
+        if (device !== undefined) this.seenOnDeviceRoute(contact);
         await this.receiveSessionData(
           contact,
           decodeSessionData(plaintext),
           hash,
+          device === undefined ? "identity" : "device",
         );
       } catch (error) {
         this.skip(`A session statement could not be read: ${errorText(error)}`);
@@ -723,15 +898,34 @@ export class ChatEngine {
     this.changed();
   }
 
+  /** The peer wrote on its device route, so it has this host's acceptance. */
+  private seenOnDeviceRoute(contact: Contact): void {
+    const acceptance = contact.acceptance;
+    if (acceptance === undefined || acceptance.delivered) return;
+    acceptance.delivered = true;
+    const message = contact.messages.find(
+      (candidate) => candidate.id === acceptance.messageId,
+    );
+    if (message !== undefined && message.status === "sent")
+      message.status = "acknowledged";
+  }
+
   private async receiveSessionData(
     contact: Contact,
     data: SessionData,
     statement: string,
+    route: Route,
   ): Promise<void> {
     const peer = shortHex(contact.account);
     switch (data.kind) {
       case "multi-device":
-        this.emit({ type: "session", peer, data: "multi-device", statement });
+        this.emit({
+          type: "session",
+          peer,
+          data: "multi-device",
+          route,
+          statement,
+        });
         this.skip(
           `${contact.name ?? contact.account} sent a multi-device envelope, which this host does not open.`,
         );
@@ -742,6 +936,7 @@ export class ChatEngine {
           type: "session",
           peer,
           data: "response",
+          route,
           requestId: shortId(data.requestId),
           code: data.code,
           matched,
@@ -770,27 +965,35 @@ export class ChatEngine {
         contact.state = "active";
         let duplicates = 0;
         for (const encoded of data.messages)
-          if (this.receiveMessage(contact, encoded) === "duplicate")
+          if ((await this.receiveMessage(contact, encoded)) === "duplicate")
             duplicates += 1;
         this.emit({
           type: "session",
           peer,
           data: "request",
+          route,
           requestId: shortId(data.requestId),
           kinds: data.messages.map(messageKind),
           duplicates,
           statement,
         });
-        await this.acknowledge(contact, data.requestId);
+        if (this.devicesChanged) {
+          this.devicesChanged = false;
+          await this.listenToSessions();
+        }
+        // Nobody answers an acceptance: a response would be the only
+        // statement signed on the identity route for it.
+        if (!data.messages.every(isDeviceAcceptance))
+          await this.acknowledge(contact, data.requestId, route);
       }
     }
   }
 
   /** Add one received message to the conversation, and say what became of it. */
-  private receiveMessage(
+  private async receiveMessage(
     contact: Contact,
     encoded: Uint8Array,
-  ): "added" | "duplicate" | "control" | "unreadable" {
+  ): Promise<"added" | "duplicate" | "control" | "unreadable"> {
     let message: ChatMessage;
     try {
       message = decodeMessage(encoded);
@@ -837,7 +1040,10 @@ export class ChatEngine {
           attachments: message.content.attachments.map(storedAttachment),
         });
         return "added";
+      case "device-accepted":
       case "accepted":
+        if (message.content.kind === "device-accepted")
+          await this.learnAcceptingDevice(contact, message.content);
         contact.messages.push({
           ...base,
           kind: "accepted",
@@ -866,8 +1072,12 @@ export class ChatEngine {
         contact.peerLeft = false;
         return "control";
       case "control":
-        // A peer's push token and device list. This host sends no push
-        // notifications and talks to the peer pairwise, so neither is kept.
+        // A peer's push token is not kept: this host sends no push
+        // notifications. A device change is applied once: the store delivers
+        // a statement again whenever the topics followed change, and a change
+        // applied twice would undo a later one.
+        if (this.seenBefore(contact, message.id)) return "duplicate";
+        await this.applyDeviceControl(contact, message.content);
         return "control";
       case "other":
         contact.messages.push({
@@ -876,6 +1086,58 @@ export class ChatEngine {
           text: `A message this host does not show yet (kind ${message.content.tag})`,
         });
         return "added";
+    }
+  }
+
+  /**
+   * Keep the device a peer accepted this host's request with, when the chat
+   * is on the device route and the acceptance names the request this host
+   * sent. An acceptance for any other request, or in a chat that never
+   * announced this host's device, changes nothing: the peer does not know
+   * this host's device there.
+   */
+  private async learnAcceptingDevice(
+    contact: Contact,
+    acceptance: Extract<MessageContent, { kind: "device-accepted" }>,
+  ): Promise<void> {
+    if (contact.deviceRoute !== true) return;
+    const sent = contact.messages.find(
+      (message) => message.direction === "out" && message.kind === "request",
+    );
+    if (sent?.id !== acceptance.requestId) {
+      this.skip(
+        `${contact.name ?? contact.account} sent an acceptance for a request this host did not send there.`,
+      );
+      return;
+    }
+    await this.learnDevice(contact, toStoredDevice(acceptance.device));
+  }
+
+  /**
+   * Apply a peer's device list change: a device added is written to and
+   * listened to from now on, one removed no longer is. Only a chat on the
+   * device route keeps a device list.
+   */
+  private async applyDeviceControl(
+    contact: Contact,
+    control: Extract<MessageContent, { kind: "control" }>,
+  ): Promise<void> {
+    if (contact.deviceRoute !== true) return;
+    if (control.control === "device-added")
+      await this.learnDevice(contact, {
+        statementAccount: bytesToHex(control.statementAccount),
+        encryptionKey: bytesToHex(control.encryptionKey),
+      });
+    else if (control.control === "device-removed") {
+      const account = bytesToHex(control.statementAccount);
+      const devices = contact.devices ?? [];
+      const kept = devices.filter(
+        (device) => device.statementAccount !== account,
+      );
+      if (kept.length !== devices.length) {
+        contact.devices = kept;
+        this.devicesChanged = true;
+      }
     }
   }
 
@@ -1026,6 +1288,7 @@ export class ChatEngine {
               message.call?.setup !== undefined &&
               message.call.closedBy === undefined)) &&
           message.status !== "acknowledged" &&
+          message.id !== contact.acceptance?.messageId &&
           uploaded(message),
       )
       .map((message) => ({
@@ -1111,9 +1374,10 @@ export class ChatEngine {
       requestId,
       messages: encoded,
     });
+    const route = this.sendRoute(contact);
     try {
       await this.submit(
-        () => this.sessionStatement(contact, plaintext, expiry),
+        () => this.sessionStatement(contact, plaintext, expiry, route),
         {
           purpose: extra.some((entry) => entry.content.kind === "left")
             ? "leave"
@@ -1123,6 +1387,7 @@ export class ChatEngine {
           peer: shortHex(contact.account),
           requestId,
           messages: outgoing.length,
+          route,
         },
         "sessions",
       );
@@ -1145,17 +1410,34 @@ export class ChatEngine {
     }
   }
 
+  /** The route this host writes to a contact on: the device route once the peer's device is known. */
+  private sendRoute(contact: Contact): Route {
+    return this.usesDeviceRoute(contact) ? "device" : "identity";
+  }
+
   private async sessionStatement(
     contact: Contact,
     plaintext: Uint8Array,
     expiry: bigint,
+    route: Route,
   ): Promise<Built> {
-    const statement = await this.deps.identity.sessionStatement({
-      peer: hexToBytes(contact.account),
-      peerChatKey: hexToBytes(contact.chatKey),
-      plaintext,
-      expiry,
-    });
+    const peer = hexToBytes(contact.account);
+    const peerChatKey = hexToBytes(contact.chatKey);
+    const statement =
+      route === "device"
+        ? await this.deps.identity.deviceSessionStatement({
+            peer,
+            peerChatKey,
+            devices: this.devicesOf(contact).map(fromStoredDevice),
+            plaintext,
+            expiry,
+          })
+        : await this.deps.identity.sessionStatement({
+            peer,
+            peerChatKey,
+            plaintext,
+            expiry,
+          });
     return { statement, plaintext };
   }
 
@@ -1166,6 +1448,7 @@ export class ChatEngine {
   private async acknowledge(
     contact: Contact,
     requestId: string,
+    route: Route,
   ): Promise<void> {
     if (
       contact.acknowledged === requestId ||
@@ -1184,8 +1467,8 @@ export class ChatEngine {
     });
     try {
       await this.submit(
-        () => this.sessionStatement(contact, plaintext, expiry),
-        { purpose: "ack", peer: shortHex(contact.account), requestId },
+        () => this.sessionStatement(contact, plaintext, expiry, route),
+        { purpose: "ack", peer: shortHex(contact.account), requestId, route },
         "sessions",
       );
       contact.expiry.response = expiry.toString();
@@ -1197,7 +1480,116 @@ export class ChatEngine {
     }
   }
 
-  /** Accept a request: open the pairwise session and tell the requester. */
+  /**
+   * Record this host's acceptance of the request `requestId` of a version 2
+   * peer, as a message that is not sent with the chat's messages: it is
+   * published alone on the identity route (see {@link publishAcceptance}).
+   * The request is remembered as answered.
+   */
+  private openAcceptance(contact: Contact, requestId: string): void {
+    const messageId = this.newId();
+    contact.messages.push({
+      id: messageId,
+      direction: "out",
+      kind: "accepted",
+      text: requestId,
+      at: this.now(),
+      status: "pending",
+    });
+    contact.acceptance = { requestId, messageId, delivered: false };
+    contact.answeredRequests = [
+      ...(contact.answeredRequests ?? []),
+      requestId,
+    ].slice(-ANSWERED_REQUESTS_LIMIT);
+  }
+
+  /**
+   * Answer a version 2 request of a contact already accepted: keep the
+   * sending device, run the chat on the device route from now on, and publish
+   * an acceptance of that request. The request is remembered, so the store
+   * delivering it again does not answer it again.
+   */
+  private async moveToDeviceRoute(
+    contact: Contact,
+    requestId: string,
+    device: StoredDevice,
+  ): Promise<void> {
+    contact.deviceRoute = true;
+    await this.learnDevice(contact, device);
+    this.openAcceptance(contact, requestId);
+    this.devicesChanged = false;
+    await this.listenToSessions();
+    if (this.writesAllowed()) await this.publishAcceptance(contact);
+  }
+
+  /**
+   * Publish the contact's acceptance: a `DeviceChatAccepted` naming this
+   * host's device, as the only message of a request on the identity route.
+   * Nobody answers it, so it is published again on every start until the peer
+   * is seen on its device route. A failure marks the message failed and
+   * leaves the acceptance to be tried again.
+   */
+  private async publishAcceptance(contact: Contact): Promise<void> {
+    const acceptance = contact.acceptance;
+    if (acceptance === undefined) return;
+    const message = contact.messages.find(
+      (candidate) => candidate.id === acceptance.messageId,
+    );
+    // The identity route's request channel: its priority only goes up.
+    const expiry = nextExpiry(
+      this.lastExpiry(contact.expiry.request),
+      this.now(),
+    );
+    const plaintext = encodeSessionData({
+      kind: "request",
+      requestId: acceptance.messageId,
+      messages: [
+        encodeMessage({
+          id: acceptance.messageId,
+          timestampMs: BigInt(message?.at ?? this.now()),
+          content: {
+            kind: "device-accepted",
+            requestId: acceptance.requestId,
+            device: this.deps.identity.device,
+          },
+        }),
+      ],
+    });
+    try {
+      await this.submit(
+        () => this.sessionStatement(contact, plaintext, expiry, "identity"),
+        {
+          purpose: "accept",
+          peer: shortHex(contact.account),
+          requestId: acceptance.requestId,
+          messages: 1,
+          route: "identity",
+        },
+        "sessions",
+      );
+      contact.expiry.request = expiry.toString();
+      if (message !== undefined && message.status !== "acknowledged") {
+        message.status = "sent";
+        delete message.problem;
+      }
+    } catch (error) {
+      if (message !== undefined && message.status === "pending") {
+        message.status = "failed";
+        message.problem = errorText(error);
+      }
+    }
+  }
+
+  /** Publish again every acceptance the peer has not shown it received. */
+  private async renewAcceptances(): Promise<void> {
+    if (!this.writesAllowed()) return;
+    for (const contact of this.record.contacts)
+      if (contact.acceptance?.delivered === false && contact.blocked !== true)
+        await this.publishAcceptance(contact);
+    this.changed();
+  }
+
+  /** Accept a request: open the session and tell the requester. */
   accept(requestId: string): Promise<void> {
     return this.userAction("accept", async () => {
       this.requireWrites();
@@ -1208,6 +1600,10 @@ export class ChatEngine {
         throw new Error("That request is no longer here.");
       if (request.problem !== null || request.peerChatKey === null)
         throw new Error(request.problem ?? "The sender has no chat key.");
+      if (request.version === 2 && request.device === undefined)
+        throw new Error(
+          "This request was kept before this host read the sender's device. It is read again when the store delivers it again.",
+        );
       const opened: StoredMessage[] = [
         {
           id: request.id,
@@ -1216,14 +1612,6 @@ export class ChatEngine {
           text: request.welcome ?? "",
           at: request.at,
           status: "received",
-        },
-        {
-          id: this.newId(),
-          direction: "out",
-          kind: "accepted",
-          text: request.id,
-          at: this.now(),
-          status: "pending",
         },
       ];
       // A peer who left and asked again keeps the conversation's history.
@@ -1243,12 +1631,32 @@ export class ChatEngine {
       contact.state = "active";
       contact.peerLeft = false;
       contact.messages.push(...opened);
+      if (request.device !== undefined) {
+        contact.deviceRoute = true;
+        contact.devices = [request.device];
+        this.openAcceptance(contact, request.id);
+      } else {
+        // A version 1 requester knows no device of this host, so a returning
+        // contact goes back to the identity route.
+        delete contact.deviceRoute;
+        delete contact.devices;
+        delete contact.acceptance;
+        contact.messages.push({
+          id: this.newId(),
+          direction: "out",
+          kind: "accepted",
+          text: request.id,
+          at: this.now(),
+          status: "pending",
+        });
+      }
       this.record.requests = this.record.requests.filter(
         (candidate) => candidate.id !== requestId,
       );
       if (returning === undefined) this.record.contacts.push(contact);
       await this.listenToSessions();
-      await this.flush(contact);
+      if (request.device !== undefined) await this.publishAcceptance(contact);
+      else await this.flush(contact);
       this.changed();
     });
   }
@@ -1286,10 +1694,7 @@ export class ChatEngine {
       const request = {
         id: this.newId(),
         timestampMs: BigInt(this.now()),
-        content: {
-          version: 1 as const,
-          welcome: welcome === "" ? null : welcome,
-        },
+        welcome: welcome === "" ? null : welcome,
       };
       const now = this.now();
       await this.submit(
@@ -1299,7 +1704,7 @@ export class ChatEngine {
             peerChatKey: chatKey,
             id: request.id,
             timestampMs: request.timestampMs,
-            welcome: request.content.welcome,
+            welcome: request.welcome,
             expiry: expiryAt(now),
             day: requestDay(now),
           }),
@@ -1315,6 +1720,7 @@ export class ChatEngine {
         chatKey: bytesToHex(chatKey),
         name: identity?.name ?? null,
         state: "requested",
+        deviceRoute: true,
         messages: [
           {
             id: request.id,
@@ -1734,6 +2140,8 @@ export class ChatEngine {
       this.requireWrites();
       const contact = this.contact(account);
       if (contact === undefined) return;
+      if (contact.acceptance?.delivered === false)
+        await this.publishAcceptance(contact);
       await this.flush(contact);
       this.changed();
     });
@@ -1790,4 +2198,23 @@ function wireAttachment(attachment: StoredAttachment): Attachment {
             }
           : { kind: "file", ...general },
   };
+}
+
+const toStoredDevice = (device: DeviceInfo): StoredDevice => ({
+  statementAccount: bytesToHex(device.statementAccount),
+  encryptionKey: bytesToHex(device.encryptionKey),
+});
+
+const fromStoredDevice = (device: StoredDevice): DeviceInfo => ({
+  statementAccount: hexToBytes(device.statementAccount),
+  encryptionKey: hexToBytes(device.encryptionKey),
+});
+
+/** Whether an encoded message is a `DeviceChatAccepted`, which nobody acknowledges. */
+function isDeviceAcceptance(encoded: Uint8Array): boolean {
+  try {
+    return decodeMessage(encoded).content.kind === "device-accepted";
+  } catch {
+    return false;
+  }
 }

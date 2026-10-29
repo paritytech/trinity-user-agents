@@ -8,7 +8,7 @@ import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import { mnemonicToEntropy } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { ok } from "neverthrow";
-import { equalBytes } from "../../../../src/chat/nova/codec.js";
+import { equalBytes, utf8 } from "../../../../src/chat/nova/codec.js";
 import { cryptoRandom, x25519Agree } from "../../../../src/chat/nova/crypto.js";
 import { ChatDiagnostics } from "../../../../tools/inspector/diagnostics.js";
 import type { ChainDirectory } from "../../../../src/chat/nova/directory.js";
@@ -17,10 +17,12 @@ import { localNovaIdentity } from "../../../../src/chat/nova/identity.js";
 import {
   ChatKeys,
   deriveChatSecret,
+  deriveDeviceSecret,
   deriveIdentitySecret,
 } from "../../../../src/chat/nova/keys.js";
 import { MemoryStatementRpc } from "../../../../fixtures/nova/memory-rpc.js";
 import {
+  encodeSessionData,
   requestChannel,
   requestTopic,
   responseChannel,
@@ -349,23 +351,33 @@ describe("the Nova chat worker's engine", () => {
       expect(bytesToHex(statement.signer)).toBe(bytesToHex(w.bob.identity));
       expect(verifyStatement(statement)).toBe(true);
     }
-    // Messages and acknowledgements go on their own channels of Bob's
-    // session topic, so a newer request never replaces an acknowledgement.
-    const topic = sessionTopic(
+    // The identity route carries the acceptance alone, on the request channel.
+    const channelsOn = (topic: Uint8Array) =>
+      new Set(
+        w.submitted
+          .map(decodeStatement)
+          .filter((statement) => equalBytes(statement.topics[0], topic))
+          .map((statement) => bytesToHex(statement.channel!)),
+      );
+    const identityTopic = sessionTopic(
       w.alice.agree(w.bob.chatPublic),
       w.bob.identity,
       w.alice.identity,
     );
-    const channels = new Set(
-      w.submitted
-        .map(decodeStatement)
-        .filter((statement) => equalBytes(statement.topics[0], topic))
-        .map((statement) => bytesToHex(statement.channel!)),
+    expect(channelsOn(identityTopic)).toEqual(
+      new Set([bytesToHex(requestChannel(identityTopic))]),
     );
-    expect(channels).toEqual(
+    // Messages and acknowledgements go on their own channels of the device
+    // route's topic, so a newer request never replaces an acknowledgement.
+    const deviceTopic = sessionTopic(
+      w.bob.agreeDevice(w.alice.chatPublic),
+      w.bob.identity,
+      w.alice.identity,
+    );
+    expect(channelsOn(deviceTopic)).toEqual(
       new Set([
-        bytesToHex(requestChannel(topic)),
-        bytesToHex(responseChannel(topic)),
+        bytesToHex(requestChannel(deviceTopic)),
+        bytesToHex(responseChannel(deviceTopic)),
       ]),
     );
     // What the store holds from Bob is what the worker submitted, and every
@@ -386,13 +398,19 @@ describe("the Nova chat worker's engine", () => {
       ).toBe(bytesToHex(held));
 
     // No secret crossed the identity bridge: not the entropy, the identity
-    // secret, the chat secret, or the secret agreed with Alice.
+    // secret, the chat secret, the device secret, or any secret agreed with
+    // Alice's chat key or device key.
     const chatSecret = deriveChatSecret(entropy(BOB));
+    const deviceSecret = deriveDeviceSecret(entropy(BOB));
     const secrets = [
       entropy(BOB),
       deriveIdentitySecret(entropy(BOB), "paseo"),
       chatSecret,
+      deviceSecret,
       x25519Agree(chatSecret, w.alice.chatPublic),
+      x25519Agree(chatSecret, w.alice.devicePublic),
+      x25519Agree(deviceSecret, w.alice.chatPublic),
+      x25519Agree(deviceSecret, w.alice.devicePublic),
     ].map((secret) => bytesToHex(secret).slice(2));
     const wire = hex(w.lent.seen);
     for (const secret of secrets) expect(wire).not.toContain(secret);
@@ -404,9 +422,12 @@ describe("the Nova chat worker's engine", () => {
       new Set([
         "hello",
         "openRequest",
+        "identityProofMatches",
+        "deviceTopics",
         "sessionTopics",
         "sessionStatement",
-        "openSession",
+        "deviceSessionStatement",
+        "openDeviceSession",
       ]),
     );
     bob.engine.stop();
@@ -458,6 +479,68 @@ describe("the Nova chat worker's engine", () => {
     bob.engine.stop();
     w.aliceEngine.stop();
   });
+
+  test("continues on the device route a chat the host's own engine began, from the history copied to it", async () => {
+    const w = await worlds();
+    const hostStorage = new MemoryStorage();
+    const hostEngine = new ChatEngine({
+      identity: localNovaIdentity(w.bob),
+      openStore: async () => new StatementStore(w.rpc.connect()),
+      directory: directory([
+        { label: "alice.01", keys: w.alice },
+        { label: "bob.02", keys: w.bob },
+      ]),
+      storage: hostStorage,
+      recordKey: "host-bob",
+      writes: () => true,
+      retryDelayMs: 10,
+    });
+    await hostEngine.start();
+    await w.aliceEngine.startChat("bob.02", "hello");
+    await waitFor(
+      () => hostEngine.snapshot().requests.length === 1,
+      "the request at the host's engine",
+    );
+    await hostEngine.accept(hostEngine.snapshot().requests[0].id);
+    await waitFor(
+      () => w.aliceEngine.snapshot().contacts[0]?.state === "active",
+      "the acceptance",
+    );
+    hostEngine.stop();
+
+    // The host copies its record to the worker, once, as `takeHistory` does.
+    w.kept.set(RECORD, bytesToHex(utf8(hostStorage.getItem("host-bob")!)));
+    const bob = await w.startBob();
+    expect(bob.engine.snapshot().contacts[0]).toMatchObject({
+      deviceRoute: true,
+      devices: [
+        {
+          statementAccount: bytesToHex(w.alice.identity),
+          encryptionKey: bytesToHex(w.alice.devicePublic),
+        },
+      ],
+    });
+    const aliceAccount = bytesToHex(w.alice.identity);
+    await w.aliceEngine.send(
+      w.aliceEngine.snapshot().contacts[0].account,
+      "are you there",
+    );
+    await waitFor(
+      () =>
+        w.aliceEngine.snapshot().contacts[0].messages.at(-1)?.status ===
+        "acknowledged",
+      "the worker to acknowledge on the device route",
+    );
+    const sent = await bob.conversations.send(aliceAccount, "yes");
+    await waitFor(
+      () =>
+        bob.conversations.messages(aliceAccount).find((m) => m.id === sent)
+          ?.state === "delivered",
+      "Alice to acknowledge the worker's text",
+    );
+    bob.engine.stop();
+    w.aliceEngine.stop();
+  });
 });
 
 describe("the identity bridge", () => {
@@ -470,6 +553,67 @@ describe("the identity bridge", () => {
     const client = await connectNovaIdentity(ends.product, 100);
     return { ends, service, client };
   }
+
+  test("lends the device route's operations with checked values, and names the device in hello", async () => {
+    const { client } = await lent();
+    const alice = keysOf(ALICE);
+    const bob = keysOf(BOB);
+    expect(client.identity.device).toEqual({
+      statementAccount: bob.identity,
+      encryptionKey: bob.devicePublic,
+    });
+    const device = {
+      statementAccount: alice.identity,
+      encryptionKey: alice.devicePublic,
+    };
+    await expect(
+      client.identity.deviceTopics(alice.identity, alice.chatPublic, device),
+    ).resolves.toEqual({
+      incoming: expect.any(Uint8Array),
+      outgoing: expect.any(Uint8Array),
+    });
+    await expect(
+      client.identity.deviceTopics(alice.identity, alice.chatPublic, {
+        ...device,
+        encryptionKey: new Uint8Array(31),
+      }),
+    ).rejects.toThrow("encryptionKey must be 32 bytes.");
+    await expect(
+      client.identity.openDeviceSession(
+        { ...device, statementAccount: new Uint8Array(3) },
+        new Uint8Array(40),
+      ),
+    ).rejects.toThrow("statementAccount must be 32 bytes.");
+    const plaintext = encodeSessionData({
+      kind: "response",
+      requestId: "r",
+      code: 0,
+    });
+    const statement = (devices: unknown) =>
+      client.identity.deviceSessionStatement({
+        peer: alice.identity,
+        peerChatKey: alice.chatPublic,
+        devices: devices as (typeof device)[],
+        plaintext,
+        expiry: 1n,
+      });
+    await expect(statement([])).rejects.toThrow("1 to 16 devices");
+    await expect(statement(Array(17).fill(device))).rejects.toThrow(
+      "1 to 16 devices",
+    );
+    await expect(statement("device")).rejects.toThrow("1 to 16 devices");
+    await expect(statement([device])).resolves.toBeInstanceOf(Uint8Array);
+    // Bytes the caller chose are not wrapped.
+    await expect(
+      client.identity.deviceSessionStatement({
+        peer: alice.identity,
+        peerChatKey: alice.chatPublic,
+        devices: [device],
+        plaintext: new Uint8Array([9, 9, 9]),
+        expiry: 1n,
+      }),
+    ).rejects.toThrow();
+  });
 
   test("signs only statements it builds itself", async () => {
     const { client, ends } = await lent();

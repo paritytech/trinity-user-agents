@@ -276,9 +276,14 @@ describe("chat engine", () => {
     const account = aliceEngine.snapshot().contacts[0].account;
     await aliceEngine.send(account, "one");
     await aliceEngine.send(account, "two");
-    // The second request replaced the first on Alice's request channel.
+    // The second request replaced the first on Alice's request channel of
+    // the device route, where a chat that began with a version 2 request runs.
     const channel = requestChannel(
-      sessionTopic(alice.agree(bob.chatPublic), alice.identity, bob.identity),
+      sessionTopic(
+        alice.agreeDevice(bob.chatPublic),
+        alice.identity,
+        bob.identity,
+      ),
     );
     const onChannel = store.statements.filter((encoded) => {
       const statement = decodeStatement(encoded);
@@ -884,7 +889,7 @@ describe("chat engine diagnostics", () => {
     expect(types).toContain("lifecycle");
     expect(types).toContain("subscription");
     expect(events).toContainEqual(
-      expect.objectContaining({ type: "request", outcome: "new", version: 1 }),
+      expect.objectContaining({ type: "request", outcome: "new", version: 2 }),
     );
     expect(events).toContainEqual(
       expect.objectContaining({
@@ -901,12 +906,18 @@ describe("chat engine diagnostics", () => {
       }),
     );
     expect(events).toContainEqual(
-      expect.objectContaining({ type: "session", data: "request", kinds: [0] }),
+      expect.objectContaining({
+        type: "session",
+        data: "request",
+        route: "device",
+        kinds: [0],
+      }),
     );
     expect(events).toContainEqual(
       expect.objectContaining({
         type: "session",
         data: "request",
+        route: "identity",
         kinds: [1, 17],
       }),
     );
@@ -922,7 +933,8 @@ describe("chat engine diagnostics", () => {
       state: "stopped",
     });
     // A subscription names the topics it filters on in full: Bob's request
-    // inbox, then the topic Alice writes to him on once they are contacts.
+    // inbox, then the topics Alice writes to him on once they are contacts:
+    // her identity route, then her device's.
     const subscriptions = events.filter(
       (event) => event.type === "subscription",
     );
@@ -938,8 +950,17 @@ describe("chat engine diagnostics", () => {
       expect.objectContaining({
         stream: "sessions",
         action: "subscribe",
-        topics: 1,
-        topicIds: [bytesToHex(topic)],
+        topics: 2,
+        topicIds: [
+          bytesToHex(topic),
+          bytesToHex(
+            sessionTopic(
+              bob.agree(alice.devicePublic),
+              alice.identity,
+              bob.identity,
+            ),
+          ),
+        ],
       }),
     );
 
@@ -952,6 +973,8 @@ describe("chat engine diagnostics", () => {
       hex(alice.chatPublic),
       hex(bob.chatPublic),
       hex(alice.agree(bob.chatPublic)),
+      hex(alice.devicePublic),
+      hex(alice.agreeDevice(bob.chatPublic)),
       hex(alice.identity),
       hex(bob.identity),
       hex(new Uint8Array(32).fill(3)),
