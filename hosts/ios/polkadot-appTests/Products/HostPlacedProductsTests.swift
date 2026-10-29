@@ -1,6 +1,8 @@
 import Testing
 import Keystore_iOS
 import KeyDerivation
+import Operation_iOS
+import TrUAPIHost
 @testable import polkadot_app
 
 @Suite("Host-placed products")
@@ -33,6 +35,41 @@ struct HostPlacedProductsTests {
     )
     func neighbouringIdentifiersAreNotHostPlaced(productId: String) {
         #expect(!HostPlacedProducts.contains(productId: productId))
+    }
+}
+
+@Suite("Placing a host-placed room")
+struct HostPlacedRoomPlacerTests {
+    /// The product's own `createRoom` must find the placed row, or the user sees a second, empty
+    /// chat beside it. The core derives that room id from the product and the source.
+    @Test("The placed room has the id that the product's createRoom resolves")
+    func placedRoomHasTheDerivedId() async throws {
+        let factory = ChatRepositoryFactory(storageFacade: UserDataStorageTestFacade())
+        let settings = InMemorySettingsManager()
+        settings.set(value: true, for: .hostPlacementEnabled)
+        let placer = HostPlacedRoomPlacer(
+            chatRepositoryFactory: factory,
+            tldProvider: StubDotNsTldProvider(tld: "paseo"),
+            settingsManager: settings
+        )
+
+        await placer.placeRooms()
+
+        let hostPlaced = try #require(HostPlacedProducts.all.first)
+        let productId = hostPlaced.productId("paseo")
+        let roomId = try chatRoomId(productId: productId, roomIdSource: hostPlaced.roomIdSource)
+        let repository = factory.createRepository(forFilter: nil)
+        let placed = try await repository.fetchOperation(
+            by: { Chat.Id.chatExtension(productId, roomId: roomId).rawRepresentation },
+            options: RepositoryFetchOptions()
+        ).asyncExecute()
+        let underSource = try await repository.fetchOperation(
+            by: { Chat.Id.chatExtension(productId, roomId: hostPlaced.roomIdSource).rawRepresentation },
+            options: RepositoryFetchOptions()
+        ).asyncExecute()
+
+        #expect(placed != nil)
+        #expect(underSource == nil)
     }
 }
 
