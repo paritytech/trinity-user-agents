@@ -2926,22 +2926,39 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 }
 
 fn funding_services() -> Arc<RuntimeServices> {
-	funding_services_on(stub_platform(), test_spawner())
+	funding_services_on(&crate::store::open_memory_core_db(), test_spawner())
 }
 
+/// Services over `db`, which keeps their funding sessions across a restart.
 fn funding_services_on(
-	storage: Arc<crate::test_support::StubPlatform>,
+	db: &crate::store::Db,
+	spawner: crate::subscription::Spawner,
+) -> Arc<RuntimeServices> {
+	funding_services_with(stub_platform(), db, spawner)
+}
+
+/// Services over `platform`, which keeps what they cache across a restart,
+/// with a core database of their own.
+fn funding_services_over(platform: Arc<dyn Platform>) -> Arc<RuntimeServices> {
+	funding_services_with(platform, &crate::store::open_memory_core_db(), test_spawner())
+}
+
+fn funding_services_with(
+	platform: Arc<dyn Platform>,
+	db: &crate::store::Db,
 	spawner: crate::subscription::Spawner,
 ) -> Arc<RuntimeServices> {
 	let (host_config, _) = runtime_config("funding.dot");
-	RuntimeServices::new(
-		storage,
+	let services = RuntimeServices::new(
+		platform,
 		host_config.host.host_info.clone(),
 		host_config.people_chain_genesis_hash,
 		host_config.bulletin_chain_genesis_hash,
 		host_config.asset_hub_chain_genesis_hash,
 		spawner,
-	)
+	);
+	assert!(services.install_core_db(db.clone()));
+	services
 }
 
 /// Spawner that holds every task until the test runs it, so the test knows
@@ -2974,16 +2991,16 @@ impl HeldTasks {
 // so a session in flight is announced on resume, once it is loaded.
 #[test]
 fn funding_resumes_by_announcing_sessions_a_provider_still_works_on() {
-	let storage = stub_platform();
-	let start = |storage: &Arc<crate::test_support::StubPlatform>| {
-		let services = funding_services_over(storage.clone());
+	let db = crate::store::open_memory_core_db();
+	let start = |db: &crate::store::Db| {
+		let services = funding_services_on(db, test_spawner());
 		let platform =
 			RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 		assert!(services.funding().install_platform(platform.clone()));
 		services.resume_funding();
 		(services, platform)
 	};
-	let (before, _) = start(&storage);
+	let (before, _) = start(&db);
 	offer_provider(&before, "ramp.dot", RAMP_MANIFEST);
 	let intent = futures::executor::block_on(before.open_funding(
 		None,
@@ -2998,7 +3015,7 @@ fn funding_resumes_by_announcing_sessions_a_provider_still_works_on() {
 			.expect("selected")
 	);
 
-	let (after, platform) = start(&storage);
+	let (after, platform) = start(&db);
 	let announced = || platform.announced.lock().expect("announced mutex poisoned").clone();
 	for _ in 0..200 {
 		if !announced().is_empty() {
@@ -3016,18 +3033,20 @@ fn funding_resumes_by_announcing_sessions_a_provider_still_works_on() {
 #[test]
 fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
 	let tasks = HeldTasks::default();
-	let services = funding_services_on(stub_platform(), tasks.spawner());
+	let services = funding_services_on(&crate::store::open_memory_core_db(), tasks.spawner());
 	let platform =
 		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 	assert!(services.funding().install_platform(platform.clone()));
 	let opening =
 		services.open_funding(None, "fs_resume".to_string(), v01::FundingDirection::Out, None);
-	let intent = futures::executor::block_on(async {
-		futures::pin_mut!(opening);
-		assert!(futures::poll!(&mut opening).is_pending());
-		// The overlay runs on a task of its own, which these held tasks run.
-		tasks.run().await;
-		opening.await
+	// The overlay runs on a task of its own, which these held tasks run.
+	let intent = std::thread::scope(|scope| {
+		let opened = scope.spawn(|| futures::executor::block_on(opening));
+		while !opened.is_finished() {
+			futures::executor::block_on(tasks.run());
+			std::thread::sleep(Duration::from_millis(5));
+		}
+		opened.join().expect("opening thread")
 	})
 	.expect("opened")
 	.intent;
@@ -3053,7 +3072,7 @@ fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
 /// A funding overlay that, while it is up, records how many sessions the
 /// core has stored.
 struct ObservingFundingPlatform {
-	storage: Arc<crate::test_support::StubPlatform>,
+	db: crate::store::Db,
 	stored_while_shown: Mutex<Option<usize>>,
 }
 
@@ -3064,10 +3083,7 @@ impl crate::platform::FundingPlatform for ObservingFundingPlatform {
 		_product: Option<&ProductContext>,
 		_session: crate::platform::FundingPresentation,
 	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
-		let stored = crate::host_logic::funding::load_sessions(self.storage.as_ref())
-			.await
-			.expect("sessions read")
-			.len();
+		let stored = super::funding::stored_sessions(&self.db).await.len();
 		*self.stored_while_shown.lock().expect("stored mutex poisoned") = Some(stored);
 		Ok(crate::platform::FundingPresentOutcome::Started)
 	}
@@ -3085,12 +3101,10 @@ impl crate::platform::FundingPlatform for ObservingFundingPlatform {
 // user never started, so nothing is stored until the user starts it.
 #[test]
 fn a_session_is_stored_only_once_the_user_starts_it() {
-	let storage = Arc::new(crate::test_support::StubPlatform::default());
-	let services = funding_services_on(storage.clone(), test_spawner());
-	let platform = Arc::new(ObservingFundingPlatform {
-		storage: storage.clone(),
-		stored_while_shown: Mutex::new(None),
-	});
+	let db = crate::store::open_memory_core_db();
+	let services = funding_services_on(&db, test_spawner());
+	let platform =
+		Arc::new(ObservingFundingPlatform { db: db.clone(), stored_while_shown: Mutex::new(None) });
 	assert!(services.funding().install_platform(platform.clone()));
 
 	futures::executor::block_on(services.open_funding(
@@ -3100,10 +3114,7 @@ fn a_session_is_stored_only_once_the_user_starts_it() {
 		Some(1_000),
 	))
 	.expect("opened");
-	let stored_after =
-		futures::executor::block_on(crate::host_logic::funding::load_sessions(storage.as_ref()))
-			.expect("sessions read")
-			.len();
+	let stored_after = futures::executor::block_on(super::funding::stored_sessions(&db)).len();
 
 	assert_eq!(
 		(*platform.stored_while_shown.lock().expect("stored mutex poisoned"), stored_after),
@@ -3113,7 +3124,7 @@ fn a_session_is_stored_only_once_the_user_starts_it() {
 
 /// A funding overlay whose storage starts failing writes while it is up.
 struct StorageFailingFundingPlatform {
-	storage: Arc<crate::test_support::StubPlatform>,
+	db: crate::store::Db,
 	outcome: crate::platform::FundingPresentOutcome,
 }
 
@@ -3124,11 +3135,7 @@ impl crate::platform::FundingPlatform for StorageFailingFundingPlatform {
 		_product: Option<&ProductContext>,
 		_session: crate::platform::FundingPresentation,
 	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
-		*self
-			.storage
-			.core_storage_write_error
-			.lock()
-			.expect("write error mutex poisoned") = Some("disk full");
+		super::funding::fail_writes(&self.db, true).await;
 		Ok(self.outcome)
 	}
 
@@ -3151,12 +3158,14 @@ fn a_session_that_does_not_start_is_gone_even_when_storage_fails() {
 		crate::platform::FundingPresentOutcome::Started,
 		crate::platform::FundingPresentOutcome::Dismissed,
 	] {
-		let storage = Arc::new(crate::test_support::StubPlatform::default());
-		let services = funding_services_on(storage.clone(), test_spawner());
-		assert!(services.funding().install_platform(Arc::new(StorageFailingFundingPlatform {
-			storage: storage.clone(),
-			outcome,
-		})));
+		let db = crate::store::open_memory_core_db();
+		let services = funding_services_on(&db, test_spawner());
+		assert!(
+			services.funding().install_platform(Arc::new(StorageFailingFundingPlatform {
+				db: db.clone(),
+				outcome,
+			}))
+		);
 
 		let opened = futures::executor::block_on(services.open_funding(
 			None,
@@ -3190,14 +3199,10 @@ fn a_session_is_announced_once_per_commit() {
 		)
 	};
 
-	futures::executor::block_on(services.funding().commit(
-		services.platform.as_ref(),
-		now,
-		move |sessions| {
-			sessions.insert(overdue.intent.clone(), overdue);
-			((), vec!["fs_overdue".to_string()])
-		},
-	))
+	futures::executor::block_on(services.funding().commit(now, move |sessions| {
+		sessions.insert(overdue.intent.clone(), overdue);
+		((), vec!["fs_overdue".to_string()])
+	}))
 	.expect("committed");
 
 	assert_eq!(
@@ -8906,18 +8911,6 @@ fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: 
 		.expect("provider offered");
 }
 
-fn funding_services_over(platform: Arc<dyn Platform>) -> Arc<RuntimeServices> {
-	let (host_config, _) = runtime_config("funding.dot");
-	RuntimeServices::new(
-		platform,
-		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
-		test_spawner(),
-	)
-}
-
 /// A provider's worker connection, signed in.
 fn provider_worker(services: &Arc<RuntimeServices>, provider_id: &str) -> ProductRuntimeHost {
 	let (host_config, _) = runtime_config(provider_id);
@@ -9076,8 +9069,8 @@ fn wait_for_stage(
 // resumes; the answer comes from storage, not from the empty registry.
 #[test]
 fn funding_in_progress_reads_storage_before_funding_resumes() {
-	let storage = stub_platform();
-	let before = funding_services_over(storage.clone());
+	let db = crate::store::open_memory_core_db();
+	let before = funding_services_on(&db, test_spawner());
 	assert!(before.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
@@ -9095,7 +9088,7 @@ fn funding_in_progress_reads_storage_before_funding_resumes() {
 			.expect("selected")
 	);
 
-	let relaunched = funding_services_over(storage.clone());
+	let relaunched = funding_services_on(&db, test_spawner());
 
 	assert_eq!(
 		(
@@ -9112,12 +9105,12 @@ fn funding_in_progress_reads_storage_before_funding_resumes() {
 // decides delivery from the claim of the top-up the provider named.
 #[test]
 fn a_provider_worker_delivers_a_session_across_a_restart() {
-	let storage = stub_platform();
+	let db = crate::store::open_memory_core_db();
 	// The host's engine outlives the app, so it still knows the top-up after
 	// the restart.
 	let engine = Arc::new(RecordingTopUpPlatform::default());
-	let start = |storage: &Arc<crate::test_support::StubPlatform>| {
-		let services = funding_services_over(storage.clone());
+	let start = |db: &crate::store::Db| {
+		let services = funding_services_on(db, test_spawner());
 		assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 			crate::platform::FundingPresentOutcome::Started,
 		)));
@@ -9125,7 +9118,7 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 		services.resume_funding();
 		services
 	};
-	let before = start(&storage);
+	let before = start(&db);
 	offer_provider(&before, "ramp.dot", RAMP_MANIFEST);
 	let intent = futures::executor::block_on(before.open_funding(
 		None,
@@ -9152,7 +9145,7 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 		v01::FundingUpdate::Details { transaction_id: Some("tx-1".into()), reference: None };
 	report_funding(&worker, &intent, details).expect("details while crediting");
 
-	let after = start(&storage);
+	let after = start(&db);
 	let restarted = provider_worker(&after, "ramp.dot");
 	let replayed = connect_provider(&after, "ramp.dot").calls(1).into_iter().next();
 	let restarted_in_progress = after.funding().in_progress();
@@ -10304,7 +10297,7 @@ fn a_cancel_waits_for_the_provider_to_connect() {
 /// starting.
 struct SelectThenCloseFundingPlatform {
 	services: std::sync::OnceLock<std::sync::Weak<RuntimeServices>>,
-	storage: Arc<crate::test_support::StubPlatform>,
+	db: crate::store::Db,
 	/// Whether the session was stored while the overlay was still up.
 	stored_while_up: Mutex<Option<bool>>,
 }
@@ -10323,9 +10316,8 @@ impl crate::platform::FundingPlatform for SelectThenCloseFundingPlatform {
 				.await
 				.expect("selected")
 		);
-		let stored = crate::host_logic::funding::load_sessions(self.storage.as_ref())
+		let stored = super::funding::stored_sessions(&self.db)
 			.await
-			.expect("loaded")
 			.iter()
 			.any(|stored| stored.intent == session.intent);
 		*self.stored_while_up.lock().expect("stored mutex poisoned") = Some(stored);
@@ -10348,11 +10340,11 @@ impl crate::platform::FundingPlatform for SelectThenCloseFundingPlatform {
 // asked to stop.
 #[test]
 fn closing_the_overlay_after_choosing_a_provider_keeps_the_session_and_asks_it_to_stop() {
-	let storage = stub_platform();
-	let services = funding_services_on(storage.clone(), test_spawner());
+	let db = crate::store::open_memory_core_db();
+	let services = funding_services_on(&db, test_spawner());
 	let platform = Arc::new(SelectThenCloseFundingPlatform {
 		services: std::sync::OnceLock::new(),
-		storage,
+		db,
 		stored_while_up: Mutex::new(None),
 	});
 	assert!(platform.services.set(Arc::downgrade(&services)).is_ok());
@@ -11126,7 +11118,6 @@ fn a_refused_repeat_of_a_recorded_top_up_leaves_no_record_behind() {
 		&(b"truapi/funding-terms", None::<u32>, &product_account_source()).encode(),
 	);
 	futures::executor::block_on(services.funding().record_start(
-		services.platform.as_ref(),
 		crate::unix_time::current_unix_millis(),
 		"ramp.dot",
 		&intent,
@@ -11205,7 +11196,6 @@ fn a_repeat_under_a_recorded_id_must_ask_the_same() {
 	let engine = Arc::new(RecordingTopUpPlatform::default());
 	let (services, intent, worker) = served_with_engine(engine.clone(), 1_000);
 	futures::executor::block_on(services.funding().record_start(
-		services.platform.as_ref(),
 		crate::unix_time::current_unix_millis(),
 		"ramp.dot",
 		&intent,
@@ -11308,8 +11298,8 @@ impl crate::platform::TopUpPlatform for GatedTopUpPlatform {
 #[test]
 fn a_settlement_whose_write_failed_is_written_again() {
 	let engine = Arc::new(GatedTopUpPlatform::default());
-	let storage = stub_platform();
-	let services = funding_services_over(storage.clone());
+	let db = crate::store::open_memory_core_db();
+	let services = funding_services_on(&db, test_spawner());
 	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
@@ -11320,12 +11310,11 @@ fn a_settlement_whose_write_failed_is_written_again() {
 	crediting(&worker, &intent, [7; 32], 500).expect("crediting");
 	report_funding(&worker, &intent, v01::FundingUpdate::Delivered).expect("delivered");
 
-	*storage.core_storage_write_error.lock().expect("write error mutex poisoned") =
-		Some("disk full");
+	futures::executor::block_on(super::funding::fail_writes(&db, true));
 	engine.open.store(true, Ordering::SeqCst);
 	std::thread::sleep(Duration::from_millis(300));
 	let while_failing = services.funding().get(&intent).expect("kept").is_terminal();
-	*storage.core_storage_write_error.lock().expect("write error mutex poisoned") = None;
+	futures::executor::block_on(super::funding::fail_writes(&db, false));
 
 	assert_eq!(
 		(
@@ -11375,8 +11364,8 @@ impl crate::platform::TopUpPlatform for ClaimedTopUpPlatform {
 // due still settles once the engine is installed.
 #[test]
 fn a_session_resumed_before_its_engine_settles_once_the_engine_is_installed() {
-	let storage = stub_platform();
-	let before = funding_services_over(storage.clone());
+	let db = crate::store::open_memory_core_db();
+	let before = funding_services_on(&db, test_spawner());
 	assert!(before.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
@@ -11387,7 +11376,7 @@ fn a_session_resumed_before_its_engine_settles_once_the_engine_is_installed() {
 	crediting(&worker, &intent, [7; 32], 500).expect("crediting");
 	report_funding(&worker, &intent, v01::FundingUpdate::Delivered).expect("delivered");
 
-	let after = funding_services_over(storage.clone());
+	let after = funding_services_on(&db, test_spawner());
 	assert!(after.install_funding_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
@@ -11624,8 +11613,8 @@ impl crate::host_logic::worker::WorkerController for EndingWorkerController {
 // taken and let go in the order the reconciler derives them.
 #[test]
 fn a_session_ended_while_workers_start_lets_its_worker_go() {
-	let storage = stub_platform();
-	let before = funding_services_over(storage.clone());
+	let db = crate::store::open_memory_core_db();
+	let before = funding_services_on(&db, test_spawner());
 	assert!(before.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
@@ -11654,7 +11643,7 @@ fn a_session_ended_while_workers_start_lets_its_worker_go() {
 			.expect("selected")
 	);
 
-	let after = funding_services_over(storage.clone());
+	let after = funding_services_on(&db, test_spawner());
 	let controller = Arc::new(EndingWorkerController {
 		services: Arc::downgrade(&after),
 		ends: Mutex::new(Some(second.clone())),

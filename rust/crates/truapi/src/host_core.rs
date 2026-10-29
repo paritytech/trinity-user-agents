@@ -4122,28 +4122,15 @@ mod tests {
 		(SigningHostRuntime::new(platform.clone(), config, test_spawner()), platform)
 	}
 
-	/// An empty database in memory.
-	#[cfg(not(target_arch = "wasm32"))]
-	fn memory_db() -> crate::store::Db {
-		use crate::store::{Db, DbConfig, DbLocation};
-
-		let config = DbConfig {
-			location: DbLocation::Memory,
-			migrations: crate::store::core_migrations,
-			readers: 1,
-		};
-		futures::executor::block_on(Db::open(config)).expect("database opens")
-	}
-
 	/// Every durable consumer shares one core database: a second installer
 	/// must not swap it.
 	#[cfg(not(target_arch = "wasm32"))]
 	#[test]
 	fn the_core_database_is_installed_once() {
 		let (runtime, _platform) = test_signing_runtime();
-		runtime.set_core_db(memory_db());
+		runtime.set_core_db(crate::store::open_memory_core_db());
 
-		assert!(!runtime.set_core_db(memory_db()));
+		assert!(!runtime.set_core_db(crate::store::open_memory_core_db()));
 	}
 
 	/// A host that configured no database gets a clear error rather than a
@@ -4162,7 +4149,7 @@ mod tests {
 	#[test]
 	fn nft_purses_stay_off_without_an_installation_provider() {
 		let (runtime, _platform) = test_signing_runtime();
-		runtime.set_core_db(memory_db());
+		runtime.set_core_db(crate::store::open_memory_core_db());
 
 		runtime.start_core_services();
 
@@ -4175,7 +4162,7 @@ mod tests {
 	#[test]
 	fn nft_purses_are_served_once_core_services_start() {
 		let (runtime, platform) = test_signing_runtime();
-		runtime.set_core_db(memory_db());
+		runtime.set_core_db(crate::store::open_memory_core_db());
 		runtime.set_installation_provider(platform);
 
 		runtime.start_core_services();
@@ -4190,7 +4177,7 @@ mod tests {
 	#[test]
 	fn dropping_the_runtime_releases_nft_purse_services() {
 		let (runtime, platform) = test_signing_runtime();
-		runtime.set_core_db(memory_db());
+		runtime.set_core_db(crate::store::open_memory_core_db());
 		runtime.set_installation_provider(platform);
 		runtime.start_core_services();
 		let services = Arc::downgrade(&runtime.services);
@@ -4206,7 +4193,7 @@ mod tests {
 	#[test]
 	fn the_durable_engine_starts_without_an_installation_provider() {
 		let (runtime, _platform) = test_signing_runtime();
-		runtime.set_core_db(memory_db());
+		runtime.set_core_db(crate::store::open_memory_core_db());
 
 		runtime.start_core_services();
 
