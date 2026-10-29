@@ -1,5 +1,5 @@
 {
-  "count": 43,
+  "count": 39,
   "warnings": [
     {
       "path": "",
@@ -53,8 +53,8 @@
     },
     {
       "path": "polkadot-app/Common/Services/ServiceCoordinator.swift",
-      "line": 671,
-      "message": "File Length Violation: File should contain 500 lines or less: currently contains 671 (file_length)"
+      "line": 601,
+      "message": "File Length Violation: File should contain 500 lines or less: currently contains 601 (file_length)"
     },
     {
       "path": "polkadot-app/Common/Wallet/WalletCardViewModel.swift",
@@ -103,18 +103,13 @@
     },
     {
       "path": "polkadot-app/Modules/Chat/Service/ChatOutboxService.swift",
-      "line": 704,
-      "message": "File Length Violation: File should contain 500 lines or less: currently contains 704 (file_length)"
+      "line": 708,
+      "message": "File Length Violation: File should contain 500 lines or less: currently contains 708 (file_length)"
     },
     {
       "path": "polkadot-app/Modules/Chat/Service/MessageExchangeChatCoordinator+PeerSessionDelegate.swift",
       "line": 99,
       "message": "Todo Violation: TODOs should be resolved (Consider to remove before rele...) (todo)"
-    },
-    {
-      "path": "polkadot-app/Modules/Chat/Service/MessageExchangeChatCoordinator.swift",
-      "line": 306,
-      "message": "Todo Violation: TODOs should be resolved (Move sender device activation ...) (todo)"
     },
     {
       "path": "polkadot-app/Modules/ChatCall/Connection/CallEngine.swift",
@@ -163,13 +158,8 @@
     },
     {
       "path": "polkadot-app/Modules/IncomingChatRequest/Model/ChatRequestPeerDeviceMapper.swift",
-      "line": 87,
+      "line": 98,
       "message": "Todo Violation: TODOs should be resolved (- remove when not needed) (todo)"
-    },
-    {
-      "path": "polkadot-app/Modules/IncomingChatRequest/Services/ChatRequestFactory.swift",
-      "line": 124,
-      "message": "Todo Violation: TODOs should be resolved (Add statement account id to re...) (todo)"
     },
     {
       "path": "polkadot-app/Modules/PolkadotSignIn/LinkedDevices/LinkedDevicesPresenter.swift",
@@ -183,12 +173,12 @@
     },
     {
       "path": "polkadot-app/Modules/Products/Permissions/OS/OSPermissionAsker.swift",
-      "line": 32,
+      "line": 38,
       "message": "Todo Violation: TODOs should be resolved (These capabilities require a n...) (todo)"
     },
     {
       "path": "polkadot-app/Modules/Products/Permissions/OS/OSPermissionAsker.swift",
-      "line": 55,
+      "line": 62,
       "message": "Todo Violation: TODOs should be resolved (These capabilities require a n...) (todo)"
     },
     {
@@ -203,7 +193,7 @@
     },
     {
       "path": "polkadot-app/Modules/Products/TrUAPI/RustHostRuntimeBridge.swift",
-      "line": 96,
+      "line": 95,
       "message": "Todo Violation: TODOs should be resolved (pass the real SSO host identit...) (todo)"
     }
   ]

@@ -283,13 +283,11 @@ private extension SPANativeRuntimeInteractor {
 
 extension SPANativeRuntimeInteractor: SPAProductReloading {
     func serveAppliedBuild() {
+        let domain = configuration.productDomain
+        let kind = configuration.executable
+
         reloadTask?.cancel()
-        reloadTask = Task { [
-            weak self,
-            contentLoader,
-            domain = configuration.productDomain,
-            kind = configuration.executable
-        ] in
+        reloadTask = Task { [weak self, contentLoader] in
             do {
                 let served = try await contentLoader.open(domain, kind: kind, policy: .untilCancelled).archive
 
