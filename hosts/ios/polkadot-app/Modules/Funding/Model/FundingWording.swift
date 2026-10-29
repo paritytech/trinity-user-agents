@@ -7,7 +7,7 @@ enum FundingWording {
     /// The line under a session's timeline, and whether it reads as a
     /// warning. `nil` for a band whose words come from the status instead,
     /// a cancel or an ending.
-    static func band(
+    static func band( // swiftlint:disable:this cyclomatic_complexity
         _ band: FundingBand,
         direction: FundingDirection,
         rail: FundingRail?,
@@ -59,7 +59,10 @@ enum FundingWording {
     }
 
     /// A history row's subtitle for a session in flight.
-    static func inFlight(_ status: FundingStatus, direction: FundingDirection) -> String {
+    static func inFlight( // swiftlint:disable:this cyclomatic_complexity
+        _ status: FundingStatus,
+        direction: FundingDirection
+    ) -> String {
         if let line = FundingCancelPresentation.line(for: status, compact: true) {
             return line.text
         }
@@ -75,9 +78,11 @@ enum FundingWording {
         case .retrying: String(localized: .Funding.activityRetrying)
         case .retryingPayout: String(localized: .Funding.activityRetryingPayout)
         case .takingLonger:
-            direction == .out
-                ? String(localized: .Funding.activityDelayedOut)
-                : String(localized: .Funding.activityDelayed)
+            if direction == .out {
+                String(localized: .Funding.activityDelayedOut)
+            } else {
+                String(localized: .Funding.activityDelayed)
+            }
         default: ""
         }
     }

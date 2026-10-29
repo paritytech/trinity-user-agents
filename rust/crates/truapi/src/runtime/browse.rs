@@ -12,7 +12,7 @@ use sp_crypto_hashing::keccak_256;
 use tracing::instrument;
 
 use super::{
-	dotns_lookup::DotnsLookup,
+	dotns_lookup::{DotnsLookup, DotnsLookupKind},
 	product_manifest::{cached_dotns_json, protocol_registry},
 	services::RuntimeServices,
 };
@@ -63,7 +63,7 @@ pub async fn published_products(
 	let Some(publishers) = publishers_on(genesis_hash) else {
 		return Ok(Vec::new());
 	};
-	let json = cached_dotns_json(platform, CoreStorageKey::PublishedProducts, || {
+	let (json, _) = cached_dotns_json(platform, CoreStorageKey::PublishedProducts, || {
 		fetch_published_products(&services.chain, genesis_hash, publishers)
 	})
 	.await?;
@@ -87,9 +87,10 @@ async fn fetch_published_products(
 	genesis_hash: [u8; 32],
 	publishers: &[[u8; 20]],
 ) -> Result<Option<String>, String> {
-	let mut lookup = DotnsLookup::pinned_to_best_block(chain, genesis_hash, "browse:published")
-		.await
-		.map_err(|error| error.to_string())?;
+	let mut lookup =
+		DotnsLookup::pinned_to_best_block(chain, genesis_hash, DotnsLookupKind::PublishedProducts)
+			.await
+			.map_err(|error| error.to_string())?;
 	let Some(protocol_registry) =
 		protocol_registry(&mut lookup).await.map_err(|error| error.reason())?
 	else {

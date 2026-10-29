@@ -35,9 +35,9 @@ import kotlin.reflect.KClass
 
 private val PUSH_ID_PREFIX = "notification".toByteArray(Charsets.UTF_8)
 
-// Single source of truth for which content goes through the identity session: drives both routing
-// (sessionFor) and the per-session SentMessagesNotFound reset, so they can't drift apart.
-private val IDENTITY_SESSION_CONTENT_TYPES = listOf<KClass<out ChatMessage.Content>>(
+// Content delivered as one-shot statements outside the sessions (acceptances, by ChatAcceptanceDeliveryService):
+// sessions neither send it nor reset its status when their own statements are missing.
+private val ONE_SHOT_CONTENT_TYPES = listOf<KClass<out ChatMessage.Content>>(
     ChatMessage.Content.DeviceChatAccepted::class
 )
 
@@ -122,24 +122,16 @@ class RealContactChatSession(
     }
 
     private fun trySendMessage(message: ChatMessage) {
-        val session = sessionFor(message)
         message.toEncodedMessage()
-            .map { session.sendMessage(it) }
+            .map { mainCommunicationSession.sendMessage(it) }
             .logFailure("Failed to send message: ${message.id}")
-    }
-
-    private fun sessionFor(message: ChatMessage): CommunicationSession {
-        return if (message.content::class in IDENTITY_SESSION_CONTENT_TYPES) {
-            communicationSessions.identity
-        } else {
-            communicationSessions.main
-        }
     }
 
     private fun shouldSend(message: ChatMessage): Boolean {
         return message.content !is ChatMessage.Content.ChatRequest &&
             // compaction message is sent internally in Active state of CommunicationSession state machine
-            message.content !is ChatMessage.Content.CompactionCommit
+            message.content !is ChatMessage.Content.CompactionCommit &&
+            message.content::class !in ONE_SHOT_CONTENT_TYPES
     }
 
     private fun shouldNotify(message: ChatMessage): Boolean = message.content.isDisplayableAsPush()
@@ -155,10 +147,12 @@ class RealContactChatSession(
                     }
 
                     is CommunicationSessionEvent.NewMessagesReceived -> {
+                        notifyIfDeviceRoute(roledSession.role)
                         handleNewMessagesReceived(session, event.messages)
                     }
 
                     is CommunicationSessionEvent.ResponseReceived -> {
+                        notifyIfDeviceRoute(roledSession.role)
                         handleResponseReceived(event.respondedMessages)
                     }
 
@@ -184,6 +178,13 @@ class RealContactChatSession(
                 }
             }
             .launchIn(this)
+    }
+
+    // A pairwise peer has no device route: its combined session is the only way it can reach us.
+    private suspend fun notifyIfDeviceRoute(role: ContactSessionRole) {
+        if (role == ContactSessionRole.Identity) return
+
+        callbacks.onContactSeenOnDeviceRoute(contact.accountId)
     }
 
     private suspend fun handleNewMessagesReceived(source: CommunicationSession, messages: List<EncodedMessage>) {
@@ -271,33 +272,19 @@ class RealContactChatSession(
         chatMessageRepository.commitCompaction(commitMessage.id, originalIds)
     }
 
-    // A session's "not found" must reset only the messages routed to it (see sessionFor / the session's role).
+    // The identity session sends nothing, so only the session that sent the messages may reset them.
     private suspend fun handleSentMessagesNotFound(role: ContactSessionRole) {
         when (role) {
-            ContactSessionRole.Combined -> {
-                chatMessageRepository.unwindUnackedCompactions(chatId)
-                chatMessageRepository.updateOutgoingMessagesStatusForChat(
-                    chatId = chatId,
-                    fromStatus = ChatMessage.Status.IS_SENT,
-                    toStatus = ChatMessage.Status.NEW,
-                )
-            }
+            ContactSessionRole.Identity -> Unit
 
-            ContactSessionRole.Identity ->
-                chatMessageRepository.updateOutgoingMessagesStatusForChatWithTypes(
-                    chatId = chatId,
-                    fromStatus = ChatMessage.Status.IS_SENT,
-                    toStatus = ChatMessage.Status.NEW,
-                    contentTypes = IDENTITY_SESSION_CONTENT_TYPES,
-                )
-
+            ContactSessionRole.Combined,
             ContactSessionRole.MultiDevice -> {
                 chatMessageRepository.unwindUnackedCompactions(chatId)
                 chatMessageRepository.updateOutgoingMessagesStatusForChatExcludingTypes(
                     chatId = chatId,
                     fromStatus = ChatMessage.Status.IS_SENT,
                     toStatus = ChatMessage.Status.NEW,
-                    contentTypes = IDENTITY_SESSION_CONTENT_TYPES,
+                    contentTypes = ONE_SHOT_CONTENT_TYPES,
                 )
             }
         }

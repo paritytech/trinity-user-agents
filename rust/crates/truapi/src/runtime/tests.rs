@@ -22,11 +22,12 @@ use truapi::{
 	versioned::{
 		account::{
 			HostAccountConnectionStatusSubscribeItem, HostAccountCreateProofError,
-			HostAccountCreateProofResponse, HostAccountGetAliasError, HostAccountGetAliasResponse,
-			HostAccountGetError, HostAccountGetRequest, HostAccountGetResponse,
-			HostAccountListRingVrfKeysRequest, HostAccountRingVrfSignError,
-			HostAccountRingVrfSignRequest, HostAccountRingVrfSignResponse, HostAccountSignVrfError,
-			HostAccountSignVrfRequest, HostAccountSignVrfResponse, HostGetLegacyAccountsRequest,
+			HostAccountCreateProofRequest, HostAccountCreateProofResponse,
+			HostAccountGetAliasError, HostAccountGetAliasResponse, HostAccountGetError,
+			HostAccountGetRequest, HostAccountGetResponse, HostAccountListRingVrfKeysRequest,
+			HostAccountRingVrfSignError, HostAccountRingVrfSignRequest,
+			HostAccountRingVrfSignResponse, HostAccountSignVrfError, HostAccountSignVrfRequest,
+			HostAccountSignVrfResponse, HostGetLegacyAccountsRequest,
 			HostGetLegacyAccountsResponse, HostGetUserIdError, HostGetUserIdRequest,
 			HostGetUserIdResponse,
 		},
@@ -2925,22 +2926,39 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 }
 
 fn funding_services() -> Arc<RuntimeServices> {
-	funding_services_on(stub_platform(), test_spawner())
+	funding_services_on(&crate::store::open_memory_core_db(), test_spawner())
 }
 
+/// Services over `db`, which keeps their funding sessions across a restart.
 fn funding_services_on(
-	storage: Arc<crate::test_support::StubPlatform>,
+	db: &crate::store::Db,
+	spawner: crate::subscription::Spawner,
+) -> Arc<RuntimeServices> {
+	funding_services_with(stub_platform(), db, spawner)
+}
+
+/// Services over `platform`, which keeps what they cache across a restart,
+/// with a core database of their own.
+fn funding_services_over(platform: Arc<dyn Platform>) -> Arc<RuntimeServices> {
+	funding_services_with(platform, &crate::store::open_memory_core_db(), test_spawner())
+}
+
+fn funding_services_with(
+	platform: Arc<dyn Platform>,
+	db: &crate::store::Db,
 	spawner: crate::subscription::Spawner,
 ) -> Arc<RuntimeServices> {
 	let (host_config, _) = runtime_config("funding.dot");
-	RuntimeServices::new(
-		storage,
+	let services = RuntimeServices::new(
+		platform,
 		host_config.host.host_info.clone(),
 		host_config.people_chain_genesis_hash,
 		host_config.bulletin_chain_genesis_hash,
 		host_config.asset_hub_chain_genesis_hash,
 		spawner,
-	)
+	);
+	assert!(services.install_core_db(db.clone()));
+	services
 }
 
 /// Spawner that holds every task until the test runs it, so the test knows
@@ -2973,16 +2991,16 @@ impl HeldTasks {
 // so a session in flight is announced on resume, once it is loaded.
 #[test]
 fn funding_resumes_by_announcing_sessions_a_provider_still_works_on() {
-	let storage = stub_platform();
-	let start = |storage: &Arc<crate::test_support::StubPlatform>| {
-		let services = funding_services_over(storage.clone());
+	let db = crate::store::open_memory_core_db();
+	let start = |db: &crate::store::Db| {
+		let services = funding_services_on(db, test_spawner());
 		let platform =
 			RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 		assert!(services.funding().install_platform(platform.clone()));
 		services.resume_funding();
 		(services, platform)
 	};
-	let (before, _) = start(&storage);
+	let (before, _) = start(&db);
 	offer_provider(&before, "ramp.dot", RAMP_MANIFEST);
 	let intent = futures::executor::block_on(before.open_funding(
 		None,
@@ -2997,7 +3015,7 @@ fn funding_resumes_by_announcing_sessions_a_provider_still_works_on() {
 			.expect("selected")
 	);
 
-	let (after, platform) = start(&storage);
+	let (after, platform) = start(&db);
 	let announced = || platform.announced.lock().expect("announced mutex poisoned").clone();
 	for _ in 0..200 {
 		if !announced().is_empty() {
@@ -3015,18 +3033,20 @@ fn funding_resumes_by_announcing_sessions_a_provider_still_works_on() {
 #[test]
 fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
 	let tasks = HeldTasks::default();
-	let services = funding_services_on(stub_platform(), tasks.spawner());
+	let services = funding_services_on(&crate::store::open_memory_core_db(), tasks.spawner());
 	let platform =
 		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 	assert!(services.funding().install_platform(platform.clone()));
 	let opening =
 		services.open_funding(None, "fs_resume".to_string(), v01::FundingDirection::Out, None);
-	let intent = futures::executor::block_on(async {
-		futures::pin_mut!(opening);
-		assert!(futures::poll!(&mut opening).is_pending());
-		// The overlay runs on a task of its own, which these held tasks run.
-		tasks.run().await;
-		opening.await
+	// The overlay runs on a task of its own, which these held tasks run.
+	let intent = std::thread::scope(|scope| {
+		let opened = scope.spawn(|| futures::executor::block_on(opening));
+		while !opened.is_finished() {
+			futures::executor::block_on(tasks.run());
+			std::thread::sleep(Duration::from_millis(5));
+		}
+		opened.join().expect("opening thread")
 	})
 	.expect("opened")
 	.intent;
@@ -3052,7 +3072,7 @@ fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
 /// A funding overlay that, while it is up, records how many sessions the
 /// core has stored.
 struct ObservingFundingPlatform {
-	storage: Arc<crate::test_support::StubPlatform>,
+	db: crate::store::Db,
 	stored_while_shown: Mutex<Option<usize>>,
 }
 
@@ -3063,10 +3083,7 @@ impl crate::platform::FundingPlatform for ObservingFundingPlatform {
 		_product: Option<&ProductContext>,
 		_session: crate::platform::FundingPresentation,
 	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
-		let stored = crate::host_logic::funding::load_sessions(self.storage.as_ref())
-			.await
-			.expect("sessions read")
-			.len();
+		let stored = super::funding::stored_sessions(&self.db).await.len();
 		*self.stored_while_shown.lock().expect("stored mutex poisoned") = Some(stored);
 		Ok(crate::platform::FundingPresentOutcome::Started)
 	}
@@ -3084,12 +3101,10 @@ impl crate::platform::FundingPlatform for ObservingFundingPlatform {
 // user never started, so nothing is stored until the user starts it.
 #[test]
 fn a_session_is_stored_only_once_the_user_starts_it() {
-	let storage = Arc::new(crate::test_support::StubPlatform::default());
-	let services = funding_services_on(storage.clone(), test_spawner());
-	let platform = Arc::new(ObservingFundingPlatform {
-		storage: storage.clone(),
-		stored_while_shown: Mutex::new(None),
-	});
+	let db = crate::store::open_memory_core_db();
+	let services = funding_services_on(&db, test_spawner());
+	let platform =
+		Arc::new(ObservingFundingPlatform { db: db.clone(), stored_while_shown: Mutex::new(None) });
 	assert!(services.funding().install_platform(platform.clone()));
 
 	futures::executor::block_on(services.open_funding(
@@ -3099,10 +3114,7 @@ fn a_session_is_stored_only_once_the_user_starts_it() {
 		Some(1_000),
 	))
 	.expect("opened");
-	let stored_after =
-		futures::executor::block_on(crate::host_logic::funding::load_sessions(storage.as_ref()))
-			.expect("sessions read")
-			.len();
+	let stored_after = futures::executor::block_on(super::funding::stored_sessions(&db)).len();
 
 	assert_eq!(
 		(*platform.stored_while_shown.lock().expect("stored mutex poisoned"), stored_after),
@@ -3112,7 +3124,7 @@ fn a_session_is_stored_only_once_the_user_starts_it() {
 
 /// A funding overlay whose storage starts failing writes while it is up.
 struct StorageFailingFundingPlatform {
-	storage: Arc<crate::test_support::StubPlatform>,
+	db: crate::store::Db,
 	outcome: crate::platform::FundingPresentOutcome,
 }
 
@@ -3123,11 +3135,7 @@ impl crate::platform::FundingPlatform for StorageFailingFundingPlatform {
 		_product: Option<&ProductContext>,
 		_session: crate::platform::FundingPresentation,
 	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
-		*self
-			.storage
-			.core_storage_write_error
-			.lock()
-			.expect("write error mutex poisoned") = Some("disk full");
+		super::funding::fail_writes(&self.db, true).await;
 		Ok(self.outcome)
 	}
 
@@ -3150,12 +3158,14 @@ fn a_session_that_does_not_start_is_gone_even_when_storage_fails() {
 		crate::platform::FundingPresentOutcome::Started,
 		crate::platform::FundingPresentOutcome::Dismissed,
 	] {
-		let storage = Arc::new(crate::test_support::StubPlatform::default());
-		let services = funding_services_on(storage.clone(), test_spawner());
-		assert!(services.funding().install_platform(Arc::new(StorageFailingFundingPlatform {
-			storage: storage.clone(),
-			outcome,
-		})));
+		let db = crate::store::open_memory_core_db();
+		let services = funding_services_on(&db, test_spawner());
+		assert!(
+			services.funding().install_platform(Arc::new(StorageFailingFundingPlatform {
+				db: db.clone(),
+				outcome,
+			}))
+		);
 
 		let opened = futures::executor::block_on(services.open_funding(
 			None,
@@ -3189,14 +3199,10 @@ fn a_session_is_announced_once_per_commit() {
 		)
 	};
 
-	futures::executor::block_on(services.funding().commit(
-		services.platform.as_ref(),
-		now,
-		move |sessions| {
-			sessions.insert(overdue.intent.clone(), overdue);
-			((), vec!["fs_overdue".to_string()])
-		},
-	))
+	futures::executor::block_on(services.funding().commit(now, move |sessions| {
+		sessions.insert(overdue.intent.clone(), overdue);
+		((), vec!["fs_overdue".to_string()])
+	}))
 	.expect("committed");
 
 	assert_eq!(
@@ -8294,6 +8300,151 @@ fn a_grant_lookup_obeys_the_callers_deadline() {
 	);
 }
 
+/// A proof or signature the runtime frontend refuses reaches the host log.
+///
+/// A local product call meets the manifest check here first, and a call it
+/// refuses never reaches the authority, so the authority cannot be the one to
+/// say why.
+#[test]
+fn a_frontend_refusal_tells_the_host_what_it_judged_by() {
+	let host = dim2_with_a_pairing_session(stub_platform(), [0; 32]);
+	let cx = CallContext::default();
+	let mut refusals = None;
+	let lines = crate::logging::testing::host_sink_lines(|| {
+		refusals = Some((
+			futures::executor::block_on(
+				host.create_account_proof(&cx, create_proof_request("peopl.dot")),
+			)
+			.err(),
+			futures::executor::block_on(
+				host.ring_vrf_sign(&cx, ring_vrf_sign_request("peopl.dot")),
+			)
+			.err(),
+		));
+	});
+	let line = frontend_refusal_line("manifest unavailable", "no Asset Hub");
+	assert_eq!(
+		(refusals, lines),
+		(
+			Some((
+				Some(CallError::Domain(HostAccountCreateProofError::V1(
+					v01::HostAccountCreateProofError::NotAllowlisted
+				))),
+				Some(CallError::Domain(HostAccountRingVrfSignError::V1(
+					v01::HostAccountRingVrfSignError::NotAllowlisted
+				))),
+			)),
+			vec![line.clone(), line],
+		)
+	);
+}
+
+/// A frontend lookup cut short by the deadline of the call is a refusal the
+/// host hears about. One the product withdrew is not, since nobody waits for
+/// its answer.
+#[test]
+fn a_frontend_lookup_past_its_deadline_tells_the_host_it_timed_out() {
+	let proof_and_signature_lines = |cx: CallContext| {
+		let platform =
+			Arc::new(StubPlatform { chain_connect_pending: true, ..StubPlatform::default() });
+		let host = dim2_with_a_pairing_session(platform, [0xcc; 32]);
+		crate::logging::testing::host_sink_lines(|| {
+			let _ = futures::executor::block_on(
+				host.create_account_proof(&cx, create_proof_request("peopl.dot")),
+			);
+			let _ = futures::executor::block_on(
+				host.ring_vrf_sign(&cx, ring_vrf_sign_request("peopl.dot")),
+			);
+		})
+	};
+	let mut timed_out = CallContext::default();
+	timed_out.set_timeout(Duration::from_millis(10));
+	let withdrawn = CallContext::default();
+	withdrawn.cancel().cancel();
+	let gave_up = "truapi.tracing.warn truapi::runtime::product_manifest: manifest resolution \
+	               gave up {ceiling_secs=0}"
+		.to_string();
+	let refusal = frontend_refusal_line("manifest unavailable", "dotNS lookup timed out");
+	assert_eq!(
+		(proof_and_signature_lines(timed_out), proof_and_signature_lines(withdrawn)),
+		(vec![gave_up.clone(), refusal.clone(), gave_up, refusal], Vec::new())
+	);
+}
+
+/// A call the frontend admits and the authority refuses is warned once, by
+/// the authority.
+#[test]
+fn a_refusal_past_the_frontend_is_warned_once() {
+	let platform = stub_platform();
+	cache_manifest(&platform, "peopl.dot", r#"{"dim2":["context"]}"#, 0);
+	let host = dim2_with_a_pairing_session(platform, [0; 32]);
+	let HostAccountCreateProofRequest::V1(mut request) = create_proof_request("peopl.dot");
+	request.context.product_id = "dim2.paseo".to_string();
+	let lines = crate::logging::testing::host_sink_lines(|| {
+		let _ = futures::executor::block_on(host.create_account_proof(
+			&CallContext::default(),
+			HostAccountCreateProofRequest::V1(request),
+		));
+	});
+	assert_eq!(
+		lines,
+		vec![
+			"truapi.tracing.warn truapi::runtime::product_manifest: ring-VRF access refused \
+			 {because=context on another network, entry=dim2, caller=dim2.dot, \
+			 owner=peopl.dot, context=dim2.paseo, scopes=None}"
+		]
+	);
+}
+
+/// `dim2.dot` with a live pairing session, resolving manifests against
+/// `asset_hub_chain_genesis_hash`.
+fn dim2_with_a_pairing_session(
+	platform: Arc<StubPlatform>,
+	asset_hub_chain_genesis_hash: [u8; 32],
+) -> ProductRuntimeHost {
+	let (host_config, product) = runtime_config("dim2.dot");
+	let services = RuntimeServices::new(
+		platform,
+		host_config.host.host_info.clone(),
+		host_config.people_chain_genesis_hash,
+		host_config.bulletin_chain_genesis_hash,
+		asset_hub_chain_genesis_hash,
+		test_spawner(),
+	);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session_info());
+	host
+}
+
+/// Ring-VRF signature request with the key of `product_id`.
+fn ring_vrf_sign_request(product_id: &str) -> HostAccountRingVrfSignRequest {
+	HostAccountRingVrfSignRequest::V1(v01::HostAccountRingVrfSignRequest {
+		key_handle: v01::ProductAccountId {
+			dot_ns_identifier: ProductId::for_test(product_id),
+			derivation_index: v01::DerivationIndex::Index(0),
+		},
+		message: b"sign me".to_vec(),
+	})
+}
+
+/// The host log line of the frontend of `dim2.dot` refusing the key of
+/// `peopl.dot` with no manifest read.
+fn frontend_refusal_line(because: &str, source: &str) -> String {
+	format!(
+		"truapi.tracing.warn truapi::runtime::product_manifest: ring-VRF access refused \
+		 {{because={because}, entry=dim2, caller=dim2.dot, owner=peopl.dot, source={source}, \
+		 scopes=None}}"
+	)
+}
+
 /// Subnames of one product share one cached manifest, because they are one
 /// dotNS node holding one document.
 ///
@@ -8760,18 +8911,6 @@ fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: 
 		.expect("provider offered");
 }
 
-fn funding_services_over(platform: Arc<dyn Platform>) -> Arc<RuntimeServices> {
-	let (host_config, _) = runtime_config("funding.dot");
-	RuntimeServices::new(
-		platform,
-		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
-		test_spawner(),
-	)
-}
-
 /// A provider's worker connection, signed in.
 fn provider_worker(services: &Arc<RuntimeServices>, provider_id: &str) -> ProductRuntimeHost {
 	let (host_config, _) = runtime_config(provider_id);
@@ -8930,8 +9069,8 @@ fn wait_for_stage(
 // resumes; the answer comes from storage, not from the empty registry.
 #[test]
 fn funding_in_progress_reads_storage_before_funding_resumes() {
-	let storage = stub_platform();
-	let before = funding_services_over(storage.clone());
+	let db = crate::store::open_memory_core_db();
+	let before = funding_services_on(&db, test_spawner());
 	assert!(before.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
@@ -8949,7 +9088,7 @@ fn funding_in_progress_reads_storage_before_funding_resumes() {
 			.expect("selected")
 	);
 
-	let relaunched = funding_services_over(storage.clone());
+	let relaunched = funding_services_on(&db, test_spawner());
 
 	assert_eq!(
 		(
@@ -8966,12 +9105,12 @@ fn funding_in_progress_reads_storage_before_funding_resumes() {
 // decides delivery from the claim of the top-up the provider named.
 #[test]
 fn a_provider_worker_delivers_a_session_across_a_restart() {
-	let storage = stub_platform();
+	let db = crate::store::open_memory_core_db();
 	// The host's engine outlives the app, so it still knows the top-up after
 	// the restart.
 	let engine = Arc::new(RecordingTopUpPlatform::default());
-	let start = |storage: &Arc<crate::test_support::StubPlatform>| {
-		let services = funding_services_over(storage.clone());
+	let start = |db: &crate::store::Db| {
+		let services = funding_services_on(db, test_spawner());
 		assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 			crate::platform::FundingPresentOutcome::Started,
 		)));
@@ -8979,7 +9118,7 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 		services.resume_funding();
 		services
 	};
-	let before = start(&storage);
+	let before = start(&db);
 	offer_provider(&before, "ramp.dot", RAMP_MANIFEST);
 	let intent = futures::executor::block_on(before.open_funding(
 		None,
@@ -9006,7 +9145,7 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 		v01::FundingUpdate::Details { transaction_id: Some("tx-1".into()), reference: None };
 	report_funding(&worker, &intent, details).expect("details while crediting");
 
-	let after = start(&storage);
+	let after = start(&db);
 	let restarted = provider_worker(&after, "ramp.dot");
 	let replayed = connect_provider(&after, "ramp.dot").calls(1).into_iter().next();
 	let restarted_in_progress = after.funding().in_progress();
@@ -10158,7 +10297,7 @@ fn a_cancel_waits_for_the_provider_to_connect() {
 /// starting.
 struct SelectThenCloseFundingPlatform {
 	services: std::sync::OnceLock<std::sync::Weak<RuntimeServices>>,
-	storage: Arc<crate::test_support::StubPlatform>,
+	db: crate::store::Db,
 	/// Whether the session was stored while the overlay was still up.
 	stored_while_up: Mutex<Option<bool>>,
 }
@@ -10177,9 +10316,8 @@ impl crate::platform::FundingPlatform for SelectThenCloseFundingPlatform {
 				.await
 				.expect("selected")
 		);
-		let stored = crate::host_logic::funding::load_sessions(self.storage.as_ref())
+		let stored = super::funding::stored_sessions(&self.db)
 			.await
-			.expect("loaded")
 			.iter()
 			.any(|stored| stored.intent == session.intent);
 		*self.stored_while_up.lock().expect("stored mutex poisoned") = Some(stored);
@@ -10202,11 +10340,11 @@ impl crate::platform::FundingPlatform for SelectThenCloseFundingPlatform {
 // asked to stop.
 #[test]
 fn closing_the_overlay_after_choosing_a_provider_keeps_the_session_and_asks_it_to_stop() {
-	let storage = stub_platform();
-	let services = funding_services_on(storage.clone(), test_spawner());
+	let db = crate::store::open_memory_core_db();
+	let services = funding_services_on(&db, test_spawner());
 	let platform = Arc::new(SelectThenCloseFundingPlatform {
 		services: std::sync::OnceLock::new(),
-		storage,
+		db,
 		stored_while_up: Mutex::new(None),
 	});
 	assert!(platform.services.set(Arc::downgrade(&services)).is_ok());
@@ -10980,7 +11118,6 @@ fn a_refused_repeat_of_a_recorded_top_up_leaves_no_record_behind() {
 		&(b"truapi/funding-terms", None::<u32>, &product_account_source()).encode(),
 	);
 	futures::executor::block_on(services.funding().record_start(
-		services.platform.as_ref(),
 		crate::unix_time::current_unix_millis(),
 		"ramp.dot",
 		&intent,
@@ -11059,7 +11196,6 @@ fn a_repeat_under_a_recorded_id_must_ask_the_same() {
 	let engine = Arc::new(RecordingTopUpPlatform::default());
 	let (services, intent, worker) = served_with_engine(engine.clone(), 1_000);
 	futures::executor::block_on(services.funding().record_start(
-		services.platform.as_ref(),
 		crate::unix_time::current_unix_millis(),
 		"ramp.dot",
 		&intent,
@@ -11162,8 +11298,8 @@ impl crate::platform::TopUpPlatform for GatedTopUpPlatform {
 #[test]
 fn a_settlement_whose_write_failed_is_written_again() {
 	let engine = Arc::new(GatedTopUpPlatform::default());
-	let storage = stub_platform();
-	let services = funding_services_over(storage.clone());
+	let db = crate::store::open_memory_core_db();
+	let services = funding_services_on(&db, test_spawner());
 	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
@@ -11174,12 +11310,11 @@ fn a_settlement_whose_write_failed_is_written_again() {
 	crediting(&worker, &intent, [7; 32], 500).expect("crediting");
 	report_funding(&worker, &intent, v01::FundingUpdate::Delivered).expect("delivered");
 
-	*storage.core_storage_write_error.lock().expect("write error mutex poisoned") =
-		Some("disk full");
+	futures::executor::block_on(super::funding::fail_writes(&db, true));
 	engine.open.store(true, Ordering::SeqCst);
 	std::thread::sleep(Duration::from_millis(300));
 	let while_failing = services.funding().get(&intent).expect("kept").is_terminal();
-	*storage.core_storage_write_error.lock().expect("write error mutex poisoned") = None;
+	futures::executor::block_on(super::funding::fail_writes(&db, false));
 
 	assert_eq!(
 		(
@@ -11229,8 +11364,8 @@ impl crate::platform::TopUpPlatform for ClaimedTopUpPlatform {
 // due still settles once the engine is installed.
 #[test]
 fn a_session_resumed_before_its_engine_settles_once_the_engine_is_installed() {
-	let storage = stub_platform();
-	let before = funding_services_over(storage.clone());
+	let db = crate::store::open_memory_core_db();
+	let before = funding_services_on(&db, test_spawner());
 	assert!(before.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
@@ -11241,7 +11376,7 @@ fn a_session_resumed_before_its_engine_settles_once_the_engine_is_installed() {
 	crediting(&worker, &intent, [7; 32], 500).expect("crediting");
 	report_funding(&worker, &intent, v01::FundingUpdate::Delivered).expect("delivered");
 
-	let after = funding_services_over(storage.clone());
+	let after = funding_services_on(&db, test_spawner());
 	assert!(after.install_funding_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
@@ -11260,7 +11395,7 @@ fn a_session_resumed_before_its_engine_settles_once_the_engine_is_installed() {
 /// is handed, then takes every one, and can hold its answers until
 /// `released`. It records how many calls it had outstanding at most.
 struct UnsteadyProviderLink {
-	refusals: std::sync::atomic::AtomicUsize,
+	refusals: Mutex<usize>,
 	released: Arc<AtomicBool>,
 	assigned: Mutex<Vec<String>>,
 	outstanding: Arc<std::sync::atomic::AtomicUsize>,
@@ -11270,7 +11405,7 @@ struct UnsteadyProviderLink {
 impl UnsteadyProviderLink {
 	fn new(refusals: usize, released: bool) -> Arc<Self> {
 		Arc::new(Self {
-			refusals: std::sync::atomic::AtomicUsize::new(refusals),
+			refusals: Mutex::new(refusals),
 			released: Arc::new(AtomicBool::new(released)),
 			assigned: Mutex::default(),
 			outstanding: Arc::default(),
@@ -11292,10 +11427,12 @@ impl crate::runtime::FundingProviderLink for UnsteadyProviderLink {
 	}
 
 	fn assign(&self, session: v01::FundingAssignment) -> futures::future::BoxFuture<'static, bool> {
-		let refused = self
-			.refusals
-			.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1))
-			.is_ok();
+		let refused = {
+			let mut left = self.refusals.lock().expect("refusals mutex poisoned");
+			let refused = *left > 0;
+			*left = left.saturating_sub(1);
+			refused
+		};
 		if !refused {
 			self.assigned.lock().expect("assigned mutex poisoned").push(session.intent);
 		}
@@ -11476,8 +11613,8 @@ impl crate::host_logic::worker::WorkerController for EndingWorkerController {
 // taken and let go in the order the reconciler derives them.
 #[test]
 fn a_session_ended_while_workers_start_lets_its_worker_go() {
-	let storage = stub_platform();
-	let before = funding_services_over(storage.clone());
+	let db = crate::store::open_memory_core_db();
+	let before = funding_services_on(&db, test_spawner());
 	assert!(before.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
@@ -11506,7 +11643,7 @@ fn a_session_ended_while_workers_start_lets_its_worker_go() {
 			.expect("selected")
 	);
 
-	let after = funding_services_over(storage.clone());
+	let after = funding_services_on(&db, test_spawner());
 	let controller = Arc::new(EndingWorkerController {
 		services: Arc::downgrade(&after),
 		ends: Mutex::new(Some(second.clone())),
@@ -11595,5 +11732,154 @@ fn the_host_hears_when_a_session_starts_taking_longer() {
 				.map(|session| session.status(crate::current_unix_millis()))
 		),
 		(true, Some(crate::host_logic::funding::FundingStatus::TakingLonger))
+	);
+}
+
+/// Products see only the reason, so a failed chain call must reach the host log
+/// with its kind, and only once.
+#[test]
+fn a_failed_chain_call_warns_the_host_once() {
+	// Repeats of one failing call are counted rather than reported, so this
+	// starts from a connection that has not failed yet.
+	super::forget_chain_failures();
+	let lines = crate::logging::testing::host_sink_lines(|| {
+		let _: CallError<()> = super::runtime_failure_to_call_error(
+			crate::chain_runtime::RuntimeFailure::unavailable_with_reason(
+				"get_head_header",
+				"json-rpc connection closed",
+			),
+		);
+	});
+	assert_eq!(
+		lines,
+		vec![
+			"truapi.tracing.warn truapi::runtime: chain call failed \
+			 {kind=Unavailable, reason=get_head_header: json-rpc connection closed, seen=1}"
+		]
+	);
+}
+
+/// A connection that drops fails every call made over it afterwards. The first
+/// two speak, then every doubling, so a long outage is a handful of lines
+/// rather than one per call, and each says how many it stands for.
+#[test]
+fn a_sustained_chain_failure_reports_on_a_widening_schedule() {
+	let reported: Vec<u64> = (1..=64).filter(|seen| crate::runtime::reports_at(*seen)).collect();
+
+	assert_eq!(reported, vec![1, 2, 4, 8, 16, 32, 64]);
+}
+
+/// The count rides on every line it reports, so how bad an outage is reads off
+/// the lines as they arrive rather than waiting for a tally at the end, which
+/// an outage that stops inside the quiet period would never send.
+#[test]
+fn a_chain_failure_carries_how_many_it_stands_for() {
+	use crate::chain_runtime::RuntimeFailureKind;
+	use core::time::Duration;
+	use std::{collections::BTreeMap, time::Instant};
+
+	let quiet = Duration::from_secs(30);
+	let mut reported = BTreeMap::new();
+	let key = (RuntimeFailureKind::Unavailable, "chain_probe", "closed".to_string(), None);
+	let now = Instant::now();
+
+	let counts: Vec<u64> = (0..5)
+		.map(|_| crate::runtime::count_failure(&mut reported, key.clone(), now, quiet))
+		.collect();
+
+	assert_eq!(counts, vec![1, 2, 3, 4, 5]);
+}
+
+/// A gap longer than the quiet period is a new episode, so a connection that
+/// drops twice in a day reads as two outages rather than one that never ended.
+#[test]
+fn a_chain_failure_after_a_quiet_spell_starts_counting_again() {
+	use crate::chain_runtime::RuntimeFailureKind;
+	use core::time::Duration;
+	use std::{collections::BTreeMap, time::Instant};
+
+	let quiet = Duration::from_secs(30);
+	let mut reported = BTreeMap::new();
+	let key = (RuntimeFailureKind::Unavailable, "chain_probe", "closed".to_string(), None);
+	let started = Instant::now();
+
+	assert_eq!(crate::runtime::count_failure(&mut reported, key.clone(), started, quiet), 1);
+	assert_eq!(crate::runtime::count_failure(&mut reported, key.clone(), started, quiet), 2);
+	assert_eq!(
+		crate::runtime::count_failure(&mut reported, key, started + quiet, quiet),
+		1,
+		"a failure after the quiet period carried on the last outage's count",
+	);
+}
+
+/// Two conditions are counted apart, so a connection that drops does not stand
+/// in for a payload that will not decode, and neither silences the other.
+#[test]
+fn chain_failures_are_counted_per_condition() {
+	use crate::chain_runtime::RuntimeFailureKind;
+	use core::time::Duration;
+	use std::{collections::BTreeMap, time::Instant};
+
+	let quiet = Duration::from_secs(30);
+	let mut reported = BTreeMap::new();
+	let now = Instant::now();
+	let closed = (RuntimeFailureKind::Unavailable, "chain_probe", "closed".to_string(), None);
+	let malformed = (RuntimeFailureKind::HostFailure, "chain_probe", "malformed".to_string(), None);
+
+	assert_eq!(crate::runtime::count_failure(&mut reported, closed.clone(), now, quiet), 1);
+	assert_eq!(crate::runtime::count_failure(&mut reported, closed, now, quiet), 2);
+	assert_eq!(
+		crate::runtime::count_failure(&mut reported, malformed, now, quiet),
+		1,
+		"a different condition was answered by another's count",
+	);
+}
+
+/// A failing chain call names the chain it was made against. The report that
+/// sent us looking at this code turned on which chain a transaction was being
+/// built against, and a line that does not say is most of a diagnosis short.
+#[test]
+fn a_failed_chain_call_names_its_chain() {
+	super::forget_chain_failures();
+	let lines = crate::logging::testing::host_sink_lines(|| {
+		let _: CallError<()> = super::runtime_failure_to_call_error(
+			crate::chain_runtime::RuntimeFailure::unavailable_with_reason(
+				"get_head_header",
+				"json-rpc connection closed",
+			)
+			.on_chain(&[0xcc; 32]),
+		);
+	});
+
+	let line = lines.first().expect("a failing chain call said nothing");
+	assert!(
+		line.contains(&format!("chain={}", hex::encode([0xcc; 32]))),
+		"the line did not name its chain: {line}",
+	);
+}
+
+/// Two chains failing the same way are counted apart, so one going quiet does
+/// not stand in for another and neither hides behind the other's count.
+#[test]
+fn two_chains_failing_alike_are_counted_apart() {
+	use crate::chain_runtime::RuntimeFailureKind;
+	use core::time::Duration;
+	use std::{collections::BTreeMap, time::Instant};
+
+	let quiet = Duration::from_secs(30);
+	let mut reported = BTreeMap::new();
+	let now = Instant::now();
+	let reason = "json-rpc connection closed".to_string();
+	let people =
+		(RuntimeFailureKind::Unavailable, "remote_chain_connect", reason.clone(), Some(vec![0xaa]));
+	let asset_hub =
+		(RuntimeFailureKind::Unavailable, "remote_chain_connect", reason, Some(vec![0xcc]));
+
+	assert_eq!(crate::runtime::count_failure(&mut reported, people.clone(), now, quiet), 1);
+	assert_eq!(crate::runtime::count_failure(&mut reported, people, now, quiet), 2);
+	assert_eq!(
+		crate::runtime::count_failure(&mut reported, asset_hub, now, quiet),
+		1,
+		"one chain's failures were answered by another chain's count",
 	);
 }

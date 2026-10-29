@@ -872,8 +872,10 @@ pub async fn resolve_labels<T: DotnsTransport + ?Sized>(
 			break;
 		}
 		if page + 1 == LABEL_PAGE_MAX {
+			// A warning leaves the device, and a LabelStore address resolves
+			// back to the account that owns it, so it is named by a handle.
 			warn!(
-				store = %hex::encode(store),
+				store = %crate::logging::account_handle(&store[..]),
 				read = LABEL_PAGE_MAX * LABEL_PAGE_LIMIT,
 				"LabelStore holds more labels than the pages read; a name past this point is not resolved"
 			);
@@ -973,8 +975,10 @@ async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
 			break;
 		}
 		if page + 1 == CLAIM_PAGE_MAX {
+			// A warning leaves the device, so the user is named by a handle
+			// rather than in full.
 			warn!(
-				user = %hex::encode(user),
+				user = %crate::logging::account_handle(&user[..]),
 				read = CLAIM_PAGE_MAX * CLAIM_PAGE_LIMIT,
 				"pending-claim page cap reached; later entries, if any, are not resolved"
 			);

@@ -1277,10 +1277,6 @@ pub enum CoreStorageKey {
 		/// Product whose manifest was cached, normalized.
 		product_id: String,
 	},
-	/// Funding sessions: every live one plus a bounded tail of settled ones,
-	/// as one versioned SCALE blob.
-	#[codec(index = 13)]
-	FundingSessions,
 	/// A product's Worker executable manifest as last read from dotNS, and when,
 	/// cached for the same lifetime as [`Self::ProductManifest`].
 	#[codec(index = 14)]
@@ -1296,16 +1292,6 @@ pub enum CoreStorageKey {
 	/// each record trusted for twelve hours.
 	#[codec(index = 16)]
 	FundingSupport,
-	/// Funding sessions or session pack blobs the core could not read, as a SCALE list of the
-	/// raw blobs, newest last, so a stored session is never overwritten
-	/// unread and a later bad blob does not replace an earlier one. Kept for
-	/// diagnosis only: the core never reads them back.
-	#[codec(index = 17)]
-	FundingSessionsUnreadable,
-	/// Recorded funding sessions compacted out of the funding sessions blob,
-	/// as one versioned SCALE blob. Never trimmed.
-	#[codec(index = 18)]
-	FundingSessionPack,
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -1361,12 +1347,9 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::DeviceEncryptionKey => ("DeviceEncryptionKey", None),
 		CoreStorageKey::SsoResponderRequestLedger { .. } => ("SsoResponderRequestLedger", None),
 		CoreStorageKey::ProductManifest { product_id } => ("ProductManifest", Some(product_id)),
-		CoreStorageKey::FundingSessions => ("FundingSessions", None),
 		CoreStorageKey::WorkerManifest { product_id } => ("WorkerManifest", Some(product_id)),
 		CoreStorageKey::PublishedProducts => ("PublishedProducts", None),
 		CoreStorageKey::FundingSupport => ("FundingSupport", None),
-		CoreStorageKey::FundingSessionsUnreadable => ("FundingSessionsUnreadable", None),
-		CoreStorageKey::FundingSessionPack => ("FundingSessionPack", None),
 	};
 	Ok(CoreStorageKeyDescription { kind, product_id })
 }
@@ -2172,7 +2155,6 @@ mod tests {
 				"SsoResponderRequestLedger",
 				None,
 			),
-			(CoreStorageKey::FundingSessions, "FundingSessions", None),
 			(
 				CoreStorageKey::WorkerManifest { product_id: "ramp".to_string() },
 				"WorkerManifest",
@@ -2180,8 +2162,6 @@ mod tests {
 			),
 			(CoreStorageKey::PublishedProducts, "PublishedProducts", None),
 			(CoreStorageKey::FundingSupport, "FundingSupport", None),
-			(CoreStorageKey::FundingSessionsUnreadable, "FundingSessionsUnreadable", None),
-			(CoreStorageKey::FundingSessionPack, "FundingSessionPack", None),
 		] {
 			let description = describe_core_storage_key(&key.encode()).expect("valid key");
 			assert_eq!(description.kind, kind);
@@ -3329,9 +3309,8 @@ pub enum HostScan {
 	/// The device has no camera, or the user refused the host application one.
 	/// The host has already told the user how to turn it on.
 	CameraUnavailable,
-	/// The requesting App or Widget is not the screen the user sees, so the
-	/// host opened nothing. A Worker's request was already checked by the core
-	/// and is never answered this way.
+	/// The requesting App or Widget is not the screen the user sees, or the
+	/// host application is not in front, so the host opened nothing.
 	NotVisible,
 }
 
@@ -3341,8 +3320,9 @@ pub enum HostScan {
 /// - Title the viewfinder with the product id. Show `request.hint` under it as the product's words.
 /// - Pass every code the camera reads to a `ScanFilter` built from `request`, and never follow a
 ///   scanned link.
-/// - Answer [`HostScan::NotVisible`] for an App or Widget that is not on screen. A Worker reaching
-///   the host already passed the core's tap check.
+/// - Answer [`HostScan::NotVisible`] for an App or Widget that is not on screen, or for any product
+///   while the host application is not in front. A Worker reaching the host already passed the
+///   core's tap check.
 /// - Close the viewfinder when the core drops the future, and close any still open before opening
 ///   another. A JS host is not told about a drop.
 #[async_trait]
