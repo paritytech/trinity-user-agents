@@ -67,6 +67,7 @@ fun ChatFeedUpdate.toModel(productId: ProductId): ProductFeedUpdateModel = when 
     is ChatFeedUpdate.ReactionRemoved -> ProductFeedUpdateModel.ReactionRemoved(messageId, participantId, emoji)
     is ChatFeedUpdate.StatusChanged -> ProductFeedUpdateModel.StatusChanged(messageId, status.toModel())
     is ChatFeedUpdate.Replaced -> ProductFeedUpdateModel.Replaced(v1.toModel(productId))
+    is ChatFeedUpdate.Deleted -> ProductFeedUpdateModel.Deleted(messageId)
 }
 
 fun ChatMessageStatus.toModel(): ProductMessageStatusModel = when (this) {
