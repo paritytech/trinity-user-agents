@@ -194,8 +194,8 @@ pub trait Chat: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// Replace the name and description of a room, and its icon when the
-	/// metadata names one.
+	/// Replace the name, description and empty-room text of a room, and its
+	/// icon when the metadata names one.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
@@ -210,6 +210,7 @@ pub trait Chat: Send + Sync {
 	///     name: "Renamed Room",
 	///     description: "Now with a description",
 	///     icon: "https://example.com/renamed.png",
+	///     placeholder: "No messages yet",
 	///   },
 	/// });
 	/// assert(result.isOk(), "setRoomMetadata failed:", result);
@@ -224,7 +225,8 @@ pub trait Chat: Send + Sync {
 	}
 
 	/// Replace how a room shows in the chat list. The preview gives the sort time,
-	/// the badge, and the newest message and reaction for the preview line.
+	/// the badge, whether the room is pinned, and the newest message and reaction
+	/// for the preview line, or an activity line that replaces it.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
@@ -248,6 +250,8 @@ pub trait Chat: Send + Sync {
 	///       request: false,
 	///     },
 	///     unseenReactions: 0,
+	///     pinned: true,
+	///     activity: { text: "Ben is typing", ongoing: true },
 	///   },
 	/// });
 	/// assert(result.isOk(), "setRoomPreview failed:", result);
