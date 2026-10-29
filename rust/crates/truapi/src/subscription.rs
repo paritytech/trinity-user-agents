@@ -27,9 +27,9 @@ use truapi::CallError;
 
 use crate::{
 	frame::{
-		IdFactory, MESSAGE_TYPE_INTERRUPT, MESSAGE_TYPE_RECEIVE, MESSAGE_TYPE_START,
-		MESSAGE_TYPE_STOP, PROTOCOL_ERROR_KEY, Payload, ProtocolErrorV1, ProtocolMessage,
-		VersionedProtocolError, encode_clean_interrupt,
+		IdFactory, MESSAGE_TYPE_INTERRUPT, MESSAGE_TYPE_RECEIVE, MESSAGE_TYPE_RESPONSE,
+		MESSAGE_TYPE_START, MESSAGE_TYPE_STOP, PROTOCOL_ERROR_KEY, Payload, ProtocolErrorV1,
+		ProtocolMessage, VersionedProtocolError, encode_clean_interrupt,
 	},
 	generated::wire_table::MethodIds,
 	protocol_error::decode_protocol_error_payload,
@@ -401,6 +401,23 @@ impl HostInitiatedSubscriptionManager {
 		}
 	}
 
+	/// Await the first subscription result and release the stream.
+	/// Polling starts the call; dropping it stops the subscription.
+	pub async fn request<Item, Interrupt>(
+		&self,
+		ids: MethodIds,
+		payload: Vec<u8>,
+		transport: Arc<dyn Transport>,
+	) -> Result<Item, CallError<Interrupt>>
+	where
+		Item: Decode + Send + Unpin + 'static,
+		Interrupt: Decode + Send + Unpin + 'static,
+	{
+		self.start(ids, payload, transport).next().await.unwrap_or_else(|| {
+			Err(CallError::HostFailure { reason: "product closed without a response".into() })
+		})
+	}
+
 	/// Start one typed subscription and send its `Start` frame to the
 	/// product. `payload` is already the SCALE-encoded request wrapper's own
 	/// bytes, constructed by the generated caller.
@@ -464,6 +481,9 @@ impl HostInitiatedSubscriptionManager {
 		// guarding on the trait first would make the arm below dead code and
 		// silently drop the frame that reports our start as unsupported.
 		if key == PROTOCOL_ERROR_KEY {
+			if message.payload.message_type != MESSAGE_TYPE_RESPONSE {
+				return None;
+			}
 			let frame = match decode_protocol_error_payload(&message.payload.value) {
 				Ok(Some(VersionedProtocolError::V1(
 					ProtocolErrorV1::UnsupportedMessage { trait_id, method_id } |
@@ -487,9 +507,9 @@ impl HostInitiatedSubscriptionManager {
 				// malformed protocol-error payload at the frame boundary.
 				Err(_) => return None,
 			};
-			let sender = slot.sender.clone();
+			let sender = state.active.remove(&message.request_id)?.sender;
+			drop(state);
 			let _ = sender.unbounded_send(frame);
-			state.active.remove(&message.request_id);
 			return None;
 		}
 		if message.payload.trait_id != slot.ids.trait_id ||
@@ -506,9 +526,9 @@ impl HostInitiatedSubscriptionManager {
 			// shape is method-specific and this manager is generic over the
 			// item type alone. Deliver the terminal before dropping the
 			// sender, so the stream never reports a silent end.
-			let sender = slot.sender.clone();
+			let sender = state.active.remove(&message.request_id)?.sender;
+			drop(state);
 			let _ = sender.unbounded_send(HostInitiatedFrame::Interrupt(message.payload.value));
-			state.active.remove(&message.request_id);
 		}
 		None
 	}
@@ -518,9 +538,12 @@ impl HostInitiatedSubscriptionManager {
 	/// read to the host as a body the product finished, so it would never be
 	/// opened again on the next connection.
 	pub fn close(&self) {
-		let mut state = self.state.lock().expect("host subscription state mutex poisoned");
-		state.closed = true;
-		for (_, slot) in state.active.drain() {
+		let active = {
+			let mut state = self.state.lock().expect("host subscription state mutex poisoned");
+			state.closed = true;
+			core::mem::take(&mut state.active)
+		};
+		for (_, slot) in active {
 			let _ = slot.sender.unbounded_send(HostInitiatedFrame::ConnectionClosed);
 		}
 	}
@@ -547,9 +570,8 @@ impl<Item, Interrupt> HostInitiatedSubscription<Item, Interrupt> {
 			.lock()
 			.expect("host subscription state mutex poisoned")
 			.active
-			.remove(&self.request_id)
-			.is_some();
-		if removed {
+			.remove(&self.request_id);
+		if removed.is_some() {
 			self.transport.send(ProtocolMessage {
 				request_id: self.request_id.clone(),
 				payload: Payload {
@@ -651,7 +673,10 @@ impl<Item, Interrupt> Drop for HostInitiatedSubscription<Item, Interrupt> {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
 	use super::*;
-	use crate::frame::{MESSAGE_TYPE_RESPONSE, PROTOCOL_ERROR_METHOD_ID, PROTOCOL_ERROR_TRAIT_ID};
+	use crate::frame::{
+		MESSAGE_TYPE_CANCEL, MESSAGE_TYPE_RESPONSE, PROTOCOL_ERROR_METHOD_ID,
+		PROTOCOL_ERROR_TRAIT_ID,
+	};
 	use futures::{FutureExt, stream};
 	use parity_scale_codec::Encode;
 	use std::{
@@ -726,6 +751,205 @@ mod tests {
 				message_type,
 				value: inner,
 			},
+		}
+	}
+
+	#[test]
+	fn host_request_returns_the_first_result_and_releases_its_subscription() {
+		for expected in [
+			Ok(7_u32),
+			Err(CallError::Domain("declined".to_string())),
+			Err(CallError::Denied),
+			Err(CallError::HostFailure { reason: "unavailable".into() }),
+		] {
+			let manager = HostInitiatedSubscriptionManager::new();
+			let transport = Arc::new(RecordingTransport::new());
+			let mut request =
+				Box::pin(manager.request::<u32, String>(host_ids(), vec![9], transport.clone()));
+			assert_eq!(request.as_mut().now_or_never(), None);
+			let mut frames = vec![host_frame("h:1", MESSAGE_TYPE_START, vec![9])];
+			match &expected {
+				Ok(value) => {
+					manager.handle_message(host_frame("h:1", MESSAGE_TYPE_RECEIVE, value.encode()));
+					manager.handle_message(host_frame(
+						"h:1",
+						MESSAGE_TYPE_RECEIVE,
+						99_u32.encode(),
+					));
+					frames.push(host_frame("h:1", MESSAGE_TYPE_STOP, vec![]));
+				},
+				Err(error) => {
+					manager.handle_message(host_frame(
+						"h:1",
+						MESSAGE_TYPE_INTERRUPT,
+						Err::<(), _>(error).encode(),
+					));
+				},
+			}
+			let result = request.as_mut().now_or_never();
+			drop(request);
+			assert_eq!(
+				(result, manager.state.lock().unwrap().active.len(), transport.sent()),
+				(Some(expected), 0, frames),
+			);
+		}
+	}
+
+	#[test]
+	fn host_request_requires_an_answer_before_the_subscription_ends() {
+		for (close_connection, reason) in [
+			(false, "product closed without a response"),
+			(true, "the product connection closed while the stream was open"),
+		] {
+			let manager = HostInitiatedSubscriptionManager::new();
+			let transport = Arc::new(RecordingTransport::new());
+			let mut request =
+				Box::pin(manager.request::<u32, String>(host_ids(), vec![9], transport.clone()));
+			assert_eq!(request.as_mut().now_or_never(), None);
+			if close_connection {
+				manager.close();
+			} else {
+				manager.handle_message(host_frame(
+					"h:1",
+					MESSAGE_TYPE_INTERRUPT,
+					encode_clean_interrupt(),
+				));
+			}
+			let result = request.as_mut().now_or_never();
+			drop(request);
+			assert_eq!(
+				(result, manager.state.lock().unwrap().active.len(), transport.sent()),
+				(
+					Some(Err(CallError::HostFailure { reason: reason.into() })),
+					0,
+					vec![host_frame("h:1", MESSAGE_TYPE_START, vec![9])],
+				),
+			);
+		}
+	}
+
+	#[test]
+	fn host_request_drop_stops_only_the_polled_call() {
+		let manager = HostInitiatedSubscriptionManager::new();
+		let transport = Arc::new(RecordingTransport::new());
+		drop(manager.request::<u32, String>(host_ids(), vec![0], transport.clone()));
+		let mut first =
+			Box::pin(manager.request::<u32, String>(host_ids(), vec![1], transport.clone()));
+		let mut second =
+			Box::pin(manager.request::<u32, String>(host_ids(), vec![2], transport.clone()));
+		assert_eq!(first.as_mut().now_or_never(), None);
+		assert_eq!(second.as_mut().now_or_never(), None);
+		drop(first);
+		manager.handle_message(host_frame("h:2", MESSAGE_TYPE_RECEIVE, 7_u32.encode()));
+		assert_eq!(
+			(second.as_mut().now_or_never(), transport.sent()),
+			(
+				Some(Ok(7)),
+				vec![
+					host_frame("h:1", MESSAGE_TYPE_START, vec![1]),
+					host_frame("h:2", MESSAGE_TYPE_START, vec![2]),
+					host_frame("h:1", MESSAGE_TYPE_STOP, vec![]),
+					host_frame("h:2", MESSAGE_TYPE_STOP, vec![]),
+				],
+			),
+		);
+	}
+
+	#[test]
+	fn host_request_ignores_protocol_errors_on_other_legs() {
+		let manager = HostInitiatedSubscriptionManager::new();
+		let transport = Arc::new(RecordingTransport::new());
+		let mut request = Box::pin(manager.request::<u32, String>(host_ids(), vec![], transport));
+		assert_eq!(request.as_mut().now_or_never(), None);
+		for message_type in
+			[MESSAGE_TYPE_START, MESSAGE_TYPE_INTERRUPT, MESSAGE_TYPE_STOP, MESSAGE_TYPE_CANCEL]
+		{
+			manager.handle_message(ProtocolMessage {
+				request_id: "h:1".into(),
+				payload: Payload {
+					trait_id: PROTOCOL_ERROR_TRAIT_ID,
+					method_id: PROTOCOL_ERROR_METHOD_ID,
+					message_type,
+					value: VersionedProtocolError::V1(ProtocolErrorV1::UnsupportedMessage {
+						trait_id: host_ids().trait_id,
+						method_id: host_ids().method_id,
+					})
+					.encode(),
+				},
+			});
+			assert_eq!(request.as_mut().now_or_never(), None);
+		}
+		manager.handle_message(host_frame("h:1", MESSAGE_TYPE_RECEIVE, 7_u32.encode()));
+		assert_eq!(request.as_mut().now_or_never(), Some(Ok(7)));
+	}
+
+	#[test]
+	fn host_subscription_delivery_and_close_wake_outside_the_registry_lock() {
+		use futures::task::ArcWake;
+		use std::sync::atomic::AtomicBool;
+
+		struct CheckUnlocked {
+			manager: Arc<HostInitiatedSubscriptionManager>,
+			woken: AtomicBool,
+			unlocked: AtomicBool,
+		}
+		impl ArcWake for CheckUnlocked {
+			fn wake_by_ref(waker: &Arc<Self>) {
+				waker
+					.unlocked
+					.fetch_and(waker.manager.state.try_lock().is_ok(), Ordering::SeqCst);
+				waker.woken.store(true, Ordering::SeqCst);
+			}
+		}
+		enum Ending {
+			Frame(ProtocolMessage),
+			Close,
+			Drop,
+		}
+		for terminal in [
+			Ending::Frame(host_frame("h:1", MESSAGE_TYPE_RECEIVE, 7_u32.encode())),
+			Ending::Frame(host_frame("h:1", MESSAGE_TYPE_INTERRUPT, encode_clean_interrupt())),
+			Ending::Frame(ProtocolMessage {
+				request_id: "h:1".into(),
+				payload: Payload {
+					trait_id: PROTOCOL_ERROR_TRAIT_ID,
+					method_id: PROTOCOL_ERROR_METHOD_ID,
+					message_type: MESSAGE_TYPE_RESPONSE,
+					value: VersionedProtocolError::V1(ProtocolErrorV1::UnsupportedMessage {
+						trait_id: host_ids().trait_id,
+						method_id: host_ids().method_id,
+					})
+					.encode(),
+				},
+			}),
+			Ending::Close,
+			Ending::Drop,
+		] {
+			let manager = Arc::new(HostInitiatedSubscriptionManager::new());
+			let mut subscription = manager.start::<u32, String>(
+				host_ids(),
+				vec![],
+				Arc::new(RecordingTransport::new()),
+			);
+			let wake = Arc::new(CheckUnlocked {
+				manager: manager.clone(),
+				woken: AtomicBool::new(false),
+				unlocked: AtomicBool::new(true),
+			});
+			let waker = futures::task::waker(wake.clone());
+			let mut context = Context::from_waker(&waker);
+			assert!(Pin::new(&mut subscription).poll_next(&mut context).is_pending());
+			match terminal {
+				Ending::Frame(message) => {
+					manager.handle_message(message);
+				},
+				Ending::Close => manager.close(),
+				Ending::Drop => drop(subscription),
+			}
+			assert_eq!(
+				(wake.woken.load(Ordering::SeqCst), wake.unlocked.load(Ordering::SeqCst)),
+				(true, true),
+			);
 		}
 	}
 
