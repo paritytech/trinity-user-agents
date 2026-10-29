@@ -1,9 +1,14 @@
 //! Connection-scoped Chat streams shared by product and native entrypoints.
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 use std::{
 	collections::HashMap,
 	sync::{Arc, Mutex},
 };
+
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 use crate::host_core::ProductRuntimeError;
 
@@ -50,8 +55,8 @@ pub struct ChatRateLimiter {
 struct ChatRateBucket {
 	/// Tokens left, in thousandths of a token.
 	milli_tokens: u64,
-	/// Milliseconds since the Unix epoch of the last refill.
-	refilled_at_ms: u64,
+	/// The time of the last refill, on a clock that never moves back.
+	refilled_at: Instant,
 }
 
 impl ChatRateLimiter {
@@ -60,19 +65,23 @@ impl ChatRateLimiter {
 		Self { per_second, buckets: Default::default() }
 	}
 
-	/// Take one token for `room_id` of `product_id` at `now_ms`, in
-	/// milliseconds since the Unix epoch. Returns `false` when the room used
-	/// all of its budget.
-	pub fn try_acquire(&self, product_id: &str, room_id: &str, now_ms: u64) -> bool {
+	/// Take one token for `room_id` of `product_id` at `now`. Returns `false`
+	/// when the room used all of its budget.
+	pub fn try_acquire(&self, product_id: &str, room_id: &str, now: Instant) -> bool {
 		let capacity = u64::from(self.per_second) * 1000;
 		let mut buckets = self.buckets.lock().expect("chat rate limiter mutex poisoned");
 		let bucket = buckets
 			.entry((product_id.to_string(), room_id.to_string()))
-			.or_insert(ChatRateBucket { milli_tokens: capacity, refilled_at_ms: now_ms });
-		let elapsed_ms = now_ms.saturating_sub(bucket.refilled_at_ms);
-		bucket.milli_tokens = capacity
-			.min(bucket.milli_tokens.saturating_add(elapsed_ms * u64::from(self.per_second)));
-		bucket.refilled_at_ms = bucket.refilled_at_ms.max(now_ms);
+			.or_insert(ChatRateBucket { milli_tokens: capacity, refilled_at: now });
+		let elapsed_ms =
+			u64::try_from(now.saturating_duration_since(bucket.refilled_at).as_millis())
+				.unwrap_or(u64::MAX);
+		bucket.milli_tokens = capacity.min(
+			bucket
+				.milli_tokens
+				.saturating_add(elapsed_ms.saturating_mul(u64::from(self.per_second))),
+		);
+		bucket.refilled_at = bucket.refilled_at.max(now);
 		if bucket.milli_tokens < 1000 {
 			return false;
 		}
@@ -96,7 +105,8 @@ mod tests {
 	#[test]
 	fn the_rate_limiter_holds_each_room_to_its_budget() {
 		let limiter = ChatRateLimiter::new(crate::platform::CHAT_FEED_UPDATES_PER_SECOND);
-		let start = 1_000_000;
+		let start = Instant::now();
+		let after = |milliseconds| start + core::time::Duration::from_millis(milliseconds);
 		for _ in 0..crate::platform::CHAT_FEED_UPDATES_PER_SECOND {
 			assert!(limiter.try_acquire("chat.dot", "room", start));
 		}
@@ -105,9 +115,9 @@ mod tests {
 		assert!(limiter.try_acquire("chat.dot", "other", start));
 		assert!(limiter.try_acquire("other.dot", "room", start));
 		// At 20 calls per second, the room gets one token again every 50 ms.
-		assert!(!limiter.try_acquire("chat.dot", "room", start + 49));
-		assert!(limiter.try_acquire("chat.dot", "room", start + 50));
-		assert!(!limiter.try_acquire("chat.dot", "room", start + 50));
+		assert!(!limiter.try_acquire("chat.dot", "room", after(49)));
+		assert!(limiter.try_acquire("chat.dot", "room", after(50)));
+		assert!(!limiter.try_acquire("chat.dot", "room", after(50)));
 
 		let previews = ChatRateLimiter::new(crate::platform::CHAT_PREVIEW_UPDATES_PER_SECOND);
 		for _ in 0..crate::platform::CHAT_PREVIEW_UPDATES_PER_SECOND {
