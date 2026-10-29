@@ -19,6 +19,8 @@ extension Chat.ProductFeedUpdate {
             self = .statusChanged(messageId: messageId, status: Chat.ProductMessageStatus(status))
         case let .replaced(message):
             self = .replaced(Chat.ProductFeedMessage(message))
+        case let .deleted(messageId):
+            self = .deleted(messageId: messageId)
         }
     }
 }

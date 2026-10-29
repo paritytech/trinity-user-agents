@@ -88,6 +88,8 @@ sealed interface ProductFeedUpdateModel {
     data class ReactionRemoved(val messageId: String, val participantId: String, val emoji: String) : ProductFeedUpdateModel
 
     data class StatusChanged(val messageId: String, val status: ProductMessageStatusModel) : ProductFeedUpdateModel
+
+    data class Deleted(val messageId: String) : ProductFeedUpdateModel
 }
 
 /** Why the host refuses a feed update for a room that it stores (`NativeChatFeedRejection`). */
@@ -99,6 +101,6 @@ sealed class ProductFeedRejection(message: String) : Exception(message) {
     /** A `New` whose id the room has already. */
     class DuplicateMessage : ProductFeedRejection("the room has a message with this id already")
 
-    /** The product tried to write as the user, or to edit a message that it did not write. */
+    /** The product tried to write as the user, or to change a message that it did not write. */
     class NotOwner : ProductFeedRejection("the product does not own this message")
 }
