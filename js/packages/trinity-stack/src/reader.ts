@@ -167,12 +167,19 @@ export function createStackReader(
         );
         if (stored) await options.store?.set(storeKey(id), stored);
         if (accepted.status === "updated")
-          for (const listener of listeners)
-            listener({
-              pointer,
-              descriptor: accepted.descriptor,
-              newGeneration: accepted.newGeneration,
-            });
+          for (const listener of listeners) {
+            try {
+              listener({
+                pointer,
+                descriptor: accepted.descriptor,
+                newGeneration: accepted.newGeneration,
+              });
+            } catch (error) {
+              // Reported as a browser reports an event listener's error, never failing the fetch.
+              if (typeof reportError === "function") reportError(error);
+              else console.error(error);
+            }
+          }
         const { descriptor, signed, stale, expired } = accepted;
         return { descriptor, signed, stale, expired };
       })(),

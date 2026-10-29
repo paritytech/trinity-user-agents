@@ -345,6 +345,33 @@ describe("createStackReader", () => {
       );
   });
 
+  test("a listener that throws neither fails the fetch nor stops the others", async () => {
+    const newer = await at(200);
+    const reader = createStackReader({
+      bundled: [await bundle(await at(100))],
+      refresh: "once",
+      fetch: server(() => new Response(newer)).fetch,
+    });
+    const seen: number[] = [];
+    reader.onChange(() => {
+      throw new Error("a listener's own bug");
+    });
+    reader.onChange(({ descriptor }) => seen.push(descriptor.sequence));
+    const errors: unknown[] = [];
+    const original = console.error;
+    console.error = (error: unknown) => errors.push(error);
+    const reported = globalThis.reportError;
+    globalThis.reportError = (error: unknown) => errors.push(error);
+    try {
+      expect((await reader.get(pointer)).descriptor.sequence).toBe(200);
+    } finally {
+      console.error = original;
+      globalThis.reportError = reported;
+    }
+    expect(seen).toEqual([200]);
+    expect(errors).toEqual([new Error("a listener's own bug")]);
+  });
+
   test("dotNS: a stack with no Asset Hub has none, and no lookup is made", async () => {
     const reader = createStackReader({
       bundled: [
