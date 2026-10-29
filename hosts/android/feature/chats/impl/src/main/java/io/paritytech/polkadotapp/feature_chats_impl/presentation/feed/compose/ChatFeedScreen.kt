@@ -264,7 +264,7 @@ private fun ChatFeedScreenInternal(
                         )
                     }
 
-                    if (it.messages.isEmpty() && emptyRoomText != null) {
+                    if (it.isEmptyRoom && emptyRoomText != null) {
                         EmptyRoomText(
                             modifier = Modifier
                                 .align(Alignment.Center)

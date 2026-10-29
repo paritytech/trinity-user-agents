@@ -20,6 +20,13 @@ data class ChatMessagesState(
     val readiness: ChatRoomReadinessUiState = ChatRoomReadinessUiState.READY,
 )
 
+/**
+ * The room has no messages. A product that does not answer can have messages that the feed does not show, so only a
+ * ready room is empty.
+ */
+val ChatMessagesState.isEmptyRoom: Boolean
+    get() = messages.isEmpty() && readiness == ChatRoomReadinessUiState.READY
+
 /** Whether the product of a product-source room answers. A room that the host keeps is always [READY]. */
 enum class ChatRoomReadinessUiState {
     /** The first page is on its way. */
