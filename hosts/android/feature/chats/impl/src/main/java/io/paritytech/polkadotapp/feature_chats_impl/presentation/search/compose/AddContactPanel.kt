@@ -1,41 +1,34 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.search.compose
 
-import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
-import androidx.compose.runtime.State
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.TransformOrigin
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.layout
-import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onInterceptKeyBeforeSoftKeyboard
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.Constraints
-import androidx.compose.ui.util.lerp
+import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.domain.model.intoAccountId
@@ -44,17 +37,22 @@ import io.paritytech.polkadotapp.common.presentation.screens.ObserveViewModelEve
 import io.paritytech.polkadotapp.common.utils.randomBytes
 import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
 import io.paritytech.polkadotapp.design.components.avatar.Mock
-import io.paritytech.polkadotapp.design.components.bottomsheet.NovaBottomSheetDragHandler
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonShape
-import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
+import io.paritytech.polkadotapp.design.components.docklet.DockletGeometry
+import io.paritytech.polkadotapp.design.components.docklet.DockletGlassTheme
+import io.paritytech.polkadotapp.design.components.docklet.DockletSearchButton
+import io.paritytech.polkadotapp.design.components.docklet.DockletSearchField
+import io.paritytech.polkadotapp.design.components.docklet.LocalDockletPalette
+import io.paritytech.polkadotapp.design.components.docklet.dockletContentsTransition
+import io.paritytech.polkadotapp.design.components.docklet.dockletFieldOutline
+import io.paritytech.polkadotapp.design.components.docklet.rememberDockletFieldButtonStyle
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
-import io.paritytech.polkadotapp.design.components.icon.vectors.Scanner
+import io.paritytech.polkadotapp.design.components.icon.vectors.ScanFrame
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
-import io.paritytech.polkadotapp.design.components.topbar.PolkadotSearchField
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.chatSearch.models.NoRowStatus
@@ -63,6 +61,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.search.AddConta
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.search.AddContactUiState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.search.AddContactViewModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.search.compose.components.AddContactSearchContent
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.search.compose.components.AddContactSearchHeader
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.search.models.UserSearchResultUiModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.util.rememberCompositionViewModelStoreOwner
 import kotlinx.collections.immutable.ImmutableList
@@ -71,45 +70,45 @@ import kotlinx.collections.immutable.toImmutableList
 import kotlin.random.Random
 import io.paritytech.polkadotapp.common.R as RCommon
 
-@OptIn(ExperimentalLayoutApi::class)
+private val ScanTileSize = 110.dp
+private val ScanTileTop = 19.dp
+private val ScanTileRadius = 24.dp
+private val SearchButtonGap = 9.dp
+
+enum class AddContactStep { Scan, Search }
+
 @Composable
 fun AddContactPanel(
-    modifier: Modifier = Modifier,
-    scannerShape: Shape,
-    scanner: @Composable (modifier: Modifier, recognitionArmed: Boolean) -> Unit,
+    modifier: Modifier,
+    step: AddContactStep,
+    keyboardRequested: Boolean,
+    onSearchFieldClick: () -> Unit,
+    onScanClick: () -> Unit,
+    onClose: () -> Unit,
+    scanner: @Composable (modifier: Modifier) -> Unit,
 ) {
     val viewModel = hiltViewModel<AddContactViewModel>(viewModelStoreOwner = rememberCompositionViewModelStoreOwner())
     val state by viewModel.state.collectAsStateWithLifecycle()
-    var searchActive by remember { mutableStateOf(false) }
-    val focusManager = LocalFocusManager.current
 
     ObserveViewModelEvents(viewModel, rememberAppNotifier())
 
-    val actions = remember(viewModel, focusManager) {
+    val actions = remember(viewModel, onSearchFieldClick, onScanClick, onClose) {
         AddContactPanelActions(
-            onSearchFocused = { searchActive = true },
+            onSearchFieldClick = onSearchFieldClick,
+            onScanClick = onScanClick,
+            onClose = onClose,
             onSearchChange = viewModel::onSearchChange,
-            onCloseSearch = {
-                focusManager.clearFocus()
-                viewModel.onSearchChange("")
-                searchActive = false
-            },
             onSearchResultClick = viewModel::onSearchResultClick,
             onRecentClick = viewModel::onRecentClick,
         )
     }
 
-    val imeVisible = WindowInsets.isImeVisible
-    BackHandler(enabled = searchActive) {
-        if (imeVisible) focusManager.clearFocus() else actions.onCloseSearch()
-    }
-
     AddContactPanelInternal(
         modifier = modifier,
+        step = step,
         state = state,
-        searchActive = searchActive,
+        keyboardRequested = keyboardRequested,
         actions = actions,
-        scannerShape = scannerShape,
         scanner = scanner,
     )
 }
@@ -117,215 +116,168 @@ fun AddContactPanel(
 @Composable
 private fun AddContactPanelInternal(
     modifier: Modifier,
+    step: AddContactStep,
     state: AddContactUiState,
-    searchActive: Boolean,
+    keyboardRequested: Boolean,
     actions: AddContactPanelActions,
-    scannerShape: Shape,
-    scanner: @Composable (modifier: Modifier, recognitionArmed: Boolean) -> Unit,
+    scanner: @Composable (modifier: Modifier) -> Unit,
 ) {
-    val searchProgress = animateFloatAsState(
-        targetValue = if (searchActive) 1f else 0f,
-        label = "SearchProgress"
-    )
+    AnimatedContent(
+        modifier = modifier,
+        targetState = step,
+        transitionSpec = { EnterTransition.None togetherWith ExitTransition.None },
+        label = "AddContactStep",
+    ) { shownStep ->
+        val stepModifier = Modifier
+            .fillMaxSize()
+            .then(dockletContentsTransition())
+        when (shownStep) {
+            AddContactStep.Scan -> AddContactScanStep(
+                modifier = stepModifier.padding(horizontal = PolkadotTheme.spacings.mediumIncreased),
+                actions = actions,
+                scanner = scanner,
+            )
 
-    Column(modifier = modifier) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = PolkadotTheme.spacings.small),
-            contentAlignment = Alignment.Center,
-        ) {
-            NovaBottomSheetDragHandler()
-        }
-
-        ScannerSearchArea(
-            modifier = Modifier
-                .weight(1f, fill = false)
-                .searchAreaSize { searchProgress.value },
-            state = state,
-            searchActive = searchActive,
-            searchProgress = searchProgress,
-            actions = actions,
-            scannerShape = scannerShape,
-            scanner = scanner,
-        )
-
-        VerticalSpacer { small }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            AnimatedVisibility(visible = searchActive) {
-                Row {
-                    ScanButton(onClick = actions.onCloseSearch)
-                    HorizontalSpacer { small }
-                }
-            }
-
-            PolkadotSearchField(
-                modifier = Modifier
-                    .weight(1f)
-                    .onFocusChanged { if (it.hasFocus) actions.onSearchFocused() },
-                value = state.searchQuery,
-                onValueChange = actions.onSearchChange,
-                onClear = {
-                    if (state.searchQuery.isEmpty()) actions.onCloseSearch() else actions.onSearchChange("")
-                },
-                placeholder = stringResource(RCommon.string.add_contact_search_placeholder),
-                showClear = searchActive,
-                contentPadding = PaddingValues(PolkadotTheme.spacings.zero),
-                clearButtonSize = PolkadotIconButtonSize.small(),
+            AddContactStep.Search -> AddContactSearchStep(
+                modifier = stepModifier.padding(
+                    start = PolkadotTheme.spacings.mediumIncreased,
+                    end = PolkadotTheme.spacings.mediumIncreased,
+                    top = DockletGeometry.Step2ContentTop,
+                    bottom = DockletGeometry.Step2ContentBottom,
+                ),
+                state = state,
+                keyboardRequested = keyboardRequested,
+                actions = actions,
             )
         }
     }
 }
 
 @Composable
-private fun ScannerSearchArea(
+private fun AddContactScanStep(
+    modifier: Modifier,
+    actions: AddContactPanelActions,
+    scanner: @Composable (modifier: Modifier) -> Unit,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        VerticalSpacer { ScanTileTop }
+        PolkadotSurface(
+            modifier = Modifier.size(ScanTileSize),
+            shape = RoundedCornerShape(ScanTileRadius),
+            color = PolkadotTheme.colors.bg.surface.container,
+        ) {
+            scanner(Modifier.fillMaxSize())
+        }
+        VerticalSpacer { SearchButtonGap }
+        DockletSearchButton(
+            modifier = Modifier.fillMaxWidth(),
+            text = stringResource(RCommon.string.common_search),
+            onClick = actions.onSearchFieldClick,
+        )
+    }
+}
+
+@Composable
+private fun AddContactSearchStep(
     modifier: Modifier,
     state: AddContactUiState,
-    searchActive: Boolean,
-    searchProgress: State<Float>,
+    keyboardRequested: Boolean,
     actions: AddContactPanelActions,
-    scannerShape: Shape,
-    scanner: @Composable (modifier: Modifier, recognitionArmed: Boolean) -> Unit,
 ) {
-    Box(modifier = modifier) {
-        AnimatedVisibility(
-            visible = searchActive,
-            enter = fadeIn(),
-            exit = fadeOut(),
-        ) {
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(keyboardRequested) {
+        if (keyboardRequested) focusRequester.requestFocus()
+    }
+
+    Column(modifier = modifier) {
+        AddContactSearchHeader(query = state.searchQuery)
+        VerticalSpacer { tiny }
+        Box(modifier = Modifier.weight(1f)) {
             AddContactSearchContent(
                 state = state,
                 onSearchResultClick = actions.onSearchResultClick,
                 onRecentClick = actions.onRecentClick,
             )
         }
-
-        CollapsingScanner(
-            collapseProgress = searchProgress,
-            recognitionArmed = !searchActive,
-            shape = scannerShape,
-            scanner = scanner,
-        )
-    }
-}
-
-// Scaled rather than resized, so the camera surface is not re-laid out on every animation frame.
-@Composable
-private fun BoxScope.CollapsingScanner(
-    collapseProgress: State<Float>,
-    recognitionArmed: Boolean,
-    shape: Shape,
-    scanner: @Composable (modifier: Modifier, recognitionArmed: Boolean) -> Unit,
-) {
-    PolkadotSurface(
-        modifier = Modifier
-            .align(Alignment.BottomCenter)
-            .largestSquare()
-            .graphicsLayer {
-                val scale = 1f - collapseProgress.value
-
-                scaleX = scale
-                scaleY = scale
-                transformOrigin = TransformOrigin(0.5f, 1f)
-                this.shape = shape
-                clip = true
-            },
-        color = PolkadotTheme.colors.bg.surface.nested,
-    ) {
-        scanner(Modifier.fillMaxSize(), recognitionArmed)
-    }
-}
-
-@Composable
-private fun ScanButton(onClick: () -> Unit) {
-    PolkadotIconButton(
-        icon = NovaIcons.Scanner,
-        onClick = onClick,
-        style = PolkadotButtonStyle.tertiary(),
-        size = PolkadotIconButtonSize.mediumIncreased(),
-        shape = PolkadotButtonShape.pill,
-        border = BorderStroke(PolkadotTheme.borders.default, PolkadotTheme.colors.stroke.secondary),
-    )
-}
-
-// A width-sized square that gives up height when the column has less room, e.g. above the keyboard on short screens.
-private fun Modifier.searchAreaSize(searchProgress: () -> Float): Modifier = layout { measurable, constraints ->
-    val width = constraints.maxWidth
-    val square = width.coerceAtMost(constraints.maxHeight)
-    val full = if (constraints.hasBoundedHeight) constraints.maxHeight else square
-    val height = lerp(square, full, searchProgress())
-    val placeable = measurable.measure(Constraints.fixed(width, height))
-
-    layout(width, height) {
-        placeable.place(0, 0)
-    }
-}
-
-private fun Modifier.largestSquare(): Modifier = layout { measurable, constraints ->
-    val side = minOf(constraints.maxWidth, constraints.maxHeight)
-    val placeable = measurable.measure(Constraints.fixed(side, side))
-
-    layout(side, side) {
-        placeable.place(0, 0)
-    }
-}
-
-@Immutable
-private data class AddContactPanelActions(
-    val onSearchFocused: () -> Unit,
-    val onSearchChange: (String) -> Unit,
-    val onCloseSearch: () -> Unit,
-    val onSearchResultClick: (UserSearchResultUiModel) -> Unit,
-    val onRecentClick: (ChatId) -> Unit,
-)
-
-@Composable
-private fun AddContactPanelPreview(state: AddContactUiState, searchActive: Boolean) {
-    PolkadotTheme {
-        PolkadotSurface(color = PolkadotTheme.colors.bg.surface.container) {
-            AddContactPanelInternal(
+        VerticalSpacer { tiny }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val shape = PolkadotButtonShape.pill
+            PolkadotIconButton(
+                modifier = Modifier.dockletFieldOutline(shape, LocalDockletPalette.current),
+                icon = NovaIcons.ScanFrame,
+                onClick = actions.onScanClick,
+                style = rememberDockletFieldButtonStyle(),
+                size = PolkadotIconButtonSize.mediumIncreased(),
+                shape = shape,
+            )
+            HorizontalSpacer { smallIncreased }
+            DockletSearchField(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(PolkadotTheme.spacings.small),
-                state = state,
-                searchActive = searchActive,
-                actions = AddContactPanelActions(
-                    onSearchFocused = {},
-                    onSearchChange = {},
-                    onCloseSearch = {},
-                    onSearchResultClick = {},
-                    onRecentClick = {},
-                ),
-                scannerShape = PolkadotTheme.shapes.large,
-                scanner = { modifier, _ -> Box(modifier = modifier) },
+                    .weight(1f)
+                    .focusRequester(focusRequester)
+                    .onInterceptKeyBeforeSoftKeyboard { event ->
+                        val back = event.key == Key.Back
+                        if (back && event.type == KeyEventType.KeyUp) actions.onClose()
+                        back
+                    },
+                value = state.searchQuery,
+                onValueChange = actions.onSearchChange,
+                placeholder = stringResource(RCommon.string.add_contact_search_placeholder),
             )
         }
     }
 }
 
-@Preview(widthDp = 380)
+@Immutable
+private data class AddContactPanelActions(
+    val onSearchFieldClick: () -> Unit,
+    val onScanClick: () -> Unit,
+    val onClose: () -> Unit,
+    val onSearchChange: (String) -> Unit,
+    val onSearchResultClick: (UserSearchResultUiModel) -> Unit,
+    val onRecentClick: (ChatId) -> Unit,
+)
+
+@Composable
+private fun AddContactPanelPreview(state: AddContactUiState, step: AddContactStep) {
+    PolkadotTheme {
+        DockletGlassTheme {
+            PolkadotSurface(color = LocalDockletPalette.current.glassFill) {
+                AddContactPanelInternal(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .size(width = 382.dp, height = if (step == AddContactStep.Scan) 204.dp else 424.dp),
+                    step = step,
+                    state = state,
+                    keyboardRequested = false,
+                    actions = AddContactPanelActions(
+                        onSearchFieldClick = {},
+                        onScanClick = {},
+                        onClose = {},
+                        onSearchChange = {},
+                        onSearchResultClick = {},
+                        onRecentClick = {},
+                    ),
+                    scanner = { modifier -> Box(modifier = modifier) },
+                )
+            }
+        }
+    }
+}
+
+@Preview(widthDp = 382)
 @Composable
 private fun AddContactPanelScannerPreview() {
     AddContactPanelPreview(
         state = previewState(query = "", results = AddContactSearchResults.Idle),
-        searchActive = false,
+        step = AddContactStep.Scan,
     )
 }
 
-@Preview(widthDp = 380)
-@Composable
-private fun AddContactPanelNoRecentsPreview() {
-    AddContactPanelPreview(
-        state = previewState(query = "", results = AddContactSearchResults.Idle),
-        searchActive = true,
-    )
-}
-
-@Preview(widthDp = 380)
+@Preview(widthDp = 382)
 @Composable
 private fun AddContactPanelRecentsPreview() {
     AddContactPanelPreview(
@@ -334,11 +286,11 @@ private fun AddContactPanelRecentsPreview() {
             results = AddContactSearchResults.Idle,
             recents = previewRecents("mosticRiver.88", "delaware.01", "franz", "dmitry.01", "euclid.01"),
         ),
-        searchActive = true,
+        step = AddContactStep.Search,
     )
 }
 
-@Preview(widthDp = 380)
+@Preview(widthDp = 382)
 @Composable
 private fun AddContactPanelResultsPreview() {
     AddContactPanelPreview(
@@ -349,16 +301,7 @@ private fun AddContactPanelResultsPreview() {
                 allUsers = previewUsers("monster.01", "molecule", "mostwanted", "morales"),
             ),
         ),
-        searchActive = true,
-    )
-}
-
-@Preview(widthDp = 380)
-@Composable
-private fun AddContactPanelLoadingPreview() {
-    AddContactPanelPreview(
-        state = previewState(query = "Mo", results = AddContactSearchResults.Loading),
-        searchActive = true,
+        step = AddContactStep.Search,
     )
 }
 

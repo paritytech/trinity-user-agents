@@ -13,7 +13,8 @@ use subxt_rpcs::{
 };
 use tracing::warn;
 
-use crate::{host_rpc_client::HostRpcClient, time::Timer};
+use super::runtime_call_client::RuntimeCallClient;
+use crate::time::Timer;
 
 const CHAIN_HEAD_FOLLOW: &str = "chainHead_v1_follow";
 
@@ -45,7 +46,7 @@ pub enum FollowEnd {
 	Dropped,
 }
 
-/// [`HostRpcClient`] that asks again when the provider refuses a chainHead
+/// [`RuntimeCallClient`] that asks again when the provider refuses a chainHead
 /// follow.
 ///
 /// Subxt ends its follow for good when a re-follow fails, and every call on
@@ -59,14 +60,14 @@ pub enum FollowEnd {
 /// Subxt reports any end as a dropped subscription, so this client records the
 /// cause in [`Self::follow_end`] before the failure reaches Subxt.
 pub struct FollowRetryingRpcClient {
-	inner: HostRpcClient,
+	inner: RuntimeCallClient,
 	timer: Arc<dyn Timer>,
 	follow_end: Arc<OnceLock<FollowEnd>>,
 }
 
 impl FollowRetryingRpcClient {
 	/// Retry refused follows sent through `inner`, pausing on `timer`.
-	pub fn new(inner: HostRpcClient, timer: Arc<dyn Timer>) -> Self {
+	pub fn new(inner: RuntimeCallClient, timer: Arc<dyn Timer>) -> Self {
 		Self { inner, timer, follow_end: Arc::default() }
 	}
 

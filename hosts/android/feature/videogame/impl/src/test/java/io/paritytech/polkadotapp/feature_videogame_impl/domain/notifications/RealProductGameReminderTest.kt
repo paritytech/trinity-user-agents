@@ -26,6 +26,7 @@ class RealProductGameReminderTest {
     private val scheduler: VideoGameReminderScheduler = mockk(relaxUnitFun = true)
     private val publisher: VideoGameNotificationPublisher = mockk(relaxUnitFun = true)
     private val calendar: ProductGameCalendar = mockk(relaxUnitFun = true)
+    private val telemetry: GameReminderTelemetry = mockk(relaxUnitFun = true)
 
     private var notificationsAllowed = false
     private var calendarAllowed = false
@@ -50,6 +51,7 @@ class RealProductGameReminderTest {
         calendar,
         osAccess,
         FakeTimeProvider { NOW },
+        telemetry,
     )
 
     private val game = ProductId.fromStoredValue("game.dot")
@@ -77,6 +79,7 @@ class RealProductGameReminderTest {
         assertTrue(result.isFailure)
         assertTrue(reminder.currentlyScheduled().isEmpty())
         coVerifySequence { osAccess.requestNotifications() }
+        verifyReported(GameReminderEvent.NotScheduled(game, START, GameReminderSkipReason.NOT_AUTHORIZED))
         verify(exactly = 0) { scheduler.scheduleProductGameStart(game, START) }
         coVerify(exactly = 0) { calendar.addGame(any()) }
     }
@@ -219,6 +222,34 @@ class RealProductGameReminderTest {
     }
 
     @Test
+    fun `a product cancellation reports the cancelled game with its start`() = runTest {
+        withOsAllowing(notifications = true, calendar = false)
+        reminder.schedule(game, START)
+
+        reminder.cancelByProduct(game)
+
+        verifyReported(GameReminderEvent.Cancelled(game, START))
+    }
+
+    @Test
+    fun `a product cancellation with nothing scheduled reports nothing`() = runTest {
+        reminder.cancelByProduct(game)
+
+        verifyNothingReported()
+    }
+
+    @Test
+    fun `a host cancellation is not reported as a product cancellation`() = runTest {
+        withOsAllowing(notifications = true, calendar = false)
+        reminder.schedule(game, START)
+
+        reminder.cancel(game)
+
+        assertTrue(reminder.currentlyScheduled().isEmpty())
+        verifyNothingReported()
+    }
+
+    @Test
     fun `clear leaves a newer schedule alone`() = runTest {
         withOsAllowing(notifications = true, calendar = false)
         reminder.schedule(game, START)
@@ -258,6 +289,14 @@ class RealProductGameReminderTest {
 
     private fun withPendingNotificationsPrompt() =
         CompletableDeferred<Boolean>().also { pendingNotificationsAnswer = it }
+
+    private fun verifyReported(event: GameReminderEvent) {
+        verify { telemetry.report(event) }
+    }
+
+    private fun verifyNothingReported() {
+        verify(exactly = 0) { telemetry.report(any()) }
+    }
 
     private fun assertSuccess(result: Result<*>) {
         assertTrue("expected Result.success but was ${result.exceptionOrNull()}", result.isSuccess)

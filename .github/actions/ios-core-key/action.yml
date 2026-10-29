@@ -1,0 +1,31 @@
+name: "Key the in-tree iOS core by its inputs"
+description: >-
+  The artifact name a core built from the checked-out tree is published under,
+  hashed from everything the bootstrap reads. The pull request gate and the
+  nightly both look a core up by it, so they cannot disagree about which core
+  matches a commit.
+outputs:
+  key:
+    description: "ios-core-inputs-<hash>"
+    value: ${{ steps.key.outputs.key }}
+runs:
+  using: "composite"
+  steps:
+    # Everything the bootstrap reads: the crates and their lockfile, the
+    # toolchain pins, codegen and its npm manifests, the TypeScript client and
+    # container bundled into the host, the scripts that stage the bindings,
+    # the Xcode pin, and the packaging in ios-app.yml.
+    - id: key
+      shell: bash
+      run: |
+        set -euo pipefail
+        inputs=(
+          rust ios js/packages/truapi js/container scripts
+          Makefile Cargo.toml Cargo.lock nightly-toolchain
+          package.json package-lock.json
+          .github/actions/bootstrap-ios-core .github/actions/rust-nightly
+          .github/actions/ios-core-key
+          hosts/ios/.github/actions/install .github/workflows/ios-app.yml
+        )
+        hash="$(git ls-tree -r HEAD -- "${inputs[@]}" | sha256sum | cut -c1-32)"
+        echo "key=ios-core-inputs-$hash" >> "$GITHUB_OUTPUT"

@@ -5,6 +5,43 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [0.27.0] - 2026-10-27
+
+### Added
+
+- sign lite registration in the personhood signing context (#1478)
+- capture host process start telemetry (#1574)
+- refuse a request in a version the host does not know (#1650)
+- report game reminder lifecycle to Sentry (#1677)
+- expose native host telemetry to products (#1571)
+- show product icons and manifest descriptions in chats (#1497)
+- expose native host telemetry bootstrap (#1572)
+- one ProductConsent for account access (#1591)
+- add the polkadot mainnet network preset (#1456)
+- watch storage entries at best or finalized heads (#1597)
+
+### Changed
+
+- report the embedded truapi version in system.info (#1467)
+- introduce general-purpose extrinsic construction service (#1669)
+- name worker lifecycle requests (#1693)
+- serve NFT purse create_items and query_purse (#1656)
+- simplify error propagation (#1468)
+- create and list NFT purses (#1558)
+
+### Fixed
+
+- find dead chain sockets sooner and send calls waiting on a lost host connection (#1683)
+- keep the chat on its opening scroll target while product cards grow (#1704)
+- draw Pocket faces and chat widgets the same on iOS and Android (#1447)
+- retry native preimage lookups after a miss (#1673)
+- request location authorization from iOS when a product asks for it (#1679)
+- reload worker script if killed by OS (#1692)
+- daylight-saving related tests (#1689)
+- let animations run at 120 Hz on ProMotion iPhones (#1663)
+- move the open Pocket card instead of hiding it (#1614)
+- show a placeholder Humanity card on first launch (#1563)
+
 ## [0.26.0] - 2026-10-21
 
 ### Added
@@ -29,6 +66,7 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- @parity/truapi 0.26.0, @parity/truapi-host 0.26.0, @parity/trinity-stack 0.1.0, @parity/ios-host 0.26.0, @parity/android-host 0.26.0 (#1583)
 - centralize runtime version conversion (#1421)
 - use a ProductId newtype for product identifiers (#1448)
 - SSO session and responder services (#1515)
@@ -47,6 +85,8 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Fixed
 
+- ring the game reminder at the game's start (#1613)
+- clear the two build warnings in ProductBotProvider (#1615)
 - keep a Pocket card under the cards below it while it opens and closes (#1554)
 - leave the same 16 pt card margin as Android in the Pocket (#1483)
 - let trusted products use device permissions without a prompt (#1556)

@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_device_sync_impl.domain.engine
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.BinaryScale
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.encodeToByteArray
 import io.paritytech.polkadotapp.common.domain.model.AccountId
+import io.paritytech.polkadotapp.common.utils.InformationSize.Companion.kilobytes
 import io.paritytech.polkadotapp.common.utils.decodeFromByteArrayCatching
 import io.paritytech.polkadotapp.feature_device_sync_impl.data.model.scale.SyncEntityScale
 import io.paritytech.polkadotapp.feature_device_sync_impl.data.model.scale.SyncMessageScale
@@ -45,14 +46,16 @@ class DeviceSyncRunner(
     private companion object {
         private const val SYNC_USE_CASE = "device-sync"
         private val ACK_TIMEOUT = 30.seconds
-    }
 
-    private class InFlight(val id: UInt, val ack: CompletableDeferred<Unit>)
+        private val UPDATE_ENTITY_BUDGET = 60.kilobytes
+    }
 
     private val retrySignal = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
+    private val chunker = SyncEntityChunker(UPDATE_ENTITY_BUDGET)
+
     @Volatile
-    private var inFlight: InFlight? = null
+    private var pendingAcks: Map<UInt, CompletableDeferred<Unit>> = emptyMap()
 
     /** Runs until [channel] goes terminal, then returns so the engine can rebuild. */
     suspend fun run(channel: PeerChannel) = coroutineScope {
@@ -67,7 +70,7 @@ class DeviceSyncRunner(
             Timber.w("DeviceSyncRunner: connection to $peerLogId went terminal — reconnecting")
             syncJob.cancelAndJoin()
         } finally {
-            inFlight = null
+            pendingAcks = emptyMap()
         }
     }
 
@@ -91,23 +94,32 @@ class DeviceSyncRunner(
             return
         }
 
-        val id = updateIdProvider.nextId()
-        val ack = CompletableDeferred<Unit>()
-        inFlight = InFlight(id, ack)
+        // Every update of the round carries the same timePoint: the checkpoint advances only once all are acked.
+        val updates = chunker.chunk(entities).map { batch ->
+            SyncUpdateScale(id = updateIdProvider.nextId(), entities = batch, timePoint = timePoint.toULong())
+        }
+        val acks = updates.associate { it.id to CompletableDeferred<Unit>() }
+        pendingAcks = acks
 
-        val update = SyncUpdateScale(id = id, entities = entities, timePoint = timePoint.toULong())
-        val payload = BinaryScale.encodeToByteArray<SyncMessageScale>(SyncMessageScale.Update(update))
-        dataTransport.send(SYNC_USE_CASE, payload)
-        Timber.i("DeviceSyncRunner: pushed update id=$id to $peerLogId — payload=${payload.size} bytes, ${entities.summary()}")
+        updates.forEachIndexed { index, update ->
+            val payload = BinaryScale.encodeToByteArray<SyncMessageScale>(SyncMessageScale.Update(update))
+            dataTransport.send(SYNC_USE_CASE, payload)
+            Timber.i(
+                "DeviceSyncRunner: pushed update id=${update.id} (${index + 1}/${updates.size}) to $peerLogId — " +
+                    "payload=${payload.size} bytes, ${update.entities.summary()}"
+            )
+        }
 
-        val acked = withTimeoutOrNull(ACK_TIMEOUT) { ack.await() } != null
-        inFlight = null
+        val unacked = updates.firstOrNull { update ->
+            withTimeoutOrNull(ACK_TIMEOUT) { acks.getValue(update.id).await() } == null
+        }
+        pendingAcks = emptyMap()
 
-        if (acked) {
+        if (unacked == null) {
             ownDevicesJournal.updateOutgoingUpdateTime(peerStatementAccountId, timePoint)
-            Timber.i("DeviceSyncRunner: acked update id=$id, advanced checkpoint for $peerLogId to $timePoint")
+            Timber.i("DeviceSyncRunner: acked ${updates.size} updates, advanced checkpoint for $peerLogId to $timePoint")
         } else {
-            Timber.w("DeviceSyncRunner: no ack for update id=$id within $ACK_TIMEOUT — re-arming retry")
+            Timber.w("DeviceSyncRunner: no ack for update id=${unacked.id} within $ACK_TIMEOUT — re-arming retry")
             retrySignal.emit(Unit)
         }
     }
@@ -130,9 +142,9 @@ class DeviceSyncRunner(
     }
 
     private fun applyAck(ack: SyncUpdateAckScale) {
-        val current = inFlight
-        if (current != null && current.id == ack.id) {
-            current.ack.complete(Unit)
+        val pending = pendingAcks[ack.id]
+        if (pending != null) {
+            pending.complete(Unit)
         } else {
             Timber.w("DeviceSyncRunner: received ack for unknown/stale update id=${ack.id} from $peerLogId")
         }

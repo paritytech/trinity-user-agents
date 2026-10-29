@@ -117,6 +117,8 @@ impl Permissions for WireShapePlatform {
 	}
 }
 
+impl truapi::platform::ExtrinsicVersionHost for WireShapePlatform {}
+
 #[truapi::platform::async_trait]
 impl Features for WireShapePlatform {
 	async fn feature_supported(

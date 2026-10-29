@@ -9,13 +9,15 @@ rust/crates/
   truapi/                Rust trait + type definitions for protocol versions v0.1 and v0.2
                          (canonical), plus the runtime hosts implement (default `runtime`
                          feature); ships as WASM (browser/node); its `platform` module
-                         holds the host syscall traits (storage, navigation, consent, ...)
-                         and, on native targets, its `durable` module follows presigned
+                         holds the host syscall traits (storage, navigation, consent, ...),
+                         its `chain` module builds the core's own extrinsics through
+                         `ExtrinsicService`, and, on native targets, its `durable` module follows presigned
                          transactions to a verdict over the core database and builds
                          scheduled ones through their submission policies; its `nft`
                          (purse records, item keys, and the tracker of what they hold on
                          Asset Hub) and `nft_purse` (the NFT purses RFC over them)
-                         modules keep NFT purses in the same database
+                         modules keep NFT purses in the same database, and transfer items
+                         as scheduled durable transactions
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher
   truapi-macros/         #[wire_trait(id = N)] and #[wire(id = N)] proc-macros;
                          #[sso_service] for truapi's inter-host SSO protocol
@@ -182,10 +184,10 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
   bindings changed, `make uniffi && ./ios/truapi-host/scripts/sync-bindings.sh`
   does that part without Xcode. Because nothing is committed, CI regenerates
   rather than diffs: the `ios-bindings` job proves every UniFFI-exposed type
-  still has a binding representation, and the `ios-swift` job generates the
-  package's Swift sources and container resource and then compiles the package
-  and its test target, which is what catches a hand-written conformer that
-  missed a new protocol requirement. On the Kotlin side the `android-bindings`
+  still has a binding representation, and the `package` job in `ios-app.yml`
+  compiles the package and its test target against the iOS core the app jobs
+  share, which is what catches a hand-written conformer that missed a new
+  protocol requirement. On the Kotlin side the `android-bindings`
   job compiles `TrUAPIHost.kt` against freshly generated bindings, which catches
   the same class of drift; `make android-check` does it locally. The embedding
   apps are compiled by neither.

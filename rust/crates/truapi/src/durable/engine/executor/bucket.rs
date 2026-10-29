@@ -193,8 +193,8 @@ impl BucketRun {
 			return RoundOutcome::NoProgress;
 		};
 		let change = match preparation {
-			Preparation::Ready(extrinsic) => {
-				start_built_attempt(&engine, id, genesis, extrinsic).await
+			Preparation::Ready { extrinsic, params } => {
+				start_built_attempt(&engine, id, genesis, extrinsic, params).await
 			},
 			Preparation::GiveUp => give_up_submission(&engine, id).await,
 		};
