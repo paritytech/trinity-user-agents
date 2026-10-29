@@ -56,6 +56,7 @@ class ProductFeedApplier @Inject constructor(
                     chatMessageRepository.updateMessageStatus(message.id, update.status.toUserMessageStatus())
                 }
             }
+            is ProductFeedUpdateModel.Deleted -> delete(chatId, update.messageId, decoder)
         }
     }
 
@@ -99,6 +100,14 @@ class ProductFeedApplier @Inject constructor(
         if (message.origin !is ChatMessageOrigin.Extension) throw ProductFeedRejection.NotOwner()
 
         chatMessageRepository.updateMessageContent(message.id, replacement.content, decoder)
+    }
+
+    // The database removes the reactions and the revisions of the message with it.
+    private suspend fun delete(chatId: ChatId, messageId: String, decoder: CustomContentDecoder) {
+        val message = requireLive(chatId, messageId, decoder)
+        if (message.origin !is ChatMessageOrigin.Extension) throw ProductFeedRejection.NotOwner()
+
+        chatMessageRepository.removeMessage(message.id)
     }
 
     // The reaction table keeps one row for each origin kind, so the participants of the product share one row an emoji.

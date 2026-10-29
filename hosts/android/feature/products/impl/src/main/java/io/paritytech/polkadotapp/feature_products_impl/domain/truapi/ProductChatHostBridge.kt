@@ -4,6 +4,7 @@ import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.HOST_DEFAULT_CHAT_ROOM_CONFIG
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomIconChange
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedRejection
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
@@ -79,7 +80,9 @@ class ProductChatHostBridge(
     }
 
     override suspend fun setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) {
-        chatMessaging.setRoomMetadata(requireRoom(roomId), metadata.name, metadata.toModel()).orReject()
+        val room = requireRoom(roomId)
+        val iconChange = metadata.icon?.let { RoomIconChange(ProductChatIcon.fromString(it).orReject()?.value) }
+        chatMessaging.setRoomMetadata(room, metadata.name, iconChange, metadata.toModel()).orReject()
     }
 
     override suspend fun setRoomPreview(roomId: String, preview: ChatRoomPreview) {
