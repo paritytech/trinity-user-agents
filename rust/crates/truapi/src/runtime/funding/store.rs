@@ -9,7 +9,7 @@
 //! place for diagnosis.
 
 use parity_scale_codec::{Decode, Encode};
-use rusqlite::{Transaction, named_params};
+use rusqlite::{Connection, Transaction, named_params};
 use tracing::{error, info};
 
 pub(super) use crate::store::Db;
@@ -111,9 +111,9 @@ struct Scanned<T> {
 	newer: Option<u16>,
 }
 
-fn scan<T: Decode>(tx: &Transaction<'_>, table: &Table) -> Result<Scanned<T>, DbError> {
+fn scan<T: Decode>(conn: &Connection, table: &Table) -> Result<Scanned<T>, DbError> {
 	let mut scanned = Scanned { records: Vec::new(), older: Vec::new(), newer: None };
-	let mut statement = tx.prepare_cached(table.select)?;
+	let mut statement = conn.prepare_cached(table.select)?;
 	let mut rows = statement.query([])?;
 	while let Some(row) = rows.next()? {
 		let intent: String = row.get("intent")?;

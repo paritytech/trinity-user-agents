@@ -300,10 +300,9 @@ impl NativeTrUApiHostRuntime {
 	/// Install the host's funding overlay. Set-once; answers whether this
 	/// call installed it. Call it before opening any product execution.
 	pub fn set_funding_callbacks(&self, callbacks: Arc<dyn NativeFundingCallbacks>) -> bool {
-		self.runtime.set_funding_platform(Arc::new(FundingCallbackPlatform {
-			funding: callbacks,
-			services: Arc::downgrade(self.runtime.services()),
-		}))
+		let platform = Arc::new(FundingCallbackPlatform { funding: callbacks });
+		self.runtime.set_funding_feed(platform.clone()) &&
+			self.runtime.set_funding_platform(platform)
 	}
 
 	/// Open a funding session on the host's own behalf, as the Balance
@@ -315,28 +314,6 @@ impl NativeTrUApiHostRuntime {
 		amount: Option<u128>,
 	) -> Result<Option<String>, HostRejection> {
 		Ok(self.runtime.open_funding(direction, amount).await?)
-	}
-
-	/// Session `intent` as the core holds it, for the host's status and
-	/// history views.
-	pub fn funding_session(
-		&self,
-		intent: String,
-	) -> Option<crate::host_logic::funding::FundingSession> {
-		self.runtime.funding_session(&intent)
-	}
-
-	/// Every funding session the core keeps, in flight first, then ended,
-	/// each newest first.
-	pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
-		self.runtime.funding_sessions()
-	}
-
-	/// Every ended funding session the host recorded or the core compacted,
-	/// as summaries newest first,
-	/// for rebuilding the host's own history when it was lost.
-	pub fn funding_history(&self) -> Vec<crate::host_logic::funding::FundingSessionSummary> {
-		self.runtime.funding_history()
 	}
 
 	/// Record that the host wrote ended session `intent` into its own
@@ -442,18 +419,31 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.runtime.set_funding_providers(providers)?)
 	}
 
-	/// The providers funding session `intent` can be handed to.
-	pub fn funding_candidates(
-		&self,
-		intent: String,
-	) -> Vec<crate::host_logic::funding_providers::FundingCandidate> {
-		self.runtime.funding_candidates(&intent)
+	/// Ask every funding provider to price `ask` for session `intent`. The
+	/// list arrives through `funding_quotes_changed`, and is asked for again
+	/// every minute until the session is handed to a provider or ends, the
+	/// host asks for another `ask`, or calls [`Self::stop_funding_quotes`].
+	/// Returns the request id every list of this request carries, so the
+	/// host shows only the latest request's lists.
+	pub fn get_funding_quote(&self, intent: String, ask: v01::FundingQuoteAsk) -> u64 {
+		self.runtime.request_funding_quotes(&intent, ask)
 	}
 
-	/// Ask the candidates for funding session `intent` to price `ask`. Each
-	/// provider's row arrives through `funding_quote_changed`.
-	pub fn get_funding_quote(&self, intent: String, ask: v01::FundingQuoteAsk) {
-		self.runtime.request_funding_quotes(&intent, ask);
+	/// Stop asking again for session `intent`'s quotes, as when the user
+	/// leaves the provider list.
+	pub fn stop_funding_quotes(&self, intent: String) {
+		self.runtime.stop_funding_quotes(&intent);
+	}
+
+	/// Report what the user picked so far in session `intent`'s overlay. The
+	/// countries and amount limits it leads to arrive through
+	/// `funding_options_changed`.
+	pub fn select_funding_options(
+		&self,
+		intent: String,
+		selection: crate::host_logic::funding_providers::FundingSelection,
+	) {
+		self.runtime.select_funding_options(&intent, selection);
 	}
 
 	/// Hand open funding session `intent` to the provider the user chose, by

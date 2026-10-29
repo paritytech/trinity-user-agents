@@ -785,8 +785,9 @@ Scripts under `js/scripts/` include:
   `TRUAPI_FUNDING_LEDGER`, and the core settles each session from them. The
   phase runs the host twice on the same storage, so the provider is assigned
   an inbound session again after a restart and finishes it from the state it
-  kept in its own storage. Every overlay request, screen, cancel, answer and
-  session change is recorded in
+  kept in its own storage. The device detects the country
+  `TRUAPI_FUNDING_COUNTRY` names, if any. Every overlay request, screen,
+  cancel, answer and session change is recorded in
   `TRUAPI_FUNDING_LOG`, which the cases read. CI runs this phase on every
   change to the core, the CLI or the client, with a fixed development signer
   in `HOST_CLI_SIGNER_MNEMONIC` so the host needs no account provisioned on

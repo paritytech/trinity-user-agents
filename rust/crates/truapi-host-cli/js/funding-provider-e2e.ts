@@ -54,6 +54,7 @@ const CANCEL_AMOUNT = 300n;
 const OFFER_AMOUNT = 250n;
 const LATE_AMOUNT = 200n;
 const CANCEL_FEE = 3n;
+const RELEASED_CANCEL_AMOUNT = 400n;
 
 /** Type one command into the host, as the user at its terminal would. The
  *  battery hands the host this pipe as its stdin. */
@@ -99,7 +100,11 @@ export class ScriptedProvider {
   readonly settled: { intent: string; decision: FundingCancelDecision }[] = [];
   private readonly plans = new Map<string, Plan>();
   private readonly started = new Set<string>();
-  private readonly cancelAnswers = new Map<string, FundingCancelAnswer>();
+  private readonly cancelAnswers = new Map<
+    string,
+    FundingCancelAnswer | Promise<FundingCancelAnswer>
+  >();
+  private readonly onAccepted = new Map<string, () => Promise<void>>();
   private readonly failures: string[] = [];
 
   constructor(private readonly client: TrUApiClient) {
@@ -114,6 +119,7 @@ export class ScriptedProvider {
             providerFee: 0n,
             networkFee: 0n,
             etaSecs: 60n,
+            assetDecimals: 2,
           },
         },
       }),
@@ -133,21 +139,27 @@ export class ScriptedProvider {
     });
     client.fundingProvider.onCancel(({ intent }) => {
       this.cancels.push(intent);
-      return ok(
+      // An answer may wait for the provider's own work, as an offer on a
+      // withdrawal waits for its release.
+      return Promise.resolve(
         this.cancelAnswers.get(intent) ?? {
           tag: "Refused",
           value: { reason: "the battery set no answer" },
         },
-      );
+      ).then((answer) => ok(answer));
     });
     client.fundingProvider.onSettleCancel(({ intent, decision }) => {
       this.settled.push({ intent, decision });
       if (decision.tag === "Accepted") {
+        const settle =
+          this.onAccepted.get(intent) ??
+          (() =>
+            report(client, intent, {
+              tag: "Failed",
+              value: { reason: { tag: "Cancelled" } },
+            }));
         afterAnswer(() =>
-          report(client, intent, {
-            tag: "Failed",
-            value: { reason: { tag: "Cancelled" } },
-          }).catch((error) =>
+          settle().catch((error) =>
             this.failures.push(`${intent}: ${String(error)}`),
           ),
         );
@@ -161,9 +173,19 @@ export class ScriptedProvider {
     this.plans.set(planKey(direction, amount), plan);
   }
 
-  /** Answer the cancel of session `intent` with `answer`. */
-  answerCancel(intent: string, answer: FundingCancelAnswer) {
+  /** Answer the cancel of session `intent` with `answer`, once it is
+   *  known. */
+  answerCancel(
+    intent: string,
+    answer: FundingCancelAnswer | Promise<FundingCancelAnswer>,
+  ) {
     this.cancelAnswers.set(intent, answer);
+  }
+
+  /** Settle an accepted cancel of session `intent` with `settle`, in place
+   *  of ending it as cancelled. */
+  settleAccepted(intent: string, settle: () => Promise<void>) {
+    this.onAccepted.set(intent, settle);
   }
 
   /** The assignment of session `intent`, once the worker holds it. */
@@ -289,6 +311,7 @@ export async function runProviderStart(
   const rows: DiagnosisRow[] = [];
   const check = rowFactory(rows);
   let inbound = "";
+  let outbound = "";
   let state: ProviderState | undefined;
 
   await check("provider_assigned", async () => {
@@ -360,8 +383,26 @@ export async function runProviderStart(
   await check("provider_reports_forward_only", async () => {
     await report(client, inbound, { tag: "AwaitingPayment" });
     await report(client, inbound, {
+      tag: "Deposit",
+      value: {
+        deposit: {
+          tag: "Crypto",
+          value: {
+            address: "0x0000000000000000000000000000000000000001",
+            network: "polkadot",
+            asset: "USDT",
+            amount: 1_000n,
+            decimals: 6,
+            exact: true,
+            uri: undefined,
+            expiresAt: undefined,
+          },
+        },
+      },
+    });
+    await report(client, inbound, {
       tag: "PaymentReceived",
-      value: { finalized: true },
+      value: { finalized: true, mismatch: undefined },
     });
     await report(client, inbound, { tag: "Converting" });
     const backwards = await client.fundingProvider.report({
@@ -405,7 +446,7 @@ export async function runProviderStart(
   });
 
   await check("provider_out_released", async () => {
-    const outbound = await requestFunding(client, "Out", OUT_AMOUNT);
+    outbound = await requestFunding(client, "Out", OUT_AMOUNT);
     await provider.assignment(outbound);
     const paymentId = randomId();
     const paid = await client.payment.request({
@@ -426,6 +467,87 @@ export async function runProviderStart(
       throw new Error(`ended as ${stringify(last)}`);
     }
     return "the core released the session once the named payment completed";
+  });
+
+  await check("provider_payout_retrying", async () => {
+    if (!outbound) throw new Error("no released withdrawal");
+    await report(client, outbound, { tag: "Converting" });
+    await report(client, outbound, { tag: "PayoutRetrying" });
+    await report(client, outbound, { tag: "PayoutRetrying" });
+    await report(client, outbound, {
+      tag: "Payout",
+      value: { outcome: { tag: "PaidOut" } },
+    });
+    const late = await client.fundingProvider.report({
+      intent: outbound,
+      update: { tag: "PayoutRetrying" },
+    });
+    if (!late.isErr() || !stringify(late.error).includes("OutOfOrder")) {
+      throw new Error(
+        `a retry after the payout was not refused: ${stringify(late)}`,
+      );
+    }
+    return "retries were taken after the release, and refused once the payout was reported";
+  });
+
+  await check("provider_cancel_refund_after_release", async () => {
+    const intent = await requestFunding(client, "Out", RELEASED_CANCEL_AMOUNT);
+    await provider.assignment(intent);
+    const paymentId = randomId();
+    const paid = await client.payment.request({
+      amount: RELEASED_CANCEL_AMOUNT,
+      destination: `0x${"11".repeat(32)}`,
+      id: paymentId,
+      funding: intent,
+    });
+    if (paid.isErr()) {
+      throw new Error(`payment.request failed: ${stringify(paid.error)}`);
+    }
+    // The provider can offer to cancel a withdrawal only once it is
+    // released, so its answer waits for the release.
+    const refund = RELEASED_CANCEL_AMOUNT - CANCEL_FEE;
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    provider.answerCancel(
+      intent,
+      released.then(() => ({
+        tag: "Offer" as const,
+        value: { fee: CANCEL_FEE, refund },
+      })),
+    );
+    provider.settleAccepted(intent, async () => {
+      const topUpId = randomId();
+      await topUp(client, intent, topUpId, refund);
+      await report(client, intent, {
+        tag: "Refunding",
+        value: { topUpId, amount: refund },
+      });
+    });
+    await cancelAsUser(fundingLogPath, intent, "Requested");
+    await report(client, intent, {
+      tag: "Collecting",
+      value: { paymentId, amount: RELEASED_CANCEL_AMOUNT },
+    });
+    const last = await lastStatus(client, intent);
+    if (
+      last?.tag !== "Released" ||
+      last.value.debited !== RELEASED_CANCEL_AMOUNT
+    ) {
+      throw new Error(`was not released: ${stringify(last)}`);
+    }
+    release();
+    await waitForTranscript(
+      fundingLogPath,
+      (line) =>
+        line.kind === "status" &&
+        line.intent === intent &&
+        typeof line.progress === "string" &&
+        line.progress.startsWith(`Cancelled { refunded: Some(${refund})`),
+      `${intent} ending cancelled with its refund`,
+    );
+    return "a released withdrawal the user cancelled on the provider's terms was refunded less the fee";
   });
 
   await check("provider_cancel", async () => {

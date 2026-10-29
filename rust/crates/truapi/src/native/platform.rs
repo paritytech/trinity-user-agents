@@ -769,9 +769,6 @@ impl crate::platform::GamePlatform for GameCallbackPlatform {
 pub struct FundingCallbackPlatform {
 	/// Host funding overlay.
 	pub funding: Arc<dyn NativeFundingCallbacks>,
-	/// The services whose sessions the overlay draws, for the progress each
-	/// change carries. Weak, as the services hold this platform.
-	pub services: std::sync::Weak<crate::runtime::RuntimeServices>,
 }
 
 #[async_trait]
@@ -804,18 +801,40 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 			.map_err(v01::GenericError::from)
 	}
 
-	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem) {
-		// Read as the session stands now, which is at least as new as `status`.
-		let progress = self
-			.services
-			.upgrade()
-			.and_then(|services| services.funding().get(&intent))
-			.map(|session| session.progress());
-		self.funding.funding_session_changed(intent, status, progress);
+	async fn detected_country(&self) -> Option<String> {
+		self.funding.detected_country().await
 	}
 
-	fn funding_quote_changed(&self, intent: String, row: crate::platform::FundingQuoteRow) {
-		self.funding.funding_quote_changed(intent, row);
+	fn funding_quotes_changed(&self, intent: String, quotes: crate::platform::FundingQuoteList) {
+		self.funding.funding_quotes_changed(intent, quotes);
+	}
+}
+
+impl crate::runtime::FundingFeed for FundingCallbackPlatform {
+	fn funding_session_changed(
+		&self,
+		intent: String,
+		status: v01::HostFundingStatusSubscribeItem,
+		session: Option<crate::host_logic::funding::FundingSession>,
+		progress: Option<crate::host_logic::funding::FundingProgress>,
+	) {
+		self.funding.funding_session_changed(intent, status, session, progress);
+	}
+
+	fn funding_history(&self, history: Vec<crate::host_logic::funding::FundingSessionSummary>) {
+		self.funding.funding_history(history);
+	}
+
+	fn funding_in_progress_changed(&self, in_progress: bool) {
+		self.funding.funding_in_progress_changed(in_progress);
+	}
+
+	fn funding_options_changed(
+		&self,
+		intent: String,
+		options: crate::host_logic::funding_providers::FundingOptions,
+	) {
+		self.funding.funding_options_changed(intent, options);
 	}
 }
 

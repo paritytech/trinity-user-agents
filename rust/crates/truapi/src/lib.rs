@@ -105,10 +105,10 @@ pub mod latest {
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
 		Dimensions, Effect, EffectProps, FundingAssignment, FundingCancelAnswer,
 		FundingCancelDecision, FundingDeposit, FundingDirection, FundingFailure,
-		FundingFrameOutcome, FundingFrameTarget, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk,
-		FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate, GenericError,
-		HorizontalAlignment, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
-		HostAccountGetError, HostAccountListRingVrfKeysRequest,
+		FundingFrameOutcome, FundingFrameTarget, FundingPayout, FundingQuote, FundingQuoteAnswer,
+		FundingQuoteAsk, FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate,
+		GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
+		HostAccountGetAliasRequest, HostAccountGetError, HostAccountListRingVrfKeysRequest,
 		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
 		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
 		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
@@ -884,8 +884,8 @@ pub use runtime::product_manifest::{encode_cached_root_manifest, worker_manifest
 pub use runtime::statement_allowance;
 #[cfg(feature = "runtime")]
 pub use runtime::{
-	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-	PairingProposal, PairingProposalMetadata, ResponderExit,
+	AnnouncedPairing, DevicePairingObserver, FundingFeed, MAX_PAIRING_METADATA_CHARS,
+	PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit,
 };
 #[cfg(feature = "runtime")]
 pub use unix_time::current_unix_millis;

@@ -26,7 +26,7 @@
 //! was told.
 
 use std::{
-	collections::HashSet,
+	collections::{HashMap, HashSet},
 	fs::OpenOptions,
 	io::Write,
 	path::PathBuf,
@@ -35,10 +35,12 @@ use std::{
 
 use futures::stream::{self, BoxStream, StreamExt};
 use truapi::{
-	SigningHostRuntime,
+	FundingFeed, SigningHostRuntime,
 	host_logic::{
-		funding::{CancelTerms, FundingCancel},
-		funding_providers::FundingProviderEntry,
+		funding::{
+			CancelTerms, FundingCancel, FundingProgress, FundingSession, FundingSessionSummary,
+		},
+		funding_providers::{FundingOptions, FundingProviderEntry, FundingProviderOrigin},
 	},
 	latest::{
 		FundingDirection, FundingFrameOutcome, FundingFrameTarget, FundingQuoteAsk, FundingRail,
@@ -57,7 +59,7 @@ use crate::{platform::CliPlatform, transcript::Transcript};
 
 /// The manifest the CLI ships for every provider it offers: card in, and
 /// crypto in and out, quoted by its worker.
-const SHIPPED_PROVIDER_MANIFEST: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]},{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"]}]}}}"#;
+const SHIPPED_PROVIDER_MANIFEST: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]},{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"],"networks":["polkadot"]}]}}}"#;
 
 /// Offer each product named in `TRUAPI_FUNDING_PROVIDERS` as a funding
 /// provider with [`SHIPPED_PROVIDER_MANIFEST`], also kept as its cached dotNS
@@ -86,6 +88,7 @@ pub async fn offer_providers(
 		providers.push(FundingProviderEntry {
 			product_id: entry.to_string(),
 			worker_manifest: Some(SHIPPED_PROVIDER_MANIFEST.to_string()),
+			origin: FundingProviderOrigin::Published,
 		});
 	}
 	runtime
@@ -94,16 +97,17 @@ pub async fn offer_providers(
 }
 
 /// What the overlay asks to be quoted when the user takes its defaults: a
-/// card payment in EUR inbound, USDT outbound.
+/// card payment in EUR inbound, USDT on Polkadot outbound.
 fn default_ask(direction: FundingDirection, amount: Option<u128>) -> FundingQuoteAsk {
-	let (rail, asset) = match direction {
-		FundingDirection::In => (FundingRail::Card, "EUR"),
-		FundingDirection::Out => (FundingRail::Crypto, "USDT"),
+	let (rail, asset, network) = match direction {
+		FundingDirection::In => (FundingRail::Card, "EUR", None),
+		FundingDirection::Out => (FundingRail::Crypto, "USDT", Some("polkadot".to_string())),
 	};
 	FundingQuoteAsk {
 		direction,
 		rail,
 		asset: asset.to_string(),
+		network,
 		amount: amount.unwrap_or(1_000),
 		country: None,
 	}
@@ -117,18 +121,23 @@ pub struct CliFundingHost {
 	runtime: Weak<SigningHostRuntime>,
 	/// Sessions whose current cancel offer the user was asked about.
 	asked: Mutex<HashSet<String>>,
+	/// The providers the core last offered each session.
+	candidates: Mutex<HashMap<String, Vec<String>>>,
 }
 
 impl CliFundingHost {
 	/// Serve funding on `runtime`, asking `user`, with the files the
 	/// environment names.
 	pub fn install(runtime: &Arc<SigningHostRuntime>, user: Arc<CliPlatform>) {
-		runtime.set_funding_platform(Arc::new(Self {
+		let host = Arc::new(Self {
 			user,
 			transcript: Arc::new(Transcript::from_env("TRUAPI_FUNDING_LOG", "funding")),
 			runtime: Arc::downgrade(runtime),
 			asked: Mutex::new(HashSet::new()),
-		}));
+			candidates: Mutex::new(HashMap::new()),
+		});
+		runtime.set_funding_feed(host.clone());
+		runtime.set_funding_platform(host);
 		if let Some(ledger) = std::env::var_os("TRUAPI_FUNDING_LEDGER").map(PathBuf::from) {
 			let payments = Arc::new(CliPaymentHost { ledger });
 			runtime.set_top_up_platform(payments.clone());
@@ -136,13 +145,13 @@ impl CliFundingHost {
 		}
 	}
 
-	/// Put the provider's cancel offer on session `intent` to the user, once
-	/// per offer, and pass on their answer.
-	fn ask_about_offer(&self, intent: String) {
+	/// Put the provider's cancel offer on `session` to the user, once per
+	/// offer, and pass on their answer.
+	fn ask_about_offer(&self, intent: String, session: Option<&FundingSession>) {
 		let Some(runtime) = self.runtime.upgrade() else {
 			return;
 		};
-		let offer = match runtime.funding_session(&intent).and_then(|session| session.cancel) {
+		let offer = match session.and_then(|session| session.cancel.clone()) {
 			Some(FundingCancel::Offered { fee, refund, .. }) => CancelTerms { fee, refund },
 			_ => {
 				self.lock_asked().remove(&intent);
@@ -180,6 +189,10 @@ impl CliFundingHost {
 	fn lock_asked(&self) -> std::sync::MutexGuard<'_, HashSet<String>> {
 		self.asked.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 	}
+
+	fn lock_candidates(&self) -> std::sync::MutexGuard<'_, HashMap<String, Vec<String>>> {
+		self.candidates.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+	}
 }
 
 /// Cancel session `intent` at the user's request, and record what that did.
@@ -213,11 +226,7 @@ impl FundingPlatform for CliFundingHost {
 		let Some(runtime) = self.runtime.upgrade() else {
 			return Ok(FundingPresentOutcome::Dismissed);
 		};
-		let candidates: Vec<String> = runtime
-			.funding_candidates(&session.intent)
-			.into_iter()
-			.map(|candidate| candidate.provider_id)
-			.collect();
+		let candidates = self.lock_candidates().remove(&session.intent).unwrap_or_default();
 		let rows: Vec<FundingQuoteRow> = runtime
 			.get_funding_quote(&session.intent, default_ask(session.direction, session.amount))
 			.collect()
@@ -300,20 +309,52 @@ impl FundingPlatform for CliFundingHost {
 		Ok(if done { finished } else { FundingFrameOutcome::Dismissed })
 	}
 
-	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
+	/// The country `TRUAPI_FUNDING_COUNTRY` names, standing in for the one the
+	/// device detects.
+	async fn detected_country(&self) -> Option<String> {
+		std::env::var("TRUAPI_FUNDING_COUNTRY")
+			.ok()
+			.filter(|country| !country.is_empty())
+	}
+}
+
+impl FundingFeed for CliFundingHost {
+	fn funding_session_changed(
+		&self,
+		intent: String,
+		status: HostFundingStatusSubscribeItem,
+		session: Option<FundingSession>,
+		_progress: Option<FundingProgress>,
+	) {
 		let (tag, amount) = match status {
 			HostFundingStatusSubscribeItem::InProgress { .. } => ("InProgress", None),
 			HostFundingStatusSubscribeItem::Delivered { credited } => ("Delivered", Some(credited)),
 			HostFundingStatusSubscribeItem::Released { debited } => ("Released", Some(debited)),
 			HostFundingStatusSubscribeItem::Failed { .. } => ("Failed", None),
 		};
+		// The core's own status, which shows what the product's item does
+		// not, such as a withdrawal cancelled after its release.
+		let progress = session
+			.as_ref()
+			.map(|session| format!("{:?}", session.status(truapi::current_unix_millis())));
 		self.transcript.record(serde_json::json!({
 			"kind": "status",
 			"intent": intent,
 			"tag": tag,
 			"amount": amount.map(|amount| amount.to_string()),
+			"progress": progress,
 		}));
-		self.ask_about_offer(intent);
+		self.ask_about_offer(intent, session.as_ref());
+	}
+
+	fn funding_history(&self, _history: Vec<FundingSessionSummary>) {}
+
+	fn funding_in_progress_changed(&self, _in_progress: bool) {}
+
+	fn funding_options_changed(&self, intent: String, options: FundingOptions) {
+		let candidates =
+			options.candidates.into_iter().map(|candidate| candidate.provider_id).collect();
+		self.lock_candidates().insert(intent, candidates);
 	}
 }
 

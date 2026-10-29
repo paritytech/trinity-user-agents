@@ -498,20 +498,47 @@ pub trait NativeFundingCallbacks: Send + Sync {
 		target: v01::FundingFrameTarget,
 	) -> Result<v01::FundingFrameOutcome, HostRejection>;
 
-	/// A session changed: its status and the progress the host draws, so
-	/// the host keeps the latest of each and never reads them back. Every
-	/// session in flight, and every ended one the host has not recorded,
-	/// comes through here once more when funding resumes. `progress` is
-	/// `None` once the core keeps only the session's summary.
+	/// The country the user is likely in, as an ISO 3166-1 alpha-2 code:
+	/// the device's coarse location when already permitted, then its SIM or
+	/// network country, then its locale's region. Never asks for a
+	/// permission. `None` when nothing says.
+	async fn detected_country(&self) -> Option<String>;
+
+	/// A session changed: its status, the session as the core now holds it
+	/// (its choice, cancel offer and amounts) and the progress the host
+	/// draws, so the host keeps the latest of each and never reads them back.
+	/// Every session in flight, and every ended one the host has not
+	/// recorded, comes through here once more when funding resumes.
+	/// `session` and `progress` are `None` once the core keeps only the
+	/// session's summary.
 	fn funding_session_changed(
 		&self,
 		intent: String,
 		status: v01::HostFundingStatusSubscribeItem,
+		session: Option<crate::host_logic::funding::FundingSession>,
 		progress: Option<crate::host_logic::funding::FundingProgress>,
 	);
 
-	/// One provider's row of a quote list the host requested with
-	/// `get_funding_quote`: `Pending` first, then its quote or why it is
-	/// unavailable.
-	fn funding_quote_changed(&self, intent: String, row: crate::platform::FundingQuoteRow);
+	/// Every ended session the host recorded or the core compacted, as
+	/// summaries newest first, once each time funding resumes, so the host
+	/// rebuilds its own history when that was lost.
+	fn funding_history(&self, history: Vec<crate::host_logic::funding::FundingSessionSummary>);
+
+	/// Whether a provider still works on any session: once funding resumes,
+	/// and again whenever it changes. The host keeps it to start funding at
+	/// its next launch.
+	fn funding_in_progress_changed(&self, in_progress: bool);
+
+	/// What session `intent`'s overlay offers: before the overlay is shown,
+	/// after each `select_funding_options`, and after each quote list.
+	fn funding_options_changed(
+		&self,
+		intent: String,
+		options: crate::host_logic::funding_providers::FundingOptions,
+	);
+
+	/// The quote list the host requested with `get_funding_quote`: again
+	/// whenever a provider answers, and each time the core asks every
+	/// provider again at `refresh_at_ms`.
+	fn funding_quotes_changed(&self, intent: String, quotes: crate::platform::FundingQuoteList);
 }
