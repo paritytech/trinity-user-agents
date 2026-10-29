@@ -134,7 +134,7 @@ extension ChatContactDataProviderFactory: ChatContactDataProviderMaking {
             fetchRequest: request,
             callbackQueue: queue,
             logger: logger,
-            transform: { $0.sorted(by: ChatsComparator.lastMessageComparator) },
+            transform: { $0.sorted(by: ChatsComparator.chatListComparator) },
             onUpdate: update,
             onError: failure
         )

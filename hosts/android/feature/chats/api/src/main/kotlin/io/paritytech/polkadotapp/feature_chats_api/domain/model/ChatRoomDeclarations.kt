@@ -22,7 +22,7 @@ data class ChatRoomDeclarations(
         val EMPTY = ChatRoomDeclarations(
             config = null,
             configGeneration = 0,
-            metadata = ChatRoomMetadataModel(description = null),
+            metadata = ChatRoomMetadataModel(description = null, placeholder = null),
             preview = null,
         )
     }
@@ -43,7 +43,11 @@ data class ChatRoomConfigModel(
 }
 
 /** The description of a room. The name stays with the room itself. */
-data class ChatRoomMetadataModel(val description: String?)
+data class ChatRoomMetadataModel(
+    val description: String?,
+    /** The text that the room screen shows while the room has no messages. Null shows nothing. */
+    val placeholder: String?,
+)
 
 /** How a room shows in the chat list (`ChatRoomPreview`). */
 data class ChatRoomPreviewModel(
@@ -57,6 +61,17 @@ data class ChatRoomPreviewModel(
     val lastReaction: ChatPreviewReactionModel?,
     /** The number of reactions that the user did not see yet. */
     val unseenReactions: Int,
+    /** The chat list shows the room above the rooms that are not pinned. */
+    val pinned: Boolean,
+    /** A line that replaces the preview line of the row. Null shows the preview line. */
+    val activity: ChatRoomActivityModel?,
+)
+
+/** An activity of a room, for example "Ben is typing" (`ChatRoomActivity`). */
+data class ChatRoomActivityModel(
+    val text: String,
+    /** The activity continues, so the row animates the line. */
+    val ongoing: Boolean,
 )
 
 /** A reaction that is the newest event of a room (`ChatPreviewReaction`). */
@@ -76,4 +91,7 @@ sealed interface ChatRoomBadgeModel {
 
     /** Zero shows no badge. */
     data class Count(val count: Int) : ChatRoomBadgeModel
+
+    /** An image in place of the unread count: an https URL or an inline `data:` image. */
+    data class Image(val icon: String) : ChatRoomBadgeModel
 }

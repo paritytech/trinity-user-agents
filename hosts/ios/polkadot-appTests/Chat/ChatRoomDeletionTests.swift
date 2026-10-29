@@ -116,13 +116,15 @@ private extension ChatRoomDeletionTests {
         icon: String? = nil
     ) async throws -> Chat.LocalMessage {
         _ = try await context.createRoom(for: bot, roomId: roomId, name: "Room", icon: icon)
-        try await context.setRoomMetadata(for: bot, roomId: roomId, name: "Room", icon: .keep)
+        try await context.setRoomMetadata(for: bot, roomId: roomId, name: "Room", icon: .keep, placeholder: nil)
         try await context.setRoomConfig(for: bot, roomId: roomId, config: config)
         try await context.setRoomPreview(for: bot, roomId: roomId, preview: Chat.RoomPreview(
             timestamp: nil,
             badge: .unreadCount(1),
             lastMessage: nil,
-            unseenReaction: false
+            unseenReaction: false,
+            pinned: false,
+            activity: nil
         ))
 
         let media = Chat.LocalMessage.newExtensionMessage(bot.identifier, roomId: roomId, content: .text("first"))
