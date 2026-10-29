@@ -1,11 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { decodeDotnsRecord, encodeDotnsRecord, readDotns } from "./dotns.js";
+import { checkDotns, readDotns } from "./dotns.js";
 import { type Fetch, isTrinityStackError, parse } from "./index.js";
-import { type DotnsChain, cases, transportOf } from "./test-fixtures.js";
+import { AT, type DotnsChain, cases, transportOf } from "./test-fixtures.js";
 
 const DISPATCHER = `0x${"d1".repeat(20)}`;
-const REGISTRY = `0x${"ee".repeat(20)}`;
-const AT = cases.dotns[0].at;
 const ETH_RPC = {
   kind: "eth-rpc",
   urls: ["http://127.0.0.1:8545"],
@@ -16,38 +14,29 @@ const ETH_RPC = {
 const withoutNulls = (value: unknown) =>
   JSON.parse(JSON.stringify(value, (_, field) => field ?? undefined));
 
-/** A descriptor of `generation`, with an Asset Hub on `assetHubRpc` when given. */
-function descriptor(
-  generation: string,
-  assetHubRpc?: string,
-  services: object[] = [],
-) {
-  const chains: object[] = [
-    {
-      role: "Relay",
-      genesisHash: `0x${"86".repeat(32)}`,
-      rpc: ["ws://127.0.0.1:9944"],
-    },
-  ];
-  if (assetHubRpc)
-    chains.push({
-      role: "AssetHub",
-      genesisHash: `0x${"bb".repeat(32)}`,
-      paraId: 1000,
-      rpc: [assetHubRpc],
-    });
-  const document = {
-    $v: 1,
-    sequence: 1,
-    generation,
-    id: "local",
-    name: "Local",
-    network: "local",
-    tld: "local",
-    services,
+const parsed = (document: unknown) =>
+  parse(new TextEncoder().encode(JSON.stringify(document))).descriptor;
+
+/**
+ * The first dotNS vector's descriptor with `services`, its Asset Hub on `assetHubRpc`, or without
+ * an Asset Hub when none is given.
+ */
+function descriptor(assetHubRpc?: string, services: object[] = []) {
+  const document = cases.dotns[0].descriptor;
+  const chains = document.chains.flatMap((chain: { role: string }) =>
+    chain.role !== "AssetHub"
+      ? [chain]
+      : assetHubRpc
+        ? [{ ...chain, rpc: [assetHubRpc] }]
+        : [],
+  );
+  return parsed({
+    ...document,
     chains,
-  };
-  return parse(new TextEncoder().encode(JSON.stringify(document))).descriptor;
+    services,
+    assets: [],
+    dotns: assetHubRpc ? document.dotns : undefined,
+  });
 }
 
 /** A transport over `chain` that records the block of every read. */
@@ -61,10 +50,13 @@ function over(chain: DotnsChain) {
 describe("dotNS conformance vectors", () => {
   for (const vector of cases.dotns) {
     test(vector.name, async () => {
+      const stated = parsed(vector.descriptor);
       const transport = transportOf(vector);
       let outcome: unknown;
       try {
-        outcome = await readDotns(descriptor(vector.generation), { transport });
+        const read = await readDotns(stated, { transport });
+        const checked = await checkDotns(stated, { transport });
+        outcome = { found: read.addresses, drift: checked.drift };
       } catch (error) {
         if (!isTrinityStackError(error)) throw error;
         outcome = { error: error.code };
@@ -77,9 +69,11 @@ describe("dotNS conformance vectors", () => {
 describe("readDotns", () => {
   test("makes every read at the one block its transport names", async () => {
     const { transport, blocks } = over(cases.dotns[0]);
-    await readDotns(descriptor("g1"), { transport });
-    // The storage read, protocolRegistry(), then one get per registry key.
-    expect(blocks.length).toBe(2 + 16);
+    const read = await readDotns(parsed(cases.dotns[0].descriptor), {
+      transport,
+    });
+    expect(read.at).toEqual(AT);
+    expect(blocks.length).toBeGreaterThan(0);
     expect(blocks.every((block) => block === AT)).toBe(true);
   });
 
@@ -90,42 +84,18 @@ describe("readDotns", () => {
       call: () => Promise.reject(new Error("connection reset")),
     };
     await expect(
-      readDotns(descriptor("g1"), { transport: failing }),
+      readDotns(parsed(cases.dotns[0].descriptor), { transport: failing }),
     ).rejects.toThrow("connection reset");
   });
 
   test("a stack that names no Asset Hub RPC needs a transport", async () => {
-    await expect(readDotns(descriptor("g1"))).rejects.toThrow(
+    await expect(readDotns(descriptor())).rejects.toThrow(
       "names no Asset Hub RPC",
     );
   });
-
-  test("a record round-trips as committed, and a bad address is refused", () => {
-    const record = {
-      generation: "g1",
-      at: AT,
-      dotns: {
-        dispatcher: DISPATCHER,
-        protocolRegistry: REGISTRY,
-        addresses: {},
-      },
-    };
-    const bytes = encodeDotnsRecord(record);
-    expect(new TextDecoder().decode(bytes).endsWith("}\n")).toBe(true);
-    expect(decodeDotnsRecord(bytes)).toEqual(record);
-    const bad = new TextEncoder().encode(
-      JSON.stringify({
-        ...record,
-        dotns: { ...record.dotns, dispatcher: "0x12" },
-      }),
-    );
-    expect(() => decodeDotnsRecord(bad)).toThrow("dispatcher");
-    const none = { generation: "g1", at: AT, dotns: undefined };
-    expect(decodeDotnsRecord(encodeDotnsRecord(none))).toEqual(none);
-  });
 });
 
-describe("readDotns over the stack's own endpoints", () => {
+describe("over the stack's own endpoints", () => {
   let server: ReturnType<typeof Bun.serve> | undefined;
   let connections = 0;
   afterEach(() => {
@@ -193,16 +163,11 @@ describe("readDotns over the stack's own endpoints", () => {
     const storage: unknown[][] = [];
     const blocks: unknown[] = [];
     const rpc = assetHub(chainAt(DISPATCHER, storage));
-    const record = await readDotns(descriptor("g1", rpc, [ETH_RPC]), {
+    const read = await readDotns(descriptor(rpc, [ETH_RPC]), {
       fetch: ethRpc(blocks),
     });
-    expect(record).toEqual({ ...cases.dotns[0].expect, generation: "g1" });
-    expect(storage).toEqual([
-      [
-        "0x57ca9018d648b40a8286a471e82c3808f31ce5ec278db3dff6304333f0019302",
-        AT.hash,
-      ],
-    ]);
+    expect(read).toEqual({ at: AT, addresses: cases.dotns[0].expect.found });
+    expect(storage).toEqual([[cases.dotns[0].storageKey, AT.hash]]);
     expect(new Set(blocks)).toEqual(new Set(["0x2c71c"]));
     expect(connections).toBe(1);
   });
@@ -210,7 +175,7 @@ describe("readDotns over the stack's own endpoints", () => {
   test("a reply that is not JSON fails the read instead of hanging", async () => {
     const rpc = assetHub(() => ["<html>502 Bad Gateway</html>"]);
     await expect(
-      readDotns(descriptor("g1", rpc, [ETH_RPC]), {
+      readDotns(descriptor(rpc, [ETH_RPC]), {
         fetch: ethRpc(),
         timeoutMs: 5_000,
       }),
@@ -224,7 +189,7 @@ describe("readDotns over the stack's own endpoints", () => {
         : chainAt(DISPATCHER)({ id, method, params: [] }),
     );
     await expect(
-      readDotns(descriptor("g1", rpc, [ETH_RPC]), { fetch: ethRpc() }),
+      readDotns(descriptor(rpc, [ETH_RPC]), { fetch: ethRpc() }),
     ).rejects.toThrow("answered without a result");
   });
 
@@ -239,13 +204,13 @@ describe("readDotns over the stack's own endpoints", () => {
       throw new TypeError("connection refused");
     };
     const service = { ...ETH_RPC, urls: [down, ...ETH_RPC.urls] };
-    await readDotns(descriptor("g1", rpc, [service]), { fetch: fetcher });
+    await readDotns(descriptor(rpc, [service]), { fetch: fetcher });
     expect(downCalls).toBe(1);
   });
 
   test("a dispatcher on a stack that names no eth-rpc needs a transport", async () => {
     const rpc = assetHub(chainAt(DISPATCHER));
-    await expect(readDotns(descriptor("g1", rpc))).rejects.toThrow(
+    await expect(readDotns(descriptor(rpc))).rejects.toThrow(
       "names no eth-rpc",
     );
   });

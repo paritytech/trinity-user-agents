@@ -70,24 +70,26 @@ export async function publishedAt(
   return document.slice();
 }
 
+/** The block a dotNS fixture transport reads at. */
+export const AT: Block = { number: 0x2c71c, hash: `0x${"ab".repeat(32)}` };
+
 /** A dotNS vector's chain: the gateway's storage and each call's answer, null for a revert. */
 export type DotnsChain = {
-  at: Block;
   storageKey: string;
   storage: string | null;
   calls: Record<string, string | null>;
 };
 
 /**
- * Asset Hub as a dotNS vector has it. `onRead` sees the block of every storage read and call,
- * and `at` overrides the block a lookup reads at.
+ * Asset Hub as a dotNS vector has it, at `AT`. `onRead` sees the block of every storage read and
+ * call, and `at` overrides the block a lookup reads at.
  */
 export function transportOf(
   chain: DotnsChain,
   options: { at?: () => Promise<Block>; onRead?: (at: Block) => void } = {},
 ): DotnsTransport {
   return {
-    at: options.at ?? (async () => chain.at),
+    at: options.at ?? (async () => AT),
     storage: async (key, at) => {
       if (key !== chain.storageKey) throw new Error(`unexpected key ${key}`);
       options.onRead?.(at);

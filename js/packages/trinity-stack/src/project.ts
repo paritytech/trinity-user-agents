@@ -1,16 +1,10 @@
 // The build copies a JavaScript project keeps of its stacks, as docs/design/trinity-stack-library.md
-// describes: `.trinity/` holds each stack's signed copy and dotNS record, and a module that
-// bundles them, all committed with the project.
+// describes: `.trinity/` holds each stack's signed copy and a module that bundles them, all
+// committed with the project.
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Pointer } from "../wasm/trinity_stack.js";
-import {
-  type DotnsRecord,
-  type DotnsTransport,
-  decodeDotnsRecord,
-  encodeDotnsRecord,
-  readDotns,
-} from "./dotns.js";
+import type { Block, Pointer } from "../wasm/trinity_stack.js";
+import { type DotnsDrift, type DotnsTransport, checkDotns } from "./dotns.js";
 import {
   type Descriptor,
   type Fetch,
@@ -38,7 +32,7 @@ export type Outcome = { changed: string[] };
 const NAME = /^[a-z0-9][a-z0-9-]*$/;
 
 /**
- * Adds a stack under `name` from a link, or a URL and its key, then writes its copies as
+ * Adds a stack under `name` from a link, or a URL and its key, then writes its copy as
  * `update` does. A build copy must be signed, so a stack without a key is refused.
  */
 export async function add(
@@ -67,10 +61,9 @@ export async function add(
 }
 
 /**
- * Fetches each stack, or those `names` lists, and writes what moved: a newer signed copy, and
- * its dotNS record read at Asset Hub's latest finalized block. Refuses an unsigned or expired
- * stack, and anything that would lower `sequence`. A stack that fails keeps its copies and is
- * named in `failures`, while the others still update.
+ * Fetches each stack, or those `names` lists, and writes a newer signed copy. Refuses an unsigned
+ * or expired stack, and anything that would lower `sequence`. A stack that fails keeps its copy
+ * and is named in `failures`, while the others still update.
  */
 export async function update(
   names: string[],
@@ -106,7 +99,37 @@ export async function list(options: ProjectOptions = {}) {
   }));
 }
 
-/** Removes a stack and its copies. */
+/**
+ * Compares the dotNS addresses a descriptor states with its Asset Hub at the latest finalized
+ * block. `target` is a stack name in stacks.json, whose committed copy is checked, else an http(s)
+ * URL, else a local file. Throws when the descriptor has no Asset Hub.
+ */
+export async function check(
+  target: string,
+  options: ProjectOptions = {},
+): Promise<{ at: Block; drift: DotnsDrift[] }> {
+  const stacks = await readStacks(options);
+  let document: Uint8Array | undefined;
+  if (Object.hasOwn(stacks, target)) {
+    document = await read(fileOf(target), options);
+    if (!document) throw new Error(`no committed copy of ${target}`);
+  } else if (/^https?:\/\//.test(target)) {
+    document = await fetchDescriptor(target, options);
+    if (!document) throw new Error(`${target} is unreachable`);
+  } else {
+    document = new Uint8Array(await readFile(target));
+  }
+  const { descriptor } = parse(document);
+  if (!descriptor.chains.some((chain) => chain.role === "AssetHub"))
+    throw new Error(`${descriptor.id} has no AssetHub chain, so no dotNS`);
+  return checkDotns(descriptor, {
+    transport: options.transport?.(descriptor),
+    fetch: options.fetch,
+    timeoutMs: options.timeoutMs,
+  });
+}
+
+/** Removes a stack and its copy. */
 export async function remove(
   name: string,
   options: ProjectOptions = {},
@@ -115,12 +138,11 @@ export async function remove(
   if (!Object.hasOwn(stacks, name)) throw new Error(`no stack named ${name}`);
   delete stacks[name];
   await writeStacks(stacks, options);
-  for (const file of Object.values(filesOf(name)))
-    await rm(join(dir(options), file), { force: true });
+  await rm(join(dir(options), fileOf(name)), { force: true });
   return { changed: ["stacks.json", ...(await generate(options))] };
 }
 
-/** Fetches one stack and writes its copies when they moved; returns the files it wrote. */
+/** Fetches one stack and writes its copy when it moved; returns the files it wrote. */
 async function refresh(
   name: string,
   pointer: Pointer,
@@ -128,10 +150,10 @@ async function refresh(
 ): Promise<string[]> {
   if (!pointer.key)
     throw new Error("a build copy must be signed; add the stack with its key");
-  const files = filesOf(name);
+  const file = fileOf(name);
   const accepted = accept(
     pointer,
-    await read(files.document, options),
+    await read(file, options),
     await fetchDescriptor(pointer.url, options),
     options.now,
   );
@@ -145,42 +167,15 @@ async function refresh(
   if (refusal) throw new Error(refusal);
   if (accepted.expired)
     throw new Error(`the stack expired at ${accepted.descriptor.expiresAt}`);
-  // Read before writing anything, so a stack whose Asset Hub is down keeps its copies as they were.
-  const record = accepted.descriptor.chains.some(
-    (chain) => chain.role === "AssetHub",
-  )
-    ? await readDotns(accepted.descriptor, {
-        transport: options.transport?.(accepted.descriptor),
-        fetch: options.fetch,
-        timeoutMs: options.timeoutMs,
-      })
-    : undefined;
-  const changed: string[] = [];
-  if (accepted.status === "updated") {
-    await write(files.document, accepted.document, options);
-    changed.push(files.document);
-  }
-  const kept = await readRecord(name, options);
-  if (!record) {
-    if (await read(files.dotns, options)) {
-      await rm(join(dir(options), files.dotns));
-      changed.push(files.dotns);
-    }
-  } else if (
-    // A record of the same contracts stays as committed, so a new block alone is no change.
-    kept?.generation !== record.generation ||
-    JSON.stringify(kept.dotns) !== JSON.stringify(record.dotns)
-  ) {
-    await write(files.dotns, encodeDotnsRecord(record), options);
-    changed.push(files.dotns);
-  }
-  return changed;
+  if (accepted.status !== "updated") return [];
+  await write(file, accepted.document, options);
+  return [file];
 }
 
 /** Writes `index.js` and `index.d.ts` for the stacks the project holds; returns those it changed. */
 async function generate(options: ProjectOptions): Promise<string[]> {
   const bundled = (await readCopies(options)).flatMap(
-    ({ name, link, document, dotns }) =>
+    ({ name, link, document }) =>
       document
         ? [
             {
@@ -188,7 +183,6 @@ async function generate(options: ProjectOptions): Promise<string[]> {
               value: {
                 pointer: decodeLink(link),
                 document: new TextDecoder().decode(document),
-                dotns: dotns ?? null,
               },
             },
           ]
@@ -229,19 +223,17 @@ async function generate(options: ProjectOptions): Promise<string[]> {
   return changed;
 }
 
-/** The files a stack's copies live in. */
-function filesOf(name: string) {
-  return { document: `${name}.json`, dotns: `${name}.dotns.json` };
+function fileOf(name: string) {
+  return `${name}.json`;
 }
 
-/** Each stack's link, signed copy and dotNS record, as the project holds them. */
+/** Each stack's link and signed copy, as the project holds them. */
 async function readCopies(options: ProjectOptions) {
   return Promise.all(
     Object.entries(await readStacks(options)).map(async ([name, link]) => ({
       name,
       link,
-      document: await read(filesOf(name).document, options),
-      dotns: await readRecord(name, options),
+      document: await read(fileOf(name), options),
     })),
   );
 }
@@ -269,19 +261,6 @@ async function writeStacks(
     new TextEncoder().encode(`${JSON.stringify(sorted, null, 2)}\n`),
     options,
   );
-}
-
-/** The committed dotNS record, or undefined when there is none or it no longer reads. */
-async function readRecord(
-  name: string,
-  options: ProjectOptions,
-): Promise<DotnsRecord | undefined> {
-  const bytes = await read(filesOf(name).dotns, options);
-  try {
-    return bytes && decodeDotnsRecord(bytes);
-  } catch {
-    return undefined;
-  }
 }
 
 /** A file in the project's stack directory, or undefined when there is none. */

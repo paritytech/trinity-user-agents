@@ -1,20 +1,23 @@
 #!/usr/bin/env node
-// `trinity-stack add | update | list | remove`: the build copies of a project's stacks.
+// `trinity-stack add | update | list | check | remove`: the build copies of a project's stacks.
 import { parseArgs } from "node:util";
-import { add, list, remove, update } from "./project.js";
+import { add, check, list, remove, update } from "./project.js";
 
 const USAGE = `usage:
   trinity-stack add <name> <link | url> [--key 0x..]
   trinity-stack update [<name>...]
   trinity-stack list
+  trinity-stack check <name | url | file>
   trinity-stack remove <name>
 
 options:
   --dir <path>  where the stacks live, .trinity by default
 
 update exits 0 when nothing changed, 2 when it wrote something and 1 when a stack failed,
-which keeps its copies while the others update. It reads dotNS over the stack's eth-rpc, so a
-stack with a dotNS gateway and no eth-rpc fails.`;
+which keeps its copy while the others update.
+
+check compares the dotNS addresses a descriptor states with the chain, reading dotNS over the
+Asset Hub RPC and the stack's eth-rpc. It exits 0 when they match and 1 on drift or failure.`;
 
 try {
   const { positionals, values } = parseArgs({
@@ -40,13 +43,21 @@ try {
     for (const failure of failures) console.error(failure);
     process.exitCode = failures.length > 0 ? 1 : changed.length > 0 ? 2 : 0;
   } else if (command === "list" && rest.length === 0) {
-    for (const { name, link, descriptor, dotns } of await list(options)) {
+    for (const { name, link, descriptor } of await list(options)) {
       const copy = descriptor
         ? `sequence ${descriptor.sequence}, generation ${descriptor.generation}`
         : "no copy";
-      const contracts = dotns ? `, dotNS read at #${dotns.at.number}` : "";
-      console.log(`${name}  ${copy}${contracts}\n  ${link}`);
+      console.log(`${name}  ${copy}\n  ${link}`);
     }
+  } else if (command === "check" && rest.length === 1) {
+    const { at, drift } = await check(rest[0], options);
+    if (drift.length === 0)
+      console.log(`dotNS matches the chain at #${at.number}`);
+    for (const { key, stated, onChain } of drift)
+      console.log(
+        `${key}: descriptor ${stated ?? "none"}, chain ${onChain ?? "none"}`,
+      );
+    process.exitCode = drift.length > 0 ? 1 : 0;
   } else if (command === "remove" && rest.length === 1) {
     const { changed } = await remove(rest[0], options);
     console.log(`wrote ${changed.join(", ")}`);

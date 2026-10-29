@@ -1,11 +1,17 @@
-// A stack's dotNS contracts, read from its Asset Hub as docs/rfcs/trinity-stack-descriptor.md
-// describes: descriptors leave them out, so the chain and the descriptor never disagree. The
-// trinity-stack crate's `DotnsLookup` decides every step; this module only makes the reads.
-import type { Block, Descriptor, DotnsRecord } from "../wasm/trinity_stack.js";
+// Checks the dotNS contract addresses a descriptor states against its Asset Hub, as
+// docs/rfcs/trinity-stack-descriptor.md describes. Readers use the descriptor's `dotns` as-is; an
+// operator reads the chain to fill it or to detect drift. The trinity-stack crate's `DotnsLookup`
+// decides every step; this module only makes the reads.
+import type {
+  Block,
+  Descriptor,
+  DotnsDrift,
+  DotnsLookup,
+} from "../wasm/trinity_stack.js";
 import { type Fetch, DEFAULT_TIMEOUT_MS } from "./index.js";
 import { wasm } from "./wasm.js";
 
-export type { Dotns, DotnsRecord } from "../wasm/trinity_stack.js";
+export type { DotnsDrift } from "../wasm/trinity_stack.js";
 
 /** How `readDotns` reaches Asset Hub, for a reader with its own client, such as a light client. */
 export type DotnsTransport = {
@@ -22,19 +28,44 @@ export class DotnsRevert extends Error {
   override name = "DotnsRevert";
 }
 
+export type DotnsOptions = {
+  transport?: DotnsTransport;
+  fetch?: Fetch;
+  timeoutMs?: number;
+};
+
 /**
- * Reads the stack's dotNS contracts from its Asset Hub, every read at one block. The record's
- * `dotns` is undefined when the Asset Hub has no dotNS gateway. Throws when the chain cannot be
- * reached, or answers in a way no dotNS deployment does.
+ * Reads the dotNS addresses from the descriptor's Asset Hub, every read at one block, to fill the
+ * descriptor's `dotns`. `addresses` is undefined when the Asset Hub has no dotNS gateway. Throws
+ * when the chain cannot be reached, or answers in a way no dotNS deployment does.
  */
 export async function readDotns(
   descriptor: Descriptor,
-  options: {
-    transport?: DotnsTransport;
-    fetch?: Fetch;
-    timeoutMs?: number;
-  } = {},
-): Promise<DotnsRecord> {
+  options: DotnsOptions = {},
+): Promise<{ at: Block; addresses: Record<string, string> | undefined }> {
+  const { at, result } = await lookUp(descriptor, options, (_, done) => done);
+  return { at, addresses: result };
+}
+
+/**
+ * Compares the descriptor's `dotns` with its Asset Hub at one block; `drift` is empty when they
+ * agree. Throws as `readDotns` does.
+ */
+export async function checkDotns(
+  descriptor: Descriptor,
+  options: DotnsOptions = {},
+): Promise<{ at: Block; drift: DotnsDrift[] }> {
+  const { at, result } = await lookUp(descriptor, options, (lookup) =>
+    lookup.drift(),
+  );
+  return { at, drift: result };
+}
+
+async function lookUp<T>(
+  descriptor: Descriptor,
+  options: DotnsOptions,
+  finish: (lookup: DotnsLookup, done: Record<string, string> | undefined) => T,
+): Promise<{ at: Block; result: T }> {
   let transport = options.transport;
   let close = () => {};
   if (!transport) {
@@ -44,11 +75,11 @@ export async function readDotns(
   }
   try {
     const at = await transport.at();
-    const lookup = new wasm.DotnsLookup(descriptor.generation, at);
+    const lookup = new wasm.DotnsLookup(descriptor);
     try {
       for (;;) {
         const step = lookup.next();
-        if ("done" in step) return step.done;
+        if ("done" in step) return { at, result: finish(lookup, step.done) };
         if ("storage" in step)
           lookup.storage(
             (await transport.storage(step.storage, at)) ?? undefined,
@@ -71,16 +102,6 @@ export async function readDotns(
   } finally {
     close();
   }
-}
-
-/** A record as a project commits it, next to the stack's signed copy. */
-export function encodeDotnsRecord(record: DotnsRecord): Uint8Array {
-  return wasm.encodeDotnsRecord(record);
-}
-
-/** Reads a record `encodeDotnsRecord` wrote, checking every address. */
-export function decodeDotnsRecord(bytes: Uint8Array): DotnsRecord {
-  return wasm.decodeDotnsRecord(bytes);
 }
 
 type RpcReply = {

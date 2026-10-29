@@ -3,9 +3,17 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Fetch, encodeLink } from "./index.js";
-import { type ProjectOptions, add, list, remove, update } from "./project.js";
+import {
+  type ProjectOptions,
+  add,
+  check,
+  list,
+  remove,
+  update,
+} from "./project.js";
 import { createStackReader } from "./reader.js";
 import {
+  AT,
   MODEL,
   URL_,
   cases,
@@ -15,22 +23,17 @@ import {
 } from "./test-fixtures.js";
 
 const controller = cases.dotns[0];
+const MOVED = `0x${"cc".repeat(20)}`;
 const link = encodeLink(pointer);
-
-/** Asset Hub as the controller vector has it, at block `number`. */
-const chainAt = (number: number) => () =>
-  transportOf(controller, {
-    at: async () => ({ ...controller.at, number }),
-  });
 
 let dir: string;
 let served: Uint8Array<ArrayBuffer> | undefined;
 const serve: Fetch = async () =>
   served ? new Response(served.slice()) : new Response(null, { status: 503 });
-const options = (block = 1): ProjectOptions => ({
+const options = (): ProjectOptions => ({
   dir,
   fetch: serve,
-  transport: chainAt(block),
+  transport: () => transportOf(controller),
 });
 const files = async () => (await readdir(dir)).sort();
 
@@ -41,12 +44,11 @@ beforeEach(async () => {
 afterEach(() => rm(dir, { recursive: true, force: true }));
 
 describe("trinity-stack add and update", () => {
-  test("add writes the signed copy, its dotNS record and a module a reader runs from", async () => {
+  test("add writes the signed copy and a module a reader runs from", async () => {
     const { changed } = await add("local", link, undefined, options());
     expect(changed.sort()).toEqual([
       "index.d.ts",
       "index.js",
-      "local.dotns.json",
       "local.json",
       "stacks.json",
     ]);
@@ -58,36 +60,29 @@ describe("trinity-stack add and update", () => {
       bundled: stacks,
       refresh: "never",
       fetch: () => Promise.reject(new Error("no fetch under never")),
-      transport: () => {
-        throw new Error("no lookup while the record matches");
-      },
     });
     expect((await reader.get(stacks.local)).descriptor.sequence).toBe(100);
-    expect((await reader.dotns(stacks.local))?.dispatcher).toBe(
-      controller.expect.dotns.dispatcher,
-    );
     expect(await readFile(join(dir, "index.d.ts"), "utf8")).toContain(
       'readonly "local": Bundled;',
     );
   });
 
-  test("update writes nothing when only the block moved, and exits on a change otherwise", async () => {
+  test("update writes only the signed copy, and nothing when the stack did not move", async () => {
     await add("local", link, undefined, options());
-    expect(await update([], options(2))).toEqual({ changed: [], failures: [] });
-    served = await at(200);
-    expect((await update([], options(3))).changed.sort()).toEqual([
+    expect(await update([], options())).toEqual({ changed: [], failures: [] });
+    served = await at(200, "g2");
+    expect((await update([], options())).changed.sort()).toEqual([
       "index.js",
       "local.json",
     ]);
-    served = await at(300, "g2");
-    expect((await update([], options(4))).changed.sort()).toEqual([
+    expect(await files()).toEqual([
+      "index.d.ts",
       "index.js",
-      "local.dotns.json",
       "local.json",
+      "stacks.json",
     ]);
     const [stack] = await list({ dir });
     expect(stack.descriptor?.generation).toBe("g2");
-    expect(stack.dotns?.at.number).toBe(4);
   });
 
   test("update refuses a lower sequence, an unreachable stack and an unsigned one, naming the stack", async () => {
@@ -113,34 +108,37 @@ describe("trinity-stack add and update", () => {
     );
   });
 
-  test("a stack whose Asset Hub is down keeps its copies, not a new descriptor beside an old record", async () => {
-    await add("local", link, undefined, options());
-    const before = await readFile(join(dir, "local.json"));
-    served = await at(200, "g2");
-    const down: ProjectOptions = {
-      ...options(),
-      transport: () => ({
-        ...chainAt(1)(),
-        at: () => Promise.reject(new Error("Asset Hub is down")),
-      }),
-    };
-    const outcome = await update([], down);
-    expect(outcome).toEqual({
-      changed: [],
-      failures: ["local: Asset Hub is down"],
+  test("check reads a stack's committed copy by name, else a URL, else a file", async () => {
+    served = await at(100, "g1", {
+      ...MODEL,
+      dotns: controller.descriptor.dotns,
     });
-    expect(await readFile(join(dir, "local.json"))).toEqual(before);
+    await add("local", link, undefined, options());
+    served = await at(200, "g1", {
+      ...MODEL,
+      dotns: { ...controller.descriptor.dotns, resolver: MOVED },
+    });
+    const drift = [
+      {
+        key: "resolver",
+        stated: MOVED,
+        onChain: controller.expect.found.resolver,
+      },
+    ];
+    expect(await check("local", options())).toEqual({ at: AT, drift: [] });
+    expect(await check(URL_, options())).toEqual({ at: AT, drift });
+    const path = join(dir, "moved.json");
+    await writeFile(path, served);
+    expect(await check(path, options())).toEqual({ at: AT, drift });
   });
 
-  test("a stack without an Asset Hub keeps no dotNS record", async () => {
-    served = await at(100, "g1", { ...MODEL, chains: [MODEL.chains[0]] });
-    await add("relay-only", link, undefined, options());
-    expect(await files()).toEqual([
-      "index.d.ts",
-      "index.js",
-      "relay-only.json",
-      "stacks.json",
-    ]);
+  test("check rejects a descriptor without an Asset Hub", async () => {
+    const path = join(dir, "relay-only.json");
+    await writeFile(
+      path,
+      await at(100, "g1", { ...MODEL, chains: [MODEL.chains[0]] }),
+    );
+    await expect(check(path, options())).rejects.toThrow("no AssetHub chain");
   });
 
   test("remove drops the copies and the stack from the module", async () => {

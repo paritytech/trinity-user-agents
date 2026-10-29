@@ -5,13 +5,10 @@ import type {
   Chain,
   CurrentStack,
   Descriptor,
-  Dotns,
-  DotnsRecord,
   FetchRequest,
   Pointer,
   Service,
 } from "../wasm/trinity_stack.js";
-import { type DotnsTransport, readDotns } from "./dotns.js";
 import { type Fetch, type Store, fetchServed, stackId } from "./index.js";
 import { unixSeconds } from "./time.js";
 import { wasm } from "./wasm.js";
@@ -21,8 +18,6 @@ export type Bundled = {
   pointer: Pointer;
   /** The signed document, as served. */
   document: string;
-  /** The stack's dotNS record, null when the build has none. */
-  dotns: DotnsRecord | null;
 };
 
 /** When the reader fetches a stack it holds a copy of. */
@@ -49,12 +44,6 @@ export type StackReader = {
     stack: Pointer | Bundled,
     options?: { require?: Requirements },
   ): Promise<CurrentStack>;
-  /**
-   * The stack's dotNS contracts for the descriptor in use, undefined when it has no Asset Hub or
-   * its Asset Hub has no gateway. A lookup that fails leaves the record of the same `generation`
-   * in use.
-   */
-  dotns(stack: Pointer | Bundled): Promise<Dotns | undefined>;
   /** Fetches the stack now, whatever the policy, and returns the copy it then uses. */
   refresh(stack: Pointer | Bundled): Promise<CurrentStack>;
   /** Calls `listener` whenever a stack moves to a newer descriptor; returns the unsubscribe. */
@@ -77,8 +66,6 @@ export function createStackReader(
     store?: Store;
     fetch?: Fetch;
     timeoutMs?: number;
-    /** How to reach a stack's Asset Hub for dotNS, instead of its RPC and `eth-rpc`. */
-    transport?: (descriptor: Descriptor) => DotnsTransport;
     now?: () => Date;
   } = {},
 ): StackReader {
@@ -97,7 +84,6 @@ export function createStackReader(
   /** Each stack the reader has started, with the pointer it was started from. */
   const loads = new Map<string, { pointer: Pointer; loading: Promise<void> }>();
   const fetches = new Map<string, Promise<CurrentStack>>();
-  const lookups = new Map<string, Promise<DotnsRecord | undefined>>();
   const listeners = new Set<(change: StackChange) => void>();
   const storeKey = (id: string) => `${id}#reader`;
 
@@ -113,7 +99,6 @@ export function createStackReader(
         reader.load(
           pointer,
           build && new TextEncoder().encode(build.document),
-          build?.dotns ?? undefined,
           await options.store?.get(storeKey(id)),
         );
       })();
@@ -124,96 +109,54 @@ export function createStackReader(
     return started.loading;
   };
 
-  /** Keeps `promise` as the stack's pending one in `pending` until it settles. */
-  const track = <T>(
-    pending: Map<string, Promise<T>>,
-    id: string,
-    promise: Promise<T>,
-  ) => {
-    pending.set(id, promise);
-    const settle = () => {
-      if (pending.get(id) === promise) pending.delete(id);
-    };
-    promise.then(settle, settle);
-    return promise;
-  };
-
   const fetchStack = (pointer: Pointer, request: FetchRequest) => {
     const id = stackId(pointer);
-    return track(
-      fetches,
-      id,
-      (async () => {
-        let served;
+    const fetching = (async () => {
+      let served;
+      try {
+        served = await fetchServed(request.url, {
+          fetch: options.fetch,
+          timeoutMs: options.timeoutMs,
+          ifNoneMatch: request.ifNoneMatch,
+        });
+      } catch (error) {
+        // A custom fetch's own bug: answer the reader so the stack does not stay pending.
         try {
-          served = await fetchServed(request.url, {
-            fetch: options.fetch,
-            timeoutMs: options.timeoutMs,
-            ifNoneMatch: request.ifNoneMatch,
-          });
-        } catch (error) {
-          // A custom fetch's own bug: answer the reader so the stack does not stay pending.
+          reader.fetched(pointer, undefined, undefined, false, now());
+        } catch {}
+        throw error;
+      }
+      const { accepted, stored } = reader.fetched(
+        pointer,
+        served.document,
+        served.etag,
+        served.notModified,
+        now(),
+      );
+      if (stored) await options.store?.set(storeKey(id), stored);
+      if (accepted.status === "updated")
+        for (const listener of listeners) {
           try {
-            reader.fetched(pointer, undefined, undefined, false, now());
-          } catch {}
-          throw error;
-        }
-        const { accepted, stored } = reader.fetched(
-          pointer,
-          served.document,
-          served.etag,
-          served.notModified,
-          now(),
-        );
-        if (stored) await options.store?.set(storeKey(id), stored);
-        if (accepted.status === "updated")
-          for (const listener of listeners) {
-            try {
-              listener({
-                pointer,
-                descriptor: accepted.descriptor,
-                newGeneration: accepted.newGeneration,
-              });
-            } catch (error) {
-              // Reported as a browser reports an event listener's error, never failing the fetch.
-              if (typeof reportError === "function") reportError(error);
-              else console.error(error);
-            }
+            listener({
+              pointer,
+              descriptor: accepted.descriptor,
+              newGeneration: accepted.newGeneration,
+            });
+          } catch (error) {
+            // Reported as a browser reports an event listener's error, never failing the fetch.
+            if (typeof reportError === "function") reportError(error);
+            else console.error(error);
           }
-        const { descriptor, signed, stale, expired } = accepted;
-        return { descriptor, signed, stale, expired };
-      })(),
-    );
-  };
-
-  /**
-   * Runs a lookup for `descriptor`. Resolves to the record now in use, undefined when the reader
-   * has moved to another generation meanwhile.
-   */
-  const lookUp = (pointer: Pointer, descriptor: Descriptor) => {
-    const id = stackId(pointer);
-    return track(
-      lookups,
-      id,
-      (async () => {
-        let record;
-        try {
-          record = await readDotns(descriptor, {
-            transport: options.transport?.(descriptor),
-            fetch: options.fetch,
-            timeoutMs: options.timeoutMs,
-          });
-        } catch (error) {
-          const kept = reader.lookedUp(pointer, undefined, now()).record;
-          if (kept) return kept;
-          throw error;
         }
-        const looked = reader.lookedUp(pointer, record, now());
-        if (looked.stored)
-          await options.store?.set(storeKey(id), looked.stored);
-        return looked.record;
-      })(),
-    );
+      const { descriptor, signed, stale, expired } = accepted;
+      return { descriptor, signed, stale, expired };
+    })();
+    fetches.set(id, fetching);
+    const settle = () => {
+      if (fetches.get(id) === fetching) fetches.delete(id);
+    };
+    fetching.then(settle, settle);
+    return fetching;
   };
 
   const api: StackReader = {
@@ -228,23 +171,6 @@ export function createStackReader(
       if (!current) throw new Error(`no copy of ${pointer.url} and no fetch`);
       if (getOptions.require) check(current.descriptor, getOptions.require);
       return current;
-    },
-    async dotns(stack) {
-      const pointer = pointerOf(stack);
-      // Again whenever the descriptor moved to another generation while a lookup ran.
-      for (;;) {
-        const { descriptor } = await api.get(stack);
-        const read = reader.dotns(pointer, now());
-        // A stack with no Asset Hub has no dotNS.
-        if (!read) return undefined;
-        const looking = read.lookUp
-          ? lookUp(pointer, descriptor)
-          : lookups.get(stackId(pointer));
-        const record = read.record ?? (await looking);
-        if (record) return record.dotns;
-        if (!looking)
-          throw new Error(`no dotNS record of ${pointer.url} and no lookup`);
-      }
     },
     async refresh(stack) {
       const pointer = pointerOf(stack);
