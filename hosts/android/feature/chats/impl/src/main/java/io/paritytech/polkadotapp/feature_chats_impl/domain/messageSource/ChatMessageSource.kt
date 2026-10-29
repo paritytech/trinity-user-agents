@@ -107,7 +107,7 @@ sealed interface ChatSourceAction {
     /** The user saw these messages. */
     data class MarkSeen(val messageIds: Set<ChatMessageId>) : ChatSourceAction
 
-    /** The user deleted a message. The window drops it once the product has deleted it. */
+    /** The user deleted a message. The window removes it only after the product deletes it. */
     data class Delete(val messageId: ChatMessageId) : ChatSourceAction
 }
 
