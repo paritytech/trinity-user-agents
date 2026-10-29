@@ -66,14 +66,18 @@ impl Chat for ProductRuntimeHost {
 						reason: error.to_string(),
 					})
 				};
-				request.room_id =
-					normalize_chat_identifier("roomId", &request.room_id).map_err(field_error)?;
+				request.room_id_source =
+					normalize_chat_identifier("roomIdSource", &request.room_id_source)
+						.map_err(field_error)?;
 				request.name = validate_chat_name("name", &request.name).map_err(field_error)?;
 				request.icon = validate_chat_icon("icon", &request.icon).map_err(field_error)?;
-				platform
-					.create_chat_room(&self.connection.product, request)
+				let room_id =
+					self.connection.product.product_id.chat_room_id(&request.room_id_source);
+				let status = platform
+					.create_chat_room(&self.connection.product, room_id.clone(), request)
 					.await
-					.map_err(CallError::Domain)
+					.map_err(CallError::Domain)?;
+				Ok(latest::HostChatCreateRoomResponse { status, room_id })
 			})
 			.await
 	}
@@ -590,16 +594,15 @@ mod tests {
 		async fn create_chat_room(
 			&self,
 			_product: &ProductContext,
+			room_id: String,
 			request: latest::HostChatCreateRoomRequest,
-		) -> Result<latest::HostChatCreateRoomResponse, latest::HostChatCreateRoomError> {
+		) -> Result<latest::ChatRoomRegistrationStatus, latest::HostChatCreateRoomError> {
 			self.icons.lock().unwrap().push(request.icon);
 			self.rooms
 				.lock()
 				.unwrap()
-				.insert(request.room_id, latest::ChatRoomParticipation::RoomHost);
-			Ok(latest::HostChatCreateRoomResponse {
-				status: latest::ChatRoomRegistrationStatus::New,
-			})
+				.insert(room_id, latest::ChatRoomParticipation::RoomHost);
+			Ok(latest::ChatRoomRegistrationStatus::New)
 		}
 
 		async fn register_chat_bot(

@@ -298,6 +298,21 @@ pub fn screen_chat_icon(icon: String) -> Result<String, NativeChatFieldError> {
 	crate::platform::validate_chat_icon("icon", &icon).map_err(Into::into)
 }
 
+/// The id of the chat room that `product_id` creates with `room_id_source`.
+///
+/// A host that shows a product's room before the product runs calls this,
+/// because the product's own `createRoom` resolves the room under this id. The
+/// source gets the screening of `createRoom` first.
+#[uniffi::export]
+pub fn chat_room_id(
+	product_id: latest::ProductId,
+	room_id_source: String,
+) -> Result<String, NativeChatFieldError> {
+	let room_id_source =
+		crate::platform::normalize_chat_identifier("roomIdSource", &room_id_source)?;
+	Ok(product_id.chat_room_id(&room_id_source))
+}
+
 /// Whether `product_id` is a first-party product the host grants every
 /// [`truapi::latest::RemotePermission`] without prompting.
 ///
