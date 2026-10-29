@@ -124,7 +124,7 @@ impl FundingPlatform for CliFundingHost {
 				FundingDirection::Out => "Out",
 			},
 			"amount": session.amount.map(|amount| amount.to_string()),
-			"product": product.map(|product| product.product_id.clone()),
+			"product": product.map(|product| product.product_id.as_str()),
 			"outcome": format!("{outcome:?}"),
 		}));
 		let Some(stage) = settled_stage(outcome) else {

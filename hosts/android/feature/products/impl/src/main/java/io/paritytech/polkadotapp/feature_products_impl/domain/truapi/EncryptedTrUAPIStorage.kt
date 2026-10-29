@@ -85,7 +85,7 @@ internal fun productStorageKeyOwner(key: String): String? {
     return runCatching { rest.decodeToString(start, start + length, throwOnInvalidSequence = true) }.getOrNull()
 }
 
-/** Matches the core's `normalize_product_identifier`, the form written into keys. */
+/** Matches the normalization in the core's `ProductId::parse`, the form written into keys. */
 internal fun normalizeProductId(productId: String): String =
     Normalizer.normalize(productId.trim(), Normalizer.Form.NFC).lowercase()
 

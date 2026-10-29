@@ -1,5 +1,6 @@
 import SwiftUI
 import PolkadotUI
+import DesignSystem
 
 extension DepositViewLayout {
     private struct OverallSectionView: View {
@@ -96,14 +97,14 @@ extension DepositViewLayout {
                         Image(uiImage: qrCode).resizable()
                     } else {
                         Rectangle()
-                            .foregroundStyle(.white100)
+                            .foregroundStyle(.fgStaticWhite)
                     }
                 }
                 .aspectRatio(1, contentMode: .fit)
                 .padding(8)
                 .frame(height: 230) // TODO: Pass outside
                 .background(
-                    .white100,
+                    .fgStaticWhite,
                     in: RoundedRectangle(cornerRadius: 20)
                 )
 

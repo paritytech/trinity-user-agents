@@ -142,7 +142,7 @@ private extension PolkadotHandshakeSender {
         let accountId = input.hostData.statementAccountId
         logger.debug("Allocating SSS allowance...")
         do {
-            try await sssManager.allocate(accountId: accountId, policy: .ignore, priority: .high)
+            try await sssManager.allocate(accountId: accountId, policy: .ignore, priority: .high, domain: .device)
             logger.debug("SSS allowance allocated successfully")
         } catch {
             logger.error("SSS allowance allocation failed: \(error)")

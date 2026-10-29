@@ -2,6 +2,7 @@ import ExternalAccessibility
 import UIKit
 internal import SnapKit
 import FoundationExt
+import DesignSystem
 
 public final class ChatAttachmentsViewLayout: UIView, KeyboardAdoptableViewLayout {
     public let scrollView: UIScrollView = {
@@ -46,7 +47,7 @@ public final class ChatAttachmentsViewLayout: UIView, KeyboardAdoptableViewLayou
     public var onSendTap: ((String) -> Void)?
 
     private var dimView: UIView = .create { view in
-        view.backgroundColor = UIColor(resource: .black45)
+        view.backgroundColor = UIColor.bgSurfaceOverlay
         view.isHidden = true
     }
 

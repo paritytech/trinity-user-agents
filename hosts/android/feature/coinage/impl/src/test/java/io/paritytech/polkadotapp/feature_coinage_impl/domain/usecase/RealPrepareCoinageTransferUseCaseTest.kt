@@ -13,6 +13,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.CoinageT
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageHandoffCommit
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageInput
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageOperationGroupId
+import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageRegistrationError
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageScheduledTransactionRequest
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageTransactionId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageTransactionState
@@ -22,6 +23,7 @@ import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.TransferPla
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.TransferPlannerFactory
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.exceptions.InsufficientBalanceException
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.exceptions.TransferSubmissionFailedException
+import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.strategies.CoinReservationMode
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.strategies.ExactMatchStrategy
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.strategies.ExactMatchStrategyFactory
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.strategies.ScheduledTransfer
@@ -73,6 +75,7 @@ class RealPrepareCoinageTransferUseCaseTest {
     private val splitStrategy: SplitCoinStrategy = mock()
     private val exactStrategy: ExactMatchStrategy = mock()
     private val handoffCommit: CoinageHandoffCommit = mock()
+    private val handedOff = listOf(OwnAsset.Coin(testKey(3)))
 
     private val useCase = RealPrepareCoinageTransferUseCase(
         assetSelector = assetSelector,
@@ -147,6 +150,27 @@ class RealPrepareCoinageTransferUseCaseTest {
         verifyNothingScheduled()
     }
 
+    @Test
+    fun `prepares the handoff when a chat send is prepared`() = runBlocking<Unit> {
+        withSplitScheduling()
+
+        prepareChatSend()
+
+        verifySplitReservedWith(CoinReservationMode.PREPARE)
+    }
+
+    @Test
+    fun `fails the commit and schedules nothing when the chat handoff commit is refused`() = runBlocking<Unit> {
+        withSplitScheduling()
+        withSchedulingAccepted()
+        withHandoffCommitRefused()
+
+        val prepared = prepareChatSend().getOrThrow()
+
+        assertTrue(prepared.handoffCommit.commit().isFailure)
+        verifyNothingScheduled()
+    }
+
     /**
      * The commit runs inside the transaction that saves the payment message, so registering the transactions
      * there is what ties them to the message: a saved payment always has them, a lost one never does.
@@ -201,8 +225,19 @@ class RealPrepareCoinageTransferUseCaseTest {
         val prepared = prepareMerchantSend()
 
         assertTrue(prepared.isSuccess)
+        verifySplitReservedWith(CoinReservationMode.PRECOMMIT)
         verify(transactionService).scheduleTransactions(eq(listOf(splitTransaction)), anyGroupId())
         verify(handoffCommit, never()).commit()
+    }
+
+    @Test
+    fun `schedules nothing when the merchant strategy cannot reserve its coins`() = runBlocking<Unit> {
+        withSplitScheduling()
+        withSchedulingAccepted()
+        withSplitReservationRefused()
+
+        assertTrue(prepareMerchantSend().isFailure)
+        verifyNothingScheduled()
     }
 
     /** The coins stay reserved and their transactions stay scheduled; only the screen stops waiting. */
@@ -269,7 +304,7 @@ class RealPrepareCoinageTransferUseCaseTest {
 
         val verified = verify(splitStrategy)
         with(eq(StalenessReportCollector.NoOp)) {
-            verified.schedule(eq(TransferSubmissionParams(buildUntil = RETRY_UNTIL, retryFailures = true)))
+            verified.schedule(eq(TransferSubmissionParams(buildUntil = RETRY_UNTIL, retryFailures = true)), any())
         }
     }
 
@@ -281,7 +316,7 @@ class RealPrepareCoinageTransferUseCaseTest {
 
         val verified = verify(splitStrategy)
         with(eq(StalenessReportCollector.NoOp)) {
-            verified.schedule(eq(TransferSubmissionParams(buildUntil = RETRY_UNTIL, retryFailures = true)))
+            verified.schedule(eq(TransferSubmissionParams(buildUntil = RETRY_UNTIL, retryFailures = true)), any())
         }
     }
 
@@ -293,22 +328,38 @@ class RealPrepareCoinageTransferUseCaseTest {
 
     private suspend fun withSplitScheduling() {
         whenever(splitStrategyFactory.create(any())).thenReturn(splitStrategy)
-        whenever(with(eq(StalenessReportCollector.NoOp)) { splitStrategy.schedule(any()) })
+        whenever(with(eq(StalenessReportCollector.NoOp)) { splitStrategy.schedule(any(), any()) })
             .thenReturn(Result.success(ScheduledTransfer(emptyList(), handoffCommit, listOf(splitTransaction))))
         withMemoAndCommit()
     }
 
     private suspend fun withExactScheduling() {
         whenever(exactMatchStrategyFactory.create(any())).thenReturn(exactStrategy)
-        whenever(with(eq(StalenessReportCollector.NoOp)) { exactStrategy.schedule(any()) })
+        whenever(with(eq(StalenessReportCollector.NoOp)) { exactStrategy.schedule(any(), any()) })
             .thenReturn(Result.success(ScheduledTransfer(emptyList(), handoffCommit, emptyList())))
         withMemoAndCommit()
+    }
+
+    private suspend fun verifySplitReservedWith(mode: CoinReservationMode) {
+        val verified = verify(splitStrategy)
+        with(eq(StalenessReportCollector.NoOp)) { verified.schedule(any(), eq(mode)) }
     }
 
     private suspend fun withMemoAndCommit() {
         whenever(memoBuilder.buildMemo(any())).thenReturn(Result.success(TransferMemo(emptyList(), Balance.ZERO)))
         whenever(handoffCommit.commit()).thenReturn(Result.success(Unit))
     }
+
+    private suspend fun withHandoffCommitRefused() {
+        whenever(handoffCommit.commit()).thenReturn(Result.failure(handedOffMeanwhile()))
+    }
+
+    private suspend fun withSplitReservationRefused() {
+        whenever(with(eq(StalenessReportCollector.NoOp)) { splitStrategy.schedule(any(), any()) })
+            .thenReturn(Result.failure(handedOffMeanwhile()))
+    }
+
+    private fun handedOffMeanwhile() = CoinageRegistrationError.HandoffOfHandedOffAsset(handedOff.single())
 
     private suspend fun withSchedulingAccepted() {
         whenever(transactionService.scheduleTransactions(any(), anyGroupId()))

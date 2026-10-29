@@ -46,7 +46,19 @@ object CoinageScene {
     enum class Metal(val index: Float) {
         SILVER(3f),
         GOLD(4f),
-        BRONZE(5f)
+        BRONZE(5f),
+
+        /** Not from the export: a local row for the plain set. */
+        TITANIUM(6f)
+    }
+
+    enum class CoinSet {
+        VARIED,
+        PLAIN;
+
+        companion object {
+            val SHIPPED = PLAIN
+        }
     }
 
     /**
@@ -56,7 +68,9 @@ object CoinageScene {
      * metal wherever it sits. The top band has three denominations and so gets the first three. The
      * reference's own table never pairs a flower with a core, so that mesh is exported for us specifically.
      */
-    fun geometry(exponent: Int): Geometry {
+    fun geometry(exponent: Int, set: CoinSet): Geometry {
+        if (set == CoinSet.PLAIN) return Geometry.ROUND
+
         val clamped = exponent.coerceIn(0, CoinageCoinDesign.HIGHEST_EXPONENT)
         val band = clamped / CoinageCoinDesign.DENOMINATIONS_PER_BAND
 
@@ -69,7 +83,13 @@ object CoinageScene {
         return SHAPES[clamped % CoinageCoinDesign.DENOMINATIONS_PER_BAND]
     }
 
-    fun metals(exponent: Int): Pair<Metal, Metal?> = when (CoinageCoinDesign.band(exponent)) {
+    fun metals(exponent: Int, set: CoinSet): Pair<Metal, Metal?> = if (set == CoinSet.PLAIN) {
+        Metal.TITANIUM to null
+    } else {
+        varied(exponent)
+    }
+
+    private fun varied(exponent: Int): Pair<Metal, Metal?> = when (CoinageCoinDesign.band(exponent)) {
         CoinageCoinDesign.Band.BRONZE -> Metal.BRONZE to null
         CoinageCoinDesign.Band.SILVER -> Metal.SILVER to null
         CoinageCoinDesign.Band.GOLD -> Metal.GOLD to null
@@ -104,7 +124,8 @@ object CoinageScene {
     fun batches(
         field: CoinageCoinField,
         designs: List<CoinageAssetStore.Design>,
-        window: Float
+        window: Float,
+        set: CoinSet
     ): List<CoinageBatch> {
         val batches = LinkedHashMap<String, MutableList<CoinageInstance>>()
 
@@ -112,8 +133,8 @@ object CoinageScene {
             val exponent = member.coin.exponent.coerceIn(0, CoinageCoinDesign.HIGHEST_EXPONENT)
             val design = designs.getOrNull(exponent) ?: continue
 
-            batches.getOrPut(geometry(member.coin.exponent).key) { mutableListOf() } +=
-                instance(member, design, field.distanceToTarget(member), window)
+            batches.getOrPut(geometry(member.coin.exponent, set).key) { mutableListOf() } +=
+                instance(member, design, field.distanceToTarget(member), window, set)
         }
 
         return batches.map { (geometry, instances) -> CoinageBatch(geometry, instances) }
@@ -123,9 +144,10 @@ object CoinageScene {
         member: CoinageCoinField.Member,
         design: CoinageAssetStore.Design,
         distance: Float,
-        window: Float
+        window: Float,
+        set: CoinSet
     ): CoinageInstance {
-        val (outer, core) = metals(member.coin.exponent)
+        val (outer, core) = metals(member.coin.exponent, set)
         val channels = member.channels
         // Luster is the six-tap path, so it fades in only as a coin lands.
         val landing = maxOf(0f, 1f - distance / 40f)
@@ -145,7 +167,7 @@ object CoinageScene {
             outerMetal = outer.index,
             coreMetal = core?.index ?: -1f,
             tile = design.tile,
-            reeds = reeds(member.coin.exponent),
+            reeds = reeds(member.coin.exponent, set),
             luster = channels.luster.value * landing * landing,
             recede = channels.recede.value,
             calm = channels.calm.value,
@@ -161,8 +183,8 @@ object CoinageScene {
      * Which coin is under a touch, in field coordinates, against where each one has actually got to — mid-flight
      * included. The nearest the viewer wins where two overlap.
      */
-    fun coinAt(x: Float, y: Float, field: CoinageCoinField): String? = field.members
-        .filter { contains(it, x, y) }
+    fun coinAt(x: Float, y: Float, field: CoinageCoinField, set: CoinSet): String? = field.members
+        .filter { contains(it, x, y, set) }
         .maxByOrNull { it.channels.lift.value }
         ?.coin
         ?.id
@@ -170,10 +192,10 @@ object CoinageScene {
     /** An edge-on coin covers a point or two, so the touch is taken against a floor a finger can land on. */
     private const val TOUCH_FLOOR = 16f
 
-    private fun contains(member: CoinageCoinField.Member, x: Float, y: Float): Boolean {
+    private fun contains(member: CoinageCoinField.Member, x: Float, y: Float, set: CoinSet): Boolean {
         val channels = member.channels
         val half = channels.height.value / 2
-        val visible = half * geometry(member.coin.exponent).faceWidth * abs(cos(channels.turn.value))
+        val visible = half * geometry(member.coin.exponent, set).faceWidth * abs(cos(channels.turn.value))
         val reach = maxOf(visible, TOUCH_FLOOR / 2)
 
         return abs(x - channels.centreX.value) <= reach && abs(y - channels.centreY.value) <= half
@@ -183,10 +205,10 @@ object CoinageScene {
      * Milling is reserved for the round coins above bronze, as a mint reserves it for the coins worth
      * protecting. The count is what the rim can actually resolve.
      */
-    private fun reeds(exponent: Int): Float {
+    private fun reeds(exponent: Int, set: CoinSet): Float {
         val design = CoinageCoinDesign.design(exponent)
 
-        if (!design.isReeded) return 0f
+        if (set == CoinSet.PLAIN || !design.isReeded) return 0f
 
         return (60f + 70f * design.size).roundToInt().toFloat()
     }

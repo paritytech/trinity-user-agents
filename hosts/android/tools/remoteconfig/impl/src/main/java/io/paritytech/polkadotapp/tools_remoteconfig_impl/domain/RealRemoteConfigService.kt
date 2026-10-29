@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.awaitTrue
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.logSuccess
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.tools_remoteconfig_api.RemoteConfigService
 import io.paritytech.polkadotapp.tools_remoteconfig_impl.data.RemoteConfigDataSource
 import kotlinx.coroutines.flow.Flow
@@ -85,6 +86,10 @@ class RealRemoteConfigService @Inject constructor(
             val raw = dataSource.getString(key)
             gson.fromJson<T>(raw, clazz)
         }
+    }
+
+    override suspend fun <T> getJsonObject(key: String, clazz: Class<T>): Result<T> {
+        return runCancellableCatching { gson.fromJson<T>(dataSource.getString(key), clazz) }
     }
 
     private suspend inline fun <R> getSyncedValue(retrieve: () -> R): Result<R> {

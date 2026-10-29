@@ -29,6 +29,8 @@ protocol WalletViewModelProtocol: AnyObject, Observation.Observable {
     var pocketCards: [PocketCardViewModel] { get set }
     var pocketCardFrames: [PocketCardKey: CGRect] { get set }
     var openPocketCard: PocketCardKey? { get set }
+    var openPocketCardOffset: CGSize { get set }
+    var isPocketCleared: Bool { get set }
 
     var onUsername: (() -> Void)? { get set }
     var onBalance: (() -> Void)? { get set }
@@ -50,6 +52,11 @@ class WalletViewModel: WalletViewModelProtocol {
     /// demand, so moving a card never redraws the Pocket.
     @ObservationIgnored var pocketCardFrames: [PocketCardKey: CGRect] = [:]
     var openPocketCard: PocketCardKey?
+    /// How far the open card is drawn from its slot. The Pocket draws the card
+    /// while it flies, so it keeps its place in the stack.
+    var openPocketCardOffset: CGSize = .zero
+    /// Whether the rest of the Pocket has cleared away for the open card.
+    var isPocketCleared = false
 
     var onUsername: (() -> Void)?
     var onBalance: (() -> Void)?

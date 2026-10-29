@@ -1195,6 +1195,12 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       },
     },
 
+    // The mock builds every chain as V4, as the CLI host does.
+    extrinsicVersion: {
+      async transactionExtensionVersions() {
+        return { chains: [] };
+      },
+    },
     features: {
       async featureSupported() {
         if (faults.featureError) throw new Error(faults.featureError);

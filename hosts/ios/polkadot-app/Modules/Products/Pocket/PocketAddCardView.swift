@@ -1,3 +1,4 @@
+import DesignSystem
 import PolkadotUI
 import SwiftUI
 
@@ -34,7 +35,8 @@ struct PocketAddCardView: View {
                 refusal(message)
             }
         }
-        .padding(24)
+        .padding(.horizontal, PocketCardSize.sideMargin)
+        .padding(.vertical, DSSpacings.large)
         .frame(maxWidth: .infinity, minHeight: Self.sheetHeight, alignment: .top)
         .background(Color(.bgSurfaceMain))
         .task { await viewModel.load() }

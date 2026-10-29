@@ -27,12 +27,13 @@ pub struct HostPocketRemoveCardRequest {
 }
 
 /// Card removal failure.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::From)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum HostPocketRemoveCardError {
 	/// The card is privileged and stays in Pocket.
 	Privileged,
 	/// Catch-all.
+	#[from]
 	Unknown {
 		/// Human-readable reason.
 		reason: String,

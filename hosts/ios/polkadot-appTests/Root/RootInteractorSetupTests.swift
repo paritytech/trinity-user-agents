@@ -21,6 +21,18 @@ struct RootInteractorSetupTests {
         #expect(migrator.migrateCallCount == 1)
     }
 
+    @Test("retry fetches the remote config again")
+    @MainActor
+    func retryRefetchesRemoteConfig() {
+        let remoteConfigManager = MockRemoteConfigManager()
+        let interactor = makeInteractor(remoteConfigManager: remoteConfigManager)
+
+        interactor.setup()
+        interactor.retrySetup()
+
+        #expect(remoteConfigManager.fetchCallCount == 2)
+    }
+
     @Test("TLD resolution failure gates destination")
     @MainActor
     func tldFailureGatesDestination() async throws {
@@ -433,14 +445,23 @@ private extension RootInteractorSetupTests {
         },
         clock: any Clock<Duration> = TestClock<Duration>()
     ) -> RootInteractor {
-        RootInteractor(
+        let initializer = AppSharedInitializer(
+            dependencies: AppSharedInitializerDependencies(
+                migrator: migrator,
+                chainRegistryClosure: { chainRegistry },
+                remoteConfigManager: remoteConfigManager,
+                chainRegistryConfigurator: MockChainRegistryConfigurator()
+            ),
+            logger: StubLogger()
+        )
+
+        return RootInteractor(
             chainRegistryClosure: { chainRegistry },
-            migrator: migrator,
+            initializer: initializer,
             logger: StubLogger(),
             resolver: MockDecisionResolver(),
             tokenManager: MockJWTTokenManager(),
             remoteConfigManager: remoteConfigManager,
-            chainRegistryConfigurator: MockChainRegistryConfigurator(),
             productPrewarmer: MockProductContentPrewarmer(),
             observer: RootSetupObserver(pathMonitor: pathMonitor),
             tldProvider: tldProvider,

@@ -72,13 +72,51 @@ public extension CoinageService {
         let currentInstallationStore = installation.currentInstallationStore
         let coinKeypairFactory = CoinKeypairFactory(entropyManager: rootEntropyManager)
         let voucherKeypairFactory = VoucherKeypairFactory(entropyManager: rootEntropyManager)
+        let dataStoreRepository = AccountDataStoreRepository(
+            accountKeys: DataStoreAccountKeys(entropyManager: rootEntropyManager),
+            reviveApi: installation.reviveApi,
+            logger: logger
+        )
+        durable.oracles.register(
+            CoinageInstallationRegistrationOracle.make(
+                chainId: installation.chainId,
+                dataStoreRepository: dataStoreRepository,
+                logger: logger
+            ),
+            for: .coinageInstallation
+        )
+        let installationRegistrar = CoinageInstallationRegistrar(
+            currentInstallationStore: currentInstallationStore,
+            configProvider: installation.configProvider,
+            engine: durable.txService,
+            submitter: InstallationRegistrationSubmitter(
+                dataStoreRepository: dataStoreRepository,
+                reviveApi: installation.reviveApi,
+                pgasProvisioner: installation.pgasProvisioner,
+                feeEstimator: installation.feeEstimator,
+                callArguments: RuntimeReviveCallArguments(runtimeService: installation.runtimeService),
+                chainId: installation.chainId,
+                originFactory: originFactory,
+                engine: durable.txService,
+                logger: logger
+            ),
+            backgroundExecutor: backgroundExecutor,
+            logger: logger
+        )
+
+        let backedUpInstallation = CoinageBackedUpInstallationProvider(
+            installationStore: currentInstallationStore,
+            backupObserver: installationRegistrar
+        )
         // One allocator per Coinage instance: each serialises its own reserve-then-save.
         let coinAllocator = CoinAllocator(
+            installationProvider: backedUpInstallation,
             installationStore: currentInstallationStore,
             coinRepository: coinRepository,
             keyFactory: coinKeypairFactory
         )
         let voucherAllocator = VoucherAllocator(
+            installationProvider: backedUpInstallation,
             installationStore: currentInstallationStore,
             delayProvider: VoucherDelayProvider(),
             voucherRepository: voucherRepository,
@@ -189,38 +227,6 @@ public extension CoinageService {
             memoBuilder: memoBuilder,
             recyclerLoader: readinessLoader,
             txService: txService,
-            logger: logger
-        )
-
-        let dataStoreRepository = AccountDataStoreRepository(
-            accountKeys: DataStoreAccountKeys(entropyManager: rootEntropyManager),
-            reviveApi: installation.reviveApi,
-            logger: logger
-        )
-        durable.oracles.register(
-            CoinageInstallationRegistrationOracle.make(
-                chainId: installation.chainId,
-                dataStoreRepository: dataStoreRepository,
-                logger: logger
-            ),
-            for: .coinageInstallation
-        )
-        let installationRegistrar = CoinageInstallationRegistrar(
-            currentInstallationStore: currentInstallationStore,
-            configProvider: installation.configProvider,
-            engine: durable.txService,
-            submitter: InstallationRegistrationSubmitter(
-                dataStoreRepository: dataStoreRepository,
-                reviveApi: installation.reviveApi,
-                pgasProvisioner: installation.pgasProvisioner,
-                feeEstimator: installation.feeEstimator,
-                callArguments: RuntimeReviveCallArguments(runtimeService: installation.runtimeService),
-                chainId: installation.chainId,
-                originFactory: originFactory,
-                engine: durable.txService,
-                logger: logger
-            ),
-            backgroundExecutor: backgroundExecutor,
             logger: logger
         )
 
@@ -449,6 +455,7 @@ public extension CoinageService {
             databaseFactory: databaseFactory,
             recoveryService: recoveryService,
             installationRegistrar: installationRegistrar,
+            backedUpInstallation: backedUpInstallation,
             incomingPaymentService: incomingPaymentService,
             logger: logger
         )

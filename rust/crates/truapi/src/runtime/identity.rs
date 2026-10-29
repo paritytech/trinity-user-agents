@@ -17,10 +17,12 @@ use web_time::Duration;
 use crate::{
 	chain_runtime::ChainRuntime,
 	host_logic::{
-		dotns_gateway::{DotnsIdentity, classify_labels, discover_pop_controller, resolve_labels},
+		dotns_gateway::{
+			DotnsError, DotnsIdentity, classify_labels, discover_pop_controller, resolve_labels,
+		},
 		session::SessionInfo,
 	},
-	runtime::dotns_lookup::DotnsLookup,
+	runtime::dotns_lookup::{DotnsLookup, DotnsLookupKind},
 	session_usernames::SessionUsernames,
 };
 
@@ -152,10 +154,13 @@ async fn lookup_with_retries(
 				return LookupOutcome::NoRecord;
 			},
 			Err(reason) => {
+				// A warning leaves the device, so the account is named by a
+				// handle rather than in full. The debug lines above, which stay
+				// on it, still carry the whole id.
 				warn!(
-					account = %hex::encode(account),
+					account = %crate::logging::account_handle(&account),
 					attempt,
-					%reason,
+					reason = %reason.reason(),
 					"dotNS {label} lookup failed"
 				);
 			},
@@ -174,12 +179,12 @@ async fn lookup_dotns_identity(
 	chain: &ChainRuntime,
 	asset_hub_chain_genesis_hash: [u8; 32],
 	account_id: [u8; 32],
-) -> Result<Option<DotnsIdentity>, String> {
+) -> Result<Option<DotnsIdentity>, DotnsError> {
 	let lookup = async {
 		let mut lookup = DotnsLookup::pinned_to_best_block(
 			chain,
 			asset_hub_chain_genesis_hash,
-			&format!("identity:{}", hex::encode(account_id)),
+			DotnsLookupKind::Identity,
 		)
 		.await?;
 		let Some(controller) = discover_pop_controller(&mut lookup).await? else {

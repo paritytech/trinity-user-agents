@@ -17,6 +17,9 @@ owner: "@johnthecat"
 > **NOTE (2026-09-18): retain the legacy Google Fonts exception.**
 > For compatibility, `BLESSED_REMOTE_DOMAINS` lets every product access `fonts.googleapis.com` and `fonts.gstatic.com` without a prompt. This covers all paths and query strings on those hosts, not only font requests, and requests disclose the user's IP address to Google. An explicit matching denial overrides the exception. These implicit grants are not stored.
 
+> **NOTE (2026-10-20): first-party products get device permissions without a prompt.**
+> Products in `truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS` get device permissions without a prompt. They still need the OS grant. Stored device decisions are not read or written for them.
+
 ## Summary
 
 The host callback distinguishes `AllowOnce`, `AllowAlways`, and `Deny`.

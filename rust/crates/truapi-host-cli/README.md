@@ -105,7 +105,8 @@ updates it. Nothing contacts GitHub.
 ### State directory
 
 Reserved identities derive under `uid.paseo` / `peopl.paseo` on
-`paseo-next-v2`, and `uid.testnet` / `peopl.testnet` on `previewnet`.
+`paseo-next-v2`, `uid.testnet` / `peopl.testnet` on `previewnet`, and
+`uid.dot` / `peopl.dot` on `polkadot`.
 Managed host state lives under `<base-path>/v2`, including accounts,
 sessions, pairings, core and product storage, and log
 preferences. The CLI appends `v2` to both the default base path and a path set
@@ -1024,7 +1025,11 @@ HOST_CLI_SIGNER_MNEMONIC="spin battle …" truapi-host signing-host --deeplink '
 truapi-host alloc-check --mnemonic "spin battle …" --lookback 100
 ```
 
-Both hosts take `--network`, either `paseo-next-v2` (default) or `previewnet`.
+Both hosts take `--network`: `paseo-next-v2` (default), `previewnet`, or
+`polkadot` (mainnet). Mainnet identities are real, so `polkadot` signs only with
+`--mnemonic` / `HOST_CLI_SIGNER_MNEMONIC`, never stores an account, never
+auto-approves, refuses `--product-config` and `attest`, and has no identity backend unless
+`HOST_CLI_IDENTITY_BACKEND_BASE` names one (SPEC.md §14.1).
 The network preset owns the identity backend URL, the People, Bulletin and Asset
 Hub RPCs, and their genesis hashes; there is
 no public `--statement-store` flag. Pick `previewnet` when a product's runtime

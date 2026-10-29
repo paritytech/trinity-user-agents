@@ -45,8 +45,8 @@ use crate::{
 		},
 		session::SsoSessionInfo,
 		sso::pairing::{
-			ResponderIdentity, VersionedHandshakeProposal, bootstrap_topic,
-			decode_pairing_deeplink, derive_identity_chat_private_key,
+			PairingDeeplinkDecodeError, ResponderIdentity, VersionedHandshakeProposal,
+			bootstrap_topic, decode_pairing_deeplink, derive_identity_chat_private_key,
 			derive_x25519_keypair_from_entropy, encrypt_v2_handshake_response,
 			establish_responder_session_info, v2, x25519_public_key,
 		},
@@ -193,7 +193,7 @@ struct EstablishedPairing {
 
 impl PairedSsoPeer {
 	/// Extract the public peer material carried by a pairing deeplink.
-	pub fn from_deeplink(deeplink: &str) -> Result<Self, String> {
+	pub fn from_deeplink(deeplink: &str) -> Result<Self, PairingDeeplinkDecodeError> {
 		Ok(PairingProposal::from_deeplink(deeplink)?.peer)
 	}
 }
@@ -204,9 +204,8 @@ pub const MAX_PAIRING_METADATA_CHARS: usize = 512;
 impl PairingProposal {
 	/// Decode a pairing deeplink into the peer it advertises and the metadata
 	/// a host prompts with.
-	pub fn from_deeplink(deeplink: &str) -> Result<Self, String> {
-		let VersionedHandshakeProposal::V2(proposal) =
-			decode_pairing_deeplink(deeplink).map_err(|err| err.to_string())?;
+	pub fn from_deeplink(deeplink: &str) -> Result<Self, PairingDeeplinkDecodeError> {
+		let VersionedHandshakeProposal::V2(proposal) = decode_pairing_deeplink(deeplink)?;
 		let mut metadata = PairingProposalMetadata::default();
 		for v2::MetadataEntry(key, value) in proposal.metadata {
 			let value = sanitize_pairing_metadata(value);
@@ -283,7 +282,7 @@ impl SsoResponderService {
 		&self,
 		deeplink: &str,
 	) -> Result<EstablishedPairing, String> {
-		let peer = PairedSsoPeer::from_deeplink(deeplink)?;
+		let peer = PairedSsoPeer::from_deeplink(deeplink).map_err(|err| err.to_string())?;
 		let entropy = self
 			.signing_host
 			.root_entropy()
@@ -388,7 +387,7 @@ impl SsoResponderService {
 		&self,
 		deeplink: &str,
 	) -> Result<AnnouncedPairing, String> {
-		let peer = PairedSsoPeer::from_deeplink(deeplink)?;
+		let peer = PairedSsoPeer::from_deeplink(deeplink).map_err(|err| err.to_string())?;
 		let entropy = self
 			.signing_host
 			.root_entropy()
@@ -870,6 +869,7 @@ mod tests {
 			derive_product_subtree_keypair, derive_ring_vrf_domain_entropy,
 			derive_root_keypair_from_entropy,
 		},
+		platform::ProductId,
 	};
 
 	/// The key a host advertises on chain must be the one it serves over
@@ -889,6 +889,8 @@ mod tests {
 			"headless",
 			None,
 			0,
+			None,
+			None,
 		)
 		.expect("registration builds");
 
@@ -1274,7 +1276,7 @@ mod tests {
 			Dispatch::NotARequest("ProductSubtreeResponse"),
 		);
 		let Dispatch::Response(answer) = dispatch(v1::RemoteMessage::ProductSubtreeRequest(
-			sso_messages::ProductSubtreeRequest { product_id: "myapp.dot".to_string() },
+			sso_messages::ProductSubtreeRequest { product_id: ProductId::for_test("myapp.dot") },
 		)) else {
 			panic!("expected a disconnected error response");
 		};
@@ -1327,7 +1329,7 @@ mod tests {
 		let request = RemoteMessage::request(
 			"allocation-1".to_string(),
 			sso_messages::ResourceAllocationRequest {
-				calling_product_id: "myapp.dot".to_string(),
+				calling_product_id: ProductId::for_test("myapp.dot"),
 				resources: vec![
 					api::AllocatableResource::AutoSigning,
 					api::AllocatableResource::BulletinAllowance,
@@ -1378,10 +1380,10 @@ mod tests {
 			&signing_host,
 			"alias-1",
 			v1::RemoteMessage::GetAccountAliasRequest(sso_messages::ProductRequest {
-				calling_product_id: "myapp.dot".to_string(),
+				calling_product_id: ProductId::for_test("myapp.dot"),
 				payload: api::HostAccountGetAliasRequest {
 					key_handle: api::ProductAccountId {
-						dot_ns_identifier: "peopl.dot".to_string(),
+						dot_ns_identifier: ProductId::for_test("peopl.dot"),
 						derivation_index: api::DerivationIndex::Index(0),
 					},
 					context: api::ProductProofContext {
@@ -1408,7 +1410,7 @@ mod tests {
 			&signing_host,
 			"alloc-1",
 			v1::RemoteMessage::ResourceAllocationRequest(sso_messages::ResourceAllocationRequest {
-				calling_product_id: "myapp.dot".to_string(),
+				calling_product_id: ProductId::for_test("myapp.dot"),
 				resources: vec![api::AllocatableResource::StatementStoreAllowance],
 				on_existing: sso_messages::OnExistingAllowancePolicy::Ignore,
 			}),
@@ -1426,7 +1428,7 @@ mod tests {
 			.lock()
 			.expect("resource allocation review list mutex poisoned");
 		assert_eq!(reviews.len(), 1);
-		assert_eq!(reviews[0].calling_product_id, "myapp.dot");
+		assert_eq!(reviews[0].calling_product_id, ProductId::for_test("myapp.dot"));
 	}
 
 	#[test]
@@ -1437,19 +1439,20 @@ mod tests {
 		});
 		let (_, signing_host) = signing_fixture(platform);
 		let root = derive_root_keypair_from_entropy(&ENTROPY).expect("root derives");
-		let expected_secret = derive_product_subtree_keypair(&root, "myapp.dot")
-			.expect("product subtree secret derives")
-			.secret
-			.to_bytes();
+		let expected_secret =
+			derive_product_subtree_keypair(&root, &ProductId::for_test("myapp.dot"))
+				.expect("product subtree secret derives")
+				.secret
+				.to_bytes();
 		let expected_ring_vrf_domain_entropy =
-			derive_ring_vrf_domain_entropy(&ENTROPY, "myapp.dot")
+			derive_ring_vrf_domain_entropy(&ENTROPY, &ProductId::for_test("myapp.dot"))
 				.expect("ring-VRF domain entropy derives");
 
 		let response = answer(
 			&signing_host,
 			"alloc-auto-signing",
 			v1::RemoteMessage::ResourceAllocationRequest(sso_messages::ResourceAllocationRequest {
-				calling_product_id: "myapp.dot".to_string(),
+				calling_product_id: ProductId::for_test("myapp.dot"),
 				resources: vec![api::AllocatableResource::AutoSigning],
 				on_existing: sso_messages::OnExistingAllowancePolicy::Ignore,
 			}),
@@ -1481,7 +1484,7 @@ mod tests {
 		let message = RemoteMessage::request(
 			"alloc-stale".to_string(),
 			sso_messages::ResourceAllocationRequest {
-				calling_product_id: "myapp.dot".to_string(),
+				calling_product_id: ProductId::for_test("myapp.dot"),
 				resources: vec![api::AllocatableResource::AutoSigning],
 				on_existing: OnExistingAllowancePolicy::Ignore,
 			},
@@ -1517,7 +1520,7 @@ mod tests {
 		RemoteMessage::request(
 			message_id.to_string(),
 			sso_messages::ResourceAllocationRequest {
-				calling_product_id: "myapp.dot".to_string(),
+				calling_product_id: ProductId::for_test("myapp.dot"),
 				resources: vec![api::AllocatableResource::AutoSigning],
 				on_existing: OnExistingAllowancePolicy::Ignore,
 			},
@@ -1717,7 +1720,7 @@ mod tests {
 			&signing_host,
 			"subtree-1",
 			v1::RemoteMessage::ProductSubtreeRequest(sso_messages::ProductSubtreeRequest {
-				product_id: "browse.dot".to_string(),
+				product_id: ProductId::for_test("browse.dot"),
 			}),
 		);
 
@@ -1726,11 +1729,13 @@ mod tests {
 		};
 		let root =
 			derive_root_keypair_from_entropy(&ENTROPY).expect("fixture entropy derives root");
-		let expected =
-			crate::host_logic::product_account::derive_product_subtree_keypair(&root, "browse.dot")
-				.expect("fixture derives subtree")
-				.public
-				.to_bytes();
+		let expected = crate::host_logic::product_account::derive_product_subtree_keypair(
+			&root,
+			&ProductId::for_test("browse.dot"),
+		)
+		.expect("fixture derives subtree")
+		.public
+		.to_bytes();
 		assert_eq!(response.responding_to, "subtree-1");
 		assert_eq!(response.payload, Ok(expected));
 	}

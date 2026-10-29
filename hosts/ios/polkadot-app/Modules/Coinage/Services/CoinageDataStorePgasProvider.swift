@@ -57,6 +57,7 @@ extension PGASAccountProvisioner {
     ) -> PGASAccountProvisioner {
         PGASAccountProvisioner(
             allowanceManager: allowanceManager,
+            domain: .coinage,
             balanceProvider: CoinageDataStorePgasProvider(
                 chainResource: chainRegistry,
                 balanceService: BalanceQueryService(

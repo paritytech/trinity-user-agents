@@ -51,12 +51,6 @@ struct ThemeSelectionView: View {
                 screenContent(swatchOnly: true)
                     .environment(\.appTheme, model.committed)
             }
-            .overlay(alignment: .topLeading) {
-                if model.showsBackButton {
-                    backButton
-                        .padding(.leading, DSSpacings.mediumIncreased)
-                }
-            }
             .frame(width: proxy.size.width, height: proxy.size.height)
             .coordinateSpace(name: Self.revealSpace)
             .onPreferenceChange(SwatchCenterPreferenceKey.self) { swatchCenters = $0 }
@@ -64,7 +58,6 @@ struct ThemeSelectionView: View {
             .onChange(of: proxy.safeAreaInsets.bottom, initial: true) { _, inset in bottomSafeInset = inset }
             .sensoryFeedback(.selection, trigger: model.selected)
             .onAppear(perform: animateEntrance)
-            .navigationBarBackButtonHidden()
         }
     }
 }
@@ -92,18 +85,6 @@ private extension ThemeSelectionView {
                 Color.bgSurfaceMain.ignoresSafeArea()
             }
         }
-    }
-
-    var backButton: some View {
-        Button {
-            model.back()
-        } label: {
-            Image(uiImage: NavigationBarStyle.backIndicatorImage)
-                .renderingMode(.template)
-                .foregroundStyle(Color.fgPrimary)
-        }
-        .buttonStyle(.dsIcon(style: .ghost, shape: .pill, size: .medium, glass: true))
-        .environment(\.appTheme, model.committed)
     }
 
     func animateEntrance() {

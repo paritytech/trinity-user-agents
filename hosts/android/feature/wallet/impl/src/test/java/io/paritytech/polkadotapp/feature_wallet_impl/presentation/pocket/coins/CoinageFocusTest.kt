@@ -66,9 +66,9 @@ class CoinageFocusTest {
         )
         repeat(600) { field.advance(1f / 60) }
 
-        assertEquals("front", CoinageScene.coinAt(55f, 30f, field))
-        assertEquals("edge", CoinageScene.coinAt(206f, 30f, field))
-        assertNull(CoinageScene.coinAt(215f, 30f, field))
+        assertEquals("front", CoinageScene.coinAt(55f, 30f, field, CoinageScene.CoinSet.VARIED))
+        assertEquals("edge", CoinageScene.coinAt(206f, 30f, field, CoinageScene.CoinSet.VARIED))
+        assertNull(CoinageScene.coinAt(215f, 30f, field, CoinageScene.CoinSet.VARIED))
     }
 
     private fun focus(visibleTop: Float, visibleBottom: Float) = CoinageArrangement.Focus(

@@ -110,10 +110,10 @@ private extension ChatIntegrationTest {
             signManager: signManager,
             encryptionManager: encryptionManager,
             deviceEncryptionKeyFactory: nil,
-            messageRouteSelector: { _ in .identity },
             maxStatementSize: 1_024
         ).makeService(
             statementStoreConnection: statementStore,
+            statementSignerResolver: IdentitySignerResolver(signManager: signManager),
             delegate: participant
         )
 

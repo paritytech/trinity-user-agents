@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.progressStallReport.StalenessReportCollector
 import io.paritytech.polkadotapp.common.utils.progressStallReport.markRegion
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinProvenance
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.StrategyType
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.isInRecycler
@@ -60,10 +61,13 @@ class UnloadAndSplitVouchersStrategy(
      * they share one pinned block and person proof.
      */
     context(diagnostics: StalenessReportCollector)
-    override suspend fun schedule(params: TransferSubmissionParams): Result<ScheduledTransfer> =
+    override suspend fun schedule(
+        params: TransferSubmissionParams,
+        reservationMode: CoinReservationMode,
+    ): Result<ScheduledTransfer> =
         diagnostics.markRegion(RCommon.string.coinage_stall_preparing_transfer) {
-            runCatching { mintBatches() }.flatMap { minted ->
-                transactionService.preCommitHandoff(minted.handedOff()).map { handoffCommit ->
+            runCancellableCatching { mintBatches() }.flatMap { minted ->
+                transactionService.reserveAssets(minted.handedOff(), reservationMode).map { handoffCommit ->
                     val policy = CoinageSubmissionParams.unloadPolicy(params)
 
                     ScheduledTransfer(

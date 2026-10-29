@@ -1,4 +1,3 @@
-import AsyncExtensions
 import ChainRegistry
 import Foundation
 import os
@@ -218,6 +217,7 @@ private final class RecordingWalletView: UIViewController, WalletMainViewProtoco
     func didReceive(titleViewModel _: NetworkStatusTitleView.ViewModel) {}
     func frame(of _: PocketCardKey) -> CGRect? { nil }
     func setOpenCard(_: PocketCardKey?) {}
+    func moveOpenCard(by _: CGSize, clearingPocket _: Bool, animated _: Bool) {}
 }
 
 @MainActor
@@ -273,11 +273,6 @@ private final class SlowArchives: DotNsResolverProtocol, @unchecked Sendable {
         if delay > .zero { try await Task.sleep(for: delay) }
 
         return URL(fileURLWithPath: "/tmp/\(dotNsName)")
-    }
-
-    func getMetadataEntry(dotNsName _: String, key _: String) async throws -> String? { nil }
-    func progressStream(dotNsName _: String) -> AnyAsyncSequence<DotNsLoadProgress> {
-        AsyncStream<DotNsLoadProgress> { $0.finish() }.eraseToAnyAsyncSequence()
     }
 
     func clearCache() throws {}

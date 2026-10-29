@@ -127,7 +127,6 @@ class PocketViewModelTest {
         every { Uri.encode(any()) } answers { firstArg() }
         Dispatchers.setMain(testDispatcher)
         whenever(interactor.observeBackupProgress()).thenReturn(flowOf(BackupProgress.Unknown))
-        whenever(interactor.observeAccountBackupPending()).thenReturn(flowOf(false))
     }
 
     @After

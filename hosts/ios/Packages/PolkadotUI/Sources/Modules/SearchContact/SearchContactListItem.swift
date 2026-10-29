@@ -20,11 +20,11 @@ public struct SearchContactListConfiguration: HashableContentConfiguration {
 }
 
 final class SearchContactListView: UIView, UIContentView {
-    let avatarView = DSAvatarView(size: .s40)
+    let avatarView = DSSearchAvatarView()
 
     let nameLabel: Label = create {
-        $0.typography = .titleMedium
-        $0.textColor = UIColor.fgPrimary
+        $0.typography = .bodyLargeEmphasized
+        $0.textColor = .fgPrimary
         $0.numberOfLines = 1
     }
 
@@ -51,14 +51,14 @@ final class SearchContactListView: UIView, UIContentView {
     private func setupViews() {
         addSubview(avatarView)
         avatarView.snp.makeConstraints {
-            $0.size.equalTo(avatarView.proposedDimension)
+            $0.size.equalTo(DSSearchAvatar.dimension)
             $0.leading.equalToSuperview()
-            $0.top.bottom.equalToSuperview()
+            $0.top.bottom.equalToSuperview().inset(12)
         }
 
         addSubview(nameLabel)
         nameLabel.snp.makeConstraints {
-            $0.leading.equalTo(avatarView.snp.trailing).offset(16)
+            $0.leading.equalTo(avatarView.snp.trailing).offset(12)
             $0.trailing.equalToSuperview().inset(16)
             $0.centerY.equalToSuperview()
         }

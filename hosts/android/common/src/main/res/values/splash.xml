@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="splash_icon" type="drawable">@drawable/splash_logo</item>
+</resources>

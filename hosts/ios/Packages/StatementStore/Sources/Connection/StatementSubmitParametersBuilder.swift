@@ -7,12 +7,11 @@ public protocol StatementSubmitParametersBuilding {
     func build() throws -> StatementSubmitParameters
 }
 
+/// Builds a statement for a signer known up front; see `UnsignedStatement` to sign at submission time.
 public final class StatementSubmitParametersBuilder: StatementSubmitParametersBuilding {
-    typealias FieldConverter = () throws -> StatementField
-
     private let signer: StatementStoreSigning
     private let logger: SDKLoggerProtocol?
-    private var fieldsToConvert = [FieldConverter]()
+    private let statement = UnsignedStatement()
 
     public init(
         signer: StatementStoreSigning,
@@ -24,73 +23,47 @@ public final class StatementSubmitParametersBuilder: StatementSubmitParametersBu
 
     @discardableResult
     public func addChannel(_ value: StatementFixedFieldConvertible) -> Self {
-        addFieldToConvert {
-            let data = try value.fixedStatementFieldData()
-            return .channel(data)
-        }
+        statement.addChannel(value)
+        return self
     }
 
     @discardableResult
     public func addTopic1(_ value: StatementFixedFieldConvertible) -> Self {
-        addFieldToConvert {
-            let data = try value.fixedStatementFieldData()
-            return .topic1(data)
-        }
+        statement.addTopic1(value)
+        return self
     }
 
     @discardableResult
     public func addTopic2(_ value: StatementFixedFieldConvertible) -> Self {
-        addFieldToConvert {
-            let data = try value.fixedStatementFieldData()
-            return .topic2(data)
-        }
+        statement.addTopic2(value)
+        return self
     }
 
     @discardableResult
     public func addTopic3(_ value: StatementFixedFieldConvertible) -> Self {
-        addFieldToConvert {
-            let data = try value.fixedStatementFieldData()
-            return .topic3(data)
-        }
+        statement.addTopic3(value)
+        return self
     }
 
     @discardableResult
     public func addTopic4(_ value: StatementFixedFieldConvertible) -> Self {
-        addFieldToConvert {
-            let data = try value.fixedStatementFieldData()
-            return .topic4(data)
-        }
+        statement.addTopic4(value)
+        return self
     }
 
     @discardableResult
     public func addScaleEncodedPayload(_ value: Data) -> Self {
-        addFieldToConvert {
-            .scaleEncodedPayload(value)
-        }
+        statement.addScaleEncodedPayload(value)
+        return self
     }
 
     @discardableResult
     public func addExpiry(_ value: UInt64) -> Self {
-        addFieldToConvert { .expiry(value) }
-    }
-
-    @discardableResult
-    private func addFieldToConvert(_ converter: @escaping FieldConverter) -> Self {
-        fieldsToConvert.append(converter)
+        statement.addExpiry(value)
         return self
     }
 
     public func build() throws -> StatementSubmitParameters {
-        let unsignedStatement = try fieldsToConvert.map { fieldClosure in
-            try fieldClosure()
-        }
-
-        let dataForProof = try unsignedStatement.deriveProofData()
-        let proof = try signer.sign(dataForProof)
-        let proofField = StatementField.proof(proof)
-
-        let encodedStatement = try ([proofField] + unsignedStatement).encodeForStore()
-
-        return StatementSubmitParameters(encodedStatement: encodedStatement)
+        try statement.signed(by: signer).build()
     }
 }

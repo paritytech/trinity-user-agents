@@ -52,9 +52,6 @@ struct AssetDetailsView: View {
     @ViewBuilder
     private var expandedBody: some View {
         VStack(spacing: 16) {
-            if viewModel.showsAccountBackupPending {
-                AccountBackupPendingView()
-            }
             if viewModel.showsBackupNotification {
                 backupCard()
             } else {
@@ -211,23 +208,4 @@ struct AssetDetailsView: View {
             .disabled(viewModel.isTestnetTopUpInProgress)
         }
     #endif
-}
-
-/// Funding progress banner. Pinned by the wallet host while the asset card is expanded.
-struct AssetDetailsFundingBar: View {
-    @Bindable var viewModel: AssetDetailsViewModel
-
-    var body: some View {
-        if !viewModel.fundingStates.isEmpty {
-            AssetFundingStatusView(
-                states: $viewModel.fundingStates,
-                isExpanded: $viewModel.isFundingExpanded,
-                configuration: .fundingDigitalDollarConfiguration(
-                    onCompletedAction: viewModel.onFundingCompleted,
-                    onFailedAction: viewModel.onFundingFailed
-                )
-            )
-            .frame(maxWidth: .infinity)
-        }
-    }
 }

@@ -13,7 +13,7 @@ struct DeviceSyncServiceTests {
         let repositoryFactory = MockLastSyncOfferIdRepositoryFactory()
         let service = DeviceSyncService(
             ownStatementAccountId: Data(repeating: 1, count: 32),
-            messageExchangeModeProvider: FixedMessageExchangeModeProvider(mode: .identity),
+            ownSignKeyIds: [],
             configFactory: MockDeviceSyncWebRTCConfigFactory(),
             remoteContactResolver: MockRemoteContactResolver(result: .success(nil)),
             storageDependencies: .init(
@@ -62,7 +62,7 @@ struct DeviceSyncServiceTests {
         let engine = MockDeviceSyncPeerEngine()
         let service = DeviceSyncService(
             ownStatementAccountId: Data(repeating: 1, count: 32),
-            messageExchangeModeProvider: FixedMessageExchangeModeProvider(mode: .identity),
+            ownSignKeyIds: [],
             configFactory: MockDeviceSyncWebRTCConfigFactory(),
             storageDependencies: .init(deviceDataProviderFactory: devices),
             peerEngineFactory: { _, _ in engine }
@@ -88,7 +88,7 @@ struct DeviceSyncServiceTests {
         let secondEngine = MockDeviceSyncPeerEngine()
         let service = DeviceSyncService(
             ownStatementAccountId: Data(repeating: 1, count: 32),
-            messageExchangeModeProvider: FixedMessageExchangeModeProvider(mode: .identity),
+            ownSignKeyIds: [],
             configFactory: MockDeviceSyncWebRTCConfigFactory(),
             storageDependencies: .init(deviceDataProviderFactory: devices),
             peerEngineFactory: { peerAccountId, _ in

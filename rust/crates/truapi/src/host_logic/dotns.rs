@@ -4,7 +4,7 @@
 //! same categorization and the `navigate_to` callback only receives
 //! already-validated input.
 
-use crate::platform::{has_dotns_tld, normalize_chat_identifier, normalize_product_identifier};
+use crate::platform::{ProductId, has_dotns_tld, normalize_chat_identifier};
 use unicode_normalization::UnicodeNormalization;
 use url::{Url, form_urlencoded};
 
@@ -61,11 +61,14 @@ pub enum NavigateDecision {
 	Pocket {
 		/// Normalized dotNS name of the product that backs the card, from the
 		/// `product` query parameter.
-		identifier: String,
+		identifier: ProductId,
 		/// Requested Pocket action.
 		action: PocketDeeplinkAction,
 		/// Card named by the `card` query parameter.
 		card_id: String,
+		/// An `open` link's other query parameters, still encoded, for the
+		/// card's page. Anyone can write the link, so they are a hint, never proof.
+		page_query: String,
 		/// Normalized `polkadotapp://` form of the deeplink, which is what
 		/// `navigate_to` hands the host. The product and card are
 		/// percent-encoded, so re-parsing this names the same card.
@@ -189,8 +192,8 @@ fn classify_pocket(input: &str) -> Option<NavigateDecision> {
 			reason: "pocket deeplink names no product or no card".to_string(),
 		});
 	};
-	let identifier = match normalize_product_identifier(&product) {
-		Ok(identifier) if has_dotns_tld(&identifier) => identifier,
+	let identifier = match product.parse::<ProductId>() {
+		Ok(identifier) if has_dotns_tld(identifier.as_str()) => identifier,
 		_ => {
 			return Some(NavigateDecision::Reject {
 				reason: "pocket deeplink names a product that is not a dotNS name".to_string(),
@@ -206,18 +209,52 @@ fn classify_pocket(input: &str) -> Option<NavigateDecision> {
 			return Some(NavigateDecision::Reject { reason: error.to_string() });
 		},
 	};
+	// Left encoded, so the page reads its params exactly as the link wrote them.
+	let page_query = match action {
+		PocketDeeplinkAction::Open => url
+			.query()
+			.unwrap_or_default()
+			.split('&')
+			.filter(|pair| {
+				!pair.is_empty() &&
+					!form_urlencoded::parse(pair.as_bytes())
+						.any(|(key, _)| key == "product" || key == "card")
+			})
+			.collect::<Vec<_>>()
+			.join("&"),
+		PocketDeeplinkAction::Add => String::new(),
+	};
+	// `url` leaves bytes such as `{` or a lone `%` raw under a custom scheme,
+	// and the hosts' https URL parsers refuse them.
+	let legal_bytes = page_query
+		.bytes()
+		.all(|byte| byte.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=:@/?%".contains(&byte));
+	let whole_escapes = page_query.split('%').skip(1).all(|escape| {
+		escape
+			.get(..2)
+			.is_some_and(|hex| hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+	});
+	if page_query.len() > 2048 || !legal_bytes || !whole_escapes {
+		return Some(NavigateDecision::Reject {
+			reason: "pocket deeplink page params are too long or not URL-encoded".into(),
+		});
+	}
 	// The arguments arrive percent-decoded, so they are encoded again here: a
 	// raw `#` or `&` in a card id would make the canonical form parse as a
 	// different deeplink.
 	let query = form_urlencoded::Serializer::new(String::new())
-		.append_pair("product", &identifier)
+		.append_pair("product", identifier.as_str())
 		.append_pair("card", &card_id)
 		.finish();
+	let separator = if page_query.is_empty() { "" } else { "&" };
 	Some(NavigateDecision::Pocket {
-		canonical_url: format!("{APP_SCHEME}://{POCKET_HOST}/{verb}?{query}"),
+		canonical_url: format!(
+			"{APP_SCHEME}://{POCKET_HOST}/{verb}?{query}{separator}{page_query}"
+		),
 		identifier,
 		action,
 		card_id,
+		page_query,
 	})
 }
 
@@ -339,9 +376,10 @@ mod tests {
 			PocketDeeplinkAction::Open => "open",
 		};
 		Expected::Decision(NavigateDecision::Pocket {
-			identifier: identifier.to_string(),
+			identifier: ProductId::for_test(identifier),
 			action,
 			card_id: card_id.to_string(),
+			page_query: String::new(),
 			canonical_url: format!(
 				"polkadotapp://pocket/{verb}?product={identifier}&card={card_id}"
 			),
@@ -767,6 +805,10 @@ mod tests {
 			// A zero-width joiner lets two distinct ids render identically.
 			"polkadotapp://pocket/add?product=game.dot&card=loy%E2%80%8Dalty".to_string(),
 			"polkadotapp://pocket/add?product=game.dot&card=%20%20".to_string(),
+			format!("polkadotapp://pocket/open?product=game.dot&card=a&v={}", "a".repeat(2048)),
+			"polkadotapp://pocket/open?product=game.dot&card=a&v={x}".to_string(),
+			"polkadotapp://pocket/open?product=game.dot&card=a&v=1%".to_string(),
+			"polkadotapp://pocket/open?product=game.dot&card=a&v=%+1".to_string(),
 		] {
 			assert!(
 				matches!(parse_navigate(&input), NavigateDecision::Reject { .. }),
@@ -779,15 +821,20 @@ mod tests {
 	fn pocket_canonical_url_reencodes_the_card_id() {
 		// `card` arrives percent-decoded, so a card id carrying URL syntax
 		// would otherwise re-parse as a different deeplink: `#` starts a
-		// fragment and `&` starts a second parameter.
+		// fragment and `&` starts a second parameter. Page params stay as
+		// written, and `add` loads no page, so it drops them.
 		for (input, expected) in [
 			(
-				"polkadotapp://pocket/add?product=game.dot&card=a%23b",
+				"polkadotapp://pocket/add?product=game.dot&card=a%23b&open=x",
 				"polkadotapp://pocket/add?product=game.dot&card=a%23b",
 			),
 			(
 				"polkadotapp://pocket/open?product=game.dot&card=a%26open%3Dx",
 				"polkadotapp://pocket/open?product=game.dot&card=a%26open%3Dx",
+			),
+			(
+				"polkadotapp://pocket/open?v=a+b%26c&card=x&product=game.dot&card=y&flag",
+				"polkadotapp://pocket/open?product=game.dot&card=x&v=a+b%26c&flag",
 			),
 		] {
 			match parse_navigate(input) {

@@ -8,6 +8,7 @@ use crate::{
 	chain_runtime::RuntimeFailure,
 	host_internal::sso_messages::OnExistingAllowancePolicy,
 	host_logic::product_account::{ProductAccountError, derive_sr25519_hard_path},
+	platform::ProductId,
 	runtime::{
 		authority::{AuthorityError, AuthoritySession},
 		services::RuntimeServices,
@@ -64,11 +65,11 @@ pub enum AllowanceAllocationError {
 	},
 }
 
-impl AllowanceAllocationError {
-	pub fn into_authority_error(self) -> AuthorityError {
-		match self {
-			Self::Authority(err) => err,
-			other => AuthorityError::Unavailable { reason: other.to_string() },
+impl From<AllowanceAllocationError> for AuthorityError {
+	fn from(error: AllowanceAllocationError) -> Self {
+		match error {
+			AllowanceAllocationError::Authority(err) => err,
+			other => Self::Unavailable { reason: other.to_string() },
 		}
 	}
 }
@@ -86,7 +87,7 @@ pub async fn allocate_statement_store_allowance(
 	services: &RuntimeServices,
 	signing_host: &SigningHost,
 	session: &AuthoritySession,
-	product_id: &str,
+	product_id: &ProductId,
 	policy: OnExistingAllowancePolicy,
 ) -> Result<StatementStoreAllocation, AllowanceAllocationError> {
 	use super::allowance_renewal::{self, StatementRenewalTarget};
@@ -98,7 +99,7 @@ pub async fn allocate_statement_store_allowance(
 	signing_host.require_current_session(session)?;
 	let entropy = signing_host.root_entropy()?;
 	let allowance =
-		derive_sr25519_hard_path(&entropy, &["allowance", "statement-store", product_id])?;
+		derive_sr25519_hard_path(&entropy, &["allowance", "statement-store", product_id.as_str()])?;
 	// Test signatures use real keys without claiming on-chain registration.
 	#[cfg(feature = "test-host")]
 	if signing_host.grants_allowances_unchecked() {
@@ -163,7 +164,7 @@ pub async fn allocate_statement_store_allowance(
 	let outcome = register_statement_account_pooled(
 		rpc,
 		&chain.metadata,
-		&chain.state,
+		client.extrinsic_target(&services.extrinsics),
 		&signer,
 		&scans,
 		&memberships,
@@ -206,9 +207,7 @@ pub async fn allocate_statement_store_allowance(
 	signing_host.require_current_session(session)?;
 	if let Err(reason) = allowance_renewal::track(
 		signing_host,
-		vec![StatementRenewalTarget::ProductStatementAllowance {
-			product_id: product_id.to_string(),
-		}],
+		vec![StatementRenewalTarget::ProductStatementAllowance { product_id: product_id.clone() }],
 	)
 	.await
 	{
@@ -223,7 +222,7 @@ pub async fn allocate_bulletin_allowance(
 	services: &RuntimeServices,
 	signing_host: &SigningHost,
 	session: &AuthoritySession,
-	product_id: &str,
+	product_id: &ProductId,
 	policy: OnExistingAllowancePolicy,
 ) -> Result<Vec<u8>, AllowanceAllocationError> {
 	use crate::runtime::statement_allowance::{
@@ -233,7 +232,8 @@ pub async fn allocate_bulletin_allowance(
 
 	signing_host.require_current_session(session)?;
 	let entropy = signing_host.root_entropy()?;
-	let allowance = derive_sr25519_hard_path(&entropy, &["allowance", "bulletin", product_id])?;
+	let allowance =
+		derive_sr25519_hard_path(&entropy, &["allowance", "bulletin", product_id.as_str()])?;
 	#[cfg(feature = "test-host")]
 	if signing_host.grants_allowances_unchecked() {
 		return Ok(allowance.secret.to_bytes().to_vec());
@@ -281,7 +281,7 @@ pub async fn allocate_bulletin_allowance(
 	let outcome = claim_long_term_storage(statement_allowance::LongTermStorageClaim {
 		rpc: people_rpc,
 		metadata: &chain.metadata,
-		chain_state: &chain.state,
+		target_chain: people_client.extrinsic_target(&services.extrinsics),
 		signer: &signer,
 		network_suffix: &network_suffix,
 		target: &target,
@@ -332,7 +332,7 @@ pub async fn allocate_smart_contract_allowance(
 	services: &RuntimeServices,
 	signing_host: &SigningHost,
 	session: &AuthoritySession,
-	product_id: &str,
+	product_id: &ProductId,
 	derivation_index: api::DerivationIndex,
 	policy: OnExistingAllowancePolicy,
 ) -> Result<(), AllowanceAllocationError> {
@@ -348,7 +348,7 @@ pub async fn allocate_smart_contract_allowance(
 	// PGAS credits the product account the caller named.
 	let target = signing_host
 		.product_keypair(&api::ProductAccountId {
-			dot_ns_identifier: product_id.to_string(),
+			dot_ns_identifier: product_id.clone(),
 			derivation_index,
 		})?
 		.public
@@ -401,7 +401,8 @@ pub async fn allocate_smart_contract_allowance(
 	signing_host.require_current_session(session)?;
 	let outcome = pgas::claim_pgas(pgas::PgasClaim {
 		asset_hub_rpc: asset_hub_client.rpc(),
-		asset_hub: &asset_hub,
+		asset_hub_metadata: &asset_hub.metadata,
+		asset_hub_target: asset_hub_client.extrinsic_target(&services.extrinsics),
 		people_rpc,
 		people_metadata: &people.metadata,
 		signer: &signer,

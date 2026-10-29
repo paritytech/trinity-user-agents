@@ -2,138 +2,108 @@
 import Foundation
 import Testing
 
-final class ContactTimestampFormatterTests {
-    private var formatter: ContactTimestampFormatter!
-    private let now = Date()
+struct ContactTimestampFormatterTests {
+    private let calendar: Calendar
+    private let formatter: ContactTimestampFormatter
+    private let now: Date
 
-    init() {
-        formatter = ContactTimestampFormatter()
+    init() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "UTC"))
+        self.calendar = calendar
+        formatter = ContactTimestampFormatter(locale: Locale(identifier: "en_US_POSIX"), calendar: calendar)
+        now = try #require(calendar.date(from: DateComponents(year: 2_026, month: 6, day: 15, hour: 12)))
     }
 
     @Test("Returns 'Now' for current time")
     func nowForCurrentTime() {
-        let result = formatter.string(for: now, now: now)
-        #expect(result == "Now")
+        #expect(formatter.string(for: now, now: now) == "Now")
     }
 
     @Test("Returns 'Now' for 30 seconds ago")
     func nowFor30SecondsAgo() {
-        let date = now.addingTimeInterval(-30)
-        let result = formatter.string(for: date, now: now)
-        #expect(result == "Now")
+        #expect(formatter.string(for: now.addingTimeInterval(-30), now: now) == "Now")
     }
 
     @Test("Returns 'Now' for future timestamps (clock skew)")
     func nowForFutureTimestamp() {
-        let date = now.addingTimeInterval(60)
-        let result = formatter.string(for: date, now: now)
-        #expect(result == "Now")
+        #expect(formatter.string(for: now.addingTimeInterval(60), now: now) == "Now")
     }
 
     @Test("Returns '1m' for exactly 1 minute ago")
     func oneMinuteAgo() {
-        let date = now.addingTimeInterval(-60)
-        let result = formatter.string(for: date, now: now)
-        #expect(result == "1m")
+        #expect(formatter.string(for: now.addingTimeInterval(-60), now: now) == "1m")
     }
 
     @Test("Returns '5m' for 5 minutes ago")
     func fiveMinutesAgo() {
-        let date = now.addingTimeInterval(-5 * 60)
-        let result = formatter.string(for: date, now: now)
-        #expect(result == "5m")
+        #expect(formatter.string(for: now.addingTimeInterval(-5 * 60), now: now) == "5m")
     }
 
     @Test("Returns '59m' for 59 minutes ago")
     func fiftyNineMinutesAgo() {
-        let date = now.addingTimeInterval(-59 * 60)
-        let result = formatter.string(for: date, now: now)
-        #expect(result == "59m")
+        #expect(formatter.string(for: now.addingTimeInterval(-59 * 60), now: now) == "59m")
     }
 
     @Test("Returns '1h' for exactly 1 hour ago")
     func oneHourAgo() {
-        let date = now.addingTimeInterval(-60 * 60)
-        let result = formatter.string(for: date, now: now)
-        #expect(result == "1h")
+        #expect(formatter.string(for: now.addingTimeInterval(-60 * 60), now: now) == "1h")
     }
 
     @Test("Returns '11h' for 11 hours ago")
     func elevenHoursAgo() {
-        let date = now.addingTimeInterval(-11 * 60 * 60)
-        let result = formatter.string(for: date, now: now)
-        #expect(result == "11h")
+        #expect(formatter.string(for: now.addingTimeInterval(-11 * 60 * 60), now: now) == "11h")
     }
 
     @Test("Returns '23h' for 23 hours ago")
     func twentyThreeHoursAgo() {
-        let date = now.addingTimeInterval(-23 * 60 * 60)
-        let result = formatter.string(for: date, now: now)
-        #expect(result == "23h")
+        #expect(formatter.string(for: now.addingTimeInterval(-23 * 60 * 60), now: now) == "23h")
     }
 
-    @Test("Returns 'Yesterday' for yesterday's date")
-    func yesterday() {
-        let calendar = Calendar.current
-        let yesterday = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now))!
-        let result = formatter.string(for: yesterday, now: now)
-        #expect(result == "Yesterday", "Expected 'Yesterday', got: \(result)")
+    @Test("Returns 'Yesterday' for the start of the previous day")
+    func yesterday() throws {
+        let date = try #require(calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now)))
+        #expect(formatter.string(for: date, now: now) == "Yesterday")
     }
 
     @Test("Returns day of week for 2 days ago")
-    func twoDaysAgo() {
-        let date = now.addingTimeInterval(-2 * 24 * 60 * 60)
-        let result = formatter.string(for: date, now: now)
-        let weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-        #expect(weekdays.contains(result), "Expected day of week, got: \(result)")
+    func twoDaysAgo() throws {
+        #expect(try formatter.string(for: date(adding: .day, value: -2), now: now) == "Saturday")
     }
 
     @Test("Returns day of week for 5 days ago")
-    func fiveDaysAgo() {
-        let date = now.addingTimeInterval(-5 * 24 * 60 * 60)
-        let result = formatter.string(for: date, now: now)
-        let weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-        #expect(weekdays.contains(result), "Expected day of week, got: \(result)")
+    func fiveDaysAgo() throws {
+        #expect(try formatter.string(for: date(adding: .day, value: -5), now: now) == "Wednesday")
     }
 
     @Test("Returns day of week for 6 days ago")
-    func sixDaysAgo() {
-        let date = now.addingTimeInterval(-6 * 24 * 60 * 60)
-        let result = formatter.string(for: date, now: now)
-        let weekdays = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
-        #expect(weekdays.contains(result), "Expected day of week, got: \(result)")
+    func sixDaysAgo() throws {
+        #expect(try formatter.string(for: date(adding: .day, value: -6), now: now) == "Tuesday")
     }
 
     @Test("Returns d.MM format for 10 days ago")
-    func tenDaysAgo() {
-        let date = now.addingTimeInterval(-10 * 24 * 60 * 60)
-        let result = formatter.string(for: date, now: now)
-        let datePattern = #/^\d{1,2}\.\d{2}$/#
-        #expect(result.contains(datePattern), "Expected d.MM format, got: \(result)")
+    func tenDaysAgo() throws {
+        #expect(try formatter.string(for: date(adding: .day, value: -10), now: now) == "5.06")
     }
 
     @Test("Returns d.MM format for 6 months ago")
-    func sixMonthsAgo() {
-        let date = now.addingTimeInterval(-180 * 24 * 60 * 60)
-        let result = formatter.string(for: date, now: now)
-        #expect(result.contains("."), "Expected d.MM format, got: \(result)")
-        let yearPattern = #/\.\d{4}/#
-        #expect(!result.contains(yearPattern), "Should not contain year, got: \(result)")
+    func sixMonthsAgo() throws {
+        #expect(try formatter.string(for: date(adding: .month, value: -6), now: now) == "15.12")
     }
 
     @Test("Returns d.MM.yyyy format for 1 year ago")
-    func oneYearAgo() {
-        let date = now.addingTimeInterval(-365 * 24 * 60 * 60)
-        let result = formatter.string(for: date, now: now)
-        let yearPattern = #/\d{1,2}\.\d{2}\.\d{4}/#
-        #expect(result.contains(yearPattern), "Expected d.MM.yyyy format, got: \(result)")
+    func oneYearAgo() throws {
+        #expect(try formatter.string(for: date(adding: .year, value: -1), now: now) == "15.06.2025")
     }
 
     @Test("Returns d.MM.yyyy format for 2 years ago")
-    func twoYearsAgo() {
-        let date = now.addingTimeInterval(-730 * 24 * 60 * 60)
-        let result = formatter.string(for: date, now: now)
-        let yearPattern = #/\d{1,2}\.\d{2}\.\d{4}/#
-        #expect(result.contains(yearPattern), "Expected d.MM.yyyy format, got: \(result)")
+    func twoYearsAgo() throws {
+        #expect(try formatter.string(for: date(adding: .year, value: -2), now: now) == "15.06.2024")
+    }
+}
+
+private extension ContactTimestampFormatterTests {
+    func date(adding component: Calendar.Component, value: Int) throws -> Date {
+        try #require(calendar.date(byAdding: component, value: value, to: now))
     }
 }

@@ -115,7 +115,7 @@ fn sign_vrf_forwards_cross_product_mobile_sso_request_and_response() {
 			.lock()
 			.expect("VRF signing review list mutex poisoned"),
 		vec![crate::platform::SignVrfReview {
-			calling_product_id: "myapp.dot".to_string(),
+			calling_product_id: ProductId::for_test("myapp.dot"),
 			request: request.clone(),
 		}]
 	);
@@ -174,7 +174,7 @@ fn sign_vrf_rejects_declined_pairing_host_confirmation_before_mobile_sso() {
 			.lock()
 			.expect("VRF signing review list mutex poisoned"),
 		vec![crate::platform::SignVrfReview {
-			calling_product_id: "myapp.dot".to_string(),
+			calling_product_id: ProductId::for_test("myapp.dot"),
 			request,
 		}]
 	);
@@ -793,7 +793,7 @@ fn legacy_sign_raw_accepts_derived_ss58_then_returns_sso_response() {
 	assert_eq!(
 		request.account,
 		v01::ProductAccountId {
-			dot_ns_identifier: "myapp.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		}
 	);
@@ -843,7 +843,7 @@ fn legacy_sign_raw_accepts_derived_hex_then_returns_sso_response() {
 	assert_eq!(
 		request.account,
 		v01::ProductAccountId {
-			dot_ns_identifier: "myapp.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		}
 	);

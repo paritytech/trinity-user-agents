@@ -2,7 +2,8 @@
 #
 # Its own workflow rather than a job in ci.yml, because starting it needs the
 # `labeled` event and adding that to ci.yml would rerun every gate each time
-# any label changed.
+# any label changed. on-label.yml calls it for a pull request labelled
+# android-device-build.
 #
 # The artifact is attached to the run and nothing else. Unlike the iOS device
 # preview there is no provisioning to do: an Android debug build installs on
@@ -16,11 +17,7 @@
 name: Android device preview
 
 on:
-  pull_request:
-    # `labeled` starts it. `synchronize` keeps it current once the label is on,
-    # so the APK follows the branch rather than pinning to whichever commit was
-    # the head when someone asked.
-    types: [labeled, synchronize]
+  workflow_call:
 
 permissions:
   contents: read
@@ -31,19 +28,7 @@ permissions:
 jobs:
   build:
     name: Installable APK
-    # Narrow on purpose. `labeled` fires for every label, so matching only on
-    # the label being present lets anything else being added, by a person or by
-    # labeler.yml, start a second run for the same commit that cancels the one
-    # already building.
-    if: >-
-      (github.event.action == 'labeled'
-       && github.event.label.name == 'android-device-build')
-      || (github.event.action == 'synchronize'
-          && contains(github.event.pull_request.labels.*.name, 'android-device-build'))
-    # On the job rather than the workflow. Adding any label starts a run of this
-    # workflow, and a workflow-level group would let that run cancel a build in
-    # progress before its own job is skipped. A skipped job never joins the
-    # group.
+    # A newer commit on the branch supersedes the APK being built.
     concurrency:
       group: android-device-preview-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -154,7 +139,7 @@ jobs:
 
       - name: Upload the APK
         id: upload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: android-preview-pr-${{ github.event.pull_request.number }}
           path: ${{ steps.package.outputs.apk }}

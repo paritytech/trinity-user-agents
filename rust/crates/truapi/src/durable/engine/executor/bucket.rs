@@ -21,9 +21,9 @@ use crate::{
 		engine::DurableTxEngine,
 		model::{DurableTxId, ScheduledDurableTx},
 		policy::{Preparation, SubmissionPolicy},
-		time::Timer,
 	},
 	store::{Db, DbError},
+	time::Timer,
 };
 
 /// One bucket's task. Holds the engine weakly, so a policy that never

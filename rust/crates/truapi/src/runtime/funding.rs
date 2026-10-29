@@ -18,7 +18,7 @@ use std::{
 	},
 };
 
-use core::time::Duration;
+use core::{ops::ControlFlow, time::Duration};
 
 use futures::{
 	channel::{mpsc, oneshot},
@@ -37,8 +37,9 @@ use crate::{
 	},
 	platform::{
 		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, Platform,
-		ProductContext,
+		ProductContext, ProductId,
 	},
+	time::{Backoff, retry},
 	unix_time::current_unix_millis,
 };
 
@@ -136,7 +137,7 @@ impl FundingRegistry {
 
 	/// Who opened session `intent`, held in full or in the pack: `None` when
 	/// no such session is held, `Some(None)` when the host opened it.
-	pub fn owner(&self, intent: &str) -> Option<Option<String>> {
+	pub fn owner(&self, intent: &str) -> Option<Option<ProductId>> {
 		if let Some(session) = self.lock_sessions().get(intent) {
 			return Some(session.owner_product_id.clone());
 		}
@@ -556,10 +557,12 @@ pub enum OpenFundingError {
 	Present(GenericError),
 }
 
-/// First wait before retrying a failed load of the sessions on resume.
-const RESUME_RETRY_FIRST: Duration = Duration::from_secs(1);
-/// Longest wait between retries of that load.
-const RESUME_RETRY_LONGEST: Duration = Duration::from_secs(60);
+// Pauses between retries when loading the sessions fails on resume.
+#[cfg(not(test))]
+const RESUME_RETRY_PAUSES: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(60));
+#[cfg(test)]
+const RESUME_RETRY_PAUSES: Backoff =
+	Backoff::new(Duration::from_millis(1), Duration::from_millis(4));
 
 impl RuntimeServices {
 	/// Install the host's funding surface and resume the sessions stored
@@ -596,36 +599,43 @@ impl RuntimeServices {
 			let registry = services.funding();
 			// The host's session views read what the core has loaded, so a
 			// failed load is retried until the sessions are in.
-			let mut retry_in = RESUME_RETRY_FIRST;
-			loop {
-				let loaded = registry
-					.commit(services.platform.as_ref(), current_unix_millis(), |sessions| {
-						// Ended sessions the host has not recorded are
-						// handed over again, so its history gets every
-						// outcome.
-						let pending = sessions
-							.values()
-							.filter(|session| session.needs_handoff())
-							.map(|session| session.intent.clone())
-							.collect();
-						((), pending)
-					})
-					.await;
-				match loaded {
-					Ok(()) => break registry.keep_expiring(&services),
-					// Left for the newer app that wrote them; retrying cannot
-					// read them.
-					Err(error @ FundingSessionError::NewerFormat { .. }) => {
-						tracing::warn!(%error, "funding stays unavailable");
-						break;
-					},
-					Err(error) => {
-						tracing::warn!(%error, ?retry_in, "loading funding sessions failed");
-						futures_timer::Delay::new(retry_in).await;
-						retry_in = (retry_in * 2).min(RESUME_RETRY_LONGEST);
-					},
-				}
-			}
+			let mut pauses = RESUME_RETRY_PAUSES;
+			retry(
+				|| async {
+					let loaded = registry
+						.commit(services.platform.as_ref(), current_unix_millis(), |sessions| {
+							// Ended sessions the host has not recorded are
+							// handed over again, so its history gets every
+							// outcome.
+							let pending = sessions
+								.values()
+								.filter(|session| session.needs_handoff())
+								.map(|session| session.intent.clone())
+								.collect();
+							((), pending)
+						})
+						.await;
+					match loaded {
+						Ok(()) => {
+							registry.keep_expiring(&services);
+							ControlFlow::Break(())
+						},
+						// Left for the newer app that wrote them; retrying cannot
+						// read them.
+						Err(error @ FundingSessionError::NewerFormat { .. }) => {
+							tracing::warn!(%error, "funding stays unavailable");
+							ControlFlow::Break(())
+						},
+						Err(error) => ControlFlow::Continue(error),
+					}
+				},
+				|error| {
+					let retry_in = pauses.next_pause();
+					tracing::warn!(%error, ?retry_in, "loading funding sessions failed");
+					retry_in
+				},
+			)
+			.await;
 		}));
 	}
 
@@ -776,7 +786,7 @@ mod tests {
 	fn session(intent: &str, opened_at_ms: u64) -> FundingSession {
 		FundingSession::new(
 			intent.to_string(),
-			Some("wallet.dot".to_string()),
+			Some(ProductId::for_test("wallet.dot")),
 			FundingDirection::In,
 			Some(100),
 			opened_at_ms,
@@ -1047,7 +1057,7 @@ mod tests {
 			(
 				None,
 				vec![HostFundingStatusSubscribeItem::Delivered { credited: 1 }],
-				Some(Some("wallet.dot".to_string())),
+				Some(Some(ProductId::for_test("wallet.dot"))),
 				true,
 				(0..=RECORDED_PER_OWNER as u64)
 					.rev()

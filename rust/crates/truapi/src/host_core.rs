@@ -22,8 +22,8 @@ use crate::platform::{
 	BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin, ExpandedCardHost, FundingPlatform,
 	GamePlatform, PairingHostAdmin, PairingHostConfig, PaymentPlatform,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionStatusHost, Platform,
-	PocketPlatform, ProductContext, ScannerPlatform, SigningHostConfig, TopUpPlatform,
-	normalize_product_identifier,
+	PocketPlatform, ProductContext, ProductExecutionKind, ProductId, ScannerPlatform,
+	SigningHostConfig, TopUpPlatform,
 };
 use futures::{
 	FutureExt, StreamExt,
@@ -174,9 +174,8 @@ pub enum ProductRuntimeError {
 	BufferFull,
 }
 
-fn product_context(product_id: &str) -> Result<ProductContext, v01::GenericError> {
-	ProductContext::new(product_id.to_string())
-		.map_err(|err| v01::GenericError { reason: err.to_string() })
+fn product_context(product_id: &ProductId) -> ProductContext {
+	ProductContext::new_with_execution(product_id.clone(), ProductExecutionKind::App)
 }
 
 /// A seedless pairing host: the user's keys live in an external wallet reached
@@ -398,20 +397,17 @@ impl PairingHostRuntime {
 	/// presents a new deeplink suitable for another signing host.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.logout"))]
 	pub async fn logout(&self) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.logout_and_reset_pairing()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.pairing_host.logout_and_reset_pairing().await.map_err(Into::into)
 	}
 
 	/// Clear one product's capability state while preserving the active
 	/// session and unrelated products.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.clear_product_state", %product_id))]
-	pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.clear_product_state(product_id)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+	pub async fn clear_product_state(
+		&self,
+		product_id: &ProductId,
+	) -> Result<(), v01::GenericError> {
+		self.pairing_host.clear_product_state(product_id).await.map_err(Into::into)
 	}
 
 	/// Registered providers available for an internal well-known-ring feature.
@@ -469,10 +465,7 @@ impl PairingHostRuntime {
 	/// sync. Generated and persisted on first read.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.device_encryption_key"))]
 	pub async fn device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
-		self.services
-			.device_encryption_secret()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.services.device_encryption_secret().await.map_err(Into::into)
 	}
 
 	/// Resolve `product_id`'s hard-subtree public key from the cache, the
@@ -480,7 +473,7 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_subtree_public_key"))]
 	pub async fn product_subtree_public_key(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
 		product_subtree_public_key(self.pairing_host.as_ref(), product_id, timeout_ms).await
@@ -497,9 +490,9 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.login", %product_id))]
 	pub async fn login(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 	) -> Result<v01::HostRequestLoginResponse, v01::GenericError> {
-		let product = product_context(product_id)?;
+		let product = product_context(product_id);
 		match self.pairing_host.session().request_login(&product).await {
 			Ok(response) => Ok(response),
 			Err(error) => Err(v01::GenericError { reason: pairing_login_error_reason(error) }),
@@ -524,7 +517,7 @@ impl PairingHostRuntime {
 			.session()
 			.activate_external_session(blob)
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	/// Await restoration of the persisted auth-session blob.
@@ -534,11 +527,7 @@ impl PairingHostRuntime {
 	/// immediately use the restored authority session.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_stored_session"))]
 	pub async fn activate_stored_session(&self) -> Result<(), v01::GenericError> {
-		self.pairing_host
-			.session()
-			.activate_stored_session()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.pairing_host.session().activate_stored_session().await.map_err(Into::into)
 	}
 
 	/// Notify the pairing runtime that the persisted auth-session blob may
@@ -556,10 +545,10 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.permission_authorization_status", product_id = %product_id))]
 	pub async fn permission_authorization_status(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		request: PermissionAuthorizationRequest,
 	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
+		self.product_admin(product_context(product_id))
 			.permission_authorization_status(request)
 			.await
 	}
@@ -572,10 +561,10 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.permission_authorization_statuses", product_id = %product_id))]
 	pub async fn permission_authorization_statuses(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		requests: Vec<PermissionAuthorizationRequest>,
 	) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
+		self.product_admin(product_context(product_id))
 			.permission_authorization_statuses(requests)
 			.await
 	}
@@ -584,13 +573,19 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_permission_authorization_status", product_id = %product_id))]
 	pub async fn set_permission_authorization_status(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
+		let account_access =
+			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
+		self.product_admin(product_context(product_id))
 			.set_permission_authorization_status(request, status)
-			.await
+			.await?;
+		if account_access {
+			self.pairing_host.consent().forget_allowed_once_for(product_id);
+		}
+		Ok(())
 	}
 }
 
@@ -655,7 +650,7 @@ impl SigningHostRuntime {
 	/// pairing host has to ask the Account Holder.
 	pub fn product_subtree_public_key(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
 		self.signing_host
 			.derive_subtree_public_key(product_id)
@@ -910,23 +905,56 @@ impl SigningHostRuntime {
 	/// Install the core-owned database that durable consumers share.
 	///
 	/// Set-once, so durable state cannot move to another file under a running
-	/// consumer. Returns whether this call installed it.
-	///
-	/// Also starts the durable transaction engine over it, which builds
-	/// scheduled transactions and reports pending work to the observer
-	/// installed with [`Self::set_durable_work_observer`]; install that
-	/// first.
+	/// consumer. Returns whether this call installed it. Nothing runs over it
+	/// until [`Self::start_core_services`].
 	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_core_db"))]
 	pub fn set_core_db(&self, db: crate::store::Db) -> bool {
-		if !self.services.install_core_db(db.clone()) {
-			return false;
+		self.services.install_core_db(db)
+	}
+
+	/// Install the provider of the installation id NFT purse item keys are
+	/// derived under. Set-once; returns whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn set_installation_provider(
+		&self,
+		provider: Arc<dyn crate::installation::InstallationIdProvider>,
+	) -> bool {
+		self.services.install_installation_provider(provider)
+	}
+
+	/// Starts what runs over the core database: the durable transaction
+	/// engine, then NFT purses with the tracker of their holdings. Call it
+	/// once the setters it reads have run: [`Self::set_core_db`],
+	/// [`Self::set_installation_provider`] and
+	/// [`Self::set_durable_work_observer`]. A part whose inputs are missing
+	/// is skipped and logged. A second call does nothing.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.start_core_services"))]
+	pub fn start_core_services(&self) {
+		let Ok(db) = self.services.core_db() else {
+			tracing::warn!("no core database set, durable transactions and NFT purses are off");
+			return;
+		};
+		if !start_durable_engine(&self.services, db.clone()) {
+			return;
 		}
-		let engine = durable_engine(&self.services, db);
-		self.services.install_durable_engine(engine.clone());
-		forward_durable_work(&self.services, &engine);
-		engine.ensure_submissions_started();
-		true
+		self.start_nft_purses(db);
+	}
+
+	/// Installs the NFT ledger over `db` and starts tracking its holdings,
+	/// when an installation provider is set.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn start_nft_purses(&self, db: crate::store::Db) {
+		let Some(installation) = self.services.installation_provider() else {
+			tracing::warn!("no installation provider set, NFT purses are off");
+			return;
+		};
+		let keys = Arc::new(Arc::downgrade(&self.signing_host));
+		let ledger =
+			crate::nft::NftLedger::new(crate::nft::NftLedgerDeps { db, installation, keys });
+		self.services.install_nft_ledger(ledger.clone());
+		start_holding_tracker(&self.services, ledger);
 	}
 
 	/// Install the host observer told whether durable transactions are
@@ -1043,10 +1071,8 @@ impl SigningHostRuntime {
 	/// Revoke one product's grants from the current local activation while
 	/// preserving unrelated products.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.clear_product_state", %product_id))]
-	pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
-		self.signing_host
-			.clear_product_state(product_id)
-			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	pub async fn clear_product_state(&self, product_id: &ProductId) {
+		self.signing_host.clear_product_state(product_id);
 	}
 
 	/// Read a stored permission authorization status for a product without prompting.
@@ -1057,10 +1083,10 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_status", product_id = %product_id))]
 	pub async fn permission_authorization_status(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		request: PermissionAuthorizationRequest,
 	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
+		self.product_admin(product_context(product_id))
 			.permission_authorization_status(request)
 			.await
 	}
@@ -1073,10 +1099,10 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_statuses", product_id = %product_id))]
 	pub async fn permission_authorization_statuses(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		requests: Vec<PermissionAuthorizationRequest>,
 	) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
+		self.product_admin(product_context(product_id))
 			.permission_authorization_statuses(requests)
 			.await
 	}
@@ -1085,13 +1111,19 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_permission_authorization_status", product_id = %product_id))]
 	pub async fn set_permission_authorization_status(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
+		let account_access =
+			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
+		self.product_admin(product_context(product_id))
 			.set_permission_authorization_status(request, status)
-			.await
+			.await?;
+		if account_access {
+			self.signing_host.consent().forget_allowed_once_for(product_id);
+		}
+		Ok(())
 	}
 
 	/// Registered providers available for an internal well-known-ring feature.
@@ -1156,10 +1188,7 @@ impl SigningHostRuntime {
 		&self,
 		deeplink: &str,
 	) -> Result<ResponderExit, v01::GenericError> {
-		self.sso_responder
-			.respond_to_pairing(deeplink)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.sso_responder.respond_to_pairing(deeplink).await.map_err(Into::into)
 	}
 
 	/// Tell a pairing host that allowance allocation is under way, so it leaves
@@ -1175,7 +1204,7 @@ impl SigningHostRuntime {
 		self.sso_responder
 			.notify_pairing_allowance_allocation(deeplink)
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	/// Tell a pairing host that pairing failed, so it reports `reason` and
@@ -1195,16 +1224,13 @@ impl SigningHostRuntime {
 		self.sso_responder
 			.notify_pairing_failed(announced, reason)
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	/// Answer a pairing host's handshake without entering its long-lived serve loop.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.establish_pairing"))]
 	pub async fn establish_pairing(&self, deeplink: &str) -> Result<(), v01::GenericError> {
-		self.sso_responder
-			.establish_pairing(deeplink)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.sso_responder.establish_pairing(deeplink).await.map_err(Into::into)
 	}
 
 	/// Resume a previously paired host from its persisted public peer keys.
@@ -1216,10 +1242,7 @@ impl SigningHostRuntime {
 		&self,
 		peer: PairedSsoPeer,
 	) -> Result<ResponderExit, v01::GenericError> {
-		self.sso_responder
-			.resume_pairing(peer)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.sso_responder.resume_pairing(peer).await.map_err(Into::into)
 	}
 
 	/// Notify a paired host that this signing host is ending their SSO session.
@@ -1228,10 +1251,7 @@ impl SigningHostRuntime {
 		&self,
 		peer: PairedSsoPeer,
 	) -> Result<(), v01::GenericError> {
-		self.sso_responder
-			.disconnect_paired_host(peer)
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.sso_responder.disconnect_paired_host(peer).await.map_err(Into::into)
 	}
 
 	/// Answer one SSO request using this signing host.
@@ -1250,6 +1270,20 @@ impl SigningHostRuntime {
 	}
 }
 
+/// Installs the durable transaction engine over `db`, reports its pending
+/// work and starts its submissions. False when an engine is already
+/// installed.
+#[cfg(not(target_arch = "wasm32"))]
+fn start_durable_engine(services: &Arc<RuntimeServices>, db: crate::store::Db) -> bool {
+	let engine = durable_engine(services, db);
+	if !services.install_durable_engine(engine.clone()) {
+		return false;
+	}
+	forward_durable_work(services, &engine);
+	engine.ensure_submissions_started();
+	true
+}
+
 /// The durable transaction engine over `db`, reading and submitting through
 /// the runtime's chain connections.
 #[cfg(not(target_arch = "wasm32"))]
@@ -1257,7 +1291,10 @@ fn durable_engine(
 	services: &RuntimeServices,
 	db: crate::store::Db,
 ) -> Arc<crate::durable::DurableTxEngine> {
-	use crate::durable::{DurableDeps, DurableRegistry, DurableTxEngine, RealTimer};
+	use crate::{
+		durable::{DurableDeps, DurableRegistry, DurableTxEngine},
+		time::RealTimer,
+	};
 
 	let chain = Arc::new(services.chain.clone());
 	DurableTxEngine::new(DurableDeps {
@@ -1270,6 +1307,25 @@ fn durable_engine(
 		timer: Arc::new(RealTimer),
 		spawner: services.spawner.clone(),
 	})
+}
+
+/// Starts tracking what NFT item keys hold on Asset Hub, which runs the
+/// Scarcity pallet. Without an Asset Hub genesis there is nothing to track.
+#[cfg(not(target_arch = "wasm32"))]
+fn start_holding_tracker(services: &RuntimeServices, ledger: crate::nft::NftLedger) {
+	use crate::nft::{HoldingTracker, HoldingTrackerDeps};
+
+	let Some(genesis) = services.asset_hub_chain_genesis_hash() else {
+		tracing::warn!("no Asset Hub genesis configured, NFT holdings are not tracked");
+		return;
+	};
+	let tracker = HoldingTracker::start(HoldingTrackerDeps {
+		ledger,
+		storage: Arc::new(services.chain.clone()),
+		genesis: genesis.into(),
+		spawner: services.spawner.clone(),
+	});
+	services.install_holding_tracker(tracker);
 }
 
 /// Reports every change of the engine's pending work to the host observer,
@@ -1297,7 +1353,7 @@ impl SigningHostRuntime {
 		self.signing_host
 			.track_statement_renewal_targets(targets)
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	/// Every statement account the renewal ledger currently tracks.
@@ -1308,10 +1364,7 @@ impl SigningHostRuntime {
 	pub async fn statement_renewal_targets(
 		&self,
 	) -> Result<Vec<crate::runtime::TrackedStatementRenewalTarget>, v01::GenericError> {
-		self.signing_host
-			.statement_renewal_targets()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.signing_host.statement_renewal_targets().await.map_err(Into::into)
 	}
 
 	/// Root public key the active identity records its fixed ledger entries
@@ -1322,9 +1375,7 @@ impl SigningHostRuntime {
 	/// from what it will prune.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.statement_renewal_owner_key"))]
 	pub fn statement_renewal_owner_key(&self) -> Result<truapi::Bytes32, v01::GenericError> {
-		self.signing_host
-			.statement_renewal_owner_key()
-			.map_err(|reason| v01::GenericError { reason })
+		self.signing_host.statement_renewal_owner_key().map_err(Into::into)
 	}
 
 	/// Stop renewing one fixed statement account.
@@ -1336,7 +1387,7 @@ impl SigningHostRuntime {
 		self.signing_host
 			.untrack_statement_renewal_account(account_id)
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	/// Run one statement-store renewal pass now and return per-target
@@ -1347,10 +1398,7 @@ impl SigningHostRuntime {
 	pub async fn renew_statement_allowances(
 		&self,
 	) -> Result<crate::statement_allowance::renewal::StatementRenewalReport, v01::GenericError> {
-		self.signing_host
-			.renew_statement_allowances()
-			.await
-			.map_err(|reason| v01::GenericError { reason })
+		self.signing_host.renew_statement_allowances().await.map_err(Into::into)
 	}
 
 	/// Start the periodic statement-store renewal loop (hourly, plus a tick
@@ -1512,10 +1560,7 @@ impl HostAdmin {
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
-		self.product_runtime
-			.connection()
-			.set_permission_authorization_status(request, status)
-			.await
+		self.product_runtime.set_permission_authorization_status(request, status).await
 	}
 }
 
@@ -1571,15 +1616,15 @@ impl CoreAdmin for HostAdmin {
 			.services()
 			.device_encryption_secret()
 			.await
-			.map_err(|reason| v01::GenericError { reason })
+			.map_err(Into::into)
 	}
 
 	async fn get_product_subtree_public_key(
 		&self,
-		product_id: String,
+		product_id: &ProductId,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
-		product_subtree_public_key(self.authority.as_ref(), &product_id, timeout_ms).await
+		product_subtree_public_key(self.authority.as_ref(), product_id, timeout_ms).await
 	}
 }
 
@@ -1597,11 +1642,9 @@ impl CoreAdmin for HostAdmin {
 /// cancel and would outlive any deadline that waited for it to finish.
 async fn product_subtree_public_key(
 	authority: &(impl ProductAuthority + ?Sized),
-	product_id: &str,
+	product_id: &ProductId,
 	timeout_ms: Option<u32>,
 ) -> Result<Option<[u8; 32]>, v01::GenericError> {
-	let product_id = normalize_product_identifier(product_id)
-		.map_err(|reason| v01::GenericError { reason: reason.to_string() })?;
 	let Some(session) = authority.current_session() else {
 		return Ok(None);
 	};
@@ -1690,8 +1733,8 @@ impl ProductRuntimeControl {
 	///
 	/// An open render stream is one reference on the product's worker, held by
 	/// the core for exactly as long as the returned subscription lives. A
-	/// transition it causes reaches the host through the observer installed on
-	/// [`WorkerLedger::install_demand_observer`].
+	/// transition it causes reaches the host through the controller installed with
+	/// [`WorkerLedger::install_worker_controller`].
 	pub fn render(
 		&self,
 		request: v01::ProductRendererRenderRequest,
@@ -2179,6 +2222,49 @@ mod tests {
 		runtime
 	}
 
+	/// An answer changed in settings applies at once: a product that was allowed
+	/// once is asked again after the user resets its account access.
+	#[test]
+	fn a_settings_change_to_account_access_ends_allow_once() {
+		use crate::{
+			platform::{PermissionAuthorizationRequest, PermissionDecision},
+			runtime::ProductAuthority,
+		};
+
+		let platform = Arc::new(StubPlatform {
+			permission_confirmation_decisions: std::sync::Mutex::new(
+				[PermissionDecision::AllowOnce, PermissionDecision::Deny].into(),
+			),
+			..StubPlatform::default()
+		});
+		let runtime = activated_signing_runtime(platform.clone());
+		let (requester, target) =
+			(ProductId::for_test("myapp.dot"), ProductId::for_test("peopl.dot"));
+		let access = || {
+			futures::executor::block_on(runtime.signing_host.consent().account_access(
+				&requester,
+				&target,
+				platform.as_ref(),
+			))
+			.expect("the stub answers every prompt")
+		};
+
+		let allowed_once = access();
+		futures::executor::block_on(runtime.set_permission_authorization_status(
+			&requester,
+			PermissionAuthorizationRequest::AccountAccess {
+				target_product_id: "peopl.dot".to_string(),
+			},
+			PermissionAuthorizationStatus::NotDetermined,
+		))
+		.expect("the reset is stored");
+
+		assert_eq!(
+			(allowed_once, access(), platform.account_access_reviews.lock().unwrap().len()),
+			(PermissionAuthorizationStatus::Authorized, PermissionAuthorizationStatus::Denied, 2)
+		);
+	}
+
 	/// Install `session` once the boot reconcile has reported the empty
 	/// session store, so its clear cannot land on top of the session.
 	fn install_session_after_boot(
@@ -2211,7 +2297,7 @@ mod tests {
 			let platform = Arc::new(StubPlatform::default());
 			let (config, _) = runtime_config("fetch.dot");
 			let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
-			let admin = runtime.product_admin(product_context("fetch.dot").unwrap());
+			let admin = runtime.product_admin(product_context(&ProductId::for_test("fetch.dot")));
 			let cx = CallContext::default();
 			let request = network_permission(&["api.example.com"]);
 			let granted = admin
@@ -2332,7 +2418,7 @@ mod tests {
 				Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() });
 			let (config, _) = runtime_config("fetch.dot");
 			let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
-			let admin = runtime.product_admin(product_context("fetch.dot").unwrap());
+			let admin = runtime.product_admin(product_context(&ProductId::for_test("fetch.dot")));
 			let cx = CallContext::default();
 			admin
 				.set_permission_authorization_status(
@@ -2375,7 +2461,7 @@ mod tests {
 						.unwrap(),
 				);
 			}
-			let other = runtime.product_admin(product_context("other.dot").unwrap());
+			let other = runtime.product_admin(product_context(&ProductId::for_test("other.dot")));
 			for _ in 0..2 {
 				decisions.push(
 					other
@@ -2415,7 +2501,7 @@ mod tests {
 			let platform = Arc::new(StubPlatform::default());
 			let (config, _) = runtime_config("peopl.dot");
 			let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
-			let admin = runtime.product_admin(product_context("peopl.dot").unwrap());
+			let admin = runtime.product_admin(product_context(&ProductId::for_test("peopl.dot")));
 			let cx = CallContext::default();
 			let request = network_permission(&["api.example.com"]);
 			let allowed = admin
@@ -2464,13 +2550,16 @@ mod tests {
 		let runtime = PairingHostRuntime::new(platform.clone(), host_config, test_spawner());
 		let session = crate::test_support::sso_session_info();
 		install_session_after_boot(&runtime, &platform, session.clone());
-		runtime
-			.pairing_host
-			.cache_product_subtree_for_test(&session, "myapp.dot", [9; 32]);
+		runtime.pairing_host.cache_product_subtree_for_test(
+			&session,
+			&crate::platform::ProductId::for_test("myapp.dot"),
+			[9; 32],
+		);
 
-		let key =
-			futures::executor::block_on(runtime.product_subtree_public_key("myapp.dot", Some(1)))
-				.expect("a cached subtree resolves");
+		let key = futures::executor::block_on(
+			runtime.product_subtree_public_key(&ProductId::for_test("myapp.dot"), Some(1)),
+		)
+		.expect("a cached subtree resolves");
 		assert_eq!(key, Some([9; 32]));
 
 		// The cache comes before the wallet. A one-millisecond deadline means
@@ -2490,9 +2579,10 @@ mod tests {
 		// only on a peer answer, a disconnect, or the caller's token. Without
 		// the timeout cancelling that token the call never returns, so this
 		// test would hang rather than fail.
-		let error =
-			futures::executor::block_on(runtime.product_subtree_public_key("myapp.dot", Some(1)))
-				.expect_err("an unanswered wallet request ends at its deadline");
+		let error = futures::executor::block_on(
+			runtime.product_subtree_public_key(&ProductId::for_test("myapp.dot"), Some(1)),
+		)
+		.expect_err("an unanswered wallet request ends at its deadline");
 		assert!(error.reason.contains("timed out"), "expected a timeout, got {}", error.reason);
 	}
 
@@ -2935,10 +3025,9 @@ mod tests {
 		// still reaches the product.
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
-			"worker.dot".to_string(),
+			ProductId::for_test("worker.dot"),
 			crate::platform::ProductExecutionKind::Worker,
-		)
-		.expect("worker product context is valid");
+		);
 		let runtime = ProductRuntime::from_platform_with_config(
 			Arc::new(StubPlatform::default()),
 			host_config,
@@ -2996,8 +3085,12 @@ mod tests {
 		struct RecordingDemand {
 			transitions: Mutex<Vec<(String, WorkerTransition)>>,
 		}
-		impl crate::host_logic::worker::WorkerDemandObserver for RecordingDemand {
-			fn worker_demand_changed(&self, product_id: &str, transition: WorkerTransition) {
+		impl crate::host_logic::worker::WorkerController for RecordingDemand {
+			fn request_worker_transition(
+				&self,
+				product_id: &ProductId,
+				transition: WorkerTransition,
+			) {
 				self.transitions
 					.lock()
 					.expect("transition mutex poisoned")
@@ -3007,10 +3100,9 @@ mod tests {
 
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
-			"worker.dot".to_string(),
+			ProductId::for_test("worker.dot"),
 			crate::platform::ProductExecutionKind::Worker,
-		)
-		.expect("worker product context is valid");
+		);
 		let runtime = ProductRuntime::from_platform_with_config(
 			Arc::new(StubPlatform::default()),
 			host_config,
@@ -3021,10 +3113,10 @@ mod tests {
 		let services = runtime.admin.product_runtime().connection().services().clone();
 		let demand = Arc::new(RecordingDemand::default());
 		assert!(
-			services.worker_ledger.install_demand_observer(demand.clone()),
-			"the observer installs once"
+			services.worker_ledger.install_worker_controller(demand.clone()),
+			"the controller installs once"
 		);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 
 		let render = runtime
 			.control()
@@ -3033,10 +3125,10 @@ mod tests {
 				payload: vec![],
 			})
 			.expect("a Worker connection may render");
-		assert_eq!(services.worker_ledger.count("worker.dot"), 1);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
 
 		drop(render);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 		assert_eq!(
 			demand.transitions.lock().expect("transition mutex poisoned").as_slice(),
 			[
@@ -3051,10 +3143,9 @@ mod tests {
 	fn render_runtime() -> (ProductRuntime, Arc<RecordingSink>) {
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
-			"worker.dot".to_string(),
+			ProductId::for_test("worker.dot"),
 			crate::platform::ProductExecutionKind::Worker,
-		)
-		.expect("worker product context is valid");
+		);
 		let sink = Arc::new(RecordingSink::default());
 		let runtime = ProductRuntime::from_platform_with_config(
 			Arc::new(StubPlatform::default()),
@@ -3064,6 +3155,59 @@ mod tests {
 			sink.clone(),
 		);
 		(runtime, sink)
+	}
+
+	#[test]
+	fn host_request_uses_subscription_routing() {
+		let (runtime, sink) = render_runtime();
+		let ids = crate::generated::wire_table::MethodIds { trait_id: 195, method_id: 14 };
+		let mut request = Box::pin(runtime.host_subscriptions.request::<u32, String>(
+			ids,
+			vec![9],
+			runtime.transport.clone(),
+		));
+		assert_eq!(request.as_mut().now_or_never(), None);
+		let sent = sink.frames.lock().unwrap()[0].clone();
+		let mut response = ProtocolMessage::decode(&mut &sent[..]).unwrap();
+		response.payload.message_type = crate::frame::MESSAGE_TYPE_RECEIVE;
+		response.payload.value = 7_u32.encode();
+		futures::executor::block_on(runtime.receive_frame(response.encode())).unwrap();
+		assert_eq!(request.as_mut().now_or_never(), Some(Ok(7)));
+	}
+
+	#[test]
+	fn disposing_the_runtime_finishes_its_host_requests() {
+		let (runtime, sink) = render_runtime();
+		let ids = crate::generated::wire_table::MethodIds { trait_id: 195, method_id: 14 };
+		let mut request = Box::pin(runtime.host_subscriptions.request::<u32, String>(
+			ids,
+			vec![9],
+			runtime.transport.clone(),
+		));
+		assert_eq!(request.as_mut().now_or_never(), None);
+		runtime.dispose();
+		let closed = Err(truapi::CallError::HostFailure {
+			reason: "the product connection closed while the stream was open".into(),
+		});
+		let next = runtime.host_subscriptions.request::<u32, String>(
+			ids,
+			vec![10],
+			runtime.transport.clone(),
+		);
+		assert_eq!(
+			(
+				request.as_mut().now_or_never(),
+				next.now_or_never(),
+				sink.frames.lock().unwrap().len()
+			),
+			(
+				Some(closed),
+				Some(Err(truapi::CallError::HostFailure {
+					reason: "host-initiated subscriptions are closed".into(),
+				})),
+				1,
+			),
+		);
 	}
 
 	/// Open one render for a Pocket card.
@@ -3125,7 +3269,7 @@ mod tests {
 		let (runtime, sink) = render_runtime();
 		let services = runtime.admin.product_runtime().connection().services().clone();
 		let mut render = start_render(&runtime, "loyalty");
-		assert_eq!(services.worker_ledger.count("worker.dot"), 1);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
 
 		let request_id = render_request_id(&sink, 0);
 		deliver_render_frame(
@@ -3137,12 +3281,12 @@ mod tests {
 		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(None)));
 
 		assert_eq!(
-			services.worker_ledger.count("worker.dot"),
+			services.worker_ledger.count(&ProductId::for_test("worker.dot")),
 			0,
 			"an ended stream holds no reference, whether or not the handle lives on"
 		);
 		drop(render);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 	}
 
 	#[test]
@@ -3169,12 +3313,12 @@ mod tests {
 		));
 
 		assert_eq!(
-			services.worker_ledger.count("worker.dot"),
+			services.worker_ledger.count(&ProductId::for_test("worker.dot")),
 			0,
 			"an interrupt ends the stream, so the reference goes with it"
 		);
 		drop(render);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 	}
 
 	#[test]
@@ -3190,9 +3334,9 @@ mod tests {
 			core::task::Poll::Ready(Some(Err(truapi::CallError::MalformedFrame { .. })))
 		));
 
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 		drop(render);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 	}
 
 	#[test]
@@ -3200,14 +3344,16 @@ mod tests {
 		let (runtime, _sink) = render_runtime();
 		let services = runtime.admin.product_runtime().connection().services().clone();
 		let mut render = start_render(&runtime, "loyalty");
-		assert_eq!(services.worker_ledger.count("worker.dot"), 1);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
 
+		// The render fails rather than finishing, so the host opens it again on
+		// the next connection; the failure is where its reference is released.
 		runtime.dispose();
-		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(None)));
+		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(Some(Err(_)))));
 
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 		drop(render);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 	}
 
 	#[test]
@@ -3216,7 +3362,7 @@ mod tests {
 		let services = runtime.admin.product_runtime().connection().services().clone();
 		let mut first = start_render(&runtime, "loyalty");
 		let second = start_render(&runtime, "rewards");
-		assert_eq!(services.worker_ledger.count("worker.dot"), 2);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 2);
 
 		let request_id = render_request_id(&sink, 0);
 		deliver_render_frame(
@@ -3226,17 +3372,17 @@ mod tests {
 			crate::frame::encode_clean_interrupt(),
 		);
 		assert!(matches!(poll_render(&mut first), core::task::Poll::Ready(None)));
-		assert_eq!(services.worker_ledger.count("worker.dot"), 1);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
 
 		drop(first);
 		assert_eq!(
-			services.worker_ledger.count("worker.dot"),
+			services.worker_ledger.count(&ProductId::for_test("worker.dot")),
 			1,
 			"dropping a stream that already released must not release again"
 		);
 
 		drop(second);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 	}
 
 	#[test]
@@ -3504,12 +3650,21 @@ mod tests {
 			),
 		))
 		.expect("begin operation");
-		assert_eq!(host.connection().services().worker_ledger.count("myapp.dot"), 1);
+		assert_eq!(
+			host.connection()
+				.services()
+				.worker_ledger
+				.count(&ProductId::for_test("myapp.dot")),
+			1
+		);
 
 		runtime.dispose();
 
 		assert_eq!(
-			host.connection().services().worker_ledger.count("myapp.dot"),
+			host.connection()
+				.services()
+				.worker_ledger
+				.count(&ProductId::for_test("myapp.dot")),
 			0,
 			"disposing a connection drops the demand its open operations held"
 		);
@@ -3547,7 +3702,7 @@ mod tests {
 				.lock()
 				.expect("ended operations mutex poisoned")
 				.clone();
-			if ended == vec![("myapp.dot".to_string(), 1)] {
+			if ended == vec![(ProductId::for_test("myapp.dot"), 1)] {
 				break;
 			}
 			assert!(
@@ -3633,51 +3788,120 @@ mod tests {
 		assert!(!runtime.set_device_pairing_observer(Arc::new(Inert)));
 	}
 
-	/// Every durable consumer shares one core database: a second installer
-	/// must not swap it, and a host that configured none gets a clear error
-	/// rather than a silently missing store.
+	/// A signing host runtime over a stub platform, with no core database.
 	#[cfg(not(target_arch = "wasm32"))]
-	#[test]
-	fn the_core_database_is_installed_once_and_reports_when_missing() {
-		use crate::{
-			platform::{HostInfo, PlatformInfo, SigningHostConfig},
-			store::{Db, DbConfig, DbError, DbLocation},
-		};
-		use futures::executor::block_on;
+	fn test_signing_runtime() -> (SigningHostRuntime, Arc<StubPlatform>) {
+		use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
 
+		let host = HostInfo {
+			name: "Polkadot Mobile".to_string(),
+			icon: None,
+			version: None,
+			platform: truapi::latest::HostPlatform::Unknown,
+		};
+		let genesis = ([0; 32], [0xbb; 32], [0xcc; 32]);
 		let config = SigningHostConfig::new(
-			HostInfo {
-				name: "Polkadot Mobile".to_string(),
-				icon: None,
-				version: None,
-				platform: truapi::latest::HostPlatform::Unknown,
-			},
+			host,
 			PlatformInfo::default(),
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
+			genesis.0,
+			genesis.1,
+			genesis.2,
 			"paseo".to_string(),
 		)
 		.expect("signing host config is valid");
-		let runtime =
-			SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, test_spawner());
-		let db_config = DbConfig {
+		let platform = Arc::new(StubPlatform::default());
+		(SigningHostRuntime::new(platform.clone(), config, test_spawner()), platform)
+	}
+
+	/// An empty database in memory.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn memory_db() -> crate::store::Db {
+		use crate::store::{Db, DbConfig, DbLocation};
+
+		let config = DbConfig {
 			location: DbLocation::Memory,
-			migrations: || rusqlite_migration::Migrations::new(Vec::new()),
+			migrations: crate::store::core_migrations,
 			readers: 1,
 		};
+		futures::executor::block_on(Db::open(config)).expect("database opens")
+	}
 
-		assert!(matches!(runtime.services.core_db(), Err(DbError::NotConfigured)));
-		let installed = block_on(Db::open(db_config.clone())).expect("database opens");
-		let other = block_on(Db::open(db_config)).expect("database opens");
-		assert!(runtime.set_core_db(installed));
-		assert!(!runtime.set_core_db(other));
+	/// Every durable consumer shares one core database: a second installer
+	/// must not swap it.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn the_core_database_is_installed_once() {
+		let (runtime, _platform) = test_signing_runtime();
+		runtime.set_core_db(memory_db());
 
-		let db = runtime.services.core_db().expect("installed database is served");
-		let answer: i64 =
-			block_on(db.write(|tx| Ok(tx.query_row("SELECT 42", [], |row| row.get(0))?)))
-				.expect("installed database serves writes");
-		assert_eq!(answer, 42);
+		assert!(!runtime.set_core_db(memory_db()));
+	}
+
+	/// A host that configured no database gets a clear error rather than a
+	/// silently missing store.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn a_missing_core_database_is_reported() {
+		let (runtime, _platform) = test_signing_runtime();
+
+		assert!(matches!(runtime.services.core_db(), Err(crate::store::DbError::NotConfigured)));
+	}
+
+	/// NFT item keys are derived under the installation, so without a
+	/// provider there must be no purses rather than keys under a guessed one.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn nft_purses_stay_off_without_an_installation_provider() {
+		let (runtime, _platform) = test_signing_runtime();
+		runtime.set_core_db(memory_db());
+
+		runtime.start_core_services();
+
+		assert!(runtime.services.nft_purses().is_none());
+	}
+
+	/// The setters only store their inputs, so purses are served once the
+	/// services start and not before.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn nft_purses_are_served_once_core_services_start() {
+		let (runtime, platform) = test_signing_runtime();
+		runtime.set_core_db(memory_db());
+		runtime.set_installation_provider(platform);
+
+		runtime.start_core_services();
+
+		assert!(runtime.services.nft_purses().is_some());
+	}
+
+	/// Hosts drop the runtime on every session switch, so the services NFT
+	/// purses run on must go with it rather than keep the signer, database
+	/// and tracker alive.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn dropping_the_runtime_releases_nft_purse_services() {
+		let (runtime, platform) = test_signing_runtime();
+		runtime.set_core_db(memory_db());
+		runtime.set_installation_provider(platform);
+		runtime.start_core_services();
+		let services = Arc::downgrade(&runtime.services);
+
+		drop(runtime);
+
+		assert!(services.upgrade().is_none(), "the runtime services outlived the runtime");
+	}
+
+	/// Durable transactions do not depend on NFT purses, so the engine runs
+	/// even when purses are off.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn the_durable_engine_starts_without_an_installation_provider() {
+		let (runtime, _platform) = test_signing_runtime();
+		runtime.set_core_db(memory_db());
+
+		runtime.start_core_services();
+
+		assert!(runtime.services.durable_engine().is_some());
 	}
 
 	#[test]
@@ -3758,7 +3982,7 @@ mod tests {
 		let request = RemoteMessage {
 			message_id: "m3".to_string(),
 			data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeRequest(
-				ProductSubtreeRequest { product_id: "browse.dot".to_string() },
+				ProductSubtreeRequest { product_id: ProductId::for_test("browse.dot") },
 			)),
 		};
 		let outcome = futures::executor::block_on(runtime.answer_sso_request(request));
@@ -3999,7 +4223,7 @@ mod tests {
 			ConnectionAdapters::from_services(&runtime.services),
 			runtime.signing_host.clone(),
 			runtime.signing_host.clone(),
-			ProductContext::new("unknown.dot".to_string()).expect("valid product id"),
+			ProductContext::new(ProductId::for_test("unknown.dot")),
 		);
 		// Nothing is cached for `wallet.dot`, so resolution reaches dotNS,
 		// the path the missing hash short-circuited.

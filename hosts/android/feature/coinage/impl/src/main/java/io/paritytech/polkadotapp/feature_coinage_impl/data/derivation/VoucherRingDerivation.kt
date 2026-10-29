@@ -86,9 +86,6 @@ class RealVoucherRingDerivation @Inject constructor(
     }
 }
 
-suspend fun VoucherRingDerivation.getDerivedMemberKey(derivationIndex: CoinageKeyIndex) =
-    deriveBandersnatch(derivationIndex).memberKey()
-
 suspend fun VoucherRingDerivation.getDerivedMemberKeys(derivationIndices: List<CoinageKeyIndex>) =
     deriveBandersnatchBatch(derivationIndices).map { it.memberKey() }
 

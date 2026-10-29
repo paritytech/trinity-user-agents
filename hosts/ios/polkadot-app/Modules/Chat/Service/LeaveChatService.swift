@@ -14,18 +14,21 @@ final class LeaveChatService {
     private let chatRepository: AnyDataProviderRepository<Chat.LocalModel>
     private let contactRepository: AnyDataProviderRepository<Chat.Contact>
     private let removedChatRepository: AnyDataProviderRepository<Chat.RemovedChat>
+    private let allowanceCleanupService: AllowanceCleanupServicing
+    private let signingConsentStore: ChatSigningConsentStoring
     private let productRepository: AnyDataProviderRepository<Product>
-    private let messageExchangeModeProvider: MessageExchangeModeProviding
     private let storageFacade: StorageFacadeProtocol
 
     init(
         outboxService: ChatOutboxServicing,
-        messageExchangeModeProvider: MessageExchangeModeProviding,
+        allowanceCleanupService: AllowanceCleanupServicing,
+        signingConsentStore: ChatSigningConsentStoring,
         productRepository: AnyDataProviderRepository<Product>,
         storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared
     ) {
         self.outboxService = outboxService
-        self.messageExchangeModeProvider = messageExchangeModeProvider
+        self.allowanceCleanupService = allowanceCleanupService
+        self.signingConsentStore = signingConsentStore
         self.productRepository = productRepository
         self.storageFacade = storageFacade
 
@@ -78,6 +81,9 @@ private extension LeaveChatService {
         try await contactRepository.saveOperation({ [] }, { [contact.identifier] }).asyncExecute()
 
         try await saveRemovedChatTombstoneIfNeeded(for: contact)
+        try await signingConsentStore.revoke(for: contact.accountId)
+
+        await allowanceCleanupService.cleanup()
     }
 
     /// A product learns of the removal from its room list, so nothing is sent. Its last chat takes
@@ -110,10 +116,6 @@ private extension LeaveChatService {
     }
 
     func saveRemovedChatTombstoneIfNeeded(for contact: Chat.Contact) async throws {
-        guard messageExchangeModeProvider.mode(for: contact) == .multidevice else {
-            return
-        }
-
         let tombstone = Chat.RemovedChat(
             accountId: contact.accountId,
             removedAt: Date()

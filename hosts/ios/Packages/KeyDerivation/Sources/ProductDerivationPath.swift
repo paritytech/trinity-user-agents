@@ -24,6 +24,11 @@ public enum ProductDerivationPath {
         try "\(productRoot(productId: productId))/\(index.asPathSegment())"
     }
 
+    /// Non-throwing `productRoot(productId:)` for the reserved built-in ids.
+    public static func builtInRoot(_ productId: String) -> String {
+        root(productId)
+    }
+
     /// Non-throwing variant for the reserved built-in ids — compile-time constants
     /// that cannot hit the dynamic-input validation.
     public static func builtInAccount(_ productId: String, index: UInt32) -> String {

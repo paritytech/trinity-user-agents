@@ -21,6 +21,10 @@ fixtures="rust/crates/truapi-host-cli/js/fixtures"
 script="rust/crates/truapi-host-cli/js/cross-product-storage-e2e.ts"
 network="${E2E_NETWORK:-paseo-next-v2}"
 
+# A mnemonic bypasses account auto-management, which would otherwise register a
+# lite username on chain.
+export HOST_CLI_SIGNER_MNEMONIC="${HOST_CLI_SIGNER_MNEMONIC:-bottom drive obey lake curtain smoke basket hold race lonely fit walk}"
+
 state="$(mktemp -d)"
 trap 'rm -rf "$state"' EXIT
 

@@ -3,14 +3,10 @@
 use super::{
 	super::{
 		authority::{
-			AuthorityCancelError, AuthorityError, BulletinAllowanceKey,
-			CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest,
-			SignRawAuthorityRequest, StatementStoreAllowanceKey,
+			AuthorityError, BulletinAllowanceKey, CreateTransactionAuthorityRequest,
+			SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
 		},
-		sso_remote::{
-			SSO_LOCAL_DISCONNECT_REASON, SSO_PEER_DISCONNECT_REASON, SsoRemoteResponseError,
-			SsoSessionKey,
-		},
+		sso_remote::{SsoRemoteResponseError, SsoSessionKey},
 	},
 	PairingHost,
 };
@@ -23,6 +19,7 @@ use crate::{
 		SsoProductTxPayload,
 	},
 	host_logic::session::SessionInfo,
+	platform::ProductId,
 };
 
 use tracing::instrument;
@@ -35,7 +32,7 @@ impl PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
-		product_id: String,
+		product_id: &ProductId,
 	) -> Result<[u8; 32], AuthorityError> {
 		let sso = session.sso.as_ref().ok_or(AuthorityError::Disconnected)?;
 		let lifecycle_epoch = self.session.current_session_lifecycle_epoch();
@@ -45,9 +42,8 @@ impl PairingHost {
 		}
 		let public_key = self
 			.session
-			.call(cx, session, ProductSubtreeRequest { product_id })
-			.await
-			.map_err(remote_authority_error)?
+			.call(cx, session, ProductSubtreeRequest { product_id: product_id.clone() })
+			.await?
 			.map_err(remote_authority_error)?;
 		if !self
 			.persist_product_subtree_if_current(session, lifecycle_epoch, cache_key, public_key)
@@ -63,13 +59,16 @@ impl PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
-		calling_product_id: String,
+		calling_product_id: &ProductId,
 		request: latest::HostAccountSignVrfRequest,
 	) -> Result<latest::VrfSignature, AuthorityError> {
 		self.session
-			.call(cx, session, ProductRequest { calling_product_id, payload: request })
-			.await
-			.map_err(remote_authority_error)?
+			.call(
+				cx,
+				session,
+				ProductRequest { calling_product_id: calling_product_id.clone(), payload: request },
+			)
+			.await?
 			.map_err(|err| match err {
 				latest::HostAccountSignVrfError::NotConnected => AuthorityError::Disconnected,
 				latest::HostAccountSignVrfError::Rejected => AuthorityError::Rejected,
@@ -101,8 +100,7 @@ impl PairingHost {
 		};
 		self.session
 			.call(cx, session, SignRequest::Payload(Box::new(request)))
-			.await
-			.map_err(remote_authority_error)?
+			.await?
 			.map_err(remote_authority_error)
 	}
 
@@ -130,8 +128,7 @@ impl PairingHost {
 						SignRequest::RawUnwatermarkedDeprecated(request)
 					},
 				)
-				.await
-				.map_err(remote_authority_error)?
+				.await?
 				.map_err(remote_authority_error),
 			SignRawAuthorityRequest::LegacyAccount { account, request } => {
 				let request = SignRawWithLegacyAccountRequest { account, data: request.payload };
@@ -143,15 +140,13 @@ impl PairingHost {
 							session,
 							SignRequest::RawWithLegacyAccountUnwatermarkedDeprecated(request),
 						)
-						.await
-						.map_err(remote_authority_error)?
+						.await?
 						.map_err(remote_authority_error);
 				}
 				let signature = self
 					.session
 					.call(cx, session, request)
-					.await
-					.map_err(remote_authority_error)?
+					.await?
 					.map_err(remote_authority_error)?;
 				Ok(latest::HostSignPayloadResponse { signature, signed_transaction: None })
 			},
@@ -213,8 +208,7 @@ impl PairingHost {
 					.await
 			},
 		};
-		signed
-			.map_err(remote_authority_error)?
+		signed?
 			.map(|transaction| latest::HostCreateTransactionResponse { transaction })
 			.map_err(remote_authority_error)
 	}
@@ -226,10 +220,7 @@ impl PairingHost {
 		session: &SessionInfo,
 		request: ProductRequest<latest::HostAccountGetAliasRequest>,
 	) -> Result<latest::HostAccountGetAliasResponse, RingVrfError> {
-		self.session
-			.call(cx, session, request)
-			.await
-			.map_err(ring_vrf_transport_error)?
+		self.session.call(cx, session, request).await?
 	}
 
 	/// Forward a ring-VRF proof request to the paired signing host.
@@ -239,10 +230,7 @@ impl PairingHost {
 		session: &SessionInfo,
 		request: ProductRequest<latest::HostAccountCreateProofRequest>,
 	) -> Result<latest::HostAccountCreateProofResponse, RingVrfError> {
-		self.session
-			.call(cx, session, request)
-			.await
-			.map_err(ring_vrf_transport_error)?
+		self.session.call(cx, session, request).await?
 	}
 
 	/// Forward a ring-VRF key registration request to the paired signing host.
@@ -252,10 +240,7 @@ impl PairingHost {
 		session: &SessionInfo,
 		request: ProductRequest<latest::HostAccountRegisterRingVrfKeyRequest>,
 	) -> Result<[u8; 32], RingVrfError> {
-		self.session
-			.call(cx, session, request)
-			.await
-			.map_err(ring_vrf_transport_error)?
+		self.session.call(cx, session, request).await?
 	}
 
 	/// Forward a ring-VRF key listing request to the paired signing host.
@@ -265,10 +250,7 @@ impl PairingHost {
 		session: &SessionInfo,
 		request: ProductRequest<latest::HostAccountListRingVrfKeysRequest>,
 	) -> Result<Vec<latest::RegisteredRingVrfKey>, RingVrfError> {
-		self.session
-			.call(cx, session, request)
-			.await
-			.map_err(ring_vrf_transport_error)?
+		self.session.call(cx, session, request).await?
 	}
 
 	/// Forward a direct ring-VRF signing request to the paired signing host.
@@ -278,10 +260,7 @@ impl PairingHost {
 		session: &SessionInfo,
 		request: ProductRequest<latest::HostAccountRingVrfSignRequest>,
 	) -> Result<Vec<u8>, RingVrfError> {
-		self.session
-			.call(cx, session, request)
-			.await
-			.map_err(ring_vrf_transport_error)?
+		self.session.call(cx, session, request).await?
 	}
 
 	/// Ask the paired signing host to allocate product resources, caching any
@@ -290,7 +269,7 @@ impl PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
-		product_id: String,
+		product_id: &ProductId,
 		request: latest::HostRequestResourceAllocationRequest,
 	) -> Result<latest::HostRequestResourceAllocationResponse, AuthorityError> {
 		let lifecycle_epoch = self.session.current_session_lifecycle_epoch();
@@ -305,10 +284,9 @@ impl PairingHost {
 					on_existing: OnExistingAllowancePolicy::Increase,
 				},
 			)
-			.await
-			.map_err(remote_authority_error)?
+			.await?
 			.map_err(remote_authority_error)?;
-		self.cache_allowance_outcomes(cx, session, lifecycle_epoch, &product_id, &outcomes)
+		self.cache_allowance_outcomes(cx, session, lifecycle_epoch, product_id, &outcomes)
 			.await?;
 		Ok(latest::HostRequestResourceAllocationResponse {
 			outcomes: outcomes.into_iter().map(Into::into).collect(),
@@ -320,7 +298,7 @@ impl PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
-		product_id: &str,
+		product_id: &ProductId,
 		resource: latest::AllocatableResource,
 		on_existing: OnExistingAllowancePolicy,
 	) -> Result<SsoAllocatedResource, AuthorityError> {
@@ -331,13 +309,12 @@ impl PairingHost {
 				cx,
 				session,
 				ResourceAllocationRequest {
-					calling_product_id: product_id.to_string(),
+					calling_product_id: product_id.clone(),
 					resources: vec![resource],
 					on_existing,
 				},
 			)
-			.await
-			.map_err(remote_authority_error)?
+			.await?
 			.map_err(remote_authority_error)?;
 		match outcomes.into_iter().next() {
 			Some(SsoAllocationOutcome::Allocated(resource)) => Ok(resource),
@@ -355,11 +332,11 @@ impl PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
-		product_id: String,
+		product_id: &ProductId,
 	) -> Result<StatementStoreAllowanceKey, AuthorityError> {
 		let lifecycle_epoch = self.session.current_session_lifecycle_epoch();
 		if let Some(cached) = self
-			.cached_statement_store_allowance_key(session, lifecycle_epoch, &product_id)
+			.cached_statement_store_allowance_key(session, lifecycle_epoch, product_id)
 			.await?
 		{
 			return Ok(cached);
@@ -368,7 +345,7 @@ impl PairingHost {
 			.remote_allowance_slot(
 				cx,
 				session,
-				&product_id,
+				product_id,
 				latest::AllocatableResource::StatementStoreAllowance,
 				OnExistingAllowancePolicy::Ignore,
 			)
@@ -378,7 +355,7 @@ impl PairingHost {
 				self.cache_statement_store_allowance_key(
 					session,
 					lifecycle_epoch,
-					&product_id,
+					product_id,
 					slot_account_key,
 				)
 				.await
@@ -393,12 +370,11 @@ impl PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
-		product_id: String,
+		product_id: &ProductId,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
 		let lifecycle_epoch = self.session.current_session_lifecycle_epoch();
-		if let Some(cached) = self
-			.cached_bulletin_allowance_key(session, lifecycle_epoch, &product_id)
-			.await?
+		if let Some(cached) =
+			self.cached_bulletin_allowance_key(session, lifecycle_epoch, product_id).await?
 		{
 			return Ok(cached);
 		}
@@ -418,10 +394,10 @@ impl PairingHost {
 		&self,
 		cx: &CallContext,
 		session: &SessionInfo,
-		product_id: String,
+		product_id: &ProductId,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
 		let lifecycle_epoch = self.session.current_session_lifecycle_epoch();
-		self.evict_bulletin_allowance_key(session, lifecycle_epoch, &product_id).await?;
+		self.evict_bulletin_allowance_key(session, lifecycle_epoch, product_id).await?;
 		self.allocate_bulletin_allowance_key(
 			cx,
 			session,
@@ -437,14 +413,14 @@ impl PairingHost {
 		cx: &CallContext,
 		session: &SessionInfo,
 		lifecycle_epoch: u64,
-		product_id: String,
+		product_id: &ProductId,
 		on_existing: OnExistingAllowancePolicy,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
 		match self
 			.remote_allowance_slot(
 				cx,
 				session,
-				&product_id,
+				product_id,
 				latest::AllocatableResource::BulletinAllowance,
 				on_existing,
 			)
@@ -454,7 +430,7 @@ impl PairingHost {
 				self.cache_bulletin_allowance_key(
 					session,
 					lifecycle_epoch,
-					&product_id,
+					product_id,
 					slot_account_key,
 				)
 				.await
@@ -468,7 +444,7 @@ impl PairingHost {
 		cx: &CallContext,
 		session: &SessionInfo,
 		lifecycle_epoch: u64,
-		product_id: &str,
+		product_id: &ProductId,
 		outcomes: &[SsoAllocationOutcome],
 	) -> Result<(), AuthorityError> {
 		for outcome in outcomes {
@@ -497,9 +473,8 @@ impl PairingHost {
 						product_root_private_key,
 						ring_vrf_domain_entropy,
 					} => {
-						let expected_product_subtree_public_key = self
-							.remote_product_subtree_public_key(cx, session, product_id.to_string())
-							.await?;
+						let expected_product_subtree_public_key =
+							self.remote_product_subtree_public_key(cx, session, product_id).await?;
 						self.remember_auto_signing_key(
 							session,
 							lifecycle_epoch,
@@ -515,10 +490,6 @@ impl PairingHost {
 		}
 		Ok(())
 	}
-}
-
-fn ring_vrf_transport_error(reason: SsoRemoteResponseError) -> RingVrfError {
-	remote_authority_error(reason).into()
 }
 
 fn allowance_name(resource: &latest::AllocatableResource) -> &'static str {
@@ -537,22 +508,8 @@ fn unexpected_resource(label: &str, resource: &SsoAllocatedResource) -> Authorit
 	}
 }
 
-fn remote_authority_error(reason: impl Into<SsoRemoteResponseError>) -> AuthorityError {
-	match reason.into() {
-		SsoRemoteResponseError::Cancelled(err) => AuthorityError::Cancelled(
-			AuthorityCancelError::new(err.remote_message_id(), err.reason()),
-		),
-		SsoRemoteResponseError::LocalDisconnected | SsoRemoteResponseError::PeerDisconnected => {
-			AuthorityError::Disconnected
-		},
-		SsoRemoteResponseError::Failure(reason) => match reason.as_str() {
-			"Rejected" | "User rejected" => AuthorityError::Rejected,
-			SSO_LOCAL_DISCONNECT_REASON | SSO_PEER_DISCONNECT_REASON => {
-				AuthorityError::Disconnected
-			},
-			_ => AuthorityError::Unknown { reason },
-		},
-	}
+fn remote_authority_error(reason: String) -> AuthorityError {
+	SsoRemoteResponseError::from(reason).into()
 }
 
 impl From<SsoAllocationOutcome> for latest::AllocationOutcome {

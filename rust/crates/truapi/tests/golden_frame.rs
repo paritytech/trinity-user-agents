@@ -17,17 +17,17 @@
 //!   messageType = Request
 //!   payload   = account_get_account,
 //!               inner = HostAccountGetRequest::V1(ProductAccountId {
-//!                   dot_ns_identifier: "foo",
+//!                   dot_ns_identifier: "foo.dot",
 //!                   derivation_index: DerivationIndex::Index(0),
 //!               })
 //!
-//! On the wire (17 bytes):
+//! On the wire (21 bytes):
 //!   [0c 70 3a 31]                      requestId = compact-len(3) + "p:1"
 //!   [02]                               trait discriminant 2 = account
 //!   [01]                               method discriminant 1 = get_account
 //!   [00]                               messageType: Request
 //!   [00]                               request wrapper version V1
-//!   [0c 66 6f 6f]                      compact-len(3) + "foo"
+//!   [1c 66 6f 6f 2e 64 6f 74]          compact-len(7) + "foo.dot"
 //!   [00]                               DerivationIndex variant Index
 //!   [00 00 00 00]                      u32 = 0
 //!
@@ -47,15 +47,15 @@ use truapi::{
 const GOLDEN: &[u8] = include_bytes!("snapshots/golden-account-get.bin");
 
 /// Payload byte count of the golden frame: the request wrapper's own version
-/// tag, a compact-length-prefixed 3-byte identifier, one `DerivationIndex`
+/// tag, a compact-length-prefixed 7-byte identifier, one `DerivationIndex`
 /// variant byte, and a `u32`. Spelled out term by term rather than measured
 /// from the codec, so a layout change has to move this number by hand.
-const GOLDEN_PAYLOAD_LEN: usize = 1 + 1 + 3 + 1 + 4;
+const GOLDEN_PAYLOAD_LEN: usize = 1 + 1 + 7 + 1 + 4;
 
 fn expected_request() -> HostAccountGetRequest {
 	HostAccountGetRequest::V1(v01::HostAccountGetRequest {
 		product_account_id: v01::ProductAccountId {
-			dot_ns_identifier: "foo".to_string(),
+			dot_ns_identifier: "foo.dot".parse().expect("valid product id"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 	})

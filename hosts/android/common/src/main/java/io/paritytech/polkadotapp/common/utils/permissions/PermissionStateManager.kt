@@ -1,60 +1,51 @@
 package io.paritytech.polkadotapp.common.utils.permissions
 
-import android.content.pm.PackageManager
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
-import io.paritytech.polkadotapp.common.data.storage.preferences.edit
-import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import javax.inject.Inject
 
 class PermissionStateManager @Inject constructor(
-    private val contextManager: ContextManager,
+    private val permissionStatusChecker: PermissionStatusChecker,
     private val preferences: Preferences
 ) {
     fun getPermissionState(permission: String): PermissionResult {
-        if (ContextCompat.checkSelfPermission(contextManager.applicationContext, permission) == PackageManager.PERMISSION_GRANTED) {
+        if (permissionStatusChecker.isGranted(permission)) {
             return PermissionResult.GRANTED
         }
 
-        val shouldShowRationale = ActivityCompat.shouldShowRequestPermissionRationale(contextManager.requireActivity(), permission)
-        val wasRationaleShownBefore = isRationaleShown(permission)
-
-        return resolveState(shouldShowRationale, wasRationaleShownBefore)
+        return resolveDenial(permissionStatusChecker.shouldShowRationale(permission), wasDeniedBefore(permission))
     }
 
     fun onPermissionResult(permission: String, isGranted: Boolean): PermissionResult {
         if (isGranted) {
+            setDeniedBefore(permission, false)
             return PermissionResult.GRANTED
         }
 
-        val shouldShowRationale = ActivityCompat.shouldShowRequestPermissionRationale(contextManager.requireActivity(), permission)
-
-        if (shouldShowRationale) {
-            setRationaleShown(permission)
-        }
-
-        val wasRationaleShownBefore = isRationaleShown(permission)
-        return resolveState(shouldShowRationale, wasRationaleShownBefore)
+        val result = resolveDenial(permissionStatusChecker.shouldShowRationale(permission), wasDeniedBefore(permission))
+        setDeniedBefore(permission, true)
+        return result
     }
 
-    private fun resolveState(shouldShowRationale: Boolean, wasRationaleShownBefore: Boolean): PermissionResult {
+    // shouldShowRationale is false whether the permission was never asked, dismissed, or denied for good.
+    private fun resolveDenial(shouldShowRationale: Boolean, wasDeniedBefore: Boolean): PermissionResult {
         return when {
             shouldShowRationale -> PermissionResult.DENIED
 
-            wasRationaleShownBefore -> PermissionResult.DENIED_FOREVER
+            wasDeniedBefore -> PermissionResult.DENIED_FOREVER
 
             else -> PermissionResult.DENIED
         }
     }
 
-    private fun setRationaleShown(permission: String) {
-        preferences.edit { putBoolean(getKey(permission), true) }
+    private fun setDeniedBefore(permission: String, denied: Boolean) {
+        preferences.putBoolean(deniedKey(permission), denied)
     }
 
-    private fun isRationaleShown(permission: String): Boolean {
-        return preferences.getBoolean(getKey(permission), false)
+    private fun wasDeniedBefore(permission: String): Boolean {
+        return preferences.getBoolean(deniedKey(permission), preferences.getBoolean(rationaleShownKey(permission), false))
     }
 
-    private fun getKey(permission: String) = "permission_rationale_shown ($permission)"
+    private fun deniedKey(permission: String) = "permission_denied ($permission)"
+
+    private fun rationaleShownKey(permission: String) = "permission_rationale_shown ($permission)"
 }
