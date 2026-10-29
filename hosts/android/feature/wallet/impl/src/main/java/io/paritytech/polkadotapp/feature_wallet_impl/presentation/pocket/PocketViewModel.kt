@@ -224,11 +224,16 @@ class PocketViewModel @Inject constructor(
     /**
      * A tap always starts from the list, but a link can arrive with another card open. Switched to
      * straight away, the new card would be drawn over the open one's page until it settled, so the
-     * open card is closed first, as [dismissCard] does, and the list behind it is put back.
+     * open card is closed first, as [dismissCard] does, and the list behind it is put back. A link to
+     * the card already open loads its page with the link's params, or leaves them for it to settle with.
      */
     private fun openRequestedCard(card: PocketCardUiModel.ProductCard, request: PocketCardOpenRequest) {
         cardOpenRequests.consume(request)
-        if (selectedCardId.value == card.id) return
+        if (selectedCardId.value == card.id) {
+            selectedPageQuery = request.pageQuery
+            if (shownProduct.value != null) expandedProduct.open(card.key.launchUrl(request.pageQuery))
+            return
+        }
 
         if (selectedCardId.value != null) dismissCard()
         collectiblesShown.value = false

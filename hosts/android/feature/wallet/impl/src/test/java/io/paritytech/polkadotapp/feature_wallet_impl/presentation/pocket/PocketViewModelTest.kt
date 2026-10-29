@@ -387,6 +387,10 @@ class PocketViewModelTest {
         viewModel.hostExpandedProduct(uiCard)
         assertEquals("${card.key.launchUrl()}&open=scratch", viewModel.shownProduct.value?.url)
 
+        cardOpenRequests.request(card.key, "open=prizes")
+        advanceUntilIdle()
+        assertEquals("${card.key.launchUrl()}&open=prizes", viewModel.shownProduct.value?.url)
+
         collection.value = listOf(card, productCard("stamps"))
         advanceUntilIdle()
         assertNotNull("the linked page was taken for another card's", viewModel.shownProduct.value)
