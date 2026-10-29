@@ -17,7 +17,7 @@ data class PocketCardKey(
         "${productId.toUrl()}?card=${Uri.encode(cardId.value)}" + if (pageQuery.isEmpty()) "" else "&$pageQuery"
 
     /** Whether [url] is this card's page, with or without a link's page query. */
-    fun launches(url: String): Boolean = url == launchUrl() || url.startsWith("${launchUrl()}&")
+    fun launches(url: String): Boolean = launchUrl().let { base -> url == base || url.startsWith("$base&") }
 }
 
 /** One card in the host's Pocket collection. A [privileged] card is host-placed and removable by nobody. */
