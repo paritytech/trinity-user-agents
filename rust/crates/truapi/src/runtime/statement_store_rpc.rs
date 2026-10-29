@@ -163,14 +163,24 @@ impl StatementStoreApi for StatementStoreRpc {
 			.client("statement-watch")
 			.await
 			.map_err(|error| StatementWatchError::NotStarted(error.to_string()))?;
-		let subscription = subscribe(&rpc_client, kind, &topics)
-			.await
-			.map_err(|error| StatementWatchError::NotStarted(rpc_error_message(error)))?;
-		let subscription_id = subscription.subscription_id().unwrap_or_default().to_string();
-		let pages = subscription
-			.map(move |notification| parse_statement_page(&subscription_id, notification));
-		Ok(backlog_then_live_batches(pages).take_until_inclusive(Result::is_err))
+		start_statement_watch_over(&rpc_client, kind, &topics).await
 	}
+}
+
+/// Starts watching the statements `kind` and `topics` match over
+/// `rpc_client`, as [`StatementStoreApi::start_statement_watch`] describes.
+async fn start_statement_watch_over(
+	rpc_client: &RpcClient,
+	kind: TopicFilterKind,
+	topics: &[[u8; 32]],
+) -> Result<StatementBatches, StatementWatchError> {
+	let subscription = subscribe(rpc_client, kind, topics)
+		.await
+		.map_err(|error| StatementWatchError::NotStarted(rpc_error_message(error)))?;
+	let subscription_id = subscription.subscription_id().unwrap_or_default().to_string();
+	let pages =
+		subscription.map(move |notification| parse_statement_page(&subscription_id, notification));
+	Ok(backlog_then_live_batches(pages).take_until_inclusive(Result::is_err))
 }
 
 /// The page a statement subscription notification carries.
@@ -306,12 +316,16 @@ mod tests {
 	use futures::executor::{block_on, block_on_stream};
 	use truapi::latest::RemoteStatementStoreSubscribeRequest;
 
-	use super::{StatementStoreRpc, is_no_allowance_rejection};
+	use subxt_rpcs::RpcClient;
+
+	use super::{StatementStoreRpc, TopicFilterKind, is_no_allowance_rejection};
 	use crate::{
+		chain::tokio_spawner,
 		chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
 		host_logic::statement_store::{
 			MAX_MATCH_ALL_TOPICS, StatementStoreApi, StatementWatchError, hex_topic,
 		},
+		host_rpc_client::HostRpcClient,
 		platform::JsonRpcConnection,
 		test_support::{StubPlatform, statement_page_frame, subscribe_ack_frame, test_spawner},
 	};
@@ -546,5 +560,37 @@ mod tests {
 
 		assert!(matches!(started, Err(StatementWatchError::NotStarted(_))));
 		assert_eq!(platform.chain_connects.lock().unwrap().len(), 0);
+	}
+
+	/// The live People chain answers a watch of a topic nobody uses with one
+	/// empty batch, which is what tells an inbox it caught up. Run with
+	/// `cargo test -p truapi --lib live_statement_watch -- --ignored`;
+	/// `TRUAPI_LIVE_PEOPLE_WS` and `TRUAPI_LIVE_PEOPLE_GENESIS` pick another
+	/// node.
+	#[tokio::test(flavor = "multi_thread")]
+	#[ignore = "needs the live Paseo People Next chain"]
+	async fn live_statement_watch_of_an_unused_topic_starts_with_one_empty_batch() {
+		let url = std::env::var("TRUAPI_LIVE_PEOPLE_WS")
+			.unwrap_or_else(|_| "wss://paseo-people-next-system-rpc.polkadot.io".into());
+		let genesis = std::env::var("TRUAPI_LIVE_PEOPLE_GENESIS").unwrap_or_else(|_| {
+			"4a2b5b737de1da59e209b0000a876ec2fa20035dc34fd292a848da32d255ad48".into()
+		});
+		let genesis: [u8; 32] = hex::decode(genesis).unwrap().try_into().unwrap();
+		let source = truapi_provider::ChainSource::rpc_node(url.parse().unwrap());
+		let provider =
+			truapi_provider::EmbeddedChainProvider::builder().chain(genesis, source).build();
+		let connection = truapi_provider::platform::ChainProvider::connect(&provider, genesis)
+			.await
+			.unwrap();
+		let rpc_client = RpcClient::new(HostRpcClient::new(Arc::from(connection), tokio_spawner()));
+		let topic: [u8; 32] = rand::random();
+
+		let mut batches =
+			super::start_statement_watch_over(&rpc_client, TopicFilterKind::MatchAll, &[topic])
+				.await
+				.unwrap();
+		let first = tokio::time::timeout(core::time::Duration::from_secs(30), batches.next()).await;
+
+		assert_eq!(first.unwrap().map(Result::unwrap), Some(vec![]));
 	}
 }
