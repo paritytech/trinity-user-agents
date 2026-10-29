@@ -4,9 +4,9 @@
 
 use crate::{
 	Accepted, DotnsRecord, Error, Fetched, Pointer, Status, Verified, accept, envelope::open,
-	reader::passed,
+	format, reader::passed,
 };
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// When a [`StackReader`] fetches a stack it already holds a copy of. A stack it holds no copy
@@ -80,9 +80,9 @@ pub struct Refreshed {
 	pub accepted: Accepted,
 	/// Bytes to store under the pointer's `stack_id`, when what the reader keeps changed. They
 	/// go back to [`StackReader::load`] as `stored`.
-	#[serde(serialize_with = "optional_bytes")]
+	#[serde(serialize_with = "format::serialize_optional_bytes")]
 	#[cfg_attr(feature = "js", tsify(type = "Uint8Array | undefined"))]
-	pub record: Option<Vec<u8>>,
+	pub stored: Option<Vec<u8>>,
 }
 
 /// What [`StackReader::dotns`] says.
@@ -104,19 +104,9 @@ pub struct DotnsLookedUp {
 	/// The record now in use, `None` when the reader has none for the descriptor in use.
 	pub record: Option<DotnsRecord>,
 	/// Bytes to store under the pointer's `stack_id`, when what the reader keeps changed.
-	#[serde(serialize_with = "optional_bytes")]
+	#[serde(serialize_with = "format::serialize_optional_bytes")]
 	#[cfg_attr(feature = "js", tsify(type = "Uint8Array | undefined"))]
 	pub stored: Option<Vec<u8>>,
-}
-
-fn optional_bytes<S: Serializer>(
-	bytes: &Option<Vec<u8>>,
-	serializer: S,
-) -> Result<S::Ok, S::Error> {
-	match bytes {
-		Some(bytes) => serializer.serialize_bytes(bytes),
-		None => serializer.serialize_none(),
-	}
 }
 
 /// Each stack's current copy and dotNS record, and when to refresh them.
@@ -146,7 +136,7 @@ pub struct StackReader {
 	stacks: BTreeMap<String, Stack>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct Stack {
 	held: Option<Held>,
 	fetches: Schedule,
@@ -163,7 +153,8 @@ struct Held {
 	etag: Option<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct KeptDotns {
 	record: DotnsRecord,
 	/// When it was looked up; `None` for a build copy.
@@ -177,8 +168,7 @@ struct Kept {
 	document: String,
 	fetched_at: Option<i64>,
 	etag: Option<String>,
-	dotns: Option<DotnsRecord>,
-	dotns_read_at: Option<i64>,
+	dotns: Option<KeptDotns>,
 }
 
 /// When to ask for one thing a stack needs: its descriptor, or its dotNS record.
@@ -256,7 +246,12 @@ impl StackReader {
 		if let Some(record) = &build_dotns {
 			record.check()?;
 		}
-		let kept = stored.and_then(|bytes| serde_json::from_slice::<Kept>(bytes).ok());
+		// Through `Value`, which the crate links anyway, rather than a typed slice parser.
+		let kept = stored.and_then(|bytes| {
+			serde_json::from_slice::<serde_json::Value>(bytes)
+				.and_then(Kept::deserialize)
+				.ok()
+		});
 		let stored_copy = kept.as_ref().and_then(|kept| {
 			Some(Held {
 				stack: open(kept.document.as_bytes(), pointer).ok()?,
@@ -276,20 +271,15 @@ impl StackReader {
 			},
 			(build, stored) => build.or(stored),
 		};
-		let generation = held.as_ref().map(|held| held.stack.descriptor.generation.clone());
-		let stored_dotns = kept.and_then(|kept| {
-			let record = kept.dotns?;
-			record.check().ok()?;
-			Some(KeptDotns { record, read_at: kept.dotns_read_at })
-		});
-		let dotns = [stored_dotns, build_dotns.map(|record| KeptDotns { record, read_at: None })]
+		let mut stack = Stack { held, ..Default::default() };
+		let stored_dotns =
+			kept.and_then(|kept| kept.dotns).filter(|kept| kept.record.check().is_ok());
+		let build_dotns = build_dotns.map(|record| KeptDotns { record, read_at: None });
+		stack.dotns = [stored_dotns, build_dotns]
 			.into_iter()
 			.flatten()
-			.find(|kept| Some(&kept.record.generation) == generation.as_ref());
-		self.stacks.insert(
-			pointer.stack_id(),
-			Stack { held, fetches: Schedule::default(), dotns, lookups: Schedule::default() },
-		);
+			.find(|kept| stack.serves(kept));
+		self.stacks.insert(pointer.stack_id(), stack);
 		Ok(())
 	}
 
@@ -298,18 +288,15 @@ impl StackReader {
 	pub fn get(&mut self, pointer: &Pointer, now_unix_seconds: i64) -> StackRead {
 		let refresh = self.refresh;
 		let stack = self.stack(pointer);
-		let read_at = stack.held.as_ref().and_then(|held| held.fetched_at);
-		let has_copy = stack.held.is_some();
-		let fetch = stack.fetches.wants(refresh, has_copy, read_at, now_unix_seconds).then(|| {
+		let fetch = stack.fetch_due(refresh, now_unix_seconds).then(|| {
 			stack.fetches.ask(now_unix_seconds);
 			stack.request(pointer)
 		});
-		let current = match &stack.held {
-			Some(held) if !stack.fetches.waits(refresh, has_copy) => {
-				Some(held.current(now_unix_seconds))
-			},
-			_ => None,
-		};
+		let current = stack
+			.held
+			.as_ref()
+			.filter(|_| !stack.fetches.waits(refresh, true))
+			.map(|held| held.current(now_unix_seconds));
 		StackRead { current, fetch }
 	}
 
@@ -329,9 +316,7 @@ impl StackReader {
 		self.stacks
 			.iter()
 			.filter(|(_, stack)| {
-				let read_at = stack.held.as_ref().and_then(|held| held.fetched_at);
-				stack.held.is_some() &&
-					stack.fetches.wants(self.refresh, true, read_at, now_unix_seconds)
+				stack.held.is_some() && stack.fetch_due(self.refresh, now_unix_seconds)
 			})
 			.map(|(id, _)| id.clone())
 			.collect()
@@ -372,30 +357,31 @@ impl StackReader {
 			// A browser cannot send `If-None-Match` cross-origin to a server whose CORS does not
 			// allow it, so a conditional fetch that failed is followed by a plain one.
 			(Status::Unreachable, Some(held)) if held.etag.is_some() => held.etag = None,
-			_ => return Ok(Refreshed { accepted, record: None }),
+			_ => return Ok(Refreshed { accepted, stored: None }),
 		}
-		Ok(Refreshed { accepted, record: stack.kept() })
+		Ok(Refreshed { accepted, stored: stack.kept() })
 	}
 
 	/// The dotNS record to use for the descriptor in use, and a lookup to run when the policy
 	/// says it is due, or when the reader has no record of that descriptor's `generation`.
-	/// `None` until the reader holds a descriptor.
+	/// `None` until the reader holds a descriptor, and for a stack with no Asset Hub, which has
+	/// no dotNS.
 	pub fn dotns(&mut self, pointer: &Pointer, now_unix_seconds: i64) -> Option<DotnsRead> {
 		let refresh = self.refresh;
 		let stack = self.stack(pointer);
-		let generation = &stack.held.as_ref()?.stack.descriptor.generation;
-		let usable = stack.dotns.as_ref().filter(|kept| &kept.record.generation == generation);
-		let read_at = usable.and_then(|kept| kept.read_at);
+		let descriptor = &stack.held.as_ref()?.stack.descriptor;
+		descriptor.chain("AssetHub")?;
+		let generation = descriptor.generation.clone();
+		let usable = stack.usable_dotns().cloned();
+		let read_at = usable.as_ref().and_then(|kept| kept.read_at);
 		let look_up = stack
 			.lookups
 			.wants(refresh, usable.is_some(), read_at, now_unix_seconds)
 			.then(|| {
 				stack.lookups.ask(now_unix_seconds);
-				generation.clone()
+				generation
 			});
-		let record = usable
-			.filter(|_| !stack.lookups.waits(refresh, true))
-			.map(|kept| kept.record.clone());
+		let record = usable.filter(|_| !stack.lookups.waits(refresh, true)).map(|kept| kept.record);
 		Some(DotnsRead { record, look_up })
 	}
 
@@ -413,30 +399,43 @@ impl StackReader {
 		if let Some(record) = &record {
 			record.check()?;
 		}
-		let generation = stack.held.as_ref().map(|held| &held.stack.descriptor.generation);
-		let fresh = record.filter(|record| Some(&record.generation) == generation);
-		let stored = fresh.map(|record| {
-			stack.dotns = Some(KeptDotns { record, read_at: Some(now_unix_seconds) });
-		});
-		let record = stack
-			.dotns
-			.as_ref()
-			.filter(|kept| Some(&kept.record.generation) == generation)
-			.map(|kept| kept.record.clone());
-		Ok(DotnsLookedUp { record, stored: stored.and_then(|()| stack.kept()) })
+		let fresh = record
+			.map(|record| KeptDotns { record, read_at: Some(now_unix_seconds) })
+			.filter(|kept| stack.serves(kept));
+		let stored = match fresh {
+			Some(fresh) => {
+				stack.dotns = Some(fresh);
+				stack.kept()
+			},
+			None => None,
+		};
+		let record = stack.usable_dotns().map(|kept| kept.record.clone());
+		Ok(DotnsLookedUp { record, stored })
 	}
 
 	fn stack(&mut self, pointer: &Pointer) -> &mut Stack {
-		self.stacks.entry(pointer.stack_id()).or_insert_with(|| Stack {
-			held: None,
-			fetches: Schedule::default(),
-			dotns: None,
-			lookups: Schedule::default(),
-		})
+		self.stacks.entry(pointer.stack_id()).or_default()
 	}
 }
 
 impl Stack {
+	fn fetch_due(&self, refresh: Refresh, now_unix_seconds: i64) -> bool {
+		let read_at = self.held.as_ref().and_then(|held| held.fetched_at);
+		self.fetches.wants(refresh, self.held.is_some(), read_at, now_unix_seconds)
+	}
+
+	/// Whether `kept` belongs to the descriptor in use: a record never serves another
+	/// `generation`.
+	fn serves(&self, kept: &KeptDotns) -> bool {
+		self.held
+			.as_ref()
+			.is_some_and(|held| held.stack.descriptor.generation == kept.record.generation)
+	}
+
+	fn usable_dotns(&self) -> Option<&KeptDotns> {
+		self.dotns.as_ref().filter(|kept| self.serves(kept))
+	}
+
 	fn request(&self, pointer: &Pointer) -> FetchRequest {
 		FetchRequest {
 			url: pointer.url().to_string(),
@@ -451,8 +450,7 @@ impl Stack {
 			document: String::from_utf8(held.document.clone()).expect("a descriptor is UTF-8"),
 			fetched_at: held.fetched_at,
 			etag: held.etag.clone(),
-			dotns: self.dotns.as_ref().map(|kept| kept.record.clone()),
-			dotns_read_at: self.dotns.as_ref().and_then(|kept| kept.read_at),
+			dotns: self.dotns.clone(),
 		};
 		Some(serde_json::to_vec(&kept).expect("a record serialises"))
 	}

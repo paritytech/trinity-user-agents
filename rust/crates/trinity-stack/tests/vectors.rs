@@ -894,6 +894,16 @@ fn refresh_documents() -> Vec<(&'static str, Vec<u8>)> {
 			at(43, &|value| value["generation"] = json!(NEW_GENERATION)),
 		),
 		("refresh/44.json", at(44, &|_| {})),
+		(
+			"refresh/42-without-asset-hub.json",
+			at(42, &|value| {
+				value["chains"]
+					.as_array_mut()
+					.unwrap()
+					.retain(|chain| chain["role"] != "AssetHub");
+				value.as_object_mut().unwrap().remove("assets");
+			}),
+		),
 	]
 }
 
@@ -1029,6 +1039,12 @@ fn refresh_cases() -> Vec<Value> {
 				get(NOW, Some(42), fetch(None)),
 				get(NOW + 1, Some(42), Value::Null),
 			],
+		),
+		case(
+			"a-stack-without-an-asset-hub-has-no-dotns",
+			json!("never"),
+			Some("refresh/42-without-asset-hub.json"),
+			vec![get(NOW, Some(42), Value::Null), json!({ "dotns": NOW, "expect": null })],
 		),
 		json!({
 			"name": "an-unsigned-store-never-moves-back-past-its-build-copy",
@@ -1371,8 +1387,8 @@ fn run_refresh(case: &Value, file: impl Fn(&Value) -> Option<Vec<u8>>) {
 			match reader.fetched(&pointer, served, at("now")) {
 				Err(error) => json!({ "error": error.code() }),
 				Ok(refreshed) => {
-					let stores = refreshed.record.is_some();
-					stored = refreshed.record.or(stored);
+					let stores = refreshed.stored.is_some();
+					stored = refreshed.stored.or(stored);
 					json!({
 						"status": refreshed.accepted.status.code(),
 						"serves": refreshed.accepted.stack.descriptor.sequence,
@@ -1385,10 +1401,11 @@ fn run_refresh(case: &Value, file: impl Fn(&Value) -> Option<Vec<u8>>) {
 			reader = start(&step["build"], &step["buildDotns"], stored.as_deref());
 			continue;
 		} else if step.get("dotns").is_some() {
-			let read = reader.dotns(&pointer, at("dotns")).unwrap();
-			json!({
-				"record": read.record.map(|record| record.generation),
-				"lookUp": read.look_up,
+			reader.dotns(&pointer, at("dotns")).map_or(Value::Null, |read| {
+				json!({
+					"record": read.record.map(|record| record.generation),
+					"lookUp": read.look_up,
+				})
 			})
 		} else {
 			let looked_up =

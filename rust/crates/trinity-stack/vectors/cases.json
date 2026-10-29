@@ -1601,6 +1601,29 @@
       ]
     },
     {
+      "build": "refresh/42-without-asset-hub.json",
+      "buildDotns": null,
+      "name": "a-stack-without-an-asset-hub-has-no-dotns",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "refresh": "never",
+      "steps": [
+        {
+          "expect": {
+            "fetch": null,
+            "serves": 42
+          },
+          "get": 1792065600
+        },
+        {
+          "dotns": 1792065600,
+          "expect": null
+        }
+      ]
+    },
+    {
       "build": "refresh/42.json",
       "buildDotns": null,
       "name": "an-unsigned-store-never-moves-back-past-its-build-copy",
