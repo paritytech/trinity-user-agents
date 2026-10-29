@@ -43,11 +43,9 @@ extension TabBarBottomChromeController {
         )
     }
 
-    /// Re-derives the lift on the centre spring, so a panel commit moves the chrome with the centre control.
+    /// Re-derives the lift on the centre ease, so a panel commit moves the bar with the centre control.
     func refreshKeyboardLift() {
-        DSTabBarStyle.animateCenterChange(in: view) {
-            self.applyKeyboardLift()
-        }
+        applyKeyboardLift(animation: UIAccessibility.isReduceMotionEnabled ? nil : DSTabBarStyle.centerEaseOut)
     }
 
     func installBar() {
@@ -114,7 +112,9 @@ private extension TabBarBottomChromeController {
         panelController.setPanel(nil)
     }
 
-    /// The keyboard's own animation drives the lift, so the chrome moves in step with the keyboard.
+    /// The keyboard's duration drives the lift. The lift, the room above the bar and the filled panel's height
+    /// change in one SwiftUI transaction, so the panel's top edge stays still. A zero duration or Reduce Motion
+    /// applies them at once.
     @objc func handleKeyboardFrameChange(_ notification: Notification) {
         guard let userInfo = notification.userInfo,
               let frame = userInfo[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
@@ -122,27 +122,22 @@ private extension TabBarBottomChromeController {
         }
         keyboardFrame = frame
         let duration = userInfo[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0
-        let curve = userInfo[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int
-            ?? UIView.AnimationCurve.easeInOut.rawValue
-        UIView.animate(
-            withDuration: duration,
-            delay: 0,
-            options: UIView.AnimationOptions(rawValue: UInt(curve) << 16)
-        ) {
-            self.applyKeyboardLift()
+        let animates = duration > 0 && !UIAccessibility.isReduceMotionEnabled
+        applyKeyboardLift(animation: animates ? .spring(duration: duration, bounce: 0) : nil)
+    }
+
+    /// Moves the bar to the lift the keyboard and scan panel call for, then re-declares the room above it.
+    func applyKeyboardLift(animation: Animation?) {
+        withAnimation(animation) {
+            barModel.keyboardLift = currentKeyboardLift()
+            refreshAvailablePanelHeight()
+            refreshCenterContentHeight(animation: animation)
         }
     }
 
-    /// Moves the chrome to the lift the keyboard and scan panel call for, then re-declares the room above it.
-    func applyKeyboardLift() {
-        foldController.setKeyboardLift(currentKeyboardLift())
-        refreshAvailablePanelHeight()
-        refreshCenterContentHeight()
-    }
-
-    /// While the scan panel is open, the chrome moves up until the keyboard covers the centre button's foot by
+    /// While the scan panel is open, the bar moves up until the keyboard covers the centre button's foot by
     /// `keyboardButtonOverlap`, keeping the panel above it clear. Any other keyboard, or a closed panel, returns the
-    /// chrome to rest.
+    /// bar to rest.
     func currentKeyboardLift() -> CGFloat {
         guard panelController.open == .content(.scan), let keyboardFrame else {
             return 0
@@ -184,7 +179,7 @@ private extension TabBarBottomChromeController {
         let bounds = barHost.view.bounds
         let row = CGRect(
             x: 0,
-            y: bounds.height - DSTabBarStyle.height,
+            y: bounds.height - DSTabBarStyle.height - barModel.keyboardLift,
             width: bounds.width,
             height: DSTabBarStyle.height
         )
