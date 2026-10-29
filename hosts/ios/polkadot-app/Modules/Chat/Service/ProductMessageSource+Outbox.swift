@@ -91,9 +91,11 @@ extension ProductMessageSource {
                 timestamp: message.createdAt,
                 body: .text(text: text),
                 status: .preparing,
-                replyTo: replyTo,
-                replyPreview: replyTo.flatMap { messages[$0] }.map {
-                    ChatReplyPreview(origin: $0.origin, body: $0.body)
+                reply: replyTo.map { replyTo in
+                    ChatReply(
+                        messageId: replyTo,
+                        preview: messages[replyTo].map { ChatReplyPreview(origin: $0.origin, body: $0.body) }
+                    )
                 },
                 editedAt: nil,
                 reactions: [],
