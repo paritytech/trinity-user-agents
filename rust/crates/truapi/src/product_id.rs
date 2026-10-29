@@ -226,6 +226,21 @@ impl<'de> serde::Deserialize<'de> for ProductId {
 	}
 }
 
+#[cfg(feature = "runtime")]
+impl ProductId {
+	/// The id of the chat room that this product names with the normalized
+	/// `room_id_source`.
+	///
+	/// The id is the blake2b-256 hash of the SCALE encoding of `("product",
+	/// product id, source)`, in `0x` hex. The hash includes the product, so two
+	/// products never share a room id. Each part has a length prefix, so two
+	/// different pairs never give the same bytes.
+	pub fn chat_room_id(&self, room_id_source: &str) -> String {
+		let preimage = ("product", self, room_id_source).encode();
+		format!("0x{}", hex::encode(sp_crypto_hashing::blake2_256(&preimage)))
+	}
+}
+
 // UniFFI parses a `ProductId` argument before the call runs. If that fails in
 // a Swift call that can't throw, the app crashes, so only take one in calls
 // that return a `Result`.
@@ -265,6 +280,32 @@ fn has_well_formed_labels(normalized: &str) -> bool {
 mod tests {
 	use super::*;
 	use crate::dotns_name::{DOTNS_TLDS, MAX_DNS_LABEL_LEN};
+
+	// Hosts store rooms under this id, so a change to the derivation loses
+	// every stored room.
+	#[test]
+	fn a_chat_room_id_is_stable_for_one_product_and_source() {
+		assert_eq!(
+			ProductId::for_test("chat.dot").chat_room_id("support"),
+			"0x4fb691cd1a1d7eb11cfd0b127b02f995c63329cad7e0fbcf470129d592d64d75"
+		);
+	}
+
+	#[test]
+	fn a_chat_room_id_is_unique_to_its_product_and_source() {
+		let chat = ProductId::for_test("chat.dot");
+
+		assert_ne!(
+			chat.chat_room_id("support"),
+			ProductId::for_test("shop.dot").chat_room_id("support")
+		);
+		assert_ne!(chat.chat_room_id("support"), chat.chat_room_id("sales"));
+		// Without the length prefixes, both pairs give `localhost:3000a`.
+		assert_ne!(
+			ProductId::for_test("localhost:300").chat_room_id("0a"),
+			ProductId::for_test("localhost:3000").chat_room_id("a")
+		);
+	}
 
 	#[test]
 	fn trusted_remote_permission_labels_match_the_bare_product_label() {

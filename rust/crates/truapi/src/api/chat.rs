@@ -27,16 +27,18 @@ use crate::{
 #[crate::service(required_execution = Worker)]
 #[crate::async_trait]
 pub trait Chat: Send + Sync {
-	/// Create a chat room.
+	/// Create a chat room. The host derives the room id from the product and
+	/// `roomIdSource`, so the same source gives the same room again. Every
+	/// later call names the room with the `roomId` of the answer.
 	///
 	/// ```ts
 	/// const result = await truapi.chat.createRoom({
-	///   roomId: "test-room",
+	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
 	/// });
 	/// assert(result.isOk(), "createRoom failed:", result);
-	/// console.log("room created:", result.value);
+	/// console.log("room created:", result.value.roomId);
 	/// ```
 	#[wire(id = 0)]
 	async fn create_room(
@@ -101,8 +103,14 @@ pub trait Chat: Send + Sync {
 	/// message carries: a later `actionSubscribe` trigger names it.
 	///
 	/// ```ts
+	/// const created = await truapi.chat.createRoom({
+	///   roomIdSource: "test-room",
+	///   name: "Test Room",
+	///   icon: "",
+	/// });
+	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.postMessage({
-	///   roomId: "test-room",
+	///   roomId: created.value.roomId,
 	///   payload: { tag: "Text", value: { text: "Hello from playground!" } },
 	/// });
 	/// assert(result.isOk(), "postMessage failed:", result);
@@ -144,13 +152,13 @@ pub trait Chat: Send + Sync {
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
-	///   roomId: "test-room",
+	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.setRoomFooter({
-	///   roomId: "test-room",
+	///   roomId: created.value.roomId,
 	///   footer: "Empty",
 	/// });
 	/// assert(result.isOk(), "setRoomFooter failed:", result);
@@ -174,13 +182,13 @@ pub trait Chat: Send + Sync {
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
-	///   roomId: "test-room",
+	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.setRoomConfig({
-	///   roomId: "test-room",
+	///   roomId: created.value.roomId,
 	///   config: { productSource: false, reactionDetails: true, reportSeen: true },
 	/// });
 	/// assert(result.isOk(), "setRoomConfig failed:", result);
@@ -199,13 +207,13 @@ pub trait Chat: Send + Sync {
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
-	///   roomId: "test-room",
+	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.setRoomMetadata({
-	///   roomId: "test-room",
+	///   roomId: created.value.roomId,
 	///   metadata: {
 	///     name: "Renamed Room",
 	///     description: "Now with a description",
@@ -230,13 +238,13 @@ pub trait Chat: Send + Sync {
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
-	///   roomId: "test-room",
+	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.setRoomPreview({
-	///   roomId: "test-room",
+	///   roomId: created.value.roomId,
 	///   preview: {
 	///     timestamp: BigInt(Date.now()),
 	///     badge: { tag: "UnreadCount", value: { count: 3 } },
@@ -270,12 +278,12 @@ pub trait Chat: Send + Sync {
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
-	///   roomId: "test-room",
+	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
-	/// const result = await truapi.chat.deleteRoom({ roomId: "test-room" });
+	/// const result = await truapi.chat.deleteRoom({ roomId: created.value.roomId });
 	/// assert(result.isOk(), "deleteRoom failed:", result);
 	/// ```
 	#[wire(id = 10)]
@@ -295,13 +303,13 @@ pub trait Chat: Send + Sync {
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
-	///   roomId: "test-room",
+	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.updateFeed({
-	///   roomId: "test-room",
+	///   roomId: created.value.roomId,
 	///   update: {
 	///     tag: "New",
 	///     value: {
@@ -363,8 +371,15 @@ pub trait Chat: Send + Sync {
 	/// each other action, the item is an acknowledgement.
 	///
 	/// ```ts
+	/// const created = await truapi.chat.createRoom({
+	///   roomIdSource: "test-room",
+	///   name: "Test Room",
+	///   icon: "",
+	/// });
+	/// assert(created.isOk(), "createRoom failed:", created);
+	/// const { roomId: testRoom } = created.value;
 	/// truapi.chat.onUserAction(({ roomId, action }, send, interrupt) => {
-	///   if (roomId !== "test-room") {
+	///   if (roomId !== testRoom) {
 	///     interrupt({ tag: "Domain", value: { tag: "V1", value: { tag: "UnknownRoom" } } });
 	///     return;
 	///   }
