@@ -30,7 +30,9 @@ extension Chat.RoomPreview {
             lastMessage: preview.lastMessage?.previewMessage(),
             // The native chat list draws the heart for a reaction that the user did not see, and does not count it
             // in the unread badge.
-            unseenReaction: preview.unseenReactions > 0
+            unseenReaction: preview.unseenReactions > 0,
+            pinned: preview.pinned,
+            activity: preview.activity.map { Chat.RoomActivity(text: $0.text, ongoing: $0.ongoing) }
         )
     }
 }
@@ -40,6 +42,7 @@ extension Chat.RoomBadge {
         switch badge {
         case .hidden: self = .none
         case let .unreadCount(count): self = .unreadCount(Int32(clamping: count))
+        case let .image(icon): self = .image(icon)
         }
     }
 }

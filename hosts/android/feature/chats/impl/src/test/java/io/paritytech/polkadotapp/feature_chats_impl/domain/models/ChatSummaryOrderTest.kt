@@ -154,6 +154,7 @@ class ChatSummaryOrderTest {
         lastMessageSortOrder = lastMessageSortOrder,
         roomMetadata = RoomMetadata(name = null, icon = null),
         hasUnseenReaction = false,
+        activity = null,
         customPreviewRenderer = null,
     )
 

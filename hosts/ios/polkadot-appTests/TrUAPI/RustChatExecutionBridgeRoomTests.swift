@@ -25,28 +25,38 @@ struct RustChatExecutionBridgeRoomTests {
         #expect(api.roomConfigs.map(\.config) == [config])
     }
 
-    /// The native chat draws no description, so the host keeps the name and the icon and drops the description.
-    /// No icon keeps the current icon, and an empty icon removes it, as in `createRoom`.
-    @Test func metadataKeepsTheNameAndTheIcon() async throws {
+    /// The native chat draws no description, so the host keeps the name, the icon and the placeholder and drops
+    /// the description. No icon keeps the current icon, and an empty icon removes it, as in `createRoom`.
+    @Test func metadataKeepsTheNameTheIconAndThePlaceholder() async throws {
         let bridge = await makeBridge()
 
         try await bridge.setRoomMetadata(
             roomId: "r",
-            metadata: ChatRoomMetadata(name: "Lobby", description: "Weekly game", icon: nil)
+            metadata: ChatRoomMetadata(name: "Lobby", description: "Weekly game", icon: nil, placeholder: nil)
         )
         try await bridge.setRoomMetadata(
             roomId: "r",
-            metadata: ChatRoomMetadata(name: "Plain", description: nil, icon: "data:image/png;base64,iVBO")
+            metadata: ChatRoomMetadata(
+                name: "Plain",
+                description: nil,
+                icon: "data:image/png;base64,iVBO",
+                placeholder: "No games yet"
+            )
         )
         try await bridge.setRoomMetadata(
             roomId: "r",
-            metadata: ChatRoomMetadata(name: "Bare", description: nil, icon: "")
+            metadata: ChatRoomMetadata(name: "Bare", description: nil, icon: "", placeholder: nil)
         )
 
         #expect(api.roomMetadata == [
-            .init(roomId: "r", name: "Lobby", icon: .keep),
-            .init(roomId: "r", name: "Plain", icon: .replace("data:image/png;base64,iVBO")),
-            .init(roomId: "r", name: "Bare", icon: .replace(nil))
+            .init(roomId: "r", name: "Lobby", icon: .keep, placeholder: nil),
+            .init(
+                roomId: "r",
+                name: "Plain",
+                icon: .replace("data:image/png;base64,iVBO"),
+                placeholder: "No games yet"
+            ),
+            .init(roomId: "r", name: "Bare", icon: .replace(nil), placeholder: nil)
         ])
     }
 
@@ -81,7 +91,7 @@ struct RustChatExecutionBridgeRoomTests {
         await #expect(throws: ChatRoomError.self) {
             try await bridge.setRoomMetadata(
                 roomId: "gone",
-                metadata: ChatRoomMetadata(name: "x", description: nil, icon: nil)
+                metadata: ChatRoomMetadata(name: "x", description: nil, icon: nil, placeholder: nil)
             )
         }
         await #expect(throws: ChatRoomError.self) {
@@ -112,7 +122,9 @@ struct PreviewCase: CustomTestStringConvertible, Sendable {
                 badge: nil,
                 lastMessage: nil,
                 lastReaction: nil,
-                unseenReactions: 0
+                unseenReactions: 0,
+                pinned: false,
+                activity: nil
             ),
             stored: .hostDefault
         ),
@@ -123,9 +135,18 @@ struct PreviewCase: CustomTestStringConvertible, Sendable {
                 badge: nil,
                 lastMessage: nil,
                 lastReaction: nil,
-                unseenReactions: 0
+                unseenReactions: 0,
+                pinned: false,
+                activity: nil
             ),
-            stored: .init(timestamp: 1_700_000_000_000, badge: .hostDefault, lastMessage: nil, unseenReaction: false)
+            stored: .init(
+                timestamp: 1_700_000_000_000,
+                badge: .hostDefault,
+                lastMessage: nil,
+                unseenReaction: false,
+                pinned: false,
+                activity: nil
+            )
         ),
         PreviewCase(
             testDescription: "count badge",
@@ -134,9 +155,18 @@ struct PreviewCase: CustomTestStringConvertible, Sendable {
                 badge: .unreadCount(count: 4),
                 lastMessage: nil,
                 lastReaction: nil,
-                unseenReactions: 0
+                unseenReactions: 0,
+                pinned: false,
+                activity: nil
             ),
-            stored: .init(timestamp: nil, badge: .unreadCount(4), lastMessage: nil, unseenReaction: false)
+            stored: .init(
+                timestamp: nil,
+                badge: .unreadCount(4),
+                lastMessage: nil,
+                unseenReaction: false,
+                pinned: false,
+                activity: nil
+            )
         ),
         PreviewCase(
             testDescription: "hidden badge",
@@ -145,9 +175,18 @@ struct PreviewCase: CustomTestStringConvertible, Sendable {
                 badge: .hidden,
                 lastMessage: nil,
                 lastReaction: nil,
-                unseenReactions: 0
+                unseenReactions: 0,
+                pinned: false,
+                activity: nil
             ),
-            stored: .init(timestamp: nil, badge: .none, lastMessage: nil, unseenReaction: false)
+            stored: .init(
+                timestamp: nil,
+                badge: .none,
+                lastMessage: nil,
+                unseenReaction: false,
+                pinned: false,
+                activity: nil
+            )
         ),
         PreviewCase(
             testDescription: "unseen reaction",
@@ -156,9 +195,58 @@ struct PreviewCase: CustomTestStringConvertible, Sendable {
                 badge: nil,
                 lastMessage: nil,
                 lastReaction: nil,
-                unseenReactions: 1
+                unseenReactions: 1,
+                pinned: false,
+                activity: nil
             ),
-            stored: .init(timestamp: nil, badge: .hostDefault, lastMessage: nil, unseenReaction: true)
+            stored: .init(
+                timestamp: nil,
+                badge: .hostDefault,
+                lastMessage: nil,
+                unseenReaction: true,
+                pinned: false,
+                activity: nil
+            )
+        ),
+        PreviewCase(
+            testDescription: "image badge",
+            wire: ChatRoomPreview(
+                timestamp: nil,
+                badge: .image(icon: "https://example.com/badge.png"),
+                lastMessage: nil,
+                lastReaction: nil,
+                unseenReactions: 0,
+                pinned: false,
+                activity: nil
+            ),
+            stored: .init(
+                timestamp: nil,
+                badge: .image("https://example.com/badge.png"),
+                lastMessage: nil,
+                unseenReaction: false,
+                pinned: false,
+                activity: nil
+            )
+        ),
+        PreviewCase(
+            testDescription: "pinned with an ongoing activity",
+            wire: ChatRoomPreview(
+                timestamp: nil,
+                badge: nil,
+                lastMessage: nil,
+                lastReaction: nil,
+                unseenReactions: 0,
+                pinned: true,
+                activity: ChatRoomActivity(text: "Ben is typing", ongoing: true)
+            ),
+            stored: .init(
+                timestamp: nil,
+                badge: .hostDefault,
+                lastMessage: nil,
+                unseenReaction: false,
+                pinned: true,
+                activity: Chat.RoomActivity(text: "Ben is typing", ongoing: true)
+            )
         )
     ]
 }
@@ -180,6 +268,6 @@ private extension RustChatExecutionBridgeRoomTests {
     }
 
     func declarations(config: Chat.RoomConfig?) -> Chat.RoomDeclarations {
-        Chat.RoomDeclarations(config: config, configGeneration: 1, preview: .hostDefault)
+        Chat.RoomDeclarations(config: config, configGeneration: 1, preview: .hostDefault, placeholder: nil)
     }
 }

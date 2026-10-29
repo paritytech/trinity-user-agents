@@ -24,9 +24,9 @@ abstract class ChatRoomDeclarationsDao {
     }
 
     @Transaction
-    open suspend fun setMetadata(chatId: ByteArray, description: String?) {
+    open suspend fun setMetadata(chatId: ByteArray, description: String?, placeholder: String?) {
         insertEmpty(chatId)
-        updateMetadata(chatId, description)
+        updateMetadata(chatId, description, placeholder)
     }
 
     @Transaction
@@ -41,8 +41,8 @@ abstract class ChatRoomDeclarationsDao {
     @Query("UPDATE chat_room_declarations SET config = :config, configGeneration = configGeneration + 1 WHERE chatId = :chatId")
     protected abstract suspend fun updateConfig(chatId: ByteArray, config: ByteArray)
 
-    @Query("UPDATE chat_room_declarations SET description = :description WHERE chatId = :chatId")
-    protected abstract suspend fun updateMetadata(chatId: ByteArray, description: String?)
+    @Query("UPDATE chat_room_declarations SET description = :description, placeholder = :placeholder WHERE chatId = :chatId")
+    protected abstract suspend fun updateMetadata(chatId: ByteArray, description: String?, placeholder: String?)
 
     @Query("UPDATE chat_room_declarations SET preview = :preview WHERE chatId = :chatId")
     protected abstract suspend fun updatePreview(chatId: ByteArray, preview: ByteArray)
