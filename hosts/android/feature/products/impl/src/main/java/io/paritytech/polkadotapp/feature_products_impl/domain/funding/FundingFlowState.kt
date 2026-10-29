@@ -64,6 +64,8 @@ data class FundingFlowState(
     val requestId: ULong? = null,
     /** What the core says this rail, asset, network and country take. */
     val amountLimits: FundingLimits = FundingLimits(minimum = null, maximum = null),
+    /** The least each crypto network takes for the asset on screen, as the core says. */
+    val networkMinimums: Map<String, BigDecimal> = emptyMap(),
 ) {
     companion object {
         private const val DEFAULT_FIAT = "USD"
@@ -171,6 +173,9 @@ data class FundingFlowState(
     val networks: List<FundingNetwork>
         get() = cryptoRoutes.flatMap { it.networks.orEmpty() }.distinct().map(::FundingNetwork)
 
+    /** The least [networkId] takes, as the core says. */
+    fun minimum(networkId: String): BigDecimal? = networkMinimums[networkId]
+
     val tokens: List<FundingToken>
         get() = cryptoRoutes
             .filter { route -> network == null || route.networks?.contains(network) ?: true }
@@ -266,12 +271,16 @@ data class FundingFlowState(
             country = country?.code,
         )
 
-    /** The core's options for the selection on screen: its providers, what each country supports and the limits. */
+    /**
+     * The core's options for the selection on screen: its providers, what each country supports, the limits, and
+     * for a crypto asset the least each network takes.
+     */
     fun withOptions(options: FundingOptions): FundingFlowState = withCandidates(options.candidates)
         .withCountrySupport(options.countries)
         .withAmountLimits(
             FundingLimits(minimum = options.limits.min?.let(cash::decimal), maximum = options.limits.max?.let(cash::decimal)),
         )
+        .copy(networkMinimums = options.networks.mapNotNull { it.limits.min?.let { min -> it.network to cash.decimal(min) } }.toMap())
 
     fun withAmountLimits(limits: FundingLimits): FundingFlowState = copy(amountLimits = limits)
 

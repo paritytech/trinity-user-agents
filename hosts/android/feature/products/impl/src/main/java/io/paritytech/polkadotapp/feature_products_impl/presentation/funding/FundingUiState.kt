@@ -216,6 +216,7 @@ data class FundingNetworkRow(
     val id: String,
     val name: String,
     val monogram: String,
+    val minimum: String?,
 )
 
 data class FundingTokenRow(

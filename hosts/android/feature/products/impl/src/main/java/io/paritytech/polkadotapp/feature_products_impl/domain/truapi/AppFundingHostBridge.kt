@@ -65,7 +65,7 @@ class AppFundingHostBridge @Inject constructor(
     /** Every session the core pushed and still holds, with its latest progress, by intent. */
     fun sessions(): StateFlow<Map<String, FundingSessionEntry>> = sessions.asStateFlow()
 
-    /** What each session's overlay offers, as the core last pushed it, by intent. */
+    /** What each open overlay offers, as the core last pushed it, by intent. */
     fun options(): StateFlow<Map<String, FundingOptions>> = options.asStateFlow()
 
     /** Every recorded session's summary as the core pushed it when funding resumed; `null` until then. */
@@ -93,7 +93,13 @@ class AppFundingHostBridge @Inject constructor(
             amount = amount?.toBalance(),
         )
 
-        return when (overlay.get().present(request)) {
+        // The core offers options only while the overlay is up, so they go with it.
+        val outcome = try {
+            overlay.get().present(request)
+        } finally {
+            options.update { it - intent }
+        }
+        return when (outcome) {
             FundingOverlayOutcome.STARTED -> FundingPresentOutcome.STARTED
             FundingOverlayOutcome.DISMISSED -> FundingPresentOutcome.DISMISSED
         }

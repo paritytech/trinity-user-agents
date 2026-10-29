@@ -146,6 +146,17 @@ class AppFundingHostBridgeTest {
     }
 
     @Test
+    fun `an overlay's options go once it closes`() = runBlocking {
+        bridge.fundingOptionsChanged("intent", options(min = "10"))
+        bridge.fundingOptionsChanged("other", options(min = "20"))
+        coEvery { overlay.present(any()) } returns FundingOverlayOutcome.DISMISSED
+
+        present()
+
+        assertEquals(mapOf("other" to options(min = "20")), bridge.options().value)
+    }
+
+    @Test
     fun `the history and the in-progress flag are kept as pushed`() {
         assertEquals(null to null, bridge.history().value to bridge.inProgress().value)
 
@@ -159,6 +170,7 @@ class AppFundingHostBridgeTest {
         candidates = emptyList(),
         countries = emptyList(),
         limits = FundingAmountLimits(min = min, max = null),
+        networks = emptyList(),
     )
 
     private fun session() = FundingSession(

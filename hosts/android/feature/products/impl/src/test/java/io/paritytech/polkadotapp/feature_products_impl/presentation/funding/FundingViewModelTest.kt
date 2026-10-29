@@ -183,6 +183,7 @@ class FundingViewModelTest {
         candidates = candidates.toList(),
         countries = emptyList(),
         limits = FundingAmountLimits(min = min, max = null),
+        networks = emptyList(),
     )
 
     private fun cryptoCandidate(providerId: String) = FundingCandidate(
