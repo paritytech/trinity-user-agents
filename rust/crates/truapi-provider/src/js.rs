@@ -64,10 +64,8 @@ pub fn set_log_level(level: &str) {
 
 /// Collects genesis-hash to chain-source registrations from JS.
 ///
-/// A built provider resolves a genesis nobody registered from the bundled
-/// catalog until a remote node is registered with `addRpcChain`. From then on it
-/// answers only for the chains registered on it, so a host on remote nodes
-/// never starts the light client by accident.
+/// The built provider resolves an unregistered genesis from the bundled catalog,
+/// unless a remote node was registered with `addRpcChain`.
 #[wasm_bindgen]
 pub struct ChainProviderBuilder {
 	inner: Option<EmbeddedChainProviderBuilder>,

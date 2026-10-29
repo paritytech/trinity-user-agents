@@ -6,10 +6,9 @@
 //! over the browser's `WebSocket`. Each connect adds the chain again: smoldot
 //! deduplicates identical chains internally while giving every add its own
 //! [`ChainId`], request queue, and response stream, which yields natural
-//! per-connection isolation. smoldot stops a chain once its last add is
-//! removed, so a provider built with
-//! [`keep_chains_running`](crate::EmbeddedChainProviderBuilder::keep_chains_running)
-//! also adds each chain once on its own account and never removes it.
+//! per-connection isolation. smoldot stops a chain once its last add is removed,
+//! so [`keep_chains_running`](crate::EmbeddedChainProviderBuilder::keep_chains_running)
+//! adds each chain once more on the client's own account and never removes it.
 //!
 //! Readiness: a connection holds back the requests it is sent until smoldot
 //! first reports the chain as synced, then forwards them in the order they
@@ -190,11 +189,10 @@ struct LightInner {
 
 /// A chain the client is running and how many things hold it.
 struct AddedChain {
-	/// Set for a chain this crate added on its own account, with JSON-RPC
-	/// disabled: a relay behind a parachain, or any chain the client keeps
-	/// running. No connection owns it, so it is removed here when the last holder
-	/// goes. A chain that only ever had connections leaves this `None`: each
-	/// connection removes the chain it added itself.
+	/// The add this crate made on its own account, JSON-RPC disabled: a relay
+	/// behind a parachain, or a chain kept running. Removed here when the last
+	/// holder goes. `None` while only connections hold the chain, since each
+	/// removes its own add.
 	implicit_id: Option<ChainId>,
 	/// The ids smoldot gave each live connection to this chain. Any of them,
 	/// like `implicit_id`, reports the lifecycle of the chain.
@@ -213,9 +211,7 @@ pub struct LightState {
 }
 
 impl LightState {
-	/// A client that starts on the first connect. With `keep_running`, each
-	/// chain keeps running after its last connection closes; see
-	/// [`keep_running`].
+	/// A client that starts on the first connect.
 	pub fn new(
 		connection_types: crate::connection_types::ConnectionTypes,
 		keep_running: bool,
@@ -433,14 +429,9 @@ fn add_relay(
 	)
 }
 
-/// Hold `genesis_hash` for the life of the client, so a host that connects
-/// once per use keeps the chain's sync and peers between uses. smoldot stops a
-/// chain once nothing that added it remains, so the client adds it once more on
-/// its own account and never releases that reference. A parachain's hold also
-/// takes one on its relay.
-///
-/// `specification` is already [`dialable_spec`]. Does nothing for a chain the
-/// client already holds, a kept relay included.
+/// Keep `genesis_hash` running for the life of the client through an add of its
+/// own that is never released. A parachain's hold also holds its relay.
+/// `specification` is already [`dialable_spec`].
 fn keep_running(
 	guard: &mut LightInner,
 	genesis_hash: [u8; 32],
@@ -871,9 +862,8 @@ mod tests {
 		assert!(!provider.is_connected(RELAY_GENESIS), "close is idempotent");
 	}
 
-	/// A host that connects once per use would otherwise start the chain again,
-	/// with no peers, on every use. A parachain stays up with the relay it syncs
-	/// through, and both keep reporting their state.
+	/// A chain connected once per use would otherwise restart with no peers each
+	/// time, and its relay with it.
 	#[test]
 	fn a_kept_chain_outlives_its_connections() {
 		let provider = EmbeddedChainProvider::builder()

@@ -46,9 +46,8 @@ const REQUEST_BUFFER: usize = 1024;
 /// submission fetches those bodies to find its transaction.
 const MAX_MESSAGE_BYTES: u32 = 64 * 1024 * 1024;
 
-/// How long each step of reaching a node may take: resolving its host, then
-/// connecting and the TLS handshake at each address. It matches the jsonrpsee
-/// default for the WebSocket handshake that follows.
+/// How long resolving the host, connecting and the TLS handshake may each
+/// take, as jsonrpsee allows for the WebSocket handshake that follows.
 const DIAL_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How many redirects the handshake follows, as jsonrpsee's own dial does.
@@ -59,10 +58,9 @@ const MAX_REDIRECTS: usize = 5;
 /// Requires an ambient tokio runtime; both the handshake and the spawned
 /// writer task run on it.
 ///
-/// The socket is dialed here rather than by jsonrpsee so that every byte read
-/// from it is seen; see [`LastRead`]. The dial keeps what jsonrpsee's does:
-/// each address the host resolves to is tried in turn, and redirects are
-/// followed.
+/// The socket is dialed here rather than by jsonrpsee, so that every read is
+/// seen (see [`LastRead`]). Like jsonrpsee, the dial tries each resolved address
+/// in turn and follows redirects.
 pub async fn connect(url: Url) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
 	if tokio::runtime::Handle::try_current().is_err() {
 		return Err(ProviderError::MissingRuntime);
@@ -86,10 +84,9 @@ impl From<String> for Unopened {
 	}
 }
 
-/// Open `url`, following redirects. Once a redirect has been followed, a
-/// failure names the URL it happened at, since the caller reports only the URL
-/// it asked for. A redirect target can carry credentials, so it is shown
-/// redacted.
+/// Open `url`, following redirects. A failure past a redirect names the
+/// redacted URL it happened at, since the caller reports only the URL it asked
+/// for.
 async fn open(mut url: Url) -> Result<Box<dyn JsonRpcConnection>, String> {
 	for redirects in 0..=MAX_REDIRECTS {
 		match open_once(&url).await {
@@ -170,7 +167,7 @@ async fn open_at(
 	handshake(url, within_dial_timeout("the TLS handshake", tls).await?, last_read).await
 }
 
-/// `step` of a dial within [`DIAL_TIMEOUT`], its timeout naming the step.
+/// Run one step of a dial within [`DIAL_TIMEOUT`].
 async fn within_dial_timeout<T>(
 	step: &str,
 	dial: impl Future<Output = std::io::Result<T>>,
@@ -203,9 +200,8 @@ where
 
 /// When bytes last arrived on a connection's socket.
 ///
-/// jsonrpsee hands over a message only once all of it has arrived, and a 13 MiB
-/// block body on a slow link takes longer than [`READ_TIMEOUT`], so the reader
-/// times out the silence measured here rather than the wait for a message.
+/// jsonrpsee yields only whole messages, so the reader times out this silence
+/// instead, which a large message that is still arriving does not trip.
 #[derive(Clone)]
 struct LastRead(Arc<Mutex<Instant>>);
 
@@ -752,9 +748,8 @@ mod tests {
 		url::Url::parse(&format!("ws://{address}")).expect("loopback URL parses")
 	}
 
-	/// A host whose first addresses refuse the connection or the upgrade, as a
-	/// dead IPv6 route or a broken backend behind round-robin DNS does, is
-	/// still reached at the address that answers.
+	/// A host is reached at the first address that answers, past addresses that
+	/// refuse the connection or the upgrade, as a dead IPv6 route does.
 	#[tokio::test]
 	async fn a_failed_address_falls_back_to_the_next() {
 		let live = websocket_server().await;

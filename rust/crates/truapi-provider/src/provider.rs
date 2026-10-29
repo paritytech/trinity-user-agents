@@ -121,19 +121,16 @@ impl EmbeddedChainProviderBuilder {
 	}
 
 	/// Keep each light-client chain running from its first connect until the
-	/// provider is dropped, rather than stopping it once its last connection
-	/// closes. A host that connects once per use then keeps the chain's sync and
-	/// peers between uses, and never gets back what a chain it connected costs.
+	/// provider is dropped, so it keeps its sync and peers between connections.
 	#[cfg(feature = "smoldot")]
 	pub fn keep_chains_running(mut self) -> Self {
 		self.keep_chains_running = true;
 		self
 	}
 
-	/// Resolve a genesis nobody registered from the bundled catalog, so
-	/// `connect` reaches every bundled network from its genesis hash alone. A
-	/// provider built without it answers only for the chains registered on it,
-	/// and so never starts the light client for a chain its host did not name.
+	/// Resolve a genesis nobody registered from the bundled catalog. Without it, a
+	/// provider answers only for the chains registered on it, so one for remote
+	/// nodes never starts the light client.
 	#[cfg(feature = "networks")]
 	pub fn catalog(mut self) -> Self {
 		self.catalog = true;
@@ -651,10 +648,8 @@ mod tests {
 		assert!(error.to_string().contains(&"ab".repeat(32)));
 	}
 
-	/// A host that asks for a chain it did not register, such as a relay, must
-	/// be told so rather than have the catalog start that network on a light
-	/// client it never chose. That holds for a provider with nothing registered
-	/// too, which cannot tell its host meant remote nodes.
+	/// An unregistered chain must not start the light client from the catalog,
+	/// including on a provider with nothing registered.
 	#[cfg(all(feature = "ws", feature = "networks"))]
 	#[test]
 	fn a_provider_without_the_catalog_does_not_resolve_from_it() {
@@ -679,9 +674,8 @@ mod tests {
 		}
 	}
 
-	/// A chain `connect` would refuse is refused here too, rather than answered
-	/// as if nothing were stored for it. Reading its stored blob, or its relay's,
-	/// would hold megabytes nothing can ever consume.
+	/// A chain `connect` would refuse is refused here too, so no stored blob is
+	/// read for it.
 	#[cfg(feature = "networks")]
 	#[test]
 	fn load_database_refuses_a_chain_the_provider_cannot_connect_to() {

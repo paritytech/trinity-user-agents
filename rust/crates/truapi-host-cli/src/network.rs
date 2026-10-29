@@ -234,8 +234,8 @@ fn refuse_real_identity_genesis(config: &NetworkConfig) -> anyhow::Result<()> {
 	Ok(())
 }
 
-/// Asks every endpoint whose URL differs from the preset's URL for the same
-/// chain for its genesis, and refuses one that is not the chain it is routed as.
+/// Checks the genesis of each endpoint whose URL differs from the preset's for
+/// that chain, and refuses one that cannot answer or reports another.
 async fn verify_rerouted_endpoints(
 	config: &NetworkConfig,
 	preset: &NetworkConfig,
@@ -943,9 +943,8 @@ mod tests {
 		assert!(verify_rerouted_endpoints(&preset, &preset).await.is_ok());
 	}
 
-	/// People pointed at the preset's Asset Hub URL is a reroute all the same:
-	/// that node serves another chain. Here the shared URL cannot answer, so
-	/// only a check that asks it fails.
+	/// People pointed at the preset's Asset Hub URL is still a reroute, so it is
+	/// checked.
 	#[tokio::test]
 	async fn a_role_pointed_at_another_roles_preset_url_is_checked() {
 		const UNREACHABLE: &str = "ws://127.0.0.1:9";
