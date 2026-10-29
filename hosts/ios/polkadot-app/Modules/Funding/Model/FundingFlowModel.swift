@@ -38,6 +38,8 @@ final class FundingFlowModel {
     /// The amounts the core says the reported selection takes across every
     /// provider.
     private(set) var limits = FundingAmountLimits(min: nil, max: nil)
+    /// The same for each network a crypto route declares, by network id.
+    private(set) var networkLimits: [String: FundingAmountLimits] = [:]
     /// The provider the core marked as quoting best for the user.
     private(set) var bestProviderId: String?
     /// What the core knows about each country on the reported rail and
@@ -393,6 +395,7 @@ extension FundingFlowModel {
             options.countries.map { ($0.country.uppercased(), $0.support) }
         ) { _, latest in latest }
         limits = options.limits
+        networkLimits = Dictionary(options.networks.map { ($0.network, $0.limits) }) { _, latest in latest }
         loadBrands(candidates.map(\.providerId))
         reportSelection()
     }

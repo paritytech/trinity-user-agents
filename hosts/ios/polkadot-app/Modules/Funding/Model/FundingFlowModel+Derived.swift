@@ -219,14 +219,10 @@ extension FundingFlowModel {
         return seen.map(FundingNetwork.init(id:))
     }
 
-    /// The lowest minimum a provider has refused with on this network, in
-    /// the payment country.
+    /// The smallest amount the core says this network takes for the
+    /// reported selection.
     func minimum(network id: String) -> Decimal? {
-        candidates
-            .flatMap(\.limits)
-            .filter { $0.rail == .crypto && $0.network == id && ($0.country == nil || $0.country == country?.code) }
-            .compactMap { cash.decimal($0.min) }
-            .min()
+        cash.decimal(networkLimits[id]?.min)
     }
 
     var tokens: [FundingToken] {

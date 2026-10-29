@@ -143,7 +143,8 @@ private final class FakeFundingRuntime: FundingRuntime, @unchecked Sendable {
         options = FundingOptions(
             candidates: candidates,
             countries: [],
-            limits: FundingAmountLimits(min: "10000000", max: nil)
+            limits: FundingAmountLimits(min: "10000000", max: nil),
+            networks: []
         )
         book.record(intent: "intent", options: options)
     }
