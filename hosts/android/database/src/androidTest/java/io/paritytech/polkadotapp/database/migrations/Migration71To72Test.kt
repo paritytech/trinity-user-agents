@@ -36,8 +36,11 @@ class Migration71To72Test {
             assertEquals(listOf(listOf("m1", "hi")), migrated.rows("SELECT id, searchableContent FROM chat_messages"))
             assertEquals(emptyList<List<String?>>(), migrated.rows("SELECT chatId FROM chat_room_declarations"))
 
-            migrated.execSQL("INSERT INTO chat_room_declarations (chatId, description) VALUES (X'01', 'A room')")
-            assertEquals(listOf(listOf("0", "A room")), migrated.rows("SELECT configGeneration, description FROM chat_room_declarations"))
+            migrated.execSQL("INSERT INTO chat_room_declarations (chatId, description, placeholder) VALUES (X'01', 'A room', 'No games yet')")
+            assertEquals(
+                listOf(listOf("0", "A room", "No games yet")),
+                migrated.rows("SELECT configGeneration, description, placeholder FROM chat_room_declarations"),
+            )
         } finally {
             migrated.close()
         }
