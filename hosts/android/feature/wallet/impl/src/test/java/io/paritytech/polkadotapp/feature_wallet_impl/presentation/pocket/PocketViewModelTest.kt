@@ -4,10 +4,15 @@ import android.net.Uri
 import android.webkit.WebView
 import androidx.lifecycle.viewModelScope
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
+import io.mockk.verify
+import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
+import io.paritytech.polkadotapp.common.presentation.screens.MessageDisplay
+import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
@@ -16,21 +21,18 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKe
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
-import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
-import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.collectibles.CollectiblesUrlResolver
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.PocketInteractor
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketScreenState
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
@@ -38,6 +40,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -49,36 +52,29 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify
-import org.mockito.stubbing.Answer
-import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 
 class PocketViewModelTest {
     // Every flow the screen combines answers empty unless a test says otherwise, so each test names
     // only the source it is about.
-    private val quietFlows = Answer { invocation ->
-        when {
-            invocation.method.name == "warmUpProduct" -> Result.success(Unit)
-            invocation.method.name == "faceShownOnOpen" -> true
-            invocation.method.returnType == Flow::class.java -> emptyFlow<Any>()
-            else -> null
-        }
+    private val interactor: PocketInteractor = mockk {
+        every { observeDigitalDollarBalance() } returns emptyFlow()
+        every { observeProductCards() } returns emptyFlow()
+        every { observeFace(any()) } returns emptyFlow()
+        coEvery { warmUpProduct(any()) } returns Result.success(Unit)
+        coEvery { faceShownOnOpen(any()) } returns true
     }
-
-    private val interactor: PocketInteractor = mock(PocketInteractor::class.java, quietFlows)
-    private val router: PocketRouter = mock(PocketRouter::class.java)
+    private val router: PocketRouter = mockk(relaxed = true)
 
     private var collectiblesPage: Uri? = null
     private val collectiblesUrlResolver = mockk<CollectiblesUrlResolver> {
         coEvery { resolveUrl() } answers { collectiblesPage }
     }
 
-    // SpaHost.createSession carries context parameters, which cannot be named from a call site that
-    // has none, so the mock answers it by name.
-    private val hostedSession = FakeSpaHostSession()
-    private val spaHost: SpaHost = mock(SpaHost::class.java, Answer { hostedSession })
+    private val spaHost: SpaHost = mockk {
+        every {
+            context(any<ComputationalScope>(), any<MessageDisplay>()) { createSession(any(), any()) }
+        } returns FakeSpaHostSession()
+    }
 
     // One dispatcher for the screen's own scope and for the pool its card list is assembled on, so
     // the whole pipeline runs on this test's clock. Given a real background dispatcher the list
@@ -102,10 +98,10 @@ class PocketViewModelTest {
     // it is cancelled.
     private val created = mutableListOf<PocketViewModel>()
 
-    private fun createViewModel() = PocketViewModel(
+    private fun createViewModel(dispatchers: CoroutineDispatchers = this.dispatchers) = PocketViewModel(
         interactor = interactor,
-        tokenAmountMapper = mock(TokenAmountMapper::class.java),
-        tokenAmountFormatter = mock(TokenAmountFormatter::class.java),
+        tokenAmountMapper = mockk(relaxed = true),
+        tokenAmountFormatter = mockk(relaxed = true),
         router = router,
         collectiblesUrlResolver = collectiblesUrlResolver,
         dispatchers = dispatchers,
@@ -126,7 +122,7 @@ class PocketViewModelTest {
         mockkStatic(Uri::class)
         every { Uri.encode(any()) } answers { firstArg() }
         Dispatchers.setMain(testDispatcher)
-        whenever(interactor.observeBackupProgress()).thenReturn(flowOf(BackupProgress.Unknown))
+        every { interactor.observeBackupProgress() } returns flowOf(BackupProgress.Unknown)
     }
 
     @After
@@ -152,30 +148,42 @@ class PocketViewModelTest {
     // the balance card does not share, and none of them may take the balance card off the screen.
     @Test
     fun `a failing product collection costs the product cards alone, not the balance card`() = runTest(testDispatcher) {
-        whenever(interactor.observeProductCards()).thenReturn(flow { throw IllegalStateException("unreadable") })
+        every { interactor.observeProductCards() } returns flow { throw IllegalStateException("unreadable") }
 
         val cards = settledCards(createViewModel())
 
         assertEquals(listOf("digital_dollar_card"), cards.map { it.id })
     }
 
+    // On a device the card list starts collecting on a pool thread while the screen is still being built.
+    @Test
+    fun `cards that arrive before the screen finishes building do not crash it`() = runTest(testDispatcher) {
+        val immediate = UnconfinedTestDispatcher(testScheduler)
+        Dispatchers.setMain(immediate)
+
+        val viewModel = createViewModel(TestCoroutineDispatchers(immediate))
+
+        assertEquals(listOf("digital_dollar_card"), viewModel.cards.value.map { it.id })
+    }
+
     // The collectibles page reads the collection over the host's chain connection, which it gets only
     // when it is opened as a product.
     @Test
-    fun `viewing collectibles opens the collectibles page as a product`() = runTest(testDispatcher) {
+    fun `viewing collectibles opens the collectibles page full screen as a product`() = runTest(testDispatcher) {
         val stashUrl = "https://stash.paseo/"
-        collectiblesPage = mock(Uri::class.java).also { whenever(it.toString()).thenReturn(stashUrl) }
+        collectiblesPage = mockk<Uri>().also { page -> every { page.toString() } returns stashUrl }
         val viewModel = createViewModel()
         advanceUntilIdle()
 
         viewModel.openCollectibles()
 
-        verify(router).openSpaSheet(stashUrl)
+        verify(exactly = 1) { router.openSpaBrowser(SpaBrowserPayload.ByUrl(stashUrl)) }
+        verify(exactly = 0) { router.openSpaSheet(any()) }
     }
 
     @Test
     fun `product cards follow the balance card once the collection loads`() = runTest(testDispatcher) {
-        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(productCard("loyalty"))))
+        every { interactor.observeProductCards() } returns flowOf(listOf(productCard("loyalty")))
 
         val cards = settledCards(createViewModel())
 
@@ -194,7 +202,7 @@ class PocketViewModelTest {
     @Test
     fun `a card that leaves the collection is no longer the selected one`() = runTest(testDispatcher) {
         val collection = MutableStateFlow(listOf(productCard("loyalty")))
-        whenever(interactor.observeProductCards()).thenReturn(collection)
+        every { interactor.observeProductCards() } returns collection
 
         val viewModel = createViewModel()
         val card = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
@@ -222,12 +230,12 @@ class PocketViewModelTest {
     @Test
     fun `a privileged card's product is fetched as soon as the collection arrives`() = runTest(testDispatcher) {
         val card = privilegedCard("humanity")
-        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(card)))
+        every { interactor.observeProductCards() } returns flowOf(listOf(card))
 
         val viewModel = createViewModel()
         settledCards(viewModel)
 
-        verify(interactor).warmUpProduct(card.key)
+        coVerify(exactly = 1) { interactor.warmUpProduct(card.key) }
     }
 
     // The cost of warming every card is what the privileged set exists to avoid: a user holding
@@ -235,16 +243,16 @@ class PocketViewModelTest {
     @Test
     fun `a card the user added is fetched only once it is selected`() = runTest(testDispatcher) {
         val card = productCard("loyalty")
-        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(card)))
+        every { interactor.observeProductCards() } returns flowOf(listOf(card))
 
         val viewModel = createViewModel()
         val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
-        verify(interactor, never()).warmUpProduct(any())
+        coVerify(exactly = 0) { interactor.warmUpProduct(any()) }
 
         viewModel.selectCard(uiCard)
         advanceUntilIdle()
 
-        verify(interactor).warmUpProduct(card.key)
+        coVerify(exactly = 1) { interactor.warmUpProduct(card.key) }
     }
 
     // The collection re-emits whenever it changes, and a fetch answered from cache still costs a
@@ -253,7 +261,7 @@ class PocketViewModelTest {
     fun `a privileged product is fetched once however often the collection changes`() = runTest(testDispatcher) {
         val privileged = privilegedCard("humanity")
         val collection = MutableStateFlow(listOf(privileged))
-        whenever(interactor.observeProductCards()).thenReturn(collection)
+        every { interactor.observeProductCards() } returns collection
 
         val viewModel = createViewModel()
         settledCards(viewModel)
@@ -261,7 +269,7 @@ class PocketViewModelTest {
         collection.value = listOf(privileged, productCard("loyalty"))
         advanceUntilIdle()
 
-        verify(interactor).warmUpProduct(privileged.key)
+        coVerify(exactly = 1) { interactor.warmUpProduct(privileged.key) }
     }
 
     // Expanding a card draws a second copy of it, and that copy's first frame shows whatever face it
@@ -271,8 +279,8 @@ class PocketViewModelTest {
     fun `a card drawn again can read the face the first copy already holds`() = runTest(testDispatcher) {
         val card = productCard("loyalty")
         val face = JsWidget.Text(text = "Loyalty")
-        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(card)))
-        whenever(interactor.observeFace(card.key)).thenReturn(flowOf(face))
+        every { interactor.observeProductCards() } returns flowOf(listOf(card))
+        every { interactor.observeFace(card.key) } returns flowOf(face)
 
         val viewModel = createViewModel()
         val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
@@ -290,7 +298,7 @@ class PocketViewModelTest {
     fun `a card a link asked for opens once the collection that holds it loads`() = runTest(testDispatcher) {
         val card = productCard("loyalty")
         val collection = MutableStateFlow(emptyList<PocketCard>())
-        whenever(interactor.observeProductCards()).thenReturn(collection)
+        every { interactor.observeProductCards() } returns collection
         cardOpenRequests.request(card.key)
 
         val viewModel = createViewModel()
@@ -312,7 +320,7 @@ class PocketViewModelTest {
     fun `a card a link opened stays closed once the user closes it`() = runTest(testDispatcher) {
         val card = productCard("loyalty")
         val collection = MutableStateFlow(listOf(card))
-        whenever(interactor.observeProductCards()).thenReturn(collection)
+        every { interactor.observeProductCards() } returns collection
         cardOpenRequests.request(card.key)
 
         val viewModel = createViewModel()
@@ -333,7 +341,7 @@ class PocketViewModelTest {
     fun `a link to another card closes the open one's page first`() = runTest(testDispatcher) {
         val open = productCard("loyalty")
         val linked = productCard("stamps")
-        whenever(interactor.observeProductCards()).thenReturn(MutableStateFlow(listOf(open, linked)))
+        every { interactor.observeProductCards() } returns MutableStateFlow(listOf(open, linked))
 
         val viewModel = createViewModel()
         val openCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().first()
@@ -355,7 +363,7 @@ class PocketViewModelTest {
     fun `a card a link opens closes back to the list`() = runTest(testDispatcher) {
         val held = productCard("loyalty")
         val linked = productCard("stamps")
-        whenever(interactor.observeProductCards()).thenReturn(MutableStateFlow(listOf(held, linked)))
+        every { interactor.observeProductCards() } returns MutableStateFlow(listOf(held, linked))
 
         val viewModel = createViewModel()
         val heldCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().first()
@@ -379,7 +387,7 @@ class PocketViewModelTest {
     fun `a link's page params reach only the page that link opened`() = runTest(testDispatcher) {
         val card = productCard("loyalty")
         val collection = MutableStateFlow(listOf(card))
-        whenever(interactor.observeProductCards()).thenReturn(collection)
+        every { interactor.observeProductCards() } returns collection
         cardOpenRequests.request(card.key, "open=scratch")
 
         val viewModel = createViewModel()
@@ -406,8 +414,8 @@ class PocketViewModelTest {
     @Test
     fun `a card published with its face away reports it once opened, and nothing once dismissed`() = runTest(testDispatcher) {
         val card = productCard("loyalty")
-        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(card)))
-        whenever(interactor.faceShownOnOpen(card.key)).thenReturn(false)
+        every { interactor.observeProductCards() } returns flowOf(listOf(card))
+        coEvery { interactor.faceShownOnOpen(card.key) } returns false
 
         val viewModel = createViewModel()
         val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
@@ -428,9 +436,9 @@ class PocketViewModelTest {
         runTest(testDispatcher) {
             val away = productCard("away")
             val pending = productCard("pending")
-            whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(away, pending)))
-            whenever(interactor.faceShownOnOpen(away.key)).thenReturn(false)
-            whenever(interactor.faceShownOnOpen(pending.key)).thenAnswer { COROUTINE_SUSPENDED }
+            every { interactor.observeProductCards() } returns flowOf(listOf(away, pending))
+            coEvery { interactor.faceShownOnOpen(away.key) } returns false
+            coEvery { interactor.faceShownOnOpen(pending.key) } coAnswers { awaitCancellation() }
 
             val viewModel = createViewModel()
             val cards = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>()
@@ -450,7 +458,7 @@ class PocketViewModelTest {
     fun `a card that is no longer selected does not get its product hosted`() = runTest(testDispatcher) {
         val left = productCard("left")
         val next = productCard("next")
-        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(left, next)))
+        every { interactor.observeProductCards() } returns flowOf(listOf(left, next))
 
         val viewModel = createViewModel()
         val cards = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>()
@@ -467,7 +475,7 @@ class PocketViewModelTest {
     // A card opened again rides up with its product rather than over an empty space.
     @Test
     fun `a card opened again gets its held product at the tap`() = runTest(testDispatcher) {
-        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(productCard("loyalty"))))
+        every { interactor.observeProductCards() } returns flowOf(listOf(productCard("loyalty")))
         val viewModel = createViewModel()
         val card = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
         viewModel.selectCard(card)
@@ -482,7 +490,7 @@ class PocketViewModelTest {
     // Building a WebView while the card is still moving starves the animation.
     @Test
     fun `a card opened for the first time gets its product only once it settles`() = runTest(testDispatcher) {
-        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(productCard("loyalty"))))
+        every { interactor.observeProductCards() } returns flowOf(listOf(productCard("loyalty")))
         val viewModel = createViewModel()
         val card = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
 
