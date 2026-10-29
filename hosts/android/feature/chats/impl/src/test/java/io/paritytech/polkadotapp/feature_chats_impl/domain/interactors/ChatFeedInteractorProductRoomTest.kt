@@ -110,6 +110,7 @@ class ChatFeedInteractorProductRoomTest {
         chatNotificationPublisher = mockk(relaxed = true),
         chatActiveTracker = mockk(relaxed = true),
         chatEngine = chatEngine,
+        roomPolicyProvider = mockk(relaxed = true),
         contactsRepository = mockk(relaxed = true),
         coroutineDispatchers = mockk(relaxed = true),
         chatDisplayGenerator = mockk(relaxed = true),
