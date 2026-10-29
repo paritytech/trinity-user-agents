@@ -215,7 +215,8 @@ schemes.
   by their bytes, so `DOT` or `.dot` cannot pass as `dot`.
 - Hex values MUST be 0x-prefixed and lowercase. Genesis hashes, block hashes, SHA-256 digests and keys are 32 bytes,
   signatures 64 bytes, and `contracts` and `dotns` addresses are 20-byte Asset Hub contract addresses. A `dotns` key is
-  1 to 32 ASCII letters and digits, because the registry reads it as a `bytes32`.
+  1 to 32 ASCII letters and digits, because the registry reads it as a `bytes32`, and its address MUST NOT be the zero
+  address, which the registry returns for a key it leaves unset.
 - When `fork` is set, every chain MUST have `forkedAt`, and no chain may have it otherwise. `fork.of` follows the same
   rules as a pointer.
 - URLs, in the descriptor and in a pointer, MUST use `https`, `wss` or, for `stun` services, `stun`. The one exception
@@ -268,8 +269,8 @@ facts are deliberately not in a descriptor, and readers get them from elsewhere:
 dotNS contract addresses are the exception: Asset Hub holds them, and a descriptor still carries them in `dotns`.
 Reading them takes a storage read and up to 19 contract calls through a service the stack runs, while they change only
 when the stack deploys dotNS under other addresses or the registry's owner rewires a key. A stack that deploys dotNS
-with the same factory key, as previewnet does, gets the same addresses after a restart of its chains. A reader uses
-`dotns` as stated and does not read the addresses from the chain.
+with the same factory key, as previewnet does, gets the same addresses after a restart of its chains. A reader SHOULD
+use `dotns` as stated rather than read the addresses from the chain.
 
 An operator or a tool checks `dotns` against the chain in three steps, all at one block:
 
@@ -283,8 +284,8 @@ An operator or a tool checks `dotns` against the chain in three steps, all at on
    and each other key `dotns` has, written as the key's ASCII bytes padded on the right with zeros, such as
    `bytes32("storeFactory")`. A key the registry leaves unset returns the zero address.
 
-`dotns` drifts from the chain when an address differs, when the registry sets a key `dotns` leaves out, and when `dotns`
-has a key the registry leaves unset.
+`dotns` drifts from the chain when an address differs, when the registry sets a `DotnsConstants` key `dotns` leaves out,
+and when `dotns` has a key the registry leaves unset.
 
 A **fork** copies a stack's chains at some block and runs them under new validators, as a PPN spawner instance does with
 zombie-bite. It keeps its source's genesis hashes, so nothing on the chain tells the two apart. A fork's operator sets
@@ -495,6 +496,7 @@ their own.
 - An unsigned stack trusts its web server, DNS and TLS. Whoever controls its host can change its services.
 - Verification exists in more than one implementation, and the conformance vectors must keep them in agreement.
 - A stack kept by hand needs automation and a guarded key, where today it needs a Firebase edit.
+- When the registry's owner rewires a key, readers keep the old address until the operator publishes again.
 
 ## Security
 
