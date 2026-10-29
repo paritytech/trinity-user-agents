@@ -12,7 +12,10 @@ connections, and its synced state is kept between launches, so a launch resumes
 from finalized state instead of syncing from scratch. It holds at most 32 of them
 at once and rejects a `connect` past that, so a client that leaks connections
 fails instead of growing; closing one hands its slot back. Connections to a
-remote node you registered with `addRpcChain` are not counted against it.
+remote node you registered with `addRpcChain` are not counted against it. A
+provider with an `addRpcChain` registration connects only to chains registered
+on it. The catalog does not resolve any other genesis hash for it, so a host on
+remote nodes never starts the light client by accident.
 
 ## Usage
 

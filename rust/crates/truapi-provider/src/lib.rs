@@ -19,7 +19,8 @@
 //!   reports its sync progress per chain.
 //! - `networks` feature — a bundled catalog so `connect(genesis_hash)` resolves the whole network
 //!   (relay wiring + statement placement included) from the genesis hash alone, with no prior
-//!   registration.
+//!   registration. A provider with a remote node registered resolves only what was registered on
+//!   it, so it never starts the light client for a chain its host did not name.
 //! - `js` feature — a JavaScript-facing API (the `js` module) on `wasm32`, so web hosts can consume
 //!   the provider directly without a Rust caller.
 //!

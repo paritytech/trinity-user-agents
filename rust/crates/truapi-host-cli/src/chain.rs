@@ -117,9 +117,9 @@ impl CliChainProvider {
 	/// The routed endpoint that answers `genesis_hash`: its own, otherwise
 	/// People's, and none when People is not routed either.
 	///
-	/// Only routed hashes reach the provider. Asked for any other, it would look
-	/// the hash up in its bundled catalog and start the light client, whichever
-	/// backend was selected.
+	/// Only routed hashes reach the provider. The light-client provider would
+	/// resolve any other bundled hash from its catalog and start that network,
+	/// and so would an RPC provider with no endpoint registered.
 	fn chain_for(&self, genesis_hash: [u8; 32]) -> Option<&'static ChainEndpoint> {
 		let routed = |genesis| {
 			routed_endpoints(&self.network, self.live_chain_routing)
