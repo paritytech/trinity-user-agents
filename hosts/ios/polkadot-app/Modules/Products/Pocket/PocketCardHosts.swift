@@ -44,6 +44,15 @@ final class PocketCardHosts {
         return product
     }
 
+    /// Has `load` take the held product for `key` to `pageQuery`, unless its
+    /// page already shows it.
+    func reload(_ key: PocketCardKey, at pageQuery: String, using load: (SPAViewProtocol) -> Void) {
+        guard let held, held.key == key, held.pageQuery != pageQuery else { return }
+
+        load(held.view)
+        self.held = CardProduct(key: key, pageQuery: pageQuery, view: held.view, surface: held.surface)
+    }
+
     func isOnDisplay(_ key: PocketCardKey) -> Bool {
         guard let held, held.key == key else { return false }
 

@@ -41,6 +41,26 @@ struct PocketCardHostsTests {
         #expect(tapped?.view !== linked?.view)
     }
 
+    /// A link to the card on screen cannot open a second screen, so its params
+    /// are loaded into the page already there. The same params leave the page
+    /// where the user took it.
+    @Test
+    func loadsNewParamsIntoTheHeldPage() {
+        let hosts = PocketCardHosts()
+        let factory = CountingFactory()
+        let held = hosts.product(for: loyalty, pageQuery: "open=scratch", make: factory.make)
+        var loaded: [String] = []
+
+        hosts.reload(loyalty, at: "open=scratch") { _ in loaded.append("open=scratch") }
+        hosts.reload(loyalty, at: "open=prizes") { _ in loaded.append("open=prizes") }
+        hosts.reload(trophy, at: "open=prizes") { _ in loaded.append("trophy") }
+        let reopened = hosts.product(for: loyalty, pageQuery: "open=prizes", make: factory.make)
+
+        #expect(loaded == ["open=prizes"])
+        #expect(factory.built == 1)
+        #expect(reopened?.view === held?.view)
+    }
+
     /// One at a time: a second card takes the first down rather than adding to
     /// it. Each has its own surface, since another card's page must never move
     /// this card's face.
