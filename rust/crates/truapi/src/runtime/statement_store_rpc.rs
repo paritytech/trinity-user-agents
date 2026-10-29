@@ -177,7 +177,10 @@ async fn start_statement_watch_over(
 	let subscription = subscribe(rpc_client, kind, topics)
 		.await
 		.map_err(|error| StatementWatchError::NotStarted(rpc_error_message(error)))?;
-	let subscription_id = subscription.subscription_id().unwrap_or_default().to_string();
+	let subscription_id = subscription
+		.subscription_id()
+		.map(ToString::to_string)
+		.ok_or_else(|| StatementWatchError::NotStarted("the subscription has no id".to_owned()))?;
 	let pages =
 		subscription.map(move |notification| parse_statement_page(&subscription_id, notification));
 	Ok(backlog_then_live_batches(pages).take_until_inclusive(Result::is_err))
@@ -318,7 +321,9 @@ mod tests {
 
 	use subxt_rpcs::RpcClient;
 
-	use super::{StatementStoreRpc, TopicFilterKind, is_no_allowance_rejection};
+	use super::{
+		StatementStoreRpc, TopicFilterKind, is_no_allowance_rejection, start_statement_watch_over,
+	};
 	use crate::{
 		chain::tokio_spawner,
 		chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
@@ -521,8 +526,8 @@ mod tests {
 		let batches = block_on_stream(batches).take(2).map(Result::unwrap).collect::<Vec<_>>();
 
 		assert_eq!(batches, vec![vec![vec![1], vec![2]], vec![vec![3]]]);
-		let request: serde_json::Value =
-			serde_json::from_str(&platform.sent_rpc.lock().unwrap()[0]).unwrap();
+		let sent = platform.sent_rpc.lock().unwrap();
+		let request: serde_json::Value = serde_json::from_str(&sent[0]).unwrap();
 		assert_eq!(request["params"][0], json!({ "matchAll": [hex_topic(&[7; 32])] }));
 	}
 
@@ -535,7 +540,7 @@ mod tests {
 			"method": "statement_subscribeStatement",
 			"params": { "subscription": "watch", "result": { "event": "somethingElse" } },
 		});
-		let (statement_store, _platform) = watching_statement_store(vec![
+		let (statement_store, platform) = watching_statement_store(vec![
 			subscribe_ack_frame("truapi:1", "watch"),
 			malformed.to_string(),
 			statement_page_frame("watch", vec![vec![1]], Some(0)),
@@ -547,6 +552,9 @@ mod tests {
 
 		assert!(matches!(batches.next(), Some(Err(StatementWatchError::MalformedPage(_)))));
 		assert!(batches.next().is_none());
+		let sent = platform.sent_rpc.lock().unwrap();
+		let request: serde_json::Value = serde_json::from_str(&sent[0]).unwrap();
+		assert_eq!(request["params"][0], json!({ "matchAny": [hex_topic(&[7; 32])] }));
 	}
 
 	/// A filter the RPC would refuse fails before any connection opens.
@@ -582,11 +590,12 @@ mod tests {
 		let connection = truapi_provider::platform::ChainProvider::connect(&provider, genesis)
 			.await
 			.unwrap();
-		let rpc_client = RpcClient::new(HostRpcClient::new(Arc::from(connection), tokio_spawner()));
+		let host_client = HostRpcClient::new(Arc::from(connection), tokio_spawner());
+		let rpc_client = RpcClient::new(host_client);
 		let topic: [u8; 32] = rand::random();
 
 		let mut batches =
-			super::start_statement_watch_over(&rpc_client, TopicFilterKind::MatchAll, &[topic])
+			start_statement_watch_over(&rpc_client, TopicFilterKind::MatchAll, &[topic])
 				.await
 				.unwrap();
 		let first = tokio::time::timeout(core::time::Duration::from_secs(30), batches.next()).await;

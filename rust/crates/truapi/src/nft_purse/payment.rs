@@ -107,9 +107,7 @@ impl NftPurses {
 		creator: &ProductId,
 		key: NftPurseReceiveKey,
 	) -> Result<PaymentListen<NftPurseCheque>, PaymentListenError> {
-		self.receive_key_purse(creator, key)
-			.await?
-			.ok_or(PaymentListenError::UnknownReceiveKey(key))?;
+		self.check_receive_key_maker(creator, key).await?;
 		let secret = self.receive_secret(&key).await?;
 		let channel = one_time_payment_topic(&key);
 		let batches = self.start_topic_watch(channel).await?;
@@ -117,7 +115,10 @@ impl NftPurses {
 		let recipient = NftPurseChequeRecipient::Ephemeral(key);
 		let expected = ExpectedCheque { topic: channel, recipient, id: Some(id) };
 		let arrivals = arriving_cheque_batches(batches, secret, expected)
-			.flat_map(|batch| stream::iter(each_cheque(batch)))
+			.flat_map(|batch| {
+				let cheques = cheques_one_by_one(batch);
+				stream::iter(cheques)
+			})
 			.take(1)
 			.boxed();
 		Ok(PaymentListen { channel, arrivals })
@@ -140,8 +141,19 @@ impl NftPurses {
 		let batches = self.start_topic_watch(channel).await?;
 		let recipient = NftPurseChequeRecipient::Static;
 		let expected = ExpectedCheque { topic: channel, recipient, id: None };
-		let arrivals = arriving_cheque_batches(batches, secret, expected);
-		Ok(PaymentListen { channel, arrivals: without_later_empty_batches(arrivals) })
+		let batches = arriving_cheque_batches(batches, secret, expected);
+		let arrivals = without_later_empty_batches(batches);
+		Ok(PaymentListen { channel, arrivals })
+	}
+
+	/// Fails when `creator` did not make `key` on this host.
+	async fn check_receive_key_maker(
+		&self,
+		creator: &ProductId,
+		key: NftPurseReceiveKey,
+	) -> Result<(), PaymentListenError> {
+		let purse = self.receive_key_purse(creator, key).await?;
+		purse.map(|_| ()).ok_or(PaymentListenError::UnknownReceiveKey(key))
 	}
 
 	/// Starts watching the statements published under `topic`.
@@ -200,8 +212,8 @@ fn arriving_cheque_batches(
 		.take_until_inclusive(Result::is_err)
 }
 
-/// Each cheque of `batch` on its own, or its error.
-fn each_cheque<E>(batch: Result<Vec<NftPurseCheque>, E>) -> Vec<Result<NftPurseCheque, E>> {
+/// The cheques of `batch` one by one, or its error.
+fn cheques_one_by_one<E>(batch: Result<Vec<NftPurseCheque>, E>) -> Vec<Result<NftPurseCheque, E>> {
 	match batch {
 		Ok(cheques) => cheques.into_iter().map(Ok).collect(),
 		Err(error) => vec![Err(error)],
@@ -229,7 +241,7 @@ fn accepted_cheque(
 	expected: &ExpectedCheque,
 ) -> Option<NftPurseCheque> {
 	open_envelope(statement, secret)
-		.and_then(|contents| accept_cheque(contents, expected))
+		.and_then(|contents| cheque_matching_expected(contents, expected))
 		.inspect_err(|reason| tracing::debug!("skipped a payment statement: {reason}"))
 		.ok()
 }
@@ -247,7 +259,7 @@ fn open_envelope(
 
 /// The cheque in `contents`, when its version is known and it matches
 /// `expected`.
-fn accept_cheque(
+fn cheque_matching_expected(
 	contents: EnvelopeContents,
 	expected: &ExpectedCheque,
 ) -> Result<NftPurseCheque, RejectedEnvelope> {
@@ -294,14 +306,22 @@ mod tests {
 	}
 
 	/// Purse calls with a purse and a receive key into it made by
-	/// [`PRODUCT`], and the statement store they watch.
-	fn listening_purses() -> (TempDir, NftPurses, Arc<ScriptedStatements>, NftPurseReceiveKey) {
+	/// [`PRODUCT`], the statement store they watch, and the directory that
+	/// keeps their database alive.
+	struct Listening {
+		_dir: TempDir,
+		purses: NftPurses,
+		statements: Arc<ScriptedStatements>,
+		key: NftPurseReceiveKey,
+	}
+
+	fn listening_purses() -> Listening {
 		let (dir, db) = open_temporary_core_db();
 		let statements = Arc::new(ScriptedStatements::default());
 		let purses = test_purses_watching(db, statements.clone());
 		let purse = block_on(purses.create_purse(&product(), "Tickets".to_owned())).unwrap();
 		let key = block_on(purses.create_receive_key(&product(), purse)).unwrap();
-		(dir, purses, statements, key)
+		Listening { _dir: dir, purses, statements, key }
 	}
 
 	/// A cheque for `key` that decodes and matches, though its secrets are not real.
@@ -331,7 +351,10 @@ mod tests {
 		sealed_statement(key, &contents.encode())
 	}
 
-	fn arrivals_of(listen: PaymentListen<NftPurseCheque>) -> Vec<Result<NftPurseCheque, String>> {
+	/// Everything `listen` emits until it ends, with errors as their messages.
+	fn collected_arrivals(
+		listen: PaymentListen<NftPurseCheque>,
+	) -> Vec<Result<NftPurseCheque, String>> {
 		let arrivals = block_on_stream(listen.arrivals);
 		arrivals.map(|arrival| arrival.map_err(|error| error.to_string())).collect()
 	}
@@ -348,7 +371,8 @@ mod tests {
 	/// Pins the envelope format other senders implement.
 	#[test]
 	fn an_envelope_sealed_elsewhere_opens_into_its_cheque() {
-		let key = NftPurseReceiveKey(hex::decode(VECTOR_RECEIVE_KEY).unwrap().try_into().unwrap());
+		let key_bytes = hex::decode(VECTOR_RECEIVE_KEY).unwrap();
+		let key = NftPurseReceiveKey(key_bytes.try_into().unwrap());
 		let data = hex::decode(ENVELOPE_VECTOR).unwrap();
 		let statement = vec![StatementField::Data(data)].encode();
 		let expected = ExpectedCheque {
@@ -359,15 +383,13 @@ mod tests {
 
 		let cheque = accepted_cheque(&statement, &X25519PrivateKey::from([0x11; 32]), &expected);
 
-		let expected_cheque =
-			NftPurseCheque { items: vec![NftPurseItemKey([0x44; 32])], ..cheque_for(key, 0x44) };
-		assert_eq!(cheque, Some(expected_cheque));
+		assert_eq!(cheque, Some(cheque_for(key, 0x44)));
 	}
 
 	/// Junk on the channel must not end a listen that waits for one cheque.
 	#[test]
 	fn a_one_time_listen_skips_what_is_not_its_cheque_and_ends_after_the_first() {
-		let (_dir, purses, statements, key) = listening_purses();
+		let Listening { _dir, purses, statements, key } = listening_purses();
 		let topic = one_time_payment_topic(&key);
 		let envelope = |version, item| {
 			EnvelopeContents { version, topic, cheque: cheque_for(key, item) }.encode()
@@ -393,38 +415,28 @@ mod tests {
 
 		let listen = block_on(purses.start_one_time_payment_listen(&product(), key)).unwrap();
 
-		assert_eq!(arrivals_of(listen), vec![Ok(good)]);
+		assert_eq!(collected_arrivals(listen), vec![Ok(good)]);
 	}
 
 	/// Completion means a cheque arrived, so a watch that ends first is an
 	/// error.
 	#[test]
 	fn a_one_time_listen_whose_watch_ends_first_ends_with_an_error() {
-		let (_dir, purses, statements, key) = listening_purses();
+		let Listening { _dir, purses, statements, key } = listening_purses();
 		*statements.batches.lock().unwrap() = vec![vec![]];
 
 		let listen = block_on(purses.start_one_time_payment_listen(&product(), key)).unwrap();
 
-		assert_eq!(arrivals_of(listen), vec![Err(PaymentListenError::WatchEnded.to_string())]);
-	}
-
-	/// The product advertises the channel, so it must be the topic watched.
-	#[test]
-	fn a_one_time_listen_watches_its_channel() {
-		let (_dir, purses, statements, key) = listening_purses();
-
-		let listen = block_on(purses.start_one_time_payment_listen(&product(), key)).unwrap();
-
-		let watched = statements.watched.lock().unwrap().clone();
-		let expected = vec![RemoteStatementStoreSubscribeRequest::MatchAll(vec![listen.channel.0])];
-		assert_eq!(watched, expected);
-		assert_eq!(listen.channel, one_time_payment_topic(&key));
+		assert_eq!(
+			collected_arrivals(listen),
+			vec![Err(PaymentListenError::WatchEnded.to_string())]
+		);
 	}
 
 	/// Another product's receive key stays invisible, and nothing is watched.
 	#[test]
 	fn a_one_time_listen_on_another_products_key_does_not_start() {
-		let (_dir, purses, statements, key) = listening_purses();
+		let Listening { _dir, purses, statements, key } = listening_purses();
 		let other = ProductId::for_test("other.dot");
 
 		let started = block_on(purses.start_one_time_payment_listen(&other, key));
@@ -449,7 +461,7 @@ mod tests {
 	/// empty batches say nothing, and only `Static` cheques belong in an inbox.
 	#[test]
 	fn an_inbox_listen_emits_the_backlog_then_each_batch_with_cheques() {
-		let (_dir, purses, statements, key) = listening_purses();
+		let Listening { _dir, purses, statements, key } = listening_purses();
 		let domain = [3; 32];
 		let topic = payment_inbox_topic([2; 32], &product(), domain);
 		let static_key =

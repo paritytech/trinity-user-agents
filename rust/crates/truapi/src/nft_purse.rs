@@ -261,7 +261,8 @@ impl StatementStoreApi for ScriptedStatements {
 	> {
 		self.watched.lock().unwrap().push(filter);
 		let batches = self.batches.lock().unwrap().clone().into_iter().map(Ok);
-		Ok(futures::StreamExt::boxed(futures::stream::iter(batches)))
+		let watch = futures::stream::iter(batches);
+		Ok(futures::StreamExt::boxed(watch))
 	}
 }
 

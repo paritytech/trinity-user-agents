@@ -33,11 +33,12 @@ fn listen_one_time(host: &ProductRuntimeHost, key: v01::NftPurseReceiveKey) -> O
 /// The JSON-RPC methods `platform` was sent, in order.
 fn sent_methods(platform: &StubPlatform) -> Vec<String> {
 	let sent = platform.sent_rpc.lock().unwrap();
-	let method = |request: &String| {
-		let request: serde_json::Value = serde_json::from_str(request).unwrap();
-		request["method"].as_str().unwrap_or_default().to_owned()
-	};
-	sent.iter().map(method).collect()
+	sent.iter()
+		.map(|request| {
+			let request: serde_json::Value = serde_json::from_str(request).unwrap();
+			request["method"].as_str().unwrap_or_default().to_owned()
+		})
+		.collect()
 }
 
 /// The topic of the first statement subscription `platform` was sent.

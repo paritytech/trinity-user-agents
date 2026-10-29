@@ -48,9 +48,7 @@ impl ProductRuntimeHost {
 			one_time_payment_failure,
 		))
 	}
-}
 
-impl ProductRuntimeHost {
 	/// The channel of the caller's inbox `inbox_domain`, then the cheques
 	/// already there, then each batch of new ones. A listen that did not
 	/// start emits no channel.
@@ -109,7 +107,8 @@ fn channel_then_arrivals<T: Send + 'static, I: Send + 'static, E: Send + 'static
 	let standard =
 		latest::NftPursePaymentTransmissionChannel::Standard { sss_topic: listen.channel };
 	let arrivals = listen.arrivals.map(move |arrived| arrived.map(arrival).map_err(failure));
-	Subscription::new(stream::once(async move { Ok(channel(standard)) }).chain(arrivals))
+	let items = stream::once(async move { Ok(channel(standard)) }).chain(arrivals);
+	Subscription::new(items)
 }
 
 /// An unknown or foreign receive key is the product's error, a database
@@ -123,8 +122,7 @@ fn one_time_payment_failure(
 		},
 		PaymentListenError::Db(error) => host_failure(error),
 		error => {
-			let reason = latest::GenericError { reason: error.to_string() };
-			CallError::Domain(latest::HostNftPurseListenOneTimePaymentError::Other(reason))
+			other_refusal(error.to_string(), latest::HostNftPurseListenOneTimePaymentError::Other)
 		},
 	}
 }
@@ -136,15 +134,18 @@ fn payment_inbox_failure(
 ) -> CallError<latest::HostNftPurseListenPaymentInboxError> {
 	match error {
 		PaymentListenError::Db(error) => host_failure(error),
-		error => inbox_refusal(error.to_string()),
+		error => {
+			other_refusal(error.to_string(), latest::HostNftPurseListenPaymentInboxError::Other)
+		},
 	}
 }
 
 fn no_identity_account() -> CallError<latest::HostNftPurseListenPaymentInboxError> {
-	inbox_refusal("the session has no wallet identity account to name the inbox".to_owned())
+	let reason = "the session has no wallet identity account to name the inbox".to_owned();
+	other_refusal(reason, latest::HostNftPurseListenPaymentInboxError::Other)
 }
 
-fn inbox_refusal(reason: String) -> CallError<latest::HostNftPurseListenPaymentInboxError> {
-	let reason = latest::GenericError { reason };
-	CallError::Domain(latest::HostNftPurseListenPaymentInboxError::Other(reason))
+/// The product-facing `Other` error of a call, built by `other`, for `reason`.
+fn other_refusal<E>(reason: String, other: fn(latest::GenericError) -> E) -> CallError<E> {
+	CallError::Domain(other(latest::GenericError { reason }))
 }
