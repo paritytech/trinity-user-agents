@@ -25,4 +25,15 @@ struct PocketCardLaunchUrlTests {
 
         #expect(url.absoluteString == "https://game.paseo?card=gold%20card")
     }
+
+    /// A link's page params come after the card, still encoded, so the page
+    /// reads the same values the link carried.
+    @Test
+    func appendsALinksPageParamsAfterTheCard() throws {
+        let key = PocketCardKey(productId: "peopl.paseo", cardId: PocketCardId(value: "humanity"))
+
+        let url = try #require(key.launchUrl(pageQuery: "open=scratch&tag=a%26b"))
+
+        #expect(url.absoluteString == "https://peopl.paseo?card=humanity&open=scratch&tag=a%26b")
+    }
 }

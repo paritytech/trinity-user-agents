@@ -15,11 +15,16 @@ struct PocketCardKey: Hashable {
     /// Where the card's product opens: its own page, told which card the user
     /// came from. Built the same way on every host, so a product is handed the
     /// same address whichever one it is running on.
-    var launchUrl: URL? {
+    var launchUrl: URL? { launchUrl(pageQuery: "") }
+
+    /// The launch address with a link's `pageQuery` after the card. The core
+    /// hands over only valid query text, so it is appended as it is.
+    func launchUrl(pageQuery: String) -> URL? {
         var components = URLComponents()
         components.scheme = "https"
         components.host = productId
         components.queryItems = [URLQueryItem(name: "card", value: cardId.value)]
+        if !pageQuery.isEmpty { components.percentEncodedQuery? += "&\(pageQuery)" }
 
         return components.url
     }

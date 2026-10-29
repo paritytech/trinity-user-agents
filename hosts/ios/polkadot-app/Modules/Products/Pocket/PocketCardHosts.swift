@@ -18,22 +18,28 @@ import UIKit
 final class PocketCardHosts {
     struct CardProduct {
         let key: PocketCardKey
+        let pageQuery: String
         let view: SPAViewProtocol
         let surface: PocketCardSurface
     }
 
     private var held: CardProduct?
 
-    /// The product for `key`, built by `make` unless the one already held is it.
-    func product(for key: PocketCardKey, make: (PocketCardSurface) -> SPAViewProtocol?) -> CardProduct? {
-        if let held, held.key == key { return held }
+    /// The product for `key` at `pageQuery`, built by `make` unless the one
+    /// already held is it.
+    func product(
+        for key: PocketCardKey,
+        pageQuery: String = "",
+        make: (PocketCardSurface) -> SPAViewProtocol?
+    ) -> CardProduct? {
+        if let held, held.key == key, held.pageQuery == pageQuery { return held }
 
         release()
 
         let surface = PocketCardSurface()
         guard let view = make(surface) else { return nil }
 
-        let product = CardProduct(key: key, view: view, surface: surface)
+        let product = CardProduct(key: key, pageQuery: pageQuery, view: view, surface: surface)
         held = product
         return product
     }
