@@ -13,8 +13,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha512};
 use std::{collections::BTreeMap, fs, path::PathBuf};
 use trinity_stack::{
-	DOTNS_KEYS, DotnsAnswer, DotnsLookup, DotnsStep, Fetched, Pointer, accept, open, public_key,
-	sign,
+	CurrentStack, DOTNS_KEYS, DotnsAnswer, DotnsLookup, DotnsRecord, DotnsStep, FetchRequest,
+	Fetched, Pointer, Refresh, Served, StackReader, accept, open, public_key, sign,
 };
 
 const SECRET: [u8; 32] = [7; 32];
@@ -872,6 +872,224 @@ fn dotns_cases() -> Vec<(&'static str, Value, Value, Value)> {
 	]
 }
 
+const NEW_GENERATION: &str = "2026-10-15T00:00:00Z";
+
+/// The signed copies the refresh cases fetch and bundle, by file.
+fn refresh_documents() -> Vec<(&'static str, Vec<u8>)> {
+	let at = |sequence: u64, edit: &dyn Fn(&mut Value)| {
+		signed(&with(|value| {
+			value["sequence"] = json!(sequence);
+			edit(value);
+		}))
+	};
+	vec![
+		("refresh/41.json", at(41, &|_| {})),
+		("refresh/42.json", at(42, &|_| {})),
+		("refresh/43.json", at(43, &|value| value["name"] = json!("Renamed"))),
+		(
+			"refresh/43-new-generation.json",
+			at(43, &|value| value["generation"] = json!(NEW_GENERATION)),
+		),
+		("refresh/44.json", at(44, &|_| {})),
+	]
+}
+
+/// A dotNS record of `generation`, with no gateway: the reader's choices do not depend on it.
+fn record(generation: &str) -> Value {
+	json!({ "generation": generation, "at": at(), "dotns": null })
+}
+
+/// The refresh cases: a policy, the copies a reader starts from, and steps in order, each with
+/// what the reader must answer. `serves` names the copy in use by its `sequence`, null when the
+/// caller waits. `stores` says whether the reader handed back bytes to store. A `restart` starts
+/// a new reader from its build copy and what the last step stored.
+fn refresh_cases() -> Vec<Value> {
+	let base_generation = base()["generation"].clone();
+	let fetch = |etag: Option<&str>| json!({ "ifNoneMatch": etag });
+	let get = |now: i64, serves: Option<u64>, fetch: Value| json!({ "get": now, "expect": { "serves": serves, "fetch": fetch } });
+	let fetched = |document: Option<&str>, etag: Option<&str>, now: i64, expect: Value| json!({ "fetched": { "document": document, "etag": etag, "notModified": false }, "now": now, "expect": expect });
+	let not_modified = |now: i64, expect: Value| json!({ "fetched": { "document": null, "etag": null, "notModified": true }, "now": now, "expect": expect });
+	let outcome = |status: &str, serves: u64, stores: bool| json!({ "status": status, "serves": serves, "stores": stores, "newGeneration": false });
+	let case = |name: &str, refresh: Value, build: Option<&str>, steps: Vec<Value>| json!({ "name": name, "pointer": { "url": URL, "key": key() }, "refresh": refresh, "build": build, "buildDotns": null, "steps": steps });
+	let max_age = json!({ "maxAge": 3600 });
+	vec![
+		case(
+			"never-serves-the-build-copy-until-asked",
+			json!("never"),
+			Some("refresh/42.json"),
+			vec![
+				get(NOW, Some(42), Value::Null),
+				get(NOW + 86_400, Some(42), Value::Null),
+				json!({ "due": NOW + 86_400, "expect": false }),
+				json!({ "refresh": NOW, "expect": { "fetch": fetch(None) } }),
+				json!({ "refresh": NOW, "expect": { "fetch": null } }),
+				fetched(Some("refresh/43.json"), None, NOW, outcome("updated", 43, true)),
+				get(NOW, Some(43), Value::Null),
+			],
+		),
+		case(
+			"once-waits-for-the-first-fetch-and-shares-it",
+			json!("once"),
+			Some("refresh/42.json"),
+			vec![
+				get(NOW, None, fetch(None)),
+				get(NOW, None, Value::Null),
+				fetched(Some("refresh/43.json"), None, NOW, outcome("updated", 43, true)),
+				get(NOW, Some(43), Value::Null),
+				get(NOW + 86_400, Some(43), Value::Null),
+			],
+		),
+		case(
+			"once-keeps-its-copy-when-the-server-is-down",
+			json!("once"),
+			Some("refresh/42.json"),
+			vec![
+				get(NOW, None, fetch(None)),
+				fetched(None, None, NOW, outcome("unreachable", 42, false)),
+				get(NOW, Some(42), Value::Null),
+			],
+		),
+		case(
+			"max-age-serves-at-once-and-refreshes-behind",
+			max_age.clone(),
+			Some("refresh/42.json"),
+			vec![
+				get(NOW, Some(42), fetch(None)),
+				get(NOW, Some(42), Value::Null),
+				fetched(
+					Some("refresh/42.json"),
+					Some("\"a\""),
+					NOW,
+					outcome("unchanged", 42, true),
+				),
+				get(NOW + 3_599, Some(42), Value::Null),
+				json!({ "due": NOW + 3_599, "expect": false }),
+				json!({ "due": NOW + 3_600, "expect": true }),
+				get(NOW + 3_600, Some(42), fetch(Some("\"a\""))),
+				not_modified(NOW + 3_600, outcome("unchanged", 42, true)),
+				get(NOW + 7_199, Some(42), Value::Null),
+			],
+		),
+		case(
+			"max-age-waits-a-full-period-after-a-failure",
+			max_age.clone(),
+			Some("refresh/42.json"),
+			vec![
+				get(NOW, Some(42), fetch(None)),
+				fetched(None, None, NOW, outcome("unreachable", 42, false)),
+				get(NOW + 3_599, Some(42), Value::Null),
+				get(NOW + 3_600, Some(42), fetch(None)),
+			],
+		),
+		case(
+			"a-rollback-keeps-the-copy",
+			max_age.clone(),
+			Some("refresh/42.json"),
+			vec![
+				get(NOW, Some(42), fetch(None)),
+				fetched(Some("refresh/41.json"), None, NOW, outcome("rollback", 42, false)),
+				get(NOW, Some(42), Value::Null),
+			],
+		),
+		case(
+			"without-a-copy-every-policy-waits-and-asks-again",
+			json!("never"),
+			None,
+			vec![
+				get(NOW, None, fetch(None)),
+				get(NOW, None, Value::Null),
+				fetched(None, None, NOW, json!({ "error": "unreachable" })),
+				get(NOW, None, fetch(None)),
+				not_modified(NOW, json!({ "error": "unreachable" })),
+				get(NOW, None, fetch(None)),
+				fetched(Some("refresh/42.json"), None, NOW, outcome("updated", 42, true)),
+				get(NOW, Some(42), Value::Null),
+			],
+		),
+		case(
+			"the-store-moves-a-stack-forward-from-its-build-copy-never-back",
+			json!("never"),
+			Some("refresh/42.json"),
+			vec![
+				json!({ "refresh": NOW, "expect": { "fetch": fetch(None) } }),
+				fetched(Some("refresh/43.json"), Some("\"b\""), NOW, outcome("updated", 43, true)),
+				json!({ "restart": NOW, "build": "refresh/42.json", "buildDotns": null }),
+				get(NOW, Some(43), Value::Null),
+				json!({ "refresh": NOW, "expect": { "fetch": fetch(Some("\"b\"")) } }),
+				json!({ "restart": NOW, "build": "refresh/44.json", "buildDotns": null }),
+				get(NOW, Some(44), Value::Null),
+			],
+		),
+		case(
+			"a-new-generation-is-reported",
+			json!("never"),
+			Some("refresh/42.json"),
+			vec![
+				json!({ "refresh": NOW, "expect": { "fetch": fetch(None) } }),
+				fetched(
+					Some("refresh/43-new-generation.json"),
+					None,
+					NOW,
+					json!({ "status": "updated", "serves": 43, "stores": true, "newGeneration": true }),
+				),
+			],
+		),
+		json!({
+			"name": "dotns-follows-the-descriptors-generation",
+			"pointer": { "url": URL, "key": key() },
+			"refresh": "never",
+			"build": "refresh/42.json",
+			"buildDotns": record(base_generation.as_str().unwrap()),
+			"steps": [
+				get(NOW, Some(42), Value::Null),
+				{ "dotns": NOW, "expect": { "record": base_generation, "lookUp": null } },
+				{ "refresh": NOW, "expect": { "fetch": fetch(None) } },
+				fetched(
+					Some("refresh/43-new-generation.json"),
+					None,
+					NOW,
+					json!({ "status": "updated", "serves": 43, "stores": true, "newGeneration": true }),
+				),
+				{ "dotns": NOW, "expect": { "record": null, "lookUp": NEW_GENERATION } },
+				{ "dotns": NOW, "expect": { "record": null, "lookUp": null } },
+				{ "lookedUp": record(base_generation.as_str().unwrap()), "now": NOW, "expect": { "record": null, "stores": false } },
+				{ "dotns": NOW, "expect": { "record": null, "lookUp": NEW_GENERATION } },
+				{ "lookedUp": record(NEW_GENERATION), "now": NOW, "expect": { "record": NEW_GENERATION, "stores": true } },
+				{ "dotns": NOW + 86_400, "expect": { "record": NEW_GENERATION, "lookUp": null } },
+				{ "restart": NOW, "build": "refresh/42.json", "buildDotns": record(base_generation.as_str().unwrap()) },
+				{ "dotns": NOW, "expect": { "record": NEW_GENERATION, "lookUp": null } },
+			],
+		}),
+		json!({
+			"name": "dotns-once-reads-again-and-falls-back-to-its-record",
+			"pointer": { "url": URL, "key": key() },
+			"refresh": "once",
+			"build": "refresh/42.json",
+			"buildDotns": record(base_generation.as_str().unwrap()),
+			"steps": [
+				get(NOW, None, fetch(None)),
+				fetched(None, None, NOW, outcome("unreachable", 42, false)),
+				{ "dotns": NOW, "expect": { "record": null, "lookUp": base_generation } },
+				{ "lookedUp": null, "now": NOW, "expect": { "record": base_generation, "stores": false } },
+				{ "dotns": NOW, "expect": { "record": base_generation, "lookUp": null } },
+			],
+		}),
+		json!({
+			"name": "dotns-max-age-refreshes-behind-its-record",
+			"pointer": { "url": URL, "key": key() },
+			"refresh": max_age,
+			"build": "refresh/42.json",
+			"buildDotns": record(base_generation.as_str().unwrap()),
+			"steps": [
+				{ "dotns": NOW, "expect": { "record": base_generation, "lookUp": base_generation } },
+				{ "lookedUp": record(base_generation.as_str().unwrap()), "now": NOW, "expect": { "record": base_generation, "stores": true } },
+				{ "dotns": NOW + 3_599, "expect": { "record": base_generation, "lookUp": null } },
+				{ "dotns": NOW + 3_600, "expect": { "record": base_generation, "lookUp": base_generation } },
+			],
+		}),
+	]
+}
+
 fn generate() -> BTreeMap<PathBuf, Vec<u8>> {
 	let mut files = BTreeMap::new();
 	let mut file = |path: String, contents: Vec<u8>| {
@@ -904,7 +1122,10 @@ fn generate() -> BTreeMap<PathBuf, Vec<u8>> {
 			json!({ "name": name, "generation": GENERATION, "at": at(), "storage": storage, "calls": calls, "expect": expect })
 		})
 		.collect();
-	let cases = json!({ "documents": documents, "reader": reader, "links": links, "dotns": dotns });
+	for (path, bytes) in refresh_documents() {
+		file(path.into(), bytes);
+	}
+	let cases = json!({ "documents": documents, "reader": reader, "links": links, "dotns": dotns, "refresh": refresh_cases() });
 	let mut cases = serde_json::to_vec_pretty(&cases).unwrap();
 	cases.push(b'\n');
 	files.insert(PathBuf::from("cases.json"), cases);
@@ -1044,6 +1265,85 @@ fn every_vector_gets_its_verdict() {
 	for case in cases["dotns"].as_array().unwrap() {
 		let outcome = look_up(case).unwrap_or_else(|error| json!({ "error": error.code() }));
 		assert_eq!(outcome, case["expect"], "{}", case["name"]);
+	}
+
+	for case in cases["refresh"].as_array().unwrap() {
+		run_refresh(case, file);
+	}
+}
+
+/// Runs a refresh vector's steps, checking each answer.
+fn run_refresh(case: &Value, file: impl Fn(&Value) -> Option<Vec<u8>>) {
+	let name = case["name"].as_str().unwrap();
+	let pointer = pointer_of(case);
+	let refresh = match &case["refresh"] {
+		Value::String(policy) if policy == "never" => Refresh::Never,
+		Value::String(policy) if policy == "once" => Refresh::Once,
+		policy => Refresh::MaxAge(policy["maxAge"].as_u64().unwrap()),
+	};
+	let record = |value: &Value| {
+		(!value.is_null()).then(|| serde_json::from_value::<DotnsRecord>(value.clone()).unwrap())
+	};
+	let start = |build: &Value, build_dotns: &Value, stored: Option<&[u8]>, now: i64| {
+		let mut reader = StackReader::new(refresh);
+		reader
+			.load(&pointer, file(build).as_deref(), record(build_dotns), stored, now)
+			.unwrap();
+		reader
+	};
+	let mut stored: Option<Vec<u8>> = None;
+	let mut reader = start(&case["build"], &case["buildDotns"], None, NOW);
+	let fetch_of = |request: Option<FetchRequest>| {
+		request.map_or(Value::Null, |request| json!({ "ifNoneMatch": request.if_none_match }))
+	};
+	let sequence =
+		|current: Option<CurrentStack>| current.map(|current| current.stack.descriptor.sequence);
+	for (index, step) in case["steps"].as_array().unwrap().iter().enumerate() {
+		let at = |key: &str| step[key].as_i64().unwrap();
+		let outcome = if step.get("get").is_some() {
+			let read = reader.get(&pointer, at("get"));
+			json!({ "serves": sequence(read.current), "fetch": fetch_of(read.fetch) })
+		} else if step.get("refresh").is_some() {
+			json!({ "fetch": fetch_of(reader.refresh(&pointer, at("refresh"))) })
+		} else if step.get("due").is_some() {
+			json!(reader.due(at("due")).contains(&pointer.stack_id()))
+		} else if let Some(served) = step.get("fetched") {
+			let document = file(&served["document"]);
+			let served = match (&document, served["notModified"].as_bool().unwrap()) {
+				(_, true) => Served::NotModified,
+				(Some(bytes), false) => Served::Document { bytes, etag: served["etag"].as_str() },
+				(None, false) => Served::Unreachable,
+			};
+			match reader.fetched(&pointer, served, at("now")) {
+				Err(error) => json!({ "error": error.code() }),
+				Ok(refreshed) => {
+					let stores = refreshed.record.is_some();
+					stored = refreshed.record.or(stored);
+					json!({
+						"status": refreshed.accepted.status.code(),
+						"serves": refreshed.accepted.stack.descriptor.sequence,
+						"stores": stores,
+						"newGeneration": refreshed.accepted.new_generation,
+					})
+				},
+			}
+		} else if step.get("restart").is_some() {
+			reader = start(&step["build"], &step["buildDotns"], stored.as_deref(), at("restart"));
+			continue;
+		} else if step.get("dotns").is_some() {
+			let read = reader.dotns(&pointer, at("dotns")).unwrap();
+			json!({
+				"record": read.record.map(|record| record.generation),
+				"lookUp": read.look_up,
+			})
+		} else {
+			let looked_up =
+				reader.looked_up(&pointer, record(&step["lookedUp"]), at("now")).unwrap();
+			let stores = looked_up.stored.is_some();
+			stored = looked_up.stored.or(stored);
+			json!({ "record": looked_up.record.map(|record| record.generation), "stores": stores })
+		};
+		assert_eq!(outcome, step["expect"], "{name} step {index}");
 	}
 }
 

@@ -65,7 +65,7 @@ impl DotnsRecord {
 	pub fn parse(bytes: &[u8]) -> Result<Self, Error> {
 		let record: Self =
 			serde_json::from_slice(bytes).map_err(|error| Error::Malformed(error.to_string()))?;
-		record.validate()?;
+		record.check()?;
 		Ok(record)
 	}
 
@@ -76,7 +76,8 @@ impl DotnsRecord {
 		json
 	}
 
-	fn validate(&self) -> Result<(), Error> {
+	/// Fails when an address or the block hash is not lowercase 0x-prefixed hex of its length.
+	pub fn check(&self) -> Result<(), Error> {
 		format::hex_bytes::<32>("at.hash", &self.at.hash)?;
 		let Some(dotns) = &self.dotns else { return Ok(()) };
 		format::hex_bytes::<20>("dispatcher", &dotns.dispatcher)?;

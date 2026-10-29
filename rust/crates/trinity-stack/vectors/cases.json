@@ -1100,5 +1100,798 @@
       },
       "stored": null
     }
+  ],
+  "refresh": [
+    {
+      "build": "refresh/42.json",
+      "buildDotns": null,
+      "name": "never-serves-the-build-copy-until-asked",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "refresh": "never",
+      "steps": [
+        {
+          "expect": {
+            "fetch": null,
+            "serves": 42
+          },
+          "get": 1792065600
+        },
+        {
+          "expect": {
+            "fetch": null,
+            "serves": 42
+          },
+          "get": 1792152000
+        },
+        {
+          "due": 1792152000,
+          "expect": false
+        },
+        {
+          "expect": {
+            "fetch": {
+              "ifNoneMatch": null
+            }
+          },
+          "refresh": 1792065600
+        },
+        {
+          "expect": {
+            "fetch": null
+          },
+          "refresh": 1792065600
+        },
+        {
+          "expect": {
+            "newGeneration": false,
+            "serves": 43,
+            "status": "updated",
+            "stores": true
+          },
+          "fetched": {
+            "document": "refresh/43.json",
+            "etag": null,
+            "notModified": false
+          },
+          "now": 1792065600
+        },
+        {
+          "expect": {
+            "fetch": null,
+            "serves": 43
+          },
+          "get": 1792065600
+        }
+      ]
+    },
+    {
+      "build": "refresh/42.json",
+      "buildDotns": null,
+      "name": "once-waits-for-the-first-fetch-and-shares-it",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "refresh": "once",
+      "steps": [
+        {
+          "expect": {
+            "fetch": {
+              "ifNoneMatch": null
+            },
+            "serves": null
+          },
+          "get": 1792065600
+        },
+        {
+          "expect": {
+            "fetch": null,
+            "serves": null
+          },
+          "get": 1792065600
+        },
+        {
+          "expect": {
+            "newGeneration": false,
+            "serves": 43,
+            "status": "updated",
+            "stores": true
+          },
+          "fetched": {
+            "document": "refresh/43.json",
+            "etag": null,
+            "notModified": false
+          },
+          "now": 1792065600
+        },
+        {
+          "expect": {
+            "fetch": null,
+            "serves": 43
+          },
+          "get": 1792065600
+        },
+        {
+          "expect": {
+            "fetch": null,
+            "serves": 43
+          },
+          "get": 1792152000
+        }
+      ]
+    },
+    {
+      "build": "refresh/42.json",
+      "buildDotns": null,
+      "name": "once-keeps-its-copy-when-the-server-is-down",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "refresh": "once",
+      "steps": [
+        {
+          "expect": {
+            "fetch": {
+              "ifNoneMatch": null
+            },
+            "serves": null
+          },
+          "get": 1792065600
+        },
+        {
+          "expect": {
+            "newGeneration": false,
+            "serves": 42,
+            "status": "unreachable",
+            "stores": false
+          },
+          "fetched": {
+            "document": null,
+            "etag": null,
+            "notModified": false
+          },
+          "now": 1792065600
+        },
+        {
+          "expect": {
+            "fetch": null,
+            "serves": 42
+          },
+          "get": 1792065600
+        }
+      ]
+    },
+    {
+      "build": "refresh/42.json",
+      "buildDotns": null,
+      "name": "max-age-serves-at-once-and-refreshes-behind",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "refresh": {
+        "maxAge": 3600
+      },
+      "steps": [
+        {
+          "expect": {
+            "fetch": {
+              "ifNoneMatch": null
+            },
+            "serves": 42
+          },
+          "get": 1792065600
+        },
+        {
+          "expect": {
+            "fetch": null,
+            "serves": 42
+          },
+          "get": 1792065600
+        },
+        {
+          "expect": {
+            "newGeneration": false,
+            "serves": 42,
+            "status": "unchanged",
+            "stores": true
+          },
+          "fetched": {
+            "document": "refresh/42.json",
+            "etag": "\"a\"",
+            "notModified": false
+          },
+          "now": 1792065600
+        },
+        {
+          "expect": {
+            "fetch": null,
+            "serves": 42
+          },
+          "get": 1792069199
+        },
+        {
+          "due": 1792069199,
+          "expect": false
+        },
+        {
+          "due": 1792069200,
+          "expect": true
+        },
+        {
+          "expect": {
+            "fetch": {
+              "ifNoneMatch": "\"a\""
+            },
+            "serves": 42
+          },
+          "get": 1792069200
+        },
+        {
+          "expect": {
+            "newGeneration": false,
+            "serves": 42,
+            "status": "unchanged",
+            "stores": true
+          },
+          "fetched": {
+            "document": null,
+            "etag": null,
+            "notModified": true
+          },
+          "now": 1792069200
+        },
+        {
+          "expect": {
+            "fetch": null,
+            "serves": 42
+          },
+          "get": 1792072799
+        }
+      ]
+    },
+    {
+      "build": "refresh/42.json",
+      "buildDotns": null,
+      "name": "max-age-waits-a-full-period-after-a-failure",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "refresh": {
+        "maxAge": 3600
+      },
+      "steps": [
+        {
+          "expect": {
+            "fetch": {
+              "ifNoneMatch": null
+            },
+            "serves": 42
+          },
+          "get": 1792065600
+        },
+        {
+          "expect": {
+            "newGeneration": false,
+            "serves": 42,
+            "status": "unreachable",
+            "stores": false
+          },
+          "fetched": {
+            "document": null,
+            "etag": null,
+            "notModified": false
+          },
+          "now": 1792065600
+        },
+        {
+          "expect": {
+            "fetch": null,
+            "serves": 42
+          },
+          "get": 1792069199
+        },
+        {
+          "expect": {
+            "fetch": {
+              "ifNoneMatch": null
+            },
+            "serves": 42
+          },
+          "get": 1792069200
+        }
+      ]
+    },
+    {
+      "build": "refresh/42.json",
+      "buildDotns": null,
+      "name": "a-rollback-keeps-the-copy",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "refresh": {
+        "maxAge": 3600
+      },
+      "steps": [
+        {
+          "expect": {
+            "fetch": {
+              "ifNoneMatch": null
+            },
+            "serves": 42
+          },
+          "get": 1792065600
+        },
+        {
+          "expect": {
+            "newGeneration": false,
+            "serves": 42,
+            "status": "rollback",
+            "stores": false
+          },
+          "fetched": {
+            "document": "refresh/41.json",
+            "etag": null,
+            "notModified": false
+          },
+          "now": 1792065600
+        },
+        {
+          "expect": {
+            "fetch": null,
+            "serves": 42
+          },
+          "get": 1792065600
+        }
+      ]
+    },
+    {
+      "build": null,
+      "buildDotns": null,
+      "name": "without-a-copy-every-policy-waits-and-asks-again",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "refresh": "never",
+      "steps": [
+        {
+          "expect": {
+            "fetch": {
+              "ifNoneMatch": null
+            },
+            "serves": null
+          },
+          "get": 1792065600
+        },
+        {
+          "expect": {
+            "fetch": null,
+            "serves": null
+          },
+          "get": 1792065600
+        },
+        {
+          "expect": {
+            "error": "unreachable"
+          },
+          "fetched": {
+            "document": null,
+            "etag": null,
+            "notModified": false
+          },
+          "now": 1792065600
+        },
+        {
+          "expect": {
+            "fetch": {
+              "ifNoneMatch": null
+            },
+            "serves": null
+          },
+          "get": 1792065600
+        },
+        {
+          "expect": {
+            "error": "unreachable"
+          },
+          "fetched": {
+            "document": null,
+            "etag": null,
+            "notModified": true
+          },
+          "now": 1792065600
+        },
+        {
+          "expect": {
+            "fetch": {
+              "ifNoneMatch": null
+            },
+            "serves": null
+          },
+          "get": 1792065600
+        },
+        {
+          "expect": {
+            "newGeneration": false,
+            "serves": 42,
+            "status": "updated",
+            "stores": true
+          },
+          "fetched": {
+            "document": "refresh/42.json",
+            "etag": null,
+            "notModified": false
+          },
+          "now": 1792065600
+        },
+        {
+          "expect": {
+            "fetch": null,
+            "serves": 42
+          },
+          "get": 1792065600
+        }
+      ]
+    },
+    {
+      "build": "refresh/42.json",
+      "buildDotns": null,
+      "name": "the-store-moves-a-stack-forward-from-its-build-copy-never-back",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "refresh": "never",
+      "steps": [
+        {
+          "expect": {
+            "fetch": {
+              "ifNoneMatch": null
+            }
+          },
+          "refresh": 1792065600
+        },
+        {
+          "expect": {
+            "newGeneration": false,
+            "serves": 43,
+            "status": "updated",
+            "stores": true
+          },
+          "fetched": {
+            "document": "refresh/43.json",
+            "etag": "\"b\"",
+            "notModified": false
+          },
+          "now": 1792065600
+        },
+        {
+          "build": "refresh/42.json",
+          "buildDotns": null,
+          "restart": 1792065600
+        },
+        {
+          "expect": {
+            "fetch": null,
+            "serves": 43
+          },
+          "get": 1792065600
+        },
+        {
+          "expect": {
+            "fetch": {
+              "ifNoneMatch": "\"b\""
+            }
+          },
+          "refresh": 1792065600
+        },
+        {
+          "build": "refresh/44.json",
+          "buildDotns": null,
+          "restart": 1792065600
+        },
+        {
+          "expect": {
+            "fetch": null,
+            "serves": 44
+          },
+          "get": 1792065600
+        }
+      ]
+    },
+    {
+      "build": "refresh/42.json",
+      "buildDotns": null,
+      "name": "a-new-generation-is-reported",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "refresh": "never",
+      "steps": [
+        {
+          "expect": {
+            "fetch": {
+              "ifNoneMatch": null
+            }
+          },
+          "refresh": 1792065600
+        },
+        {
+          "expect": {
+            "newGeneration": true,
+            "serves": 43,
+            "status": "updated",
+            "stores": true
+          },
+          "fetched": {
+            "document": "refresh/43-new-generation.json",
+            "etag": null,
+            "notModified": false
+          },
+          "now": 1792065600
+        }
+      ]
+    },
+    {
+      "build": "refresh/42.json",
+      "buildDotns": {
+        "at": {
+          "hash": "0xabababababababababababababababababababababababababababababababab",
+          "number": 182044
+        },
+        "dotns": null,
+        "generation": "2026-09-17T16:15:00Z"
+      },
+      "name": "dotns-follows-the-descriptors-generation",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "refresh": "never",
+      "steps": [
+        {
+          "expect": {
+            "fetch": null,
+            "serves": 42
+          },
+          "get": 1792065600
+        },
+        {
+          "dotns": 1792065600,
+          "expect": {
+            "lookUp": null,
+            "record": "2026-09-17T16:15:00Z"
+          }
+        },
+        {
+          "expect": {
+            "fetch": {
+              "ifNoneMatch": null
+            }
+          },
+          "refresh": 1792065600
+        },
+        {
+          "expect": {
+            "newGeneration": true,
+            "serves": 43,
+            "status": "updated",
+            "stores": true
+          },
+          "fetched": {
+            "document": "refresh/43-new-generation.json",
+            "etag": null,
+            "notModified": false
+          },
+          "now": 1792065600
+        },
+        {
+          "dotns": 1792065600,
+          "expect": {
+            "lookUp": "2026-10-15T00:00:00Z",
+            "record": null
+          }
+        },
+        {
+          "dotns": 1792065600,
+          "expect": {
+            "lookUp": null,
+            "record": null
+          }
+        },
+        {
+          "expect": {
+            "record": null,
+            "stores": false
+          },
+          "lookedUp": {
+            "at": {
+              "hash": "0xabababababababababababababababababababababababababababababababab",
+              "number": 182044
+            },
+            "dotns": null,
+            "generation": "2026-09-17T16:15:00Z"
+          },
+          "now": 1792065600
+        },
+        {
+          "dotns": 1792065600,
+          "expect": {
+            "lookUp": "2026-10-15T00:00:00Z",
+            "record": null
+          }
+        },
+        {
+          "expect": {
+            "record": "2026-10-15T00:00:00Z",
+            "stores": true
+          },
+          "lookedUp": {
+            "at": {
+              "hash": "0xabababababababababababababababababababababababababababababababab",
+              "number": 182044
+            },
+            "dotns": null,
+            "generation": "2026-10-15T00:00:00Z"
+          },
+          "now": 1792065600
+        },
+        {
+          "dotns": 1792152000,
+          "expect": {
+            "lookUp": null,
+            "record": "2026-10-15T00:00:00Z"
+          }
+        },
+        {
+          "build": "refresh/42.json",
+          "buildDotns": {
+            "at": {
+              "hash": "0xabababababababababababababababababababababababababababababababab",
+              "number": 182044
+            },
+            "dotns": null,
+            "generation": "2026-09-17T16:15:00Z"
+          },
+          "restart": 1792065600
+        },
+        {
+          "dotns": 1792065600,
+          "expect": {
+            "lookUp": null,
+            "record": "2026-10-15T00:00:00Z"
+          }
+        }
+      ]
+    },
+    {
+      "build": "refresh/42.json",
+      "buildDotns": {
+        "at": {
+          "hash": "0xabababababababababababababababababababababababababababababababab",
+          "number": 182044
+        },
+        "dotns": null,
+        "generation": "2026-09-17T16:15:00Z"
+      },
+      "name": "dotns-once-reads-again-and-falls-back-to-its-record",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "refresh": "once",
+      "steps": [
+        {
+          "expect": {
+            "fetch": {
+              "ifNoneMatch": null
+            },
+            "serves": null
+          },
+          "get": 1792065600
+        },
+        {
+          "expect": {
+            "newGeneration": false,
+            "serves": 42,
+            "status": "unreachable",
+            "stores": false
+          },
+          "fetched": {
+            "document": null,
+            "etag": null,
+            "notModified": false
+          },
+          "now": 1792065600
+        },
+        {
+          "dotns": 1792065600,
+          "expect": {
+            "lookUp": "2026-09-17T16:15:00Z",
+            "record": null
+          }
+        },
+        {
+          "expect": {
+            "record": "2026-09-17T16:15:00Z",
+            "stores": false
+          },
+          "lookedUp": null,
+          "now": 1792065600
+        },
+        {
+          "dotns": 1792065600,
+          "expect": {
+            "lookUp": null,
+            "record": "2026-09-17T16:15:00Z"
+          }
+        }
+      ]
+    },
+    {
+      "build": "refresh/42.json",
+      "buildDotns": {
+        "at": {
+          "hash": "0xabababababababababababababababababababababababababababababababab",
+          "number": 182044
+        },
+        "dotns": null,
+        "generation": "2026-09-17T16:15:00Z"
+      },
+      "name": "dotns-max-age-refreshes-behind-its-record",
+      "pointer": {
+        "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      },
+      "refresh": {
+        "maxAge": 3600
+      },
+      "steps": [
+        {
+          "dotns": 1792065600,
+          "expect": {
+            "lookUp": "2026-09-17T16:15:00Z",
+            "record": "2026-09-17T16:15:00Z"
+          }
+        },
+        {
+          "expect": {
+            "record": "2026-09-17T16:15:00Z",
+            "stores": true
+          },
+          "lookedUp": {
+            "at": {
+              "hash": "0xabababababababababababababababababababababababababababababababab",
+              "number": 182044
+            },
+            "dotns": null,
+            "generation": "2026-09-17T16:15:00Z"
+          },
+          "now": 1792065600
+        },
+        {
+          "dotns": 1792069199,
+          "expect": {
+            "lookUp": null,
+            "record": "2026-09-17T16:15:00Z"
+          }
+        },
+        {
+          "dotns": 1792069200,
+          "expect": {
+            "lookUp": "2026-09-17T16:15:00Z",
+            "record": "2026-09-17T16:15:00Z"
+          }
+        }
+      ]
+    }
   ]
 }
