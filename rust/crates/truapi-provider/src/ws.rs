@@ -12,7 +12,10 @@ use core::{
 	task::{Context, Poll},
 	time::Duration,
 };
-use std::sync::{Arc, Mutex};
+use std::{
+	net::SocketAddr,
+	sync::{Arc, Mutex},
+};
 
 use crate::platform::JsonRpcConnection;
 use futures::{
@@ -20,7 +23,7 @@ use futures::{
 	future::{self, Either},
 	stream::{self, AbortHandle, BoxStream, Stream, StreamExt},
 };
-use jsonrpsee_client_transport::ws::WsTransportClientBuilder;
+use jsonrpsee_client_transport::ws::{WsHandshakeError, WsTransportClientBuilder};
 use jsonrpsee_core::client::{ReceivedMessage, TransportReceiverT, TransportSenderT};
 use tokio::{
 	io::{AsyncRead, AsyncWrite, ReadBuf},
@@ -45,9 +48,12 @@ const REQUEST_BUFFER: usize = 1024;
 /// submission fetches those bodies to find its transaction.
 const MAX_MESSAGE_BYTES: u32 = 64 * 1024 * 1024;
 
-/// How long reaching the node may take, TCP and TLS each, matching the
+/// How long reaching one address may take, TCP and TLS each, matching the
 /// jsonrpsee default for the WebSocket handshake that follows.
 const DIAL_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How many redirects the handshake follows, as jsonrpsee's own dial does.
+const MAX_REDIRECTS: usize = 5;
 
 /// Open a WebSocket connection to `url`.
 ///
@@ -55,34 +61,102 @@ const DIAL_TIMEOUT: Duration = Duration::from_secs(10);
 /// writer task run on it.
 ///
 /// The socket is dialed here rather than by jsonrpsee so that every byte read
-/// from it is seen; see [`LastRead`]. Redirects are not followed.
+/// from it is seen; see [`LastRead`]. The dial keeps what jsonrpsee's does:
+/// each address the host resolves to is tried in turn, and redirects are
+/// followed.
 pub async fn connect(url: Url) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
 	if tokio::runtime::Handle::try_current().is_err() {
 		return Err(ProviderError::MissingRuntime);
 	}
-	open(&url)
+	open(url.clone())
 		.await
 		.map_err(|reason| ProviderError::Handshake { url: crate::error::redacted(&url), reason })
 }
 
-async fn open(url: &Url) -> Result<Box<dyn JsonRpcConnection>, String> {
+/// Why one URL could not be opened.
+#[derive(Debug)]
+enum Unopened {
+	/// The node answered the upgrade with a redirect to this location.
+	Redirected(String),
+	Failed(String),
+}
+
+impl From<String> for Unopened {
+	fn from(reason: String) -> Self {
+		Unopened::Failed(reason)
+	}
+}
+
+async fn open(mut url: Url) -> Result<Box<dyn JsonRpcConnection>, String> {
+	for _ in 0..=MAX_REDIRECTS {
+		match open_once(&url).await {
+			Ok(connection) => return Ok(connection),
+			Err(Unopened::Failed(reason)) => return Err(reason),
+			Err(Unopened::Redirected(location)) => {
+				url = url
+					.join(&location)
+					.map_err(|err| format!("redirected to {location}: {err}"))?;
+			},
+		}
+	}
+	Err(format!("more than {MAX_REDIRECTS} redirects"))
+}
+
+async fn open_once(url: &Url) -> Result<Box<dyn JsonRpcConnection>, Unopened> {
+	let secure = match url.scheme() {
+		"ws" => false,
+		"wss" => true,
+		other => return Err(format!("`{other}` is not a WebSocket URL scheme").into()),
+	};
 	let host = url
 		.host_str()
-		.ok_or("the URL names no host")?
+		.ok_or("the URL names no host".to_owned())?
 		.trim_start_matches('[')
 		.trim_end_matches(']');
-	let port = url.port_or_known_default().ok_or("the URL names no port")?;
-	let tcp = within_dial_timeout(TcpStream::connect((host, port))).await?;
+	let port = url.port_or_known_default().ok_or("the URL names no port".to_owned())?;
+	let server_name = match secure {
+		false => None,
+		true => Some(ServerName::try_from(host.to_owned()).map_err(|err| err.to_string())?),
+	};
+	let addresses = within_dial_timeout(tokio::net::lookup_host((host, port))).await?;
+	open_any(url, server_name.as_ref(), addresses).await
+}
+
+/// Open `url` at each of `addresses` in turn, until one answers.
+async fn open_any(
+	url: &Url,
+	server_name: Option<&ServerName<'static>>,
+	addresses: impl IntoIterator<Item = SocketAddr>,
+) -> Result<Box<dyn JsonRpcConnection>, Unopened> {
+	let mut failure = format!("{} resolves to no address", url.host_str().unwrap_or_default());
+	for address in addresses {
+		match open_at(url, server_name, address).await {
+			Err(Unopened::Failed(reason)) => {
+				tracing::debug!(%address, "WebSocket dial failed: {reason}");
+				failure = reason;
+			},
+			opened_or_redirected => return opened_or_redirected,
+		}
+	}
+	Err(failure.into())
+}
+
+/// Open `url` at `address`, over TLS when `server_name` names the host.
+async fn open_at(
+	url: &Url,
+	server_name: Option<&ServerName<'static>>,
+	address: SocketAddr,
+) -> Result<Box<dyn JsonRpcConnection>, Unopened> {
+	let tcp = within_dial_timeout(TcpStream::connect(address)).await?;
 	if let Err(err) = tcp.set_nodelay(true) {
 		tracing::debug!("TCP_NODELAY not set: {err}");
 	}
 	let last_read = LastRead::now();
 	let socket = Watched { socket: tcp, last_read: last_read.clone() };
-	if url.scheme() != "wss" {
+	let Some(server_name) = server_name else {
 		return handshake(url, socket, last_read).await;
-	}
-	let server_name = ServerName::try_from(host.to_owned()).map_err(|err| err.to_string())?;
-	let tls = TlsConnector::from(crate::tls::client_config()).connect(server_name, socket);
+	};
+	let tls = TlsConnector::from(crate::tls::client_config()).connect(server_name.clone(), socket);
 	handshake(url, within_dial_timeout(tls).await?, last_read).await
 }
 
@@ -99,7 +173,7 @@ async fn handshake<S>(
 	url: &Url,
 	socket: S,
 	last_read: LastRead,
-) -> Result<Box<dyn JsonRpcConnection>, String>
+) -> Result<Box<dyn JsonRpcConnection>, Unopened>
 where
 	S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -108,7 +182,10 @@ where
 		.max_response_size(MAX_MESSAGE_BYTES)
 		.build_with_stream(url.clone(), socket)
 		.await
-		.map_err(|err| err.to_string())?;
+		.map_err(|err| match err {
+			WsHandshakeError::Redirected { location, .. } => Unopened::Redirected(location),
+			other => Unopened::Failed(other.to_string()),
+		})?;
 	Ok(Box::new(WsConnection::start(sender, receiver, last_read)))
 }
 
@@ -170,6 +247,18 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for Watched<S> {
 		buf: &[u8],
 	) -> Poll<std::io::Result<usize>> {
 		Pin::new(&mut self.get_mut().socket).poll_write(cx, buf)
+	}
+
+	fn poll_write_vectored(
+		self: Pin<&mut Self>,
+		cx: &mut Context<'_>,
+		bufs: &[std::io::IoSlice<'_>],
+	) -> Poll<std::io::Result<usize>> {
+		Pin::new(&mut self.get_mut().socket).poll_write_vectored(cx, bufs)
+	}
+
+	fn is_write_vectored(&self) -> bool {
+		self.socket.is_write_vectored()
 	}
 
 	fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
@@ -371,7 +460,9 @@ mod tests {
 	use futures::{channel::mpsc, stream::StreamExt};
 	use jsonrpsee_core::client::{ReceivedMessage, TransportReceiverT, TransportSenderT};
 
-	use super::{LastRead, READ_TIMEOUT, Watched, WsConnection};
+	use super::{
+		LastRead, READ_TIMEOUT, Watched, WsConnection, connect, handshake, open, open_any,
+	};
 
 	/// Local error type so the fakes need no extra dev-deps.
 	#[derive(Debug)]
@@ -598,6 +689,103 @@ mod tests {
 		let read_at = tokio::time::Instant::now();
 		last_read.silence().await;
 		assert_eq!(read_at.elapsed(), READ_TIMEOUT);
+	}
+
+	/// A WebSocket server on loopback that keeps every connection open.
+	async fn websocket_server() -> std::net::SocketAddr {
+		let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+			.await
+			.expect("bind a loopback listener");
+		let address = listener.local_addr().expect("listener address");
+		tokio::spawn(async move {
+			while let Ok((socket, _)) = listener.accept().await {
+				tokio::spawn(async move {
+					let Ok(mut socket) = tokio_tungstenite::accept_async(socket).await else {
+						return;
+					};
+					while let Some(Ok(_)) = socket.next().await {}
+				});
+			}
+		});
+		address
+	}
+
+	/// A loopback server that answers every request with `response`, then closes.
+	async fn raw_server(response: String) -> std::net::SocketAddr {
+		use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+		let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+			.await
+			.expect("bind a loopback listener");
+		let address = listener.local_addr().expect("listener address");
+		tokio::spawn(async move {
+			while let Ok((mut socket, _)) = listener.accept().await {
+				let mut request = [0; 1024];
+				let _ = socket.read(&mut request).await;
+				let _ = socket.write_all(response.as_bytes()).await;
+			}
+		});
+		address
+	}
+
+	/// An address nothing listens on.
+	async fn refusing_address() -> std::net::SocketAddr {
+		let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+			.await
+			.expect("bind a loopback listener");
+		listener.local_addr().expect("listener address")
+	}
+
+	fn ws_url(address: std::net::SocketAddr) -> url::Url {
+		url::Url::parse(&format!("ws://{address}")).expect("loopback URL parses")
+	}
+
+	/// A host whose first addresses refuse the connection or the upgrade, as a
+	/// dead IPv6 route or a broken backend behind round-robin DNS does, is
+	/// still reached at the address that answers.
+	#[tokio::test]
+	async fn a_failed_address_falls_back_to_the_next() {
+		let live = websocket_server().await;
+		let addresses = [refusing_address().await, raw_server(String::new()).await, live];
+
+		let opened = open_any(&ws_url(live), None, addresses).await;
+		assert!(opened.is_ok(), "{:?}", opened.err());
+	}
+
+	#[tokio::test]
+	async fn a_redirect_is_followed() {
+		let live = websocket_server().await;
+		let redirect = raw_server(format!(
+			"HTTP/1.1 301 Moved Permanently\r\nLocation: ws://{live}/\r\nContent-Length: 0\r\n\r\n"
+		))
+		.await;
+
+		let opened = open(ws_url(redirect)).await;
+		assert!(opened.is_ok(), "{:?}", opened.err());
+	}
+
+	/// A URL that cannot be a WebSocket is refused before anything is dialed,
+	/// rather than after a connection attempt that may take the whole timeout.
+	#[tokio::test]
+	async fn a_url_that_is_not_a_websocket_is_refused_before_dialing() {
+		let Err(error) =
+			connect(url::Url::parse("https://192.0.2.1").expect("static URL parses")).await
+		else {
+			panic!("an https URL is not a WebSocket");
+		};
+		assert!(error.to_string().contains("`https` is not a WebSocket URL scheme"), "{error}");
+	}
+
+	/// jsonrpsee checks the URL it is handed even over a socket secured here,
+	/// and accepts `wss` only with its `tls` feature on.
+	#[tokio::test]
+	async fn a_wss_url_is_accepted_over_a_socket_secured_here() {
+		let live = websocket_server().await;
+		let socket = tokio::net::TcpStream::connect(live).await.expect("reach the server");
+		let url = url::Url::parse(&format!("wss://{live}")).expect("loopback URL parses");
+
+		let opened = handshake(&url, socket, LastRead::now()).await;
+		assert!(opened.is_ok(), "{:?}", opened.err());
 	}
 
 	#[tokio::test]
