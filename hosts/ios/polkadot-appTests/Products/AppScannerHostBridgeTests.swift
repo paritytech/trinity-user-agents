@@ -32,7 +32,10 @@ struct AppScannerHostBridgeTests {
         let page = StubProductPage(productId: "shop.dot")
         let window = try makeTestWindow(root: page)
         let bridge = AppScannerHostBridge(
-            routerFacade: ProductRoutersFacade(productsRouter: ProductsRouter(), navigationRouter: MockNavigationRouter()),
+            routerFacade: ProductRoutersFacade(
+                productsRouter: ProductsRouter(),
+                navigationRouter: MockNavigationRouter()
+            ),
             visibility: ProductVisibility(application: StubApplication(), window: { window }),
             makeScanner: { _, _, answer in StubScanner(answer: answer) }
         )
