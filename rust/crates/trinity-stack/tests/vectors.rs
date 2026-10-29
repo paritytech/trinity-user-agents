@@ -823,8 +823,8 @@ fn drift(key: &str, stated: Option<&[u8; 20]>, on_chain: Option<&[u8; 20]>) -> V
 }
 
 /// The check cases: a descriptor, what its chain holds and answers, and the addresses and drift
-/// a reader ends with, or its error. A null call answer is a revert. A reader must make no call
-/// the chain does not list.
+/// a check ends with, or its error. A null call answer is a revert. A check must make no call the
+/// chain does not list.
 fn dotns_cases() -> Vec<(&'static str, Value, Value, Value, Value)> {
 	let both = || registry(&[], &[("registrar", REGISTRAR), ("resolver", RESOLVER)]);
 	let calls = |answers: Vec<(String, Value)>| Value::Object(answers.into_iter().collect());

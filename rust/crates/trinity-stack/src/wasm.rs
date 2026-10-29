@@ -205,7 +205,7 @@ impl JsDotnsLookup {
 	/// The keys on which the descriptor and the chain disagree, once the lookup is done.
 	pub fn drift(&self) -> Result<Vec<Ts<DotnsDrift>>, JsValue> {
 		let DotnsStep::Done(found) = self.lookup.next() else {
-			return Err(to_js_error(Error::LookupStep("drift before the lookup is done".into())));
+			return Err(type_error("drift before the lookup is done"));
 		};
 		crate::dotns_drift(&self.descriptor, found.as_ref()).iter().map(to_js).collect()
 	}

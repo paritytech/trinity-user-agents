@@ -146,28 +146,9 @@ struct Schedule {
 }
 
 impl Schedule {
-	/// Whether to ask now, given the copy in use and when it was read.
-	fn wants(&self, refresh: Refresh, has_copy: bool, read_at: Option<i64>, now: i64) -> bool {
-		if self.pending {
-			return false;
-		}
-		match refresh {
-			_ if !has_copy => true,
-			Refresh::Never => false,
-			Refresh::Once => self.asked_at.is_none(),
-			Refresh::MaxAge(age) => {
-				// A read time ahead of the clock was kept under a skewed one, so it says nothing.
-				let read_at = read_at.filter(|read_at| *read_at <= now);
-				read_at.max(self.asked_at).is_none_or(|last| {
-					now.saturating_sub(last) >= i64::try_from(age).unwrap_or(i64::MAX)
-				})
-			},
-		}
-	}
-
-	/// Whether a caller waits for the answer instead of using the copy.
-	fn waits(&self, refresh: Refresh, has_copy: bool) -> bool {
-		!has_copy || (refresh == Refresh::Once && !self.answered)
+	/// Whether a caller waits for the answer instead of using the copy it has.
+	fn waits(&self, refresh: Refresh) -> bool {
+		refresh == Refresh::Once && !self.answered
 	}
 
 	fn ask(&mut self, now: i64) {
@@ -248,7 +229,7 @@ impl StackReader {
 		let current = stack
 			.held
 			.as_ref()
-			.filter(|_| !stack.fetches.waits(refresh, true))
+			.filter(|_| !stack.fetches.waits(refresh))
 			.map(|held| held.current(now_unix_seconds));
 		StackRead { current, fetch }
 	}
@@ -322,8 +303,21 @@ impl StackReader {
 
 impl Stack {
 	fn fetch_due(&self, refresh: Refresh, now_unix_seconds: i64) -> bool {
-		let read_at = self.held.as_ref().and_then(|held| held.fetched_at);
-		self.fetches.wants(refresh, self.held.is_some(), read_at, now_unix_seconds)
+		if self.fetches.pending {
+			return false;
+		}
+		let Some(held) = &self.held else { return true };
+		match refresh {
+			Refresh::Never => false,
+			Refresh::Once => self.fetches.asked_at.is_none(),
+			Refresh::MaxAge(age) => {
+				// A fetch time ahead of the clock was kept under a skewed one, so it says nothing.
+				let fetched_at = held.fetched_at.filter(|at| *at <= now_unix_seconds);
+				fetched_at.max(self.fetches.asked_at).is_none_or(|last| {
+					now_unix_seconds.saturating_sub(last) >= i64::try_from(age).unwrap_or(i64::MAX)
+				})
+			},
+		}
 	}
 
 	fn request(&self, pointer: &Pointer) -> FetchRequest {

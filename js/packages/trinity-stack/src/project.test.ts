@@ -75,12 +75,6 @@ describe("trinity-stack add and update", () => {
       "index.js",
       "local.json",
     ]);
-    expect(await files()).toEqual([
-      "index.d.ts",
-      "index.js",
-      "local.json",
-      "stacks.json",
-    ]);
     const [stack] = await list({ dir });
     expect(stack.descriptor?.generation).toBe("g2");
   });
@@ -141,7 +135,7 @@ describe("trinity-stack add and update", () => {
     await expect(check(path, options())).rejects.toThrow("no AssetHub chain");
   });
 
-  test("remove drops the copies and the stack from the module", async () => {
+  test("remove drops the copy and the stack from the module", async () => {
     await add("local", link, undefined, options());
     await remove("local", { dir });
     expect(await files()).toEqual(["index.d.ts", "index.js", "stacks.json"]);

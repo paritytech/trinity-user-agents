@@ -276,7 +276,22 @@ mod tests {
 
 	#[test]
 	fn answering_the_wrong_step_is_refused_and_changes_nothing() {
-		let descriptor: Descriptor = serde_json::from_str(r#"{"$v":1,"sequence":1,"generation":"g","id":"a","name":"A","network":"n","tld":"dot","services":[],"chains":[{"role":"Relay","genesisHash":"0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92","rpc":["wss://relay.example"]}]}"#).unwrap();
+		let descriptor = Descriptor::from_json(serde_json::json!({
+			"$v": 1,
+			"sequence": 1,
+			"generation": "g",
+			"id": "a",
+			"name": "A",
+			"network": "n",
+			"tld": "dot",
+			"services": [],
+			"chains": [{
+				"role": "Relay",
+				"genesisHash": format!("0x{}", "86".repeat(32)),
+				"rpc": ["wss://relay.example"],
+			}],
+		}))
+		.unwrap();
 		let mut lookup = DotnsLookup::new(&descriptor);
 		assert_eq!(lookup.answer(&[]).map_err(|error| error.code()), Err("lookup-step"));
 		lookup.storage(Some(&[0xd1; 20])).unwrap();

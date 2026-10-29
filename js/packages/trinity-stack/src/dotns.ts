@@ -2,18 +2,13 @@
 // docs/rfcs/trinity-stack-descriptor.md describes. Readers use the descriptor's `dotns` as-is; an
 // operator reads the chain to fill it or to detect drift. The trinity-stack crate's `DotnsLookup`
 // decides every step; this module only makes the reads.
-import type {
-  Block,
-  Descriptor,
-  DotnsDrift,
-  DotnsLookup,
-} from "../wasm/trinity_stack.js";
+import type { Block, Descriptor, DotnsDrift } from "../wasm/trinity_stack.js";
 import { type Fetch, DEFAULT_TIMEOUT_MS } from "./index.js";
 import { wasm } from "./wasm.js";
 
 export type { DotnsDrift } from "../wasm/trinity_stack.js";
 
-/** How `readDotns` reaches Asset Hub, for a reader with its own client, such as a light client. */
+/** How `readDotns` and `checkDotns` reach Asset Hub, for a caller with its own client, such as a light client. */
 export type DotnsTransport = {
   /** The block every read is made at, such as the latest finalized one. */
   at(): Promise<Block>;
@@ -43,8 +38,8 @@ export async function readDotns(
   descriptor: Descriptor,
   options: DotnsOptions = {},
 ): Promise<{ at: Block; addresses: Record<string, string> | undefined }> {
-  const { at, result } = await lookUp(descriptor, options, (_, done) => done);
-  return { at, addresses: result };
+  const { at, addresses } = await lookUp(descriptor, options);
+  return { at, addresses };
 }
 
 /**
@@ -55,17 +50,18 @@ export async function checkDotns(
   descriptor: Descriptor,
   options: DotnsOptions = {},
 ): Promise<{ at: Block; drift: DotnsDrift[] }> {
-  const { at, result } = await lookUp(descriptor, options, (lookup) =>
-    lookup.drift(),
-  );
-  return { at, drift: result };
+  const { at, drift } = await lookUp(descriptor, options);
+  return { at, drift };
 }
 
-async function lookUp<T>(
+async function lookUp(
   descriptor: Descriptor,
   options: DotnsOptions,
-  finish: (lookup: DotnsLookup, done: Record<string, string> | undefined) => T,
-): Promise<{ at: Block; result: T }> {
+): Promise<{
+  at: Block;
+  addresses: Record<string, string> | undefined;
+  drift: DotnsDrift[];
+}> {
   let transport = options.transport;
   let close = () => {};
   if (!transport) {
@@ -79,7 +75,8 @@ async function lookUp<T>(
     try {
       for (;;) {
         const step = lookup.next();
-        if ("done" in step) return { at, result: finish(lookup, step.done) };
+        if ("done" in step)
+          return { at, addresses: step.done, drift: lookup.drift() };
         if ("storage" in step)
           lookup.storage(
             (await transport.storage(step.storage, at)) ?? undefined,

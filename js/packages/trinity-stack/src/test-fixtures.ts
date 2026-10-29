@@ -82,14 +82,14 @@ export type DotnsChain = {
 
 /**
  * Asset Hub as a dotNS vector has it, at `AT`. `onRead` sees the block of every storage read and
- * call, and `at` overrides the block a lookup reads at.
+ * call.
  */
 export function transportOf(
   chain: DotnsChain,
-  options: { at?: () => Promise<Block>; onRead?: (at: Block) => void } = {},
+  options: { onRead?: (at: Block) => void } = {},
 ): DotnsTransport {
   return {
-    at: options.at ?? (async () => AT),
+    at: async () => AT,
     storage: async (key, at) => {
       if (key !== chain.storageKey) throw new Error(`unexpected key ${key}`);
       options.onRead?.(at);

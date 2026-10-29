@@ -307,7 +307,7 @@ impl Descriptor {
 		if let Some(dotns) = &self.dotns {
 			self.require_chain("AssetHub")?;
 			for (key, address) in dotns {
-				// A registry key is a `bytes32`, which `get(bytes32)` reads it as.
+				// `get(bytes32)` takes the key as one right-padded `bytes32`.
 				if !(1..=32).contains(&key.len()) ||
 					!key.bytes().all(|byte| byte.is_ascii_alphanumeric())
 				{
