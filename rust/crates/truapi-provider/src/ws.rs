@@ -7,18 +7,27 @@
 //! stream, and the consumer recovers by connecting again.
 
 use core::{
+	pin::Pin,
 	sync::atomic::{AtomicBool, Ordering},
+	task::{Context, Poll},
 	time::Duration,
 };
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::platform::JsonRpcConnection;
 use futures::{
 	channel::mpsc,
+	future::{self, Either},
 	stream::{self, AbortHandle, BoxStream, Stream, StreamExt},
 };
 use jsonrpsee_client_transport::ws::WsTransportClientBuilder;
 use jsonrpsee_core::client::{ReceivedMessage, TransportReceiverT, TransportSenderT};
+use tokio::{
+	io::{AsyncRead, AsyncWrite, ReadBuf},
+	net::TcpStream,
+	time::Instant,
+};
+use tokio_rustls::{TlsConnector, rustls::pki_types::ServerName};
 use url::Url;
 
 use crate::error::ProviderError;
@@ -36,27 +45,140 @@ const REQUEST_BUFFER: usize = 1024;
 /// submission fetches those bodies to find its transaction.
 const MAX_MESSAGE_BYTES: u32 = 64 * 1024 * 1024;
 
+/// How long reaching the node may take, TCP and TLS each, matching the
+/// jsonrpsee default for the WebSocket handshake that follows.
+const DIAL_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Open a WebSocket connection to `url`.
 ///
 /// Requires an ambient tokio runtime; both the handshake and the spawned
 /// writer task run on it.
+///
+/// The socket is dialed here rather than by jsonrpsee so that every byte read
+/// from it is seen; see [`LastRead`]. Redirects are not followed.
 pub async fn connect(url: Url) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
 	if tokio::runtime::Handle::try_current().is_err() {
 		return Err(ProviderError::MissingRuntime);
 	}
+	open(&url)
+		.await
+		.map_err(|reason| ProviderError::Handshake { url: crate::error::redacted(&url), reason })
+}
 
+async fn open(url: &Url) -> Result<Box<dyn JsonRpcConnection>, String> {
+	let host = url
+		.host_str()
+		.ok_or("the URL names no host")?
+		.trim_start_matches('[')
+		.trim_end_matches(']');
+	let port = url.port_or_known_default().ok_or("the URL names no port")?;
+	let tcp = within_dial_timeout(TcpStream::connect((host, port))).await?;
+	if let Err(err) = tcp.set_nodelay(true) {
+		tracing::debug!("TCP_NODELAY not set: {err}");
+	}
+	let last_read = LastRead::now();
+	let socket = Watched { socket: tcp, last_read: last_read.clone() };
+	if url.scheme() != "wss" {
+		return handshake(url, socket, last_read).await;
+	}
+	let server_name = ServerName::try_from(host.to_owned()).map_err(|err| err.to_string())?;
+	let tls = TlsConnector::from(crate::tls::client_config()).connect(server_name, socket);
+	handshake(url, within_dial_timeout(tls).await?, last_read).await
+}
+
+async fn within_dial_timeout<T>(
+	dial: impl Future<Output = std::io::Result<T>>,
+) -> Result<T, String> {
+	match tokio::time::timeout(DIAL_TIMEOUT, dial).await {
+		Ok(dialed) => dialed.map_err(|err| err.to_string()),
+		Err(_elapsed) => Err(format!("no connection within {}s", DIAL_TIMEOUT.as_secs())),
+	}
+}
+
+async fn handshake<S>(
+	url: &Url,
+	socket: S,
+	last_read: LastRead,
+) -> Result<Box<dyn JsonRpcConnection>, String>
+where
+	S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
 	let (sender, receiver) = WsTransportClientBuilder::default()
-		.with_custom_cert_store(crate::tls::client_config().as_ref().clone())
 		.max_request_size(MAX_MESSAGE_BYTES)
 		.max_response_size(MAX_MESSAGE_BYTES)
-		.build(url.clone())
+		.build_with_stream(url.clone(), socket)
 		.await
-		.map_err(|err| ProviderError::Handshake {
-			url: crate::error::redacted(&url),
-			reason: err.to_string(),
-		})?;
+		.map_err(|err| err.to_string())?;
+	Ok(Box::new(WsConnection::start(sender, receiver, last_read)))
+}
 
-	Ok(Box::new(WsConnection::start(sender, receiver)))
+/// When bytes last arrived on a connection's socket.
+///
+/// jsonrpsee hands over a message only once all of it has arrived, and a 13 MiB
+/// block body on a slow link takes longer than [`READ_TIMEOUT`], so the reader
+/// times out the silence measured here rather than the wait for a message.
+#[derive(Clone)]
+struct LastRead(Arc<Mutex<Instant>>);
+
+impl LastRead {
+	fn now() -> Self {
+		LastRead(Arc::new(Mutex::new(Instant::now())))
+	}
+
+	fn touch(&self) {
+		*self.0.lock().expect("last-read mutex poisoned") = Instant::now();
+	}
+
+	/// Resolves once nothing has arrived for [`READ_TIMEOUT`].
+	async fn silence(&self) {
+		loop {
+			let deadline = *self.0.lock().expect("last-read mutex poisoned") + READ_TIMEOUT;
+			if Instant::now() >= deadline {
+				return;
+			}
+			tokio::time::sleep_until(deadline).await;
+		}
+	}
+}
+
+/// A socket that records each read in its [`LastRead`].
+struct Watched<S> {
+	socket: S,
+	last_read: LastRead,
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for Watched<S> {
+	fn poll_read(
+		self: Pin<&mut Self>,
+		cx: &mut Context<'_>,
+		buf: &mut ReadBuf<'_>,
+	) -> Poll<std::io::Result<()>> {
+		let this = self.get_mut();
+		let before = buf.filled().len();
+		let polled = Pin::new(&mut this.socket).poll_read(cx, buf);
+		if buf.filled().len() > before {
+			this.last_read.touch();
+		}
+		polled
+	}
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for Watched<S> {
+	fn poll_write(
+		self: Pin<&mut Self>,
+		cx: &mut Context<'_>,
+		buf: &[u8],
+	) -> Poll<std::io::Result<usize>> {
+		Pin::new(&mut self.get_mut().socket).poll_write(cx, buf)
+	}
+
+	fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+		Pin::new(&mut self.get_mut().socket).poll_flush(cx)
+	}
+
+	fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+		Pin::new(&mut self.get_mut().socket).poll_shutdown(cx)
+	}
 }
 
 /// A live WebSocket connection exposed as a raw JSON-RPC pipe.
@@ -71,24 +193,24 @@ impl WsConnection {
 	/// Spawn the writer task and set up the responses stream.
 	///
 	/// Generic over the jsonrpsee transport traits so tests can inject
-	/// in-memory transports.
-	fn start<S, R>(sender: S, receiver: R) -> Self
+	/// in-memory transports. `last_read` is the receiver's socket's.
+	fn start<S, R>(sender: S, receiver: R, last_read: LastRead) -> Self
 	where
 		S: TransportSenderT + Send,
 		R: TransportReceiverT + Send,
 	{
-		Self::start_with_buffer(sender, receiver, REQUEST_BUFFER)
+		Self::start_with_buffer(sender, receiver, last_read, REQUEST_BUFFER)
 	}
 
 	/// [`start`](Self::start) with an explicit request-buffer depth, so tests
 	/// can force an overflow deterministically.
-	fn start_with_buffer<S, R>(sender: S, receiver: R, buffer: usize) -> Self
+	fn start_with_buffer<S, R>(sender: S, receiver: R, last_read: LastRead, buffer: usize) -> Self
 	where
 		S: TransportSenderT + Send,
 		R: TransportReceiverT + Send,
 	{
 		let (requests, request_queue) = mpsc::channel(buffer);
-		let (responses, stream_abort) = stream::abortable(response_stream(receiver));
+		let (responses, stream_abort) = stream::abortable(response_stream(receiver, last_read));
 		tokio::spawn(writer_pump(sender, request_queue, stream_abort.clone()));
 		WsConnection {
 			requests: Mutex::new(requests),
@@ -143,7 +265,7 @@ impl Drop for WsConnection {
 }
 
 /// How often a quiet connection is pinged, and how long the reader waits for any
-/// frame before declaring the socket dead.
+/// byte before declaring the socket dead.
 ///
 /// The read timeout is a multiple of the ping interval so that one lost ping or
 /// a slow peer does not tear down a healthy connection: two pings must go
@@ -192,32 +314,41 @@ async fn writer_pump<S: TransportSenderT>(
 }
 
 /// Yield every inbound text frame; the stream ends on transport error, EOF, or
-/// silence past [`READ_TIMEOUT`], which is the disconnect signal consumers rely
-/// on.
+/// no bytes arriving for [`READ_TIMEOUT`], which is the disconnect signal
+/// consumers rely on.
 ///
 /// The timeout is what makes that signal reliable. A half-open socket — the peer
 /// gone without a FIN, so the kernel keeps the connection open — delivers neither
 /// data nor error, and `receive()` on it simply never returns. The writer pings
 /// every [`KEEPALIVE_INTERVAL`], so a live peer produces at least a `Pong` well
-/// inside this window and only a dead one falls silent for the whole of it.
-fn response_stream<R: TransportReceiverT + Send>(receiver: R) -> impl Stream<Item = String> + Send {
-	stream::unfold(receiver, |mut receiver| {
+/// inside this window and only a dead one falls silent for the whole of it. A
+/// message still arriving keeps the connection alive however long it takes.
+fn response_stream<R: TransportReceiverT + Send>(
+	receiver: R,
+	last_read: LastRead,
+) -> impl Stream<Item = String> + Send {
+	stream::unfold((receiver, last_read), |(mut receiver, last_read)| {
 		async move {
 			loop {
-				let received = match tokio::time::timeout(READ_TIMEOUT, receiver.receive()).await {
-					Ok(received) => received,
-					Err(_elapsed) => {
-						tracing::warn!(
-							"no WebSocket traffic for {}s; treating the connection as dead",
-							READ_TIMEOUT.as_secs()
-						);
-						return None;
-					},
+				let received = {
+					let receive = receiver.receive();
+					let silence = last_read.silence();
+					futures::pin_mut!(receive, silence);
+					match future::select(receive, silence).await {
+						Either::Left((received, _)) => received,
+						Either::Right(((), _)) => {
+							tracing::warn!(
+								"no WebSocket traffic for {}s; treating the connection as dead",
+								READ_TIMEOUT.as_secs()
+							);
+							return None;
+						},
+					}
 				};
 				match received {
-					Ok(ReceivedMessage::Text(text)) => return Some((text, receiver)),
+					Ok(ReceivedMessage::Text(text)) => return Some((text, (receiver, last_read))),
 					Ok(ReceivedMessage::Bytes(bytes)) => match String::from_utf8(bytes) {
-						Ok(text) => return Some((text, receiver)),
+						Ok(text) => return Some((text, (receiver, last_read))),
 						Err(_) => tracing::warn!("dropping non-UTF-8 binary WebSocket frame"),
 					},
 					// Answers our keepalive: proof of life, nothing to forward.
@@ -240,7 +371,7 @@ mod tests {
 	use futures::{channel::mpsc, stream::StreamExt};
 	use jsonrpsee_core::client::{ReceivedMessage, TransportReceiverT, TransportSenderT};
 
-	use super::WsConnection;
+	use super::{LastRead, READ_TIMEOUT, Watched, WsConnection};
 
 	/// Local error type so the fakes need no extra dev-deps.
 	#[derive(Debug)]
@@ -331,6 +462,7 @@ mod tests {
 		let connection = WsConnection::start(
 			FakeSender { sent: sent_tx, closed: std::sync::Arc::clone(&sender_closed) },
 			FakeReceiver { frames: frames_rx },
+			LastRead::now(),
 		);
 		Harness { connection, sent: sent_rx, frames: frames_tx, sender_closed }
 	}
@@ -414,9 +546,58 @@ mod tests {
 		let connection = WsConnection::start(
 			FakeSender { sent, closed: std::sync::Arc::new(Mutex::new(false)) },
 			SilentReceiver,
+			LastRead::now(),
 		);
 		let mut responses = connection.responses();
 		assert_eq!(responses.next().await, None);
+	}
+
+	/// One message whose bytes trickle in for several read timeouts, as a
+	/// 13 MiB Bulletin block body does on a link under about 0.3 MB/s.
+	struct TricklingReceiver {
+		last_read: LastRead,
+	}
+
+	impl TransportReceiverT for TricklingReceiver {
+		type Error = FakeError;
+
+		async fn receive(&mut self) -> Result<ReceivedMessage, Self::Error> {
+			for _ in 0..10 {
+				tokio::time::sleep(READ_TIMEOUT / 2).await;
+				self.last_read.touch();
+			}
+			Ok(ReceivedMessage::Text("block".to_owned()))
+		}
+	}
+
+	/// A healthy connection carrying a slow message must not be treated as dead.
+	#[tokio::test(start_paused = true)]
+	async fn a_message_slower_than_the_read_timeout_still_arrives() {
+		let (sent, _sent_rx) = mpsc::unbounded::<String>();
+		let last_read = LastRead::now();
+		let connection = WsConnection::start(
+			FakeSender { sent, closed: std::sync::Arc::new(Mutex::new(false)) },
+			TricklingReceiver { last_read: last_read.clone() },
+			last_read,
+		);
+		assert_eq!(connection.responses().next().await.as_deref(), Some("block"));
+	}
+
+	/// Bytes read through the socket restart the silence the reader times out.
+	#[tokio::test(start_paused = true)]
+	async fn a_read_from_the_socket_restarts_the_silence() {
+		use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+		let (near, mut far) = tokio::io::duplex(64);
+		let last_read = LastRead::now();
+		let mut socket = Watched { socket: near, last_read: last_read.clone() };
+		tokio::time::advance(READ_TIMEOUT / 2).await;
+		far.write_all(b"x").await.expect("the far end writes");
+		socket.read_exact(&mut [0; 1]).await.expect("the byte arrives");
+
+		let read_at = tokio::time::Instant::now();
+		last_read.silence().await;
+		assert_eq!(read_at.elapsed(), READ_TIMEOUT);
 	}
 
 	#[tokio::test]
@@ -424,7 +605,8 @@ mod tests {
 		// A dead socket (send fails) must end the responses stream so the
 		// consumer sees a disconnect instead of hanging on the request.
 		let (_frames_tx, frames_rx) = mpsc::unbounded::<Result<ReceivedMessage, FakeError>>();
-		let connection = WsConnection::start(FailingSender, FakeReceiver { frames: frames_rx });
+		let connection =
+			WsConnection::start(FailingSender, FakeReceiver { frames: frames_rx }, LastRead::now());
 		let mut responses = connection.responses();
 		connection.send("req".to_owned());
 		assert_eq!(responses.next().await, None);
@@ -435,8 +617,12 @@ mod tests {
 		// The writer stalls on the first request, so a tiny buffer fills and a
 		// later send overflows; the consumer must see the stream end, not hang.
 		let (_frames_tx, frames_rx) = mpsc::unbounded::<Result<ReceivedMessage, FakeError>>();
-		let connection =
-			WsConnection::start_with_buffer(StalledSender, FakeReceiver { frames: frames_rx }, 2);
+		let connection = WsConnection::start_with_buffer(
+			StalledSender,
+			FakeReceiver { frames: frames_rx },
+			LastRead::now(),
+			2,
+		);
 		let mut responses = connection.responses();
 		for _ in 0..64 {
 			connection.send("req".to_owned());
