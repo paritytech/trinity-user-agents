@@ -40,14 +40,6 @@ pub fn serialize_optional_bytes<S: serde::Serializer>(
 	}
 }
 
-/// Serialises bytes as lowercase 0x-prefixed hex.
-pub fn serialize_hex<S: serde::Serializer>(
-	bytes: impl AsRef<[u8]>,
-	serializer: S,
-) -> Result<S::Ok, S::Error> {
-	serializer.serialize_str(&to_hex(bytes.as_ref()))
-}
-
 /// Which schemes a URL may use where it appears.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Schemes {

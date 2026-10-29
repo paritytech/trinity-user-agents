@@ -13,8 +13,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha512};
 use std::{collections::BTreeMap, fs, path::PathBuf};
 use trinity_stack::{
-	CurrentStack, DOTNS_KEYS, Descriptor, DotnsAnswer, DotnsLookup, DotnsStep, FetchRequest,
-	Fetched, Pointer, Refresh, Served, StackReader, accept, dotns_drift, open, public_key, sign,
+	CurrentStack, FetchRequest, Fetched, Pointer, Refresh, Served, StackReader, accept, open,
+	public_key, sign,
 };
 
 const SECRET: [u8; 32] = [7; 32];
@@ -442,44 +442,6 @@ fn document_cases() -> Vec<DocumentCase> {
 			with(|value| value["contracts"]["accountDataStore"] = json!(hex(&[0x22; 32]))),
 			"invalid-hex",
 		),
-		plain("dotns-set", stating(both_stated()), "ok"),
-		plain(
-			"dotns-without-asset-hub",
-			with(|value| {
-				value["dotns"] = both_stated();
-				value["chains"].as_array_mut().unwrap().remove(1);
-				value.as_object_mut().unwrap().remove("assets");
-			}),
-			"unknown-chain-role",
-		),
-		plain(
-			"dotns-key-longer-than-bytes32",
-			stating(json!({ "a".repeat(33): hex(&REGISTRAR) })),
-			"dotns-key",
-		),
-		plain(
-			"dotns-key-with-a-dash",
-			stating(json!({ "store-factory": hex(&REGISTRAR) })),
-			"dotns-key",
-		),
-		plain("dotns-key-empty", stating(json!({ "": hex(&REGISTRAR) })), "dotns-key"),
-		plain("dotns-key-of-32-bytes", stating(json!({ "a".repeat(32): hex(&REGISTRAR) })), "ok"),
-		plain(
-			"dotns-key-with-an-underscore",
-			stating(json!({ "store_factory": hex(&REGISTRAR) })),
-			"dotns-key",
-		),
-		plain("dotns-key-not-ascii", stating(json!({ "régistrar": hex(&REGISTRAR) })), "dotns-key"),
-		plain(
-			"dotns-address-zero",
-			stating(json!({ "registrar": hex(&[0; 20]) })),
-			"dotns-zero-address",
-		),
-		plain(
-			"dotns-address-uppercase",
-			stating(json!({ "registrar": hex(&REGISTRAR).to_uppercase().replace("0X", "0x") })),
-			"invalid-hex",
-		),
 		plain(
 			"rpc-plain-ws-on-hostname",
 			with(|value| {
@@ -780,194 +742,6 @@ fn link_cases() -> Vec<(&'static str, String, Value)> {
 	]
 }
 
-const DISPATCHER: [u8; 20] = [0xd1; 20];
-const ROOT_DISPATCHER: [u8; 20] = [0xd0; 20];
-const CONTROLLER: [u8; 20] = [0xc0; 20];
-const REGISTRY: [u8; 20] = [0xee; 20];
-const REGISTRAR: [u8; 20] = [0xaa; 20];
-const RESOLVER: [u8; 20] = [0xbb; 20];
-const MOVED: [u8; 20] = [0xcc; 20];
-/// `twox128("DotnsGateway") ++ twox128("DispatcherAddress")`.
-const DISPATCHER_ADDRESS_KEY: &str =
-	"0x57ca9018d648b40a8286a471e82c3808f31ce5ec278db3dff6304333f0019302";
-const PROTOCOL_REGISTRY: &str = "0x7656419f";
-const TARGET: &str = "0xcc1f2afa";
-/// A registry key no release of this crate knows, which a check reads because the descriptor
-/// has it.
-const NEW_KEY: &str = "newContract";
-
-/// The base descriptor with `dotns` set.
-fn stating(dotns: Value) -> Value {
-	with(|value| value["dotns"] = dotns)
-}
-
-fn both_stated() -> Value {
-	json!({ "registrar": hex(&REGISTRAR), "resolver": hex(&RESOLVER) })
-}
-
-/// An address as a call returns it: one ABI word.
-fn word(address: &[u8; 20]) -> Value {
-	json!(hex(&[[0; 12].as_slice(), address].concat()))
-}
-
-fn call(to: &[u8; 20], input: &str) -> String {
-	format!("{}:{input}", hex(to))
-}
-
-/// The registry's answers to `get(bytes32)` for every key in `DOTNS_KEYS` and `extra`: `set`
-/// ones hold an address, the rest are unset.
-fn registry(extra: &[&str], set: &[(&str, [u8; 20])]) -> Vec<(String, Value)> {
-	DOTNS_KEYS
-		.iter()
-		.chain(extra)
-		.map(|key| {
-			let mut input = format!("0x8eaa6ac0{}", hex::encode(key));
-			input.extend(std::iter::repeat_n('0', 74 - input.len()));
-			let value =
-				set.iter().find(|(name, _)| name == key).map_or([0; 20], |(_, value)| *value);
-			(call(&REGISTRY, &input), word(&value))
-		})
-		.collect()
-}
-
-fn drift(key: &str, stated: Option<&[u8; 20]>, on_chain: Option<&[u8; 20]>) -> Value {
-	json!({ "key": key, "stated": stated.map(|address| hex(address)), "onChain": on_chain.map(|address| hex(address)) })
-}
-
-/// The check cases: a descriptor, what its chain holds and answers, and the addresses and drift
-/// a check ends with, or its error. A null call answer is a revert. A check must make no call the
-/// chain does not list.
-fn dotns_cases() -> Vec<(&'static str, Value, Value, Value, Value)> {
-	let both = || registry(&[], &[("registrar", REGISTRAR), ("resolver", RESOLVER)]);
-	let calls = |answers: Vec<(String, Value)>| Value::Object(answers.into_iter().collect());
-	let at_gateway = |registry: Vec<(String, Value)>| {
-		calls([vec![(call(&DISPATCHER, PROTOCOL_REGISTRY), word(&REGISTRY))], registry].concat())
-	};
-	let found = |drift: Vec<Value>| json!({ "found": both_stated(), "drift": drift });
-	vec![
-		(
-			"controller-at-the-gateway",
-			stating(both_stated()),
-			json!(hex(&DISPATCHER)),
-			at_gateway(both()),
-			found(vec![]),
-		),
-		(
-			"dispatcher-behind-target",
-			stating(both_stated()),
-			json!(hex(&ROOT_DISPATCHER)),
-			calls(
-				[
-					vec![
-						(call(&ROOT_DISPATCHER, PROTOCOL_REGISTRY), Value::Null),
-						(call(&ROOT_DISPATCHER, TARGET), word(&CONTROLLER)),
-						(call(&CONTROLLER, PROTOCOL_REGISTRY), word(&REGISTRY)),
-					],
-					both(),
-				]
-				.concat(),
-			),
-			found(vec![]),
-		),
-		(
-			"stated-address-moved",
-			stating(json!({ "registrar": hex(&REGISTRAR), "resolver": hex(&MOVED) })),
-			json!(hex(&DISPATCHER)),
-			at_gateway(both()),
-			found(vec![drift("resolver", Some(&MOVED), Some(&RESOLVER))]),
-		),
-		(
-			"registry-sets-a-key-the-descriptor-leaves-out",
-			stating(json!({ "registrar": hex(&REGISTRAR) })),
-			json!(hex(&DISPATCHER)),
-			at_gateway(both()),
-			found(vec![drift("resolver", None, Some(&RESOLVER))]),
-		),
-		(
-			"descriptor-has-a-key-the-registry-leaves-unset",
-			stating(
-				json!({ "registrar": hex(&REGISTRAR), "resolver": hex(&RESOLVER), "storeFactory": hex(&MOVED) }),
-			),
-			json!(hex(&DISPATCHER)),
-			at_gateway(both()),
-			found(vec![drift("storeFactory", Some(&MOVED), None)]),
-		),
-		(
-			"a-stated-key-outside-the-known-ones-is-read-too",
-			stating(
-				json!({ "registrar": hex(&REGISTRAR), "resolver": hex(&RESOLVER), NEW_KEY: hex(&MOVED) }),
-			),
-			json!(hex(&DISPATCHER)),
-			at_gateway(registry(
-				&[NEW_KEY],
-				&[("registrar", REGISTRAR), ("resolver", RESOLVER), (NEW_KEY, MOVED)],
-			)),
-			json!({ "found": { "registrar": hex(&REGISTRAR), "resolver": hex(&RESOLVER), NEW_KEY: hex(&MOVED) }, "drift": [] }),
-		),
-		(
-			"no-gateway-and-none-stated",
-			base(),
-			Value::Null,
-			calls(vec![]),
-			json!({ "found": null, "drift": [] }),
-		),
-		(
-			"no-gateway-but-addresses-stated",
-			stating(both_stated()),
-			Value::Null,
-			calls(vec![]),
-			json!({
-				"found": null,
-				"drift": [drift("registrar", Some(&REGISTRAR), None), drift("resolver", Some(&RESOLVER), None)],
-			}),
-		),
-		(
-			"dispatcher-answers-neither",
-			stating(both_stated()),
-			json!(hex(&ROOT_DISPATCHER)),
-			calls(vec![
-				(call(&ROOT_DISPATCHER, PROTOCOL_REGISTRY), Value::Null),
-				(call(&ROOT_DISPATCHER, TARGET), Value::Null),
-			]),
-			json!({ "error": "unknown-dispatcher" }),
-		),
-		(
-			"gateway-holds-no-address",
-			stating(both_stated()),
-			json!("0x1234"),
-			calls(vec![]),
-			json!({ "error": "dispatcher-address" }),
-		),
-		(
-			"registry-word-with-high-bytes",
-			stating(both_stated()),
-			json!(hex(&DISPATCHER)),
-			calls(vec![(call(&DISPATCHER, PROTOCOL_REGISTRY), json!(hex(&[0xff; 32])))]),
-			json!({ "error": "not-an-address" }),
-		),
-		(
-			"controller-behind-target-reverts",
-			stating(both_stated()),
-			json!(hex(&ROOT_DISPATCHER)),
-			calls(vec![
-				(call(&ROOT_DISPATCHER, PROTOCOL_REGISTRY), Value::Null),
-				(call(&ROOT_DISPATCHER, TARGET), word(&CONTROLLER)),
-				(call(&CONTROLLER, PROTOCOL_REGISTRY), Value::Null),
-			]),
-			json!({ "error": "reverted" }),
-		),
-		(
-			"registry-get-reverts",
-			stating(both_stated()),
-			json!(hex(&DISPATCHER)),
-			at_gateway(
-				registry(&[], &[]).into_iter().map(|(call, _)| (call, Value::Null)).collect(),
-			),
-			json!({ "error": "reverted" }),
-		),
-	]
-}
-
 const NEW_GENERATION: &str = "2026-10-15T00:00:00Z";
 
 /// The signed copies the refresh cases fetch and bundle, by file.
@@ -1203,16 +977,10 @@ fn generate() -> BTreeMap<PathBuf, Vec<u8>> {
 		.into_iter()
 		.map(|(name, link, expect)| json!({ "name": name, "link": link, "expect": expect }))
 		.collect();
-	let dotns: Vec<Value> = dotns_cases()
-		.into_iter()
-		.map(|(name, descriptor, storage, calls, expect)| {
-			json!({ "name": name, "descriptor": descriptor, "storageKey": DISPATCHER_ADDRESS_KEY, "storage": storage, "calls": calls, "expect": expect })
-		})
-		.collect();
 	for (path, bytes) in refresh_documents() {
 		file(path.into(), bytes);
 	}
-	let cases = json!({ "documents": documents, "reader": reader, "links": links, "dotns": dotns, "refresh": refresh_cases() });
+	let cases = json!({ "documents": documents, "reader": reader, "links": links, "refresh": refresh_cases() });
 	let mut cases = serde_json::to_vec_pretty(&cases).unwrap();
 	cases.push(b'\n');
 	files.insert(PathBuf::from("cases.json"), cases);
@@ -1349,11 +1117,6 @@ fn every_vector_gets_its_verdict() {
 		assert_eq!(outcome, case["expect"], "{}", case["name"]);
 	}
 
-	for case in cases["dotns"].as_array().unwrap() {
-		let outcome = check_dotns(case).unwrap_or_else(|error| json!({ "error": error.code() }));
-		assert_eq!(outcome, case["expect"], "{}", case["name"]);
-	}
-
 	for case in cases["refresh"].as_array().unwrap() {
 		run_refresh(case, file);
 	}
@@ -1416,40 +1179,5 @@ fn run_refresh(case: &Value, file: impl Fn(&Value) -> Option<Vec<u8>>) {
 			panic!("{name} step {index}: unknown step {step}");
 		};
 		assert_eq!(outcome, step["expect"], "{name} step {index}");
-	}
-}
-
-/// Checks a dotNS vector's descriptor against its chain.
-fn check_dotns(case: &Value) -> Result<Value, trinity_stack::Error> {
-	let bytes = |value: &Value| hex::decode(&value.as_str().unwrap()[2..]).unwrap();
-	let descriptor = Descriptor::from_json(case["descriptor"].clone()).unwrap();
-	let mut lookup = DotnsLookup::new(&descriptor);
-	loop {
-		match lookup.next() {
-			DotnsStep::Storage(key) => {
-				assert_eq!(json!(hex(&key)), case["storageKey"], "{}: storage key", case["name"]);
-				lookup.storage(
-					Some(&case["storage"]).filter(|value| !value.is_null()).map(bytes).as_deref(),
-				)?
-			},
-			DotnsStep::Calls(calls) => {
-				let answers: Vec<DotnsAnswer> = calls
-					.iter()
-					.map(|call| {
-						let key = format!("{}:{}", hex(&call.to), hex(&call.input));
-						match case["calls"].get(&key) {
-							None => panic!("{}: unexpected call {key}", case["name"]),
-							Some(Value::Null) => DotnsAnswer::Reverted,
-							Some(value) => DotnsAnswer::Returned(bytes(value)),
-						}
-					})
-					.collect();
-				lookup.answer(&answers)?
-			},
-			DotnsStep::Done(found) => {
-				let drift = dotns_drift(&descriptor, found.as_ref());
-				return Ok(json!({ "found": found, "drift": drift }));
-			},
-		}
 	}
 }

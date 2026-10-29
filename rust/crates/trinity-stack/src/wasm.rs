@@ -2,9 +2,9 @@
 //! crate's own types, and errors as a `TrinityStackError` carrying the rule's [`Error::code`].
 
 use crate::{
-	Accepted, DEFAULT_LINK_BASE, Descriptor, Document, DotnsAnswer, DotnsDrift, DotnsStep, Error,
-	FetchRequest, Fetched, Pointer, PublishState, Refresh, Refreshed, Rendered, Served, SpecFile,
-	StackRead, Verified, accept as accept_fetched, format, open as open_bytes,
+	Accepted, DEFAULT_LINK_BASE, Descriptor, Document, Error, FetchRequest, Fetched, Pointer,
+	PublishState, Refresh, Refreshed, Rendered, Served, SpecFile, StackRead, Verified,
+	accept as accept_fetched, format, open as open_bytes,
 };
 use serde::Serialize;
 use tsify::{Ts, Tsify};
@@ -170,69 +170,6 @@ pub fn check_spec(spec: Ts<SpecFile>, bytes: &[u8]) -> Result<(), JsValue> {
 #[wasm_bindgen(js_name = lightSpecGenesis)]
 pub fn light_spec_genesis(bytes: &[u8]) -> Result<String, JsValue> {
 	Ok(format::to_hex(&crate::light_spec_genesis(bytes).map_err(to_js_error)?))
-}
-
-fn hex_value(value: &str) -> Result<Vec<u8>, JsValue> {
-	value
-		.strip_prefix("0x")
-		.and_then(|digits| hex::decode(digits).ok())
-		.ok_or_else(|| type_error(&format!("{value:?} is not 0x-prefixed hex")))
-}
-
-/// [`crate::DotnsLookup`] for JS, with the descriptor it checks.
-#[wasm_bindgen(js_name = DotnsLookup)]
-pub struct JsDotnsLookup {
-	descriptor: Descriptor,
-	lookup: crate::DotnsLookup,
-}
-
-#[wasm_bindgen(js_class = DotnsLookup)]
-impl JsDotnsLookup {
-	/// A lookup of the addresses a descriptor's `dotns` is checked against, from the descriptor's
-	/// JSON text. Throws the rule's code when the descriptor breaks one.
-	#[wasm_bindgen(constructor)]
-	pub fn new(descriptor: &str) -> Result<JsDotnsLookup, JsValue> {
-		let document = serde_json::from_str(descriptor)
-			.map_err(|error| to_js_error(Error::NotJson(error.to_string())))?;
-		let descriptor = Descriptor::from_json(document).map_err(to_js_error)?;
-		Ok(Self { lookup: crate::DotnsLookup::new(&descriptor), descriptor })
-	}
-
-	/// What the lookup needs next.
-	pub fn next(&self) -> Result<Ts<DotnsStep>, JsValue> {
-		to_js(&self.lookup.next())
-	}
-
-	/// The keys on which the descriptor and the chain disagree, once the lookup is done.
-	pub fn drift(&self) -> Result<Vec<Ts<DotnsDrift>>, JsValue> {
-		let DotnsStep::Done(found) = self.lookup.next() else {
-			return Err(type_error("drift before the lookup is done"));
-		};
-		crate::dotns_drift(&self.descriptor, found.as_ref()).iter().map(to_js).collect()
-	}
-
-	/// Takes the hex value at the storage key, undefined when it is unset.
-	pub fn storage(&mut self, value: Option<String>) -> Result<(), JsValue> {
-		let value = value.as_deref().map(hex_value).transpose()?;
-		self.lookup.storage(value.as_deref()).map_err(to_js_error)
-	}
-
-	/// Takes the calls' answers in order: the hex data a call returned, or null when it
-	/// reverted.
-	pub fn answer(
-		&mut self,
-		#[wasm_bindgen(unchecked_param_type = "(string | null)[]")] answers: Vec<JsValue>,
-	) -> Result<(), JsValue> {
-		let answers = answers
-			.iter()
-			.map(|answer| match answer.as_string() {
-				Some(data) => Ok(DotnsAnswer::Returned(hex_value(&data)?)),
-				None if answer.is_null() => Ok(DotnsAnswer::Reverted),
-				None => Err(type_error("an answer is hex data, or null for a revert")),
-			})
-			.collect::<Result<Vec<_>, _>>()?;
-		self.lookup.answer(&answers).map_err(to_js_error)
-	}
 }
 
 /// [`crate::StackReader`] for JS.

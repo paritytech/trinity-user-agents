@@ -41,16 +41,9 @@ pub enum Error {
 	/// A `paraId` is missing on a parachain, present on the relay, or repeated.
 	#[error("paraId: {0}")]
 	ParaId(String),
-	/// `Asset.chain` or `coinage.chain` names a role no chain has, or `dotns` is set on a stack
-	/// without an `AssetHub`.
+	/// `Asset.chain` or `coinage.chain` names a role no chain has.
 	#[error("no chain has role {0:?}")]
 	UnknownChainRole(String),
-	/// A `dotns` key is not 1 to 32 ASCII letters and digits.
-	#[error("dotns key {0:?} must be 1 to 32 ASCII letters and digits")]
-	DotnsKey(String),
-	/// A `dotns` key holds the zero address, which the registry means as unset.
-	#[error("dotns key {0:?} holds the zero address; leave an unset key out")]
-	DotnsZeroAddress(String),
 	/// A hex value is not lowercase, 0x-prefixed and of the right length.
 	#[error("{field} is not {bytes} bytes of lowercase 0x-prefixed hex")]
 	InvalidHex {
@@ -121,33 +114,6 @@ pub enum Error {
 	/// A secret key is not 32 bytes.
 	#[error("a secret key is 32 bytes, got {0}")]
 	SecretKeyLength(usize),
-	/// `DotnsGateway.DispatcherAddress` holds something other than a 20-byte address.
-	#[error("DotnsGateway.DispatcherAddress holds {0} bytes, not an address")]
-	DispatcherAddress(usize),
-	/// The gateway's dispatcher answers neither `protocolRegistry()` nor `TARGET()`.
-	#[error("{0} answers neither protocolRegistry() nor TARGET()")]
-	UnknownDispatcher(String),
-	/// A dotNS contract reverted a call a reader needs.
-	#[error("{contract} reverted {call}")]
-	Reverted {
-		/// The contract.
-		contract: String,
-		/// The calldata.
-		call: String,
-	},
-	/// A dotNS contract returned something other than one address.
-	#[error("{contract} returned {returned} for {call}, not an address")]
-	NotAnAddress {
-		/// The contract.
-		contract: String,
-		/// The calldata.
-		call: String,
-		/// What it returned.
-		returned: String,
-	},
-	/// A dotNS lookup was answered out of step: the wrong kind of answer, or the wrong number.
-	#[error("dotNS lookup answered out of step: {0}")]
-	LookupStep(String),
 }
 
 impl Error {

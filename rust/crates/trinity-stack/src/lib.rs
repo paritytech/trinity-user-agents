@@ -2,7 +2,6 @@
 
 mod canonical;
 mod descriptor;
-mod dotns;
 mod envelope;
 mod error;
 mod format;
@@ -19,9 +18,6 @@ pub use canonical::{canonical, content_hash};
 pub use descriptor::{
 	Asset, Block, Chain, Coinage, Descriptor, Fork, ForkSource, SERVICE_KINDS, Service, SpecFile,
 	VERSION,
-};
-pub use dotns::{
-	DOTNS_KEYS, DotnsAnswer, DotnsCall, DotnsDrift, DotnsLookup, DotnsStep, dotns_drift,
 };
 pub use envelope::{Document, Verified, open, public_key, sign};
 pub use error::Error;
