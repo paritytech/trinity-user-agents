@@ -1,26 +1,21 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -40,13 +35,10 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.co
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.ChatListLoading
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.IdleSearchEntry
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.SearchRevealContainer
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.icons.NewChat
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.icons.StartNewChat
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.rememberSearchRevealState
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.models.ChatListUiState
 import kotlinx.collections.immutable.persistentListOf
-
-private const val ShineTopLeftAlpha = 0.9f
-private const val ShineBottomRightAlpha = 0.6f
 
 @Composable
 fun ChatListScreen() {
@@ -119,39 +111,15 @@ private fun NewChatButton(
     onClick: () -> Unit,
 ) {
     DockletGlassTheme {
-        val borderWidth = PolkadotTheme.borders.default
-        val shine = PolkadotTheme.colors.fg.primary
-        val border = remember(borderWidth, shine) {
-            BorderStroke(
-                width = borderWidth,
-                brush = Brush.linearGradient(
-                    0f to shine.copy(alpha = ShineTopLeftAlpha),
-                    0.5f to shine.copy(alpha = 0f),
-                    1f to shine.copy(alpha = ShineBottomRightAlpha),
-                ),
-            )
-        }
         PolkadotIconButton(
-            icon = NewChat,
+            icon = StartNewChat,
             onClick = onClick,
             modifier = modifier,
-            style = rememberDockletGlassButtonStyle(),
-            size = rememberNewChatButtonSize(),
+            style = rememberDockletGlassButtonStyle(backdrop = PolkadotTheme.colors.bg.surface.main),
+            size = PolkadotIconButtonSize.medium(),
             shape = PolkadotButtonShape.pill,
-            border = border,
         )
     }
-}
-
-@Composable
-private fun rememberNewChatButtonSize(): PolkadotIconButtonSize {
-    val padding = PolkadotTheme.spacings.small
-    return remember(padding) { NewChatButtonSize(PaddingValues(padding)) }
-}
-
-@Immutable
-private data class NewChatButtonSize(override val padding: PaddingValues) : PolkadotIconButtonSize {
-    override val iconSize: Dp = NewChat.defaultWidth
 }
 
 @Preview(backgroundColor = 0xFF000000, showBackground = true)

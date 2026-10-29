@@ -21,10 +21,8 @@ fun rememberDockletFieldButtonStyle(): PolkadotButtonStyle =
     rememberDockletFillButtonStyle(LocalDockletPalette.current.fieldFill)
 
 @Composable
-fun rememberDockletGlassButtonStyle(): PolkadotButtonStyle {
-    val fill = LocalDockletPalette.current.glassFill.compositeOver(PolkadotTheme.colors.bg.surface.main)
-    return rememberDockletFillButtonStyle(fill)
-}
+fun rememberDockletGlassButtonStyle(backdrop: Color): PolkadotButtonStyle =
+    rememberDockletFillButtonStyle(LocalDockletPalette.current.glassFill.compositeOver(backdrop))
 
 @Composable
 private fun rememberDockletFillButtonStyle(fill: Color): PolkadotButtonStyle {

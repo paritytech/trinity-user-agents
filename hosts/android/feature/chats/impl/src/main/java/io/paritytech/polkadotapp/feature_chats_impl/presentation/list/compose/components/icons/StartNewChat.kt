@@ -8,13 +8,13 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 
-val NewChat: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
+val StartNewChat: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
     ImageVector.Builder(
-        name = "NewChat",
-        defaultWidth = 28.dp,
-        defaultHeight = 28.dp,
-        viewportWidth = 28f,
-        viewportHeight = 28f
+        name = "StartNewChat",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f
     ).apply {
         path(
             stroke = SolidColor(Color(0xFFECECEC)),
@@ -22,10 +22,10 @@ val NewChat: ImageVector by lazy(LazyThreadSafetyMode.NONE) {
             strokeLineCap = StrokeCap.Round,
             strokeLineJoin = StrokeJoin.Round
         ) {
-            moveTo(5.833f, 14f)
-            horizontalLineTo(22.167f)
-            moveTo(14f, 5.833f)
-            verticalLineTo(22.167f)
+            moveTo(5f, 12f)
+            horizontalLineTo(19f)
+            moveTo(12f, 5f)
+            verticalLineTo(19f)
         }
     }.build()
 }
