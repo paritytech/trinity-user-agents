@@ -1351,7 +1351,7 @@ struct RecordingChatPlatform {
 	posted_rooms: Mutex<Vec<String>>,
 	posted_payloads: Mutex<Vec<v01::ChatMessageContent>>,
 	posted_alts: Mutex<Vec<Option<String>>>,
-	room_footers: Mutex<Vec<(String, v01::ChatRoomFooter)>>,
+	room_footers: Mutex<Vec<(String, truapi::latest::ChatRoomFooter)>>,
 	bot_rooms: Vec<String>,
 }
 
@@ -1925,7 +1925,82 @@ fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 	);
 	assert_eq!(
 		*chat_platform.room_footers.lock().expect("room footers mutex poisoned"),
-		[("caf\u{e9}".to_string(), v01::ChatRoomFooter::Empty)]
+		[("caf\u{e9}".to_string(), truapi::latest::ChatRoomFooter::Empty)]
+	);
+}
+
+#[test]
+fn a_card_docks_in_the_footer_of_the_room_the_product_created() {
+	let (host_config, _) = runtime_config("chat.dot");
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		crate::platform::ProductExecutionKind::Worker,
+	);
+	let spawner = test_spawner();
+	let platform: Arc<dyn Platform> = stub_platform();
+	let services = RuntimeServices::new(
+		platform.clone(),
+		host_config.host.host_info.clone(),
+		host_config.people_chain_genesis_hash,
+		host_config.bulletin_chain_genesis_hash,
+		host_config.asset_hub_chain_genesis_hash,
+		spawner.clone(),
+	);
+	let chat_platform = Arc::new(RecordingChatPlatform::default());
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	adapters.chat_platform = Some(chat_platform.clone());
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session_info());
+	let card = v02::ChatRoomFooter::Card(v01::ChatCustomMessage {
+		message_type: "register".to_string(),
+		payload: vec![1],
+	});
+
+	futures::executor::block_on(Chat::create_room(
+		&host,
+		&CallContext::default(),
+		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
+			room_id: "room".to_string(),
+			name: "Room".to_string(),
+			icon: String::new(),
+		}),
+	))
+	.expect("create_room accepts the room");
+
+	futures::executor::block_on(Chat::set_room_footer(
+		&host,
+		&CallContext::default(),
+		HostChatSetRoomFooterRequest::V2(v02::HostChatSetRoomFooterRequest {
+			room_id: "room".to_string(),
+			footer: card.clone(),
+		}),
+	))
+	.expect("set_room_footer docks the card");
+
+	let unknown = futures::executor::block_on(Chat::set_room_footer(
+		&host,
+		&CallContext::default(),
+		HostChatSetRoomFooterRequest::V2(v02::HostChatSetRoomFooterRequest {
+			room_id: "elsewhere".to_string(),
+			footer: card.clone(),
+		}),
+	));
+	assert_eq!(
+		unknown,
+		Err(CallError::Domain(HostChatSetRoomFooterError::V2(
+			v01::HostChatSetRoomFooterError::UnknownRoom
+		)))
+	);
+	assert_eq!(
+		*chat_platform.room_footers.lock().expect("room footers mutex poisoned"),
+		[("room".to_string(), card)]
 	);
 }
 
@@ -9302,4 +9377,131 @@ fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
 			0,
 		)
 	);
+}
+
+#[test]
+fn a_docked_card_is_screened_like_a_posted_custom_message() {
+	let (host_config, _) = runtime_config("chat.dot");
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		crate::platform::ProductExecutionKind::Worker,
+	);
+	let platform: Arc<dyn Platform> = stub_platform();
+	let services = RuntimeServices::new(
+		platform.clone(),
+		host_config.host.host_info.clone(),
+		host_config.people_chain_genesis_hash,
+		host_config.bulletin_chain_genesis_hash,
+		host_config.asset_hub_chain_genesis_hash,
+		test_spawner(),
+	);
+	let chat_platform = Arc::new(RecordingChatPlatform::default());
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	adapters.chat_platform = Some(chat_platform.clone());
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session_info());
+	futures::executor::block_on(Chat::create_room(
+		&host,
+		&CallContext::default(),
+		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
+			room_id: "room".to_string(),
+			name: "Room".to_string(),
+			icon: String::new(),
+		}),
+	))
+	.expect("create_room accepts the room");
+	let dock = |message_type: &str, payload: Vec<u8>| {
+		futures::executor::block_on(Chat::set_room_footer(
+			&host,
+			&CallContext::default(),
+			HostChatSetRoomFooterRequest::V2(v02::HostChatSetRoomFooterRequest {
+				room_id: "room".to_string(),
+				footer: v02::ChatRoomFooter::Card(v01::ChatCustomMessage {
+					message_type: message_type.to_string(),
+					payload,
+				}),
+			}),
+		))
+	};
+
+	// When
+	let oversized = dock("register", vec![0; crate::platform::CHAT_CUSTOM_PAYLOAD_MAX_BYTES + 1]);
+	dock(" register ", vec![1]).expect("set_room_footer docks the card");
+
+	// Then
+	assert!(matches!(
+		oversized,
+		Err(CallError::Domain(HostChatSetRoomFooterError::V2(
+			v01::HostChatSetRoomFooterError::Unknown { .. }
+		)))
+	));
+	assert_eq!(
+		*chat_platform.room_footers.lock().expect("room footers mutex poisoned"),
+		[(
+			"room".to_string(),
+			v02::ChatRoomFooter::Card(v01::ChatCustomMessage {
+				message_type: "register".to_string(),
+				payload: vec![1],
+			})
+		)]
+	);
+}
+
+#[test]
+fn a_footer_action_never_reaches_a_product_that_subscribed_with_v1() {
+	// A v0.1 product cannot decode a footer context, and only a product that
+	// docked a card through v0.2 can be sent one.
+	let host = scanner_host_for(ProductExecutionKind::Worker, None);
+	let mut actions = futures::executor::block_on(truapi::api::Renderer::action_subscribe(
+		&host,
+		&CallContext::default(),
+		truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1,
+	));
+
+	// When
+	host.connection.publish_renderer_action(footer_tap()).unwrap();
+	host.connection.publish_renderer_action(card_tap()).unwrap();
+
+	// Then
+	let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
+	assert_eq!(actions.poll_next_unpin(&mut cx), core::task::Poll::Ready(Some(Ok(card_tap()))));
+}
+
+#[test]
+fn a_footer_action_reaches_the_product_that_subscribed_with_v2() {
+	// Every button on a docked card is dead unless its press reaches a product
+	// that subscribed through v0.2.
+	let host = scanner_host_for(ProductExecutionKind::Worker, None);
+	let mut actions = futures::executor::block_on(truapi::api::Renderer::action_subscribe(
+		&host,
+		&CallContext::default(),
+		truapi::versioned::renderer::HostRendererActionSubscribeRequest::V2,
+	));
+
+	// When
+	host.connection.publish_renderer_action(footer_tap()).unwrap();
+
+	// Then
+	let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
+	assert_eq!(actions.poll_next_unpin(&mut cx), core::task::Poll::Ready(Some(Ok(footer_tap()))));
+}
+
+fn footer_tap() -> truapi::versioned::renderer::HostRendererActionSubscribeItem {
+	truapi::versioned::renderer::HostRendererActionSubscribeItem::V2(
+		v02::HostRendererActionSubscribeItem {
+			context: v02::RenderContext::ChatRoomFooter {
+				room_id: "room".into(),
+				message_type: "register".into(),
+			},
+			action_id: "join".into(),
+			payload: vec![],
+		},
+	)
 }

@@ -56,5 +56,8 @@ interface ChatExtension {
     fun animatesMessageReveal(chatId: ChatId): Boolean = false
 
     fun observeUserInputAllowed(chatId: ChatId): Flow<Boolean> = flowOf(true)
+
+    /** The card this extension docked in the input slot of [chatId], or null while that slot holds the input. */
+    fun observeRoomFooterCard(chatId: ChatId): Flow<CustomChatFooterRenderer?> = flowOf(null)
     fun observeChatConfig(chatId: ChatId): Flow<ChatConfig> = flowOf(ChatConfig.Default)
 }

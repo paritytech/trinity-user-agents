@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomRe
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.DefaultRoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.NewMessagesRoomFilter
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMenuRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatPreviewDelegate
@@ -20,6 +21,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_api.model.productRoomId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatId
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductRoomFooterCardRenderer
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageRenderer
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
@@ -86,12 +88,22 @@ class ProductChatExtension(
     // Strong ref to the messaging target bound weakly onto the shared worker; held for our lifetime.
     private var chatMessaging: ProductChatMessaging? = null
 
-    // Rooms the product asked to show nothing below the messages. Absent means the text input, the default.
-    private val roomsWithoutInput = MutableStateFlow(emptySet<ProductChatIdParameter>())
+    // Absent means the text input, the default.
+    private val roomFooters = MutableStateFlow(emptyMap<ProductChatIdParameter, ProductRoomFooter>())
 
     override fun observeUserInputAllowed(chatId: ChatId): Flow<Boolean> {
         val room = chatId.productRoomId(id) ?: return flowOf(true)
-        return roomsWithoutInput.map { room !in it }.distinctUntilChanged()
+        return roomFooters.map { (it[room] ?: ProductRoomFooter.TextInput) == ProductRoomFooter.TextInput }
+            .distinctUntilChanged()
+    }
+
+    override fun observeRoomFooterCard(chatId: ChatId): Flow<CustomChatFooterRenderer?> {
+        val room = chatId.productRoomId(id) ?: return flowOf(null)
+        return roomFooters.map { footers ->
+            (footers[room] as? ProductRoomFooter.Card)?.let { card ->
+                ProductRoomFooterCardRenderer(room, card, runningWorker, messageRenderer.imageResolver)
+            }
+        }.distinctUntilChanged()
     }
 
     override fun customMessageRenderers(): List<CustomChatMessageRenderer<*>> {
@@ -184,9 +196,9 @@ class ProductChatExtension(
             return Result.success(chatMessage.id)
         }
 
-        override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, showsTextInput: Boolean): Result<Unit> {
-            roomsWithoutInput.update { rooms ->
-                if (showsTextInput) rooms - chatIdParameter else rooms + chatIdParameter
+        override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, footer: ProductRoomFooter): Result<Unit> {
+            roomFooters.update { rooms ->
+                if (footer == ProductRoomFooter.TextInput) rooms - chatIdParameter else rooms + (chatIdParameter to footer)
             }
             return Result.success(Unit)
         }

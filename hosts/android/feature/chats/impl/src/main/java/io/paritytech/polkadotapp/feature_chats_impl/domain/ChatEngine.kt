@@ -463,6 +463,10 @@ class ChatEngine @Inject constructor(
         return chatExtensionRegistry.getExtensionForChat(chatId)?.customFooterRenderer(chatId)
     }
 
+    fun observeRoomFooterCard(chatId: ChatId): Flow<CustomChatFooterRenderer?> = flowOfAll {
+        chatExtensionRegistry.getExtensionForChat(chatId)?.observeRoomFooterCard(chatId) ?: flowOfValue(null)
+    }
+
     suspend fun getMenuRendererForChat(chatId: ChatId): CustomChatMenuRenderer? {
         return chatExtensionRegistry.getExtensionForChat(chatId)?.customMenuRenderer(chatId)
     }

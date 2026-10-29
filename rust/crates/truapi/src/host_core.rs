@@ -33,7 +33,7 @@ use futures::{
 use parity_scale_codec::{Decode, Encode};
 use thiserror::Error;
 use tracing::{instrument, warn};
-use truapi::{CallContext, CancellationReason, v01};
+use truapi::{CallContext, CancellationReason, v01, versioned::FromLatest};
 
 use crate::{
 	frame::ProtocolMessage,
@@ -1698,6 +1698,10 @@ pub struct ProductRuntimeControl {
 	disposed: Arc<AtomicBool>,
 }
 
+/// A context v0.1 can express goes out as V1 so a v0.1 product decodes it, and
+/// only a footer context, which a product docks through a v0.2 call, goes out as V2.
+const RENDER_REQUEST_VERSION_EVERY_PRODUCT_DECODES: u8 = 1;
+
 impl ProductRuntimeControl {
 	fn connection(&self) -> Result<&ProductConnection, ProductRuntimeError> {
 		if self.disposed.load(Ordering::Acquire) {
@@ -1721,11 +1725,9 @@ impl ProductRuntimeControl {
 	/// subscribes.
 	pub fn publish_renderer_action(
 		&self,
-		item: v01::HostRendererActionSubscribeItem,
+		item: truapi::latest::HostRendererActionSubscribeItem,
 	) -> Result<(), ProductRuntimeError> {
-		self.connection()?.publish_renderer_action(
-			truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(item),
-		)
+		self.connection()?.publish_renderer_action(item.into())
 	}
 
 	/// Ask this connection's product to draw one body, streaming replacement
@@ -1737,14 +1739,17 @@ impl ProductRuntimeControl {
 	/// [`WorkerLedger::install_worker_controller`].
 	pub fn render(
 		&self,
-		request: v01::ProductRendererRenderRequest,
+		request: truapi::latest::ProductRendererRenderRequest,
 	) -> Result<
 		truapi::Subscription<v01::RendererNode, truapi::CallError<v01::GenericError>>,
 		ProductRuntimeError,
 	> {
 		self.connection()?.renderer_access()?;
 		let reference = WorkerReference::acquire(self.connection.clone());
-		let request = truapi::versioned::renderer::ProductRendererRenderRequest::V1(request);
+		let request = truapi::versioned::renderer::ProductRendererRenderRequest::from_latest(
+			request,
+			RENDER_REQUEST_VERSION_EVERY_PRODUCT_DECODES,
+		);
 		let transport: Arc<dyn Transport> = self.transport.clone();
 		let stream = crate::generated::dispatcher::renderer_render(
 			&self.host_subscriptions,
@@ -1759,9 +1764,10 @@ impl ProductRuntimeControl {
 			(stream, Some(reference)),
 			|(mut stream, reference)| async move {
 				match stream.next().await? {
-					Ok(truapi::versioned::renderer::ProductRendererRenderItem::V1(node)) => {
-						Some((Ok(node), (stream, reference)))
-					},
+					Ok(
+						truapi::versioned::renderer::ProductRendererRenderItem::V1(node) |
+						truapi::versioned::renderer::ProductRendererRenderItem::V2(node),
+					) => Some((Ok(node), (stream, reference))),
 					Err(interrupt) => Some((
 						Err(crate::interrupt::interrupt_into_latest(interrupt)),
 						(stream, None),
@@ -3007,8 +3013,8 @@ mod tests {
 		);
 
 		assert!(matches!(
-			runtime.control().render(v01::ProductRendererRenderRequest {
-				context: v01::RenderContext::ChatMessage {
+			runtime.control().render(truapi::latest::ProductRendererRenderRequest {
+				context: truapi::latest::RenderContext::ChatMessage {
 					room_id: "room".into(),
 					message_id: "message".into(),
 					message_type: "vote".into(),
@@ -3049,14 +3055,14 @@ mod tests {
 
 		let _render = runtime
 			.control()
-			.render(v01::ProductRendererRenderRequest {
-				context: v01::RenderContext::PocketCard { card_id: "loyalty".into() },
+			.render(truapi::latest::ProductRendererRenderRequest {
+				context: truapi::latest::RenderContext::PocketCard { card_id: "loyalty".into() },
 				payload: vec![],
 			})
 			.expect("a signed-out Worker connection may render");
 
-		let published = v01::HostRendererActionSubscribeItem {
-			context: v01::RenderContext::PocketCard { card_id: "loyalty".into() },
+		let published = truapi::latest::HostRendererActionSubscribeItem {
+			context: truapi::latest::RenderContext::PocketCard { card_id: "loyalty".into() },
 			action_id: "vote".into(),
 			payload: vec![],
 		};
@@ -3070,12 +3076,12 @@ mod tests {
 			core::task::Poll::Ready(Some(item)) => item,
 			other => panic!("a published renderer action must be ready, got {other:?}"),
 		};
-		let Ok(truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(delivered)) =
+		let Ok(delivered @ truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(_)) =
 			delivered
 		else {
 			panic!("expected a renderer action item")
 		};
-		assert_eq!(delivered, published);
+		assert_eq!(truapi::versioned::IntoLatest::into_latest(delivered), published);
 	}
 
 	#[test]
@@ -3120,8 +3126,8 @@ mod tests {
 
 		let render = runtime
 			.control()
-			.render(v01::ProductRendererRenderRequest {
-				context: v01::RenderContext::PocketCard { card_id: "loyalty".into() },
+			.render(truapi::latest::ProductRendererRenderRequest {
+				context: truapi::latest::RenderContext::PocketCard { card_id: "loyalty".into() },
 				payload: vec![],
 			})
 			.expect("a Worker connection may render");
@@ -3164,8 +3170,8 @@ mod tests {
 	) -> truapi::Subscription<v01::RendererNode, truapi::CallError<v01::GenericError>> {
 		runtime
 			.control()
-			.render(v01::ProductRendererRenderRequest {
-				context: v01::RenderContext::PocketCard { card_id: card_id.to_string() },
+			.render(truapi::latest::ProductRendererRenderRequest {
+				context: truapi::latest::RenderContext::PocketCard { card_id: card_id.to_string() },
 				payload: vec![],
 			})
 			.expect("a Worker connection may render")
@@ -3344,11 +3350,13 @@ mod tests {
 		);
 
 		assert!(matches!(
-			runtime.control().publish_renderer_action(v01::HostRendererActionSubscribeItem {
-				context: v01::RenderContext::PocketCard { card_id: "card".into() },
-				action_id: "vote".into(),
-				payload: vec![],
-			}),
+			runtime.control().publish_renderer_action(
+				truapi::latest::HostRendererActionSubscribeItem {
+					context: truapi::latest::RenderContext::PocketCard { card_id: "card".into() },
+					action_id: "vote".into(),
+					payload: vec![],
+				}
+			),
 			Err(ProductRuntimeError::Denied)
 		));
 	}

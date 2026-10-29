@@ -285,6 +285,9 @@ class ChatFeedInteractor @Inject internal constructor(
     suspend fun getFooterRendererForChat(chatId: ChatId): CustomChatFooterRenderer? =
         chatEngine.getFooterRendererForChat(chatId)
 
+    fun observeRoomFooterCard(chatId: ChatId): Flow<CustomChatFooterRenderer?> =
+        chatEngine.observeRoomFooterCard(chatId)
+
     suspend fun getMenuRendererForChat(chatId: ChatId): CustomChatMenuRenderer? =
         chatEngine.getMenuRendererForChat(chatId)
 

@@ -264,6 +264,9 @@ class ChatFeedViewModel @Inject constructor(
         renderer.takeIf { revealed }
     }.stateInBackground(initialValue = null)
 
+    override val roomFooterCard = interactor.observeRoomFooterCard(chatId)
+        .stateInBackground(initialValue = null)
+
     override val customAppearance = flowOf {
         interactor.getCustomAppearanceForChat(chatId)
     }.stateInBackground(initialValue = null)

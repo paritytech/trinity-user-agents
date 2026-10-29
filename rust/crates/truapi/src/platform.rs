@@ -388,18 +388,23 @@ pub fn validate_chat_message_content(
 		Content::ReactionRemoved(reaction) => {
 			Content::ReactionRemoved(validate_chat_reaction(reaction)?)
 		},
-		Content::Custom(custom) => {
-			if custom.payload.len() > CHAT_CUSTOM_PAYLOAD_MAX_BYTES {
-				return Err(ChatFieldError::TooLong {
-					field: "payload",
-					limit: CHAT_CUSTOM_PAYLOAD_MAX_BYTES,
-				});
-			}
-			Content::Custom(ChatCustomMessage {
-				message_type: normalize_chat_identifier("messageType", &custom.message_type)?,
-				payload: custom.payload,
-			})
-		},
+		Content::Custom(custom) => Content::Custom(validate_chat_custom_message(custom)?),
+	})
+}
+
+/// Screen a product-drawn custom message, wherever a host renders it.
+pub fn validate_chat_custom_message(
+	custom: ChatCustomMessage,
+) -> Result<ChatCustomMessage, ChatFieldError> {
+	if custom.payload.len() > CHAT_CUSTOM_PAYLOAD_MAX_BYTES {
+		return Err(ChatFieldError::TooLong {
+			field: "payload",
+			limit: CHAT_CUSTOM_PAYLOAD_MAX_BYTES,
+		});
+	}
+	Ok(ChatCustomMessage {
+		message_type: normalize_chat_identifier("messageType", &custom.message_type)?,
+		payload: custom.payload,
 	})
 }
 

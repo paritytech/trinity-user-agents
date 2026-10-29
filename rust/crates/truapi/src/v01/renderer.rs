@@ -556,7 +556,6 @@ pub enum RendererNode {
 
 /// Where a product-rendered body lives, and the id that names it there.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum RenderContext {
 	/// A message in a chat room.
 	ChatMessage {
@@ -582,7 +581,6 @@ pub enum RenderContext {
 
 /// A body the host needs drawn.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct ProductRendererRenderRequest {
 	/// Where the body lives.
 	pub context: RenderContext,
@@ -592,7 +590,6 @@ pub struct ProductRendererRenderRequest {
 
 /// An action triggered inside a product-rendered body.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct HostRendererActionSubscribeItem {
 	/// Where the body lives.
 	pub context: RenderContext,

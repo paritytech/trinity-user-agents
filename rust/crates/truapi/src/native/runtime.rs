@@ -1017,7 +1017,7 @@ impl NativeProductExecution {
 	/// `observer` until the returned subscription is cancelled.
 	pub fn render(
 		&self,
-		request: v01::ProductRendererRenderRequest,
+		request: truapi::latest::ProductRendererRenderRequest,
 		observer: Box<dyn NativeRendererObserver>,
 	) -> Result<Arc<NativeRendererSubscription>, crate::ProductRuntimeError> {
 		self.require_renderer()?;
@@ -1036,7 +1036,7 @@ impl NativeProductExecution {
 	/// it until the product connection subscribes.
 	pub fn publish_renderer_action(
 		&self,
-		item: v01::HostRendererActionSubscribeItem,
+		item: truapi::latest::HostRendererActionSubscribeItem,
 	) -> Result<(), crate::ProductRuntimeError> {
 		self.require_renderer()?;
 		self.renderer_connection.publish(item.into())
@@ -1310,8 +1310,8 @@ mod tests {
 			truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1,
 		));
 
-		let published = v01::HostRendererActionSubscribeItem {
-			context: v01::RenderContext::ChatMessage {
+		let published = truapi::latest::HostRendererActionSubscribeItem {
+			context: truapi::latest::RenderContext::ChatMessage {
 				room_id: "support".to_string(),
 				message_id: "message-1".to_string(),
 				message_type: "vote".to_string(),
@@ -1328,8 +1328,8 @@ mod tests {
 			core::task::Poll::Ready(Some(item)) => item,
 			other => panic!("a published renderer action must be ready, got {other:?}"),
 		};
-		let delivered = delivered.expect("expected a renderer action item").into_latest();
-		assert_eq!(delivered, published);
+		let delivered = delivered.expect("expected a renderer action item");
+		assert_eq!(truapi::versioned::IntoLatest::into_latest(delivered), published);
 		// The scanner checks taps on a connection, while hosts publish them here.
 		assert!(admin.product_runtime().connection().recently_tapped());
 	}

@@ -16,6 +16,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParamet
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductRoomFooterCardRenderer
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.productIconUri
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
@@ -169,10 +170,48 @@ class ProductChatExtensionTest {
 
         assertEquals(true, extension.observeUserInputAllowed(ChatId.forExtensionRoom(extensionId, ROOM)).first())
 
-        messaging.setRoomFooter(ProductChatIdParameter(ROOM), showsTextInput = false)
+        messaging.setRoomFooter(ProductChatIdParameter(ROOM), ProductRoomFooter.Empty)
 
         assertEquals(false, extension.observeUserInputAllowed(ChatId.forExtensionRoom(extensionId, ROOM)).first())
         assertEquals(true, extension.observeUserInputAllowed(ChatId.forExtensionRoom(extensionId, "other")).first())
+    }
+
+    @Test
+    fun `a docked card takes the place of the input until the text input is asked back`() = runTest {
+        val refCounter = FakeRefCounter(RecordingWorker())
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk())
+        withChatHost { extension.startGlobalWork() }
+        val messaging = requireNotNull(refCounter.chatSurface)
+        val room = ChatId.forExtensionRoom(extensionId, ROOM)
+
+        messaging.setRoomFooter(ProductChatIdParameter(ROOM), ProductRoomFooter.Card("register", byteArrayOf(1)))
+        val inputWithCard = extension.observeUserInputAllowed(room).first()
+        messaging.setRoomFooter(ProductChatIdParameter(ROOM), ProductRoomFooter.TextInput)
+
+        assertEquals(listOf(false, true), listOf(inputWithCard, extension.observeUserInputAllowed(room).first()))
+    }
+
+    @Test
+    fun `a docked card reaches the input slot of its room and leaves it on an empty footer`() = runTest {
+        // Given
+        val refCounter = FakeRefCounter(RecordingWorker())
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk())
+        withChatHost { extension.startGlobalWork() }
+        val messaging = requireNotNull(refCounter.chatSurface)
+        val room = ChatId.forExtensionRoom(extensionId, ROOM)
+        val card = ProductRoomFooter.Card("register", byteArrayOf(1))
+
+        // When
+        messaging.setRoomFooter(ProductChatIdParameter(ROOM), card)
+        val slotWithCard = extension.observeRoomFooterCard(room).first()
+        val otherRoomSlot = extension.observeRoomFooterCard(ChatId.forExtensionRoom(extensionId, "other")).first()
+        messaging.setRoomFooter(ProductChatIdParameter(ROOM), ProductRoomFooter.Empty)
+
+        // Then
+        assertEquals(
+            listOf(card, null, null),
+            listOf((slotWithCard as? ProductRoomFooterCardRenderer)?.card, otherRoomSlot, extension.observeRoomFooterCard(room).first()),
+        )
     }
 
     @Test

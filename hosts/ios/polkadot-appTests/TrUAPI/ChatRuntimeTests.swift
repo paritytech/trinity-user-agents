@@ -1,5 +1,6 @@
 import Foundation
 import os
+import PolkadotUI
 import Products
 import StructuredConcurrency
 import StructuredConcurrencyTestSupport
@@ -77,6 +78,27 @@ private func workersRunning(_ execution: MockProductExecution) -> StubWorkerMana
     let workers = StubWorkerManager()
     workers.publish([chatProduct: execution])
     return workers
+}
+
+private func makeFooterDecoder(runtime: TrUAPIChatHandler) -> ProductMessageDecoder {
+    ProductMessageDecoder(
+        runtime: runtime,
+        tokenResolver: StubWidgetDesignTokenResolver(),
+        description: nil,
+        resolveImage: WidgetImageResolver { _ in nil },
+        logger: Logger.shared
+    )
+}
+
+private func dockedCard(
+    from decoder: ProductMessageDecoder,
+    payload: Data = Data([1])
+) throws -> ProductWidgetViewModel {
+    let card = try #require(
+        decoder.makeRoomFooterCard(roomId: "room", messageType: "register", payload: payload)
+            as? ProductRoomFooterCardConfiguration
+    )
+    return try #require(card.nodeProvider as? ProductWidgetViewModel)
 }
 
 // MARK: - Tests
@@ -441,6 +463,123 @@ struct ChatRuntimeTests {
         } else {
             Issue.record("the action should be addressed by a chatMessage context")
         }
+
+        await runtime.dispose()
+    }
+
+    @Test func rustRuntimeRendersADockedFooterCardUnderTheFooterContext() async throws {
+        let execution = MockProductExecution()
+        execution.renderNodes = [.string(text: "docked")]
+        let runtime = makeRustRuntime(workers: workersRunning(execution))
+        try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+
+        for try await _ in await runtime.renderRoomFooter(
+            roomId: "room", messageType: "register", payload: Data([1])
+        ) {}
+
+        let request = try #require(execution.renderRequests.first)
+        #expect(request.payload == Data([1]))
+        if case let .chatRoomFooter(roomId, messageType) = request.context {
+            #expect(roomId == "room")
+            #expect(messageType == "register")
+        } else {
+            Issue.record("a footer card must be rendered under a chatRoomFooter context")
+        }
+
+        await runtime.dispose()
+    }
+
+    /// The core routes a press by context, so a footer press addressed as a chat
+    /// message would reach no card the product drew.
+    @Test func rustRuntimePublishesAFooterTapUnderTheFooterContext() async throws {
+        let execution = MockProductExecution()
+        let runtime = makeRustRuntime(workers: workersRunning(execution))
+        try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+
+        await runtime.dispatchRoomFooterEvent(
+            roomId: "room", messageType: "register", actionId: "join", payload: "p"
+        )
+
+        let rendererAction = try #require(execution.publishedRendererActions.first)
+        #expect(execution.publishedRendererActions.count == 1)
+        #expect(rendererAction.actionId == "join")
+        #expect(rendererAction.payload == Data("p".utf8))
+        if case let .chatRoomFooter(roomId, messageType) = rendererAction.context {
+            #expect(roomId == "room")
+            #expect(messageType == "register")
+        } else {
+            Issue.record("a footer press must be addressed by a chatRoomFooter context")
+        }
+
+        await runtime.dispose()
+    }
+
+    /// A worker still booting when the room opens ends the first footer stream
+    /// before it draws, and the card has to appear once the product can draw it.
+    @Test func aDockedCardWhoseFirstStreamDrewNothingIsReopened() async throws {
+        let execution = MockProductExecution()
+        let runtime = makeRustRuntime(workers: workersRunning(execution))
+        try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+        let viewModel = try dockedCard(from: makeFooterDecoder(runtime: runtime))
+
+        await execution.awaitRenderRequest()
+        execution.renderNodes = [.spacer(modifiers: [])]
+        await viewModel.renderTask?.value
+
+        #expect(execution.renderRequests.count == 2)
+        let node = await MainActor.run { viewModel.node }
+        #expect(node != nil)
+
+        await runtime.dispose()
+    }
+
+    /// The chat rebuilds its input configuration on every feed update, and each
+    /// fresh card would open another render stream on the product.
+    @Test func aFeedUpdateKeepsTheDockedCardItAlreadyRenders() async throws {
+        let execution = MockProductExecution()
+        execution.keepsRenderStreamOpen = true
+        let runtime = makeRustRuntime(workers: workersRunning(execution))
+        try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+        let decoder = makeFooterDecoder(runtime: runtime)
+
+        let first = try dockedCard(from: decoder)
+        let second = try dockedCard(from: decoder)
+
+        #expect(first === second)
+
+        await runtime.dispose()
+    }
+
+    /// The product replaces its card on every update and may clear it, and each
+    /// card left drawing would hold a render stream open on the product.
+    @Test func aReplacedOrClearedCardStopsDrawing() async throws {
+        let execution = MockProductExecution()
+        execution.keepsRenderStreamOpen = true
+        let runtime = makeRustRuntime(workers: workersRunning(execution))
+        try await runtime.start(messagingSupport: .init(bot: nil, context: nil))
+        let decoder = makeFooterDecoder(runtime: runtime)
+
+        // Given
+        let first = try dockedCard(from: decoder, payload: Data([1]))
+        await execution.awaitRenderRequest()
+
+        // When
+        let second = try dockedCard(from: decoder, payload: Data([2]))
+        await execution.awaitRenderRequest()
+
+        // Then
+        try #require(first.renderTask?.isCancelled == true)
+        await first.renderTask?.value
+        #expect(second.renderTask?.isCancelled == false)
+
+        // When
+        decoder.clearRoomFooterCard(roomId: "room")
+
+        // Then
+        try #require(second.renderTask?.isCancelled == true)
+        await second.renderTask?.value
+        #expect(execution.renderRequests.count == 2)
+        #expect(try dockedCard(from: decoder, payload: Data([2])) !== second)
 
         await runtime.dispose()
     }

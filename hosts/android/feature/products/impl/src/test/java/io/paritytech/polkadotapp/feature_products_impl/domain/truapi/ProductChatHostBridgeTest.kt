@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotMessage
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductRoomFooter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
@@ -58,7 +59,7 @@ class ProductChatHostBridgeTest {
 
         val posted = runCatching { bridge.postMessage("", ChatMessageContent.Text("hi"), alt = null) }.exceptionOrNull()
         val created = runCatching { bridge.createRoom("", "Jollity", "") }.exceptionOrNull()
-        val footed = runCatching { bridge.setRoomFooter("", ChatRoomFooter.EMPTY) }.exceptionOrNull()
+        val footed = runCatching { bridge.setRoomFooter("", ChatRoomFooter.Empty) }.exceptionOrNull()
 
         assertTrue(posted is HostRejection)
         assertTrue(posted!!.message!!.contains("a chat message needs a room"))
@@ -153,15 +154,20 @@ class ProductChatHostBridgeTest {
     }
 
     @Test
-    fun `setRoomFooter maps the core footer onto the room's text input`() = runTest {
+    fun `setRoomFooter maps the core footer onto the room`() = runTest {
         val api = FakeChatMessaging()
         val bridge = bridge(api)
 
-        bridge.setRoomFooter(ROOM, ChatRoomFooter.EMPTY)
-        bridge.setRoomFooter(ROOM, ChatRoomFooter.TEXT_INPUT)
+        bridge.setRoomFooter(ROOM, ChatRoomFooter.Empty)
+        bridge.setRoomFooter(ROOM, ChatRoomFooter.TextInput)
+        bridge.setRoomFooter(ROOM, ChatRoomFooter.Card(ChatCustomMessage("register", byteArrayOf(1))))
 
         assertEquals(
-            listOf(ProductChatIdParameter(ROOM) to false, ProductChatIdParameter(ROOM) to true),
+            listOf(
+                ProductChatIdParameter(ROOM) to ProductRoomFooter.Empty,
+                ProductChatIdParameter(ROOM) to ProductRoomFooter.TextInput,
+                ProductChatIdParameter(ROOM) to ProductRoomFooter.Card("register", byteArrayOf(1)),
+            ),
             api.footers,
         )
     }

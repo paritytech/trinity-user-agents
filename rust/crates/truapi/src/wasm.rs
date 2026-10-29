@@ -1695,7 +1695,7 @@ impl WasmProductRuntime {
 		on_complete: Function,
 		on_error: Function,
 	) -> Result<WasmRendererSubscription, JsValue> {
-		let request = v01::ProductRendererRenderRequest::decode(&mut request.as_slice())
+		let request = truapi::latest::ProductRendererRenderRequest::decode(&mut request.as_slice())
 			.map_err(|err| JsValue::from_str(&format!("render request did not decode: {err}")))?;
 		let mut stream = self
 			.inner
@@ -1751,7 +1751,7 @@ impl WasmProductRuntime {
 	/// `HostRendererActionSubscribeItem`.
 	#[wasm_bindgen(js_name = publishRendererAction)]
 	pub fn publish_renderer_action(&self, item: Vec<u8>) -> Result<(), JsValue> {
-		let item = v01::HostRendererActionSubscribeItem::decode(&mut item.as_slice())
+		let item = truapi::latest::HostRendererActionSubscribeItem::decode(&mut item.as_slice())
 			.map_err(|err| JsValue::from_str(&format!("renderer action did not decode: {err}")))?;
 		self.inner
 			.core

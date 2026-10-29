@@ -9,20 +9,34 @@ extension ChatViewModelFactory {
     ) -> (any ChatInputViewConfigurationProtocol)? {
         switch metadata.peerMetadata.input {
         case let .inputField(inputFieldMetadata):
-            makeTextInputConfiguration(inputFieldMetadata)
+            clearRoomFooterCard(of: metadata.chatId)
+            return makeTextInputConfiguration(inputFieldMetadata)
         case .incomingRequest:
-            makeIncomingRequestInputConfiguration(for: metadata.peerMetadata, actions: actions)
+            return makeIncomingRequestInputConfiguration(for: metadata.peerMetadata, actions: actions)
         case .outgoingRequest:
-            makeOutgoingPendingRequestInputConfiguration(for: metadata)
+            return makeOutgoingPendingRequestInputConfiguration(for: metadata)
         case .blockedUser:
-            makeBlockedUserInputConfiguration(for: metadata.peerMetadata, actions: actions)
+            return makeBlockedUserInputConfiguration(for: metadata.peerMetadata, actions: actions)
+        case let .productCard(roomId, messageType, payload):
+            return productMessageDecoder?
+                .makeRoomFooterCard(roomId: roomId, messageType: messageType, payload: payload)
         case .empty:
-            nil
+            clearRoomFooterCard(of: metadata.chatId)
+            return nil
         }
     }
 }
 
 private extension ChatViewModelFactory {
+    var productMessageDecoder: ProductMessageDecoder? {
+        customDecodersById[MessageDecoderIdentifier.product.rawValue] as? ProductMessageDecoder
+    }
+
+    func clearRoomFooterCard(of chatId: Chat.Id) {
+        guard case let .chatExtension(_, roomId?) = chatId else { return }
+        productMessageDecoder?.clearRoomFooterCard(roomId: roomId)
+    }
+
     func makeTextInputConfiguration(
         _ inputFieldMetadata: Chat.PeerMetadataInput.InputField
     ) -> any ChatInputViewConfigurationProtocol {

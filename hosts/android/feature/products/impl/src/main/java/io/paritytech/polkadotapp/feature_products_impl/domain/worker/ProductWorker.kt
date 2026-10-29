@@ -2,10 +2,12 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.worker
 
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.JsEventDispatcher
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 
 /**
  * A booted product worker that the chat surface drives: it delivers user messages, renders custom
@@ -21,4 +23,11 @@ interface ProductWorker : JsEventDispatcher {
         messageType: String,
         messageData: DataByteArray,
     ): Flow<Result<JsWidget>>
+
+    /** Draws the card the product docked in the footer of [roomId]. Only a TrUAPI product docks one. */
+    fun renderRoomFooter(roomId: ProductChatIdParameter, messageType: String, payload: DataByteArray): Flow<Result<JsWidget>> =
+        emptyFlow()
+
+    /** A press inside the card the product docked in the footer of [roomId]. */
+    fun dispatchRoomFooterEvent(roomId: ProductChatIdParameter, messageType: String, actionId: String, eventType: JsUiEvent.Type) = Unit
 }

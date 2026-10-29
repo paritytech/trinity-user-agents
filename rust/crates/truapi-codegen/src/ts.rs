@@ -248,7 +248,7 @@ fn collect_preserved_version_prefixed_types(
 	}
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum VersionedKind {
 	Unit,
 	Tuple(TypeRef),
@@ -332,6 +332,18 @@ fn validate_versioned_wrapper_shapes(api: &ApiDefinition) -> Result<()> {
 		}
 	}
 	Ok(())
+}
+
+/// The version a host-initiated item goes out in: the oldest one carrying the
+/// same payload as `wire_version`, so a host that predates `wire_version` still
+/// decodes it.
+fn host_initiated_item_version(wrapper: &VersionedWrapper, wire_version: u32) -> u32 {
+	let payload = &wrapper.variants[&wire_version].kind;
+	wrapper
+		.variants
+		.values()
+		.find(|variant| variant.kind == *payload)
+		.map_or(wire_version, |variant| variant.version)
 }
 
 fn versioned_wrapper_for<'a>(
@@ -949,6 +961,11 @@ fn method_wire_version(
 /// every wrapper it touches gets that version recorded here. Wrappers that no
 /// included method references end up absent from the map and can be elided
 /// from the emitted types altogether.
+///
+/// The request of a host-initiated method keeps every version up to the
+/// target, because the host picks the version it sends and the client has to
+/// decode whichever arrives. Its item keeps the version
+/// [`host_initiated_item_version`] picks.
 fn versioned_wrapper_emit_versions(
 	api: &ApiDefinition,
 	wrappers: &BTreeMap<String, VersionedWrapper>,
@@ -965,6 +982,29 @@ fn versioned_wrapper_emit_versions(
 			};
 			for wrapper_name in method_versioned_wrappers(method, wrappers) {
 				emit.entry(wrapper_name).or_default().insert(wire_version);
+			}
+			if method.wire.host_initiated &&
+				let Some(request_name) = request_wrapper_name(method, wrappers)
+			{
+				let decoded_versions = wrappers[request_name]
+					.variants
+					.keys()
+					.filter(|version| **version <= target_version)
+					.copied();
+				emit.entry(request_name.to_string()).or_default().extend(decoded_versions);
+			}
+			if method.wire.host_initiated &&
+				let ReturnType::Subscription { item, interrupt } = &method.return_type
+			{
+				let interrupt = call_error_inner(interrupt).unwrap_or(interrupt);
+				for (name, wrapper) in [item, interrupt]
+					.into_iter()
+					.filter_map(|ty| versioned_wrapper_for(ty, wrappers))
+				{
+					emit.entry(name.to_string())
+						.or_default()
+						.insert(host_initiated_item_version(wrapper, wire_version));
+				}
 			}
 		}
 	}
@@ -2003,12 +2043,13 @@ fn emit_host_initiated_registration(
 			method.name
 		);
 	};
-	let Some((item_name, _)) = versioned_wrapper_for(item_ty, wrappers) else {
+	let Some((item_name, item_wrapper)) = versioned_wrapper_for(item_ty, wrappers) else {
 		bail!(
 			"host-initiated method `{}`: item type is not a recognized versioned wrapper",
 			method.name
 		);
 	};
+	let item_version = host_initiated_item_version(item_wrapper, version);
 	let request_codec = format!("T.{}", versioned_wrapper_ts_name(request_name));
 	let item_codec = format!("T.{}", versioned_wrapper_ts_name(item_name));
 	let error_codec = leg_error_codec_expr(interrupt, wrappers, &ctx)?;
@@ -2018,7 +2059,7 @@ fn emit_host_initiated_registration(
             this.{field} = transport.registerHostInitiatedSubscription({{
               ids: W.{wire_const},
               decodeRequest: (payload) => {request_codec}.dec(payload).value,
-              encodeItem: (item) => {item_codec}.enc({{ tag: \"V{version}\", value: item }}),
+              encodeItem: (item) => {item_codec}.enc({{ tag: \"V{item_version}\", value: item }}),
               encodeInterrupt: interruptEncoder({error_codec}),
               declinePayload: HOST_INITIATED_DECLINE_PAYLOAD,
               bufferCapacity: HOST_INITIATED_BUFFER_CAPACITY,
@@ -3084,6 +3125,63 @@ mod tests {
 				.contains("this.#renderRegistration = transport.registerHostInitiatedSubscription")
 		);
 		assert!(source.contains("return this.#renderRegistration.setHandler(handler)"));
+	}
+
+	/// The host sends a v0.1 product the old request and a v0.2 product the new
+	/// one, so a client that kept only its own version could not read the first.
+	/// An item whose payload never changed goes out in its oldest version, which
+	/// a host of either version decodes.
+	#[test]
+	fn a_host_initiated_request_decodes_every_version_and_answers_in_the_oldest_item() {
+		let mut method = request_method_with_wrappers(
+			"render",
+			Some(0),
+			"RenderRequest",
+			"RenderItem",
+			"RenderError",
+		);
+		let ReturnType::Result { ok, err } = method.return_type else {
+			unreachable!();
+		};
+		method.kind = MethodKind::Subscription;
+		method.return_type = ReturnType::Subscription { item: ok, interrupt: err };
+		method.wire.host_initiated = true;
+		let mut api = api(vec![method]);
+		api.public_trait_order = vec!["Example".to_string()];
+		api.types.push(versioned_tuple_wrapper_variants(
+			"RenderRequest",
+			&[(1, "V01RenderRequest"), (2, "V02RenderRequest")],
+		));
+		api.types.push(empty_struct("V01RenderRequest"));
+		api.types.push(empty_struct("V02RenderRequest"));
+		api.types
+			.push(versioned_tuple_wrapper_variants("RenderItem", &[(1, "Node"), (2, "Node")]));
+		api.types.push(empty_struct("Node"));
+		api.types.push(versioned_tuple_wrapper_variants(
+			"RenderError",
+			&[(1, "Failure"), (2, "Failure")],
+		));
+		api.types.push(empty_struct("Failure"));
+
+		let types = generate_types(&api, 2).unwrap();
+		let client = generate_client(&api, 2, 2).unwrap();
+
+		assert!(
+			types.contains(
+				"S.indexedTaggedUnion({V1: [0, V01RenderRequest] as const, V2: [1, RenderRequest] as const})"
+			),
+			"{types}"
+		);
+		assert!(
+			client.contains("T.VersionedRenderItem.enc({ tag: \"V1\", value: item })"),
+			"{client}"
+		);
+		assert!(
+			types.contains(
+				"S.indexedTaggedUnion({V1: [0, Failure] as const, V2: [1, Failure] as const})"
+			),
+			"{types}"
+		);
 	}
 
 	#[test]

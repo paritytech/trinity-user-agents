@@ -27,6 +27,15 @@ struct ChatRoomFooterTests {
         #expect(room(footer: .empty).peerMetadata(using: registry).input == .empty)
     }
 
+    /// The input slot holds the docked card, addressed to the room it was docked in.
+    @Test func aRoomWithACardFooterHoldsTheProductCardInItsInputSlot() {
+        let registry = SingleBotRegistry(bot: bot)
+
+        let input = room(footer: .card(messageType: "register", payload: Data([1]))).peerMetadata(using: registry).input
+
+        #expect(input == .productCard(roomId: "room", messageType: "register", payload: Data([1])))
+    }
+
     /// A room the product never set a footer on keeps the text input.
     @Test(arguments: [nil, Chat.RoomFooter.textInput])
     func anyOtherRoomShowsTheBotInput(footer: Chat.RoomFooter?) {
@@ -42,6 +51,15 @@ struct ChatRoomFooterTests {
         try await context.setRoomFooter(for: bot, roomId: "room", footer: .empty)
 
         #expect(try await storedRoom()?.roomFooter == .empty)
+    }
+
+    @Test func aDockedCardIsStoredOnTheRoom() async throws {
+        let context = makeContext()
+        _ = try await context.createRoom(for: bot, roomId: "room", name: nil, icon: nil)
+
+        try await context.setRoomFooter(for: bot, roomId: "room", footer: .card(messageType: "register", payload: Data([1])))
+
+        #expect(try await storedRoom()?.roomFooter == .card(messageType: "register", payload: Data([1])))
     }
 
     @Test func aFooterForARoomNeverCreatedIsRefused() async throws {

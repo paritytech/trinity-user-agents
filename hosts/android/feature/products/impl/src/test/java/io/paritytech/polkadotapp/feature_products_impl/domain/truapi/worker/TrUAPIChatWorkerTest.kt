@@ -1,5 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
+import io.mockk.Runs
+import io.mockk.every
+import io.mockk.just
+import io.mockk.mockk
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
@@ -382,6 +386,40 @@ class TrUAPIChatWorkerTest {
         assertEquals("onTap", captured[0].actionId)
         assertTrue(captured[0].payload.isEmpty())
         assertEquals("hi", captured[1].payload.toString(Charsets.UTF_8))
+    }
+
+    @Test
+    fun `a docked footer card renders under RenderContext ChatRoomFooter with its payload`() = runTest {
+        val requests = mutableListOf<ProductRendererRenderRequest>()
+        val execution = mockk<TrUAPIProductExecution> {
+            every { render(capture(requests)) } returns flowOf(RendererNode.Nil)
+        }
+        val worker = worker(workers = runningWorkers(execution))
+
+        val results = worker.renderRoomFooter(roomId, "register", DataByteArray(byteArrayOf(1))).toList()
+
+        assertEquals(listOf(Result.success(JsWidget.Spacer())), results)
+        assertEquals(listOf(RenderContext.ChatRoomFooter(roomId = roomId.value, messageType = "register")), requests.map { it.context })
+        assertTrue(requests.single().payload.contentEquals(byteArrayOf(1)))
+    }
+
+    // The core routes a press by context, so a footer press addressed as a chat
+    // message would reach no card the product drew.
+    @Test
+    fun `a footer press publishes a renderer action addressed by RenderContext ChatRoomFooter`() = runTest {
+        val actions = mutableListOf<HostRendererActionSubscribeItem>()
+        val execution = mockk<TrUAPIProductExecution> {
+            every { publishRendererAction(capture(actions)) } just Runs
+        }
+        val workers = mockk<TrUAPIWorkerSupervisor> {
+            every { currentExecution(productId) } returns execution
+            every { executionState(productId) } returns emptyFlow()
+        }
+        val worker = worker(workers = workers)
+
+        worker.dispatchRoomFooterEvent(roomId, "register", "join", JsUiEvent.Type.ButtonClick)
+
+        assertEquals(listOf(RenderContext.ChatRoomFooter(roomId.value, "register") to "join"), actions.map { it.context to it.actionId })
     }
 
     @Test

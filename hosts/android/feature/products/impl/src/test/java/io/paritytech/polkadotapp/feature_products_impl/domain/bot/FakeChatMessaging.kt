@@ -15,7 +15,7 @@ class FakeChatMessaging(
         { _, _ -> notStubbed() },
 ) : ProductChatMessaging {
     val sentText = mutableListOf<Pair<String, String>>()
-    val footers = mutableListOf<Pair<ProductChatIdParameter, Boolean>>()
+    val footers = mutableListOf<Pair<ProductChatIdParameter, ProductRoomFooter>>()
 
     override suspend fun createRoom(request: CreateProductRoomRequest): Result<CreateProductRoomResult> =
         onCreateRoom(request)
@@ -28,8 +28,8 @@ class FakeChatMessaging(
         return onSendMessage(chatIdParameter, message)
     }
 
-    override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, showsTextInput: Boolean): Result<Unit> {
-        footers += chatIdParameter to showsTextInput
+    override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, footer: ProductRoomFooter): Result<Unit> {
+        footers += chatIdParameter to footer
         return Result.success(Unit)
     }
 

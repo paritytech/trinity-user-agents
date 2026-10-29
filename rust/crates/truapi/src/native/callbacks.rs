@@ -286,7 +286,7 @@ pub trait NativeChatCallbacks: Send + Sync {
 	async fn set_room_footer(
 		&self,
 		room_id: String,
-		footer: v01::ChatRoomFooter,
+		footer: truapi::latest::ChatRoomFooter,
 	) -> Result<(), HostRejection>;
 
 	/// Return the current product-scoped native Chat room list.

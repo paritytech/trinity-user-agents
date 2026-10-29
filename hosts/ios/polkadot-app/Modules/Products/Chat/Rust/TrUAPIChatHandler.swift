@@ -102,31 +102,22 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         messageType: String,
         messageData: Data
     ) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
-        do {
-            guard let roomId else { throw ChatSeamError.roomlessChat }
-            let nodes = try await renderNodesWhenConnected(
-                deadline: ContinuousClock.now + renderStartupWindow,
-                roomId: roomId,
-                messageId: messageId,
-                messageType: messageType,
-                messageData: messageData
-            )
-            return AsyncThrowingStream { continuation in
-                let task = Task {
-                    do {
-                        for try await node in nodes {
-                            continuation.yield(.native(node))
-                        }
-                        continuation.finish()
-                    } catch {
-                        continuation.finish(throwing: error)
-                    }
-                }
-                continuation.onTermination = { _ in task.cancel() }
-            }
-        } catch {
-            return AsyncThrowingStream { $0.finish(throwing: error) }
+        guard let roomId else {
+            return AsyncThrowingStream { $0.finish(throwing: ChatSeamError.roomlessChat) }
         }
+        return await render(
+            .chatMessage(roomId: roomId, messageId: messageId, messageType: messageType),
+            payload: messageData
+        )
+    }
+
+    /// Draws the card the product docked in the footer of `roomId`.
+    func renderRoomFooter(
+        roomId: String,
+        messageType: String,
+        payload: Data
+    ) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
+        await render(.chatRoomFooter(roomId: roomId, messageType: messageType), payload: payload)
     }
 
     /// A press inside a body the product drew is a renderer action addressed by
@@ -146,20 +137,38 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
             // would be delivered nowhere. Only this runtime needs the type: the
             // native one addresses by message id.
             guard let messageType else { throw ChatSeamError.untypedBody }
-            try requireExecution().publishRendererAction(HostRendererActionSubscribeItem(
-                context: .chatMessage(
-                    roomId: roomId,
-                    messageId: messageId,
-                    messageType: messageType
-                ),
+            try publishRendererAction(
+                .chatMessage(roomId: roomId, messageId: messageId, messageType: messageType),
                 actionId: actionId,
-                payload: payload.map { Data($0.utf8) } ?? Data()
-            ))
+                payload: payload
+            )
             logger.debug("Rust chat runtime dispatched event \(actionId) for message \(messageId) to \(productId)")
         } catch is CancellationError {
             logger.debug("Rust chat runtime disposed before event \(actionId)")
         } catch {
             logger.error("Rust chat runtime failed to dispatch event \(actionId): \(error)")
+        }
+    }
+
+    /// A press inside the card the product docked in the footer of `roomId`.
+    func dispatchRoomFooterEvent(
+        roomId: String,
+        messageType: String,
+        actionId: String,
+        payload: String?
+    ) async {
+        do {
+            try checkNotDisposed()
+            try publishRendererAction(
+                .chatRoomFooter(roomId: roomId, messageType: messageType),
+                actionId: actionId,
+                payload: payload
+            )
+            logger.debug("Rust chat runtime dispatched footer event \(actionId) in room \(roomId) to \(productId)")
+        } catch is CancellationError {
+            logger.debug("Rust chat runtime disposed before footer event \(actionId)")
+        } catch {
+            logger.error("Rust chat runtime failed to dispatch footer event \(actionId): \(error)")
         }
     }
 
@@ -236,24 +245,39 @@ private extension TrUAPIChatHandler {
         guard !disposed else { throw CancellationError() }
     }
 
+    func render(
+        _ context: RenderContext,
+        payload: Data
+    ) async -> AsyncThrowingStream<ChatRendererOutput, Error> {
+        do {
+            let nodes = try await renderNodesWhenConnected(
+                deadline: ContinuousClock.now + renderStartupWindow,
+                request: ProductRendererRenderRequest(context: context, payload: payload)
+            )
+            return AsyncThrowingStream { continuation in
+                let task = Task {
+                    do {
+                        for try await node in nodes {
+                            continuation.yield(.native(node))
+                        }
+                        continuation.finish()
+                    } catch {
+                        continuation.finish(throwing: error)
+                    }
+                }
+                continuation.onTermination = { _ in task.cancel() }
+            }
+        } catch {
+            return AsyncThrowingStream { $0.finish(throwing: error) }
+        }
+    }
+
     /// A persisted message can decode before the product attaches. `ProductMessageDecoder`
     /// never evicts, so failing once breaks that cell for the session.
     func renderNodesWhenConnected(
         deadline: ContinuousClock.Instant,
-        roomId: String,
-        messageId: String,
-        messageType: String,
-        messageData: Data
+        request: ProductRendererRenderRequest
     ) async throws -> AsyncThrowingStream<RendererNode, Error> {
-        let request = ProductRendererRenderRequest(
-            context: .chatMessage(
-                roomId: roomId,
-                messageId: messageId,
-                messageType: messageType
-            ),
-            payload: messageData
-        )
-
         while true {
             try checkNotDisposed()
             do {
@@ -264,12 +288,20 @@ private extension TrUAPIChatHandler {
                 )
             } catch let error where (error as? ChatSeamError) == .notStarted {
                 guard ContinuousClock.now < deadline else {
-                    logger.error("Custom render gave up waiting for the product: \(messageId)")
+                    logger.error("Custom render gave up waiting for the product: \(request.context)")
                     throw error
                 }
                 try await Task.sleep(for: Self.renderRetryInterval)
             }
         }
+    }
+
+    func publishRendererAction(_ context: RenderContext, actionId: String, payload: String?) throws {
+        try requireExecution().publishRendererAction(HostRendererActionSubscribeItem(
+            context: context,
+            actionId: actionId,
+            payload: payload.map { Data($0.utf8) } ?? Data()
+        ))
     }
 
     func requireExecution() throws -> TrUAPIProductExecutionProtocol {

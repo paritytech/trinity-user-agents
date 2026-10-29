@@ -17,7 +17,8 @@ use crate::{
 pub trait Renderer: Send + Sync {
 	/// Streams renderer trees for one product-rendered body. Each item
 	/// replaces the previous tree. The stream stays open while the body is
-	/// displayed so the product can redraw in place.
+	/// displayed so the product can redraw in place. The context may name a
+	/// card the product docked in a room footer.
 	///
 	/// ```ts
 	/// truapi.renderer.onRender(({ context, payload }, send) => {

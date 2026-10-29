@@ -90,8 +90,8 @@ use crate::platform::{
 	ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision, Platform,
 	ProductContext, ProductId, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
-	normalize_chat_identifier, validate_chat_icon, validate_chat_message_content,
-	validate_chat_name,
+	normalize_chat_identifier, validate_chat_custom_message, validate_chat_icon,
+	validate_chat_message_content, validate_chat_name,
 };
 pub use signing_host::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
@@ -102,7 +102,7 @@ use truapi::{
 	api::{Chat, Contacts, Funding, Pocket, Renderer},
 	latest, v01,
 	versioned::{
-		IntoLatest,
+		IntoLatest, Versioned,
 		chat::{
 			HostChatActionSubscribeError, HostChatActionSubscribeItem,
 			HostChatActionSubscribeRequest, HostChatCreateRoomError, HostChatCreateRoomRequest,
@@ -1409,6 +1409,12 @@ impl Chat for ProductRuntimeHost {
 				};
 				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
 					.map_err(|error| failure(error.to_string()))?;
+				if let latest::ChatRoomFooter::Card(card) = request.footer {
+					request.footer = latest::ChatRoomFooter::Card(
+						validate_chat_custom_message(card)
+							.map_err(|error| failure(error.to_string()))?,
+					);
+				}
 
 				// Checked here rather than by each host, so every host answers a room
 				// the product never created the same way.
@@ -1462,6 +1468,7 @@ impl Renderer for ProductRuntimeHost {
 		request: HostRendererActionSubscribeRequest,
 	) -> Subscription<HostRendererActionSubscribeItem, CallError<HostRendererActionSubscribeError>>
 	{
+		let decodes_footer_contexts = request.version() >= 2;
 		version(request)
 			.exec(|()| async move {
 				if self.connection.renderer_access().is_err() {
@@ -1471,7 +1478,14 @@ impl Renderer for ProductRuntimeHost {
 					self.connection
 						.renderer
 						.subscribe()
-						.map(|item| item.map(IntoLatest::into_latest)),
+						.map(|item| item.map(IntoLatest::into_latest))
+						.filter(move |item| {
+							let footer = matches!(
+								item,
+								Ok(action) if matches!(action.context, latest::RenderContext::ChatRoomFooter { .. })
+							);
+							core::future::ready(decodes_footer_contexts || !footer)
+						}),
 				)
 			})
 			.await
