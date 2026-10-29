@@ -33,10 +33,6 @@ mod store {
 		match *db {}
 	}
 
-	pub(super) async fn read_sessions(db: &Db) -> Result<Vec<FundingSession>, FundingSessionError> {
-		match *db {}
-	}
-
 	pub(super) async fn write(
 		db: &Db,
 		_sessions: &[&FundingSession],
@@ -165,6 +161,52 @@ struct Announcements {
 	pending: VecDeque<(String, HostFundingStatusSubscribeItem)>,
 	/// Whether a caller is delivering them.
 	delivering: bool,
+	/// The [`FundingRegistry::in_progress`] the host was last told.
+	in_progress: Option<bool>,
+}
+
+/// One change the host is told of.
+enum Announcement {
+	Session(String, HostFundingStatusSubscribeItem),
+	InProgress(bool),
+}
+
+/// What a host draws its funding screens from, pushed by the core so the
+/// host never reads it back. Native hosts get it through their funding
+/// callbacks; a host without one gets only
+/// [`FundingPlatform::funding_session_changed`].
+pub trait FundingFeed: Send + Sync {
+	/// A session changed: its status, the session as the core now holds it
+	/// and the progress the host draws. Every session the host has to hear
+	/// of comes through here once more when funding resumes. `session` and
+	/// `progress` are `None` once the core keeps only the session's summary.
+	fn funding_session_changed(
+		&self,
+		intent: String,
+		status: HostFundingStatusSubscribeItem,
+		session: Option<FundingSession>,
+		progress: Option<crate::host_logic::funding::FundingProgress>,
+	);
+
+	/// Every ended session the host recorded or the core compacted, as
+	/// summaries newest first, once each time funding resumes, so a host
+	/// that lost its own history rebuilds it.
+	fn funding_history(&self, history: Vec<FundingSessionSummary>);
+
+	/// Whether a provider still works on any session: once funding resumes,
+	/// and again whenever it changes. A host that remembers it starts
+	/// funding at its next launch, so the providers carry on from their last
+	/// checkpoint without waiting for a product.
+	fn funding_in_progress_changed(&self, in_progress: bool);
+
+	/// What session `intent`'s overlay offers: before the overlay shows,
+	/// after each selection the host reports while it is up, and after each
+	/// quote list, which can teach the core new limits.
+	fn funding_options_changed(
+		&self,
+		intent: String,
+		options: crate::host_logic::funding_providers::FundingOptions,
+	);
 }
 
 /// Host-global funding sessions, their subscribers and the host surface.
@@ -190,6 +232,7 @@ pub struct FundingRegistry {
 	/// write lock.
 	loaded: AtomicBool,
 	platform: OnceLock<Arc<dyn FundingPlatform>>,
+	feed: OnceLock<Arc<dyn FundingFeed>>,
 	/// The core database the sessions are stored in.
 	db: OnceLock<store::Db>,
 	/// Each provider's worker connection, by product id.
@@ -235,6 +278,18 @@ impl FundingRegistry {
 	/// The host's funding surface, when one is installed.
 	pub fn platform(&self) -> Option<Arc<dyn FundingPlatform>> {
 		self.platform.get().cloned()
+	}
+
+	/// Install the feed the host draws its funding screens from, before the
+	/// funding surface, whose install resumes funding. Set-once; returns
+	/// whether this call installed it.
+	pub fn install_feed(&self, feed: Arc<dyn FundingFeed>) -> bool {
+		self.feed.set(feed).is_ok()
+	}
+
+	/// The host's funding feed, when one is installed.
+	pub fn feed(&self) -> Option<Arc<dyn FundingFeed>> {
+		self.feed.get().cloned()
 	}
 
 	/// Install the core database the sessions are stored in. Set-once;
@@ -502,42 +557,15 @@ impl FundingRegistry {
 		self.lock_sessions().get(intent).cloned()
 	}
 
+	/// Whether session `intent`'s overlay is up.
+	pub fn is_presenting(&self, intent: &str) -> bool {
+		self.lock_presenting().contains(intent)
+	}
+
 	/// Whether a provider still works on any session: one in flight, or a
 	/// withdrawal whose payout or refund it has not reported.
 	pub fn in_progress(&self) -> bool {
 		self.lock_sessions().values().any(provider_works_on)
-	}
-
-	/// [`Self::in_progress`], reading the core database when the sessions are
-	/// not loaded yet. It writes nothing back and starts nothing.
-	pub async fn in_progress_stored(&self) -> Result<bool, FundingSessionError> {
-		let loaded = self.writes.lock().await;
-		if *loaded {
-			return Ok(self.in_progress());
-		}
-		drop(loaded);
-		Ok(store::read_sessions(self.db()?).await?.iter().any(provider_works_on))
-	}
-
-	/// Every session the user started that the host still has to hear of, for
-	/// its progress and history views: those in flight first, then the ended
-	/// ones it has not recorded, each newest first.
-	pub fn sessions(&self) -> Vec<FundingSession> {
-		let mut sessions: Vec<_> = {
-			let presenting = self.lock_presenting();
-			self.lock_sessions()
-				.values()
-				.filter(|session| session.needs_handoff() && !presenting.contains(&session.intent))
-				.cloned()
-				.collect()
-		};
-		sessions.sort_by_key(|session| {
-			(
-				session.is_terminal(),
-				core::cmp::Reverse(session.settled_at_ms().unwrap_or(session.opened_at_ms)),
-			)
-		});
-		sessions
 	}
 
 	/// Every ended session the host recorded or the core compacted into the
@@ -1287,9 +1315,12 @@ impl FundingRegistry {
 	}
 
 	/// Hand queued changes to the host in commit order, outside the write
-	/// lock so the host may call back into the registry. One caller delivers
-	/// at a time, and a change committed from inside the callback is
-	/// delivered by that caller once the callback returns.
+	/// lock so the host may call back into the registry, then whether a
+	/// provider still works on any session, when that changed. Each session
+	/// goes with the record and progress it has when delivered, which are at
+	/// least as new as its status. One caller delivers at a time, and a
+	/// change committed from inside the callback is delivered by that caller
+	/// once the callback returns.
 	fn announce(&self) {
 		let Some(platform) = self.platform() else {
 			return;
@@ -1298,16 +1329,38 @@ impl FundingRegistry {
 			return;
 		}
 		loop {
+			let in_progress = self.in_progress();
 			let next = {
 				let mut announcements = self.lock_announcements();
-				let next = announcements.pending.pop_front();
+				let next = match announcements.pending.pop_front() {
+					Some((intent, item)) => Some(Announcement::Session(intent, item)),
+					None if announcements.in_progress != Some(in_progress) => {
+						announcements.in_progress = Some(in_progress);
+						Some(Announcement::InProgress(in_progress))
+					},
+					None => None,
+				};
 				announcements.delivering = next.is_some();
 				next
 			};
-			let Some((intent, item)) = next else {
-				return;
-			};
-			platform.funding_session_changed(intent, item);
+			let feed = self.feed();
+			match next {
+				Some(Announcement::Session(intent, item)) => {
+					platform.funding_session_changed(intent.clone(), item.clone());
+					if let Some(feed) = feed {
+						let session = self.get(&intent);
+						let progress =
+							session.as_ref().map(|session| session.progress(current_unix_millis()));
+						feed.funding_session_changed(intent, item, session, progress);
+					}
+				},
+				Some(Announcement::InProgress(in_progress)) => {
+					if let Some(feed) = feed {
+						feed.funding_in_progress_changed(in_progress);
+					}
+				},
+				None => return,
+			}
 		}
 	}
 
@@ -1554,8 +1607,8 @@ impl RuntimeServices {
 		let services = self.clone();
 		(self.spawner)(Box::pin(async move {
 			let registry = services.funding();
-			// The host's session views read what the core has loaded, so a
-			// failed load is retried until the sessions are in.
+			// The host's session views are fed from what the core has
+			// loaded, so a failed load is retried until the sessions are in.
 			let mut retry_in = RESUME_RETRY_FIRST;
 			loop {
 				let loaded = registry
@@ -1572,7 +1625,12 @@ impl RuntimeServices {
 					})
 					.await;
 				match loaded {
-					Ok(()) => break,
+					Ok(()) => {
+						if let Some(feed) = registry.feed() {
+							feed.funding_history(registry.history());
+						}
+						break;
+					},
 					// Left for the newer app that wrote them; retrying cannot
 					// read them.
 					Err(error @ FundingSessionError::NewerFormat { .. }) => {
@@ -1608,13 +1666,6 @@ impl RuntimeServices {
 				(settled, Vec::from_iter(settled.then_some(intent)))
 			})
 			.await
-	}
-
-	/// Whether a provider still works on any session, once the stored
-	/// sessions are loaded: a host asking at launch, before funding resumes,
-	/// gets the answer from storage rather than an empty registry.
-	pub async fn funding_in_progress(&self) -> Result<bool, FundingSessionError> {
-		self.funding().in_progress_stored().await
 	}
 
 	/// Record that the host wrote ended session `intent` into its own
@@ -1967,7 +2018,10 @@ impl RuntimeServices {
 			direction: session.direction,
 			amount: session.amount,
 		};
+		self.refresh_funding_providers();
+		self.send_funding_options(&session.intent);
 		let presented = platform.present_funding(product.as_ref(), presentation).await;
+		self.forget_funding_selection(&session.intent);
 		match presented {
 			Ok(FundingPresentOutcome::Started) => {
 				registry
@@ -2180,36 +2234,6 @@ mod tests {
 		assert_eq!(
 			after.get("fs_overdue").map(|session| session.stage),
 			Some(FundingStage::Failed { reason: FundingFailure::Expired, settled_at_ms: NOW })
-		);
-	}
-
-	// The host's list shows what is in flight first, then what ended, each
-	// newest first.
-	#[test]
-	fn sessions_list_in_flight_first_then_ended_newest_first() {
-		let db = open_memory_core_db();
-		let registry = registry_on(&db);
-		let ended = |intent, settled_at_ms| {
-			let mut session = session(intent, settled_at_ms - 1);
-			session.fail(FundingFailure::Expired, settled_at_ms);
-			session
-		};
-		for session in [
-			ended("fs_old", NOW - 2),
-			session("fs_live_old", NOW - 5),
-			ended("fs_new", NOW - 1),
-			session("fs_live_new", NOW),
-		] {
-			insert(&registry, session);
-		}
-
-		assert_eq!(
-			registry
-				.sessions()
-				.into_iter()
-				.map(|session| session.intent)
-				.collect::<Vec<_>>(),
-			["fs_live_new", "fs_live_old", "fs_new", "fs_old"]
 		);
 	}
 
@@ -2627,10 +2651,10 @@ mod tests {
 		assert_eq!(
 			(
 				block_on(replay.collect::<Vec<_>>()),
-				after.sessions(),
+				after.get("fs_1").is_some_and(|session| session.needs_handoff()),
 				after.subscribe("fs_9").is_none()
 			),
-			(vec![expired], Vec::new(), true)
+			(vec![expired], false, true)
 		);
 	}
 
