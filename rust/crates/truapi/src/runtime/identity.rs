@@ -154,8 +154,11 @@ async fn lookup_with_retries(
 				return LookupOutcome::NoRecord;
 			},
 			Err(reason) => {
+				// A warning leaves the device, so the account is named by a
+				// handle rather than in full. The debug lines above, which stay
+				// on it, still carry the whole id.
 				warn!(
-					account = %hex::encode(account),
+					account = %crate::logging::account_handle(&account),
 					attempt,
 					reason = %reason.reason(),
 					"dotNS {label} lookup failed"

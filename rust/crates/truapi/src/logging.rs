@@ -11,11 +11,13 @@
 //! not understand. Everything chattier stays off until asked for, and
 //! `setLogLevel("off")` silences the console completely.
 //!
-//! An event whose target starts with [`HOST_MARKER_PREFIX`] is addressed to the
-//! host rather than to the console: it reaches the sink a host installs with
-//! [`set_host_log_sink`] whatever the level is, so the few conditions a host
-//! operator has to see do not depend on the level being lowered for everything
-//! else.
+//! Two kinds of event reach the sink a host installs with [`set_host_sink`],
+//! whatever the console level is, because a native host keeps stderr out of its
+//! log files and crash reports. An event whose target starts with
+//! [`HOST_MARKER_PREFIX`] is addressed to the host rather than to the console,
+//! and its target is the marker the host receives. Any warning or error is
+//! forwarded too, under a marker naming its level, so a host's log does not
+//! depend on anyone lowering the level for everything else.
 //!
 //! On wasm each level maps to the matching `console` method
 //! (`error`/`warn`/`info`/`debug`); on native everything goes to stderr.
@@ -30,7 +32,7 @@ use core::{
 	fmt::{self, Write as _},
 };
 use std::sync::{
-	Arc, Mutex, OnceLock,
+	Arc, OnceLock, RwLock,
 	atomic::{AtomicBool, Ordering},
 };
 
@@ -49,11 +51,21 @@ use tracing_subscriber::{
 
 static RELOAD_HANDLE: OnceLock<reload::Handle<LevelFilter, Registry>> = OnceLock::new();
 static TRACE_SPANS: AtomicBool = AtomicBool::new(false);
+static HOST_SINK: RwLock<Option<HostSink>> = RwLock::new(None);
+
+/// Takes a marker and a detail line for the native host log.
+type HostSink = Arc<dyn Fn(&str, &str) + Send + Sync>;
 
 /// Prefix that marks an event's target as addressed to the host rather than
 /// naming a module. Rust module paths separate with `::`, so a dotted target
 /// cannot collide with one, and the rest of the target names the condition.
 pub const HOST_MARKER_PREFIX: &str = "truapi.";
+
+/// Targets this crate family owns, whether a module path (`truapi::chain_runtime`)
+/// or a marker addressed to the host (`truapi.chain.follow_budget_reached`). A
+/// dependency's own `tracing` traffic is not a host's business and must not be
+/// able to drive the host sink.
+const CRATE_TARGET_PREFIX: &str = "truapi";
 
 /// Loudest level a marked event may use.
 ///
@@ -62,32 +74,6 @@ pub const HOST_MARKER_PREFIX: &str = "truapi.";
 /// otherwise cut it before any dispatch. Raise this before marking anything
 /// quieter than it.
 const HOST_MARKER_MAX_LEVEL: LevelFilter = LevelFilter::INFO;
-
-/// What a host installs to read the events addressed to it: the event's target
-/// as a marker slug and its rendered message as the detail, called from
-/// whatever thread raised the event.
-pub type HostLogSink = Arc<dyn Fn(&str, &str) + Send + Sync>;
-
-/// Host sink for marked events, when a host has one.
-///
-/// A `Mutex` rather than a `OnceLock` so a test can install one and take it
-/// away again. Marked events are rare, so the lock is never hot.
-static HOST_SINK: Mutex<Option<HostLogSink>> = Mutex::new(None);
-
-/// Send every event whose target starts with [`HOST_MARKER_PREFIX`] to `sink`,
-/// replacing any previous one. Hosts that surface a lifecycle log call this
-/// once; the rest leave it unset, and those events then reach only the console,
-/// subject to the current level.
-pub fn set_host_log_sink(sink: HostLogSink) {
-	// Released outside the lock: dropping the previous sink runs host code,
-	// which must not be able to re-enter a lock this thread already holds.
-	let previous = HOST_SINK.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).replace(sink);
-	drop(previous);
-}
-
-fn host_log_sink() -> Option<HostLogSink> {
-	HOST_SINK.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
-}
 
 thread_local! {
 	/// Set while this thread is inside the host's sink. A globally installed
@@ -111,6 +97,31 @@ impl Drop for HostSinkReentry {
 /// this floor keeps those visible without emitting routine traffic.
 pub const DEFAULT_LEVEL: LevelFilter = LevelFilter::ERROR;
 
+/// Lowest level that reaches the host sink, independent of [`set_level`].
+pub const HOST_SINK_LEVEL: LevelFilter = LevelFilter::WARN;
+
+/// [`HOST_SINK_LEVEL`] as an event level, for comparing one event against it.
+const HOST_SINK_EVENT_LEVEL: Level = Level::WARN;
+
+/// How much of an account a line that leaves the device may name.
+const ACCOUNT_HANDLE_BYTES: usize = 4;
+
+/// A short handle for an account, for a line that leaves the device.
+///
+/// Enough to tell two accounts apart within one log, and not the identifier
+/// itself. A host ships these lines to a crash reporter, where a whole account
+/// id is a public key that indexes everything that account has ever done. Lines
+/// that stay on the device can name it in full.
+pub fn account_handle(account: &[u8]) -> String {
+	hex::encode(&account[..account.len().min(ACCOUNT_HANDLE_BYTES)])
+}
+
+/// Longest detail the host sink forwards, in characters.
+///
+/// A warning can carry a host exception message, which is unbounded and can
+/// embed paths or arguments, and the host ships these lines off the device.
+pub const HOST_SINK_DETAIL_MAX_CHARS: usize = 512;
+
 /// Install the global subscriber. Idempotent: the first call wins, later
 /// calls (and a foreign subscriber already being set) are no-ops.
 pub fn init() {
@@ -118,14 +129,88 @@ pub fn init() {
 		return;
 	}
 	let (filter, handle) = reload::Layer::<LevelFilter, Registry>::new(DEFAULT_LEVEL);
-	let subscriber = Registry::default().with(ConsoleLayer.with_filter(filter)).with(
-		HostSinkLayer.with_filter(
-			filter_fn(|meta: &tracing::Metadata<'_>| meta.target().starts_with(HOST_MARKER_PREFIX))
-				.with_max_level_hint(HOST_MARKER_MAX_LEVEL),
-		),
-	);
-	if tracing::subscriber::set_global_default(subscriber).is_ok() {
+	if tracing::subscriber::set_global_default(subscriber(filter, &HOST_SINK)).is_ok() {
 		let _ = RELOAD_HANDLE.set(handle);
+	}
+}
+
+fn subscriber(
+	filter: reload::Layer<LevelFilter, Registry>,
+	slot: &'static RwLock<Option<HostSink>>,
+) -> impl Subscriber {
+	Registry::default().with(ConsoleLayer.with_filter(filter)).with(
+		HostSinkLayer { sink: slot }.with_filter(
+			filter_fn(|meta: &tracing::Metadata<'_>| {
+				// Only this crate's own events. The reentrancy guard is
+				// thread-local, so it does not catch a host that hands a line to
+				// another thread which logs; admitting every crate's warnings
+				// would make that loop reachable through any dependency, and
+				// would ship their lines off the device besides.
+				meta.target().starts_with(CRATE_TARGET_PREFIX) &&
+					(meta.target().starts_with(HOST_MARKER_PREFIX) ||
+						*meta.level() <= HOST_SINK_EVENT_LEVEL)
+			})
+			.with_max_level_hint(HOST_MARKER_MAX_LEVEL),
+		),
+	)
+}
+
+/// Send each event at [`HOST_SINK_LEVEL`] or above to `sink` as a marker
+/// (`truapi.tracing.warn` or `truapi.tracing.error`) and a detail line.
+///
+/// One sink per process: the latest replaces any earlier one, and dropping the
+/// returned registration removes the sink unless a later one replaced it.
+/// Between a registration dropping and the next one installing, no sink is
+/// set, so build one runtime per process.
+pub fn set_host_sink(sink: HostSink) -> HostSinkRegistration {
+	HostSinkRegistration::install(&HOST_SINK, sink)
+}
+
+/// Whether any host still has a sink installed.
+#[cfg(test)]
+pub(crate) fn host_sink_installed() -> bool {
+	HOST_SINK.read().unwrap_or_else(|poisoned| poisoned.into_inner()).is_some()
+}
+
+/// Keeps a host sink installed until dropped, and puts back whatever it
+/// displaced.
+///
+/// Restoring rather than clearing is what lets a host install its sink before
+/// the rest of its startup, which may fail: a runtime that does not finish
+/// starting leaves the one already running still logging.
+#[must_use = "dropping the registration puts back the sink it displaced"]
+pub struct HostSinkRegistration {
+	slot: &'static RwLock<Option<HostSink>>,
+	sink: HostSink,
+	displaced: Option<HostSink>,
+}
+
+impl HostSinkRegistration {
+	fn install(slot: &'static RwLock<Option<HostSink>>, sink: HostSink) -> Self {
+		// `replace` hands the previous sink back rather than dropping it here,
+		// so no host code runs under the write lock.
+		let displaced = slot
+			.write()
+			.unwrap_or_else(|poisoned| poisoned.into_inner())
+			.replace(sink.clone());
+		Self { slot, sink, displaced }
+	}
+}
+
+impl Drop for HostSinkRegistration {
+	fn drop(&mut self) {
+		let displaced = self.displaced.take();
+		let dropped = {
+			let mut installed = self.slot.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+			if installed.as_ref().is_some_and(|installed| Arc::ptr_eq(installed, &self.sink)) {
+				core::mem::replace(&mut *installed, displaced)
+			} else {
+				// A later registration owns the slot, so it owns what it
+				// displaced too, and this one has nothing to put back.
+				displaced
+			}
+		};
+		drop(dropped);
 	}
 }
 
@@ -169,32 +254,6 @@ pub fn parse_level(level: &str) -> LevelFilter {
 /// The reloadable level filter governs the console layer alone, so an event a
 /// host operator needs arrives at the default `ERROR` floor without turning on
 /// the rest of the crate's `warn!` traffic.
-struct HostSinkLayer;
-
-impl<S> Layer<S> for HostSinkLayer
-where
-	S: Subscriber,
-	S: for<'a> LookupSpan<'a>,
-{
-	fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-		if IN_HOST_SINK.with(Cell::get) {
-			return;
-		}
-		let Some(sink) = host_log_sink() else {
-			return;
-		};
-		let mut visitor = EventVisitor::default();
-		event.record(&mut visitor);
-		let mut detail = visitor.message;
-		if !visitor.fields.is_empty() {
-			let _ = write!(detail, " {{{}}}", visitor.fields);
-		}
-		IN_HOST_SINK.with(|inside| inside.set(true));
-		let _reentry = HostSinkReentry;
-		sink(event.metadata().target(), &detail);
-	}
-}
-
 /// Routes each event to the console method matching its level.
 struct ConsoleLayer;
 
@@ -250,14 +309,50 @@ where
 		let mut visitor = EventVisitor::default();
 		event.record(&mut visitor);
 
-		let mut line = format!("[truapi] {} {}", meta.level(), meta.target());
-		if !visitor.message.is_empty() {
-			let _ = write!(line, ": {}", visitor.message);
-		}
-		if !visitor.fields.is_empty() {
-			let _ = write!(line, " {{{}}}", visitor.fields);
-		}
+		let line = format!("[truapi] {} {}", meta.level(), visitor.describe(meta.target()));
 		emit(*meta.level(), &line);
+	}
+}
+
+/// Hands each event to the sink installed by [`set_host_sink`].
+struct HostSinkLayer {
+	sink: &'static RwLock<Option<HostSink>>,
+}
+
+impl<S: Subscriber> Layer<S> for HostSinkLayer {
+	fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+		if IN_HOST_SINK.with(Cell::get) {
+			return;
+		}
+		// Cloned out so a sink that logs again cannot deadlock on the lock.
+		let sink = self.sink.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+		let Some(sink) = sink else {
+			return;
+		};
+		let meta = event.metadata();
+		let mut visitor = EventVisitor::default();
+		event.record(&mut visitor);
+		// A marked target names its own condition, so it is the marker. Anything
+		// else reaches a host only for being a warning, so the marker names the
+		// level and the detail keeps the module that raised it.
+		let (marker, detail) = if meta.target().starts_with(HOST_MARKER_PREFIX) {
+			(meta.target().to_string(), visitor.detail())
+		} else {
+			(
+				format!("truapi.tracing.{}", meta.level().as_str().to_ascii_lowercase()),
+				visitor.describe(meta.target()),
+			)
+		};
+		IN_HOST_SINK.with(|inside| inside.set(true));
+		let _reentry = HostSinkReentry;
+		sink(&marker, truncate_to_chars(&detail, HOST_SINK_DETAIL_MAX_CHARS));
+	}
+}
+
+fn truncate_to_chars(text: &str, max_chars: usize) -> &str {
+	match text.char_indices().nth(max_chars) {
+		Some((end, _)) => &text[..end],
+		None => text,
 	}
 }
 
@@ -296,6 +391,29 @@ struct EventVisitor {
 	fields: String,
 }
 
+impl EventVisitor {
+	/// The line for a marked event, whose target the sink already carries as
+	/// the marker, so repeating it here would only say it twice.
+	fn detail(&self) -> String {
+		let mut line = self.message.clone();
+		if !self.fields.is_empty() {
+			let _ = write!(line, " {{{}}}", self.fields);
+		}
+		line
+	}
+
+	fn describe(&self, target: &str) -> String {
+		let mut line = target.to_string();
+		if !self.message.is_empty() {
+			let _ = write!(line, ": {}", self.message);
+		}
+		if !self.fields.is_empty() {
+			let _ = write!(line, " {{{}}}", self.fields);
+		}
+		line
+	}
+}
+
 impl Visit for EventVisitor {
 	fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
 		if field.name() == "message" {
@@ -325,9 +443,41 @@ fn emit(level: Level, line: &str) {
 	}
 }
 
+/// Test helpers for code whose logging reaches the host sink.
+#[cfg(test)]
+pub mod testing {
+	use super::*;
+
+	/// Runs `emit` with the host sink layer on this thread and returns each line
+	/// it forwards as `marker detail`.
+	pub fn host_sink_lines(emit: impl FnOnce()) -> Vec<String> {
+		// A global default stops tracing-core from caching a callsite as never
+		// enabled when a thread with no subscriber registers it first.
+		init();
+		let lines = Arc::new(std::sync::Mutex::new(Vec::new()));
+		let recorded = lines.clone();
+		let sink: HostSink = Arc::new(move |marker, detail| {
+			recorded.lock().unwrap().push(format!("{marker} {detail}"));
+		});
+		// Leaked so each call gets its own slot and parallel tests cannot share a sink.
+		let slot: &'static RwLock<Option<HostSink>> = Box::leak(Box::new(RwLock::new(Some(sink))));
+		tracing::subscriber::with_default(
+			subscriber(reload::Layer::new(LevelFilter::OFF).0, slot),
+			emit,
+		);
+		core::mem::take(&mut *lines.lock().unwrap())
+	}
+
+	/// Calls the sink `registration` holds, wherever the process-wide slot points now.
+	pub fn forward(registration: &HostSinkRegistration, marker: &str, detail: &str) {
+		(registration.sink)(marker, detail);
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use std::sync::Mutex;
 
 	/// The host sink is process-wide, so a test that installs one has to own it
 	/// for the whole of its run or a sibling's teardown reads as its own.
@@ -345,7 +495,7 @@ mod tests {
 		set_level(DEFAULT_LEVEL);
 		let seen: Arc<Mutex<Vec<(String, String)>>> = Arc::new(Mutex::new(Vec::new()));
 		let recorder = seen.clone();
-		set_host_log_sink(Arc::new(move |marker: &str, detail: &str| {
+		let _sink = set_host_sink(Arc::new(move |marker: &str, detail: &str| {
 			recorder.lock().unwrap().push((marker.to_string(), detail.to_string()));
 		}));
 
@@ -368,7 +518,7 @@ mod tests {
 		);
 
 		// Leave no sink behind for other tests in this binary.
-		*HOST_SINK.lock().unwrap() = None;
+		*HOST_SINK.write().unwrap() = None;
 	}
 
 	/// A sink that logs is a host writing its own log, so it must not be able
@@ -381,17 +531,25 @@ mod tests {
 		set_level(DEFAULT_LEVEL);
 		let depth = Arc::new(Mutex::new(0usize));
 		let recorder = depth.clone();
-		set_host_log_sink(Arc::new(move |_marker: &str, _detail: &str| {
+		let _sink = set_host_sink(Arc::new(move |_marker: &str, _detail: &str| {
 			*recorder.lock().unwrap() += 1;
-			tracing::info!(target: "truapi.test.echo", "raised from inside the sink");
+			// A plain warning, not a marked one: a host shipping these onward
+			// logs on the way, and every warning in the process reaches this
+			// sink, so this is the path that actually recurses in production.
+			tracing::warn!("raised from inside the sink");
+			tracing::info!(target: "truapi.test.echo", "and a marked one");
 		}));
 
 		tracing::info!(target: "truapi.test.reentrancy", "one marked event");
 
 		assert_eq!(*depth.lock().unwrap(), 1, "the event the sink raised re-entered the sink",);
 
+		tracing::warn!("one plain warning");
+
+		assert_eq!(*depth.lock().unwrap(), 2, "the sink re-entered on a plain warning",);
+
 		// Leave no sink behind for other tests in this binary.
-		*HOST_SINK.lock().unwrap() = None;
+		*HOST_SINK.write().unwrap() = None;
 	}
 
 	/// The host filter has no level opinion of its own, so without a hint it
@@ -402,6 +560,26 @@ mod tests {
 		init();
 		set_level(DEFAULT_LEVEL);
 		assert_eq!(LevelFilter::current(), HOST_MARKER_MAX_LEVEL);
+	}
+
+	/// A dependency's warnings are not a host's business, and the reentrancy
+	/// guard is thread-local, so admitting every crate's would let any of them
+	/// drive the sink back into itself from a thread the guard cannot see.
+	#[test]
+	fn a_warning_from_another_crate_does_not_reach_the_host_sink() {
+		let lines = testing::host_sink_lines(|| {
+			tracing::warn!(target: "subxt::backend", "a dependency warning");
+			tracing::warn!(target: "truapi::probe", "a warning of our own");
+		});
+
+		assert!(
+			!lines.iter().any(|line| line.contains("a dependency warning")),
+			"a dependency's warning reached the host sink: {lines:?}",
+		);
+		assert!(
+			lines.iter().any(|line| line.contains("a warning of our own")),
+			"our own warning did not reach the host sink: {lines:?}",
+		);
 	}
 
 	#[test]
@@ -419,6 +597,75 @@ mod tests {
 		assert_eq!(parse_level("none"), LevelFilter::OFF);
 	}
 
+	/// The console stays at `ERROR` by default, so warnings reach a native
+	/// host only through the sink, and routine chatter must not.
+	#[test]
+	fn the_host_sink_receives_warnings_and_errors_only() {
+		let lines = testing::host_sink_lines(|| {
+			tracing::info!(target: "truapi::chain", "routine");
+			tracing::warn!(target: "truapi::chain", kind = "Unavailable", "chain call failed");
+			tracing::error!(target: "truapi::chain", "undecodable frame");
+		});
+		assert_eq!(
+			lines,
+			vec![
+				"truapi.tracing.warn truapi::chain: chain call failed {kind=\"Unavailable\"}",
+				"truapi.tracing.error truapi::chain: undecodable frame",
+			]
+		);
+	}
+
+	/// A runtime that is torn down must stop forwarding to its host, but must
+	/// not silence the runtime that replaced it.
+	#[test]
+	fn dropping_a_registration_removes_only_its_own_sink() {
+		static SINK: RwLock<Option<HostSink>> = RwLock::new(None);
+		let lines = Arc::new(std::sync::Mutex::new(Vec::new()));
+		let recording = |name: &'static str| -> HostSink {
+			let recorded = lines.clone();
+			Arc::new(move |_marker, _detail| recorded.lock().unwrap().push(name))
+		};
+		let warn_through_sink = || {
+			let subscriber = Registry::default()
+				.with(HostSinkLayer { sink: &SINK }.with_filter(HOST_SINK_LEVEL));
+			tracing::subscriber::with_default(subscriber, || tracing::warn!("chain call failed"));
+		};
+
+		let first = HostSinkRegistration::install(&SINK, recording("first"));
+		let second = HostSinkRegistration::install(&SINK, recording("second"));
+		drop(first);
+		warn_through_sink();
+		drop(second);
+		warn_through_sink();
+
+		// Dropping the one that does not own the slot changes nothing, and
+		// dropping the owner puts back what it displaced. Restoring is what
+		// lets a host install before the rest of its startup: a runtime that
+		// fails to start leaves the one already running still logging.
+		//
+		// The second line here is the cost of that: `first` was already
+		// dropped, so its sink is put back with nobody behind it. A native
+		// host's sink holds its callbacks weakly and goes quiet when its
+		// runtime does, so a restored sink with no runtime says nothing.
+		assert_eq!(*lines.lock().unwrap(), vec!["second", "first"]);
+	}
+
+	/// A host exception message is unbounded and leaves the device, so the
+	/// sink caps it without splitting a character.
+	#[test]
+	fn the_host_sink_bounds_the_detail_in_characters() {
+		let reason = "\u{e9}".repeat(10_000);
+		let lines = testing::host_sink_lines(|| {
+			tracing::warn!(target: "truapi::chain", "{reason}");
+		});
+
+		let detail: String = format!("truapi::chain: {reason}")
+			.chars()
+			.take(HOST_SINK_DETAIL_MAX_CHARS)
+			.collect();
+		assert_eq!(lines, vec![format!("truapi.tracing.warn {detail}")]);
+	}
+
 	#[test]
 	fn parse_level_reads_each_named_level() {
 		assert_eq!(parse_level("error"), LevelFilter::ERROR);
@@ -427,20 +674,5 @@ mod tests {
 		assert_eq!(parse_level("info"), LevelFilter::INFO);
 		assert_eq!(parse_level("debug"), LevelFilter::DEBUG);
 		assert_eq!(parse_level("trace"), LevelFilter::TRACE);
-	}
-}
-
-#[cfg(test)]
-mod maxlevel_probe {
-	use super::*;
-
-	#[test]
-	fn probe_global_max_level() {
-		init();
-		set_level(DEFAULT_LEVEL);
-		println!("PROBE at ERROR: current={:?}", LevelFilter::current());
-		set_level(LevelFilter::OFF);
-		println!("PROBE at OFF:   current={:?}", LevelFilter::current());
-		println!("PROBE debug enabled? {}", tracing::enabled!(tracing::Level::DEBUG));
 	}
 }
