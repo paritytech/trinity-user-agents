@@ -378,17 +378,39 @@ enum StaticReceiveKeyError {
 #### Listen for payment
 
 ```rust
-// Receiver side: select and monitor the transmission channel for a
-// ChequeDestination::Ephemeral payment.
-// First emits PaymentListenForItem::Channel with the selected channel, then
-// PaymentListenForItem::Cheque once the cheque arrives.
+// Receiver side: watch the channel of a ChequeDestination::Ephemeral payment.
+// First emits OneTimePaymentItem::Channel with the channel, then
+// OneTimePaymentItem::Cheque with the first cheque addressed to the key, then ends.
 // The receiver hands the channel and the ReceiveKey to the sender out of band
-// (deep link, QR code, ...).
-fn listen_for_payment(key: ReceiveKey) -> Result<Subscription<PaymentListenForItem>, ListenForPaymentError>;
+// (deep link, QR code, ...). Only the product that created the key may listen;
+// any other key answers ReceiveKeyNotFound.
+fn listen_one_time_payment(key: ReceiveKey) -> Result<Subscription<OneTimePaymentItem>, ListenOneTimePaymentError>;
 
-enum PaymentListenForItem {
+enum OneTimePaymentItem {
     Channel(PaymentTransmissionChannel),
     Cheque(Cheque),
+}
+
+enum ListenOneTimePaymentError {
+    ReceiveKeyNotFound,
+    Other(GenericError),
+}
+
+// Receiver side: watch one of the calling product's long-lived inboxes for
+// ChequeDestination::Static payments. The product picks `inbox_domain` and
+// publishes it with its payment instructions.
+// First emits PaymentInboxItem::Channel with the channel, then the Static cheques
+// already stored there as one batch, possibly empty, then each batch of new cheques.
+// Never ends on its own.
+fn listen_payment_inbox(inbox_domain: [u8; 32]) -> Result<Subscription<PaymentInboxItem>, ListenPaymentInboxError>;
+
+enum PaymentInboxItem {
+    Channel(PaymentTransmissionChannel),
+    Cheques(Vec<Cheque>),
+}
+
+enum ListenPaymentInboxError {
+    Other(GenericError),
 }
 
 enum PaymentTransmissionChannel {
@@ -396,12 +418,34 @@ enum PaymentTransmissionChannel {
         sss_topic: [u8; 32],
     },
 }
-
-enum ListenForPaymentError {
-    ReceiveKeyNotFound,
-    Other(GenericError),
-}
 ```
+
+The `Standard` channel is a People chain statement-store topic. Labels are ASCII:
+
+- One-time payment: `blake2_256("nft-purse/payment-channel" ‖ ReceiveKey)`.
+- Payment inbox: `blake2_256("nft-purse/payment-inbox" ‖ identity_account ‖
+  blake2_256(product_id) ‖ inbox_domain)`, where `identity_account` is the receiver's
+  wallet identity account, which a sender finds from the receiver's username, and
+  `product_id` is the receiving product's id in UTF-8. Mixing in the product id means
+  a product can only listen to its own inboxes.
+
+A sender publishes one statement under the topic. Its data is the cheque sealed to the
+key that opens it: the ReceiveKey for a one-time payment, the static receive key for an
+inbox. The sealed form is the one `encrypted_secrets` uses (ephemeral X25519 public key,
+12-byte nonce, then the ChaCha20-Poly1305 ciphertext and tag, under a key HKDF-SHA256
+derives from the X25519 shared secret), over `SCALE(version: u8 = 0, topic: [u8; 32],
+cheque: Cheque)`. The topic inside the authenticated plaintext stops a cheque copied
+under another topic from counting. The cheque must fit in one statement.
+
+A listener emits a cheque when its envelope opens, decodes exactly, carries version 0
+and the watched topic, and names the expected recipient: `Ephemeral(key)` with the id
+derived from the key for a one-time payment, `Static` for an inbox. Anything else on the
+topic is skipped. The item secrets are not checked: `deposit` checks them, and receiving
+a cheque proves nothing about its items. Every listen emits every matching cheque the
+statement store still holds, including ones already deposited, so the product skips
+those by cheque id; depositing one twice answers OperationExists. Senders choose the ids
+of `Static` cheques, so two cheques in one inbox may share one. A dropped connection ends
+a listen with `Other`, and the product listens again on the same channel.
 
 #### Create a cheque
 
