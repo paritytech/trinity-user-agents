@@ -81,7 +81,6 @@ extension Chat {
     enum RoomBadge: Equatable {
         /// The host counts the unread messages.
         case hostDefault
-        case none
         /// Zero shows no badge.
         case unreadCount(Int32)
         /// An image in place of the unread count: an `https` URL or an inline `data:` image.
