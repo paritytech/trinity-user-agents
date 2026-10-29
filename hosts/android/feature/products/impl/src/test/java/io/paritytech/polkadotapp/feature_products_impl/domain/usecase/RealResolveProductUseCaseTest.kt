@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.usecase
 
 import com.google.gson.Gson
+import io.mockk.coEvery
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
@@ -13,7 +15,12 @@ import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRe
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCard
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCards
 import io.paritytech.polkadotapp.test_shared.whenever
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -39,7 +46,7 @@ class RealResolveProductUseCaseTest {
         override fun setAppUrl(productId: ProductId, appUrl: String?) = Unit
     }
 
-    private fun useCase() = RealResolveProductUseCase(
+    private fun useCase(dotNsResolver: DotNsResolver = this.dotNsResolver) = RealResolveProductUseCase(
         dotNsResolver,
         manifestParser,
         productRepository,
@@ -124,6 +131,23 @@ class RealResolveProductUseCaseTest {
         useCase.resolve(productId).getOrThrow()
 
         verify(dotNsResolver, times(1)).getMetadataEntry(base, "manifest")
+    }
+
+    // A page opening a new product waits out a chain outage; a product already on the device must open meanwhile.
+    @Test
+    fun `a product waiting on chain does not hold up another one`() = runTest {
+        val waitingProduct = ProductId.fromStoredValue("newgame.dot")
+        val dotNsResolver: DotNsResolver = mockk {
+            coEvery { getMetadataEntry(waitingProduct.value, "manifest", any()) } coAnswers { awaitCancellation() }
+            coEvery { getMetadataEntry(base, "manifest", any()) } returns Result.success(null)
+        }
+        val useCase = useCase(dotNsResolver)
+        backgroundScope.launch { useCase.resolve(waitingProduct) }
+        runCurrent()
+
+        val resolved = withTimeout(1_000) { useCase.resolve(productId) }
+
+        assertEquals(base, resolved.getOrNull()?.product?.id?.value)
     }
 
     @Test

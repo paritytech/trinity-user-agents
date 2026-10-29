@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.webView
 
+import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
 import io.paritytech.polkadotapp.common.utils.toCanonicalDotHost
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
@@ -19,7 +20,11 @@ class ProductServingHostResolver @Inject constructor(
     override suspend fun servingHostFor(requestHost: String): String = servingHostFor(requestHost, ExecutableKind.APP)
 
     /** A page under a Pocket card is the product's [ExecutableKind.WIDGET], served on the same origin as its app. */
-    suspend fun servingHostFor(requestHost: String, executable: ExecutableKind): String {
+    suspend fun servingHostFor(
+        requestHost: String,
+        executable: ExecutableKind,
+        retryPolicy: NetworkRetryPolicy = NetworkRetryPolicy.DEFAULT,
+    ): String {
         // Settled by the time a request is intercepted, since the client awaits it first.
         val tld = dotNsTldProvider.getTld().getOrNull() ?: return requestHost
         // Archives are keyed by the canonical dotNS name, so a `.dot.li` mirror maps to it as well.
@@ -28,7 +33,7 @@ class ProductServingHostResolver @Inject constructor(
         // A host that already names an executable is served by that executable's own archive.
         if (!productId.value.equals(host, ignoreCase = true)) return host
 
-        val resolved = resolveProductUseCase.resolve(productId).getOrNull() ?: return host
+        val resolved = resolveProductUseCase.resolve(productId, retryPolicy).getOrNull() ?: return host
 
         val served = when (executable) {
             ExecutableKind.APP -> resolved.executables.app?.host

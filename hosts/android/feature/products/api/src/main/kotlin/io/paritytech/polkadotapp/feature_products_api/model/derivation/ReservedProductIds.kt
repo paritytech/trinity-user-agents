@@ -21,6 +21,8 @@ object ReservedProductIds {
 
     fun chat(tld: DotNsTld): ProductId = reserved("chat", tld)
 
+    fun all(tld: DotNsTld): Set<ProductId> = setOf(game(tld), funding(tld), lightPersonIdentity(tld), personhood(tld))
+
     private fun reserved(label: String, tld: DotNsTld): ProductId {
         return ProductId.fromStoredValue(label + tld.suffix)
     }

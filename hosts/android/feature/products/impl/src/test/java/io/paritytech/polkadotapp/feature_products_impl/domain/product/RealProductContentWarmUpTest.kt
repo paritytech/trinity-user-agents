@@ -6,6 +6,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRunt
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ProductServingHostResolver
+import io.paritytech.polkadotapp.test_shared.any
 import io.paritytech.polkadotapp.test_shared.thenThrowUnsafe
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
@@ -80,7 +81,7 @@ class RealProductContentWarmUpTest {
 
         val result = warmUp.warmUp(productId)
 
-        verify(dotNsResolver, never()).resolveToLocalUri(anyString())
+        verify(dotNsResolver, never()).resolveToLocalUri(anyString(), any())
         assertTrue(result.isFailure)
     }
 }

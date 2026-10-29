@@ -1,9 +1,11 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.usecase
 
+import io.paritytech.polkadotapp.common.utils.KeyedMutex
 import io.paritytech.polkadotapp.common.utils.combineResults
 import io.paritytech.polkadotapp.common.utils.flatten
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.mapErrorNotInstance
+import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
@@ -22,8 +24,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.toDefinitio
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductManifest
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -39,17 +39,19 @@ internal class RealResolveProductUseCase @Inject constructor(
     // Successful resolutions only, so a transient read failure stays retryable. Hit without the
     // lock, since the WebView's request-interception thread blocks on this for every request.
     private val cache = ConcurrentHashMap<String, ResolvedProduct>()
-    private val resolveMutex = Mutex()
 
-    override suspend fun resolve(productId: ProductId): Result<ResolvedProduct> {
+    // Per product: a page waiting out a chain outage must not hold up a product that is already on the device.
+    private val resolveLocks = KeyedMutex<String>()
+
+    override suspend fun resolve(productId: ProductId, retryPolicy: NetworkRetryPolicy): Result<ResolvedProduct> {
         cache[productId.value]?.let { return Result.success(it) }
 
-        return resolveMutex.withLock {
+        return resolveLocks.withLock(productId.value) {
             // Another caller may have resolved the same product while this one waited.
             cache[productId.value]?.let { return@withLock Result.success(it) }
 
             // runCatching guards the storage and coroutine machinery; the read itself fails as a Result.
-            runCatching { resolveFromChain(productId) }
+            runCatching { resolveFromDotNs(productId, retryPolicy) }
                 .flatten()
                 // Payload-free variants cannot carry the cause, and this is the last place with it.
                 .mapErrorNotInstance<ResolvedProduct, ProductResolutionError> {
@@ -64,11 +66,11 @@ internal class RealResolveProductUseCase @Inject constructor(
         cache.remove(productId.value)
     }
 
-    private suspend fun resolveFromChain(productId: ProductId): Result<ResolvedProduct> {
+    private suspend fun resolveFromDotNs(productId: ProductId, retryPolicy: NetworkRetryPolicy): Result<ResolvedProduct> {
         val baseName = productId.value
 
         // A read failure is distinct from an absent record, which is the legacy path below.
-        val rootText = dotNsResolver.getMetadataEntry(baseName, ProductManifest.ROOT_RECORD_KEY)
+        val rootText = dotNsResolver.getMetadataEntry(baseName, ProductManifest.ROOT_RECORD_KEY, retryPolicy)
             .logFailure("Failed to read product manifest record for $baseName")
             .getOrElse { return Result.failure(it) }
 
@@ -82,7 +84,7 @@ internal class RealResolveProductUseCase @Inject constructor(
         }
 
         val userWorkerUrl = productRepository.getUserWorkerUrl(productId)
-        val executables = collectExecutables(productId, hasManifest = rootText != null, userWorkerUrl = userWorkerUrl)
+        val executables = collectExecutables(productId, hasManifest = rootText != null, userWorkerUrl = userWorkerUrl, retryPolicy)
             .getOrElse { return Result.failure(it) }
 
         val product = Product(
@@ -103,6 +105,7 @@ internal class RealResolveProductUseCase @Inject constructor(
         productId: ProductId,
         hasManifest: Boolean,
         userWorkerUrl: String?,
+        retryPolicy: NetworkRetryPolicy,
     ): Result<Executables> {
         if (!hasManifest) {
             return Result.success(
@@ -115,9 +118,9 @@ internal class RealResolveProductUseCase @Inject constructor(
         }
 
         return coroutineScope {
-            val app = async { resolveExecutable(productId, ExecutableKind.APP) }
-            val widget = async { resolveExecutable(productId, ExecutableKind.WIDGET) }
-            val worker = async { resolveExecutable(productId, ExecutableKind.WORKER) }
+            val app = async { resolveExecutable(productId, ExecutableKind.APP, retryPolicy) }
+            val widget = async { resolveExecutable(productId, ExecutableKind.WIDGET, retryPolicy) }
+            val worker = async { resolveExecutable(productId, ExecutableKind.WORKER, retryPolicy) }
 
             combineResults(app.await(), widget.await(), worker.await()) { appExec, widgetExec, workerExec ->
                 Executables(
@@ -151,10 +154,11 @@ internal class RealResolveProductUseCase @Inject constructor(
     private suspend fun resolveExecutable(
         productId: ProductId,
         kind: ExecutableKind,
+        retryPolicy: NetworkRetryPolicy,
     ): Result<ProductExecutable?> {
         val host = ProductManifest.hostOf(productId, kind)
 
-        return dotNsResolver.getMetadataEntry(host.value, ProductManifest.EXECUTABLE_RECORD_KEY)
+        return dotNsResolver.getMetadataEntry(host.value, ProductManifest.EXECUTABLE_RECORD_KEY, retryPolicy)
             .logFailure("Failed to read executable record for $host")
             .map { text ->
                 // Only the product owner can create modality subnames, so ownership needs no re-check.

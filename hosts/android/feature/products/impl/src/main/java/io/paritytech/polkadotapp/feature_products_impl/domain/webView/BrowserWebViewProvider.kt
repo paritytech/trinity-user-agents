@@ -11,15 +11,18 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
+import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsContentLoader
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
@@ -29,10 +32,12 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProdu
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.PageLifecycleSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.UrlDerivedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.update.ProductsInUse
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.map
 
 /**
  * Visible WebView provider for SPA browser and Explore environments.
@@ -50,6 +55,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
     private val dotNsResolver: DotNsResolver,
     private val dotNsTldProvider: DotNsTldProvider,
     private val servingHostResolver: ProductServingHostResolver,
+    private val productsInUse: ProductsInUse,
     dispatchers: CoroutineDispatchers,
     @Assisted("initialUrl") private val initialUrl: String,
     @Assisted private val navigationPolicy: NavigationPolicy,
@@ -91,6 +97,17 @@ class BrowserWebViewProvider @AssistedInject constructor(
     /** Load progress of the domain the WebView is currently resolving content for. */
     val loadProgress: Flow<DotNsLoadProgress> =
         if (fixedProductId != null) servedPageProgress else contentLoader.loadProgress
+
+    private val pageUrl = MutableStateFlow<String?>(null)
+
+    init {
+        // A product's new build is applied only once no page of it is running, so each page reports its product.
+        if (fixedProductId != null) {
+            productsInUse.hold(fixedProductId, scope)
+        } else {
+            productsInUse.track(pageUrl.map { url -> url?.let { productIdOf(it) } }, scope)
+        }
+    }
 
     private val permissionClient = webViewPermissionClientFactory.create(callingProductIdProvider, firstPartyOrigin)
     private val chromeClient = productWebChromeClientFactory.create(
@@ -150,7 +167,26 @@ class BrowserWebViewProvider @AssistedInject constructor(
     }
 
     override suspend fun loadInitialContent() {
+        // Held before the first request, or an update could be applied under the document being served.
+        pageUrl.value = initialUrl
+        downloadPageContent()
         accessWebView { it.loadUrl(initialUrl) }
+    }
+
+    // Downloaded here, retrying until the tab closes, so the WebView's request interception finds the page on disk
+    // instead of blocking on the network. A failure is left for that interception to report.
+    private suspend fun downloadPageContent() {
+        val uri = initialUrl.toUri()
+        val host = uri.host ?: return
+        val tld = dotNsTldProvider.getTld().getOrNull() ?: return
+        if (!DotNsUtils.isDotDomain(uri, tld)) return
+
+        val servingHost = servingHostResolver.servingHostFor(host, servedExecutable, NetworkRetryPolicy.UntilCancelled)
+        contentLoader.resolveToLocalUri(servingHost, NetworkRetryPolicy.UntilCancelled)
+    }
+
+    private suspend fun productIdOf(url: String): ProductId? {
+        return dotNsTldProvider.getTld().getOrNull()?.let { tld -> ProductId.fromUrl(url.toUri(), tld).getOrNull() }
     }
 
     override fun onInitialThemeDelivered() {
@@ -192,6 +228,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             permissionClient.onPageStarted(view, url, favicon)
             innerClient.onPageStarted(view, url, favicon)
+            pageUrl.value = url
             notifyOnPageStarted(url)
         }
 
