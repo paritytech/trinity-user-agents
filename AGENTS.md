@@ -18,8 +18,9 @@ rust/crates/
                          rest that keeps NFT receive key secrets; its `nft`
                          (purse records, item keys, and the tracker of what they hold on
                          Asset Hub) and `nft_purse` (the NFT purses RFC over them)
-                         modules keep NFT purses in the same database, and transfer items
-                         as scheduled durable transactions
+                         modules keep NFT purses in the same database, transfer items
+                         as scheduled durable transactions, and receive cheques over
+                         the statement store
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher
   truapi-macros/         #[wire_trait(id = N)] and #[wire(id = N)] proc-macros;
                          #[sso_service] for truapi's inter-host SSO protocol

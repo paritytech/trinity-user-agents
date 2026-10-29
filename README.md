@@ -350,9 +350,26 @@ Whether an item can still go back comes from the core database alone: one
 spent since stays and is listed as unavailable. Each is followed by
 `observeOperationStatus` under `blake2_256("nft-purse/revoke" ‖ chequeId)` or
 `blake2_256("nft-purse/refund" ‖ chequeId)`. Refunding out of Root's or
-another product's purse asks the user through `NftPurseDrain`. Listening for
-payments answers unavailable for now. A host without a core database, such as
-the browser core, answers `Unsupported` to the served calls.
+another product's purse asks the user through `NftPurseDrain`.
+
+Cheques arrive over the People chain's statement store. A sender publishes a
+statement under the receiver's topic whose data seals `SCALE(version, topic,
+cheque)` to the key that opens the cheque, in the same sealed box as the item
+secrets. `listenOneTimePayment` watches `blake2_256("nft-purse/payment-channel"
+‖ receiveKey)` for a key the product made, emits that channel, then the first
+cheque addressed to the key, and ends. `listenPaymentInbox` watches
+`blake2_256("nft-purse/payment-inbox" ‖ identityAccount ‖
+blake2_256(productId) ‖ inboxDomain)` for `Static` cheques, so a product opens
+only its own inboxes. It emits the channel, then everything already stored as
+one batch, possibly empty, then each batch of new cheques. Statements that do
+not open, decode or match are skipped. Both emit cheques already deposited
+again while the store holds them, and a dropped connection ends them with
+`Other`. Receiving a cheque proves nothing about its items: `deposit` checks
+them. Underneath, `StatementStoreApi` watches any topic filter as its stored
+backlog in one batch, then each live page.
+
+A host without a core database, such as the browser core, answers
+`Unsupported` to the served calls.
 
 ### Trinity stack descriptors
 
