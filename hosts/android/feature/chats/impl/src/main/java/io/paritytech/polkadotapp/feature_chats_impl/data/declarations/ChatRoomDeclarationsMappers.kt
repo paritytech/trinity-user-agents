@@ -4,6 +4,7 @@ import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.Bina
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.decodeFromByteArray
 import io.paritytech.polkadotapp.database.model.ChatRoomDeclarationsLocal
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatPreviewReactionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomActivityModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
@@ -22,8 +23,8 @@ import timber.log.Timber
 fun ChatRoomDeclarationsLocal.toDomain(decoder: CustomContentDecoder): ChatRoomDeclarations = ChatRoomDeclarations(
     config = config?.decodeOrNull<ChatRoomConfigLocal>("config")?.toDomain(),
     configGeneration = configGeneration,
-    metadata = ChatRoomMetadataModel(description = description),
-    preview = preview?.decodeOrNull<ChatRoomPreviewLocal>("preview")?.toDomain(decoder),
+    metadata = ChatRoomMetadataModel(description = description, placeholder = placeholder),
+    preview = preview?.decodePreviewOrNull()?.toDomain(decoder),
 )
 
 fun ChatRoomConfigModel.encode(): ByteArray = BinaryScale.encodeToByteArray(toLocal())
@@ -32,9 +33,26 @@ fun ChatRoomPreviewModel.encode(decoder: CustomContentDecoder): ByteArray = Bina
 
 // A value that does not decode reads as "not declared", so the host default applies until the product declares again.
 private inline fun <reified T> ByteArray.decodeOrNull(part: String): T? =
-    runCatching { BinaryScale.decodeFromByteArray<T>(this) }
-        .onFailure { Timber.w(it, "Cannot decode the %s of a chat room", part) }
-        .getOrNull()
+    runCatching { BinaryScale.decodeFromByteArray<T>(this) }.orNotDeclared(part)
+
+// A preview in its first layout reads as not pinned and without an activity.
+private fun ByteArray.decodePreviewOrNull(): ChatRoomPreviewLocal? =
+    runCatching { BinaryScale.decodeFromByteArray<ChatRoomPreviewLocal>(this) }
+        .recoverCatching { BinaryScale.decodeFromByteArray<ChatRoomPreviewFirstLayoutLocal>(this).toCurrentLayout() }
+        .orNotDeclared("preview")
+
+private fun <T> Result<T>.orNotDeclared(part: String): T? =
+    onFailure { Timber.w(it, "Cannot decode the %s of a chat room", part) }.getOrNull()
+
+private fun ChatRoomPreviewFirstLayoutLocal.toCurrentLayout() = ChatRoomPreviewLocal(
+    timestamp = timestamp,
+    badge = badge,
+    lastMessage = lastMessage,
+    lastReaction = lastReaction,
+    unseenReactions = unseenReactions,
+    pinned = false,
+    activity = null,
+)
 
 fun ChatRoomConfigModel.toLocal() = ChatRoomConfigLocal(
     productSource = productSource,
@@ -58,11 +76,14 @@ fun ChatRoomPreviewModel.toLocal(decoder: CustomContentDecoder) = ChatRoomPrevie
         when (it) {
             ChatRoomBadgeModel.Hidden -> ChatRoomBadgeLocal.Hidden
             is ChatRoomBadgeModel.Count -> ChatRoomBadgeLocal.UnreadCount(it.count)
+            is ChatRoomBadgeModel.Image -> ChatRoomBadgeLocal.Image(it.icon)
         }
     },
     lastMessage = lastMessage?.toPreviewLocal(decoder),
     lastReaction = lastReaction?.let { PreviewReactionLocal(it.emoji, it.byUser, it.message?.toPreviewLocal(decoder), it.removed) },
     unseenReactions = unseenReactions,
+    pinned = pinned,
+    activity = activity?.let { ChatRoomActivityLocal(it.text, it.ongoing) },
 )
 
 fun ChatRoomPreviewLocal.toDomain(decoder: CustomContentDecoder) = ChatRoomPreviewModel(
@@ -71,11 +92,14 @@ fun ChatRoomPreviewLocal.toDomain(decoder: CustomContentDecoder) = ChatRoomPrevi
         when (it) {
             ChatRoomBadgeLocal.Hidden -> ChatRoomBadgeModel.Hidden
             is ChatRoomBadgeLocal.UnreadCount -> ChatRoomBadgeModel.Count(it.count)
+            is ChatRoomBadgeLocal.Image -> ChatRoomBadgeModel.Image(it.icon)
         }
     },
     lastMessage = lastMessage?.toDomain(decoder),
     lastReaction = lastReaction?.let { ChatPreviewReactionModel(it.emoji, it.byUser, it.message?.toDomain(decoder), it.removed) },
     unseenReactions = unseenReactions,
+    pinned = pinned,
+    activity = activity?.let { ChatRoomActivityModel(it.text, it.ongoing) },
 )
 
 private fun ProductRoomMessage.toPreviewLocal(decoder: CustomContentDecoder) = PreviewMessageLocal(

@@ -94,7 +94,7 @@ class ProductRoomDeclarerTest {
     @Test
     fun `metadata renames the room and keeps the description as a declaration`() = runBlocking<Unit> {
         withRoomExisting(true)
-        val metadata = ChatRoomMetadataModel(description = "Play")
+        val metadata = ChatRoomMetadataModel(description = "Play", placeholder = null)
 
         declarer.setMetadata(extensionId, room, "Lobby", null, metadata)
 
@@ -138,7 +138,7 @@ class ProductRoomDeclarerTest {
     }
 
     private companion object {
-        val EMPTY_METADATA = ChatRoomMetadataModel(description = null)
-        val EMPTY_PREVIEW = ChatRoomPreviewModel(timestamp = null, badge = null, lastMessage = null, lastReaction = null, unseenReactions = 0)
+        val EMPTY_METADATA = ChatRoomMetadataModel(description = null, placeholder = null)
+        val EMPTY_PREVIEW = ChatRoomPreviewModel(timestamp = null, badge = null, lastMessage = null, lastReaction = null, unseenReactions = 0, pinned = false, activity = null)
     }
 }

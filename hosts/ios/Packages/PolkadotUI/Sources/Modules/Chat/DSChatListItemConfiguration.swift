@@ -15,6 +15,10 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
     public let isMuted: Bool
     public let hasReaction: Bool
     public let unreadCount: Int
+    /// An image in place of the unread count.
+    public let badgeImage: DSChatListBadgeImage?
+    /// The message line tells of an activity that continues, so the row animates it.
+    public let isMessageOngoing: Bool
     public let accessibilityId: String?
 
     let dateFormatter: TimestampFormatting
@@ -31,6 +35,8 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
         isMuted: Bool = false,
         hasReaction: Bool = false,
         unreadCount: Int = 0,
+        badgeImage: DSChatListBadgeImage? = nil,
+        isMessageOngoing: Bool = false,
         accessibilityId: (any AccessibilityIdentifying)? = nil
     ) {
         self.dateFormatter = dateFormatter
@@ -44,6 +50,8 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
         self.isMuted = isMuted
         self.hasReaction = hasReaction
         self.unreadCount = unreadCount
+        self.badgeImage = badgeImage
+        self.isMessageOngoing = isMessageOngoing
         self.accessibilityId = accessibilityId?.rawValue
     }
 
@@ -68,6 +76,8 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
         hasher.combine(isMuted)
         hasher.combine(hasReaction)
         hasher.combine(unreadCount)
+        hasher.combine(badgeImage)
+        hasher.combine(isMessageOngoing)
         hasher.combine(accessibilityId)
     }
 
@@ -81,6 +91,8 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
             lhs.isMuted == rhs.isMuted &&
             lhs.hasReaction == rhs.hasReaction &&
             lhs.unreadCount == rhs.unreadCount &&
+            lhs.badgeImage == rhs.badgeImage &&
+            lhs.isMessageOngoing == rhs.isMessageOngoing &&
             lhs.accessibilityId == rhs.accessibilityId
     }
 
@@ -93,7 +105,9 @@ public struct DSChatListItemConfiguration: HashableContentConfiguration {
             messageContext: messageContext,
             isMuted: isMuted,
             hasReaction: hasReaction,
-            unreadCount: unreadCount
+            unreadCount: unreadCount,
+            badgeImage: badgeImage,
+            isMessageOngoing: isMessageOngoing
         )
     }
 

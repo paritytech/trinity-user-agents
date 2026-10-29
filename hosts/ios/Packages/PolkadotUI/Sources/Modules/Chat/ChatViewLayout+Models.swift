@@ -10,6 +10,8 @@ public extension ChatViewLayout {
         let scrollToReactionConfiguration: ScrollToReactionButtonConfiguration
         let sections: [Section]
         let footerConfiguration: (any HashableContentConfiguration)?
+        /// The text that the screen shows while the room has no messages. Nil shows nothing.
+        let placeholder: String?
 
         public init(
             headerConfiguration: ChatHeaderConfiguration,
@@ -19,7 +21,8 @@ public extension ChatViewLayout {
             scrollDownConfiguration: ScrollDownButtonConfiguration,
             scrollToReactionConfiguration: ScrollToReactionButtonConfiguration = .init(),
             sections: [Section],
-            footerConfiguration: (any HashableContentConfiguration)?
+            footerConfiguration: (any HashableContentConfiguration)?,
+            placeholder: String? = nil
         ) {
             self.headerConfiguration = headerConfiguration
             self.chatInputConfiguration = chatInputConfiguration
@@ -29,6 +32,7 @@ public extension ChatViewLayout {
             self.initiallyVisibleMessageIdentifier = initiallyVisibleMessageIdentifier
             self.firstUnreadMessageIdentifier = firstUnreadMessageIdentifier
             self.footerConfiguration = footerConfiguration
+            self.placeholder = placeholder
         }
     }
 }

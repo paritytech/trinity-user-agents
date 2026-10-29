@@ -50,12 +50,12 @@ class SubscribeActiveChatsUseCase @Inject constructor(
             .map { (summaries, policies) ->
                 // A product that keeps the messages of its room gives the time that orders the room.
                 val productTimestamps = policies.mapNotNull { (chatId, policy) -> policy.listTimestamp?.let { chatId to it } }.toMap()
+                // The policy goes first, because a product can pin its room.
+                val rows = summaries.map { it.withRoomPolicy(policies[it.chatId]) }
 
-                chatListOrder(summaries, productTimestamps).mapNotNull { messageSummary ->
-                    val chatId = messageSummary.chatId
+                chatListOrder(rows, productTimestamps).mapNotNull { summary ->
+                    val chatId = summary.chatId
                     if (!context.isChatActive(chatId)) return@mapNotNull null
-
-                    val summary = messageSummary.withRoomPolicy(policies[chatId])
 
                     val display = constructChatDisplay(chatId, summary, context.activeContactsById) ?: return@mapNotNull null
 
@@ -66,6 +66,7 @@ class SubscribeActiveChatsUseCase @Inject constructor(
                         timestamp = summary.timestamp,
                         unreadBadge = summary.badge,
                         hasUnseenReaction = summary.hasUnseenReaction,
+                        activity = summary.activity,
                         customPreviewRenderer = summary.customPreviewRenderer
                     )
                 }
