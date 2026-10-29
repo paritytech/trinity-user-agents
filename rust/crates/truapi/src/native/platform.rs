@@ -581,7 +581,6 @@ async fn lookup_until_found(
 	RealTimer.sleep(next_pause()).await;
 	let mut retries = 0u32;
 	let found = retry(
-		&RealTimer,
 		|| {
 			retries += 1;
 			async {

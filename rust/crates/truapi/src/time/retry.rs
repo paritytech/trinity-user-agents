@@ -3,15 +3,26 @@
 
 use core::{ops::ControlFlow, time::Duration};
 
-use super::Timer;
+use super::{RealTimer, Timer};
 
-/// Runs `attempt` until it returns `Break`, sleeping on `timer` between attempts.
+/// Runs `attempt` until it returns `Break`, sleeping between attempts.
 ///
 /// `Continue` carries a failure worth retrying; `pause_after` takes it and
 /// returns how long to wait. `Break` carries the result, including a failure
 /// retrying cannot fix. To give up after some number of failures, count them
 /// in `attempt`.
 pub async fn retry<Done, Failure, AttemptFuture>(
+	attempt: impl FnMut() -> AttemptFuture,
+	pause_after: impl FnMut(Failure) -> Duration,
+) -> Done
+where
+	AttemptFuture: Future<Output = ControlFlow<Done, Failure>>,
+{
+	retry_on(&RealTimer, attempt, pause_after).await
+}
+
+/// [`retry`], sleeping on `timer`.
+async fn retry_on<Done, Failure, AttemptFuture>(
 	timer: &dyn Timer,
 	mut attempt: impl FnMut() -> AttemptFuture,
 	mut pause_after: impl FnMut(Failure) -> Duration,
@@ -102,7 +113,7 @@ mod tests {
 		let mut attempts = 0;
 		let mut failures = Vec::new();
 
-		let done = block_on(retry(
+		let done = block_on(retry_on(
 			&timer,
 			|| {
 				attempts += 1;

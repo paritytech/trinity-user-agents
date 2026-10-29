@@ -547,11 +547,9 @@ async fn accept_loop(
 /// Bind `port` again for a lost listener, backing off between failed binds.
 async fn rebind(port: u16, logger: &BridgeLogger) -> TcpListener {
 	let mut pauses = RELISTEN_PAUSES;
-	// Wait before the first bind too, so a listener that keeps getting lost is
-	// not bound again in a tight loop.
+	// Pause before binding too, so a listener lost right after each bind can't spin.
 	RealTimer.sleep(pauses.next_pause()).await;
 	retry(
-		&RealTimer,
 		|| {
 			ready(match bind_loopback(port).and_then(TcpListener::from_std) {
 				Ok(listener) => ControlFlow::Break(listener),

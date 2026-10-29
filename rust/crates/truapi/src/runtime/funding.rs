@@ -39,7 +39,7 @@ use crate::{
 		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, Platform,
 		ProductContext, ProductId,
 	},
-	time::{Backoff, RealTimer, retry},
+	time::{Backoff, retry},
 	unix_time::current_unix_millis,
 };
 
@@ -601,7 +601,6 @@ impl RuntimeServices {
 			// failed load is retried until the sessions are in.
 			let mut pauses = RESUME_RETRY_PAUSES;
 			retry(
-				&RealTimer,
 				|| async {
 					let loaded = registry
 						.commit(services.platform.as_ref(), current_unix_millis(), |sessions| {

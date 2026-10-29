@@ -77,7 +77,7 @@ use truapi::{
 	statement_allowance as alloc,
 	statement_allowance::{ExtrinsicTarget, PersonhoodSigner, collection::PersonhoodCollection},
 	subscription::Spawner,
-	time::{Backoff, RealTimer, retry},
+	time::{Backoff, retry},
 };
 
 use crate::{
@@ -1993,7 +1993,6 @@ fn spawn_supervised_responder(
 		let peer = paired_sso_peer(&host);
 		let mut pauses = RESPONDER_RETRY_PAUSES;
 		retry(
-			&RealTimer,
 			|| async {
 				match runtime.resume_pairing(peer).await {
 					Ok(ResponderExit::PeerDisconnected) => ControlFlow::Break(()),
@@ -2032,7 +2031,6 @@ async fn forget_disconnected_peer(
 	pauses: &mut Backoff,
 ) {
 	retry(
-		&RealTimer,
 		|| {
 			ready(match catalog.remove_paired_host(profile, &peer.statement_account_id) {
 				Ok(_) => ControlFlow::Break(()),
