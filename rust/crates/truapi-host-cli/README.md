@@ -251,19 +251,22 @@ The worker boots with the page, so reloading the page restarts the worker. The
 page is the phone's chat screen for Chat Extension v2, drawn from what the
 in-memory host keeps.
 
-- **Chat list.** Each room with its name, icon and description, newest first
-  by the time of the product's preview, with the preview line and the unread
-  badge. The line comes from the newest message the preview names, else from
-  the newest message the host holds ("You: " for your own), or "X reacted
-  with ..." (or "X removed a reaction") when the preview names a newer
-  reaction; a heart marks unseen reactions. A room the product keeps shows no
+- **Chat list.** Each room with its name, icon and description, pinned rooms
+  first and then newest first by the time of the product's preview, with the
+  preview line and the badge. The line comes from the newest message the
+  preview names, else from the newest message the host holds ("You: " for your
+  own), or "X reacted with ..." (or "X removed a reaction") when the preview
+  names a newer reaction; an activity line such as "Ben is typing" replaces it,
+  and moves while the activity continues. A heart marks unseen reactions. The
+  badge is an unread count or an image. A room the product keeps shows no
   badge it did not set; a room the host keeps counts its unread messages.
 - **Room.** `Text` and `RichText` (plain text with its links, and media as
   their HOP file, which the page does not claim), an `Event` as a centred line,
   and a `Call` and a `Payment` as one line each. Messages show "edited",
   status ticks, reactions (yours highlighted, click to toggle) and a reply
   quote that jumps to its message. A `Replaced` feed update draws a message
-  again in place, with no edit mark, and a `Deleted` one removes it.
+  again in place, with no edit mark, and a `Deleted` one removes it. A room
+  with no messages shows the empty-room text of the product.
 - **Menus.** The message menu has Copy, Reply, Edit for your own text, React,
   "Who reacted" (`reactions_query`) when the room sets `reaction_details`, and
   Delete for your own message in a room the product keeps.

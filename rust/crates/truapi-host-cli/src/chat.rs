@@ -78,7 +78,7 @@ impl RoomRecord {
 	fn new(participating_as: ChatRoomParticipation, name: String, icon_url: String) -> Self {
 		Self {
 			participating_as,
-			metadata: ChatRoomMetadata { name, description: None, icon: None },
+			metadata: ChatRoomMetadata { name, description: None, icon: None, placeholder: None },
 			icon_url,
 			config: ChatRoomConfig::default(),
 			preview: None,
@@ -781,6 +781,7 @@ fn room_json(room_id: &str, room: &RoomRecord) -> Value {
 		"name": room.metadata.name,
 		"description": room.metadata.description,
 		"icon": room.icon_url,
+		"placeholder": room.metadata.placeholder,
 		"config": config_json(&room.config),
 		"footer": footer_json(&room.footer),
 		"lastSeen": room.last_seen,
@@ -802,6 +803,7 @@ fn list_json(room: &RoomRecord) -> Value {
 		Some(ChatRoomBadge::UnreadCount { count }) if *count > 0 => {
 			json!({ "type": "UnreadCount", "count": count })
 		},
+		Some(ChatRoomBadge::Image { icon }) => json!({ "type": "Image", "icon": icon }),
 		// Matched by shape, not by name: an unread count of 0 and the
 		// variant that hides the badge both show nothing.
 		Some(_) => Value::Null,
@@ -826,6 +828,11 @@ fn list_json(room: &RoomRecord) -> Value {
 		})),
 		"unseenReactions": preview.map_or(0, |preview| preview.unseen_reactions),
 		"badge": badge,
+		"pinned": preview.is_some_and(|preview| preview.pinned),
+		"activity": preview.and_then(|preview| preview.activity.as_ref()).map(|activity| json!({
+			"text": activity.text,
+			"ongoing": activity.ongoing,
+		})),
 		"previewDeclared": preview.is_some(),
 	})
 }
@@ -1164,7 +1171,7 @@ mod tests {
 	use truapi::{
 		latest::{
 			ChatCallClose, ChatCustomMessage, ChatPaymentRecord, ChatPreviewReaction,
-			HostChatSetRoomFooterRequest,
+			ChatRoomActivity, HostChatSetRoomFooterRequest,
 		},
 		platform::ProductId,
 	};
@@ -1452,6 +1459,7 @@ mod tests {
 						name: name.to_string(),
 						description: Some("We answer".to_string()),
 						icon: icon.map(str::to_string),
+						placeholder: Some("Ask us anything".to_string()),
 					},
 				},
 			))
@@ -1461,6 +1469,7 @@ mod tests {
 
 		let event = declare("Help desk", Some("https://icons.example/desk.png"));
 		assert_eq!(event["name"], "Help desk");
+		assert_eq!(event["placeholder"], "Ask us anything");
 		assert_eq!(event["description"], "We answer");
 		assert_eq!(event["icon"], "https://icons.example/desk.png");
 		let event = declare("Front desk", None);
@@ -1539,8 +1548,12 @@ mod tests {
 				removed: true,
 			}),
 			unseen_reactions: 2,
+			pinned: true,
+			activity: Some(ChatRoomActivity { text: "Ben is typing".to_string(), ongoing: true }),
 		});
 		assert_eq!(list["timestamp"], 42);
+		assert_eq!(list["pinned"], true);
+		assert_eq!(list["activity"], json!({ "text": "Ben is typing", "ongoing": true }));
 		assert_eq!(list["badge"], json!({ "type": "UnreadCount", "count": 7 }));
 		assert_eq!(list["text"], "from the product");
 		assert_eq!(list["origin"], "contact");
@@ -1559,17 +1572,37 @@ mod tests {
 			last_message: None,
 			last_reaction: None,
 			unseen_reactions: 0,
+			pinned: false,
+			activity: None,
 		});
 		assert_eq!(list["badge"], Value::Null);
 		assert_eq!(list["text"], "newest");
+		assert_eq!((list["pinned"].clone(), list["activity"].clone()), (json!(false), Value::Null));
 		let list = preview(ChatRoomPreview {
 			timestamp: None,
 			badge: Some(ChatRoomBadge::UnreadCount { count: 0 }),
 			last_message: None,
 			last_reaction: None,
 			unseen_reactions: 0,
+			pinned: false,
+			activity: None,
 		});
 		assert_eq!(list["badge"], Value::Null, "a count of 0 shows nothing");
+		let list = preview(ChatRoomPreview {
+			timestamp: None,
+			badge: Some(ChatRoomBadge::Image {
+				icon: "https://icons.example/live.png".to_string(),
+			}),
+			last_message: None,
+			last_reaction: None,
+			unseen_reactions: 0,
+			pinned: false,
+			activity: None,
+		});
+		assert_eq!(
+			list["badge"],
+			json!({ "type": "Image", "icon": "https://icons.example/live.png" })
+		);
 	}
 
 	#[test]

@@ -203,6 +203,10 @@ aside[hidden], section[hidden] { display: none; }
 .room .pin { font: 10px var(--mono); color: var(--accent); }
 .room .line { display: block; font: 12px var(--ui); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .badge { flex: none; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--accent); color: var(--accent-ink); font: 600 11px/20px var(--mono); text-align: center; }
+.badge.image { padding: 0; width: 20px; object-fit: cover; background: none; }
+.room .line.activity { color: var(--accent); font-style: italic; }
+.room .line.activity.ongoing::after { content: "…"; display: inline-block; animation: activity 1.2s steps(4, end) infinite; overflow: hidden; vertical-align: bottom; width: 0; }
+@keyframes activity { to { width: 1.25em; } }
 .roomhead { flex-wrap: wrap; }
 .roomhead .titles { flex: 1; min-width: 0; }
 .roomhead .titles p { margin: 2px 0 0; font: 12px var(--ui); color: var(--muted); white-space: pre-wrap; }
@@ -514,8 +518,11 @@ function messagesOf(roomId) {
 }
 function isSource(room) { return !!(room && room.config && room.config.productSource); }
 
+// Pinned rooms come first, and each group keeps the order of its time.
 function sortedRooms() {
   return [...state.rooms.values()].sort((a, b) => {
+    const pa = Boolean(a.list && a.list.pinned), pb = Boolean(b.list && b.list.pinned);
+    if (pa !== pb) return pa ? -1 : 1;
     const ta = (a.list && a.list.timestamp) || 0, tb = (b.list && b.list.timestamp) || 0;
     if (ta !== tb) return tb - ta;
     return String(a.name).localeCompare(String(b.name));
@@ -523,6 +530,15 @@ function sortedRooms() {
 }
 
 function badgeNode(badge) {
+  if (badge && badge.type === "Image") {
+    const src = safeUrl(badge.icon);
+    if (!src) return null;
+    const img = el("img", "badge image");
+    img.alt = "";
+    img.src = src;
+    img.dataset.badge = "image";
+    return img;
+  }
   if (!badge || badge.type !== "UnreadCount") return null;
   const node = el("span", "badge", badge.count);
   node.dataset.badge = String(badge.count);
@@ -543,15 +559,19 @@ function roomRow(room) {
   const text = el("span", "rowtext");
   const name = el("span", "rowname");
   name.appendChild(el("b", null, room.name));
+  if (room.list && room.list.pinned) name.appendChild(el("span", "pin", "pinned"));
   if (room.list && room.list.unseenReactions > 0) name.appendChild(el("span", "pin", "\u{2764}\u{FE0F}"));
   // A newer call the product names apart from the newest message: this page
   // keeps the line on the message and marks the call beside the name.
   text.appendChild(name);
+  const activity = room.list && room.list.activity;
   const reaction = room.list && room.list.lastReaction;
-  const line = reaction ? `${reaction.byUser ? "You" : room.name} ${reaction.removed ? "removed a reaction" : `reacted with ${reaction.emoji}`}`
+  // An activity line replaces the preview line, and it moves while the activity continues.
+  const line = activity ? activity.text
+    : reaction ? `${reaction.byUser ? "You" : room.name} ${reaction.removed ? "removed a reaction" : `reacted with ${reaction.emoji}`}`
     : room.list && room.list.text != null ? `${room.list.origin === USER ? "You: " : ""}${room.list.text}` : null;
   if (line) {
-    const node = el("span", "line", line);
+    const node = el("span", activity ? (activity.ongoing ? "line activity ongoing" : "line activity") : "line", line);
     node.dataset.preview = line;
     text.appendChild(node);
   } else {
@@ -748,7 +768,7 @@ function renderRoom(forceBottom) {
     if (line) thread.appendChild(line);
   }
   if (!messages.length && !temps.length) {
-    const empty = emptyState("No messages");
+    const empty = emptyState(room.placeholder || "No messages");
     empty.id = "placeholder";
     thread.appendChild(empty);
   }
