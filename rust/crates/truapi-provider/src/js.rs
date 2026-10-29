@@ -833,9 +833,10 @@ mod tests {
 	/// so rather than quietly never warming up.
 	#[wasm_bindgen_test]
 	async fn without_storage_the_database_calls_fail() {
-		let mut builder = ChainProviderBuilder::new();
-		let provider = builder.build().expect("an empty builder builds");
 		let genesis = format!("0x{}", "11".repeat(32));
+		let mut builder = ChainProviderBuilder::new();
+		builder.add_light_chain(&genesis, "{}".to_owned()).expect("the genesis parses");
+		let provider = builder.build().expect("builds");
 
 		assert!(
 			provider.load_database(&genesis).await.is_err(),
@@ -855,6 +856,7 @@ mod tests {
 		let genesis = format!("0x{}", "22".repeat(32));
 
 		let mut builder = ChainProviderBuilder::new();
+		builder.add_light_chain(&genesis, "{}".to_owned()).expect("the genesis parses");
 		builder
 			.set_storage(recording_client(std::rc::Rc::clone(&calls)))
 			.expect("the client has load and save");
@@ -874,6 +876,7 @@ mod tests {
 		let genesis = format!("0x{}", "33".repeat(32));
 
 		let mut builder = ChainProviderBuilder::new();
+		builder.add_light_chain(&genesis, "{}".to_owned()).expect("the genesis parses");
 		builder
 			.set_storage(recording_client(std::rc::Rc::clone(&calls)))
 			.expect("the client has load and save");
