@@ -12,14 +12,20 @@ class ChatRequestDeliverySigners @Inject constructor(
     private val accountRepository: AccountRepository,
     private val statementProverFactory: StatementStoreMessageProver.Factory,
 ) {
-    suspend fun usernameSigner(contact: Contact): Result<ChatRequestDeliverySigner> = runCancellableCatching {
+    suspend fun usernameSigner(contact: Contact, period: UInt): Result<ChatRequestDeliverySigner> = runCancellableCatching {
         val identityAccount = accountRepository.getAccountByIdOrThrow(contact.ourMetaAccountId)
-        ChatRequestDeliverySigner(statementProverFactory.createKeyPairProver(identityAccount), ChatRequest.Delivery.Delivered)
+
+        ChatRequestDeliverySigner(
+            prover = statementProverFactory.createKeyPairProver(identityAccount),
+            accountId = identityAccount.defaultPubKey(),
+            delivery = ChatRequest.Delivery.DeliveredByUsername(period),
+        )
     }
 
     fun anonymousSigner(account: ChatRequestDeliveryAccount): ChatRequestDeliverySigner {
         return ChatRequestDeliverySigner(
             prover = statementProverFactory.createKeyPairProver(account.keypair),
+            accountId = account.accountId,
             delivery = ChatRequest.Delivery.DeliveredAnonymously(account.period),
         )
     }

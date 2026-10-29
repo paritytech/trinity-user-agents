@@ -107,6 +107,7 @@ private fun DisableSystemBarContrastEnforcement() {
 
 @Composable
 fun NovaBottomSheetSurface(
+    color: Color = PolkadotTheme.colors.bg.surface.container,
     content: @Composable BoxScope.() -> Unit
 ) {
     PolkadotSurface(
@@ -115,7 +116,7 @@ fun NovaBottomSheetSurface(
             .padding(PolkadotTheme.spacings.small)
             .navigationBarsPadding(),
         shape = PolkadotTheme.shapes.extraLarge,
-        color = PolkadotTheme.colors.bg.surface.container,
+        color = color,
         content = content
     )
 }

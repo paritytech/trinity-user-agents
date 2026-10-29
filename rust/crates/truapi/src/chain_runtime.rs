@@ -171,7 +171,7 @@ pub struct LegacyConnection {
 /// Classification of framework-level chain failures separate from JSON-RPC
 /// domain errors. Maps cleanly to [`truapi::CallError`] variants at the
 /// `ProductRuntimeHost` boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RuntimeFailureKind {
 	/// Backend is not wired or refused the request for plumbing reasons.
 	Unavailable,
@@ -190,37 +190,67 @@ pub struct RuntimeFailure {
 	kind: RuntimeFailureKind,
 	method: &'static str,
 	reason: Option<String>,
+	/// Chain the call was made against, where the failure knows it.
+	///
+	/// Kept beside the reason rather than inside it, because the reason is what
+	/// the product is told and that should not change, while a host reading its
+	/// log needs to know which chain went quiet. A failure raised before a
+	/// chain is chosen has none.
+	chain: Option<Vec<u8>>,
 }
 
 impl RuntimeFailure {
 	/// Backend refused the call for unavailability reasons (no provider, the
 	/// connection died, etc.).
 	pub fn unavailable(method: &'static str) -> Self {
-		Self { kind: RuntimeFailureKind::Unavailable, method, reason: None }
+		Self { kind: RuntimeFailureKind::Unavailable, method, reason: None, chain: None }
 	}
 
 	/// Backend produced a structural error (malformed json-rpc, unexpected
 	/// shape, ...).
 	pub fn host_failure(method: &'static str, reason: impl Into<String>) -> Self {
-		Self { kind: RuntimeFailureKind::HostFailure, method, reason: Some(reason.into()) }
+		Self {
+			kind: RuntimeFailureKind::HostFailure,
+			method,
+			reason: Some(reason.into()),
+			chain: None,
+		}
 	}
 
 	/// [`Self::unavailable`] carrying the underlying failure text for
 	/// diagnostics.
 	pub fn unavailable_with_reason(method: &'static str, reason: impl Into<String>) -> Self {
-		Self { kind: RuntimeFailureKind::Unavailable, method, reason: Some(reason.into()) }
+		Self {
+			kind: RuntimeFailureKind::Unavailable,
+			method,
+			reason: Some(reason.into()),
+			chain: None,
+		}
 	}
 
 	/// Failure classification.
-	#[cfg(test)]
 	pub fn kind(&self) -> RuntimeFailureKind {
 		self.kind
 	}
 
 	/// Method tag the failure originated from.
-	#[cfg(test)]
-	fn method(&self) -> &'static str {
+	pub fn method(&self) -> &'static str {
 		self.method
+	}
+
+	/// Say which chain this failure happened on.
+	///
+	/// A failure raised before a chain is chosen leaves it unset, so a reader
+	/// can tell "this chain went quiet" from "we never got that far".
+	#[must_use]
+	pub fn on_chain(mut self, genesis_hash: &[u8]) -> Self {
+		self.chain = Some(genesis_hash.to_vec());
+		self
+	}
+
+	/// Chain the call was made against, where the failure knows it.
+	pub fn chain(&self) -> Option<&[u8]> {
+		self.chain.as_deref()
 	}
 
 	/// Diagnostic reason. Always non-empty for `HostFailure`.
@@ -235,7 +265,12 @@ impl RuntimeFailure {
 	/// the original method and reason so the caller still sees where it
 	/// failed.
 	fn reclassify(&self, method: &'static str) -> RuntimeFailure {
-		RuntimeFailure { kind: self.kind, method, reason: Some(self.reason()) }
+		RuntimeFailure {
+			kind: self.kind,
+			method,
+			reason: Some(self.reason()),
+			chain: self.chain.clone(),
+		}
 	}
 }
 
@@ -281,6 +316,11 @@ impl RuntimeChainProvider for HostChainProvider {
 		})
 	}
 }
+
+/// Follows a node allows per connection, as [`ConnectionScope`] describes. A
+/// connection holding this many refuses the next one, whichever caller it
+/// belongs to.
+const FOLLOWS_A_NODE_BUDGETS: usize = 4;
 
 /// Which caller a chain connection belongs to.
 ///
@@ -541,7 +581,7 @@ impl ChainRuntime {
 			.methods
 			.chainhead_v1_header(&remote_follow_id, hash)
 			.await
-			.map_err(|err| rpc_failure(method, err))?
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))?
 			.map(|header| header.0);
 		Ok(RemoteChainHeadHeaderResponse { header })
 	}
@@ -562,7 +602,7 @@ impl ChainRuntime {
 			.methods
 			.chainhead_v1_body(&remote_follow_id, hash_from_bytes(method, &request.hash)?)
 			.await
-			.map_err(|err| rpc_failure(method, err))
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))
 			.and_then(operation_started_result)?;
 		Ok(RemoteChainHeadBodyResponse { operation })
 	}
@@ -590,7 +630,7 @@ impl ChainRuntime {
 				request.child_trie.as_deref(),
 			)
 			.await
-			.map_err(|err| rpc_failure(method, err))
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))
 			.and_then(operation_started_result)?;
 		Ok(RemoteChainHeadStorageResponse { operation })
 	}
@@ -616,7 +656,7 @@ impl ChainRuntime {
 				&request.call_parameters,
 			)
 			.await
-			.map_err(|err| rpc_failure(method, err))
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))
 			.and_then(operation_started_result)?;
 		Ok(RemoteChainHeadCallResponse { operation })
 	}
@@ -642,7 +682,7 @@ impl ChainRuntime {
 				.methods
 				.chainhead_v1_unpin(&remote_follow_id, hash)
 				.await
-				.map_err(|err| rpc_failure(method, err))?;
+				.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))?;
 		}
 		Ok(())
 	}
@@ -662,7 +702,7 @@ impl ChainRuntime {
 			.methods
 			.chainhead_v1_continue(&remote_follow_id, &request.operation_id)
 			.await
-			.map_err(|err| rpc_failure(method, err))
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))
 	}
 
 	/// Stop a chain-head operation.
@@ -680,7 +720,7 @@ impl ChainRuntime {
 			.methods
 			.chainhead_v1_stop_operation(&remote_follow_id, &request.operation_id)
 			.await
-			.map_err(|err| rpc_failure(method, err))
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))
 	}
 
 	/// Echo back the chain genesis hash via chainSpec_v1_genesisHash.
@@ -695,7 +735,7 @@ impl ChainRuntime {
 			.methods
 			.chainspec_v1_genesis_hash()
 			.await
-			.map_err(|err| rpc_failure(method, err))
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))
 			.map(hash_to_bytes)?;
 		Ok(RemoteChainSpecGenesisHashResponse { genesis_hash })
 	}
@@ -712,7 +752,7 @@ impl ChainRuntime {
 			.methods
 			.chainspec_v1_chain_name()
 			.await
-			.map_err(|err| rpc_failure(method, err))?;
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))?;
 		Ok(RemoteChainSpecChainNameResponse { chain_name })
 	}
 
@@ -728,7 +768,7 @@ impl ChainRuntime {
 			.methods
 			.chainspec_v1_properties::<Value>()
 			.await
-			.map_err(|err| rpc_failure(method, err))?;
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))?;
 		let properties = serde_json::to_string(&value)
 			.map_err(|err| RuntimeFailure::host_failure(method, err.to_string()))?;
 		Ok(RemoteChainSpecPropertiesResponse { properties })
@@ -746,7 +786,7 @@ impl ChainRuntime {
 			.methods
 			.transaction_v1_broadcast(&request.transaction)
 			.await
-			.map_err(|err| rpc_failure(method, err))?;
+			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))?;
 		let operation_id = provider_operation_id.map(|provider_operation_id| {
 			let sequence = self.next_transaction_operation_id.fetch_add(1, Ordering::Relaxed);
 			self.with_transaction_operations(|operations| {
@@ -1187,6 +1227,11 @@ struct ChainConnection {
 	/// one metadata cache.
 	chain_config: OnceLock<SubstrateConfig>,
 	legacy_connection: Mutex<Option<LegacyConnection>>,
+	/// Whether this connection has already reported itself at the budget.
+	/// dotNS opens and drops a follow per lookup, so a connection sitting at
+	/// the budget would otherwise repeat the line on every lookup, into a
+	/// device log the level filter cannot quiet.
+	budget_reported: AtomicBool,
 }
 
 impl ChainConnection {
@@ -1212,6 +1257,7 @@ impl ChainConnection {
 			subxt_connection_generation: AtomicU64::new(0),
 			chain_config: OnceLock::new(),
 			legacy_connection: Mutex::new(None),
+			budget_reported: AtomicBool::new(false),
 		})
 	}
 
@@ -1514,7 +1560,7 @@ impl ChainConnection {
 		}
 		let mut follow = self.methods.chainhead_v1_follow(with_runtime).await.map_err(|err| {
 			self.remove_follow(&local_follow_id);
-			rpc_failure(FOLLOW_METHOD, err)
+			rpc_failure(FOLLOW_METHOD, err).on_chain(&self.genesis_hash)
 		})?;
 		let remote_follow_id = follow
 			.subscription_id()
@@ -1549,8 +1595,10 @@ impl ChainConnection {
 						},
 					},
 					Err(error) => {
-						connection
-							.interrupt_follow(&pump_follow_id, rpc_failure(FOLLOW_METHOD, error));
+						connection.interrupt_follow(
+							&pump_follow_id,
+							rpc_failure(FOLLOW_METHOD, error).on_chain(&connection.genesis_hash),
+						);
 						break;
 					},
 				}
@@ -1578,7 +1626,64 @@ impl ChainConnection {
 		};
 		follow.remote_subscription_id = Some(remote_follow_id);
 		follow.abort = Some(abort);
+		let holding = Self::follows_holding_a_slot(&follows);
+		drop(follows);
+		let at_budget = holding.len() >= FOLLOWS_A_NODE_BUDGETS;
+		// Reported on the way into the budget and again only after the
+		// connection has come back out of it, so a connection that sits there
+		// says so once rather than on every follow that renews the condition.
+		let already_reported = self.budget_reported.swap(at_budget, Ordering::Relaxed);
+		if at_budget && !already_reported {
+			// The refusal this predicts surfaces far from here, on whichever
+			// call happens to open the next follow, and says nothing about
+			// follows when it does. The target addresses it to the host, so it
+			// arrives whatever the level is, and hosts run at `ERROR`.
+			let genesis = encode_hex(&self.genesis_hash);
+			let held = holding.len();
+			let occupants = holding
+				.iter()
+				.map(|held| Self::occupant_name(held))
+				.collect::<Vec<_>>()
+				.join(", ");
+			warn!(
+				target: "truapi.chain.follow_budget_reached",
+				"this connection to chain {genesis} holds {held} of {FOLLOWS_A_NODE_BUDGETS} follows; its next follow will be refused: {occupants}",
+			);
+		}
 		true
+	}
+
+	/// Local ids of the follows holding a slot in this connection's budget.
+	///
+	/// A follow is recorded on intent and gains a remote id once the node
+	/// acknowledges one, so only the acknowledged ones occupy the node's
+	/// budget. Counting intents instead would report a connection as full
+	/// while the node still had room.
+	fn follows_holding_a_slot(follows: &HashMap<String, FollowState>) -> Vec<String> {
+		let mut holding: Vec<String> = follows
+			.iter()
+			.filter(|(_, follow)| follow.remote_subscription_id.is_some())
+			.map(|(local_follow_id, _)| local_follow_id.clone())
+			.collect();
+		holding.sort();
+		holding
+	}
+
+	/// Name one follow holding a slot, for a line that leaves the device.
+	///
+	/// The core's own follow ids are its own words and are named in full. A
+	/// product's follow id is built from the request id it chose, which is
+	/// arbitrary text off the wire, so only the runtime it belongs to is named.
+	/// Which products hold how many is the diagnostic; what a product called
+	/// its request is not, and is not ours to repeat.
+	fn occupant_name(local_follow_id: &str) -> String {
+		if local_follow_id.starts_with("truapi:") {
+			return local_follow_id.to_string();
+		}
+		match local_follow_id.split_once(':') {
+			Some((runtime, _)) => format!("{runtime}:product"),
+			None => "product".to_string(),
+		}
 	}
 
 	/// Abort every follow pump on this connection.
@@ -3328,6 +3433,46 @@ mod tests {
 		assert_eq!(err.method(), "remote_chain_spec_chain_name");
 	}
 
+	/// A socket that drops under a call keeps the reason the transport gave, so the
+	/// product and the host log can tell it apart from a node that answered
+	/// with an error.
+	#[test]
+	fn dropped_connection_keeps_the_transport_reason() {
+		let provider = Arc::new(ScriptedProvider::new(|_| None));
+		provider.sender.lock().unwrap().take();
+		let runtime = ChainRuntime::new(provider, spawner_for_tests());
+		let err = match futures::executor::block_on(
+			runtime.remote_chain_spec_genesis_hash(vec![0u8; 32]),
+		) {
+			Ok(_) => panic!("expected failure"),
+			Err(err) => err,
+		};
+		assert_eq!(err.kind(), RuntimeFailureKind::Unavailable);
+		assert!(
+			err.reason()
+				.starts_with("remote_chain_spec_genesis_hash: RPC error: client error: json-rpc"),
+			"unexpected reason: {}",
+			err.reason()
+		);
+	}
+
+	/// A transport that is reconnecting is unavailable rather than broken, and
+	/// its reason still reaches the product and the host log.
+	#[test]
+	fn reconnecting_transport_keeps_its_reason() {
+		let failure = rpc_failure(
+			"get_head_header",
+			SubxtRpcError::DisconnectedWillReconnect("socket closed".to_string()),
+		);
+		assert_eq!(failure.kind(), RuntimeFailureKind::Unavailable);
+		assert_eq!(failure.method(), "get_head_header");
+		assert!(
+			failure.reason().contains("socket closed"),
+			"unexpected reason: {}",
+			failure.reason()
+		);
+	}
+
 	#[test]
 	fn json_rpc_error_becomes_host_failure() {
 		let provider = Arc::new(ScriptedProvider::new(|request| {
@@ -3577,6 +3722,35 @@ mod tests {
 		assert!(
 			messages.iter().any(|m| m.contains("chainHead_v1_unfollow")),
 			"unfollow not sent; messages: {messages:?}",
+		);
+	}
+
+	/// Only follows the node acknowledged hold a slot in its budget. A follow
+	/// recorded on intent has asked for nothing yet, so counting it would
+	/// report a connection as full while the node still had room.
+	#[test]
+	fn only_acknowledged_follows_hold_a_slot_in_the_budget() {
+		let mut follows: HashMap<String, FollowState> = HashMap::new();
+		let intended = |remote: Option<&str>| FollowState {
+			with_runtime: false,
+			client_subscription_id: None,
+			remote_subscription_id: remote.map(str::to_string),
+			abort: None,
+			sender: mpsc::unbounded().0,
+			cancelled: Arc::new(AtomicBool::new(false)),
+		};
+		follows.insert("acknowledged-b".to_string(), intended(Some("REMOTE-B")));
+		follows.insert("intent-only".to_string(), intended(None));
+		follows.insert("acknowledged-a".to_string(), intended(Some("REMOTE-A")));
+
+		assert_eq!(
+			ChainConnection::follows_holding_a_slot(&follows),
+			vec!["acknowledged-a".to_string(), "acknowledged-b".to_string()],
+			"an unacknowledged follow occupies nothing on the node",
+		);
+		assert!(
+			ChainConnection::follows_holding_a_slot(&follows).len() < FOLLOWS_A_NODE_BUDGETS,
+			"two acknowledged follows are below the budget",
 		);
 	}
 
@@ -4432,5 +4606,33 @@ mod tests {
 			item,
 			Some(RemoteChainHeadFollowItem::OperationCallDone { operation_id, .. }) if operation_id == operation
 		)
+	}
+}
+
+#[cfg(test)]
+mod occupant_name_tests {
+	use super::ChainConnection;
+
+	/// A product mints its follow id from the request id it chose, which is
+	/// arbitrary text off the wire. The line naming the occupants leaves the
+	/// device, so it names the runtime and not what the product called itself.
+	#[test]
+	fn a_product_follow_is_named_without_the_id_it_chose() {
+		assert_eq!(ChainConnection::occupant_name("c7:p:41"), "c7:product");
+		assert_eq!(
+			ChainConnection::occupant_name("c7:tarik@example.invalid"),
+			"c7:product",
+			"a request id the product chose reached the line",
+		);
+		assert_eq!(ChainConnection::occupant_name("anything"), "product");
+	}
+
+	/// The core's own ids are its own words, and say which read holds the slot.
+	#[test]
+	fn a_core_follow_is_named_in_full() {
+		assert_eq!(
+			ChainConnection::occupant_name("truapi:dotns:3:identity"),
+			"truapi:dotns:3:identity"
+		);
 	}
 }
