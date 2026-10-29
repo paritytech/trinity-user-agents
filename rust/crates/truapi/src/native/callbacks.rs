@@ -504,16 +504,37 @@ pub trait NativeFundingCallbacks: Send + Sync {
 	/// permission. `None` when nothing says.
 	async fn detected_country(&self) -> Option<String>;
 
-	/// A session changed: its status and the progress the host draws, so
-	/// the host keeps the latest of each and never reads them back. Every
-	/// session in flight, and every ended one the host has not recorded,
-	/// comes through here once more when funding resumes. `progress` is
-	/// `None` once the core keeps only the session's summary.
+	/// A session changed: its status, the session as the core now holds it
+	/// (its choice, cancel offer and amounts) and the progress the host
+	/// draws, so the host keeps the latest of each and never reads them back.
+	/// Every session in flight, and every ended one the host has not
+	/// recorded, comes through here once more when funding resumes.
+	/// `session` and `progress` are `None` once the core keeps only the
+	/// session's summary.
 	fn funding_session_changed(
 		&self,
 		intent: String,
 		status: v01::HostFundingStatusSubscribeItem,
+		session: Option<crate::host_logic::funding::FundingSession>,
 		progress: Option<crate::host_logic::funding::FundingProgress>,
+	);
+
+	/// Every ended session the host recorded or the core compacted, as
+	/// summaries newest first, once each time funding resumes, so the host
+	/// rebuilds its own history when that was lost.
+	fn funding_history(&self, history: Vec<crate::host_logic::funding::FundingSessionSummary>);
+
+	/// Whether a provider still works on any session: once funding resumes,
+	/// and again whenever it changes. The host keeps it to start funding at
+	/// its next launch.
+	fn funding_in_progress_changed(&self, in_progress: bool);
+
+	/// What session `intent`'s overlay offers: before the overlay is shown,
+	/// after each `select_funding_options`, and after each quote list.
+	fn funding_options_changed(
+		&self,
+		intent: String,
+		options: crate::host_logic::funding_providers::FundingOptions,
 	);
 
 	/// The quote list the host requested with `get_funding_quote`: again
