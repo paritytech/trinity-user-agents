@@ -58,6 +58,7 @@ extension ChatRoomDeclarationUpdateMapper: CoreDataMapperProtocol {
 extension Chat.RoomNameUpdate: ChatRoomDeclarationUpdating {
     func apply(to entity: CDChatRoomMetadata) {
         entity.name = name
+        entity.placeholder = placeholder
 
         if case let .replace(newIcon) = icon {
             entity.icon = newIcon
@@ -77,8 +78,12 @@ extension Chat.RoomPreviewUpdate: ChatRoomDeclarationUpdating {
         entity.previewTimestamp = preview.timestamp ?? 0
         entity.badgeKind = preview.badge.storedKind
         entity.badgeCount = preview.badge.storedCount
+        entity.badgeIcon = preview.badge.storedIcon
         entity.previewMessage = try preview.lastMessage?.storedBytes()
         entity.previewUnseenReaction = preview.unseenReaction
+        entity.previewPinned = preview.pinned
+        entity.previewActivityText = preview.activity?.text
+        entity.previewActivityOngoing = preview.activity?.ongoing ?? false
     }
 }
 
@@ -90,20 +95,22 @@ extension Chat.RoomDeclarations {
         self.init(
             config: entity?.config.flatMap(Chat.RoomConfig.decodedIfValid),
             configGeneration: entity?.configGeneration ?? 0,
-            preview: entity.map(Chat.RoomPreview.init(entity:)) ?? .hostDefault
+            preview: entity.map(Chat.RoomPreview.init(entity:)) ?? .hostDefault,
+            placeholder: entity?.placeholder
         )
     }
 }
 
 // MARK: - Stored forms
 
-/// The stored kinds of a badge: 0 host count, 1 none, 2 count.
+/// The stored kinds of a badge: 0 host count, 1 none, 2 count, 3 image.
 private extension Chat.RoomBadge {
     var storedKind: Int16 {
         switch self {
         case .hostDefault: 0
         case .none: 1
         case .unreadCount: 2
+        case .image: 3
         }
     }
 
@@ -111,10 +118,16 @@ private extension Chat.RoomBadge {
         if case let .unreadCount(count) = self { count } else { 0 }
     }
 
-    init(kind: Int16, count: Int32) {
-        switch kind {
-        case 1: self = .none
-        case 2: self = .unreadCount(count)
+    var storedIcon: String? {
+        if case let .image(icon) = self { icon } else { nil }
+    }
+
+    /// An image badge without its icon reads as the host count.
+    init(kind: Int16, count: Int32, icon: String?) {
+        switch (kind, icon) {
+        case (1, _): self = .none
+        case (2, _): self = .unreadCount(count)
+        case let (3, .some(icon)): self = .image(icon)
         default: self = .hostDefault
         }
     }
@@ -125,9 +138,13 @@ private extension Chat.RoomPreview {
     init(entity: CDChatRoomMetadata) {
         self.init(
             timestamp: entity.previewTimestamp == 0 ? nil : entity.previewTimestamp,
-            badge: Chat.RoomBadge(kind: entity.badgeKind, count: entity.badgeCount),
+            badge: Chat.RoomBadge(kind: entity.badgeKind, count: entity.badgeCount, icon: entity.badgeIcon),
             lastMessage: entity.previewMessage.flatMap(Chat.RoomPreviewMessage.decodedIfStored),
-            unseenReaction: entity.previewUnseenReaction
+            unseenReaction: entity.previewUnseenReaction,
+            pinned: entity.previewPinned,
+            activity: entity.previewActivityText.map {
+                Chat.RoomActivity(text: $0, ongoing: entity.previewActivityOngoing)
+            }
         )
     }
 }
