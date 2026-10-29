@@ -20,7 +20,7 @@ struct ChatExtensionV2RoomScenarioTests {
         let status = try await create(
             bridge,
             icon: icon,
-            metadata: ChatRoomMetadata(name: "Lobby", description: nil, icon: nil),
+            metadata: ChatRoomMetadata(name: "Lobby", description: nil, icon: nil, placeholder: nil),
             config: .hostDefault,
             preview: nil
         )
@@ -45,7 +45,7 @@ struct ChatExtensionV2RoomScenarioTests {
         let declared = try await fixture.storedChat("lobby")?.roomDeclarations
         let repeated = try await create(
             bridge,
-            metadata: ChatRoomMetadata(name: "Lobby", description: "Another", icon: nil),
+            metadata: ChatRoomMetadata(name: "Lobby", description: "Another", icon: nil, placeholder: nil),
             config: .hostDefault,
             preview: nil
         )
@@ -60,21 +60,44 @@ struct ChatExtensionV2RoomScenarioTests {
         #expect(try await bridge.roomConfig(roomId: "lobby") == config)
     }
 
-    /// `set_room_metadata` reaches the chat-list row and the room header. The native chat draws no
+    /// `set_room_metadata` reaches the chat-list row and the room screen. The native chat draws no
     /// description.
-    @Test func metadataReachesTheListAndTheHeader() async throws {
+    @Test func metadataReachesTheListAndTheRoomScreen() async throws {
         let bridge = await fixture.bridge()
         try await create(bridge, metadata: metadata, config: .hostDefault, preview: nil)
 
         try await bridge.setRoomMetadata(
             roomId: "lobby",
-            metadata: ChatRoomMetadata(name: "Finals", description: "x", icon: nil)
+            metadata: ChatRoomMetadata(name: "Finals", description: "x", icon: nil, placeholder: "No games yet")
         )
 
         let chat = try #require(try await fixture.storedChat("lobby"))
         let registry = SingleBotRegistry(bot: fixture.bot)
         #expect(chat.chatWithPeerMetadata(using: registry).peerMetadata.name == "Finals")
         #expect(chat.chatMetadata(using: registry).peerMetadata.name == "Finals")
+        #expect(chat.chatMetadata(using: registry).roomPlaceholder == "No games yet")
+    }
+
+    /// An image badge takes the place of the unread count, so the row counts no unread message.
+    @Test func anImageBadgeTakesThePlaceOfTheUnreadCount() async throws {
+        let bridge = await fixture.bridge()
+        try await create(bridge, metadata: metadata, config: .hostDefault, preview: nil)
+        _ = try await fixture.surface.sendMessage(.text("hello"), roomId: "lobby")
+        #expect(try await fixture.storedChat("lobby")?.unreadDisplayMessageCount == 1)
+
+        try await bridge.setRoomPreview(roomId: "lobby", preview: ChatRoomPreview(
+            timestamp: nil,
+            badge: .image(icon: "https://example.com/badge.png"),
+            lastMessage: nil,
+            lastReaction: nil,
+            unseenReactions: 0,
+            pinned: false,
+            activity: nil
+        ))
+
+        let chat = try #require(try await fixture.storedChat("lobby"))
+        #expect(chat.unreadDisplayMessageCount == 0)
+        #expect(chat.roomDeclarations?.preview.badge == .image("https://example.com/badge.png"))
     }
 
     /// The badge, the time, the last message and the reaction of a preview reach the row of the chat list.
@@ -88,7 +111,9 @@ struct ChatExtensionV2RoomScenarioTests {
             // The product gives a message of the contact that the user has not seen as `Delivered`.
             lastMessage: message("m1", text: "Your turn", timestamp: 42, status: .delivered),
             lastReaction: nil,
-            unseenReactions: 1
+            unseenReactions: 1,
+            pinned: false,
+            activity: nil
         ))
         var chat = try #require(try await fixture.storedChat("lobby"))
         #expect(chat.unreadDisplayMessageCount == 3)
@@ -102,7 +127,9 @@ struct ChatExtensionV2RoomScenarioTests {
             badge: .hidden,
             lastMessage: nil,
             lastReaction: nil,
-            unseenReactions: 0
+            unseenReactions: 0,
+            pinned: false,
+            activity: nil
         ))
         chat = try #require(try await fixture.storedChat("lobby"))
         #expect(chat.unreadDisplayMessageCount == 0)
@@ -172,7 +199,7 @@ private let png = Data([0x89, 0x50, 0x4E, 0x47])
 
 private extension ChatExtensionV2RoomScenarioTests {
     var metadata: ChatRoomMetadata {
-        ChatRoomMetadata(name: "Lobby", description: "Weekly game", icon: nil)
+        ChatRoomMetadata(name: "Lobby", description: "Weekly game", icon: nil, placeholder: nil)
     }
 
     var config: ChatRoomConfig {
@@ -185,7 +212,9 @@ private extension ChatExtensionV2RoomScenarioTests {
             badge: nil,
             lastMessage: message("m0", text: "Your turn"),
             lastReaction: nil,
-            unseenReactions: 0
+            unseenReactions: 0,
+            pinned: false,
+            activity: nil
         )
     }
 
