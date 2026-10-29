@@ -169,10 +169,10 @@ struct PreviewCase: CustomTestStringConvertible, Sendable {
             )
         ),
         PreviewCase(
-            testDescription: "hidden badge",
+            testDescription: "zero count badge",
             wire: ChatRoomPreview(
                 timestamp: nil,
-                badge: .hidden,
+                badge: .unreadCount(count: 0),
                 lastMessage: nil,
                 lastReaction: nil,
                 unseenReactions: 0,
@@ -181,7 +181,7 @@ struct PreviewCase: CustomTestStringConvertible, Sendable {
             ),
             stored: .init(
                 timestamp: nil,
-                badge: .none,
+                badge: .unreadCount(0),
                 lastMessage: nil,
                 unseenReaction: false,
                 pinned: false,

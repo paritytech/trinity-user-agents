@@ -56,7 +56,7 @@ class ChatRoomDeclarationsScaleConformanceTest {
             ),
             storedPreview(PREVIEW),
         )
-        assertEquals(ChatRoomBadgeModel.Hidden, storedPreview(PREVIEW_HIDDEN)?.badge)
+        assertEquals(ChatRoomBadgeModel.Count(0), storedPreview(PREVIEW_HIDDEN)?.badge)
     }
 
     @Test
