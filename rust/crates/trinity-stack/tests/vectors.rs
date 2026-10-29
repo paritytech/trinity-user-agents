@@ -13,8 +13,8 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha512};
 use std::{collections::BTreeMap, fs, path::PathBuf};
 use trinity_stack::{
-	CurrentStack, DOTNS_KEYS, DotnsAnswer, DotnsLookup, DotnsRecord, DotnsStep, FetchRequest,
-	Fetched, Pointer, Refresh, Served, StackReader, accept, open, public_key, sign,
+	Block, CurrentStack, DOTNS_KEYS, DotnsAnswer, DotnsLookup, DotnsRecord, DotnsStep,
+	FetchRequest, Fetched, Pointer, Refresh, Served, StackReader, accept, open, public_key, sign,
 };
 
 const SECRET: [u8; 32] = [7; 32];
@@ -1340,6 +1340,28 @@ fn every_vector_gets_its_verdict() {
 	for case in cases["refresh"].as_array().unwrap() {
 		run_refresh(case, file);
 	}
+}
+
+/// A rebuild that read a registry rewire must not be shadowed by the record an earlier run
+/// stored, which a reader under `Never` would otherwise keep using.
+#[test]
+fn the_store_never_moves_a_dotns_record_back_past_the_builds() {
+	let pointer = Pointer::new(URL, Some(&key())).unwrap();
+	let build = signed(&with(|value| value["sequence"] = json!(42)));
+	let read_at = |number: u32| DotnsRecord {
+		generation: base()["generation"].as_str().unwrap().into(),
+		at: Block { number, hash: hex(&[0xab; 32]) },
+		dotns: None,
+	};
+	let dotns_after = |build_dotns: u32, stored: Option<&[u8]>| {
+		let mut reader = StackReader::new(Refresh::Never);
+		reader.load(&pointer, Some(&build), Some(read_at(build_dotns)), stored).unwrap();
+		reader.dotns(&pointer, NOW).unwrap().record.map(|record| record.at.number)
+	};
+	let mut reader = StackReader::new(Refresh::Never);
+	reader.load(&pointer, Some(&build), Some(read_at(1)), None).unwrap();
+	let stored = reader.looked_up(&pointer, Some(read_at(2)), NOW).unwrap().stored.unwrap();
+	assert_eq!([dotns_after(3, Some(&stored)), dotns_after(1, Some(&stored))], [Some(3), Some(2)]);
 }
 
 /// Runs a refresh vector's steps, checking each answer.

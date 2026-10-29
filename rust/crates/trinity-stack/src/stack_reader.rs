@@ -223,9 +223,9 @@ impl StackReader {
 	}
 
 	/// Starts a stack from the copy a build bundled and the record the caller stored, the newer
-	/// of the two: the store can move a stack forward from its build copy, never back. Either
-	/// may be absent, and a stored record that no longer reads is ignored. Fails when the build
-	/// copy breaks a rule.
+	/// of the two: the store can move a stack or its dotNS record forward from the build's, never
+	/// back. Either may be absent, and a stored record that no longer reads is ignored. Fails
+	/// when the build copy breaks a rule.
 	pub fn load(
 		&mut self,
 		pointer: &Pointer,
@@ -275,10 +275,14 @@ impl StackReader {
 		let stored_dotns =
 			kept.and_then(|kept| kept.dotns).filter(|kept| kept.record.check().is_ok());
 		let build_dotns = build_dotns.map(|record| KeptDotns { record, read_at: None });
-		stack.dotns = [stored_dotns, build_dotns]
-			.into_iter()
-			.flatten()
-			.find(|kept| stack.serves(kept));
+		stack.dotns =
+			[stored_dotns, build_dotns]
+				.into_iter()
+				.flatten()
+				.filter(|kept| stack.serves(kept))
+				.reduce(|newest, other| {
+					if other.record.at.number > newest.record.at.number { other } else { newest }
+				});
 		self.stacks.insert(pointer.stack_id(), stack);
 		Ok(())
 	}
