@@ -149,6 +149,8 @@ export type MainToWorker =
       status: PermissionAuthorizationStatus;
     }
   | { kind: "getSessionChatIdentityKey"; requestId: number }
+  /** Mint contact handles for 32-byte `accounts` packed back to back. */
+  | { kind: "contactHandles"; requestId: number; accounts: Uint8Array }
   | { kind: "getDeviceStatementKey"; requestId: number }
   | { kind: "getDeviceEncryptionKey"; requestId: number }
   | {
@@ -272,6 +274,19 @@ export type WorkerToMain =
     }
   | {
       kind: "sessionChatIdentityKeyResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
+  | {
+      kind: "contactHandlesResponse";
+      requestId: number;
+      ok: true;
+      /** One 32-byte handle per account asked, packed; absent without a session. */
+      handles: Uint8Array | undefined;
+    }
+  | {
+      kind: "contactHandlesResponse";
       requestId: number;
       ok: false;
       error: string;

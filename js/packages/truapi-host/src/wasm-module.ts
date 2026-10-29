@@ -54,6 +54,14 @@ export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
   ): WorkerProductRuntime;
   disconnectSession(): Promise<void>;
   notifyContactsChanged(): void;
+  /**
+   * The handles this user knows `accounts` by under the current session, the
+   * ones `contacts.pick` gives a product. `accounts` holds 32-byte accounts
+   * back to back and so does the answer, in the same order. Undefined without
+   * a session; throws for input that is not whole accounts. Writes no cache.
+   * Absent from a core built before it existed.
+   */
+  contactHandles?(accounts: Uint8Array): Uint8Array | undefined;
   /** Only on a core built with `test-host`. */
   setSubmitPreimagesLocally?(local: boolean): void;
   /**

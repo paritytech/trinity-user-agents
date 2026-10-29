@@ -722,6 +722,9 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
     case "getSessionChatIdentityKey":
       handleGetSessionChatIdentityKey(msg.requestId);
       break;
+    case "contactHandles":
+      handleContactHandles(msg.requestId, msg.accounts);
+      break;
     case "getDeviceStatementKey":
       handleGetDeviceStatementKey(msg.requestId);
       break;
@@ -1136,6 +1139,25 @@ function handleGetSessionChatIdentityKey(requestId: number): void {
       ok: false,
       error: errorMessage(err),
     });
+  }
+}
+
+function handleContactHandles(requestId: number, accounts: Uint8Array): void {
+  const fail = (error: string) =>
+    postToMain({ kind: "contactHandlesResponse", requestId, ok: false, error });
+  if (!host) return fail("contactHandles received before runtime is ready");
+  const runtime = host.runtime;
+  if (runtime.contactHandles === undefined)
+    return fail("this core does not mint contact handles");
+  try {
+    postToMain({
+      kind: "contactHandlesResponse",
+      requestId,
+      ok: true,
+      handles: runtime.contactHandles(accounts),
+    });
+  } catch (err) {
+    fail(errorMessage(err));
   }
 }
 

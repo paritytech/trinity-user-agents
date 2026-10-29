@@ -120,3 +120,7 @@ Serve `contacts(lookup)` and `pick_contact(product_id)`. Beyond that:
 - **Signal removals.** Call `notify_contacts_changed()` whenever a contact is removed or blocked;
   without it, a handle the core cached keeps resolving until the runtime restarts.
 - **Never send the list anywhere.** The lookup answers only the handles asked about.
+- **Name handles from the core.** To draw a handle a product holds, mint the handles of the people
+  the host knows with `contact_handles(accounts)` and keep the index per session. The core caches
+  none of them, so whom a transaction pays is still the lookup's answer alone. Web hosts reach it
+  through `contactHandles`; the iOS and Android host runtimes do not expose it yet.

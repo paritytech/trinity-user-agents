@@ -800,6 +800,25 @@ impl From<GenericError> for JsValue {
 	}
 }
 
+/// Mint handles for packed 32-byte accounts, refusing input that is not a
+/// whole number of accounts before minting any.
+fn packed_contact_handles(
+	accounts: &[u8],
+	mint: impl FnOnce(&[[u8; 32]]) -> Option<Vec<[u8; 32]>>,
+) -> Result<Option<Vec<u8>>, JsValue> {
+	if !accounts.len().is_multiple_of(32) {
+		return Err(JsValue::from_str(&format!(
+			"contact accounts are 32 bytes each, got {} bytes",
+			accounts.len()
+		)));
+	}
+	let accounts: Vec<[u8; 32]> = accounts
+		.chunks_exact(32)
+		.map(|account| account.try_into().expect("chunks_exact(32) yields 32 bytes; qed"))
+		.collect();
+	Ok(mint(&accounts).map(|handles| handles.concat()))
+}
+
 /// Parse a product id the host passed, rejecting with the reason the way the
 /// runtime's own errors do.
 fn product_id_from_js(product_id: &str) -> Result<ProductId, JsValue> {
@@ -1071,6 +1090,16 @@ impl WasmPairingHostRuntime {
 	#[wasm_bindgen(js_name = notifyContactsChanged)]
 	pub fn notify_contacts_changed(&self) {
 		self.runtime.notify_contacts_changed();
+	}
+
+	/// The handles this user knows `accounts` by under the current session,
+	/// the ones `contacts.pick` gives a product. `accounts` holds 32-byte
+	/// accounts back to back, and the answer holds their handles the same way,
+	/// in the same order. `undefined` without a session. Host only; writes
+	/// no cache.
+	#[wasm_bindgen(js_name = contactHandles)]
+	pub fn contact_handles(&self, accounts: Vec<u8>) -> Result<Option<Vec<u8>>, JsValue> {
+		packed_contact_handles(&accounts, |accounts| self.runtime.contact_handles(accounts))
 	}
 
 	/// Read a permission authorization status for a product.
@@ -1377,6 +1406,16 @@ impl WasmSigningHostRuntime {
 	#[wasm_bindgen(js_name = notifyContactsChanged)]
 	pub fn notify_contacts_changed(&self) {
 		self.runtime.notify_contacts_changed();
+	}
+
+	/// The handles this user knows `accounts` by under the current session,
+	/// the ones `contacts.pick` gives a product. `accounts` holds 32-byte
+	/// accounts back to back, and the answer holds their handles the same way,
+	/// in the same order. `undefined` without a session. Host only; writes
+	/// no cache.
+	#[wasm_bindgen(js_name = contactHandles)]
+	pub fn contact_handles(&self, accounts: Vec<u8>) -> Result<Option<Vec<u8>>, JsValue> {
+		packed_contact_handles(&accounts, |accounts| self.runtime.contact_handles(accounts))
 	}
 
 	/// Revoke one product's grants from the current local activation.

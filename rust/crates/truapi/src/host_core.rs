@@ -355,6 +355,20 @@ impl PairingHostRuntime {
 		self.services.contact_handles.clear();
 	}
 
+	/// The handles this user knows `accounts` by, in order, under the current
+	/// session: the ones `contacts.pick` gives every product for the same
+	/// people.
+	///
+	/// Host only, so the host can name people it already knows. Writes no
+	/// cache: a handle minted here resolves in a transaction only while the
+	/// host's [`ContactsPlatform::contacts`] still answers for its account.
+	/// `None` without a session, or without the root entropy source handles
+	/// are keyed on.
+	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.contact_handles"))]
+	pub fn contact_handles(&self, accounts: &[[u8; 32]]) -> Option<Vec<[u8; 32]>> {
+		mint_contact_handles(self.pairing_host.as_ref(), accounts)
+	}
+
 	/// Build a product-facing runtime from this pairing host.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_runtime"))]
 	pub fn product_runtime(
@@ -960,6 +974,20 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.notify_contacts_changed"))]
 	pub fn notify_contacts_changed(&self) {
 		self.services.contact_handles.clear();
+	}
+
+	/// The handles this user knows `accounts` by, in order, under the current
+	/// session: the ones `contacts.pick` gives every product for the same
+	/// people.
+	///
+	/// Host only, so the host can name people it already knows. Writes no
+	/// cache: a handle minted here resolves in a transaction only while the
+	/// host's [`ContactsPlatform::contacts`] still answers for its account.
+	/// `None` without a session, or without the root entropy source handles
+	/// are keyed on.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.contact_handles"))]
+	pub fn contact_handles(&self, accounts: &[[u8; 32]]) -> Option<Vec<[u8; 32]>> {
+		mint_contact_handles(self.signing_host.as_ref(), accounts)
 	}
 
 	/// Install the host's [`DevicePairingObserver`], told whenever a device
@@ -2415,6 +2443,21 @@ impl Transport for SinkTransport {
 	) -> Box<dyn FnOnce()> {
 		Box::new(|| {})
 	}
+}
+
+/// Mint the handles `accounts` are known by under `authority`'s current
+/// session, deriving the handle key once.
+fn mint_contact_handles(
+	authority: &dyn ProductAuthority,
+	accounts: &[[u8; 32]],
+) -> Option<Vec<[u8; 32]>> {
+	let session = authority.current_session()?;
+	let handle_key = authority
+		.contacts_handle_key(&session)
+		.inspect_err(|error| warn!("no contact handle key for the current session: {error}"))
+		.ok()?;
+	let handles = crate::runtime::contacts::ContactHandles::from_handle_key(handle_key);
+	Some(accounts.iter().map(|account| handles.mint(account)).collect())
 }
 
 #[cfg(test)]
