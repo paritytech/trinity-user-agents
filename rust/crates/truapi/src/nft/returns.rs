@@ -207,7 +207,7 @@ mod tests {
 		durable::{DurableTxId, RegistrationError},
 		nft::{
 			HandoffRequest, HandoffTag, HeldItem, ImportRequest, NftLedger, PurseId, PurseTag,
-			TransferDestinations, TransferRequest,
+			TransferRequest, TransferType,
 			keys::ItemIndex,
 			testing::{
 				TEST_INSTALLATION, fail_transfer, finalize_transfer, imported_test_key,
@@ -283,8 +283,7 @@ mod tests {
 		let transfer = TransferRequest {
 			operation: refund(9),
 			from: PURSE,
-			items: [key].into(),
-			destinations: TransferDestinations::Foreign(ItemKey([0xee; 32])),
+			transfer: TransferType::Foreign { input: key, into: ItemKey([0xee; 32]) },
 		};
 		block_on(imported.ledger.start_transfers(transfer)).unwrap();
 	}

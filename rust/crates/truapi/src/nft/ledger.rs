@@ -16,6 +16,7 @@ use super::{
 	operation::{
 		DestinationKeys, OperationKey, StartOperationError, TransferProgress, TransferRequest,
 		latest_per_source, nft_domain, plan_transfers, progress_of, record_inputs,
+		validate_can_start,
 	},
 	purse::{CreatePurseError, PurseId, PurseRecord, PurseTag},
 	reclaim::{ReclaimRequest, plan_reclaims},
@@ -136,16 +137,27 @@ impl NftLedger {
 		&self,
 		request: TransferRequest,
 	) -> Result<(), RegistrationError<StartOperationError>> {
-		if request.items.is_empty() {
+		let items = request.transfer.inputs();
+		if items.is_empty() {
 			return Err(RegistrationError::Hook(StartOperationError::NoItems));
 		}
 		let installation = self.current_installation().await?;
-		let items = request.items.clone();
 		let planned = self.planned_transfers(request, installation);
 		self.durable
 			.execute_with(planned, move |tx, ids| record_inputs(tx, items, ids))
 			.await
 			.map(|_| ())
+	}
+
+	/// Refuses `request` as [`Self::start_transfers`] would when its operation
+	/// is already registered or one of its items is not idle, without writing.
+	/// Registration checks both again in its own write.
+	pub async fn check_transfers_can_start(
+		&self,
+		request: &TransferRequest,
+	) -> Result<(), StartOperationError> {
+		let request = request.clone();
+		self.db.read(move |conn| Ok(validate_can_start(conn, &request))).await?
 	}
 
 	/// The installation new keys are allocated under now.

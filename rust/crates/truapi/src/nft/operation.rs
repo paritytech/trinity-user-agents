@@ -5,7 +5,7 @@ use core::num::NonZeroU32;
 use std::collections::BTreeSet;
 
 use parity_scale_codec::Encode;
-use rusqlite::Transaction;
+use rusqlite::{Connection, Transaction};
 use sp_crypto_hashing::blake2_256;
 use subxt::utils::H256;
 
@@ -93,24 +93,44 @@ impl From<ItemRefusal> for StartOperationError {
 	}
 }
 
-/// Where the transfers of an operation take their items.
-pub enum TransferDestinations {
-	/// Fresh keys allocated in this purse, one per item.
-	AllocatedIn(PurseId),
-	/// This key, outside every purse. Only one item can go there.
-	Foreign(ItemKey),
+/// Which items an operation transfers and where they go.
+#[derive(Clone)]
+pub enum TransferType {
+	/// Each of `inputs` into a fresh key allocated in `into`.
+	Local {
+		/// The items, in the order their transfers are registered.
+		inputs: BTreeSet<ItemKey>,
+		/// The purse the fresh keys are allocated in.
+		into: PurseId,
+	},
+	/// `input` to `into`, a key outside every purse.
+	Foreign {
+		/// The item.
+		input: ItemKey,
+		/// The key it goes to.
+		into: ItemKey,
+	},
 }
 
-/// Transfers of `items`, each from its key in `from`, registered as one operation.
+impl TransferType {
+	/// The items the transfers spend, in the order they are registered.
+	pub fn inputs(&self) -> BTreeSet<ItemKey> {
+		match self {
+			Self::Local { inputs, .. } => inputs.clone(),
+			Self::Foreign { input, .. } => BTreeSet::from([*input]),
+		}
+	}
+}
+
+/// Transfers of items, each from its key in `from`, registered as one operation.
+#[derive(Clone)]
 pub struct TransferRequest {
 	/// The operation they form.
 	pub operation: OperationKey,
 	/// The purse every item is spent from.
 	pub from: PurseId,
-	/// The items, in the order their transfers are registered.
-	pub items: BTreeSet<ItemKey>,
-	/// Where they go.
-	pub destinations: TransferDestinations,
+	/// Which items go where.
+	pub transfer: TransferType,
 }
 
 /// What allocating destination keys needs: the installation they are
@@ -130,15 +150,11 @@ pub fn plan_transfers(
 	request: &TransferRequest,
 	keys: DestinationKeys<'_>,
 ) -> Result<Vec<PolicyParams>, StartOperationError> {
-	if group_exists(tx, &nft_domain(), request.operation.group())? {
-		return Err(StartOperationError::OperationExists);
-	}
-	let sources = idle_items::<StartOperationError>(tx, request.from, &request.items)?;
-	let destinations = match request.destinations {
-		TransferDestinations::AllocatedIn(purse) => {
-			allocate_destinations(tx, purse, sources.len(), keys)?
-		},
-		TransferDestinations::Foreign(destination) => vec![destination],
+	validate_operation_unused(tx, &request.operation)?;
+	let sources = idle_items::<StartOperationError>(tx, request.from, &request.transfer.inputs())?;
+	let destinations = match request.transfer {
+		TransferType::Local { into, .. } => allocate_destinations(tx, into, sources.len(), keys)?,
+		TransferType::Foreign { into, .. } => vec![into],
 	};
 	let give_up_after = current_unix_secs() + TRANSFER_WAIT_LIMIT_SECS;
 	Ok(sources
@@ -155,6 +171,27 @@ pub fn plan_transfers(
 			.into()
 		})
 		.collect())
+}
+
+/// Refuses `request` when its operation is already registered or one of its
+/// items is not idle in its purse.
+pub fn validate_can_start(
+	conn: &Connection,
+	request: &TransferRequest,
+) -> Result<(), StartOperationError> {
+	validate_operation_unused(conn, &request.operation)?;
+	idle_items::<StartOperationError>(conn, request.from, &request.transfer.inputs()).map(|_| ())
+}
+
+/// Refuses `operation` when it is already registered.
+fn validate_operation_unused(
+	conn: &Connection,
+	operation: &OperationKey,
+) -> Result<(), StartOperationError> {
+	if group_exists(conn, &nft_domain(), operation.group())? {
+		return Err(StartOperationError::OperationExists);
+	}
+	Ok(())
 }
 
 /// `item_count` fresh keys in `purse`.
@@ -301,12 +338,11 @@ mod tests {
 	}
 
 	fn rebalance_request(operation: OperationKey, items: &[ItemKey]) -> TransferRequest {
-		let items = items.iter().copied().collect();
+		let inputs = items.iter().copied().collect();
 		TransferRequest {
 			operation,
 			from: FROM,
-			items,
-			destinations: TransferDestinations::AllocatedIn(TO),
+			transfer: TransferType::Local { inputs, into: TO },
 		}
 	}
 
@@ -461,8 +497,7 @@ mod tests {
 		let request = TransferRequest {
 			operation: operation(1),
 			from: FROM,
-			items: purses.held.iter().copied().collect(),
-			destinations: TransferDestinations::Foreign(FOREIGN),
+			transfer: TransferType::Foreign { input: purses.held[0], into: FOREIGN },
 		};
 
 		start_operation(&purses, request).unwrap();

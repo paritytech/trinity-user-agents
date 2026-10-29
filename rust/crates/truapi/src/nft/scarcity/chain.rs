@@ -25,7 +25,7 @@ fn locked_entry() -> DynamicAddress<(AccountId32,), ScarcityLock> {
 	dynamic("Scarcity", "Locked")
 }
 
-/// The `Timestamp::Now` entry, the chain time a lock compares against.
+/// The `Timestamp::Now` entry, the chain time in milliseconds.
 fn timestamp_now_entry() -> DynamicAddress<(), u64> {
 	dynamic("Timestamp", "Now")
 }
@@ -63,14 +63,15 @@ impl From<ScarcityNft> for HeldItem {
 struct ScarcityLock {
 	/// Failed transfers so far, which double the lock each time.
 	retries: u8,
-	/// Chain time, in milliseconds, at which the lock ends.
+	/// Chain time, in Unix seconds, at which the lock ends.
 	until: u64,
 }
 
 /// The locks on some keys, with the chain time they compare against.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct KeyLocks {
-	/// `Timestamp::Now` at the block, in milliseconds.
+	/// `Timestamp::Now` at the block, in Unix seconds as the pallet compares
+	/// locks.
 	pub now: u64,
 	/// For each key, the chain time its lock ends at, if it has one.
 	pub until: Vec<Option<u64>>,
@@ -142,9 +143,9 @@ impl ScarcityChain for ScarcityStorage {
 		let read_locks = self.storage.read_entries_at(self.genesis, at, &locks_entry, &owners);
 		let read_now = self.storage.read_entries_at(self.genesis, at, &time_entry, &[()]);
 		let (locks, now) = futures::future::try_join(read_locks, read_now).await?;
-		let now = now.into_iter().flatten().next().ok_or_else(|| chain_time_missing(at))?;
+		let now_millis = now.into_iter().flatten().next().ok_or_else(|| chain_time_missing(at))?;
 		let until = locks.into_iter().map(|lock| lock.map(|lock| lock.until)).collect();
-		Ok(KeyLocks { now, until })
+		Ok(KeyLocks { now: now_millis / 1000, until })
 	}
 
 	async fn transfer_context(&self) -> Result<TransferContext, StorageWatchError> {
@@ -282,7 +283,7 @@ mod tests {
 
 	#[test]
 	fn reads_each_lock_with_the_chain_time() {
-		let lock = ScarcityLockFixture { retries: 2, until: 1_700_000_120_000 };
+		let lock = ScarcityLockFixture { retries: 2, until: 1_700_000_120 };
 		let reads = scarcity(vec![
 			(account_key(("Scarcity", "Locked"), HOLDER), lock.encode()),
 			(map_key(("Timestamp", "Now"), Vec::new()), 1_700_000_000_000_u64.encode()),
@@ -290,8 +291,7 @@ mod tests {
 
 		let locks = block_on(reads.locks_at(AT, &[HOLDER, EMPTY])).unwrap();
 
-		let expected =
-			KeyLocks { now: 1_700_000_000_000, until: vec![Some(1_700_000_120_000), None] };
+		let expected = KeyLocks { now: 1_700_000_000, until: vec![Some(1_700_000_120), None] };
 		assert_eq!(locks, expected);
 	}
 
