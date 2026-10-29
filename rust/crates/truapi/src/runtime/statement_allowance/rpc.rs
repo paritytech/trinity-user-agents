@@ -10,6 +10,7 @@ use subxt_rpcs::client::RpcClient as NativeRpcClient;
 use subxt_rpcs::{
 	RpcClient as HostRpcClient,
 	client::{RpcParams, rpc_params},
+	methods::legacy::TransactionStatus,
 };
 use thiserror::Error;
 
@@ -202,7 +203,7 @@ impl RpcClient {
 		let extrinsic_hex = format!("0x{}", hex::encode(extrinsic));
 		let mut subscription = self
 			.inner
-			.subscribe::<Value>(
+			.subscribe::<TransactionStatus<String>>(
 				"author_submitAndWatchExtrinsic",
 				rpc_params![extrinsic_hex],
 				"author_unwatchExtrinsic",
@@ -228,10 +229,10 @@ impl RpcClient {
 				() = timeout => return Err(RpcError::SubmitTimeout.into()),
 			};
 			tracing::debug!(?status, "allowance extrinsic status");
-			match extrinsic_status(&status) {
+			match extrinsic_status(status) {
 				ExtrinsicStatus::Included(hash) => return Ok(hash),
 				ExtrinsicStatus::Rejected(reason) => {
-					return Err(RpcError::ExtrinsicRejected { status: reason }.into());
+					return Err(RpcError::ExtrinsicRejected { status: reason.to_owned() }.into());
 				},
 				ExtrinsicStatus::Pending => {},
 			}
@@ -242,24 +243,24 @@ impl RpcClient {
 #[derive(Debug, PartialEq)]
 enum ExtrinsicStatus {
 	Included(String),
-	Rejected(String),
+	Rejected(&'static str),
 	Pending,
 }
 
-fn extrinsic_status(status: &Value) -> ExtrinsicStatus {
-	for key in ["finalized", "inBlock"] {
-		if let Some(hash) = status.get(key).and_then(Value::as_str) {
-			return ExtrinsicStatus::Included(hash.to_string());
-		}
+fn extrinsic_status(status: TransactionStatus<String>) -> ExtrinsicStatus {
+	match status {
+		TransactionStatus::InBlock(hash) | TransactionStatus::Finalized(hash) => {
+			ExtrinsicStatus::Included(hash)
+		},
+		TransactionStatus::Future | TransactionStatus::Ready | TransactionStatus::Broadcast(_) => {
+			ExtrinsicStatus::Pending
+		},
+		TransactionStatus::Invalid => ExtrinsicStatus::Rejected("invalid"),
+		TransactionStatus::Dropped => ExtrinsicStatus::Rejected("dropped"),
+		TransactionStatus::Usurped(_) => ExtrinsicStatus::Rejected("usurped"),
+		TransactionStatus::Retracted(_) => ExtrinsicStatus::Rejected("retracted"),
+		TransactionStatus::FinalityTimeout(_) => ExtrinsicStatus::Rejected("finalityTimeout"),
 	}
-	// The pool sends `"dropped"` and `"invalid"` as bare strings and the rest
-	// as objects keyed by the status.
-	for key in ["invalid", "dropped", "usurped", "retracted", "finalityTimeout"] {
-		if status.as_str() == Some(key) || status.get(key).is_some() {
-			return ExtrinsicStatus::Rejected(key.to_string());
-		}
-	}
-	ExtrinsicStatus::Pending
 }
 
 fn value_to_params(value: Value) -> Result<RpcParams, StatementAllowanceError> {
@@ -407,24 +408,31 @@ pub mod testing {
 
 #[cfg(test)]
 mod tests {
-	use serde_json::json;
+	use serde_json::{Value, json};
 
 	use super::{
 		ExtrinsicStatus, HostRpcClient, RpcClient, extrinsic_status, testing::ScriptedRpc,
 	};
 
+	/// What a status notification, as the pool sends it, means for the submission.
+	fn status(notification: Value) -> ExtrinsicStatus {
+		extrinsic_status(serde_json::from_value(notification).expect("a pool status"))
+	}
+
 	#[test]
 	fn in_block_status_completes_submission() {
-		let status = extrinsic_status(&json!({"inBlock": "0x1234"}));
-
-		assert!(matches!(status, ExtrinsicStatus::Included(hash) if hash == "0x1234"));
+		assert_eq!(
+			status(json!({"inBlock": "0x1234"})),
+			ExtrinsicStatus::Included("0x1234".to_string())
+		);
 	}
 
 	#[test]
 	fn finalized_status_completes_submission() {
-		let status = extrinsic_status(&json!({"finalized": "0xabcd"}));
-
-		assert!(matches!(status, ExtrinsicStatus::Included(hash) if hash == "0xabcd"));
+		assert_eq!(
+			status(json!({"finalized": "0xabcd"})),
+			ExtrinsicStatus::Included("0xabcd".to_string())
+		);
 	}
 
 	/// Each status in the form the pool sends it. A rejection that is not
@@ -440,18 +448,18 @@ mod tests {
 			json!("ready"),
 			json!({"broadcast": ["12D3KooW"]}),
 		]
-		.iter()
-		.map(extrinsic_status)
+		.into_iter()
+		.map(status)
 		.collect();
 
 		assert_eq!(
 			statuses,
 			vec![
-				ExtrinsicStatus::Rejected("invalid".to_string()),
-				ExtrinsicStatus::Rejected("dropped".to_string()),
-				ExtrinsicStatus::Rejected("usurped".to_string()),
-				ExtrinsicStatus::Rejected("retracted".to_string()),
-				ExtrinsicStatus::Rejected("finalityTimeout".to_string()),
+				ExtrinsicStatus::Rejected("invalid"),
+				ExtrinsicStatus::Rejected("dropped"),
+				ExtrinsicStatus::Rejected("usurped"),
+				ExtrinsicStatus::Rejected("retracted"),
+				ExtrinsicStatus::Rejected("finalityTimeout"),
 				ExtrinsicStatus::Pending,
 				ExtrinsicStatus::Pending,
 			],
