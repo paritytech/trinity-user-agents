@@ -172,7 +172,7 @@ impl EmbeddedChainProviderBuilder {
 /// call yields the live stream, later calls yield an ended stream.
 ///
 /// A genesis nobody registered is resolved from the bundled catalog only on a
-/// provider built with [`catalog`](EmbeddedChainProviderBuilder::catalog).
+/// provider built with `catalog()`, which the `networks` feature adds.
 pub struct EmbeddedChainProvider {
 	chains: HashMap<[u8; 32], ChainSource>,
 	/// The relay each explicitly-registered parachain syncs through; catalog
