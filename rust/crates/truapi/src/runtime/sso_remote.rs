@@ -167,7 +167,8 @@ pub struct CancelError {
 }
 
 impl CancelError {
-	fn new(reason: CancellationReason, remote_message_id: &str) -> Self {
+	/// The request sent as `remote_message_id`, cancelled for `reason`.
+	pub fn new(reason: CancellationReason, remote_message_id: &str) -> Self {
 		Self { reason, remote_message_id: remote_message_id.to_string() }
 	}
 
@@ -212,6 +213,11 @@ pub enum SsoRemoteResponseError {
 	/// The paired signing host announced a disconnect.
 	#[display("{}", SSO_PEER_DISCONNECT_REASON)]
 	PeerDisconnected,
+	/// The request never reached the signing host: the statement store stayed
+	/// halted while its subscriptions were opened, or its statement reached
+	/// no peer. A later call can succeed.
+	#[display("{_0}")]
+	ChainUnavailable(String),
 	/// Submit, subscription, or decode failure.
 	#[display("{_0}")]
 	#[from]

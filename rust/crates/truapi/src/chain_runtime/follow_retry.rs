@@ -2,37 +2,24 @@
 //! `chainHead_v1_follow` again when the provider refuses it, and records why a
 //! follow ended for good.
 
-use core::{ops::ControlFlow, time::Duration};
 use std::sync::{Arc, OnceLock};
 
 use futures::StreamExt;
 use serde_json::value::RawValue;
 use subxt_rpcs::{
-	Error as RpcError, UserError,
+	Error as RpcError,
 	client::{RawRpcFuture, RawRpcSubscription, RpcClientT},
 };
-use tracing::warn;
 
-use super::runtime_call_client::RuntimeCallClient;
-use crate::time::{Timer, retry_on};
+use super::{
+	chain_halt::{ask_through_halts, says_chain_halted},
+	runtime_call_client::RuntimeCallClient,
+};
+use truapi::CancellationToken;
+
+use crate::time::Timer;
 
 const CHAIN_HEAD_FOLLOW: &str = "chainHead_v1_follow";
-
-/// The `error.data` dotli answers a follow with while it waits to redial a
-/// halted chain, which it documents as worth asking again.
-const CHAIN_HALTED: &str = "dotli:chain-halted";
-
-/// Pauses before each new follow after a refusal. dotli lets the first redial
-/// of a halted chain through at once, then waits one second and doubles the
-/// wait each time. These pauses double the same way, so each attempt comes
-/// after another chance to redial.
-pub const REFUSED_FOLLOW_PAUSES: [Duration; 5] = [
-	Duration::from_secs(1),
-	Duration::from_secs(2),
-	Duration::from_secs(4),
-	Duration::from_secs(8),
-	Duration::from_secs(16),
-];
 
 /// Why a follow sent through [`FollowRetryingRpcClient`] ended for good.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,13 +84,6 @@ impl FollowRetryingRpcClient {
 	}
 }
 
-/// Whether `refusal` says the chain halted, so a later follow can be accepted.
-fn says_chain_halted(refusal: &UserError) -> bool {
-	refusal.data.as_deref().is_some_and(|data| {
-		serde_json::from_str::<&str>(data.get()).is_ok_and(|data| data == CHAIN_HALTED)
-	})
-}
-
 impl RpcClientT for FollowRetryingRpcClient {
 	fn request_raw<'a>(
 		&'a self,
@@ -122,37 +102,20 @@ impl RpcClientT for FollowRetryingRpcClient {
 		if sub != CHAIN_HEAD_FOLLOW {
 			return self.inner.subscribe_raw(sub, params, unsub);
 		}
-		let mut pauses = REFUSED_FOLLOW_PAUSES.into_iter();
-		Box::pin(retry_on(
-			&*self.timer,
-			move || {
-				let pause = pauses.next();
-				let params = params.clone();
-				async move {
-					let (ended, error) = match self.inner.subscribe_raw(sub, params, unsub).await {
-						Ok(subscription) => {
-							return ControlFlow::Break(Ok(self.recording_failures(subscription)));
-						},
-						Err(RpcError::User(refusal)) if says_chain_halted(&refusal) => {
-							match pause {
-								Some(pause) => return ControlFlow::Continue((pause, refusal)),
-								None => (FollowEnd::Refused, RpcError::User(refusal)),
-							}
-						},
-						Err(RpcError::User(rejection)) => {
-							(FollowEnd::Rejected, RpcError::User(rejection))
-						},
-						Err(error) => (FollowEnd::Dropped, error),
-					};
-					let _ = self.follow_end.set(ended);
-					ControlFlow::Break(Err(error))
-				}
-			},
-			|(pause, refusal)| {
-				warn!(?pause, %refusal, "chainHead follow refused; asking again");
-				pause
-			},
-		))
+		Box::pin(async move {
+			let result = ask_through_halts(&*self.timer, &CancellationToken::default(), || {
+				self.inner.subscribe_raw(sub, params.clone(), unsub)
+			})
+			.await;
+			let ended = match &result {
+				Ok(_) => return result.map(|subscription| self.recording_failures(subscription)),
+				Err(error) if says_chain_halted(error) => FollowEnd::Refused,
+				Err(RpcError::User(_)) => FollowEnd::Rejected,
+				Err(_) => FollowEnd::Dropped,
+			};
+			let _ = self.follow_end.set(ended);
+			result
+		})
 	}
 }
 
@@ -164,9 +127,8 @@ mod tests {
 	use futures::executor::block_on;
 	use subxt::error::{BackendError, OnlineClientAtBlockError, RpcError as SubxtRpcError};
 
-	use super::REFUSED_FOLLOW_PAUSES;
 	use crate::{
-		chain_runtime::ChainRuntime,
+		chain_runtime::{ChainRuntime, chain_halt::HALT_PAUSES},
 		test_support::{FollowRefusal, ScriptedChainHead, follow_count, wait_until},
 	};
 
@@ -197,7 +159,7 @@ mod tests {
 		let read = select_current_block(&chain);
 
 		wait_until(|| timer.sleeps() == 1, "the first pause starts");
-		timer.advance(REFUSED_FOLLOW_PAUSES[0]);
+		timer.advance(HALT_PAUSES[0]);
 
 		read.join().unwrap().expect("the second follow serves the block");
 		assert_eq!(follow_count(&provider), 2);

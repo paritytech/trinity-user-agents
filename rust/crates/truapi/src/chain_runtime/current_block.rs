@@ -118,7 +118,7 @@ mod tests {
 
 	use super::*;
 	use crate::{
-		chain_runtime::{RuntimeChainProvider, follow_retry::REFUSED_FOLLOW_PAUSES},
+		chain_runtime::{RuntimeChainProvider, chain_halt::HALT_PAUSES},
 		platform::JsonRpcConnection,
 		test_support::{
 			FollowRefusal, ScriptedChainHead, follow_count, test_spawner, wait_for_sent, wait_until,
@@ -210,7 +210,7 @@ mod tests {
 		let read = read_current_block(&chain);
 
 		// The first sleep is the read's deadline, and each later one a pause.
-		for (attempt, pause) in REFUSED_FOLLOW_PAUSES.into_iter().enumerate() {
+		for (attempt, pause) in HALT_PAUSES.into_iter().enumerate() {
 			wait_until(|| timer.sleeps() == attempt + 2, "the next pause starts");
 			timer.advance(pause);
 		}
@@ -325,7 +325,7 @@ mod tests {
 	fn the_deadline_outlasts_every_pause() {
 		// A follow accepted on its last chance must still be able to serve the
 		// read before the deadline ends it.
-		let pauses: Duration = REFUSED_FOLLOW_PAUSES.iter().sum();
+		let pauses: Duration = HALT_PAUSES.iter().sum();
 		assert!(CURRENT_BLOCK_TIMEOUT > pauses, "{CURRENT_BLOCK_TIMEOUT:?} <= {pauses:?}");
 	}
 }

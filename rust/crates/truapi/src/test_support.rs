@@ -204,6 +204,9 @@ pub struct StubPlatform {
 	/// test releases them.
 	pub rpc_method_responses_gate: Arc<Mutex<Option<futures::channel::oneshot::Receiver<()>>>>,
 	pub sso_response_script: Option<SsoResponseScript>,
+	/// How many statement subscriptions the SSO script answers with dotli's
+	/// halt error before it acknowledges any.
+	pub sso_halted_subscribes: usize,
 	/// Every genesis hash handed to `connect`, in order. Lets a test assert
 	/// *which* chain a lookup reached, not merely that it reached one: the
 	/// hashes a host is configured with are same-typed `[u8; 32]` passed
@@ -635,6 +638,22 @@ pub fn sso_peer_disconnect_monitor_responses(
 			)],
 		),
 	]
+}
+
+/// The JSON-RPC error dotli answers a request with while it redials a halted
+/// chain.
+pub fn chain_halted_error() -> serde_json::Value {
+	serde_json::json!({
+		"code": -32603,
+		"message": "Chain transport halted",
+		"data": "dotli:chain-halted",
+	})
+}
+
+/// dotli's answer to `request_id` while it redials a halted chain.
+pub fn chain_halted_frame(request_id: &str) -> String {
+	serde_json::json!({"jsonrpc": "2.0", "id": request_id, "error": chain_halted_error()})
+		.to_string()
 }
 
 /// JSON-RPC subscription acknowledgement frame.
@@ -1264,6 +1283,7 @@ struct RecordingConnection {
 	method_responses: Vec<(&'static str, String)>,
 	method_responses_gate: Arc<Mutex<Option<futures::channel::oneshot::Receiver<()>>>>,
 	sso_response_script: Option<SsoResponseScript>,
+	sso_halted_subscribes: usize,
 	auth_states: Arc<Mutex<Vec<AuthState>>>,
 	pairing_success_response: bool,
 	pairing_pending_response: bool,
@@ -1282,7 +1302,8 @@ async fn wait_for_rpc_method_id(
 	method: &str,
 	index: usize,
 ) -> String {
-	for _ in 0..100 {
+	// Long enough for a request sent after one of the core's halt pauses.
+	for _ in 0..5_000 {
 		let ids = sent
 			.lock()
 			.expect("rpc list mutex poisoned")
@@ -1311,18 +1332,33 @@ fn retarget_sso_response(mut response: RemoteMessage, message_id: &str) -> Remot
 fn sso_scripted_responses(
 	sent: Arc<Mutex<Vec<String>>>,
 	script: SsoResponseScript,
+	halted_subscribes: usize,
 ) -> BoxStream<'static, String> {
-	Box::pin(stream::unfold(0, move |state| {
+	let halts = stream::unfold(0, {
+		let sent = sent.clone();
+		move |halted| {
+			let sent = sent.clone();
+			async move {
+				if halted == halted_subscribes {
+					return None;
+				}
+				let id = wait_for_statement_subscribe_id(sent, halted).await;
+				Some((chain_halted_frame(&id), halted + 1))
+			}
+		}
+	});
+	let answers = stream::unfold(0, move |state| {
 		let sent = sent.clone();
 		let script = script.clone();
 		async move {
 			match state {
 				0 => {
-					let id = wait_for_statement_subscribe_id(sent.clone(), 0).await;
+					let id = wait_for_statement_subscribe_id(sent.clone(), halted_subscribes).await;
 					Some((subscribe_ack_frame(&id, "own-sub"), 1))
 				},
 				1 => {
-					let id = wait_for_statement_subscribe_id(sent.clone(), 1).await;
+					let id =
+						wait_for_statement_subscribe_id(sent.clone(), halted_subscribes + 1).await;
 					Some((subscribe_ack_frame(&id, "peer-sub"), 2))
 				},
 				2 => {
@@ -1401,7 +1437,8 @@ fn sso_scripted_responses(
 				_ => futures::future::pending().await,
 			}
 		}
-	}))
+	});
+	halts.chain(answers).boxed()
 }
 
 impl JsonRpcConnection for RecordingConnection {
@@ -1561,7 +1598,7 @@ impl JsonRpcConnection for RecordingConnection {
 			}));
 		}
 		if let Some(script) = self.sso_response_script.clone() {
-			return sso_scripted_responses(self.sent.clone(), script);
+			return sso_scripted_responses(self.sent.clone(), script, self.sso_halted_subscribes);
 		}
 		if !self.method_responses.is_empty() {
 			let answers = method_keyed_responses(self.sent.clone(), self.method_responses.clone());
@@ -1829,6 +1866,7 @@ impl ChainProvider for StubPlatform {
 			method_responses: self.rpc_method_responses.clone(),
 			method_responses_gate: self.rpc_method_responses_gate.clone(),
 			sso_response_script: self.sso_response_script.clone(),
+			sso_halted_subscribes: self.sso_halted_subscribes,
 			auth_states: self.auth_states.clone(),
 			pairing_success_response: self.pairing_success_response,
 			pairing_pending_response: self.pairing_pending_response,

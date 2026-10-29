@@ -23,7 +23,7 @@ use crate::{
 	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
 	host_internal::extrinsic::tests::bulletin_runtime_call,
 	platform::JsonRpcConnection,
-	test_support::test_spawner,
+	test_support::{chain_halted_error, test_spawner},
 	time::ManualTimer,
 };
 
@@ -256,11 +256,7 @@ impl ScriptedChainHead {
 					if follows.fetch_add(1, Ordering::SeqCst) < self.refused_follows =>
 				{
 					let error = match self.refusal {
-						FollowRefusal::ChainHalted => json!({
-							"code": -32603,
-							"message": "Chain transport halted",
-							"data": "dotli:chain-halted"
-						}),
+						FollowRefusal::ChainHalted => chain_halted_error(),
 						FollowRefusal::Error(code) => {
 							json!({"code": code, "message": "follow refused"})
 						},

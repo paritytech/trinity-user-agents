@@ -42,12 +42,13 @@ pub trait Signing: Send + Sync {
 	/// signing something that names somebody else. A call paying nobody from
 	/// the picker leaves it empty.
 	///
-	/// A host that builds the transaction itself fails the call as
-	/// `ChainUnavailable` when the node serving the chain cannot be asked for
-	/// its current state or does not answer in time. Nothing was signed, so the
-	/// same call can be made again. Bound the attempts, since the chain can
-	/// stay down, and expect a call that needed the user's confirmation to ask
-	/// for it again.
+	/// The call fails as `ChainUnavailable` when the chain it depends on stays
+	/// unreachable: the node serving the transaction's chain cannot be asked
+	/// for its current state or does not answer in time, or a request to the
+	/// signing host never reaches it, because the chain it travels over stays
+	/// halted or reaches no peer. Nothing was signed, so the same call can be
+	/// made again. Bound the attempts, since the chain can stay down, and
+	/// expect a call that needed the user's confirmation to ask for it again.
 	///
 	/// ```ts
 	/// const productContext = await truapi.system.getProductContext();

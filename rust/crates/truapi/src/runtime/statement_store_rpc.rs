@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use core::{future::Future, time::Duration};
+use core::{future::Future, ops::ControlFlow, time::Duration};
 use serde_json::{Value, json};
 
 use crate::platform::{JsonRpcConnection, Platform, ProviderError};
@@ -23,13 +23,14 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::{
-	chain_runtime::{ChainRuntime, RuntimeFailure},
+	chain_runtime::{ChainRuntime, HALT_PAUSES, RuntimeFailure},
 	host_logic::statement_store::{
 		SUBMIT_STATEMENT_METHOD, SUBSCRIBE_STATEMENT_METHOD, TopicFilterKind,
 		UNSUBSCRIBE_STATEMENT_METHOD, hex_topic,
 	},
 	host_rpc_client::HostRpcClient,
 	subscription::Spawner,
+	time::{Timer, retry_on},
 };
 
 /// One attempt plus ten retries, 2 s apart, matching the native iOS and Android hosts.
@@ -229,6 +230,49 @@ where
 	unreachable!("the bounded SSO submit loop always returns")
 }
 
+/// Submit with `submit`, and again after each of [`HALT_PAUSES`] while the
+/// statement reaches no peer, as a light client restarted after a halt
+/// reports until it connects some. A light client keeps no store, so a
+/// statement no peer received was never sent and can be submitted again.
+pub async fn submit_until_sent<SubmitFn, SubmitFuture>(
+	timer: &dyn Timer,
+	mut submit: SubmitFn,
+) -> Result<(), String>
+where
+	SubmitFn: FnMut() -> SubmitFuture,
+	SubmitFuture: Future<Output = Result<(), String>>,
+{
+	let mut pauses = HALT_PAUSES.into_iter();
+	retry_on(
+		timer,
+		|| {
+			let attempt = submit();
+			let pause = pauses.next();
+			async move {
+				match (attempt.await, pause) {
+					(Err(reason), Some(pause)) if reached_no_peer(&reason) => {
+						ControlFlow::Continue((pause, reason))
+					},
+					(result, _) => ControlFlow::Break(result),
+				}
+			}
+		},
+		|(pause, reason)| {
+			warn!(?pause, %reason, "the statement reached no peer; submitting it again");
+			pause
+		},
+	)
+	.await
+}
+
+/// Whether a [`submit`] failure says the statement reached no peer. smoldot
+/// answers every statement-store failure with one code, so only its message
+/// tells this one apart.
+pub fn reached_no_peer(reason: &str) -> bool {
+	reason.contains("No connected peers to broadcast the statement") ||
+		reason.contains("connected peers accepted the statement")
+}
+
 /// Whether a [`submit`] failure is a `noAllowance` rejection.
 pub fn is_no_allowance_rejection(reason: &str) -> bool {
 	reason.contains("noAllowance")
@@ -266,7 +310,7 @@ mod tests {
 	};
 	use serde_json::json;
 
-	use super::{StatementStoreRpc, is_no_allowance_rejection};
+	use super::{StatementStoreRpc, is_no_allowance_rejection, reached_no_peer, submit_until_sent};
 	use crate::{
 		chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
 		platform::JsonRpcConnection,
@@ -433,5 +477,65 @@ mod tests {
 		assert!(!is_no_allowance_rejection(
 			r#"statement_submit not accepted: {"reason":"badProof","status":"rejected"}"#
 		));
+	}
+
+	/// smoldot's two answers for a statement that reached no peer, as its
+	/// light client words them.
+	const NO_PEERS: &str =
+		"Statement store error: No connected peers to broadcast the statement to";
+	const NO_PEER_ACCEPTED: &str =
+		"Statement store error: none of the 3 connected peers accepted the statement";
+
+	/// Only a statement that reached no peer is safe to send again. Any
+	/// other rejection, such as a bad proof, would fail the same way.
+	#[test]
+	fn only_a_statement_that_reached_no_peer_is_unsent() {
+		let reasons = [NO_PEERS, NO_PEER_ACCEPTED, "statement_submit not accepted: badProof"];
+
+		let unsent: Vec<bool> = reasons.iter().map(|reason| reached_no_peer(reason)).collect();
+
+		assert_eq!(unsent, vec![true, true, false]);
+	}
+
+	/// A light client restarted after a halt reaches no peer for a few
+	/// seconds, so the statement is sent again once it can be.
+	#[test]
+	fn a_statement_that_reached_no_peer_is_submitted_again_after_a_pause() {
+		let timer = Arc::new(crate::time::ManualTimer::default());
+		let attempts = Arc::new(AtomicUsize::new(0));
+		let submitting = {
+			let (timer, attempts) = (timer.clone(), attempts.clone());
+			std::thread::spawn(move || {
+				futures::executor::block_on(submit_until_sent(&*timer, || {
+					let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+					futures::future::ready(if attempt == 0 {
+						Err(NO_PEERS.to_string())
+					} else {
+						Ok(())
+					})
+				}))
+			})
+		};
+
+		crate::test_support::wait_until(|| timer.sleeps() == 1, "the pause starts");
+		timer.advance(crate::chain_runtime::HALT_PAUSES[0]);
+
+		assert_eq!(submitting.join().unwrap(), Ok(()));
+		assert_eq!(attempts.load(Ordering::SeqCst), 2);
+	}
+
+	/// Any other failure is final, so it is reported at once.
+	#[test]
+	fn a_rejected_statement_is_not_submitted_again() {
+		let timer = crate::time::ManualTimer::default();
+		let attempts = AtomicUsize::new(0);
+
+		let result = futures::executor::block_on(submit_until_sent(&timer, || {
+			attempts.fetch_add(1, Ordering::SeqCst);
+			futures::future::ready(Err("statement_submit not accepted: badProof".to_string()))
+		}));
+
+		assert!(result.is_err());
+		assert_eq!((attempts.into_inner(), timer.sleeps()), (1, 0));
 	}
 }
