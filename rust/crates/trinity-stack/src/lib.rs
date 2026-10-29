@@ -2,6 +2,7 @@
 
 mod canonical;
 mod descriptor;
+mod dotns;
 mod envelope;
 mod error;
 mod format;
@@ -18,6 +19,7 @@ pub use descriptor::{
 	Asset, Block, Chain, Coinage, Descriptor, Fork, ForkSource, SERVICE_KINDS, Service, SpecFile,
 	VERSION,
 };
+pub use dotns::{DOTNS_KEYS, Dotns, DotnsAnswer, DotnsCall, DotnsLookup, DotnsRecord, DotnsStep};
 pub use envelope::{Document, Verified, open, public_key, sign};
 pub use error::Error;
 pub use pointer::{DEFAULT_LINK_BASE, Pointer};

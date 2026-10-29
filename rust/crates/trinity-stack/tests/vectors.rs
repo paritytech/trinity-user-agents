@@ -12,7 +12,10 @@ use curve25519_dalek::{
 use serde_json::{Value, json};
 use sha2::{Digest, Sha512};
 use std::{collections::BTreeMap, fs, path::PathBuf};
-use trinity_stack::{Fetched, Pointer, accept, open, public_key, sign};
+use trinity_stack::{
+	DOTNS_KEYS, DotnsAnswer, DotnsLookup, DotnsStep, Fetched, Pointer, accept, open, public_key,
+	sign,
+};
 
 const SECRET: [u8; 32] = [7; 32];
 const OTHER_SECRET: [u8; 32] = [9; 32];
@@ -739,6 +742,136 @@ fn link_cases() -> Vec<(&'static str, String, Value)> {
 	]
 }
 
+const GENERATION: &str = "2026-10-26T22:19:25Z";
+const DISPATCHER: [u8; 20] = [0xd1; 20];
+const ROOT_DISPATCHER: [u8; 20] = [0xd0; 20];
+const CONTROLLER: [u8; 20] = [0xc0; 20];
+const REGISTRY: [u8; 20] = [0xee; 20];
+const REGISTRAR: [u8; 20] = [0xaa; 20];
+const RESOLVER: [u8; 20] = [0xbb; 20];
+const PROTOCOL_REGISTRY: &str = "0x7656419f";
+const TARGET: &str = "0xcc1f2afa";
+
+fn at() -> Value {
+	json!({ "number": 182_044, "hash": hex(&[0xab; 32]) })
+}
+
+/// An address as a call returns it: one ABI word.
+fn word(address: &[u8; 20]) -> Value {
+	json!(hex(&[[0; 12].as_slice(), address].concat()))
+}
+
+fn call(to: &[u8; 20], input: &str) -> String {
+	format!("{}:{input}", hex(to))
+}
+
+/// The registry's answers to `get(bytes32)` for every key: `set` ones hold an address, the rest
+/// are unset.
+fn registry(set: &[(&str, [u8; 20])]) -> Vec<(String, Value)> {
+	DOTNS_KEYS
+		.iter()
+		.map(|key| {
+			let mut input = format!("0x8eaa6ac0{}", hex::encode(key));
+			input.extend(std::iter::repeat_n('0', 74 - input.len()));
+			let value =
+				set.iter().find(|(name, _)| name == key).map_or([0; 20], |(_, value)| *value);
+			(call(&REGISTRY, &input), word(&value))
+		})
+		.collect()
+}
+
+fn found(dispatcher: &[u8; 20]) -> Value {
+	json!({
+		"generation": GENERATION,
+		"at": at(),
+		"dotns": {
+			"dispatcher": hex(dispatcher),
+			"protocolRegistry": hex(&REGISTRY),
+			"addresses": { "registrar": hex(&REGISTRAR), "resolver": hex(&RESOLVER) },
+		},
+	})
+}
+
+/// The lookup cases: what the chain holds and answers, and the record or error a reader ends
+/// with. A null call answer is a revert. A reader must make no call the chain does not list.
+fn dotns_cases() -> Vec<(&'static str, Value, Value, Value)> {
+	let both = || registry(&[("registrar", REGISTRAR), ("resolver", RESOLVER)]);
+	let calls = |answers: Vec<(String, Value)>| Value::Object(answers.into_iter().collect());
+	vec![
+		(
+			"controller-at-the-gateway",
+			json!(hex(&DISPATCHER)),
+			calls([vec![(call(&DISPATCHER, PROTOCOL_REGISTRY), word(&REGISTRY))], both()].concat()),
+			found(&DISPATCHER),
+		),
+		(
+			"dispatcher-behind-target",
+			json!(hex(&ROOT_DISPATCHER)),
+			calls(
+				[
+					vec![
+						(call(&ROOT_DISPATCHER, PROTOCOL_REGISTRY), Value::Null),
+						(call(&ROOT_DISPATCHER, TARGET), word(&CONTROLLER)),
+						(call(&CONTROLLER, PROTOCOL_REGISTRY), word(&REGISTRY)),
+					],
+					both(),
+				]
+				.concat(),
+			),
+			found(&ROOT_DISPATCHER),
+		),
+		(
+			"no-gateway",
+			Value::Null,
+			calls(vec![]),
+			json!({ "generation": GENERATION, "at": at(), "dotns": null }),
+		),
+		(
+			"dispatcher-answers-neither",
+			json!(hex(&ROOT_DISPATCHER)),
+			calls(vec![
+				(call(&ROOT_DISPATCHER, PROTOCOL_REGISTRY), Value::Null),
+				(call(&ROOT_DISPATCHER, TARGET), Value::Null),
+			]),
+			json!({ "error": "unknown-dispatcher" }),
+		),
+		(
+			"gateway-holds-no-address",
+			json!("0x1234"),
+			calls(vec![]),
+			json!({ "error": "dispatcher-address" }),
+		),
+		(
+			"registry-word-with-high-bytes",
+			json!(hex(&DISPATCHER)),
+			calls(vec![(call(&DISPATCHER, PROTOCOL_REGISTRY), json!(hex(&[0xff; 32])))]),
+			json!({ "error": "not-an-address" }),
+		),
+		(
+			"controller-behind-target-reverts",
+			json!(hex(&ROOT_DISPATCHER)),
+			calls(vec![
+				(call(&ROOT_DISPATCHER, PROTOCOL_REGISTRY), Value::Null),
+				(call(&ROOT_DISPATCHER, TARGET), word(&CONTROLLER)),
+				(call(&CONTROLLER, PROTOCOL_REGISTRY), Value::Null),
+			]),
+			json!({ "error": "reverted" }),
+		),
+		(
+			"registry-get-reverts",
+			json!(hex(&DISPATCHER)),
+			calls(
+				[
+					vec![(call(&DISPATCHER, PROTOCOL_REGISTRY), word(&REGISTRY))],
+					registry(&[]).into_iter().map(|(call, _)| (call, Value::Null)).collect(),
+				]
+				.concat(),
+			),
+			json!({ "error": "reverted" }),
+		),
+	]
+}
+
 fn generate() -> BTreeMap<PathBuf, Vec<u8>> {
 	let mut files = BTreeMap::new();
 	let mut file = |path: String, contents: Vec<u8>| {
@@ -765,7 +898,13 @@ fn generate() -> BTreeMap<PathBuf, Vec<u8>> {
 		.into_iter()
 		.map(|(name, link, expect)| json!({ "name": name, "link": link, "expect": expect }))
 		.collect();
-	let cases = json!({ "documents": documents, "reader": reader, "links": links });
+	let dotns: Vec<Value> = dotns_cases()
+		.into_iter()
+		.map(|(name, storage, calls, expect)| {
+			json!({ "name": name, "generation": GENERATION, "at": at(), "storage": storage, "calls": calls, "expect": expect })
+		})
+		.collect();
+	let cases = json!({ "documents": documents, "reader": reader, "links": links, "dotns": dotns });
 	let mut cases = serde_json::to_vec_pretty(&cases).unwrap();
 	cases.push(b'\n');
 	files.insert(PathBuf::from("cases.json"), cases);
@@ -900,5 +1039,39 @@ fn every_vector_gets_its_verdict() {
 			},
 		};
 		assert_eq!(outcome, case["expect"], "{}", case["name"]);
+	}
+
+	for case in cases["dotns"].as_array().unwrap() {
+		let outcome = look_up(case).unwrap_or_else(|error| json!({ "error": error.code() }));
+		assert_eq!(outcome, case["expect"], "{}", case["name"]);
+	}
+}
+
+/// Runs a lookup against a dotNS vector's chain.
+fn look_up(case: &Value) -> Result<Value, trinity_stack::Error> {
+	let bytes = |value: &Value| hex::decode(&value.as_str().unwrap()[2..]).unwrap();
+	let at = serde_json::from_value(case["at"].clone()).unwrap();
+	let mut lookup = DotnsLookup::new(case["generation"].as_str().unwrap().into(), at);
+	loop {
+		match lookup.next() {
+			DotnsStep::Storage(_) => lookup.storage(
+				Some(&case["storage"]).filter(|value| !value.is_null()).map(bytes).as_deref(),
+			)?,
+			DotnsStep::Calls(calls) => {
+				let answers: Vec<DotnsAnswer> = calls
+					.iter()
+					.map(|call| {
+						let key = format!("{}:{}", hex(&call.to), hex(&call.input));
+						match case["calls"].get(&key) {
+							None => panic!("{}: unexpected call {key}", case["name"]),
+							Some(Value::Null) => DotnsAnswer::Reverted,
+							Some(value) => DotnsAnswer::Returned(bytes(value)),
+						}
+					})
+					.collect();
+				lookup.answer(&answers)?
+			},
+			DotnsStep::Done(record) => return Ok(serde_json::to_value(record).unwrap()),
+		}
 	}
 }

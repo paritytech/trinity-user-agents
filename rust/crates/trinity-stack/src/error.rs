@@ -114,6 +114,33 @@ pub enum Error {
 	/// A secret key is not 32 bytes.
 	#[error("a secret key is 32 bytes, got {0}")]
 	SecretKeyLength(usize),
+	/// `DotnsGateway.DispatcherAddress` holds something other than a 20-byte address.
+	#[error("DotnsGateway.DispatcherAddress holds {0} bytes, not an address")]
+	DispatcherAddress(usize),
+	/// The gateway's dispatcher answers neither `protocolRegistry()` nor `TARGET()`.
+	#[error("{0} answers neither protocolRegistry() nor TARGET()")]
+	UnknownDispatcher(String),
+	/// A dotNS contract reverted a call a reader needs.
+	#[error("{contract} reverted {call}")]
+	Reverted {
+		/// The contract.
+		contract: String,
+		/// The calldata.
+		call: String,
+	},
+	/// A dotNS contract returned something other than one address.
+	#[error("{contract} returned {returned} for {call}, not an address")]
+	NotAnAddress {
+		/// The contract.
+		contract: String,
+		/// The calldata.
+		call: String,
+		/// What it returned.
+		returned: String,
+	},
+	/// A dotNS lookup was answered out of step: the wrong kind of answer, or the wrong number.
+	#[error("dotNS lookup answered out of step: {0}")]
+	LookupStep(String),
 }
 
 impl Error {

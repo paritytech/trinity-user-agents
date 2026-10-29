@@ -640,6 +640,206 @@
       }
     }
   ],
+  "dotns": [
+    {
+      "at": {
+        "hash": "0xabababababababababababababababababababababababababababababababab",
+        "number": 182044
+      },
+      "calls": {
+        "0xd1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1:0x7656419f": "0x000000000000000000000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0636f6e74656e745265736f6c7665720000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0636f6e74726f6c6c657200000000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0636f73744d6f64656c0000000000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac063726561746533466163746f7279000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac06d756c746963616c6c3300000000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac06e616d65457363726f7700000000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac06e616d6557686974656c69737400000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0706f70436f6e74726f6c6c657200000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0706f704c656e7300000000000000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0706f705265736f6c766572000000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0706f7052756c6573000000000000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac07265676973747261720000000000000000000000000000000000000000000000": "0x000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac07265676973747279000000000000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac07265736f6c766572000000000000000000000000000000000000000000000000": "0x000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0726576657273655265736f6c7665720000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac073746f7265466163746f72790000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expect": {
+        "at": {
+          "hash": "0xabababababababababababababababababababababababababababababababab",
+          "number": 182044
+        },
+        "dotns": {
+          "addresses": {
+            "registrar": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "resolver": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "dispatcher": "0xd1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1",
+          "protocolRegistry": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        },
+        "generation": "2026-10-26T22:19:25Z"
+      },
+      "generation": "2026-10-26T22:19:25Z",
+      "name": "controller-at-the-gateway",
+      "storage": "0xd1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1"
+    },
+    {
+      "at": {
+        "hash": "0xabababababababababababababababababababababababababababababababab",
+        "number": 182044
+      },
+      "calls": {
+        "0xc0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0:0x7656419f": "0x000000000000000000000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "0xd0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0:0x7656419f": null,
+        "0xd0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0:0xcc1f2afa": "0x000000000000000000000000c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0636f6e74656e745265736f6c7665720000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0636f6e74726f6c6c657200000000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0636f73744d6f64656c0000000000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac063726561746533466163746f7279000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac06d756c746963616c6c3300000000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac06e616d65457363726f7700000000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac06e616d6557686974656c69737400000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0706f70436f6e74726f6c6c657200000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0706f704c656e7300000000000000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0706f705265736f6c766572000000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0706f7052756c6573000000000000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac07265676973747261720000000000000000000000000000000000000000000000": "0x000000000000000000000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac07265676973747279000000000000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac07265736f6c766572000000000000000000000000000000000000000000000000": "0x000000000000000000000000bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0726576657273655265736f6c7665720000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac073746f7265466163746f72790000000000000000000000000000000000000000": "0x0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expect": {
+        "at": {
+          "hash": "0xabababababababababababababababababababababababababababababababab",
+          "number": 182044
+        },
+        "dotns": {
+          "addresses": {
+            "registrar": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "resolver": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "dispatcher": "0xd0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0",
+          "protocolRegistry": "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        },
+        "generation": "2026-10-26T22:19:25Z"
+      },
+      "generation": "2026-10-26T22:19:25Z",
+      "name": "dispatcher-behind-target",
+      "storage": "0xd0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0"
+    },
+    {
+      "at": {
+        "hash": "0xabababababababababababababababababababababababababababababababab",
+        "number": 182044
+      },
+      "calls": {},
+      "expect": {
+        "at": {
+          "hash": "0xabababababababababababababababababababababababababababababababab",
+          "number": 182044
+        },
+        "dotns": null,
+        "generation": "2026-10-26T22:19:25Z"
+      },
+      "generation": "2026-10-26T22:19:25Z",
+      "name": "no-gateway",
+      "storage": null
+    },
+    {
+      "at": {
+        "hash": "0xabababababababababababababababababababababababababababababababab",
+        "number": 182044
+      },
+      "calls": {
+        "0xd0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0:0x7656419f": null,
+        "0xd0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0:0xcc1f2afa": null
+      },
+      "expect": {
+        "error": "unknown-dispatcher"
+      },
+      "generation": "2026-10-26T22:19:25Z",
+      "name": "dispatcher-answers-neither",
+      "storage": "0xd0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0"
+    },
+    {
+      "at": {
+        "hash": "0xabababababababababababababababababababababababababababababababab",
+        "number": 182044
+      },
+      "calls": {},
+      "expect": {
+        "error": "dispatcher-address"
+      },
+      "generation": "2026-10-26T22:19:25Z",
+      "name": "gateway-holds-no-address",
+      "storage": "0x1234"
+    },
+    {
+      "at": {
+        "hash": "0xabababababababababababababababababababababababababababababababab",
+        "number": 182044
+      },
+      "calls": {
+        "0xd1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1:0x7656419f": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "expect": {
+        "error": "not-an-address"
+      },
+      "generation": "2026-10-26T22:19:25Z",
+      "name": "registry-word-with-high-bytes",
+      "storage": "0xd1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1"
+    },
+    {
+      "at": {
+        "hash": "0xabababababababababababababababababababababababababababababababab",
+        "number": 182044
+      },
+      "calls": {
+        "0xc0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0:0x7656419f": null,
+        "0xd0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0:0x7656419f": null,
+        "0xd0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0:0xcc1f2afa": "0x000000000000000000000000c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0"
+      },
+      "expect": {
+        "error": "reverted"
+      },
+      "generation": "2026-10-26T22:19:25Z",
+      "name": "controller-behind-target-reverts",
+      "storage": "0xd0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0"
+    },
+    {
+      "at": {
+        "hash": "0xabababababababababababababababababababababababababababababababab",
+        "number": 182044
+      },
+      "calls": {
+        "0xd1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1:0x7656419f": "0x000000000000000000000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0636f6e74656e745265736f6c7665720000000000000000000000000000000000": null,
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0636f6e74726f6c6c657200000000000000000000000000000000000000000000": null,
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0636f73744d6f64656c0000000000000000000000000000000000000000000000": null,
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac063726561746533466163746f7279000000000000000000000000000000000000": null,
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac06d756c746963616c6c3300000000000000000000000000000000000000000000": null,
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac06e616d65457363726f7700000000000000000000000000000000000000000000": null,
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac06e616d6557686974656c69737400000000000000000000000000000000000000": null,
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0706f70436f6e74726f6c6c657200000000000000000000000000000000000000": null,
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0706f704c656e7300000000000000000000000000000000000000000000000000": null,
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0706f705265736f6c766572000000000000000000000000000000000000000000": null,
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0706f7052756c6573000000000000000000000000000000000000000000000000": null,
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac07265676973747261720000000000000000000000000000000000000000000000": null,
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac07265676973747279000000000000000000000000000000000000000000000000": null,
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac07265736f6c766572000000000000000000000000000000000000000000000000": null,
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac0726576657273655265736f6c7665720000000000000000000000000000000000": null,
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee:0x8eaa6ac073746f7265466163746f72790000000000000000000000000000000000000000": null
+      },
+      "expect": {
+        "error": "reverted"
+      },
+      "generation": "2026-10-26T22:19:25Z",
+      "name": "registry-get-reverts",
+      "storage": "0xd1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1d1"
+    }
+  ],
   "links": [
     {
       "expect": {
