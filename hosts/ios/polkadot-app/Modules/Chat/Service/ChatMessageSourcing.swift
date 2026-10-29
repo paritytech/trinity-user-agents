@@ -103,6 +103,8 @@ enum ChatSourceAction: Equatable {
     case markSeen(Set<Chat.MessageId>)
     /// Adds the reaction of the user, or removes it when the user has it.
     case toggleReaction(messageId: Chat.MessageId, emoji: String)
+    /// Removes a message of the user.
+    case delete(messageId: Chat.MessageId)
 }
 
 enum ChatSourceActionOutcome: Equatable {

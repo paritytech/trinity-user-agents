@@ -57,6 +57,8 @@ protocol ChatInteractorInputProtocol: AnyObject {
     func readAllBefore(identifier: Chat.MessageId)
     func readMessages(_ identifiers: [Chat.MessageId])
     func toggleReaction(messageId: String, emoji: String)
+    /// Removes a message of the user in a product-source room.
+    func deleteMessage(messageId: String)
     func leaveChat()
     func blockUser()
     func unblockUser()

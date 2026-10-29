@@ -109,6 +109,16 @@ extension UIAction {
         }
     }
 
+    static func chatDelete(_ action: @escaping () -> Void) -> UIAction {
+        UIAction(
+            title: String(localized: .chatDelete),
+            image: UIImage(systemName: "trash"),
+            attributes: .destructive
+        ) { _ in
+            action()
+        }
+    }
+
     static func chatEditHistory(_ action: @escaping () -> Void) -> UIAction {
         UIAction(
             title: String(localized: .chatEditHistory),

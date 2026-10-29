@@ -116,6 +116,8 @@ extension ProductRoomCacheEntry {
             Self.modify(&messages, messageId) { $0.adjustReaction(emoji, by: participantId, placed: false) }
         case let .statusChanged(messageId, status):
             Self.modify(&messages, messageId) { $0.status = status }
+        case let .deleted(messageId):
+            messages.removeAll { $0.messageId == messageId }
         }
 
         return ProductRoomCacheEntry(

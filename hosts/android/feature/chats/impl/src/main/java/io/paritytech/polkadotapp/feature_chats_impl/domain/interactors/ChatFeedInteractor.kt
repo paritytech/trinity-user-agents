@@ -266,6 +266,13 @@ class ChatFeedInteractor @Inject internal constructor(
         return ChatSourceActionOutcome.Done
     }
 
+    /** The user can delete a message of their own only in a room whose product keeps the messages. */
+    fun observeDeletesUserMessages(chatId: ChatId): Flow<Boolean> = roomSource(chatId).observeProductKeepsMessages()
+
+    /** The host database deletes no message of the user, so a room that it keeps refuses the deletion. */
+    suspend fun deleteUserMessage(chatId: ChatId, messageId: ChatMessageId): ChatSourceActionOutcome =
+        performInProductRoom(chatId, ChatSourceAction.Delete(messageId)) ?: ChatSourceActionOutcome.Refused(reason = null)
+
     /** Tells the product of a product-source room that the user saw the message. The host database needs nothing. */
     suspend fun reportMessageSeen(chatId: ChatId, messageId: ChatMessageId) {
         performInProductRoom(chatId, ChatSourceAction.MarkSeen(setOf(messageId)))

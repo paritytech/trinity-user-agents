@@ -44,8 +44,13 @@ protocol ChatExtensionDiscoverContextProtocol: ChatProductRoomDeclaring, ChatPro
     /// Removes a room, its messages and its declarations.
     func deleteRoom(for chatBot: ChatExtensionBotProtocol, roomId: String) async throws
 
-    /// Replaces the name of a room. The native chat draws no description.
-    func setRoomMetadata(for chatBot: ChatExtensionBotProtocol, roomId: String, name: String) async throws
+    /// Replaces the name of a room and changes its icon. The native chat draws no description.
+    func setRoomMetadata(
+        for chatBot: ChatExtensionBotProtocol,
+        roomId: String,
+        name: String,
+        icon: Chat.RoomIconChange
+    ) async throws
 
     /// Replaces the chat-list preview of a room and leaves the rest of the room alone.
     func setRoomPreview(
@@ -419,9 +424,14 @@ extension ChatExtensionDiscoverContext: ChatExtensionDiscoverContextProtocol {
         }
     }
 
-    func setRoomMetadata(for chatBot: ChatExtensionBotProtocol, roomId: String, name: String) async throws {
+    func setRoomMetadata(
+        for chatBot: ChatExtensionBotProtocol,
+        roomId: String,
+        name: String,
+        icon: Chat.RoomIconChange
+    ) async throws {
         let chatId = try await requireRoom(of: chatBot, roomId: roomId)
-        try await saveDeclaration(Chat.RoomNameUpdate(chatId: chatId, name: name))
+        try await saveDeclaration(Chat.RoomNameUpdate(chatId: chatId, name: name, icon: icon))
     }
 
     func setRoomPreview(

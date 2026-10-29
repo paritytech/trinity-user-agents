@@ -51,6 +51,19 @@ class ProductMessageWindowTest {
     }
 
     @Test
+    fun `a removed message leaves its page and the window`() {
+        val window = ProductMessageWindow(windowLimit = 10)
+        window.replaceWith(ProductMessagesPage((1..3).map { productMessage(it) }, next = "1"))
+
+        window.remove("m2")
+        window.remove("m9")
+
+        assertEquals(listOf("m1", "m3"), window.orderedIds)
+        assertFalse(window.contains("m2"))
+        assertNull(window.messages["m2"])
+    }
+
+    @Test
     fun `the snapshot is newest first, and an incoming message is unread until the product reads it`() {
         val window = ProductMessageWindow(windowLimit = 10)
         window.replaceWith(

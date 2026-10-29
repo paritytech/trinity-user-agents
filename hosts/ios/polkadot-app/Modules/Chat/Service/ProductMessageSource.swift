@@ -130,6 +130,11 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
         }
 
         apply(update)
+
+        // The cached page does not follow the open window. The next open must not show a deleted message.
+        if case .deleted = update {
+            await cache.apply(update, productId: productId, roomId: roomId)
+        }
     }
 
     // MARK: - ChatMessageSourcing
@@ -278,6 +283,8 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
             return await perform(hasReaction
                 ? .reactionRemoved(messageId: messageId, emoji: emoji)
                 : .reactionPlaced(messageId: messageId, emoji: emoji))
+        case let .delete(messageId):
+            return await perform(.deleteMessage(messageId: messageId))
         }
     }
 
@@ -301,6 +308,8 @@ actor ProductMessageSource: ChatMessageSourcing, ProductFeedListening {
             modify(messageId) { $0.adjustReaction(emoji, by: participantId, placed: false) }
         case let .statusChanged(messageId, status):
             modify(messageId) { $0.status = status }
+        case let .deleted(messageId):
+            remove(messageId)
         }
 
         emit()

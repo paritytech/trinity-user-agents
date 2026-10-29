@@ -39,6 +39,8 @@ extension Chat {
         case reactionPlaced(messageId: String, participantId: String, emoji: String)
         case reactionRemoved(messageId: String, participantId: String, emoji: String)
         case statusChanged(messageId: String, status: ProductMessageStatus)
+        /// The product removes a message that it wrote.
+        case deleted(messageId: String)
     }
 
     /// Why the host refuses a feed update (`NativeChatFeedRejection`).

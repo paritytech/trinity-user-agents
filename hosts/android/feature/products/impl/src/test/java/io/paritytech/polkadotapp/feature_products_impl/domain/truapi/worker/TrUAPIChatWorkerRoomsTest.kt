@@ -168,6 +168,16 @@ class TrUAPIChatWorkerRoomsTest {
     }
 
     @Test
+    fun `a deletion goes to the product with the id of its message`() = runTest {
+        coEvery { execution.chatUserAction(any(), any()) } returns ProductChatUserActionItem.Acknowledged
+
+        val outcome = worker().userAction(room, ChatUserActionModel.DeleteMessage("m1"))
+
+        assertEquals(ChatUserActionOutcome.Acknowledged, outcome.getOrNull())
+        coVerify { execution.chatUserAction(match { it.roomId == "lobby" && it.action == ChatUserAction.DeleteMessage("m1") }, any()) }
+    }
+
+    @Test
     fun `an unavailable worker is asked an action once more after a second`() = runTest {
         coEvery { execution.chatUserAction(any(), any()) } throws ChatQueryException.Failed("not connected") andThen
             ProductChatUserActionItem.Acknowledged

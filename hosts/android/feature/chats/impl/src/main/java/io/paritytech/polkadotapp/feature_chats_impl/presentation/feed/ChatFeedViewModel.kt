@@ -210,16 +210,18 @@ class ChatFeedViewModel @Inject constructor(
         menuActionsProvider.getToolbarActions(openChatRequest, inputStateType, addMenuIconForcibly = hasRenderer)
     }.stateInBackground(initialValue = persistentListOf())
 
+    private val deletesUserMessages = interactor.observeDeletesUserMessages(chatId)
+
     override val popupState = combine(
         messagePopupSection,
         reactions,
         originDisplayResolver,
         messages,
-        chatInputStateType,
-    ) { popupSelection, reactions, originDisplayResolver, messagesList, chatInputStateType ->
+        combineToPair(chatInputStateType, deletesUserMessages),
+    ) { popupSelection, reactions, originDisplayResolver, messagesList, (chatInputStateType, deletesUserMessages) ->
         if (popupSelection == null) return@combine null
 
-        messageUiMapper.constructPopUpState(popupSelection, reactions, originDisplayResolver, messagesList, chatInputStateType)
+        messageUiMapper.constructPopUpState(popupSelection, reactions, originDisplayResolver, messagesList, chatInputStateType, deletesUserMessages)
     }.stateIn(this, SharingStarted.Eagerly, null)
 
     private val messageInputState = MutableStateFlow(ChatSendMessageInputState())
@@ -547,6 +549,11 @@ class ChatFeedViewModel @Inject constructor(
             is MessageAction.ViewEditHistory -> {
                 messagePopupSection.update { null }
                 showMessageHistory(action.message.id)
+            }
+
+            is MessageAction.Delete -> launchUnit {
+                messagePopupSection.update { null }
+                showActionOutcome(interactor.deleteUserMessage(chatId, action.message.id))
             }
 
             is MessageAction.DismissActionMenu -> {

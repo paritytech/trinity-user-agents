@@ -45,6 +45,12 @@ extension ProductMessageSource {
             return await ask(action, after: messageId) { [weak self] in
                 await self?.put(original)
             }
+        case let .deleteMessage(messageId):
+            guard messages[messageId] != nil else {
+                return .refused(reason: nil)
+            }
+
+            return await delete(messageId, action: action)
         case .seen:
             return await ask(action) {}
         case .sendPayment,
@@ -108,6 +114,24 @@ extension ProductMessageSource {
             emit()
             return .refused(reason: Self.reason(of: error))
         }
+    }
+
+    /// Removes the message from the window and from the cached page when the product takes the delete. A refused
+    /// delete keeps the message.
+    func delete(_ messageId: String, action: ChatUserAction) async -> ChatSourceActionOutcome {
+        do {
+            _ = try await querying.userAction(ProductChatUserActionRequest(roomId: roomId, action: action))
+        } catch {
+            logger.warning("Delete of room \(roomId) failed: \(error)")
+            noteUnavailable(after: error)
+            emit()
+            return .refused(reason: Self.reason(of: error))
+        }
+
+        remove(messageId)
+        emit()
+        await cache.apply(.deleted(messageId: messageId), productId: productId, roomId: roomId)
+        return .done
     }
 
     func noteUnavailable(after error: Error) {

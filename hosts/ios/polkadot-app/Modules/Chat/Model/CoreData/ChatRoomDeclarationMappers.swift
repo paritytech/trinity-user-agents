@@ -58,6 +58,10 @@ extension ChatRoomDeclarationUpdateMapper: CoreDataMapperProtocol {
 extension Chat.RoomNameUpdate: ChatRoomDeclarationUpdating {
     func apply(to entity: CDChatRoomMetadata) {
         entity.name = name
+
+        if case let .replace(newIcon) = icon {
+            entity.icon = newIcon
+        }
     }
 }
 

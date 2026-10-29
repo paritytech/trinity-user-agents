@@ -225,6 +225,17 @@ class ProductChatExtensionTest {
         assertEquals(listOf<ChatUserActionModel>(ChatUserActionModel.Seen("m1"), ChatUserActionModel.Seen("m2")), worker.userActions)
     }
 
+    @Test
+    fun `a deletion names its message by the product id`() = runTest {
+        val worker = RecordingWorker()
+        val extension = extension(FakeRefCounter(worker))
+        withChatHost(ownRooms = flowOf(listOf(room))) { extension.startGlobalWork() }
+
+        requireNotNull(extension.roomQuerying(room)).userAction(room, ChatUserActionModel.DeleteMessage(ProductMessageIds.stored("m1", room)))
+
+        assertEquals(listOf<ChatUserActionModel>(ChatUserActionModel.DeleteMessage("m1")), worker.userActions)
+    }
+
     private fun textMessage(text: String) = ChatMessage.new(
         chatId = ChatId.forExtensionRoom(extensionId, ROOM),
         content = ChatMessage.Content.Text(text),

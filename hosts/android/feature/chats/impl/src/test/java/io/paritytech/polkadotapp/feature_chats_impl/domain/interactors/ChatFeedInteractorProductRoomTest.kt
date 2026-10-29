@@ -84,6 +84,22 @@ class ChatFeedInteractorProductRoomTest {
     }
 
     @Test
+    fun `a deletion in a room the product keeps goes to the product`() = runBlocking<Unit> {
+        coEvery { roomSource.productSource() } returns productSource
+
+        assertEquals(ChatSourceActionOutcome.Done, interactor().deleteUserMessage(roomId, "m1"))
+
+        coVerify { productSource.perform(ChatSourceAction.Delete("m1")) }
+    }
+
+    @Test
+    fun `a room that the host database keeps refuses a deletion`() = runBlocking<Unit> {
+        coEvery { roomSource.productSource() } returns null
+
+        assertEquals(ChatSourceActionOutcome.Refused(reason = null), interactor().deleteUserMessage(roomId, "m1"))
+    }
+
+    @Test
     fun `a refusal of the product reaches the room screen`() = runBlocking<Unit> {
         coEvery { roomSource.productSource() } returns productSource
         coEvery { productSource.perform(any()) } returns ChatSourceActionOutcome.Refused("Locked")

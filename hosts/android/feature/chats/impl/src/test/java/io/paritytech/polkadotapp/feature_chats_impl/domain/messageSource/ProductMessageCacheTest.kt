@@ -41,6 +41,17 @@ class ProductMessageCacheTest {
     }
 
     @Test
+    fun `a deleted message leaves the cached page`() = runBlocking<Unit> {
+        val cache = ProductMessageCache()
+        cache.store(room, entry(listOf(message("m1", 1), message("m2", 2))))
+
+        cache.apply(room, ProductFeedUpdateModel.Deleted("m1"))
+        cache.apply(room, ProductFeedUpdateModel.Deleted("m9"))
+
+        assertEquals(listOf("m2"), cache.entry(room)!!.messages.map { it.messageId })
+    }
+
+    @Test
     fun `a full page drops its oldest message and its cursor`() = runBlocking<Unit> {
         val cache = ProductMessageCache(capacity = 4, messageLimit = 2)
         cache.store(room, entry(listOf(message("m1", 1), message("m2", 2))))
