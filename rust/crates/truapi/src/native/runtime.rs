@@ -28,7 +28,7 @@ use crate::{
 			RemoteMessage, RemoteMessageData, SsoRequestOutcome, decode_remote_message, v1,
 		},
 	},
-	pocket_cards::{PocketCardRemoval, PocketCards},
+	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCards},
 	runtime::{AnnouncedPairing, sso_remote::sso_message_id},
 	store::{Db, core_db_config},
 	subscription::Spawner,
@@ -746,17 +746,16 @@ impl NativeTrUApiHostRuntime {
 		observe_pocket_cards(&self.pocket, observer.into(), &self.spawner)
 	}
 
-	/// Add a card the user approved, with the face they approved it by.
-	/// Screen its id and title with [`super::screen_pocket_card_id`] and
-	/// [`super::screen_pocket_card_title`] first.
+	/// Add a card the user approved, with the face they approved it by. An id
+	/// or title a product could not use is refused.
 	pub async fn add_pocket_card(
 		&self,
 		product_id: ProductId,
 		card_id: String,
 		title: String,
 		face: truapi::latest::RendererNode,
-	) -> Result<(), NativeCoreDatabaseError> {
-		Ok(self.pocket.add(product_id, card_id, title, face).await?)
+	) -> Result<(), PocketAddError> {
+		self.pocket.add(product_id, card_id, title, face).await
 	}
 
 	/// Remove a card on the user's behalf, unless it is pinned.

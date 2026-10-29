@@ -35,7 +35,7 @@ pub use crate::{
 		dotns::{NavigateDecision, PocketDeeplinkAction},
 		scanner::{ScanFilter, ScanVerdict},
 	},
-	pocket_cards::{PinnedPocketCard, PocketCardRemoval, PocketEntry},
+	pocket_cards::{PinnedPocketCard, PocketAddError, PocketCardRemoval, PocketEntry},
 };
 pub use callbacks::{
 	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,

@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.PocketCardRepository
@@ -16,7 +17,8 @@ class RealPocketCollection @Inject constructor(
 ) : PocketCardStore {
     override fun observeCards(): Flow<List<PocketCard>> = repository.observeCards()
 
-    override suspend fun removeCard(key: PocketCardKey): Result<Unit> = runCatching { repository.remove(key) }
+    override suspend fun removeCard(key: PocketCardKey): Result<Unit> =
+        runCancellableCatching { repository.remove(key) }
 
     override suspend fun addCard(card: CachedPocketCard) {
         require(!card.card.privileged) { "only the host places privileged cards" }
@@ -25,6 +27,8 @@ class RealPocketCollection @Inject constructor(
 
     /** The newest face the product drew, else the one bundled with a pinned card for its first run. */
     override suspend fun cachedFace(key: PocketCardKey): RendererNode? =
-        runCatching { repository.face(key) }.logFailure("pocket: no kept face for ${key.cardId.value}").getOrNull()
+        runCancellableCatching { repository.face(key) }
+            .logFailure("pocket: no kept face for ${key.cardId.value}")
+            .getOrNull()
             ?: pinnedPocketCards.pinned(key)?.face
 }

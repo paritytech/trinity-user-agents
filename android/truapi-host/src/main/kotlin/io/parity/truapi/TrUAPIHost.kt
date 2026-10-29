@@ -67,6 +67,7 @@ import uniffi.truapi.NativeGameCallbacks
 import uniffi.truapi.NativePocketObserver
 import uniffi.truapi.NativeRendererObserver
 import uniffi.truapi.NativeSubscription
+import uniffi.truapi.PocketAddException
 import uniffi.truapi.PocketCardRemoval
 import uniffi.truapi.PocketEntry
 import uniffi.truapi.DevicePermissionStatus
@@ -1141,11 +1142,10 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         }
 
     /**
-     * Add a card the user approved, with the face they approved it by. Screen
-     * its id and title with `screenPocketCardId` and `screenPocketCardTitle`
-     * first.
+     * Add a card the user approved, with the face they approved it by. An id
+     * or title a product could not use is refused with [PocketAddException].
      */
-    @Throws(NativeCoreDatabaseException::class)
+    @Throws(PocketAddException::class)
     suspend fun addPocketCard(productId: String, cardId: String, title: String, face: RendererNode) =
         inner.addPocketCard(productId, cardId, title, face)
 

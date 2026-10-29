@@ -1125,14 +1125,14 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         }
     }
 
-    /// Adds a card the user approved, with the face they approved it by.
-    /// Screen its id and title with `screenPocketCardId` and
-    /// `screenPocketCardTitle` first.
+    /// Adds a card the user approved, with the face they approved it by. An id
+    /// or title a product could not use is refused with `PocketAddError`.
     public func addPocketCard(productId: String, cardId: String, title: String, face: RendererNode) async throws {
         try await inner.addPocketCard(productId: productId, cardId: cardId, title: title, face: face)
     }
 
     /// Removes a card on the user's behalf, unless it is pinned.
+    @discardableResult
     public func removePocketCard(productId: String, cardId: String) async throws -> PocketCardRemoval {
         try await inner.removePocketCard(productId: productId, cardId: cardId)
     }

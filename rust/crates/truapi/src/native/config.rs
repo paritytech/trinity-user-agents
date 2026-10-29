@@ -167,7 +167,12 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 			local_session_secret: config.local_session_secret,
 			local_session_lite_username: config.local_session_lite_username,
 			database_directory: PathBuf::from(config.database_directory),
-			pinned_pocket_cards: config.pinned_pocket_cards,
+			pinned_pocket_cards: config
+				.pinned_pocket_cards
+				.into_iter()
+				.map(PinnedPocketCard::screened)
+				.collect::<Result<_, _>>()
+				.map_err(|error| NativeRuntimeConfigError::Invalid { reason: error.to_string() })?,
 		})
 	}
 }

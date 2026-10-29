@@ -8,7 +8,6 @@ use crate::{
 	store::open_temporary_core_db,
 	test_support::{test_spawner, wait_until},
 	time::ManualTimer,
-	unix_time::current_unix_millis,
 };
 
 const LOYALTY: &str = "loyalty.dot";
@@ -51,12 +50,16 @@ fn listed(cards: &PocketCards) -> Vec<(String, String, bool)> {
 	let current = block_on(cards.observe().next()).unwrap().unwrap();
 	current
 		.into_iter()
-		.map(|card| (card.product_id, card.card_id, card.privileged))
+		.map(|card| (card.product_id.as_str().to_owned(), card.card_id, card.privileged))
 		.collect()
 }
 
-fn keep(cards: &PocketCards, product_id: &str, card_id: &str, text: &str, drawn_at: u64) {
-	block_on(cards.keep_face(product(product_id), card_id.into(), face(text), drawn_at)).unwrap();
+fn keep(cards: &PocketCards, product_id: &str, card_id: &str, text: &str) {
+	keep_drawn(cards, product_id, card_id, text, cards.next_draw());
+}
+
+fn keep_drawn(cards: &PocketCards, product_id: &str, card_id: &str, text: &str, draw_order: u64) {
+	block_on(cards.keep_face(product(product_id), card_id.into(), face(text), draw_order)).unwrap();
 }
 
 fn kept_face(cards: &PocketCards, product_id: &str, card_id: &str) -> Option<RendererNode> {
@@ -120,7 +123,7 @@ fn a_card_the_user_added_survives_being_pinned_and_unpinned() {
 #[test]
 fn a_pinned_card_the_user_never_added_leaves_with_its_face_once_unpinned() {
 	let (_dir, cards) = open(vec![humanity()]);
-	keep(&cards, PERSONHOOD, "humanity", "drawn", 1);
+	keep(&cards, PERSONHOOD, "humanity", "drawn");
 
 	let cards = reopen(&cards, Vec::new());
 
@@ -133,7 +136,7 @@ fn a_pinned_card_keeps_its_last_face_across_starts() {
 	// The pins are written on every start; that must not cost Humanity the
 	// face its product last drew.
 	let (_dir, cards) = open(vec![humanity()]);
-	keep(&cards, PERSONHOOD, "humanity", "drawn", 1);
+	keep(&cards, PERSONHOOD, "humanity", "drawn");
 
 	let cards = reopen(&cards, vec![humanity()]);
 
@@ -165,7 +168,7 @@ fn a_face_is_kept_only_for_a_card_in_the_pocket() {
 	// face back.
 	let (_dir, cards) = open(Vec::new());
 
-	keep(&cards, LOYALTY, "stamps", "drawn", 1);
+	keep(&cards, LOYALTY, "stamps", "drawn");
 
 	assert_eq!(kept_face(&cards, LOYALTY, "stamps"), None);
 }
@@ -175,14 +178,73 @@ fn an_older_face_never_replaces_a_newer_one() {
 	// The Pocket list and the opened card can render one card at once, and a
 	// render that stops writes its last face late.
 	let (_dir, cards) = open(Vec::new());
+	let stale = cards.next_draw();
 	add(&cards, LOYALTY, "stamps", "approved");
-	let approved_at = current_unix_millis();
 
-	keep(&cards, LOYALTY, "stamps", "stale", approved_at - 1_000);
+	keep_drawn(&cards, LOYALTY, "stamps", "stale", stale);
 	assert_eq!(kept_face(&cards, LOYALTY, "stamps"), Some(face("approved")));
 
-	keep(&cards, LOYALTY, "stamps", "newer", approved_at + 1_000);
+	keep(&cards, LOYALTY, "stamps", "newer");
 	assert_eq!(kept_face(&cards, LOYALTY, "stamps"), Some(face("newer")));
+}
+
+#[test]
+fn a_face_from_an_earlier_run_never_blocks_one_drawn_now() {
+	// Faces are ordered within a run, not by the wall clock, so a face kept
+	// while the clock was ahead cannot outrank the faces drawn after it.
+	let (_dir, cards) = open(Vec::new());
+	add(&cards, LOYALTY, "stamps", "approved");
+	keep_drawn(&cards, LOYALTY, "stamps", "earlier run", i64::MAX as u64);
+
+	let cards = reopen(&cards, Vec::new());
+	keep(&cards, LOYALTY, "stamps", "drawn now");
+
+	assert_eq!(kept_face(&cards, LOYALTY, "stamps"), Some(face("drawn now")));
+}
+
+#[test]
+fn pinned_cards_are_listed_in_the_host_order() {
+	let stamps = PinnedPocketCard {
+		product_id: product(LOYALTY),
+		card_id: "stamps".into(),
+		title: "Stamps".into(),
+	};
+	let (_dir, cards) = open(vec![humanity(), stamps.clone()]);
+
+	let cards = reopen(&cards, vec![stamps, humanity()]);
+
+	assert_eq!(
+		listed(&cards),
+		vec![entry(LOYALTY, "stamps", true), entry(PERSONHOOD, "humanity", true)]
+	);
+}
+
+#[test]
+fn an_added_card_is_screened_like_a_product_would_address_it() {
+	// A product removes its card by an id the core normalizes, so the stored id
+	// has to be normalized the same way or the removal finds nothing.
+	let (_dir, cards) = open(Vec::new());
+
+	block_on(cards.add(
+		product(LOYALTY),
+		"  cafe\u{301}  ".into(),
+		"Coffee".into(),
+		face("approved"),
+	))
+	.unwrap();
+	let refused =
+		block_on(cards.add(product(LOYALTY), "   ".into(), "Blank".into(), face("approved")));
+
+	assert_eq!(listed(&cards), vec![entry(LOYALTY, "caf\u{e9}", false)]);
+	assert!(matches!(refused, Err(PocketAddError::Refused { .. })));
+}
+
+#[test]
+fn a_pinned_card_is_screened_like_an_added_one() {
+	let blank = PinnedPocketCard { card_id: "   ".into(), ..humanity() };
+
+	assert_eq!(humanity().screened().unwrap(), humanity());
+	assert!(blank.screened().is_err());
 }
 
 #[test]
@@ -275,7 +337,7 @@ fn the_newest_face_is_kept_at_most_every_interval_and_at_once_when_drawing_stops
 		keeper.keep_faces(product(LOYALTY), "stamps".into(), drawn, keeper_timer).await;
 	}));
 	let kept = || kept_face(&cards, LOYALTY, "stamps");
-	let drawn = |text: &str| (face(text), current_unix_millis());
+	let drawn = |text: &str| (face(text), cards.next_draw());
 
 	faces.unbounded_send(drawn("1")).unwrap();
 	wait_until(|| kept() == Some(face("1")), "the first face is kept at once");
@@ -283,7 +345,10 @@ fn the_newest_face_is_kept_at_most_every_interval_and_at_once_when_drawing_stops
 
 	faces.unbounded_send(drawn("2")).unwrap();
 	faces.unbounded_send(drawn("3")).unwrap();
+	// Long enough for a keeper that did not wait to have written already.
+	std::thread::sleep(core::time::Duration::from_millis(200));
 	assert_eq!(kept(), Some(face("1")), "nothing is written within the interval");
+	assert_eq!(timer.sleeps(), 1, "the keeper is still waiting out the first interval");
 	timer.advance(FACE_WRITE_INTERVAL);
 	wait_until(|| kept() == Some(face("3")), "the newest face is kept once the interval ends");
 	wait_until(|| timer.sleeps() == 2, "the keeper waits again");

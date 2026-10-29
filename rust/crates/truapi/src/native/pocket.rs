@@ -15,7 +15,6 @@ use crate::{
 	pocket_cards::{PocketCards, PocketEntry},
 	subscription::Spawner,
 	time::RealTimer,
-	unix_time::current_unix_millis,
 };
 
 /// Observer implemented by a native host to follow the Pocket collection.
@@ -57,21 +56,23 @@ pub fn keeping_faces(
 	spawner: &Spawner,
 ) -> Arc<dyn NativeRendererObserver> {
 	let (faces, drawn) = unbounded();
+	let keeper = cards.clone();
 	(spawner)(Box::pin(async move {
-		cards.keep_faces(product_id, card_id, drawn, Arc::new(RealTimer)).await;
+		keeper.keep_faces(product_id, card_id, drawn, Arc::new(RealTimer)).await;
 	}));
-	Arc::new(FaceKeepingObserver { observer, faces })
+	Arc::new(FaceKeepingObserver { observer, faces, cards })
 }
 
 struct FaceKeepingObserver {
 	observer: Arc<dyn NativeRendererObserver>,
 	faces: UnboundedSender<(ProductRendererRenderItem, u64)>,
+	cards: PocketCards,
 }
 
 impl NativeRendererObserver for FaceKeepingObserver {
 	fn on_update(&self, node: ProductRendererRenderItem) {
 		self.observer.on_update(node.clone());
-		let _ = self.faces.unbounded_send((node, current_unix_millis()));
+		let _ = self.faces.unbounded_send((node, self.cards.next_draw()));
 	}
 
 	fn on_complete(&self) {

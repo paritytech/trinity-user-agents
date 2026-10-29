@@ -9,7 +9,7 @@ import TrUAPIHost
 /// Reads, additions and removals raise what went wrong. The core tells a
 /// failure apart from an empty Pocket and from a card that was already gone,
 /// and a product told its removal succeeded when it did not will not ask again.
-final class CorePocketCardStore: PocketCardStore, @unchecked Sendable {
+final class CorePocketCardStore: @unchecked Sendable {
     private let runtimeProvider: any TrUAPIHostRuntimeProviding
     private let pinned: any PinnedPocketCards
     private let logger: LoggerProtocol
@@ -23,7 +23,9 @@ final class CorePocketCardStore: PocketCardStore, @unchecked Sendable {
         self.pinned = pinned
         self.logger = logger
     }
+}
 
+extension CorePocketCardStore: PocketCardStore {
     func cards() async throws -> [PocketCardEntry] {
         for try await cards in try runtimeProvider.sharedRuntime().pocketCards() {
             return cards.map(Self.entry)
@@ -59,7 +61,7 @@ final class CorePocketCardStore: PocketCardStore, @unchecked Sendable {
     }
 
     func removeCard(_ key: PocketCardKey) async throws {
-        _ = try await runtimeProvider.sharedRuntime().removePocketCard(
+        try await runtimeProvider.sharedRuntime().removePocketCard(
             productId: key.productId,
             cardId: key.cardId.value
         )
@@ -91,8 +93,10 @@ final class CorePocketCardStore: PocketCardStore, @unchecked Sendable {
 
         return await pinned.face(for: key.cardId)
     }
+}
 
-    private static func entry(_ card: PocketEntry) -> PocketCardEntry {
+private extension CorePocketCardStore {
+    static func entry(_ card: PocketEntry) -> PocketCardEntry {
         PocketCardEntry(
             key: PocketCardKey(productId: card.productId, cardId: PocketCardId(value: card.cardId)),
             title: card.title,

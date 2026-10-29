@@ -7,7 +7,10 @@
 //! offline and at the next start.
 
 use core::time::Duration;
-use std::sync::Arc;
+use std::sync::{
+	Arc,
+	atomic::{AtomicU64, Ordering},
+};
 
 use futures::{
 	FutureExt, StreamExt,
@@ -17,7 +20,7 @@ use futures::{
 	stream::BoxStream,
 };
 use parity_scale_codec::{DecodeLimit, Encode};
-use rusqlite::{OptionalExtension, Row, Transaction, named_params};
+use rusqlite::{OptionalExtension, Row, Transaction, named_params, types::Type};
 use truapi::latest::{
 	GenericError, HostPocketListSubscribeItem, HostPocketRemoveCardError,
 	HostPocketRemoveCardRequest, PocketCard, RendererNode,
@@ -25,10 +28,12 @@ use truapi::latest::{
 
 use crate::{
 	native::MAX_FACE_DEPTH,
-	platform::{PocketPlatform, ProductContext, ProductId, async_trait},
+	platform::{
+		ChatFieldError, PocketPlatform, ProductContext, ProductId, async_trait,
+		normalize_chat_identifier, validate_chat_name,
+	},
 	store::{Db, DbError},
 	time::Timer,
-	unix_time::current_unix_millis,
 };
 
 /// A card the host pins: listed first, and removable by nobody.
@@ -42,11 +47,23 @@ pub struct PinnedPocketCard {
 	pub title: String,
 }
 
+impl PinnedPocketCard {
+	/// The card with its id and title screened as a product's would be, so a
+	/// product can address it.
+	pub fn screened(self) -> Result<Self, ChatFieldError> {
+		Ok(Self {
+			card_id: normalize_chat_identifier("cardId", &self.card_id)?,
+			title: validate_chat_name("title", &self.title)?,
+			..self
+		})
+	}
+}
+
 /// One card in the Pocket, as the host lists it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct PocketEntry {
 	/// Product that backs the card.
-	pub product_id: String,
+	pub product_id: ProductId,
 	/// Card label, unique within the product.
 	pub card_id: String,
 	/// Title shown for the card.
@@ -66,6 +83,35 @@ pub enum PocketCardRemoval {
 	Privileged,
 }
 
+/// Why a card was not added.
+#[derive(Debug, Clone, thiserror::Error, uniffi::Error)]
+pub enum PocketAddError {
+	/// The card id or title is not one a product could use.
+	#[error("{reason}")]
+	Refused {
+		/// Which field was refused, and why.
+		reason: String,
+	},
+	/// The core database failed.
+	#[error("{reason}")]
+	Unavailable {
+		/// What failed.
+		reason: String,
+	},
+}
+
+impl From<ChatFieldError> for PocketAddError {
+	fn from(error: ChatFieldError) -> Self {
+		Self::Refused { reason: error.to_string() }
+	}
+}
+
+impl From<DbError> for PocketAddError {
+	fn from(error: DbError) -> Self {
+		Self::Unavailable { reason: error.to_string() }
+	}
+}
+
 /// Least time between two writes of one card's face. A product redraws at
 /// frame rate, and the card needs one recent face, not every one.
 const FACE_WRITE_INTERVAL: Duration = Duration::from_secs(2);
@@ -74,27 +120,37 @@ const FACE_WRITE_INTERVAL: Duration = Duration::from_secs(2);
 #[derive(Clone)]
 pub struct PocketCards {
 	db: Db,
+	/// Orders the faces this process draws. Faces from earlier runs are set
+	/// below it on open, so the wall clock never decides which face is newer.
+	draws: Arc<AtomicU64>,
 }
 
 impl PocketCards {
-	/// The collection in `db`, with `pinned` as the host's pins. A card no
-	/// longer pinned stays only if the user added it.
+	/// The collection in `db`, with `pinned` as the host's pins, listed in that
+	/// order. A card no longer pinned stays only if the user added it.
 	pub async fn open(db: Db, pinned: Vec<PinnedPocketCard>) -> Result<Self, DbError> {
 		db.write(move |tx| {
 			tx.execute(UNPIN_ALL, [])?;
 			let mut pin = tx.prepare_cached(PIN)?;
-			for card in &pinned {
+			for (position, card) in pinned.iter().enumerate() {
 				pin.execute(named_params! {
 					":product": card.product_id.as_str(),
 					":card": card.card_id,
 					":title": card.title,
+					":pin": position,
 				})?;
 			}
 			tx.execute(DROP_UNPINNED, [])?;
+			tx.execute(AGE_FACES, [])?;
 			Ok(())
 		})
 		.await?;
-		Ok(Self { db })
+		Ok(Self { db, draws: Arc::new(AtomicU64::new(0)) })
+	}
+
+	/// The place of a face drawn now among every face this process keeps.
+	pub fn next_draw(&self) -> u64 {
+		self.draws.fetch_add(1, Ordering::Relaxed) + 1
 	}
 
 	/// Every card, pinned first, then in the order the user added them, now
@@ -103,14 +159,19 @@ impl PocketCards {
 		self.db.observe(CARDS, |statement| statement.query_map([], entry))
 	}
 
-	/// Adds a card the user approved, with the face they approved it by.
+	/// Adds a card the user approved, with the face they approved it by. The
+	/// id and title are screened as a product's would be, so the product can
+	/// address the card.
 	pub async fn add(
 		&self,
 		product_id: ProductId,
 		card_id: String,
 		title: String,
 		face: RendererNode,
-	) -> Result<(), DbError> {
+	) -> Result<(), PocketAddError> {
+		let card_id = normalize_chat_identifier("cardId", &card_id)?;
+		let title = validate_chat_name("title", &title)?;
+		let draw_order = self.next_draw();
 		self.db
 			.write(move |tx| {
 				tx.prepare_cached(ADD)?.execute(named_params! {
@@ -118,9 +179,10 @@ impl PocketCards {
 					":card": card_id,
 					":title": title,
 				})?;
-				upsert_face(tx, &product_id, &card_id, &face, current_unix_millis())
+				upsert_face(tx, &product_id, &card_id, &face, draw_order)
 			})
-			.await
+			.await?;
+		Ok(())
 	}
 
 	/// Removes a card unless it is pinned.
@@ -169,22 +231,22 @@ impl PocketCards {
 		}))
 	}
 
-	/// Keeps `face`, drawn at `drawn_at` unix milliseconds, as the card's
+	/// Keeps `face`, drawn at [`Self::next_draw`] `draw_order`, as the card's
 	/// newest, if the card is in the Pocket and no later face is kept.
 	pub async fn keep_face(
 		&self,
 		product_id: ProductId,
 		card_id: String,
 		face: RendererNode,
-		drawn_at: u64,
+		draw_order: u64,
 	) -> Result<(), DbError> {
 		self.db
-			.write(move |tx| upsert_face(tx, &product_id, &card_id, &face, drawn_at))
+			.write(move |tx| upsert_face(tx, &product_id, &card_id, &face, draw_order))
 			.await
 	}
 
-	/// Keeps the newest of `faces`, each with the unix milliseconds it was
-	/// drawn at, as the card's face: at once, then at most every
+	/// Keeps the newest of `faces`, each with its [`Self::next_draw`] order,
+	/// as the card's face: at once, then at most every
 	/// [`FACE_WRITE_INTERVAL`], and at once again when `faces` ends.
 	pub async fn keep_faces(
 		&self,
@@ -224,10 +286,10 @@ impl PocketCards {
 		&self,
 		product_id: &ProductId,
 		card_id: &str,
-		(face, drawn_at): (RendererNode, u64),
+		(face, draw_order): (RendererNode, u64),
 	) {
 		if let Err(error) =
-			self.keep_face(product_id.clone(), card_id.to_owned(), face, drawn_at).await
+			self.keep_face(product_id.clone(), card_id.to_owned(), face, draw_order).await
 		{
 			tracing::warn!(%error, card_id, "a Pocket face was not kept");
 		}
@@ -271,59 +333,64 @@ impl PocketPlatform for PocketCards {
 	}
 }
 
-const CARDS: &str = "SELECT product_id, card_id, title, privileged FROM pocket_card
-	ORDER BY privileged DESC, added_at, rowid";
+const CARDS: &str = "SELECT product_id, card_id, title, pin IS NOT NULL AS privileged
+	FROM pocket_card ORDER BY pin IS NULL, pin, added_at, rowid";
 
-const PRODUCT_CARDS: &str = "SELECT card_id, privileged FROM pocket_card
-	WHERE product_id = :product ORDER BY privileged DESC, added_at, rowid";
+const PRODUCT_CARDS: &str = "SELECT card_id, pin IS NOT NULL AS privileged FROM pocket_card
+	WHERE product_id = :product ORDER BY pin IS NULL, pin, added_at, rowid";
 
-const UNPIN_ALL: &str = "UPDATE pocket_card SET privileged = 0 WHERE privileged = 1";
+const UNPIN_ALL: &str = "UPDATE pocket_card SET pin = NULL WHERE pin IS NOT NULL";
 
-const PIN: &str = "INSERT INTO pocket_card (product_id, card_id, title, privileged)
-	VALUES (:product, :card, :title, 1)
-	ON CONFLICT (product_id, card_id) DO UPDATE SET title = excluded.title, privileged = 1";
+const PIN: &str = "INSERT INTO pocket_card (product_id, card_id, title, pin)
+	VALUES (:product, :card, :title, :pin)
+	ON CONFLICT (product_id, card_id) DO UPDATE SET title = excluded.title, pin = excluded.pin";
 
-const DROP_UNPINNED: &str = "DELETE FROM pocket_card WHERE privileged = 0 AND added_at IS NULL";
+const DROP_UNPINNED: &str = "DELETE FROM pocket_card WHERE pin IS NULL AND added_at IS NULL";
+
+const AGE_FACES: &str = "UPDATE pocket_card_face SET draw_order = 0";
 
 const ADD: &str = "INSERT INTO pocket_card (product_id, card_id, title, added_at)
 	VALUES (:product, :card, :title, unixepoch())
 	ON CONFLICT (product_id, card_id) DO UPDATE
-		SET title = CASE WHEN privileged THEN title ELSE excluded.title END,
+		SET title = CASE WHEN pin IS NULL THEN excluded.title ELSE title END,
 		added_at = COALESCE(added_at, excluded.added_at)";
 
 const PRIVILEGED: &str =
-	"SELECT privileged FROM pocket_card WHERE product_id = :product AND card_id = :card";
+	"SELECT pin IS NOT NULL FROM pocket_card WHERE product_id = :product AND card_id = :card";
 
 const DELETE: &str = "DELETE FROM pocket_card WHERE product_id = :product AND card_id = :card";
 
 const FACE: &str =
 	"SELECT face FROM pocket_card_face WHERE product_id = :product AND card_id = :card";
 
-const UPSERT_FACE: &str = "INSERT INTO pocket_card_face (product_id, card_id, face, drawn_at)
-	SELECT :product, :card, :face, :drawn_at WHERE EXISTS
+const UPSERT_FACE: &str = "INSERT INTO pocket_card_face (product_id, card_id, face, draw_order)
+	SELECT :product, :card, :face, :draw_order WHERE EXISTS
 		(SELECT 1 FROM pocket_card WHERE product_id = :product AND card_id = :card)
-	ON CONFLICT (product_id, card_id) DO UPDATE SET face = excluded.face, drawn_at = excluded.drawn_at
-		WHERE excluded.drawn_at >= pocket_card_face.drawn_at";
+	ON CONFLICT (product_id, card_id) DO UPDATE SET face = excluded.face, draw_order = excluded.draw_order
+		WHERE excluded.draw_order > pocket_card_face.draw_order";
 
 fn upsert_face(
 	tx: &Transaction<'_>,
 	product_id: &ProductId,
 	card_id: &str,
 	face: &RendererNode,
-	drawn_at: u64,
+	draw_order: u64,
 ) -> Result<(), DbError> {
 	tx.prepare_cached(UPSERT_FACE)?.execute(named_params! {
 		":product": product_id.as_str(),
 		":card": card_id,
 		":face": face.encode(),
-		":drawn_at": drawn_at,
+		":draw_order": draw_order,
 	})?;
 	Ok(())
 }
 
 fn entry(row: &Row<'_>) -> rusqlite::Result<PocketEntry> {
+	let product_id: String = row.get("product_id")?;
 	Ok(PocketEntry {
-		product_id: row.get("product_id")?,
+		product_id: product_id.parse().map_err(|error| {
+			rusqlite::Error::FromSqlConversionFailure(0, Type::Text, Box::new(error))
+		})?,
 		card_id: row.get("card_id")?,
 		title: row.get("title")?,
 		privileged: row.get("privileged")?,
