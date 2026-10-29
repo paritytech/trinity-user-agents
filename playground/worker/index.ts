@@ -247,6 +247,7 @@ async function runRoomDeclarationProbe(): Promise<void> {
         name: `TrUAPI Diagnosis v2 ${runId}`,
         description: "Chat Extension v2",
         icon: DIAGNOSIS_ROOM_ICON,
+        placeholder: "The diagnosis writes here",
       },
     });
     if (metadata.isErr()) {
@@ -254,7 +255,9 @@ async function runRoomDeclarationProbe(): Promise<void> {
         `setRoomMetadata failed: ${JSON.stringify(metadata.error)}`,
       );
     }
-    done("replaced the name, the description and the icon");
+    done(
+      "replaced the name, the description, the icon and the empty-room text",
+    );
 
     const preview = await chat.setRoomPreview({
       roomId,
@@ -263,6 +266,8 @@ async function runRoomDeclarationProbe(): Promise<void> {
         badge: { tag: "UnreadCount", value: { count: 1 } },
         lastMessage: message,
         unseenReactions: 0,
+        pinned: true,
+        activity: { text: "Diagnosis running", ongoing: true },
       },
     });
     if (preview.isErr()) {
@@ -270,7 +275,7 @@ async function runRoomDeclarationProbe(): Promise<void> {
         `setRoomPreview failed: ${JSON.stringify(preview.error)}`,
       );
     }
-    done("replaced the chat list preview");
+    done("replaced the chat list preview, pinned, with an activity line");
 
     const feed = await chat.updateFeed({
       roomId,
