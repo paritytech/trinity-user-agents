@@ -1,6 +1,8 @@
 import Foundation
 import AlarmKit
 import AppIntents
+import IssueMonitoring
+import Keystore_iOS
 
 @available(iOS 26.1, *)
 struct GameAlarmPlayIntent: LiveActivityIntent {
@@ -16,7 +18,16 @@ struct GameAlarmPlayIntent: LiveActivityIntent {
     @MainActor
     func perform() async throws -> some IntentResult {
         if let productId {
-            ProductOpener().open(productId: productId)
+            let diagnostics = GameReminderDiagnostics(recorder: IssueMonitoringFactory.createHostEventRecorder())
+            diagnostics.tapped(productId: productId, startsAt: storedStartsAt(productId: productId))
+
+            if ProductOpener().open(productId: productId) {
+                diagnostics.productOpened(
+                    productId: productId,
+                    startsAt: storedStartsAt(productId: productId),
+                    source: .alarm
+                )
+            }
         }
 
         if let alarmIDString = alarmID,
@@ -25,5 +36,11 @@ struct GameAlarmPlayIntent: LiveActivityIntent {
         }
 
         return .result()
+    }
+
+    /// The fire date the alarm was booked with, read from the settings that booking persisted.
+    private func storedStartsAt(productId: String) -> Date? {
+        SettingsManager.shared.integer(for: GameReminderStorageKeys.product(productId).alarmFireDate)
+            .map { Date(timeIntervalSinceReferenceDate: TimeInterval($0)) }
     }
 }
