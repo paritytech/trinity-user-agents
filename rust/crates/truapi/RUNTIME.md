@@ -472,11 +472,9 @@ for raw bytes signed inside the `<Bytes>` watermark.
   `select_funding_provider`, `cancel_funding`, `confirm_funding_cancel`,
   `acknowledge_funding_session`
   and `funding_in_progress`. Amounts cross the FFI as decimal strings.
-  Sessions are stored as a versioned blob, and the core keeps reading every
-  earlier format, so an upgrade keeps the sessions in flight; a blob it
-  cannot read is kept under `FundingSessionsUnreadable` rather than
-  overwritten. `funding_in_progress` reads storage when funding has not
-  resumed yet, so a host can ask at launch.
+  Sessions are stored in the core database, one row each; a row the core
+  cannot read is skipped and left in place. `funding_in_progress` reads the
+  database when funding has not resumed yet, so a host can ask at launch.
   The host owns the funding history. A session is stored only once the user
   starts it in the overlay. `funding_sessions` lists sessions in flight first,
   then ended ones the host has not recorded, each newest first. An ended
