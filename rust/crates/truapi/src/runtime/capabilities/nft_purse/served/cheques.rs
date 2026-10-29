@@ -34,8 +34,9 @@ impl ProductRuntimeHost {
 		Ok(latest::HostNftPurseCreateReceiveKeyResponse { key })
 	}
 
-	/// Hands items of a purse off in a cheque, after confirming a drain of a
-	/// purse the caller does not own. The items are spent from then on.
+	/// Hands items of a purse off in a cheque after checking the cheque id and
+	/// the items, and then confirming a drain of a purse the caller does not
+	/// own. The items are spent from then on.
 	pub async fn create_nft_cheque(
 		&self,
 		cx: &CallContext,
@@ -57,13 +58,14 @@ impl ProductRuntimeHost {
 		let item_count = u32::try_from(items.len()).map_err(host_failure)?;
 		let drain =
 			Drain { from, owner, item_count, destination: NftPurseDrainDestination::Cheque };
-		let denied = latest::HostNftPurseCreateChequeError::Denied;
-		self.confirm_drain(cx, drain, denied).await?;
 		let caller = self.connection.product_id();
-		let cheque = purses
-			.create_cheque(caller, from, &to, items)
+		let prepared = purses
+			.prepare_cheque(caller, from, &to, items)
 			.await
 			.map_err(create_cheque_failure)?;
+		let denied = latest::HostNftPurseCreateChequeError::Denied;
+		self.confirm_drain(cx, drain, denied).await?;
+		let cheque = prepared.create().await.map_err(create_cheque_failure)?;
 		Ok(latest::HostNftPurseCreateChequeResponse { cheque })
 	}
 }

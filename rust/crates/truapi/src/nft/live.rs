@@ -383,8 +383,8 @@ impl ChequeRoundTrip<'_> {
 		let product = live_product();
 		let receive_key = self.purses.create_receive_key(&product, from).await.unwrap();
 		let to = NftPurseChequeDestination::Ephemeral(receive_key);
-		let cheque =
-			self.purses.create_cheque(&product, from, &to, expected.clone()).await.unwrap();
+		let prepared = self.purses.prepare_cheque(&product, from, &to, expected.clone()).await;
+		let cheque = prepared.unwrap().create().await.unwrap();
 
 		let storage_key = [b"nft/receive-key/".as_slice(), &receive_key.0].concat();
 		let secret: [u8; 32] = encrypted.stored()[&storage_key].clone().try_into().unwrap();

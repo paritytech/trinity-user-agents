@@ -214,6 +214,24 @@ fn a_second_cheque_for_the_same_receive_key_answers_operation_exists() {
 	assert_eq!(again, Err(cheque_refusal(v01::NftPurseCreateChequeError::OperationExists)));
 }
 
+/// A retry of a cheque from a purse the caller does not own must not ask the
+/// user again only to be refused once they confirm.
+#[test]
+fn a_cheque_retried_for_the_same_receive_key_is_refused_without_asking_again() {
+	let platform = StubPlatform { nft_purse_drain_confirmed: true, ..Default::default() };
+	let platform = Arc::new(platform);
+	let purses = product_purses(platform.clone());
+	let root = purses.root_purse();
+	let items = purses.held_items(root, 1);
+	let receive_key = v01::NftPurseReceiveKey(public_key_of([3; 32]));
+	create_cheque(&purses.host, root.0, to_receive_key(receive_key), items.clone()).unwrap();
+
+	let again = create_cheque(&purses.host, root.0, to_receive_key(receive_key), items);
+
+	assert_eq!(again, Err(cheque_refusal(v01::NftPurseCreateChequeError::OperationExists)));
+	assert_eq!(drain_reviews(&platform).len(), 1);
+}
+
 #[test]
 fn a_cheque_of_no_items_answers_no_items() {
 	let purses = product_purses(Arc::new(StubPlatform::default()));
