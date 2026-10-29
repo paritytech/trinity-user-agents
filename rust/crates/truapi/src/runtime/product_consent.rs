@@ -192,7 +192,8 @@ fn skips_review(caller: AccountCaller<'_>, review: &UserConfirmationReview) -> b
 		UserConfirmationReview::SignRaw(SignRawReview::Product { .. }) |
 		UserConfirmationReview::CreateTransaction(CreateTransactionReview::Product { .. }) |
 		UserConfirmationReview::ResourceAllocation(_) |
-		UserConfirmationReview::ProductSubtree(_) => first_party,
+		UserConfirmationReview::ProductSubtree(_) |
+		UserConfirmationReview::NftPurseDrain(_) => first_party,
 		// Watermarked bytes cannot pass for a transaction's signing payload, so a
 		// trusted product signs them the way it signs with its own accounts.
 		UserConfirmationReview::SignRaw(SignRawReview::LegacyAccount {
