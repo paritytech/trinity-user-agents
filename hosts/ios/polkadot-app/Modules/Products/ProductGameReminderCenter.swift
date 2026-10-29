@@ -316,18 +316,22 @@ private extension ProductGameReminderCenter {
         }
     }
 
-    func recordFired(_ alarmIds: Set<UUID>) {
+    func recordFired(_ alarmIds: @autoclosure () -> Set<UUID>) {
+        diagnostics.fired { ringingSlots(alarmIds()) }
+    }
+
+    private func ringingSlots(_ alarmIds: Set<UUID>) -> [(productId: ProductId, startsAt: Date)] {
         guard !alarmIds.isEmpty else {
-            return
+            return []
         }
-        for slot in slots {
+        return slots.compactMap { slot in
             guard let alarmId = settingsManager.string(for: GameReminderStorageKeys.product(slot.productId).alarmId)
                 .flatMap(UUID.init(uuidString:)),
                 alarmIds.contains(alarmId),
                 firedAlarmIds.insert(alarmId).inserted else {
-                continue
+                return nil
             }
-            diagnostics.fired(productId: slot.productId, startsAt: slot.startsAt)
+            return (slot.productId, slot.startsAt)
         }
     }
 

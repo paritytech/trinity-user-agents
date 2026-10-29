@@ -17,14 +17,16 @@ extension GameReminderDiagnostics {
     static func recording(
         into recorder: RecordingHostEventRecorder,
         now: @escaping @Sendable () -> Date = { Date() },
-        applicationState: @escaping @MainActor @Sendable () -> UIApplication.State = { .active }
+        applicationState: @escaping @MainActor @Sendable () -> UIApplication.State = { .active },
+        isReporting: Bool = true
     ) -> GameReminderDiagnostics {
         GameReminderDiagnostics(
             recorder: recorder,
             origin: testOrigin,
             monotonicMilliseconds: { testMonotonicMilliseconds },
             now: now,
-            applicationState: applicationState
+            applicationState: applicationState,
+            isReporting: isReporting
         )
     }
 }

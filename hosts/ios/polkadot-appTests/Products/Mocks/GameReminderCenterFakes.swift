@@ -14,8 +14,15 @@ final class GameReminderCenterFakes: @unchecked Sendable {
     let calendar = RecordingCalendar()
     let recorder = RecordingHostEventRecorder()
     var currentAlertingAlarms: Set<UUID> = []
+    private(set) var alertingAlarmReads = 0
+    private let isReporting: Bool
     var diagnostics: GameReminderDiagnostics {
-        .recording(into: recorder, now: { self.now }, applicationState: { self.applicationState })
+        .recording(
+            into: recorder,
+            now: { self.now },
+            applicationState: { self.applicationState },
+            isReporting: isReporting
+        )
     }
 
     let alarmAlerts: AsyncStream<Set<UUID>>.Continuation
@@ -24,8 +31,9 @@ final class GameReminderCenterFakes: @unchecked Sendable {
     private var alarms: [String: RecordingGameReminder] = [:]
     private var notifications: [String: RecordingGameReminder] = [:]
 
-    init(now: Date, alarmAvailable: Bool) {
+    init(now: Date, alarmAvailable: Bool, isReporting: Bool) {
         self.now = now
+        self.isReporting = isReporting
         self.alarmAvailable = alarmAvailable
         (alarmAlertStream, alarmAlerts) = AsyncStream.makeStream()
     }
@@ -70,7 +78,8 @@ extension GameReminderCenterFakes: ProductGameReminderServicesMaking, Applicatio
     }
 
     func currentAlertingAlarmIds() -> Set<UUID> {
-        currentAlertingAlarms
+        alertingAlarmReads += 1
+        return currentAlertingAlarms
     }
 
     func open(productId: String) -> Bool {
@@ -84,9 +93,10 @@ extension GameReminderCenterFakes {
     static func makeCenter(
         now: Date,
         alarmAvailable: Bool = true,
+        isReporting: Bool = true,
         settings: SettingsManagerProtocol = InMemorySettingsManager()
     ) -> (center: ProductGameReminderCenter, fakes: GameReminderCenterFakes) {
-        let fakes = GameReminderCenterFakes(now: now, alarmAvailable: alarmAvailable)
+        let fakes = GameReminderCenterFakes(now: now, alarmAvailable: alarmAvailable, isReporting: isReporting)
         let center = ProductGameReminderCenter(
             dependencies: .init(
                 services: fakes,

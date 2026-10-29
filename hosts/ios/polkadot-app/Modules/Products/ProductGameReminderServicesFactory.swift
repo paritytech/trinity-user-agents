@@ -66,8 +66,7 @@ struct ProductGameReminderServicesFactory: ProductGameReminderServicesMaking {
     }
 
     func currentAlertingAlarmIds() -> Set<UUID> {
-        guard IssueMonitoringFactory.isReportingSupported,
-              #available(iOS 26.1, *),
+        guard #available(iOS 26.1, *),
               let alarms = try? AlarmManager.shared.alarms else {
             return []
         }

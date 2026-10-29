@@ -10,6 +10,7 @@ struct GameReminderDiagnostics: Sendable {
     private let monotonicMilliseconds: @Sendable () -> Int
     private let now: @Sendable () -> Date
     private let applicationState: @MainActor @Sendable () -> UIApplication.State
+    private let isReporting: Bool
 
     init(
         recorder: any HostEventRecording = NoopHostEventRecorder(),
@@ -18,13 +19,15 @@ struct GameReminderDiagnostics: Sendable {
         now: @escaping @Sendable () -> Date = { Date() },
         applicationState: @escaping @MainActor @Sendable () -> UIApplication.State = {
             UIApplication.shared.applicationState
-        }
+        },
+        isReporting: Bool = IssueMonitoringFactory.isReportingSupported
     ) {
         self.recorder = recorder
         self.origin = origin
         self.monotonicMilliseconds = monotonicMilliseconds
         self.now = now
         self.applicationState = applicationState
+        self.isReporting = isReporting
     }
 
     func scheduled(productId: ProductId, startsAt: Date, delivery: GameReminderEvent.Delivery) {
@@ -52,18 +55,24 @@ struct GameReminderDiagnostics: Sendable {
     }
 
     /// Only AlarmKit reports a ring, so the delivery is always the alarm.
+    /// `ringing` runs only in a build that reports, so the caller may put the AlarmKit query behind it.
     @MainActor
-    func fired(productId: ProductId, startsAt: Date) {
-        record(
-            GameReminderEvent(
-                step: .fired,
-                productId: productId,
-                startsAt: startsAt,
-                occurredAt: now(),
-                delivery: .alarm,
-                appState: .init(applicationState())
+    func fired(_ ringing: () -> [(productId: ProductId, startsAt: Date)]) {
+        guard isReporting else {
+            return
+        }
+        for (productId, startsAt) in ringing() {
+            record(
+                GameReminderEvent(
+                    step: .fired,
+                    productId: productId,
+                    startsAt: startsAt,
+                    occurredAt: now(),
+                    delivery: .alarm,
+                    appState: .init(applicationState())
+                )
             )
-        )
+        }
     }
 
     @MainActor

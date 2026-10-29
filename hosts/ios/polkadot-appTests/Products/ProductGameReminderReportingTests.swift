@@ -13,9 +13,15 @@ struct ProductGameReminderReportingTests {
     private func makeSUT(
         now: Date,
         alarmAvailable: Bool = true,
+        isReporting: Bool = true,
         settings: SettingsManagerProtocol = InMemorySettingsManager()
     ) -> (center: ProductGameReminderCenter, fakes: GameReminderCenterFakes) {
-        GameReminderCenterFakes.makeCenter(now: now, alarmAvailable: alarmAvailable, settings: settings)
+        GameReminderCenterFakes.makeCenter(
+            now: now,
+            alarmAvailable: alarmAvailable,
+            isReporting: isReporting,
+            settings: settings
+        )
     }
 
     @Test("A product's cancel is reported with its start; a start it never held reports nothing")
@@ -138,5 +144,20 @@ struct ProductGameReminderReportingTests {
         center.refresh()
 
         #expect(settings.stringReads.isEmpty)
+    }
+
+    @Test("A build that does not report never asks AlarmKit which alarms ring")
+    func nonReportingBuildReadsNoAlarmState() async {
+        let settings = ReadCountingSettingsManager()
+        let alarmId = UUID()
+        settings.set(string: alarmId.uuidString, for: GameReminderStorageKeys.product(productId).alarmId)
+        let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-60), isReporting: false, settings: settings)
+        fakes.currentAlertingAlarms = [alarmId]
+
+        center.refresh()
+
+        #expect(fakes.alertingAlarmReads == 0)
+        #expect(!settings.stringReads.contains(GameReminderStorageKeys.product(productId).alarmId))
+        #expect(fakes.recorder.events.isEmpty)
     }
 }

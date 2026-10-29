@@ -90,4 +90,19 @@ struct GameReminderEventTests {
 
         #expect(reads.withLock { $0 } == 0)
     }
+
+    @MainActor
+    @Test func aNonReportingBuildNeverEvaluatesTheRingingAlarms() {
+        let recorder = RecordingHostEventRecorder()
+        let diagnostics = GameReminderDiagnostics(recorder: recorder, isReporting: false)
+        var reads = 0
+
+        diagnostics.fired {
+            reads += 1
+            return [("game.dot", Date())]
+        }
+
+        #expect(reads == 0)
+        #expect(recorder.events.isEmpty)
+    }
 }
