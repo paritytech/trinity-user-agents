@@ -21,7 +21,7 @@ use subxt::{
 
 use super::{
 	ItemKey, NftLedger, NftLedgerDeps, OperationKey, PageRequest, PurseId, PurseTag,
-	ScarcityTransfersDeps, TransferDestinations, TransferRequest, TransferState,
+	ScarcityTransfersDeps, TransferRequest, TransferState, TransferType,
 	scarcity::ASSET_HUB_PIPELINE,
 	testing::{FixedEntropy, FixedInstallation, TEST_INSTALLATION},
 	with_scarcity_transfers,
@@ -416,8 +416,7 @@ async fn rebalance_round_trip(
 	let request = TransferRequest {
 		operation: operation.clone(),
 		from,
-		items: expected,
-		destinations: TransferDestinations::AllocatedIn(to),
+		transfer: TransferType::Local { inputs: expected, into: to },
 	};
 	ledger.start_transfers(request).await.expect("transfers register");
 	let minted = wait_for_finalized_transfers(ledger, &operation).await;
