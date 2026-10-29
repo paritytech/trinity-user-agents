@@ -24,6 +24,10 @@
     "./dotns": {
       "types": "./dist/dotns.d.ts",
       "import": "./dist/dotns.js"
+    },
+    "./reader": {
+      "types": "./dist/reader.d.ts",
+      "import": "./dist/reader.js"
     }
   },
   "files": [

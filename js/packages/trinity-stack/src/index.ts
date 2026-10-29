@@ -19,7 +19,10 @@ export type {
   Block,
   Chain,
   Coinage,
+  CurrentStack,
   Descriptor,
+  Dotns,
+  DotnsRecord,
   Fork,
   ForkSource,
   ParsedDocument,
@@ -143,7 +146,7 @@ export async function publish(
   return { document, descriptor: parse(plain).descriptor, state };
 }
 
-/** Where a reader keeps the last accepted document of each stack, and `resolveDotns` its last answer. */
+/** Where a reader keeps what it knows of each stack, under keys derived from its `stackId`. */
 export interface Store {
   get(id: string): Uint8Array | undefined | Promise<Uint8Array | undefined>;
   set(id: string, document: Uint8Array): void | Promise<void>;
@@ -206,6 +209,24 @@ export async function fetchDescriptor(
   url: string,
   options: { fetch?: Fetch; timeoutMs?: number } = {},
 ): Promise<Uint8Array | undefined> {
+  return (await fetchServed(url, options)).document;
+}
+
+/** What a descriptor URL served: a document and its `ETag`, a `304`, or nothing. */
+export type Served = {
+  document?: Uint8Array;
+  etag?: string;
+  notModified: boolean;
+};
+
+/**
+ * `fetchDescriptor`, sending `ifNoneMatch` as `If-None-Match` so an unchanged descriptor costs a
+ * `304` with no body.
+ */
+export async function fetchServed(
+  url: string,
+  options: { fetch?: Fetch; timeoutMs?: number; ifNoneMatch?: string } = {},
+): Promise<Served> {
   wasm.stackId({ url });
   const controller = new AbortController();
   const timer = setTimeout(
@@ -217,16 +238,27 @@ export async function fetchDescriptor(
       cache: "no-store",
       redirect: "error",
       signal: controller.signal,
+      headers: options.ifNoneMatch
+        ? { "if-none-match": options.ifNoneMatch }
+        : undefined,
     });
-    const bytes = response.ok ? await readCapped(response) : undefined;
-    if (!bytes) controller.abort();
-    return bytes;
+    if (response.status === 304) {
+      controller.abort();
+      return { notModified: true };
+    }
+    const document = response.ok ? await readCapped(response) : undefined;
+    if (!document) {
+      controller.abort();
+      return { notModified: false };
+    }
+    const etag = response.headers.get("etag") ?? undefined;
+    return { document, etag, notModified: false };
   } catch (error) {
     const aborted =
       error instanceof DOMException &&
       (error.name === "AbortError" || error.name === "TimeoutError");
     if (!options.fetch || error instanceof TypeError || aborted)
-      return undefined;
+      return { notModified: false };
     throw error;
   } finally {
     clearTimeout(timer);
