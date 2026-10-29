@@ -15,6 +15,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -48,6 +49,17 @@ class ChatRoomSourceContextTest {
 
         assertSame(hostSource, context.source())
         assertNull(context.productSource())
+    }
+
+    // The room screen offers the deletion of a message of the user only while the product keeps the messages.
+    @Test
+    fun `the room tells whether the product keeps its messages, also after a change of store`() = runBlocking<Unit> {
+        val policies = flowOf(policy(ChatRoomPolicy.MessageStore.HOST), policy(ChatRoomPolicy.MessageStore.PRODUCT))
+        val context = context(policy(ChatRoomPolicy.MessageStore.HOST), policies = policies)
+        val personChat = context(policy(ChatRoomPolicy.MessageStore.PRODUCT), chatId = ChatId.fromContact(ByteArray(32) { 1 }.toDataByteArray()))
+
+        assertEquals(listOf(false, true), context.observeProductKeepsMessages().toList())
+        assertEquals(listOf(false), personChat.observeProductKeepsMessages().toList())
     }
 
     @Test

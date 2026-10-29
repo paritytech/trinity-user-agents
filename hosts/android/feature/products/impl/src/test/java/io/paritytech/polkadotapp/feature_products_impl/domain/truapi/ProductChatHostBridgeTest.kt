@@ -6,6 +6,7 @@ import io.mockk.mockk
 import io.parity.truapi.HOST_DEFAULT_CHAT_ROOM_CONFIG
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomIconChange
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatPreviewReactionModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
@@ -215,13 +216,13 @@ class ProductChatHostBridgeTest {
         val messaging = mockk<ProductChatMessaging>()
         val room = ProductChatIdParameter(ROOM)
         coEvery { messaging.setRoomConfig(any(), any()) } returns Result.success(Unit)
-        coEvery { messaging.setRoomMetadata(any(), any(), any()) } returns Result.success(Unit)
+        coEvery { messaging.setRoomMetadata(any(), any(), any(), any()) } returns Result.success(Unit)
         coEvery { messaging.setRoomPreview(any(), any()) } returns Result.success(Unit)
         coEvery { messaging.deleteRoom(any()) } returns Result.success(Unit)
         val bridge = ProductChatHostBridge(productId, messaging)
 
         bridge.setRoomConfig(ROOM, HOST_DEFAULT_CHAT_ROOM_CONFIG.copy(reportSeen = true))
-        bridge.setRoomMetadata(ROOM, ChatRoomMetadata("Lobby", "Play here"))
+        bridge.setRoomMetadata(ROOM, ChatRoomMetadata("Lobby", "Play here", icon = null))
         bridge.setRoomPreview(
             ROOM,
             ChatRoomPreview(5uL, ChatRoomBadge.UnreadCount(2u), null, ChatPreviewReaction("👍", byUser = false, message = null, removed = true), 3u),
@@ -229,7 +230,7 @@ class ProductChatHostBridgeTest {
         bridge.deleteRoom(ROOM)
 
         coVerify { messaging.setRoomConfig(room, ChatRoomConfigModel.HOST_DEFAULT.copy(reportSeen = true)) }
-        coVerify { messaging.setRoomMetadata(room, "Lobby", ChatRoomMetadataModel("Play here")) }
+        coVerify { messaging.setRoomMetadata(room, "Lobby", null, ChatRoomMetadataModel("Play here")) }
         coVerify {
             messaging.setRoomPreview(
                 room,
@@ -237,6 +238,30 @@ class ProductChatHostBridgeTest {
             )
         }
         coVerify { messaging.deleteRoom(room) }
+    }
+
+    // The room keeps a new icon in the form the core screens it to, as it keeps the icon of createRoom.
+    @Test
+    fun `a metadata icon replaces the room icon in the screened form`() = runTest {
+        val messaging = mockk<ProductChatMessaging>()
+        coEvery { messaging.setRoomMetadata(any(), any(), any(), any()) } returns Result.success(Unit)
+
+        ProductChatHostBridge(productId, messaging).setRoomMetadata(ROOM, ChatRoomMetadata("Lobby", null, icon = "https://example.invalid"))
+
+        coVerify {
+            messaging.setRoomMetadata(ProductChatIdParameter(ROOM), "Lobby", RoomIconChange("https://example.invalid/"), ChatRoomMetadataModel(null))
+        }
+    }
+
+    // An empty icon removes the room icon. It must not reach the binding as "keep the icon".
+    @Test
+    fun `an empty metadata icon removes the room icon`() = runTest {
+        val messaging = mockk<ProductChatMessaging>()
+        coEvery { messaging.setRoomMetadata(any(), any(), any(), any()) } returns Result.success(Unit)
+
+        ProductChatHostBridge(productId, messaging).setRoomMetadata(ROOM, ChatRoomMetadata("Lobby", null, icon = ""))
+
+        coVerify { messaging.setRoomMetadata(ProductChatIdParameter(ROOM), "Lobby", RoomIconChange(null), ChatRoomMetadataModel(null)) }
     }
 
     // The chat list draws a custom message with the renderer of the product that sent it, as it draws a posted one.

@@ -142,6 +142,11 @@ internal class ProductMessageWindow(private val windowLimit: Int) {
         messages[messageId] = change(message)
     }
 
+    fun remove(messageId: String) {
+        if (messages.remove(messageId) == null) return
+        pages.replaceAll { page -> page.copy(ids = page.ids - messageId) }
+    }
+
     /** Puts back the earlier state of a message that is still in the window. */
     fun put(message: ProductRoomMessage) {
         if (messages.containsKey(message.messageId)) messages[message.messageId] = message

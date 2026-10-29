@@ -11,4 +11,9 @@ struct MessageListMetadata {
     var peerName: String {
         chatMetadata.peerMetadata.name
     }
+
+    /// The product keeps the messages of the room.
+    var isProductSource: Bool {
+        chatMetadata.roomPolicy?.messageStore == .product
+    }
 }

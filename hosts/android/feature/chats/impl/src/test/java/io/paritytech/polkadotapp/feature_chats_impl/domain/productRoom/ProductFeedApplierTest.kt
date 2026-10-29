@@ -120,6 +120,29 @@ class ProductFeedApplierTest {
     }
 
     @Test
+    fun `a deleted message of the product leaves the room`() = runBlocking<Unit> {
+        val stored = productStored("m1")
+        withStoredMessage(stored)
+
+        assertSuccess(apply(ProductFeedUpdateModel.Deleted("m1")))
+
+        coVerify { chatMessageRepository.removeMessage(stored.id) }
+    }
+
+    @Test
+    fun `a deletion of a message of the user is refused`() = runBlocking<Unit> {
+        withStoredMessage(message(id = "u1", chatId = room, origin = ChatMessageOrigin.User))
+
+        assertRejected<ProductFeedRejection.NotOwner>(apply(ProductFeedUpdateModel.Deleted("u1")))
+        coVerify(exactly = 0) { chatMessageRepository.removeMessage(any()) }
+    }
+
+    @Test
+    fun `a deletion of a message that is not there is refused`() = runBlocking<Unit> {
+        assertRejected<ProductFeedRejection.UnknownMessage>(apply(ProductFeedUpdateModel.Deleted("m9")))
+    }
+
+    @Test
     fun `a reaction of a participant is stored as a reaction of the product`() = runBlocking<Unit> {
         val stored = productStored("m1")
         withStoredMessage(stored)

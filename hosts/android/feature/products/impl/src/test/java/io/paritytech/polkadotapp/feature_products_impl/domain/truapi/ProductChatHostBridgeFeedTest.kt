@@ -125,6 +125,15 @@ class ProductChatHostBridgeFeedTest {
     }
 
     @Test
+    fun `a deletion reaches the store with the product id of the message`() = runTest {
+        coEvery { messaging.applyFeedUpdate(room, any()) } returns Result.success(Unit)
+
+        bridge.updateFeed(ROOM, ChatFeedUpdate.Deleted("m1"), persist = true)
+
+        coVerify { messaging.applyFeedUpdate(room, ProductFeedUpdateModel.Deleted("m1")) }
+    }
+
+    @Test
     fun `each refusal of the store reaches the product as its own rejection`() = runTest {
         suspend fun rejectionFor(failure: Throwable): Throwable? {
             coEvery { messaging.applyFeedUpdate(room, any()) } returns Result.failure(failure)

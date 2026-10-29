@@ -86,10 +86,19 @@ extension Chat {
 }
 
 extension Chat {
-    /// Replaces the name of a room and keeps its v1 icon.
+    /// What `set_room_metadata` does to the icon of a room.
+    enum RoomIconChange: Equatable {
+        /// The room keeps its current icon.
+        case keep
+        /// The room shows this icon. Nil removes the icon.
+        case replace(String?)
+    }
+
+    /// Replaces the name of a room and changes its icon as `icon` tells.
     struct RoomNameUpdate {
         let chatId: Chat.Id
         let name: String
+        let icon: RoomIconChange
     }
 
     struct RoomConfigUpdate {
