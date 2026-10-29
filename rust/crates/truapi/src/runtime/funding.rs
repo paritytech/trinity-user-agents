@@ -14,6 +14,35 @@
 //! hand-overs and timers must exist, and brings them in line one pass at a
 //! time.
 
+#[cfg(not(target_arch = "wasm32"))]
+mod store;
+#[cfg(test)]
+pub(crate) use store::{fail_writes, stored_sessions};
+
+/// A wasm core has no core database, so it holds no funding session: every
+/// commit fails before it changes anything.
+#[cfg(target_arch = "wasm32")]
+mod store {
+	use crate::host_logic::funding::{FundingSession, FundingSessionError, FundingSessionSummary};
+
+	pub(super) enum Db {}
+
+	pub(super) async fn load(
+		db: &Db,
+	) -> Result<(Vec<FundingSession>, Vec<FundingSessionSummary>), FundingSessionError> {
+		match *db {}
+	}
+
+	pub(super) async fn write(
+		db: &Db,
+		_sessions: &[&FundingSession],
+		_removed: Vec<String>,
+		_summaries: &[FundingSessionSummary],
+	) -> Result<(), FundingSessionError> {
+		match *db {}
+	}
+}
+
 use std::{
 	collections::{HashMap, HashSet, VecDeque},
 	sync::{
@@ -43,10 +72,10 @@ use crate::{
 	host_logic::funding::{
 		CancelCall, CancelConfirmation, CancelOutcome, CancelTerms, FundingChoice, FundingSession,
 		FundingSessionError, FundingSessionSummary, Settlement, StartRecord, StartedFunds,
-		load_pack, load_sessions, pack_blob, retained, store_pack, store_sessions,
+		retained,
 	},
 	platform::{
-		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, ProductContext,
+		FundingPlatform, FundingPresentOutcome, FundingPresentation, ProductContext,
 		ProductExecutionKind, ProductId,
 	},
 	runtime::payment_id::host_payment_id,
@@ -138,9 +167,8 @@ struct Announcements {
 #[derive(Default)]
 pub struct FundingRegistry {
 	sessions: Mutex<HashMap<String, FundingSession>>,
-	/// Recorded sessions compacted out of [`Self::sessions`], by intent. A
-	/// session can sit in both after a write that stored its summary but not
-	/// the trimmed sessions; the full record then wins.
+	/// Recorded sessions compacted out of [`Self::sessions`], by intent.
+	/// Should a session sit in both, the full record wins.
 	pack: Mutex<HashMap<String, FundingSessionSummary>>,
 	/// Sessions whose overlay is still up: live in memory, so the overlay can
 	/// quote and pick a provider for them, but not stored until the user
@@ -158,6 +186,8 @@ pub struct FundingRegistry {
 	/// write lock.
 	loaded: AtomicBool,
 	platform: OnceLock<Arc<dyn FundingPlatform>>,
+	/// The core database the sessions are stored in.
+	db: OnceLock<store::Db>,
 	/// Each provider's worker connection, by product id.
 	links: Mutex<HashMap<String, Link>>,
 	/// Callers waiting for a provider's worker to connect, by product id.
@@ -203,6 +233,20 @@ impl FundingRegistry {
 		self.platform.get().cloned()
 	}
 
+	/// Install the core database the sessions are stored in. Set-once;
+	/// returns whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_db(&self, db: crate::store::Db) -> bool {
+		self.db.set(db).is_ok()
+	}
+
+	/// The core database, or a storage error while none is installed.
+	fn db(&self) -> Result<&store::Db, FundingSessionError> {
+		self.db.get().ok_or_else(|| FundingSessionError::Storage {
+			reason: "no core database configured".to_string(),
+		})
+	}
+
 	/// A registry belonging to `services`.
 	pub fn new(services: Weak<RuntimeServices>) -> Self {
 		Self { services, ..Self::default() }
@@ -212,7 +256,6 @@ impl FundingRegistry {
 	/// it to that provider. Returns whether it was open and unassigned.
 	pub async fn select_provider(
 		&self,
-		storage: &(impl CoreStorage + ?Sized),
 		now_ms: u64,
 		intent: &str,
 		provider_id: &str,
@@ -221,7 +264,7 @@ impl FundingRegistry {
 		let intent = intent.to_string();
 		let provider = provider_id.to_string();
 		let assigned = self
-			.commit(storage, now_ms, move |sessions| {
+			.commit(now_ms, move |sessions| {
 				let assigned = sessions.get_mut(&intent).and_then(|session| {
 					session.assign(&provider, choice, now_ms).then(|| session.assignment())
 				});
@@ -333,7 +376,6 @@ impl FundingRegistry {
 	/// session alone, and uses them up.
 	pub async fn report(
 		&self,
-		storage: &(impl CoreStorage + ?Sized),
 		now_ms: u64,
 		provider: &ProductContext,
 		intent: &str,
@@ -342,7 +384,7 @@ impl FundingRegistry {
 		let intent = intent.to_string();
 		let provider_id = provider.product_id.as_str();
 		let host_id = |id: &[u8; 32]| host_payment_id(provider, *id);
-		self.commit(storage, now_ms, move |sessions| {
+		self.commit(now_ms, move |sessions| {
 			let reported = match sessions.get_mut(&intent) {
 				Some(session) => session.report(provider_id, update, host_id, now_ms),
 				None => Err(HostFundingReportError::NotFound),
@@ -385,14 +427,13 @@ impl FundingRegistry {
 	/// holds their id.
 	pub async fn record_start(
 		&self,
-		storage: &(impl CoreStorage + ?Sized),
 		now_ms: u64,
 		provider_id: &str,
 		intent: &str,
 		asked: FundsAsked,
 	) -> Result<Option<StartRecord>, FundingSessionError> {
 		let FundsAsked { direction, host_id, amount, terms } = asked;
-		self.commit(storage, now_ms, |sessions| {
+		self.commit(now_ms, |sessions| {
 			let elsewhere = sessions.values().any(|session| {
 				session.intent != intent &&
 					session.provider_id.as_deref() == Some(provider_id) &&
@@ -430,13 +471,12 @@ impl FundingRegistry {
 	/// unless the host took them before.
 	pub async fn finish_start(
 		&self,
-		storage: &(impl CoreStorage + ?Sized),
 		now_ms: u64,
 		intent: &str,
 		host_id: [u8; 32],
 		taken: bool,
 	) -> Result<(), FundingSessionError> {
-		self.commit(storage, now_ms, |sessions| {
+		self.commit(now_ms, |sessions| {
 			let changed = sessions.get_mut(intent).is_some_and(|session| {
 				if taken { session.accept_start(&host_id) } else { session.forget_start(&host_id) }
 			});
@@ -534,12 +574,11 @@ impl FundingRegistry {
 	/// and not yet acknowledged.
 	pub async fn acknowledge(
 		&self,
-		storage: &(impl CoreStorage + ?Sized),
 		now_ms: u64,
 		intent: &str,
 	) -> Result<bool, FundingSessionError> {
 		let intent = intent.to_string();
-		self.commit(storage, now_ms, move |sessions| {
+		self.commit(now_ms, move |sessions| {
 			let acknowledged = sessions
 				.get_mut(&intent)
 				.filter(|session| session.is_terminal() && !session.acknowledged)
@@ -556,13 +595,12 @@ impl FundingRegistry {
 	/// closing.
 	pub async fn cancel(
 		&self,
-		storage: &(impl CoreStorage + ?Sized),
 		now_ms: u64,
 		intent: &str,
 	) -> Result<CancelOutcome, FundingSessionError> {
 		let target = intent.to_string();
 		let (outcome, provider) = self
-			.commit(storage, now_ms, move |sessions| {
+			.commit(now_ms, move |sessions| {
 				let Some(session) =
 					sessions.get_mut(&target).filter(|_| !self.lock_presenting().contains(&target))
 				else {
@@ -592,14 +630,13 @@ impl FundingRegistry {
 	/// answer to the provider.
 	pub async fn confirm_cancel(
 		&self,
-		storage: &(impl CoreStorage + ?Sized),
 		now_ms: u64,
 		intent: &str,
 		terms: Option<CancelTerms>,
 	) -> Result<CancelConfirmation, FundingSessionError> {
 		let target = intent.to_string();
 		let (confirmation, call) = self
-			.commit(storage, now_ms, move |sessions| {
+			.commit(now_ms, move |sessions| {
 				let Some(session) = sessions.get_mut(&target) else {
 					return ((CancelConfirmation::NoOffer, None), Vec::new());
 				};
@@ -653,13 +690,12 @@ impl FundingRegistry {
 	/// is already held, in full or in the pack.
 	async fn present(
 		&self,
-		storage: &(impl CoreStorage + ?Sized),
 		now_ms: u64,
 		session: FundingSession,
 	) -> Result<bool, FundingSessionError> {
 		let intent = session.intent.clone();
 		let presented = self
-			.commit(storage, now_ms, |sessions| {
+			.commit(now_ms, |sessions| {
 				if sessions.contains_key(&session.intent) ||
 					self.lock_pack().contains_key(&session.intent)
 				{
@@ -680,16 +716,11 @@ impl FundingRegistry {
 	/// it. A session that cannot be stored is discarded, as the caller is
 	/// told it failed; until then it stays presented, so no other commit
 	/// stores it.
-	async fn start(
-		&self,
-		storage: &(impl CoreStorage + ?Sized),
-		now_ms: u64,
-		intent: &str,
-	) -> Result<(), FundingSessionError> {
+	async fn start(&self, now_ms: u64, intent: &str) -> Result<(), FundingSessionError> {
 		// Leaving the overlay inside the commit, so no other commit stores
 		// the session before this one announces it.
 		let started = self
-			.commit(storage, now_ms, |_| {
+			.commit(now_ms, |_| {
 				self.lock_presenting().remove(intent);
 				((), vec![intent.to_string()])
 			})
@@ -737,8 +768,8 @@ impl FundingRegistry {
 		true
 	}
 
-	/// Apply `edit` to a copy of the sessions, persist the result, then make it
-	/// current and notify every session `edit` names. An edit may move
+	/// Apply `edit` to a copy of the sessions, persist what changed, then make
+	/// it current and notify every session `edit` names. An edit may move
 	/// sessions in or out of the overlay; when the write fails, that move is
 	/// undone along with the rest.
 	///
@@ -747,22 +778,24 @@ impl FundingRegistry {
 	/// cannot leave an overdue session open.
 	pub async fn commit<R>(
 		&self,
-		storage: &(impl CoreStorage + ?Sized),
 		now_ms: u64,
 		edit: impl FnOnce(&mut HashMap<String, FundingSession>) -> (R, Vec<String>),
 	) -> Result<R, FundingSessionError> {
 		let mut loaded = self.writes.lock().await;
+		let db = self.db()?;
+		if !*loaded {
+			// Held as stored, so a commit writes only the rows it changes.
+			let (sessions, summaries) = store::load(db).await?;
+			self.lock_sessions()
+				.extend(sessions.into_iter().map(|session| (session.intent.clone(), session)));
+			self.lock_pack()
+				.extend(summaries.into_iter().map(|summary| (summary.intent.clone(), summary)));
+			*loaded = true;
+			self.loaded.store(true, Ordering::Release);
+		}
 		let presenting_before = self.lock_presenting().clone();
 		let mut working = self.lock_sessions().clone();
 		let mut changed = Vec::new();
-		if !*loaded {
-			for session in load_sessions(storage).await? {
-				working.entry(session.intent.clone()).or_insert(session);
-			}
-			let stored = load_pack(storage).await?;
-			self.lock_pack()
-				.extend(stored.into_iter().map(|summary| (summary.intent.clone(), summary)));
-		}
 		let (result, edited) = edit(&mut working);
 		// A session the host is told about must be stored too, which covers
 		// one leaving the overlay: started, though nothing in it changed.
@@ -788,48 +821,50 @@ impl FundingRegistry {
 		}
 		// The write lock keeps the in-memory map unchanged until this commit
 		// replaces it, so it still holds the sessions as they were before `edit`.
-		if !*loaded || announces || working != *self.lock_sessions() {
+		if announces || working != *self.lock_sessions() {
 			let (kept, compacted) = retained(working.into_values());
+			let kept: HashMap<String, FundingSession> =
+				kept.into_iter().map(|session| (session.intent.clone(), session)).collect();
 			// An assigned session is stored even while its overlay is up, as
-			// its provider's reports are stored before they are answered.
-			let (started, stored_set_changed) = {
+			// its provider's reports are stored before they are answered. A
+			// session only shown in the overlay is not stored, so holding one
+			// changes nothing worth writing.
+			let stored = |presenting: &HashSet<String>, session: &FundingSession| {
+				!presenting.contains(&session.intent) || session.provider_id.is_some()
+			};
+			let (put, removed) = {
 				let presenting = self.lock_presenting();
 				let before = self.lock_sessions();
-				let stored = |presenting: &HashSet<String>, session: &FundingSession| {
-					!presenting.contains(&session.intent) || session.provider_id.is_some()
-				};
-				let started: Vec<&FundingSession> =
-					kept.iter().filter(|session| stored(&presenting, session)).collect();
-				let stored_before =
-					before.values().filter(|session| stored(&presenting_before, session)).count();
-				// A session only shown in the overlay is not stored, so holding
-				// one changes nothing worth writing.
-				let unchanged = started.len() == stored_before &&
-					started.iter().all(|session| {
-						stored(&presenting_before, session) &&
-							before.get(&session.intent) == Some(*session)
-					});
-				(started, !unchanged)
+				let put: Vec<&FundingSession> = kept
+					.values()
+					.filter(|session| {
+						stored(&presenting, session) &&
+							before.get(&session.intent).is_none_or(|held| {
+								held != *session || !stored(&presenting_before, held)
+							})
+					})
+					.collect();
+				let removed: Vec<String> = before
+					.values()
+					.filter(|held| {
+						stored(&presenting_before, held) &&
+							!kept
+								.get(&held.intent)
+								.is_some_and(|session| stored(&presenting, session))
+					})
+					.map(|held| held.intent.clone())
+					.collect();
+				(put, removed)
 			};
-			if !*loaded || announces || stored_set_changed {
-				// The pack first, so no session leaves the sessions blob before
-				// its summary is stored.
-				let written = match self.store_compacted(storage, &compacted).await {
-					Ok(()) => store_sessions(storage, &started).await,
-					Err(error) => Err(error),
-				};
-				if let Err(error) = written {
-					*self.lock_presenting() = presenting_before;
-					return Err(error);
-				}
+			let writes = !put.is_empty() || !removed.is_empty() || !compacted.is_empty();
+			if writes && let Err(error) = store::write(db, &put, removed, &compacted).await {
+				*self.lock_presenting() = presenting_before;
+				return Err(error);
 			}
 			self.lock_pack()
 				.extend(compacted.into_iter().map(|summary| (summary.intent.clone(), summary)));
-			*self.lock_sessions() =
-				kept.into_iter().map(|session| (session.intent.clone(), session)).collect();
+			*self.lock_sessions() = kept;
 		}
-		*loaded = true;
-		self.loaded.store(true, Ordering::Release);
 		// Each session once, even when an edit and its expiry both name it.
 		let mut announced = HashSet::new();
 		changed.retain(|intent| announced.insert(intent.clone()));
@@ -854,9 +889,9 @@ impl FundingRegistry {
 
 	/// Wake the reconciler, which brings background work in line with the
 	/// sessions, and start it on first use. A registry built on its own has
-	/// none.
+	/// none, and one without a database holds no session to work on.
 	pub fn wake(&self) {
-		let Some(services) = self.services.upgrade() else {
+		let Some(services) = self.services.upgrade().filter(|_| self.db.get().is_some()) else {
 			return;
 		};
 		let mut reconciler = self.lock_reconciler();
@@ -887,7 +922,7 @@ impl FundingRegistry {
 		let now_ms = current_unix_millis();
 		let overdue = self.next_deadline().is_some_and(|deadline_ms| deadline_ms <= now_ms);
 		if !self.loaded.load(Ordering::Acquire) || overdue {
-			match self.sweep(services.platform.as_ref(), now_ms).await {
+			match self.sweep(now_ms).await {
 				Ok(()) => {},
 				// Left for the newer app that wrote them; nothing runs on them.
 				Err(FundingSessionError::NewerFormat { .. }) => return None,
@@ -1040,7 +1075,7 @@ impl FundingRegistry {
 				let mut answered = true;
 				for calls in registry.pending_calls(&provider) {
 					for call in calls {
-						answered &= registry.put(&services, link.as_ref(), call).await;
+						answered &= registry.put(link.as_ref(), call).await;
 					}
 				}
 				registry.caught_up(&provider, generation, answered);
@@ -1106,7 +1141,7 @@ impl FundingRegistry {
 		let spawner = services.spawner.clone();
 		spawner(Box::pin(async move {
 			for call in calls {
-				services.funding().put(&services, link.as_ref(), call).await;
+				services.funding().put(link.as_ref(), call).await;
 			}
 		}));
 	}
@@ -1114,12 +1149,7 @@ impl FundingRegistry {
 	/// Put one call to a provider's worker and store its answer. Returns
 	/// whether the worker answered within [`CALL_TIMEOUT`] and the answer was
 	/// stored.
-	async fn put(
-		&self,
-		services: &RuntimeServices,
-		link: &dyn FundingProviderLink,
-		call: ProviderCall,
-	) -> bool {
+	async fn put(&self, link: &dyn FundingProviderLink, call: ProviderCall) -> bool {
 		let (intent, answered) = match call {
 			ProviderCall::Assign(session) => {
 				let intent = session.intent.clone();
@@ -1138,7 +1168,7 @@ impl FundingRegistry {
 				};
 				let target = intent.clone();
 				let answered = self
-					.commit(services.platform.as_ref(), current_unix_millis(), move |sessions| {
+					.commit(current_unix_millis(), move |sessions| {
 						let now_ms = current_unix_millis();
 						let changed = sessions
 							.get_mut(&target)
@@ -1159,7 +1189,7 @@ impl FundingRegistry {
 				}
 				let target = intent.clone();
 				let answered = self
-					.commit(services.platform.as_ref(), current_unix_millis(), move |sessions| {
+					.commit(current_unix_millis(), move |sessions| {
 						if let Some(session) = sessions.get_mut(&target) {
 							session.cancel_settled(&decision);
 						}
@@ -1178,46 +1208,16 @@ impl FundingRegistry {
 		}
 	}
 
-	/// Store the pack with `compacted` added; nothing to write when it is
-	/// empty. The blob is encoded under the pack lock, so the pack is not
-	/// copied to write it.
-	async fn store_compacted(
-		&self,
-		storage: &(impl CoreStorage + ?Sized),
-		compacted: &[FundingSessionSummary],
-	) -> Result<(), FundingSessionError> {
-		if compacted.is_empty() {
-			return Ok(());
-		}
-		let blob = {
-			let pack = self.lock_pack();
-			// A summary stored by a commit whose sessions write then failed is
-			// compacted again; it is written once.
-			let held = pack
-				.values()
-				.filter(|summary| !compacted.iter().any(|fresh| fresh.intent == summary.intent));
-			pack_blob(held.chain(compacted))
-		};
-		store_pack(storage, blob).await
-	}
-
 	/// Load persisted sessions if they are not loaded yet and expire the
 	/// overdue ones; the reconciler then keeps expiring the rest on time.
-	pub async fn load(
-		&self,
-		storage: &(impl CoreStorage + ?Sized),
-	) -> Result<(), FundingSessionError> {
-		self.sweep(storage, current_unix_millis()).await
+	pub async fn load(&self) -> Result<(), FundingSessionError> {
+		self.sweep(current_unix_millis()).await
 	}
 
 	/// Commit no edit, which loads persisted sessions on first use and
 	/// expires the overdue ones.
-	async fn sweep(
-		&self,
-		storage: &(impl CoreStorage + ?Sized),
-		now_ms: u64,
-	) -> Result<(), FundingSessionError> {
-		self.commit(storage, now_ms, |_| ((), Vec::new())).await
+	async fn sweep(&self, now_ms: u64) -> Result<(), FundingSessionError> {
+		self.commit(now_ms, |_| ((), Vec::new())).await
 	}
 
 	fn next_deadline(&self) -> Option<u64> {
@@ -1558,7 +1558,7 @@ impl RuntimeServices {
 			let mut retry_in = RESUME_RETRY_FIRST;
 			loop {
 				let loaded = registry
-					.commit(services.platform.as_ref(), current_unix_millis(), |sessions| {
+					.commit(current_unix_millis(), |sessions| {
 						// Ended sessions the host has not recorded are
 						// handed over again, so its history gets every
 						// outcome.
@@ -1598,7 +1598,7 @@ impl RuntimeServices {
 	) -> Result<bool, FundingSessionError> {
 		let intent = intent.to_string();
 		self.funding()
-			.commit(self.platform.as_ref(), current_unix_millis(), move |sessions| {
+			.commit(current_unix_millis(), move |sessions| {
 				let settled = sessions
 					.get_mut(&intent)
 					.filter(|session| !session.is_terminal())
@@ -1622,16 +1622,12 @@ impl RuntimeServices {
 		&self,
 		intent: &str,
 	) -> Result<bool, FundingSessionError> {
-		self.funding()
-			.acknowledge(self.platform.as_ref(), current_unix_millis(), intent)
-			.await
+		self.funding().acknowledge(current_unix_millis(), intent).await
 	}
 
 	/// Cancel session `intent` at the user's request, and say what that did.
 	pub async fn cancel_funding(&self, intent: &str) -> Result<CancelOutcome, FundingSessionError> {
-		self.funding()
-			.cancel(self.platform.as_ref(), current_unix_millis(), intent)
-			.await
+		self.funding().cancel(current_unix_millis(), intent).await
 	}
 
 	/// Answer the provider's cancel offer on session `intent`: accept it on
@@ -1641,9 +1637,7 @@ impl RuntimeServices {
 		intent: &str,
 		terms: Option<CancelTerms>,
 	) -> Result<CancelConfirmation, FundingSessionError> {
-		self.funding()
-			.confirm_cancel(self.platform.as_ref(), current_unix_millis(), intent, terms)
-			.await
+		self.funding().confirm_cancel(current_unix_millis(), intent, terms).await
 	}
 
 	/// Hand open session `intent` to the provider the user chose, which must
@@ -1691,13 +1685,7 @@ impl RuntimeServices {
 			}
 		}
 		registry
-			.select_provider(
-				self.platform.as_ref(),
-				current_unix_millis(),
-				intent,
-				provider.as_str(),
-				choice,
-			)
+			.select_provider(current_unix_millis(), intent, provider.as_str(), choice)
 			.await
 	}
 
@@ -1754,7 +1742,7 @@ impl RuntimeServices {
 				loop {
 					let settling = intent.clone();
 					let settled = registry
-						.commit(self.platform.as_ref(), current_unix_millis(), move |sessions| {
+						.commit(current_unix_millis(), move |sessions| {
 							let now_ms = current_unix_millis();
 							let settled = sessions.get_mut(&settling).is_some_and(|session| {
 								if refund {
@@ -1817,7 +1805,7 @@ impl RuntimeServices {
 				let host_id = funds.host_id;
 				let target = intent.clone();
 				let written = registry
-					.commit(self.platform.as_ref(), now_ms, |sessions| {
+					.commit(now_ms, |sessions| {
 						let starting = registry.lock_starting().contains(&host_id);
 						let changed = !starting &&
 							sessions.get_mut(&target).is_some_and(|session| {
@@ -1940,7 +1928,7 @@ impl RuntimeServices {
 		// provider, but stored only once the user starts it: an overlay the
 		// app is killed under leaves no session behind.
 		let presented = registry
-			.present(self.platform.as_ref(), now_ms, session.clone())
+			.present(now_ms, session.clone())
 			.await
 			.map_err(OpenFundingError::Session)?;
 		if !presented {
@@ -1973,7 +1961,6 @@ impl RuntimeServices {
 		session: FundingSession,
 	) -> Result<FundingSession, OpenFundingError> {
 		let registry = self.funding();
-		let storage = self.platform.as_ref();
 		let presentation = FundingPresentation {
 			intent: session.intent.clone(),
 			direction: session.direction,
@@ -1983,7 +1970,7 @@ impl RuntimeServices {
 		match presented {
 			Ok(FundingPresentOutcome::Started) => {
 				registry
-					.start(storage, current_unix_millis(), &session.intent)
+					.start(current_unix_millis(), &session.intent)
 					.await
 					.map_err(OpenFundingError::Session)?;
 				Ok(registry.get(&session.intent).unwrap_or(session))
@@ -2000,12 +1987,12 @@ impl RuntimeServices {
 				// asked to stop, as the user left without starting.
 				let now_ms = current_unix_millis();
 				registry
-					.start(storage, now_ms, &session.intent)
+					.start(now_ms, &session.intent)
 					.await
 					.map_err(OpenFundingError::Session)?;
 				if registry.get(&session.intent).is_some_and(|kept| !kept.money_moved()) {
 					registry
-						.cancel(storage, now_ms, &session.intent)
+						.cancel(now_ms, &session.intent)
 						.await
 						.map_err(OpenFundingError::Session)?;
 				}
@@ -2095,10 +2082,10 @@ mod tests {
 	use futures::executor::block_on;
 	use parity_scale_codec::Encode;
 
+	use super::store::{put_session_row, rows};
 	use crate::{
 		host_logic::funding::{FundingStage, RECORDED_PER_OWNER},
-		platform::CoreStorageKey,
-		test_support::stub_platform,
+		store::{Db, open_memory_core_db},
 	};
 
 	const NOW: u64 = 1_700_000_000_000;
@@ -2114,8 +2101,21 @@ mod tests {
 		)
 	}
 
-	fn insert(registry: &FundingRegistry, storage: &dyn CoreStorage, session: FundingSession) {
-		block_on(registry.commit(storage, NOW, move |sessions| {
+	fn registry_on(db: &Db) -> FundingRegistry {
+		let registry = FundingRegistry::default();
+		assert!(registry.install_db(db.clone()));
+		registry
+	}
+
+	fn stored_intents(db: &Db) -> Vec<String> {
+		block_on(stored_sessions(db))
+			.into_iter()
+			.map(|session| session.intent)
+			.collect()
+	}
+
+	fn insert(registry: &FundingRegistry, session: FundingSession) {
+		block_on(registry.commit(NOW, move |sessions| {
 			sessions.insert(session.intent.clone(), session);
 			((), Vec::new())
 		}))
@@ -2124,29 +2124,24 @@ mod tests {
 
 	#[test]
 	fn a_settled_session_survives_later_saves() {
-		let storage = stub_platform();
-		let registry = FundingRegistry::default();
-		insert(&registry, storage.as_ref(), session("fs_old", NOW - DAY_MS));
-		block_on(registry.sweep(storage.as_ref(), NOW)).expect("swept");
+		let db = open_memory_core_db();
+		let registry = registry_on(&db);
+		insert(&registry, session("fs_old", NOW - DAY_MS));
+		block_on(registry.sweep(NOW)).expect("swept");
 
-		insert(&registry, storage.as_ref(), session("fs_new", NOW));
+		insert(&registry, session("fs_new", NOW));
 
-		let persisted: Vec<String> = block_on(load_sessions(storage.as_ref()))
-			.expect("loaded")
-			.into_iter()
-			.map(|session| session.intent)
-			.collect();
-		assert_eq!(persisted, ["fs_new", "fs_old"]);
+		assert_eq!(stored_intents(&db), ["fs_new", "fs_old"]);
 	}
 
 	#[test]
 	fn a_subscriber_sees_the_current_stage_then_expiry_and_the_end() {
-		let storage = stub_platform();
-		let registry = FundingRegistry::default();
-		insert(&registry, storage.as_ref(), session("fs_1", NOW));
+		let db = open_memory_core_db();
+		let registry = registry_on(&db);
+		insert(&registry, session("fs_1", NOW));
 		let stream = registry.subscribe("fs_1").expect("session exists");
 
-		block_on(registry.sweep(storage.as_ref(), NOW + DAY_MS)).expect("swept");
+		block_on(registry.sweep(NOW + DAY_MS)).expect("swept");
 
 		assert_eq!(
 			block_on(stream.collect::<Vec<_>>()),
@@ -2159,9 +2154,9 @@ mod tests {
 
 	#[test]
 	fn subscribing_drops_watchers_that_went_away() {
-		let storage = stub_platform();
-		let registry = FundingRegistry::default();
-		insert(&registry, storage.as_ref(), session("fs_1", NOW));
+		let db = open_memory_core_db();
+		let registry = registry_on(&db);
+		insert(&registry, session("fs_1", NOW));
 		for _ in 0..3 {
 			drop(registry.subscribe("fs_1").expect("session exists"));
 		}
@@ -2172,13 +2167,13 @@ mod tests {
 
 	#[test]
 	fn a_restart_restores_open_sessions_and_expires_overdue_ones() {
-		let storage = stub_platform();
-		let before = FundingRegistry::default();
-		insert(&before, storage.as_ref(), session("fs_live", NOW));
-		insert(&before, storage.as_ref(), session("fs_overdue", NOW - DAY_MS));
+		let db = open_memory_core_db();
+		let before = registry_on(&db);
+		insert(&before, session("fs_live", NOW));
+		insert(&before, session("fs_overdue", NOW - DAY_MS));
 
-		let after = FundingRegistry::default();
-		block_on(after.sweep(storage.as_ref(), NOW)).expect("loaded");
+		let after = registry_on(&db);
+		block_on(after.sweep(NOW)).expect("loaded");
 
 		assert_eq!(after.get("fs_live"), Some(session("fs_live", NOW)));
 		assert_eq!(
@@ -2191,8 +2186,8 @@ mod tests {
 	// newest first.
 	#[test]
 	fn sessions_list_in_flight_first_then_ended_newest_first() {
-		let storage = stub_platform();
-		let registry = FundingRegistry::default();
+		let db = open_memory_core_db();
+		let registry = registry_on(&db);
 		let ended = |intent, settled_at_ms| {
 			let mut session = session(intent, settled_at_ms - 1);
 			session.fail(FundingFailure::Expired, settled_at_ms);
@@ -2204,7 +2199,7 @@ mod tests {
 			ended("fs_new", NOW - 1),
 			session("fs_live_new", NOW),
 		] {
-			insert(&registry, storage.as_ref(), session);
+			insert(&registry, session);
 		}
 
 		assert_eq!(
@@ -2281,14 +2276,12 @@ mod tests {
 	/// Record funds `provider` starts under `host_id` for session `intent`.
 	fn record(
 		registry: &FundingRegistry,
-		storage: &dyn CoreStorage,
 		provider: &str,
 		intent: &str,
 		host_id: [u8; 32],
 		amount: u128,
 	) -> Option<StartRecord> {
 		block_on(registry.record_start(
-			storage,
 			NOW,
 			provider,
 			intent,
@@ -2303,8 +2296,8 @@ mod tests {
 	// cancelled and B can name it.
 	#[test]
 	fn started_funds_belong_to_the_session_they_were_started_for() {
-		let storage = stub_platform();
-		let registry = FundingRegistry::default();
+		let db = open_memory_core_db();
+		let registry = registry_on(&db);
 		for (intent, amount) in [("fs_a", 100), ("fs_b", 200)] {
 			let mut session = FundingSession::new(
 				intent.to_string(),
@@ -2314,15 +2307,13 @@ mod tests {
 				NOW,
 			);
 			assert!(session.assign("ramp.dot", None, NOW));
-			insert(&registry, storage.as_ref(), session);
+			insert(&registry, session);
 		}
 		let host_id = host_payment_id(&worker("ramp.dot"), [1; 32]);
-		let recorded = record(&registry, storage.as_ref(), "ramp.dot", "fs_b", host_id, 100);
-		block_on(registry.finish_start(storage.as_ref(), NOW, "fs_b", host_id, true))
-			.expect("stored");
+		let recorded = record(&registry, "ramp.dot", "fs_b", host_id, 100);
+		block_on(registry.finish_start(NOW, "fs_b", host_id, true)).expect("stored");
 		let report = |intent: &str| {
 			block_on(registry.report(
-				storage.as_ref(),
 				NOW,
 				&worker("ramp.dot"),
 				intent,
@@ -2336,7 +2327,7 @@ mod tests {
 				recorded,
 				report("fs_a"),
 				report("fs_b"),
-				block_on(registry.cancel(storage.as_ref(), NOW, "fs_a")).expect("stored"),
+				block_on(registry.cancel(NOW, "fs_a")).expect("stored"),
 				registry.get("fs_a").expect("kept").started,
 			),
 			(
@@ -2413,8 +2404,8 @@ mod tests {
 	// provider does not serve.
 	#[test]
 	fn started_funds_are_named_once_by_the_session_they_were_started_for() {
-		let storage = stub_platform();
-		let registry = FundingRegistry::default();
+		let db = open_memory_core_db();
+		let registry = registry_on(&db);
 		let served = |intent: &str, provider: &str| {
 			let mut session = session(intent, NOW);
 			assert!(session.assign(provider, None, NOW));
@@ -2423,24 +2414,17 @@ mod tests {
 		for session in
 			[served("fs_a", "ramp.dot"), served("fs_b", "ramp.dot"), served("fs_c", "other.dot")]
 		{
-			insert(&registry, storage.as_ref(), session);
+			insert(&registry, session);
 		}
 		let host_id = host_payment_id(&worker("ramp.dot"), [9; 32]);
-		let recorded = record(&registry, storage.as_ref(), "ramp.dot", "fs_a", host_id, 100);
-		let again = record(&registry, storage.as_ref(), "ramp.dot", "fs_b", host_id, 100);
-		let unserved = record(&registry, storage.as_ref(), "ramp.dot", "fs_c", host_id, 100);
-		block_on(registry.finish_start(storage.as_ref(), NOW, "fs_a", host_id, true))
-			.expect("stored");
+		let recorded = record(&registry, "ramp.dot", "fs_a", host_id, 100);
+		let again = record(&registry, "ramp.dot", "fs_b", host_id, 100);
+		let unserved = record(&registry, "ramp.dot", "fs_c", host_id, 100);
+		block_on(registry.finish_start(NOW, "fs_a", host_id, true)).expect("stored");
 		let crediting = FundingUpdate::Crediting { top_up_id: [9; 32], amount: 100 };
 		let report = |provider: &str, intent: &str| {
-			block_on(registry.report(
-				storage.as_ref(),
-				NOW,
-				&worker(provider),
-				intent,
-				crediting.clone(),
-			))
-			.expect("stored")
+			block_on(registry.report(NOW, &worker(provider), intent, crediting.clone()))
+				.expect("stored")
 		};
 
 		assert_eq!(
@@ -2528,7 +2512,6 @@ mod tests {
 	/// there would acknowledge from there.
 	struct ReentrantHost {
 		registry: OnceLock<Weak<FundingRegistry>>,
-		storage: Arc<crate::test_support::StubPlatform>,
 		cancels: Mutex<VecDeque<&'static str>>,
 		/// Each session the host heard of, and whether the write lock was
 		/// free at the time.
@@ -2562,8 +2545,7 @@ mod tests {
 			self.heard.lock().expect("heard mutex poisoned").push((intent, writes_free));
 			let next = self.cancels.lock().expect("cancels mutex poisoned").pop_front();
 			if let (true, Some(next)) = (writes_free, next) {
-				let storage = self.storage.clone();
-				std::thread::spawn(move || block_on(registry.cancel(storage.as_ref(), NOW, next)))
+				std::thread::spawn(move || block_on(registry.cancel(NOW, next)))
 					.join()
 					.expect("cancel thread")
 					.expect("cancelled");
@@ -2575,13 +2557,12 @@ mod tests {
 	// hear of every change in the order it was made.
 	#[test]
 	fn the_host_hears_of_changes_in_order_and_may_call_back() {
-		let storage = stub_platform();
-		let registry = Arc::new(FundingRegistry::default());
-		insert(&registry, storage.as_ref(), session("fs_a", NOW));
-		insert(&registry, storage.as_ref(), session("fs_b", NOW));
+		let db = open_memory_core_db();
+		let registry = Arc::new(registry_on(&db));
+		insert(&registry, session("fs_a", NOW));
+		insert(&registry, session("fs_b", NOW));
 		let host = Arc::new(ReentrantHost {
 			registry: OnceLock::new(),
-			storage: storage.clone(),
 			cancels: Mutex::new(VecDeque::from(["fs_b"])),
 			heard: Mutex::new(Vec::new()),
 		});
@@ -2589,7 +2570,7 @@ mod tests {
 		assert!(registry.install_platform(host.clone()));
 
 		assert_eq!(
-			block_on(registry.cancel(storage.as_ref(), NOW, "fs_a")).expect("cancelled"),
+			block_on(registry.cancel(NOW, "fs_a")).expect("cancelled"),
 			CancelOutcome::Ended
 		);
 
@@ -2601,15 +2582,12 @@ mod tests {
 
 	#[test]
 	fn a_failed_save_changes_nothing_in_memory() {
-		let storage = stub_platform();
-		let registry = FundingRegistry::default();
-		insert(&registry, storage.as_ref(), session("fs_1", NOW));
-		let failing = crate::test_support::StubPlatform {
-			local_storage_error: Some("disk full"),
-			..Default::default()
-		};
+		let db = open_memory_core_db();
+		let registry = registry_on(&db);
+		insert(&registry, session("fs_1", NOW));
+		block_on(fail_writes(&db, true));
 
-		let failed = block_on(registry.commit(&failing, NOW, |sessions| {
+		let failed = block_on(registry.commit(NOW, |sessions| {
 			sessions.clear();
 			((), Vec::new())
 		}));
@@ -2620,35 +2598,33 @@ mod tests {
 
 	#[test]
 	fn a_session_whose_start_failed_is_not_stored_by_a_later_commit() {
-		let storage = stub_platform();
-		let registry = FundingRegistry::default();
-		block_on(registry.present(storage.as_ref(), NOW, session("fs_1", NOW))).expect("presented");
-		let failing = crate::test_support::StubPlatform {
-			local_storage_error: Some("disk full"),
-			..Default::default()
-		};
+		let db = open_memory_core_db();
+		let registry = registry_on(&db);
+		block_on(registry.present(NOW, session("fs_1", NOW))).expect("presented");
+		block_on(fail_writes(&db, true));
 
-		let started = block_on(registry.start(&failing, NOW, "fs_1"));
-		insert(&registry, storage.as_ref(), session("fs_2", NOW));
+		let started = block_on(registry.start(NOW, "fs_1"));
+		block_on(fail_writes(&db, false));
+		insert(&registry, session("fs_2", NOW));
 
 		assert!(started.is_err());
 		assert_eq!(registry.get("fs_1"), None);
-		assert_eq!(block_on(load_sessions(storage.as_ref())), Ok(vec![session("fs_2", NOW)]));
+		assert_eq!(block_on(stored_sessions(&db)), vec![session("fs_2", NOW)]);
 	}
 
 	// A product that reloads after the host recorded its session must still
 	// learn how it ended, not read it as a session that never existed.
 	#[test]
 	fn a_recorded_session_still_answers_its_owner_after_a_restart() {
-		let storage = stub_platform();
-		let before = FundingRegistry::default();
-		insert(&before, storage.as_ref(), session("fs_1", NOW - DAY_MS));
-		block_on(before.sweep(storage.as_ref(), NOW)).expect("expired");
-		assert!(block_on(before.acknowledge(storage.as_ref(), NOW, "fs_1")).expect("recorded"));
+		let db = open_memory_core_db();
+		let before = registry_on(&db);
+		insert(&before, session("fs_1", NOW - DAY_MS));
+		block_on(before.sweep(NOW)).expect("expired");
+		assert!(block_on(before.acknowledge(NOW, "fs_1")).expect("recorded"));
 		let expired = HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Expired };
 
-		let after = FundingRegistry::default();
-		block_on(after.sweep(storage.as_ref(), NOW)).expect("loaded");
+		let after = registry_on(&db);
+		block_on(after.sweep(NOW)).expect("loaded");
 		let replay = after.subscribe("fs_1").expect("recorded session kept");
 
 		assert_eq!(
@@ -2666,14 +2642,14 @@ mod tests {
 	// the host can rebuild its history from every recorded session.
 	#[test]
 	fn a_compacted_session_still_answers_its_owner_after_a_restart() {
-		let storage = stub_platform();
-		let before = FundingRegistry::default();
+		let db = open_memory_core_db();
+		let before = registry_on(&db);
 		let recorded = |n: u64| FundingSession {
 			acknowledged: true,
 			stage: FundingStage::Delivered { credited: u128::from(n) + 1, settled_at_ms: NOW + n },
 			..session(&format!("fs_{n}"), NOW)
 		};
-		block_on(before.commit(storage.as_ref(), NOW, |sessions| {
+		block_on(before.commit(NOW, |sessions| {
 			for n in 0..=RECORDED_PER_OWNER as u64 {
 				sessions.insert(format!("fs_{n}"), recorded(n));
 			}
@@ -2681,8 +2657,8 @@ mod tests {
 		}))
 		.expect("stored");
 
-		let after = FundingRegistry::default();
-		block_on(after.sweep(storage.as_ref(), NOW)).expect("loaded");
+		let after = registry_on(&db);
+		block_on(after.sweep(NOW)).expect("loaded");
 		let replay = after.subscribe("fs_0").expect("compacted session kept");
 
 		assert_eq!(
@@ -2710,19 +2686,16 @@ mod tests {
 	// store that is down and leaves the stored set as it was.
 	#[test]
 	fn holding_a_session_in_the_overlay_writes_nothing() {
-		let storage = stub_platform();
-		let registry = FundingRegistry::default();
-		insert(&registry, storage.as_ref(), session("fs_1", NOW));
-		let failing = crate::test_support::StubPlatform {
-			local_storage_error: Some("disk full"),
-			..Default::default()
-		};
+		let db = open_memory_core_db();
+		let registry = registry_on(&db);
+		insert(&registry, session("fs_1", NOW));
+		block_on(fail_writes(&db, true));
 
-		let presented = block_on(registry.present(&failing, NOW, session("fs_2", NOW)));
+		let presented = block_on(registry.present(NOW, session("fs_2", NOW)));
 
 		assert_eq!(
-			(presented, block_on(load_sessions(storage.as_ref()))),
-			(Ok(true), Ok(vec![session("fs_1", NOW)]))
+			(presented, block_on(stored_sessions(&db))),
+			(Ok(true), vec![session("fs_1", NOW)])
 		);
 	}
 
@@ -2730,9 +2703,9 @@ mod tests {
 	// compacted cannot be presented again.
 	#[test]
 	fn a_held_intent_cannot_be_presented_again() {
-		let storage = stub_platform();
-		let registry = FundingRegistry::default();
-		insert(&registry, storage.as_ref(), session("fs_1", NOW));
+		let db = open_memory_core_db();
+		let registry = registry_on(&db);
+		insert(&registry, session("fs_1", NOW));
 		registry.lock_pack().insert(
 			"fs_packed".to_string(),
 			FundingSessionSummary::from(FundingSession {
@@ -2743,10 +2716,10 @@ mod tests {
 
 		assert_eq!(
 			[
-				block_on(registry.present(storage.as_ref(), NOW, session("fs_1", NOW))),
-				block_on(registry.present(storage.as_ref(), NOW, session("fs_packed", NOW))),
-				block_on(registry.present(storage.as_ref(), NOW, session("fs_new", NOW))),
-				block_on(registry.present(storage.as_ref(), NOW, session("fs_new", NOW))),
+				block_on(registry.present(NOW, session("fs_1", NOW))),
+				block_on(registry.present(NOW, session("fs_packed", NOW))),
+				block_on(registry.present(NOW, session("fs_new", NOW))),
+				block_on(registry.present(NOW, session("fs_new", NOW))),
 			],
 			[Ok(false), Ok(false), Ok(true), Ok(false)]
 		);
@@ -2756,12 +2729,9 @@ mod tests {
 	// ended, rather than waiting on a session that is gone.
 	#[test]
 	fn a_discarded_session_ends_its_watchers_as_cancelled() {
-		let storage = stub_platform();
-		let registry = FundingRegistry::default();
-		assert_eq!(
-			block_on(registry.present(storage.as_ref(), NOW, session("fs_1", NOW))),
-			Ok(true)
-		);
+		let db = open_memory_core_db();
+		let registry = registry_on(&db);
+		assert_eq!(block_on(registry.present(NOW, session("fs_1", NOW))), Ok(true));
 		let watch = registry.subscribe("fs_1").expect("presented session watchable");
 
 		block_on(registry.discard("fs_1"));
@@ -2782,34 +2752,80 @@ mod tests {
 	// writes over them.
 	#[test]
 	fn sessions_of_a_newer_format_make_the_registry_read_only() {
-		let storage = stub_platform();
-		let blob = (u16::MAX, vec![session("fs_1", NOW)]).encode();
-		block_on(storage.write_core_storage(CoreStorageKey::FundingSessions, blob.clone()))
-			.expect("written");
-		let registry = FundingRegistry::default();
+		let db = open_memory_core_db();
+		block_on(put_session_row(&db, "fs_1", (u16::MAX, session("fs_1", NOW)).encode()));
+		let before = block_on(rows(&db, "funding_session"));
+		let registry = registry_on(&db);
 
-		let presented = block_on(registry.present(storage.as_ref(), NOW, session("fs_2", NOW)));
+		let presented = block_on(registry.present(NOW, session("fs_2", NOW)));
 
 		assert_eq!(
-			(
-				presented,
-				registry.get("fs_2"),
-				block_on(storage.read_core_storage(CoreStorageKey::FundingSessions)),
-			),
-			(Err(FundingSessionError::NewerFormat { format: u16::MAX }), None, Ok(Some(blob)),)
+			(presented, registry.get("fs_2"), block_on(rows(&db, "funding_session"))),
+			(Err(FundingSessionError::NewerFormat { format: u16::MAX }), None, before)
 		);
 	}
 
 	#[test]
 	fn a_session_whose_overlay_is_up_cannot_be_cancelled() {
-		let storage = stub_platform();
-		let registry = FundingRegistry::default();
-		block_on(registry.present(storage.as_ref(), NOW, session("fs_1", NOW))).expect("presented");
+		let db = open_memory_core_db();
+		let registry = registry_on(&db);
+		block_on(registry.present(NOW, session("fs_1", NOW))).expect("presented");
+
+		assert_eq!(block_on(registry.cancel(NOW, "fs_1")), Ok(CancelOutcome::Refused));
+		assert_eq!(registry.get("fs_1").map(|session| session.is_terminal()), Some(false));
+	}
+
+	// A row that does not decode is the core's only trace of that session, so
+	// no later commit writes over it or deletes it.
+	#[test]
+	fn a_row_that_does_not_decode_survives_later_commits() {
+		let db = open_memory_core_db();
+		block_on(put_session_row(&db, "fs_bad", vec![0xff]));
+		let registry = registry_on(&db);
+
+		insert(&registry, session("fs_1", NOW));
+		block_on(registry.sweep(NOW + DAY_MS)).expect("expired");
+
+		let bad = block_on(rows(&db, "funding_session"))
+			.into_iter()
+			.find(|(intent, _)| intent == "fs_bad");
+		assert_eq!((registry.get("fs_bad"), bad), (None, Some(("fs_bad".to_string(), vec![0xff]))));
+	}
+
+	// Compaction moves sessions out of the full record and into the pack in
+	// one write, so a failed write leaves both as they were.
+	#[test]
+	fn a_compaction_that_fails_to_store_keeps_every_session() {
+		let db = open_memory_core_db();
+		let registry = registry_on(&db);
+		let recorded = |n: u64| FundingSession {
+			acknowledged: true,
+			stage: FundingStage::Delivered { credited: 1, settled_at_ms: NOW + n },
+			..session(&format!("fs_{n}"), NOW)
+		};
+		block_on(registry.commit(NOW, |sessions| {
+			for n in 0..RECORDED_PER_OWNER as u64 {
+				sessions.insert(format!("fs_{n}"), recorded(n));
+			}
+			((), Vec::new())
+		}))
+		.expect("stored");
+		block_on(fail_writes(&db, true));
+
+		let compacted = block_on(registry.commit(NOW, |sessions| {
+			sessions.insert("fs_last".to_string(), recorded(RECORDED_PER_OWNER as u64));
+			((), Vec::new())
+		}));
 
 		assert_eq!(
-			block_on(registry.cancel(storage.as_ref(), NOW, "fs_1")),
-			Ok(CancelOutcome::Refused)
+			(
+				compacted.is_err(),
+				registry.get("fs_0").is_some(),
+				registry.history().len(),
+				block_on(rows(&db, "funding_session")).len(),
+				block_on(rows(&db, "funding_summary")).len(),
+			),
+			(true, true, RECORDED_PER_OWNER, RECORDED_PER_OWNER, 0)
 		);
-		assert_eq!(registry.get("fs_1").map(|session| session.is_terminal()), Some(false));
 	}
 }

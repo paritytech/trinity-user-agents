@@ -405,13 +405,13 @@ impl RuntimeServices {
 		self.device_pairing_observer.get().cloned()
 	}
 
-	/// Install the core database.
+	/// Install the core database, which also stores the funding sessions.
 	///
 	/// Set-once, so durable state cannot move to another file under a running
 	/// consumer. Returns whether this call installed it.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub(crate) fn install_core_db(&self, db: Db) -> bool {
-		self.core_db.set(db).is_ok()
+		self.core_db.set(db.clone()).is_ok() && self.funding.install_db(db)
 	}
 
 	/// The core database.

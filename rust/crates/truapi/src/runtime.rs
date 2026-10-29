@@ -1632,13 +1632,7 @@ impl FundingProvider for ProductRuntimeHost {
 					.connection
 					.services
 					.funding()
-					.report(
-						self.connection.platform.as_ref(),
-						crate::current_unix_millis(),
-						&self.connection.product,
-						&intent,
-						update,
-					)
+					.report(crate::current_unix_millis(), &self.connection.product, &intent, update)
 					.await?;
 				reported.map_err(CallError::Domain)
 			})
@@ -1728,7 +1722,7 @@ impl Funding for ProductRuntimeHost {
 				if let Err(error) = self.require_session() {
 					return Subscription::interrupted(error);
 				}
-				if let Err(error) = registry.load(self.connection.platform.as_ref()).await {
+				if let Err(error) = registry.load().await {
 					return Subscription::interrupted(CallError::HostFailure {
 						reason: error.to_string(),
 					});

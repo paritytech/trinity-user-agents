@@ -68,6 +68,13 @@ pub fn open_temporary_core_db() -> (tempfile::TempDir, Db) {
 	(dir, db)
 }
 
+/// A core database in memory, private to the caller.
+#[cfg(test)]
+pub fn open_memory_core_db() -> Db {
+	let config = DbConfig { location: DbLocation::Memory, migrations: core_migrations, readers: 1 };
+	futures::executor::block_on(Db::open(config)).expect("core database opens")
+}
+
 /// Why a store operation failed.
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
