@@ -1,0 +1,721 @@
+[
+  {
+    "build": "refresh/42.json",
+    "name": "never-serves-the-build-copy-until-asked",
+    "pointer": {
+      "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+      "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+    },
+    "refresh": "never",
+    "steps": [
+      {
+        "expect": {
+          "fetch": null,
+          "serves": 42
+        },
+        "get": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": null,
+          "serves": 42
+        },
+        "get": 1792152000
+      },
+      {
+        "due": 1792152000,
+        "expect": false
+      },
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": null
+          }
+        },
+        "refresh": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": null
+        },
+        "refresh": 1792065600
+      },
+      {
+        "expect": {
+          "newGeneration": false,
+          "serves": 43,
+          "status": "updated",
+          "stores": true
+        },
+        "fetched": {
+          "document": "refresh/43.json",
+          "etag": null,
+          "notModified": false
+        },
+        "now": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": null,
+          "serves": 43
+        },
+        "get": 1792065600
+      }
+    ]
+  },
+  {
+    "build": "refresh/42.json",
+    "name": "once-waits-for-the-first-fetch-and-shares-it",
+    "pointer": {
+      "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+      "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+    },
+    "refresh": "once",
+    "steps": [
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": null
+          },
+          "serves": null
+        },
+        "get": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": null,
+          "serves": null
+        },
+        "get": 1792065600
+      },
+      {
+        "expect": {
+          "newGeneration": false,
+          "serves": 43,
+          "status": "updated",
+          "stores": true
+        },
+        "fetched": {
+          "document": "refresh/43.json",
+          "etag": null,
+          "notModified": false
+        },
+        "now": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": null,
+          "serves": 43
+        },
+        "get": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": null,
+          "serves": 43
+        },
+        "get": 1792152000
+      }
+    ]
+  },
+  {
+    "build": "refresh/42.json",
+    "name": "once-uses-its-copy-when-the-server-is-down",
+    "pointer": {
+      "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+      "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+    },
+    "refresh": "once",
+    "steps": [
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": null
+          },
+          "serves": null
+        },
+        "get": 1792065600
+      },
+      {
+        "expect": {
+          "newGeneration": false,
+          "serves": 42,
+          "status": "unreachable",
+          "stores": false
+        },
+        "fetched": {
+          "document": null,
+          "etag": null,
+          "notModified": false
+        },
+        "now": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": null,
+          "serves": 42
+        },
+        "get": 1792065600
+      }
+    ]
+  },
+  {
+    "build": "refresh/42.json",
+    "name": "max-age-serves-at-once-and-refreshes-behind",
+    "pointer": {
+      "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+      "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+    },
+    "refresh": {
+      "maxAge": 3600
+    },
+    "steps": [
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": null
+          },
+          "serves": 42
+        },
+        "get": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": null,
+          "serves": 42
+        },
+        "get": 1792065600
+      },
+      {
+        "expect": {
+          "newGeneration": false,
+          "serves": 42,
+          "status": "unchanged",
+          "stores": true
+        },
+        "fetched": {
+          "document": "refresh/42.json",
+          "etag": "\"a\"",
+          "notModified": false
+        },
+        "now": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": null,
+          "serves": 42
+        },
+        "get": 1792069199
+      },
+      {
+        "due": 1792069199,
+        "expect": false
+      },
+      {
+        "due": 1792069200,
+        "expect": true
+      },
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": "\"a\""
+          },
+          "serves": 42
+        },
+        "get": 1792069200
+      },
+      {
+        "expect": {
+          "newGeneration": false,
+          "serves": 42,
+          "status": "unchanged",
+          "stores": true
+        },
+        "fetched": {
+          "document": null,
+          "etag": null,
+          "notModified": true
+        },
+        "now": 1792069200
+      },
+      {
+        "build": "refresh/42.json",
+        "restart": 1792069200
+      },
+      {
+        "expect": {
+          "fetch": null,
+          "serves": 42
+        },
+        "get": 1792072799
+      },
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": "\"a\""
+          },
+          "serves": 42
+        },
+        "get": 1792072800
+      }
+    ]
+  },
+  {
+    "build": "refresh/42.json",
+    "name": "max-age-waits-a-full-period-after-a-failure",
+    "pointer": {
+      "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+      "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+    },
+    "refresh": {
+      "maxAge": 3600
+    },
+    "steps": [
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": null
+          },
+          "serves": 42
+        },
+        "get": 1792065600
+      },
+      {
+        "expect": {
+          "newGeneration": false,
+          "serves": 42,
+          "status": "unreachable",
+          "stores": false
+        },
+        "fetched": {
+          "document": null,
+          "etag": null,
+          "notModified": false
+        },
+        "now": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": null,
+          "serves": 42
+        },
+        "get": 1792069199
+      },
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": null
+          },
+          "serves": 42
+        },
+        "get": 1792069200
+      }
+    ]
+  },
+  {
+    "build": "refresh/42.json",
+    "name": "a-rollback-uses-the-copy",
+    "pointer": {
+      "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+      "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+    },
+    "refresh": {
+      "maxAge": 3600
+    },
+    "steps": [
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": null
+          },
+          "serves": 42
+        },
+        "get": 1792065600
+      },
+      {
+        "expect": {
+          "newGeneration": false,
+          "serves": 42,
+          "status": "rollback",
+          "stores": false
+        },
+        "fetched": {
+          "document": "refresh/41.json",
+          "etag": null,
+          "notModified": false
+        },
+        "now": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": null,
+          "serves": 42
+        },
+        "get": 1792065600
+      }
+    ]
+  },
+  {
+    "build": "refresh/42.json",
+    "name": "a-failed-conditional-fetch-is-followed-by-a-plain-one",
+    "pointer": {
+      "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+      "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+    },
+    "refresh": {
+      "maxAge": 3600
+    },
+    "steps": [
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": null
+          },
+          "serves": 42
+        },
+        "get": 1792065600
+      },
+      {
+        "expect": {
+          "newGeneration": false,
+          "serves": 42,
+          "status": "unchanged",
+          "stores": true
+        },
+        "fetched": {
+          "document": "refresh/42.json",
+          "etag": "\"a\"",
+          "notModified": false
+        },
+        "now": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": "\"a\""
+          },
+          "serves": 42
+        },
+        "get": 1792069200
+      },
+      {
+        "expect": {
+          "newGeneration": false,
+          "serves": 42,
+          "status": "unreachable",
+          "stores": true
+        },
+        "fetched": {
+          "document": null,
+          "etag": null,
+          "notModified": false
+        },
+        "now": 1792069200
+      },
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": null
+          },
+          "serves": 42
+        },
+        "get": 1792072800
+      }
+    ]
+  },
+  {
+    "build": "refresh/42.json",
+    "name": "a-fetch-time-ahead-of-the-clock-is-due",
+    "pointer": {
+      "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+      "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+    },
+    "refresh": {
+      "maxAge": 3600
+    },
+    "steps": [
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": null
+          },
+          "serves": 42
+        },
+        "get": 1792152000
+      },
+      {
+        "expect": {
+          "newGeneration": false,
+          "serves": 42,
+          "status": "unchanged",
+          "stores": true
+        },
+        "fetched": {
+          "document": "refresh/42.json",
+          "etag": null,
+          "notModified": false
+        },
+        "now": 1792152000
+      },
+      {
+        "build": "refresh/42.json",
+        "restart": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": null
+          },
+          "serves": 42
+        },
+        "get": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": null,
+          "serves": 42
+        },
+        "get": 1792065601
+      }
+    ]
+  },
+  {
+    "build": "refresh/42.json",
+    "name": "an-unsigned-store-never-moves-back-past-its-build-copy",
+    "pointer": {
+      "key": null,
+      "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+    },
+    "refresh": "never",
+    "steps": [
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": null
+          }
+        },
+        "refresh": 1792065600
+      },
+      {
+        "expect": {
+          "newGeneration": false,
+          "serves": 43,
+          "status": "updated",
+          "stores": true
+        },
+        "fetched": {
+          "document": "refresh/43.json",
+          "etag": null,
+          "notModified": false
+        },
+        "now": 1792065600
+      },
+      {
+        "build": "refresh/44.json",
+        "restart": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": null,
+          "serves": 44
+        },
+        "get": 1792065600
+      },
+      {
+        "build": "refresh/42.json",
+        "restart": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": null,
+          "serves": 43
+        },
+        "get": 1792065600
+      }
+    ]
+  },
+  {
+    "build": null,
+    "name": "without-a-copy-every-policy-waits-and-asks-again",
+    "pointer": {
+      "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+      "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+    },
+    "refresh": "never",
+    "steps": [
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": null
+          },
+          "serves": null
+        },
+        "get": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": null,
+          "serves": null
+        },
+        "get": 1792065600
+      },
+      {
+        "expect": {
+          "error": "unreachable"
+        },
+        "fetched": {
+          "document": null,
+          "etag": null,
+          "notModified": false
+        },
+        "now": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": null
+          },
+          "serves": null
+        },
+        "get": 1792065600
+      },
+      {
+        "expect": {
+          "error": "unreachable"
+        },
+        "fetched": {
+          "document": null,
+          "etag": null,
+          "notModified": true
+        },
+        "now": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": null
+          },
+          "serves": null
+        },
+        "get": 1792065600
+      },
+      {
+        "expect": {
+          "newGeneration": false,
+          "serves": 42,
+          "status": "updated",
+          "stores": true
+        },
+        "fetched": {
+          "document": "refresh/42.json",
+          "etag": null,
+          "notModified": false
+        },
+        "now": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": null,
+          "serves": 42
+        },
+        "get": 1792065600
+      }
+    ]
+  },
+  {
+    "build": "refresh/42.json",
+    "name": "the-store-moves-a-stack-forward-from-its-build-copy-never-back",
+    "pointer": {
+      "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+      "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+    },
+    "refresh": "never",
+    "steps": [
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": null
+          }
+        },
+        "refresh": 1792065600
+      },
+      {
+        "expect": {
+          "newGeneration": false,
+          "serves": 43,
+          "status": "updated",
+          "stores": true
+        },
+        "fetched": {
+          "document": "refresh/43.json",
+          "etag": "\"b\"",
+          "notModified": false
+        },
+        "now": 1792065600
+      },
+      {
+        "build": "refresh/42.json",
+        "restart": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": null,
+          "serves": 43
+        },
+        "get": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": "\"b\""
+          }
+        },
+        "refresh": 1792065600
+      },
+      {
+        "build": "refresh/44.json",
+        "restart": 1792065600
+      },
+      {
+        "expect": {
+          "fetch": null,
+          "serves": 44
+        },
+        "get": 1792065600
+      }
+    ]
+  },
+  {
+    "build": "refresh/42.json",
+    "name": "a-new-generation-is-reported",
+    "pointer": {
+      "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+      "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+    },
+    "refresh": "never",
+    "steps": [
+      {
+        "expect": {
+          "fetch": {
+            "ifNoneMatch": null
+          }
+        },
+        "refresh": 1792065600
+      },
+      {
+        "expect": {
+          "newGeneration": true,
+          "serves": 43,
+          "status": "updated",
+          "stores": true
+        },
+        "fetched": {
+          "document": "refresh/43-new-generation.json",
+          "etag": null,
+          "notModified": false
+        },
+        "now": 1792065600
+      }
+    ]
+  }
+]

@@ -13,6 +13,11 @@ export const cases = JSON.parse(
   await readFile(new URL("cases.json", VECTORS), "utf8"),
 );
 
+/** The crate's `vectors/refresh.json`, the reference reader's refresh cases. */
+export const refreshCases = JSON.parse(
+  await readFile(new URL("refresh.json", VECTORS), "utf8"),
+);
+
 /** A file the vectors name, or undefined for null. */
 export async function file(path: string | null) {
   return path === null
@@ -37,12 +42,6 @@ export const MODEL: Model = {
       role: "Relay",
       genesisHash: `0x${"86".repeat(32)}`,
       rpc: ["ws://127.0.0.1:9944"],
-    },
-    {
-      role: "AssetHub",
-      genesisHash: `0x${"bb".repeat(32)}`,
-      paraId: 1000,
-      rpc: ["ws://127.0.0.1:9945"],
     },
   ],
   services: [],

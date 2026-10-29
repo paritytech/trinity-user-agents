@@ -450,8 +450,9 @@ A reader runs from a copy it holds, and fetching only refreshes that copy:
   reporting a genesis hash other than the copy's tells it the stack was restarted.
 
 Every reader implementation, in the host core or in a tool, MUST pass the conformance vectors once they are published,
-so all of them accept and refuse the same descriptors. [Appendix B](#appendix-b-changes-per-tool) lists what changes in
-each tool today.
+so all of them accept and refuse the same descriptors. The reference reader's refresh cases, which fix choices this
+section leaves to each reader, are informative. [Appendix B](#appendix-b-changes-per-tool) lists what changes in each
+tool today.
 
 A reference implementation, which is informative, will come with the conformance vectors: a Rust crate that holds every
 rule and the reader, used by the host core and compiled to WebAssembly for a TypeScript library and CLI that build a

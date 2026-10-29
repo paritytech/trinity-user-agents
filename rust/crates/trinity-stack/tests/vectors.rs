@@ -764,10 +764,12 @@ fn refresh_documents() -> Vec<(&'static str, Vec<u8>)> {
 	]
 }
 
-/// The refresh cases: a policy, the copies a reader starts from, and steps in order, each with
-/// what the reader must answer. `serves` names the copy in use by its `sequence`, null when the
-/// caller waits. `stores` says whether the reader handed back bytes to store. A `restart` starts
-/// a new reader from its build copy and what the last step stored.
+/// The refresh cases of the reference `StackReader`: a policy, the copies a reader starts from,
+/// and steps in order, each with what the reader answers. They pin this crate's choices where
+/// the RFC leaves a reader its own, so they are informative, unlike `cases.json`. `serves` names
+/// the copy in use by its `sequence`, null when the caller waits. `stores` says whether the reader
+/// handed back bytes to store. A `restart` starts a new reader from its build copy and what the
+/// last step stored.
 fn refresh_cases() -> Vec<Value> {
 	let fetch = |etag: Option<&str>| json!({ "ifNoneMatch": etag });
 	let get = |now: i64, serves: Option<u64>, fetch: Value| json!({ "get": now, "expect": { "serves": serves, "fetch": fetch } });
@@ -804,7 +806,7 @@ fn refresh_cases() -> Vec<Value> {
 			],
 		),
 		case(
-			"once-keeps-its-copy-when-the-server-is-down",
+			"once-uses-its-copy-when-the-server-is-down",
 			json!("once"),
 			Some("refresh/42.json"),
 			vec![
@@ -848,7 +850,7 @@ fn refresh_cases() -> Vec<Value> {
 			],
 		),
 		case(
-			"a-rollback-keeps-the-copy",
+			"a-rollback-uses-the-copy",
 			max_age.clone(),
 			Some("refresh/42.json"),
 			vec![
@@ -980,10 +982,13 @@ fn generate() -> BTreeMap<PathBuf, Vec<u8>> {
 	for (path, bytes) in refresh_documents() {
 		file(path.into(), bytes);
 	}
-	let cases = json!({ "documents": documents, "reader": reader, "links": links, "refresh": refresh_cases() });
+	let cases = json!({ "documents": documents, "reader": reader, "links": links });
 	let mut cases = serde_json::to_vec_pretty(&cases).unwrap();
 	cases.push(b'\n');
 	files.insert(PathBuf::from("cases.json"), cases);
+	let mut refresh = serde_json::to_vec_pretty(&refresh_cases()).unwrap();
+	refresh.push(b'\n');
+	files.insert(PathBuf::from("refresh.json"), refresh);
 	files
 }
 
@@ -1116,8 +1121,15 @@ fn every_vector_gets_its_verdict() {
 		};
 		assert_eq!(outcome, case["expect"], "{}", case["name"]);
 	}
+}
 
-	for case in cases["refresh"].as_array().unwrap() {
+/// Runs the reference reader's refresh cases, as the JS driver of the same crate does.
+#[test]
+fn every_refresh_case_gets_its_answers() {
+	let cases: Value =
+		serde_json::from_slice(&fs::read(vectors_dir().join("refresh.json")).unwrap()).unwrap();
+	let file = |path: &Value| path.as_str().map(|path| fs::read(vectors_dir().join(path)).unwrap());
+	for case in cases.as_array().unwrap() {
 		run_refresh(case, file);
 	}
 }
