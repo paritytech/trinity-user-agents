@@ -496,6 +496,15 @@
       }
     },
     {
+      "expect": "invalid-url",
+      "file": "documents/url-with-backslash.json",
+      "name": "url-with-backslash",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
       "expect": "forked-at",
       "file": "documents/fork-without-forked-at.json",
       "name": "fork-without-forked-at",
