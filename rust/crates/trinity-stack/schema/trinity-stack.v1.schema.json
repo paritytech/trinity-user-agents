@@ -50,7 +50,11 @@
       "description": "dotNS contract addresses by protocol registry key, such as storeFactory.",
       "type": "object",
       "propertyNames": { "pattern": "^[A-Za-z0-9]{1,32}$" },
-      "additionalProperties": { "type": "string", "pattern": "^0x[0-9a-f]{40}$" }
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^0x[0-9a-f]{40}$",
+        "not": { "const": "0x0000000000000000000000000000000000000000" }
+      }
     },
     "coinage": {
       "type": "object",
