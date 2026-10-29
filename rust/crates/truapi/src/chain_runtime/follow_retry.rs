@@ -2,7 +2,7 @@
 //! `chainHead_v1_follow` again when the provider refuses it, and records why a
 //! follow ended for good.
 
-use core::time::Duration;
+use core::{ops::ControlFlow, time::Duration};
 use std::sync::{Arc, OnceLock};
 
 use futures::StreamExt;
@@ -14,7 +14,7 @@ use subxt_rpcs::{
 use tracing::warn;
 
 use super::runtime_call_client::RuntimeCallClient;
-use crate::time::Timer;
+use crate::time::{Timer, retry_on};
 
 const CHAIN_HEAD_FOLLOW: &str = "chainHead_v1_follow";
 
@@ -119,29 +119,37 @@ impl RpcClientT for FollowRetryingRpcClient {
 		if sub != CHAIN_HEAD_FOLLOW {
 			return self.inner.subscribe_raw(sub, params, unsub);
 		}
-		Box::pin(async move {
-			let mut pauses = REFUSED_FOLLOW_PAUSES.into_iter();
-			loop {
-				let refusal = match self.inner.subscribe_raw(sub, params.clone(), unsub).await {
-					Ok(subscription) => return Ok(self.recording_failures(subscription)),
-					Err(RpcError::User(refusal)) if !rejects_the_request(&refusal) => refusal,
-					Err(RpcError::User(rejection)) => {
-						let _ = self.follow_end.set(FollowEnd::Unservable);
-						return Err(RpcError::User(rejection));
-					},
-					Err(error) => {
-						let _ = self.follow_end.set(FollowEnd::Dropped);
-						return Err(error);
-					},
-				};
-				let Some(pause) = pauses.next() else {
-					let _ = self.follow_end.set(FollowEnd::Refused);
-					return Err(RpcError::User(refusal));
-				};
+		let mut pauses = REFUSED_FOLLOW_PAUSES.into_iter();
+		Box::pin(retry_on(
+			&*self.timer,
+			move || {
+				let pause = pauses.next();
+				let params = params.clone();
+				async move {
+					let (ended, error) = match self.inner.subscribe_raw(sub, params, unsub).await {
+						Ok(subscription) => {
+							return ControlFlow::Break(Ok(self.recording_failures(subscription)));
+						},
+						Err(RpcError::User(refusal)) if !rejects_the_request(&refusal) => {
+							match pause {
+								Some(pause) => return ControlFlow::Continue((pause, refusal)),
+								None => (FollowEnd::Refused, RpcError::User(refusal)),
+							}
+						},
+						Err(RpcError::User(rejection)) => {
+							(FollowEnd::Unservable, RpcError::User(rejection))
+						},
+						Err(error) => (FollowEnd::Dropped, error),
+					};
+					let _ = self.follow_end.set(ended);
+					ControlFlow::Break(Err(error))
+				}
+			},
+			|(pause, refusal)| {
 				warn!(?pause, %refusal, "chainHead follow refused; asking again");
-				self.timer.sleep(pause).await;
-			}
-		})
+				pause
+			},
+		))
 	}
 }
 
