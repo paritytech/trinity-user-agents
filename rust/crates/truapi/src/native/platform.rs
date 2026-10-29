@@ -99,6 +99,19 @@ pub struct CallbackPlatform {
 	/// and the screen share one namespace, so they subscribe and publish on
 	/// the runtime-wide bus instead of this execution's own.
 	pub storage_events: Arc<NativeEventBus>,
+	/// The callbacks the runtime was built with. Runtime-wide notices go
+	/// there, whichever execution raised them.
+	pub runtime_callbacks: Arc<dyn HostCallbacks>,
+}
+
+impl CallbackPlatform {
+	/// A permission slot was written or cleared, so the host's listing of
+	/// stored decisions is stale.
+	fn permission_authorizations_changed(&self, key: &CoreStorageKey) {
+		if let CoreStorageKey::PermissionAuthorization { product_id, .. } = key {
+			self.runtime_callbacks.permission_authorizations_changed(product_id.clone());
+		}
+	}
 }
 
 impl crate::host_logic::worker::WorkerController for CallbackPlatform {
@@ -356,14 +369,18 @@ impl CoreStorage for CallbackPlatform {
 		self.callbacks
 			.core_storage_write(key.encode(), value)
 			.await
-			.map_err(v01::GenericError::from)
+			.map_err(v01::GenericError::from)?;
+		self.permission_authorizations_changed(&key);
+		Ok(())
 	}
 
 	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), v01::GenericError> {
 		self.callbacks
 			.core_storage_clear(key.encode())
 			.await
-			.map_err(v01::GenericError::from)
+			.map_err(v01::GenericError::from)?;
+		self.permission_authorizations_changed(&key);
+		Ok(())
 	}
 }
 

@@ -405,6 +405,8 @@ The core's `Permissions` platform trait has two methods, and so does `HostCallba
 
 Both return `PermissionDecision`: `.allowOnce`, `.allowAlways`, or `.deny`. Preserve the user’s choice; the core keeps one-use grants in memory and consumes them at the authorized operation. OS refusal after app consent should throw instead of returning `.deny`, which records a product denial. The same typed values drive the `TrUAPIProductExecution` permission admin API (`permissionAuthorizationStatus`, `setPermissionAuthorizationStatus`), which reads and updates the persisted decisions without prompting.
 
+`TrUAPIHostRuntime` administers decisions without opening the product: `permissionAuthorizations()` lists every stored decision across products, read from the keys `HostCoreStorageBackend.keys()` reports, and `permissionAuthorizationStatus(productId:request:)` / `setPermissionAuthorizationStatus(productId:request:status:)` read or update one. Every write or clear of a stored decision arrives as `HostBridge.permissionAuthorizationsChanged(productId:)`, on the runtime's bridge.
+
 Identity and account access reviews use `confirmPermission(review:)`, which also returns `PermissionDecision`. Override it to preserve Allow once. Its compatibility default maps `confirmUserAction`'s Boolean approval to `.allowAlways`; signing and other single-action reviews continue to use that Boolean callback.
 
 Fetch, XHR, WebSocket connections, notification scheduling, external navigation and existing remote-operation gates consume temporary grants. The shared container authorizes each `getUserMedia` call through `authorize_device_permission`, camera before microphone. Each approval consumes its one-use grant for that attempt: a later microphone denial or native capture failure does not restore the camera grant. The returned stream remains usable until stopped; another capture requires new authorization.
@@ -526,6 +528,7 @@ final class MyCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
     func read(key: Data) throws -> Data? { values[key] }
     func write(key: Data, value: Data) throws { values[key] = value }
     func clear(key: Data) throws { values.removeValue(forKey: key) }
+    func keys() throws -> [Data] { Array(values.keys) }
 }
 
 final class MyBridge: HostBridge, @unchecked Sendable {

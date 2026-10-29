@@ -44,6 +44,18 @@ public protocol HostCoreStorageBackend: AnyObject, Sendable {
     func read(key: Data) throws -> Data?
     func write(key: Data, value: Data) throws
     func clear(key: Data) throws
+
+    /// Every key this backend holds, which is how the core lists the
+    /// permission decisions it stored. Defaults to a rejection, so a host
+    /// that cannot enumerate its store still builds;
+    /// ``TrUAPIHostRuntime/permissionAuthorizations()`` then fails on it.
+    func keys() throws -> [Data]
+}
+
+public extension HostCoreStorageBackend {
+    func keys() throws -> [Data] {
+        throw HostRejection.Rejected(reason: "this host does not list core storage")
+    }
 }
 
 /// Host-side callback bundle that the Rust core invokes for capabilities the
@@ -204,6 +216,15 @@ public protocol HostBridge: AnyObject, Sendable {
     /// core thread: hand it off rather than blocking. Defaults to a no-op
     /// for a host that runs no durable work.
     func durableWorkChanged(pending: Bool)
+
+    /// A stored permission decision of `productId` was written or cleared, by
+    /// a prompt or by
+    /// ``TrUAPIHostRuntime/setPermissionAuthorizationStatus(productId:request:status:)``,
+    /// so a screen listing decisions reads
+    /// ``TrUAPIHostRuntime/permissionAuthorizations()`` again. Runtime-wide,
+    /// like `durableWorkChanged`, and arrives on a core thread: hand it off
+    /// rather than blocking. Defaults to a no-op.
+    func permissionAuthorizationsChanged(productId: String)
 
     /// The 32-byte id of the current app installation, created on first use.
     /// NFT purse item keys are derived under it, so it must be the id the
@@ -431,6 +452,7 @@ public extension HostBridge {
     func requestWorkerTransition(productId: String, transition: WorkerTransition) {}
     func devicePaired(device: PairedSsoPeer) {}
     func durableWorkChanged(pending: Bool) {}
+    func permissionAuthorizationsChanged(productId: String) {}
     func currentInstallation() async throws -> Data {
         throw HostRejection.Rejected(reason: "this host keeps no installation id")
     }
@@ -696,6 +718,10 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         bridge.durableWorkChanged(pending: pending)
     }
 
+    func permissionAuthorizationsChanged(productId: String) {
+        bridge.permissionAuthorizationsChanged(productId: productId)
+    }
+
     func currentInstallation() async throws -> Data {
         try await withHostRejection {
             try await bridge.currentInstallation()
@@ -777,6 +803,12 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
     func coreStorageClear(key: Data) throws {
         try withHostRejection {
             try bridge.coreStorage.clear(key: key)
+        }
+    }
+
+    func coreStorageKeys() throws -> [Data] {
+        try withHostRejection {
+            try bridge.coreStorage.keys()
         }
     }
 
@@ -1080,6 +1112,31 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// host may stop the worker. Releasing with none held is a no-op.
     public func releaseWorker(productId: String) {
         inner.releaseWorker(productId: productId)
+    }
+
+    /// Every permission decision the core stored for any product, read from
+    /// ``HostCoreStorageBackend/keys()``. A device capability resolves the OS
+    /// gate like a status read, so one the OS refuses lists as `.denied`.
+    public func permissionAuthorizations() async throws -> [ProductPermissionAuthorization] {
+        try await inner.permissionAuthorizations()
+    }
+
+    /// Read a product's stored permission decision without opening it.
+    public func permissionAuthorizationStatus(
+        productId: String,
+        request: PermissionAuthorizationRequest
+    ) async throws -> PermissionAuthorizationStatus {
+        try await inner.permissionAuthorizationStatus(productId: productId, request: request)
+    }
+
+    /// Update a product's stored permission decision without opening it.
+    /// `.notDetermined` clears it, so the product's next request prompts again.
+    public func setPermissionAuthorizationStatus(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus
+    ) throws {
+        try inner.setPermissionAuthorizationStatus(productId: productId, request: request, status: status)
     }
 
     /// Tell the pairing host behind `deeplink` that allowance allocation is

@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import ChainRegistry
+import Products
 import SubstrateSdk
 import TrUAPIHost
 @testable import polkadot_app
@@ -15,7 +16,9 @@ private func makeHostDefaults() -> UserDefaults {
 
 private func makeHostBridge(
     chainRegistry: ChainRegistryProtocol = MockChainRegistry(),
-    confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter()
+    confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter(),
+    osPermissionAsker: MockOSPermissionAsker = MockOSPermissionAsker(),
+    permissionChanges: TrUAPIPermissionChangeNotifier = TrUAPIPermissionChangeNotifier()
 ) -> RustHostRuntimeBridge {
     let chainConnections = TrUAPIV2SpecConnectionPool(
         chainRegistry: chainRegistry,
@@ -29,6 +32,8 @@ private func makeHostBridge(
         chainConnections: chainConnections,
         confirmationPresenter: confirmationPresenter,
         backedUpInstallation: TrUAPIBackedUpInstallation(),
+        osPermissionAsker: osPermissionAsker,
+        permissionChanges: permissionChanges,
         logger: Logger.shared
     )
 }
@@ -94,6 +99,30 @@ struct RustHostRuntimeBridgeTests {
 
         #expect(device == .deny)
         #expect(remote == .deny)
+    }
+
+    /// The settings screens read decisions through the runtime, so the OS gate
+    /// is answered at host level from the same capabilities a product's bridge reads.
+    @Test func devicePermissionStatusReadsTheOSGate() async throws {
+        let osAsker = MockOSPermissionAsker()
+        osAsker.statusToReturn = .denied
+        let bridge = makeHostBridge(osPermissionAsker: osAsker)
+
+        let camera = try await bridge.devicePermissionStatus(request: .camera)
+        let motion = try await bridge.devicePermissionStatus(request: .motion)
+
+        #expect([camera, motion] == [.denied, .notApplicable])
+        #expect(osAsker.checkedCapabilities == [.camera])
+    }
+
+    @Test func permissionChangesReachTheNotifier() async throws {
+        let changes = TrUAPIPermissionChangeNotifier()
+        let bridge = makeHostBridge(permissionChanges: changes)
+        var iterator = changes.changes.makeAsyncIterator()
+
+        bridge.permissionAuthorizationsChanged(productId: "game.paseo")
+
+        #expect(try await iterator.next() == "game.paseo")
     }
 
     @Test(arguments: [TrUAPIPermissionDecision.allowOnce, .allowAlways, .deny])

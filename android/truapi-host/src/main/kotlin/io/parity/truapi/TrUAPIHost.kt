@@ -54,6 +54,7 @@ import uniffi.truapi.AuthState
 import uniffi.truapi.HostChainSet
 import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
+import uniffi.truapi.ProductPermissionAuthorization
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.DbStatus
@@ -144,6 +145,16 @@ interface HostCoreStorage {
 
     @Throws(HostRejection::class)
     suspend fun clear(key: ByteArray)
+
+    /**
+     * Every key this store holds, which is how the core lists the permission
+     * decisions it stored. Defaults to a rejection, so a host that cannot
+     * enumerate its store still builds; [TrUAPIHostRuntime.permissionAuthorizations]
+     * then fails on it.
+     */
+    @Throws(HostRejection::class)
+    suspend fun keys(): List<ByteArray> =
+        throw HostRejection.Rejected("this host does not list core storage")
 }
 
 /** Ids handed out by the default [HostBridge.beginOperation], distinct for the life of the process. */
@@ -383,6 +394,15 @@ interface HostBridge {
     fun durableWorkChanged(pending: Boolean) {}
 
     /**
+     * A stored permission decision of [productId] was written or cleared, by a
+     * prompt or by [TrUAPIHostRuntime.setPermissionAuthorizationStatus], so a
+     * screen listing decisions reads [TrUAPIHostRuntime.permissionAuthorizations]
+     * again. Runtime-wide, like [durableWorkChanged], and arrives on a core
+     * thread: marshal the work off rather than blocking.
+     */
+    fun permissionAuthorizationsChanged(productId: String) {}
+
+    /**
      * The 32-byte id of the current app installation, created on first use.
      * NFT purse item keys are derived under it, so it must be the id the host
      * registers for recovery. Runtime-wide, like [durableWorkChanged].
@@ -539,6 +559,11 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
         runCatching { bridge.durableWorkChanged(pending) }
     }
 
+    // Infallible across the FFI for the same reason `onCoreLog` is.
+    override fun permissionAuthorizationsChanged(productId: String) {
+        runCatching { bridge.permissionAuthorizationsChanged(productId) }
+    }
+
     override suspend fun currentInstallation(): ByteArray =
         withHostRejection { bridge.currentInstallation() }
 
@@ -592,6 +617,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
 
     override suspend fun coreStorageClear(key: ByteArray) =
         withHostRejection { bridge.coreStorage.clear(key) }
+
+    override suspend fun coreStorageKeys(): List<ByteArray> =
+        withHostRejection { bridge.coreStorage.keys() }
 
     override fun chainConnect(genesisHash: ByteArray): UInt? =
         withHostRejection { bridge.chainConnect(genesisHash) }
@@ -1073,6 +1101,35 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      */
     fun releaseWorker(productId: String) {
         inner.releaseWorker(productId)
+    }
+
+    /**
+     * Every permission decision the core stored for any product, read from
+     * [HostCoreStorage.keys]. A device capability resolves the OS gate like a
+     * status read, so one the OS refuses lists as `DENIED`.
+     */
+    @Throws(HostRejection::class)
+    suspend fun permissionAuthorizations(): List<ProductPermissionAuthorization> =
+        inner.permissionAuthorizations()
+
+    /** Read a product's stored permission decision without opening it. */
+    @Throws(HostRejection::class)
+    suspend fun permissionAuthorizationStatus(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+    ): PermissionAuthorizationStatus = inner.permissionAuthorizationStatus(productId, request)
+
+    /**
+     * Update a product's stored permission decision without opening it.
+     * `NOT_DETERMINED` clears it, so the product's next request prompts again.
+     */
+    @Throws(HostRejection::class)
+    fun setPermissionAuthorizationStatus(
+        productId: String,
+        request: PermissionAuthorizationRequest,
+        status: PermissionAuthorizationStatus,
+    ) {
+        inner.setPermissionAuthorizationStatus(productId, request, status)
     }
 
     /**

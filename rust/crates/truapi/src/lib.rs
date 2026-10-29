@@ -852,7 +852,7 @@ pub use native_debug::{DebugSinkError, WsDebugSink};
 pub use platform::{
 	CoreStorageKeyDescription, CoreStorageKeyDescriptionError, HostIdentity, PairingHostConfig,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform, ProductContext,
-	SigningHostConfig, describe_core_storage_key,
+	ProductPermissionAuthorization, SigningHostConfig, describe_core_storage_key,
 };
 #[cfg(feature = "runtime")]
 pub use runtime::StatementRenewalTarget;

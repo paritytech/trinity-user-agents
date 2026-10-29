@@ -1010,6 +1010,20 @@ pub enum PermissionAuthorizationStatus {
 	Authorized,
 }
 
+/// One product's stored decision on one permission request, as host
+/// administration UI lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ProductPermissionAuthorization {
+	/// Product the decision belongs to.
+	pub product_id: ProductId,
+	/// Permission request the decision answers.
+	pub request: PermissionAuthorizationRequest,
+	/// The decision, resolved like a status read: a device capability the
+	/// OS refuses reads as `Denied` whatever is stored.
+	pub status: PermissionAuthorizationStatus,
+}
+
 /// Core-owned administration API exposed to host UI.
 ///
 /// Hosts call this surface to drive global runtime actions or inspect/update

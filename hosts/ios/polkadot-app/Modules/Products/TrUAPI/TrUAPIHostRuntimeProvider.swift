@@ -43,6 +43,8 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let coreStorage: TrUAPILocalStoring
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let backedUpInstallation = TrUAPIBackedUpInstallation()
+    private let osPermissionAsker: OSPermissionAsking
+    private let permissionChanges: TrUAPIPermissionChangeNotifier
     private let tldProvider: DotNsTldProviding
     private let logger: LoggerProtocol
 
@@ -64,6 +66,8 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         settingsManager: SettingsManagerProtocol,
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
+        permissionChanges: TrUAPIPermissionChangeNotifier,
+        osPermissionAsker: OSPermissionAsking = OSPermissionAsker(),
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         logger: LoggerProtocol
     ) {
@@ -72,6 +76,8 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.settingsManager = settingsManager
         self.coreStorage = coreStorage
         self.confirmationRouterFacade = confirmationRouterFacade
+        self.permissionChanges = permissionChanges
+        self.osPermissionAsker = osPermissionAsker
         self.tldProvider = tldProvider
         self.logger = logger
     }
@@ -148,6 +154,8 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
             workerManager: workerManager,
             backedUpInstallation: backedUpInstallation,
+            osPermissionAsker: osPermissionAsker,
+            permissionChanges: permissionChanges,
             logger: logger
         )
 

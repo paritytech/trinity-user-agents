@@ -4,6 +4,9 @@ protocol TrUAPILocalStoring: AnyObject, Sendable {
     func read(key: String) throws -> Data?
     func write(key: String, value: Data) throws
     func clear(key: String) throws
+
+    /// Every key this store holds under its own prefix.
+    func keys() throws -> [String]
 }
 
 /// UserDefaults-backed KV store for the TrUAPI core; values are stored as
@@ -63,6 +66,13 @@ final class TrUAPILocalStorage: TrUAPILocalStoring, @unchecked Sendable {
 
     func clear(key: String) throws {
         defaults.removeObject(forKey: storageKey(key))
+    }
+
+    func keys() throws -> [String] {
+        let prefix = "\(keyPrefix)."
+        return defaults.dictionaryRepresentation().keys.compactMap { key in
+            key.hasPrefix(prefix) ? String(key.dropFirst(prefix.count)) : nil
+        }
     }
 }
 

@@ -90,25 +90,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func devicePermissionStatus(request: HostDevicePermissionRequest) async throws -> DevicePermissionStatus {
-        switch request {
-        case .camera,
-             .microphone,
-             .notifications:
-            switch await dependencies.osPermissionAsker.checkPermission(for: request.deviceCapabilityType) {
-            case .allowed: .granted
-            case .denied: .denied
-            case .notDetermined: .notDetermined
-            }
-        case .location:
-            .notDetermined
-        case .bluetooth,
-             .nfc,
-             .clipboard,
-             .openUrl,
-             .biometrics,
-             .motion:
-            .notApplicable
-        }
+        await TrUAPIDevicePermissionStatus.resolve(request, osPermissionAsker: dependencies.osPermissionAsker)
     }
 
     func remotePermission(

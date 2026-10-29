@@ -225,15 +225,23 @@ extension ServiceCoordinator {
         // Host-level core confirmations route through an SSO-style facade whose
         // presentation view is attached with the main tab bar; until then,
         // host-level prompts deny.
+        let permissionChanges = TrUAPIPermissionChangeNotifier()
         let truapiRuntimeProvider = TrUAPIHostRuntimeProvider(
             chainRegistry: ChainRegistryFacade.sharedRegistry,
             entropyManager: RootEntropyManager.shared,
             settingsManager: SettingsManager.shared,
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationRouterFacade: ProductRoutersFacade.sso(),
+            permissionChanges: permissionChanges,
             logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
+        RootDependencyLocator.setDependency(
+            TrUAPIPermissionAuthorizations(
+                runtimeProvider: truapiRuntimeProvider,
+                changeNotifier: permissionChanges
+            ) as TrUAPIPermissionAuthorizing
+        )
         CoreDurableRecoveryTask.shared.attach(
             truapiRuntimeProvider,
             executor: ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry)

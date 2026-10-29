@@ -65,7 +65,7 @@ The public surface lives in [`src/main/kotlin/io/parity/truapi/TrUAPIHost.kt`](s
 
 - `HostBridge` - callback bundle the embedding app implements. Splits device permissions, remote permissions, navigation, push, feature support, action and permission confirmations, and both storage backends.
 - `HostStorage` - product-scoped read/write/clear interface the host backs with its own persistence. Its methods suspend, so a backend can await disk or keystore work.
-- `HostCoreStorage` - core-owned read/write/clear interface for auth session, pairing identity, and persisted permission decisions (`key` is a SCALE-encoded `CoreStorageKey`). Its methods suspend, like `HostStorage`'s.
+- `HostCoreStorage` - core-owned read/write/clear/keys interface for auth session, pairing identity, and persisted permission decisions (`key` is a SCALE-encoded `CoreStorageKey`). Its methods suspend, like `HostStorage`'s; `keys` defaults to a rejection and backs the runtime's listing of stored decisions.
 - `LocalhostBridgeBootstrap` - supplies the private WebSocket endpoint to the container.
 - `ContainerScriptBundle` - loads the bundled browser container for installation at document start.
 - `TrUAPIHostRuntime` - process-owned runtime whose product executions share one authentication session. Open a connection per executable with `openProductExecution`, which returns a `TrUAPIProductExecution` holding its own token on the runtime's shared WS bridge, permission authorization, theme/preimage/chain notifications, and the Chat controls below.
@@ -197,6 +197,8 @@ The core's `Permissions` platform trait has two methods, and so does the bridge:
 
 Both return `PermissionDecision` (`ALLOW_ONCE`, `ALLOW_ALWAYS`, or `DENY`). Preserve the choice so the core can consume one-use grants without persisting them. OS refusal after app consent should throw rather than record a product denial. The same typed values drive the `TrUAPIProductExecution` permission admin API (`permissionAuthorizationStatus`, `setPermissionAuthorizationStatus`), which reads and updates the persisted decisions without prompting.
 
+`TrUAPIHostRuntime` administers decisions without opening the product: `permissionAuthorizations()` lists every stored decision across products, read from the keys `HostCoreStorage.keys()` reports, and `permissionAuthorizationStatus(productId, request)` / `setPermissionAuthorizationStatus(productId, request, status)` read or update one. Every write or clear of a stored decision arrives as `HostBridge.permissionAuthorizationsChanged(productId)`, on the runtime's bridge.
+
 The browser container checks product consent before opening WebSockets or requesting camera and microphone access. After installing it, the WebChromeClient media callback should check only the Android OS permission, so it does not consume product consent twice.
 
 To disable WebRTC, call `execution.setPermissionAuthorizationStatus` with a remote `WebRtc` request and `DENIED` before loading each product. This overrides saved grants and trusted-product auto-grants, which otherwise skip `remotePermission` callbacks.
@@ -324,6 +326,7 @@ class MyCoreStorage : HostCoreStorage {
     override suspend fun read(key: ByteArray) = map[k(key)]
     override suspend fun write(key: ByteArray, value: ByteArray) { map[k(key)] = value }
     override suspend fun clear(key: ByteArray) { map.remove(k(key)) }
+    override suspend fun keys() = map.keys.map { hex -> hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray() }
 }
 
 class MyBridge(private val webView: WebView) : HostBridge {

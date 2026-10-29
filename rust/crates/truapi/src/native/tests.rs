@@ -184,6 +184,8 @@ pub struct EventCallbacks {
 	pub paired_devices: Mutex<Vec<PairedSsoPeer>>,
 	/// Every `durable_work_changed` report, in order.
 	pub durable_work: Mutex<Vec<bool>>,
+	/// Every `permission_authorizations_changed` report, in order.
+	pub permission_changes: Mutex<Vec<String>>,
 	/// Capability this host reports as refused by the OS, if any.
 	pub os_refused: Option<v01::HostDevicePermissionRequest>,
 	/// Configurable prompt outcome for grant, denial, and callback failure tests.
@@ -237,6 +239,7 @@ impl EventCallbacks {
 			worker_demand: Mutex::new(Vec::new()),
 			paired_devices: Mutex::new(Vec::new()),
 			durable_work: Mutex::new(Vec::new()),
+			permission_changes: Mutex::new(Vec::new()),
 			os_refused: None,
 			remote_permission_result: Ok(PermissionDecision::Deny),
 			remote_permission_reply: Mutex::new(None),
@@ -268,6 +271,12 @@ impl HostCallbacks for EventCallbacks {
 
 	fn durable_work_changed(&self, pending: bool) {
 		self.durable_work.lock().expect("durable work mutex poisoned").push(pending);
+	}
+	fn permission_authorizations_changed(&self, product_id: String) {
+		self.permission_changes
+			.lock()
+			.expect("permission changes mutex poisoned")
+			.push(product_id);
 	}
 	async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
 		Ok(vec![7; 32])
@@ -338,6 +347,9 @@ impl HostCallbacks for EventCallbacks {
 	async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection> {
 		self.core_storage.lock().unwrap().remove(&key);
 		Ok(())
+	}
+	async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
+		Ok(self.core_storage.lock().unwrap().keys().cloned().collect())
 	}
 	fn chain_connect(&self, genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
 		self.chain_connects
@@ -558,6 +570,7 @@ pub fn event_platform() -> (Arc<EventCallbacks>, Arc<NativeEventBus>, CallbackPl
 		callbacks: callbacks.clone(),
 		events: events.clone(),
 		storage_events: events.clone(),
+		runtime_callbacks: callbacks.clone(),
 	};
 	(callbacks, events, platform)
 }
@@ -2155,6 +2168,7 @@ fn start_ws_bridge_twice_returns_already_running() {
 		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
 		}
 		fn durable_work_changed(&self, _pending: bool) {}
+		fn permission_authorizations_changed(&self, _product_id: String) {}
 		fn device_paired(&self, _device: PairedSsoPeer) {}
 		async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
 			Ok(vec![0; 32])
@@ -2210,6 +2224,9 @@ fn start_ws_bridge_twice_returns_already_running() {
 		}
 		async fn core_storage_clear(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
 			Ok(())
+		}
+		async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
+			Ok(Vec::new())
 		}
 		fn chain_connect(&self, _genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
 			Ok(None)
@@ -2328,6 +2345,7 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		fn request_worker_transition(&self, _product_id: ProductId, _transition: WorkerTransition) {
 		}
 		fn durable_work_changed(&self, _pending: bool) {}
+		fn permission_authorizations_changed(&self, _product_id: String) {}
 		fn device_paired(&self, _device: PairedSsoPeer) {}
 		async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
 			Ok(vec![0; 32])
@@ -2385,6 +2403,9 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		}
 		async fn core_storage_clear(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
 			Ok(())
+		}
+		async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection> {
+			Ok(Vec::new())
 		}
 		fn chain_connect(&self, _genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection> {
 			Ok(None)
@@ -2991,13 +3012,15 @@ fn native_permission_confirmation_preserves_consent_lifetime() {
 			PermissionDecision::AllowAlways,
 			PermissionDecision::Deny,
 		] {
+			let callbacks = Arc::new(EventCallbacks {
+				permission_confirmation_result: decision,
+				..EventCallbacks::new()
+			});
 			let platform = CallbackPlatform {
-				callbacks: Arc::new(EventCallbacks {
-					permission_confirmation_result: decision,
-					..EventCallbacks::new()
-				}),
+				callbacks: callbacks.clone(),
 				events: Arc::default(),
 				storage_events: Arc::default(),
+				runtime_callbacks: callbacks,
 			};
 			let review = UserConfirmationReview::IdentityDisclosure(
 				crate::platform::IdentityDisclosureReview {
