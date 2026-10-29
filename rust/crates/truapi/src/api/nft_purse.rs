@@ -11,8 +11,8 @@ use crate::{
 		HostNftPurseCreateReceiveKeyRequest, HostNftPurseCreateReceiveKeyResponse,
 		HostNftPurseDepositError, HostNftPurseDepositRequest, HostNftPurseDepositResponse,
 		HostNftPurseListPursesError, HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
-		HostNftPurseListenForPaymentError, HostNftPurseListenForPaymentItem,
-		HostNftPurseListenForPaymentRequest, HostNftPurseObserveOperationStatusError,
+		HostNftPurseListenOneTimePaymentError, HostNftPurseListenOneTimePaymentItem,
+		HostNftPurseListenOneTimePaymentRequest, HostNftPurseObserveOperationStatusError,
 		HostNftPurseObserveOperationStatusItem, HostNftPurseObserveOperationStatusRequest,
 		HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
 		HostNftPurseRebalancePurseError, HostNftPurseRebalancePurseRequest,
@@ -148,14 +148,24 @@ pub trait NftPurse: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// Listen for the cheque sent to a receive key.
+	/// Listen for the cheque sent to a receive key the caller made. Emits the
+	/// channel, then the first cheque addressed to the key, then ends. Every
+	/// call emits a cheque the statement store still holds, including one
+	/// already deposited.
+	///
+	/// The channel's topic is `blake2_256("nft-purse/payment-channel" ‖ key)`.
+	/// A sender publishes a statement under that topic whose data is the
+	/// cheque sealed to the receive key: the ephemeral X25519 key, then the
+	/// 12-byte nonce, then the ChaCha20-Poly1305 ciphertext and tag of
+	/// `SCALE(version: u8 = 0, topic, cheque)`, keyed by HKDF-SHA256 over the
+	/// X25519 shared secret. The cheque must fit in one statement.
 	///
 	/// ```ts
 	/// import { firstValueFrom, from } from "rxjs";
 	///
 	/// const item = await firstValueFrom(
 	///   from(
-	///     truapi.nftPurse.listenForPayment({
+	///     truapi.nftPurse.listenOneTimePayment({
 	///       request: {
 	///         key: "0x0000000000000000000000000000000000000000000000000000000000000000",
 	///       },
@@ -165,12 +175,14 @@ pub trait NftPurse: Send + Sync {
 	/// console.log("payment item:", item);
 	/// ```
 	#[wire(id = 6)]
-	async fn listen_for_payment(
+	async fn listen_one_time_payment(
 		&self,
 		_cx: &CallContext,
-		_request: HostNftPurseListenForPaymentRequest,
-	) -> Subscription<HostNftPurseListenForPaymentItem, CallError<HostNftPurseListenForPaymentError>>
-	{
+		_request: HostNftPurseListenOneTimePaymentRequest,
+	) -> Subscription<
+		HostNftPurseListenOneTimePaymentItem,
+		CallError<HostNftPurseListenOneTimePaymentError>,
+	> {
 		Subscription::interrupted(CallError::unavailable())
 	}
 

@@ -20,17 +20,18 @@ mod browser {
 			HostNftPurseCreateReceiveKeyRequest, HostNftPurseCreateReceiveKeyResponse,
 			HostNftPurseDepositError, HostNftPurseDepositRequest, HostNftPurseDepositResponse,
 			HostNftPurseListPursesError, HostNftPurseListPursesRequest,
-			HostNftPurseListPursesResponse, HostNftPurseObserveOperationStatusError,
-			HostNftPurseObserveOperationStatusItem, HostNftPurseObserveOperationStatusRequest,
-			HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest,
-			HostNftPurseQueryPurseResponse, HostNftPurseRebalancePurseError,
-			HostNftPurseRebalancePurseRequest, HostNftPurseRebalancePurseResponse,
-			HostNftPurseRefundError, HostNftPurseRefundRequest, HostNftPurseRefundResponse,
-			HostNftPurseRevokeChequeError, HostNftPurseRevokeChequeRequest,
-			HostNftPurseRevokeChequeResponse, HostNftPurseStaticReceiveKeyError,
-			HostNftPurseStaticReceiveKeyRequest, HostNftPurseStaticReceiveKeyResponse,
-			HostNftPurseTransferItemError, HostNftPurseTransferItemRequest,
-			HostNftPurseTransferItemResponse,
+			HostNftPurseListPursesResponse, HostNftPurseListenOneTimePaymentError,
+			HostNftPurseListenOneTimePaymentItem, HostNftPurseListenOneTimePaymentRequest,
+			HostNftPurseObserveOperationStatusError, HostNftPurseObserveOperationStatusItem,
+			HostNftPurseObserveOperationStatusRequest, HostNftPurseQueryPurseError,
+			HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
+			HostNftPurseRebalancePurseError, HostNftPurseRebalancePurseRequest,
+			HostNftPurseRebalancePurseResponse, HostNftPurseRefundError, HostNftPurseRefundRequest,
+			HostNftPurseRefundResponse, HostNftPurseRevokeChequeError,
+			HostNftPurseRevokeChequeRequest, HostNftPurseRevokeChequeResponse,
+			HostNftPurseStaticReceiveKeyError, HostNftPurseStaticReceiveKeyRequest,
+			HostNftPurseStaticReceiveKeyResponse, HostNftPurseTransferItemError,
+			HostNftPurseTransferItemRequest, HostNftPurseTransferItemResponse,
 		},
 	};
 
@@ -139,6 +140,17 @@ mod browser {
 			_request: HostNftPurseTransferItemRequest,
 		) -> Result<HostNftPurseTransferItemResponse, CallError<HostNftPurseTransferItemError>> {
 			Err(CallError::Unsupported)
+		}
+
+		async fn listen_one_time_payment(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseListenOneTimePaymentRequest,
+		) -> Subscription<
+			HostNftPurseListenOneTimePaymentItem,
+			CallError<HostNftPurseListenOneTimePaymentError>,
+		> {
+			Subscription::interrupted(CallError::Unsupported)
 		}
 
 		async fn observe_operation_status(

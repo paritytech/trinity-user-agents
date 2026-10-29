@@ -1369,17 +1369,17 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_subscription(wire_table::NFT_PURSE_LISTEN_FOR_PAYMENT, move |request_id: String, request: versioned::nft_purse::HostNftPurseListenForPaymentRequest| {
+        dispatcher.on_subscription(wire_table::NFT_PURSE_LISTEN_ONE_TIME_PAYMENT, move |request_id: String, request: versioned::nft_purse::HostNftPurseListenOneTimePaymentRequest| {
             let host = host.clone();
             Box::pin(async move {
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
-                let stream = host.listen_for_payment(&cx, request).await;
+                let stream = host.listen_one_time_payment(&cx, request).await;
                 let stream = futures::StreamExt::map(
                     stream,
-                    move |item: Result<versioned::nft_purse::HostNftPurseListenForPaymentItem, truapi::CallError<versioned::nft_purse::HostNftPurseListenForPaymentError>>| {
+                    move |item: Result<versioned::nft_purse::HostNftPurseListenOneTimePaymentItem, truapi::CallError<versioned::nft_purse::HostNftPurseListenOneTimePaymentError>>| {
                         item.map(|item| {
-                            <versioned::nft_purse::HostNftPurseListenForPaymentItem as truapi::versioned::FromLatest>::from_latest(
+                            <versioned::nft_purse::HostNftPurseListenOneTimePaymentItem as truapi::versioned::FromLatest>::from_latest(
                                 truapi::versioned::IntoLatest::into_latest(item),
                                 target_version,
                             )

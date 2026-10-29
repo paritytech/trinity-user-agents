@@ -8,6 +8,7 @@ mod cheque;
 mod dao;
 mod deposit;
 mod operation;
+mod payment;
 mod receive_key;
 mod refund;
 
@@ -21,10 +22,12 @@ use truapi::latest::{
 
 pub use deposit::DepositRefusal;
 pub use operation::drain_needs_confirmation;
+pub use payment::{PaymentListen, PaymentListenError};
 pub use receive_key::{CreateReceiveKeyError, StaticReceiveSecret};
 
 use crate::{
 	encrypted_storage::EncryptedStorage,
+	host_logic::statement_store::StatementStoreApi,
 	nft::{
 		AllocateItemsError, CreatePurseError, ItemKey, NftLedger, PageRequest, PurseId,
 		PurseRecord, PurseTag,
@@ -143,6 +146,8 @@ pub struct NftPursesDeps {
 	pub encrypted: Arc<dyn EncryptedStorage>,
 	/// Opens `Static` cheques.
 	pub static_secret: Arc<dyn StaticReceiveSecret>,
+	/// The statement store cheques arrive through.
+	pub statements: Arc<dyn StatementStoreApi>,
 }
 
 /// The RFC's purse calls, shared by every product.
@@ -152,13 +157,14 @@ pub struct NftPurses {
 	db: Db,
 	encrypted: Arc<dyn EncryptedStorage>,
 	static_secret: Arc<dyn StaticReceiveSecret>,
+	statements: Arc<dyn StatementStoreApi>,
 }
 
 impl NftPurses {
 	/// The RFC calls over `deps`.
 	pub fn new(deps: NftPursesDeps) -> Self {
-		let NftPursesDeps { ledger, db, encrypted, static_secret } = deps;
-		Self { ledger, db, encrypted, static_secret }
+		let NftPursesDeps { ledger, db, encrypted, static_secret, statements } = deps;
+		Self { ledger, db, encrypted, static_secret, statements }
 	}
 
 	/// Creates a purse owned by the product `caller`.
@@ -216,14 +222,47 @@ impl NftPurses {
 	}
 }
 
-/// Purse calls over `db` with the test ledger, encrypted storage in memory and
-/// [`TEST_STATIC_SECRET`].
+/// Purse calls over `db` with the test ledger, encrypted storage in memory,
+/// [`TEST_STATIC_SECRET`] and a statement store that has nothing to watch.
 #[cfg(test)]
 pub fn test_purses(db: Db) -> NftPurses {
+	test_purses_watching(db, Arc::default())
+}
+
+/// [`test_purses`] whose statement store is `statements`.
+#[cfg(test)]
+pub fn test_purses_watching(db: Db, statements: Arc<ScriptedStatements>) -> NftPurses {
 	let ledger = crate::nft::test_ledger(db.clone());
 	let encrypted = Arc::new(crate::encrypted_storage::MemoryEncryptedStorage::default());
 	let static_secret = Arc::new(FixedStaticSecret(TEST_STATIC_SECRET));
-	NftPurses::new(NftPursesDeps { ledger, db, encrypted, static_secret })
+	NftPurses::new(NftPursesDeps { ledger, db, encrypted, static_secret, statements })
+}
+
+/// A statement store whose every watch yields `batches` and then ends, and
+/// that remembers the filters it was asked to watch.
+#[cfg(test)]
+#[derive(Default)]
+pub struct ScriptedStatements {
+	/// What each watch yields.
+	pub batches: std::sync::Mutex<Vec<Vec<Vec<u8>>>>,
+	/// The filters watched, in order.
+	pub watched: std::sync::Mutex<Vec<truapi::latest::RemoteStatementStoreSubscribeRequest>>,
+}
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl StatementStoreApi for ScriptedStatements {
+	async fn start_statement_watch(
+		&self,
+		filter: truapi::latest::RemoteStatementStoreSubscribeRequest,
+	) -> Result<
+		crate::host_logic::statement_store::StatementBatches,
+		crate::host_logic::statement_store::StatementWatchError,
+	> {
+		self.watched.lock().unwrap().push(filter);
+		let batches = self.batches.lock().unwrap().clone().into_iter().map(Ok);
+		Ok(futures::StreamExt::boxed(futures::stream::iter(batches)))
+	}
 }
 
 /// The static receive secret of [`test_purses`].

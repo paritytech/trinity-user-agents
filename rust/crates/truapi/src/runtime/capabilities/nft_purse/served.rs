@@ -2,6 +2,7 @@
 
 mod cheques;
 mod operations;
+mod payments;
 
 use tracing::instrument;
 use truapi::{
@@ -17,9 +18,10 @@ use truapi::{
 		HostNftPurseCreateReceiveKeyRequest, HostNftPurseCreateReceiveKeyResponse,
 		HostNftPurseDepositError, HostNftPurseDepositRequest, HostNftPurseDepositResponse,
 		HostNftPurseListPursesError, HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
-		HostNftPurseObserveOperationStatusError, HostNftPurseObserveOperationStatusItem,
-		HostNftPurseObserveOperationStatusRequest, HostNftPurseQueryPurseError,
-		HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
+		HostNftPurseListenOneTimePaymentError, HostNftPurseListenOneTimePaymentItem,
+		HostNftPurseListenOneTimePaymentRequest, HostNftPurseObserveOperationStatusError,
+		HostNftPurseObserveOperationStatusItem, HostNftPurseObserveOperationStatusRequest,
+		HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
 		HostNftPurseRebalancePurseError, HostNftPurseRebalancePurseRequest,
 		HostNftPurseRebalancePurseResponse, HostNftPurseRefundError, HostNftPurseRefundRequest,
 		HostNftPurseRefundResponse, HostNftPurseRevokeChequeError, HostNftPurseRevokeChequeRequest,
@@ -153,6 +155,18 @@ impl NftPurse for ProductRuntimeHost {
 		request: HostNftPurseTransferItemRequest,
 	) -> Result<HostNftPurseTransferItemResponse, CallError<HostNftPurseTransferItemError>> {
 		version(request).exec(|request| self.transfer_nft_item(cx, request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.listen_one_time_payment"))]
+	async fn listen_one_time_payment(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseListenOneTimePaymentRequest,
+	) -> Subscription<
+		HostNftPurseListenOneTimePaymentItem,
+		CallError<HostNftPurseListenOneTimePaymentError>,
+	> {
+		version(request).exec(|request| self.listen_one_time_nft_payment(request)).await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.observe_operation_status"))]

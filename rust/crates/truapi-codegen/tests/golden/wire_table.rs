@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "64ed389d14560e44";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "3ad94ee07f139bf1";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -626,8 +626,8 @@ pub const NFT_PURSE_CREATE_RECEIVE_KEY: MethodIds = MethodIds {
     method_id: 5,
 };
 
-/// Wire discriminants for `nft_purse_listen_for_payment`.
-pub const NFT_PURSE_LISTEN_FOR_PAYMENT: MethodIds = MethodIds {
+/// Wire discriminants for `nft_purse_listen_one_time_payment`.
+pub const NFT_PURSE_LISTEN_ONE_TIME_PAYMENT: MethodIds = MethodIds {
     trait_id: 26,
     method_id: 6,
 };
@@ -1067,8 +1067,8 @@ pub const WIRE_TABLE: &[WireEntry] = &[
         kind: WireKind::Request(NFT_PURSE_CREATE_RECEIVE_KEY),
     },
     WireEntry {
-        method: "nft_purse_listen_for_payment",
-        kind: WireKind::Subscription(NFT_PURSE_LISTEN_FOR_PAYMENT),
+        method: "nft_purse_listen_one_time_payment",
+        kind: WireKind::Subscription(NFT_PURSE_LISTEN_ONE_TIME_PAYMENT),
     },
     WireEntry {
         method: "nft_purse_create_cheque",

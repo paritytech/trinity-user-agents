@@ -481,7 +481,8 @@ impl RuntimeServices {
 		let db = self.core_db.get().cloned()?;
 		let encrypted = self.encrypted_storage.get().cloned()?;
 		let static_secret = self.static_receive_secret.get().cloned()?;
-		Some(NftPurses::new(NftPursesDeps { ledger, db, encrypted, static_secret }))
+		let statements = Arc::new(self.statement_store.clone());
+		Some(NftPurses::new(NftPursesDeps { ledger, db, encrypted, static_secret, statements }))
 	}
 
 	/// Install the host's durable work observer. Returns whether this call
