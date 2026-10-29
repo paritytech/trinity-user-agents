@@ -620,14 +620,14 @@ fn mock_product() -> ProductContext {
 fn create_room(p: &MockPlatform, room_id: &str) -> latest::ChatRoomRegistrationStatus {
 	block_on(p.create_chat_room(
 		&mock_product(),
+		room_id.to_string(),
 		latest::HostChatCreateRoomRequest {
-			room_id: room_id.to_string(),
+			room_id_source: room_id.to_string(),
 			name: format!("{room_id} room"),
 			icon: "https://example.invalid/i.png".to_string(),
 		},
 	))
 	.expect("room registration succeeds")
-	.status
 }
 
 fn post_text(
@@ -692,8 +692,9 @@ fn an_injected_chat_error_refuses_every_chat_entry_point() {
 
 	let room = block_on(p.create_chat_room(
 		&product,
+		"lobby".to_string(),
 		latest::HostChatCreateRoomRequest {
-			room_id: "lobby".to_string(),
+			room_id_source: "lobby".to_string(),
 			name: "lobby room".to_string(),
 			icon: "https://example.invalid/i.png".to_string(),
 		},

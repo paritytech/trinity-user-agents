@@ -5,6 +5,9 @@
 //! `None` and the host keeps its own placeholder. It also lets a product dock
 //! one of its own cards in a room footer. A v0.1 footer upgrades to the same
 //! `TextInput` or `Empty`.
+//!
+//! v0.2 also lets the host make the room id. The `room_id` of a v0.1 room
+//! request becomes the source of the id, and a v0.1 answer carries no id.
 
 use crate::{
 	v01, v02,
@@ -12,9 +15,18 @@ use crate::{
 };
 
 truapi_macros::versioned_type! {
-	pub enum HostChatCreateRoomRequest { V1 => v01::HostChatCreateRoomRequest }
-	pub enum HostChatCreateRoomResponse { V1 => v01::HostChatCreateRoomResponse }
-	pub enum HostChatCreateRoomError { V1 => v01::HostChatCreateRoomError }
+	pub enum HostChatCreateRoomRequest {
+		V1 => v01::HostChatCreateRoomRequest,
+		V2 => v02::HostChatCreateRoomRequest,
+	}
+	pub enum HostChatCreateRoomResponse {
+		V1 => v01::HostChatCreateRoomResponse,
+		V2 => v02::HostChatCreateRoomResponse,
+	}
+	pub enum HostChatCreateRoomError {
+		V1 => v01::HostChatCreateRoomError,
+		V2 => v01::HostChatCreateRoomError,
+	}
 	pub enum HostChatRegisterBotRequest { V1 => v01::HostChatRegisterBotRequest }
 	pub enum HostChatRegisterBotResponse { V1 => v01::HostChatRegisterBotResponse }
 	pub enum HostChatRegisterBotError { V1 => v01::HostChatRegisterBotError }
@@ -70,6 +82,54 @@ truapi_macros::versioned_type! {
 	pub enum HostChatSetRoomConfigError { V1 => v01::HostChatSetRoomConfigError }
 }
 
+impl IntoLatest for HostChatCreateRoomRequest {
+	fn into_latest(self) -> Self::Latest {
+		match self {
+			Self::V1(v01::HostChatCreateRoomRequest { room_id, name, icon }) => {
+				v02::HostChatCreateRoomRequest { room_id_source: room_id, name, icon }
+			},
+			Self::V2(latest) => latest,
+		}
+	}
+}
+
+// A v0.1 answer names no room. The dispatcher upgrades an answer only to
+// downgrade it again for the same caller, so the empty id never reaches a
+// product.
+impl IntoLatest for HostChatCreateRoomResponse {
+	fn into_latest(self) -> Self::Latest {
+		match self {
+			Self::V1(v01::HostChatCreateRoomResponse { status }) => {
+				v02::HostChatCreateRoomResponse { status, room_id: String::new() }
+			},
+			Self::V2(latest) => latest,
+		}
+	}
+}
+
+impl FromLatest for HostChatCreateRoomResponse {
+	fn from_latest(latest: Self::Latest, target: u8) -> Self {
+		if target >= 2 {
+			return Self::V2(latest);
+		}
+		Self::V1(v01::HostChatCreateRoomResponse { status: latest.status })
+	}
+}
+
+impl IntoLatest for HostChatCreateRoomError {
+	fn into_latest(self) -> Self::Latest {
+		match self {
+			Self::V1(payload) | Self::V2(payload) => payload,
+		}
+	}
+}
+
+impl FromLatest for HostChatCreateRoomError {
+	fn from_latest(latest: Self::Latest, target: u8) -> Self {
+		if target >= 2 { Self::V2(latest) } else { Self::V1(latest) }
+	}
+}
+
 impl IntoLatest for HostChatPostMessageRequest {
 	fn into_latest(self) -> Self::Latest {
 		match self {
@@ -111,6 +171,7 @@ impl FromLatest for HostChatPostMessageError {
 		if target >= 2 { Self::V2(latest) } else { Self::V1(latest) }
 	}
 }
+
 
 impl IntoLatest for HostChatSetRoomFooterRequest {
 	fn into_latest(self) -> Self::Latest {

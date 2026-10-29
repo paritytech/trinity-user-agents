@@ -13,9 +13,10 @@
 //! differ, the test writes the frames it encoded to `chat-v2-frames.txt.actual`
 //! beside the snapshot.
 //!
-//! `create_room`, `post_message` and `set_room_footer` keep the frames of the
-//! first Chat methods. Products that use the first SDK call them through the
-//! client that the host injects.
+//! `post_message` and `set_room_footer` keep the frames of the first Chat
+//! methods. Products that use the first SDK call them through the client that
+//! the host injects. `create_room` has a second version, in which the host
+//! makes the room id, and its first frames still decode.
 
 use std::{fmt::Debug, fs, path::PathBuf};
 
@@ -167,6 +168,27 @@ fn frames() -> Vec<String> {
 			"0.create_room.request",
 			wire_table::CHAT_CREATE_ROOM,
 			MESSAGE_TYPE_REQUEST,
+			HostChatCreateRoomRequest::V2(v02::HostChatCreateRoomRequest {
+				room_id_source: "support".into(),
+				name: "Room".into(),
+				icon: "https://icons.example/room.png".into(),
+			}),
+		),
+		line(
+			"0.create_room.response",
+			wire_table::CHAT_CREATE_ROOM,
+			MESSAGE_TYPE_RESPONSE,
+			Ok::<_, CallError<HostChatCreateRoomError>>(HostChatCreateRoomResponse::V2(
+				v02::HostChatCreateRoomResponse {
+					status: v01::ChatRoomRegistrationStatus::Exists,
+					room_id: room(),
+				},
+			)),
+		),
+		line(
+			"0.create_room.v1_request",
+			wire_table::CHAT_CREATE_ROOM,
+			MESSAGE_TYPE_REQUEST,
 			HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
 				room_id: room(),
 				name: "Room".into(),
@@ -174,7 +196,7 @@ fn frames() -> Vec<String> {
 			}),
 		),
 		line(
-			"0.create_room.response",
+			"0.create_room.v1_response",
 			wire_table::CHAT_CREATE_ROOM,
 			MESSAGE_TYPE_RESPONSE,
 			Ok::<_, CallError<HostChatCreateRoomError>>(HostChatCreateRoomResponse::V1(

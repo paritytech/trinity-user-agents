@@ -17,7 +17,7 @@ import type {
 import type { DiagnosisRow } from "./diagnosis.ts";
 
 /** Room every case posts into, created by the first case. */
-const ROOM_ID = "support";
+const ROOM_ID_SOURCE = "support";
 
 /** Published limits, mirrored from `truapi::platform` so a case can cross one. */
 const BODY_MAX_BYTES = 16 * 1024;
@@ -185,7 +185,7 @@ export async function runChatScreeningE2e(
 
   let startedAt = performance.now();
   const created = await client.chat.createRoom({
-    roomId: ROOM_ID,
+    roomIdSource: ROOM_ID_SOURCE,
     name: "Support",
     icon: "https://rooms.invalid/support.png",
   });
@@ -197,13 +197,14 @@ export async function runChatScreeningE2e(
   if (created.isErr()) {
     return rows;
   }
+  const { roomId } = created.value;
 
   // Content a host can render reaches it byte for byte: line breaks and tabs
   // survive, because a body is screened but never trimmed or normalized.
   startedAt = performance.now();
   const text = "line one\nline two\twith a tab";
   const accepted: HostChatPostMessageRequest = {
-    roomId: ROOM_ID,
+    roomId,
     payload: { tag: "Text", value: { text } },
   };
   const posted = await client.chat.postMessage(accepted);
@@ -237,7 +238,7 @@ export async function runChatScreeningE2e(
   startedAt = performance.now();
   const roomsBefore = registrations(chatLogPath);
   const oversizedIcon = await client.chat.createRoom({
-    roomId: "oversized-icon",
+    roomIdSource: "oversized-icon",
     name: "Oversized",
     icon: `https://icons.invalid/${pathThatGrowsPast(ICON_MAX_BYTES)}`,
   });
@@ -269,7 +270,7 @@ export async function runChatScreeningE2e(
     startedAt = performance.now();
     const before = transcript(chatLogPath).length;
     const result = await client.chat.postMessage({
-      roomId: ROOM_ID,
+      roomId,
       payload: refused.payload,
     });
     const after = transcript(chatLogPath).length;

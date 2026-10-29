@@ -8,9 +8,10 @@
 // and the client itself, and compare them with that snapshot. They also give
 // the client the host's response frames and read the results it decodes.
 //
-// `createRoom`, `postMessage` and `setRoomFooter` keep the shapes of the first
-// SDK. A host injects this client into products that use that SDK. Those
-// products call the client with the first shapes.
+// `postMessage` and `setRoomFooter` keep the shapes of the first SDK. A host
+// injects this client into products that use that SDK. Those products call the
+// client with the first shapes. `createRoom` has a second version, in which the
+// host makes the room id.
 
 import { readFileSync } from "node:fs";
 
@@ -247,9 +248,9 @@ describe("chat extension v2 frames", () => {
                     W.CHAT_CREATE_ROOM,
                     MESSAGE_TYPE_REQUEST,
                     T.VersionedHostChatCreateRoomRequest.enc({
-                        tag: "V1",
+                        tag: "V2",
                         value: {
-                            roomId: "room",
+                            roomIdSource: "support",
                             name: "Room",
                             icon: "https://icons.example/room.png",
                         },
@@ -454,17 +455,19 @@ describe("chat extension v2 frames", () => {
         }
     });
 
-    it("sends the first shapes of createRoom, setRoomFooter and postMessage as the first SDK did", async () => {
+    it("creates a room from its source and reads the id the host made", async () => {
         const created = recordingClient();
         const room = created.client.chat.createRoom({
-            roomId: "room",
+            roomIdSource: "support",
             name: "Room",
             icon: "https://icons.example/room.png",
         });
         expect(created.sent).toEqual([snapshot.get("0.create_room.request")]);
         created.receive(snapshot.get("0.create_room.response")!);
-        expect((await room)._unsafeUnwrap()).toEqual({ status: "Exists" });
+        expect((await room)._unsafeUnwrap()).toEqual({ status: "Exists", roomId: "room" });
+    });
 
+    it("sends the first shapes of setRoomFooter and postMessage as the first SDK did", async () => {
         const footed = recordingClient();
         const footer = footed.client.chat.setRoomFooter({ roomId: "room", footer: "TextInput" });
         expect(footed.sent).toEqual([snapshot.get("6.set_room_footer.request")]);
@@ -597,15 +600,11 @@ describe("chat extension v2 frames", () => {
         ).toEqual([pinned("14.reactions_query.receive")]);
     });
 
-    it("decodes the first requests of createRoom, setRoomFooter and postMessage", () => {
+    it("decodes the first requests of setRoomFooter and postMessage", () => {
         const payload = (name: string): Uint8Array => {
             // The request id "p:1", then the trait, method and message type.
             return hexToBytes(snapshot.get(name)!).slice(4 + 3);
         };
-        expect(T.VersionedHostChatCreateRoomRequest.dec(payload("0.create_room.request"))).toEqual({
-            tag: "V1",
-            value: { roomId: "room", name: "Room", icon: "https://icons.example/room.png" },
-        });
         expect(
             T.VersionedHostChatSetRoomFooterRequest.dec(payload("6.set_room_footer.request")),
         ).toEqual({ tag: "V1", value: { roomId: "room", footer: "TextInput" } });
