@@ -1,10 +1,12 @@
-//! Product-facing chat capability adapters.
+//! The chat capability that products call.
 //!
-//! The core screens every chat call before a host sees it: identifiers and
-//! texts are normalized and bounded, a room-changing call needs a room the
-//! product hosts, and feed and preview calls are paced per room.
+//! The core screens each chat call before a host sees it. It normalizes and
+//! bounds identifiers and texts. A call that changes a room needs a room that
+//! the product hosts. The core paces the feed and preview calls of each room.
 
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 use futures::StreamExt;
 use tracing::{instrument, warn};
@@ -31,6 +33,8 @@ use truapi::{
 		},
 	},
 };
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 use crate::{
 	platform::{
@@ -39,15 +43,14 @@ use crate::{
 		validate_chat_room_metadata, validate_chat_room_preview,
 	},
 	runtime::{ProductRuntimeHost, chat::ChatRateLimiter, versioning::version},
-	unix_time::current_unix_millis,
 };
 
 /// The participant id of the host's user, which a product cannot write as.
 const USER_PARTICIPANT_ID: &str = "user";
 
-/// Fields whose rejection a product resolves by sending less content, and the
-/// only ones the fieldless `MessageTooLarge` can describe. `payload` is the
-/// payload of a first-version `Custom` message.
+/// The fields that a product makes valid when it sends less content.
+/// `MessageTooLarge` names no field, so it can describe only these. `payload`
+/// is the payload of a first-version `Custom` message.
 const CHAT_SIZED_CONTENT_FIELDS: [&str; 2] = ["text", "payload"];
 
 #[truapi::async_trait]
@@ -273,6 +276,15 @@ impl Chat for ProductRuntimeHost {
 						latest::HostChatSetRoomPreviewError::RateLimited,
 					));
 				}
+				let config = platform
+					.read_chat_room_config(&self.connection.product, request.room_id.clone())
+					.await
+					.map_err(room_host_error)?;
+				// In a room that the host stores, the host shows the messages and
+				// reactions of the user from its own store.
+				if !config.product_source && preview_shows_the_user(&request.preview) {
+					return Err(CallError::Domain(latest::HostChatSetRoomPreviewError::NotOwner));
+				}
 				platform
 					.set_chat_room_preview(&self.connection.product, request)
 					.await
@@ -435,20 +447,40 @@ impl<E: From<RoomRefusal>> From<RoomRefusal> for CallError<E> {
 	}
 }
 
-/// Whether `update` names the host's user as the author of a message or a
-/// reaction.
+/// Whether `update` names the host's user as the author of a message, of the
+/// message that a reply quotes, or of a reaction.
 fn names_the_user(update: &latest::ChatFeedUpdate) -> bool {
-	let participant_id = match update {
+	match update {
 		latest::ChatFeedUpdate::New(message) | latest::ChatFeedUpdate::Replaced(message) => {
-			&message.origin.participant_id
+			shows_the_user(message)
 		},
 		latest::ChatFeedUpdate::ReactionPlaced { participant_id, .. } |
-		latest::ChatFeedUpdate::ReactionRemoved { participant_id, .. } => participant_id,
+		latest::ChatFeedUpdate::ReactionRemoved { participant_id, .. } => {
+			participant_id == USER_PARTICIPANT_ID
+		},
 		latest::ChatFeedUpdate::Edited { .. } |
 		latest::ChatFeedUpdate::StatusChanged { .. } |
-		latest::ChatFeedUpdate::Deleted { .. } => return false,
-	};
-	participant_id == USER_PARTICIPANT_ID
+		latest::ChatFeedUpdate::Deleted { .. } => false,
+	}
+}
+
+/// Whether the host's user wrote `message`, or the message that it quotes.
+fn shows_the_user(message: &latest::ChatMessage) -> bool {
+	let quotes_the_user = message
+		.reply
+		.as_ref()
+		.and_then(|reply| reply.preview.as_ref())
+		.is_some_and(|preview| preview.origin.participant_id == USER_PARTICIPANT_ID);
+	message.origin.participant_id == USER_PARTICIPANT_ID || quotes_the_user
+}
+
+/// Whether `preview` shows a message or a reaction of the host's user.
+fn preview_shows_the_user(preview: &latest::ChatRoomPreview) -> bool {
+	let last_message = preview.last_message.as_ref().is_some_and(shows_the_user);
+	let last_reaction = preview.last_reaction.as_ref().is_some_and(|reaction| {
+		reaction.by_user || reaction.message.as_ref().is_some_and(shows_the_user)
+	});
+	last_message || last_reaction
 }
 
 /// Report a rejected field of a room-changing call.
@@ -476,9 +508,9 @@ fn feed_field_error(error: ChatFieldError) -> CallError<latest::HostChatUpdateFe
 /// the size variant the protocol declares for it.
 fn post_field_error(error: ChatFieldError) -> CallError<latest::HostChatPostMessageError> {
 	CallError::Domain(match error {
-		// `MessageTooLarge` names no field, so it is reserved for the content
-		// a product shrinks by sending less. Every other rejection reports
-		// through `Unknown`, whose reason names the field and its limit.
+		// `MessageTooLarge` names no field. Thus the core uses it only for the
+		// content that a product can make smaller. Each other rejection uses
+		// `Unknown`, and its reason names the field and its limit.
 		ChatFieldError::TooLong { field, .. } if CHAT_SIZED_CONTENT_FIELDS.contains(&field) => {
 			latest::HostChatPostMessageError::MessageTooLarge
 		},
@@ -515,11 +547,7 @@ impl ProductRuntimeHost {
 	/// Spend one call of the budget of `room_id` in `limiter`. Returns `false`
 	/// when the room has no budget left.
 	fn take_room_budget(&self, limiter: &ChatRateLimiter, room_id: &str) -> bool {
-		limiter.try_acquire(
-			self.connection.product.product_id.as_str(),
-			room_id,
-			current_unix_millis(),
-		)
+		limiter.try_acquire(self.connection.product.product_id.as_str(), room_id, Instant::now())
 	}
 }
 
@@ -698,31 +726,13 @@ mod tests {
 	}
 
 	fn chat_runtime(chat: Arc<RecordingHost>) -> ProductRuntimeHost {
-		chat_runtime_on(stub_platform(), chat)
-	}
-
-	/// [`chat_runtime`] over `platform`, so that a test reads what the core
-	/// handed the host platform.
-	fn chat_runtime_on(
-		platform: Arc<crate::test_support::StubPlatform>,
-		chat: Arc<RecordingHost>,
-	) -> ProductRuntimeHost {
-		chat_runtime_of("chat.dot", platform, chat)
-	}
-
-	/// [`chat_runtime_on`] for the product `product_id`.
-	fn chat_runtime_of(
-		product_id: &str,
-		platform: Arc<crate::test_support::StubPlatform>,
-		chat: Arc<RecordingHost>,
-	) -> ProductRuntimeHost {
-		let (host_config, _) = runtime_config(product_id);
+		let (host_config, _) = runtime_config("chat.dot");
 		let product = ProductContext::new_with_execution(
-			ProductId::for_test(product_id),
+			ProductId::for_test("chat.dot"),
 			ProductExecutionKind::Worker,
 		);
 		let services = RuntimeServices::new(
-			platform,
+			stub_platform(),
 			host_config.host.host_info.clone(),
 			host_config.people_chain_genesis_hash,
 			host_config.bulletin_chain_genesis_hash,
@@ -774,6 +784,66 @@ mod tests {
 				update,
 			}),
 		))
+	}
+
+	fn set_preview(
+		runtime: &ProductRuntimeHost,
+		room_id: &str,
+		preview: latest::ChatRoomPreview,
+	) -> Result<HostChatSetRoomPreviewResponse, CallError<HostChatSetRoomPreviewError>> {
+		block_on(Chat::set_room_preview(
+			runtime,
+			&CallContext::default(),
+			HostChatSetRoomPreviewRequest::V1(latest::HostChatSetRoomPreviewRequest {
+				room_id: room_id.to_string(),
+				preview,
+			}),
+		))
+	}
+
+	/// A message of the product that quotes a message of `quoted_participant_id`.
+	fn quoting(quoted_participant_id: &str) -> latest::ChatMessage {
+		let latest::ChatFeedUpdate::New(mut message) = text_message("product") else {
+			unreachable!("text_message builds a new message")
+		};
+		message.reply = Some(latest::ChatReply {
+			message_id: "m0".to_string(),
+			preview: Some(latest::ChatReplyPreview {
+				origin: latest::ChatMessageOrigin {
+					participant_id: quoted_participant_id.to_string(),
+				},
+				body: latest::ChatMessageBody::Text { text: "I agree to pay".to_string() },
+			}),
+		});
+		message
+	}
+
+	/// Previews that show a message or a reaction of the user.
+	fn previews_of_the_user() -> [latest::ChatRoomPreview; 4] {
+		let latest::ChatFeedUpdate::New(user_message) = text_message("user") else {
+			unreachable!("text_message builds a new message")
+		};
+		let preview = |last_message, last_reaction| latest::ChatRoomPreview {
+			timestamp: None,
+			badge: None,
+			last_message,
+			last_reaction,
+			unseen_reactions: 0,
+			pinned: false,
+			activity: None,
+		};
+		let reaction = |by_user, message| latest::ChatPreviewReaction {
+			emoji: "👍".to_string(),
+			by_user,
+			message,
+			removed: false,
+		};
+		[
+			preview(Some(user_message.clone()), None),
+			preview(Some(quoting("user")), None),
+			preview(None, Some(reaction(true, None))),
+			preview(None, Some(reaction(false, Some(user_message)))),
+		]
 	}
 
 	/// Stores `config` as the configuration the product declared for `room_id`.
@@ -875,7 +945,11 @@ mod tests {
 		let chat = RecordingHost::with_rooms(&[hosted("stored")]);
 		let runtime = chat_runtime(chat.clone());
 
-		for update in updates_by("user") {
+		let quotes = [
+			latest::ChatFeedUpdate::New(quoting("user")),
+			latest::ChatFeedUpdate::Replaced(quoting("user")),
+		];
+		for update in updates_by("user").into_iter().chain(quotes) {
 			assert_eq!(
 				update_feed(&runtime, "stored", update),
 				Err(CallError::Domain(HostChatUpdateFeedError::V1(
@@ -884,10 +958,37 @@ mod tests {
 			);
 		}
 		assert!(chat.feed.lock().unwrap().is_empty());
+
+		// The product still quotes its own messages and those of the contact.
+		update_feed(&runtime, "stored", latest::ChatFeedUpdate::New(quoting("contact")))
+			.expect("a quote of the contact");
 	}
 
-	// In a room that the product keeps, the product reports all changes, also
-	// the messages and reactions of the user. The host only shows them.
+	// The chat list shows the newest message and reaction of a room. In a room
+	// that the host stores, the host takes those of the user from its own store,
+	// so a product cannot show the user there.
+	#[test]
+	fn a_preview_cannot_show_the_user_in_a_room_the_host_keeps() {
+		let chat = RecordingHost::with_rooms(&[hosted("stored"), hosted("sourced")]);
+		let runtime = chat_runtime(chat.clone());
+		configure(
+			&chat,
+			"sourced",
+			latest::ChatRoomConfig { product_source: true, ..Default::default() },
+		);
+
+		for preview in previews_of_the_user() {
+			assert_eq!(
+				set_preview(&runtime, "stored", preview.clone()),
+				Err(CallError::Domain(HostChatSetRoomPreviewError::V1(
+					latest::HostChatSetRoomPreviewError::NotOwner
+				)))
+			);
+			set_preview(&runtime, "sourced", preview).expect("a preview of a product room");
+		}
+		assert_eq!(chat.calls(), ["preview sourced"; 4]);
+	}
+
 	// A deletion names no author, so the core sends it to the host. The host
 	// refuses the deletion of a message that the product did not write.
 	#[test]
@@ -907,6 +1008,8 @@ mod tests {
 		);
 	}
 
+	// In a room that the product keeps, the product reports all changes, also
+	// the messages and reactions of the user. The host only shows them.
 	#[test]
 	fn a_room_the_product_keeps_shows_the_users_messages_and_reactions() {
 		let chat = RecordingHost::with_rooms(&[hosted("sourced")]);
