@@ -117,7 +117,9 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
 
     func setRoomMetadata(roomId: String, metadata: ChatRoomMetadata) async throws {
         logger.debug("[truapi:chat-bridge] setRoomMetadata \(roomId)")
-        try await chatMessaging.setRoomMetadata(roomId: requireRoomId(roomId), name: metadata.name)
+        // An empty icon removes the icon, as in `createRoom`.
+        let icon: Chat.RoomIconChange = metadata.icon.map { .replace($0.nilIfEmpty) } ?? .keep
+        try await chatMessaging.setRoomMetadata(roomId: requireRoomId(roomId), name: metadata.name, icon: icon)
     }
 
     func setRoomPreview(roomId: String, preview: ChatRoomPreview) async throws {
