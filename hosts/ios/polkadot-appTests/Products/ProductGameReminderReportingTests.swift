@@ -152,12 +152,13 @@ struct ProductGameReminderReportingTests {
         let alarmId = UUID()
         settings.set(string: alarmId.uuidString, for: GameReminderStorageKeys.product(productId).alarmId)
         let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-60), isReporting: false, settings: settings)
+        await center.schedule(productId: productId, startsAt: startsAt, addCalendarEvent: false)
         fakes.currentAlertingAlarms = [alarmId]
 
         center.refresh()
 
         #expect(fakes.alertingAlarmReads == 0)
-        #expect(!settings.stringReads.contains(GameReminderStorageKeys.product(productId).alarmId))
+        #expect(settings.stringReads.isEmpty)
         #expect(fakes.recorder.events.isEmpty)
     }
 }

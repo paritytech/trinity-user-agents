@@ -320,7 +320,7 @@ private extension ProductGameReminderCenter {
         diagnostics.fired { ringingSlots(alarmIds()) }
     }
 
-    private func ringingSlots(_ alarmIds: Set<UUID>) -> [(productId: ProductId, startsAt: Date)] {
+    func ringingSlots(_ alarmIds: Set<UUID>) -> [(productId: ProductId, startsAt: Date)] {
         guard !alarmIds.isEmpty else {
             return []
         }
