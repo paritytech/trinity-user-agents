@@ -48,6 +48,9 @@ pub enum Error {
 	/// A `dotns` key is not 1 to 32 ASCII letters and digits.
 	#[error("dotns key {0:?} must be 1 to 32 ASCII letters and digits")]
 	DotnsKey(String),
+	/// A `dotns` key holds the zero address, which the registry means as unset.
+	#[error("dotns key {0:?} holds the zero address; leave an unset key out")]
+	DotnsZeroAddress(String),
 	/// A hex value is not lowercase, 0x-prefixed and of the right length.
 	#[error("{field} is not {bytes} bytes of lowercase 0x-prefixed hex")]
 	InvalidHex {

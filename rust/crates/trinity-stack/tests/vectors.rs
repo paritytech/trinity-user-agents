@@ -463,6 +463,18 @@ fn document_cases() -> Vec<DocumentCase> {
 			"dotns-key",
 		),
 		plain("dotns-key-empty", stating(json!({ "": hex(&REGISTRAR) })), "dotns-key"),
+		plain("dotns-key-of-32-bytes", stating(json!({ "a".repeat(32): hex(&REGISTRAR) })), "ok"),
+		plain(
+			"dotns-key-with-an-underscore",
+			stating(json!({ "store_factory": hex(&REGISTRAR) })),
+			"dotns-key",
+		),
+		plain("dotns-key-not-ascii", stating(json!({ "régistrar": hex(&REGISTRAR) })), "dotns-key"),
+		plain(
+			"dotns-address-zero",
+			stating(json!({ "registrar": hex(&[0; 20]) })),
+			"dotns-zero-address",
+		),
 		plain(
 			"dotns-address-uppercase",
 			stating(json!({ "registrar": hex(&REGISTRAR).to_uppercase().replace("0X", "0x") })),
@@ -1397,9 +1409,11 @@ fn run_refresh(case: &Value, file: impl Fn(&Value) -> Option<Vec<u8>>) {
 					})
 				},
 			}
-		} else {
+		} else if step.get("restart").is_some() {
 			reader = start(&step["build"], stored.as_deref());
 			continue;
+		} else {
+			panic!("{name} step {index}: unknown step {step}");
 		};
 		assert_eq!(outcome, step["expect"], "{name} step {index}");
 	}

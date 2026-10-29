@@ -80,9 +80,11 @@ async function run(vector: {
       } catch (error) {
         outcome = { error: (error as { code: string }).code };
       }
-    } else {
+    } else if (step.restart !== undefined) {
       reader = await start(step.build);
       continue;
+    } else {
+      throw new Error(`${vector.name} step ${index}: unknown step`);
     }
     expect(outcome, `${vector.name} step ${index}`).toEqual(step.expect);
   }

@@ -442,6 +442,42 @@
       }
     },
     {
+      "expect": "ok",
+      "file": "documents/dotns-key-of-32-bytes.json",
+      "name": "dotns-key-of-32-bytes",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "dotns-key",
+      "file": "documents/dotns-key-with-an-underscore.json",
+      "name": "dotns-key-with-an-underscore",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "dotns-key",
+      "file": "documents/dotns-key-not-ascii.json",
+      "name": "dotns-key-not-ascii",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "dotns-zero-address",
+      "file": "documents/dotns-address-zero.json",
+      "name": "dotns-address-zero",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
       "expect": "invalid-hex",
       "file": "documents/dotns-address-uppercase.json",
       "name": "dotns-address-uppercase",
