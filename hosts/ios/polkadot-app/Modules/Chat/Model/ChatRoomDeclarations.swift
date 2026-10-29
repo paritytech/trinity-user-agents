@@ -12,6 +12,8 @@ extension Chat {
         /// Goes up by one at each configuration that the product sets, so an open room reloads its policy.
         let configGeneration: Int64
         let preview: RoomPreview
+        /// The text that the room screen shows while the room has no messages. Nil shows nothing.
+        let placeholder: String?
 
         /// The configuration that applies: the declared one, or the host default.
         var effectiveConfig: RoomConfig {
@@ -27,14 +29,27 @@ extension Chat {
         let lastMessage: RoomPreviewMessage?
         /// The contact reacted to a message, and the user did not see the reaction yet.
         let unseenReaction: Bool
+        /// The chat list shows the room above the rooms that are not pinned.
+        let pinned: Bool
+        /// A line that replaces the preview line. Nil draws the preview line of the last message.
+        let activity: RoomActivity?
 
         /// The preview of a room whose product set none: the host draws the last message.
         static let hostDefault = RoomPreview(
             timestamp: nil,
             badge: .hostDefault,
             lastMessage: nil,
-            unseenReaction: false
+            unseenReaction: false,
+            pinned: false,
+            activity: nil
         )
+    }
+
+    /// A line that the chat list shows for a room in place of its last message, for example "Ben is typing".
+    struct RoomActivity: Equatable {
+        let text: String
+        /// The activity continues, so the chat list animates the line.
+        let ongoing: Bool
     }
 
     /// The newest message of a room that the product keeps, which the chat list draws as the preview line.
@@ -69,6 +84,8 @@ extension Chat {
         case none
         /// Zero shows no badge.
         case unreadCount(Int32)
+        /// An image in place of the unread count: an `https` URL or an inline `data:` image.
+        case image(String)
     }
 
     /// The parts of a room that the product serves itself (`ChatRoomConfig`).
@@ -94,11 +111,12 @@ extension Chat {
         case replace(String?)
     }
 
-    /// Replaces the name of a room and changes its icon as `icon` tells.
+    /// Replaces the name and the placeholder of a room, and changes its icon as `icon` tells.
     struct RoomNameUpdate {
         let chatId: Chat.Id
         let name: String
         let icon: RoomIconChange
+        let placeholder: String?
     }
 
     struct RoomConfigUpdate {
