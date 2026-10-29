@@ -647,12 +647,6 @@ pub struct SigningHostRuntime {
 }
 
 impl SigningHostRuntime {
-	/// The services this runtime serves products from.
-	#[cfg(not(target_arch = "wasm32"))]
-	pub(crate) fn services(&self) -> &Arc<RuntimeServices> {
-		&self.services
-	}
-
 	/// `product_id`'s Worker manifest from dotNS, cached for a day like the
 	/// root manifest. `Ok(None)` when the product publishes no Worker, or one
 	/// this core cannot use; `Err` when dotNS could not be read.
@@ -809,27 +803,12 @@ impl SigningHostRuntime {
 		self.services.install_funding_platform(platform)
 	}
 
-	/// Whether a provider still works on any funding session, read from
-	/// storage if funding has not resumed yet. A host that remembers it
-	/// starts funding at its next launch, so the providers carry on from
-	/// their last checkpoint without waiting for a product. Every change to
-	/// it comes with a `funding_session_changed`, so a host asks again there.
-	pub async fn funding_in_progress(&self) -> Result<bool, v01::GenericError> {
-		Ok(self.services.funding_in_progress().await?)
-	}
-
-	/// Every funding session the core keeps, in flight first, then ended,
-	/// each newest first.
-	pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
-		self.services.funding().sessions()
-	}
-
-	/// Every ended funding session the host recorded or the core compacted,
-	/// as summaries newest first,
-	/// for rebuilding the host's own history when it was lost. Compacted
-	/// sessions are kept for good, so this never forgets one.
-	pub fn funding_history(&self) -> Vec<crate::host_logic::funding::FundingSessionSummary> {
-		self.services.funding().history()
+	/// Install the feed the host draws its funding screens from: sessions,
+	/// history, whether funding is in progress, and the overlay's options.
+	/// Install it before [`Self::set_funding_platform`], which resumes
+	/// funding. Set-once; returns whether this call installed it.
+	pub fn set_funding_feed(&self, feed: Arc<dyn crate::runtime::FundingFeed>) -> bool {
+		self.services.funding().install_feed(feed)
 	}
 
 	/// Record that the host wrote ended session `intent` into its own
@@ -868,77 +847,6 @@ impl SigningHostRuntime {
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
-	/// The providers funding session `intent` can be handed to, with the
-	/// routes that serve its direction, in the host's order. Empty for a
-	/// session the core does not know.
-	pub fn funding_candidates(
-		&self,
-		intent: &str,
-	) -> Vec<crate::host_logic::funding_providers::FundingCandidate> {
-		self.services
-			.funding()
-			.get(intent)
-			.map(|session| self.services.funding_candidates(session.direction))
-			.unwrap_or_default()
-	}
-
-	/// What the core knows about each country for funding session `intent`
-	/// on `rail` and `asset`, for the host's country picker. Empty for a
-	/// session the core does not know.
-	pub fn funding_countries(
-		&self,
-		intent: &str,
-		rail: v01::FundingRail,
-		asset: &str,
-	) -> Vec<crate::host_logic::funding_providers::FundingCountry> {
-		self.services
-			.funding()
-			.get(intent)
-			.map(|session| {
-				self.services.funding_providers().countries(session.direction, rail, asset)
-			})
-			.unwrap_or_default()
-	}
-
-	/// The amounts funding session `intent` can take on `rail`, `asset`,
-	/// `network` and `country`, across every provider, as their refusals
-	/// showed: the bounds the host's amount screen enforces before quoting.
-	/// The minimum is never below the $10 product floor. Unbounded for a
-	/// session the core does not know.
-	pub fn funding_amount_limits(
-		&self,
-		intent: &str,
-		rail: v01::FundingRail,
-		asset: &str,
-		network: Option<&str>,
-		country: Option<&str>,
-	) -> crate::host_logic::funding_providers::FundingAmountLimits {
-		self.services
-			.funding()
-			.get(intent)
-			.map(|session| {
-				self.services.funding_providers().amount_limits(
-					crate::host_logic::funding_providers::LimitScope {
-						direction: session.direction,
-						rail,
-						asset,
-						network,
-						country,
-					},
-				)
-			})
-			.unwrap_or(crate::host_logic::funding_providers::FundingAmountLimits {
-				min: Some(crate::host_logic::funding_providers::FUNDING_MIN_AMOUNT),
-				max: None,
-			})
-	}
-
-	/// The country the host detected for the user, which quotes go by until
-	/// the user picks one.
-	pub async fn detected_funding_country(&self) -> Option<String> {
-		self.services.detected_funding_country().await
-	}
-
 	/// Live quotes for funding session `intent`: one row per funding
 	/// provider, whatever routes its manifest declares, `Pending` and then
 	/// `Quoted` or `Unavailable` as each provider answers or runs out of time.
@@ -962,6 +870,7 @@ impl SigningHostRuntime {
 	pub fn request_funding_quotes(&self, intent: &str, ask: v01::FundingQuoteAsk) -> u64 {
 		let (request_id, lists) = self.services.watch_funding_quotes(intent, ask);
 		let platform = self.services.funding().platform();
+		let services = self.services.clone();
 		let intent = intent.to_string();
 		(self.services.spawner)(Box::pin(async move {
 			let Some(platform) = platform else {
@@ -970,6 +879,7 @@ impl SigningHostRuntime {
 			futures::pin_mut!(lists);
 			while let Some(list) = futures::StreamExt::next(&mut lists).await {
 				platform.funding_quotes_changed(intent.clone(), list);
+				services.send_funding_options(&intent);
 			}
 		}));
 		request_id
@@ -978,6 +888,17 @@ impl SigningHostRuntime {
 	/// Stop asking again for funding session `intent`'s quotes.
 	pub fn stop_funding_quotes(&self, intent: &str) {
 		self.services.funding_quotes().stop_watching(intent);
+	}
+
+	/// Record what the user picked in funding session `intent`'s overlay;
+	/// the options it leads to arrive through
+	/// [`crate::runtime::FundingFeed::funding_options_changed`].
+	pub fn select_funding_options(
+		&self,
+		intent: &str,
+		selection: crate::host_logic::funding_providers::FundingSelection,
+	) {
+		self.services.select_funding_options(intent, selection);
 	}
 
 	/// Answer the provider's cancel offer on funding session `intent`:
@@ -1007,15 +928,6 @@ impl SigningHostRuntime {
 			.select_funding_provider(intent, provider_id, quote_id)
 			.await
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
-	}
-
-	/// One funding session as the core holds it, for the host's own status
-	/// and history views.
-	pub fn funding_session(
-		&self,
-		intent: &str,
-	) -> Option<crate::host_logic::funding::FundingSession> {
-		self.services.funding().get(intent)
 	}
 
 	/// Open a funding session on the host's own behalf, as the Balance card's

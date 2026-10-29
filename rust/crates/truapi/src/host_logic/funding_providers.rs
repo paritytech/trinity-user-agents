@@ -389,6 +389,37 @@ pub enum FundingCountrySupport {
 	Unsupported,
 }
 
+/// What the user has picked so far in a session's overlay, which the
+/// countries and amount limits in [`FundingOptions`] go by.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingSelection {
+	/// How the user pays or is paid.
+	pub rail: FundingRail,
+	/// The asset symbol, once one is picked.
+	pub asset: Option<String>,
+	/// The network, for crypto.
+	pub network: Option<String>,
+	/// The ISO 3166-1 alpha-2 code the user picked, or `None` for none yet.
+	pub country: Option<String>,
+}
+
+/// What a session's overlay offers: the providers it can be handed to, and
+/// for the user's selection, what each country supports and the amounts it
+/// takes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingOptions {
+	/// The providers the session can be handed to.
+	pub candidates: Vec<FundingCandidate>,
+	/// What the core knows about each country for the selection's rail and
+	/// asset. Empty until an asset is picked.
+	pub countries: Vec<FundingCountry>,
+	/// The amounts the selection takes across every provider. The minimum
+	/// is never below [`FUNDING_MIN_AMOUNT`].
+	pub limits: FundingAmountLimits,
+}
+
 /// What `providers`' manifests and recent quote answers say about each
 /// country for `direction`, `rail` and `asset`, by country code. A country
 /// nothing names is left out, as the core knows nothing about it.
