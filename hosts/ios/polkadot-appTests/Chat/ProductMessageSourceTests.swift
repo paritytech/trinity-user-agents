@@ -545,7 +545,7 @@ private func createdMessage(for request: ProductChatUserActionRequest) -> ChatMe
 
     var message = productMessage(50, id: messageId, origin: "user", status: .sent)
     message.body = body
-    message.replyTo = replyTo
+    message.reply = replyTo.map { ChatReply(messageId: $0, preview: nil) }
     return message
 }
 
