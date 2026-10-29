@@ -4,6 +4,7 @@ import PolkadotUI
 import Foundation_iOS
 import SubstrateSdk
 import ChainRegistry
+import UIKit.UIImage
 
 protocol ContactsListViewModelMaking {
     func createViewModel(
@@ -52,6 +53,8 @@ extension ContactsListViewModelFactory: ContactsListViewModelMaking {
 
             let messageDate: Date? = chat.message.map { Date.fromChatTimestamp($0.timestamp) }
             let unreadCount = chat.unreadDisplayMessageCount
+            let preview = chat.roomDeclarations?.preview
+            let activity = preview?.activity
 
             let lastMessage = lastMessageText(
                 for: chatWithPeerMetadata,
@@ -70,11 +73,13 @@ extension ContactsListViewModelFactory: ContactsListViewModelMaking {
                 avatarViewModel: avatarViewModel,
                 icon: peerMetadata.icon.imageViewModel(using: productIconViewModelFactory),
                 sender: peerMetadata.name,
-                message: lastMessage,
-                messageKind: messageKind(for: chat.message),
+                message: activity?.text ?? lastMessage,
+                messageKind: activity == nil ? messageKind(for: chat.message) : .default,
                 date: messageDate,
                 hasReaction: chat.hasIncomingReaction,
                 unreadCount: unreadCount,
+                badgeImage: preview.flatMap(badgeImage(for:)),
+                isMessageOngoing: activity?.ongoing ?? false,
                 accessibilityId: nil
             )
             let identifiable = IdentifiableContentConfiguration(
@@ -93,6 +98,23 @@ extension ContactsListViewModelFactory: ContactsListViewModelMaking {
 }
 
 private extension ContactsListViewModelFactory {
+    /// The image badge of a product room. The image is inline or at an `https` URL.
+    func badgeImage(for preview: Chat.RoomPreview) -> DSChatListBadgeImage? {
+        guard case let .image(icon) = preview.badge else {
+            return nil
+        }
+
+        if let data = icon.inlineImageData {
+            return DSChatListBadgeImage(key: icon, viewModel: StaticImageViewModel(image: UIImage(data: data)))
+        }
+
+        guard let url = URL(string: icon), url.scheme == "https" else {
+            return nil
+        }
+
+        return DSChatListBadgeImage(key: icon, viewModel: RemoteImageViewModel(url: url))
+    }
+
     func messageKind(for message: Chat.LocalMessage?) -> DSChatMessage.Kind {
         guard let message else { return .default }
 

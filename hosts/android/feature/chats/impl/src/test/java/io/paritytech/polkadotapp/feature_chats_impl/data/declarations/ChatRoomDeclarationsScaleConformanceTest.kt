@@ -8,6 +8,7 @@ import io.paritytech.polkadotapp.database.model.ChatRoomDeclarationsLocal
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRendererId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatPreviewReactionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomActivityModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
@@ -23,7 +24,8 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
- * Backward compatibility of the SCALE values in `chat_room_declarations`. The config keeps its first stored layout.
+ * Backward compatibility of the SCALE values in `chat_room_declarations`. The config keeps its first stored layout, and
+ * a preview in its first layout still decodes.
  *
  * DO NOT modify the encoded hex values below: they are the frozen format that must always decode.
  */
@@ -39,8 +41,9 @@ class ChatRoomDeclarationsScaleConformanceTest {
         assertEquals(ChatRoomConfigModel.HOST_DEFAULT, decode<ChatRoomConfigLocal>(CONFIG_DEFAULT).toDomain())
     }
 
+    // A preview stored before the pinning and the activity keeps its row, unpinned and without an activity.
     @Test
-    fun `decode previews with each badge from encoded bytes`() {
+    fun `decode previews in the first layout with each badge from encoded bytes`() {
         assertEquals(
             ChatRoomPreviewModel(
                 timestamp = 1_700_000_000_000,
@@ -48,23 +51,28 @@ class ChatRoomDeclarationsScaleConformanceTest {
                 lastMessage = null,
                 lastReaction = ChatPreviewReactionModel(emoji = "👍", byUser = false, message = null, removed = false),
                 unseenReactions = 2,
+                pinned = false,
+                activity = null,
             ),
-            decode<ChatRoomPreviewLocal>(PREVIEW).toDomain(noCustomContent),
+            storedPreview(PREVIEW),
         )
-        assertEquals(ChatRoomBadgeModel.Hidden, decode<ChatRoomPreviewLocal>(PREVIEW_HIDDEN).toDomain(noCustomContent).badge)
+        assertEquals(ChatRoomBadgeModel.Hidden, storedPreview(PREVIEW_HIDDEN)?.badge)
     }
 
     @Test
-    fun `a preview encodes to the frozen bytes`() {
+    fun `a pinned preview with an image badge and an activity encodes to the frozen bytes and decodes back`() {
         val preview = ChatRoomPreviewModel(
             timestamp = null,
-            badge = ChatRoomBadgeModel.Hidden,
+            badge = ChatRoomBadgeModel.Image("https://example.invalid/badge.png"),
             lastMessage = null,
             lastReaction = null,
             unseenReactions = 0,
+            pinned = true,
+            activity = ChatRoomActivityModel("Ben is typing", ongoing = true),
         )
 
-        assertEquals(PREVIEW_HIDDEN, preview.encode(noCustomContent).toHexString())
+        assertEquals(PREVIEW_PINNED, preview.encode(noCustomContent).toHexString())
+        assertEquals(preview, storedPreview(PREVIEW_PINNED))
     }
 
     @Test
@@ -84,13 +92,15 @@ class ChatRoomDeclarationsScaleConformanceTest {
         val declarations = ChatRoomDeclarations(
             config = ChatRoomConfigModel.HOST_DEFAULT.copy(reportSeen = true),
             configGeneration = 4,
-            metadata = ChatRoomMetadataModel("About"),
+            metadata = ChatRoomMetadataModel("About", placeholder = "Nothing here yet"),
             preview = ChatRoomPreviewModel(
                 timestamp = 9,
                 badge = ChatRoomBadgeModel.Count(1),
                 lastMessage = lastMessage,
                 lastReaction = ChatPreviewReactionModel("🔥", byUser = true, message = lastMessage, removed = true),
                 unseenReactions = 0,
+                pinned = true,
+                activity = ChatRoomActivityModel("Ben is typing", ongoing = false),
             ),
         )
 
@@ -99,6 +109,7 @@ class ChatRoomDeclarationsScaleConformanceTest {
             config = declarations.config!!.encode(),
             configGeneration = 4,
             description = "About",
+            placeholder = "Nothing here yet",
             preview = declarations.preview!!.encode(noCustomContent),
             features = null,
             contact = null,
@@ -110,7 +121,7 @@ class ChatRoomDeclarationsScaleConformanceTest {
     @Test
     fun `a preview message keeps its text`() {
         val message = ProductRoomMessage("m1", "product", 5, ChatMessage.Content.Text("hi"), ProductMessageStatusModel.SENT, null, null, emptyList(), false)
-        val preview = ChatRoomPreviewModel(timestamp = null, badge = null, lastMessage = message, lastReaction = null, unseenReactions = 0)
+        val preview = previewOf(message)
 
         val decoded = decode<ChatRoomPreviewLocal>(preview.encode(noCustomContent).toHexString()).toDomain(noCustomContent)
 
@@ -123,7 +134,7 @@ class ChatRoomDeclarationsScaleConformanceTest {
     fun `a custom preview message keeps the content of its renderer`() {
         val content = ChatMessage.Content.Custom(rendererId = "game.dot", content = Result.success("poll"))
         val message = ProductRoomMessage("m1", "product", 5, content, ProductMessageStatusModel.SENT, null, null, emptyList(), false)
-        val preview = ChatRoomPreviewModel(timestamp = null, badge = null, lastMessage = message, lastReaction = null, unseenReactions = 0)
+        val preview = previewOf(message)
 
         val decoded = decode<ChatRoomPreviewLocal>(preview.encode(TextContent).toHexString()).toDomain(TextContent)
 
@@ -132,7 +143,7 @@ class ChatRoomDeclarationsScaleConformanceTest {
 
     @Test
     fun `a part that does not decode reads as not declared`() {
-        val row = ChatRoomDeclarationsLocal(byteArrayOf(1), byteArrayOf(9), 1, null, byteArrayOf(1, 9), null, null)
+        val row = ChatRoomDeclarationsLocal(byteArrayOf(1), byteArrayOf(9), 1, null, null, byteArrayOf(1, 9), null, null)
 
         val declarations = row.toDomain(noCustomContent)
 
@@ -147,6 +158,19 @@ class ChatRoomDeclarationsScaleConformanceTest {
 
     private inline fun <reified T> decode(hex: String): T = BinaryScale.decodeFromByteArray<T>(hex.fromHex())
 
+    private fun storedPreview(hex: String): ChatRoomPreviewModel? =
+        ChatRoomDeclarationsLocal(byteArrayOf(1), null, 0, null, null, hex.fromHex(), null, null).toDomain(noCustomContent).preview
+
+    private fun previewOf(message: ProductRoomMessage) = ChatRoomPreviewModel(
+        timestamp = null,
+        badge = null,
+        lastMessage = message,
+        lastReaction = null,
+        unseenReactions = 0,
+        pinned = false,
+        activity = null,
+    )
+
     private object TextContent : CustomContentDecoder {
         override fun decode(rendererId: CustomChatMessageRendererId, content: ByteArray): Result<Any?> =
             Result.success(content.decodeToString())
@@ -160,5 +184,6 @@ class ChatRoomDeclarationsScaleConformanceTest {
         const val CONFIG_DEFAULT = "00000000000000"
         const val PREVIEW = "010068e5cf8b010000010103000000000110f09f918d00000002000000"
         const val PREVIEW_HIDDEN = "000100000000000000"
+        const val PREVIEW_PINNED = "0001028468747470733a2f2f6578616d706c652e696e76616c69642f62616467652e706e6700000000000001013442656e20697320747970696e6701"
     }
 }

@@ -14,6 +14,7 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
     private let chatInputHostView = ChatInputHostView()
     private let scrollDownButton = ScrollToBottomButton()
     let scrollToReactionButton = ScrollToReactionButton()
+    private let placeholderLabel = Label()
     private var currentInputViewHeight: CGFloat = 0
     private var currentKeyboardHeight: CGFloat = 0
 
@@ -103,6 +104,8 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
             $0.edges.equalToSuperview()
         }
 
+        setupPlaceholder()
+
         addSubview(scrollToReactionButton)
         scrollToReactionButton.alpha = 0
         scrollToReactionButton.addTarget(self, action: #selector(handleScrollToReaction), for: .touchUpInside)
@@ -121,6 +124,20 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
         }
 
         setupScrollEdgeEffect()
+    }
+
+    private func setupPlaceholder() {
+        placeholderLabel.typography = .paragraphLarge
+        placeholderLabel.textColor = .fgTertiary
+        placeholderLabel.textAlignment = .center
+        placeholderLabel.numberOfLines = 0
+        placeholderLabel.isHidden = true
+
+        addSubview(placeholderLabel)
+        placeholderLabel.snp.makeConstraints { make in
+            make.leading.trailing.equalToSuperview().inset(32)
+            make.centerY.equalTo(safeAreaLayoutGuide)
+        }
     }
 
     private func setupScrollEdgeEffect() {
@@ -242,6 +259,9 @@ public extension ChatViewLayout {
         scrollDownButton.unreadCount = viewModel.scrollDownConfiguration.unreadCount
 
         centerItem.configuration = viewModel.headerConfiguration
+
+        placeholderLabel.text = viewModel.placeholder
+        placeholderLabel.isHidden = viewModel.placeholder?.isEmpty ?? true
 
         updateView(
             sections: viewModel.sections,

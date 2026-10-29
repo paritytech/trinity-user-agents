@@ -72,6 +72,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.DmChatM
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.ProductAttachmentStager
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.withOutbox
+import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicyProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -94,6 +95,7 @@ class ChatFeedInteractor @Inject internal constructor(
     private val chatNotificationPublisher: ChatNotificationPublisher,
     private val chatActiveTracker: ChatActiveTrackerInternal,
     private val chatEngine: ChatEngine,
+    private val roomPolicyProvider: ChatRoomPolicyProvider,
     private val contactsRepository: ContactsRepository,
     private val coroutineDispatchers: CoroutineDispatchers,
     private val chatDisplayGenerator: ChatDisplayGenerator,
@@ -383,6 +385,10 @@ class ChatFeedInteractor @Inject internal constructor(
 
     suspend fun animatesMessageReveal(chatId: ChatId): Boolean =
         chatEngine.animatesMessageReveal(chatId)
+
+    /** The text that the product of the room gives for a room without messages. Null for a person chat. */
+    fun observeEmptyRoomText(chatId: ChatId): Flow<String?> =
+        roomPolicyProvider.observePolicy(chatId).map { it?.placeholder }
 
     suspend fun getLastRevealedTimestamp(chatId: ChatId): Timestamp? =
         chatEngine.getLastRevealedTimestamp(chatId)
