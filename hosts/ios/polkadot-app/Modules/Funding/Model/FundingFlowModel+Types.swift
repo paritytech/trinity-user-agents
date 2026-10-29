@@ -14,4 +14,9 @@ extension FundingFlowModel {
     }
 
     struct Context {
+        let intent: String
+        let direction: FundingDirection
+        let amount: U128?
+        let cash: FundingCash
+    }
 }

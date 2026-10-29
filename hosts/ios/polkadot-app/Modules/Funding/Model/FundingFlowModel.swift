@@ -13,12 +13,6 @@ import TrUAPIHost
 @Observable
 final class FundingFlowModel {
     let intent: String
-        let direction: FundingDirection
-        let amount: U128?
-        let cash: FundingCash
-    }
-
-    let intent: String
     let direction: FundingDirection
     let cash: FundingCash
     /// What a payment can spend now, once the app has read it.
