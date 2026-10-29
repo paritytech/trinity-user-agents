@@ -21,7 +21,6 @@ export type {
   Coinage,
   CurrentStack,
   Descriptor,
-  DotnsDrift,
   Fork,
   ForkSource,
   ParsedDocument,

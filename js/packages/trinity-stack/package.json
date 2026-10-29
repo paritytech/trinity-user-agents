@@ -1,7 +1,7 @@
 {
   "name": "@parity/trinity-stack",
   "version": "0.1.0",
-  "description": "Read, verify, sign and publish Trinity stack descriptors, and check their dotNS addresses against the chain; the descriptor rules run in the trinity-stack Rust crate compiled to WebAssembly",
+  "description": "Read, verify, sign and publish Trinity stack descriptors, and keep a project's stacks as build copies; the rules run in the trinity-stack Rust crate compiled to WebAssembly",
   "license": "MIT",
   "author": "Parity Technologies <admin@parity.io>",
   "repository": {
@@ -23,10 +23,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./dotns": {
-      "types": "./dist/dotns.d.ts",
-      "import": "./dist/dotns.js"
     },
     "./reader": {
       "types": "./dist/reader.d.ts",

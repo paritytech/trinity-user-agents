@@ -2,28 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Fetch, encodeLink, publicKey } from "./index.js";
-import {
-  type ProjectOptions,
-  add,
-  check,
-  list,
-  remove,
-  update,
-} from "./project.js";
+import { type Fetch, encodeLink } from "./index.js";
+import { type ProjectOptions, add, list, remove, update } from "./project.js";
 import { createStackReader } from "./reader.js";
-import {
-  AT,
-  MODEL,
-  URL_,
-  cases,
-  pointer,
-  publishedAt as at,
-  transportOf,
-} from "./test-fixtures.js";
+import { URL_, pointer, publishedAt as at } from "./test-fixtures.js";
 
-const controller = cases.dotns[0];
-const MOVED = `0x${"cc".repeat(20)}`;
 const link = encodeLink(pointer);
 
 let dir: string;
@@ -33,7 +16,6 @@ const serve: Fetch = async () =>
 const options = (): ProjectOptions => ({
   dir,
   fetch: serve,
-  transport: () => transportOf(controller),
 });
 const files = async () => (await readdir(dir)).sort();
 
@@ -67,7 +49,7 @@ describe("trinity-stack add and update", () => {
     );
   });
 
-  test("update writes only the signed copy, and nothing when the stack did not move", async () => {
+  test("update writes the signed copy when the stack moved, and nothing otherwise", async () => {
     await add("local", link, undefined, options());
     expect(await update([], options())).toEqual({ changed: [], failures: [] });
     served = await at(200, "g2");
@@ -100,47 +82,6 @@ describe("trinity-stack add and update", () => {
     await expect(update(["missing"], options())).rejects.toThrow(
       "no stack named missing",
     );
-  });
-
-  test("check reads a stack's committed copy by name, else a link or URL, else a file", async () => {
-    served = await at(100, "g1", {
-      ...MODEL,
-      dotns: controller.descriptor.dotns,
-    });
-    await add("local", link, undefined, options());
-    served = await at(200, "g1", {
-      ...MODEL,
-      dotns: { ...controller.descriptor.dotns, resolver: MOVED },
-    });
-    const drift = [
-      {
-        key: "resolver",
-        stated: MOVED,
-        onChain: controller.expect.found.resolver,
-      },
-    ];
-    expect(await check("local", options())).toEqual({ at: AT, drift: [] });
-    expect(await check(URL_, options())).toEqual({ at: AT, drift });
-    expect(await check(link, options())).toEqual({ at: AT, drift });
-    const otherKey = encodeLink({
-      url: URL_,
-      key: publicKey(new Uint8Array(32).fill(9)),
-    });
-    await expect(check(otherKey, options())).rejects.toThrow(
-      "signature does not verify",
-    );
-    const path = join(dir, "moved.json");
-    await writeFile(path, served);
-    expect(await check(path, options())).toEqual({ at: AT, drift });
-  });
-
-  test("check rejects a descriptor without an Asset Hub", async () => {
-    const path = join(dir, "relay-only.json");
-    await writeFile(
-      path,
-      await at(100, "g1", { ...MODEL, chains: [MODEL.chains[0]] }),
-    );
-    await expect(check(path, options())).rejects.toThrow("no AssetHub chain");
   });
 
   test("remove drops the copy and the stack from the module", async () => {

@@ -3,16 +3,13 @@
 // committed with the project.
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Block, Pointer } from "../wasm/trinity_stack.js";
-import { type DotnsDrift, type DotnsTransport, checkDotns } from "./dotns.js";
+import type { Pointer } from "../wasm/trinity_stack.js";
 import {
-  type Descriptor,
   type Fetch,
   accept,
   decodeLink,
   encodeLink,
   fetchDescriptor,
-  open,
   parse,
   stackId,
 } from "./index.js";
@@ -23,7 +20,6 @@ export type ProjectOptions = {
   dir?: string;
   fetch?: Fetch;
   timeoutMs?: number;
-  transport?: (descriptor: Descriptor) => DotnsTransport;
   now?: Date;
 };
 
@@ -98,49 +94,6 @@ export async function list(options: ProjectOptions = {}) {
     ...copy,
     descriptor: document && parse(document).descriptor,
   }));
-}
-
-/**
- * Compares the dotNS addresses a descriptor states with its Asset Hub at the latest finalized
- * block. `target` is a stack name in stacks.json, whose committed copy is checked, else a link or
- * an http(s) URL, whose document must pass the pointer's rules, else a local file. Throws when the
- * descriptor has no Asset Hub.
- */
-export async function check(
-  target: string,
-  options: ProjectOptions = {},
-): Promise<{ at: Block; drift: DotnsDrift[] }> {
-  const stacks = await readStacks(options);
-  const pointer = pointerOf(target);
-  let descriptor: Descriptor;
-  if (Object.hasOwn(stacks, target)) {
-    const document = await read(fileOf(target), options);
-    if (!document) throw new Error(`no committed copy of ${target}`);
-    descriptor = open(document, decodeLink(stacks[target])).descriptor;
-  } else if (pointer) {
-    const document = await fetchDescriptor(pointer.url, options);
-    if (!document) throw new Error(`${pointer.url} is unreachable`);
-    descriptor = open(document, pointer).descriptor;
-  } else {
-    descriptor = parse(new Uint8Array(await readFile(target))).descriptor;
-  }
-  if (!descriptor.chains.some((chain) => chain.role === "AssetHub"))
-    throw new Error(`${descriptor.id} has no AssetHub chain, so no dotNS`);
-  return checkDotns(descriptor, {
-    transport: options.transport?.(descriptor),
-    fetch: options.fetch,
-    timeoutMs: options.timeoutMs,
-  });
-}
-
-/** The pointer `target` names as a link or an http(s) URL; undefined for anything else. */
-function pointerOf(target: string): Pointer | undefined {
-  if (!URL.canParse(target)) return undefined;
-  const parsed = new URL(target);
-  if (parsed.searchParams.has("url")) return decodeLink(target);
-  return ["http:", "https:"].includes(parsed.protocol)
-    ? { url: target }
-    : undefined;
 }
 
 /** Removes a stack and its copy. */

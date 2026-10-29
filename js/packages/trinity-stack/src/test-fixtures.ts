@@ -1,8 +1,6 @@
-// What the package's tests share: the crate's conformance vectors, a signed test stack, and a
-// dotNS transport over a vector's chain. Excluded from the build.
+// What the package's tests share: the crate's conformance vectors and a signed test stack.
+// Excluded from the build.
 import { readFile } from "node:fs/promises";
-import type { Block } from "../wasm/trinity_stack.js";
-import { type DotnsTransport, DotnsRevert } from "./dotns.js";
 import { type Model, generateSecret, publicKey, publish } from "./index.js";
 
 const VECTORS = new URL(
@@ -68,40 +66,4 @@ export async function publishedAt(
   });
   // A copy over a plain ArrayBuffer, which a Response body takes.
   return document.slice();
-}
-
-/** The block a dotNS fixture transport reads at. */
-export const AT: Block = { number: 0x2c71c, hash: `0x${"ab".repeat(32)}` };
-
-/** A dotNS vector's chain: the gateway's storage and each call's answer, null for a revert. */
-export type DotnsChain = {
-  storageKey: string;
-  storage: string | null;
-  calls: Record<string, string | null>;
-};
-
-/**
- * Asset Hub as a dotNS vector has it, at `AT`. `onRead` sees the block of every storage read and
- * call.
- */
-export function transportOf(
-  chain: DotnsChain,
-  options: { onRead?: (at: Block) => void } = {},
-): DotnsTransport {
-  return {
-    at: async () => AT,
-    storage: async (key, at) => {
-      if (key !== chain.storageKey) throw new Error(`unexpected key ${key}`);
-      options.onRead?.(at);
-      return chain.storage;
-    },
-    call: async (to, data, at) => {
-      options.onRead?.(at);
-      const answer = chain.calls[`${to}:${data}`];
-      if (answer === undefined)
-        throw new Error(`unexpected call ${to}:${data}`);
-      if (answer === null) throw new DotnsRevert("execution reverted");
-      return answer;
-    },
-  };
 }

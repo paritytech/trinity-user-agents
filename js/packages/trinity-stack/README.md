@@ -47,7 +47,6 @@ const { descriptor } = await reader.get(stacks.previewnet, {
   require: { chains: ["AssetHub"], services: ["eth-rpc"] },
 });
 const ethRpc = service(descriptor, "eth-rpc");
-const dotns = descriptor.dotns; // dotNS contract addresses, as the descriptor states them
 reader.onChange(({ newGeneration }) => {
   /* reconnect, and drop cached chain data on a new generation */
 });
@@ -56,29 +55,6 @@ reader.onChange(({ newGeneration }) => {
 It never fetches per request. A fetch that fails leaves the copy it has in use, and a `store` of the project's own lets
 a restart start from the last copy fetched. Every decision is the crate's `StackReader`, so the host core behaves the
 same way.
-
-## dotNS contracts
-
-A descriptor states its dotNS contract addresses in `dotns`, a map from registry key to address, such as
-`descriptor.dotns?.registrar`. Readers use it as-is and make no chain reads for it. The operator fills it from the
-chain, and checks it before each publish and on a schedule:
-
-```ts
-import { checkDotns, readDotns } from "@parity/trinity-stack/dotns";
-
-const { addresses } = await readDotns(descriptor); // undefined when the Asset Hub has no dotNS gateway
-const { at, drift } = await checkDotns(descriptor); // [{ key, stated, onChain }], empty when they match
-```
-
-Both read the Asset Hub the way the RFC describes: the gateway's storage over the chain's RPC and the contracts over
-`eth-rpc`, all at the latest finalized block, which `at` names. A tool with its own client, such as a light client,
-passes a `transport`. From the command line:
-
-```sh
-npx trinity-stack check previewnet   # a stack in stacks.json, a link, a descriptor URL or a local file
-```
-
-It prints `dotNS matches the chain at #<block>` and exits 0, or one line per key that differs and exits 1.
 
 ## Publishing a stack
 
