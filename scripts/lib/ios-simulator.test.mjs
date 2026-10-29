@@ -64,6 +64,24 @@ test("the default falls back to a booted iPhone", () => {
   assert.equal(selectSimulatorFromList(withoutPreparedE2E)?.udid, "iphone-26");
 });
 
+test("the default takes the newest runtime's iPhone when none is booted", () => {
+  const shutDown = {
+    devices: {
+      "com.apple.CoreSimulator.SimRuntime.iOS-9-3": [
+        { udid: "iphone-9", name: "iPhone 6s", state: "Shutdown", isAvailable: true },
+      ],
+      "com.apple.CoreSimulator.SimRuntime.iOS-26-4": [
+        { udid: "iphone-26", name: "iPhone 17 Pro", state: "Shutdown", isAvailable: true },
+      ],
+      "com.apple.CoreSimulator.SimRuntime.iOS-18-3": [
+        { udid: "iphone-18", name: "iPhone 16 Pro", state: "Shutdown", isAvailable: true },
+      ],
+    },
+  };
+
+  assert.equal(selectSimulatorFromList(shutDown)?.udid, "iphone-26");
+});
+
 test("the app group follows the bundle id, as the entitlements declare it", () => {
   assert.equal(
     appGroupId("io.parity.polkadotapp.develop"),

@@ -128,11 +128,23 @@ extension CoinageAssetStore {
             material = [
                 raw.material.exposure, raw.material.luster, raw.material.rimLuster,
                 raw.material.lusterMinPx, raw.material.studioRadius, raw.material.studioScale,
-                raw.material.basin, raw.material.rollGloss, raw.material.rollReliefHaze,
+                raw.material.rollGloss, raw.material.rollReliefHaze,
                 raw.native.envSharpen, raw.material.haze, raw.material.polish,
                 raw.material.tone, raw.material.grime, raw.material.engraveDark,
                 raw.material.frost, raw.material.wallRough, raw.material.aaVariance,
-                raw.material.aaThreshold, raw.material.reliefBias
+                raw.material.aaThreshold, raw.material.reliefBias,
+                Tuning.ambient, Tuning.reliefGain, Tuning.roomLift
+            ] + Tuning.panels.prefix(Tuning.panelCount).flatMap(Self.packed)
+        }
+
+        /// A panel as the shader reads it: unit direction, cosine of the half angle, gain.
+        private static func packed(_ panel: Tuning.Panel) -> [Float] {
+            let direction = panel.direction
+            let length = max((direction * direction).sum().squareRoot(), 1e-6)
+
+            return [
+                direction.x / length, direction.y / length, direction.z / length,
+                cos(panel.halfAngle), panel.gain
             ]
         }
 
@@ -241,7 +253,7 @@ private extension CoinageAssetStore {
 
         struct Material: Decodable {
             let exposure, luster, rimLuster, lusterMinPx, studioRadius, studioScale: Float
-            let basin, rollGloss, rollReliefHaze, haze, polish, tone, grime: Float
+            let rollGloss, rollReliefHaze, haze, polish, tone, grime: Float
             let engraveDark, frost, wallRough, aaVariance, aaThreshold, reliefBias: Float
         }
 

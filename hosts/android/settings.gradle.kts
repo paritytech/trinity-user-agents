@@ -72,6 +72,8 @@ run {
 
 include(":test-shared")
 
+include(":config:detekt:rules")
+
 include(":feature:account:api")
 include(":feature:account:impl")
 include(":feature:balances:api")
@@ -87,8 +89,6 @@ include(":feature:cross-chain-transfers:api")
 include(":feature:cross-chain-transfers:impl")
 include(":feature:device-sync:api")
 include(":feature:device-sync:impl")
-include(":feature:fund:api")
-include(":feature:fund:impl")
 include(":feature:prices:api")
 include(":feature:prices:impl")
 include(":feature:scan:api")

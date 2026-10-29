@@ -40,12 +40,14 @@ actor TrUAPIWorkerRuntime {
 
     nonisolated var execution: TrUAPIProductExecutionProtocol { executionModel.execution }
 
-    func start() async throws {
+    /// `onEngineLost` runs if the engine dies once it is up. For example,
+    /// iOS might kill engine once the app goes background.
+    func start(onEngineLost: @escaping @Sendable () -> Void) async throws {
         try checkNotDisposed()
 
         let bootstrap = try executionModel.startBridge()
         let scripts = try RustRuntimeScriptsFactory(bootstrapScript: bootstrap).makeScripts()
-        let jsEngine = try await bootEngine(scripts: scripts)
+        let jsEngine = try await bootEngine(scripts: scripts, onEngineLost: onEngineLost)
         try checkNotDisposed()
 
         let bridge = JSESModuleBridge(engine: jsEngine)
@@ -82,12 +84,18 @@ actor TrUAPIWorkerRuntime {
 
     /// The capability handler is installed before the page exists, so a script
     /// that asks for a camera on its first line is prompted rather than denied.
-    private func bootEngine(scripts: [JSEngineScript]) async throws -> JSEngineProtocol {
+    private func bootEngine(
+        scripts: [JSEngineScript],
+        onEngineLost: @escaping @Sendable () -> Void
+    ) async throws -> JSEngineProtocol {
         let jsEngine = engineFactory()
         do {
             await jsEngine.registerJSDeviceCapabilityHandler(
-                executionModel.osPermissionAsker.makeDeviceCapabilityHandler()
+                executionModel.osPermissionAsker.makeDeviceCapabilityHandler(
+                    execution: executionModel.execution
+                )
             )
+            await jsEngine.onTermination(onEngineLost)
             try checkNotDisposed()
             try await jsEngine.initialize(with: scripts)
             guard await jsEngine.getState() == .ready else { throw ScriptExecutorError.engineInitFailed }

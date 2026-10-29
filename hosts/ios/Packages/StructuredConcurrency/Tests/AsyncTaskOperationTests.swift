@@ -1,7 +1,37 @@
-import Testing
 import Foundation
 import Operation_iOS
+import StructuredConcurrencyTestSupport
+import Testing
 @testable import StructuredConcurrency
+
+private struct Signal: Sendable {
+    private let stream: AsyncStream<Void>
+    private let continuation: AsyncStream<Void>.Continuation
+
+    init() { (stream, continuation) = AsyncStream.makeStream() }
+
+    func fire() { continuation.yield() }
+
+    /// Returns once `fire()` has been called, failing rather than hanging if it never is.
+    func wait() async throws {
+        try await withTimeout(.hangGuard) {
+            for await _ in stream {
+                return
+            }
+            throw CancellationError()
+        }
+    }
+}
+
+private final class DeallocSentinel {
+    static var key = 0
+
+    private let signal: Signal
+
+    init(_ signal: Signal) { self.signal = signal }
+
+    deinit { signal.fire() }
+}
 
 struct AsyncTaskOperationTests {
     @Test func deliversResult() throws {
@@ -29,7 +59,9 @@ struct AsyncTaskOperationTests {
     }
 
     @Test func cancelDuringExecutionCancelsTask() async throws {
+        let started = Signal()
         let operation = AsyncTaskOperation<Int> {
+            started.fire()
             try await Task.sleep(nanoseconds: 60_000_000_000)
             return 0
         }
@@ -37,9 +69,8 @@ struct AsyncTaskOperationTests {
         let queue = OperationQueue()
         queue.addOperation(operation)
 
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await started.wait()
         operation.cancel()
-        try await Task.sleep(nanoseconds: 200_000_000)
 
         #expect(operation.isCancelled)
         #expect(throws: (any Error).self) {
@@ -48,36 +79,45 @@ struct AsyncTaskOperationTests {
     }
 
     @Test func cancelPropagatesIntoTask() async throws {
-        await confirmation("task cancellation handler called") { confirm in
-            let operation = AsyncTaskOperation<Int> {
-                await withTaskCancellationHandler {
-                    try? await Task.sleep(nanoseconds: 60_000_000_000)
-                } onCancel: {
-                    confirm()
-                }
-                return 0
+        let entered = Signal()
+        let cancelled = Signal()
+        let operation = AsyncTaskOperation<Int> {
+            await withTaskCancellationHandler {
+                entered.fire()
+                try? await Task.sleep(for: .seconds(60))
+            } onCancel: {
+                cancelled.fire()
             }
-
-            let queue = OperationQueue()
-            queue.addOperation(operation)
-
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            operation.cancel()
+            return 0
         }
+
+        let queue = OperationQueue()
+        queue.addOperation(operation)
+
+        try await entered.wait()
+        operation.cancel()
+        try await cancelled.wait()
     }
 
     @Test func operationDeallocates() async throws {
         weak var weakOperation: AsyncTaskOperation<Int>?
+        let deallocated = Signal()
 
         autoreleasepool {
             let operation = AsyncTaskOperation<Int> { 42 }
             weakOperation = operation
+            objc_setAssociatedObject(
+                operation,
+                &DeallocSentinel.key,
+                DeallocSentinel(deallocated),
+                .OBJC_ASSOCIATION_RETAIN
+            )
 
             let queue = OperationQueue()
             queue.addOperations([operation], waitUntilFinished: true)
         }
 
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await deallocated.wait()
         #expect(weakOperation == nil)
     }
 

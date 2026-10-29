@@ -7,10 +7,15 @@
 //! collections a device can prove membership in, which is why the allowance
 //! path takes a collection rather than assuming one.
 
+use subxt::ext::scale_encode::EncodeAsType;
+
 use super::{StatementAllowanceError, extension::Metadata, rpc::RpcClient, view};
 
-/// A personhood ring collection in the People chain's `Members` pallet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display)]
+/// A personhood ring collection in the People chain's `Members` pallet. It
+/// encodes by variant name as the runtime's `MembershipCollection` and
+/// `PgasCollection`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display, EncodeAsType)]
+#[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 #[display("{}", self.metadata_variant())]
 pub enum PersonhoodCollection {
 	/// Full personhood, established by proof-of-personhood registration.

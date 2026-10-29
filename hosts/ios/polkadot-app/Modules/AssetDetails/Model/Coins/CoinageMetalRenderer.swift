@@ -119,7 +119,8 @@ final class CoinageMetalRenderer {
         in view: MTKView,
         viewport: CGSize,
         dpr: CGFloat,
-        light: CoinageTilt.Turn
+        light: CoinageTilt.Turn,
+        withinTransaction: Bool = false
     ) {
         ensureCapacity(batches.reduce(0) { $0 + $1.instances.count })
 
@@ -154,8 +155,18 @@ final class CoinageMetalRenderer {
             encoder.endEncoding()
         }
 
-        command.present(drawable)
-        command.commit()
+        // A frame drawn while the view is being resized has to land in the same Core Animation
+        // transaction as the new bounds, or the layer shows nothing until the next one. That
+        // needs the drawable presented by hand once the work is scheduled, rather than by the
+        // command buffer whenever it completes.
+        if withinTransaction {
+            command.commit()
+            command.waitUntilScheduled()
+            drawable.present()
+        } else {
+            command.present(drawable)
+            command.commit()
+        }
 
         ringSlot = (ringSlot + 1) % Self.framesInFlight
     }
@@ -274,6 +285,15 @@ private extension CoinageMetalRenderer {
         // Not an sRGB target: the shader encodes sRGB itself.
         descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
         descriptor.depthAttachmentPixelFormat = .depth32Float
+
+        // Receded coins come out of the shader premultiplied by their own fade, over a clear
+        // background, so the card shows through them whatever colour it is.
+        let blending = descriptor.colorAttachments[0]
+        blending?.isBlendingEnabled = true
+        blending?.sourceRGBBlendFactor = .one
+        blending?.sourceAlphaBlendFactor = .one
+        blending?.destinationRGBBlendFactor = .oneMinusSourceAlpha
+        blending?.destinationAlphaBlendFactor = .oneMinusSourceAlpha
 
         return try device.makeRenderPipelineState(descriptor: descriptor)
     }

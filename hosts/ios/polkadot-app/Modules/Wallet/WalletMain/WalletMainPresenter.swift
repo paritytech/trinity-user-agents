@@ -1,5 +1,6 @@
 import Foundation
 import ChainRegistry
+import Products
 
 @MainActor
 final class WalletMainPresenter {
@@ -7,6 +8,8 @@ final class WalletMainPresenter {
     let wireframe: WalletMainWireframeProtocol
     let interactor: WalletMainInteractorInputProtocol
     let titleViewModelFactory: NetworkStatusTitleViewModelMaking
+
+    private var collectiblesPage: ProductPage?
 
     init(
         interactor: WalletMainInteractorInputProtocol,
@@ -25,8 +28,13 @@ extension WalletMainPresenter: WalletMainPresenterProtocol {
         interactor.setup()
     }
 
+    func showCollectibles() {
+        guard let collectiblesPage else { return }
+        wireframe.showProduct(page: collectiblesPage)
+    }
+
     func showPocketCard(_ card: PocketCardViewModel) {
-        wireframe.showPocketCard(card)
+        wireframe.showPocketCard(card, from: view)
     }
 
     /// Confirmed first: a long press is easy to make by accident, and the card
@@ -39,6 +47,11 @@ extension WalletMainPresenter: WalletMainPresenterProtocol {
 }
 
 extension WalletMainPresenter: WalletMainInteractorOutputProtocol {
+    func didReceiveCollectibles(page: ProductPage) {
+        collectiblesPage = page
+        view?.didReceive(isCollectiblesAvailable: true)
+    }
+
     func didReceive(pocketCards: [PocketCardViewModel]) {
         view?.didReceive(pocketCards: pocketCards)
     }

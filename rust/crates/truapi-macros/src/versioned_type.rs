@@ -176,6 +176,18 @@ fn expand_versioned_enum(def: &VersionedEnum) -> syn::Result<proc_macro2::TokenS
 		}
 	};
 
+	let newest = variants.last().expect("checked non-empty");
+	if let Some(ty) = &newest.ty {
+		let vident = &newest.ident;
+		tokens.extend(quote! {
+			impl From<#ty> for #name {
+				fn from(latest: #ty) -> Self {
+					Self::#vident(latest)
+				}
+			}
+		});
+	}
+
 	if let [only] = &variants[..] {
 		let vident = &only.ident;
 		let (into_body, from_param, from_body) = match &only.ty {

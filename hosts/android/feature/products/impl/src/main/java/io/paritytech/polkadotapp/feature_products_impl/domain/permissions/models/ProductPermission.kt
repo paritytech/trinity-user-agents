@@ -82,6 +82,18 @@ sealed interface ProductPermission {
         override val key: String get() = ""
     }
 
+    /** Reading the NFT purses of another owner: a product, or the user's own account when `null`. */
+    data class NftPurseRead(
+        val ownerProductId: String?,
+    ) : ProductPermission {
+        override val typeName: String get() = TYPE_NAME
+        override val key: String get() = ownerProductId.orEmpty()
+
+        companion object {
+            const val TYPE_NAME = "nft_purse_read"
+        }
+    }
+
     companion object {
         fun fromLocal(typeName: String, key: String): ProductPermission {
             return when (typeName) {
@@ -89,6 +101,7 @@ sealed interface ProductPermission {
                 AccountAccess.TYPE_NAME -> AccountAccess(key)
                 BalanceAccess.TYPE_NAME -> BalanceAccess
                 UserIdentityAccess.TYPE_NAME -> UserIdentityAccess
+                NftPurseRead.TYPE_NAME -> NftPurseRead(key.ifEmpty { null })
                 RemotePermission.NetworkAccess.TYPE_NAME -> RemotePermission.NetworkAccess(key)
                 RemotePermission.WebRtcAccess.TYPE_NAME -> RemotePermission.WebRtcAccess
                 RemotePermission.ChainSubmitAccess.TYPE_NAME -> RemotePermission.ChainSubmitAccess
@@ -115,4 +128,5 @@ enum class DeviceCapabilityType {
     Clipboard,
     Biometrics,
     OpenUrl,
+    Motion,
 }

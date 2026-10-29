@@ -9,4 +9,6 @@ data class PocketFacePreviewState(
     val url: String,
     /** Null until a face has been asked for, so the screen opens on its instructions. */
     val face: LoadingState<JsWidget>?,
+    // Counts presses of Draw, so an unchanged face is still redrawn and its images fetched again.
+    val draws: Int,
 )

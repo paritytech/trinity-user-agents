@@ -5,6 +5,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.OneShotEventChannel
+import io.paritytech.polkadotapp.common.utils.disable
+import io.paritytech.polkadotapp.common.utils.enable
 import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.shareInBackground
@@ -24,8 +26,10 @@ import io.paritytech.polkadotapp.feature_usernames_api.presentation.filterAvaila
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.SendEnterAmountPayload
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.TransferMethodPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.WithdrawUnavailablePresentationError
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.scanAddressQr.ScanAddressQrResultPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.domain.SendPaymentInteractor
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -48,10 +52,12 @@ class SendPaymentViewModel @Inject constructor(
     parserAddressUsernameConverterFactory: ParseAddressUsernameConverterFactory,
     previousPaymentsAddressConverterFactory: PreviousPaymentsAddressConverterFactory,
     contactsAddressConverterFactory: ContactsAddressConverterFactory,
-    interactor: SendPaymentInteractor,
+    private val interactor: SendPaymentInteractor,
 ) : BaseViewModel(), SendPaymentContract {
     private val contacts = flowOf { getContactsUseCase() }
         .shareInBackground()
+
+    private val fundingSheetInProgress = MutableStateFlow(false)
 
     private val _messageEvents = OneShotEventChannel<Int>()
     override val messageEvents = _messageEvents.receiveAsFlow()
@@ -82,12 +88,17 @@ class SendPaymentViewModel @Inject constructor(
     ) { inputValue, results ->
         SendPaymentUiState(
             input = inputValue,
+            sendToYourselfVisible = inputValue.isEmpty(),
             results = results,
         )
     }.stateIn(
         scope = this,
         started = SharingStarted.Eagerly,
-        initialValue = SendPaymentUiState(input = "", results = PaymentSearchResults.Loading)
+        initialValue = SendPaymentUiState(
+            input = "",
+            sendToYourselfVisible = true,
+            results = PaymentSearchResults.Loading
+        )
     )
 
     fun onQrResult(payload: ScanAddressQrResultPayload) {
@@ -116,6 +127,15 @@ class SendPaymentViewModel @Inject constructor(
             chatStarter.openChatWith(accountId)
                 .onFailure { showPresentationError(it.asStartChatError().toPresentationError()) }
         }
+    }
+
+    override fun onSendToYourselfClick() = launchUnit {
+        if (fundingSheetInProgress.value) return@launchUnit
+        fundingSheetInProgress.enable()
+        interactor.getFundingConfig()
+            .onSuccess { walletRouter.openSpaSheet(it.offrampUrl) }
+            .onFailure { showPresentationError(WithdrawUnavailablePresentationError(it)) }
+        fundingSheetInProgress.disable()
     }
 
     override fun onPasteClick() {

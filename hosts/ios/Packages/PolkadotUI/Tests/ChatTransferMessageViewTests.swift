@@ -10,7 +10,8 @@ struct ChatTransferMessageViewTests {
         let view = ChatTransferMessageView(configuration: configuration)
 
         #expect(view.amountView.amountLabel.text == "$20")
-        #expect(view.amountView.unitLabel.text == "CASH")
+        #expect(view.amountView.unitLabel.text == CashLogo.Wordmark.smallCaps.glyph)
+        #expect(view.amountView.unitLabel.accessibilityLabel == "CASH")
         #expect(view.amountView.amountLabel.textColor == configuration.amountTextColor)
         #expect(view.amountView.unitLabel.textColor == configuration.tokenSymbolColor)
     }
@@ -22,14 +23,14 @@ struct ChatTransferMessageViewTests {
         #expect(makeView(amount: "2,000,000").amountView.typography == .titleExtraLarge)
     }
 
-    @Test("The asset is set in the small caps face at the amount's size")
+    @Test("The asset is drawn as the CASH wordmark at the amount's size")
     func assetFollowsAmountSize() {
         let view = makeView(amount: "20")
         let amountFont = view.amountView.amountLabel.font
         let unitFont = view.amountView.unitLabel.font
 
         #expect(unitFont?.pointSize == amountFont?.pointSize)
-        #expect(unitFont?.fontName == UIFont.app(.smallCapsHeadlineMedium).fontName)
+        #expect(unitFont?.fontName == CashLogo.font(size: 1).fontName)
     }
 
     @Test("A short claim strikes the original amount through and warns that it differs")

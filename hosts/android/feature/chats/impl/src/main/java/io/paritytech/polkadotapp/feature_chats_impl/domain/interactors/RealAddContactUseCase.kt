@@ -4,12 +4,13 @@ import io.novasama.substrate_sdk_android.extensions.toHexString
 import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.common.domain.model.AccountId
+import io.paritytech.polkadotapp.common.domain.model.CurrentTimeContext
 import io.paritytech.polkadotapp.common.domain.model.requireX25519PublicKey
 import io.paritytech.polkadotapp.common.domain.model.x25519OrNull
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
-import io.paritytech.polkadotapp.common.utils.CurrentTimeContext
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.mapToSet
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.domain.model.SharedSecretDerivationDomain
 import io.paritytech.polkadotapp.feature_chain_resources_api.data.repository.ResourcesRepository
@@ -26,9 +27,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatRequestR
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatRoomRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepository
 import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatEngine
-import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.OutgoingChatRequestService
-import io.paritytech.polkadotapp.feature_chats_transport_protocol.scale.TokenContent
-import io.paritytech.polkadotapp.feature_chats_transport_protocol.scale.TokenPlatform
+import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.newOutgoingChatRequest
 import io.paritytech.polkadotapp.feature_usernames_api.domain.model.Username
 import io.paritytech.polkadotapp.tools_push_notifications_api.PushNotificationsHelper
 import kotlinx.coroutines.flow.Flow
@@ -40,7 +39,6 @@ import kotlin.time.Instant
 
 class RealAddContactUseCase @Inject constructor(
     private val contactsRepository: ContactsRepository,
-    private val outgoingChatRequestService: OutgoingChatRequestService,
     private val chatRequestRepository: ChatRequestRepository,
     private val chatRoomRepository: ChatRoomRepository,
     private val pushNotificationsHelper: PushNotificationsHelper,
@@ -50,6 +48,7 @@ class RealAddContactUseCase @Inject constructor(
     private val accountRepository: AccountRepository,
     private val chainRegistry: ChainRegistry,
     private val knownChains: KnownChains,
+    private val currentTimeContext: CurrentTimeContext,
 ) : AddContactUseCase {
     override suspend fun addContactWithChatRequest(
         contactAccountId: AccountId,
@@ -62,7 +61,6 @@ class RealAddContactUseCase @Inject constructor(
         welcomeMessage: ChatMessage.Content.RichText?,
     ): Result<Unit> = withContext(coroutineDispatchers.io) {
         val token = pushNotificationsHelper.getCurrentToken()
-        val tokenContent = createTokenContent(token)
 
         val contact = Contact(
             accountId = contactAccountId,
@@ -73,15 +71,11 @@ class RealAddContactUseCase @Inject constructor(
             avatarUrl = avatar,
             origin = origin,
             lastSharedPushToken = token,
-            addedAt = CurrentTimeContext.currentTime(),
+            addedAt = currentTimeContext.currentTime(),
         )
 
-        Timber.d("Sending new chat request to contact ${contact.accountId}, welcome message: $welcomeMessage")
-
-        outgoingChatRequestService.sendChatRequest(contact, tokenContent, welcomeMessage)
-            .flatMap { chatRequest ->
-                createPendingContactChat(contact, chatRequest, welcomeMessage)
-            }
+        Timber.i("addContact: recording chat request to ${contact.accountId} for background delivery")
+        createPendingContactChat(contact, newOutgoingChatRequest(), welcomeMessage)
     }
 
     override suspend fun addAlreadyEstablishedContactsById(accountIds: List<AccountId>): Result<Unit> {
@@ -91,7 +85,7 @@ class RealAddContactUseCase @Inject constructor(
         return resourcesRepository.resolveConsumers(chain.id, accountIds).flatMap { consumerInfoByAccount ->
             runCatching {
                 val walletAccount = accountRepository.getWalletAccount()
-                val now = CurrentTimeContext.currentTime()
+                val now = currentTimeContext.currentTime()
 
                 accountIds.forEach { accountId ->
                     val consumerInfo = consumerInfoByAccount[accountId] ?: run {
@@ -139,37 +133,25 @@ class RealAddContactUseCase @Inject constructor(
         )
     }
 
-    private fun createTokenContent(token: String?): TokenContent? {
-        return token?.let {
-            TokenContent(
-                token = token.toByteArray(Charsets.UTF_8),
-                platform = TokenPlatform.ANDROID
-            )
-        }
-    }
-
+    // The contact link is written last: it is what makes a recorded request visible to background delivery,
+    // which reads the welcome message back and sends the request from an unlinkable account.
     private suspend fun createPendingContactChat(
         contact: Contact,
         chatRequest: ChatRequest,
         welcomeMessage: ChatMessage.Content.RichText?,
-    ): Result<Unit> {
-        return runCatching {
+    ): Result<Unit> = runCancellableCatching {
+        contactsRepository.withTransaction {
             chatRequestRepository.save(chatRequest)
-
-            val contactWithRequestId = contact.copy(pendingChatRequestId = chatRequest.id)
-            contactsRepository.saveContact(contactWithRequestId)
             chatRoomRepository.createRoomIfNotExists(ChatId.fromContact(contact.accountId))
-
-            if (welcomeMessage != null) {
-                saveWelcomeMessage(contact, chatRequest, welcomeMessage)
-            }
+            welcomeMessage?.let { saveWelcomeMessage(contact, chatRequest, it) }
+            contactsRepository.saveContact(contact.copy(pendingChatRequestId = chatRequest.id))
         }
     }
 
     private suspend fun saveWelcomeMessage(
         contact: Contact,
         chatRequest: ChatRequest,
-        welcomeMessage: ChatMessage.Content.RichText?
+        welcomeMessage: ChatMessage.Content.RichText?,
     ) {
         val chatMessage = ChatMessage(
             id = chatRequest.id,
@@ -177,7 +159,7 @@ class RealAddContactUseCase @Inject constructor(
             timestamp = chatRequest.timestamp,
             content = ChatMessage.Content.ChatRequest(welcomeMessage),
             origin = ChatMessageOrigin.User,
-            status = ChatMessage.Status.IS_SENT
+            status = ChatMessage.Status.PROCESSING,
         )
 
         chatEngine.saveMessage(chatMessage)

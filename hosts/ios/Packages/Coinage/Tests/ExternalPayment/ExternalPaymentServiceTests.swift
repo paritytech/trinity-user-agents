@@ -1,4 +1,6 @@
 import Foundation
+import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import SubstrateSdk
 import Testing
 @testable import Coinage
@@ -145,25 +147,28 @@ struct ExternalPaymentServiceTests {
         let store = InMemoryExternalPaymentStore(seed: [payment])
         let harness = Factory.makeHarness(store: store)
 
-        let collector = Task<[ExternalPaymentStatus], Error> {
+        let statuses = harness.service.subscribePaymentStatus(
+            productId: payment.productId,
+            paymentId: payment.paymentId
+        )
+        let received = try await withTimeout(.hangGuard) {
             var received: [ExternalPaymentStatus] = []
-            for try await status in harness.service.subscribePaymentStatus(
-                productId: payment.productId,
-                paymentId: payment.paymentId
-            ) {
+            for try await status in statuses {
                 received.append(status)
+                if received.count == 1 { try await Self.complete(payment, in: store) }
             }
             return received
         }
 
-        try await Task.sleep(for: .milliseconds(50))
+        #expect(received == [.processing, .completed])
+    }
+
+    private static func complete(_ payment: ExternalPayment, in store: InMemoryExternalPaymentStore) async throws {
         var moved = payment
         moved.stage = .offboardVouchers
         try await store.save(payment: moved)
         moved.stage = .completed
         try await store.save(payment: moved)
-
-        #expect(try await collector.value == [.processing, .completed])
     }
 
     // MARK: - Processing

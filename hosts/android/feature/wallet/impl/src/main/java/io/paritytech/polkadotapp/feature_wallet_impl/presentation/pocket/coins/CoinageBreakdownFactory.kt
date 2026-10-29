@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins
 
+import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclerFungibility
+import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.CoinageHolding
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.holdingKeyOrder
 
@@ -27,11 +29,7 @@ object CoinageBreakdownFactory {
                     id = holding.id,
                     exponent = holding.exponent.value,
                     wear = wear,
-                    partition = if (holding.isReady) {
-                        CoinageStripLayout.Partition.READY
-                    } else {
-                        CoinageStripLayout.Partition.CLEARING
-                    },
+                    partition = partition(holding),
                     level = CoinageWear.level(wear),
                     hops = holding.hops
                 )
@@ -56,6 +54,22 @@ object CoinageBreakdownFactory {
         val penalty = if (isBatchUnloaded) CoinageStatusMetrics.BATCH_UNLOAD_PENALTY else 0
 
         return CoinageWear.amount(maxOf(CoinageWear.level(hiddenAmong = crowd) - penalty, 0))
+    }
+
+    /**
+     * What the card says about each holding when its coin is tapped, keyed the way the coins are. A voucher
+     * is still in its recycler, so it has made no hops since clearing, and is graded on its ring's score.
+     */
+    fun traces(
+        holdings: List<CoinageHolding>,
+        value: (Balance) -> TokenAmountModel
+    ): Map<String, CoinageCoinTrace> = holdings.associate { holding ->
+        holding.id to CoinageCoinTrace(
+            value = value(holding.value),
+            partition = partition(holding),
+            hops = holding.hops,
+            quality = CoinageCoinTrace.Quality.of(holding.recyclerFungibility?.percent)
+        )
     }
 
     /**
@@ -84,6 +98,12 @@ object CoinageBreakdownFactory {
             .thenBy { it.level }
             .thenByDescending { it.hops }
     )
+
+    private fun partition(holding: CoinageHolding) = if (holding.isReady) {
+        CoinageStripLayout.Partition.READY
+    } else {
+        CoinageStripLayout.Partition.CLEARING
+    }
 
     /**
      * Within one denomination: unknown histories first, then least fungible, with the derivation index as the

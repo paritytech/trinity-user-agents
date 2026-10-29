@@ -12,11 +12,17 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
+import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
+import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
 import io.paritytech.polkadotapp.design.components.error.DefaultErrorState
+import io.paritytech.polkadotapp.design.components.icon.NovaIcons
+import io.paritytech.polkadotapp.design.components.icon.vectors.Refreshing
 import io.paritytech.polkadotapp.design.components.progress.NovaLinearProgressIndicator
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
@@ -41,6 +47,7 @@ fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
     SpaBrowserScreenInternal(
         state = state,
         webView = webView,
+        onRefresh = viewModel::onRefresh,
     )
 }
 
@@ -48,6 +55,7 @@ fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
 internal fun SpaBrowserScreenInternal(
     state: SpaBrowserUiState,
     webView: WebView?,
+    onRefresh: () -> Unit,
 ) {
     // No chrome: the product fills the screen. There is no in-screen way to close it — the only exit is
     // the global tab bar (pull it out to switch or manage apps).
@@ -62,10 +70,24 @@ internal fun SpaBrowserScreenInternal(
                 modifier = Modifier.weight(1f),
                 color = PolkadotTheme.colors.bg.surface.container,
             ) {
-                SpaBrowserPageContent(
-                    pageState = state.pageState,
-                    webView = webView,
-                )
+                Box(modifier = Modifier.fillMaxSize()) {
+                    SpaBrowserPageContent(
+                        pageState = state.pageState,
+                        webView = webView,
+                    )
+
+                    if (state.isDevServer) {
+                        PolkadotIconButton(
+                            icon = NovaIcons.Refreshing,
+                            onClick = onRefresh,
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(PolkadotTheme.spacings.mediumIncreased),
+                            style = PolkadotButtonStyle.secondary(),
+                            size = PolkadotIconButtonSize.medium(),
+                        )
+                    }
+                }
             }
         }
     }
@@ -157,6 +179,7 @@ private fun SpaBrowserScreenPreview() {
                 loadProgress = DotNsLoadProgress.Downloading(0.4f),
             ),
             webView = null,
+            onRefresh = {},
         )
     }
 }

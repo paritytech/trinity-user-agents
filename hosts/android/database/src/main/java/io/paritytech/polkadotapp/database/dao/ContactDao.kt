@@ -6,8 +6,20 @@ import androidx.room.Transaction
 import androidx.room.Upsert
 import io.paritytech.polkadotapp.database.model.ContactLocal
 import io.paritytech.polkadotapp.database.model.ContactWithChatRequestLocal
+import io.paritytech.polkadotapp.database.model.ContactWithDevicePresenceLocal
 import io.paritytech.polkadotapp.database.model.ContactWithRequestTimestampLocal
 import kotlinx.coroutines.flow.Flow
+
+private const val CONTACT_WITH_REQUEST_COLUMNS = """
+            contacts.*,
+            chat_requests.id as request_id,
+            chat_requests.timestamp as request_timestamp,
+            chat_requests.direction as request_direction,
+            chat_requests.status as request_status,
+            chat_requests.deliveryStatus as request_deliveryStatus,
+            chat_requests.deliveredVia as request_deliveredVia,
+            chat_requests.lastDeliveredPeriod as request_lastDeliveredPeriod
+"""
 
 @Dao
 abstract class ContactDao {
@@ -79,7 +91,9 @@ abstract class ContactDao {
     @Query("UPDATE contacts SET chatRequestId = :chatRequestId WHERE accountId = :accountId")
     abstract suspend fun updateChatRequestId(accountId: ByteArray, chatRequestId: String?)
 
-    @Query("UPDATE contacts SET chatRequestId = NULL, establishedAt = :establishedAt WHERE accountId = :accountId")
+    // The token shared inside the chat request is shared again on the device route: the acceptor stops re-publishing
+    // its acceptance only once it sees us there (chat-spec RFC-0005 §2).
+    @Query("UPDATE contacts SET chatRequestId = NULL, establishedAt = :establishedAt, lastSharedPushToken = NULL WHERE accountId = :accountId")
     abstract suspend fun markChatRequestAccepted(accountId: ByteArray, establishedAt: Long)
 
     @Query("SELECT * FROM contacts WHERE establishedAt IS NOT NULL AND establishedAt > :after")
@@ -122,12 +136,7 @@ abstract class ContactDao {
 
     @Query(
         """
-        SELECT
-            contacts.*,
-            chat_requests.id as request_id,
-            chat_requests.timestamp as request_timestamp,
-            chat_requests.direction as request_direction,
-            chat_requests.status as request_status
+        SELECT $CONTACT_WITH_REQUEST_COLUMNS
         FROM contacts
         LEFT JOIN chat_requests ON contacts.chatRequestId = chat_requests.id
         WHERE contacts.accountId = :accountId
@@ -138,32 +147,57 @@ abstract class ContactDao {
 
     @Query(
         """
-        SELECT
-            contacts.*,
-            chat_requests.id as request_id,
-            chat_requests.timestamp as request_timestamp,
-            chat_requests.direction as request_direction,
-            chat_requests.status as request_status
+        SELECT $CONTACT_WITH_REQUEST_COLUMNS
         FROM contacts
         LEFT JOIN chat_requests ON contacts.chatRequestId = chat_requests.id
         """
     )
     abstract fun subscribeContactsWithChatRequests(): Flow<List<ContactWithChatRequestLocal>>
 
+    // One query, so a contact and its devices always come from the same committed state.
     @Query(
         """
-        SELECT
-            contacts.*,
-            chat_requests.id as request_id,
-            chat_requests.timestamp as request_timestamp,
-            chat_requests.direction as request_direction,
-            chat_requests.status as request_status
+        SELECT contacts.*,
+            EXISTS(SELECT 1 FROM contact_devices WHERE contact_devices.contactAccountId = contacts.accountId) AS hasDevices
+        FROM contacts
+        """
+    )
+    abstract fun subscribeContactsWithDevicePresence(): Flow<List<ContactWithDevicePresenceLocal>>
+
+    @Query(
+        """
+        SELECT $CONTACT_WITH_REQUEST_COLUMNS
         FROM contacts
         LEFT JOIN chat_requests ON contacts.chatRequestId = chat_requests.id
         WHERE contacts.ourMetaAccountId = :metaAccountId
         """
     )
     abstract suspend fun getContactsWithChatRequestsForAccount(metaAccountId: Long): List<ContactWithChatRequestLocal>
+
+    @Query(
+        """
+        SELECT $CONTACT_WITH_REQUEST_COLUMNS
+        FROM contacts
+        INNER JOIN chat_requests ON contacts.chatRequestId = chat_requests.id
+        WHERE chat_requests.direction = 'OUTGOING' AND chat_requests.deliveryStatus = 'UNDELIVERED'
+        """
+    )
+    abstract fun subscribeContactsWithUndeliveredOutgoingRequests(): Flow<List<ContactWithChatRequestLocal>>
+
+    @Query(
+        """
+        SELECT $CONTACT_WITH_REQUEST_COLUMNS
+        FROM contacts
+        INNER JOIN chat_requests ON contacts.chatRequestId = chat_requests.id
+        WHERE chat_requests.direction = 'OUTGOING'
+            AND chat_requests.status = 'PENDING'
+            AND chat_requests.deliveryStatus = 'DELIVERED'
+            AND chat_requests.lastDeliveredPeriod IS NOT NULL
+            AND contacts.isBlocked = 0
+        ORDER BY chat_requests.timestamp DESC
+        """
+    )
+    abstract suspend fun getContactsWithRenewablePendingRequests(): List<ContactWithChatRequestLocal>
 
     @Transaction
     open suspend fun withTransaction(action: suspend () -> Unit) {

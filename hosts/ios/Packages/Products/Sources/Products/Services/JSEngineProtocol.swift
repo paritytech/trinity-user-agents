@@ -39,10 +39,17 @@ public protocol JSEngineProtocol: AnyObject {
 
     /// Register a handler that decides whether to grant media capture permissions.
     func registerJSDeviceCapabilityHandler(_ handler: @escaping JSDeviceCapabilityHandler) async
+
+    /// Runs `handler` once if the engine dies after it became ready. A dead engine
+    /// stays unusable, and only a fresh one runs its scripts again. A death during
+    /// `initialize` is reported by `initialize` throwing instead.
+    func onTermination(_ handler: @escaping @Sendable () -> Void) async
 }
 
 public extension JSEngineProtocol {
     func initialize() async throws {
         try await initialize(with: [])
     }
+
+    func onTermination(_: @escaping @Sendable () -> Void) async {}
 }

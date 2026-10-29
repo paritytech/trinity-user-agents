@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKe
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFaceSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -17,7 +18,7 @@ import javax.inject.Inject
 class RealPocketFaceSource @Inject constructor(
     private val store: PocketCardStore,
     private val streams: PocketFaceStreams,
-    private val images: PocketImageResolver,
+    private val images: ProductImageResolver,
 ) : PocketFaceSource {
     /**
      * Drawn first, kept second: the face is what the screen is waiting for, and keeping it is

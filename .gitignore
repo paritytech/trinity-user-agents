@@ -28,6 +28,8 @@ local.properties
 .env.*
 !.env.example
 /.e2e-dotli/
+# Copied in by e2e/host-playground/ios/build.sh
+/hosts/ios/polkadot-app/HostPlaygroundE2E/
 
 # Editor / OS
 .vscode/*
@@ -78,3 +80,4 @@ js/packages/truapi/dist/generated/
 js/packages/truapi-host/src/generated/
 js/packages/truapi-host/dist/generated/
 js/packages/truapi-host/dist/wasm/
+__pycache__/

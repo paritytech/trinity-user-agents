@@ -286,7 +286,7 @@ private extension AccountSearchProvider {
                 return account.map { [makeRemoteRow(contact: $0)] } ?? []
             }
 
-            let contacts = try await remoteContactSearch.search(by: query).asyncExecute()
+            let contacts = try await remoteContactSearch.search(by: query)
             try Task.checkCancellation()
 
             return contacts.map { makeRemoteRow(contact: $0) }

@@ -1,5 +1,6 @@
 @testable import polkadot_app
 import Foundation
+import SubstrateSdk
 import Operation_iOS
 import MessageExchangeKit
 import StatementStore
@@ -28,6 +29,15 @@ final class MockStatementStore {
         return statements
             .filter { filter.matches(topics: $0.topics) }
             .map(\.data)
+    }
+
+    func senderAccountIds() throws -> [AccountId] {
+        mutex.lock()
+        defer { mutex.unlock() }
+
+        return try statements.compactMap { mockStatement in
+            try Statement(scaleDecoder: ScaleDecoder(data: mockStatement.data)).getSenderAccountId()
+        }
     }
 
     func insertStatement(with builder: StatementSubmitParametersBuilding) throws {

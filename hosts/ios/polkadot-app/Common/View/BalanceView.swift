@@ -69,12 +69,13 @@ final class BalanceView: ControlView<
             return
         }
 
-        let text = NSMutableAttributedString(string: amount)
-        text.append(NSAttributedString(
-            string: " " + unit,
-            attributes: [.font: UIFont.app(.smallCapsHeadlineMedium).withSize(Constants.unitFontSize)]
+        let text = NSMutableAttributedString(string: amount + " ")
+        text.append(CashLogo.unit(
+            unit,
+            fallback: UIFont.app(.smallCapsHeadlineMedium).withSize(Constants.unitFontSize)
         ))
         amountLabel.attributedText = text
+        amountLabel.accessibilityLabel = amount + " " + unit
 
         setNeedsLayout()
     }

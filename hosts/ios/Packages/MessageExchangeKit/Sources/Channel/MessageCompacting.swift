@@ -11,23 +11,23 @@ public protocol MessageCompacting: Sendable {
 public protocol MessageCompactorMaking: Sendable {
     associatedtype Message: MessageExchange.CodableMessage
 
-    func createCompactor(for signKeyId: String) -> AnyMessageCompactor<Message>?
+    func createCompactor() throws -> AnyMessageCompactor<Message>?
 }
 
 public final class AnyMessageCompactorFactory<M: MessageExchange.CodableMessage>: MessageCompactorMaking,
     @unchecked Sendable {
     public typealias Message = M
 
-    private let createClosure: @Sendable (String) -> AnyMessageCompactor<M>?
+    private let createClosure: @Sendable () throws -> AnyMessageCompactor<M>?
 
     public init<Factory: MessageCompactorMaking>(_ factory: Factory) where Factory.Message == M {
-        createClosure = { signKeyId in
-            factory.createCompactor(for: signKeyId)
+        createClosure = {
+            try factory.createCompactor()
         }
     }
 
-    public func createCompactor(for signKeyId: String) -> AnyMessageCompactor<M>? {
-        createClosure(signKeyId)
+    public func createCompactor() throws -> AnyMessageCompactor<M>? {
+        try createClosure()
     }
 }
 

@@ -18,10 +18,9 @@ struct DebugPocketFacePreviewView: View {
                 .disabled(viewModel.isLoading)
 
             // Drawn in the real card frame, so what is seen here is what the
-            // Pocket will show. The face comes from a URL rather than from a
-            // product's archive, so there is nothing for an archive path to
-            // resolve against and those images draw as holes.
-            PocketProductCardView(title: "Preview", face: viewModel.face, resolveImage: nil)
+            // Pocket will show.
+            PocketProductCardView(title: "Preview", face: viewModel.face, resolveImage: viewModel.imageResolver)
+                .id(viewModel.draws)
 
             if let refusal = viewModel.refusal {
                 ScrollView {
@@ -35,7 +34,7 @@ struct DebugPocketFacePreviewView: View {
 
             Spacer()
         }
-        .padding(16)
+        .padding(PocketCardSize.sideMargin)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color(.bgSurfaceMain))
         .navigationTitle("Pocket face preview")

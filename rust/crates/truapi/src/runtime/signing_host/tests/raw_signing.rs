@@ -21,7 +21,8 @@ fn raw_signing_review_matches_the_signed_bytes() {
 	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec())).unwrap();
 	let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
 	let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-	let product = derive_product_keypair(&root, "myapp.dot", index_bytes(0)).unwrap();
+	let product =
+		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
 	let runtime = product_runtime(services, activation);
 	let cx = CallContext::default();
 	for (legacy, watermarked) in [(false, false), (true, false), (false, true), (true, true)] {
@@ -89,7 +90,9 @@ fn paired_raw_signing_review_matches_the_signed_bytes_and_requires_confirmation(
 			let service = SigningHostSsoService::new(activation);
 			let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
 			let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-			let product = derive_product_keypair(&root, "myapp.dot", index_bytes(0)).unwrap();
+			let product =
+				derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0))
+					.unwrap();
 			let payload = v01::RawPayload::Bytes { bytes: vec![0x11; 32] };
 			let message = if legacy && watermarked {
 				RemoteMessage::request(

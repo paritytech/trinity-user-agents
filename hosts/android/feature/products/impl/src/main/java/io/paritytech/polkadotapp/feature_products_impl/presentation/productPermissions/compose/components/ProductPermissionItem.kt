@@ -13,6 +13,7 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
+import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.compose.ownerName
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
@@ -59,6 +60,7 @@ private fun ProductPermission.displayName(): String {
         is ProductPermission.AccountAccess -> targetProductId
         is ProductPermission.BalanceAccess -> stringResource(RCommon.string.product_permission_type_balance_access)
         is ProductPermission.UserIdentityAccess -> stringResource(RCommon.string.product_permission_type_user_identity_access)
+        is ProductPermission.NftPurseRead -> ownerName()
         is ProductPermission.RemotePermission.NetworkAccess -> domain
         ProductPermission.RemotePermission.WebRtcAccess -> stringResource(RCommon.string.product_permission_type_webrtc)
         ProductPermission.RemotePermission.ChainSubmitAccess -> stringResource(RCommon.string.product_permission_type_chain_submit)
@@ -83,6 +85,7 @@ private fun DeviceCapabilityType.nameRes(): Int = when (this) {
     DeviceCapabilityType.Clipboard -> RCommon.string.product_permission_capability_clipboard
     DeviceCapabilityType.Biometrics -> RCommon.string.product_permission_capability_biometrics
     DeviceCapabilityType.OpenUrl -> RCommon.string.product_permission_capability_open_url
+    DeviceCapabilityType.Motion -> RCommon.string.product_permission_capability_motion
 }
 
 @StringRes
@@ -91,6 +94,7 @@ private fun ProductPermission.descriptionRes(): Int = when (this) {
     is ProductPermission.AccountAccess -> RCommon.string.product_permission_type_account_access
     is ProductPermission.BalanceAccess -> RCommon.string.product_permission_type_balance_access_description
     is ProductPermission.UserIdentityAccess -> RCommon.string.product_permission_type_user_identity_access_description
+    is ProductPermission.NftPurseRead -> RCommon.string.product_permission_type_nft_purse_read_description
     is ProductPermission.RemotePermission.NetworkAccess -> RCommon.string.product_permission_type_network_access
     ProductPermission.RemotePermission.WebRtcAccess,
     ProductPermission.RemotePermission.ChainSubmitAccess,

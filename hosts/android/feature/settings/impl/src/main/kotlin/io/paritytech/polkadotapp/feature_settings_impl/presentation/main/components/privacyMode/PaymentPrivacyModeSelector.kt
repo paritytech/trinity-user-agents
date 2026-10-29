@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -37,6 +38,9 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
+import io.paritytech.polkadotapp.common.presentation.compose.withCurrencyTickerStyle
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.ShieldOutlined
@@ -105,8 +109,9 @@ private fun Header() {
         HorizontalSpacer { small }
 
         NovaText(
-            text = stringResource(RCommon.string.payment_privacy_mode_title),
-            style = PolkadotTheme.typography.title.small,
+            text = stringResource(RCommon.string.payment_privacy_mode_title, LocalPaymentAssetBrand.current.symbol)
+                .withCurrencyTickerStyle(PolkadotTheme.typography.body.large),
+            style = PolkadotTheme.typography.body.large,
             color = PolkadotTheme.colors.fg.primary
         )
     }
@@ -337,7 +342,9 @@ private val HEADER_ICON_SIZE = 24.dp
 
 @Preview
 @Composable
-private fun PaymentPrivacyModeSelectorPreview() {
+private fun PaymentPrivacyModeSelectorPreview() = CompositionLocalProvider(
+    LocalPaymentAssetBrand provides PaymentAssetBrand.mocked
+) {
     PolkadotTheme {
         Column(
             modifier = Modifier.padding(PolkadotTheme.spacings.mediumIncreased)

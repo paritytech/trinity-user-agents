@@ -30,6 +30,7 @@ import io.paritytech.polkadotapp.test_shared.testDispatchers
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -41,6 +42,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -58,6 +60,7 @@ class CoinageInstallationRegistrarTest {
 
     private val config = mockk<AccountDataStoreConfigProvider> {
         coEvery { contractAddress() } returns Result.success(CONTRACT)
+        coEvery { lastKnownContractAddress() } returns Result.failure(IllegalStateException("remote config never activated"))
     }
 
     // An accepted attempt shows up as a fresh PENDING row in its target's group; a gate holds it before it commits.
@@ -258,6 +261,82 @@ class CoinageInstallationRegistrarTest {
         assertEquals(1, engine.recoveryStarts)
     }
 
+    @Test
+    fun `a finalized registration reads completed before onboarding and sync when its contract is last known`() = registrarTest {
+        onboarded.value = false
+        coEvery { config.contractAddress() } coAnswers { awaitCancellation() }
+        withLastKnownContract()
+        engine.set(listOf(state(1, FINALIZED_SUCCESS)))
+
+        start()
+
+        assertEquals(CoinageAccountBackupStatus.Completed, status())
+        assertEquals(0, attempts.size)
+    }
+
+    @Test
+    fun `the status starts at registering when no contract is known yet`() = registrarTest {
+        onboarded.value = false
+        engine.set(listOf(state(1, FINALIZED_SUCCESS)))
+
+        start()
+
+        assertEquals(CoinageAccountBackupStatus.Registering, status())
+        assertEquals(0, engine.groupReads)
+    }
+
+    @Test
+    fun `the status starts at registering when the last known contract was never finalized`() = registrarTest {
+        onboarded.value = false
+        withLastKnownContract()
+        engine.set(listOf(state(1, FAILURE)))
+
+        start()
+
+        assertEquals(CoinageAccountBackupStatus.Registering, status())
+    }
+
+    @Test
+    fun `the status starts at registering when the earlier registration cannot be read`() = registrarTest {
+        onboarded.value = false
+        withLastKnownContract()
+        engine.set(listOf(state(1, FINALIZED_SUCCESS)))
+        engine.failGroupReads = true
+
+        start()
+
+        assertEquals(CoinageAccountBackupStatus.Registering, status())
+    }
+
+    @Test
+    fun `the status goes back to registering and registers when the synced contract differs from the last known one`() = registrarTest {
+        withLastKnownContract()
+        engine.set(listOf(state(1, FINALIZED_SUCCESS)))
+        coEvery { config.contractAddress() } returns Result.success(OTHER_CONTRACT)
+        val statuses = collectStatuses()
+
+        start()
+
+        assertEquals(listOf(CoinageAccountBackupStatus.Completed, CoinageAccountBackupStatus.Registering), statuses)
+        assertEquals(listOf(InstallationRegistrationTarget(OTHER_CONTRACT, TEST_INSTALLATION)), attempts)
+    }
+
+    @Test
+    fun `recovery still starts when the last known registration is final`() = registrarTest {
+        withLastKnownContract()
+        engine.set(listOf(state(1, FINALIZED_SUCCESS)))
+
+        start()
+
+        assertEquals(1, engine.recoveryStarts)
+        assertEquals(0, attempts.size)
+        assertEquals(CoinageAccountBackupStatus.Completed, status())
+    }
+
+    private fun withLastKnownContract() {
+        coEvery { config.lastKnownContractAddress() } returns Result.success(CONTRACT)
+    }
+
     private fun registrarTest(body: suspend RegistrarScope.() -> Unit) = runTest {
         val registrar = CoinageInstallationRegistrar(
             observeAccountOnboardingStatusUseCase = onboardingStatus,
@@ -292,6 +371,12 @@ class CoinageInstallationRegistrarTest {
         suspend fun status() = registrar.subscribeStatus().first()
 
         fun CoroutineScope.launchCollecting() = registrar.subscribeStatus().launchIn(this)
+
+        fun collectStatuses(): List<CoinageAccountBackupStatus> {
+            val statuses = mutableListOf<CoinageAccountBackupStatus>()
+            registrar.subscribeStatus().onEach { statuses += it }.launchIn(backgroundScope)
+            return statuses
+        }
     }
 
     private fun state(id: Long, status: DurableTxStatus) = DurableTxState(DurableTxId(id), status)
@@ -324,7 +409,14 @@ class CoinageInstallationRegistrarTest {
             }
         }
 
-        override suspend fun getGroupStates(domain: TxDomainId, groupId: OperationGroupId) = Result.success(current(groupId))
+        var failGroupReads = false
+        var groupReads = 0
+            private set
+
+        override suspend fun getGroupStates(domain: TxDomainId, groupId: OperationGroupId): Result<List<DurableTxState>> {
+            groupReads++
+            return if (failGroupReads) Result.failure(IllegalStateException("durable table unreadable")) else Result.success(current(groupId))
+        }
 
         override fun startRecovery() {
             recoveryStarts++

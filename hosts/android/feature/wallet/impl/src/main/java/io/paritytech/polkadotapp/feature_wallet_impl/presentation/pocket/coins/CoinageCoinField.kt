@@ -21,6 +21,7 @@ class CoinageCoinField {
         val wear = CoinageSpring()
         val luster = CoinageSpring()
         val calm = CoinageSpring()
+        val recede = CoinageSpring()
     }
 
     /** Where one coin is heading. */
@@ -35,7 +36,9 @@ class CoinageCoinField {
         val calm: Float,
         val tilt: Float = 0f,
         /** Toward the viewer. */
-        val lift: Float = 0f
+        val lift: Float = 0f,
+        /** How far the coin fades back while another one is picked out. */
+        val recede: Float = 0f
     )
 
     class Member(
@@ -119,6 +122,17 @@ class CoinageCoinField {
         isMoving = true
     }
 
+    /**
+     * Re-aims one coin alone, leaving every other where it is heading and nothing staggered: the picked coin
+     * following the screen as the page scrolls under it.
+     */
+    fun move(id: String, centreX: Float, centreY: Float) {
+        val member = index[id]?.let { members.getOrNull(it) } ?: return
+
+        member.target = member.target.copy(centreX = centreX, centreY = centreY)
+        isMoving = true
+    }
+
     /** Advances every spring. Returns whether anything is still moving, so a settled field can stop asking. */
     fun advance(seconds: Float): Boolean {
         var moving = false
@@ -176,6 +190,7 @@ class CoinageCoinField {
         channels.thickness.step(target.thickness, seconds, CoinageSpring.Omega.THICKNESS)
         channels.calm.step(target.calm, seconds, CoinageSpring.Omega.THICKNESS)
         channels.luster.step(target.luster, seconds, CoinageSpring.Omega.LUSTER)
+        channels.recede.step(target.recede, seconds, CoinageSpring.Omega.LUSTER)
         channels.wear.step(target.wear, seconds, CoinageSpring.Omega.WEAR)
 
         return !settled(member)
@@ -194,6 +209,7 @@ class CoinageCoinField {
             channels.calm.isSettled(target.calm) &&
             channels.lift.isSettled(target.lift) &&
             channels.luster.isSettled(target.luster) &&
+            channels.recede.isSettled(target.recede) &&
             channels.wear.isSettled(target.wear)
     }
 

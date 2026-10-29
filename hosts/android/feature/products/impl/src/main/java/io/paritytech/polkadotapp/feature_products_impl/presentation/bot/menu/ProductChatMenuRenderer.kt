@@ -36,6 +36,8 @@ import io.paritytech.polkadotapp.common.R as RCommon
 internal class ProductChatMenuRenderer(
     private val product: Product,
     private val chatId: ChatId,
+    /** A host-placed chat offers no removal: it would only hide the row until the next launch. */
+    val removable: Boolean,
 ) : CustomChatMenuRenderer {
     @Composable
     override fun DrawMenu(onDismiss: () -> Unit) {
@@ -57,6 +59,7 @@ internal class ProductChatMenuRenderer(
                         viewModel.onOpenAppClick(product.id)
                         onDismiss()
                     },
+                    removable = removable,
                     onRemoveChatClick = { viewModel.onRemoveChatClick() }
                 )
 
@@ -73,6 +76,7 @@ internal class ProductChatMenuRenderer(
 private fun MainContent(
     appName: String,
     onOpenAppClick: () -> Unit,
+    removable: Boolean,
     onRemoveChatClick: () -> Unit
 ) {
     Column(
@@ -93,12 +97,14 @@ private fun MainContent(
             onClick = onOpenAppClick
         )
 
-        NovaMenuOption(
-            text = stringResource(RCommon.string.product_chat_menu_remove_chat),
-            icon = NovaIcons.Leave,
-            color = PolkadotTheme.colors.fg.error,
-            onClick = onRemoveChatClick
-        )
+        if (removable) {
+            NovaMenuOption(
+                text = stringResource(RCommon.string.product_chat_menu_remove_chat),
+                icon = NovaIcons.Leave,
+                color = PolkadotTheme.colors.fg.error,
+                onClick = onRemoveChatClick
+            )
+        }
     }
 }
 
@@ -152,6 +158,7 @@ private fun MainContentPreview() {
         MainContent(
             appName = "Nova Swap",
             onOpenAppClick = {},
+            removable = true,
             onRemoveChatClick = {}
         )
     }

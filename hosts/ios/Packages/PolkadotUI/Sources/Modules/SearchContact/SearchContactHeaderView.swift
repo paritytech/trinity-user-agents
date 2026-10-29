@@ -59,7 +59,7 @@ final class SearchContactHeaderView: UIView {
 
         $0.typography = .titleMedium
         $0.textColor = UIColor.fgPrimary
-        $0.text = "Cancel"
+        $0.text = String(localized: .Common.cancel)
     }
 
     var searchHandler: ((String?) -> Void)?

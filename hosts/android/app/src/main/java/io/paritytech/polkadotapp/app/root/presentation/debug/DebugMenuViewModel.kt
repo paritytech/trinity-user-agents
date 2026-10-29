@@ -10,10 +10,13 @@ import io.paritytech.polkadotapp.app.root.domain.debug.RestartAppUseCase
 import io.paritytech.polkadotapp.app.root.presentation.root.RootRouter
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.Urls
+import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.feature_coinage_api.domain.debug.CoinageDebugSettings
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
+import io.paritytech.polkadotapp.feature_products_api.domain.browser.DevServerAddresses
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.tools_jwt_auth_impl.data.store.JWTTokenStore
@@ -36,8 +39,14 @@ class DebugMenuViewModel @Inject constructor(
     private val coinageDebugSettings: CoinageDebugSettings,
     private val productRuntimeSettings: ProductRuntimeSettings,
     private val restartAppUseCase: RestartAppUseCase,
+    private val devServerAddresses: DevServerAddresses,
 ) : BaseViewModel(), DebugMenuContract {
-    override val state = MutableStateFlow(DebugMenuState(truapiHostVersion = truapiHostVersion()))
+    override val state = MutableStateFlow(
+        DebugMenuState(
+            truapiHostVersion = truapiHostVersion(),
+            devServerAvailable = FeatureOption.DEV_SERVER_PRODUCTS.isEnabled,
+        )
+    )
 
     init {
         refreshJWTTokenState()
@@ -98,6 +107,22 @@ class DebugMenuViewModel @Inject constructor(
 
     override fun onSpaBrowserDialogDismissed() {
         state.update { it.copy(showSpaBrowserDialog = false) }
+    }
+
+    override fun onOpenDevServerClick() {
+        state.update { it.copy(showDevServerDialog = true) }
+    }
+
+    override fun onDevServerAddressEntered(address: String) {
+        state.update { it.copy(showDevServerDialog = false) }
+
+        devServerAddresses.urlOf(address)
+            .onSuccess { url -> router.openSpaBrowser(SpaBrowserPayload.ByUrl(url)) }
+            .onFailure { error -> showMessage(error.message.orEmpty()) }
+    }
+
+    override fun onDevServerDialogDismissed() {
+        state.update { it.copy(showDevServerDialog = false) }
     }
 
     override fun onClearDotNsCacheClick() = launchUnit {

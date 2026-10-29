@@ -16,6 +16,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.model.ValueExponent
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.CoinageTransactionService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageHandoffCommit
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageInput
+import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageRegistrationError
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageScheduledTransactionRequest
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageTransactionId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageTransactionState
@@ -27,6 +28,7 @@ import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.TransferPla
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.TransferPlannerFactory
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.exceptions.InsufficientBalanceException
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.exceptions.TransferSubmissionFailedException
+import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.strategies.CoinReservationMode
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.strategies.ExactMatchStrategyFactory
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.strategies.SplitCoinStrategyFactory
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.recycling.CoinageAssetSelector
@@ -65,6 +67,7 @@ class RealPrepareCoinageTransferUseCaseTest {
     private val coinageTransactionFactory: CoinageTransaction.Factory = mockk()
     private val coinageTransaction: CoinageTransaction = mockk(relaxUnitFun = true)
     private val handoffCommit: CoinageHandoffCommit = mockk()
+    private val handedOff = listOf(OwnAsset.Coin(testKey(3)))
 
     private val useCase = RealPrepareCoinageTransferUseCase(
         assetSelector = assetSelector,
@@ -139,6 +142,27 @@ class RealPrepareCoinageTransferUseCaseTest {
         verifyNothingScheduled()
     }
 
+    @Test
+    fun `prepares the handoff when a chat send is prepared`() = runBlocking<Unit> {
+        withSplitScheduling()
+
+        prepareChatSend()
+
+        verifySplitReservedWith(CoinReservationMode.PREPARE)
+    }
+
+    @Test
+    fun `fails the commit and schedules nothing when the chat handoff commit is refused`() = runBlocking<Unit> {
+        withSplitScheduling()
+        withSchedulingAccepted()
+        withHandoffCommitRefused()
+
+        val prepared = prepareChatSend().getOrThrow()
+
+        assertTrue(prepared.handoffCommit.commit().isFailure)
+        verifyNothingScheduled()
+    }
+
     /**
      * The commit runs inside the transaction that saves the payment message, so registering the transactions
      * there is what ties them to the message: a saved payment always has them, a lost one never does.
@@ -193,8 +217,19 @@ class RealPrepareCoinageTransferUseCaseTest {
         val prepared = prepareMerchantSend()
 
         assertTrue(prepared.isSuccess)
+        verifySplitReservedWith(CoinReservationMode.PRECOMMIT)
         coVerify(exactly = 1) { transactionService.scheduleTransactions(listOf(splitTransaction), any()) }
         coVerify(exactly = 0) { handoffCommit.commit() }
+    }
+
+    @Test
+    fun `schedules nothing when the merchant strategy cannot reserve its coins`() = runBlocking<Unit> {
+        withSplitScheduling()
+        withSchedulingAccepted()
+        withSplitReservationRefused()
+
+        assertTrue(prepareMerchantSend().isFailure)
+        verifyNothingScheduled()
     }
 
     /** The coins stay reserved and their transactions stay scheduled; only the screen stops waiting. */
@@ -291,11 +326,30 @@ class RealPrepareCoinageTransferUseCaseTest {
     }
 
     private fun withHandoffAndCommit() {
+        coEvery { transactionService.prepareHandoff(any()) } returns Result.success(handoffCommit)
         coEvery { transactionService.preCommitHandoff(any()) } returns Result.success(handoffCommit)
         coEvery { memoBuilder.buildMemo(any()) } returns Result.success(TransferMemo(emptyList(), Balance.ZERO))
         coEvery { handoffCommit.commit() } returns Result.success(Unit)
         coEvery { handoffCommit.release() } returns Result.success(Unit)
     }
+
+    private fun verifySplitReservedWith(mode: CoinReservationMode) {
+        when (mode) {
+            CoinReservationMode.PREPARE -> coVerify(exactly = 1) { transactionService.prepareHandoff(any()) }
+            CoinReservationMode.PRECOMMIT -> coVerify(exactly = 1) { transactionService.preCommitHandoff(any()) }
+        }
+    }
+
+    private fun withHandoffCommitRefused() {
+        coEvery { handoffCommit.commit() } returns Result.failure(handedOffMeanwhile())
+    }
+
+    private fun withSplitReservationRefused() {
+        coEvery { transactionService.prepareHandoff(any()) } returns Result.failure(handedOffMeanwhile())
+        coEvery { transactionService.preCommitHandoff(any()) } returns Result.failure(handedOffMeanwhile())
+    }
+
+    private fun handedOffMeanwhile() = CoinageRegistrationError.HandoffOfHandedOffAsset(handedOff.single())
 
     private fun withSchedulingAccepted() {
         coEvery { transactionService.scheduleTransactions(any(), any()) } returns Result.success(listOf(CoinageTransactionId(1)))

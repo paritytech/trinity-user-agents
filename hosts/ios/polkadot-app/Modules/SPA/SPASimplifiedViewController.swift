@@ -6,8 +6,7 @@ import UIKit
 import UIKitExt
 import WebKit
 
-/// Builds without the browse tab still reach the SPA through debug settings and deeplinks, so this
-/// controller ships without the browser chrome: no top pills, no collapse, no minimize.
+/// A product shown as a one-shot sheet, without the browser chrome: no top pills, no collapse, no minimize.
 final class SPASimplifiedViewController: UIViewController, ViewHolder {
     typealias RootViewType = SPASimplifiedViewLayout
 
@@ -23,6 +22,10 @@ final class SPASimplifiedViewController: UIViewController, ViewHolder {
     private var loadFailure: ErrorContent?
     private var loadingStartedAt: Date?
     private var pendingFailureTask: Task<Void, Never>?
+    private lazy var loadIndicator = SPALoadIndicator(
+        progressView: rootView.loadProgressView,
+        statusLabel: rootView.loadStatusLabel
+    )
 
     init(
         presenter: SPAPresenterProtocol,
@@ -47,6 +50,7 @@ final class SPASimplifiedViewController: UIViewController, ViewHolder {
     override func loadView() {
         let webViewConfiguration = WKWebViewConfiguration()
 
+        webViewConfiguration.applicationNameForUserAgent = ProductUserAgent.applicationName
         webViewConfiguration.allowsInlineMediaPlayback = true
         webViewConfiguration.mediaTypesRequiringUserActionForPlayback = []
 
@@ -81,11 +85,8 @@ final class SPASimplifiedViewController: UIViewController, ViewHolder {
 
         contentUnavailableConfiguration = UIContentUnavailableConfiguration.titleSubtitle(
             with: loadFailure.title,
-            subtitle: loadFailure.message,
-            actionTitle: String(localized: .Common.retry)
-        ) { [weak self] in
-            self?.presenter.didTapRetry()
-        }
+            subtitle: loadFailure.message
+        )
     }
 
     deinit {
@@ -103,6 +104,7 @@ private extension SPASimplifiedViewController {
 
     func display(loadFailure content: ErrorContent) {
         rootView.activityIndicatorView.stopAnimating()
+        loadIndicator.stop()
 
         loadFailure = content
         setNeedsUpdateContentUnavailableConfiguration()
@@ -118,6 +120,10 @@ private extension SPASimplifiedViewController {
                 )
             case let .directURL(url):
                 DirectURLNavigationDecisionHandler(baseURL: url)
+            #if DEBUG
+                case let .devServer(url, _):
+                    DirectURLNavigationDecisionHandler(baseURL: url)
+            #endif
             }
 
         let engine = SPAJSEngine(
@@ -130,6 +136,10 @@ private extension SPASimplifiedViewController {
             self?.presenter.didInterceptNavigation(to: url)
         }
 
+        engine.onDeeplinkRequested = { [weak self] url in
+            self?.presenter.didRequestDeeplink(url)
+        }
+
         presenter.setup(engine: engine)
     }
 
@@ -138,7 +148,7 @@ private extension SPASimplifiedViewController {
             setTitle(String(localized: .tabBrowse))
         }
 
-        if configuration.showMoreButton, !configuration.isBrowserTab {
+        if configuration.showMoreButton, configuration.presentation == .pushed {
             setupMoreButton()
         }
     }
@@ -170,7 +180,7 @@ private extension SPASimplifiedViewController {
         guard !didSetupWebViewLayout else { return }
         didSetupWebViewLayout = true
 
-        if configuration.isBrowserTab {
+        if configuration.presentation != .pushed {
             rootView.setupBrowserTabLayout()
         } else if configuration.isRootScreen {
             rootView.setupRootLayout()
@@ -183,25 +193,6 @@ private extension SPASimplifiedViewController {
 
     @objc func onMoreTapped() {
         presenter.didTapMoreButton()
-    }
-
-    func showProgressBar() {
-        rootView.loadProgressView.isHidden = false
-    }
-
-    func hideProgressBar(delay: TimeInterval = 0) {
-        let closure = { [rootView] in
-            rootView.loadProgressView.isHidden = true
-            rootView.loadProgressView.setProgress(0, animated: false)
-        }
-        guard delay > 0 else {
-            closure()
-            return
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            closure()
-        }
     }
 }
 
@@ -232,6 +223,7 @@ extension SPASimplifiedViewController: SPAViewProtocol {
 
     func showLoading() {
         rootView.activityIndicatorView.startAnimating()
+        loadIndicator.start()
 
         pendingFailureTask?.cancel()
         pendingFailureTask = nil
@@ -245,6 +237,7 @@ extension SPASimplifiedViewController: SPAViewProtocol {
 
     func hideLoading() {
         rootView.activityIndicatorView.stopAnimating()
+        loadIndicator.finish()
     }
 
     /// A failure arriving right after a retry would swap the error state out and back in the same
@@ -261,27 +254,8 @@ extension SPASimplifiedViewController: SPAViewProtocol {
         }
     }
 
-    // Resolving: 0-10%
-    // Downloading: 10-90%
-    // Unpacking: 90-100%
-    func updateLoadProgress(_ progress: DotNsLoadProgress) {
-        switch progress {
-        case .resolved:
-            showProgressBar()
-            rootView.loadProgressView.setProgress(0.1, animated: true)
-        case let .downloading(fraction):
-            showProgressBar()
-            rootView.loadProgressView.setProgress(0.1 + 0.8 * Float(fraction), animated: true)
-        case .unpacking:
-            showProgressBar()
-            rootView.loadProgressView.setProgress(0.9, animated: true)
-        case .completed:
-            rootView.loadProgressView.setProgress(1.0, animated: true)
-            hideProgressBar(delay: 0.3)
-        case .idle,
-             .failed:
-            hideProgressBar()
-        }
+    func updateLoadPhase(_ phase: ProductLoadPhase) {
+        loadIndicator.update(phase)
     }
 }
 

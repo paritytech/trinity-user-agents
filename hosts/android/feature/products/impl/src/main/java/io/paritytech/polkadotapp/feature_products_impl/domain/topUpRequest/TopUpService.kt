@@ -92,7 +92,21 @@ class RealTopUpService @Inject constructor(
         id: PaymentTopUpId,
         amount: Balance,
         source: PaymentTopUpSource,
-    ): Result<Unit> = runningGuard.withLock {
+    ): Result<Unit> {
+        // Resolved outside the guard: it touches no shared state, and status reads wait on the guard.
+        val resolved = sourceResolver.resolve(productId, source)
+            .getOrElse { return Result.failure(TopUpError.InvalidSource(it)) }
+
+        return runningGuard.withLock { register(productId, id, amount, source, resolved) }
+    }
+
+    private suspend fun register(
+        productId: ProductId,
+        id: PaymentTopUpId,
+        amount: Balance,
+        source: PaymentTopUpSource,
+        resolved: TopUpSource,
+    ): Result<Unit> {
         if (repository.get(productId, id) != null) {
             Timber.tag(COINAGE_LOG_TAG).w("Top-up id already taken product=${productId.value} id=${id.asHex()}")
 
@@ -113,13 +127,11 @@ class RealTopUpService @Inject constructor(
             outcome = null,
         )
 
-        return sourceResolver.resolve(productId, source)
-            .recoverCatching { throw TopUpError.InvalidSource(it) }
-            // Both recorded before a single transaction is built. A product told its top-up was accepted must
-            // be able to ask after it again whatever becomes of this process, and to have it picked back up.
-            .flatMap { resolved -> sourceStorage.put(operation.groupId, source).map { resolved } }
-            .flatMap { resolved -> repository.insert(operation).map { resolved } }
-            .onSuccess { resolved -> run(operation, resolved) }
+        // Both recorded before a single transaction is built. A product told its top-up was accepted must
+        // be able to ask after it again whatever becomes of this process, and to have it picked back up.
+        return sourceStorage.put(operation.groupId, source)
+            .flatMap { repository.insert(operation) }
+            .onSuccess { run(operation, resolved) }
             .map { }
     }
 

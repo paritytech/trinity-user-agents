@@ -60,6 +60,7 @@ class TrUAPIWorkerSupervisorFailureTest {
         webViewProviderFactory = webViewProviderFactory,
         bootstrapInstaller = bootstrapInstaller,
         refCounter = Lazy { refCounter },
+        navigation = mockk(relaxed = true),
         dispatchers = testDispatchers(),
     )
 

@@ -29,6 +29,9 @@ interface PinnedPocketCards {
      * which network it belongs to.
      */
     fun pinned(key: PocketCardKey): CachedPocketCard?
+
+    /** Whether the app ships the image at [path] for the product behind a pinned card, so it needs no archive. */
+    fun bundlesImage(productId: ProductId, path: String): Boolean
 }
 
 /**
@@ -53,6 +56,7 @@ class AssetPinnedPocketCards @Inject constructor(
     private val loading = Mutex()
     private var loaded: List<CachedPocketCard>? = null
     private val bundledFaces = ConcurrentHashMap<String, RendererNode>()
+    private val bundledImages by lazy { context.assets.list("pocket").orEmpty().map { "pocket/$it" }.toSet() }
 
     // The card's product is reserved on the network the app is on, which can take a chain read to
     // learn. Only listing the cards needs it; naming one does not.
@@ -62,10 +66,18 @@ class AssetPinnedPocketCards @Inject constructor(
 
     override fun pinned(key: PocketCardKey): CachedPocketCard? {
         val definition = definitions.firstOrNull { it.cardId == key.cardId.value } ?: return null
-        val tld = DotNsTld.parse(key.productId.value.substringAfter('.', missingDelimiterValue = "")) ?: return null
-        if (definition.backingProduct(tld) != key.productId) return null
+        if (!definition.backs(key.productId)) return null
 
         return definition.toCard(key.productId)
+    }
+
+    override fun bundlesImage(productId: ProductId, path: String): Boolean =
+        definitions.any { it.backs(productId) } && path in bundledImages
+
+    private fun Definition.backs(productId: ProductId): Boolean {
+        val tld = DotNsTld.parse(productId.value.substringAfter('.', missingDelimiterValue = "")) ?: return false
+
+        return backingProduct(tld) == productId
     }
 
     private suspend fun load(): List<CachedPocketCard> {

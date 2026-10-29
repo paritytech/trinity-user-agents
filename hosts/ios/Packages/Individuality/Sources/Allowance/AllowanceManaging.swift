@@ -29,21 +29,30 @@ public protocol AllowanceManaging {
     func allocate(
         accountId: AccountId,
         policy: OnExistingAllowancePolicy,
-        priority: AllowanceRecord.Priority
+        priority: AllowanceRecord.Priority,
+        domain: AllowanceRecord.Domain
     ) async throws
     /// Ensures [accountId] can submit to HOP. Managers that do not distinguish this from a plain
     /// allowance fall back to `allocate(policy: .ignore)`; the Bulletin manager overrides this to
     /// gate on `HopRuntimeApi.can_account_promote` instead of the stored allowance extent.
-    func ensureCanSubmit(accountId: AccountId, priority: AllowanceRecord.Priority) async throws
+    func ensureCanSubmit(
+        accountId: AccountId,
+        priority: AllowanceRecord.Priority,
+        domain: AllowanceRecord.Domain
+    ) async throws
     func renew() async throws
-    func release(accountId: AccountId) async throws
+    func release(with strategy: AllowanceReleaseStrategy) async throws
 }
 
 public extension AllowanceManaging {
-    func ensureCanSubmit(accountId: AccountId, priority: AllowanceRecord.Priority) async throws {
-        try await allocate(accountId: accountId, policy: .ignore, priority: priority)
+    func ensureCanSubmit(
+        accountId: AccountId,
+        priority: AllowanceRecord.Priority,
+        domain: AllowanceRecord.Domain
+    ) async throws {
+        try await allocate(accountId: accountId, policy: .ignore, priority: priority, domain: domain)
     }
 
     func renew() async throws {}
-    func release(accountId _: AccountId) async throws {}
+    func release(with _: AllowanceReleaseStrategy) async throws {}
 }

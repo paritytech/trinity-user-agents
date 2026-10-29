@@ -1,0 +1,81 @@
+{
+  "$v": 1,
+  "assets": [
+    {
+      "chain": "AssetHub",
+      "id": 1984,
+      "pallet": "Assets",
+      "role": "payment"
+    }
+  ],
+  "chains": [
+    {
+      "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+      "role": "Relay",
+      "rpc": [
+        "wss://previewnet.substrate.dev/relay"
+      ]
+    },
+    {
+      "genesisHash": "0xbac97e23fc8f4bccae72a98f8aeb2bcab20bf755862304e4b46ad6473456e896",
+      "lightSpec": {
+        "sha256": "0x11111111111111111111111111111111111111111111111111111111111111",
+        "url": "https://previewnet.substrate.dev/chainspecs/asset-hub.smol.json"
+      },
+      "paraId": 1000,
+      "role": "AssetHub",
+      "rpc": [
+        "wss://previewnet.substrate.dev/asset-hub"
+      ]
+    },
+    {
+      "genesisHash": "0x55e3e689ecfa9d2fffcf7d309b8011956671493982230bfd0420c683542249e9",
+      "paraId": 1004,
+      "role": "People",
+      "rpc": [
+        "wss://previewnet.substrate.dev/people"
+      ],
+      "statementStore": true
+    }
+  ],
+  "coinage": {
+    "chain": "People",
+    "instance": 0
+  },
+  "contracts": {
+    "accountDataStore": "0x2222222222222222222222222222222222222222"
+  },
+  "generation": "2026-09-17T16:15:00Z",
+  "id": "previewnet",
+  "name": "Previewnet",
+  "network": "paseo",
+  "sequence": 42,
+  "services": [
+    {
+      "kind": "dub",
+      "urls": [
+        "https://previewnet.substrate.dev/dub/"
+      ]
+    },
+    {
+      "kind": "ipfs-gateway",
+      "urls": [
+        "https://previewnet.substrate.dev/ipfs/"
+      ]
+    },
+    {
+      "chainId": 420420421,
+      "kind": "eth-rpc",
+      "urls": [
+        "https://previewnet.substrate.dev/eth-rpc"
+      ]
+    },
+    {
+      "kind": "stun",
+      "urls": [
+        "stun:previewnet.substrate.dev:3478"
+      ]
+    }
+  ],
+  "tld": "testnet"
+}

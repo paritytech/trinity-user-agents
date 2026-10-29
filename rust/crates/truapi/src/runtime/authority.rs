@@ -2,11 +2,11 @@
 //!
 //! Local and paired hosts use the same request and session types.
 
-use crate::platform::ProductContext;
+use super::product_consent::ProductConsent;
+use crate::platform::{ProductContext, ProductId};
 use async_trait::async_trait;
-use std::sync::Arc;
 use truapi::{
-	CallContext, CallError, CancellationReason,
+	CallContext, CancellationReason,
 	latest::{
 		HostAccountCreateProofRequest, HostAccountCreateProofResponse, HostAccountGetAliasRequest,
 		HostAccountGetAliasResponse, HostAccountListRingVrfKeysRequest,
@@ -19,7 +19,6 @@ use truapi::{
 		HostSignRawWithLegacyAccountRequest, LegacyAccountTxPayload, ProductAccountId,
 		ProductAccountTxPayload, VrfSignature,
 	},
-	versioned::account::{HostRequestLoginError, HostRequestLoginResponse},
 };
 
 use crate::{
@@ -29,11 +28,41 @@ use crate::{
 		transaction::ExtrinsicPayloadError,
 	},
 	host_logic::{
+		product_account::ProductAccountError,
 		raw_signing::RawPayloadError,
 		session::{SessionInfo, SessionState},
 		statement_store::statement_public_key_from_secret,
 	},
 };
+
+use super::sso_remote::{
+	SSO_LOCAL_DISCONNECT_REASON, SSO_PEER_DISCONNECT_REASON, SsoRemoteResponseError,
+};
+
+/// Trust boundary for product identity and host permissions.
+#[derive(Clone, Copy)]
+pub enum AccountCaller<'a> {
+	/// Product identity bound by this host's runtime.
+	Local {
+		/// Product bound by the host runtime.
+		product: &'a ProductContext,
+	},
+	/// Product identity reported by an authenticated paired host.
+	Remote {
+		/// Some SSO operations carry no product identity.
+		product_id: Option<&'a ProductId>,
+	},
+}
+
+impl AccountCaller<'_> {
+	/// Product named by this invocation, when the transport supplied one.
+	pub fn product_id(&self) -> Option<&ProductId> {
+		match self {
+			Self::Local { product } => Some(&product.product_id),
+			Self::Remote { product_id } => *product_id,
+		}
+	}
+}
 
 /// Core-only Bulletin key, zeroized on drop and redacted in diagnostics.
 #[derive(Clone, zeroize::Zeroize, zeroize::ZeroizeOnDrop, derive_more::Debug)]
@@ -126,6 +155,9 @@ pub enum AuthorityError {
 	/// User or authority rejected the request.
 	#[display("Rejected")]
 	Rejected,
+	/// The platform could not present or complete a wallet review.
+	#[display("confirmation failed: {}", _0.reason)]
+	ConfirmationFailed(#[error(not(source))] crate::latest::GenericError),
 	/// The selected authority session is no longer active.
 	#[display("Disconnected")]
 	Disconnected,
@@ -142,6 +174,35 @@ pub enum AuthorityError {
 	/// Catch-all authority failure.
 	#[display("{reason}")]
 	Unknown { reason: String },
+}
+
+impl From<ProductAccountError> for AuthorityError {
+	fn from(err: ProductAccountError) -> Self {
+		Self::Unavailable { reason: err.to_string() }
+	}
+}
+
+impl From<SsoRemoteResponseError> for AuthorityError {
+	fn from(reason: SsoRemoteResponseError) -> Self {
+		match reason {
+			SsoRemoteResponseError::Cancelled(err) => {
+				Self::Cancelled(AuthorityCancelError::new(err.remote_message_id(), err.reason()))
+			},
+			SsoRemoteResponseError::LocalDisconnected |
+			SsoRemoteResponseError::PeerDisconnected => Self::Disconnected,
+			SsoRemoteResponseError::Failure(reason) => match reason.as_str() {
+				"Rejected" | "User rejected" => Self::Rejected,
+				SSO_LOCAL_DISCONNECT_REASON | SSO_PEER_DISCONNECT_REASON => Self::Disconnected,
+				_ => Self::Unknown { reason },
+			},
+		}
+	}
+}
+
+impl From<SsoRemoteResponseError> for RingVrfError {
+	fn from(reason: SsoRemoteResponseError) -> Self {
+		AuthorityError::from(reason).into()
+	}
 }
 
 /// A preimage this host cannot assemble is a shape failure, not a transport one.
@@ -194,6 +255,9 @@ impl From<AuthorityError> for HostAccountSignVrfError {
 		match err {
 			AuthorityError::Disconnected => Self::NotConnected,
 			AuthorityError::Rejected => Self::Rejected,
+			AuthorityError::ConfirmationFailed(error) => {
+				Self::Unknown { reason: format!("VRF signing confirmation failed: {error:?}") }
+			},
 			AuthorityError::Cancelled(err) => Self::Unknown { reason: err.to_string() },
 			AuthorityError::Unavailable { reason } |
 			AuthorityError::NotSupported { reason } |
@@ -265,12 +329,8 @@ pub enum CreateTransactionAuthorityRequest {
 }
 
 /// Whether blessed `calling_product_id` is using its own account, `owner`.
-pub(crate) fn is_blessed_owner(calling_product_id: &str, owner: &str) -> bool {
-	use crate::platform::{has_trusted_remote_permissions, normalize_product_identifier};
-	normalize_product_identifier(calling_product_id).is_ok_and(|caller| {
-		has_trusted_remote_permissions(&caller) &&
-			normalize_product_identifier(owner).is_ok_and(|owner| owner == caller)
-	})
+pub fn is_blessed_owner(calling_product_id: &ProductId, owner: &ProductId) -> bool {
+	calling_product_id.has_trusted_remote_permissions() && owner == calling_product_id
 }
 
 /// Whether this product account can sign without confirmation.
@@ -314,31 +374,17 @@ pub trait ProductAuthority: Send + Sync {
 	/// Current account-authority session, if connected.
 	fn current_session(&self) -> Option<AuthoritySession>;
 
-	/// Session state shared with this authority.
-	fn session_state(&self) -> Arc<SessionState>;
+	/// This runtime's account-access decisions and operation reviews.
+	fn consent(&self) -> &ProductConsent;
 
 	/// Seed a product subtree for authority tests.
 	#[cfg(test)]
 	fn cache_product_subtree_for_test(
 		&self,
 		_session: &SessionInfo,
-		_product_id: &str,
+		_product_id: &ProductId,
 		_public_key: [u8; 32],
 	) {
-	}
-
-	/// Request account connection for the calling product.
-	async fn request_login(
-		&self,
-		product: &ProductContext,
-	) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>>;
-
-	/// Disconnect the current account-authority session.
-	async fn disconnect(&self);
-
-	/// Refresh session identity without user interaction.
-	async fn refresh_session_identity(&self) -> Option<AuthoritySession> {
-		self.current_session()
 	}
 
 	/// Resolve the public key for a product's hard subtree.
@@ -346,21 +392,21 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_id: String,
+		product_id: &ProductId,
 	) -> Result<[u8; 32], AuthorityError>;
 
 	/// Whether subtree resolution needs SSO and host consent.
 	async fn subtree_resolution_reaches_account_holder(
 		&self,
 		session: &AuthoritySession,
-		product_id: &str,
+		product_id: &ProductId,
 	) -> bool;
 
 	/// Whether this product account can sign without confirmation.
 	async fn auto_signing_status(
 		&self,
 		session: &AuthoritySession,
-		calling_product_id: &str,
+		calling_product_id: &ProductId,
 		account: &ProductAccountId,
 	) -> Result<AutoSigningGrant, AuthorityError>;
 
@@ -369,7 +415,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: String,
+		calling_product_id: &ProductId,
 		request: HostAccountSignVrfRequest,
 	) -> Result<VrfSignature, AuthorityError>;
 
@@ -380,7 +426,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: Option<&str>,
+		calling_product_id: Option<&ProductId>,
 		request: SignPayloadAuthorityRequest,
 	) -> Result<HostSignPayloadResponse, AuthorityError>;
 
@@ -391,7 +437,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: Option<&str>,
+		calling_product_id: Option<&ProductId>,
 		request: SignRawAuthorityRequest,
 		watermarked: bool,
 	) -> Result<HostSignPayloadResponse, AuthorityError>;
@@ -403,7 +449,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: Option<&str>,
+		calling_product_id: Option<&ProductId>,
 		request: CreateTransactionAuthorityRequest,
 	) -> Result<HostCreateTransactionResponse, AuthorityError>;
 
@@ -458,7 +504,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_id: String,
+		product_id: &ProductId,
 		request: HostRequestResourceAllocationRequest,
 	) -> Result<HostRequestResourceAllocationResponse, AuthorityError>;
 
@@ -467,12 +513,13 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_id: String,
+		product_id: &ProductId,
 	) -> Result<StatementStoreAllowanceKey, AuthorityError>;
 
 	/// Forget the cached key only if it matches `public_key`, preserving any
 	/// replacement. Hosts without a local cache use the no-op default.
-	fn forget_statement_store_allowance_key(&self, _product_id: &str, _public_key: [u8; 32]) {}
+	fn forget_statement_store_allowance_key(&self, _product_id: &ProductId, _public_key: [u8; 32]) {
+	}
 
 	/// Whether a preimage submission is kept in the core instead of being sent
 	/// to the Bulletin chain.
@@ -490,7 +537,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_id: String,
+		product_id: &ProductId,
 	) -> Result<BulletinAllowanceKey, AuthorityError>;
 
 	/// Invalidate the cached Bulletin key and increase or recreate its allowance
@@ -499,7 +546,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		product_id: String,
+		product_id: &ProductId,
 	) -> Result<BulletinAllowanceKey, AuthorityError>;
 
 	/// Sign exact statement-store proof bytes with a product-derived account.
@@ -507,7 +554,7 @@ pub trait ProductAuthority: Send + Sync {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: Option<&str>,
+		calling_product_id: Option<&ProductId>,
 		account: ProductAccountId,
 		payload: Vec<u8>,
 	) -> Result<[u8; 64], AuthorityError>;
@@ -516,7 +563,7 @@ pub trait ProductAuthority: Send + Sync {
 	fn derive_entropy(
 		&self,
 		session: &AuthoritySession,
-		product_id: &str,
+		product_id: &ProductId,
 		context: &[u8],
 	) -> Result<[u8; 32], AuthorityError>;
 

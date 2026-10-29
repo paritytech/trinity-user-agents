@@ -16,10 +16,13 @@ public struct PocketCardDefinition: Hashable, Sendable {
     public let id: PocketCardId
     public let title: String
     public let preview: PocketCardPreview
+    /// Whether the card opens with its face shown above the product's page.
+    public let faceShown: Bool
 
-    public init(id: PocketCardId, title: String, preview: PocketCardPreview) {
+    public init(id: PocketCardId, title: String, preview: PocketCardPreview, faceShown: Bool = true) {
         self.id = id
         self.title = title
         self.preview = preview
+        self.faceShown = faceShown
     }
 }

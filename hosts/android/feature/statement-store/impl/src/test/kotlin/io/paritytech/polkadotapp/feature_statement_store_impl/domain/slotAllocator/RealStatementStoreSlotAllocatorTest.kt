@@ -6,6 +6,7 @@ import android.content.Context
 import io.mockk.Runs
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.just
 import io.mockk.mockk
@@ -48,6 +49,7 @@ class RealStatementStoreSlotAllocatorTest {
     private val accountHigh: AccountId = byteArrayOf(0x02).toDataByteArray()
     private val accountNormal: AccountId = byteArrayOf(0x03).toDataByteArray()
     private val accountUntracked: AccountId = byteArrayOf(0x04).toDataByteArray()
+    private val accountCritical: AccountId = byteArrayOf(0x05).toDataByteArray()
 
     private val fixedNow: Instant = Instant.fromEpochSeconds(1_000_000)
     private val fixedTimeContext = CurrentTimeContext { fixedNow }
@@ -77,6 +79,7 @@ class RealStatementStoreSlotAllocatorTest {
         renewer = renewer,
         renewalLock = lock,
         currentTimeContext = fixedTimeContext,
+        currentPeriodProvider = { period },
     )
 
     @Before
@@ -103,8 +106,8 @@ class RealStatementStoreSlotAllocatorTest {
     }
 
     @Test
-    fun `target-priority invocation - stale rows for target trigger renewer with priorityAccount = target`() = runBlocking<Unit> {
-        withStaleAllocationsFor(target)
+    fun `stale rows trigger renewer with priorityAccount = target`() = runBlocking<Unit> {
+        withStaleAllocations()
         withSlotTakenBy(target)
 
         allocate(OnExistingAllocationStrategy.IGNORE, SlotPriority.Normal)
@@ -113,7 +116,7 @@ class RealStatementStoreSlotAllocatorTest {
     }
 
     @Test
-    fun `no renewer call when target rows are fresh`() = runBlocking<Unit> {
+    fun `no renewer call when no rows are stale`() = runBlocking<Unit> {
         withNoStaleAllocations()
         withSlotTakenBy(target)
 
@@ -135,6 +138,46 @@ class RealStatementStoreSlotAllocatorTest {
         verifyNoAllocationInsertions()
         verifyNoEvictionPerformed()
         verifyNoExtrinsicSubmitted()
+    }
+
+    @Test
+    fun `stale rows of other accounts are renewed before target picks a free seq`() = runBlocking<Unit> {
+        withStaleAllocations()
+        withFreeSlot()
+        withSuccessfulSubmission()
+
+        allocate(OnExistingAllocationStrategy.INCREASE, SlotPriority.Critical)
+
+        verifyRenewedBeforeLoadingSlots()
+    }
+
+    @Test
+    fun `Critical caller cannot evict Critical slot - NoAllocationAvailable`() = runBlocking<Unit> {
+        withNoStaleAllocations()
+        withZeroCooldown()
+        withSlotTakenBy(accountCritical)
+        withTrackedPriorities(accountCritical to SlotPriority.Critical)
+
+        val result = allocate(OnExistingAllocationStrategy.INCREASE, SlotPriority.Critical)
+
+        assertNoAllocationAvailable(result)
+        verifyNoEvictionPerformed()
+        verifyNoExtrinsicSubmitted()
+    }
+
+    @Test
+    fun `Critical caller evicts High slot`() = runBlocking<Unit> {
+        withNoStaleAllocations()
+        withZeroCooldown()
+        withSlotTakenBy(accountHigh)
+        withTrackedPriorities(accountHigh to SlotPriority.High)
+        withSuccessfulSubmission()
+
+        val result = allocate(OnExistingAllocationStrategy.INCREASE, SlotPriority.Critical)
+
+        assertSuccess(result)
+        verifySlotDeletedFor(accountHigh, seq = 0u)
+        verifyAllocationInsertedFor(target, seq = 0u, priority = SlotPriority.Critical)
     }
 
     @Test
@@ -295,11 +338,11 @@ class RealStatementStoreSlotAllocatorTest {
     }
 
     private suspend fun withNoStaleAllocations() {
-        coEvery { allocationRepository.hasStaleFor(any(), any(), any()) } returns false
+        coEvery { allocationRepository.hasAnyStale(any(), any()) } returns false
     }
 
-    private suspend fun withStaleAllocationsFor(account: AccountId) {
-        coEvery { allocationRepository.hasStaleFor(any(), account, any()) } returns true
+    private suspend fun withStaleAllocations() {
+        coEvery { allocationRepository.hasAnyStale(any(), any()) } returns true
     }
 
     /** The chain has a single slot at seq 0, taken by [account]; no free seqs. */
@@ -345,7 +388,7 @@ class RealStatementStoreSlotAllocatorTest {
     }
 
     private suspend fun withAllocationWritesAccepted() {
-        coEvery { allocationRepository.insert(any(), any(), any(), any(), any(), any(), any()) } returns 0L
+        coEvery { allocationRepository.insert(any(), any(), any(), any(), any(), any(), any(), any()) } returns 0L
         coEvery { allocationRepository.deleteSlot(any(), any(), any(), any()) } just Runs
         coEvery { allocationRepository.deleteAllForAccount(any(), any()) } just Runs
     }
@@ -384,12 +427,19 @@ class RealStatementStoreSlotAllocatorTest {
         coVerify(exactly = 1) { renewer.renew(any(), priorityAccount) }
     }
 
+    private suspend fun verifyRenewedBeforeLoadingSlots() {
+        coVerifyOrder {
+            renewer.renew(any(), target)
+            slotLoader.loadSlots(any())
+        }
+    }
+
     private suspend fun assertRenewerNotInvoked() {
         coVerify(exactly = 0) { renewer.renew(any(), any()) }
     }
 
     private suspend fun verifyNoAllocationInsertions() {
-        coVerify(exactly = 0) { allocationRepository.insert(any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { allocationRepository.insert(any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 
     private suspend fun verifyNoEvictionPerformed() {
@@ -419,6 +469,7 @@ class RealStatementStoreSlotAllocatorTest {
                 latestRenewedPeriod = any(),
                 since = any(),
                 priority = priority,
+                tag = any(),
             )
         }
     }

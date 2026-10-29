@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs
 
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
@@ -48,6 +49,20 @@ class RealDotNsResolverTest {
 
         assertTrue(result.isFailure)
         assertTrue(resolver.getProgressByDomain(domain).first() is DotNsLoadProgress.Failed)
+    }
+
+    // A failed lookup is usually a read that did not land, such as a device briefly offline.
+    // Remembered, it would keep the product unreachable until the app restarts, network or not.
+    @Test
+    fun `a lookup that failed is read from the chain again rather than remembered`() = runTest {
+        every { contentHashOverrides.getContentHashOverride(domain) } returns null
+        coEvery { contractApi.resolveContentHash(domain) } returns Result.failure(IllegalStateException("no node"))
+        val resolver = resolver()
+
+        resolver.resolveToLocalUri(domain)
+        resolver.resolveToLocalUri(domain)
+
+        coVerify(exactly = 2) { contractApi.resolveContentHash(domain) }
     }
 
     private fun TestScope.resolver() = RealDotNsResolver(

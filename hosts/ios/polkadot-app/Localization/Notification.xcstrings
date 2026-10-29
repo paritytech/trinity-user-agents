@@ -51,7 +51,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Game Starts in %@ Seconds!"
+            "value": "Game starting now!"
           }
         }
       }

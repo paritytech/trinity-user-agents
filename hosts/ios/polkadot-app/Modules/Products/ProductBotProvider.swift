@@ -6,8 +6,16 @@ import Operation_iOS
 import Products
 import StructuredConcurrency
 
+/// What the provider reports: the products it serves bots for, as soon as they are known, and
+/// each bot on its own once its manifest resolved and its worker archive downloaded. A product
+/// whose manifest cannot be read never gets a `botBuilt`.
+enum ProductBotEvent {
+    case listed([Product])
+    case botBuilt(ProductBot)
+}
+
 protocol ProductBotProviding {
-    func observeBots() -> AnyAsyncSequence<[ProductBot]>
+    func observeBots() -> AnyAsyncSequence<ProductBotEvent>
 }
 
 final class ProductBotProvider: ProductBotProviding {
@@ -40,34 +48,48 @@ final class ProductBotProvider: ProductBotProviding {
         self.logger = logger
     }
 
-    func observeBots() -> AnyAsyncSequence<[ProductBot]> {
-        productProvider.asyncStream()
-            .scan([String: Product]()) { dict, changes in
-                changes.mergeToDict(dict)
-            }
-            .map { [self] productDict in
-                var products = Array(productDict.values)
+    /// Reports every product change at once and never waits on a build: each product without a
+    /// bot gets its own build task, which reports the bot when it is ready. A product that leaves
+    /// the list has its build cancelled; one whose build failed is tried again on the next change.
+    func observeBots() -> AnyAsyncSequence<ProductBotEvent> {
+        let (stream, continuation) = AsyncThrowingStream<ProductBotEvent, Error>.makeStream()
+        let builds = ProductBotBuilds()
 
-                #if targetEnvironment(simulator)
-                    if let injected = Self.simulatorChatProduct(),
-                       !products.contains(where: { $0.identifier == injected.identifier }) {
-                        products.append(injected)
-                    }
-                #endif
-
-                // After the E2E injection, so a launcher naming a host-placed product keeps the
-                // display name it asked for.
-                for hostPlaced in await hostPlacedProducts() {
-                    guard !products.contains(where: { $0.identifier == hostPlaced.identifier }) else {
-                        continue
-                    }
-
-                    products.append(hostPlaced)
+        let observation = Task { [self] in
+            let productDicts = productProvider.asyncStream()
+                .scan([String: Product]()) { dict, changes in
+                    changes.mergeToDict(dict)
                 }
 
-                return await makeBots(for: products)
+            do {
+                for try await productDict in productDicts {
+                    let products = await listProducts(from: productDict)
+                    continuation.yield(.listed(products))
+
+                    await builds.keep(only: Set(products.map(\.identifier)))
+
+                    for product in products {
+                        guard await builds.needsBuild(product.identifier) else { continue }
+
+                        await builds.register(product.identifier) { [self] in
+                            let bot = await makeBot(for: product)
+                            if let bot { continuation.yield(.botBuilt(bot)) }
+                            await builds.finished(product.identifier, built: bot != nil)
+                        }
+                    }
+                }
+
+                continuation.finish()
+            } catch {
+                continuation.finish(throwing: error)
             }
-            .eraseToAnyAsyncSequence()
+
+            await builds.cancelAll()
+        }
+
+        continuation.onTermination = { _ in observation.cancel() }
+
+        return stream.eraseToAnyAsyncSequence()
     }
 
     #if targetEnvironment(simulator)
@@ -94,6 +116,29 @@ final class ProductBotProvider: ProductBotProviding {
 }
 
 private extension ProductBotProvider {
+    func listProducts(from productDict: [String: Product]) async -> [Product] {
+        var products = Array(productDict.values)
+
+        #if targetEnvironment(simulator)
+            if let injected = Self.simulatorChatProduct(),
+               !products.contains(where: { $0.identifier == injected.identifier }) {
+                products.append(injected)
+            }
+        #endif
+
+        // After the E2E injection, so a launcher naming a host-placed product keeps the
+        // display name it asked for.
+        for hostPlaced in await hostPlacedProducts() {
+            guard !products.contains(where: { $0.identifier == hostPlaced.identifier }) else {
+                continue
+            }
+
+            products.append(hostPlaced)
+        }
+
+        return products
+    }
+
     /// Unioned into the stream rather than written to the product repository: nothing installs
     /// them, so nothing can uninstall them either. Pocket refuses to remove a privileged card;
     /// this gets the same result without a second copy of the collection to keep in step.
@@ -112,20 +157,10 @@ private extension ProductBotProvider {
 
     /// The last async seam before a bot is built: the file provider that serves the worker runs
     /// synchronously, so the worker's archive and entry module have to be known by now.
-    ///
-    /// Resolved concurrently — serially, one unreachable product delays every other bot.
-    func makeBots(for products: [Product]) async -> [ProductBot] {
-        let resolved = await withTaskGroup(of: ResolvedProduct?.self) { group in
-            for product in products {
-                group.addTask { await self.resolveForBot(product) }
-            }
+    func makeBot(for product: Product) async -> ProductBot? {
+        guard let resolved = await resolveForBot(product), !Task.isCancelled else { return nil }
 
-            return await group.reduce(into: [ResolvedProduct]()) { result, resolved in
-                resolved.map { result.append($0) }
-            }
-        }
-
-        return resolved.compactMap { botFactory.create(resolved: $0) }
+        return botFactory.create(resolved: resolved)
     }
 
     /// Nil for a product whose published manifest is broken. That is the product's bug, and
@@ -163,5 +198,47 @@ private extension ProductBotProvider {
         } catch {
             logger.error("Failed to warm the chat worker archive \(worker.identifier): \(error)")
         }
+    }
+}
+
+/// The build task of every product that has no bot yet, keyed by product id. A product counts as
+/// having a bot from the moment its build starts, so a second list change never builds it twice.
+private actor ProductBotBuilds {
+    private var tasks: [String: Task<Void, Never>] = [:]
+    private var built: Set<String> = []
+
+    func needsBuild(_ productId: String) -> Bool {
+        tasks[productId] == nil && !built.contains(productId)
+    }
+
+    func register(_ productId: String, _ build: @escaping @Sendable () async -> Void) {
+        tasks[productId] = Task(operation: build)
+    }
+
+    /// A build cancelled by `keep(only:)` still reaches here; it must not record a bot for a
+    /// product that left, nor forget a build registered since for the same product.
+    func finished(_ productId: String, built isBuilt: Bool) {
+        guard !Task.isCancelled else { return }
+
+        tasks[productId] = nil
+
+        if isBuilt {
+            built.insert(productId)
+        }
+    }
+
+    /// Cancels the builds and forgets the bots of the products not in `productIds`.
+    func keep(only productIds: Set<String>) {
+        for (productId, task) in tasks where !productIds.contains(productId) {
+            task.cancel()
+            tasks[productId] = nil
+        }
+
+        built = built.intersection(productIds)
+    }
+
+    func cancelAll() {
+        tasks.values.forEach { $0.cancel() }
+        tasks = [:]
     }
 }

@@ -13,7 +13,7 @@ use truapi::{
 
 use crate::{
 	platform::{ExpandedCardFaceOutcome, ProductExecutionKind},
-	runtime::ProductRuntimeHost,
+	runtime::{ProductRuntimeHost, versioning::version},
 };
 
 #[truapi::async_trait]
@@ -25,25 +25,29 @@ impl ExpandedCard for ProductRuntimeHost {
 		request: HostExpandedCardSetFaceShownRequest,
 	) -> Result<HostExpandedCardSetFaceShownResponse, CallError<HostExpandedCardSetFaceShownError>>
 	{
-		// Admin connections call the trait without the dispatcher's kind filter.
-		if self.product.execution_kind != ProductExecutionKind::Widget {
-			return Err(CallError::Denied);
-		}
-		let Some(card) = &self.expanded_card else {
-			return Err(CallError::Unsupported);
-		};
-		let HostExpandedCardSetFaceShownRequest::V1(request) = request;
-		let domain_error = |error| CallError::Domain(HostExpandedCardSetFaceShownError::V1(error));
-		match card.set_expanded_card_face_shown(request.shown).await {
-			Ok(ExpandedCardFaceOutcome::Applied) => Ok(HostExpandedCardSetFaceShownResponse::V1),
-			Ok(ExpandedCardFaceOutcome::NotPresented) => {
-				Err(domain_error(FaceShownError::NotPresented))
-			},
-			Ok(ExpandedCardFaceOutcome::UserMoving) => {
-				Err(domain_error(FaceShownError::UserMoving))
-			},
-			Ok(ExpandedCardFaceOutcome::Unsupported) => Err(CallError::Unsupported),
-			Err(error) => Err(domain_error(FaceShownError::Unknown { reason: error.reason })),
-		}
+		version(request)
+			.exec(|request| async move {
+				// Admin connections call the trait without the dispatcher's kind filter.
+				if self.connection.product.execution_kind != ProductExecutionKind::Widget {
+					return Err(CallError::Denied);
+				}
+				let Some(card) = &self.connection.expanded_card else {
+					return Err(CallError::Unsupported);
+				};
+				match card.set_expanded_card_face_shown(request.shown).await {
+					Ok(ExpandedCardFaceOutcome::Applied) => Ok(()),
+					Ok(ExpandedCardFaceOutcome::NotPresented) => {
+						Err(CallError::Domain(FaceShownError::NotPresented))
+					},
+					Ok(ExpandedCardFaceOutcome::UserMoving) => {
+						Err(CallError::Domain(FaceShownError::UserMoving))
+					},
+					Ok(ExpandedCardFaceOutcome::Unsupported) => Err(CallError::Unsupported),
+					Err(error) => {
+						Err(CallError::Domain(FaceShownError::Unknown { reason: error.reason }))
+					},
+				}
+			})
+			.await
 	}
 }

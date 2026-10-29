@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_settings_impl.presentation.common
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
@@ -15,10 +16,12 @@ import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.AlertOutlined
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowRight
 import io.paritytech.polkadotapp.design.components.icon.vectors.CloudOutlined
+import io.paritytech.polkadotapp.design.components.icon.vectors.ShieldCheck
 import io.paritytech.polkadotapp.design.components.menu.PolkadotMenuListItem
 import io.paritytech.polkadotapp.design.components.menu.PolkadotMenuListScope
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageAccountBackupStatus
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
@@ -104,20 +107,54 @@ fun PolkadotMenuListScope.BackupSettingsMenuItem(
 }
 
 @Composable
+fun PolkadotMenuListScope.PaymentsBackupSettingsMenuItem(status: CoinageAccountBackupStatus) {
+    PolkadotMenuListItem(
+        leading = {
+            NovaIcon(
+                modifier = Modifier
+                    .size(20.dp)
+                    .align(Alignment.Center),
+                imageVector = NovaIcons.ShieldCheck,
+                tint = PolkadotTheme.colors.fg.secondary
+            )
+        },
+        title = {
+            NovaText(
+                text = stringResource(RCommon.string.settings_payments_backup),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        },
+        trailing = { MenuValue(stringResource(status.labelRes())) },
+        onClick = null
+    )
+}
+
+@StringRes
+private fun CoinageAccountBackupStatus.labelRes(): Int = when (this) {
+    CoinageAccountBackupStatus.Registering -> RCommon.string.settings_payments_backup_in_progress
+    CoinageAccountBackupStatus.Delayed -> RCommon.string.settings_payments_backup_delayed
+    CoinageAccountBackupStatus.Completed -> RCommon.string.settings_payments_backup_done
+}
+
+@Composable
 private fun MenuValueChevron(label: String?) {
     Row(
         horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        label?.let {
-            NovaText(
-                text = label,
-                style = PolkadotTheme.typography.body.mediumEmphasized,
-                color = PolkadotTheme.colors.fg.secondary
-            )
-        }
+        label?.let { MenuValue(it) }
         Chevron()
     }
+}
+
+@Composable
+private fun MenuValue(label: String) {
+    NovaText(
+        text = label,
+        style = PolkadotTheme.typography.body.mediumEmphasized,
+        color = PolkadotTheme.colors.fg.secondary
+    )
 }
 
 @Composable

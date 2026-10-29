@@ -321,10 +321,10 @@ Native runtime: `StorageHostCalls` provides a per-product key-value store namesp
 Spec: trinity-user-agents RFC "Pocket modality" (#609), core implementation #706, on top of Unified Renderer (#633) and
 Worker Lifecycle (#632). The host owns the collection and is its only writer; a product observes its own cards over
 the wire (`Pocket::list_subscribe`) and may remove one (`Pocket::remove_card`). There is no add call: a card enters
-when the user follows a `polkadotapp://<product>.<tld>/-/pocket/add?card=<id>` deeplink and approves the sheet.
-`/-/pocket/open?card=<id>` lands on the Pocket tab with that card expanded when the user holds it, `/-/pocket` alone on
-the tab, and `polkadotapp://pocket` reaches the tab from a link that names no product. The first path segment `-` is
-reserved for host-handled targets; `ProductSpaDeepLinkHandler` declines it.
+when the user follows a `polkadotapp://pocket/add?product=<product>.<tld>&card=<id>` deeplink and approves the sheet.
+`polkadotapp://pocket/open?product=<product>.<tld>&card=<id>` lands on the Pocket tab with that card expanded when the
+user holds it, and `polkadotapp://pocket` alone on the tab. A product's `navigateTo` uses the same links, which
+`PocketDeepLinkHandler` reads like any other app link. A product's own paths are App routes.
 
 Seams, all in `feature/products/api/.../domain/pocket/`:
 - `PocketCollection` — `observeCards()` and user removal. One pinned card, Humanity on the personhood product
@@ -332,13 +332,14 @@ Seams, all in `feature/products/api/.../domain/pocket/`:
   face they were approved with. Balance and Scarcity are not pinned: the products behind them publish no Pocket
   cards, and the host already draws its own native cards for that ground. The newest face a product streams is kept
   for every card,
-  pinned ones included, so a card wears what its product last drew rather than the bundled stub at cold start. It is
+  pinned ones included, so a card wears what its product last drew rather than the bundled placeholder at cold start. It is
   stored in the core's own encoding of the tree (`encodeRendererNode`, `pocket_card_faces.face`), so it reads back as
   the tree that was drawn.
 - `PocketCardOpenRequests` — the card a deeplink asked the Pocket tab to expand. A link can arrive before the tab has
   been shown, so the request is held until the Pocket screen finds the card in its collection, and cleared there.
 - `PocketFaceSource.observeFace(key)` — the cached face first, then every tree the product streams; `sendAction`
-  carries a press back; `resolveImage` fetches `Image` sources from the archive or the Bulletin gateway.
+  carries a press back; `resolveImage` fetches `Image` sources from the archive or the Bulletin gateway, except that an
+  `Archive` image of a pinned card's product that the app ships under `assets/pocket/` loads from the app.
 - The face vocabulary is the renderer's: the core's `parseRendererNodeJson` reads a `{ tag, value }` preview into its
   `RendererNode`, with the same 64-level bound the render stream carries, `RendererNodeMapping` turns that (or a
   streamed tree) into `JsWidget`, `JsWidgetRenderer` (`api/presentation/widget`) draws it.
@@ -351,7 +352,7 @@ Seams, all in `feature/products/api/.../domain/pocket/`:
 Core side (`feature/products/impl/.../domain/truapi/`):
 - Pocket is core-only, whatever `ProductRuntimeSettings` says: the native runtime has no Pocket surface.
 - `TrUAPIWorkerSupervisor` starts a product's worker on the core's `Start` transition (runtime bridge
-  `workerDemandChanged`): hidden `ChatWebViewProvider` WebView, `openProductExecution(WORKER, pocket = ...)` through
+  `requestWorkerTransition`): hidden `ChatWebViewProvider` WebView, `openProductExecution(WORKER, pocket = ...)` through
   `ProductTrUAPIHostBridge.attach(kind = WORKER)`, bootstrap at document start, entry module by URL. `Stop` tears it
   down. Chat is not served on this path; chat products keep the native worker, so a product with both runs two.
 - `TrUAPIPocketFaceStreams` takes one `acquireWorker` reference per collected face, opens `render` on
@@ -364,6 +365,16 @@ Core side (`feature/products/impl/.../domain/truapi/`):
 
 Demo: `feature/products/product-sample/pocket-worker`, a worker on the core's own client that publishes one card,
 draws its face live and gives it up on its Remove button.
+
+### Host-placed chat
+
+The chat analogue of the pinned card. `HostPlacedProducts` (`feature/products/impl/.../domain/bot/external/`) names
+the products the host itself puts in chat, Jollity on the reserved game product, and `ProductExternalExtensionProvider`
+unions them with the installed chat products, placed first and listed once when the user also installed one. Nothing
+is written to the product tables, so nothing can uninstall them, and the product the registry sees never changes, so
+the worker is not restarted over a resolved name. A placed product's chat extension holds the worker like any other,
+and the product registers its rooms through its own `createRoom`. A host-placed chat is pinned above the rest
+(`ProductChatPreviewDelegate`, through `Order.PinToTop`, for the `PlacedByHost` origin) and its menu offers no removal.
 
 ---
 

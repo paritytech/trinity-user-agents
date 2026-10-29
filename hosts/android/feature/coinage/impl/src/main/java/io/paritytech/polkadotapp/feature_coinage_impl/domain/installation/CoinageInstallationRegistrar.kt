@@ -5,7 +5,7 @@ import io.paritytech.polkadotapp.chains.multiNetwork.connection.ChainConnectionR
 import io.paritytech.polkadotapp.chains.multiNetwork.connection.withConnectionEnabled
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageAccountBackupStatus
-import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageAccountBackupObserver
+import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageInstallationId
 import io.paritytech.polkadotapp.feature_coinage_impl.data.dataStore.AccountDataStoreConfigProvider
 import io.paritytech.polkadotapp.feature_coinage_impl.data.installation.CoinageInstallationRepository
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.coinageLogE
@@ -50,16 +50,24 @@ class CoinageInstallationRegistrar @Inject constructor(
     private val chainConnectionRefCounter: ChainConnectionRefCounter,
     private val knownChains: KnownChains,
     dispatchers: CoroutineDispatchers,
-) : CoinageAccountBackupObserver, CoroutineScope by CoroutineScope(dispatchers.io + SupervisorJob()) {
+) : CoroutineScope by CoroutineScope(dispatchers.io + SupervisorJob()) {
     private val registration: SharedFlow<CoinageAccountBackupStatus> = flow {
-        emit(CoinageAccountBackupStatus.Registering)
+        val installation = installationRepository.getOrCreateCurrent()
+        val finalizedBefore = finalizedRegistrationOf(installation)
+        val completedBefore = finalizedBefore != null
+
+        emit(if (completedBefore) CoinageAccountBackupStatus.Completed else CoinageAccountBackupStatus.Registering)
 
         observeAccountOnboardingStatusUseCase().first { it.isOnboarded }
 
         // Overdue counts from here, so a contract address that never arrives is reported like any other delay.
         val completed = flow {
-            emit(false)
-            registerUntilFinalized(awaitTarget())
+            emit(completedBefore)
+
+            val target = awaitTarget(installation)
+            if (target != finalizedBefore) emit(false)
+
+            registerUntilFinalized(target)
             emit(true)
         }
         emitAll(combine(completed, overdueAfter(EXPECTED_REGISTRATION_TIME), ::statusOf))
@@ -68,7 +76,7 @@ class CoinageInstallationRegistrar @Inject constructor(
         .onEach { status -> coinageLogI("Installation registration status=$status") }
         .shareIn(this, SharingStarted.Lazily, replay = 1)
 
-    override fun subscribeStatus(): Flow<CoinageAccountBackupStatus> = registration
+    fun subscribeStatus(): Flow<CoinageAccountBackupStatus> = registration
 
     fun start() {
         registration.launchIn(this)
@@ -111,9 +119,21 @@ class CoinageInstallationRegistrar @Inject constructor(
             .first { states -> states.none { it.status.isLive } }
     }
 
-    private suspend fun awaitTarget(): InstallationRegistrationTarget {
-        val installation = installationRepository.getOrCreateCurrent()
+    // Read before remote config syncs, so a registration that already finalized does not hold allocations until then.
+    private suspend fun finalizedRegistrationOf(installation: CoinageInstallationId): InstallationRegistrationTarget? {
+        val contract = configProvider.lastKnownContractAddress().getOrNull() ?: return null
+        val target = InstallationRegistrationTarget(contract, installation)
 
+        return durableTransactionService.getGroupStates(COINAGE_INSTALLATION_DOMAIN, target.registrationGroup()).fold(
+            onSuccess = { states -> target.takeIf { states.any { it.status == DurableTxStatus.FINALIZED_SUCCESS } } },
+            onFailure = {
+                coinageLogW("Installation registration: could not read the earlier registration, checking it again")
+                null
+            },
+        )
+    }
+
+    private suspend fun awaitTarget(installation: CoinageInstallationId): InstallationRegistrationTarget {
         while (true) {
             configProvider.contractAddress()
                 .onFailure { coinageLogW("Installation registration: data store contract address is not available yet") }

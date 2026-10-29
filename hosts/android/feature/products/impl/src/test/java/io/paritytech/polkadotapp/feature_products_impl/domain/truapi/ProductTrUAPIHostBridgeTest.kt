@@ -4,20 +4,24 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import io.parity.truapi.HostBridge
 import io.parity.truapi.TrUAPIHostRuntime
+import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
-import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
@@ -26,6 +30,7 @@ import org.junit.Test
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.HostRejection
 import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.WsBridgeEndpoint
 
 class ProductTrUAPIHostBridgeTest {
     private fun refusingCore(): TrUAPIHostRuntime = mockk {
@@ -35,16 +40,21 @@ class ProductTrUAPIHostBridgeTest {
     private val gameReminder = mockk<ProductGameReminder>(relaxUnitFun = true)
     private val game = ProductId.fromStoredValue("game.dot")
 
-    private fun TestScope.bridge() = ProductTrUAPIHostBridge(
-        hostApiInteractor = mockk<HostApiInteractor>(),
+    private fun TestScope.bridge(
+        scope: CoroutineScope = CoroutineScope(StandardTestDispatcher(testScheduler)),
+        hostApiInteractor: HostApiInteractor = mockk(),
+    ) = ProductTrUAPIHostBridge(
+        hostApiInteractor = hostApiInteractor,
         chainHttpClient = OkHttpClient(),
         encryptedPreferences = mockk<EncryptedPreferences>(),
         confirmationLauncher = mockk<TrUAPIConfirmationLauncher>(),
-        appLifecycleObserver = mockk<AppLifecycleObserver>(),
+        appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
+        networkStateService = mockk { every { defaultNetwork } returns MutableStateFlow(null) },
         dotNsTldProvider = mockk<DotNsTldProvider>(),
-        pocketCardStore = mockk<PocketCardStore>(),
+        pocketCardStore = mockk { every { observeCards() } returns emptyFlow() },
         productGameReminder = gameReminder,
-        scope = CoroutineScope(StandardTestDispatcher(testScheduler)),
+        extensionVersions = mockk(),
+        scope = scope,
     )
 
     @Test
@@ -59,6 +69,35 @@ class ProductTrUAPIHostBridgeTest {
         )
 
         assertTrue(outcome.isFailure)
+    }
+
+    // The worker supervisor never holds the bridge; it stops a worker by cancelling the scope it
+    // handed in. That cancel is what has to close the execution, or every card scrolled off screen
+    // leaves its execution, loopback registration and chain sockets alive for the whole process.
+    @Test
+    fun `cancelling the owning scope closes the execution`() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val execution = mockk<TrUAPIProductExecution>(relaxUnitFun = true) {
+            every { startWsBridge(any()) } returns WsBridgeEndpoint(port = 1u, token = "token")
+        }
+        val runtime = mockk<TrUAPIHostRuntime> {
+            every { openProductExecution(any(), any(), any(), any(), any()) } returns execution
+        }
+        val bridge = bridge(scope, hostApiInteractor = mockk { every { subscribeTheme() } returns emptyFlow() })
+
+        bridge.attach(
+            runtime = runtime,
+            productId = ProductId.fromStoredValue("game.dot"),
+            chains = EMPTY_CHAINS,
+            navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
+            kind = ProductExecutionKind.WORKER,
+            onReadyToInject = {},
+        )
+        scope.cancel()
+        advanceUntilIdle()
+
+        verify { execution.stopWsBridge() }
+        verify { execution.close() }
     }
 
     private suspend fun TestScope.attachCapturingBridge(card: ExpandedCardFace?): HostBridge {
@@ -113,7 +152,7 @@ class ProductTrUAPIHostBridgeTest {
         gameBridge.cancelReminder()
 
         coVerify(exactly = 1) { gameReminder.schedule(game, 1_000) }
-        coVerify(exactly = 1) { gameReminder.cancel(game) }
+        coVerify(exactly = 1) { gameReminder.cancelByProduct(game) }
     }
 
     @Test
@@ -126,7 +165,7 @@ class ProductTrUAPIHostBridgeTest {
         assertEquals("notifications are not allowed", (outcome.exceptionOrNull() as? HostRejection.Rejected)?.reason)
     }
 
-    private suspend fun withScheduleOutcome(outcome: Result<Unit>) {
+    private fun withScheduleOutcome(outcome: Result<Unit>) {
         coEvery { gameReminder.schedule(game, 1_000) } returns outcome
     }
 }

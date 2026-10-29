@@ -1,5 +1,8 @@
 import AsyncExtensions
 import Foundation
+import os
+import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import Testing
 import UIKit
 
@@ -37,8 +40,8 @@ struct PaymentAssetViewModelTests {
         try await received.wait(untilCount: 1)
 
         viewModel.cancel()
+        try await branding.waitForSubscriptionToEnd()
         branding.send(PaymentAssetBrand(symbol: "USD", squareIcon: nil, wideIcon: nil))
-        try await Task.sleep(for: .milliseconds(100))
 
         #expect(received.symbols == ["CASH"])
     }
@@ -66,21 +69,48 @@ private extension PaymentAssetViewModelTests {
         }
     }
 
-    final class StubBranding: PaymentAssetBrandingProviding {
-        private let subject: AsyncCurrentValueSubject<PaymentAssetBrand>
+    final class StubBranding: PaymentAssetBrandingProviding, @unchecked Sendable {
+        private let state: OSAllocatedUnfairLock<
+            (current: PaymentAssetBrand, subscribers: [UUID: AsyncStream<PaymentAssetBrand>.Continuation])
+        >
+        private let ended = AsyncStream<Void>.makeStream()
 
         init(initial: PaymentAssetBrand) {
-            subject = AsyncCurrentValueSubject(initial)
+            state = .init(initialState: (initial, [:]))
         }
 
-        var current: PaymentAssetBrand { subject.value }
+        var current: PaymentAssetBrand { state.withLock { $0.current } }
 
         func stream() -> AnyAsyncSequence<PaymentAssetBrand> {
-            subject.eraseToAnyAsyncSequence()
+            let id = UUID()
+            let (stream, continuation) = AsyncStream<PaymentAssetBrand>.makeStream()
+            continuation.onTermination = { [state, ended] _ in
+                state.withLock { _ = $0.subscribers.removeValue(forKey: id) }
+                ended.continuation.yield()
+            }
+            state.withLock { state in
+                state.subscribers[id] = continuation
+                continuation.yield(state.current)
+            }
+            return stream.eraseToAnyAsyncSequence()
         }
 
         func send(_ brand: PaymentAssetBrand) {
-            subject.send(brand)
+            let subscribers = state.withLock { state in
+                state.current = brand
+                return Array(state.subscribers.values)
+            }
+            subscribers.forEach { $0.yield(brand) }
+        }
+
+        /// Returns once a subscriber's stream has ended, failing rather than hanging if none does.
+        func waitForSubscriptionToEnd() async throws {
+            try await withTimeout(.hangGuard) { [ended] in
+                for await _ in ended.stream {
+                    return
+                }
+                throw CancellationError()
+            }
         }
     }
 }

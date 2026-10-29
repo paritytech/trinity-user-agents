@@ -47,22 +47,29 @@ class QRScannerViewController: UIViewController, ViewHolder {
         presenter.viewWillDisappear()
     }
 
-    func configureVideoLayer(with captureSession: AVCaptureSession) {
-        if let layer = rootView.qrFrameView.frameLayer as? AVCaptureVideoPreviewLayer {
-            if layer.session === captureSession {
-                return
-            }
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        // A scheduled hide retains the screen, which would outlive its closing.
+        invalidateMessageScheduling()
+    }
 
-            layer.session = captureSession
+    func configureVideoLayer(with captureSession: AVCaptureSession) {
+        attachPreview(to: captureSession)
+        rootView.didAttachPreview()
+    }
+
+    func attachPreview(to session: AVCaptureSession) {
+        if let layer = rootView.qrFrameView.frameLayer as? AVCaptureVideoPreviewLayer {
+            if layer.session !== session {
+                layer.session = session
+            }
         } else {
-            let videoPreviewLayer = AVCaptureVideoPreviewLayer(session: captureSession)
+            let videoPreviewLayer = AVCaptureVideoPreviewLayer(session: session)
             videoPreviewLayer.videoGravity = AVLayerVideoGravity.resizeAspectFill
             videoPreviewLayer.frame = view.layer.bounds
 
             rootView.qrFrameView.frameLayer = videoPreviewLayer
         }
-
-        rootView.didAttachPreview()
     }
 
     // MARK: Message Management

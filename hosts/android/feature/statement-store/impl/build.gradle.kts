@@ -28,4 +28,5 @@ dependencies {
     implementation(project(":feature:chain-resources:api"))
 
     testImplementation(project(":test-shared"))
+    testImplementation(libs.mockk)
 }

@@ -40,14 +40,16 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     let coreStorage: HostCoreStorageBackend
 
     private let dependencies: Dependencies
+    private let cardFace: (any ExpandedCardFaceShowing)?
     private weak var execution: TrUAPIProductExecutionProtocol?
     private let cachedTheme = OSAllocatedUnfairLock(
         uncheckedState: HostThemeSubscribeItem(name: .default, variant: .dark)
     )
     private var themeObservation: Task<Void, Never>?
 
-    init(dependencies: Dependencies) {
+    init(dependencies: Dependencies, cardFace: (any ExpandedCardFaceShowing)? = nil) {
         self.dependencies = dependencies
+        self.cardFace = cardFace
         storage = ProductStorageBackend(storage: dependencies.productStorage)
         coreStorage = CoreStorageBackend(storage: dependencies.coreStorage)
     }
@@ -64,7 +66,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func onCoreLog(marker: String, detail: String) {
-        dependencies.logger.debug("[truapi:\(marker)] \(detail)")
+        dependencies.logger.logCoreLine(marker: marker, detail: detail)
     }
 
     func navigateTo(url: String) async throws {
@@ -103,7 +105,8 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
              .nfc,
              .clipboard,
              .openUrl,
-             .biometrics:
+             .biometrics,
+             .motion:
             .notApplicable
         }
     }
@@ -114,7 +117,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     ) async throws -> TrUAPIPermissionDecision {
         try await dependencies.permissionGuard.requestPermissionsDecision(
             productId: dependencies.productId,
-            permissions: request.toDomainRequest().toDomainPermissions()
+            permissions: request.toDomainPermissions()
         ).hostDecision
     }
 
@@ -166,6 +169,12 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         cachedTheme.withLock { $0 }
     }
 
+    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+        guard let cardFace else { return .unsupported }
+
+        return await cardFace.setFaceShown(shown)
+    }
+
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool {
         switch request {
         case let .chain(genesisHash):
@@ -184,22 +193,12 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         TrUAPISupportedChains.make(chainRegistry: dependencies.chainRegistry)
     }
 
-    func authStateChanged(state: AuthState) {
-        let details =
-            switch state {
-            case .disconnected:
-                "disconnected"
-            case .pairing:
-                "pairing"
-            case .connected:
-                "connected"
-            case .loginFailed:
-                "loging failed"
-            case .authenticating:
-                "authenticating"
-            }
+    func transactionExtensionVersions() async throws -> ExtensionVersionMap {
+        try TrUAPIExtensionVersions.make(chainRegistry: dependencies.chainRegistry)
+    }
 
-        dependencies.logger.debug("[truapi] auth state: \(details)")
+    func authStateChanged(state: AuthState) {
+        dependencies.logger.info("[truapi.auth] \(dependencies.productId): \(state.logMarker)")
     }
 }
 
@@ -283,19 +282,32 @@ extension HostDevicePermissionRequest {
         case .clipboard: .clipboard
         case .openUrl: .openUrl
         case .biometrics: .biometrics
+        case .motion: .motion
         }
     }
 }
 
 extension RemotePermission {
-    /// Maps the TrUAPI remote permission to the Products domain request.
-    func toDomainRequest() -> Products.RemotePermissionRequest {
+    /// The Products permissions the guard asks the user about.
+    func toDomainPermissions() -> [ProductPermission] {
         switch self {
-        case let .remote(domains): .remote(domains: domains)
-        case .webRtc: .webRTC
-        case .chainSubmit: .chainSubmit
-        case .preimageSubmit: .preimageSubmit
-        case .statementSubmit: .statementSubmit
+        case let .remote(domains): Products.RemotePermissionRequest.remote(domains: domains).toDomainPermissions()
+        case .webRtc: Products.RemotePermissionRequest.webRTC.toDomainPermissions()
+        case .chainSubmit: Products.RemotePermissionRequest.chainSubmit.toDomainPermissions()
+        case .preimageSubmit: Products.RemotePermissionRequest.preimageSubmit.toDomainPermissions()
+        case .statementSubmit: Products.RemotePermissionRequest.statementSubmit.toDomainPermissions()
+        case .balanceAccess: [.balanceAccess]
+        case let .nftPurseRead(owner): [.nftPurseRead(ownerProductId: owner.productId)]
+        }
+    }
+}
+
+extension NftPurseOwner {
+    /// The owning product, or `nil` for purses of the user's own account.
+    var productId: String? {
+        switch self {
+        case let .product(productId): productId
+        case .root: nil
         }
     }
 }

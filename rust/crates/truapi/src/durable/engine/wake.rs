@@ -44,7 +44,7 @@ mod tests {
 		signal.wake();
 
 		assert!(listener.try_recv().is_ok());
-		assert!(!listener.try_recv().is_ok());
+		assert!(listener.try_recv().is_err());
 	}
 
 	#[test]

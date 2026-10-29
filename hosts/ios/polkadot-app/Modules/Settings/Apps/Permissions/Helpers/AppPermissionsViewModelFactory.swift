@@ -82,6 +82,11 @@ private extension AppPermissionsViewModelFactory {
                 String(localized: .Products.appPermissionUserIdentityTitle),
                 String(localized: .Products.permissionBodyUserIdentityAccess)
             )
+        case let .nftPurseRead(ownerProductId):
+            (
+                String(localized: .Products.appPermissionNftPursesTitle),
+                NftPurseReadCopy.description(ownerProductId: ownerProductId)
+            )
         }
     }
 
@@ -96,6 +101,7 @@ private extension AppPermissionsViewModelFactory {
         case .clipboard: String(localized: .Products.appPermissionCapabilityClipboard)
         case .openUrl: String(localized: .Products.appPermissionCapabilityOpenUrl)
         case .biometrics: String(localized: .Products.appPermissionCapabilityBiometrics)
+        case .motion: String(localized: .Products.appPermissionCapabilityMotion)
         }
     }
 
@@ -110,6 +116,7 @@ private extension AppPermissionsViewModelFactory {
         case .clipboard: String(localized: .Products.permissionCapabilityDescriptionClipboard)
         case .openUrl: String(localized: .Products.permissionCapabilityDescriptionOpenUrl)
         case .biometrics: String(localized: .Products.permissionCapabilityDescriptionBiometrics)
+        case .motion: String(localized: .Products.permissionCapabilityDescriptionMotion)
         }
     }
 }

@@ -5,7 +5,7 @@ extension Chat {
     /// Remote representation of a chat encryption key: on-chain identity records store it
     /// in a fixed 65-byte container — a keypair-type byte, the key bytes, and zero padding
     /// that readers ignore (chat-spec RFC-0004 §4). The local representation is `Chat.PublicKey`;
-    /// raw container bytes appear only in `ConsumerInfo.identifierKey` and extrinsic call params.
+    /// raw container bytes appear only in `DotnsGatewayPallet.NameEntry.chat` and extrinsic call params.
     enum OnChainEncryptionIdentifier {
         case x25519(PublicKey)
 

@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.domain.model
 
+import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageKeyIndex
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclerFungibility
@@ -16,6 +17,8 @@ data class CoinageHolding(
     /** Stable across refreshes, so a coin keeps its identity — and its face — while the field re-lays out. */
     val id: String,
     val exponent: ValueExponent,
+    /** What the denomination is worth, for the detail a picked coin shows. */
+    val value: Balance,
     val derivationIndex: CoinageKeyIndex,
     /** Spendable now at no privacy cost. Everything else is Clearing, whatever the reason. */
     val isReady: Boolean,

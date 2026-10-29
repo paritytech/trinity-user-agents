@@ -51,6 +51,9 @@ final class ProductsNativeApi: ProductsNativeApiProtocol, @unchecked Sendable {
     )
 
     lazy var accountResolver: IdentityAccountResolving = IdentityAccountResolver()
+    lazy var navigationTargetResolver: ProductNavigationTargetResolving = ProductNavigationTargetResolver(
+        hostProvider: hostProvider
+    )
 
     let operationQueue: OperationQueue
     let logger: LoggerProtocol

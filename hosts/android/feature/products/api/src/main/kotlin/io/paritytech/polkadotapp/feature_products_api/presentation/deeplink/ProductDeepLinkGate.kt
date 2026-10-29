@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_products_api.presentation.deeplink
 
-import android.net.Uri
 import io.paritytech.polkadotapp.feature_products_api.domain.FundingDomainProvider
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 
@@ -22,10 +21,3 @@ class ProductDeepLinkGate(
         return productId in fundingDomainProvider.getFundingProductIds().getOrNull().orEmpty()
     }
 }
-
-/** The first path segment the core reserves for targets the host answers itself, rather than the product. */
-private const val RESERVED_SEGMENT = "-"
-private const val POCKET_SEGMENT = "pocket"
-
-/** `/-/pocket/…`, the one reserved target the host claims so far. */
-fun Uri.isPocketTarget(): Boolean = pathSegments.take(2) == listOf(RESERVED_SEGMENT, POCKET_SEGMENT)

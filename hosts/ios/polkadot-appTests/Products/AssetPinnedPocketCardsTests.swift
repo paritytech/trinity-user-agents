@@ -49,10 +49,31 @@ struct AssetPinnedPocketCardsTests {
     func bundledFaceDecodesThroughTheRendererPath() async throws {
         let face = try #require(await pinned.face(for: PocketCardId(value: "humanity")))
 
-        guard case let .column(_, _, children) = face else {
-            Issue.record("expected the bundled face to be a column, got \(face)")
+        guard case .box = face else {
+            Issue.record("expected the bundled face to be a box, got \(face)")
             return
         }
-        #expect(children.count == 2)
+    }
+
+    /// A missing file is a hole in the card at first launch, which nothing
+    /// else would notice.
+    @Test
+    func everyImageTheBundledFaceDrawsShipsWithTheApp() throws {
+        let url = try #require(Bundle.main.url(forResource: "pocket-humanity", withExtension: "json"))
+        let json = try String(contentsOf: url, encoding: .utf8)
+        let paths = json.matches(of: #/"tag"\s*:\s*"Archive"\s*,\s*"value"\s*:\s*"([^"]+)"/#)
+            .map { String($0.1) }
+
+        #expect(!paths.isEmpty)
+        for path in paths {
+            #expect(AssetPinnedPocketCards.image(at: path) != nil, "not shipped: \(path)")
+        }
+    }
+
+    @Test(arguments: [
+        "pocket/wordmark-light.png", "pocket/../pocket/card-mark.webp", "card-mark.webp", "pocket-card-mark.webp"
+    ])
+    func aPathTheAppDoesNotShipIsLeftToTheProductsArchive(path: String) {
+        #expect(AssetPinnedPocketCards.image(at: path) == nil)
     }
 }

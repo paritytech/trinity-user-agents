@@ -14,6 +14,9 @@ protocol ContactsLocalStorageServicing {
         byPushId pushId: String
     ) -> CompoundOperationWrapper<Chat.Contact?>
 
+    /// Contacts whose chat request has been accepted, blocked contacts included.
+    func getEstablishedContacts() -> BaseOperation<[Chat.Contact]>
+
     func updateOugoingSettings(_ settingsList: [Chat.ContactOutgoingSettings]) -> BaseOperation<Void>
     func updateVoIPOugoingSettings(_ settingsList: [Chat.VoIPContactOutgoingSettings]) -> BaseOperation<Void>
 
@@ -66,6 +69,15 @@ final class ContactsLocalStorageService: ContactsLocalStorageServicing {
             targetOperation: mappingOperation,
             dependencies: [fetchOperation]
         )
+    }
+
+    func getEstablishedContacts() -> BaseOperation<[Chat.Contact]> {
+        storageFacade.createRepository(
+            filter: NSPredicate(format: "%K == nil", #keyPath(CDChatContact.chatRequest)),
+            sortDescriptors: [],
+            mapper: AnyCoreDataMapper(ChatContactMapper())
+        )
+        .fetchAllOperation(with: .init())
     }
 
     func updateOugoingSettings(_ settingsList: [Chat.ContactOutgoingSettings]) -> BaseOperation<Void> {

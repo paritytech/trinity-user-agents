@@ -84,7 +84,8 @@ class AmountInputView: UIControl {
     }
 
     func bind(unit: String?) {
-        unitLabel.text = unit
+        self.unit = unit ?? ""
+        unitLabel.accessibilityLabel = unit
 
         setNeedsLayout()
     }
@@ -116,8 +117,10 @@ class AmountInputView: UIControl {
         symbolLabel.text ?? ""
     }
 
+    private var unit = ""
+
     private var unitText: String {
-        unitLabel.text ?? ""
+        unit
     }
 
     private func unitFont(for size: CGFloat) -> UIFont {
@@ -168,7 +171,7 @@ class AmountInputView: UIControl {
 
         symbolLabel.font = font
         textField.font = font
-        unitLabel.font = unitFont(for: font.pointSize)
+        unitLabel.attributedText = CashLogo.unit(unit, fallback: unitFont(for: font.pointSize))
 
         let symbolWidth = symbolText.isEmpty ? 0 : symbolLabel.intrinsicContentSize.width
         let symbolGap = symbolText.isEmpty ? 0 : horizontalSpacing

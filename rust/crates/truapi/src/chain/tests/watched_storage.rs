@@ -1,0 +1,373 @@
+//! [`WatchedStorage`] for `ChainRuntime`, against the scripted node.
+
+use std::sync::{
+	Arc, Mutex,
+	mpsc::{Receiver, channel},
+};
+
+use futures::{StreamExt, executor::block_on, stream::BoxStream};
+use serde_json::json;
+use sp_crypto_hashing::twox_128;
+
+use super::{
+	BEST_SUBSCRIPTION, FINALIZED_SUBSCRIPTION, GENESIS, Node, TIMEOUT, head_notification,
+	method_count, serve, storage_notification, wait_for_subscriptions,
+};
+use crate::{
+	chain::{RawStorageChanges, WatchedHead, WatchedStorage},
+	chain_runtime::{ChainRuntime, RuntimeFailure},
+	test_support::{
+		ScriptedProvider, later_notification_sender, notification_sender, wait_for_sent,
+	},
+};
+
+const WATCHED: &[u8] = b"watched";
+const OTHER: &[u8] = b"other";
+
+type ReceivedRawChanges = Receiver<Result<RawStorageChanges, RuntimeFailure>>;
+
+fn last_runtime_upgrade_key() -> Vec<u8> {
+	[twox_128(b"System"), twox_128(b"LastRuntimeUpgrade")].concat()
+}
+
+/// Polls `changes` on a thread, since the node only announces heads after the
+/// subscriptions are open, and hands each item over as it arrives.
+fn forward_on_thread(
+	mut changes: BoxStream<'static, Result<RawStorageChanges, RuntimeFailure>>,
+) -> ReceivedRawChanges {
+	let (sender, receiver) = channel();
+	std::thread::spawn(move || {
+		block_on(async move {
+			while let Some(item) = changes.next().await {
+				if sender.send(item).is_err() {
+					return;
+				}
+			}
+		})
+	});
+	receiver
+}
+
+/// Starts a watch of `keys` at `head`.
+fn start_watch(chain: &ChainRuntime, head: WatchedHead, keys: &[&[u8]]) -> ReceivedRawChanges {
+	let keys = keys.iter().map(|key| key.to_vec()).collect();
+	let changes = block_on(chain.watch_raw_key_changes(GENESIS, head, keys)).unwrap();
+	forward_on_thread(changes)
+}
+
+/// Starts a finalized watch of `keys` and waits until its head subscriptions
+/// are open.
+fn start_finalized_watch(
+	provider: &ScriptedProvider,
+	chain: &ChainRuntime,
+	keys: &[&[u8]],
+) -> ReceivedRawChanges {
+	let received = start_watch(chain, WatchedHead::Finalized, keys);
+	wait_for_subscriptions(provider);
+	received
+}
+
+fn announce_head(
+	node: &Arc<Mutex<Node>>,
+	provider: &ScriptedProvider,
+	subscription: &str,
+	number: u64,
+) {
+	let header = node.lock().unwrap().headers[number as usize].clone();
+	notification_sender(provider)
+		.unbounded_send(head_notification(subscription, &header))
+		.unwrap();
+}
+
+/// Pushes a `state_storage` notification at block `number` naming `changes`.
+fn push_storage_notification(
+	node: &Arc<Mutex<Node>>,
+	provider: &ScriptedProvider,
+	number: u64,
+	changes: &[(&[u8], Option<&[u8]>)],
+) {
+	let block = node.lock().unwrap().block(number).hash;
+	let changes: Vec<_> = changes
+		.iter()
+		.map(|(key, value)| {
+			let value = value.map(|value| format!("0x{}", hex::encode(value)));
+			json!([format!("0x{}", hex::encode(key)), value])
+		})
+		.collect();
+	let notification = storage_notification(json!({"block": block, "changes": changes}));
+	notification_sender(provider).unbounded_send(notification).unwrap();
+}
+
+fn store_values_at_block(node: &mut Node, number: u64, entries: &[(&[u8], &[u8])]) {
+	let at = node.block(number).hash;
+	let entries = entries.iter().map(|(key, value)| (key.to_vec(), value.to_vec()));
+	node.storage.entry(at).or_default().extend(entries);
+}
+
+/// Blocks up to 7 with block 5 best, so a best watch's first notification
+/// is at 5 and later ones can name blocks 6 and 7.
+fn node_with_best_block_five() -> Node {
+	let mut node = Node::new(3, 7);
+	node.best = 5;
+	node
+}
+
+/// Waits up to [`TIMEOUT`] for the next change, skipping errors the watch
+/// reports while it reconnects.
+fn next_change_within_timeout(received: &ReceivedRawChanges) -> RawStorageChanges {
+	let deadline = std::time::Instant::now() + TIMEOUT;
+	loop {
+		let left = deadline.saturating_duration_since(std::time::Instant::now());
+		match received.recv_timeout(left).expect("a change before the timeout") {
+			Ok(changes) => return changes,
+			Err(_) => continue,
+		}
+	}
+}
+
+/// Closes the first connection, as if its socket dropped.
+fn close_first_connection(provider: &ScriptedProvider) {
+	provider.sender.lock().unwrap().take();
+}
+
+/// Waits until `method` has been sent a second time, on the new connection.
+fn wait_for_second(provider: &ScriptedProvider, method: &str) {
+	let sent_twice =
+		|sent: &[String]| sent.iter().filter(|request| request.contains(method)).count() >= 2;
+	assert!(sent_twice(&wait_for_sent(provider, sent_twice)), "{method} not sent again");
+}
+
+fn next_item_within_timeout(
+	received: &ReceivedRawChanges,
+) -> Result<RawStorageChanges, RuntimeFailure> {
+	received.recv_timeout(TIMEOUT).expect("an item before the timeout")
+}
+
+#[test]
+fn each_finalized_head_reads_every_watched_key_in_one_call() {
+	let mut node = Node::new(3, 5);
+	store_values_at_block(&mut node, 4, &[(WATCHED, b"one")]);
+	let at = node.block(4);
+	let (node, provider, chain) = serve(node);
+	let received = start_finalized_watch(&provider, &chain, &[WATCHED, OTHER]);
+
+	announce_head(&node, &provider, FINALIZED_SUBSCRIPTION, 4);
+	let changes = next_item_within_timeout(&received).unwrap();
+
+	assert_eq!(changes.at, at);
+	assert_eq!(changes.value, vec![(0, Some(b"one".to_vec())), (1, None)]);
+	assert_eq!(method_count(&provider, "state_queryStorageAt"), 1);
+}
+
+#[test]
+fn a_finalized_watch_does_not_read_at_best_heads() {
+	let mut node = Node::new(3, 5);
+	store_values_at_block(&mut node, 4, &[(WATCHED, b"finalized")]);
+	store_values_at_block(&mut node, 5, &[(WATCHED, b"best")]);
+	let at = node.block(4);
+	let (node, provider, chain) = serve(node);
+	let received = start_finalized_watch(&provider, &chain, &[WATCHED]);
+
+	announce_head(&node, &provider, BEST_SUBSCRIPTION, 5);
+	// Long enough for a wrongly accepted best head to be read before the
+	// finalized one arrives, so the two cannot collapse into one read.
+	std::thread::sleep(core::time::Duration::from_millis(200));
+	announce_head(&node, &provider, FINALIZED_SUBSCRIPTION, 4);
+	let changes = next_item_within_timeout(&received).unwrap();
+
+	assert_eq!(changes.at, at);
+	assert_eq!(changes.value, vec![(0, Some(b"finalized".to_vec()))]);
+}
+
+#[test]
+fn a_finalized_watch_fetches_metadata_again_only_after_a_runtime_upgrade() {
+	// Every metadata fetch at a block starts with a `Core_version` call, so
+	// counting them counts the fetches.
+	let upgrade = last_runtime_upgrade_key();
+	let mut node = Node::new(3, 7);
+	store_values_at_block(&mut node, 4, &[(&upgrade, b"spec 1"), (WATCHED, b"a")]);
+	store_values_at_block(&mut node, 5, &[(&upgrade, b"spec 1"), (WATCHED, b"b")]);
+	store_values_at_block(&mut node, 6, &[(&upgrade, b"spec 2"), (WATCHED, b"c")]);
+	let (node, provider, chain) = serve(node);
+	let received = start_finalized_watch(&provider, &chain, &[WATCHED]);
+	let fetches_after = |number: u64| {
+		announce_head(&node, &provider, FINALIZED_SUBSCRIPTION, number);
+		next_item_within_timeout(&received).unwrap();
+		method_count(&provider, "Core_version")
+	};
+
+	let first = fetches_after(4);
+	let fetches = [fetches_after(5), fetches_after(6)];
+
+	assert_eq!(fetches, [first, first + 1]);
+}
+
+#[test]
+fn a_key_the_node_leaves_out_is_an_error_rather_than_an_absent_value() {
+	let mut node = Node::new(3, 5);
+	node.unanswered_keys.insert(OTHER.to_vec());
+	let (node, provider, chain) = serve(node);
+	let received = start_finalized_watch(&provider, &chain, &[WATCHED, OTHER]);
+
+	announce_head(&node, &provider, FINALIZED_SUBSCRIPTION, 4);
+	let error = next_item_within_timeout(&received).unwrap_err();
+
+	let key = hex::encode(OTHER);
+	assert!(error.to_string().contains(&format!("key 0x{key} at")), "{error}");
+}
+
+#[test]
+fn a_best_watch_reports_the_first_notification_whole_and_later_ones_as_they_come() {
+	// The node names only changed keys after the first notification, so a
+	// later one is reported as is, without reading the other keys again.
+	let mut node = node_with_best_block_five();
+	store_values_at_block(&mut node, 5, &[(WATCHED, b"one")]);
+	let (first_at, later_at) = (node.block(5), node.block(6));
+	let (node, provider, chain) = serve(node);
+	let received = start_watch(&chain, WatchedHead::Best, &[WATCHED, OTHER]);
+
+	let first = next_item_within_timeout(&received).unwrap();
+	push_storage_notification(&node, &provider, 6, &[(OTHER, Some(b"two"))]);
+	let later = next_item_within_timeout(&received).unwrap();
+
+	assert_eq!(first.at, first_at);
+	assert_eq!(first.value, vec![(0, Some(b"one".to_vec())), (1, None)]);
+	assert_eq!(later.at, later_at);
+	assert_eq!(later.value, vec![(1, Some(b"two".to_vec()))]);
+	assert_eq!(method_count(&provider, "state_queryStorageAt"), 0);
+}
+
+#[test]
+fn a_best_watch_drops_keys_a_block_wrote_with_the_value_they_already_had() {
+	// A node names every key a block wrote, and several parachain blocks can
+	// share one timestamp: an unchanged value is not a change.
+	let mut node = node_with_best_block_five();
+	store_values_at_block(&mut node, 5, &[(WATCHED, b"one"), (OTHER, b"two")]);
+	let at = node.block(7);
+	let (node, provider, chain) = serve(node);
+	let received = start_watch(&chain, WatchedHead::Best, &[WATCHED, OTHER]);
+	next_item_within_timeout(&received).unwrap();
+
+	push_storage_notification(&node, &provider, 6, &[(WATCHED, Some(b"one"))]);
+	push_storage_notification(
+		&node,
+		&provider,
+		7,
+		&[(WATCHED, Some(b"one")), (OTHER, Some(b"three"))],
+	);
+	let changes = next_item_within_timeout(&received).unwrap();
+
+	assert_eq!(changes.at, at);
+	assert_eq!(changes.value, vec![(1, Some(b"three".to_vec()))]);
+}
+
+#[test]
+fn a_best_watch_fetches_metadata_again_only_after_a_runtime_upgrade() {
+	let upgrade = last_runtime_upgrade_key();
+	let mut node = node_with_best_block_five();
+	store_values_at_block(&mut node, 5, &[(&upgrade, b"spec 1")]);
+	let (node, provider, chain) = serve(node);
+	let received = start_watch(&chain, WatchedHead::Best, &[WATCHED]);
+	next_item_within_timeout(&received).unwrap();
+	let first = method_count(&provider, "Core_version");
+	let fetches_after = |number: u64, changes: &[(&[u8], Option<&[u8]>)]| {
+		push_storage_notification(&node, &provider, number, changes);
+		next_item_within_timeout(&received).unwrap();
+		method_count(&provider, "Core_version")
+	};
+
+	let unchanged = fetches_after(6, &[(WATCHED, Some(b"a"))]);
+	let upgraded = fetches_after(7, &[(&upgrade, Some(b"spec 2")), (WATCHED, Some(b"b"))]);
+
+	assert_eq!([unchanged, upgraded], [first, first + 1]);
+}
+
+#[test]
+fn a_best_watch_whose_first_notification_leaves_a_key_out_is_an_error() {
+	// Later notifications name only changed keys, so a key missing from the
+	// first one would have no value at all rather than an absent one.
+	let mut node = Node::new(3, 5);
+	node.unanswered_keys.insert(OTHER.to_vec());
+	let (_node, _provider, chain) = serve(node);
+	let received = start_watch(&chain, WatchedHead::Best, &[WATCHED, OTHER]);
+
+	let error = next_item_within_timeout(&received).unwrap_err();
+
+	let key = hex::encode(OTHER);
+	assert!(error.to_string().contains(&format!("key 0x{key} at")), "{error}");
+}
+
+#[test]
+fn a_best_watch_carries_on_over_a_new_connection_reporting_only_what_changed() {
+	// Once a socket drops, its client stays closed, so the watch has to
+	// subscribe on a new connection. The new subscription reports every key
+	// again, but only the key that changed while disconnected counts as a
+	// change.
+	let mut node = node_with_best_block_five();
+	store_values_at_block(&mut node, 5, &[(WATCHED, b"one"), (OTHER, b"two")]);
+	store_values_at_block(&mut node, 6, &[(WATCHED, b"one"), (OTHER, b"three")]);
+	let at = node.block(6);
+	let (node, provider, chain) = serve(node);
+	let received = start_watch(&chain, WatchedHead::Best, &[WATCHED, OTHER]);
+	next_item_within_timeout(&received).unwrap();
+
+	node.lock().unwrap().best = 6;
+	close_first_connection(&provider);
+	let changes = next_change_within_timeout(&received);
+
+	assert_eq!(changes.at, at);
+	assert_eq!(changes.value, vec![(1, Some(b"three".to_vec()))]);
+}
+
+#[test]
+fn a_best_watch_reports_a_change_again_after_its_read_failed() {
+	// A node names a key only in a block that writes it. If a failed read
+	// counted as reported, the change would be lost until the key is written
+	// again, so the watch subscribes again and the new subscription's first
+	// notification carries it.
+	let mut node = node_with_best_block_five();
+	store_values_at_block(&mut node, 5, &[(WATCHED, b"one"), (OTHER, b"two")]);
+	store_values_at_block(&mut node, 6, &[(WATCHED, b"one"), (OTHER, b"three")]);
+	let at = node.block(6);
+	let (node, provider, chain) = serve(node);
+	let received = start_watch(&chain, WatchedHead::Best, &[WATCHED, OTHER]);
+	next_item_within_timeout(&received).unwrap();
+
+	node.lock().unwrap().best = 6;
+	let unknown_block = format!("0x{}", "ee".repeat(32));
+	let other = format!("0x{}", hex::encode(OTHER));
+	let unreadable = json!({"block": unknown_block, "changes": [[other, "0x01"]]});
+	notification_sender(&provider)
+		.unbounded_send(storage_notification(unreadable))
+		.unwrap();
+	let changes = next_change_within_timeout(&received);
+
+	assert_eq!(changes.at, at);
+	assert_eq!(changes.value, vec![(1, Some(b"three".to_vec()))]);
+}
+
+#[test]
+fn a_finalized_watch_reads_over_a_new_connection_after_the_old_one_closes() {
+	// The head subscriptions reconnect on their own. If reads kept using the
+	// closed connection, every read after the drop would fail.
+	let mut node = Node::new(3, 7);
+	store_values_at_block(&mut node, 4, &[(WATCHED, b"one")]);
+	store_values_at_block(&mut node, 5, &[(WATCHED, b"two")]);
+	let (node, provider, chain) = serve(node);
+	let received = start_finalized_watch(&provider, &chain, &[WATCHED]);
+	announce_head(&node, &provider, FINALIZED_SUBSCRIPTION, 4);
+	next_item_within_timeout(&received).unwrap();
+
+	close_first_connection(&provider);
+	wait_for_second(&provider, "chain_subscribeFinalizedHeads");
+	let header = node.lock().unwrap().headers[5].clone();
+	later_notification_sender(&provider, 0)
+		.expect("a second connection")
+		.unbounded_send(head_notification(FINALIZED_SUBSCRIPTION, &header))
+		.unwrap();
+	let changes = next_change_within_timeout(&received);
+
+	let at = node.lock().unwrap().block(5);
+	assert_eq!(changes.at, at);
+	assert_eq!(changes.value, vec![(0, Some(b"two".to_vec()))]);
+}

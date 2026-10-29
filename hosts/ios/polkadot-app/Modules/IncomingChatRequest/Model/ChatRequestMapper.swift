@@ -43,8 +43,7 @@ extension ChatRequestMapper: CoreDataMapperProtocol {
             contactAccountId: accountId,
             timestamp: timestamp,
             status: status,
-            message: message,
-            anonymousDeliveryPeriod: entity.anonymousDeliveryPeriod.map { UInt32(bitPattern: $0.int32Value) }
+            message: message
         )
     }
 

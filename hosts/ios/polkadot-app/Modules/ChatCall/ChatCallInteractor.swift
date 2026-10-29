@@ -52,7 +52,6 @@ final class ChatCallInteractor {
         self.callType = callType
         setupCallKit()
         observeCallEngineState()
-        observeRemoteMediaState()
     }
 
     deinit {
@@ -448,6 +447,7 @@ private extension ChatCallInteractor {
 
 extension ChatCallInteractor: ChatCallInteractorInputProtocol {
     func setup() {
+        observeRemoteMediaState()
         observeVideoState()
         observeVideoCaptureFailure()
 

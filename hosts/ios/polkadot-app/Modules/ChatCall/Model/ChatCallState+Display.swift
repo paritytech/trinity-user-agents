@@ -5,9 +5,10 @@ extension ChatCallState {
         switch self {
         case .contacting:
             String(localized: .chatCallStatusContacting)
-        case .ringing,
-             .connecting:
+        case .ringing:
             String(localized: .chatCallStatusRinging)
+        case .connecting:
+            String(localized: .chatCallStatusConnecting)
         case .ended:
             String(localized: .chatCallStatusEnded)
         case .failed:

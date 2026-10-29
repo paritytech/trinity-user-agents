@@ -12,30 +12,38 @@ import UIKit
 enum PocketCardOpening {
     static func open(
         _ card: PocketCardViewModel,
+        origin: PocketCardOrigin?,
         flowState: SPAFlowState,
         navigator: ModuleNavigating,
         pocket: ProductPocketService
     ) {
+        // A second screen would take the open card's page and leave it blank.
+        guard !pocket.cardHosts.isOnDisplay(card.key) else { return }
+
         guard
             let url = card.key.launchUrl,
-            let page = flowState.hostProvider.page(url: url)
+            let page = flowState.hostProvider.page(url: url),
+            let product = pocket.cardHosts.product(for: card.key, make: { surface in
+                makeView(for: card, page: page, surface: surface, flowState: flowState)
+            })
         else { return }
 
-        let product = pocket.cardHosts.view(for: card.key) {
-            let configuration = SPAConfiguration(
-                title: card.title,
-                isRootScreen: false,
-                showMoreButton: false,
-                page: page,
-                executable: .widget
-            )
-
-            return SPAViewFactory.createView(configuration: configuration, flowState: flowState)
+        let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
+        if origin == nil {
+            navigator.presentFullScreen(screen)
+        } else {
+            // The card flies between the Pocket and its screen, so the Pocket stays in the window under it.
+            navigator.presentOverFullScreen(screen, animatedBy: screen)
         }
+        product.surface.claim(screen)
 
-        guard let product else { return }
-
-        navigator.presentFullScreen(PocketCardScreenViewController(card: card, product: product))
+        Task { [weak screen] in
+            let shown = await PocketCardFaceOnOpen.faceShown(
+                for: card.key,
+                cards: PublishedPocketCards.makeDefault(products: flowState.productResolver)
+            )
+            screen?.applyOpeningFace(shown: shown)
+        }
     }
 
     /// A link may name a card the Pocket does not hold, which is the one case
@@ -54,7 +62,39 @@ enum PocketCardOpening {
                 return
             }
 
-            open(card, flowState: flowState, navigator: navigator, pocket: pocket)
+            open(card, origin: nil, flowState: flowState, navigator: navigator, pocket: pocket)
         }
+    }
+}
+
+private extension PocketCardOpening {
+    static func makeView(
+        for card: PocketCardViewModel,
+        page: ProductPage,
+        surface: PocketCardSurface,
+        flowState: SPAFlowState
+    ) -> SPAViewProtocol? {
+        let widgetURL = debugWidgetURL(for: card.key)
+        let configuration = SPAConfiguration(
+            title: card.title,
+            isRootScreen: false,
+            showMoreButton: false,
+            page: page,
+            contentSource: widgetURL.map(SPAContentSource.directURL) ?? .dotNs,
+            cardFace: surface
+        )
+
+        // The native runtime cannot load a page by its address.
+        return widgetURL == nil
+            ? SPAViewFactory.createView(configuration: configuration, flowState: flowState)
+            : SPAViewFactory.createRustView(configuration: configuration, flowState: flowState)
+    }
+
+    static func debugWidgetURL(for key: PocketCardKey) -> URL? {
+        #if DEBUG
+            return DebugPocketCards().widgetURL(for: key)
+        #else
+            return nil
+        #endif
     }
 }

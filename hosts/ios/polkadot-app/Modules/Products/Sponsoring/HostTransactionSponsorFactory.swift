@@ -39,14 +39,14 @@ final class HostTransactionSponsorFactory: TransactionSponsorMaking {
         )
 
         let peopleTimeProvider = ChainTimeProvider(
-            chainId: AppConfig.Chains.usernameChain,
+            chainId: AppConfig.Chains.peopleChain,
             chainRegistry: chainRegistry,
             storageRequestFactory: storageRequestFactory
         )
 
         let bulletInInfoProvider = BulletInSlotInfoProvider(
             bulletInChainId: AppConfig.Chains.bulletInChain,
-            peopleChainId: AppConfig.Chains.usernameChain,
+            peopleChainId: AppConfig.Chains.peopleChain,
             chainRegistry: chainRegistry,
             keyResolver: keyResolver,
             operationQueue: operationQueue,

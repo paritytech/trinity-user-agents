@@ -33,7 +33,7 @@ enum IdentityDetailsViewFactory {
 
         let identityService = IdentityService(
             chainRegistry: chainRegistry,
-            chain: AppConfig.Chains.usernameChain,
+            chain: AppConfig.Chains.assethubChain,
             operationQueue: operationQueue,
             logger: logger
         )

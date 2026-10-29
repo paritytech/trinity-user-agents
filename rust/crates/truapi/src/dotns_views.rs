@@ -2,8 +2,8 @@
 //! runtime's manifest readers.
 
 use crate::host_logic::dotns_gateway::{
-	DotnsTransport, DotnsViewError, call_bytes32, call_no_args, decode_address, decode_bool,
-	decode_string, namehash_under, registry_key,
+	DotnsCallError, DotnsContractError, DotnsError, DotnsTransport, DotnsViewError, call_bytes32,
+	call_no_args, decode_address, decode_bool, decode_string, namehash_under, registry_key,
 };
 
 /// The TLD of networks whose `DotnsProtocolRegistry` has no `tld()` view;
@@ -49,18 +49,32 @@ pub fn call_bytes32_string(signature: &str, word: &[u8; 32], value: &str) -> Vec
 	data
 }
 
+/// Runs a contract view and decodes its return data, retaining which stage failed.
+pub async fn read_view<T: DotnsTransport + ?Sized, Output>(
+	transport: &mut T,
+	dest: &[u8; 20],
+	input: Vec<u8>,
+	decode: fn(&[u8]) -> Result<Output, DotnsContractError>,
+) -> Result<Output, DotnsCallError> {
+	let output = transport.view(dest, input).await?;
+	Ok(decode(&output)?)
+}
+
 /// One component address out of the protocol registry's address book, so a
 /// rotated implementation is picked up without a change here.
 pub async fn protocol_component<T: DotnsTransport + ?Sized>(
 	transport: &mut T,
 	protocol_registry: &[u8; 20],
 	name: &str,
-) -> Result<[u8; 20], String> {
-	let output = transport
-		.view(protocol_registry, call_bytes32("get(bytes32)", &registry_key(name)))
-		.await
-		.map_err(|err| format!("ProtocolRegistry.get({name}): {err}"))?;
-	decode_address(&output).map_err(|err| format!("ProtocolRegistry.get({name}): {err}"))
+) -> Result<[u8; 20], DotnsError> {
+	read_view(
+		transport,
+		protocol_registry,
+		call_bytes32("get(bytes32)", &registry_key(name)),
+		decode_address,
+	)
+	.await
+	.map_err(|source| DotnsError::ProtocolComponent { name: name.to_string(), source })
 }
 
 /// The network TLD with its leading dot (`.paseo`), read from
@@ -72,34 +86,22 @@ pub async fn protocol_component<T: DotnsTransport + ?Sized>(
 pub async fn network_tld<T: DotnsTransport + ?Sized>(
 	transport: &mut T,
 	registry: &[u8; 20],
-) -> Result<String, String> {
-	match transport.view(registry, call_no_args("tld()")).await {
-		Ok(output) => {
-			return decode_string(&output).map_err(|err| format!("ProtocolRegistry.tld(): {err}"));
-		},
-		Err(DotnsViewError::Reverted(_)) => {},
-		Err(DotnsViewError::Failed(reason)) => {
-			return Err(format!("ProtocolRegistry.tld(): {reason}"));
-		},
+) -> Result<String, DotnsError> {
+	match read_view(transport, registry, call_no_args("tld()"), decode_string).await {
+		Ok(tld) => return Ok(tld),
+		Err(DotnsCallError::View(DotnsViewError::Reverted(_))) => {},
+		Err(error) => return Err(DotnsError::Tld(error)),
 	}
-	let dotns_registry_output = transport
-		.view(registry, call_bytes32("get(bytes32)", &registry_key("registry")))
-		.await
-		.map_err(|err| format!("ProtocolRegistry.get(registry): {err}"))?;
-	let dotns_registry = decode_address(&dotns_registry_output)
-		.map_err(|err| format!("ProtocolRegistry.get(registry): {err}"))?;
-	let exists_output = transport
-		.view(&dotns_registry, call_bytes32("recordExists(bytes32)", &tld_node(TLD_WITHOUT_VIEW)))
-		.await
-		.map_err(|err| format!("DotnsRegistry.recordExists: {err}"))?;
-	if decode_bool(&exists_output).map_err(|err| format!("DotnsRegistry.recordExists: {err}"))? {
-		Ok(TLD_WITHOUT_VIEW.to_string())
-	} else {
-		Err(format!(
-			"ProtocolRegistry has no tld() view and the registry holds no record for \
-             {TLD_WITHOUT_VIEW:?}; the network TLD cannot be determined"
-		))
-	}
+	let dotns_registry = protocol_component(transport, registry, "registry").await?;
+	let exists = read_view(
+		transport,
+		&dotns_registry,
+		call_bytes32("recordExists(bytes32)", &tld_node(TLD_WITHOUT_VIEW)),
+		decode_bool,
+	)
+	.await
+	.map_err(DotnsError::RecordExists)?;
+	if exists { Ok(TLD_WITHOUT_VIEW.to_string()) } else { Err(DotnsError::MissingTld) }
 }
 
 /// The node of the network TLD: `namehash(tld)` for a single-label TLD.

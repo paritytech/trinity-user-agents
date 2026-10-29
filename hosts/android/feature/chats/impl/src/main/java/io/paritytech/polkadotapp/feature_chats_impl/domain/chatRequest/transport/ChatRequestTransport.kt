@@ -6,9 +6,10 @@ import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.enco
 import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.common.domain.model.X25519PublicKey
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
+import io.paritytech.polkadotapp.common.utils.InformationSize
+import io.paritytech.polkadotapp.common.utils.InformationSize.Companion.bytes
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
-import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_account_api.domain.model.SharedSecretDerivationDomain
 import io.paritytech.polkadotapp.feature_chats_impl.data.chatRequest.ChatRequestCrypto
 import io.paritytech.polkadotapp.feature_chats_impl.data.chatRequest.ChatRequestProver
@@ -49,9 +50,25 @@ interface ChatRequestTransport {
         topics: OutgoingChatRequestTopics,
         request: ChatRequestDecrypted,
         derivationDomain: SharedSecretDerivationDomain,
-        statementSigner: MetaAccount,
+        statementProver: StatementStoreMessageProver,
     ): Result<Unit>
+
+    /** Upper bound of the encoded statement [submitChatRequest] would submit for [request]. */
+    suspend fun estimateStatementSize(
+        topics: OutgoingChatRequestTopics,
+        request: ChatRequestDecrypted,
+    ): Result<InformationSize>
+
+    /** Whether a request signed by [signer] is still stored under [session]. */
+    suspend fun isChatRequestStored(
+        session: ChatRequestTopic.Session,
+        derivationDomain: SharedSecretDerivationDomain,
+        signer: AccountId,
+    ): Result<Boolean>
 }
+
+// Generous upper bound on what a chat request statement adds around its data: proof, expiry, topics, length prefixes.
+private val STATEMENT_ENVELOPE_SIZE = 512.bytes
 
 class RealChatRequestTransport @Inject constructor(
     private val coroutineDispatchers: CoroutineDispatchers,
@@ -59,7 +76,6 @@ class RealChatRequestTransport @Inject constructor(
     private val chatRequestCrypto: ChatRequestCrypto,
     private val chatRequestProver: ChatRequestProver,
     private val encryptionFactory: CommunicationEncryption.Factory,
-    private val statementProverFactory: StatementStoreMessageProver.Factory
 ) : ChatRequestTransport {
     override suspend fun fetchChatRequests(
         topic: ChatRequestTopic,
@@ -100,12 +116,32 @@ class RealChatRequestTransport @Inject constructor(
         topics: OutgoingChatRequestTopics,
         request: ChatRequestDecrypted,
         derivationDomain: SharedSecretDerivationDomain,
-        statementSigner: MetaAccount,
+        statementProver: StatementStoreMessageProver,
     ): Result<Unit> {
         return encryptAndEncodeStatementData(request, peerPublicKey = topics.session.peerChatKey)
             .mapCatching { createChatRequestStatementBody(it, topics, derivationDomain) }
-            .mapCatching { createChatRequestStatement(it, statementSigner) }
+            .mapCatching { statementProver.prepareSignedStatement(it) }
             .flatMap { statementStoreService.submitStatement(it) }
+    }
+
+    override suspend fun estimateStatementSize(
+        topics: OutgoingChatRequestTopics,
+        request: ChatRequestDecrypted,
+    ): Result<InformationSize> {
+        return encryptAndEncodeStatementData(request, peerPublicKey = topics.session.peerChatKey)
+            .map { statementData -> statementData.size.bytes + STATEMENT_ENVELOPE_SIZE }
+    }
+
+    override suspend fun isChatRequestStored(
+        session: ChatRequestTopic.Session,
+        derivationDomain: SharedSecretDerivationDomain,
+        signer: AccountId,
+    ): Result<Boolean> = withContext(coroutineDispatchers.io) {
+        val sessionTopic = session.toStatementTopic(derivationDomain)
+
+        statementStoreService.fetchStatements(TopicFilter.MatchAll(listOf(sessionTopic))).map { statements ->
+            statements.any { it.proof.publicKey.contentEquals(signer.value) }
+        }
     }
 
     private suspend fun createChatRequestStatementBody(
@@ -121,14 +157,6 @@ class RealChatRequestTransport @Inject constructor(
             data = statementData
         )
         return statementBody
-    }
-
-    private suspend fun createChatRequestStatement(
-        statementBody: Statement.Body,
-        statementSigner: MetaAccount,
-    ): Statement {
-        return statementProverFactory.createKeyPairProver(statementSigner)
-            .prepareSignedStatement(statementBody)
     }
 
     private suspend fun ChatRequestTopic.toStatementTopic(

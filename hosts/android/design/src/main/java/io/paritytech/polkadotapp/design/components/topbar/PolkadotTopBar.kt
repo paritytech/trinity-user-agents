@@ -4,36 +4,28 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastForEach
-import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
-import io.paritytech.polkadotapp.design.components.avatar.Mock
-import io.paritytech.polkadotapp.design.components.avatar.PolkadotAvatar
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonShape
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
-import io.paritytech.polkadotapp.design.components.icon.NovaIcons
-import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowLeft
-import io.paritytech.polkadotapp.design.components.icon.vectors.CallFilled
-import io.paritytech.polkadotapp.design.components.icon.vectors.More
-import io.paritytech.polkadotapp.design.components.icon.vectors.VideocamFilled
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import kotlinx.collections.immutable.ImmutableList
@@ -59,7 +51,62 @@ fun PolkadotTopBar(
     titleSize: TopBarTitleSize = TopBarTitleSize.Standard,
     actions: ImmutableList<TopBarAction> = persistentListOf(),
     leadingContent: (@Composable () -> Unit)? = null,
+    titleTrailingContent: (@Composable () -> Unit)? = null,
     content: (@Composable () -> Unit)? = null,
+) {
+    TopBar(
+        modifier = modifier,
+        navigationAction = navigationAction,
+        title = remember(title) { title?.let(::AnnotatedString) },
+        subtitle = subtitle,
+        titleAlignment = titleAlignment,
+        titleSize = titleSize,
+        actions = actions,
+        leadingContent = leadingContent,
+        titleTrailingContent = titleTrailingContent,
+        content = content,
+    )
+}
+
+@Composable
+fun PolkadotTopBar(
+    modifier: Modifier = Modifier,
+    navigationAction: TopBarAction? = null,
+    title: AnnotatedString,
+    subtitle: String? = null,
+    titleAlignment: TopBarTitleAlignment = TopBarTitleAlignment.Start,
+    titleSize: TopBarTitleSize = TopBarTitleSize.Standard,
+    actions: ImmutableList<TopBarAction> = persistentListOf(),
+    leadingContent: (@Composable () -> Unit)? = null,
+    titleTrailingContent: (@Composable () -> Unit)? = null,
+    content: (@Composable () -> Unit)? = null,
+) {
+    TopBar(
+        modifier = modifier,
+        navigationAction = navigationAction,
+        title = title,
+        subtitle = subtitle,
+        titleAlignment = titleAlignment,
+        titleSize = titleSize,
+        actions = actions,
+        leadingContent = leadingContent,
+        titleTrailingContent = titleTrailingContent,
+        content = content,
+    )
+}
+
+@Composable
+private fun TopBar(
+    modifier: Modifier,
+    navigationAction: TopBarAction?,
+    title: AnnotatedString?,
+    subtitle: String?,
+    titleAlignment: TopBarTitleAlignment,
+    titleSize: TopBarTitleSize,
+    actions: ImmutableList<TopBarAction>,
+    leadingContent: (@Composable () -> Unit)?,
+    titleTrailingContent: (@Composable () -> Unit)?,
+    content: (@Composable () -> Unit)?,
 ) {
     require(actions.size <= MAX_TOP_BAR_ACTIONS) { "Top bar supports at most $MAX_TOP_BAR_ACTIONS actions" }
 
@@ -90,6 +137,7 @@ fun PolkadotTopBar(
                 title = title,
                 subtitle = subtitle,
                 titleStyle = titleStyle,
+                titleTrailingContent = titleTrailingContent,
                 actions = actions,
             )
         } else {
@@ -100,6 +148,7 @@ fun PolkadotTopBar(
                 title = title,
                 subtitle = subtitle,
                 titleStyle = titleStyle,
+                titleTrailingContent = titleTrailingContent,
                 actions = actions,
                 content = content,
             )
@@ -111,9 +160,10 @@ fun PolkadotTopBar(
 private fun CenteredTopBar(
     navigationAction: TopBarAction?,
     leadingContent: (@Composable () -> Unit)?,
-    title: String?,
+    title: AnnotatedString?,
     subtitle: String?,
     titleStyle: TextStyle,
+    titleTrailingContent: (@Composable () -> Unit)?,
     actions: ImmutableList<TopBarAction>,
     modifier: Modifier = Modifier,
 ) {
@@ -128,6 +178,7 @@ private fun CenteredTopBar(
                     title = title,
                     subtitle = subtitle,
                     titleStyle = titleStyle,
+                    titleTrailingContent = titleTrailingContent,
                     textAlign = TextAlign.Center,
                     horizontalAlignment = Alignment.CenterHorizontally,
                 )
@@ -169,9 +220,10 @@ private fun CenteredTopBar(
 private fun StartTopBar(
     navigationAction: TopBarAction?,
     leadingContent: (@Composable () -> Unit)?,
-    title: String?,
+    title: AnnotatedString?,
     subtitle: String?,
     titleStyle: TextStyle,
+    titleTrailingContent: (@Composable () -> Unit)?,
     actions: ImmutableList<TopBarAction>,
     content: (@Composable () -> Unit)?,
     modifier: Modifier = Modifier,
@@ -197,6 +249,7 @@ private fun StartTopBar(
                 title = title,
                 subtitle = subtitle,
                 titleStyle = titleStyle,
+                titleTrailingContent = titleTrailingContent,
                 textAlign = TextAlign.Start,
                 horizontalAlignment = Alignment.Start,
             )
@@ -236,10 +289,35 @@ private fun LeadingGroup(
 }
 
 @Composable
+private fun TitleRow(
+    title: AnnotatedString,
+    titleStyle: TextStyle,
+    textAlign: TextAlign,
+    trailingContent: (@Composable () -> Unit)?,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.tiny),
+    ) {
+        NovaText(
+            modifier = Modifier.weight(1f, fill = false),
+            text = title,
+            style = titleStyle,
+            color = PolkadotTheme.colors.fg.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = textAlign,
+        )
+        trailingContent?.invoke()
+    }
+}
+
+@Composable
 private fun TitleColumn(
-    title: String?,
+    title: AnnotatedString?,
     subtitle: String?,
     titleStyle: TextStyle,
+    titleTrailingContent: (@Composable () -> Unit)?,
     textAlign: TextAlign,
     horizontalAlignment: Alignment.Horizontal,
     modifier: Modifier = Modifier,
@@ -249,14 +327,7 @@ private fun TitleColumn(
         horizontalAlignment = horizontalAlignment,
     ) {
         if (title != null) {
-            NovaText(
-                text = title,
-                style = titleStyle,
-                color = PolkadotTheme.colors.fg.primary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                textAlign = textAlign,
-            )
+            TitleRow(title, titleStyle, textAlign, titleTrailingContent)
         }
         if (subtitle != null) {
             NovaText(
@@ -299,83 +370,4 @@ private fun TopBarActionButton(
         size = PolkadotIconButtonSize.mediumIncreased(),
         shape = PolkadotButtonShape.pill,
     )
-}
-
-@Preview(showBackground = true, backgroundColor = 0xFF000000)
-@Composable
-private fun PolkadotTopBarPreview() {
-    PolkadotTheme {
-        Column {
-            // Big title (large heading), start-aligned
-            PolkadotTopBar(
-                title = "Label",
-                titleSize = TopBarTitleSize.Large,
-                actions = persistentListOf(rememberTopBarAction(action = {}, icon = NovaIcons.More)),
-            )
-
-            PolkadotTopBar(
-                navigationAction = rememberTopBarAction(action = {}, icon = NovaIcons.ArrowLeft),
-                title = "Label",
-                titleAlignment = TopBarTitleAlignment.Center,
-                titleSize = TopBarTitleSize.Medium,
-            )
-
-            // Back, centered title + subtitle + action
-            PolkadotTopBar(
-                navigationAction = rememberTopBarAction(action = {}, icon = NovaIcons.ArrowLeft),
-                title = "Label",
-                subtitle = "Supporting text",
-                titleAlignment = TopBarTitleAlignment.Center,
-                actions = persistentListOf(rememberTopBarAction(action = {}, icon = NovaIcons.More)),
-            )
-
-            // Back, centered title + subtitle, no actions
-            PolkadotTopBar(
-                navigationAction = rememberTopBarAction(action = {}, icon = NovaIcons.ArrowLeft),
-                title = "LongLabelWithManyWorks",
-                subtitle = "Supporting text",
-                titleAlignment = TopBarTitleAlignment.Center,
-                actions = persistentListOf(
-                    rememberTopBarAction(action = {}, icon = NovaIcons.CallFilled),
-                    rememberTopBarAction(action = {}, icon = NovaIcons.VideocamFilled),
-                    rememberTopBarAction(action = {}, icon = NovaIcons.More),
-                ),
-            )
-
-            // Chat: back + leading avatar + title/subtitle + actions
-            PolkadotTopBar(
-                navigationAction = rememberTopBarAction(action = {}, icon = NovaIcons.ArrowLeft),
-                title = "Label",
-                subtitle = "Supporting text",
-                actions = persistentListOf(
-                    rememberTopBarAction(action = {}, icon = NovaIcons.VideocamFilled),
-                    rememberTopBarAction(action = {}, icon = NovaIcons.More),
-                ),
-                leadingContent = {
-                    PolkadotAvatar(
-                        model = AvatarUiModel.Mock.fromName("Andrey"),
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                },
-            )
-
-            // Search via the fill content slot (back-arrow leading per the Figma "Search" variant)
-            PolkadotTopBar {
-                PolkadotSearchField(
-                    modifier = Modifier.fillMaxWidth(),
-                    value = "Input text",
-                    onValueChange = {},
-                    onClear = {},
-                    placeholder = "Search",
-                    leadingIcon = NovaIcons.ArrowLeft,
-                    onLeadingClick = {},
-                )
-            }
-
-            // Back only
-            PolkadotTopBar(
-                navigationAction = rememberTopBarAction(action = {}, icon = NovaIcons.ArrowLeft),
-            )
-        }
-    }
 }

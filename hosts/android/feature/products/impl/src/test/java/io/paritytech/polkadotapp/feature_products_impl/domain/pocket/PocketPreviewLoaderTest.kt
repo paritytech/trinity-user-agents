@@ -33,7 +33,7 @@ class PocketPreviewLoaderTest {
     private val fetchedUrls = mutableListOf<String>()
     private var remoteFace: Result<RendererNode> = Result.success(faceOf("from the dev server"))
     private val remoteFaces = object : RemoteFaceSource {
-        override suspend fun fetch(url: String): Result<RendererNode> {
+        override suspend fun fetch(url: String, bypassCache: Boolean): Result<RendererNode> {
             fetchedUrls += url
             return remoteFace
         }

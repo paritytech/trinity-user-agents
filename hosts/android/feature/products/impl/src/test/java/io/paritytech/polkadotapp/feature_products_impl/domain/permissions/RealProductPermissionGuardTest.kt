@@ -30,6 +30,7 @@ class RealProductPermissionGuardTest {
     private val balanceHandler: ProductPermissionHandler<ProductPermission.BalanceAccess> = mockk()
     private val deviceHandler: ProductPermissionHandler<ProductPermission.DeviceCapability> = mockk()
     private val identityHandler: ProductPermissionHandler<ProductPermission.UserIdentityAccess> = mockk()
+    private val nftPurseReadHandler: ProductPermissionHandler<ProductPermission.NftPurseRead> = mockk()
     private val repository: ProductPermissionRepository = mockk(relaxed = true)
     private val requester: ProductPermissionRequester = mockk(relaxed = true)
 
@@ -226,6 +227,7 @@ class RealProductPermissionGuardTest {
         balanceHandler,
         deviceHandler,
         identityHandler,
+        nftPurseReadHandler,
         repository,
         requester,
     )

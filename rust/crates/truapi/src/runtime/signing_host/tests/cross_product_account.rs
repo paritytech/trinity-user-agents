@@ -8,13 +8,16 @@
 use super::*;
 
 use crate::{
-	platform::CoreStorage,
-	runtime::product_manifest::{CachedManifest, manifest_cache_key},
+	platform::{CoreStorage, CoreStorageKey},
+	runtime::product_manifest::CachedManifest,
+	test_support::account_id,
 	unix_time::current_unix_secs,
 };
+use futures::FutureExt as _;
 use parity_scale_codec::Encode;
 use truapi::versioned::signing::{
-	HostSignPayloadError, HostSignPayloadRequest, HostSignPayloadResponse,
+	HostCreateTransactionRequest, HostSignPayloadError, HostSignPayloadRequest,
+	HostSignPayloadResponse, HostSignRawRequest,
 };
 
 /// Seed `owner`'s manifest cache, so the grant resolves without a chain.
@@ -23,15 +26,16 @@ fn cache_grant(platform: &StubPlatform, owner: &str, trusted: &str) {
 		fetched_at_secs: current_unix_secs(),
 		json: Some(format!(r#"{{"$v":1,"trustedProducts":{trusted}}}"#)),
 	};
-	futures::executor::block_on(
-		platform.write_core_storage(manifest_cache_key(owner), entry.encode()),
-	)
+	futures::executor::block_on(platform.write_core_storage(
+		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+		entry.encode(),
+	))
 	.expect("stub core storage accepts the entry");
 }
 
 fn dim2_account() -> v01::ProductAccountId {
 	v01::ProductAccountId {
-		dot_ns_identifier: "dim2.paseo".to_string(),
+		dot_ns_identifier: ProductId::for_test("dim2.paseo"),
 		derivation_index: v01::DerivationIndex::Index(0),
 	}
 }
@@ -66,8 +70,8 @@ fn a_context_grant_signs_with_the_granting_products_account() {
 	// The account that signed is the one the grant was published for, not the
 	// caller's own: a product acting for another does not sign as itself.
 	let root = derive_root_keypair_from_entropy(&ENTROPY).expect("root derives");
-	let owner =
-		derive_product_keypair(&root, "dim2.paseo", index_bytes(0)).expect("owner key derives");
+	let owner = derive_product_keypair(&root, &ProductId::for_test("dim2.paseo"), index_bytes(0))
+		.expect("owner key derives");
 	let preimage = crate::host_internal::transaction::extrinsic_payload_preimage(
 		&crate::test_support::sign_payload_data(),
 	)
@@ -100,7 +104,7 @@ fn an_ungranted_product_cannot_sign_with_the_account() {
 
 /// The user still sees what they are approving. A grant is the publisher's
 /// answer about which product may act; it is not the user's answer about a
-/// signature, which this role asks for every time.
+/// signature, which this role asks for before the first one.
 #[test]
 fn a_granted_signature_is_still_confirmed_by_the_user() {
 	let platform = Arc::new(StubPlatform { sign_payload_confirmed: false, ..Default::default() });
@@ -137,4 +141,261 @@ fn a_blessed_product_signs_with_another_products_account_only_when_granted() {
 		let result = sign_as(platform.clone(), "stash.paseo").map(|_| ());
 		assert_eq!((result, platform.sign_payload_reviews.lock().unwrap().len()), (expected, 0),);
 	}
+}
+
+/// A `dim2next.paseo` execution that `dim2.paseo` granted its accounts, on a
+/// local signing session. One runtime is one execution, so what the user
+/// approved carries from one call to the next.
+fn dim2next_runtime(platform: Arc<StubPlatform>) -> ProductRuntimeHost {
+	cache_grant(&platform, "dim2.paseo", r#"{"dim2next":["context"]}"#);
+	let (services, activation) = signing_runtime_with_platform(platform);
+	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		.expect("the local session activates");
+	product_runtime_for(services, activation, "dim2next.paseo")
+}
+
+fn payload_request(account: v01::ProductAccountId) -> HostSignPayloadRequest {
+	HostSignPayloadRequest::V1(v01::HostSignPayloadRequest {
+		account,
+		payload: crate::test_support::sign_payload_data(),
+	})
+}
+
+fn raw_request(account: v01::ProductAccountId) -> HostSignRawRequest {
+	HostSignRawRequest::V1(v01::HostSignRawRequest {
+		account,
+		payload: crate::test_support::raw_payload(),
+	})
+}
+
+fn transaction_request(account: v01::ProductAccountId) -> HostCreateTransactionRequest {
+	let mut payload = crate::test_support::product_tx_payload("dim2.paseo");
+	payload.signer = account;
+	HostCreateTransactionRequest::V1(payload)
+}
+
+fn sign_payload_with(runtime: &ProductRuntimeHost, account: v01::ProductAccountId) {
+	futures::executor::block_on(
+		runtime.sign_payload(&CallContext::default(), payload_request(account)),
+	)
+	.expect("the grant admits the account and the user approves");
+}
+
+fn sign_raw_with(runtime: &ProductRuntimeHost, account: v01::ProductAccountId) {
+	futures::executor::block_on(runtime.sign_raw(&CallContext::default(), raw_request(account)))
+		.expect("the grant admits the account and the user approves");
+}
+
+/// Starts a transaction and leaves it once it has been confirmed and handed to
+/// the authority, which would then wait on a chain these tests do not run.
+fn create_transaction_with(runtime: &ProductRuntimeHost, account: v01::ProductAccountId) {
+	let cx = CallContext::default();
+	let call = runtime.create_transaction(&cx, transaction_request(account));
+	assert!(call.now_or_never().is_none(), "the grant admits the account and the user approves",);
+}
+
+/// How many prompts of each kind the user has seen: payload, raw, transaction.
+fn prompts(platform: &StubPlatform) -> (usize, usize, usize) {
+	(
+		platform.sign_payload_reviews.lock().unwrap().len(),
+		platform.sign_raw_reviews.lock().unwrap().len(),
+		platform.create_transaction_reviews.lock().unwrap().len(),
+	)
+}
+
+/// A product that signs repeatedly with another product's account, such as a
+/// game registering a player and then signalling, would otherwise put a prompt
+/// in front of every signature. The user approves each kind once per product
+/// whose accounts sign, as the grant is filed, and approving one kind does not
+/// let another through unasked.
+#[test]
+fn a_cross_product_signature_is_confirmed_once_per_kind_and_product() {
+	let platform = Arc::new(StubPlatform {
+		sign_payload_confirmed: true,
+		sign_raw_confirmed: true,
+		create_transaction_confirmed: true,
+		..Default::default()
+	});
+	let runtime = dim2next_runtime(platform.clone());
+
+	for _ in 0..3 {
+		sign_payload_with(&runtime, account_id("dim2.paseo", 0));
+	}
+	assert_eq!(prompts(&platform), (1, 0, 0));
+
+	sign_payload_with(&runtime, account_id("dim2.paseo", 1));
+	assert_eq!(
+		prompts(&platform),
+		(1, 0, 0),
+		"another account of the same product does not ask again",
+	);
+
+	cache_grant(&platform, "stash.paseo", r#"{"dim2next":["context"]}"#);
+	sign_payload_with(&runtime, account_id("stash.paseo", 0));
+	assert_eq!(prompts(&platform), (2, 0, 0), "another product asks again");
+
+	for _ in 0..2 {
+		sign_raw_with(&runtime, account_id("dim2.paseo", 0));
+		create_transaction_with(&runtime, account_id("dim2.paseo", 0));
+	}
+	assert_eq!(prompts(&platform), (2, 1, 1), "each kind asks once");
+}
+
+/// A refusal is not an answer for later: one mistaken tap must not leave the
+/// product unable to sign until it is reopened.
+#[test]
+fn a_refused_cross_product_signature_asks_again() {
+	let platform = Arc::new(StubPlatform { sign_payload_confirmed: false, ..Default::default() });
+	let runtime = dim2next_runtime(platform.clone());
+
+	for _ in 0..2 {
+		futures::executor::block_on(
+			runtime.sign_payload(
+				&CallContext::default(),
+				payload_request(account_id("dim2.paseo", 0)),
+			),
+		)
+		.expect_err("the user refused");
+	}
+
+	assert_eq!(prompts(&platform), (2, 0, 0));
+}
+
+/// Unwatermarked bytes cannot be told apart from a transaction, so an earlier
+/// approval must not let them through, just as an AutoSigning grant does not.
+#[test]
+fn unwatermarked_raw_bytes_are_confirmed_every_time() {
+	let platform = Arc::new(StubPlatform { sign_raw_confirmed: true, ..Default::default() });
+	let runtime = dim2next_runtime(platform.clone());
+
+	for _ in 0..2 {
+		#[allow(deprecated)]
+		futures::executor::block_on(runtime.sign_raw_unwatermarked_deprecated(
+			&CallContext::default(),
+			raw_request(account_id("dim2.paseo", 0)),
+		))
+		.expect("the grant admits the account and the user approves");
+	}
+
+	assert_eq!(prompts(&platform), (0, 2, 0));
+}
+
+/// A signature the user already approved goes through while a prompt about
+/// another one is still open, rather than queueing behind a question it does
+/// not need answered.
+#[test]
+fn an_approved_signature_does_not_wait_for_another_prompt() {
+	let (_release, gate) = futures::channel::oneshot::channel();
+	let platform = Arc::new(StubPlatform {
+		sign_payload_confirmed: true,
+		create_transaction_confirmed: true,
+		create_transaction_confirmation_gate: std::sync::Mutex::new(Some(gate)),
+		..Default::default()
+	});
+	let runtime = dim2next_runtime(platform.clone());
+	sign_payload_with(&runtime, account_id("dim2.paseo", 0));
+
+	let cx = CallContext::default();
+	let mut transaction =
+		Box::pin(runtime.create_transaction(&cx, transaction_request(account_id("dim2.paseo", 0))));
+	assert!(transaction.as_mut().now_or_never().is_none());
+	assert_eq!(prompts(&platform), (1, 0, 1), "the transaction prompt is open");
+
+	let signed = runtime
+		.sign_payload(&cx, payload_request(account_id("dim2.paseo", 0)))
+		.now_or_never();
+	assert!(
+		matches!(signed, Some(Ok(_))),
+		"the approved payload signature does not wait: {signed:?}",
+	);
+}
+
+fn peopl_account_request() -> HostAccountGetRequest {
+	HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+		product_account_id: v01::ProductAccountId {
+			dot_ns_identifier: ProductId::for_test("peopl.dot"),
+			derivation_index: v01::DerivationIndex::Index(0),
+		},
+	})
+}
+
+/// A product's prompts open on its own connection, so a host that builds one
+/// platform per product execution shows them as that product's, not the host's.
+#[test]
+fn a_product_is_asked_on_its_own_connection() {
+	let runtime_platform = Arc::new(StubPlatform::default());
+	let connection_platform = Arc::new(StubPlatform {
+		permission_confirmation_decisions: std::sync::Mutex::new(
+			[crate::platform::PermissionDecision::AllowOnce].into(),
+		),
+		..StubPlatform::default()
+	});
+	let (services, activation) = signing_runtime_with_platform(runtime_platform.clone());
+	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		.expect("the local session activates");
+	let runtime = ProductRuntimeHost::from_services(
+		services.clone(),
+		crate::host_core::ConnectionAdapters {
+			platform: connection_platform.clone(),
+			..crate::host_core::ConnectionAdapters::from_services(&services)
+		},
+		activation.clone(),
+		activation,
+		ProductContext::new(ProductId::for_test("myapp.dot")),
+	);
+
+	let _ = futures::executor::block_on(
+		runtime.get_account(&CallContext::default(), peopl_account_request()),
+	);
+	let _ = futures::executor::block_on(
+		runtime.sign_payload(&CallContext::default(), payload_request(account_id("myapp.dot", 0))),
+	);
+
+	let reviews = |platform: &StubPlatform| {
+		(
+			platform.account_access_reviews.lock().unwrap().len(),
+			platform.sign_payload_reviews.lock().unwrap().len(),
+		)
+	};
+	assert_eq!((reviews(&connection_platform), reviews(&runtime_platform)), ((1, 1), (0, 0)));
+}
+
+/// A product that gives up on its request stops waiting for the account-access
+/// prompt, as a paired host's withdrawn request does.
+#[test]
+fn a_cancelled_account_request_stops_waiting_for_the_prompt() {
+	let (_release, gate) = futures::channel::oneshot::channel();
+	let platform = Arc::new(StubPlatform {
+		account_access_confirmation_gate: std::sync::Mutex::new(Some(gate)),
+		..StubPlatform::default()
+	});
+	let (services, activation) = signing_runtime_with_platform(platform.clone());
+	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		.expect("the local session activates");
+	let runtime = product_runtime(services, activation);
+	let cancel = truapi::CancellationToken::default();
+	let cx = CallContext::with_parts("get-account-cancelled".to_string(), cancel.clone());
+
+	let (result, ()) = futures::executor::block_on(async {
+		futures::select! {
+			outcome = async {
+				futures::join!(runtime.get_account(&cx, peopl_account_request()), async {
+					cancel.cancel()
+				})
+			}.fuse() => outcome,
+			() = futures_timer::Delay::new(std::time::Duration::from_secs(5)).fuse() => {
+				panic!("the request kept waiting for the prompt after it was cancelled")
+			},
+		}
+	});
+
+	assert!(
+		matches!(
+			result,
+			Err(CallError::Domain(HostAccountGetError::V1(
+				v01::HostAccountGetError::Unknown { .. }
+			)))
+		),
+		"{result:?}"
+	);
 }

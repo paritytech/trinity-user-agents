@@ -55,7 +55,7 @@ extension ChainAssetStyleProvider: ChainAssetStyleProviding {
             .init(
                 displayTitle: "USDC",
                 logo: .iconUsdc,
-                brandColor: .assetUSDС,
+                brandColor: .assetUSDC,
                 mainTextColor: .black100,
                 secondaryTextColor: .black100
             )

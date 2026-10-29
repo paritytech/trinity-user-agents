@@ -83,6 +83,7 @@ class SpaBrowserViewModel @Inject constructor(
             subtitle = info?.host,
             loadProgress = load.toProgress(),
             pageState = load.toPageState(),
+            isDevServer = info?.isDevServer == true,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, SpaBrowserUiState())
 
@@ -104,6 +105,10 @@ class SpaBrowserViewModel @Inject constructor(
         super.onCleared()
 
         productSessionController.resetVisitHistory()
+    }
+
+    override fun onRefresh() {
+        productSessionController.reload()
     }
 
     // Back unwinds the active tab's page history first, then the tab visit history (tabs stay open), and

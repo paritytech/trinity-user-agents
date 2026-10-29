@@ -18,6 +18,7 @@ final class CoinageCoinField {
         var wear = CoinageSpring()
         var luster = CoinageSpring()
         var calm = CoinageSpring()
+        var recede = CoinageSpring()
     }
 
     /// Where one coin is heading.
@@ -32,6 +33,8 @@ final class CoinageCoinField {
         var calm: CGFloat
         /// Toward the viewer.
         var lift: CGFloat = 0
+        /// How far the coin fades into the backdrop, while another one is picked out.
+        var recede: CGFloat = 0
     }
 
     struct Member {
@@ -120,6 +123,15 @@ final class CoinageCoinField {
         isMoving = true
     }
 
+    /// Re-aims one coin alone, leaving every other where it is heading and nothing staggered:
+    /// the picked coin following the screen as the page scrolls under it.
+    func move(_ id: String, to centre: CGPoint) {
+        guard let position = index[id], position < members.count else { return }
+
+        members[position].target.centre = centre
+        isMoving = true
+    }
+
     /// Advances every spring. Returns whether anything is still moving, so a settled field can stop
     /// asking for frames.
     @discardableResult
@@ -186,6 +198,7 @@ private extension CoinageCoinField {
         member.channels.thickness.step(toward: target.thickness, seconds: seconds, omega: CoinageSpring.Omega.thickness)
         member.channels.calm.step(toward: target.calm, seconds: seconds, omega: CoinageSpring.Omega.thickness)
         member.channels.luster.step(toward: target.luster, seconds: seconds, omega: CoinageSpring.Omega.luster)
+        member.channels.recede.step(toward: target.recede, seconds: seconds, omega: CoinageSpring.Omega.luster)
         member.channels.wear.step(toward: target.wear, seconds: seconds, omega: CoinageSpring.Omega.wear)
 
         return !settled(member)
@@ -204,6 +217,7 @@ private extension CoinageCoinField {
             && channels.calm.isSettled(at: target.calm)
             && channels.lift.isSettled(at: target.lift)
             && channels.luster.isSettled(at: target.luster)
+            && channels.recede.isSettled(at: target.recede)
             && channels.wear.isSettled(at: target.wear)
     }
 }

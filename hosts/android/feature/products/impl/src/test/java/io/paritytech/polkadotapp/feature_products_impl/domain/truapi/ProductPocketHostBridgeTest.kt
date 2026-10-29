@@ -1,8 +1,11 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketRemoval
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.FakePinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.InMemoryPocketCardRepository
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RealPocketCollection
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.addedCard
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.gameProduct
@@ -109,6 +112,41 @@ class ProductPocketHostBridgeTest {
         advanceUntilIdle()
 
         assertEquals(listOf(humanity.card, loyalty.card), store.observeCards().first())
+        scope.cancel()
+    }
+
+    // The snapshot is set before each republish, so it holds every card the product can have been
+    // shown: one missing from it is absent, and a storage round trip for it is wasted.
+    @Test
+    fun `a card the product was never shown is absent without a store read`() = runTest {
+        val scope = executionScope()
+        val removalsReachingStore = mutableListOf<PocketCardKey>()
+        val countingStore = object : PocketCardStore by store {
+            override suspend fun removeCard(key: PocketCardKey): Result<PocketRemoval> {
+                removalsReachingStore += key
+                return store.removeCard(key)
+            }
+        }
+        val bridge = ProductPocketHostBridge(gameProduct, countingStore, scope)
+        bridge.start {}
+        advanceUntilIdle()
+
+        assertEquals(NativePocketRemoval.ABSENT, bridge.removeCard("never-added"))
+        assertEquals(emptyList<PocketCardKey>(), removalsReachingStore)
+        scope.cancel()
+    }
+
+    // Card ids are the product's own, so it can remember one from an earlier session and ask for
+    // its removal as soon as it connects, before the collection has first been read.
+    @Test
+    fun `a removal that arrives before the collection is read still reaches the store`() = runTest {
+        val scope = executionScope()
+        store.addCard(loyalty)
+        val bridge = ProductPocketHostBridge(gameProduct, store, scope)
+        bridge.start {}
+
+        assertEquals(NativePocketRemoval.REMOVED, bridge.removeCard("loyalty"))
+        assertEquals(listOf(humanity.card), store.observeCards().first())
         scope.cancel()
     }
 }
