@@ -333,6 +333,31 @@ pub enum NftPurseListenOneTimePaymentError {
 	Other(GenericError),
 }
 
+/// Request to listen to one of the caller's payment inboxes.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostNftPurseListenPaymentInboxRequest {
+	/// Which of the caller's inboxes to listen to. The product picks it and
+	/// publishes it with its payment instructions.
+	pub inbox_domain: [u8; 32],
+}
+
+/// Stream item of `listen_payment_inbox`.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostNftPurseListenPaymentInboxItem {
+	/// The channel the host listens on, emitted first.
+	Channel(NftPursePaymentTransmissionChannel),
+	/// The cheques already stored, possibly none, the first time; each later
+	/// batch of new cheques after that.
+	Cheques(Vec<NftPurseCheque>),
+}
+
+/// Why the host could not listen to a payment inbox.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum NftPurseListenPaymentInboxError {
+	/// Any failure.
+	Other(GenericError),
+}
+
 /// Request to hand items off in a cheque.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseCreateChequeRequest {

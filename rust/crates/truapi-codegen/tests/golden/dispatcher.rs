@@ -1511,7 +1511,7 @@ where
         });
     }
     {
-        let host = host;
+        let host = host.clone();
         dispatcher.on_request(wire_table::NFT_PURSE_STATIC_RECEIVE_KEY, move |request_id: String, request: versioned::nft_purse::HostNftPurseStaticReceiveKeyRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
@@ -1526,6 +1526,30 @@ where
                         Err(err) => Err(downgrade_call_error(err, target_version)),
                     };
                 result.encode()
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_subscription(wire_table::NFT_PURSE_LISTEN_PAYMENT_INBOX, move |request_id: String, request: versioned::nft_purse::HostNftPurseListenPaymentInboxRequest| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_request_id(request_id);
+                let stream = host.listen_payment_inbox(&cx, request).await;
+                let stream = futures::StreamExt::map(
+                    stream,
+                    move |item: Result<versioned::nft_purse::HostNftPurseListenPaymentInboxItem, truapi::CallError<versioned::nft_purse::HostNftPurseListenPaymentInboxError>>| {
+                        item.map(|item| {
+                            <versioned::nft_purse::HostNftPurseListenPaymentInboxItem as truapi::versioned::FromLatest>::from_latest(
+                                truapi::versioned::IntoLatest::into_latest(item),
+                                target_version,
+                            )
+                        })
+                        .map_err(|error| downgrade_call_error(error, target_version))
+                    },
+                );
+                Ok(subscription_stream(stream))
             })
         });
     }

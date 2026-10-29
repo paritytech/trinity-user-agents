@@ -1,7 +1,6 @@
 //! Product-facing NFT purse capability adapter. Purses live in the core
 //! database, which the browser core does not have, so there the served calls
 //! answer `Unsupported`, as on a native host that configured no database.
-//! Calls no host serves yet answer unavailable everywhere.
 
 #[cfg(not(target_arch = "wasm32"))]
 mod served;
@@ -22,16 +21,18 @@ mod browser {
 			HostNftPurseListPursesError, HostNftPurseListPursesRequest,
 			HostNftPurseListPursesResponse, HostNftPurseListenOneTimePaymentError,
 			HostNftPurseListenOneTimePaymentItem, HostNftPurseListenOneTimePaymentRequest,
-			HostNftPurseObserveOperationStatusError, HostNftPurseObserveOperationStatusItem,
-			HostNftPurseObserveOperationStatusRequest, HostNftPurseQueryPurseError,
-			HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
-			HostNftPurseRebalancePurseError, HostNftPurseRebalancePurseRequest,
-			HostNftPurseRebalancePurseResponse, HostNftPurseRefundError, HostNftPurseRefundRequest,
-			HostNftPurseRefundResponse, HostNftPurseRevokeChequeError,
-			HostNftPurseRevokeChequeRequest, HostNftPurseRevokeChequeResponse,
-			HostNftPurseStaticReceiveKeyError, HostNftPurseStaticReceiveKeyRequest,
-			HostNftPurseStaticReceiveKeyResponse, HostNftPurseTransferItemError,
-			HostNftPurseTransferItemRequest, HostNftPurseTransferItemResponse,
+			HostNftPurseListenPaymentInboxError, HostNftPurseListenPaymentInboxItem,
+			HostNftPurseListenPaymentInboxRequest, HostNftPurseObserveOperationStatusError,
+			HostNftPurseObserveOperationStatusItem, HostNftPurseObserveOperationStatusRequest,
+			HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest,
+			HostNftPurseQueryPurseResponse, HostNftPurseRebalancePurseError,
+			HostNftPurseRebalancePurseRequest, HostNftPurseRebalancePurseResponse,
+			HostNftPurseRefundError, HostNftPurseRefundRequest, HostNftPurseRefundResponse,
+			HostNftPurseRevokeChequeError, HostNftPurseRevokeChequeRequest,
+			HostNftPurseRevokeChequeResponse, HostNftPurseStaticReceiveKeyError,
+			HostNftPurseStaticReceiveKeyRequest, HostNftPurseStaticReceiveKeyResponse,
+			HostNftPurseTransferItemError, HostNftPurseTransferItemRequest,
+			HostNftPurseTransferItemResponse,
 		},
 	};
 
@@ -149,6 +150,17 @@ mod browser {
 		) -> Subscription<
 			HostNftPurseListenOneTimePaymentItem,
 			CallError<HostNftPurseListenOneTimePaymentError>,
+		> {
+			Subscription::interrupted(CallError::Unsupported)
+		}
+
+		async fn listen_payment_inbox(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseListenPaymentInboxRequest,
+		) -> Subscription<
+			HostNftPurseListenPaymentInboxItem,
+			CallError<HostNftPurseListenPaymentInboxError>,
 		> {
 			Subscription::interrupted(CallError::Unsupported)
 		}

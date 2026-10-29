@@ -45,4 +45,7 @@ truapi_macros::versioned_type! {
 	pub enum HostNftPurseStaticReceiveKeyRequest { V1 => v01::HostNftPurseStaticReceiveKeyRequest }
 	pub enum HostNftPurseStaticReceiveKeyResponse { V1 => v01::HostNftPurseStaticReceiveKeyResponse }
 	pub enum HostNftPurseStaticReceiveKeyError { V1 => v01::NftPurseStaticReceiveKeyError }
+	pub enum HostNftPurseListenPaymentInboxRequest { V1 => v01::HostNftPurseListenPaymentInboxRequest }
+	pub enum HostNftPurseListenPaymentInboxItem { V1 => v01::HostNftPurseListenPaymentInboxItem }
+	pub enum HostNftPurseListenPaymentInboxError { V1 => v01::NftPurseListenPaymentInboxError }
 }

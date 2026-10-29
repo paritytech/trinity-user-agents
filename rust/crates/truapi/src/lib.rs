@@ -440,6 +440,15 @@ pub mod latest {
 	/// NFT one-time payment listen failure.
 	pub type HostNftPurseListenOneTimePaymentError =
 		LatestOf<versioned::nft_purse::HostNftPurseListenOneTimePaymentError>;
+	/// NFT payment inbox listen request.
+	pub type HostNftPurseListenPaymentInboxRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseListenPaymentInboxRequest>;
+	/// NFT payment inbox listen item.
+	pub type HostNftPurseListenPaymentInboxItem =
+		LatestOf<versioned::nft_purse::HostNftPurseListenPaymentInboxItem>;
+	/// NFT payment inbox listen failure.
+	pub type HostNftPurseListenPaymentInboxError =
+		LatestOf<versioned::nft_purse::HostNftPurseListenPaymentInboxError>;
 	/// NFT static receive key request.
 	pub type HostNftPurseStaticReceiveKeyRequest =
 		LatestOf<versioned::nft_purse::HostNftPurseStaticReceiveKeyRequest>;

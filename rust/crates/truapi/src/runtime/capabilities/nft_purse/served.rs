@@ -19,9 +19,11 @@ use truapi::{
 		HostNftPurseDepositError, HostNftPurseDepositRequest, HostNftPurseDepositResponse,
 		HostNftPurseListPursesError, HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
 		HostNftPurseListenOneTimePaymentError, HostNftPurseListenOneTimePaymentItem,
-		HostNftPurseListenOneTimePaymentRequest, HostNftPurseObserveOperationStatusError,
-		HostNftPurseObserveOperationStatusItem, HostNftPurseObserveOperationStatusRequest,
-		HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
+		HostNftPurseListenOneTimePaymentRequest, HostNftPurseListenPaymentInboxError,
+		HostNftPurseListenPaymentInboxItem, HostNftPurseListenPaymentInboxRequest,
+		HostNftPurseObserveOperationStatusError, HostNftPurseObserveOperationStatusItem,
+		HostNftPurseObserveOperationStatusRequest, HostNftPurseQueryPurseError,
+		HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
 		HostNftPurseRebalancePurseError, HostNftPurseRebalancePurseRequest,
 		HostNftPurseRebalancePurseResponse, HostNftPurseRefundError, HostNftPurseRefundRequest,
 		HostNftPurseRefundResponse, HostNftPurseRevokeChequeError, HostNftPurseRevokeChequeRequest,
@@ -167,6 +169,18 @@ impl NftPurse for ProductRuntimeHost {
 		CallError<HostNftPurseListenOneTimePaymentError>,
 	> {
 		version(request).exec(|request| self.listen_one_time_nft_payment(request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.listen_payment_inbox"))]
+	async fn listen_payment_inbox(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseListenPaymentInboxRequest,
+	) -> Subscription<
+		HostNftPurseListenPaymentInboxItem,
+		CallError<HostNftPurseListenPaymentInboxError>,
+	> {
+		version(request).exec(|request| self.listen_nft_payment_inbox(request)).await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "nft_purse.observe_operation_status"))]

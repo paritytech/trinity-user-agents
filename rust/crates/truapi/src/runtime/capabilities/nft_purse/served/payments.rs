@@ -50,6 +50,54 @@ impl ProductRuntimeHost {
 	}
 }
 
+impl ProductRuntimeHost {
+	/// The channel of the caller's inbox `inbox_domain`, then the cheques
+	/// already there, then each batch of new ones. A listen that did not
+	/// start emits no channel.
+	pub async fn listen_nft_payment_inbox(
+		&self,
+		request: latest::HostNftPurseListenPaymentInboxRequest,
+	) -> Subscription<
+		latest::HostNftPurseListenPaymentInboxItem,
+		CallError<latest::HostNftPurseListenPaymentInboxError>,
+	> {
+		self.start_nft_payment_inbox_listen(request)
+			.await
+			.unwrap_or_else(Subscription::interrupted)
+	}
+
+	async fn start_nft_payment_inbox_listen(
+		&self,
+		request: latest::HostNftPurseListenPaymentInboxRequest,
+	) -> Result<
+		Subscription<
+			latest::HostNftPurseListenPaymentInboxItem,
+			CallError<latest::HostNftPurseListenPaymentInboxError>,
+		>,
+		CallError<latest::HostNftPurseListenPaymentInboxError>,
+	> {
+		self.require_session()?;
+		let purses = self.connection.nft_purses()?;
+		let account = self.identity_account().ok_or_else(no_identity_account)?;
+		let caller = self.connection.product_id();
+		let listen = purses
+			.start_payment_inbox_listen(account, caller, request.inbox_domain)
+			.await
+			.map_err(payment_inbox_failure)?;
+		Ok(channel_then_arrivals(
+			listen,
+			latest::HostNftPurseListenPaymentInboxItem::Channel,
+			latest::HostNftPurseListenPaymentInboxItem::Cheques,
+			payment_inbox_failure,
+		))
+	}
+
+	/// The wallet identity account of the session, which inbox topics name.
+	fn identity_account(&self) -> Option<[u8; 32]> {
+		self.accounts.current_session()?.identity_account_id
+	}
+}
+
 /// The channel of `listen`, then each of its arrivals, each wrapped in the
 /// call's item, and its final error mapped by `failure`.
 fn channel_then_arrivals<T: Send + 'static, I: Send + 'static, E: Send + 'static>(
@@ -79,4 +127,24 @@ fn one_time_payment_failure(
 			CallError::Domain(latest::HostNftPurseListenOneTimePaymentError::Other(reason))
 		},
 	}
+}
+
+/// A database failure is the host's, and anything else ends the listen with
+/// `Other`.
+fn payment_inbox_failure(
+	error: PaymentListenError,
+) -> CallError<latest::HostNftPurseListenPaymentInboxError> {
+	match error {
+		PaymentListenError::Db(error) => host_failure(error),
+		error => inbox_refusal(error.to_string()),
+	}
+}
+
+fn no_identity_account() -> CallError<latest::HostNftPurseListenPaymentInboxError> {
+	inbox_refusal("the session has no wallet identity account to name the inbox".to_owned())
+}
+
+fn inbox_refusal(reason: String) -> CallError<latest::HostNftPurseListenPaymentInboxError> {
+	let reason = latest::GenericError { reason };
+	CallError::Domain(latest::HostNftPurseListenPaymentInboxError::Other(reason))
 }

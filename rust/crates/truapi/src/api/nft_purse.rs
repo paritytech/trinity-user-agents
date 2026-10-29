@@ -12,9 +12,11 @@ use crate::{
 		HostNftPurseDepositError, HostNftPurseDepositRequest, HostNftPurseDepositResponse,
 		HostNftPurseListPursesError, HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
 		HostNftPurseListenOneTimePaymentError, HostNftPurseListenOneTimePaymentItem,
-		HostNftPurseListenOneTimePaymentRequest, HostNftPurseObserveOperationStatusError,
-		HostNftPurseObserveOperationStatusItem, HostNftPurseObserveOperationStatusRequest,
-		HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
+		HostNftPurseListenOneTimePaymentRequest, HostNftPurseListenPaymentInboxError,
+		HostNftPurseListenPaymentInboxItem, HostNftPurseListenPaymentInboxRequest,
+		HostNftPurseObserveOperationStatusError, HostNftPurseObserveOperationStatusItem,
+		HostNftPurseObserveOperationStatusRequest, HostNftPurseQueryPurseError,
+		HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
 		HostNftPurseRebalancePurseError, HostNftPurseRebalancePurseRequest,
 		HostNftPurseRebalancePurseResponse, HostNftPurseRefundError, HostNftPurseRefundRequest,
 		HostNftPurseRefundResponse, HostNftPurseRevokeChequeError, HostNftPurseRevokeChequeRequest,
@@ -354,5 +356,45 @@ pub trait NftPurse: Send + Sync {
 	) -> Result<HostNftPurseStaticReceiveKeyResponse, CallError<HostNftPurseStaticReceiveKeyError>>
 	{
 		Err(CallError::unavailable())
+	}
+
+	/// Listen to one of the caller's payment inboxes. Emits the channel, then
+	/// the `Static` cheques already stored there, possibly none, then each
+	/// batch of new ones. Never ends on its own. Every call emits every cheque
+	/// the statement store still holds, including ones already deposited, so
+	/// the product skips those by cheque id.
+	///
+	/// The channel's topic is `blake2_256("nft-purse/payment-inbox" ‖
+	/// identity_account_id ‖ blake2_256(product_id) ‖ inbox_domain)`, with
+	/// the session's wallet identity account and the caller's product id as
+	/// UTF-8. A sender publishes a statement under that topic whose data is
+	/// the cheque sealed to the static receive key, in the envelope that
+	/// `listen_one_time_payment` describes. Senders choose `Static` cheque ids,
+	/// so two cheques may share one.
+	///
+	/// ```ts
+	/// import { firstValueFrom, from } from "rxjs";
+	///
+	/// const item = await firstValueFrom(
+	///   from(
+	///     truapi.nftPurse.listenPaymentInbox({
+	///       request: {
+	///         inboxDomain: "0x0000000000000000000000000000000000000000000000000000000000000000",
+	///       },
+	///     }),
+	///   ),
+	/// );
+	/// console.log("inbox item:", item);
+	/// ```
+	#[wire(id = 14)]
+	async fn listen_payment_inbox(
+		&self,
+		_cx: &CallContext,
+		_request: HostNftPurseListenPaymentInboxRequest,
+	) -> Subscription<
+		HostNftPurseListenPaymentInboxItem,
+		CallError<HostNftPurseListenPaymentInboxError>,
+	> {
+		Subscription::interrupted(CallError::unavailable())
 	}
 }

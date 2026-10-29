@@ -23,6 +23,7 @@ use crate::{
 		x25519_seal::{SealError, SealedBox, X25519PrivateKey},
 	},
 	platform::ProductId,
+	runtime::AuthorityError,
 	store::DbError,
 	stream_extensions::StreamExtensions as _,
 };
@@ -32,6 +33,9 @@ const ENVELOPE_VERSION: u8 = 0;
 
 /// Domain of the topic a one-time payment is published under.
 const ONE_TIME_TOPIC_DOMAIN: &[u8] = b"nft-purse/payment-channel";
+
+/// Domain of the topic a payment inbox is published under.
+const INBOX_TOPIC_DOMAIN: &[u8] = b"nft-purse/payment-inbox";
 
 /// A started payment listen: the channel to advertise, and what arrives on it.
 pub struct PaymentListen<T> {
@@ -50,6 +54,9 @@ pub enum PaymentListenError {
 	/// The secret of the receive key could not be read.
 	#[error(transparent)]
 	ReceiveSecret(#[from] ReceiveSecretError),
+	/// The static receive secret is unavailable, as without a session.
+	#[error("the static receive secret is unavailable: {0}")]
+	StaticSecret(AuthorityError),
 	/// The statement watch failed.
 	#[error(transparent)]
 	Watch(#[from] StatementWatchError),
@@ -116,6 +123,27 @@ impl NftPurses {
 		Ok(PaymentListen { channel, arrivals })
 	}
 
+	/// Starts watching `creator`'s inbox `inbox_domain` of the identity
+	/// `account`. Each arrival is a batch of `Static` cheques: the first holds
+	/// every cheque already stored, possibly none, and no later one is empty.
+	pub async fn start_payment_inbox_listen(
+		&self,
+		account: [u8; 32],
+		creator: &ProductId,
+		inbox_domain: [u8; 32],
+	) -> Result<PaymentListen<Vec<NftPurseCheque>>, PaymentListenError> {
+		let secret = self
+			.static_secret
+			.static_receive_secret()
+			.map_err(PaymentListenError::StaticSecret)?;
+		let channel = payment_inbox_topic(account, creator, inbox_domain);
+		let batches = self.start_topic_watch(channel).await?;
+		let recipient = NftPurseChequeRecipient::Static;
+		let expected = ExpectedCheque { topic: channel, recipient, id: None };
+		let arrivals = arriving_cheque_batches(batches, secret, expected);
+		Ok(PaymentListen { channel, arrivals: without_later_empty_batches(arrivals) })
+	}
+
 	/// Starts watching the statements published under `topic`.
 	async fn start_topic_watch(
 		&self,
@@ -130,6 +158,30 @@ impl NftPurses {
 fn one_time_payment_topic(key: &NftPurseReceiveKey) -> StatementTopic {
 	let preimage = [ONE_TIME_TOPIC_DOMAIN, &key.0].concat();
 	StatementTopic(blake2_256(&preimage))
+}
+
+/// The topic of `creator`'s inbox `inbox_domain` of the identity `account`.
+fn payment_inbox_topic(
+	account: [u8; 32],
+	creator: &ProductId,
+	inbox_domain: [u8; 32],
+) -> StatementTopic {
+	let product = blake2_256(creator.as_str().as_bytes());
+	let preimage = [INBOX_TOPIC_DOMAIN, &account, &product, &inbox_domain].concat();
+	StatementTopic(blake2_256(&preimage))
+}
+
+/// `batches` without the empty ones after the first.
+fn without_later_empty_batches<E: Send + 'static>(
+	batches: BoxStream<'static, Result<Vec<NftPurseCheque>, E>>,
+) -> BoxStream<'static, Result<Vec<NftPurseCheque>, E>> {
+	batches
+		.enumerate()
+		.filter(|(index, batch)| {
+			ready(*index == 0 || !matches!(batch, Ok(cheques) if cheques.is_empty()))
+		})
+		.map(|(_, batch)| batch)
+		.boxed()
 }
 
 /// The cheques `expected` accepts in each batch of `batches`, opened with
@@ -221,7 +273,7 @@ mod tests {
 	use super::*;
 	use crate::{
 		host_logic::statement_store::StatementField,
-		nft_purse::{ScriptedStatements, test_purses_watching},
+		nft_purse::{ScriptedStatements, TEST_STATIC_SECRET, test_purses_watching},
 		store::open_temporary_core_db,
 	};
 
@@ -381,5 +433,51 @@ mod tests {
 			matches!(started, Err(PaymentListenError::UnknownReceiveKey(found)) if found == key)
 		);
 		assert!(statements.watched.lock().unwrap().is_empty());
+	}
+
+	/// Senders outside this crate derive the same inbox, and a product's id is
+	/// part of it.
+	#[test]
+	fn the_inbox_topic_matches_its_vector() {
+		let topic = payment_inbox_topic([2; 32], &product(), [3; 32]);
+
+		let expected = "d1b6e489cb8d74220dd9da720267e2298565fa869ec305707ad7e7ce1d21220a";
+		assert_eq!(hex::encode(topic.0), expected);
+	}
+
+	/// The first batch says the inbox caught up even when it is empty, later
+	/// empty batches say nothing, and only `Static` cheques belong in an inbox.
+	#[test]
+	fn an_inbox_listen_emits_the_backlog_then_each_batch_with_cheques() {
+		let (_dir, purses, statements, key) = listening_purses();
+		let domain = [3; 32];
+		let topic = payment_inbox_topic([2; 32], &product(), domain);
+		let static_key =
+			NftPurseReceiveKey(X25519PrivateKey::from(TEST_STATIC_SECRET).public_key().0);
+		let static_cheque = |item| NftPurseCheque {
+			recipient: NftPurseChequeRecipient::Static,
+			..cheque_for(key, item)
+		};
+		let to_inbox = |cheque| payment_statement(static_key, topic, cheque);
+		*statements.batches.lock().unwrap() = vec![
+			vec![],
+			vec![to_inbox(static_cheque(1)), to_inbox(cheque_for(key, 2))],
+			vec![to_inbox(cheque_for(key, 3))],
+			vec![to_inbox(static_cheque(4))],
+		];
+
+		let listen =
+			block_on(purses.start_payment_inbox_listen([2; 32], &product(), domain)).unwrap();
+
+		let arrivals = block_on_stream(listen.arrivals)
+			.map(|arrival| arrival.map_err(|error| error.to_string()));
+		let expected = vec![
+			Ok(vec![]),
+			Ok(vec![static_cheque(1)]),
+			Ok(vec![static_cheque(4)]),
+			Err(PaymentListenError::WatchEnded.to_string()),
+		];
+		assert_eq!(arrivals.collect::<Vec<_>>(), expected);
+		assert_eq!(listen.channel, topic);
 	}
 }

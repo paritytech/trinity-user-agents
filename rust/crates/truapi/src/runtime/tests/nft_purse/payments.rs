@@ -1,12 +1,23 @@
 //! Listening for payments through the product-facing trait.
 
 use futures::{StreamExt, executor::block_on};
+use parity_scale_codec::Encode;
+use sp_crypto_hashing::blake2_256;
 use truapi::versioned::nft_purse::{
 	HostNftPurseListenOneTimePaymentError, HostNftPurseListenOneTimePaymentItem,
+	HostNftPurseListenPaymentInboxError, HostNftPurseListenPaymentInboxItem,
+	HostNftPurseListenPaymentInboxRequest,
 };
 
 use super::{cheques::create_receive_key, operations::product_purses, *};
-use crate::test_support::{statement_page_frame, subscribe_ack_frame};
+use crate::{
+	host_logic::{
+		session::SessionInfo,
+		statement_store::StatementField,
+		x25519_seal::{SealedBox, X25519PrivateKey},
+	},
+	test_support::{session_info, statement_page_frame, subscribe_ack_frame},
+};
 
 type OneTimePayments = Subscription<
 	HostNftPurseListenOneTimePaymentItem,
@@ -128,4 +139,89 @@ fn dropping_a_one_time_listen_unsubscribes() {
 
 	let methods = sent_methods(&platform);
 	assert_eq!(methods.last().map(String::as_str), Some("statement_unsubscribeStatement"));
+}
+
+type InboxPayments = Subscription<
+	HostNftPurseListenPaymentInboxItem,
+	CallError<HostNftPurseListenPaymentInboxError>,
+>;
+
+const INBOX_DOMAIN: [u8; 32] = [3; 32];
+
+fn listen_inbox(host: &ProductRuntimeHost) -> InboxPayments {
+	let request = v01::HostNftPurseListenPaymentInboxRequest { inbox_domain: INBOX_DOMAIN };
+	let request = HostNftPurseListenPaymentInboxRequest::V1(request);
+	block_on(host.listen_payment_inbox(&CallContext::default(), request))
+}
+
+/// The inbox topic of [`PRODUCT`] and [`INBOX_DOMAIN`] for the test session,
+/// derived the way a sender outside the host derives it.
+fn inbox_topic() -> v01::StatementTopic {
+	let account = session_info().identity_account_id.unwrap();
+	let product = blake2_256(PRODUCT.as_bytes());
+	let preimage =
+		[b"nft-purse/payment-inbox".as_slice(), &account, &product, &INBOX_DOMAIN].concat();
+	v01::StatementTopic(blake2_256(&preimage))
+}
+
+/// The statement a sender publishes to put `cheque` in the inbox: the
+/// envelope sealed to the static receive key.
+fn inbox_statement(cheque: &v01::NftPurseCheque) -> Vec<u8> {
+	let plaintext = (0u8, inbox_topic(), cheque).encode();
+	let static_key = X25519PrivateKey::from(TEST_STATIC_SECRET).public_key();
+	let sealed = SealedBox::seal(static_key, &plaintext).unwrap();
+	vec![StatementField::Data(sealed.to_bytes())].encode()
+}
+
+fn inbox_item(item: v01::HostNftPurseListenPaymentInboxItem) -> HostNftPurseListenPaymentInboxItem {
+	HostNftPurseListenPaymentInboxItem::V1(item)
+}
+
+/// A cheque a sender built and published reaches the product, after the
+/// channel it was published on.
+#[test]
+fn an_inbox_listen_delivers_the_cheques_stored_in_the_inbox() {
+	let cheque = v01::NftPurseCheque {
+		version: 0,
+		id: v01::NftPurseChequeId([6; 32]),
+		recipient: v01::NftPurseChequeRecipient::Static,
+		items: vec![v01::NftPurseItemKey([7; 32])],
+		encrypted_secrets: vec![8; 4],
+	};
+	let platform = Arc::new(StubPlatform {
+		rpc_responses: vec![
+			subscribe_ack_frame("truapi:1", "inbox"),
+			statement_page_frame("inbox", vec![inbox_statement(&cheque)], Some(0)),
+		],
+		..Default::default()
+	});
+	let (_dir, host) = nft_host(platform, true);
+
+	let items = block_on(listen_inbox(&host).take(2).collect::<Vec<_>>());
+
+	let channel = v01::NftPursePaymentTransmissionChannel::Standard { sss_topic: inbox_topic() };
+	let expected = vec![
+		Ok(inbox_item(v01::HostNftPurseListenPaymentInboxItem::Channel(channel))),
+		Ok(inbox_item(v01::HostNftPurseListenPaymentInboxItem::Cheques(vec![cheque]))),
+	];
+	assert_eq!(items, expected);
+}
+
+/// Without the account a sender names the inbox by, there is no inbox to
+/// watch.
+#[test]
+fn an_inbox_listen_without_an_identity_account_is_refused() {
+	let platform = platform_with_empty_topic();
+	let (_dir, host) = nft_host(platform.clone(), false);
+	install_pairing_session(&host, SessionInfo { identity_account_id: None, ..session_info() });
+
+	let first = block_on(listen_inbox(&host).next());
+
+	assert!(matches!(
+		first,
+		Some(Err(CallError::Domain(HostNftPurseListenPaymentInboxError::V1(
+			v01::NftPurseListenPaymentInboxError::Other(_)
+		))))
+	));
+	assert!(sent_methods(&platform).is_empty());
 }
