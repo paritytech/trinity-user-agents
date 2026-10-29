@@ -101,21 +101,22 @@ export async function list(options: ProjectOptions = {}) {
 
 /**
  * Compares the dotNS addresses a descriptor states with its Asset Hub at the latest finalized
- * block. `target` is a stack name in stacks.json, whose committed copy is checked, else an http(s)
- * URL, else a local file. Throws when the descriptor has no Asset Hub.
+ * block. `target` is a stack name in stacks.json, whose committed copy is checked, else a link or
+ * an http(s) URL, else a local file. Throws when the descriptor has no Asset Hub.
  */
 export async function check(
   target: string,
   options: ProjectOptions = {},
 ): Promise<{ at: Block; drift: DotnsDrift[] }> {
   const stacks = await readStacks(options);
+  const url = urlOf(target);
   let document: Uint8Array | undefined;
   if (Object.hasOwn(stacks, target)) {
     document = await read(fileOf(target), options);
     if (!document) throw new Error(`no committed copy of ${target}`);
-  } else if (/^https?:\/\//.test(target)) {
-    document = await fetchDescriptor(target, options);
-    if (!document) throw new Error(`${target} is unreachable`);
+  } else if (url) {
+    document = await fetchDescriptor(url, options);
+    if (!document) throw new Error(`${url} is unreachable`);
   } else {
     document = new Uint8Array(await readFile(target));
   }
@@ -127,6 +128,14 @@ export async function check(
     fetch: options.fetch,
     timeoutMs: options.timeoutMs,
   });
+}
+
+/** The descriptor URL `target` names as a link or an http(s) URL; undefined for anything else. */
+function urlOf(target: string): string | undefined {
+  if (!URL.canParse(target)) return undefined;
+  const parsed = new URL(target);
+  if (parsed.searchParams.has("url")) return decodeLink(target).url;
+  return ["http:", "https:"].includes(parsed.protocol) ? target : undefined;
 }
 
 /** Removes a stack and its copy. */

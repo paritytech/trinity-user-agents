@@ -174,7 +174,7 @@ npx trinity-stack add <name> <link | url> [--key 0x..]
 npx trinity-stack update [<name>...]
 npx trinity-stack list
 npx trinity-stack remove <name>
-npx trinity-stack check <name | url | file>
+npx trinity-stack check <name | link | url | file>
 ```
 
 They keep one directory in the project, committed with it:

@@ -7,7 +7,7 @@ const USAGE = `usage:
   trinity-stack add <name> <link | url> [--key 0x..]
   trinity-stack update [<name>...]
   trinity-stack list
-  trinity-stack check <name | url | file>
+  trinity-stack check <name | link | url | file>
   trinity-stack remove <name>
 
 options:

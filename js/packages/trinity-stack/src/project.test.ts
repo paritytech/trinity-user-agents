@@ -102,7 +102,7 @@ describe("trinity-stack add and update", () => {
     );
   });
 
-  test("check reads a stack's committed copy by name, else a URL, else a file", async () => {
+  test("check reads a stack's committed copy by name, else a link or URL, else a file", async () => {
     served = await at(100, "g1", {
       ...MODEL,
       dotns: controller.descriptor.dotns,
@@ -121,6 +121,7 @@ describe("trinity-stack add and update", () => {
     ];
     expect(await check("local", options())).toEqual({ at: AT, drift: [] });
     expect(await check(URL_, options())).toEqual({ at: AT, drift });
+    expect(await check(link, options())).toEqual({ at: AT, drift });
     const path = join(dir, "moved.json");
     await writeFile(path, served);
     expect(await check(path, options())).toEqual({ at: AT, drift });

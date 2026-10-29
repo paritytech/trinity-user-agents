@@ -60,8 +60,8 @@ same way.
 ## dotNS contracts
 
 A descriptor states its dotNS contract addresses in `dotns`, a map from registry key to address, such as
-`descriptor.dotns?.registrar`. Readers use it as-is and make no chain reads for it. The operator fills it before
-publishing, and checks it against the chain afterwards:
+`descriptor.dotns?.registrar`. Readers use it as-is and make no chain reads for it. The operator fills it from the
+chain, and checks it before each publish and on a schedule:
 
 ```ts
 import { checkDotns, readDotns } from "@parity/trinity-stack/dotns";
@@ -75,7 +75,7 @@ Both read the Asset Hub the way the RFC describes: the gateway's storage over th
 passes a `transport`. From the command line:
 
 ```sh
-npx trinity-stack check previewnet   # a stack in stacks.json, a descriptor URL or a local file
+npx trinity-stack check previewnet   # a stack in stacks.json, a link, a descriptor URL or a local file
 ```
 
 It prints `dotNS matches the chain at #<block>` and exits 0, or one line per key that differs and exits 1.
