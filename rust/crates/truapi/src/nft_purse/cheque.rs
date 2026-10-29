@@ -112,7 +112,7 @@ fn seal_cheque(
 		id,
 		recipient: cheque_recipient(to),
 		items: items.iter().map(|key| NftPurseItemKey(key.0)).collect(),
-		encrypted_secrets: encrypted_secrets(sealed),
+		encrypted_secrets: sealed.to_bytes(),
 	})
 }
 
@@ -130,11 +130,6 @@ fn cheque_recipient(to: &NftPurseChequeDestination) -> NftPurseChequeRecipient {
 		NftPurseChequeDestination::Ephemeral(key) => NftPurseChequeRecipient::Ephemeral(*key),
 		NftPurseChequeDestination::Static { .. } => NftPurseChequeRecipient::Static,
 	}
-}
-
-/// `ephemeral public key ‖ nonce ‖ ciphertext`.
-fn encrypted_secrets(sealed: SealedBox) -> Vec<u8> {
-	[sealed.ephemeral_public.0.as_slice(), &sealed.encrypted].concat()
 }
 
 /// Why a cheque did not open into one valid secret per listed item.
@@ -210,11 +205,7 @@ fn decrypt_secrets(
 	secret: &X25519PrivateKey,
 	encrypted_secrets: &[u8],
 ) -> Result<Zeroizing<Vec<[u8; 64]>>, CorruptedCheque> {
-	let Some((ephemeral, encrypted)) = encrypted_secrets.split_first_chunk::<32>() else {
-		return Err(SealError::TooShort(encrypted_secrets.len()).into());
-	};
-	let ephemeral_public = X25519PublicKey(*ephemeral);
-	let sealed = SealedBox { ephemeral_public, encrypted: encrypted.to_vec() };
+	let sealed = SealedBox::from_bytes(encrypted_secrets)?;
 	let plaintext = Zeroizing::new(sealed.open(secret)?);
 	Ok(Zeroizing::new(Vec::<[u8; 64]>::decode(&mut plaintext.as_slice())?))
 }
@@ -311,7 +302,7 @@ mod tests {
 		plaintext: &[u8],
 	) -> NftPurseCheque {
 		let sealed = SealedBox::seal(recipient.public_key(), plaintext).unwrap();
-		NftPurseCheque { encrypted_secrets: encrypted_secrets(sealed), ..cheque }
+		NftPurseCheque { encrypted_secrets: sealed.to_bytes(), ..cheque }
 	}
 
 	fn available_keys(purses: &NftPurses) -> Vec<ItemKey> {
