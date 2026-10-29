@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 72,
-    "identityHash": "7fb997d0a52a66c116e680b353a40bb4",
+    "identityHash": "84bab652ea68243d71fdd7cc4a07ee2d",
     "entities": [
       {
         "tableName": "product_funding_operations",
@@ -2204,7 +2204,7 @@
       },
       {
         "tableName": "statement_store_slot_allocations",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `chainId` TEXT NOT NULL, `collection` TEXT NOT NULL, `accountId` BLOB NOT NULL, `seq` INTEGER NOT NULL, `latestRenewedPeriod` INTEGER NOT NULL, `sinceMillis` INTEGER NOT NULL, `priorityLevel` INTEGER NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `chainId` TEXT NOT NULL, `collection` TEXT NOT NULL, `accountId` BLOB NOT NULL, `seq` INTEGER NOT NULL, `latestRenewedPeriod` INTEGER NOT NULL, `sinceMillis` INTEGER NOT NULL, `priorityLevel` INTEGER NOT NULL, `tag` TEXT)",
         "fields": [
           {
             "fieldPath": "id",
@@ -2253,6 +2253,11 @@
             "columnName": "priorityLevel",
             "affinity": "INTEGER",
             "notNull": true
+          },
+          {
+            "fieldPath": "tag",
+            "columnName": "tag",
+            "affinity": "TEXT"
           }
         ],
         "primaryKey": {
@@ -3006,6 +3011,108 @@
         }
       },
       {
+        "tableName": "chat_acceptances",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`contactAccountId` BLOB NOT NULL, `requestId` TEXT NOT NULL, `messageId` TEXT NOT NULL, `acceptedAt` INTEGER NOT NULL, `deliveryStatus` TEXT NOT NULL, `deliveredVia` TEXT, `lastDeliveredPeriod` INTEGER, PRIMARY KEY(`contactAccountId`), FOREIGN KEY(`contactAccountId`) REFERENCES `contacts`(`accountId`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "contactAccountId",
+            "columnName": "contactAccountId",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "requestId",
+            "columnName": "requestId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "messageId",
+            "columnName": "messageId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "acceptedAt",
+            "columnName": "acceptedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deliveryStatus",
+            "columnName": "deliveryStatus",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deliveredVia",
+            "columnName": "deliveredVia",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "lastDeliveredPeriod",
+            "columnName": "lastDeliveredPeriod",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "contactAccountId"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "contacts",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "contactAccountId"
+            ],
+            "referencedColumns": [
+              "accountId"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "chat_identity_signing_consents",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`contactAccountId` BLOB NOT NULL, `state` TEXT NOT NULL, PRIMARY KEY(`contactAccountId`), FOREIGN KEY(`contactAccountId`) REFERENCES `contacts`(`accountId`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "contactAccountId",
+            "columnName": "contactAccountId",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "contactAccountId"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "contacts",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "contactAccountId"
+            ],
+            "referencedColumns": [
+              "accountId"
+            ]
+          }
+        ]
+      },
+      {
         "tableName": "pocket_cards",
         "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`productId` TEXT NOT NULL, `cardId` TEXT NOT NULL, `title` TEXT NOT NULL, PRIMARY KEY(`productId`, `cardId`))",
         "fields": [
@@ -3066,113 +3173,11 @@
             "cardId"
           ]
         }
-      },
-      {
-        "tableName": "product_funding_records",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`intent` TEXT NOT NULL, `direction` TEXT NOT NULL, `rail` TEXT, `asset` TEXT, `providerId` TEXT, `requestedPlanks` TEXT, `settledPlanks` TEXT, `outcome` TEXT NOT NULL, `failureCode` TEXT, `failureMessage` TEXT, `payout` TEXT, `payoutFailureReason` TEXT, `refundedPlanks` TEXT, `transactionId` TEXT, `reference` TEXT, `openedAtMillis` INTEGER NOT NULL, `settledAtMillis` INTEGER NOT NULL, PRIMARY KEY(`intent`))",
-        "fields": [
-          {
-            "fieldPath": "intent",
-            "columnName": "intent",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "direction",
-            "columnName": "direction",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "rail",
-            "columnName": "rail",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "asset",
-            "columnName": "asset",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "providerId",
-            "columnName": "providerId",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "requestedPlanks",
-            "columnName": "requestedPlanks",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "settledPlanks",
-            "columnName": "settledPlanks",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "outcome",
-            "columnName": "outcome",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "failureCode",
-            "columnName": "failureCode",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "failureMessage",
-            "columnName": "failureMessage",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "payout",
-            "columnName": "payout",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "payoutFailureReason",
-            "columnName": "payoutFailureReason",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "refundedPlanks",
-            "columnName": "refundedPlanks",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "transactionId",
-            "columnName": "transactionId",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "reference",
-            "columnName": "reference",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "openedAtMillis",
-            "columnName": "openedAtMillis",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "settledAtMillis",
-            "columnName": "settledAtMillis",
-            "affinity": "INTEGER",
-            "notNull": true
-          }
-        ],
-        "primaryKey": {
-          "autoGenerate": false,
-          "columnNames": [
-            "intent"
-          ]
-        }
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '7fb997d0a52a66c116e680b353a40bb4')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '84bab652ea68243d71fdd7cc4a07ee2d')"
     ]
   }
 }

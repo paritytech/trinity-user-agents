@@ -172,6 +172,10 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             routerFacade: confirmationRouterFacade
         )
         runtime.setContacts(contactsBridge)
+        runtime.setScanner(AppScannerHostBridge(
+            routerFacade: confirmationRouterFacade,
+            visibility: ProductVisibility(application: UIApplication.shared)
+        ))
         paymentsBridge?.install(on: runtime)
         // Also before any execution opens, so a product's Funding request
         // never answers unsupported. The core discovers the published

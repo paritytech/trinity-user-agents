@@ -4,7 +4,7 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 /** Adds the funding history: one record per ended funding session, keyed by its intent. */
-class Migration71To72 : Migration(71, 72) {
+class Migration72To73 : Migration(72, 73) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL(
             "CREATE TABLE IF NOT EXISTS `product_funding_records` (" +

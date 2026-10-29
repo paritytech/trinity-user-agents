@@ -9,6 +9,14 @@ enum FundingAmountIssue: Equatable {
 }
 
 extension FundingFlowModel {
+    var brandsInOrder: [String] {
+        candidates.map(\.providerId)
+    }
+
+    func brand(for providerId: String) -> FundingProviderBrand {
+        brands[providerId] ?? .placeholder(for: providerId)
+    }
+
     /// What the core's amount range depends on.
     struct FundingLimitsKey: Equatable {
         let rail: FundingRail
