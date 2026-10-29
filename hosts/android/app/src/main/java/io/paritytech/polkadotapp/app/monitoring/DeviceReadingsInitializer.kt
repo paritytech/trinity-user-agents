@@ -35,8 +35,8 @@ internal class DeviceReadingsInitializer @Inject constructor(
     private val reporter: DeviceReadingsReporter,
     private val telemetryEnabledProvider: HostTelemetryEnabledProvider,
 ) : AppInitializer {
-    private val activityManager by lazy { context.getSystemService(ActivityManager::class.java) }
-    private val powerManager by lazy { context.getSystemService(PowerManager::class.java) }
+    private val activityManager = context.getSystemService(ActivityManager::class.java)
+    private val powerManager = context.getSystemService(PowerManager::class.java)
     private val coreCount = Runtime.getRuntime().availableProcessors()
 
     context(scope: ComputationalScope)
