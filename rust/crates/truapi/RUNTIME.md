@@ -487,10 +487,12 @@ for raw bytes signed inside the `<Bytes>` watermark.
   and watches it with `statusSubscribe({ intent })`; another product's
   session reads as `NotFound`. The overlay runs on a task of its own, so no
   call waits on it; a session the user dismisses ends its watchers as
-  `Failed { Cancelled }`. Sessions and
-  the pack are versioned blobs: a corrupt one is set aside under
-  `FundingSessionsUnreadable`, and one in a newer format is left untouched
-  while funding answers a host failure. Products see a session in flight as
+  `Failed { Cancelled }`. Sessions and the pack live in the core database,
+  one versioned row per session: a row that does not decode is skipped and
+  left in place, one of an older format is dropped, and one in a newer
+  format is left untouched while funding answers a host failure. Funding
+  needs the core database: natively the configured `database_directory`,
+  otherwise `set_core_db`. Products see a session in flight as
   `InProgress`.
   `select_funding_provider` hands a session to the provider the user chose.
   That provider's worker runs it through the `FundingProvider` trait. The

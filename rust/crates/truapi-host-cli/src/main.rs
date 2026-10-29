@@ -1854,13 +1854,14 @@ fn build_signing_runtime(
 		chat.map(|chat| chat as Arc<dyn ChatPlatform>),
 	));
 	runtime.set_permission_status_host(status_host);
+	// Before funding, which loads its sessions from it.
+	runtime.set_core_db(core_db);
 	if let Some(pocket) = pocket {
 		runtime.set_pocket_platform(pocket);
 	}
 	funding_host::CliFundingHost::install(&runtime, platform.clone());
 	runtime.set_game_platform(Arc::new(game::CliGameHost));
 	runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
-	runtime.set_core_db(core_db);
 	runtime.set_installation_provider(installation);
 	runtime.start_core_services();
 	runtime.start_statement_allowance_renewal();
