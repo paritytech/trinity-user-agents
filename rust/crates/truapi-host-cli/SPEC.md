@@ -1834,8 +1834,10 @@ cannot be combined with the `HOST_CLI_*_WS` overrides or
 and keeps each chain running after its last connection closes, so a chain syncs
 once per process. A chain's first request waits for it to sync. A PGAS
 claim on Asset Hub, such as `pgas-check --submit`, is dropped: smoldot validates a
-transaction before broadcasting it, and the proof Asset Hub's nodes return for
-that validation is missing entries the validation reads.
+transaction before broadcasting it, and the validation checks that the PGAS asset
+exists. Asset Hub's nodes prove that with the asset's trie entry, which holds
+only the hash of its value, but smoldot answers an existence check by reading the
+whole value and refuses the proof.
 
 `wss://` certificates are verified with the root certificates built into the
 binary, on both backends, not with certificate authorities added to the
