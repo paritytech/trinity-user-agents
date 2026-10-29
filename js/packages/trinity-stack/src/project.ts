@@ -5,6 +5,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Pointer } from "../wasm/trinity_stack.js";
 import {
+  type Accepted,
   type Fetch,
   accept,
   decodeLink,
@@ -52,32 +53,39 @@ export async function add(
   const stacks = await readStacks(options);
   if (Object.hasOwn(stacks, name))
     throw new Error(`${name} is already added; remove it first`);
-  const changed = await refresh(name, pointer, options);
+  const { written } = await refresh(name, pointer, options);
   await writeStacks({ ...stacks, [name]: encodeLink(pointer) }, options);
-  return { changed: [...changed, "stacks.json", ...(await generate(options))] };
+  return { changed: [...written, "stacks.json", ...(await generate(options))] };
 }
 
 /**
  * Fetches each stack, or those `names` lists, and writes a newer signed copy. Refuses an unsigned
  * or expired stack, and anything that would lower `sequence`. A stack that fails keeps its copy
- * and is named in `failures`, while the others still update.
+ * and is named in `failures`, while the others still update. A copy past `validUntil` is written
+ * and named in `warnings`. A project with no stacks writes nothing.
  */
 export async function update(
   names: string[],
   options: ProjectOptions = {},
-): Promise<Outcome & { failures: string[] }> {
+): Promise<Outcome & { failures: string[]; warnings: string[] }> {
   const stacks = await readStacks(options);
   const unknown = names.filter((name) => !Object.hasOwn(stacks, name));
   if (unknown.length > 0)
     throw new Error(`no stack named ${unknown.join(", ")}`);
   const chosen = names.length > 0 ? names : Object.keys(stacks);
+  if (chosen.length === 0) return { changed: [], failures: [], warnings: [] };
   const results = await Promise.allSettled(
     chosen.map(async (name) =>
       refresh(name, decodeLink(stacks[name]), options),
     ),
   );
   const changed = results.flatMap((result) =>
-    result.status === "fulfilled" ? result.value : [],
+    result.status === "fulfilled" ? result.value.written : [],
+  );
+  const warnings = results.flatMap((result, index) =>
+    result.status === "fulfilled" && result.value.stale
+      ? [`${chosen[index]}: the copy is past validUntil`]
+      : [],
   );
   const failures = results.flatMap((result, index) =>
     result.status === "rejected"
@@ -85,7 +93,7 @@ export async function update(
       : [],
   );
   changed.push(...(await generate(options)));
-  return { changed, failures };
+  return { changed, failures, warnings };
 }
 
 /** Each stack's name, link and the copies the project holds. */
@@ -114,7 +122,7 @@ async function refresh(
   name: string,
   pointer: Pointer,
   options: ProjectOptions,
-): Promise<string[]> {
+): Promise<{ written: string[]; stale: boolean }> {
   if (!pointer.key)
     throw new Error("a build copy must be signed; add the stack with its key");
   const file = fileOf(name);
@@ -124,9 +132,9 @@ async function refresh(
     await fetchDescriptor(pointer.url, options),
     options.now,
   );
-  const refusals: Partial<Record<string, string>> = {
+  const refusals: Partial<Record<Accepted["status"], string>> = {
     unreachable: `${pointer.url} is unreachable`,
-    refused: `${pointer.url} serves a descriptor that breaks a rule`,
+    refused: `${pointer.url} serves a descriptor that breaks ${"refused" in accepted ? accepted.refused : "a rule"}`,
     rollback: `${pointer.url} serves a lower sequence than the committed copy`,
     conflict: `${pointer.url} serves other content under the committed sequence`,
   };
@@ -134,9 +142,10 @@ async function refresh(
   if (refusal) throw new Error(refusal);
   if (accepted.expired)
     throw new Error(`the stack expired at ${accepted.descriptor.expiresAt}`);
-  if (accepted.status !== "updated") return [];
+  if (accepted.status !== "updated")
+    return { written: [], stale: accepted.stale };
   await write(file, accepted.document, options);
-  return [file];
+  return { written: [file], stale: accepted.stale };
 }
 
 /** Writes `index.js` and `index.d.ts` for the stacks the project holds; returns those it changed. */

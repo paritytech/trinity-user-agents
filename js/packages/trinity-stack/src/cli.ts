@@ -32,11 +32,11 @@ try {
     const { changed } = await add(rest[0], rest[1], values.key, options);
     console.log(`wrote ${changed.join(", ")}`);
   } else if (command === "update") {
-    const { changed, failures } = await update(rest, options);
+    const { changed, failures, warnings } = await update(rest, options);
     console.log(
       changed.length > 0 ? `wrote ${changed.join(", ")}` : "nothing changed",
     );
-    for (const failure of failures) console.error(failure);
+    for (const line of [...warnings, ...failures]) console.error(line);
     process.exitCode = failures.length > 0 ? 1 : changed.length > 0 ? 2 : 0;
   } else if (command === "list" && rest.length === 0) {
     for (const { name, link, descriptor } of await list(options)) {

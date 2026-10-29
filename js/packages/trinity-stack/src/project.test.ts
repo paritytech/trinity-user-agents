@@ -49,9 +49,23 @@ describe("trinity-stack add and update", () => {
     );
   });
 
+  test("update in a project with no stacks writes nothing, so a scheduled job opens no pull request", async () => {
+    const empty = join(dir, "empty");
+    expect(await update([], { ...options(), dir: empty })).toEqual({
+      changed: [],
+      failures: [],
+      warnings: [],
+    });
+    await expect(readdir(empty)).rejects.toThrow("ENOENT");
+  });
+
   test("update writes the signed copy when the stack moved, and nothing otherwise", async () => {
     await add("local", link, undefined, options());
-    expect(await update([], options())).toEqual({ changed: [], failures: [] });
+    expect(await update([], options())).toEqual({
+      changed: [],
+      failures: [],
+      warnings: [],
+    });
     served = await at(200, "g2");
     expect((await update([], options())).changed.sort()).toEqual([
       "index.js",
@@ -70,6 +84,7 @@ describe("trinity-stack add and update", () => {
       failures: [
         "local: https://stack.example/.well-known/trinity-stack.json serves a lower sequence than the committed copy",
       ],
+      warnings: [],
     });
     served = undefined;
     expect((await update(["local"], options())).failures).toEqual([
