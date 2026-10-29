@@ -99,6 +99,7 @@ private extension FundingFlowModelQuoteTests {
                 cash: FundingCash(symbol: "CASH", precision: 6)
             ),
             runtime: runtime,
+            book: runtime.book,
             branding: NoBranding()
         )
     }
@@ -131,21 +132,26 @@ private struct NoBranding: FundingProviderBranding {
     }
 }
 
-/// A runtime holding only what the quote path reads.
+/// A runtime holding only what the quote path reads, answering each
+/// selection with the same options, as the core does inline.
 private final class FakeFundingRuntime: FundingRuntime, @unchecked Sendable {
-    private let candidates: [FundingCandidate]
+    let book = FundingSessionBook()
+    private let options: FundingOptions
     private(set) var lastRequestId: UInt64 = 0
 
     init(candidates: [FundingCandidate]) {
-        self.candidates = candidates
+        options = FundingOptions(
+            candidates: candidates,
+            countries: [],
+            limits: FundingAmountLimits(min: "10000000", max: nil),
+            networks: []
+        )
+        book.record(intent: "intent", options: options)
     }
 
-    func fundingSession(intent _: String) -> FundingSession? { nil }
-    func fundingProgress(intent _: String) -> FundingProgress? { nil }
-    func fundingSessions() -> [FundingSession] { [] }
-    func fundingHistory() -> [FundingSessionSummary] { [] }
-    func fundingInProgress() async throws -> Bool { false }
-    func fundingCandidates(intent _: String) -> [FundingCandidate] { candidates }
+    func selectFundingOptions(intent: String, selection _: FundingSelection) {
+        book.record(intent: intent, options: options)
+    }
 
     func getFundingQuote(intent _: String, ask _: FundingQuoteAsk) -> UInt64 {
         lastRequestId += 1
@@ -153,19 +159,6 @@ private final class FakeFundingRuntime: FundingRuntime, @unchecked Sendable {
     }
 
     func stopFundingQuotes(intent _: String) {}
-    func fundingCountries(intent _: String, rail _: FundingRail, asset _: String) -> [FundingCountry] { [] }
-
-    func fundingAmountLimits(
-        intent _: String,
-        rail _: FundingRail,
-        asset _: String,
-        network _: String?,
-        country _: String?
-    ) -> FundingAmountLimits {
-        FundingAmountLimits(min: "10000000", max: nil)
-    }
-
-    func detectedFundingCountry() async -> String? { nil }
     func selectFundingProvider(intent _: String, providerId _: String, quoteId _: String?) async throws -> Bool { true }
     func cancelFunding(intent _: String) async throws -> CancelOutcome { .ended }
     func confirmFundingCancel(intent _: String, terms _: CancelTerms?) async throws -> CancelConfirmation { .declined }

@@ -23,8 +23,8 @@ final class FundingFlowModel {
     var rail: FundingRail
     var amountText: String
     var path: [Screen] = []
-    /// Where the user pays from: the core's detected country until the user
-    /// picks one.
+    /// Where the user pays from: the device's region until the user picks
+    /// one.
     var country: PaymentCountry?
     var network: String?
     var asset: String?
@@ -35,13 +35,17 @@ final class FundingFlowModel {
     private(set) var rows: [String: FundingQuoteState] = [:]
     /// The providers of the core's latest quote list, in its order.
     private(set) var quoteOrder: [String] = []
-    /// The last amount range read from the core, and the choice it was read for.
-    @ObservationIgnored var cachedLimits: (key: FundingLimitsKey, limits: (min: Decimal, max: Decimal?))?
+    /// The amounts the core says the reported selection takes across every
+    /// provider.
+    private(set) var limits = FundingAmountLimits(min: nil, max: nil)
+    /// The same for each network a crypto route declares, by network id.
+    private(set) var networkLimits: [String: FundingAmountLimits] = [:]
     /// The provider the core marked as quoting best for the user.
     private(set) var bestProviderId: String?
-    /// What the core knows about each country on the current rail, by code.
+    /// What the core knows about each country on the reported rail and
+    /// asset, by code.
     private(set) var countrySupport: [String: FundingCountrySupport] = [:]
-    /// The country the core detected, which the country list leads with.
+    /// The country the device is set to, which the country list leads with.
     private(set) var detectedCountry: PaymentCountry?
     private(set) var ask: FundingQuoteAsk?
     /// The core's id for the latest quote request: lists answering an
@@ -67,30 +71,37 @@ final class FundingFlowModel {
     var onHistory: (() -> Void)?
 
     let runtime: FundingRuntime
+    let book: FundingSessionBook
     let branding: FundingProviderBranding
     /// When the core asks every provider again, and the prices on screen
     /// change.
     private(set) var quotesRefreshAt: Date?
     private var startsWhenQuoted = false
     private var quoteTask: Task<Void, Never>?
+    /// The selection the core was last told of.
+    @ObservationIgnored var reportedSelection: FundingSelection?
 
     init(
         context: Context,
         runtime: FundingRuntime,
+        book: FundingSessionBook = .shared,
         branding: FundingProviderBranding
     ) {
         intent = context.intent
         direction = context.direction
         cash = context.cash
         self.runtime = runtime
+        self.book = book
         self.branding = branding
         amountText = context.amount.map { Self.text(for: context.cash.decimal($0)) } ?? ""
 
-        let candidates = runtime.fundingCandidates(intent: context.intent)
+        let candidates = book.options(intent: context.intent)?.candidates ?? []
         self.candidates = candidates
         rail = Self.defaultRail(candidates: candidates, direction: context.direction)
-        loadBrands()
-        detectCountry()
+        detectedCountry = FundingCountries.localeRegion().flatMap { FundingCountries.country(code: $0) }
+        country = detectedCountry
+        loadBrands(candidates.map(\.providerId))
+        reportSelection()
     }
 }
 
@@ -107,7 +118,7 @@ extension FundingFlowModel {
         quoteOrder = []
         bestProviderId = nil
         ask = nil
-        loadCountrySupport()
+        reportSelection()
         amountChanged()
     }
 
@@ -127,11 +138,13 @@ extension FundingFlowModel {
     func chooseNetwork(_ id: String) {
         network = id
         asset = nil
+        reportSelection()
         path.append(.token)
     }
 
     func chooseToken(_ symbol: String) {
         asset = symbol
+        reportSelection()
         requestQuote()
 
         if direction == .in {
@@ -145,6 +158,7 @@ extension FundingFlowModel {
     func chooseCountry(_ newCountry: PaymentCountry) {
         country = newCountry
         path.removeLast()
+        reportSelection()
         requestQuote()
     }
 
@@ -278,6 +292,7 @@ extension FundingFlowModel {
         rail = session.choice?.rail ?? rail
         asset = session.choice?.asset
         chosenProviderId = session.providerId
+        loadBrands([session.providerId].compactMap(\.self))
         hasStarted = true
         refreshSession()
         path = [.progress]
@@ -364,10 +379,25 @@ extension FundingFlowModel {
         direction == .in && rail == .crypto
     }
 
-    /// The core's view of the session moved on: read it again.
+    /// The core pushed the session again: draw what it holds now.
     func refreshSession() {
-        session = runtime.fundingSession(intent: intent)
-        progress = runtime.fundingProgress(intent: intent)
+        session = book.session(intent: intent)
+        progress = book.progress(intent: intent)
+    }
+
+    /// The core pushed what the overlay offers again: its providers, and the
+    /// countries and amounts for the reported selection.
+    func refreshOptions() {
+        guard let options = book.options(intent: intent) else { return }
+
+        candidates = options.candidates
+        countrySupport = Dictionary(
+            options.countries.map { ($0.country.uppercased(), $0.support) }
+        ) { _, latest in latest }
+        limits = options.limits
+        networkLimits = Dictionary(options.networks.map { ($0.network, $0.limits) }) { _, latest in latest }
+        loadBrands(candidates.map(\.providerId))
+        reportSelection()
     }
 
     /// Takes the core's quote list unless it answers an earlier ask. Request
@@ -376,12 +406,10 @@ extension FundingFlowModel {
         guard let latest = quoteRequestId, quotes.requestId >= latest else { return }
 
         quoteRequestId = quotes.requestId
-        cachedLimits = nil
         rows = Dictionary(quotes.rows.map { ($0.providerId, $0.state) }) { _, latest in latest }
         quoteOrder = quotes.rows.map(\.providerId)
         bestProviderId = quotes.best
         quotesRefreshAt = Date(milliseconds: quotes.refreshAtMs)
-        loadCountrySupport()
 
         guard startsWhenQuoted, !isStarting, !hasStarted, !rows.values.contains(where: \.isPending) else { return }
 
@@ -421,18 +449,8 @@ private extension FundingFlowModel {
         }
     }
 
-    /// Starts at the country the core detected, unless the user has picked
-    /// one meanwhile.
-    func detectCountry() {
-        Task { [runtime] in
-            guard let code = await runtime.detectedFundingCountry() else { return }
-            detectedCountry = FundingCountries.country(code: code)
-            if country == nil { country = detectedCountry }
-        }
-    }
-
-    func loadBrands() {
-        for providerId in candidates.map(\.providerId) {
+    func loadBrands(_ providerIds: [String]) {
+        for providerId in providerIds where brands[providerId] == nil {
             Task { [branding] in
                 let brand = await branding.brand(for: providerId)
                 brands[providerId] = brand
@@ -466,22 +484,8 @@ extension FundingFlowModel {
         bestProviderId = nil
         rows = Dictionary(uniqueKeysWithValues: candidates.map { ($0.providerId, .pending) })
         quoteOrder = []
+        reportSelection()
         let requestId = runtime.getFundingQuote(intent: intent, ask: newAsk)
         quoteRequestId = max(quoteRequestId ?? requestId, requestId)
-    }
-
-    /// What the core has learned about each country for this rail and asset.
-    func loadCountrySupport() {
-        guard let asked = askedAsset else {
-            countrySupport = [:]
-            return
-        }
-
-        countrySupport = Dictionary(
-            runtime.fundingCountries(intent: intent, rail: rail, asset: asked).map { (
-                $0.country.uppercased(),
-                $0.support
-            ) }
-        ) { _, latest in latest }
     }
 }

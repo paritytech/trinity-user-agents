@@ -17,14 +17,6 @@ extension FundingFlowModel {
         brands[providerId] ?? .placeholder(for: providerId)
     }
 
-    /// What the core's amount range depends on.
-    struct FundingLimitsKey: Equatable {
-        let rail: FundingRail
-        let asset: String
-        let network: String?
-        let country: String?
-    }
-
     func currentAsk() -> FundingQuoteAsk? {
         guard amount > 0 else { return nil }
 
@@ -79,28 +71,26 @@ extension FundingFlowModel {
         amount > 0 && amountIssue == nil && availableRails.contains(rail)
     }
 
-    /// The range the core says this rail, asset, network and country take
-    /// across every provider, product floor included. Read once per choice
-    /// and again after each quote list, which can teach the core new limits.
+    /// The range the core says the reported selection takes across every
+    /// provider, product floor included.
     var amountLimits: (min: Decimal, max: Decimal?) {
-        let key = FundingLimitsKey(
+        (min: cash.decimal(limits.min) ?? 0, max: cash.decimal(limits.max))
+    }
+
+    /// Tells the core the rail, asset, network and country on screen when
+    /// they changed. The core answers inline with what they offer.
+    func reportSelection() {
+        let selection = FundingSelection(
             rail: rail,
-            asset: askedAsset ?? "",
+            asset: askedAsset,
             network: rail == .crypto ? network : nil,
             country: country?.code
         )
-        if let cached = cachedLimits, cached.key == key { return cached.limits }
+        guard !hasStarted, selection != reportedSelection else { return }
 
-        let limits = runtime.fundingAmountLimits(
-            intent: intent,
-            rail: key.rail,
-            asset: key.asset,
-            network: key.network,
-            country: key.country
-        )
-        let range = (min: cash.decimal(limits.min) ?? 0, max: cash.decimal(limits.max))
-        cachedLimits = (key, range)
-        return range
+        reportedSelection = selection
+        runtime.selectFundingOptions(intent: intent, selection: selection)
+        refreshOptions()
     }
 
     /// The asset an ask on this rail names: the chosen token for crypto,
@@ -229,14 +219,10 @@ extension FundingFlowModel {
         return seen.map(FundingNetwork.init(id:))
     }
 
-    /// The lowest minimum a provider has refused with on this network, in
-    /// the payment country.
+    /// The smallest amount the core says this network takes for the
+    /// reported selection.
     func minimum(network id: String) -> Decimal? {
-        candidates
-            .flatMap(\.limits)
-            .filter { $0.rail == .crypto && $0.network == id && ($0.country == nil || $0.country == country?.code) }
-            .compactMap { cash.decimal($0.min) }
-            .min()
+        cash.decimal(networkLimits[id]?.min)
     }
 
     var tokens: [FundingToken] {

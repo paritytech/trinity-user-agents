@@ -3,7 +3,8 @@ import TrUAPIHost
 
 /// Puts back into the host's history every session the core recorded that
 /// the store lacks, such as after the store was lost. A row the store has
-/// wins. Runs once per launch, and again only if reading the store failed.
+/// wins. Runs once per launch, once the core has sent its history, and again
+/// only if reading the store failed.
 @MainActor
 final class FundingHistoryRebuilder {
     private let store: FundingHistoryStoring

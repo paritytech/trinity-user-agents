@@ -354,9 +354,13 @@ Balance card reach the same overlay: the card opens a session with
 `openFunding(direction:amount:)`, a product with its own Funding request, and
 either way the core calls `presentFunding`.
 
-The core owns the sessions. While `presentFunding` waits, the session is live:
-list its providers with `fundingCandidates(intent:)`, price it with
-`getFundingQuote(intent:ask:)` (the quote list arrives through
+The core owns the sessions and pushes what the host draws; the host reads
+nothing back. Before `presentFunding` is called, `fundingOptionsChanged` carries
+the session's providers. While `presentFunding` waits, the session is live:
+report the user's rail, asset, network and country with
+`selectFundingOptions(intent:selection:)` whenever one changes (the countries
+and amount range for it come back through `fundingOptionsChanged`), price it
+with `getFundingQuote(intent:ask:)` (the quote list arrives through
 `fundingQuotesChanged` with the request id the call returned, `pending` rows
 first, and again at each refresh), hand it to the chosen provider with
 `selectFundingProvider(intent:providerId:quoteId:)`, and only then answer
@@ -364,10 +368,15 @@ first, and again at each refresh), hand it to the chosen provider with
 one of its own screens asks through `presentProviderFrame`, answered `.closed`
 when the screen closed itself and `.dismissed` when the user closed it.
 
-`fundingSessionChanged` carries each session's status and progress, so the
-host keeps the latest progress itself; `fundingSessions()` and
-`fundingSession(intent:)` feed its in-flight and history views. Ended sessions are handed over again on each resume
-until the host records them with `acknowledgeFundingSession(intent:)`.
+`fundingSessionChanged` carries each started session's status, the session as
+the core holds it and its progress, so the host keeps the latest of each for
+its in-flight and history views. Each time funding resumes, every session in
+flight and every ended one the host has not recorded comes through again,
+`fundingHistory` carries the summaries of the recorded ones for rebuilding a
+lost history, and `fundingInProgressChanged` says whether a provider still
+works on any session, again whenever that changes. Ended sessions keep being
+handed over until the host records them with
+`acknowledgeFundingSession(intent:)`.
 `setFundingProviders(_:)` lists the providers the host ships with their Worker
 manifests; amounts cross as decimal strings of CASH units.
 
