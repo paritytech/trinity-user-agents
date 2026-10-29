@@ -1,21 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFile } from "node:fs/promises";
-import {
-  type DotnsTransport,
-  DotnsRevert,
-  decodeDotnsRecord,
-  encodeDotnsRecord,
-  readDotns,
-} from "./dotns.js";
+import { decodeDotnsRecord, encodeDotnsRecord, readDotns } from "./dotns.js";
 import { type Fetch, isTrinityStackError, parse } from "./index.js";
-
-const VECTORS = new URL(
-  "../../../../rust/crates/trinity-stack/vectors/",
-  import.meta.url,
-);
-const cases = JSON.parse(
-  await readFile(new URL("cases.json", VECTORS), "utf8"),
-);
+import { type DotnsChain, cases, transportOf } from "./test-fixtures.js";
 
 const DISPATCHER = `0x${"d1".repeat(20)}`;
 const REGISTRY = `0x${"ee".repeat(20)}`;
@@ -64,32 +50,10 @@ function descriptor(
   return parse(new TextEncoder().encode(JSON.stringify(document))).descriptor;
 }
 
-/** The answers a chain gives, keyed `to:data`; null is a revert. */
-type Chain = {
-  storageKey: string;
-  storage: string | null;
-  calls: Record<string, string | null>;
-};
-
 /** A transport over `chain` that records the block of every read. */
-function over(chain: Chain, at = AT) {
+function over(chain: DotnsChain) {
   const blocks: unknown[] = [];
-  const transport: DotnsTransport = {
-    at: async () => at,
-    storage: async (key, block) => {
-      if (key !== chain.storageKey) throw new Error(`unexpected key ${key}`);
-      blocks.push(block);
-      return chain.storage;
-    },
-    call: async (to, data, block) => {
-      blocks.push(block);
-      const answer = chain.calls[`${to}:${data}`];
-      if (answer === undefined)
-        throw new Error(`unexpected call ${to}:${data}`);
-      if (answer === null) throw new DotnsRevert("execution reverted");
-      return answer;
-    },
-  };
+  const transport = transportOf(chain, { onRead: (at) => blocks.push(at) });
   return { transport, blocks };
 }
 
@@ -97,7 +61,7 @@ function over(chain: Chain, at = AT) {
 describe("dotNS conformance vectors", () => {
   for (const vector of cases.dotns) {
     test(vector.name, async () => {
-      const { transport } = over(vector, vector.at);
+      const transport = transportOf(vector);
       let outcome: unknown;
       try {
         outcome = await readDotns(descriptor(vector.generation), { transport });
@@ -163,7 +127,11 @@ describe("readDotns", () => {
 
 describe("readDotns over the stack's own endpoints", () => {
   let server: ReturnType<typeof Bun.serve> | undefined;
-  afterEach(() => server?.stop(true));
+  let connections = 0;
+  afterEach(() => {
+    server?.stop(true);
+    connections = 0;
+  });
 
   /** An Asset Hub RPC that answers each request with `messages(request)`. */
   function assetHub(
@@ -180,6 +148,9 @@ describe("readDotns over the stack's own endpoints", () => {
           ? undefined
           : new Response(null, { status: 400 }),
       websocket: {
+        open() {
+          connections++;
+        },
         message(socket, message) {
           for (const reply of messages(JSON.parse(String(message))))
             socket.send(reply);
@@ -218,7 +189,7 @@ describe("readDotns over the stack's own endpoints", () => {
       );
     };
 
-  test("reads storage and calls at the finalized block", async () => {
+  test("reads storage and calls at the finalized block, over one connection", async () => {
     const storage: unknown[][] = [];
     const blocks: unknown[] = [];
     const rpc = assetHub(chainAt(DISPATCHER, storage));
@@ -233,6 +204,7 @@ describe("readDotns over the stack's own endpoints", () => {
       ],
     ]);
     expect(new Set(blocks)).toEqual(new Set(["0x2c71c"]));
+    expect(connections).toBe(1);
   });
 
   test("a reply that is not JSON fails the read instead of hanging", async () => {

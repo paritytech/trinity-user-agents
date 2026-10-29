@@ -35,31 +35,41 @@ export async function readDotns(
     timeoutMs?: number;
   } = {},
 ): Promise<DotnsRecord> {
-  const transport = options.transport ?? defaultTransport(descriptor, options);
-  const at = await transport.at();
-  const lookup = new wasm.DotnsLookup(descriptor.generation, at);
+  let transport = options.transport;
+  let close = () => {};
+  if (!transport) {
+    const own = defaultTransport(descriptor, options);
+    transport = own;
+    close = own.close;
+  }
   try {
-    for (;;) {
-      const step = lookup.next();
-      if ("done" in step) return step.done;
-      if ("storage" in step)
-        lookup.storage(
-          (await transport.storage(step.storage, at)) ?? undefined,
-        );
-      else
-        lookup.answer(
-          await Promise.all(
-            step.calls.map(({ to, input }) =>
-              transport.call(to, input, at).catch((error: unknown) => {
-                if (error instanceof DotnsRevert) return null;
-                throw error;
-              }),
+    const at = await transport.at();
+    const lookup = new wasm.DotnsLookup(descriptor.generation, at);
+    try {
+      for (;;) {
+        const step = lookup.next();
+        if ("done" in step) return step.done;
+        if ("storage" in step)
+          lookup.storage(
+            (await transport.storage(step.storage, at)) ?? undefined,
+          );
+        else
+          lookup.answer(
+            await Promise.all(
+              step.calls.map(({ to, input }) =>
+                transport.call(to, input, at).catch((error: unknown) => {
+                  if (error instanceof DotnsRevert) return null;
+                  throw error;
+                }),
+              ),
             ),
-          ),
-        );
+          );
+      }
+    } finally {
+      lookup.free();
     }
   } finally {
-    lookup.free();
+    close();
   }
 }
 
@@ -79,11 +89,14 @@ type RpcReply = {
   error?: { code?: number; message?: string };
 };
 
-/** Asset Hub's RPC for the block and storage, and the stack's `eth-rpc` for calls. */
+/**
+ * Asset Hub's RPC for the block and storage, over one WebSocket for the lookup, and the stack's
+ * `eth-rpc` for calls.
+ */
 function defaultTransport(
   descriptor: Descriptor,
   options: { fetch?: Fetch; timeoutMs?: number },
-): DotnsTransport {
+): DotnsTransport & { close(): void } {
   const rpc =
     descriptor.chains.find((chain) => chain.role === "AssetHub")?.rpc ?? [];
   const ethRpc =
@@ -95,11 +108,10 @@ function defaultTransport(
     );
   const fetcher = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const askRpc = failover(rpc);
   const askEthRpc = failover(ethRpc);
-  const request = (method: string, params: unknown[]) =>
-    askRpc((url) => webSocketRequest(url, method, params, timeoutMs));
+  const { request, close } = webSocketSession(rpc, timeoutMs);
   return {
+    close,
     at: async () => {
       const hash = await request("chain_getFinalizedHead", []);
       const header = (await request("chain_getHeader", [hash])) as {
@@ -189,42 +201,77 @@ async function ethCall(
   return reply.result;
 }
 
-/** Sends one JSON-RPC request and settles on its reply, ignoring any other message. */
-function webSocketRequest(
-  url: string,
-  method: string,
-  params: unknown[],
-  timeoutMs: number,
-): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    const socket = new WebSocket(url);
-    let settled = false;
-    const settle = (finish: () => void) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      socket.close();
-      finish();
-    };
-    const fail = (reason: string) =>
-      settle(() => reject(new Error(`${method} on ${url} ${reason}`)));
-    const timer = setTimeout(() => fail("timed out"), timeoutMs);
-    socket.onopen = () =>
-      socket.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }));
-    socket.onmessage = (event) => {
-      let reply: RpcReply | null;
-      try {
-        reply = JSON.parse(String(event.data));
-      } catch {
-        return fail("answered with something other than JSON");
-      }
-      if (reply?.id !== 1) return;
-      const { result, error } = reply;
-      if (error) fail(`failed: ${error.message}`);
-      else if (result === undefined) fail("answered without a result");
-      else settle(() => resolve(result));
-    };
-    socket.onerror = () => fail("could not connect");
-    socket.onclose = () => fail("closed before answering");
-  });
+/**
+ * One WebSocket, to the first of `urls` that opens, for every JSON-RPC request of a lookup. A
+ * reply settles the request of its `id`; any other message is ignored.
+ */
+function webSocketSession(urls: string[], timeoutMs: number) {
+  /** Settles a waiting request with its reply, or the reason it has none. */
+  const waiting = new Map<number, (reply: RpcReply | string) => void>();
+  const failAll = (reason: string) => {
+    for (const settle of waiting.values()) settle(reason);
+    waiting.clear();
+  };
+  let lastId = 0;
+  let connecting: Promise<{ socket: WebSocket; url: string }> | undefined;
+  const open = (url: string) =>
+    new Promise<{ socket: WebSocket; url: string }>((resolve, reject) => {
+      const socket = new WebSocket(url);
+      const timer = setTimeout(() => {
+        socket.close();
+        reject(new Error(`${url} timed out`));
+      }, timeoutMs);
+      socket.onopen = () => {
+        clearTimeout(timer);
+        resolve({ socket, url });
+      };
+      socket.onerror = () => {
+        clearTimeout(timer);
+        reject(new Error(`could not connect to ${url}`));
+      };
+      socket.onclose = () => failAll("closed before answering");
+      socket.onmessage = (event) => {
+        let reply: RpcReply | null;
+        try {
+          reply = JSON.parse(String(event.data));
+        } catch {
+          return failAll("answered with something other than JSON");
+        }
+        const settle = waiting.get(reply?.id as number);
+        if (!settle || !reply) return;
+        waiting.delete(reply.id as number);
+        settle(reply);
+      };
+    });
+  return {
+    async request(method: string, params: unknown[]): Promise<unknown> {
+      connecting ??= failover(urls)(open);
+      const { socket, url } = await connecting;
+      const id = ++lastId;
+      const reply = await new Promise<RpcReply | string>((resolve) => {
+        const timer = setTimeout(() => {
+          waiting.delete(id);
+          resolve("timed out");
+        }, timeoutMs);
+        waiting.set(id, (reply) => {
+          clearTimeout(timer);
+          resolve(reply);
+        });
+        socket.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
+      });
+      if (typeof reply === "string")
+        throw new Error(`${method} on ${url} ${reply}`);
+      if (reply.error)
+        throw new Error(`${method} on ${url} failed: ${reply.error.message}`);
+      if (reply.result === undefined)
+        throw new Error(`${method} on ${url} answered without a result`);
+      return reply.result;
+    },
+    close() {
+      connecting?.then(
+        ({ socket }) => socket.close(),
+        () => {},
+      );
+    },
+  };
 }
