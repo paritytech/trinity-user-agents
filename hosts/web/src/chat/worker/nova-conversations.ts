@@ -11,6 +11,7 @@ import type {
   ConversationEngine,
   ConversationMessage,
   MessageState,
+  StartTarget,
 } from "../draft/conversations.js";
 
 /**
@@ -161,8 +162,11 @@ export function novaConversations(
   const starting = new Map<string, Promise<string>>();
   const starter =
     (resolve: (reference: string) => Promise<Uint8Array>) =>
-    async (reference: string, welcome: string): Promise<string> => {
-      const account = bytesToHex(await resolve(reference));
+    async (target: StartTarget, welcome: string): Promise<string> => {
+      // The Nova wire addresses a person by account, which a contact handle does not name.
+      if (!("reference" in target))
+        throw new Error("This chat starts conversations by reference only.");
+      const account = bytesToHex(await resolve(target.reference));
       const pending = starting.get(account);
       if (pending !== undefined) return pending;
       const run = (async () => {

@@ -117,6 +117,24 @@ export interface ProductWorkersDeps {
     connect(productId: string, port: MessagePort): void;
     disconnect(productId: string): void;
   };
+  /**
+   * Where a worker's frame hands its port for the proposed host request
+   * service (`src/invitations/contract.ts`), which decides whether to serve
+   * it. The link ends when the worker stops.
+   */
+  invitations?: {
+    connect(productId: string, port: MessagePort): void;
+    disconnect(productId: string): void;
+  };
+  /**
+   * Where a worker's frame hands its port for the draft topic relay
+   * (`src/chat/draft/topic-relay.ts`), which decides whether to serve it.
+   * The link ends when the worker stops.
+   */
+  topicRelay?: {
+    connect(productId: string, port: MessagePort): void;
+    disconnect(productId: string): void;
+  };
   observer?: WorkerObserver;
 }
 
@@ -452,6 +470,22 @@ export class ProductWorkers {
                 },
               }
             : {}),
+          ...(this.deps.invitations === undefined
+            ? {}
+            : {
+                onInvitationsPort: (port: MessagePort) => {
+                  if (current()) this.deps.invitations?.connect(name, port);
+                  else port.close();
+                },
+              }),
+          ...(this.deps.topicRelay === undefined
+            ? {}
+            : {
+                onTopicRelayPort: (port: MessagePort) => {
+                  if (current()) this.deps.topicRelay?.connect(name, port);
+                  else port.close();
+                },
+              }),
           ...(this.deps.observer === undefined
             ? {}
             : {
@@ -562,6 +596,8 @@ export class ProductWorkers {
     if (running === undefined) return;
     this.deps.chatV2?.disconnect(name);
     this.deps.novaIdentity?.disconnect(name);
+    this.deps.invitations?.disconnect(name);
+    this.deps.topicRelay?.disconnect(name);
     if (running.handle !== null) {
       this.deps.runtime()?.releaseWorker(name);
       running.handle.dispose();

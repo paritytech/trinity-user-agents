@@ -17,7 +17,8 @@ import {
  * One session (wallet, network and identity) has: the host's Nova chat, one
  * provider per product whose worker is listed or has rooms, and, when the
  * host runs the Chat Extension v2 draft bridge, one chat product provider per
- * listed worker. All of them run for the session, whichever screen or conversation is in front, and all of them are
+ * listed worker. A session with no wallet keys ({@link ProductsOnlySession})
+ * has the products' providers only. All of them run for the session, whichever screen or conversation is in front, and all of them are
  * disposed when the session ends or changes, so nothing one session started
  * answers into the next.
  */
@@ -58,11 +59,27 @@ export interface ChatInboxDeps {
   hostChat?(): boolean;
 }
 
-const sessionKey = (session: ChatSession): string =>
-  `${session.network}:${session.walletId}:${session.identityAccountId ?? ""}:${session.chatPublicKey ?? ""}`;
+/**
+ * A session with no wallet keys, such as a test user of the invitation demo:
+ * it has the chat products' providers and no Nova chat.
+ */
+export interface ProductsOnlySession {
+  walletId: string;
+  network: string;
+}
+
+export type InboxSession = ChatSession | ProductsOnlySession;
+
+const hasWallet = (session: InboxSession): session is ChatSession =>
+  "entropy" in session;
+
+const sessionKey = (session: InboxSession): string =>
+  hasWallet(session)
+    ? `${session.network}:${session.walletId}:${session.identityAccountId ?? ""}:${session.chatPublicKey ?? ""}`
+    : `${session.network}:${session.walletId}:products-only`;
 
 export class ChatInbox implements ChatInboxView {
-  private session: ChatSession | null = null;
+  private session: InboxSession | null = null;
   private key: string | null = null;
   private refusal: string | null = null;
   private nova: ChatProvider | null = null;
@@ -123,7 +140,7 @@ export class ChatInbox implements ChatInboxView {
   }
 
   /** Follow the signed-in session. A different wallet, network or identity ends every provider. */
-  setSession(session: ChatSession | null): void {
+  setSession(session: InboxSession | null): void {
     const key = session === null ? null : sessionKey(session);
     this.session = session;
     if (key === this.key) return;
@@ -142,8 +159,8 @@ export class ChatInbox implements ChatInboxView {
     this.emit({ type: "session" });
   }
 
-  private startHostChat(session: ChatSession): void {
-    if (this.deps.hostChat?.() === false) return;
+  private startHostChat(session: InboxSession): void {
+    if (!hasWallet(session) || this.deps.hostChat?.() === false) return;
     const nova = startNovaChat(session, this.deps);
     if (typeof nova === "string") this.refusal = nova;
     else this.nova = this.add(nova);
@@ -155,7 +172,10 @@ export class ChatInbox implements ChatInboxView {
    */
   syncHostChat(): void {
     const session = this.session;
-    const wanted = session !== null && this.deps.hostChat?.() !== false;
+    const wanted =
+      session !== null &&
+      hasWallet(session) &&
+      this.deps.hostChat?.() !== false;
     const running = this.nova !== null || this.refusal !== null;
     if (wanted === running) return;
     if (this.nova !== null) this.remove(this.nova);

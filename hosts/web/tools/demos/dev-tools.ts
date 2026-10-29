@@ -1,9 +1,19 @@
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
+import type { ContactHandle } from "@parity/truapi";
 import {
+  CONTACT_CHAT_PATH,
   EXAMPLE_CHAT_PATH,
   type DemoWorkerAnswer,
 } from "./local-demo-route.js";
 import type { ChatContact } from "../../src/chat/provider.js";
+import type {
+  ChatV2ProviderOptions,
+  HandleContacts,
+} from "../../src/chat/draft/provider.js";
+import {
+  parseWorkerManifest,
+  type ResolvedWorker,
+} from "../../src/products/worker-manifest.js";
 import type { FrameTap } from "../../src/products/tap.js";
 import {
   InvitationService,
@@ -30,12 +40,14 @@ import {
   publicIdentity,
 } from "../../fixtures/invitations/fixture-identity.js";
 import { LocalDelivery } from "../../fixtures/invitations/local-delivery.js";
+import { LocalTopics } from "../../fixtures/invitations/local-topics.js";
 import { pageStore } from "../../fixtures/invitations/shared-store.js";
 import * as samples from "../../fixtures/notifications/sample-notifications.js";
 import {
   TEST_USERS,
   chatContactsOf,
   fixtureIdentity,
+  personOf,
   setTabTestUser,
   tabTestUser,
   testUserEntropy,
@@ -59,9 +71,19 @@ import {
  * simulated delivery. The core signs the demo user in with its public test
  * phrase under a storage scope of its own, so products get a real session,
  * real handles from `contacts.pick` and real prompts. None of the wallet
- * session's services start, so fixture contacts never reach chat, workers or
- * a transaction. Example Chat, the demo's product, opens only when asked:
- * from More, or to accept an invitation. Its Close ends it.
+ * session's services start: no Nova chat, Pocket or wallet workers, so
+ * fixture contacts never reach a wallet's chat or a transaction it signs.
+ *
+ * The demo has two products, each with its own request service:
+ *
+ * - Example Chat, an app, opens only when asked: from More, or to accept an
+ *   invitation. Its Close ends it.
+ * - Contact Chat (`fixtures/products/contact-chat/`), a chat worker, runs
+ *   for the test user as an ordinary product worker. The host's Chat shows
+ *   its conversations and names each person from the contact handle the
+ *   product holds, through the fixture contacts; the product never gets a
+ *   name. Its text goes on conversation topics through the local simulated
+ *   topics (`fixtures/invitations/local-topics.ts`).
  */
 
 export interface DevToolsDeps {
@@ -85,7 +107,15 @@ export interface DevToolsDeps {
   showProduct(): void;
   /** The host's contact picker, the one `contacts.pick` opens. */
   pickContact: PickContact;
+  /** Bring Chat to the front, at Contact Chat's request. */
+  showChat(): void;
   log(line: string): void;
+}
+
+/** What the host lends a worker frame of one product over one port. */
+export interface WorkerPortService {
+  connect(productId: string, port: MessagePort): void;
+  disconnect(productId: string): void;
 }
 
 export interface DevSession {
@@ -99,6 +129,8 @@ export interface DevSession {
   useDemo(id: string | null): void;
   /** The Notifications scope of the test user, or null. */
   notificationsScope: string | null;
+  /** The host storage scope of the test user's session, its workers' too, or null. */
+  scope: string | null;
   /** The test user's contacts, for the host's contact picker, or null. */
   contacts: ChatContact[] | null;
   /** Where the test user's picker finds people by username: the other test users, or null. */
@@ -112,12 +144,32 @@ export interface DevSession {
   /** Close Example Chat: its frame ends and it stops taking invitations until it opens again. */
   closeExampleChat(): void;
   showProduct(visible: boolean): void;
+  /** The workers the test user runs: Contact Chat. Empty outside the demo. */
+  workerNames(): string[];
+  /** Whether `name` is a worker this module resolves. */
+  resolvesWorker(name: string): boolean;
+  /** Contact Chat's worker, as the dev server describes the archive it built. */
+  resolveWorker(): Promise<ResolvedWorker>;
+  /** Whether `productId` may give its rooms contacts: Contact Chat, for a test user. */
+  isContactChat(productId: string): boolean;
+  /** What the host lends Contact Chat's chat provider, or null for another product. */
+  chatOptions(productId: string): ChatV2ProviderOptions | null;
+  /** The request service, for Contact Chat's worker frame only. */
+  requests: WorkerPortService;
+  /** The local simulated topics, for Contact Chat's worker frame only. */
+  topics: WorkerPortService;
 }
 
 /** Example Chat's product id and name on a network. */
 export const exampleChat = (networkSuffix: string): Product => ({
   id: `example-chat.${networkSuffix}`,
   name: "Example Chat",
+});
+
+/** Contact Chat's product id and name on a network. */
+export const contactChat = (networkSuffix: string): Product => ({
+  id: `contact-chat.${networkSuffix}`,
+  name: "Contact Chat",
 });
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -191,6 +243,7 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
       testUser === null
         ? null
         : testUserKey(deps.network.id, testUser.id, "notifications"),
+    scope: testUser === null ? null : testUserScope(testUser),
     contacts: testUser === null ? null : chatContactsOf(testUser),
     usernames:
       testUser === null
@@ -206,10 +259,60 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
     exampleChatOpen: () => session?.isOpen() ?? false,
     closeExampleChat: () => session?.close(),
     showProduct: (visible) => session?.show(visible),
+    workerNames: () => (session === null ? [] : [session.chatProduct.id]),
+    resolvesWorker: (name) => session?.chatProduct.id === name,
+    resolveWorker: async () => {
+      const response = await fetch(`${deps.base}${CONTACT_CHAT_PATH}`, {
+        cache: "no-store",
+      });
+      if (!response.ok)
+        throw new Error(
+          `The dev server did not build Contact Chat: ${await response.text()}`,
+        );
+      const answer = (await response.json()) as DemoWorkerAnswer;
+      return {
+        record: answer.record,
+        cid: answer.cid,
+        kind: answer.kind,
+        manifest: parseWorkerManifest(answer.manifest),
+        gateway: window.location.origin,
+      };
+    },
+    isContactChat: (productId) => session?.chatProduct.id === productId,
+    chatOptions: (productId) =>
+      session?.chatProduct.id === productId ? session.chatOptions : null,
+    requests: {
+      connect: (productId, port) =>
+        session?.chatProduct.id === productId
+          ? session.attachChat(port)
+          : port.close(),
+      disconnect: (productId) => {
+        if (session?.chatProduct.id === productId) session.detachChat();
+      },
+    },
+    topics: {
+      connect: (productId, port) =>
+        session?.chatProduct.id === productId
+          ? session.serveTopics(port)
+          : port.close(),
+      disconnect: (productId) => {
+        if (session?.chatProduct.id === productId) session.stopTopics();
+      },
+    },
   };
 }
 
 interface TestUserSession {
+  /** Contact Chat, which runs as the test user's worker. */
+  chatProduct: Product;
+  /** What the host lends Contact Chat's chat provider: names by handle, and starts by handle. */
+  chatOptions: ChatV2ProviderOptions;
+  /** Serve Contact Chat's request service port, in place of any before it. */
+  attachChat(port: MessagePort): void;
+  detachChat(): void;
+  /** Serve Contact Chat's topic relay port, in place of any before it. */
+  serveTopics(port: MessagePort): void;
+  stopTopics(): void;
   notificationActions: NotificationActions;
   start(runtime: WorkerPairingHostRuntime): Promise<void>;
   show(visible: boolean): void;
@@ -238,14 +341,9 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
   };
   const credential = fixtureIdentity(self);
   deps.notifications.setScope(keys.notifications);
-  const service = new InvitationService({
-    product,
-    auth: new FixtureIdentityAuth(credential, cryptoRandom),
-    contacts: new FixtureContacts(self, deps.pickContact, deps.log),
-    notifications: deps.notifications,
-    storage: localStorage,
-    keys,
-    delivery: new LocalDelivery({
+  const contacts = new FixtureContacts(self, deps.pickContact, deps.log);
+  const delivery = () =>
+    new LocalDelivery({
       self: publicIdentity(credential).agreementPublic,
       network: deps.network.id,
       store: pageStore(),
@@ -253,7 +351,15 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
       schedule,
       random: cryptoRandom,
       log: deps.log,
-    }),
+    });
+  const service = new InvitationService({
+    product,
+    auth: new FixtureIdentityAuth(credential, cryptoRandom),
+    contacts,
+    notifications: deps.notifications,
+    storage: localStorage,
+    keys,
+    delivery: delivery(),
     now,
     schedule,
     random: cryptoRandom,
@@ -261,6 +367,63 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
     showProduct: () => deps.showProduct(),
     log: deps.log,
   });
+
+  // Contact Chat: its own request service, over the same fixture identity,
+  // contacts and delivery, and its own lists.
+  const chatProduct = contactChat(deps.network.networkSuffix);
+  const chatKeys = {
+    sent: testUserKey(deps.network.id, self.id, "contact-chat-outbox"),
+    received: testUserKey(deps.network.id, self.id, "contact-chat-received"),
+  };
+  const chatService = new InvitationService({
+    product: chatProduct,
+    auth: new FixtureIdentityAuth(credential, cryptoRandom),
+    contacts,
+    notifications: deps.notifications,
+    storage: localStorage,
+    keys: chatKeys,
+    delivery: delivery(),
+    now,
+    schedule,
+    random: cryptoRandom,
+    confirmSend,
+    showProduct: () => deps.showChat(),
+    log: deps.log,
+  });
+  const topics = new LocalTopics({
+    network: deps.network.id,
+    store: pageStore(),
+    now,
+  });
+  let stopTopics = () => {};
+  const others = TEST_USERS.filter((user) => user.id !== self.id);
+  const handleContacts: HandleContacts = {
+    resolve: (handle: ContactHandle) => {
+      const person = contacts.resolve(handle);
+      const user = others.find((other) => other.id === person?.id);
+      return person === null || user === undefined
+        ? null
+        : { account: user.account, name: person.name, seed: person.handle };
+    },
+    handleFor: (account) => {
+      const user = others.find(
+        (other) => other.account.toLowerCase() === account.toLowerCase(),
+      );
+      return user === undefined ? null : contacts.handleFor(personOf(user));
+    },
+  };
+  const chatOptions: ChatV2ProviderOptions = {
+    contacts: handleContacts,
+    start: {
+      target: (account) => {
+        const handle = handleContacts.handleFor(account);
+        if (handle === null)
+          throw new Error("Contact Chat cannot reach this person.");
+        return { handle };
+      },
+      blocked: () => null,
+    },
+  };
 
   const host = el("section", "test-product");
   host.setAttribute("aria-label", product.name);
@@ -361,21 +524,51 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
   window.addEventListener("storage", (event) => {
     if (event.key === null || Object.values(keys).includes(event.key))
       service.reload();
+    if (event.key === null || Object.values(chatKeys).includes(event.key))
+      chatService.reload();
   });
   window.addEventListener("pagehide", () => {
     service.stop();
+    chatService.stop();
+    stopTopics();
     open?.dispose();
   });
 
   return {
+    chatProduct,
+    chatOptions,
+    attachChat: (port) => chatService.attachProduct(productPort(port)),
+    detachChat: () => chatService.detachProduct(),
+    serveTopics: (port) => {
+      stopTopics();
+      stopTopics = topics.serve(port);
+    },
+    stopTopics: () => {
+      stopTopics();
+      stopTopics = () => {};
+    },
     notificationActions: {
-      canAccept: (item) => service.owns(item.id),
-      accept: (item) => ensureOpen().then(() => service.requestAccept(item.id)),
-      // Example Chat lists what the user accepted; it has no chat conversation to open.
-      destination: (item) => (service.owns(item.id) ? product.name : null),
-      // An accepted row opens Example Chat, as its Accept did.
+      canAccept: (item) => service.owns(item.id) || chatService.owns(item.id),
+      // Contact Chat runs as a worker: its Accept needs no frame opened.
+      accept: (item) =>
+        chatService.owns(item.id)
+          ? chatService.requestAccept(item.id)
+          : ensureOpen().then(() => service.requestAccept(item.id)),
+      // Example Chat lists what the user accepted; Contact Chat's conversation is in Chat.
+      destination: (item) =>
+        chatService.owns(item.id)
+          ? "Chat"
+          : service.owns(item.id)
+            ? product.name
+            : null,
+      // An accepted row opens Chat for Contact Chat, and Example Chat as its Accept did.
       open: (item) => {
-        if (item.state.tag !== "accepted" || !service.owns(item.id)) return;
+        if (item.state.tag !== "accepted") return;
+        if (chatService.owns(item.id)) {
+          chatService.requestOpen(item.id);
+          return;
+        }
+        if (!service.owns(item.id)) return;
         void ensureOpen().then(
           () => service.requestOpen(item.id),
           (error: unknown) =>
@@ -389,6 +582,7 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
       await current.activateLocalSession(testUserEntropy(self));
       deps.log(`Signed in to test account ${self.name}.`);
       service.start();
+      chatService.start();
     },
     show: (visible) => {
       host.hidden = !visible;
@@ -405,7 +599,9 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
     onChange: (listener) => listeners.push(listener),
     reset: () => {
       service.stop();
-      for (const key of Object.values(keys)) localStorage.removeItem(key);
+      chatService.stop();
+      for (const key of [...Object.values(keys), ...Object.values(chatKeys)])
+        localStorage.removeItem(key);
       for (const part of ["outbox", "received"] as const)
         localStorage.removeItem(testUserKey(deps.network.id, self.id, part, 1));
     },

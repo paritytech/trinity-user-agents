@@ -231,4 +231,39 @@ export class SessionMembership {
     }
     this.members.engineSwitch()?.render();
   }
+
+  /**
+   * Hand a session with no wallet keys, such as a test user of the
+   * invitation demo, to what belongs to it: its product workers and their
+   * chat providers. The Nova chat, Pocket and TrUAPI product rooms stay off,
+   * and the Inbox reads the scope it reads while signed out. Null ends it,
+   * as {@link sync} with none does.
+   */
+  syncProductsOnly(walletId: string | null): void {
+    if (walletId === null) return this.sync(null);
+    const {
+      network,
+      pocketFaces,
+      productWorkers,
+      productChat,
+      notifications,
+      localChatDemo,
+      novaWorkerMode,
+      hostNames,
+      chatV2,
+      chatInbox,
+    } = this.members;
+    pocketFaces.setSession(null);
+    productChat.setScope(null);
+    notifications?.setScope(this.members.signedOutNotifications);
+    localChatDemo?.stop();
+    novaWorkerMode?.setSession(null);
+    hostNames.setSession(null);
+    const scope = `${network.id}:${walletId}:products-only`;
+    if (scope !== this.chatV2Scope) chatV2.reset();
+    this.chatV2Scope = scope;
+    productWorkers.setSession({ walletId, network });
+    chatInbox.setSession({ walletId, network: network.id });
+    this.members.engineSwitch()?.render();
+  }
 }

@@ -114,9 +114,16 @@ export function setTabTestUser(storage: Storage, id: string | null): void {
 /**
  * The version of each list a test user keeps. The sent and received lists
  * moved to v2 with the host-owned request flow; v1 lists are left as they
- * are and no longer read.
+ * are and no longer read. Contact Chat's requests are listed apart from
+ * Example Chat's.
  */
-const PART_VERSION = { notifications: 1, outbox: 2, received: 2 } as const;
+const PART_VERSION = {
+  notifications: 1,
+  outbox: 2,
+  received: 2,
+  "contact-chat-outbox": 1,
+  "contact-chat-received": 1,
+} as const;
 
 /** Where a test user's data is kept, per network. */
 export const testUserKey = (

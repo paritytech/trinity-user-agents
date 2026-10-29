@@ -563,12 +563,20 @@ describe("invitations between test users", () => {
         await eventually(() => badge(page), 4);
 
         // The invitation demo is chosen in More and is not an account: its
-        // made-up Bob gets no chat or workers, and none of the wallet's Inbox.
+        // made-up Bob gets no Nova chat and none of the wallet's workers or
+        // Inbox. Chat shows only the demo's own chat worker, Contact Chat.
         await actAs(page, "bob");
         await signedIn("Signed in as Bob (invitation demo)");
         expect(await marker.innerText()).toBe("Invitation demo · Bob");
-        expect(await chatNote()).toBe("Chat is off in the invitation demo");
-        expect(await workerStatus()).toContain("Sign in with a wallet");
+        expect(await chatNote()).not.toBe("Sign in to chat");
+        expect(await page.locator('[data-conversation^="nova/"]').count()).toBe(
+          0,
+        );
+        const demoWorkers = await workerStatus();
+        expect(demoWorkers).not.toContain("Sign in with a wallet");
+        expect(await page.locator("#worker-list").innerText()).toContain(
+          "contact-chat.paseo",
+        );
         expect(await badge(page)).toBe(0);
         await setMenu(page, true);
         expect(

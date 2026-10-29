@@ -1,5 +1,7 @@
+import type { ContactHandle } from "@parity/truapi";
 import type { HexString } from "@parity/truapi/scale";
 import type {
+  ChatParticipantEntry,
   ChatRoomContact,
   ChatMessage,
   ChatMessageBody,
@@ -55,15 +57,14 @@ export interface Participant {
   name: string;
   /** Their public account, when the engine's protocol addresses people by one. The host names them from it. */
   account?: string;
+  /** The contact handle the host gave the engine for them, when it knows them by none of their own. The host names them from it. */
+  handle?: ContactHandle;
 }
 
 /** Where a conversation with one person stands; the names of the v2 draft's contact states. */
 export type ContactState =
-  | "Outgoing"
-  | "Incoming"
-  | "Established"
-  | "Blocked"
-  | "PeerLeft";
+  /** No request is open: the user may ask them again. */
+  "Invite" | "Outgoing" | "Incoming" | "Established" | "Blocked" | "PeerLeft";
 
 export interface Conversation {
   id: string;
@@ -75,10 +76,18 @@ export interface Conversation {
   /**
    * The one person a conversation is with, for an engine that has
    * person-to-person conversations. The host names and draws them from the
-   * account; the engine's title is then only a fallback.
+   * account or the contact handle; the engine's title is then only a
+   * fallback.
    */
-  contact?: { account: string; state: ContactState };
+  contact?: ConversationContact;
 }
+
+export type ConversationContact =
+  | { account: string; state: ContactState }
+  | { handle: ContactHandle; state: ContactState };
+
+/** Whom the host asks the engine to start a conversation with: see {@link ConversationEngine.start}. */
+export type StartTarget = { reference: string } | { handle: ContactHandle };
 
 export interface ConversationEngine {
   conversations(): Conversation[];
@@ -89,13 +98,14 @@ export interface ConversationEngine {
   /** Send a failed message again. */
   retry(conversationId: string, messageId: string): Promise<void>;
   /**
-   * Start a conversation with the person `contact` refers to: an opaque
-   * reference the host made when the user chose someone. What the engine
-   * does to reach them is its own: resolve the reference with a service of
-   * the host, and send a request. Resolves to the conversation's id.
+   * Start a conversation with the person the user chose in the host: an
+   * opaque reference the host made for this start, or the contact handle the
+   * host knows them by. What the engine does to reach them is its own, such
+   * as resolving the reference with a service of the host, or asking the
+   * host to send a request to the handle. Resolves to the conversation's id.
    * Absent: the engine starts no conversations.
    */
-  start?(contact: string, welcome: string): Promise<string>;
+  start?(target: StartTarget, welcome: string): Promise<string>;
   onChange(listener: () => void): () => void;
 }
 
@@ -149,13 +159,10 @@ function toV2(message: ConversationMessage): ChatMessage {
   };
 }
 
-const contactOf = (contact: {
-  account: string;
-  state: ContactState;
-}): ChatRoomContact => ({
-  account: contact.account as HexString,
-  state: contact.state,
-});
+const contactOf = (contact: ConversationContact): ChatRoomContact =>
+  "handle" in contact
+    ? { handle: contact.handle, state: contact.state }
+    : { account: contact.account as HexString, state: contact.state };
 
 const json = (value: unknown) =>
   JSON.stringify(value, (_key, entry) =>
@@ -409,18 +416,17 @@ export function serveConversations(
     const conversation = find(roomId);
     if (conversation === undefined)
       return interrupt({ tag: "Domain", value: { tag: "UnknownRoom" } });
-    const entry = (participant: Participant) => ({
+    const entry = (participant: Participant): ChatParticipantEntry => ({
       participantId: participant.id,
       participant:
-        participant.account === undefined
-          ? {
-              tag: "Custom" as const,
-              value: { nickname: participant.name },
-            }
-          : {
-              tag: "LitePerson" as const,
-              value: { account: participant.account as HexString },
-            },
+        participant.handle !== undefined
+          ? { tag: "Contact", value: { handle: participant.handle } }
+          : participant.account === undefined
+            ? { tag: "Custom", value: { nickname: participant.name } }
+            : {
+                tag: "LitePerson",
+                value: { account: participant.account as HexString },
+              },
     });
     const people = conversation.participants;
     if (query.tag === "Count")
@@ -443,12 +449,16 @@ export function serveConversations(
     value: { tag: "Rejected" as const, value: { reason } },
   });
 
-  const start = engine.start;
-  if (start !== undefined)
-    chat.onStartConversation(async ({ contact, welcome }, send, interrupt) => {
+  if (engine.start !== undefined)
+    chat.onStartConversation(async (request, send, interrupt) => {
       let roomId: string;
       try {
-        roomId = await start(contact, welcome ?? "");
+        roomId = await engine.start!(
+          "handle" in request
+            ? { handle: request.handle }
+            : { reference: request.contact },
+          request.welcome ?? "",
+        );
       } catch (error) {
         return interrupt(
           rejected(error instanceof Error ? error.message : String(error)),

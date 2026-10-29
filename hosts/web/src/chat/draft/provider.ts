@@ -1,3 +1,4 @@
+import type { ContactHandle } from "@parity/truapi";
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import {
   Listeners,
@@ -25,6 +26,8 @@ import {
   type ChatMessageStatus,
   type ChatParticipant,
   type ChatResource,
+  type ChatRoomContact,
+  type ProductChatStartConversationRequest,
 } from "./contract.js";
 import type { ChatV2Change, ChatV2Host, V2Room } from "./host.js";
 
@@ -45,13 +48,17 @@ import type { ChatV2Change, ChatV2Host, V2Room } from "./host.js";
  *   are named through `participants_query` `ByIds`.
  *
  * - DRAFT: a room with a contact (`set_room_contact`) is named and drawn by
- *   the host, from the account, with {@link ChatV2ProviderOptions.names}; a
- *   name the product put in the room's metadata is used only when the host
- *   has none. A participant given as `LitePerson` is named the same way.
+ *   the host. A contact given by account is named with
+ *   {@link ChatV2ProviderOptions.names}; a name the product put in the room's
+ *   metadata is used only when the host has none. A participant given as
+ *   `LitePerson` is named the same way. A contact given by contact handle,
+ *   and a `Contact` participant, are named only by the host's own contacts
+ *   ({@link ChatV2ProviderOptions.contacts}); a handle that names no one now
+ *   shows as "Contact", whatever the product declared.
  * - DRAFT: with {@link ChatV2ProviderOptions.start}, the user can start a
  *   conversation with someone they chose in the host's picker
- *   (`start_conversation`). The product gets an opaque reference, never the
- *   name the picker showed.
+ *   (`start_conversation`). The product gets an opaque reference or the
+ *   person's contact handle, never the name the picker showed.
  *
  * The provider never touches the product rooms TrUAPI Chat keeps, or the Nova
  * chat.
@@ -63,16 +70,45 @@ export interface ChatV2ProviderOptions {
   names?(account: string): string | null;
   /** Calls back when the host learned a name. */
   onNamesChange?(listener: () => void): () => void;
+  /** The host's own contacts, which name the contact handles the product holds. */
+  contacts?: HandleContacts;
   /**
-   * Make the opaque reference the product gets for one start with `account`,
-   * which only the host's own services can resolve. Absent: no start.
+   * What the product gets for a start with `account`: an opaque reference
+   * only the host's own services can resolve, or the contact handle the
+   * host knows them by. Throws when the person cannot be offered. Absent: no
+   * start.
    */
   start?: {
-    reference(account: string): string;
+    target(account: string): StartRequestTarget;
     /** Why a conversation cannot be started now, or null. */
     blocked(): string | null;
   };
 }
+
+/** Whom a start names, as `start_conversation` carries it. */
+export type StartRequestTarget =
+  | { contact: string }
+  | { handle: ContactHandle };
+
+/** Who a contact handle names to the host. Host only: no field reaches the product. */
+export interface HandlePerson {
+  /** The account the host's picker knows them by. */
+  account: string;
+  name: string;
+  /** What their avatar is drawn from. */
+  seed: string;
+}
+
+/** The host's contacts as they name the contact handles one product holds. */
+export interface HandleContacts {
+  /** Who `handle` names now, or null when it names no one this host knows. */
+  resolve(handle: ContactHandle): HandlePerson | null;
+  /** The handle the product knows the person with `account` by, or null. */
+  handleFor(account: string): ContactHandle | null;
+}
+
+/** The name drawn for a contact handle that names no one the host knows. */
+export const UNKNOWN_CONTACT = "Contact";
 
 const abbreviate = (account: string): string =>
   `${account.slice(0, 8)}…${account.slice(-6)}`;
@@ -205,7 +241,7 @@ function participantLabel(participant: ChatParticipant): string {
     case "LitePerson":
       return `${participant.value.account.slice(0, 10)}…`;
     case "Contact":
-      return "Contact";
+      return UNKNOWN_CONTACT;
   }
 }
 
@@ -333,9 +369,37 @@ export class ChatV2Provider implements ChatProvider {
 
   /** The host's name for the room's contact, else the name the product declared. */
   private roomName(room: V2Room): string {
-    const account = room.contact?.account;
-    if (account === undefined) return room.metadata.name;
-    return this.options.names?.(account) ?? abbreviate(account);
+    const contact = room.contact;
+    if (contact === undefined) return room.metadata.name;
+    if ("handle" in contact)
+      return this.resolve(contact.handle)?.name ?? UNKNOWN_CONTACT;
+    return this.options.names?.(contact.account) ?? abbreviate(contact.account);
+  }
+
+  private resolve(handle: ContactHandle): HandlePerson | null {
+    return this.options.contacts?.resolve(handle) ?? null;
+  }
+
+  /** The account the host knows the room's contact by, or null. */
+  private contactAccount(contact: ChatRoomContact): string | null {
+    return "handle" in contact
+      ? (this.resolve(contact.handle)?.account.toLowerCase() ?? null)
+      : contact.account;
+  }
+
+  /**
+   * The room whose contact is the person with `account`, unless it waits for
+   * a new request (`Invite`): then the user is offered one, as for a person
+   * with no room.
+   */
+  private roomWith(account: string): V2Room | undefined {
+    const handle = this.options.contacts?.handleFor(account) ?? null;
+    const room =
+      this.host.roomWith(this.productId, account) ??
+      (handle === null
+        ? undefined
+        : this.host.roomWithHandle(this.productId, handle));
+    return room?.contact?.state === "Invite" ? undefined : room;
   }
 
   private starter(
@@ -346,25 +410,31 @@ export class ChatV2Provider implements ChatProvider {
         this.host.connected(this.productId)
           ? start.blocked()
           : "The product's worker is not running.",
-      conversationWith: (account) =>
-        this.host.roomWith(this.productId, account)?.roomId ?? null,
+      conversationWith: (account) => this.roomWith(account)?.roomId ?? null,
       start: async (account, welcome) => {
-        const known = this.host.roomWith(this.productId, account);
+        const known = this.roomWith(account);
         if (known !== undefined) return known.roomId;
+        const request: ProductChatStartConversationRequest = {
+          ...start.target(account),
+          ...(welcome === "" ? {} : { welcome }),
+        };
         const answer = await this.host.query(
           this.productId,
           "startConversation",
-          {
-            contact: start.reference(account),
-            ...(welcome === "" ? {} : { welcome }),
-          },
+          request,
         );
         if (answer.isErr()) throw new Error(refusalText(answer.error));
         const roomId = answer.value.roomId;
-        const room = this.room(roomId);
+        const contact = this.room(roomId)?.contact;
         // The product names the room's contact; only a room it declared with
         // that person is an answer.
-        if (room?.contact?.account !== account.toLowerCase())
+        if (
+          contact === undefined ||
+          ("handle" in request
+            ? !("handle" in contact) ||
+              contact.handle.bytes !== request.handle.bytes.toLowerCase()
+            : this.contactAccount(contact) !== account.toLowerCase())
+        )
           throw new Error(
             "The product did not open a conversation with this person.",
           );
@@ -380,18 +450,21 @@ export class ChatV2Provider implements ChatProvider {
    * or used as a payment recipient.
    */
   people(): ChatContact[] {
-    if (this.options.names === undefined) return [];
-    return this.host.roomsOf(this.productId).flatMap((room) =>
-      room.contact === undefined || room.contact.state === "Blocked"
+    return this.host.roomsOf(this.productId).flatMap((room) => {
+      const contact = room.contact;
+      if (contact === undefined || contact.state === "Blocked") return [];
+      if (!("handle" in contact) && this.options.names === undefined) return [];
+      const account = this.contactAccount(contact);
+      return account === null
         ? []
         : [
             {
-              account: room.contact.account,
+              account: account as ChatContact["account"],
               name: this.roomName(room),
               lastActiveAt: Number(room.preview?.timestamp ?? 0),
             },
-          ],
-    );
+          ];
+    });
   }
 
   status(): ProviderStatus {
@@ -413,7 +486,7 @@ export class ChatV2Provider implements ChatProvider {
         title: this.roomName(room),
         subtitle: room.metadata.description ?? this.productId,
         icon: room.contact === undefined ? dataUrl(room.metadata.avatar) : null,
-        seed: room.contact?.account ?? this.productId,
+        seed: this.seedOf(room),
         preview:
           room.preview?.text?.text ??
           (newest === undefined ? "" : previewText(newest.body)),
@@ -425,6 +498,15 @@ export class ChatV2Provider implements ChatProvider {
             : {}),
       };
     });
+  }
+
+  /** What the room's avatar is drawn from: the host's own word for its contact. */
+  private seedOf(room: V2Room): string {
+    const contact = room.contact;
+    if (contact === undefined) return this.productId;
+    if ("handle" in contact)
+      return this.resolve(contact.handle)?.seed ?? contact.handle.bytes;
+    return contact.account;
   }
 
   composer(roomId: string): Composer {
@@ -446,6 +528,11 @@ export class ChatV2Provider implements ChatProvider {
         return { kind: "blocked", reason: "They left this chat" };
       case "Blocked":
         return { kind: "blocked", reason: "You blocked this person" };
+      case "Invite":
+        return {
+          kind: "blocked",
+          reason: "Start a new chat with them to send a request",
+        };
     }
     return { kind: "text" };
   }
@@ -475,7 +562,10 @@ export class ChatV2Provider implements ChatProvider {
             entry.participant.tag === "LitePerson"
               ? (this.options.names?.(entry.participant.value.account) ??
                   participantLabel(entry.participant))
-              : participantLabel(entry.participant),
+              : entry.participant.tag === "Contact"
+                ? (this.resolve(entry.participant.value.handle)?.name ??
+                  UNKNOWN_CONTACT)
+                : participantLabel(entry.participant),
           );
     }
     return messages.map((message) => this.view(roomId, message));

@@ -1,0 +1,152 @@
+/**
+ * DEV ONLY. Contact Chat, a chat product worker that knows people only by
+ * the contact handles its host gives it (`./engine.ts`). The dev server
+ * builds it into an app archive (`chat-product-demo-plugin.ts`), and a test
+ * user of the invitation demo runs it through the ordinary worker loader.
+ *
+ * In its frame:
+ *
+ * - the host's Chat screen shows its conversations over the Chat Extension
+ *   v2 draft bridge (`src/chat/draft/conversations.ts`), and names and draws
+ *   each person from the handle;
+ * - setup goes through the proposed host request service
+ *   (`src/invitations/contract.ts`);
+ * - text goes on the conversation topics through the draft topic relay
+ *   (`src/chat/draft/topic-relay.ts`), the stand-in for the Statement Store
+ *   a test user cannot reach;
+ * - its record is kept in its own TrUAPI storage.
+ *
+ * What it received from the host, and what it keeps, are on
+ * `window.__contactChatWorker`, for a test to read.
+ */
+import { getClientSync } from "@parity/truapi/sandbox";
+import { connectChatV2 } from "../../../src/chat/draft/product.js";
+import {
+  serveConversations,
+  type ReadMarks,
+} from "../../../src/chat/draft/conversations.js";
+import { connectTopicRelay } from "../../../src/chat/draft/topic-relay.js";
+import { ProductStorage } from "../../../src/chat/worker/truapi-ports.js";
+import { cryptoRandom } from "../../../src/invitations/sealing.js";
+import { ContactChat } from "./engine.js";
+import { connectHostRequests, type HostRequests } from "./requests.js";
+
+interface WorkerState {
+  stage: "starting" | "running" | "failed";
+  reason?: string;
+  errors: string[];
+  /** Every message the host sent this product, as JSON, in order. */
+  received: string[];
+  /** Every start the host asked for, as JSON. */
+  starts: string[];
+  /** The product's whole stored record, as JSON. */
+  record(): string | null;
+}
+
+const RECORD_KEY = "contact-chat:record:v1";
+const READS_KEY = "contact-chat:read:v1";
+const RECEIVED_MAX = 200;
+
+const state: WorkerState = {
+  stage: "starting",
+  errors: [],
+  received: [],
+  starts: [],
+  record: () => null,
+};
+(
+  window as unknown as { __contactChatWorker: WorkerState }
+).__contactChatWorker = state;
+const report = (reason: string) => {
+  state.errors = [...state.errors, reason].slice(-20);
+};
+const heard = (value: unknown) => {
+  state.received = [...state.received, JSON.stringify(value)].slice(
+    -RECEIVED_MAX,
+  );
+};
+
+/** The request service, with every host message it hears kept for a test. */
+function observed(requests: HostRequests): HostRequests {
+  return {
+    call: async (call) => {
+      const result = await requests.call(call);
+      heard({ result });
+      return result;
+    },
+    onMessage: (listener) =>
+      requests.onMessage((message) => {
+        heard(message);
+        listener(message);
+      }),
+  };
+}
+
+async function run(): Promise<void> {
+  const client = getClientSync();
+  if (client === null) throw new Error("No TrUAPI host.");
+  const storage = await ProductStorage.load(
+    client,
+    [RECORD_KEY, READS_KEY],
+    (reason) => report(`storage: ${reason}`),
+  );
+  state.record = () => storage.getItem(RECORD_KEY);
+  const relay = connectTopicRelay();
+  const engine = new ContactChat({
+    requests: observed(connectHostRequests()),
+    topics: {
+      post: (topic, data) => relay.post(topic, data),
+      watch: (topic, onData) =>
+        relay.watch(topic, (frames) => {
+          heard({ topic, frames });
+          onData(frames);
+        }),
+    },
+    storage,
+    recordKey: RECORD_KEY,
+    random: cryptoRandom,
+    now: Date.now,
+    report,
+  });
+  const marks = (): Record<string, string> => {
+    try {
+      return JSON.parse(storage.getItem(READS_KEY) ?? "{}") as Record<
+        string,
+        string
+      >;
+    } catch {
+      return {};
+    }
+  };
+  const reads: ReadMarks = {
+    get: (conversationId) => marks()[conversationId] ?? null,
+    set: (conversationId, messageId) =>
+      storage.setItem(
+        READS_KEY,
+        JSON.stringify({ ...marks(), [conversationId]: messageId }),
+      ),
+  };
+  const served = serveConversations(
+    connectChatV2(),
+    {
+      conversations: () => engine.conversations(),
+      messages: (id) => engine.messages(id),
+      send: (id, text) => engine.send(id, text),
+      retry: (id, messageId) => engine.retry(id, messageId),
+      start: (target, welcome) => {
+        state.starts = [...state.starts, JSON.stringify(target)];
+        return engine.start(target, welcome);
+      },
+      onChange: (listener) => engine.onChange(listener),
+    },
+    { reads, onError: (what, reason) => report(`${what}: ${reason}`) },
+  );
+  await engine.run();
+  await served.ready;
+  state.stage = "running";
+}
+
+run().catch((error: unknown) => {
+  state.stage = "failed";
+  state.reason = error instanceof Error ? error.message : String(error);
+});

@@ -428,13 +428,21 @@ export type ChatContactState =
 /**
  * The person a room is a conversation with. DRAFT: unlike that proposal's
  * `ChatRoomContact`, it carries no username. The host names and draws the
- * person itself, from the account.
+ * person itself, either from the account a protocol addresses them by, or
+ * from the contact handle its host gave the product, which tells the product
+ * nothing about them.
  */
-export interface ChatRoomContact {
-  /** The person's 32-byte account, as the product's protocol addresses them. */
-  account: HexString;
-  state: ChatContactState;
-}
+export type ChatRoomContact =
+  | {
+      /** The person's 32-byte account, as the product's protocol addresses them. */
+      account: HexString;
+      state: ChatContactState;
+    }
+  | {
+      /** The handle the product holds for the person, as its host gave it. */
+      handle: ContactHandle;
+      state: ChatContactState;
+    };
 
 export interface HostChatSetRoomContactRequest {
   roomId: string;
@@ -443,16 +451,23 @@ export interface HostChatSetRoomContactRequest {
 
 /**
  * DRAFT, in no proposal: the user chose a person in the host's own picker
- * and asked to start a conversation with them. `contact` is an opaque,
- * single-use reference the host made for this one start; it names the person
- * only to a service of the host that may resolve it (the Nova chat worker's
- * identity bridge). The product answers with the room the conversation is in.
+ * and asked to start a conversation with them. The product answers with the
+ * room the conversation is in. The person is named one of two ways:
+ *
+ * - `contact`: an opaque, single-use reference the host made for this one
+ *   start; it names the person only to a service of the host that may
+ *   resolve it (the Nova chat worker's identity bridge).
+ * - `handle`: the contact handle the host knows the person by for this
+ *   product, the same one a pick of them would give. The product reaches
+ *   them only through its host's services, by that handle.
  */
-export interface ProductChatStartConversationRequest {
-  contact: string;
-  /** The first message the user wrote, if any. */
-  welcome?: string;
-}
+export type ProductChatStartConversationRequest =
+  | {
+      contact: string;
+      /** The first message the user wrote, if any. */
+      welcome?: string;
+    }
+  | { handle: ContactHandle; welcome?: string };
 
 export interface ProductChatStartConversationItem {
   roomId: string;

@@ -4,6 +4,7 @@ import { type Plugin, build } from "vite";
 import { cidToString } from "./src/products/archive/cid.js";
 import { Blocks, car } from "./fixtures/archive/builders.js";
 import {
+  CONTACT_CHAT_PATH,
   DEMO_WORKER_PATH,
   EXAMPLE_CHAT_PATH,
   LOOPBACK_HOSTNAMES,
@@ -20,6 +21,10 @@ const WORKERS = [
     entry: "fixtures/products/chat-v2-product-worker.ts",
   },
   { path: NOVA_WORKER_PATH, entry: "src/chat/worker/worker.ts" },
+  {
+    path: CONTACT_CHAT_PATH,
+    entry: "fixtures/products/contact-chat/worker.ts",
+  },
   {
     path: EXAMPLE_CHAT_PATH,
     entry: "fixtures/products/example-chat/product.ts",
@@ -185,7 +190,8 @@ function serveDemo(base: string): Middleware {
  * chat worker (`src/chat/worker/worker.ts`), packs each as an app archive,
  * describes them at {@link DEMO_WORKER_PATH} and {@link NOVA_WORKER_PATH},
  * and does the same for Example Chat, the test users' app, at
- * {@link EXAMPLE_CHAT_PATH}. It serves the archives' blocks, and only those, at `/ipfs/<cid>` as a
+ * {@link EXAMPLE_CHAT_PATH}, and Contact Chat, the test users' chat worker,
+ * at {@link CONTACT_CHAT_PATH}. It serves the archives' blocks, and only those, at `/ipfs/<cid>` as a
  * gateway would. The host's loader fetches and checks the archive as it checks any
  * worker's, so nothing skips the archive check. Requests from or to another
  * machine are refused. A build does not include it.

@@ -13,6 +13,9 @@ export const NOVA_WORKER_PATH = "__chat-product-demo/nova-worker.json";
 /** Example Chat's app archive (`fixtures/products/example-chat/product.ts`), under the host's base. */
 export const EXAMPLE_CHAT_PATH = "__chat-product-demo/example-chat.json";
 
+/** Contact Chat's worker (`fixtures/products/contact-chat/worker.ts`), under the host's base. */
+export const CONTACT_CHAT_PATH = "__chat-product-demo/contact-chat-worker.json";
+
 /** What the dev server answers at {@link DEMO_WORKER_PATH}. */
 export interface DemoWorkerAnswer {
   /** Where the content came from, for the screen. */

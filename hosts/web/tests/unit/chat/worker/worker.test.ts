@@ -1084,7 +1084,7 @@ describe("starting a chat in the Nova chat worker from the host's picker", () =>
       names: (account) => names.name(account),
       onNamesChange: (listener) => names.onChange(listener),
       start: {
-        reference: (account) => mode.startReference(account),
+        target: (account) => ({ contact: mode.startReference(account) }),
         blocked: () => null,
       },
     });
