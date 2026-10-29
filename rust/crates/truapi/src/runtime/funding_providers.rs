@@ -267,16 +267,33 @@ impl RuntimeServices {
 					.as_deref()
 					.map(|asset| providers.countries(session.direction, selection.rail, asset))
 					.unwrap_or_default();
-				let networks = match (&selection.rail, &selection.asset) {
-					(FundingRail::Crypto, Some(asset)) => {
-						declared_networks(&candidates, session.direction, asset)
-							.into_iter()
-							.map(|network| FundingNetworkLimits {
-								limits: limits_on(selection, Some(&network)),
-								network,
+				let networks = match selection.rail {
+					FundingRail::Crypto => declared_networks(
+						&candidates,
+						session.direction,
+						selection.asset.as_deref(),
+					)
+					.into_iter()
+					.map(|(network, assets)| {
+						let limits = assets
+							.iter()
+							.map(|asset| {
+								providers.amount_limits(LimitScope {
+									direction: session.direction,
+									rail: FundingRail::Crypto,
+									asset,
+									network: Some(&network),
+									country: selection.country.as_deref(),
+								})
 							})
-							.collect()
-					},
+							.reduce(widest)
+							.unwrap_or(FundingAmountLimits {
+								min: Some(FUNDING_MIN_AMOUNT),
+								max: None,
+							});
+						FundingNetworkLimits { network, limits }
+					})
+					.collect(),
 					_ => Vec::new(),
 				};
 				(countries, limits_on(selection, selection.network.as_deref()), networks)
@@ -455,29 +472,50 @@ fn normalized_product_id(product_id: String) -> Result<String, String> {
 		.map_err(|error| error.to_string())
 }
 
-/// The networks `candidates`' crypto routes declare for `asset` in
-/// `direction`, each once, in the order first declared.
+/// The networks `candidates`' crypto routes declare in `direction`, each
+/// once in the order first declared, with the assets declared on it: only
+/// `asset` when one is picked, otherwise every one.
 fn declared_networks(
 	candidates: &[FundingCandidate],
 	direction: FundingDirection,
-	asset: &str,
-) -> Vec<String> {
-	let mut networks: Vec<String> = Vec::new();
-	let declared = candidates
+	asset: Option<&str>,
+) -> Vec<(String, Vec<String>)> {
+	let mut networks: Vec<(String, Vec<String>)> = Vec::new();
+	let routes = candidates
 		.iter()
 		.flat_map(|candidate| &candidate.routes)
-		.filter(|route| {
-			route.rail == FundingRail::Crypto &&
-				route.directions.contains(&direction) &&
-				route.assets.iter().any(|declared| declared == asset)
-		})
-		.flat_map(|route| route.networks.iter().flatten());
-	for network in declared {
-		if !networks.contains(network) {
-			networks.push(network.clone());
+		.filter(|route| route.rail == FundingRail::Crypto && route.directions.contains(&direction));
+	for route in routes {
+		let assets = route
+			.assets
+			.iter()
+			.filter(|declared| asset.is_none_or(|asset| *declared == asset));
+		for network in route.networks.iter().flatten() {
+			let index = match networks.iter().position(|(known, _)| known == network) {
+				Some(index) => index,
+				None => {
+					networks.push((network.clone(), Vec::new()));
+					networks.len() - 1
+				},
+			};
+			for declared in assets.clone() {
+				if !networks[index].1.contains(declared) {
+					networks[index].1.push(declared.clone());
+				}
+			}
 		}
 	}
+	networks.retain(|(_, assets)| !assets.is_empty());
 	networks
+}
+
+/// The range that admits an amount either `a` or `b` admits: the smaller
+/// bound on each side, or none when either has none.
+fn widest(a: FundingAmountLimits, b: FundingAmountLimits) -> FundingAmountLimits {
+	FundingAmountLimits {
+		min: a.min.zip(b.min).map(|(a, b)| a.min(b)),
+		max: a.max.zip(b.max).map(|(a, b)| a.max(b)),
+	}
 }
 
 #[cfg(test)]
@@ -488,8 +526,9 @@ mod tests {
 
 	use crate::host_logic::worker_manifest::FundingRoute;
 
-	// The network picker lists each network a crypto route declares for the
-	// asset once, in the order the providers declare them.
+	// The network picker lists each network a crypto route declares once, in
+	// the order the providers declare them: for the picked asset, or for any
+	// asset before one is picked.
 	#[test]
 	fn declared_networks_are_listed_once_in_order() {
 		let route = |rail, assets: &[&str], networks: Option<&[&str]>| FundingRoute {
@@ -514,9 +553,29 @@ mod tests {
 			candidate(vec![route(FundingRail::Crypto, &["USDT"], Some(&["ethereum", "tron"]))]),
 		];
 
+		let usdt = |networks: &[&str]| -> Vec<(String, Vec<String>)> {
+			networks
+				.iter()
+				.map(|network| (network.to_string(), vec!["USDT".to_string()]))
+				.collect()
+		};
 		assert_eq!(
-			declared_networks(&candidates, FundingDirection::In, "USDT"),
-			["polkadot", "ethereum", "tron"]
+			(
+				declared_networks(&candidates, FundingDirection::In, Some("USDT")),
+				declared_networks(&candidates, FundingDirection::In, None)
+					.into_iter()
+					.map(|(network, _)| network)
+					.collect::<Vec<_>>(),
+			),
+			(
+				usdt(&["polkadot", "ethereum", "tron"]),
+				vec![
+					"polkadot".to_string(),
+					"ethereum".to_string(),
+					"base".to_string(),
+					"tron".to_string()
+				]
+			)
 		);
 	}
 
