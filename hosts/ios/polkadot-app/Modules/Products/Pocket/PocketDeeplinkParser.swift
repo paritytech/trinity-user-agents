@@ -68,7 +68,7 @@ struct PocketDeeplinkParser {
         }
 
         switch parseNavigate(input: link) {
-        case let .pocket(identifier, action, cardId, canonicalUrl):
+        case let .pocket(identifier, action, cardId, _, canonicalUrl):
             let linkAction: PocketLinkAction =
                 switch action {
                 case .add: .add
