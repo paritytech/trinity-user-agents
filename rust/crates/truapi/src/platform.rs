@@ -658,8 +658,8 @@ fn validate_chat_media_resource(
 	Ok(resource)
 }
 
-/// A media type is matched against allowlists, so it is lower-cased and
-/// screened like a name.
+/// Hosts compare a media type with allowlists. Thus the core screens it as a
+/// name and makes it lower case.
 fn validate_chat_mime_type(field: &'static str, mime_type: &str) -> Result<String, ChatFieldError> {
 	let mime_type = validate_chat_name(field, mime_type)?.to_ascii_lowercase();
 	if mime_type.is_empty() {
@@ -668,8 +668,8 @@ fn validate_chat_mime_type(field: &'static str, mime_type: &str) -> Result<Strin
 	Ok(mime_type)
 }
 
-/// Bound and screen a description. It is content that can span lines, so it
-/// keeps line breaks and is not normalized.
+/// Bound and screen a description. A description can have more than one line,
+/// so the core keeps its line breaks and does not normalize it.
 fn validate_chat_description(field: &'static str, value: &str) -> Result<String, ChatFieldError> {
 	if value.len() > CHAT_DESCRIPTION_MAX_BYTES {
 		return Err(ChatFieldError::TooLong { field, limit: CHAT_DESCRIPTION_MAX_BYTES });
@@ -3038,7 +3038,7 @@ mod tests {
 			Err(ChatFieldError::RejectedScheme { field: "icon" })
 		);
 
-		// The empty-room text is bounded as a description is.
+		// The core bounds the empty-room text as it bounds a description.
 		let placeholder =
 			|text: String| ChatRoomMetadata { placeholder: Some(text), ..metadata(0) };
 		assert!(
@@ -3161,7 +3161,8 @@ mod tests {
 		);
 	}
 
-	// The quote of a reply is screened like the message it quotes.
+	// The core screens the quote of a reply as it screens the message that it
+	// quotes.
 	#[test]
 	fn the_quote_of_a_reply_is_screened() {
 		let quoting = |participant_id: &str| ChatMessage {
@@ -3763,9 +3764,10 @@ pub trait ChatPlatform: Send + Sync {
 		Ok(())
 	}
 
-	/// Replace the name and description of a room. If a Rust host does not
-	/// implement this method, it ignores the metadata. The room keeps the name
-	/// and icon of `create_chat_room`.
+	/// Replace the name, description, icon and empty-room text of a room. An
+	/// icon of `None` keeps the icon, and an empty icon removes it. If a Rust
+	/// host does not implement this method, it ignores the metadata. The room
+	/// keeps the name and icon of `create_chat_room`.
 	async fn set_chat_room_metadata(
 		&self,
 		_product: &ProductContext,
@@ -3798,7 +3800,8 @@ pub trait ChatPlatform: Send + Sync {
 	/// it the host applies the change only to an open room screen and the chat
 	/// list preview. The host answers `UnknownMessage`, `DuplicateMessage`
 	/// and, for an edit, a replacement or a deletion of a message the product
-	/// did not write, `NotOwner`.
+	/// did not write, `NotOwner`. A web host can answer only `Unknown`: the
+	/// web bridge turns each error that a web callback throws into `Unknown`.
 	async fn update_chat_feed(
 		&self,
 		_product: &ProductContext,
