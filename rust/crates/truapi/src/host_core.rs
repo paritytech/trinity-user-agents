@@ -4420,14 +4420,13 @@ mod tests {
 		async fn create_chat_room(
 			&self,
 			_product: &ProductContext,
+			_room_id: String,
 			_request: truapi::latest::HostChatCreateRoomRequest,
 		) -> Result<
-			truapi::latest::HostChatCreateRoomResponse,
+			truapi::latest::ChatRoomRegistrationStatus,
 			truapi::latest::HostChatCreateRoomError,
 		> {
-			Ok(truapi::latest::HostChatCreateRoomResponse {
-				status: truapi::latest::ChatRoomRegistrationStatus::New,
-			})
+			Ok(truapi::latest::ChatRoomRegistrationStatus::New)
 		}
 
 		async fn register_chat_bot(

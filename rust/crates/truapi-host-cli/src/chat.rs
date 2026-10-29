@@ -38,12 +38,12 @@ use truapi::{
 		ChatMessageStatus, ChatReactionSummary, ChatResource, ChatRoom, ChatRoomBadge,
 		ChatRoomConfig, ChatRoomFooter, ChatRoomMetadata, ChatRoomParticipation, ChatRoomPreview,
 		ChatRoomRegistrationStatus, ChatUserAction, GenericError, HostChatCreateRoomError,
-		HostChatCreateRoomRequest, HostChatCreateRoomResponse, HostChatDeleteRoomRequest,
-		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
-		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-		HostChatRegisterBotResponse, HostChatSetRoomConfigRequest, HostChatSetRoomFooterRequest,
-		HostChatSetRoomMetadataRequest, HostChatSetRoomPreviewRequest, HostChatUpdateFeedError,
-		HostChatUpdateFeedRequest, ProductChatUserActionItem,
+		HostChatCreateRoomRequest, HostChatDeleteRoomRequest, HostChatListSubscribeItem,
+		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
+		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+		HostChatSetRoomConfigRequest, HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
+		HostChatSetRoomPreviewRequest, HostChatUpdateFeedError, HostChatUpdateFeedRequest,
+		ProductChatUserActionItem,
 	},
 	platform::{ChatPlatform, ProductContext, async_trait},
 };
@@ -995,11 +995,12 @@ impl ChatPlatform for CliChatHost {
 	async fn create_chat_room(
 		&self,
 		_product: &ProductContext,
+		room_id: String,
 		request: HostChatCreateRoomRequest,
-	) -> Result<HostChatCreateRoomResponse, HostChatCreateRoomError> {
+	) -> Result<ChatRoomRegistrationStatus, HostChatCreateRoomError> {
 		let mut state = self.lock();
 		// A room that exists keeps what it declared.
-		let status = if state.rooms.contains_key(&request.room_id) {
+		let status = if state.rooms.contains_key(&room_id) {
 			ChatRoomRegistrationStatus::Exists
 		} else {
 			let room = RoomRecord::new(
@@ -1007,15 +1008,15 @@ impl ChatPlatform for CliChatHost {
 				request.name.clone(),
 				request.icon.clone(),
 			);
-			let event = with_kind("room", room_json(&request.room_id, &room));
-			state.rooms.insert(request.room_id.clone(), room);
+			let event = with_kind("room", room_json(&room_id, &room));
+			state.rooms.insert(room_id.clone(), room);
 			Self::republish(&mut state);
 			Self::broadcast(&mut state, event);
 			ChatRoomRegistrationStatus::New
 		};
 		drop(state);
-		self.record_registration("room", &request.room_id, &request.name, &request.icon);
-		Ok(HostChatCreateRoomResponse { status })
+		self.record_registration("room", &room_id, &request.name, &request.icon);
+		Ok(status)
 	}
 
 	async fn register_chat_bot(
@@ -1191,9 +1192,9 @@ mod tests {
 		ChatMessageBody::Text { text: text.to_string() }
 	}
 
-	fn room(room_id: &str) -> HostChatCreateRoomRequest {
+	fn room(room_id_source: &str) -> HostChatCreateRoomRequest {
 		HostChatCreateRoomRequest {
-			room_id: room_id.to_string(),
+			room_id_source: room_id_source.to_string(),
 			name: "Support".to_string(),
 			icon: String::new(),
 		}
@@ -1203,8 +1204,11 @@ mod tests {
 		ChatRoomConfig { product_source: true, report_seen: true, ..ChatRoomConfig::default() }
 	}
 
+	// The core derives the room id. These tests drive the host alone, so the
+	// source stands in for the id.
 	fn create(host: &CliChatHost, request: HostChatCreateRoomRequest) {
-		futures::executor::block_on(host.create_chat_room(&product(), request))
+		let room_id = request.room_id_source.clone();
+		futures::executor::block_on(host.create_chat_room(&product(), room_id, request))
 			.expect("a room is created");
 	}
 
@@ -1424,11 +1428,12 @@ mod tests {
 
 		let again = futures::executor::block_on(host.create_chat_room(
 			&product(),
+			"kept".to_string(),
 			HostChatCreateRoomRequest { name: "Renamed".to_string(), ..room("kept") },
 		))
 		.expect("an existing room is found again");
 
-		assert_eq!(again.status, ChatRoomRegistrationStatus::Exists);
+		assert_eq!(again, ChatRoomRegistrationStatus::Exists);
 		assert_eq!(host.room_config("kept"), Some(source_config()));
 		assert_eq!(room_view(&host, "kept")["name"], "Support");
 	}

@@ -982,8 +982,9 @@ mod tests {
 		let create = |room_id: &str, name: &str, config: ChatRoomConfig| {
 			futures::executor::block_on(chat.create_chat_room(
 				&product(),
+				room_id.to_string(),
 				HostChatCreateRoomRequest {
-					room_id: room_id.to_string(),
+					room_id_source: room_id.to_string(),
 					name: name.to_string(),
 					icon: String::new(),
 				},
