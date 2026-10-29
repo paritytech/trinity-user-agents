@@ -253,18 +253,17 @@ struct NetworkAccessPermissionHandlerTests {
     }
 
     @Test(arguments: [PermissionDecision.allowOnce, .allowAlways, .deny])
-    func decisionRecordsOnlyAStandingGrantForSettings(decision: PermissionDecision) async throws {
+    func decisionPreservesConsentWithoutDuplicatingGrants(decision: PermissionDecision) async throws {
         let (_, repository, requester) = makeSUT(promptDecision: decision)
         let guardService = makeGuard(repository: repository, requester: requester)
         let permission = ProductPermission.networkAccess(domain: "api.example.com")
         let result = try await guardService.requestPermissionsDecision(productId: productId, permissions: [permission])
         #expect(result == decision)
-        let recorded: ProductPermissionState = decision == .allowAlways ? .allowedAlways : .notDetermined
-        #expect(try await repository.getPermissionState(productId: productId, permission: permission) == recorded)
+        #expect(try await repository.getPermissionState(productId: productId, permission: permission) == .notDetermined)
     }
 
     @Test
-    func decisionRequestsFreshConsentAndRecordsWhatWasGrantedForGood() async throws {
+    func decisionRequestsFreshConsentWithoutTransferringLegacyOneTimeGrants() async throws {
         let (_, repository, requester) = makeSUT(promptDecision: .allowAlways)
         let guardService = makeGuard(repository: repository, requester: requester)
         let temporary = ProductPermission.networkAccess(domain: "once.example.com")
@@ -282,7 +281,6 @@ struct NetworkAccessPermissionHandlerTests {
             repository.getPermissionState(productId: productId, permission: permanent),
             repository.getPermissionState(productId: productId, permission: newPermission)
         ]
-        #expect(states == [.allowedOnce, .allowedAlways, .allowedAlways])
-        #expect(repository.grantCalls.map(\.permission).dropFirst() == [temporary, newPermission])
+        #expect(states == [.allowedOnce, .allowedAlways, .notDetermined])
     }
 }

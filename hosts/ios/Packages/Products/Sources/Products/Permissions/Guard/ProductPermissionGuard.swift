@@ -141,9 +141,7 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
             undecided.append(permission)
         }
         guard !undecided.isEmpty else { return .allowAlways }
-        let decision = await requester.promptBatched(productId: productId, permissions: undecided)
-        try await recordForSettings(decision, productId: productId, permissions: undecided)
-        return decision
+        return await requester.promptBatched(productId: productId, permissions: undecided)
     }
 
     public func consumePermission(
@@ -187,20 +185,6 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
              .userIdentityAccess,
              .nftPurseRead:
             try await remoteHandler.isGranted(productId: productId, permission: permission)
-        }
-    }
-}
-
-private extension ProductPermissionGuard {
-    func recordForSettings(
-        _ decision: PermissionDecision,
-        productId: String,
-        permissions: [ProductPermission]
-    ) async throws {
-        guard decision == .allowAlways else { return }
-
-        for permission in permissions {
-            try await repository.grant(productId: productId, permission: permission)
         }
     }
 }

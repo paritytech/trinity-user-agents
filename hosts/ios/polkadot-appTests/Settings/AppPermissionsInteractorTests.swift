@@ -6,82 +6,117 @@ import Testing
 
 struct AppPermissionsInteractorTests {
     @Test
+    func listsTheCoresGrantsBesideTheNativeOnes() async throws {
+        let core = RecordingCoreAuthorizations()
+        core.grantsToReturn = [
+            grant("other.paseo", .balanceAccess),
+            grant("game.paseo", .networkAccess(domain: "api.example.com")),
+            grant("game.paseo", .deviceCapability(.camera))
+        ]
+        let (interactor, presenter) = await makeInteractor(
+            nativeGrants: [grant("game.paseo", .deviceCapability(.camera)), grant("game.paseo", .webRtcAccess)],
+            core: core
+        )
+
+        interactor.setup()
+        let listed = try await waitUntil { await presenter.lastGrants.count == 3 }
+
+        let expected = [
+            grant("game.paseo", .deviceCapability(.camera)),
+            grant("game.paseo", .webRtcAccess),
+            grant("game.paseo", .networkAccess(domain: "api.example.com"))
+        ]
+        #expect(listed)
+        #expect(await presenter.lastGrants == expected)
+    }
+
+    @Test
+    func readsTheCoreAgainWhenItsDecisionsOnThisProductMove() async throws {
+        let core = RecordingCoreAuthorizations()
+        let (interactor, presenter) = await makeInteractor(core: core)
+
+        interactor.setup()
+        _ = try await waitUntil { await presenter.updates == 2 }
+        core.grantsToReturn = [grant("game.paseo", .balanceAccess)]
+        core.changed(productId: "other.paseo")
+        core.changed(productId: "game.paseo")
+        let relisted = try await waitUntil { await presenter.lastGrants == [grant("game.paseo", .balanceAccess)] }
+
+        #expect(relisted)
+        #expect(core.reads == 2)
+    }
+
+    @Test
     func revokingClearsTheNativeStoreAndTheCore() async throws {
         let repository = RecordingPermissionRepository()
-        let resetter = RecordingPermissionResetter()
-        let interactor = makeInteractor(repository: repository, resetter: resetter)
+        let core = RecordingCoreAuthorizations()
+        let (interactor, _) = await makeInteractor(repository: repository, core: core)
 
         interactor.revokeOnDisappear(permissions: [.balanceAccess, .deviceCapability(.camera)])
-        try await waitUntil { resetter.resets.count == 1 }
+        _ = try await waitUntil { core.resets.count == 1 }
 
         #expect(repository.revoked == [[.balanceAccess, .deviceCapability(.camera)]])
-        #expect(resetter.resets.first?.productId == "game.paseo")
-        #expect(resetter.resets.first?.permissions == [.balanceAccess, .deviceCapability(.camera)])
+        #expect(core.resets == [.init(
+            productId: "game.paseo",
+            permissions: [.balanceAccess, .deviceCapability(.camera)]
+        )])
     }
 
     @Test
     func stillClearsTheCoreWhenTheNativeRevokeFails() async throws {
         let repository = RecordingPermissionRepository()
         repository.revokeError = TestError()
-        let resetter = RecordingPermissionResetter()
-        let interactor = makeInteractor(repository: repository, resetter: resetter)
+        let core = RecordingCoreAuthorizations()
+        let (interactor, _) = await makeInteractor(repository: repository, core: core)
 
         interactor.revokeOnDisappear(permissions: [.webRtcAccess])
-        try await waitUntil { resetter.resets.count == 1 }
+        _ = try await waitUntil { core.resets.count == 1 }
 
-        #expect(resetter.resets.first?.permissions == [.webRtcAccess])
+        #expect(core.resets.first?.permissions == [.webRtcAccess])
     }
 
     @Test
     func revokingNothingTouchesNeither() async throws {
         let repository = RecordingPermissionRepository()
-        let resetter = RecordingPermissionResetter()
-        let interactor = makeInteractor(repository: repository, resetter: resetter)
+        let core = RecordingCoreAuthorizations()
+        let (interactor, _) = await makeInteractor(repository: repository, core: core)
 
         interactor.revokeOnDisappear(permissions: [])
         try await Task.sleep(for: .milliseconds(100))
 
         #expect(repository.revoked.isEmpty)
-        #expect(resetter.resets.isEmpty)
+        #expect(core.resets.isEmpty)
     }
 }
 
 private struct TestError: Error {}
 
+@MainActor
 private func makeInteractor(
-    repository: RecordingPermissionRepository,
-    resetter: RecordingPermissionResetter
-) -> AppPermissionsInteractor {
-    AppPermissionsInteractor(
+    nativeGrants: [ProductPermissionGrant] = [],
+    repository: RecordingPermissionRepository = RecordingPermissionRepository(),
+    core: RecordingCoreAuthorizations
+) -> (AppPermissionsInteractor, GrantsSpy) {
+    let interactor = AppPermissionsInteractor(
         productId: "game.paseo",
-        providerFactory: IdleGrantsProvider(),
+        providerFactory: SnapshotGrantsProvider(grants: nativeGrants),
         repository: repository,
-        permissionResetter: resetter,
+        coreAuthorizations: core,
         notificationScheduler: IdleNotificationScheduler()
     )
+    let presenter = GrantsSpy()
+    interactor.presenter = presenter
+    return (interactor, presenter)
 }
 
-private func waitUntil(_ condition: @Sendable () -> Bool) async throws {
-    for _ in 0 ..< 200 where !condition() {
-        try await Task.sleep(for: .milliseconds(10))
-    }
-    #expect(condition())
-}
+@MainActor
+private final class GrantsSpy: AppPermissionsInteractorOutputProtocol {
+    private(set) var lastGrants: [ProductPermissionGrant] = []
+    private(set) var updates = 0
 
-private struct Reset: Equatable {
-    let productId: ProductId
-    let permissions: [ProductPermission]
-}
-
-private final class RecordingPermissionResetter: ProductPermissionResetting, @unchecked Sendable {
-    private let state = OSAllocatedUnfairLock(initialState: [Reset]())
-
-    var resets: [Reset] {
-        state.withLock { $0 }
-    }
-
-    func reset(productId: ProductId, permissions: [ProductPermission]) throws {
-        state.withLock { $0.append(Reset(productId: productId, permissions: permissions)) }
+    func didReceive(grants: [ProductPermissionGrant]) {
+        lastGrants = grants
+        updates += 1
     }
 }
 
@@ -116,17 +151,6 @@ private final class RecordingPermissionRepository: ProductPermissionRepositoryPr
     func revokeAllByProduct(productId _: String) async throws {}
     func deny(productId _: String, permission _: ProductPermission) async throws {}
     func getAllByProduct(productId _: String) async throws -> [ProductPermissionGrant] { [] }
-}
-
-private final class IdleGrantsProvider: ProductPermissionDataProviderMaking {
-    func subscribePermissionGrantsSnapshot(
-        for _: NSPredicate?,
-        deliverOn _: DispatchQueue,
-        update _: @escaping ([ProductPermissionGrant]) -> Void,
-        failure _: @escaping (Error) -> Void
-    ) -> AnyObject {
-        NSObject()
-    }
 }
 
 private struct IdleNotificationScheduler: ProductNotificationScheduling {

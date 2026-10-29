@@ -23,7 +23,27 @@ extension PermissionAuthorizationRequest {
                 .remote(RemotePermissionRequest(permission: .statementSubmit))
             case .userIdentityAccess:
                 .identityDisclosure
+            case let .nftPurseRead(ownerProductId):
+                .remote(RemotePermissionRequest(permission: .nftPurseRead(owner: ownerProductId
+                        .map { .product($0) } ?? .root)))
             }
+    }
+
+    /// The settings permissions a stored core decision stands for: none for a
+    /// decision the settings never list, one per domain for a domain bundle.
+    var productPermissions: [ProductPermission] {
+        switch self {
+        case let .device(request):
+            [.deviceCapability(request.deviceCapabilityType)]
+        case let .remote(request):
+            request.permission.toDomainPermissions()
+        case .identityDisclosure:
+            [.userIdentityAccess]
+        case let .accountAccess(targetProductId):
+            [.accountAccess(targetProductId: targetProductId)]
+        case .crossProductSignature:
+            []
+        }
     }
 }
 

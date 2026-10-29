@@ -137,14 +137,10 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
         return devicePermissionGranted
     }
 
-    private(set) var permissionStatusUpdates: [(PermissionAuthorizationRequest, PermissionAuthorizationStatus)] = []
-
     func setPermissionAuthorizationStatus(
-        request: PermissionAuthorizationRequest,
-        status: PermissionAuthorizationStatus
-    ) throws {
-        permissionStatusUpdates.append((request, status))
-    }
+        request _: PermissionAuthorizationRequest,
+        status _: PermissionAuthorizationStatus
+    ) throws {}
 
     func notifyThemeChanged(theme: HostThemeSubscribeItem) {
         themeChanges.append(theme)

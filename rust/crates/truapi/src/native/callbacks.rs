@@ -112,6 +112,14 @@ pub trait HostCallbacks: Send + Sync {
 	/// [`CoreStorageKey`].
 	async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection>;
 
+	/// Every key the host holds in core storage, each a SCALE-encoded
+	/// [`CoreStorageKey`], which is how the core lists the permission
+	/// decisions it stored there. A key the core cannot decode is ignored.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with.
+	async fn core_storage_keys(&self) -> Result<Vec<Vec<u8>>, HostRejection>;
+
 	/// Open a JSON-RPC connection for a chain. Return a host-assigned
 	/// connection id, or `None` when unsupported.
 	fn chain_connect(&self, genesis_hash: Vec<u8>) -> Result<Option<u32>, HostRejection>;
@@ -203,6 +211,16 @@ pub trait HostCallbacks: Send + Sync {
 	/// Runtime-wide, so invoked only on the callbacks the runtime was built
 	/// with. Arrives on a core thread: hand it off rather than blocking.
 	fn durable_work_changed(&self, pending: bool);
+
+	/// A stored permission decision of `product_id` was written or cleared,
+	/// by a prompt or by
+	/// [`NativeTrUApiHostRuntime::set_permission_authorization_status`], so a
+	/// host screen listing decisions reads them again.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with, whichever execution's prompt moved the decision. Arrives on a
+	/// core thread: hand it off rather than blocking.
+	fn permission_authorizations_changed(&self, product_id: String);
 
 	/// The 32-byte id of the current app installation, created on first use.
 	/// Item keys of NFT purses are derived under it, so it must be the one

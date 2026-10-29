@@ -109,6 +109,18 @@ final class TrUAPIStorageTests {
         #expect(try storage.read(key: key) == nil)
     }
 
+    /// The core lists its stored decisions from these keys, so every slot the
+    /// store holds is reported and nothing from another store is.
+    @Test func coreStorageListsItsOwnKeys() throws {
+        let core = TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults)
+        let product = TrUAPILocalStorage.createProductLocalStorage(productId: "test.product", defaults: defaults)
+        try core.write(key: "00", value: Data([0x01]))
+        try core.write(key: "0a0b", value: Data([0x02]))
+        try product.write(key: "k", value: Data([0x03]))
+
+        #expect(try Set(core.keys()) == ["00", "0a0b"])
+    }
+
     @Test func coreStorageIsolatedFromProductStorage() throws {
         let core = TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults)
         let product = TrUAPILocalStorage.createProductLocalStorage(
