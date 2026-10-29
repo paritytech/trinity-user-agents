@@ -24,6 +24,15 @@ public enum IssueMonitoringFactory {
         #endif
     }
 
+    /// Log sink for the service `createService(dsn:)` starts, or nil when that service is a no-op.
+    public static func createLogSink(dsn: String) -> HostLogSink? {
+        #if SENTRY_ENABLED
+            dsn.isEmpty ? nil : SentryHostLogSink()
+        #else
+            nil
+        #endif
+    }
+
     /// Builds the immutable product bootstrap only when this build links reporting support.
     public static func createNativeHostTelemetry(
         hostSessionID: UUID,
@@ -44,6 +53,21 @@ public enum IssueMonitoringFactory {
             SentryHostEventRecorder()
         #else
             NoopHostEventRecorder()
+        #endif
+    }
+
+    /// Writes a line of device readings to the given log once a minute in the foreground, and sends them
+    /// as gauges. Builds without reporting support receive a monitor that takes no readings.
+    ///
+    /// Memory and storage totals do not change while the app runs, so their gauges go out once per launch.
+    public static func createDeviceReadingsMonitor(log: @escaping (String) -> Void) -> DeviceReadingsMonitoring {
+        #if SENTRY_ENABLED
+            DeviceReadingsMonitor { readings in
+                log("Device readings: \(readings.logLine)")
+                readings.sendSentryGauges()
+            }
+        #else
+            NoopDeviceReadingsMonitor()
         #endif
     }
 
