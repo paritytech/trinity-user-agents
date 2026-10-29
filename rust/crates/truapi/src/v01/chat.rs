@@ -403,7 +403,7 @@ pub enum ChatMediaItem {
 	},
 }
 
-/// Name and description of a room.
+/// The name, description, icon and empty-room text of a room.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct ChatRoomMetadata {
@@ -513,7 +513,8 @@ pub struct HostChatSetRoomConfigRequest {
 	pub config: ChatRoomConfig,
 }
 
-/// Request to replace the name and description of a room.
+/// Request to replace the name, description, icon and empty-room text of a
+/// room.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostChatSetRoomMetadataRequest {
 	/// A room that this product created.
@@ -552,7 +553,7 @@ pub enum HostChatSetRoomConfigError {
 	},
 }
 
-/// Failure to replace the name and description of a room.
+/// Failure to replace the metadata of a room.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostChatSetRoomMetadataError {
 	/// This product created no room with this id.
@@ -573,6 +574,9 @@ pub enum HostChatSetRoomPreviewError {
 	UnknownRoom,
 	/// The product takes part in the room as a bot, not as its host.
 	NotRoomHost,
+	/// In a room the host stores: the preview shows a message or a reaction of
+	/// the user.
+	NotOwner,
 	/// The product replaced the preview of this room too often.
 	RateLimited,
 	/// Catch-all.
