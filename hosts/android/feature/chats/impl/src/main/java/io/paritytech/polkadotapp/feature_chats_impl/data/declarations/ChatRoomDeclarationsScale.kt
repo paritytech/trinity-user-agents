@@ -49,6 +49,7 @@ class ChatRoomActivityLocal(val text: String, val ongoing: Boolean)
 
 @Serializable
 sealed interface ChatRoomBadgeLocal {
+    /** Never written. A stored preview that holds it shows no badge. */
     @Serializable
     @EnumIndex(0)
     object Hidden : ChatRoomBadgeLocal

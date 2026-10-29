@@ -40,7 +40,6 @@ fun ChatRoomPreview.toModel(productId: ProductId) = ChatRoomPreviewModel(
     timestamp = timestamp?.toLong(),
     badge = badge?.let {
         when (it) {
-            ChatRoomBadge.Hidden -> ChatRoomBadgeModel.Hidden
             is ChatRoomBadge.UnreadCount -> ChatRoomBadgeModel.Count(it.count.toInt())
             is ChatRoomBadge.Image -> ChatRoomBadgeModel.Image(it.icon)
         }
