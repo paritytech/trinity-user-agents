@@ -61,6 +61,16 @@ type ReleaseEvent = {
   };
 };
 
+type PackageEvent = {
+  action: string;
+  package: {
+    name: string;
+    package_type: string;
+    html_url: string;
+    package_version: { version: string } | null;
+  };
+};
+
 export type GithubOutcome = {
   /** Something to post, if the event is one the room should hear about. */
   message?: Message;
@@ -69,10 +79,10 @@ export type GithubOutcome = {
 };
 
 /**
- * A failed run of a watched workflow, or a published release that is not a
- * prerelease (nightlies announce themselves). Webhooks also arrive for
- * releases the Release workflow publishes with its own token, which never
- * trigger other workflows.
+ * A failed run of a watched workflow, a published release that is not a
+ * prerelease (nightlies announce themselves), or a package version published
+ * to GitHub Packages, such as the Android AAR. Webhooks also arrive for what workflows publish with their own
+ * token, which never triggers other workflows.
  */
 export function githubEvent(
   event: string | null,
@@ -119,6 +129,21 @@ export function githubEvent(
       message: {
         text: `📦 ${name} released ${release.html_url}`,
         html: `📦 <b>${escape(name)}</b> released, <a href="${escape(release.html_url)}">release notes</a>`,
+      },
+    };
+  }
+  if (event === "package") {
+    const { action, package: pkg } = payload as PackageEvent;
+    const version = pkg?.package_version?.version ?? "";
+    // Snapshots and pre-releases are left out, like prerelease releases.
+    if (action !== "published" || !/^v?\d+\.\d+\.\d+$/.test(version)) {
+      return { refresh: false };
+    }
+    return {
+      refresh: false,
+      message: {
+        text: `📦 ${pkg.name} ${version} published to GitHub Packages (${pkg.package_type}) ${pkg.html_url}`,
+        html: `📦 <b>${escape(pkg.name)} ${escape(version)}</b> published to GitHub Packages (${escape(pkg.package_type)}), <a href="${escape(pkg.html_url)}">package</a>`,
       },
     };
   }

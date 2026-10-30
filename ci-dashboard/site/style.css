@@ -526,3 +526,18 @@ tr:last-child td {
     padding: 20px 16px 48px;
   }
 }
+
+.banner {
+  display: block;
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--bad);
+  border-radius: 10px;
+  background: var(--bad-bg);
+  color: var(--bad);
+  text-decoration: none;
+}
+
+.banner:hover {
+  text-decoration: underline;
+}

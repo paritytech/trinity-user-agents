@@ -207,3 +207,17 @@ export function runState(run: WorkflowRun | undefined): RunState {
   }
   return "unknown";
 }
+
+/**
+ * The latest run of the signing check, when it is failing: an expired or
+ * nearly expired certificate or profile, or credentials that no longer work.
+ */
+export function failingSigningRun(
+  workflows: { file: string }[],
+  runs: (WorkflowRun | undefined)[],
+): WorkflowRun | undefined {
+  const run = runs[workflows.findIndex((w) => w.file === SIGNING_WORKFLOW)];
+  return runState(run) === "failing" ? run : undefined;
+}
+
+export const SIGNING_WORKFLOW = "validate-signing-credentials.yml";

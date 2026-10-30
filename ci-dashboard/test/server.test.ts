@@ -102,6 +102,35 @@ describe("githubEvent", () => {
   });
 });
 
+describe("packages", () => {
+  const published = (version: string, action = "published") => ({
+    action,
+    package: {
+      name: "io.parity.truapi-host-android",
+      package_type: "maven",
+      html_url: "https://github.test/package",
+      package_version: { version },
+    },
+  });
+
+  test("announces a published release version", () => {
+    const outcome = githubEvent("package", published("0.26.0"), config);
+    expect(outcome.message?.text).toBe(
+      "📦 io.parity.truapi-host-android 0.26.0 published to GitHub Packages (maven) https://github.test/package",
+    );
+  });
+
+  test("leaves out snapshots, pre-releases and other actions", () => {
+    for (const payload of [
+      published("0.27.0-SNAPSHOT"),
+      published("0.27.0-rc.1"),
+      published("0.26.0", "updated"),
+    ]) {
+      expect(githubEvent("package", payload, config).message).toBeUndefined();
+    }
+  });
+});
+
 describe("sentryEvent", () => {
   const issue = (slug: string, action = "created") => ({
     action,
