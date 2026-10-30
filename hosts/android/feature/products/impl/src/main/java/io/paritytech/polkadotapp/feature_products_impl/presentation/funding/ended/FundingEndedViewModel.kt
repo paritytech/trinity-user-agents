@@ -6,10 +6,9 @@ import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.launchUnit
-import io.paritytech.polkadotapp.common.utils.logFailure
-import io.paritytech.polkadotapp.feature_products_impl.data.repository.FundingHistoryRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionPresenter
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingActivityCenter
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -28,7 +27,7 @@ data class FundingEndedScreenState(
 @HiltViewModel
 class FundingEndedViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
-    private val history: FundingHistoryRepository,
+    private val activity: FundingActivityCenter,
     private val interactor: FundingFlowInteractor,
     private val presenter: FundingSessionPresenter,
     private val router: ProductsRouter,
@@ -37,10 +36,7 @@ class FundingEndedViewModel @Inject constructor(
     private val intent = savedStateHandle.get<String>(FundingEndedBottomSheet.INTENT).orEmpty()
 
     val state: StateFlow<LoadingState<FundingEndedScreenState>> = flow {
-        val record = history.records()
-            .logFailure("Funding history read failed")
-            .getOrNull()
-            ?.firstOrNull { it.intent == intent }
+        val record = activity.ended(intent)
         if (record == null) {
             close()
             return@flow

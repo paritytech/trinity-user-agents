@@ -23,14 +23,20 @@ interface FundingRuntime {
     /** Opens a session on the host's own behalf, which the core then shows the overlay for. */
     suspend fun openFunding(direction: FundingDirection): Result<String?>
 
-    /** Starts the core, which then pushes every session in flight and every ended one the host has not recorded. */
+    /** Starts the core, which then pushes every session in flight and every ended one the host has not acknowledged. */
     suspend fun start(): Result<Unit>
 
     /** Every session the core pushed and still holds, with its latest progress, by intent. */
     val sessions: StateFlow<Map<String, FundingSessionEntry>>
 
-    /** Every session the host recorded, as summaries, to rebuild lost history from; `null` until the core pushed it. */
-    val history: StateFlow<List<FundingSessionSummary>?>
+    /**
+     * Whether a provider still works on any session, as the core last pushed it: `null` until funding resumed, which
+     * is also when the core has loaded the sessions [history] reads.
+     */
+    val inProgress: StateFlow<Boolean?>
+
+    /** Every ended session the core holds, in full or compacted, as summaries newest first. Read it each time history shows. */
+    suspend fun history(): Result<List<FundingSessionSummary>>
 
     /** What session [intent]'s overlay offers, as the core last pushed it; `null` until it has. */
     fun options(intent: String): Flow<FundingOptions?>
@@ -54,6 +60,7 @@ interface FundingRuntime {
     /** The user's answer to the provider's cancel offer: the terms shown to accept them, `null` to decline. */
     suspend fun confirmCancel(intent: String, terms: CancelTerms?): Result<CancelConfirmation>
 
+    /** Records that the user was shown how ended session [intent] went; until then the core pushes it again on each resume. */
     suspend fun acknowledge(intent: String): Result<Boolean>
 
     fun quoteLists(intent: String): Flow<FundingQuoteList>

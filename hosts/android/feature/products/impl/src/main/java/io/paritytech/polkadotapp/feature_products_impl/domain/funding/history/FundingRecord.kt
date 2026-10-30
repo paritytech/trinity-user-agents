@@ -15,7 +15,7 @@ import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.FundingStage
 import kotlin.time.Instant
 
-/** One ended funding session as the host keeps it, once the core has handed it over and dropped it. */
+/** One ended funding session as the history shows it: in full while the core pushed it, else from its summary. */
 data class FundingRecord(
     val intent: String,
     val direction: FundingDirection,
@@ -59,8 +59,8 @@ data class FundingRecord(
         }
 
         /**
-         * The record the core's summary of a recorded session rebuilds, or `null` for one still open. The summary keeps
-         * only how the session ended, so the provider, rail, payout and references are unknown.
+         * The record of a session the core's history summarises, or `null` for one still open. The summary keeps only
+         * how the session ended, so the provider, rail, payout and references are unknown.
          */
         fun of(summary: FundingSessionSummary): FundingRecord? {
             val (outcome, amount, settledAtMs) = summary.stage.ended(cancelled = false) ?: return null

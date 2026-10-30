@@ -28,7 +28,6 @@ import uniffi.truapi.FundingPresentOutcome
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingSession
-import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.HostFundingStatusSubscribeItem
 import uniffi.truapi.U128
 import javax.inject.Inject
@@ -44,7 +43,6 @@ class AppFundingHostBridge @Inject constructor(
 ) : FundingHostBridge {
     private val sessions = MutableStateFlow<Map<String, FundingSessionEntry>>(emptyMap())
     private val options = MutableStateFlow<Map<String, FundingOptions>>(emptyMap())
-    private val history = MutableStateFlow<List<FundingSessionSummary>?>(null)
     private val inProgress = MutableStateFlow<Boolean?>(null)
     private val changedSessions = MutableSharedFlow<String>(
         extraBufferCapacity = EVENT_BUFFER,
@@ -67,9 +65,6 @@ class AppFundingHostBridge @Inject constructor(
 
     /** What each open overlay offers, as the core last pushed it, by intent. */
     fun options(): StateFlow<Map<String, FundingOptions>> = options.asStateFlow()
-
-    /** Every recorded session's summary as the core pushed it when funding resumed; `null` until then. */
-    fun history(): StateFlow<List<FundingSessionSummary>?> = history.asStateFlow()
 
     /** Whether a provider still works on any session, as the core last said; `null` until funding resumed. */
     fun inProgress(): StateFlow<Boolean?> = inProgress.asStateFlow()
@@ -118,6 +113,10 @@ class AppFundingHostBridge @Inject constructor(
         }
     }
 
+    override fun closeProviderFrame(providerId: String, intent: String) {
+        overlay.get().closeProviderFrame(ProductId.fromStoredValue(providerId), intent)
+    }
+
     override suspend fun detectedCountry(): String? = countryDetector.detect()
 
     override fun fundingSessionChanged(
@@ -130,10 +129,6 @@ class AppFundingHostBridge @Inject constructor(
             if (session == null) held - intent else held + (intent to FundingSessionEntry(session, progress))
         }
         changedSessions.tryEmit(intent)
-    }
-
-    override fun fundingHistory(history: List<FundingSessionSummary>) {
-        this.history.value = history
     }
 
     override fun fundingInProgressChanged(inProgress: Boolean) {

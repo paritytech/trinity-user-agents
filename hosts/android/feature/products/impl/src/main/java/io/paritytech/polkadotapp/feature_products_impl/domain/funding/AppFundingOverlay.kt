@@ -32,6 +32,9 @@ import javax.inject.Inject
  * answers `Closed` when the user says they sent a bank transfer, or once the provider's part is done: the payment
  * seen or the session over. An external page answers `Returned` once it reaches its return URL.
  *
+ * A provider may close its frame itself once done with it, such as a card payment the user made: the frame answers
+ * `Closed` and the session's sheet shows in its place.
+ *
  * The core drops a call when its product or worker goes away. The sheet or frame it showed then closes, rather than
  * staying up with nothing to answer.
  */
@@ -76,10 +79,10 @@ class AppFundingOverlay @Inject constructor(
             showsSentFunds = rail == FundingRail.BANK && direction == FundingDirection.IN,
         )
         frames.put(frame)
-        try {
+        val outcome = try {
             router.openFundingProviderFrame(intent)
 
-            return coroutineScope {
+            coroutineScope {
                 // The frame may be hidden when the payment moves, so the overlay, not the screen, watches for it.
                 val watcher = launch {
                     runtime.sessionChanges()
@@ -95,6 +98,12 @@ class AppFundingOverlay @Inject constructor(
             frames.remove(frame)
             withContext(NonCancellable) { router.closeFundingProviderFrame(intent) }
         }
+        if (frame.awaitClosedByProvider()) reopen(intent)
+        return outcome
+    }
+
+    override fun closeProviderFrame(providerId: ProductId, intent: String) {
+        frames.get(intent)?.takeIf { it.providerId == providerId }?.closeByProvider()
     }
 
     /**

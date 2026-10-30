@@ -828,6 +828,13 @@ interface FundingHostBridge {
     suspend fun presentProviderFrame(providerId: String, intent: String, target: FundingFrameTarget): FundingFrameOutcome
 
     /**
+     * Close the frame [presentProviderFrame] shows for provider [providerId]'s session [intent], answering that
+     * call [FundingFrameOutcome.Closed], and show the session sheet in its place. Does nothing when no frame is
+     * open for it. Runs inline on the core's thread, so return promptly.
+     */
+    fun closeProviderFrame(providerId: String, intent: String)
+
+    /**
      * The country the user is likely in, as an ISO 3166-1 alpha-2 code: the device's coarse location when
      * already permitted, then its SIM or network country, then its locale's region. Never asks for a
      * permission. `null` when nothing says.
@@ -847,12 +854,6 @@ interface FundingHostBridge {
         session: FundingSession?,
         progress: FundingProgress?,
     ) {}
-
-    /**
-     * Every ended session the host recorded or the core compacted, as summaries newest first, once each time
-     * funding resumes, so the host rebuilds its own history when that was lost. Runs inline on the core's thread.
-     */
-    fun fundingHistory(history: List<FundingSessionSummary>) {}
 
     /**
      * Whether a provider still works on any session: once funding resumes, and again whenever it changes. A host
@@ -887,6 +888,11 @@ private class FundingCallbackAdapter(private val bridge: FundingHostBridge) : Na
         target: FundingFrameTarget,
     ): FundingFrameOutcome = withHostRejection { bridge.presentProviderFrame(providerId, intent, target) }
 
+    // Infallible across the FFI, as `onCoreLog` is.
+    override fun closeProviderFrame(providerId: String, intent: String) {
+        runCatching { bridge.closeProviderFrame(providerId, intent) }
+    }
+
     // Infallible across the FFI: a host that cannot tell answers no country. A cancelled call stays cancelled.
     override suspend fun detectedCountry(): String? =
         try {
@@ -905,11 +911,6 @@ private class FundingCallbackAdapter(private val bridge: FundingHostBridge) : Na
         progress: FundingProgress?,
     ) {
         runCatching { bridge.fundingSessionChanged(intent, status, session, progress) }
-    }
-
-    // Infallible across the FFI, as `onCoreLog` is.
-    override fun fundingHistory(history: List<FundingSessionSummary>) {
-        runCatching { bridge.fundingHistory(history) }
     }
 
     // Infallible across the FFI, as `onCoreLog` is.
@@ -1162,7 +1163,13 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     suspend fun confirmFundingCancel(intent: String, terms: CancelTerms?): CancelConfirmation =
         inner.confirmFundingCancel(intent, terms)
 
-    /** Record that the host wrote ended session [intent] into its own history. */
+    /** Every ended funding session, as summaries newest first. Read it whenever the host shows history. */
+    fun fundingHistory(): List<FundingSessionSummary> = inner.fundingHistory()
+
+    /**
+     * Record that the host told the user how ended session [intent] went; until then it comes through
+     * [FundingHostBridge.fundingSessionChanged] again each time funding resumes.
+     */
     @Throws(HostRejection::class)
     suspend fun acknowledgeFundingSession(intent: String): Boolean = inner.acknowledgeFundingSession(intent)
 
@@ -1298,6 +1305,17 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      */
     fun releaseWorker(productId: String) {
         inner.releaseWorker(productId)
+    }
+
+    /**
+     * Report that the product's worker stopped without the host asking: it
+     * crashed, its JS engine failed, or the system killed it. While references
+     * remain, a start transition follows through
+     * [HostBridge.requestWorkerTransition]. Not for a stop the host made after
+     * a stop transition.
+     */
+    fun workerExited(productId: String) {
+        inner.workerExited(productId)
     }
 
     /**

@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
 import io.mockk.coVerify
+import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingBalance
@@ -19,6 +20,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.FundingBand
@@ -87,6 +89,55 @@ class AppFundingOverlayTest {
         assertTrue(frame.showsSentFunds)
         frame.answer(ProviderFrameOutcome.Dismissed)
         assertEquals(ProviderFrameOutcome.Dismissed, outcome.await())
+    }
+
+    // A card payment the user made: the provider is done with its screen, which gives way to the session's sheet.
+    @Test
+    fun `a provider closing its screen answers it closed and shows the session's sheet in its place`() = runTest {
+        push(session(FundingRail.CARD, FundingStage.Open))
+
+        val outcome = async { overlay.presentProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent", ProviderFrameTarget.App("/pay")) }
+        runCurrent()
+        overlay.closeProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent")
+
+        assertEquals(ProviderFrameOutcome.Closed, outcome.await())
+        coVerifyOrder {
+            router.closeFundingProviderFrame("intent")
+            router.openFundingOverlay("intent")
+        }
+        assertEquals(FundingOverlayMode.Resumed, contexts.get("intent")?.mode)
+        assertEquals(null, frames.get("intent"))
+    }
+
+    @Test
+    fun `a provider closing its screen over the open sheet leaves the sheet as it is`() = runTest {
+        push(session(FundingRail.CARD, FundingStage.Open))
+        val sheet = FundingOverlayContext(FundingOverlayRequest(null, "intent", FundingDirection.IN, null), FundingOverlayMode.New)
+        contexts.put(sheet)
+
+        val outcome = async { overlay.presentProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent", ProviderFrameTarget.App("/pay")) }
+        runCurrent()
+        overlay.closeProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent")
+
+        assertEquals(ProviderFrameOutcome.Closed, outcome.await())
+        assertSame(sheet, contexts.get("intent"))
+        coVerify(exactly = 0) { router.openFundingOverlay(any()) }
+    }
+
+    @Test
+    fun `closing a screen that is not open, or another provider's, does nothing`() = runTest {
+        overlay.closeProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent")
+        push(session(FundingRail.CARD, FundingStage.Open))
+
+        val outcome = async { overlay.presentProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent", ProviderFrameTarget.App("/pay")) }
+        runCurrent()
+        overlay.closeProviderFrame(ProductId.fromStoredValue("other.dot"), "intent")
+        runCurrent()
+        assertFalse(outcome.isCompleted)
+
+        requireNotNull(frames.get("intent")).answer(ProviderFrameOutcome.Dismissed)
+        assertEquals(ProviderFrameOutcome.Dismissed, outcome.await())
+        coVerify(exactly = 0) { router.openFundingOverlay(any()) }
     }
 
     @Test

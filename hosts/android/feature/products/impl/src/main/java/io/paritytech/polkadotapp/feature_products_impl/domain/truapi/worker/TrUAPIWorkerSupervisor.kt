@@ -49,6 +49,8 @@ sealed interface WorkerExecutionState {
 /**
  * Runs product workers on the core for as long as the core's reference ledger wants them: a `Start`
  * boots the worker script in a hidden WebView behind a `WORKER` execution, a `Stop` tears it down.
+ * A running worker whose renderer goes away is reported to the core as exited, which starts it again
+ * while it is still held.
  * A worker the app ships runs from its own files, with no dotNS lookup.
  */
 @Singleton
@@ -146,7 +148,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
             webViewRuntime.initialize()
             bootstrapInstaller.installerFor(setOf(workerScript.baseUrl), null)
         }.getOrElse { return Result.failure(it) }
-        provider.addOnWebViewDestroyedListener { rebootAfterRendererLoss(productId, worker) }
+        provider.addOnWebViewDestroyedListener { reportRendererLoss(productId, worker) }
 
         return hostBridgeFactory.create(worker.scope)
             .attach(
@@ -176,13 +178,23 @@ class TrUAPIWorkerSupervisor @Inject constructor(
             }
     }
 
-    // The renderer takes the running script with it, and only a fresh boot runs the script again.
-    private fun rebootAfterRendererLoss(productId: ProductId, worker: RunningWorker) {
+    /**
+     * The renderer took the running script with it: the worker stopped without the core asking. It is torn down and
+     * reported as exited, and the core asks for it again while anything still holds it. A stop the core asked for
+     * destroys the WebView too, but has already taken the worker out of [workers], so it is not reported.
+     */
+    private fun reportRendererLoss(productId: ProductId, worker: RunningWorker) {
         scope.launch {
-            transitions.withLock {
-                if (workers[productId] !== worker || currentExecution(productId) == null) return@withLock
-                stop(productId)
-                start(productId)
+            val exited = transitions.withLock {
+                val running = workers[productId] === worker && currentExecution(productId) != null
+                if (running) stop(productId)
+                running
+            }
+            // Outside the lock: the core answers with a start, which takes it.
+            if (exited) {
+                runtimeProvider.get().runtime()
+                    .mapCatching { it.workerExited(productId.value) }
+                    .logFailure("TrUAPI worker exit for ${productId.value} was not reported")
             }
         }
     }
