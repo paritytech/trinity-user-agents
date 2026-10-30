@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/paritytech/trinity-user-agents/rust/crates/trinity-stack/schema/trinity-stack.v1.schema.json",
   "title": "Trinity stack descriptor, $v 1",
-  "description": "Shape of a $v 1 descriptor. Rules that span fields (unique roles, exactly one Relay, forkedAt on every chain of a fork, private-range http) are checked by readers, not by this schema; the conformance vectors cover them. So are three rules JSON Schema cannot express: integers are written without a fraction or exponent (42, never 42.0), strings and names hold no Unicode noncharacters, and an http or ws URL names its private address in canonical form.",
+  "description": "Shape of a $v 1 descriptor. Rules that span fields (unique roles, exactly one Relay, forkedAt on every chain of a fork, an AssetHub chain when dotns is set, private-range http) are checked by readers, not by this schema; the conformance vectors cover them. So are three rules JSON Schema cannot express: integers are written without a fraction or exponent (42, never 42.0), strings and names hold no Unicode noncharacters, and an http or ws URL names its private address in canonical form.",
   "type": "object",
   "required": ["$v", "sequence", "generation", "id", "name", "network", "tld", "chains", "services"],
   "properties": {
@@ -46,6 +46,16 @@
       "type": "object",
       "additionalProperties": { "type": "string", "pattern": "^0x[0-9a-f]{40}$" }
     },
+    "dotns": {
+      "description": "dotNS contract addresses by DotnsConstants key, such as storeFactory, and protocolRegistry for the registry itself.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Za-z0-9]{1,32}$" },
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^0x[0-9a-f]{40}$",
+        "not": { "const": "0x0000000000000000000000000000000000000000" }
+      }
+    },
     "coinage": {
       "type": "object",
       "required": ["chain", "instance"],
@@ -87,7 +97,18 @@
       "if": {
         "properties": {
           "kind": {
-            "enum": ["dub", "turn", "stun", "ipfs-gateway", "hop", "eth-rpc", "storage-provider", "faucet"]
+            "enum": [
+              "dub",
+              "turn",
+              "stun",
+              "ipfs-gateway",
+              "hop",
+              "eth-rpc",
+              "storage-provider",
+              "faucet",
+              "web-gateway",
+              "evm-explorer"
+            ]
           }
         }
       },
@@ -99,6 +120,10 @@
             "if": { "properties": { "kind": { "const": "eth-rpc" } } },
             "then": { "required": ["chainId"], "properties": { "chainId": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 } } },
             "else": { "not": { "required": ["chainId"] } }
+          },
+          {
+            "if": { "properties": { "kind": { "const": "web-gateway" } } },
+            "then": { "properties": { "urls": { "items": { "pattern": "^(https://|http://localhost(:[0-9]+)?/)" } } } }
           },
           {
             "if": { "properties": { "kind": { "const": "stun" } } },

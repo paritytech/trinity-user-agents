@@ -36,16 +36,20 @@ pub enum Schemes {
 	Web,
 	/// `stun`, for the URLs of a `stun` service.
 	Stun,
+	/// `https` on a hostname, or `http` on `localhost`, for a `web-gateway`, which takes a name's
+	/// label in front of its host and so cannot be a literal address.
+	Gateway,
 }
 
 /// Parses a URL and checks it against the RFC's scheme rule. Descriptors keep the text as written,
 /// so the text itself must be the URL: the parser would forgive whitespace, control characters
-/// and a missing `//`, which other readers refuse.
+/// and a missing `//`, which other readers refuse, and in `http(s)` and `ws(s)` URLs reads `\` as
+/// `/`, which RFC 3986 readers do not.
 pub fn url(value: &str, schemes: Schemes) -> Result<Url, Error> {
 	let invalid = || Error::InvalidUrl(value.to_owned());
 	if value
 		.chars()
-		.any(|character| character.is_whitespace() || character.is_control())
+		.any(|character| character.is_whitespace() || character.is_control() || character == '\\')
 	{
 		return Err(invalid());
 	}
@@ -61,6 +65,13 @@ pub fn url(value: &str, schemes: Schemes) -> Result<Url, Error> {
 		(Schemes::Web, "https" | "wss") => web,
 		(Schemes::Web, "http" | "ws") => web && parsed.host().is_some_and(is_private_literal),
 		(Schemes::Web, _) => false,
+		(Schemes::Gateway, "https") => web && matches!(parsed.host(), Some(Host::Domain(_))),
+		// Also as written: this parser reads `\` as `/`, so `http://localhost\@evil.example/` is
+		// localhost here and evil.example to an RFC 3986 parser.
+		(Schemes::Gateway, "http") => {
+			web && parsed.host_str() == Some("localhost") && written_host(value) == "localhost"
+		},
+		(Schemes::Gateway, _) => false,
 	};
 	if allowed { Ok(parsed) } else { Err(invalid()) }
 }
@@ -144,9 +155,13 @@ mod tests {
 
 	#[test]
 	fn a_url_is_read_as_written() {
-		for refused in
-			[" https://a.example/", "https://a.example/\n", "https://a.exa\tmple/", "wss:a.example"]
-		{
+		for refused in [
+			" https://a.example/",
+			"https://a.example/\n",
+			"https://a.exa\tmple/",
+			"wss:a.example",
+			"https://a.example\\@evil.example/",
+		] {
 			assert!(url(refused, Schemes::Web).is_err(), "{refused:?}");
 		}
 		assert!(url("stun:stun.example:3478 ", Schemes::Stun).is_err());

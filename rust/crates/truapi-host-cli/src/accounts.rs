@@ -655,6 +655,7 @@ fn attest_config(
 	Ok(attestation::AttestConfig {
 		backend_base: network.identity_backend()?.to_string(),
 		asset_hub_ws: network.asset_hub_ws.to_string(),
+		people_ws: network.people_ws.to_string(),
 		network_suffix: network.network_suffix.to_string(),
 		entropy,
 		username_base,
@@ -867,7 +868,9 @@ fn now_unix() -> u64 {
 	SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()
 }
 
-fn write_secret_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+/// Replaces the file at `path` with `bytes` atomically, readable and
+/// writable by its owner only on Unix.
+pub fn write_secret_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 	let tmp_path = temp_path(path);
 	#[cfg(unix)]
 	{

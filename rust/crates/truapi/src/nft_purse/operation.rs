@@ -1,0 +1,355 @@
+//! The RFC's chain operations over Layer 1 transfers: registering a rebalance or
+//! a transfer under a product's idempotency key, and the status a product
+//! observes for it.
+
+use std::collections::BTreeSet;
+
+use futures::{StreamExt, stream::BoxStream};
+use parity_scale_codec::Encode;
+use sp_crypto_hashing::blake2_256;
+use truapi::latest::{
+	NftPurseChequeId, NftPurseClearedItem, NftPurseClearingReference, NftPurseIdempotencyKey,
+	NftPurseItemKey, NftPurseStatus,
+};
+
+use super::{NftPurses, PurseOwner};
+use crate::{
+	durable::RegistrationError,
+	nft::{
+		ItemKey, NftLedger, OperationKey, PurseId, StartOperationError, TransferProgress,
+		TransferRequest, TransferState, TransferType,
+	},
+	platform::ProductId,
+	store::DbError,
+	stream_extensions::StreamExtensions,
+};
+
+/// An operation nothing refused when it was prepared: its key was unused and
+/// its items idle. Starting it checks both again.
+pub struct PreparedOperation {
+	ledger: NftLedger,
+	request: TransferRequest,
+}
+
+impl PreparedOperation {
+	/// Registers the operation's transfers.
+	pub async fn start(self) -> Result<(), RegistrationError<StartOperationError>> {
+		self.ledger.start_transfers(self.request).await
+	}
+}
+
+impl NftPurses {
+	/// Prepares transferring `items` from `from` into fresh keys of `to`, as
+	/// the operation `caller` names `idempotency_key`. The caller asks for
+	/// [`drain_needs_confirmation`] before starting it.
+	pub async fn prepare_rebalance(
+		&self,
+		caller: &ProductId,
+		from: PurseId,
+		to: PurseId,
+		items: BTreeSet<ItemKey>,
+		idempotency_key: NftPurseIdempotencyKey,
+	) -> Result<PreparedOperation, RegistrationError<StartOperationError>> {
+		let operation = operation_key(caller, idempotency_key);
+		let transfer = TransferType::Local { inputs: items, into: to };
+		self.prepare_unless_refused(TransferRequest { operation, from, transfer }).await
+	}
+
+	/// Prepares transferring `item`, held in `from`, to `destination` outside the
+	/// purses, as the operation `caller` names `idempotency_key`.
+	pub async fn prepare_transfer(
+		&self,
+		caller: &ProductId,
+		from: PurseId,
+		item: NftPurseItemKey,
+		destination: NftPurseItemKey,
+		idempotency_key: NftPurseIdempotencyKey,
+	) -> Result<PreparedOperation, RegistrationError<StartOperationError>> {
+		let operation = operation_key(caller, idempotency_key);
+		let transfer =
+			TransferType::Foreign { input: ItemKey(item.0), into: ItemKey(destination.0) };
+		self.prepare_unless_refused(TransferRequest { operation, from, transfer }).await
+	}
+
+	/// `request` as an operation to start, unless it is already refused.
+	async fn prepare_unless_refused(
+		&self,
+		request: TransferRequest,
+	) -> Result<PreparedOperation, RegistrationError<StartOperationError>> {
+		self.ledger
+			.check_transfers_can_start(&request)
+			.await
+			.map_err(RegistrationError::Hook)?;
+		Ok(PreparedOperation { ledger: self.ledger.clone(), request })
+	}
+
+	/// The purse `item` belongs to, if it is one of ours.
+	pub async fn purse_of(&self, item: NftPurseItemKey) -> Result<Option<PurseId>, DbError> {
+		self.ledger.purse_of(ItemKey(item.0)).await
+	}
+
+	/// The status of the operation `caller` registered as `idempotency_key`,
+	/// now and after every change, without repeats, ending after a terminal
+	/// one. `None` while `caller` registered no such operation.
+	pub fn observe_status(
+		&self,
+		caller: &ProductId,
+		idempotency_key: NftPurseIdempotencyKey,
+	) -> BoxStream<'static, Result<Option<NftPurseStatus>, DbError>> {
+		let operation = operation_key(caller, idempotency_key);
+		self.ledger
+			.observe_operation(&operation)
+			.map(|transfers| transfers.map(status_of))
+			.distinct_until_changed()
+			.take_until_inclusive(|read| read.as_ref().is_ok_and(is_terminal))
+	}
+}
+
+/// Whether `caller` must confirm draining a purse `owner` holds: one owned by
+/// Root or by another product.
+pub fn drain_needs_confirmation(caller: &ProductId, owner: &PurseOwner) -> bool {
+	!matches!(owner, PurseOwner::Product(id) if id == caller)
+}
+
+/// The idempotency key of the operation `domain` names for cheque `id`, as
+/// products derive it to observe a revoke or a refund.
+pub fn cheque_idempotency_key(domain: &[u8], id: &NftPurseChequeId) -> NftPurseIdempotencyKey {
+	let preimage = [domain, &id.0].concat();
+	NftPurseIdempotencyKey(blake2_256(&preimage))
+}
+
+/// The operation `caller` names `idempotency_key`, scoped to `caller`.
+pub fn operation_key(caller: &ProductId, idempotency_key: NftPurseIdempotencyKey) -> OperationKey {
+	OperationKey::new(caller.as_str().as_bytes(), idempotency_key.0)
+}
+
+/// The status of an operation whose transfers stand as `transfers`, or `None` when it
+/// has none.
+fn status_of(transfers: Vec<TransferProgress>) -> Option<NftPurseStatus> {
+	(!transfers.is_empty()).then(|| fold_status(&transfers))
+}
+
+/// The RFC status of an operation whose transfers stand as `transfers`.
+fn fold_status(transfers: &[TransferProgress]) -> NftPurseStatus {
+	let cleared: Vec<_> = transfers.iter().filter_map(cleared_item).collect();
+	let failed = failed_items(transfers);
+	let settled = transfers.iter().all(is_settled);
+	match (settled, failed.is_empty(), cleared.is_empty()) {
+		(true, true, _) => {
+			NftPurseStatus::Cleared { reference: clearing_reference(transfers), cleared }
+		},
+		(true, false, _) => {
+			NftPurseStatus::Incomplete { reference: clearing_reference(transfers), cleared, failed }
+		},
+		(false, _, false) => NftPurseStatus::Clearing { cleared },
+		(false, _, true) => NftPurseStatus::InProgress,
+	}
+}
+
+/// The source keys of the transfers that failed.
+fn failed_items(transfers: &[TransferProgress]) -> Vec<NftPurseItemKey> {
+	let failed = transfers.iter().filter(|progress| progress.state == TransferState::Failed);
+	failed.map(|progress| NftPurseItemKey(progress.consumed.0)).collect()
+}
+
+/// Whether nothing will change `progress` again: it is finalized or failed.
+fn is_settled(progress: &TransferProgress) -> bool {
+	matches!(progress.state, TransferState::Landed { finalized: true } | TransferState::Failed)
+}
+
+/// `progress` as a cleared item, when its transfer landed.
+fn cleared_item(progress: &TransferProgress) -> Option<NftPurseClearedItem> {
+	let TransferState::Landed { finalized } = progress.state else { return None };
+	let consumed = NftPurseItemKey(progress.consumed.0);
+	Some(NftPurseClearedItem { consumed, minted: NftPurseItemKey(progress.minted.0), finalized })
+}
+
+/// The landed transfers of `transfers`, each with the transaction that transferred it,
+/// sorted by item, and their binary Merkle root.
+fn clearing_reference(transfers: &[TransferProgress]) -> NftPurseClearingReference {
+	let mut leaves: Vec<_> = transfers
+		.iter()
+		.filter(|progress| matches!(progress.state, TransferState::Landed { .. }))
+		.filter_map(|progress| Some((NftPurseItemKey(progress.consumed.0), progress.tx_hash?.0)))
+		.collect();
+	leaves.sort_by_key(|(item, _)| item.0);
+	let encoded = leaves.iter().map(|(item, tx_hash)| (item.0, *tx_hash).encode());
+	let root = binary_merkle_tree::merkle_root::<ClearingHasher, _>(encoded);
+	NftPurseClearingReference { root, leaves }
+}
+
+/// Blake2-256 as the hasher `binary_merkle_tree` builds the root with.
+struct ClearingHasher;
+
+impl hash_db::Hasher for ClearingHasher {
+	type Out = [u8; 32];
+	type StdHasher = std::hash::DefaultHasher;
+	const LENGTH: usize = 32;
+
+	fn hash(bytes: &[u8]) -> [u8; 32] {
+		blake2_256(bytes)
+	}
+}
+
+/// Whether `status` is the operation's last: `Cleared` or `Incomplete`.
+fn is_terminal(status: &Option<NftPurseStatus>) -> bool {
+	matches!(status, Some(NftPurseStatus::Cleared { .. } | NftPurseStatus::Incomplete { .. }))
+}
+
+#[cfg(test)]
+mod tests {
+	use futures::{StreamExt, executor::block_on};
+	use subxt::utils::H256;
+
+	use super::*;
+	use crate::{
+		nft::{HeldItem, NftLedger, PurseTag, test_ledger},
+		store::{Db, open_temporary_core_db},
+	};
+
+	fn item_key(byte: u8) -> ItemKey {
+		ItemKey([byte; 32])
+	}
+
+	fn transfer_at(byte: u8, state: TransferState) -> TransferProgress {
+		TransferProgress {
+			consumed: item_key(byte),
+			minted: item_key(byte + 100),
+			tx_hash: Some(H256([byte + 200; 32])),
+			state,
+		}
+	}
+
+	fn waiting(byte: u8) -> TransferProgress {
+		TransferProgress { tx_hash: None, ..transfer_at(byte, TransferState::Waiting) }
+	}
+
+	fn landed(byte: u8) -> TransferProgress {
+		transfer_at(byte, TransferState::Landed { finalized: false })
+	}
+
+	fn finalized(byte: u8) -> TransferProgress {
+		transfer_at(byte, TransferState::Landed { finalized: true })
+	}
+
+	fn failed(byte: u8) -> TransferProgress {
+		transfer_at(byte, TransferState::Failed)
+	}
+
+	fn cleared(byte: u8, finalized: bool) -> NftPurseClearedItem {
+		let (consumed, minted) = (NftPurseItemKey([byte; 32]), NftPurseItemKey([byte + 100; 32]));
+		NftPurseClearedItem { consumed, minted, finalized }
+	}
+
+	#[test]
+	fn nothing_landed_is_in_progress() {
+		assert_eq!(fold_status(&[waiting(1), waiting(2)]), NftPurseStatus::InProgress);
+	}
+
+	#[test]
+	fn a_landed_transfer_makes_the_operation_clearing_and_lists_every_landed_transfer() {
+		let status = fold_status(&[finalized(1), landed(2), waiting(3)]);
+
+		assert_eq!(
+			status,
+			NftPurseStatus::Clearing { cleared: vec![cleared(1, true), cleared(2, false)] }
+		);
+	}
+
+	#[test]
+	fn every_transfer_finalized_clears_the_operation() {
+		let status = fold_status(&[finalized(2), finalized(1)]);
+
+		let NftPurseStatus::Cleared { cleared: items, reference } = status else {
+			panic!("{status:?}")
+		};
+		assert_eq!(items, vec![cleared(2, true), cleared(1, true)]);
+		let leaf_items: Vec<_> = reference.leaves.iter().map(|(item, _)| item.0[0]).collect();
+		assert_eq!(leaf_items, vec![1, 2]);
+	}
+
+	#[test]
+	fn settled_transfers_with_a_failure_are_incomplete_and_name_the_failed_items() {
+		let status = fold_status(&[finalized(1), failed(2)]);
+
+		let NftPurseStatus::Incomplete { cleared: items, failed, reference } = status else {
+			panic!("{status:?}")
+		};
+		assert_eq!(items, vec![cleared(1, true)]);
+		assert_eq!(failed, vec![NftPurseItemKey([2; 32])]);
+		assert_eq!(reference.leaves, vec![(NftPurseItemKey([1; 32]), [201; 32])]);
+	}
+
+	#[test]
+	fn a_failure_beside_a_transfer_still_landing_is_not_terminal() {
+		assert!(matches!(fold_status(&[landed(1), failed(2)]), NftPurseStatus::Clearing { .. }));
+	}
+
+	/// Verifiers recompute the root with `binary-merkle-tree`, so it must match
+	/// that crate's construction byte for byte.
+	#[test]
+	fn the_clearing_root_is_the_binary_merkle_root_of_the_encoded_leaves() {
+		let transfers = [
+			TransferProgress { tx_hash: Some(H256([4; 32])), ..finalized(3) },
+			TransferProgress { tx_hash: Some(H256([2; 32])), ..finalized(1) },
+		];
+
+		let reference = clearing_reference(&transfers);
+
+		let expected = "b4e4e38b8537fb079a236c1dce5c3b442dec0b44b42c04015ed0df9343aacf40";
+		assert_eq!(hex::encode(reference.root), expected);
+	}
+
+	/// A product listens until the operation ends. Once every transfer is
+	/// final nothing changes in the ledger again, so the stream must end on
+	/// the terminal status itself rather than wait for another.
+	#[test]
+	fn the_status_stream_ends_with_its_terminal_status() {
+		let (_dir, db) = open_temporary_core_db();
+		let ledger = test_ledger(db.clone());
+		let purses = crate::nft_purse::test_purses(db.clone());
+		let caller: ProductId = "tickets.dot".parse().unwrap();
+		let item = held_item_in_new_purses(&ledger);
+		let key = NftPurseIdempotencyKey([1; 32]);
+		let items = BTreeSet::from([item]);
+		let prepared =
+			block_on(purses.prepare_rebalance(&caller, PurseId(0), PurseId(1), items, key));
+		block_on(prepared.unwrap().start()).unwrap();
+		finalize_every_transfer(&db);
+
+		let observed = block_on(async {
+			let statuses = purses.observe_status(&caller, key).collect::<Vec<_>>();
+			futures::future::select(Box::pin(statuses), futures_timer::Delay::new(TIMEOUT)).await
+		});
+
+		let futures::future::Either::Left((statuses, _)) = observed else {
+			panic!("the stream did not end after its terminal status")
+		};
+		assert!(matches!(statuses[..], [Ok(Some(NftPurseStatus::Cleared { .. }))]), "{statuses:?}");
+	}
+
+	const TIMEOUT: core::time::Duration = core::time::Duration::from_secs(5);
+
+	/// A key of purse 0, holding an NFT, with purse 1 beside it.
+	fn held_item_in_new_purses(ledger: &NftLedger) -> ItemKey {
+		for name in ["from", "to"] {
+			block_on(ledger.create_purse(name.to_owned(), PurseTag::default())).unwrap();
+		}
+		let one = core::num::NonZeroU32::new(1).unwrap();
+		let key = block_on(ledger.allocate_items(PurseId(0), one)).unwrap()[0];
+		let held = HeldItem { collection: 1, item: 1, instance: 7 };
+		block_on(ledger.record_holdings(vec![(key, Some(held))])).unwrap();
+		key
+	}
+
+	fn finalize_every_transfer(db: &Db) {
+		let finalize = |tx: &rusqlite::Transaction<'_>| {
+			tx.execute(
+				"UPDATE durable_tx SET status = 'FINALIZED_SUCCESS', tx_hash = ?1",
+				[[9u8; 32]],
+			)?;
+			Ok(())
+		};
+		block_on(db.write(finalize)).unwrap();
+	}
+}
