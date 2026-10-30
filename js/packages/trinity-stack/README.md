@@ -36,19 +36,20 @@ npx trinity-stack update   # exits 2 when a committed file changed, so a schedul
 
 They write `.trinity/`: `stacks.json` and each stack's signed copy, committed with the project, and an `index.js` and
 `index.d.ts` that bundle them, which `.trinity/.gitignore` leaves out of git. `trinity-stack generate` rebuilds those
-two from the committed files without fetching, so a project runs it on install, as polkadot-api projects run
-`papi generate`:
+two from the committed files without fetching, so a project runs it on install, as dotns-sdk runs `papi generate`:
 
 ```json
-{ "scripts": { "postinstall": "trinity-stack generate" } }
+{ "scripts": { "prepare": "trinity-stack generate" } }
 ```
 
-A build that installs with scripts turned off runs `npx trinity-stack generate` before it builds. `add` writes
-`.gitignore` and an empty `.npmignore` only when they are missing, and the `.npmignore` keeps the module in a package
-the project publishes.
+`prepare` runs on the project's own installs and before it publishes, never when someone installs the published package.
+Yarn Berry does not run `prepare`, so a Yarn Berry app that is never published uses `postinstall`. A build that installs
+with scripts turned off runs `npx trinity-stack generate` before it builds. `add` writes `.gitignore` and an empty
+`.npmignore` only when they are missing, and the `.npmignore` keeps the module in a package the project publishes.
 
-A stack that fails to update is left as it was, and `update` exits 1. At run time a reader serves those copies and
-refreshes them by the policy the project picks:
+A stack that fails to update is left as it was, and `update` exits 1. The copies of the stacks that did move are written
+all the same, so a job that opens its pull request from the git diff still picks them up. At run time a reader serves
+those copies and refreshes them by the policy the project picks:
 
 ```ts
 import { createStackReader, service } from "@parity/trinity-stack/reader";

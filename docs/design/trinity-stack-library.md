@@ -171,8 +171,9 @@ They write one directory in the project:
   module. It exits 0 when no committed file changed, 1 on an error and 2 when one did, so a scheduled CI job can open a
   pull request whenever a stack moved and leave it to review.
 - **`generate`** rebuilds the module from the committed files and fetches nothing, so a project's `prepare` script runs
-  it the way polkadot-api projects run `papi generate`, usually as `postinstall`, which every package manager runs. It
-  fails when a stack in stacks.json has no copy, rather than leave that stack out of the module.
+  it, as dotns-sdk runs `papi generate`. `prepare` never runs when someone installs the published package. `postinstall`
+  would, and would fail there when `@parity/trinity-stack` is only a dev dependency. `generate` fails when a stack in
+  stacks.json has no copy, rather than leave that stack out of the module.
 - **The generated module** carries each stack as data, not as a file to load:
 
   ```ts

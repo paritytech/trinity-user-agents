@@ -17,7 +17,7 @@ update exits 0 when no committed file changed, 2 when one did and 1 when a stack
 stack that fails is left as it was while the others update.
 
 generate rebuilds index.js and index.d.ts from the committed copies without fetching, for a
-"postinstall" script; .trinity/.gitignore leaves both out of git.`;
+"prepare" script; .trinity/.gitignore leaves both out of git.`;
 
 try {
   const { positionals, values } = parseArgs({
