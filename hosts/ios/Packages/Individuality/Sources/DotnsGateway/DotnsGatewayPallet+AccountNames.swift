@@ -9,6 +9,11 @@ public extension DotnsGatewayPallet {
         /// never saw one: a label backfilled by migration, or a full label linked to a lite
         /// label other than the recorded one.
         public let chat: BytesCodable?
+
+        public init(label: Data, chat: BytesCodable?) {
+            self.label = label
+            self.chat = chat
+        }
     }
 
     /// The value stored in the `AccountNames` map: a cache of lite and full names.
@@ -23,6 +28,11 @@ public extension DotnsGatewayPallet {
         public let lite: NameEntry?
         public let full: NameEntry?
 
+        public init(lite: NameEntry?, full: NameEntry?) {
+            self.lite = lite
+            self.full = full
+        }
+
         /// The label to show for the account: the full name where one exists, otherwise the lite
         /// name, and `nil` while neither is registered.
         public var username: Data? {
@@ -34,11 +44,28 @@ public extension DotnsGatewayPallet {
         public var chatKey: Data? {
             lite?.chat?.wrappedValue
         }
+
+        public func listedLabel(among labels: Set<Data>, assigned: Set<Data>) -> Data? {
+            if let full = full?.label {
+                let cachedLabels = [full, lite?.label].compactMap { $0 }
+                return cachedLabels.contains(where: labels.contains) ? full : nil
+            }
+            guard let lite = lite?.label else {
+                return nil
+            }
+            let upgraded = assigned.subtracting([lite]).min { $0.lexicographicallyPrecedes($1) }
+            return upgraded ?? (labels.contains(lite) ? lite : nil)
+        }
     }
 
     /// One account's name record together with the account it was read for.
     struct AccountNameWithAccountId {
         public let accountId: AccountId
         public let record: AccountNameRecord
+
+        public init(accountId: AccountId, record: AccountNameRecord) {
+            self.accountId = accountId
+            self.record = record
+        }
     }
 }
