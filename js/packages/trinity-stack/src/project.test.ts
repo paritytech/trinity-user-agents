@@ -3,7 +3,14 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Fetch, encodeLink } from "./index.js";
-import { type ProjectOptions, add, list, remove, update } from "./project.js";
+import {
+  type ProjectOptions,
+  add,
+  generate,
+  list,
+  remove,
+  update,
+} from "./project.js";
 import { createStackReader } from "./reader.js";
 import { MODEL, URL_, pointer, publishedAt as at } from "./test-fixtures.js";
 
@@ -29,11 +36,15 @@ describe("trinity-stack add and update", () => {
   test("add writes the signed copy and a module a reader runs from", async () => {
     const { changed } = await add("local", link, undefined, options());
     expect(changed.sort()).toEqual([
+      ".gitignore",
       "index.d.ts",
       "index.js",
       "local.json",
       "stacks.json",
     ]);
+    expect(await readFile(join(dir, ".gitignore"), "utf8")).toBe(
+      "index.js\nindex.d.ts\n",
+    );
     expect(new Uint8Array(await readFile(join(dir, "local.json")))).toEqual(
       served!,
     );
@@ -67,12 +78,28 @@ describe("trinity-stack add and update", () => {
       warnings: [],
     });
     served = await at(200, "g2");
-    expect((await update([], options())).changed.sort()).toEqual([
-      "index.js",
-      "local.json",
-    ]);
+    expect((await update([], options())).changed).toEqual(["local.json"]);
     const [stack] = await list({ dir });
     expect(stack.descriptor?.generation).toBe("g2");
+  });
+
+  test("generate rebuilds the git-ignored module from the committed copies, with no fetch", async () => {
+    await add("local", link, undefined, options());
+    await rm(join(dir, "index.js"));
+    await rm(join(dir, "index.d.ts"));
+    const offline = {
+      dir,
+      fetch: () => Promise.reject(new Error("generate must not fetch")),
+    };
+    expect((await generate(offline)).sort()).toEqual([
+      "index.d.ts",
+      "index.js",
+    ]);
+    const { stacks } = await import(`${join(dir, "index.js")}?generated`);
+    expect(Object.keys(stacks)).toEqual(["local"]);
+    // A fresh clone before `prepare`: update rebuilds the module but reports no committed change.
+    await rm(join(dir, "index.js"));
+    expect((await update([], options())).changed).toEqual([]);
   });
 
   test("update rejects a lower sequence, an unreachable stack and an unsigned one, naming the stack", async () => {
@@ -115,7 +142,12 @@ describe("trinity-stack add and update", () => {
   test("remove drops the copy and the stack from the module", async () => {
     await add("local", link, undefined, options());
     await remove("local", { dir });
-    expect(await files()).toEqual(["index.d.ts", "index.js", "stacks.json"]);
+    expect(await files()).toEqual([
+      ".gitignore",
+      "index.d.ts",
+      "index.js",
+      "stacks.json",
+    ]);
     const { stacks } = await import(`${join(dir, "index.js")}?removed`);
     expect(stacks).toEqual({});
   });
