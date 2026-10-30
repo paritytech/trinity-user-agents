@@ -67,11 +67,9 @@ pub struct FundingSessionSummary {
 	pub opened_at_ms: u64,
 	/// The provider that served it, `None` when none took it.
 	pub provider_id: Option<String>,
-	/// The rail the user paid or was paid by, from the quote it was chosen
-	/// on.
-	pub rail: Option<FundingRail>,
-	/// The asset symbol the user paid with or received.
-	pub asset: Option<String>,
+	/// The quote the provider was chosen on, with its rail, asset and
+	/// network. `None` when no provider took it.
+	pub choice: Option<FundingChoice>,
 	/// How the host shows its ending: the row's status.
 	pub status: FundingStatus,
 	/// The provider's payout outcome on a withdrawal, once it reported one.
@@ -102,8 +100,7 @@ impl FundingSession {
 			stage: self.stage.clone(),
 			opened_at_ms: self.opened_at_ms,
 			provider_id: self.provider_id.clone(),
-			rail: self.choice.as_ref().map(|choice| choice.rail),
-			asset: self.choice.as_ref().map(|choice| choice.asset.clone()),
+			choice: self.choice.clone(),
 			status: self.status(ended_at_ms),
 			payout: self.payout().cloned(),
 			refunded: self.refund.as_ref().and_then(|refund| refund.refunded),
