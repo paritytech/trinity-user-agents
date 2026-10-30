@@ -1,7 +1,5 @@
 use super::*;
 
-use crate::product_secrets::SecretOwner;
-
 // The wallet ending its own session drops every secret, and so does switching
 // to another account. Activating the same account again, as the app does on
 // every launch, keeps them.
@@ -11,8 +9,8 @@ fn the_wallet_drops_product_secrets_when_its_session_ends_or_the_account_changes
 	let storage = services.install_memory_secrets();
 	let secrets = services.product_secrets().expect("secrets installed");
 	let keep_secret = || {
-		let owner = SecretOwner { product_id: "wallet.dot", account: &[1; 32] };
-		futures::executor::block_on(secrets.put(&[1; 32], owner, b"secret")).expect("secret kept");
+		futures::executor::block_on(secrets.put(&[1; 32], "wallet.dot", b"secret"))
+			.expect("secret kept");
 	};
 	let kept = || storage.stored().len();
 

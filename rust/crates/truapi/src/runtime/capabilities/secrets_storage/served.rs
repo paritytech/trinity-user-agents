@@ -15,8 +15,8 @@ use truapi::{
 };
 
 use crate::{
-	host_logic::secrets_storage::{MAX_KEYS_PER_PRODUCT, check_write, is_valid_key, secret_id},
-	product_secrets::{ProductSecrets, SecretOwner},
+	host_logic::secrets_storage::{check_write, is_valid_key, secret_id},
+	product_secrets::ProductSecrets,
 	runtime::{ProductRuntimeHost, versioning::version},
 };
 
@@ -81,12 +81,9 @@ impl SecretsStorage for ProductRuntimeHost {
 			.await
 	}
 
-	/// A key the product has no secret under yet only gets one while the
-	/// product keeps fewer than [`MAX_KEYS_PER_PRODUCT`] for the signed-in
-	/// account. The count check and the write hold one lock, so concurrent
-	/// writes cannot pass the cap together. Dropping secrets at sign-out takes
-	/// the same lock, and the session is checked again under it, so a write
-	/// racing a sign-out or an account switch cannot outlive it.
+	/// Dropping secrets at sign-out takes the same lock as a write, and the
+	/// session is checked again under it, so a write racing a sign-out or an
+	/// account switch cannot outlive it.
 	#[instrument(skip_all, fields(runtime.method = "secrets_storage.write"))]
 	async fn write(
 		&self,
@@ -97,25 +94,12 @@ impl SecretsStorage for ProductRuntimeHost {
 			.exec(|latest::HostSecretsStorageWriteRequest { key, value }| async move {
 				let SecretSlot { secrets, owner, id } = self.secret_slot(&key)?;
 				check_write(&key, &value).map_err(CallError::Domain)?;
-				let owned_by = SecretOwner {
-					product_id: self.connection.product.product_id.as_str(),
-					account: &owner,
-				};
 				let _writes = self.connection.services.secrets_storage_writes().await;
 				if !self.is_signed_in(&owner) {
 					return Err(CallError::Denied);
 				}
-				let replacing = secrets.get(&id).await.map_err(write_failure)?.is_some();
-				if !replacing &&
-					secrets.count(owned_by).await.map_err(write_failure)? >= MAX_KEYS_PER_PRODUCT
-				{
-					return Err(CallError::Domain(
-						latest::HostSecretsStorageWriteError::TooManyKeys {
-							max: MAX_KEYS_PER_PRODUCT,
-						},
-					));
-				}
-				secrets.put(&id, owned_by, &value).await.map_err(write_failure)
+				let product_id = self.connection.product.product_id.as_str();
+				secrets.put(&id, product_id, &value).await.map_err(write_failure)
 			})
 			.await
 	}

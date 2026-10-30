@@ -2632,8 +2632,6 @@ mod tests {
 	#[cfg(not(target_arch = "wasm32"))]
 	#[test]
 	fn the_core_drops_product_secrets_when_a_session_or_product_is_cleared() {
-		use crate::product_secrets::SecretOwner;
-
 		let platform = Arc::new(StubPlatform::default());
 		let (host_config, _) = runtime_config("myapp.dot");
 		let runtime = PairingHostRuntime::new(platform.clone(), host_config, test_spawner());
@@ -2641,8 +2639,7 @@ mod tests {
 		let secrets = runtime.services.product_secrets().expect("secrets installed");
 		let keep_secrets = || {
 			for (n, product_id) in [(1, "myapp.dot"), (2, "other.dot")] {
-				let owner = SecretOwner { product_id, account: &[1; 32] };
-				futures::executor::block_on(secrets.put(&[n; 32], owner, b"secret"))
+				futures::executor::block_on(secrets.put(&[n; 32], product_id, b"secret"))
 					.expect("secret kept");
 			}
 		};

@@ -39,11 +39,6 @@ pub enum HostSecretsStorageWriteError {
 		/// The limit, in bytes.
 		max: u32,
 	},
-	/// The product already keeps `max` keys, and `key` is not one of them.
-	TooManyKeys {
-		/// The most keys one product may keep per account.
-		max: u32,
-	},
 	/// Catch-all.
 	Unknown {
 		/// Human-readable reason.

@@ -11,9 +11,6 @@ pub const MAX_KEY_CHARS: usize = 64;
 /// credentials, not documents.
 pub const MAX_VALUE_BYTES: u32 = 8192;
 
-/// Most keys one product may keep, per account.
-pub const MAX_KEYS_PER_PRODUCT: u32 = 16;
-
 /// The id `product_id`'s secret under `key` is kept under, for the account
 /// `owner` signed in with. Hashing in the account and the product means no
 /// user or product can name another's secret.

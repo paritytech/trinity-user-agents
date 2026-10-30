@@ -9724,24 +9724,28 @@ fn clear_secret(
 }
 
 // The core derives the id from the product, so another product reading the
-// same key must never receive the secret.
+// same key must never receive the secret. A product writes again when it finds
+// no secret, so a cleared one reads as absent, and clearing twice is not an
+// error.
 #[test]
-fn a_kept_secret_is_returned_only_to_the_product_that_wrote_it() {
+fn a_kept_secret_is_returned_only_to_the_product_that_wrote_it_until_cleared() {
 	let services = payment_services();
 	services.install_memory_secrets();
 	let wallet = payment_host(&services, "wallet.dot", true);
 	let shop = payment_host(&services, "shop.dot", true);
 
 	let written = write_secret(&wallet, "onramp", onramp_secret());
+	let read = (read_secret(&wallet, "onramp"), read_secret(&shop, "onramp"));
+	let cleared = [clear_secret(&wallet, "onramp"), clear_secret(&wallet, "onramp")];
 
+	let cleared_ok = Ok(truapi::versioned::secrets_storage::HostSecretsStorageClearResponse::V1);
 	assert_eq!(
-		(written, read_secret(&wallet, "onramp"), read_secret(&shop, "onramp")),
-		(
-			Ok(truapi::versioned::secrets_storage::HostSecretsStorageWriteResponse::V1),
-			Ok(Some(onramp_secret())),
-			Ok(None),
-		)
+		written,
+		Ok(truapi::versioned::secrets_storage::HostSecretsStorageWriteResponse::V1)
 	);
+	assert_eq!(read, (Ok(Some(onramp_secret())), Ok(None)));
+	assert_eq!(cleared, [cleared_ok.clone(), cleared_ok]);
+	assert_eq!(read_secret(&wallet, "onramp"), Ok(None));
 }
 
 // Secrets belong to the account that signed in, so a different account using
@@ -9767,110 +9771,6 @@ fn a_kept_secret_is_returned_only_to_the_account_that_wrote_it() {
 	assert_eq!(
 		(read_secret(&alice, "onramp"), read_secret(&bob, "onramp")),
 		(Ok(Some(onramp_secret())), Ok(None))
-	);
-}
-
-// Secrets storage is meant for a handful of credentials, so a product keeps a
-// bounded number of keys. Replacing one it already keeps stays allowed at the
-// limit.
-#[test]
-fn a_product_keeps_a_bounded_number_of_keys() {
-	let services = payment_services();
-	services.install_memory_secrets();
-	let wallet = payment_host(&services, "wallet.dot", true);
-	let max = crate::host_logic::secrets_storage::MAX_KEYS_PER_PRODUCT;
-	for index in 0..max {
-		write_secret(&wallet, &format!("key-{index}"), onramp_secret())
-			.expect("a secret within the limit is kept");
-	}
-
-	assert_eq!(
-		(
-			write_secret(&wallet, "one-too-many", onramp_secret()),
-			write_secret(&wallet, "key-0", onramp_secret()),
-		),
-		(
-			Err(CallError::Domain(
-				truapi::versioned::secrets_storage::HostSecretsStorageWriteError::V1(
-					v01::HostSecretsStorageWriteError::TooManyKeys { max }
-				)
-			)),
-			Ok(truapi::versioned::secrets_storage::HostSecretsStorageWriteResponse::V1),
-		)
-	);
-}
-
-// The cap is per account: secrets another account left for the same product,
-// such as ones whose clear failed on sign-out, must not use up the next
-// account's keys.
-#[test]
-fn the_key_cap_counts_only_the_signed_in_account() {
-	let services = payment_services();
-	services.install_memory_secrets();
-	let alice = payment_host(&services, "wallet.dot", true);
-	let (host_config, product) = runtime_config("wallet.dot");
-	let pairing_host = PairingHost::new(services.clone(), host_config);
-	let bob = ProductRuntimeHost::from_services(
-		services.clone(),
-		crate::host_core::ConnectionAdapters::from_services(&services),
-		pairing_host.clone(),
-		pairing_host.session().clone(),
-		product,
-	);
-	install_pairing_session(&bob, SessionInfo { public_key: [0xb0; 32], ..session_info() });
-	let max = crate::host_logic::secrets_storage::MAX_KEYS_PER_PRODUCT;
-	for index in 0..max {
-		write_secret(&alice, &format!("key-{index}"), onramp_secret())
-			.expect("a secret within the limit is kept");
-	}
-
-	assert_eq!(
-		write_secret(&bob, "onramp", onramp_secret()),
-		Ok(truapi::versioned::secrets_storage::HostSecretsStorageWriteResponse::V1)
-	);
-}
-
-// Two writes of new keys racing at the last free slot must not both get in:
-// the count check and the write happen under one lock, so the second sees the
-// first's secret.
-#[test]
-fn concurrent_writes_cannot_pass_the_key_cap() {
-	let services = payment_services();
-	let keeper = services.install_memory_secrets();
-	let wallet = payment_host(&services, "wallet.dot", true);
-	let max = crate::host_logic::secrets_storage::MAX_KEYS_PER_PRODUCT;
-	for index in 0..max - 1 {
-		write_secret(&wallet, &format!("key-{index}"), onramp_secret())
-			.expect("a secret within the limit is kept");
-	}
-
-	let cx = CallContext::default();
-	let write = |key: &'static str| {
-		truapi::api::SecretsStorage::write(
-			&wallet,
-			&cx,
-			truapi::versioned::secrets_storage::HostSecretsStorageWriteRequest::V1(
-				v01::HostSecretsStorageWriteRequest {
-					key: key.to_string(),
-					value: onramp_secret(),
-				},
-			),
-		)
-	};
-	let (first, second) =
-		futures::executor::block_on(futures::future::join(write("racer-one"), write("racer-two")));
-
-	assert_eq!(
-		(first.is_ok(), second, keeper.stored().len() as u32),
-		(
-			true,
-			Err(CallError::Domain(
-				truapi::versioned::secrets_storage::HostSecretsStorageWriteError::V1(
-					v01::HostSecretsStorageWriteError::TooManyKeys { max }
-				)
-			)),
-			max,
-		)
 	);
 }
 
@@ -9938,25 +9838,6 @@ fn a_paired_account_switch_drops_product_secrets() {
 	);
 
 	assert_eq!((kept_for_same_account, keeper.stored().len()), (1, 0));
-}
-
-// A product writes again when it finds no secret, so a cleared secret has to
-// read as absent, and clearing it twice is not an error.
-#[test]
-fn a_cleared_secret_reads_as_absent() {
-	let services = payment_services();
-	services.install_memory_secrets();
-	let wallet = payment_host(&services, "wallet.dot", true);
-	write_secret(&wallet, "onramp", onramp_secret()).expect("secret written");
-
-	let cleared = clear_secret(&wallet, "onramp");
-	let cleared_again = clear_secret(&wallet, "onramp");
-
-	let cleared_ok = Ok(truapi::versioned::secrets_storage::HostSecretsStorageClearResponse::V1);
-	assert_eq!(
-		(cleared, cleared_again, read_secret(&wallet, "onramp")),
-		(cleared_ok.clone(), cleared_ok, Ok(None))
-	);
 }
 
 // The key goes into the id the core derives, and the host keeps values in

@@ -80,9 +80,8 @@ pub struct RuntimeServices {
 	/// Host Game adapter, installed once at startup by a host that can hold
 	/// reminders. Unset leaves every product Game call `Unsupported`.
 	game_platform: OnceLock<Arc<dyn GamePlatform>>,
-	/// Held across a secrets storage write's session and count checks and its
-	/// write, and across a clear, so two writes cannot both pass the
-	/// per-product cap and no write lands after a sign-out's clear.
+	/// Held across a secrets storage write's session check and its write, and
+	/// across a clear, so no write lands after a sign-out's clear.
 	secrets_storage_writes: futures::lock::Mutex<()>,
 	/// Host scanner, installed once at startup by a host that can draw a
 	/// viewfinder. Unset leaves every product scan `Unsupported`.

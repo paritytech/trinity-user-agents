@@ -2,11 +2,11 @@
 //! database's `product_secret` table, and the secret itself in the host's
 //! [`EncryptedStorage`].
 //!
-//! The row records which product and account own a secret, so the core can
-//! count and clear secrets without the host listing anything. Every secret is
-//! written after its row and deleted before it, so a crash in between leaves
-//! at most a row whose secret is missing, which reads as absent and the next
-//! clear removes. A secret is never left behind without a row.
+//! The row records which product owns a secret, so the core can clear secrets
+//! without the host listing anything. Every secret is written after its row
+//! and deleted before it, so a crash in between leaves at most a row whose
+//! secret is missing, which reads as absent and the next clear removes. A
+//! secret is never left behind without a row.
 
 use std::sync::Arc;
 
@@ -19,17 +19,9 @@ use crate::{
 	store::{Db, DbError},
 };
 
-/// The id of a product's secret, derived from its owner and the product's key.
+/// The id of a product's secret, derived from the account, the product and
+/// the product's key.
 pub type SecretId = [u8; 32];
-
-/// The product and signed-in account a secret belongs to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SecretOwner<'a> {
-	/// The product that owns the secret.
-	pub product_id: &'a str,
-	/// The account the secret was kept for.
-	pub account: &'a [u8; 32],
-}
 
 /// Products' secrets, over the core database and the host's encrypted
 /// storage. Cloning shares both.
@@ -39,16 +31,12 @@ pub struct ProductSecrets {
 	encrypted: Arc<dyn EncryptedStorage>,
 }
 
-const UPSERT: &str = "INSERT INTO product_secret (id, product_id, account)
-	VALUES (:id, :product_id, :account)
-	ON CONFLICT (id) DO UPDATE SET product_id = :product_id, account = :account";
+const UPSERT: &str = "INSERT INTO product_secret (id, product_id) VALUES (:id, :product_id)
+	ON CONFLICT (id) DO UPDATE SET product_id = :product_id";
 
 const EXISTS: &str = "SELECT 1 FROM product_secret WHERE id = :id";
 
 const DELETE: &str = "DELETE FROM product_secret WHERE id = :id";
-
-const COUNT: &str = "SELECT COUNT(*) FROM product_secret
-	WHERE product_id = :product_id AND account = :account";
 
 const IDS: &str = "SELECT id FROM product_secret
 	WHERE :product_id IS NULL OR product_id = :product_id";
@@ -64,42 +52,25 @@ impl ProductSecrets {
 		Self { db, encrypted }
 	}
 
-	/// Keeps `secret` under `id`, owned by `owner`, replacing any secret
-	/// already under it. When the host fails to store a new secret, its row
-	/// is removed again, so it does not count toward the owner's secrets.
+	/// Keeps `secret` under `id`, owned by `product_id`, replacing any secret
+	/// already under it.
 	pub async fn put(
 		&self,
 		id: &SecretId,
-		owner: SecretOwner<'_>,
+		product_id: &str,
 		secret: &[u8],
 	) -> Result<(), GenericError> {
 		let row_id = *id;
-		let product_id = owner.product_id.to_owned();
-		let account = *owner.account;
-		let inserted = self
-			.db
+		let product_id = product_id.to_owned();
+		self.db
 			.write(move |tx| {
-				let existed = tx
-					.prepare_cached(EXISTS)?
-					.query_row(named_params! { ":id": row_id }, |_| Ok(()))
-					.optional()?
-					.is_some();
-				tx.prepare_cached(UPSERT)?.execute(named_params! {
-					":id": row_id,
-					":product_id": product_id,
-					":account": account,
-				})?;
-				Ok(!existed)
+				tx.prepare_cached(UPSERT)?
+					.execute(named_params! { ":id": row_id, ":product_id": product_id })?;
+				Ok(())
 			})
 			.await
 			.map_err(db_failure)?;
-		let written = self.encrypted.write_encrypted(&storage_key(id), secret).await;
-		if written.is_err() &&
-			inserted && let Err(error) = self.delete_row(id).await
-		{
-			tracing::warn!(reason = %error.reason, "a secret the host did not store left its row behind");
-		}
-		written
+		self.encrypted.write_encrypted(&storage_key(id), secret).await
 	}
 
 	/// The secret under `id`, or `None` when none is kept or the host lost
@@ -126,19 +97,11 @@ impl ProductSecrets {
 	/// Deletes the secret under `id`. Deleting none succeeds.
 	pub async fn delete(&self, id: &SecretId) -> Result<(), GenericError> {
 		self.encrypted.delete_encrypted(&storage_key(id)).await?;
-		self.delete_row(id).await
-	}
-
-	/// How many secrets `owner` has.
-	pub async fn count(&self, owner: SecretOwner<'_>) -> Result<u32, GenericError> {
-		let product_id = owner.product_id.to_owned();
-		let account = *owner.account;
+		let row_id = *id;
 		self.db
-			.read(move |conn| {
-				Ok(conn.prepare_cached(COUNT)?.query_row(
-					named_params! { ":product_id": product_id, ":account": account },
-					|row| row.get(0),
-				)?)
+			.write(move |tx| {
+				tx.prepare_cached(DELETE)?.execute(named_params! { ":id": row_id })?;
+				Ok(())
 			})
 			.await
 			.map_err(db_failure)
@@ -165,17 +128,6 @@ impl ProductSecrets {
 		}
 		Ok(())
 	}
-
-	async fn delete_row(&self, id: &SecretId) -> Result<(), GenericError> {
-		let row_id = *id;
-		self.db
-			.write(move |tx| {
-				tx.prepare_cached(DELETE)?.execute(named_params! { ":id": row_id })?;
-				Ok(())
-			})
-			.await
-			.map_err(db_failure)
-	}
 }
 
 /// A core database failure, as the reason a secret operation failed.
@@ -193,9 +145,6 @@ mod tests {
 		store::{DbConfig, DbLocation},
 	};
 
-	const ALICE: [u8; 32] = [1; 32];
-	const BOB: [u8; 32] = [2; 32];
-
 	fn id(n: u8) -> SecretId {
 		[n; 32]
 	}
@@ -211,77 +160,33 @@ mod tests {
 		(ProductSecrets::new(db, storage.clone()), storage)
 	}
 
-	fn owner<'a>(product_id: &'a str, account: &'a [u8; 32]) -> SecretOwner<'a> {
-		SecretOwner { product_id, account }
-	}
-
-	// Only the secret goes to the host, under the feature's prefix, and it
-	// reads back until deleted.
+	// Only the secret goes to the host, under the feature's prefix. Clearing
+	// one product leaves the others' secrets, and clearing all leaves nothing
+	// in the host's storage.
 	#[test]
-	fn a_kept_secret_reads_back_until_deleted() {
+	fn secrets_are_kept_per_product_until_cleared() {
 		let (secrets, storage) = secrets();
-		block_on(secrets.put(&id(1), owner("a.dot", &ALICE), b"secret")).unwrap();
-
-		let read = block_on(secrets.get(&id(1))).unwrap();
-		let host_keys: Vec<_> = storage.stored().into_keys().collect();
-		block_on(secrets.delete(&id(1))).unwrap();
-		block_on(secrets.delete(&id(1))).unwrap();
-
-		assert_eq!(read.as_deref().map(Vec::as_slice), Some(b"secret".as_slice()));
-		assert_eq!(host_keys, vec![storage_key(&id(1))]);
-		assert_eq!(block_on(secrets.get(&id(1))).unwrap(), None);
-		assert!(storage.stored().is_empty());
-	}
-
-	// Counting is per product and account, and replacing a secret does not
-	// count it twice.
-	#[test]
-	fn secrets_are_counted_per_product_and_account() {
-		let (secrets, _) = secrets();
-		for (id, product, account) in [
-			(id(1), "a.dot", &ALICE),
-			(id(2), "a.dot", &ALICE),
-			(id(3), "a.dot", &BOB),
-			(id(4), "b.dot", &ALICE),
-		] {
-			block_on(secrets.put(&id, owner(product, account), b"s")).unwrap();
-		}
-		block_on(secrets.put(&id(1), owner("a.dot", &ALICE), b"again")).unwrap();
-
-		let counts = [
-			block_on(secrets.count(owner("a.dot", &ALICE))).unwrap(),
-			block_on(secrets.count(owner("a.dot", &BOB))).unwrap(),
-			block_on(secrets.count(owner("b.dot", &ALICE))).unwrap(),
-		];
-
-		assert_eq!(counts, [2, 1, 1]);
-	}
-
-	// Clearing one product leaves the others' secrets, and clearing all
-	// leaves nothing in the host's storage.
-	#[test]
-	fn clearing_deletes_one_products_secrets_or_all() {
-		let (secrets, storage) = secrets();
-		block_on(secrets.put(&id(1), owner("a.dot", &ALICE), b"s")).unwrap();
-		block_on(secrets.put(&id(2), owner("b.dot", &ALICE), b"s")).unwrap();
+		block_on(secrets.put(&id(1), "a.dot", b"secret")).unwrap();
+		block_on(secrets.put(&id(2), "b.dot", b"secret")).unwrap();
+		let host_keys = storage.stored().len();
 
 		block_on(secrets.clear(Some("a.dot"))).unwrap();
 		let after_product = (
 			block_on(secrets.get(&id(1))).unwrap(),
-			block_on(secrets.get(&id(2))).unwrap().is_some(),
+			block_on(secrets.get(&id(2))).unwrap().as_deref().cloned(),
 		);
 		block_on(secrets.clear(None)).unwrap();
 
-		assert_eq!(after_product, (None, true));
+		assert_eq!(host_keys, 2);
+		assert_eq!(after_product, (None, Some(b"secret".to_vec())));
 		assert!(storage.stored().is_empty());
-		assert_eq!(block_on(secrets.count(owner("b.dot", &ALICE))).unwrap(), 0);
 	}
 
-	/// Encrypted storage the host cannot write or read.
-	struct BrokenStorage;
+	/// Encrypted storage the host cannot read.
+	struct LockedStorage;
 
 	#[async_trait::async_trait]
-	impl EncryptedStorage for BrokenStorage {
+	impl EncryptedStorage for LockedStorage {
 		async fn read_encrypted(
 			&self,
 			_key: &[u8],
@@ -290,7 +195,7 @@ mod tests {
 		}
 
 		async fn write_encrypted(&self, _key: &[u8], _value: &[u8]) -> Result<(), GenericError> {
-			Err(GenericError { reason: "full".to_owned() })
+			Ok(())
 		}
 
 		async fn delete_encrypted(&self, _key: &[u8]) -> Result<(), GenericError> {
@@ -298,21 +203,16 @@ mod tests {
 		}
 	}
 
-	// A secret the host failed to store must not count toward its owner's
-	// secrets, and storage the host cannot read is an error, not an absent
-	// secret, so a locked Keychain is never taken for a lost one.
+	// Storage the host cannot read is an error, not an absent secret, so a
+	// locked Keychain is never taken for a lost one.
 	#[test]
-	fn a_failed_store_leaves_no_row_and_an_unreadable_store_is_an_error() {
+	fn an_unreadable_store_is_an_error() {
 		let (working, _) = secrets();
-		let broken = ProductSecrets::new(working.db.clone(), Arc::new(BrokenStorage));
-		block_on(working.put(&id(1), owner("a.dot", &ALICE), b"s")).unwrap();
+		let locked = ProductSecrets::new(working.db.clone(), Arc::new(LockedStorage));
+		block_on(working.put(&id(1), "a.dot", b"s")).unwrap();
 
-		let stored = block_on(broken.put(&id(2), owner("a.dot", &ALICE), b"s"));
-		let count = block_on(broken.count(owner("a.dot", &ALICE))).unwrap();
-		let read = block_on(broken.get(&id(1)));
+		let read = block_on(locked.get(&id(1)));
 
-		assert_eq!(stored, Err(GenericError { reason: "full".to_owned() }));
-		assert_eq!(count, 1);
 		assert_eq!(read, Err(GenericError { reason: "locked".to_owned() }));
 	}
 
@@ -321,7 +221,7 @@ mod tests {
 	#[test]
 	fn a_secret_is_served_only_with_both_its_row_and_its_value() {
 		let (secrets, storage) = secrets();
-		block_on(secrets.put(&id(1), owner("a.dot", &ALICE), b"s")).unwrap();
+		block_on(secrets.put(&id(1), "a.dot", b"s")).unwrap();
 		block_on(storage.delete_encrypted(&storage_key(&id(1)))).unwrap();
 		block_on(storage.write_encrypted(&storage_key(&id(2)), b"s")).unwrap();
 
