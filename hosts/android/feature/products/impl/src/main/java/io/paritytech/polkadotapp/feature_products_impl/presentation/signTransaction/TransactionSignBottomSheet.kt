@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.fragment.app.viewModels
 import dagger.hilt.android.AndroidEntryPoint
 import io.paritytech.polkadotapp.common.presentation.screens.BaseComposeBottomSheet
+import io.paritytech.polkadotapp.design.utils.SensitiveScreenEffect
 import io.paritytech.polkadotapp.feature_products_impl.presentation.signTransaction.compose.TransactionSignScreen
 
 @AndroidEntryPoint
@@ -18,5 +19,8 @@ class TransactionSignBottomSheet : BaseComposeBottomSheet<TransactionSignViewMod
     }
 
     @Composable
-    override fun Screen() = TransactionSignScreen(viewModel)
+    override fun Screen() {
+        SensitiveScreenEffect()
+        TransactionSignScreen(viewModel)
+    }
 }

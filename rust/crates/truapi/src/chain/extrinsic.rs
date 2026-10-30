@@ -18,7 +18,7 @@ mod well_known;
 #[cfg(test)]
 mod tests;
 
-pub use builder::ExtrinsicBuilder;
+pub use builder::{DEFAULT_MORTALITY_PERIOD, ExtrinsicBuilder};
 pub use error::ExtrinsicBuildError;
 pub use extension::{ExtensionError, InheritedImplication, TransactionExtension};
 pub use service::{ExtrinsicService, ExtrinsicServiceDeps};

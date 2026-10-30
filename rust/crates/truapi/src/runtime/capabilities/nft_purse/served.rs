@@ -1,16 +1,32 @@
 //! The NFT purse calls a host with a core database serves.
 
+mod cheques;
+mod operations;
+
 use tracing::instrument;
 use truapi::{
-	CallContext, CallError,
+	CallContext, CallError, Subscription,
 	api::NftPurse,
 	latest,
 	versioned::nft_purse::{
-		HostNftPurseCreateItemsError, HostNftPurseCreateItemsRequest,
-		HostNftPurseCreateItemsResponse, HostNftPurseCreatePurseError,
-		HostNftPurseCreatePurseRequest, HostNftPurseCreatePurseResponse,
+		HostNftPurseCreateChequeError, HostNftPurseCreateChequeRequest,
+		HostNftPurseCreateChequeResponse, HostNftPurseCreateItemsError,
+		HostNftPurseCreateItemsRequest, HostNftPurseCreateItemsResponse,
+		HostNftPurseCreatePurseError, HostNftPurseCreatePurseRequest,
+		HostNftPurseCreatePurseResponse, HostNftPurseCreateReceiveKeyError,
+		HostNftPurseCreateReceiveKeyRequest, HostNftPurseCreateReceiveKeyResponse,
+		HostNftPurseDepositError, HostNftPurseDepositRequest, HostNftPurseDepositResponse,
 		HostNftPurseListPursesError, HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
-		HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
+		HostNftPurseObserveOperationStatusError, HostNftPurseObserveOperationStatusItem,
+		HostNftPurseObserveOperationStatusRequest, HostNftPurseQueryPurseError,
+		HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
+		HostNftPurseRebalancePurseError, HostNftPurseRebalancePurseRequest,
+		HostNftPurseRebalancePurseResponse, HostNftPurseRefundError, HostNftPurseRefundRequest,
+		HostNftPurseRefundResponse, HostNftPurseRevokeChequeError, HostNftPurseRevokeChequeRequest,
+		HostNftPurseRevokeChequeResponse, HostNftPurseStaticReceiveKeyError,
+		HostNftPurseStaticReceiveKeyRequest, HostNftPurseStaticReceiveKeyResponse,
+		HostNftPurseTransferItemError, HostNftPurseTransferItemRequest,
+		HostNftPurseTransferItemResponse,
 	},
 };
 
@@ -63,6 +79,94 @@ impl NftPurse for ProductRuntimeHost {
 		request: HostNftPurseListPursesRequest,
 	) -> Result<HostNftPurseListPursesResponse, CallError<HostNftPurseListPursesError>> {
 		version(request).exec(|request| self.list_nft_purses(request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.create_receive_key"))]
+	async fn create_receive_key(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseCreateReceiveKeyRequest,
+	) -> Result<HostNftPurseCreateReceiveKeyResponse, CallError<HostNftPurseCreateReceiveKeyError>>
+	{
+		version(request).exec(|request| self.create_nft_receive_key(request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.create_cheque"))]
+	async fn create_cheque(
+		&self,
+		cx: &CallContext,
+		request: HostNftPurseCreateChequeRequest,
+	) -> Result<HostNftPurseCreateChequeResponse, CallError<HostNftPurseCreateChequeError>> {
+		version(request).exec(|request| self.create_nft_cheque(cx, request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.revoke_cheque"))]
+	async fn revoke_cheque(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseRevokeChequeRequest,
+	) -> Result<HostNftPurseRevokeChequeResponse, CallError<HostNftPurseRevokeChequeError>> {
+		version(request).exec(|request| self.revoke_nft_cheque(request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.refund"))]
+	async fn refund(
+		&self,
+		cx: &CallContext,
+		request: HostNftPurseRefundRequest,
+	) -> Result<HostNftPurseRefundResponse, CallError<HostNftPurseRefundError>> {
+		version(request).exec(|request| self.refund_nft_cheque(cx, request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.deposit"))]
+	async fn deposit(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseDepositRequest,
+	) -> Result<HostNftPurseDepositResponse, CallError<HostNftPurseDepositError>> {
+		version(request).exec(|request| self.deposit_nft_cheque(request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.static_receive_key"))]
+	async fn static_receive_key(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseStaticReceiveKeyRequest,
+	) -> Result<HostNftPurseStaticReceiveKeyResponse, CallError<HostNftPurseStaticReceiveKeyError>>
+	{
+		version(request).exec(|_| self.static_nft_receive_key()).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.rebalance_purse"))]
+	async fn rebalance_purse(
+		&self,
+		cx: &CallContext,
+		request: HostNftPurseRebalancePurseRequest,
+	) -> Result<HostNftPurseRebalancePurseResponse, CallError<HostNftPurseRebalancePurseError>> {
+		version(request).exec(|request| self.rebalance_nft_purse(cx, request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.transfer_item"))]
+	async fn transfer_item(
+		&self,
+		cx: &CallContext,
+		request: HostNftPurseTransferItemRequest,
+	) -> Result<HostNftPurseTransferItemResponse, CallError<HostNftPurseTransferItemError>> {
+		version(request).exec(|request| self.transfer_nft_item(cx, request)).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "nft_purse.observe_operation_status"))]
+	async fn observe_operation_status(
+		&self,
+		_cx: &CallContext,
+		request: HostNftPurseObserveOperationStatusRequest,
+	) -> Subscription<
+		HostNftPurseObserveOperationStatusItem,
+		CallError<HostNftPurseObserveOperationStatusError>,
+	> {
+		version(request)
+			.exec(|request| async move { self.observe_nft_operation(request) })
+			.await
 	}
 }
 
