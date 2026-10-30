@@ -124,8 +124,10 @@ private func temporaryDirectory() -> URL {
     FileManager.default.temporaryDirectory.appending(path: "ProductOutboxTests-\(UUID().uuidString)")
 }
 
-private func waitUntil(_ condition: @Sendable () async -> Bool) async {
-    for _ in 0 ..< 1_000 where await !condition() {
-        try? await Task.sleep(for: .milliseconds(2))
+private extension ProductOutboxTests {
+    func waitUntil(_ condition: @Sendable () async -> Bool) async {
+        for _ in 0 ..< 1_000 where await !condition() {
+            try? await Task.sleep(for: .milliseconds(2))
+        }
     }
 }
