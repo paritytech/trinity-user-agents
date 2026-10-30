@@ -148,25 +148,29 @@ The package ships a `trinity-stack` CLI, so a JavaScript project needs no `truap
 ```
 npx trinity-stack add <name> <link | url> [--key 0x..]
 npx trinity-stack update [<name>...]
+npx trinity-stack generate
 npx trinity-stack list
 npx trinity-stack remove <name>
 ```
 
-They keep one directory in the project, committed with it:
+They keep one directory in the project:
 
 ```
 .trinity/
   stacks.json             { "previewnet": "polkadotapp://stack?key=0x4d43…&url=…", … }, edited by add and remove
   previewnet.json         the signed descriptor, byte for byte as served
-  index.js, index.d.ts    generated: the stacks above, ready to import
+  .gitignore              index.js and index.d.ts
+  index.js, index.d.ts    generated from the files above, ready to import; not committed
 ```
 
 - **`add`** does what `update` does for that stack, then records the link, so a stack that fails to add leaves nothing
   behind.
 - **`update`** fetches each stack and runs `accept` with the committed copy as stored, so it refuses an unsigned stack,
   an expired one and anything that would lower `sequence`, as `truapi-host stack bundle` does. It then regenerates the
-  module. It exits 0 with nothing changed, 1 on an error and 2 when it wrote something, so a scheduled CI job can open a
+  module. It exits 0 when no committed file changed, 1 on an error and 2 when one did, so a scheduled CI job can open a
   pull request whenever a stack moved and leave it to review.
+- **`generate`** rebuilds the module from the committed files and fetches nothing, so a project's `prepare` script runs
+  it the way polkadot-api projects run `papi generate`.
 - **The generated module** carries each stack as data, not as a file to load:
 
   ```ts
@@ -180,8 +184,10 @@ They keep one directory in the project, committed with it:
   bytes, and `accept` compares stored and fetched copies byte for byte. The declaration file types `stacks` by name, so
   a project that refers to a stack it never added fails to compile. It does not type a stack's chains or services.
 
-- **Committed, not generated on install.** The module is small and changes only when `update` runs, so committing it
-  keeps a build reproducible without network access, and puts every change to a stack in front of a reviewer.
+- **The copies are committed, the module is not.** The signed copies are the input a reviewer checks, and the module
+  only repeats them as JavaScript, so committing it would put every change in git twice. Rebuilding it needs no network,
+  so a build stays reproducible from the committed files alone, as polkadot-api keeps `.papi/metadata` and ignores the
+  descriptors it generates from it.
 
 `truapi-host stack bundle` stays for host builds that do not run Node. Both apply the same crate rules.
 

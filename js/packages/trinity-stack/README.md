@@ -31,12 +31,19 @@ A project ships the stacks it uses, so it keeps working when a descriptor's serv
 
 ```sh
 npx trinity-stack add previewnet "polkadotapp://stack?key=0x4d43…&url=…"
-npx trinity-stack update   # exits 2 when it wrote something, so a scheduled job can open a pull request
+npx trinity-stack update   # exits 2 when a committed file changed, so a scheduled job can open a pull request
 ```
 
-They write `.trinity/`, committed with the project: each stack's signed copy and an `index.js` that bundles them. A
-stack that fails to update keeps its copy, and `update` exits 1. At run time a reader serves those copies and refreshes
-them by the policy the project picks:
+They write `.trinity/`: `stacks.json` and each stack's signed copy, committed with the project, and an `index.js` that
+bundles them, which `.trinity/.gitignore` leaves out of git. `trinity-stack generate` rebuilds `index.js` from the
+committed files without fetching, so a project runs it before it builds:
+
+```json
+{ "scripts": { "prepare": "trinity-stack generate" } }
+```
+
+A stack that fails to update is left as it was, and `update` exits 1. At run time a reader serves those copies and
+refreshes them by the policy the project picks:
 
 ```ts
 import { createStackReader, service } from "@parity/trinity-stack/reader";
