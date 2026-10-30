@@ -923,8 +923,9 @@ impl SigningHostRuntime {
 		self.services.install_installation_provider(provider)
 	}
 
-	/// Install the host storage encrypted at rest, which keeps the secrets of
-	/// NFT receive keys. Set-once; returns whether this call installed it.
+	/// Install the host storage encrypted at rest, which keeps the secrets the
+	/// core database must not hold. Set-once; returns whether this call
+	/// installed it.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn set_encrypted_storage(
 		&self,
@@ -965,7 +966,7 @@ impl SigningHostRuntime {
 			tracing::warn!("no installation provider set, NFT purses are off");
 			return;
 		};
-		if !self.services.has_encrypted_storage() {
+		if self.services.encrypted_storage().is_none() {
 			tracing::warn!("no encrypted storage set, NFT purses are off");
 		}
 

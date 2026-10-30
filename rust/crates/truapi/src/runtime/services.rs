@@ -106,7 +106,8 @@ pub struct RuntimeServices {
 	/// Provider of the installation id NFT purse item keys are derived under.
 	#[cfg(not(target_arch = "wasm32"))]
 	installation_provider: OnceLock<Arc<dyn InstallationIdProvider>>,
-	/// Host storage encrypted at rest, for receive key secrets of NFT purses.
+	/// Host storage encrypted at rest, for secrets the core database must not
+	/// hold.
 	#[cfg(not(target_arch = "wasm32"))]
 	encrypted_storage: OnceLock<Arc<dyn EncryptedStorage>>,
 	/// Host observer told whether durable work is pending. Unset leaves
@@ -455,10 +456,10 @@ impl RuntimeServices {
 		self.encrypted_storage.set(storage).is_ok()
 	}
 
-	/// Whether the host storage encrypted at rest is installed.
+	/// The host storage encrypted at rest, once installed.
 	#[cfg(not(target_arch = "wasm32"))]
-	pub fn has_encrypted_storage(&self) -> bool {
-		self.encrypted_storage.get().is_some()
+	pub fn encrypted_storage(&self) -> Option<Arc<dyn EncryptedStorage>> {
+		self.encrypted_storage.get().cloned()
 	}
 
 	/// NFT purses, once their ledger and the encrypted storage are installed.

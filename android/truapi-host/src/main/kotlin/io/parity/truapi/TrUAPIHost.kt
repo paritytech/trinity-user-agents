@@ -395,10 +395,10 @@ interface HostBridge {
     /**
      * A value the host keeps encrypted at rest and out of backups, such as in
      * encrypted preferences. Returns null when nothing is stored under [key],
-     * and throws only when the store cannot be read. The core keeps NFT
-     * receive key secrets here. Runtime-wide, like [durableWorkChanged].
-     * Defaults to a rejection for a host with no such store, which fails
-     * `createReceiveKey`.
+     * and throws when the store cannot be read or the value no longer
+     * decrypts. The core keeps secrets here that its database must not hold.
+     * Runtime-wide, like [durableWorkChanged]. Defaults to a rejection for a
+     * host with no such store, which turns off the features that need it.
      */
     @Throws(HostRejection::class)
     suspend fun encryptedStorageRead(key: ByteArray): ByteArray? =
@@ -411,6 +411,14 @@ interface HostBridge {
      */
     @Throws(HostRejection::class)
     suspend fun encryptedStorageWrite(key: ByteArray, value: ByteArray): Unit =
+        throw HostRejection.Rejected("this host keeps no encrypted storage")
+
+    /**
+     * Deletes the value stored under [key]. Deleting nothing succeeds.
+     * Runtime-wide, like [durableWorkChanged]. Defaults to a rejection.
+     */
+    @Throws(HostRejection::class)
+    suspend fun encryptedStorageDelete(key: ByteArray): Unit =
         throw HostRejection.Rejected("this host keeps no encrypted storage")
 
     /** Product-scoped key-value storage for the Rust core. */
@@ -568,6 +576,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
 
     override suspend fun encryptedStorageWrite(key: ByteArray, value: ByteArray) =
         withHostRejection { bridge.encryptedStorageWrite(key, value) }
+
+    override suspend fun encryptedStorageDelete(key: ByteArray) =
+        withHostRejection { bridge.encryptedStorageDelete(key) }
 
     override suspend fun navigateTo(url: String) =
         withNavigateRejection { bridge.navigateTo(url) }

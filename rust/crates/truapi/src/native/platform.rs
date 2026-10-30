@@ -135,6 +135,10 @@ impl EncryptedStorage for CallbackPlatform {
 	async fn write_encrypted(&self, key: &[u8], value: &[u8]) -> Result<(), v01::GenericError> {
 		Ok(self.callbacks.encrypted_storage_write(key.to_vec(), value.to_vec()).await?)
 	}
+
+	async fn delete_encrypted(&self, key: &[u8]) -> Result<(), v01::GenericError> {
+		Ok(self.callbacks.encrypted_storage_delete(key.to_vec()).await?)
+	}
 }
 
 #[async_trait]
