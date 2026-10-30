@@ -223,6 +223,7 @@ private fun Value(text: String) {
 private fun text(text: FundingEndedText): String = when (text) {
     is FundingEndedText.Res -> stringResource(text.res, *text.args.toTypedArray())
     is FundingEndedText.Reason -> text.reason.reasonText.text()
+    is FundingEndedText.Plain -> text.text
 }
 
 private val DATE_TIME = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)

@@ -39,6 +39,9 @@ sealed interface FundingEndedText {
     data class Res(@param:StringRes val res: Int, val args: List<String>) : FundingEndedText
 
     data class Reason(val reason: FundingFailureReason) : FundingEndedText
+
+    /** Text shown as it is, such as an amount in the provider's asset. */
+    data class Plain(val text: String) : FundingEndedText
 }
 
 sealed interface FundingEndedRow {

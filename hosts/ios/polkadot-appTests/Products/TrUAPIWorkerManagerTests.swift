@@ -113,19 +113,27 @@ struct TrUAPIWorkerManagerTests {
     }
 
     /// A worker whose engine fails once it is already in the running map must
-    /// leave nothing behind: the core keeps counting the reference the card
-    /// holds, so no further stop arrives to clear a half-started entry, and
-    /// every later start would be swallowed by the entry that is still there.
+    /// leave nothing behind, or every later start would be swallowed by the
+    /// entry still there. The core is told, and starts it again after its
+    /// backoff.
     @Test
     func leavesNothingBehindWhenTheEngineFailsToBoot() async throws {
         let logger = MockLogger()
         let builder = StubWorkerBuilder(engineFails: true)
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]), logger: logger)
+        let references = StubWorkerReferences()
+        let manager = makeManager(
+            builder: builder,
+            collection: collectionHolding([loyalty]),
+            references: references,
+            logger: logger
+        )
 
         manager.demandChanged(productId: "game.paseo", transition: .start)
         try await logger.waitForError(containing: "failed to start")
+        try await barrier(manager)
 
         #expect(manager.currentExecution(of: "game.paseo") == nil)
+        #expect(references.exited == ["game.paseo"])
 
         builder.engineFails = false
         manager.demandChanged(productId: "game.paseo", transition: .start)
@@ -138,12 +146,20 @@ struct TrUAPIWorkerManagerTests {
     func leavesNothingBehindWhenTheWorkerCannotBeBuilt() async throws {
         let logger = MockLogger()
         let builder = StubWorkerBuilder(cannotBuild: true)
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]), logger: logger)
+        let references = StubWorkerReferences()
+        let manager = makeManager(
+            builder: builder,
+            collection: collectionHolding([loyalty]),
+            references: references,
+            logger: logger
+        )
 
         manager.demandChanged(productId: "game.paseo", transition: .start)
         try await logger.waitForError(containing: "failed to start")
+        try await barrier(manager)
 
         #expect(manager.currentExecution(of: "game.paseo") == nil)
+        #expect(references.exited == ["game.paseo"])
 
         builder.cannotBuild = false
         manager.demandChanged(productId: "game.paseo", transition: .start)

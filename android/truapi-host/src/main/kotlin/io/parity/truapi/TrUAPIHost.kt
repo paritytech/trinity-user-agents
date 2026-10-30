@@ -360,6 +360,13 @@ interface HostBridge {
     fun requestWorkerTransition(productId: String, transition: WorkerTransition) {}
 
     /**
+     * The product's worker crashed [crashes] times in a row while it was needed: tell the user that product is not
+     * working. The core keeps starting it again, waiting longer each time, so this needs no answer. Runtime-wide like
+     * [requestWorkerTransition], and can arrive on any thread.
+     */
+    fun workerCrashing(productId: String, crashes: UInt) {}
+
+    /**
      * Begin a pending operation. [label] is a log/UI hint, empty when the
      * product gave none. Leave unimplemented to opt out of worker keep-alive;
      * override to run background work past the product's surface.
@@ -545,6 +552,11 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     // Infallible across the FFI for the same reason `onCoreLog` is.
     override fun requestWorkerTransition(productId: String, transition: WorkerTransition) {
         runCatching { bridge.requestWorkerTransition(productId, transition) }
+    }
+
+    // Infallible across the FFI for the same reason `onCoreLog` is.
+    override fun workerCrashing(productId: String, crashes: UInt) {
+        runCatching { bridge.workerCrashing(productId, crashes) }
     }
 
     // Infallible across the FFI for the same reason `onCoreLog` is.

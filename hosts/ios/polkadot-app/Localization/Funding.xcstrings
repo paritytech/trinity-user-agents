@@ -760,6 +760,17 @@
         }
       }
     },
+    "providerCrashing" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(provider)@ stopped working. Retrying…"
+          }
+        }
+      }
+    },
     "providers.countryUnsupported" : {
       "extractionState" : "manual",
       "localizations" : {

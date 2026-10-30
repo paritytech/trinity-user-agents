@@ -47,6 +47,7 @@ class TrUAPIWorkerSupervisorTest {
     private val workerScopes = mutableListOf<CoroutineScope>()
     private val policyScopes = mutableListOf<CoroutineScope>()
     private var includesChat = true
+    private var attachFailure: Throwable? = null
     private val runtime = mockk<TrUAPIHostRuntime>(relaxed = true)
 
     @Before
@@ -80,6 +81,18 @@ class TrUAPIWorkerSupervisorTest {
 
         verify(exactly = 1) { runtime.workerExited(PRODUCT.value) }
         assertEquals(listOf(null, executions[0], null, executions[1]), seen)
+    }
+
+    // A script that fails to boot is a crash too; the core restarts it with backoff while it is held.
+    @Test
+    fun `a worker that fails to boot is reported exited`() = runTest {
+        attachFailure = IllegalStateException("boot failed")
+        val supervisor = supervisor()
+
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        advanceUntilIdle()
+
+        verify(exactly = 1) { runtime.workerExited(PRODUCT.value) }
     }
 
     // The core asked for the stop, so it knows; reporting it as an exit would start the worker again.
@@ -172,7 +185,7 @@ class TrUAPIWorkerSupervisorTest {
         coEvery { attach(any(), any(), any(), any(), any(), any(), any(), any()) } answers {
             policies += arg<NavigationPolicy>(3)
             chatBridges += arg<ChatHostBridge?>(5)
-            Result.success(execution)
+            attachFailure?.let { Result.failure(it) } ?: Result.success(execution)
         }
     }
 

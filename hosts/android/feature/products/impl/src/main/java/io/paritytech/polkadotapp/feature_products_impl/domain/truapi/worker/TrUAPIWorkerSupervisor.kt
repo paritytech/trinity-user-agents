@@ -49,8 +49,8 @@ sealed interface WorkerExecutionState {
 /**
  * Runs product workers on the core for as long as the core's reference ledger wants them: a `Start`
  * boots the worker script in a hidden WebView behind a `WORKER` execution, a `Stop` tears it down.
- * A running worker whose renderer goes away is reported to the core as exited, which starts it again
- * while it is still held.
+ * A worker that fails to boot, or whose renderer goes away while it runs, is reported to the core as
+ * exited, which starts it again with backoff while it is still held. A stop the core asked for is not.
  * A worker the app ships runs from its own files, with no dotNS lookup.
  */
 @Singleton
@@ -109,14 +109,18 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 .logFailure("TrUAPI worker for ${productId.value} failed to start")
                 // A half-booted worker left in the map swallows every later start, and the core
                 // keeps counting the reference the card holds, so no stop ever arrives to clear it.
-                // Only this one: a stop and a new start may have overtaken the failure.
+                // Only this one: a stop and a new start may have overtaken the failure. The core
+                // starts it again while it is held, backing off between crashes.
                 .onFailure { cause ->
-                    transitions.withLock {
-                        if (workers[productId] === worker) {
+                    val exited = transitions.withLock {
+                        val current = workers[productId] === worker
+                        if (current) {
                             stop(productId)
                             executionStates.update { it + (productId to WorkerExecutionState.Failed(cause)) }
                         }
+                        current
                     }
+                    if (exited) reportExited(productId)
                 }
                 .onSuccess { execution ->
                     transitions.withLock {
@@ -190,13 +194,15 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 if (running) stop(productId)
                 running
             }
-            // Outside the lock: the core answers with a start, which takes it.
-            if (exited) {
-                runtimeProvider.get().runtime()
-                    .mapCatching { it.workerExited(productId.value) }
-                    .logFailure("TrUAPI worker exit for ${productId.value} was not reported")
-            }
+            if (exited) reportExited(productId)
         }
+    }
+
+    /** Called outside [transitions]: the core may answer with a start at once, which takes it. */
+    private suspend fun reportExited(productId: ProductId) {
+        runtimeProvider.get().runtime()
+            .mapCatching { it.workerExited(productId.value) }
+            .logFailure("TrUAPI worker exit for ${productId.value} was not reported")
     }
 
     private fun stop(productId: ProductId) {

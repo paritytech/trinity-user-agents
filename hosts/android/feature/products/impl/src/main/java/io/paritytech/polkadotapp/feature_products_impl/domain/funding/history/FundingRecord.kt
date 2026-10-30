@@ -3,7 +3,9 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.funding.history
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAssetUnit
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.toReason
+import uniffi.truapi.FundingChoice
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingFailure
 import uniffi.truapi.FundingPayout
@@ -17,8 +19,8 @@ import kotlin.time.Instant
 data class FundingRecord(
     val intent: String,
     val direction: FundingDirection,
-    val rail: FundingRail?,
-    val asset: String?,
+    /** The quote the session ran on, with its rail, asset and network; `null` when none was chosen. */
+    val choice: FundingChoice?,
     val providerId: String?,
     val requestedAmount: Balance?,
     val settledAmount: Balance?,
@@ -31,6 +33,19 @@ data class FundingRecord(
     val openedAt: Instant,
     val settledAt: Instant,
 ) {
+    val rail: FundingRail?
+        get() = choice?.rail
+
+    /**
+     * What the user paid for value in, or received for value out, in the quote's asset at the decimals it states;
+     * `null` without a quote.
+     */
+    val quotedAmount: String?
+        get() = choice?.let { choice ->
+            val units = if (direction == FundingDirection.IN) choice.quote.sendAmount else choice.quote.receiveAmount
+            FundingAssetUnit.of(choice.asset, choice.quote.assetDecimals.toInt()).format(units)
+        }
+
     companion object {
         /**
          * The record of a session the core's history summarises, or `null` for one still open. Its outcome is the
@@ -41,8 +56,7 @@ data class FundingRecord(
             return FundingRecord(
                 intent = summary.intent,
                 direction = summary.direction,
-                rail = summary.rail,
-                asset = summary.asset,
+                choice = summary.choice,
                 providerId = summary.providerId,
                 requestedAmount = summary.amount?.toBalanceOrNull(),
                 settledAmount = amount?.toBalanceOrNull(),

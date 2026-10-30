@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.end
 
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAssetUnit
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecord
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecordOutcome
@@ -12,7 +13,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.FundingChoice
 import uniffi.truapi.FundingDirection
+import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingRail
 import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
@@ -80,6 +83,7 @@ class FundingEndedMapperTest {
 
         assertEquals(
             listOf(
+                FundingEndedRow.Value(RCommon.string.funding_ended_paid, FundingEndedText.Plain(PAID)),
                 FundingEndedRow.Settled(RCommon.string.funding_ended_credited, "$50 CASH", requested = "$60 CASH"),
                 FundingEndedRow.Value(RCommon.string.funding_ended_method, FundingEndedText.Res(RCommon.string.funding_rail_card, emptyList())),
                 FundingEndedRow.Provider("ramp.dot"),
@@ -91,6 +95,36 @@ class FundingEndedMapperTest {
         )
     }
 
+    @Test
+    fun `a session's quote shows what was paid and a crypto network`() {
+        val choice = FundingChoice(
+            quote = FundingQuote("q", "2500000", "50000000", "0", "0", null, null, 6u),
+            rail = FundingRail.CRYPTO,
+            asset = "USDC",
+            network = "polkadot",
+        )
+        val ended = mapper.map(record(FundingDirection.IN, FundingRecordOutcome.Delivered, choice = choice))
+
+        assertEquals(
+            listOf(
+                FundingEndedRow.Value(RCommon.string.funding_ended_sent, FundingEndedText.Plain("2.5 USDC")),
+                FundingEndedRow.Value(
+                    RCommon.string.funding_ended_method,
+                    FundingEndedText.Res(RCommon.string.funding_ended_method_crypto_network, listOf("Polkadot")),
+                ),
+            ),
+            ended.rows.filterIsInstance<FundingEndedRow.Value>(),
+        )
+    }
+
+    @Test
+    fun `a refunded card top-up says what came back to the card`() {
+        val ended = mapper.map(record(FundingDirection.IN, FundingRecordOutcome.Refunded))
+
+        assertEquals(FundingEndedText.Res(RCommon.string.funding_ended_refunded_card, listOf(PAID)), ended.note)
+        assertEquals(FundingEndedRow.Value(RCommon.string.funding_ended_paid, FundingEndedText.Plain(PAID)), ended.rows.first())
+    }
+
     private fun record(
         direction: FundingDirection,
         outcome: FundingRecordOutcome,
@@ -98,11 +132,11 @@ class FundingEndedMapperTest {
         refunded: Long? = null,
         requested: Long = 50_000_000,
         transactionId: String? = null,
+        choice: FundingChoice? = CARD,
     ) = FundingRecord(
         intent = "fs_1",
         direction = direction,
-        rail = FundingRail.CARD,
-        asset = "USD",
+        choice = choice,
         providerId = "ramp.dot",
         requestedAmount = requested.intoBalance(),
         settledAmount = 50_000_000L.intoBalance().takeIf { outcome !is FundingRecordOutcome.Failed },
@@ -116,6 +150,13 @@ class FundingEndedMapperTest {
     )
 
     private companion object {
+        val CARD = FundingChoice(
+            quote = FundingQuote("q", "5100", "50000000", "0", "0", null, null, 2u),
+            rail = FundingRail.CARD,
+            asset = "USD",
+            network = null,
+        )
+        val PAID = FundingAssetUnit.of("USD", 2).format("5100")
         val OPENED = Instant.fromEpochMilliseconds(1_000)
         val SETTLED = Instant.fromEpochMilliseconds(2_000)
     }

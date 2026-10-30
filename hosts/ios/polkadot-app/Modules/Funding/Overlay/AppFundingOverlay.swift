@@ -19,6 +19,8 @@ protocol FundingOverlayEnvironment: AnyObject {
     func providerPage(providerId: String, route: String, title: String) -> UIViewController?
     /// A session changed, for the CASH card's lists.
     func fundingActivityChanged()
+    /// A passing notice over whatever is on screen.
+    func showNotice(_ message: String)
 }
 
 /// The runtime's funding overlay: the sheet a session is started from, and
@@ -66,6 +68,10 @@ final class AppFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
 
     func fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {
         Task { @MainActor in coordinator?.quotesChanged(intent: intent, quotes: quotes) }
+    }
+
+    func workerCrashing(productId: String) {
+        Task { @MainActor in await coordinator?.workerCrashing(productId: productId) }
     }
 
     func reopen(intent: String) {
@@ -307,6 +313,19 @@ final class FundingOverlayCoordinator {
             acknowledgeShown(intent: intent)
         }
         environment.fundingActivityChanged()
+    }
+
+    /// Says so on the open session sheets the product serves, or over
+    /// whatever is on screen when none is open.
+    func workerCrashing(productId: String) async {
+        let name = await environment.branding.brand(for: productId).name
+        let message = String(localized: .Funding.providerCrashing(provider: name))
+        let served = flows.values.filter { $0.chosenProviderId == productId }
+        if served.isEmpty {
+            environment.showNotice(message)
+        } else {
+            served.forEach { $0.toast = message }
+        }
     }
 
     func optionsChanged(intent: String) {
