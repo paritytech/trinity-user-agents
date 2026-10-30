@@ -306,10 +306,15 @@ session/SSO crypto, key derivation, and permission policy, while all I/O
 `host_logic::worker::WorkerLedger` holds the reference count per product
 worker from the Worker Lifecycle RFC, one per host in `RuntimeServices`. Both
 bindings expose it as `acquire_worker` and `release_worker`, and the host
-reports a worker that stopped without being asked, because it crashed or the
-system killed it, with `worker_exited`: while references remain the ledger
-requests `Start` again, and the core hands the restarted worker its funding
-sessions once it connects. Every `Start` or
+reports a worker that stopped without being asked, because it crashed, failed
+to boot or the system killed it, with `worker_exited`: while references remain
+the ledger requests `Start` again, and the core hands the restarted worker its
+funding sessions once it connects. Exits less than a minute apart form a run:
+the first restart is immediate, then each waits 1 s, doubling up to 5 min, and
+a restart still waiting is dropped once nothing holds the worker or it was
+started meanwhile. On the run's third crash the host hears
+`worker_crashing(product_id, crashes)` and tells the user that product is not
+working. Every `Start` or
 `Stop` the counts produce is requested through the host's
 `request_worker_transition` callback, in the order the ledger produced it and one
 at a time, whether the host asked for the transition or the core took the
