@@ -228,7 +228,98 @@ pub enum FundingUpdate {
 	/// Allowed after `Released` and before `Payout`, as often as it retries.
 	#[codec(index = 13)]
 	PayoutRetrying,
+	/// What the provider is doing within the current step, for the line
+	/// under the host's status, such as the deposit's confirmations. Allowed
+	/// while the provider works on the session, as often as it checks; the
+	/// latest is shown until the session moves to another step. Each one
+	/// counts as hearing from the provider but is not kept in the session's
+	/// history.
+	#[codec(index = 14)]
+	Progress {
+		/// The fact and its time.
+		detail: FundingDetail,
+	},
 }
+
+/// The line under a session's status: a fact about the current step, and
+/// when it happened or is due. The host words it.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingDetail {
+	/// What the provider reports.
+	pub fact: FundingFact,
+	/// When it happened, in Unix milliseconds, shown as an age ("3s ago"),
+	/// or when it is due, shown as a countdown ("about 12s left").
+	pub at_ms: Option<u64>,
+}
+
+/// A fact a provider reports within a step, which the host words in the
+/// user's language.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingFact {
+	/// The provider checked and nothing changed: "Checked with the
+	/// provider".
+	#[codec(index = 0)]
+	Checked,
+	/// A crypto transfer's confirmations: "Confirmation 7 of 13", with the
+	/// time of the last block. Crypto sessions only.
+	#[codec(index = 1)]
+	Confirmations {
+		/// Confirmations so far, at most `required`.
+		done: u32,
+		/// Confirmations needed, more than zero.
+		required: u32,
+	},
+	/// The provider is waiting for a stable price: "Price checked".
+	#[codec(index = 2)]
+	PriceChecked,
+	/// The conversion runs in parts: "Part 2 of 4", with the time of the
+	/// last part.
+	#[codec(index = 3)]
+	Parts {
+		/// Parts done, at most `total`.
+		done: u32,
+		/// Parts in all, more than zero.
+		total: u32,
+	},
+	/// The next step is scheduled: "About 12s left" until `at_ms`.
+	#[codec(index = 4)]
+	Scheduled,
+	/// The user's bank sent the transfer: "Sent by your bank", at `at_ms`.
+	/// Inbound bank sessions only.
+	#[codec(index = 5)]
+	SentByBank,
+	/// The money is expected to arrive by `at_ms`: "Expected by Thu 3 Nov".
+	#[codec(index = 6)]
+	ExpectedBy,
+	/// The provider is reviewing the payment: "The provider is reviewing
+	/// the payment".
+	#[codec(index = 7)]
+	InReview,
+	/// The provider is retrying: "Attempt 2 of 3", with the next try at
+	/// `at_ms`.
+	#[codec(index = 8)]
+	Attempt {
+		/// This attempt, from 1.
+		n: u32,
+		/// Attempts it will make, when it knows, at least `n`.
+		of: Option<u32>,
+	},
+	/// Last resort, for a step none of the others describes. Shown as given,
+	/// so not translated: at most [`FUNDING_DETAIL_MAX_CHARS`] characters
+	/// and [`FUNDING_DETAIL_MAX_BYTES`] bytes of plain text on one line.
+	#[codec(index = 9)]
+	Other {
+		/// The text.
+		text: String,
+	},
+}
+
+/// Most characters a [`FundingFact::Other`] text holds.
+pub const FUNDING_DETAIL_MAX_CHARS: usize = 80;
+/// Most UTF-8 bytes a [`FundingFact::Other`] text holds.
+pub const FUNDING_DETAIL_MAX_BYTES: usize = 320;
 
 /// How a provider's payout to the user went after an outbound session was
 /// released.
@@ -396,6 +487,11 @@ pub enum HostFundingReportError {
 	/// it was assigned, asks a different amount, or was already named.
 	#[codec(index = 2)]
 	NotStarted,
+	/// A `Progress` fact that does not fit the session or breaks its limits:
+	/// a count past its total, a fact for another rail, or an `Other` text
+	/// too long, on several lines or with control or invisible characters.
+	#[codec(index = 4)]
+	InvalidDetail,
 	/// Catch-all.
 	#[codec(index = 3)]
 	Unknown {
