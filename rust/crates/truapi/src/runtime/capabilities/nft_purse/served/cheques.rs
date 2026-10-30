@@ -10,8 +10,8 @@ use crate::{
 	durable::RegistrationError,
 	host_logic::x25519_seal::SealError,
 	nft::{HandoffError, ItemKey, ItemRefusal, PurseId, StartImportError, StartOperationError},
-	nft_purse::{CreateReceiveKeyError, DepositRefusal},
-	platform::NftPurseDrainDestination,
+	nft_purse::{CreateReceiveKeyError, DepositRefusal, NftPurses},
+	platform::{NftPurseDrainDestination, ProductId},
 	runtime::ProductRuntimeHost,
 };
 
@@ -99,6 +99,96 @@ impl ProductRuntimeHost {
 		let latest::HostNftPurseDepositRequest { cheque, to } = request;
 		let depositor = self.connection.product_id();
 		purses.deposit(depositor, &cheque, PurseId(to.0)).await.map_err(deposit_failure)
+	}
+
+	/// Starts moving the items of a cheque the product created back into its
+	/// purse. Only the product's own cheques are found, and its own purse
+	/// gains the items, so nothing is asked.
+	pub async fn revoke_nft_cheque(
+		&self,
+		request: latest::HostNftPurseRevokeChequeRequest,
+	) -> Result<(), CallError<latest::HostNftPurseRevokeChequeError>> {
+		self.require_session()?;
+		let purses = self.connection.nft_purses()?;
+		let creator = self.connection.product_id();
+		purses.revoke_cheque(creator, &request.cheque_id).await.map_err(revoke_failure)
+	}
+
+	/// Starts returning the items of a cheque the product deposited to the
+	/// cheque's keys, after confirming a drain of a purse the caller does
+	/// not own. Answers which items move and which stay.
+	pub async fn refund_nft_cheque(
+		&self,
+		cx: &CallContext,
+		request: latest::HostNftPurseRefundRequest,
+	) -> Result<latest::HostNftPurseRefundResponse, CallError<latest::HostNftPurseRefundError>> {
+		self.require_session()?;
+		let purses = self.connection.nft_purses()?;
+		let depositor = self.connection.product_id();
+		let id = request.cheque_id;
+		let drain = refund_confirmation_info(&purses, depositor, &id).await?;
+		self.confirm_drain(cx, drain, latest::HostNftPurseRefundError::Denied).await?;
+		purses.refund(depositor, &id).await.map_err(refund_failure)
+	}
+}
+
+/// The drain the user confirms for a refund of `depositor`'s cheque `id`,
+/// refusing early what the refund would refuse, so the user is not asked
+/// for nothing.
+async fn refund_confirmation_info(
+	purses: &NftPurses,
+	depositor: &ProductId,
+	id: &latest::NftPurseChequeId,
+) -> Result<Drain, CallError<latest::HostNftPurseRefundError>> {
+	let drain = purses.refund_drain(depositor, id).await.map_err(refund_refusal)?;
+	let owner = purses.owner_of(drain.from).await.map_err(host_failure)?.ok_or_else(|| {
+		host_failure(format!("purse {} of a deposit does not exist", drain.from.0))
+	})?;
+	let item_count = u32::try_from(drain.item_count).map_err(host_failure)?;
+	let destination = NftPurseDrainDestination::Refund;
+	Ok(Drain { from: drain.from, owner, item_count, destination })
+}
+
+/// A refund refused by Layer 1 as the product's error. A host without NFT
+/// transfers does not support refunds. Everything else is the host's failure.
+fn refund_failure(
+	error: RegistrationError<StartOperationError>,
+) -> CallError<latest::HostNftPurseRefundError> {
+	match error {
+		RegistrationError::Hook(refusal) => refund_refusal(refusal),
+		RegistrationError::UnknownDomain(_) => CallError::Unsupported,
+		other => host_failure(other),
+	}
+}
+
+/// A deposit this product never made is not found, one still moving is in
+/// progress, a repeated refund exists, and a refund that would move nothing
+/// is unavailable. Anything else is the host's failure.
+fn refund_refusal(refusal: StartOperationError) -> CallError<latest::HostNftPurseRefundError> {
+	let domain = match refusal {
+		StartOperationError::ImportNotFound => latest::HostNftPurseRefundError::ChequeNotFound,
+		StartOperationError::ImportUnsettled => latest::HostNftPurseRefundError::DepositInProgress,
+		StartOperationError::OperationExists => latest::HostNftPurseRefundError::OperationExists,
+		StartOperationError::NothingIdle => latest::HostNftPurseRefundError::ItemUnavailable,
+		other => return host_failure(other),
+	};
+	CallError::Domain(domain)
+}
+
+/// A cheque the product did not create is not found. A host without NFT
+/// transfers does not support revokes. Everything else is the host's failure.
+fn revoke_failure(
+	error: RegistrationError<StartOperationError>,
+) -> CallError<latest::HostNftPurseRevokeChequeError> {
+	match error {
+		RegistrationError::Hook(StartOperationError::TagNotFound) => {
+			CallError::Domain(latest::HostNftPurseRevokeChequeError::ChequeNotFound)
+		},
+		RegistrationError::Hook(StartOperationError::ItemUnavailable(_)) => {
+			CallError::Domain(latest::HostNftPurseRevokeChequeError::ItemsInUse)
+		},
+		RegistrationError::UnknownDomain(_) => CallError::Unsupported,
+		other => host_failure(other),
 	}
 }
 

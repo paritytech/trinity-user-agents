@@ -22,6 +22,8 @@ enum NftPurseDrainTarget: Equatable, Sendable {
     case key(hex: String)
     /// A cheque the product hands to another user.
     case cheque
+    /// The keys of a deposited cheque, back to its sender.
+    case refund
 }
 
 @MainActor

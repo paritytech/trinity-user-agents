@@ -11,12 +11,16 @@ use truapi::latest::{
 };
 use zeroize::Zeroizing;
 
-use super::NftPurses;
+use super::{
+	NftPurses,
+	operation::{cheque_idempotency_key, operation_key},
+};
 use crate::{
+	durable::RegistrationError,
 	host_logic::x25519_seal::{SealError, SealedBox, X25519PrivateKey},
 	nft::{
 		HandoffError, HandoffRequest, HandoffTag, ImportedItemKey, ItemKey, ItemSecret, NftLedger,
-		PurseId,
+		OperationKey, PurseId, ReclaimRequest, StartOperationError,
 	},
 	platform::ProductId,
 };
@@ -29,6 +33,9 @@ const CHEQUE_ID_DOMAIN: &[u8] = b"nft-purse/cheque-id";
 
 /// Separates the creating product from the cheque id in a handoff tag.
 const HANDOFF_TAG_SEPARATOR: &[u8] = b".";
+
+/// Domain of the hash that derives the idempotency key of a cheque's revoke.
+const REVOKE_KEY_DOMAIN: &[u8] = b"nft-purse/revoke";
 
 /// The id a cheque for `destination` carries: derived from the receive key,
 /// or the static destination's own.
@@ -77,6 +84,26 @@ impl NftPurses {
 		self.ledger.validate_can_handoff(&request).await?;
 		Ok(PreparedCheque { ledger: self.ledger.clone(), to: to.clone(), id, request })
 	}
+
+	/// Starts moving what sits at the keys of `creator`'s cheque `id` back
+	/// into fresh keys of the purse they left. Each call moves only the keys
+	/// with no move yet or whose latest move failed, and moves nothing when
+	/// every key is moving or moved. Refuses a cheque `creator` did not make
+	/// with `TagNotFound`.
+	pub async fn revoke_cheque(
+		&self,
+		creator: &ProductId,
+		id: &NftPurseChequeId,
+	) -> Result<(), RegistrationError<StartOperationError>> {
+		let operation = revoke_operation(creator, id);
+		let tag = handoff_tag(creator, id);
+		self.ledger.start_reclaims(ReclaimRequest { operation, tag }).await
+	}
+}
+
+/// The operation `creator`'s revoke of cheque `id` is registered as.
+fn revoke_operation(creator: &ProductId, id: &NftPurseChequeId) -> OperationKey {
+	operation_key(creator, cheque_idempotency_key(REVOKE_KEY_DOMAIN, id))
 }
 
 /// The tag that names the handoff of the cheque `id` by `creator`, so cheque

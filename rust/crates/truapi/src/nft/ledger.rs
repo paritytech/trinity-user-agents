@@ -17,9 +17,14 @@ use super::{
 	keys::{ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSlot},
 	operation::{
 		DestinationKeys, OperationKey, StartOperationError, TransferProgress, TransferRequest,
-		nft_domain, plan_transfers, progress_of, record_inputs, validate_can_start,
+		latest_per_source, nft_domain, plan_transfers, progress_of, record_inputs,
+		validate_can_start,
 	},
 	purse::{CreatePurseError, PurseId, PurseRecord, PurseTag},
+	reclaim::{ReclaimRequest, plan_reclaims, record_reclaim_inputs},
+	returns::{
+		ReturnRequest, StartedReturn, plan_returns, read_return_items, validated_return_items,
+	},
 	scarcity::TRANSFER_POLICY,
 };
 use crate::{
@@ -140,9 +145,10 @@ impl NftLedger {
 		}
 		let installation = self.current_installation().await?;
 		let planned = self.planned_transfers(request, installation);
-		let record =
-			move |tx: &rusqlite::Transaction<'_>, ids: &[_]| record_inputs(tx, &items, ids);
-		self.durable.execute_with(planned, record).await.map(|_| ())
+		self.durable
+			.execute_with(planned, move |tx, ids| record_inputs(tx, items, ids))
+			.await
+			.map(|_| ())
 	}
 
 	/// Refuses `request` as [`Self::start_transfers`] would when its operation
@@ -216,10 +222,70 @@ impl NftLedger {
 		let installation = self.current_installation().await?;
 		let sources = plan.sources.clone();
 		let planned = self.planned_imports(plan, installation);
-		let record =
-			move |tx: &rusqlite::Transaction<'_>, ids: &[_]| record_inputs(tx, &sources, ids);
+		let record = move |tx: &rusqlite::Transaction<'_>, ids: &[_]| {
+			record_inputs(tx, sources.iter().copied(), ids)
+		};
 		self.durable.execute_with(planned, record).await?;
 		Ok(())
+	}
+
+	/// Registers, under `request.operation`, one move for each key handed off
+	/// under `request.tag` that has no move yet or whose latest move failed,
+	/// each into a fresh key of the purse it was handed off from. Registers
+	/// nothing when every key is moving or moved, and records that each move
+	/// spends its key. Each move waits for its key to hold an NFT for up to 30
+	/// minutes from now.
+	pub async fn start_reclaims(
+		&self,
+		request: ReclaimRequest,
+	) -> Result<(), RegistrationError<StartOperationError>> {
+		let installation = self.current_installation().await?;
+		let operation = request.operation.clone();
+		let group = operation.group().clone();
+		let planned = self.planned_in_write(group, installation, move |tx, keys| {
+			plan_reclaims(tx, &request, keys)
+		});
+		let record = move |tx: &rusqlite::Transaction<'_>, ids: &[_]| {
+			record_reclaim_inputs(tx, &operation, ids)
+		};
+		self.durable.execute_with(planned, record).await.map(|_| ())
+	}
+
+	/// Once every move of `request.import` is final, registers under
+	/// `request.operation` one move for each item it landed that nothing
+	/// consumed, back to the key the item came from, and records that each
+	/// move spends its item. Answers which items it started and which stay.
+	/// Each move waits for its key to hold an NFT for up to 30 minutes.
+	pub async fn start_returns(
+		&self,
+		request: ReturnRequest,
+	) -> Result<StartedReturn, RegistrationError<StartOperationError>> {
+		let group = request.operation.group().clone();
+		let import = request.import.clone();
+		let policy = PolicyId::new(TRANSFER_POLICY);
+		let planned = DurableRequest::scheduled_in(nft_domain(), Some(group), policy, move |tx| {
+			plan_returns(tx, &request)
+		});
+		self.durable
+			.execute_with(planned, move |tx, ids| {
+				// The moves' inputs are not recorded yet, so this reads the items the plan moved.
+				let started = read_return_items(tx, &import)?.into_started();
+				record_inputs(tx, started.started.iter().copied(), ids)?;
+				Ok(started)
+			})
+			.await
+			.map(|(_, started)| started)
+	}
+
+	/// The slots of the items [`Self::start_returns`] would move for
+	/// `request` now, read outside any registration, or the refusal it would
+	/// answer. The registration checks again.
+	pub async fn slots_to_return(
+		&self,
+		request: ReturnRequest,
+	) -> Result<Vec<ItemSlot>, StartOperationError> {
+		let items = self.db.read(move |conn| Ok(validated_return_items(conn, &request))).await??;
+		Ok(items.available.into_iter().map(|item| item.slot).collect())
 	}
 
 	/// Refuses `plan` as [`Self::start_imports`] would before storing any
@@ -239,15 +305,15 @@ impl NftLedger {
 		self.planned_in_write(group, installation, move |tx, keys| plan_imports(tx, &plan, keys))
 	}
 
-	/// Every transfer of `operation`, in registration order, now and after every
-	/// change. Empty while no such operation exists.
+	/// The latest transfer of each key `operation` moves, in registration
+	/// order, now and after every change. Empty while no such operation exists.
 	pub fn observe_operation(
 		&self,
 		operation: &OperationKey,
 	) -> BoxStream<'static, Result<Vec<TransferProgress>, DbError>> {
 		self.durable
 			.observe_group(&nft_domain(), operation.group())
-			.map(|transfers| transfers.and_then(progress_of))
+			.map(|transfers| transfers.and_then(progress_of).map(latest_per_source))
 			.boxed()
 	}
 

@@ -56,6 +56,17 @@
         }
       }
     },
+    "action.nftPurseDrain.toRefund.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ wants to return %2$(itemCount)@ item(s) of purse %3$(fromPurse)@, owned by %4$(owner)@, to the sender of a cheque it deposited."
+          }
+        }
+      }
+    },
     "action.productSubtree.body": {
       "extractionState": "manual",
       "localizations": {

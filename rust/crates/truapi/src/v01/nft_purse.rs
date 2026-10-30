@@ -15,7 +15,7 @@ pub struct NftPurseId(pub u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
 pub struct NftPurseItemKey(pub [u8; 32]);
 
-/// Id of a cheque, and the idempotency key of its deposit and refund.
+/// Id of a cheque, and the idempotency key of its deposit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
 pub struct NftPurseChequeId(pub [u8; 32]);
 
@@ -380,10 +380,11 @@ pub struct HostNftPurseRevokeChequeRequest {
 /// Why a cheque was not revoked.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum NftPurseRevokeChequeError {
-	/// Another product created the cheque.
-	Denied,
-	/// The cheque is unknown.
+	/// This product created no cheque with this id.
 	ChequeNotFound,
+	/// Some of the cheque's items are already being moved, such as by a
+	/// deposit of the cheque on this device.
+	ItemsInUse,
 	/// Any other failure.
 	Other(GenericError),
 }
@@ -441,19 +442,32 @@ pub enum NftPurseStaticReceiveKeyError {
 /// Request to return a deposited cheque's items to their original keys.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseRefundRequest {
-	/// The deposited cheque. It is the idempotency key.
+	/// The deposited cheque.
 	pub cheque_id: NftPurseChequeId,
+}
+
+/// The refund's moves, by the depositing purse's item keys.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostNftPurseRefundResponse {
+	/// Items whose move back to their cheque key started.
+	pub started: Vec<NftPurseItemKey>,
+	/// Items the deposit brought in that were spent since, and stay.
+	pub unavailable: Vec<NftPurseItemKey>,
 }
 
 /// Why a cheque could not be refunded.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum NftPurseRefundError {
-	/// Another product deposited the cheque, or the user did not confirm.
+	/// The user did not confirm draining the purse.
 	Denied,
-	/// The cheque is unknown.
+	/// This product deposited no cheque with this id.
 	ChequeNotFound,
+	/// Some move of the deposit has not finalized or failed yet.
+	DepositInProgress,
 	/// The cheque is already refunded.
 	OperationExists,
+	/// Every item the deposit brought in was spent since.
+	ItemUnavailable,
 	/// Any other failure.
 	Other(GenericError),
 }
@@ -487,8 +501,9 @@ pub enum NftPurseTransferItemError {
 /// Request for the status of an operation the calling product registered.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseObserveOperationStatusRequest {
-	/// The key the operation was registered under, or the cheque id of a
-	/// deposit or refund.
+	/// The key the operation was registered under: the cheque id of a
+	/// deposit, or `blake2_256("nft-purse/revoke" ‖ chequeId)` and
+	/// `blake2_256("nft-purse/refund" ‖ chequeId)` for a revoke and a refund.
 	pub idempotency_key: NftPurseIdempotencyKey,
 }
 

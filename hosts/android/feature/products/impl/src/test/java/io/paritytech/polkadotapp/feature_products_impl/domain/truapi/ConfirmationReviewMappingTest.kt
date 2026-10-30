@@ -339,6 +339,30 @@ class ConfirmationReviewMappingTest {
     }
 
     @Test
+    fun `nft purse drain back to a cheque's sender maps to the refund destination`() {
+        val review = UserConfirmationReview.NftPurseDrain(
+            NftPurseDrainReview(
+                callingProductId = "drainer.dot",
+                fromPurse = 4u,
+                owner = NftPurseOwner.Product("owner.dot"),
+                itemCount = 2u,
+                destination = NftPurseDrainDestination.Refund,
+            ),
+        )
+
+        val confirmation = review.toConfirmation(caller)
+
+        val expected = TrUAPIConfirmation.NftPurseDrain(
+            requesterProductId = "drainer.dot",
+            fromPurse = 4u,
+            ownerProductId = "owner.dot",
+            itemCount = 2u,
+            destination = TrUAPIConfirmation.NftPurseDrain.Destination.Refund,
+        )
+        assertEquals(expected, confirmation)
+    }
+
+    @Test
     fun `product subtree maps the product as its own requester`() {
         val review = UserConfirmationReview.ProductSubtree(ProductSubtreeReview(productId = "self.dot"))
 
