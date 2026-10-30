@@ -284,18 +284,8 @@ impl Account for ProductRuntimeHost {
 					.current_session()
 					.ok_or(CallError::Domain(latest::HostGetUserIdError::NotConnected))?;
 
-				match self.connection.identity_disclosure_authorization().await {
-					Ok(PermissionAuthorizationStatus::Authorized) => {},
-					Ok(
-						PermissionAuthorizationStatus::Denied |
-						PermissionAuthorizationStatus::NotDetermined,
-					) => {
-						return Err(CallError::Domain(
-							latest::HostGetUserIdError::PermissionDenied,
-						));
-					},
-					Err(reason) => return Err(CallError::HostFailure { reason }),
-				}
+				let denied = latest::HostGetUserIdError::PermissionDenied;
+				self.connection.require_identity_disclosure(denied).await?;
 
 				let primary_username = match session.primary_username() {
 					Some(name) => Some(name.to_string()),
