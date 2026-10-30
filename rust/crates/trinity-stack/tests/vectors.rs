@@ -12,7 +12,7 @@ use curve25519_dalek::{
 use serde_json::{Value, json};
 use sha2::{Digest, Sha512};
 use std::{collections::BTreeMap, fs, path::PathBuf};
-use trinity_stack::{Fetched, Pointer, accept, open, public_key, sign};
+use trinity_stack::{Descriptor, Fetched, Pointer, accept, open, public_key, sign};
 
 const SECRET: [u8; 32] = [7; 32];
 const OTHER_SECRET: [u8; 32] = [9; 32];
@@ -82,6 +82,20 @@ fn with(edit: impl FnOnce(&mut Value)) -> Value {
 	let mut value = base();
 	edit(&mut value);
 	value
+}
+
+/// `base()` with a `web-gateway` in place of its `dub`.
+fn web_gateway(url: &str) -> Value {
+	with(|value| value["services"][0] = json!({ "kind": "web-gateway", "urls": [url] }))
+}
+
+/// The smallest valid descriptor.
+fn minimal() -> Value {
+	json!({
+		"$v": 1, "sequence": 0, "generation": "g", "id": "local", "name": "Local",
+		"network": "local", "tld": "local", "services": [],
+		"chains": [{ "role": "Relay", "genesisHash": RELAY, "rpc": ["ws://127.0.0.1:9944"] }],
+	})
 }
 
 fn bytes(value: &Value) -> Vec<u8> {
@@ -210,6 +224,16 @@ struct DocumentCase {
 	expect: &'static str,
 }
 
+const ADDRESS: [u8; 20] = [0xaa; 20];
+
+fn with_dotns(dotns: Value) -> Value {
+	with(|value| value["dotns"] = dotns)
+}
+
+fn two_addresses() -> Value {
+	json!({ "registrar": hex(&ADDRESS), "resolver": hex(&[0xbb; 20]) })
+}
+
 fn document_cases() -> Vec<DocumentCase> {
 	let plain =
 		|name, value: Value, expect| DocumentCase { name, bytes: bytes(&value), key: None, expect };
@@ -230,15 +254,7 @@ fn document_cases() -> Vec<DocumentCase> {
 	let compact = serde_json::to_string(&base()).unwrap();
 	vec![
 		plain("valid-full", base(), "ok"),
-		plain(
-			"valid-minimal",
-			json!({
-				"$v": 1, "sequence": 0, "generation": "g", "id": "local", "name": "Local",
-				"network": "local", "tld": "local", "services": [],
-				"chains": [{ "role": "Relay", "genesisHash": RELAY, "rpc": ["ws://127.0.0.1:9944"] }],
-			}),
-			"ok",
-		),
+		plain("valid-minimal", minimal(), "ok"),
 		plain(
 			"valid-private-range",
 			with(|value| {
@@ -440,6 +456,47 @@ fn document_cases() -> Vec<DocumentCase> {
 			"invalid-hex",
 		),
 		plain(
+			"valid-dotns",
+			with_dotns(json!({ "registrar": hex(&ADDRESS), "protocolRegistry": hex(&[0xbb; 20]) })),
+			"ok",
+		),
+		plain(
+			"dotns-without-asset-hub",
+			with(|value| {
+				value["dotns"] = two_addresses();
+				value["chains"].as_array_mut().unwrap().remove(1);
+				value.as_object_mut().unwrap().remove("assets");
+			}),
+			"unknown-chain-role",
+		),
+		plain(
+			"dotns-key-of-33-bytes",
+			with_dotns(json!({ "a".repeat(33): hex(&ADDRESS) })),
+			"dotns-key",
+		),
+		plain("dotns-key-empty", with_dotns(json!({ "": hex(&ADDRESS) })), "dotns-key"),
+		plain("dotns-key-of-32-bytes", with_dotns(json!({ "a".repeat(32): hex(&ADDRESS) })), "ok"),
+		plain(
+			"dotns-key-with-an-underscore",
+			with_dotns(json!({ "store_factory": hex(&ADDRESS) })),
+			"dotns-key",
+		),
+		plain(
+			"dotns-key-not-ascii",
+			with_dotns(json!({ "régistrar": hex(&ADDRESS) })),
+			"dotns-key",
+		),
+		plain(
+			"dotns-address-zero",
+			with_dotns(json!({ "registrar": hex(&[0; 20]) })),
+			"dotns-zero-address",
+		),
+		plain(
+			"dotns-address-uppercase",
+			with_dotns(json!({ "registrar": hex(&ADDRESS).to_uppercase().replace("0X", "0x") })),
+			"invalid-hex",
+		),
+		plain(
 			"rpc-plain-ws-on-hostname",
 			with(|value| {
 				value["chains"][0]["rpc"] = json!(["ws://previewnet.substrate.dev/relay"])
@@ -478,6 +535,71 @@ fn document_cases() -> Vec<DocumentCase> {
 			"service-url-not-base",
 		),
 		plain(
+			"valid-web-gateway-with-query",
+			with(|value| {
+				value["services"].as_array_mut().unwrap().extend([
+					json!({ "kind": "web-gateway", "urls": ["https://testnet.li/?network=previewnet"] }),
+					json!({ "kind": "evm-explorer", "urls": ["https://blockscout-testnet.polkadot.io/"] }),
+				])
+			}),
+			"ok",
+		),
+		plain(
+			"web-gateway-path-not-base",
+			web_gateway("https://testnet.li/apps?network=previewnet"),
+			"service-url-not-base",
+		),
+		plain(
+			"web-gateway-without-slash",
+			web_gateway("https://testnet.li?network=previewnet"),
+			"service-url-not-base",
+		),
+		plain(
+			"web-gateway-with-fragment",
+			web_gateway("https://testnet.li/?network=previewnet#apps"),
+			"service-url-not-base",
+		),
+		plain("web-gateway-on-address", web_gateway("https://10.0.0.5/"), "invalid-url"),
+		plain("web-gateway-on-wss", web_gateway("wss://testnet.li/"), "invalid-url"),
+		plain("web-gateway-http-on-hostname", web_gateway("http://testnet.li/"), "invalid-url"),
+		plain("web-gateway-http-on-loopback", web_gateway("http://127.0.0.1:5173/"), "invalid-url"),
+		plain("valid-web-gateway-on-localhost", web_gateway("http://localhost:5173/"), "ok"),
+		plain(
+			"web-gateway-http-on-localhost-prefix",
+			web_gateway("http://localhost.evil.example/"),
+			"invalid-url",
+		),
+		plain(
+			"web-gateway-http-under-localhost",
+			web_gateway("http://gw.localhost:5173/"),
+			"invalid-url",
+		),
+		plain(
+			"web-gateway-http-on-localhost-with-user",
+			web_gateway("http://user@localhost:5173/"),
+			"invalid-url",
+		),
+		plain(
+			"web-gateway-http-on-localhost-uppercase",
+			web_gateway("http://LOCALHOST:5173/"),
+			"invalid-url",
+		),
+		plain(
+			"web-gateway-http-on-localhost-backslash",
+			web_gateway("http://localhost\\@evil.example/"),
+			"invalid-url",
+		),
+		plain(
+			"web-gateway-on-localhost-without-slash",
+			web_gateway("http://localhost:5173"),
+			"service-url-not-base",
+		),
+		plain(
+			"http-on-localhost-outside-web-gateway",
+			with(|value| value["services"][0]["urls"] = json!(["http://localhost:4000/"])),
+			"invalid-url",
+		),
+		plain(
 			"eth-rpc-without-chain-id",
 			with(|value| {
 				value["services"][2].as_object_mut().unwrap().remove("chainId");
@@ -504,6 +626,14 @@ fn document_cases() -> Vec<DocumentCase> {
 			with(|value| {
 				value["services"][0]["urls"] =
 					json!(["https://previewnet.substrate.dev@evil.example/"])
+			}),
+			"invalid-url",
+		),
+		plain(
+			"url-with-backslash",
+			with(|value| {
+				value["services"][0]["urls"] =
+					json!(["https://previewnet.substrate.dev\\@evil.example/"])
 			}),
 			"invalid-url",
 		),
@@ -739,6 +869,76 @@ fn link_cases() -> Vec<(&'static str, String, Value)> {
 	]
 }
 
+/// `minimal()`, whose `tld` is `local`, with this `web-gateway`, or none.
+fn with_web_gateway(gateway: Option<&str>) -> Value {
+	let mut value = minimal();
+	if let Some(url) = gateway {
+		value["services"] = json!([{ "kind": "web-gateway", "urls": [url] }]);
+	}
+	value
+}
+
+/// `(name, gateway, dotNS name, expected)` for `web_url`.
+fn web_url_cases() -> Vec<(&'static str, Option<&'static str>, &'static str, Value)> {
+	let previewnet = Some("https://testnet.li/?network=previewnet");
+	let nested = Some("https://gateway.example/gw/?n=x");
+	let local = Some("http://localhost:5173/?network=previewnet");
+	let url = |url: &str| json!({ "url": url });
+	let invalid = json!({ "error": "invalid-name" });
+	vec![
+		(
+			"local-host-form-keeps-port",
+			local,
+			"my-app",
+			url("http://my-app.localhost:5173/?network=previewnet"),
+		),
+		(
+			"local-path-form-keeps-port",
+			local,
+			"sub.my-app.local",
+			url("http://localhost:5173/sub.my-app?network=previewnet"),
+		),
+		(
+			"host-form-keeps-query",
+			previewnet,
+			"my-app",
+			url("https://my-app.testnet.li/?network=previewnet"),
+		),
+		(
+			"tld-is-dropped",
+			previewnet,
+			"my-app.local",
+			url("https://my-app.testnet.li/?network=previewnet"),
+		),
+		(
+			"path-form-keeps-query",
+			previewnet,
+			"sub.my-app.local",
+			url("https://testnet.li/sub.my-app?network=previewnet"),
+		),
+		(
+			"host-form-under-gateway-path",
+			nested,
+			"my-app",
+			url("https://my-app.gateway.example/gw/?n=x"),
+		),
+		(
+			"path-form-under-gateway-path",
+			nested,
+			"sub.my-app.local",
+			url("https://gateway.example/gw/sub.my-app?n=x"),
+		),
+		("no-gateway", None, "my-app", json!({ "url": null })),
+		("name-uppercase", previewnet, "My-App", invalid.clone()),
+		("name-empty-label", previewnet, "a..b", invalid.clone()),
+		("name-empty", previewnet, "", invalid.clone()),
+		("name-only-tld", previewnet, ".local", invalid.clone()),
+		("name-with-path", previewnet, "my-app/x", invalid.clone()),
+		("subname-without-tld", previewnet, "sub.my-app", invalid.clone()),
+		("name-with-another-tld", previewnet, "my-app.dot", invalid),
+	]
+}
+
 fn generate() -> BTreeMap<PathBuf, Vec<u8>> {
 	let mut files = BTreeMap::new();
 	let mut file = |path: String, contents: Vec<u8>| {
@@ -765,7 +965,14 @@ fn generate() -> BTreeMap<PathBuf, Vec<u8>> {
 		.into_iter()
 		.map(|(name, link, expect)| json!({ "name": name, "link": link, "expect": expect }))
 		.collect();
-	let cases = json!({ "documents": documents, "reader": reader, "links": links });
+	let web_urls: Vec<Value> = web_url_cases()
+		.into_iter()
+		.map(|(name, gateway, dotns_name, expect)| {
+			json!({ "name": name, "descriptor": with_web_gateway(gateway), "dotnsName": dotns_name, "expect": expect })
+		})
+		.collect();
+	let cases =
+		json!({ "documents": documents, "reader": reader, "links": links, "webUrls": web_urls });
 	let mut cases = serde_json::to_vec_pretty(&cases).unwrap();
 	cases.push(b'\n');
 	files.insert(PathBuf::from("cases.json"), cases);
@@ -898,6 +1105,15 @@ fn every_vector_gets_its_verdict() {
 				}
 				outcome
 			},
+		};
+		assert_eq!(outcome, case["expect"], "{}", case["name"]);
+	}
+
+	for case in cases["webUrls"].as_array().unwrap() {
+		let descriptor = Descriptor::from_json(case["descriptor"].clone()).unwrap();
+		let outcome = match descriptor.web_url(case["dotnsName"].as_str().unwrap()) {
+			Err(error) => json!({ "error": error.code() }),
+			Ok(url) => json!({ "url": url }),
 		};
 		assert_eq!(outcome, case["expect"], "{}", case["name"]);
 	}

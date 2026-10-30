@@ -34,7 +34,6 @@ extension ServiceCoordinator {
         productWorkerFacade.setup()
         chatExtensionsRegistry.discover()
         chatRequestCoordinator.setup()
-        fiatOnrampTrackingService.setup()
         attachmentUploadService.setup()
         attachmentDownloadService.setup()
         notificationBadgeSyncService.setup()
@@ -64,7 +63,6 @@ extension ServiceCoordinator {
 
         chatCoordinator.throttle()
         chatRequestCoordinator.throttle()
-        fiatOnrampTrackingService.throttle()
         attachmentUploadService.throttle()
         attachmentDownloadService.throttle()
         notificationBadgeSyncService.throttle()
