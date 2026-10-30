@@ -150,7 +150,7 @@ type Descriptor = {
   services: Service[];
   assets?: Asset[]; // Assets readers treat specially, such as the one a wallet pays in.
   contracts?: Record<string, string>; // Asset Hub contracts readers need that the chains do not point to, by name.
-  dotns?: Record<string, string>; // dotNS contract addresses by protocol registry key, as dotNS's DotnsConstants names them, e.g. "storeFactory". See below.
+  dotns?: Record<string, string>; // dotNS contract addresses by protocol registry key, as defined in dotNS's DotnsConstants, e.g. "storeFactory". See below.
   coinage?: { chain: string; instance: number }; // Chain role and instance of the Coinage pallet, the on-chain payment system.
 };
 
@@ -264,12 +264,13 @@ facts are deliberately not in a descriptor, and readers get them from elsewhere:
 | DUB attester                                        | the DUB's `api/v1/attester`          |
 | TURN servers and their short-lived credentials      | the `turn` service, when needed      |
 
-dotNS contract addresses are the exception: Asset Hub holds them, and a descriptor still carries them in `dotns`. A
+dotNS contract addresses are the exception: Asset Hub stores them, and a descriptor still carries them in `dotns`. A
 reader would otherwise find them with a storage read (`DotnsGateway.DispatcherAddress`) and up to 19 contract calls
 through Asset Hub's RPC, for addresses that change only when the stack moves to a dotNS deployment at other addresses or
 the registry's owner rewires a key. Previewnet boots dotNS from the dotNS release's genesis, so its addresses stay the
 same across restarts until it moves to a release with other ones. A reader SHOULD use `dotns` as stated rather than read
-the addresses from the chain.
+the addresses from the chain. A descriptor without `dotns`, or without a key a reader needs, leaves that reader to read
+the address from the chain through `DotnsGateway.DispatcherAddress` and the protocol registry.
 
 A **fork** copies a stack's chains at some block and runs them under new validators, as a PPN spawner instance does with
 zombie-bite. It keeps its source's genesis hashes, so nothing on the chain tells the two apart. A fork's operator sets
@@ -462,7 +463,7 @@ tools may use it or their own.
 - An unsigned stack trusts its web server, DNS and TLS. Whoever controls its host can change its services.
 - Verification exists in more than one implementation, and the conformance vectors must keep them in agreement.
 - A stack kept by hand needs automation and a guarded key, where today it needs a Firebase edit.
-- When the dotNS registry's owner rewires a key, readers keep the old address until the operator publishes again.
+- When the dotNS registry's owner rewires a key, readers use the old address until the operator publishes again.
 
 ## Security
 
@@ -479,7 +480,8 @@ tools may use it or their own.
   it issues against an access token from the DUB.
 - **Availability.** A reader keeps its last verified copy while the descriptor is unreachable.
 - **dotNS.** `dotns` comes with the rest of the descriptor, so a reader trusts the addresses as far as the descriptor
-  itself: the stack's key, or for an unsigned stack its host. It never takes them from an RPC's answer.
+  itself: the stack's key, or for an unsigned stack its host. A reader that uses `dotns` never takes them from an RPC's
+  answer.
 
 ## Alternatives Considered
 
@@ -522,21 +524,21 @@ instance is the only host that serves it. A forking tool such as zombie-bite can
 RPC URLs, check the chains' genesis hashes against it, and write the fork's descriptor with `fork` and `forkedAt` filled
 in. The engine already knows each field:
 
-| Descriptor field                 | Source in previewnet-engine                                                                                                                                                   |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `chains[].genesisHash`           | `chain_getBlockHash(0)` on each chain once it is up                                                                                                                           |
-| `chains[].rpc`                   | `chains[].url` from `/api/network`; the relay gets every `relay-*` validator's URL                                                                                            |
-| `chains[].fullSpec`              | `chains[].links.spec`, hashed as it is served                                                                                                                                 |
-| `chains[].lightSpec`             | planned: built from the full spec, with the relay's checkpoint from a relay node's `sync_state_genSyncSpec`                                                                   |
-| `services[]`                     | the `dub`, `ipfs-daemon`, `eth-rpc` and `storage-provider-node` entries of `/api/network`, and `hop` is the Bulletin RPC                                                      |
-| `services[]` `turn` and `stun`   | the `ice` entry of `/api/network`: `turn` is the DUB behind its `credentialsUrl`, and `stun` is its `stun:` server, served by the eturnal TURN relay PPN runs next to the DUB |
-| `services[]` `faucet`            | the deployment's configuration                                                                                                                                                |
-| `assets`, `contracts`, `coinage` | the network file, for stacks that set them up at genesis                                                                                                                      |
-| `dotns`                          | the dotNS release's `deployments/expected.json` the engine already fetches, each contract name mapped to its `DotnsConstants` registry key                                    |
-| `tld`                            | the network file's `genesisConfig.networkSuffix`                                                                                                                              |
-| `generation`                     | the spawn record in `/api/provenance`                                                                                                                                         |
-| `expiresAt`                      | the spawner instance's lifetime, for spawner forks                                                                                                                            |
-| `fork`, `chains[].forkedAt`      | the source pointer the fork was made from, and the head each chain was bitten at, for spawner forks                                                                           |
+| Descriptor field                 | Source in previewnet-engine                                                                                                                                                                                        |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `chains[].genesisHash`           | `chain_getBlockHash(0)` on each chain once it is up                                                                                                                                                                |
+| `chains[].rpc`                   | `chains[].url` from `/api/network`; the relay gets every `relay-*` validator's URL                                                                                                                                 |
+| `chains[].fullSpec`              | `chains[].links.spec`, hashed as it is served                                                                                                                                                                      |
+| `chains[].lightSpec`             | planned: built from the full spec, with the relay's checkpoint from a relay node's `sync_state_genSyncSpec`                                                                                                        |
+| `services[]`                     | the `dub`, `ipfs-daemon`, `eth-rpc` and `storage-provider-node` entries of `/api/network`, and `hop` is the Bulletin RPC                                                                                           |
+| `services[]` `turn` and `stun`   | the `ice` entry of `/api/network`: `turn` is the DUB behind its `credentialsUrl`, and `stun` is its `stun:` server, served by the eturnal TURN relay PPN runs next to the DUB                                      |
+| `services[]` `faucet`            | the deployment's configuration                                                                                                                                                                                     |
+| `assets`, `contracts`, `coinage` | the network file, for stacks that set them up at genesis                                                                                                                                                           |
+| `dotns`                          | the contracts the dotNS release registers in the protocol registry, from the `deployments/expected.json` the engine already fetches, each under its `DotnsConstants` key (`DotnsCostModelRegistry` as `costModel`) |
+| `tld`                            | the network file's `genesisConfig.networkSuffix`                                                                                                                                                                   |
+| `generation`                     | the spawn record in `/api/provenance`                                                                                                                                                                              |
+| `expiresAt`                      | the spawner instance's lifetime, for spawner forks                                                                                                                                                                 |
+| `fork`, `chains[].forkedAt`      | the source pointer the fork was made from, and the head each chain was bitten at, for spawner forks                                                                                                                |
 
 A stack that no single piece of software runs, such as paseo-next-v2 or Polkadot, can keep its descriptor in a git
 repository. CI checks each change against the live chains, signs on merge, and a scheduled job opens a pull request with
