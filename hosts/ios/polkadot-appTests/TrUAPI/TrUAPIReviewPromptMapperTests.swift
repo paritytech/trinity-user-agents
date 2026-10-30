@@ -44,6 +44,44 @@ struct TrUAPIReviewPromptMapperTests {
     }
 
     @Test
+    func mapsNftPurseDrainOfARootPurseToAnExternalKey() {
+        let request = mapper.makeActionRequest(from: NftPurseDrainReview(
+            callingProductId: "caller.dot",
+            fromPurse: 4,
+            owner: .root,
+            itemCount: 1,
+            destination: .externalKey(key: Data(repeating: 0xab, count: 32))
+        ))
+
+        #expect(request == .nftPurseDrain(
+            productId: "caller.dot",
+            fromPurse: 4,
+            ownerProductId: nil,
+            itemCount: 1,
+            destination: .key(hex: String(repeating: "ab", count: 32))
+        ))
+    }
+
+    @Test
+    func mapsNftPurseDrainIntoACheque() {
+        let request = mapper.makeActionRequest(from: NftPurseDrainReview(
+            callingProductId: "caller.dot",
+            fromPurse: 4,
+            owner: .product("other.dot"),
+            itemCount: 2,
+            destination: .cheque
+        ))
+
+        #expect(request == .nftPurseDrain(
+            productId: "caller.dot",
+            fromPurse: 4,
+            ownerProductId: "other.dot",
+            itemCount: 2,
+            destination: .cheque
+        ))
+    }
+
+    @Test
     func mapsAccountAliasToContextProductAccountAccess() {
         let request = mapper.makePermissionRequest(from: AccountAliasReview(
             callingProductId: "caller.dot",

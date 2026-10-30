@@ -9,15 +9,25 @@ mod served;
 #[cfg(target_arch = "wasm32")]
 mod browser {
 	use truapi::{
-		CallContext, CallError,
+		CallContext, CallError, Subscription,
 		api::NftPurse,
 		versioned::nft_purse::{
-			HostNftPurseCreateItemsError, HostNftPurseCreateItemsRequest,
-			HostNftPurseCreateItemsResponse, HostNftPurseCreatePurseError,
-			HostNftPurseCreatePurseRequest, HostNftPurseCreatePurseResponse,
+			HostNftPurseCreateChequeError, HostNftPurseCreateChequeRequest,
+			HostNftPurseCreateChequeResponse, HostNftPurseCreateItemsError,
+			HostNftPurseCreateItemsRequest, HostNftPurseCreateItemsResponse,
+			HostNftPurseCreatePurseError, HostNftPurseCreatePurseRequest,
+			HostNftPurseCreatePurseResponse, HostNftPurseCreateReceiveKeyError,
+			HostNftPurseCreateReceiveKeyRequest, HostNftPurseCreateReceiveKeyResponse,
+			HostNftPurseDepositError, HostNftPurseDepositRequest, HostNftPurseDepositResponse,
 			HostNftPurseListPursesError, HostNftPurseListPursesRequest,
-			HostNftPurseListPursesResponse, HostNftPurseQueryPurseError,
-			HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
+			HostNftPurseListPursesResponse, HostNftPurseObserveOperationStatusError,
+			HostNftPurseObserveOperationStatusItem, HostNftPurseObserveOperationStatusRequest,
+			HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest,
+			HostNftPurseQueryPurseResponse, HostNftPurseRebalancePurseError,
+			HostNftPurseRebalancePurseRequest, HostNftPurseRebalancePurseResponse,
+			HostNftPurseStaticReceiveKeyError, HostNftPurseStaticReceiveKeyRequest,
+			HostNftPurseStaticReceiveKeyResponse, HostNftPurseTransferItemError,
+			HostNftPurseTransferItemRequest, HostNftPurseTransferItemResponse,
 		},
 	};
 
@@ -55,6 +65,72 @@ mod browser {
 			_request: HostNftPurseListPursesRequest,
 		) -> Result<HostNftPurseListPursesResponse, CallError<HostNftPurseListPursesError>> {
 			Err(CallError::Unsupported)
+		}
+
+		async fn create_cheque(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseCreateChequeRequest,
+		) -> Result<HostNftPurseCreateChequeResponse, CallError<HostNftPurseCreateChequeError>> {
+			Err(CallError::Unsupported)
+		}
+
+		async fn create_receive_key(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseCreateReceiveKeyRequest,
+		) -> Result<
+			HostNftPurseCreateReceiveKeyResponse,
+			CallError<HostNftPurseCreateReceiveKeyError>,
+		> {
+			Err(CallError::Unsupported)
+		}
+
+		async fn rebalance_purse(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseRebalancePurseRequest,
+		) -> Result<HostNftPurseRebalancePurseResponse, CallError<HostNftPurseRebalancePurseError>>
+		{
+			Err(CallError::Unsupported)
+		}
+
+		async fn deposit(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseDepositRequest,
+		) -> Result<HostNftPurseDepositResponse, CallError<HostNftPurseDepositError>> {
+			Err(CallError::Unsupported)
+		}
+
+		async fn static_receive_key(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseStaticReceiveKeyRequest,
+		) -> Result<
+			HostNftPurseStaticReceiveKeyResponse,
+			CallError<HostNftPurseStaticReceiveKeyError>,
+		> {
+			Err(CallError::Unsupported)
+		}
+
+		async fn transfer_item(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseTransferItemRequest,
+		) -> Result<HostNftPurseTransferItemResponse, CallError<HostNftPurseTransferItemError>> {
+			Err(CallError::Unsupported)
+		}
+
+		async fn observe_operation_status(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseObserveOperationStatusRequest,
+		) -> Subscription<
+			HostNftPurseObserveOperationStatusItem,
+			CallError<HostNftPurseObserveOperationStatusError>,
+		> {
+			Subscription::interrupted(CallError::Unsupported)
 		}
 	}
 }

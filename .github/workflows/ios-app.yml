@@ -542,7 +542,7 @@ jobs:
           retention-days: 3
 
   # An installable build for every commit on a pull request labelled
-  # ios-simulator-build. The simulator
+  # ci:ios-simulator. The simulator
   # slice needs no provisioning profile and no signing identity, so it needs
   # nothing the build job does not already have, and a reviewer can run the
   # change rather than read it.
@@ -684,7 +684,7 @@ jobs:
 
           An arm64 simulator slice, so it needs an Apple Silicon Mac and does not
           install on a device. Kept for 14 days, after which the link stops
-          resolving and a new push rebuilds it while \`ios-simulator-build\` is
+          resolving and a new push rebuilds it while \`ci:ios-simulator\` is
           set.
           EOF
 

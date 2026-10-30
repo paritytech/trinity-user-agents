@@ -1,5 +1,6 @@
 import Foundation_iOS
 import PolkadotUI
+import Products
 import UIKit
 import UIKitExt
 
@@ -24,6 +25,16 @@ enum TrUAPIActionPromptViewFactory {
             title = String(localized: .Products.actionProductSubtreeTitle)
             body = String(localized: .Products.actionProductSubtreeBody(productId: productId))
             iconName = "person.crop.circle"
+        case let .nftPurseDrain(productId, fromPurse, ownerProductId, itemCount, destination):
+            title = String(localized: .Products.actionNftPurseDrainTitle)
+            body = makeNftPurseDrainBody(
+                productId: productId,
+                fromPurse: fromPurse,
+                owner: ownerProductId ?? String(localized: .Products.actionNftPurseDrainOwnerYou),
+                itemCount: itemCount,
+                destination: destination
+            )
+            iconName = "square.stack.3d.up"
         }
 
         let icon = UIImage(systemName: iconName, withConfiguration: UIImage.SymbolConfiguration(
@@ -43,5 +54,39 @@ enum TrUAPIActionPromptViewFactory {
                 handler: { context.deliver(false) }
             )
         )
+    }
+
+    private static func makeNftPurseDrainBody(
+        productId: ProductId,
+        fromPurse: UInt32,
+        owner: String,
+        itemCount: UInt32,
+        destination: NftPurseDrainTarget
+    ) -> String {
+        switch destination {
+        case let .purse(toPurse):
+            String(localized: .Products.actionNftPurseDrainToPurseBody(
+                productId: productId,
+                itemCount: String(itemCount),
+                fromPurse: String(fromPurse),
+                owner: owner,
+                toPurse: String(toPurse)
+            ))
+        case let .key(hex):
+            String(localized: .Products.actionNftPurseDrainToKeyBody(
+                productId: productId,
+                itemCount: String(itemCount),
+                fromPurse: String(fromPurse),
+                owner: owner,
+                key: hex
+            ))
+        case .cheque:
+            String(localized: .Products.actionNftPurseDrainToChequeBody(
+                productId: productId,
+                itemCount: String(itemCount),
+                fromPurse: String(fromPurse),
+                owner: owner
+            ))
+        }
     }
 }
