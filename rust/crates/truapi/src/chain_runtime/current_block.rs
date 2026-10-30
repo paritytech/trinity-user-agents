@@ -20,6 +20,16 @@ use super::{
 /// than all the halt pauses together, so a late re-follow can still serve.
 const CURRENT_BLOCK_TIMEOUT: Duration = Duration::from_secs(45);
 
+/// One failed attempt at reading the current block.
+#[derive(Display)]
+#[display("{error}")]
+struct FailedRead {
+	error: CurrentBlockError,
+	/// Whether a halt answered one of the attempt's requests, so another
+	/// attempt can succeed.
+	met_a_halt: bool,
+}
+
 /// Why [`ChainRuntime::current_block`] could not read the chain.
 #[derive(Debug, PartialEq, Eq, Display)]
 pub enum CurrentBlockError {
@@ -58,20 +68,24 @@ impl ChainRuntime {
 			&*self.timer,
 			&never_cancelled,
 			|| async move {
-				let connection = self
-					.subxt_connection(genesis_hash)
-					.await
-					.map_err(|failure| (CurrentBlockError::NoConnection(failure), false))?;
+				let connection =
+					self.subxt_connection(genesis_hash).await.map_err(|failure| FailedRead {
+						error: CurrentBlockError::NoConnection(failure),
+						met_a_halt: false,
+					})?;
 				*latest_connection.lock().unwrap() = Some(connection.clone());
 				let halts = connection.halts();
 				connection.client.at_current_block().await.map_err(|error| {
 					let met_a_halt = connection.halts() > halts;
-					(classify(connection.follow_end(), met_a_halt, &error), met_a_halt)
+					FailedRead {
+						error: classify(connection.follow_end(), met_a_halt, &error),
+						met_a_halt,
+					}
 				})
 			},
-			|(_, met_a_halt)| *met_a_halt,
+			|failed| failed.met_a_halt,
 		)
-		.map_err(|(error, _)| error)
+		.map_err(|failed| failed.error)
 		.fuse();
 		let deadline = self.timer.sleep(CURRENT_BLOCK_TIMEOUT).fuse();
 		pin_mut!(read, deadline);
