@@ -559,6 +559,14 @@ fn document_cases() -> Vec<DocumentCase> {
 			"invalid-url",
 		),
 		plain(
+			"url-with-backslash",
+			with(|value| {
+				value["services"][0]["urls"] =
+					json!(["https://previewnet.substrate.dev\\@evil.example/"])
+			}),
+			"invalid-url",
+		),
+		plain(
 			"fork-without-forked-at",
 			with(|value| value["fork"] = json!({ "of": { "url": URL }, "at": TWO_HOURS_AGO })),
 			"forked-at",
