@@ -1,5 +1,8 @@
 package io.paritytech.polkadotapp.feature_coinage_impl.domain.recycling
 
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.Coin
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinProvenance
@@ -17,14 +20,10 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TrackedCoin
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TrackedVoucher
 import io.paritytech.polkadotapp.feature_coinage_impl.data.repository.CoinRepository
 import io.paritytech.polkadotapp.feature_coinage_impl.testKey
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.`when`
 import java.math.BigInteger
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
@@ -33,12 +32,12 @@ private const val FULL_RING = 767
 private const val FORCED_AGE = 14
 
 class CoinageAssetSelectorTest {
-    private val coinageAssetsUseCase: CoinageAssetsUseCase = mock()
-    private val ringCapacityProvider: RingCapacityProvider = mock()
-    private val settings: CoinageRecyclingStrategySettings = mock()
-    private val evaluator: CoinRecyclingEvaluator = mock()
-    private val quotaTracker: UnloadQuotaTracker = mock()
-    private val coinRepository: CoinRepository = mock()
+    private val coinageAssetsUseCase: CoinageAssetsUseCase = mockk()
+    private val ringCapacityProvider: RingCapacityProvider = mockk()
+    private val settings: CoinageRecyclingStrategySettings = mockk()
+    private val evaluator: CoinRecyclingEvaluator = mockk()
+    private val quotaTracker: UnloadQuotaTracker = mockk()
+    private val coinRepository: CoinRepository = mockk()
 
     private var now = Instant.fromEpochMilliseconds(0)
     private val timeProvider = object : TimeProvider {
@@ -58,24 +57,18 @@ class CoinageAssetSelectorTest {
     private val pastChainLimit = coinOf(derivationIndex = 3)
 
     init {
-        runBlocking {
-            `when`(coinRepository.getCoinRecyclingAge()).thenReturn(Result.success(FORCED_AGE))
+        coEvery { coinRepository.getCoinRecyclingAge() } returns Result.success(FORCED_AGE)
 
-            // The selector always asks for a COMPLETE context, so the fetched capacities are what it sees.
-            whenever(ringCapacityProvider.capacitiesFor(any()))
-                .thenReturn(Result.success(mapOf(ValueExponent(1) to FULL_RING)))
-            whenever(coinageAssetsUseCase.getCoins())
-                .thenReturn(listOf(spendable, heldForPrivacy, pastChainLimit).map(::freeCoin))
-            whenever(evaluator.verdicts).thenReturn(
-                flowOf(
-                    mapOf(
-                        spendable.derivationIndex to CoinRecyclingState.ALLOW_USE,
-                        heldForPrivacy.derivationIndex to CoinRecyclingState.TO_RECYCLE,
-                        pastChainLimit.derivationIndex to CoinRecyclingState.MUST_RECYCLE,
-                    )
-                )
+        // The selector always asks for a COMPLETE context, so the fetched capacities are what it sees.
+        coEvery { ringCapacityProvider.capacitiesFor(any()) } returns Result.success(mapOf(ValueExponent(1) to FULL_RING))
+        coEvery { coinageAssetsUseCase.getCoins() } returns listOf(spendable, heldForPrivacy, pastChainLimit).map(::freeCoin)
+        every { evaluator.verdicts } returns flowOf(
+            mapOf(
+                spendable.derivationIndex to CoinRecyclingState.ALLOW_USE,
+                heldForPrivacy.derivationIndex to CoinRecyclingState.TO_RECYCLE,
+                pastChainLimit.derivationIndex to CoinRecyclingState.MUST_RECYCLE,
             )
-        }
+        )
     }
 
     /** Both answers come from one reading of the wallet, so a caller may take either without asking twice. */
@@ -183,13 +176,12 @@ class CoinageAssetSelectorTest {
         )
     }
 
-    private suspend fun withStrategy(type: RecyclingStrategyType) {
-        whenever(settings.getStrategy()).thenReturn(type)
+    private fun withStrategy(type: RecyclingStrategyType) {
+        coEvery { settings.getStrategy() } returns type
     }
 
-    private suspend fun withVouchers(vararg vouchers: RecyclerVoucher) {
-        whenever(coinageAssetsUseCase.getVouchers())
-            .thenReturn(vouchers.map { TrackedVoucher(it, CoinageAssetState.UNTRACKED) })
+    private fun withVouchers(vararg vouchers: RecyclerVoucher) {
+        coEvery { coinageAssetsUseCase.getVouchers() } returns vouchers.map { TrackedVoucher(it, CoinageAssetState.UNTRACKED) }
     }
 
     private fun freeCoin(coin: Coin) = TrackedCoin(coin, CoinageAssetState.UNTRACKED)
@@ -199,13 +191,13 @@ class CoinageAssetSelectorTest {
         valueExponent = ValueExponent(1),
         age = Coin.Age.Known(3),
         isOnChain = true,
-        accountId = mock(),
+        accountId = mockk(),
         provenance = CoinProvenance.UNKNOWN,
     )
 
     private fun voucherOf(ringVrfKeyIndex: Int, members: Int, enteredAt: Instant? = null) = RecyclerVoucher(
         ringVrfKeyIndex = testKey(ringVrfKeyIndex),
-        ringVrfPublicKey = mock(),
+        ringVrfPublicKey = mockk(),
         recyclerValue = ValueExponent(1),
         location = Location.InRecycler(RecyclerIndex(BigInteger.ONE), recyclerMembers = members, enteredAt = enteredAt),
         recyclerFungibility = RecyclerFungibility.NONE,

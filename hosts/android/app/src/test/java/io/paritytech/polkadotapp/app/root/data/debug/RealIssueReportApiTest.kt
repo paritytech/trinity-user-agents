@@ -1,10 +1,12 @@
 package io.paritytech.polkadotapp.app.root.data.debug
 
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.app.BuildConfig
 import io.paritytech.polkadotapp.app.root.domain.debug.IssueReport
 import io.paritytech.polkadotapp.app.root.domain.debug.IssueReportSubmissionError
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
-import io.paritytech.polkadotapp.test_shared.whenever
 import io.paritytech.polkadotapp.tools_remoteconfig_api.RemoteConfigService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
@@ -21,7 +23,6 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
-import org.mockito.Mockito.mock
 import java.util.concurrent.TimeUnit
 
 class RealIssueReportApiTest {
@@ -29,8 +30,8 @@ class RealIssueReportApiTest {
     val temporaryFolder = TemporaryFolder()
 
     private val server = MockWebServer()
-    private val config = mock(RemoteConfigService::class.java)
-    private val dispatchers = mock(CoroutineDispatchers::class.java)
+    private val config = mockk<RemoteConfigService>()
+    private val dispatchers = mockk<CoroutineDispatchers>()
     private lateinit var sender: RealIssueReportApi
     private lateinit var report: IssueReport
 
@@ -41,9 +42,9 @@ class RealIssueReportApiTest {
         val clientCertificates = HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
         server.useHttps(serverCertificates.sslSocketFactory())
         server.start()
-        whenever(dispatchers.io).thenReturn(Dispatchers.IO)
-        whenever(config.getSyncedString("issue_proxy_url")).thenReturn(Result.success(server.url("/v1/issues").toString()))
-        whenever(config.getSyncedString("issue_proxy_api_key")).thenReturn(Result.success("app-key"))
+        every { dispatchers.io } returns Dispatchers.IO
+        coEvery { config.getSyncedString("issue_proxy_url") } returns Result.success(server.url("/v1/issues").toString())
+        coEvery { config.getSyncedString("issue_proxy_api_key") } returns Result.success("app-key")
         val builder = OkHttpClient.Builder()
             .sslSocketFactory(clientCertificates.sslSocketFactory(), clientCertificates.trustManager)
             .addInterceptor { error("Reports must not reach shared request loggers") }
@@ -89,8 +90,8 @@ class RealIssueReportApiTest {
     fun `fails promptly without networking for missing or unsafe configuration`() = runBlocking<Unit> {
         val endpoint = server.url("/v1/issues").toString()
         for ((url, key) in listOf("" to "app-key", endpoint to "", "http://localhost/v1/issues" to "app-key", endpoint to "key\r\nX-Other: value")) {
-            whenever(config.getSyncedString("issue_proxy_url")).thenReturn(Result.success(url))
-            whenever(config.getSyncedString("issue_proxy_api_key")).thenReturn(Result.success(key))
+            coEvery { config.getSyncedString("issue_proxy_url") } returns Result.success(url)
+            coEvery { config.getSyncedString("issue_proxy_api_key") } returns Result.success(key)
             assertEquals(IssueReportSubmissionError.NotConfigured, withTimeout(1_000) { sender.send(report) }.exceptionOrNull())
         }
         assertEquals(0, server.requestCount)

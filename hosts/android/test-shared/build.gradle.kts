@@ -9,7 +9,7 @@ android {
 dependencies {
     api(project(":common"))
 
-    api(libs.mockito.core)
+    api(libs.mockk)
     api(libs.junit)
     api(libs.kotlinx.coroutines.test)
 

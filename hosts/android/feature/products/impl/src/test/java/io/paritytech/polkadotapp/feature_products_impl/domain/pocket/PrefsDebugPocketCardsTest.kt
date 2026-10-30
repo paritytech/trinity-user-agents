@@ -1,19 +1,18 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 
 import android.content.SharedPreferences
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
-import io.paritytech.polkadotapp.test_shared.whenever
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
-import org.mockito.Mockito.RETURNS_SELF
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.verify
 
 class PrefsDebugPocketCardsTest {
-    private val prefs: SharedPreferences = mock()
+    private val prefs: SharedPreferences = mockk()
     private val productId = ProductId.fromStoredValue("game.dot")
 
     private fun cards(isDebugBuild: Boolean = true) = PrefsDebugPocketCards(prefs, isDebugBuild)
@@ -24,10 +23,10 @@ class PrefsDebugPocketCardsTest {
         previewUrl: String? = DEV_FACE,
         faceShown: Boolean = true,
     ) {
-        whenever(prefs.getBoolean("game.dot.face_shown", true)).thenReturn(faceShown)
-        whenever(prefs.getString("game.dot.card_id", null)).thenReturn(cardId)
-        whenever(prefs.getString("game.dot.title", null)).thenReturn(title)
-        whenever(prefs.getString("game.dot.preview_url", null)).thenReturn(previewUrl)
+        every { prefs.getBoolean("game.dot.face_shown", true) } returns faceShown
+        every { prefs.getString("game.dot.card_id", null) } returns cardId
+        every { prefs.getString("game.dot.title", null) } returns title
+        every { prefs.getString("game.dot.preview_url", null) } returns previewUrl
     }
 
     @Test
@@ -119,14 +118,14 @@ class PrefsDebugPocketCardsTest {
 
         cards().set(productId, DebugPocketCard(PocketCardId("loyalty"), "Loyalty", DEV_FACE, faceShown = false))
 
-        verify(editor).putBoolean("game.dot.face_shown", false)
+        verify(exactly = 1) { editor.putBoolean("game.dot.face_shown", false) }
     }
 
     private fun editingPrefs(): SharedPreferences.Editor =
-        mock(SharedPreferences.Editor::class.java, RETURNS_SELF).also { whenever(prefs.edit()).thenReturn(it) }
+        mockk<SharedPreferences.Editor>(relaxed = true).also { every { prefs.edit() } returns it }
 
     private fun storedAppUrl(url: String?) {
-        whenever(prefs.getString("game.dot.app_url", null)).thenReturn(url)
+        every { prefs.getString("game.dot.app_url", null) } returns url
     }
 
     @Test
@@ -180,7 +179,7 @@ class PrefsDebugPocketCardsTest {
 
         cards().setAppUrl(productId, DEV_APP)
 
-        verify(editor).putString("game.dot.app_url", DEV_APP)
+        verify(exactly = 1) { editor.putString("game.dot.app_url", DEV_APP) }
     }
 
     private companion object {

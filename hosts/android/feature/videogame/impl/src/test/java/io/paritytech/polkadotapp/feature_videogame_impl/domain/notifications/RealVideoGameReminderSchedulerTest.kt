@@ -1,21 +1,16 @@
 package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.test_shared.FakeTimeProvider
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.whenever
 import org.junit.Assert.assertThrows
 import org.junit.Test
-import org.mockito.Mockito.anyBoolean
-import org.mockito.Mockito.anyLong
-import org.mockito.Mockito.doThrow
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify
 
 class RealVideoGameReminderSchedulerTest {
-    private val alarms: GameReminderAlarms = mock(GameReminderAlarms::class.java)
-    private val telemetry: GameReminderTelemetry = mock(GameReminderTelemetry::class.java)
+    private val alarms: GameReminderAlarms = mockk(relaxUnitFun = true)
+    private val telemetry: GameReminderTelemetry = mockk(relaxUnitFun = true)
 
     private val scheduler = RealVideoGameReminderScheduler(alarms, FakeTimeProvider { NOW }, telemetry)
 
@@ -27,7 +22,7 @@ class RealVideoGameReminderSchedulerTest {
 
         scheduler.scheduleProductGameStart(game, START)
 
-        verify(alarms).set(game, START, exact = true)
+        verify(exactly = 1) { alarms.set(game, START, exact = true) }
         verifyReported(GameReminderEvent.Scheduled(game, START, GameReminderDelivery.ALARM))
     }
 
@@ -37,7 +32,7 @@ class RealVideoGameReminderSchedulerTest {
 
         scheduler.scheduleProductGameStart(game, START)
 
-        verify(alarms).set(game, START, exact = false)
+        verify(exactly = 1) { alarms.set(game, START, exact = false) }
         verifyReported(GameReminderEvent.Scheduled(game, START, GameReminderDelivery.NOTIFICATION))
     }
 
@@ -45,15 +40,15 @@ class RealVideoGameReminderSchedulerTest {
     fun `a start already past cancels the alarm and is reported as not scheduled`() {
         scheduler.scheduleProductGameStart(game, NOW)
 
-        verify(alarms).cancel(game)
-        verify(alarms, never()).set(any(), anyLong(), anyBoolean())
+        verify(exactly = 1) { alarms.cancel(game) }
+        verify(exactly = 0) { alarms.set(any(), any(), any()) }
         verifyReported(GameReminderEvent.NotScheduled(game, NOW, GameReminderSkipReason.START_IN_PAST))
     }
 
     @Test
     fun `an alarm the OS refuses is reported as failed and still thrown`() {
         withExactAlarms(allowed = true)
-        doThrow(SecurityException("revoked")).`when`(alarms).set(game, START, exact = true)
+        every { alarms.set(game, START, exact = true) } throws SecurityException("revoked")
 
         assertThrows(SecurityException::class.java) { scheduler.scheduleProductGameStart(game, START) }
 
@@ -62,15 +57,15 @@ class RealVideoGameReminderSchedulerTest {
     }
 
     private fun withExactAlarms(allowed: Boolean) {
-        whenever(alarms.canRingExactly()).thenReturn(allowed)
+        every { alarms.canRingExactly() } returns allowed
     }
 
     private fun verifyReported(event: GameReminderEvent) {
-        verify(telemetry).report(event)
+        verify(exactly = 1) { telemetry.report(event) }
     }
 
     private fun verifyNotReported(event: GameReminderEvent) {
-        verify(telemetry, never()).report(event)
+        verify(exactly = 0) { telemetry.report(event) }
     }
 
     private companion object {

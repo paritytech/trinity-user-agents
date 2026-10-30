@@ -112,8 +112,7 @@ class SearchRangeTest {
  * body holds, a null list meaning its hash cannot be resolved at all, and [unreadableBodies] names the
  * blocks whose hash resolves but whose body read fails.
  *
- * Hand-written rather than mocked because every read the search makes returns a `Result` — a value class
- * Mockito cannot stub — and answers a different value per block.
+ * Hand-written rather than mocked because every read the search makes answers a different value per block.
  */
 private class FakeChainView(
     private val blocks: Map<Long, List<TransactionHash>?>,

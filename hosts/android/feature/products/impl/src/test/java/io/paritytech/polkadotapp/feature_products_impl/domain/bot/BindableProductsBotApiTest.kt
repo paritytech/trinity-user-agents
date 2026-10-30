@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
@@ -17,11 +18,10 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 class BindableProductsBotApiTest {
     private val productId = ProductId.fromStoredValue("coinflip.dot")
-    private val hostApiInteractor: HostApiInteractor = mock()
+    private val hostApiInteractor: HostApiInteractor = mockk()
     private val chatIdParam = ProductChatIdParameter("room")
 
     private fun bindable() = BindableProductsBotApi(hostApiInteractor, FixedProductId(productId))

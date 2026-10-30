@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket
 
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageBackupService
@@ -18,7 +20,6 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.verifySheetNev
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.verifySheetOpenedOnce
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.verifySheetOpenedTwice
 import io.paritytech.polkadotapp.test_shared.assertPresentationErrorShown
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.emptyFlow
@@ -30,19 +31,17 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DigitalDollarCardDetailsViewModelTest {
-    private val chainAssetProvider: ChainAssetProvider = mock(ChainAssetProvider::class.java)
-    private val coinageTestnetFundUseCase: CoinageTestnetFundUseCase = mock(CoinageTestnetFundUseCase::class.java)
-    private val coinageBackupService: CoinageBackupService = mock(CoinageBackupService::class.java)
-    private val shareCoinageLogsUseCase: ShareCoinageLogsUseCase = mock(ShareCoinageLogsUseCase::class.java)
-    private val coinageHoldingsUseCase: CoinageHoldingsUseCase = mock(CoinageHoldingsUseCase::class.java)
-    private val coinageBalanceConverterUseCase: CoinageBalanceConverterUseCase =
-        mock(CoinageBalanceConverterUseCase::class.java)
-    private val router: PocketRouter = mock(PocketRouter::class.java)
-    private val tokenAmountMapper: TokenAmountMapper = mock(TokenAmountMapper::class.java)
+    private val chainAssetProvider: ChainAssetProvider = mockk()
+    private val coinageTestnetFundUseCase: CoinageTestnetFundUseCase = mockk()
+    private val coinageBackupService: CoinageBackupService = mockk()
+    private val shareCoinageLogsUseCase: ShareCoinageLogsUseCase = mockk()
+    private val coinageHoldingsUseCase: CoinageHoldingsUseCase = mockk()
+    private val coinageBalanceConverterUseCase: CoinageBalanceConverterUseCase = mockk()
+    private val router: PocketRouter = mockk(relaxUnitFun = true)
+    private val tokenAmountMapper: TokenAmountMapper = mockk()
 
     private val fundingDomainProvider = ParkedFundingDomainProvider()
 
@@ -60,8 +59,8 @@ class DigitalDollarCardDetailsViewModelTest {
     @Before
     fun setUp() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
-        whenever(coinageHoldingsUseCase.subscribeHoldings()).thenReturn(emptyFlow())
-        whenever(coinageBackupService.subscribeProgress()).thenReturn(flowOf(BackupProgress.NotStarted))
+        every { coinageHoldingsUseCase.subscribeHoldings() } returns emptyFlow()
+        every { coinageBackupService.subscribeProgress() } returns flowOf(BackupProgress.NotStarted)
     }
 
     @After

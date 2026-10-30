@@ -1,17 +1,16 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
-import io.paritytech.polkadotapp.test_shared.any
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
-import org.mockito.Mockito.doThrow
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.verify
 
 class HostWebViewCreatedTelemetryTest {
     private val origin = HostEventOrigin(
@@ -62,8 +61,8 @@ class HostWebViewCreatedTelemetryTest {
 
     @Test
     fun `does not throw when capture fails`() {
-        val capture = mock(HostEventCapture::class.java)
-        doThrow(IllegalStateException("Sentry unavailable")).`when`(capture).capture(any())
+        val capture = mockk<HostEventCapture>()
+        every { capture.capture(any()) } throws IllegalStateException("Sentry unavailable")
         val reporter = reporter(capture)
 
         reporter.report("session")
@@ -78,6 +77,6 @@ class HostWebViewCreatedTelemetryTest {
     )
 
     private fun verifyCaptureAttempted(capture: HostEventCapture) {
-        verify(capture).capture(any())
+        verify(exactly = 1) { capture.capture(any()) }
     }
 }

@@ -1,5 +1,8 @@
 package io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.strategies
 
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.utils.progressStallReport.StalenessReportCollector
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.Coin
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinProvenance
@@ -10,21 +13,15 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.Co
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.OwnAsset
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.transaction.submission.TransferSubmissionParams
 import io.paritytech.polkadotapp.feature_coinage_impl.testKey
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.eq
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
 @OptIn(ExperimentalTime::class)
 class ExactMatchStrategyTest {
-    private val transactionService: CoinageTransactionService = mock()
-    private val handoffCommit: CoinageHandoffCommit = mock()
+    private val transactionService: CoinageTransactionService = mockk()
+    private val handoffCommit: CoinageHandoffCommit = mockk()
     private val coin = coinOf(derivationIndex = 1)
 
     private val strategy = ExactMatchStrategy(StrategyType.ExactCoins(listOf(coin)), transactionService)
@@ -50,19 +47,19 @@ class ExactMatchStrategyTest {
     private suspend fun schedule(mode: CoinReservationMode) =
         with(StalenessReportCollector.NoOp) { strategy.schedule(PARAMS, mode) }
 
-    private suspend fun withHandoffAccepted() {
-        whenever(transactionService.prepareHandoff(any())).thenReturn(Result.success(handoffCommit))
-        whenever(transactionService.preCommitHandoff(any())).thenReturn(Result.success(handoffCommit))
+    private fun withHandoffAccepted() {
+        coEvery { transactionService.prepareHandoff(any()) } returns Result.success(handoffCommit)
+        coEvery { transactionService.preCommitHandoff(any()) } returns Result.success(handoffCommit)
     }
 
-    private suspend fun verifyHandoffPrepared() {
-        verify(transactionService).prepareHandoff(eq(handedOff()))
-        verify(transactionService, never()).preCommitHandoff(any())
+    private fun verifyHandoffPrepared() {
+        coVerify(exactly = 1) { transactionService.prepareHandoff(handedOff()) }
+        coVerify(exactly = 0) { transactionService.preCommitHandoff(any()) }
     }
 
-    private suspend fun verifyHandoffPreCommitted() {
-        verify(transactionService).preCommitHandoff(eq(handedOff()))
-        verify(transactionService, never()).prepareHandoff(any())
+    private fun verifyHandoffPreCommitted() {
+        coVerify(exactly = 1) { transactionService.preCommitHandoff(handedOff()) }
+        coVerify(exactly = 0) { transactionService.prepareHandoff(any()) }
     }
 
     private fun handedOff() = listOf(OwnAsset.Coin(coin.derivationIndex))
@@ -72,7 +69,7 @@ class ExactMatchStrategyTest {
         valueExponent = ValueExponent(1),
         age = Coin.Age.Known(3),
         isOnChain = true,
-        accountId = mock(),
+        accountId = mockk(),
         provenance = CoinProvenance.UNKNOWN,
     )
 

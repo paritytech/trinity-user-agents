@@ -1,12 +1,16 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
+import io.mockk.Runs
+import io.mockk.andThenJust
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
+import io.mockk.verifyOrder
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
@@ -23,11 +27,6 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.inOrder
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.times
-import org.mockito.Mockito.verify
 import uniffi.truapi.ChatRoom
 import uniffi.truapi.ChatRoomParticipation
 import java.util.concurrent.atomic.AtomicInteger
@@ -37,7 +36,7 @@ private const val ROOM_2 = "room-2"
 
 class TrUAPIChatRoomForwardingTest {
     private val productId = ProductId.fromStoredValue("chat.dot")
-    private val execution: TrUAPIProductExecution = mock()
+    private val execution: TrUAPIProductExecution = mockk(relaxUnitFun = true)
 
     private class Forwarding(val scope: CoroutineScope, val job: Job)
 
@@ -60,14 +59,17 @@ class TrUAPIChatRoomForwardingTest {
         rooms.tryEmit(listOf(ProductChatRoom(ROOM_1, RoomParticipation.ROOM_HOST), ProductChatRoom(ROOM_2, RoomParticipation.BOT)))
         runCurrent()
 
-        val order = inOrder(execution)
-        order.verify(execution).notifyChatRoomsChanged(listOf(ChatRoom(ROOM_1, ChatRoomParticipation.ROOM_HOST)))
-        order.verify(execution).notifyChatRoomsChanged(
-            listOf(
-                ChatRoom(ROOM_1, ChatRoomParticipation.ROOM_HOST),
-                ChatRoom(ROOM_2, ChatRoomParticipation.BOT),
-            ),
+        val first = listOf(ChatRoom(ROOM_1, ChatRoomParticipation.ROOM_HOST))
+        val second = listOf(
+            ChatRoom(ROOM_1, ChatRoomParticipation.ROOM_HOST),
+            ChatRoom(ROOM_2, ChatRoomParticipation.BOT),
         )
+        verifyOrder {
+            execution.notifyChatRoomsChanged(first)
+            execution.notifyChatRoomsChanged(second)
+        }
+        verify(exactly = 1) { execution.notifyChatRoomsChanged(first) }
+        verify(exactly = 1) { execution.notifyChatRoomsChanged(second) }
     }
 
     @Test
@@ -75,7 +77,7 @@ class TrUAPIChatRoomForwardingTest {
         forwarding(FakeChatMessaging(rooms = flowOf(emptyList())))
         runCurrent()
 
-        verify(execution, times(1)).notifyChatRoomsChanged(emptyList())
+        verify(exactly = 1) { execution.notifyChatRoomsChanged(emptyList()) }
     }
 
     @Test
@@ -86,7 +88,7 @@ class TrUAPIChatRoomForwardingTest {
 
         rooms.tryEmit(listOf(ProductChatRoom(ROOM_1, RoomParticipation.ROOM_HOST)))
         runCurrent()
-        verify(execution, times(1)).notifyChatRoomsChanged(any())
+        verify(exactly = 1) { execution.notifyChatRoomsChanged(any()) }
 
         forwarding.scope.cancel()
         runCurrent()
@@ -94,8 +96,8 @@ class TrUAPIChatRoomForwardingTest {
         rooms.tryEmit(listOf(ProductChatRoom(ROOM_2, RoomParticipation.BOT)))
         runCurrent()
 
-        verify(execution, times(1)).notifyChatRoomsChanged(any())
-        verify(execution, never()).notifyChatRoomsChanged(listOf(ChatRoom(ROOM_2, ChatRoomParticipation.BOT)))
+        verify(exactly = 1) { execution.notifyChatRoomsChanged(any()) }
+        verify(exactly = 0) { execution.notifyChatRoomsChanged(listOf(ChatRoom(ROOM_2, ChatRoomParticipation.BOT))) }
     }
 
     @Test
@@ -126,16 +128,15 @@ class TrUAPIChatRoomForwardingTest {
         advanceUntilIdle()
 
         assertEquals(2, subscriptions.get())
-        verify(execution).notifyChatRoomsChanged(listOf(ChatRoom(ROOM_1, ChatRoomParticipation.ROOM_HOST)))
+        verify(exactly = 1) { execution.notifyChatRoomsChanged(listOf(ChatRoom(ROOM_1, ChatRoomParticipation.ROOM_HOST))) }
     }
 
     @Test
     fun `a push that throws is dropped without resubscribing`() = runTest {
         val rooms = emissions()
         val subscriptions = AtomicInteger(0)
-        whenever(execution.notifyChatRoomsChanged(any()))
-            .thenThrow(IllegalStateException("object has already been destroyed"))
-            .thenAnswer { }
+        every { execution.notifyChatRoomsChanged(any()) } throws
+            IllegalStateException("object has already been destroyed") andThenJust Runs
         val forwarding = forwarding(FakeChatMessaging(rooms = rooms.onStart { subscriptions.incrementAndGet() }))
         runCurrent()
 
@@ -146,6 +147,6 @@ class TrUAPIChatRoomForwardingTest {
 
         assertTrue(forwarding.job.isActive)
         assertEquals(1, subscriptions.get())
-        verify(execution).notifyChatRoomsChanged(listOf(ChatRoom(ROOM_2, ChatRoomParticipation.ROOM_HOST)))
+        verify(exactly = 1) { execution.notifyChatRoomsChanged(listOf(ChatRoom(ROOM_2, ChatRoomParticipation.ROOM_HOST))) }
     }
 }

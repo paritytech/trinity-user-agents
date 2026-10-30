@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest
 
+import io.mockk.coEvery
+import io.mockk.mockk
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
@@ -13,10 +15,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.TopUpRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.TopUpSourceStorage
 import io.paritytech.polkadotapp.feature_transactions.api.domain.model.TransactionSignerSource
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.eq
 import io.paritytech.polkadotapp.test_shared.testDispatchers
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
@@ -27,7 +26,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 
@@ -43,8 +41,8 @@ class RealTopUpServiceTest {
     private val repository = InMemoryTopUpRepository()
     private val sourceStorage = InMemoryTopUpSourceStorage()
     private val executeTopUpUseCase = FakeExecuteTopUpUseCase()
-    private val sourceResolver: TopUpSourceResolver = mock()
-    private val acknowledgements: TopUpAcknowledgementPresenter = mock()
+    private val sourceResolver: TopUpSourceResolver = mockk()
+    private val acknowledgements: TopUpAcknowledgementPresenter = mockk(relaxUnitFun = true)
     private val timeProvider = object : TimeProvider {
         override fun now(): Instant = NOW
     }
@@ -441,20 +439,20 @@ class RealTopUpServiceTest {
     )
 
     private suspend fun withResolvableSource() {
-        val resolved = TopUpSource.Onboard(TransactionSignerSource.FromAccount(mock<MetaAccount>()))
+        val resolved = TopUpSource.Onboard(TransactionSignerSource.FromAccount(mockk<MetaAccount>()))
 
-        whenever(sourceResolver.resolve(any(), any())).thenReturn(Result.success(resolved))
+        coEvery { sourceResolver.resolve(any(), any()) } returns Result.success(resolved)
     }
 
     private suspend fun withResolvableSource(source: PaymentTopUpSource) {
-        val resolved = TopUpSource.Onboard(TransactionSignerSource.FromAccount(mock<MetaAccount>()))
+        val resolved = TopUpSource.Onboard(TransactionSignerSource.FromAccount(mockk<MetaAccount>()))
 
-        whenever(sourceResolver.resolve(any(), eq(source))).thenReturn(Result.success(resolved))
+        coEvery { sourceResolver.resolve(any(), source) } returns Result.success(resolved)
     }
 
     private suspend fun withUnresolvableSource() {
-        whenever(sourceResolver.resolve(any(), any()))
-            .thenReturn(Result.failure(IllegalStateException("no such account")))
+        coEvery { sourceResolver.resolve(any(), any()) } returns
+            Result.failure(IllegalStateException("no such account"))
     }
 
     /** A top-up a previous run registered and left unfinished, with its source still held. */
@@ -497,7 +495,6 @@ class RealTopUpServiceTest {
     }
 }
 
-/** A fake because [ExecuteTopUpUseCase.execute] takes value classes, which Mockito unwraps. */
 private class FakeExecuteTopUpUseCase : ExecuteTopUpUseCase {
     private var statuses: List<TopUpStatus> = emptyList()
     private var verdict: TopUpStatus = TopUpStatus.NotClaimed

@@ -1,5 +1,8 @@
 package io.paritytech.polkadotapp.feature_coinage_impl.domain.recycling
 
+import io.mockk.coEvery
+import io.mockk.every
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
@@ -25,15 +28,12 @@ import io.paritytech.polkadotapp.feature_coinage_impl.common.testConversionConte
 import io.paritytech.polkadotapp.feature_coinage_impl.data.source.ClockChangesSource
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.usecase.RealTotalBalanceUseCase
 import io.paritytech.polkadotapp.feature_coinage_impl.testKey
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -41,7 +41,6 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
-import org.mockito.Mockito.mock
 import java.math.BigInteger
 import kotlin.time.Instant
 
@@ -70,11 +69,11 @@ class VoucherReadinessUpdatesTest {
     @Test
     fun `maturity frees recycling budget without an asset event`() = runTest {
         val fixture = WalletFixture(this, RecyclingStrategyType.BALANCED)
-        val coin = Coin(testKey(0), ValueExponent(1), Coin.Age.Known(5), true, mock(), CoinProvenance.UNKNOWN)
+        val coin = Coin(testKey(0), ValueExponent(1), Coin.Age.Known(5), true, mockk(), CoinProvenance.UNKNOWN)
         fixture.coins.value = listOf(TrackedCoin(coin, CoinageAssetState.UNTRACKED))
         val recycled = mutableListOf<List<Coin>>()
-        whenever(fixture.recycling.recycle(any())).thenAnswer { invocation ->
-            recycled += invocation.getArgument<List<Coin>>(0)
+        coEvery { fixture.recycling.recycle(any()) } answers {
+            recycled += firstArg<List<Coin>>()
             Result.success(Unit)
         }
         val verdicts = mutableListOf<RecyclingVerdicts>()
@@ -239,36 +238,34 @@ class VoucherReadinessUpdatesTest {
         val clock = object : TimeProvider {
             override fun now() = Instant.fromEpochMilliseconds(scope.testScheduler.currentTime + clockOffset)
         }
-        val updates = VoucherReadinessUpdates(clock, mock<ClockChangesSource>().also {
-            whenever(it.changes()).thenReturn(clockChanges)
+        val updates = VoucherReadinessUpdates(clock, mockk<ClockChangesSource> {
+            every { changes() } returns clockChanges
         })
     }
 
     private class WalletFixture(scope: TestScope, type: RecyclingStrategyType) : SchedulerFixture(scope, type) {
         val coins = MutableStateFlow(emptyList<TrackedCoin>())
-        val recycling: CoinageRecyclingUseCase = mock()
-        private val assets: CoinageAssetsUseCase = mock()
-        private val settings: CoinageRecyclingStrategySettings = mock()
-        private val capacities: RingCapacityProvider = mock()
-        private val converter: CoinageBalanceConverterUseCase = mock()
-        private val quota: UnloadQuotaTracker = mock()
+        val recycling: CoinageRecyclingUseCase = mockk()
+        private val assets: CoinageAssetsUseCase = mockk()
+        private val settings: CoinageRecyclingStrategySettings = mockk()
+        private val capacities: RingCapacityProvider = mockk()
+        private val converter: CoinageBalanceConverterUseCase = mockk()
+        private val quota: UnloadQuotaTracker = mockk()
         private val provider = RecyclingStrategyProvider(forcedAgeOf(14), quota)
         private val contextFactory = VoucherUsabilityContextFactory(capacities, clock)
-        private val dispatchers: CoroutineDispatchers = mock()
+        private val dispatchers: CoroutineDispatchers = mockk()
 
         init {
-            runBlocking {
-                whenever(assets.subscribeCoins()).thenReturn(coins)
-                whenever(assets.subscribeVouchers()).thenReturn(vouchers)
-                whenever(assets.getVouchers()).thenAnswer { vouchers.value }
-                whenever(settings.getStrategy()).thenAnswer { strategy.value }
-                whenever(settings.strategyFlow()).thenReturn(strategy)
-                whenever(capacities.peekCapacitiesFor(any())).thenReturn(mapOf(ValueExponent(1) to 767))
-                whenever(capacities.capacitiesFor(any())).thenReturn(Result.success(mapOf(ValueExponent(1) to 767)))
-                whenever(converter.create()).thenReturn(Result.success(testConversionContext))
-                whenever(quota.isQuotaRunningLow()).thenReturn(Result.success(false))
-                whenever(dispatchers.computation).thenReturn(StandardTestDispatcher(scope.testScheduler))
-            }
+            every { assets.subscribeCoins() } returns coins
+            every { assets.subscribeVouchers() } returns vouchers
+            coEvery { assets.getVouchers() } answers { vouchers.value }
+            coEvery { settings.getStrategy() } answers { strategy.value }
+            every { settings.strategyFlow() } returns strategy
+            coEvery { capacities.peekCapacitiesFor(any()) } returns mapOf(ValueExponent(1) to 767)
+            coEvery { capacities.capacitiesFor(any()) } returns Result.success(mapOf(ValueExponent(1) to 767))
+            coEvery { converter.create() } returns Result.success(testConversionContext)
+            coEvery { quota.isQuotaRunningLow() } returns Result.success(false)
+            every { dispatchers.computation } returns StandardTestDispatcher(scope.testScheduler)
         }
 
         val evaluator = CoinRecyclingEvaluator(assets, settings, provider, contextFactory, converter, recycling, dispatchers, updates)
@@ -290,7 +287,7 @@ class VoucherReadinessUpdatesTest {
         fun voucher(enteredAt: Instant = Instant.fromEpochMilliseconds(0)) = TrackedVoucher(
             RecyclerVoucher(
                 ringVrfKeyIndex = testKey(0),
-                ringVrfPublicKey = mock(),
+                ringVrfPublicKey = mockk(),
                 recyclerValue = ValueExponent(1),
                 location = RecyclerVoucher.Location.InRecycler(RecyclerIndex(BigInteger.ONE), 32, enteredAt),
                 recyclerFungibility = RecyclerFungibility.NONE,

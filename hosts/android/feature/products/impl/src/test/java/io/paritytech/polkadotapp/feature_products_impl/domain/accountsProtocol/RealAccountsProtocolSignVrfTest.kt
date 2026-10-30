@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol
 
+import io.mockk.coEvery
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.DerivationIndex32
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.SignVrfError
@@ -9,27 +11,24 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SignedTransaction
 import io.paritytech.polkadotapp.feature_products_impl.domain.signTransaction.ProductSigningScreenLauncher
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 class RealAccountsProtocolSignVrfTest {
-    private val signingScreenLauncher: ProductSigningScreenLauncher = mock()
+    private val signingScreenLauncher: ProductSigningScreenLauncher = mockk()
 
     private val accountsProtocol = RealAccountsProtocol(
-        contextHolder = mock(),
-        productsRouter = mock(),
-        membersRingLocator = mock(),
-        membershipProver = mock(),
-        bandersnatchSecretsStorage = mock(),
-        ringVrfKeyRegistry = mock(),
-        ringVrfKeySource = mock(),
-        permissionGuard = mock(),
-        crossProductProofContextHolder = mock(),
+        contextHolder = mockk(),
+        productsRouter = mockk(),
+        membersRingLocator = mockk(),
+        membershipProver = mockk(),
+        bandersnatchSecretsStorage = mockk(),
+        ringVrfKeyRegistry = mockk(),
+        ringVrfKeySource = mockk(),
+        permissionGuard = mockk(),
+        crossProductProofContextHolder = mockk(),
         productSigningScreenLauncher = signingScreenLauncher,
     )
 
@@ -75,8 +74,8 @@ class RealAccountsProtocolSignVrfTest {
             preOutput = ByteArray(32) { PRE_OUTPUT }.toDataByteArray(),
             proof = ByteArray(64).toDataByteArray(),
         )
-        whenever(signingScreenLauncher.awaitDecision(any(), any(), any(), any()))
-            .thenReturn(Result.success(SignedTransaction.Vrf(signature)))
+        coEvery { signingScreenLauncher.awaitDecision(any(), any(), any(), any()) } returns
+            Result.success(SignedTransaction.Vrf(signature))
     }
 
     private fun items(count: Int, valueSize: Int): List<VrfTranscriptItem> = List(count) { index ->

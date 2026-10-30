@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.chatSearch
 
+import io.mockk.coEvery
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.search.ChatListSearchResult
@@ -13,20 +15,17 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatSummaryBad
 import io.paritytech.polkadotapp.feature_chats_impl.domain.search.CompoundChatSearchResultProvider
 import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.StartChatDataUseCase
 import io.paritytech.polkadotapp.feature_chats_impl.domain.usecase.SubscribeActiveChatsUseCase
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 class RealChatSearchInteractorTest {
-    private val subscribeActiveChats: SubscribeActiveChatsUseCase = mock()
-    private val chatMessageRepository: ChatMessageRepository = mock()
-    private val compoundChatSearchResultProvider: CompoundChatSearchResultProvider = mock()
-    private val startChatDataUseCase: StartChatDataUseCase = mock()
-    private val chatSearchRecentsRepository: ChatSearchRecentsRepository = mock()
+    private val subscribeActiveChats: SubscribeActiveChatsUseCase = mockk()
+    private val chatMessageRepository: ChatMessageRepository = mockk()
+    private val compoundChatSearchResultProvider: CompoundChatSearchResultProvider = mockk()
+    private val startChatDataUseCase: StartChatDataUseCase = mockk()
+    private val chatSearchRecentsRepository: ChatSearchRecentsRepository = mockk()
 
     private val sut = RealChatSearchInteractor(
         subscribeActiveChats = subscribeActiveChats,
@@ -146,11 +145,11 @@ class RealChatSearchInteractorTest {
     }
 
     private suspend fun withMessages(result: Result<List<ChatMessageSearchHit>>) {
-        whenever(chatMessageRepository.searchMessages(any(), any())).thenReturn(result)
+        coEvery { chatMessageRepository.searchMessages(any(), any()) } returns result
     }
 
     private suspend fun withApps(apps: List<ChatListSearchResult.App>) {
-        whenever(compoundChatSearchResultProvider.search(any())).thenReturn(apps)
+        coEvery { compoundChatSearchResultProvider.search(any()) } returns apps
     }
 
     private fun appResult(id: String) = ChatListSearchResult.App(

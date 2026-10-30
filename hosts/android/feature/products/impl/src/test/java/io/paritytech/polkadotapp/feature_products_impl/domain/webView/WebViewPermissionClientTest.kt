@@ -3,13 +3,19 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.webView
 import android.net.Uri
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
+import io.mockk.Called
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.confirmVerified
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.CallingProductIdProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionGuard
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,10 +28,6 @@ import org.junit.After
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.verify
-import org.mockito.Mockito.verifyNoInteractions
-import org.mockito.Mockito.verifyNoMoreInteractions
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.RemotePermissionRequest
 import java.net.URI
@@ -33,10 +35,10 @@ import java.net.URI
 class WebViewPermissionClientTest {
     private val productId = ProductId.fromStoredValue("product.paseo")
     private var currentProduct = productId
-    private val guard = mock(ProductPermissionGuard::class.java)
-    private val execution = mock(TrUAPIProductExecution::class.java)
-    private val tldProvider = mock(DotNsTldProvider::class.java)
-    private val view = mock(WebView::class.java)
+    private val guard = mockk<ProductPermissionGuard>()
+    private val execution = mockk<TrUAPIProductExecution>()
+    private val tldProvider = mockk<DotNsTldProvider> { every { currentTldOrNull() } returns null }
+    private val view = mockk<WebView>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
     private val client = WebViewPermissionClient(
         CallingProductIdProvider { Result.success(currentProduct) },
@@ -72,7 +74,7 @@ class WebViewPermissionClientTest {
     @Test
     fun `authorization errors block HTTP without falling back to native grants`() = runBlocking<Unit> {
         client.useTrUAPIPermissions(productId, execution, scope)
-        whenever(execution.authorizeRemotePermission(permission)).thenThrow(IllegalStateException("execution closed"))
+        coEvery { execution.authorizeRemotePermission(permission) } throws IllegalStateException("execution closed")
 
         assertNotNull(client.shouldInterceptRequest(view, resource("https://api.example.com/data")))
 
@@ -86,7 +88,7 @@ class WebViewPermissionClientTest {
 
         assertNotNull(client.shouldInterceptRequest(view, resource("https://api.example.com/data")))
 
-        verifyNoInteractions(execution, guard)
+        verify { listOf(execution, guard) wasNot Called }
     }
 
     @Test
@@ -96,7 +98,7 @@ class WebViewPermissionClientTest {
 
         assertNotNull(client.shouldInterceptRequest(view, resource("https://api.example.com/data")))
 
-        verifyNoInteractions(execution, guard)
+        verify { listOf(execution, guard) wasNot Called }
     }
 
     @Test
@@ -104,7 +106,7 @@ class WebViewPermissionClientTest {
         client.useTrUAPIPermissions(productId, execution, scope)
         val entered = CompletableDeferred<Unit>()
         val decision = CompletableDeferred<Boolean>()
-        whenever(execution.authorizeRemotePermission(permission)).thenAnswer {
+        coEvery { execution.authorizeRemotePermission(permission) } answers {
             entered.complete(Unit)
             runBlocking { decision.await() }
         }
@@ -126,42 +128,42 @@ class WebViewPermissionClientTest {
 
         assertNull(client.shouldInterceptRequest(view, resource("http://127.0.0.1:4000/worker.js")))
 
-        verifyNoInteractions(execution, guard)
+        verify { listOf(execution, guard) wasNot Called }
     }
 
     @Test
     fun `legacy runtime still consumes its own network permission`() = runBlocking<Unit> {
         val nativePermission = ProductPermission.RemotePermission.NetworkAccess("api.example.com")
-        whenever(guard.consumePermission(productId, nativePermission)).thenReturn(true)
+        coEvery { guard.consumePermission(productId, nativePermission) } returns true
 
         assertNull(client.shouldInterceptRequest(view, resource("https://api.example.com/data")))
 
-        verify(guard).consumePermission(productId, nativePermission)
-        verifyNoMoreInteractions(guard)
-        verifyNoInteractions(execution)
+        coVerify(exactly = 1) { guard.consumePermission(productId, nativePermission) }
+        confirmVerified(guard)
+        verify { execution wasNot Called }
     }
 
     private suspend fun withRustDecision(granted: Boolean) {
         client.useTrUAPIPermissions(productId, execution, scope)
-        whenever(execution.authorizeRemotePermission(permission)).thenReturn(granted)
+        coEvery { execution.authorizeRemotePermission(permission) } returns granted
     }
 
     private suspend fun verifyRustAuthorization() {
-        verify(execution).authorizeRemotePermission(permission)
-        verifyNoMoreInteractions(execution)
-        verifyNoInteractions(guard)
+        coVerify(exactly = 1) { execution.authorizeRemotePermission(permission) }
+        confirmVerified(execution)
+        verify { guard wasNot Called }
     }
 
     private fun resource(url: String): WebResourceRequest {
         val parsed = URI(url)
-        val uri = mock(Uri::class.java)
-        whenever(uri.scheme).thenReturn(parsed.scheme)
-        whenever(uri.host).thenReturn(parsed.host)
-        whenever(uri.port).thenReturn(parsed.port)
-        whenever(uri.toString()).thenReturn(url)
-        return mock(WebResourceRequest::class.java).also { request ->
-            whenever(request.url).thenReturn(uri)
-            whenever(request.isForMainFrame).thenReturn(false)
+        val uri = mockk<Uri>()
+        every { uri.scheme } returns parsed.scheme
+        every { uri.host } returns parsed.host
+        every { uri.port } returns parsed.port
+        every { uri.toString() } returns url
+        return mockk<WebResourceRequest>().also { request ->
+            every { request.url } returns uri
+            every { request.isForMainFrame } returns false
         }
     }
 }

@@ -1,25 +1,21 @@
 package io.paritytech.polkadotapp.feature_chats_impl.data.repository
 
+import io.mockk.coVerify
+import io.mockk.mockk
 import io.paritytech.polkadotapp.common.utils.RealCoroutineDispatchers
 import io.paritytech.polkadotapp.database.dao.ChatMessageCompactionDao
 import io.paritytech.polkadotapp.database.dao.ChatMessageDao
 import io.paritytech.polkadotapp.database.dao.ChatMessageReactionDao
 import io.paritytech.polkadotapp.database.model.ChatMessageLocal
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.anyLong
-import io.paritytech.polkadotapp.test_shared.eq
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify
 
 class CompactionStatusPropagationTest {
-    private val chatMessageDao = mock(ChatMessageDao::class.java)
-    private val chatMessageCompactionDao = mock(ChatMessageCompactionDao::class.java)
-    private val chatMessageReactionDao = mock(ChatMessageReactionDao::class.java)
-    private val chatRoomRepository = mock(ChatRoomRepository::class.java)
+    private val chatMessageDao = mockk<ChatMessageDao>()
+    private val chatMessageCompactionDao = mockk<ChatMessageCompactionDao>(relaxUnitFun = true)
+    private val chatMessageReactionDao = mockk<ChatMessageReactionDao>()
+    private val chatRoomRepository = mockk<ChatRoomRepository>()
 
     private val repository = RealChatMessageRepository(
         chatMessageDao = chatMessageDao,
@@ -33,31 +29,37 @@ class CompactionStatusPropagationTest {
     fun `propagation to IS_SENT upgrades only statuses ranked below it`() = runBlocking<Unit> {
         repository.propagateStatusToCompactedMessages("commit", ChatMessage.Status.IS_SENT)
 
-        verify(chatMessageCompactionDao).propagateStatusToCompactionDescendants(
-            eq("commit"),
-            eq(listOf(ChatMessageLocal.Status.PROCESSING, ChatMessageLocal.Status.NEW, ChatMessageLocal.Status.DELIVERY_FAILED)),
-            eq(ChatMessageLocal.Status.IS_SENT),
-            anyLong()
-        )
+        coVerify(exactly = 1) {
+            chatMessageCompactionDao.propagateStatusToCompactionDescendants(
+                "commit",
+                listOf(
+                    ChatMessageLocal.Status.PROCESSING,
+                    ChatMessageLocal.Status.NEW,
+                    ChatMessageLocal.Status.DELIVERY_FAILED
+                ),
+                ChatMessageLocal.Status.IS_SENT,
+                any()
+            )
+        }
     }
 
     @Test
     fun `propagation to IS_READ upgrades every status ranked below it`() = runBlocking<Unit> {
         repository.propagateStatusToCompactedMessages("commit", ChatMessage.Status.IS_READ)
 
-        verify(chatMessageCompactionDao).propagateStatusToCompactionDescendants(
-            eq("commit"),
-            eq(
+        coVerify(exactly = 1) {
+            chatMessageCompactionDao.propagateStatusToCompactionDescendants(
+                "commit",
                 listOf(
                     ChatMessageLocal.Status.PROCESSING,
                     ChatMessageLocal.Status.NEW,
                     ChatMessageLocal.Status.IS_SENT,
                     ChatMessageLocal.Status.DELIVERY_FAILED
-                )
-            ),
-            eq(ChatMessageLocal.Status.IS_READ),
-            anyLong()
-        )
+                ),
+                ChatMessageLocal.Status.IS_READ,
+                any()
+            )
+        }
     }
 
     @Test
@@ -66,6 +68,8 @@ class CompactionStatusPropagationTest {
         repository.propagateStatusToCompactedMessages("commit", ChatMessage.Status.PROCESSING)
         repository.propagateStatusToCompactedMessages("commit", ChatMessage.Status.DELIVERY_FAILED)
 
-        verify(chatMessageCompactionDao, never()).propagateStatusToCompactionDescendants(any(), any(), any(), anyLong())
+        coVerify(exactly = 0) {
+            chatMessageCompactionDao.propagateStatusToCompactionDescendants(any(), any(), any(), any())
+        }
     }
 }

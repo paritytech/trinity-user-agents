@@ -1,21 +1,18 @@
 package io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.strategies
 
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.CoinageTransactionService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageHandoffCommit
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.OwnAsset
 import io.paritytech.polkadotapp.feature_coinage_impl.testKey
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.eq
-import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify
 
 class CoinReservationModeTest {
-    private val transactionService: CoinageTransactionService = mock()
-    private val handoffCommit: CoinageHandoffCommit = mock()
+    private val transactionService: CoinageTransactionService = mockk()
+    private val handoffCommit: CoinageHandoffCommit = mockk()
     private val assets = listOf(OwnAsset.Coin(testKey(1)))
 
     @Test
@@ -36,18 +33,18 @@ class CoinReservationModeTest {
         verifyHandoffPreCommitted()
     }
 
-    private suspend fun withHandoffAccepted() {
-        whenever(transactionService.prepareHandoff(any())).thenReturn(Result.success(handoffCommit))
-        whenever(transactionService.preCommitHandoff(any())).thenReturn(Result.success(handoffCommit))
+    private fun withHandoffAccepted() {
+        coEvery { transactionService.prepareHandoff(any()) } returns Result.success(handoffCommit)
+        coEvery { transactionService.preCommitHandoff(any()) } returns Result.success(handoffCommit)
     }
 
-    private suspend fun verifyHandoffPrepared() {
-        verify(transactionService).prepareHandoff(eq(assets))
-        verify(transactionService, never()).preCommitHandoff(any())
+    private fun verifyHandoffPrepared() {
+        coVerify(exactly = 1) { transactionService.prepareHandoff(assets) }
+        coVerify(exactly = 0) { transactionService.preCommitHandoff(any()) }
     }
 
-    private suspend fun verifyHandoffPreCommitted() {
-        verify(transactionService).preCommitHandoff(eq(assets))
-        verify(transactionService, never()).prepareHandoff(any())
+    private fun verifyHandoffPreCommitted() {
+        coVerify(exactly = 1) { transactionService.preCommitHandoff(assets) }
+        coVerify(exactly = 0) { transactionService.prepareHandoff(any()) }
     }
 }

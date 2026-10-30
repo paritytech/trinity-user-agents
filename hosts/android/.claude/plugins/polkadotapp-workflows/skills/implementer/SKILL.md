@@ -47,7 +47,7 @@ You write code against a plan from `/architect`.
    | Router / Navigator / cross-screen navigation | `code/navigation-and-routers.md` |
    | WorkManager / CoroutineWorker / stateful background jobs | `code/workers-and-background-sync.md` |
    | A one-shot user-initiated operation that can stall (submission, chain read, handshake, cross-chain wait) | `code/diagnostics-and-stall-reporting.md` |
-   | Adding or modifying unit tests (Mockito, helpers, naming) | `code/testing.md` |
+   | Adding or modifying unit tests (mockk, helpers, naming) | `code/testing.md` |
 
 4. **Cross-check architecture docs** only when a seam-level decision arises that the plan didn't pin down. If the plan was complete, you should rarely need to reload architecture in the implementer pass.
 

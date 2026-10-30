@@ -1,22 +1,21 @@
 package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 
+import io.mockk.every
+import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPublisher
-import io.paritytech.polkadotapp.test_shared.any
-import io.paritytech.polkadotapp.test_shared.whenever
 import org.junit.Test
-import org.mockito.Mockito.anyBoolean
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify
 
 class GameReminderAlarmHandlerTest {
-    private val publisher: VideoGameNotificationPublisher = mock(VideoGameNotificationPublisher::class.java)
-    private val lifecycle: AppLifecycleObserver = mock(AppLifecycleObserver::class.java)
-    private val reminder: RealProductGameReminder = mock(RealProductGameReminder::class.java)
-    private val telemetry: GameReminderTelemetry = mock(GameReminderTelemetry::class.java)
+    private val publisher: VideoGameNotificationPublisher = mockk(relaxUnitFun = true)
+    private val lifecycle: AppLifecycleObserver = mockk()
+    private val reminder: RealProductGameReminder = mockk {
+        every { scheduledFor(any()) } returns null
+    }
+    private val telemetry: GameReminderTelemetry = mockk(relaxUnitFun = true)
 
     private val handler = GameReminderAlarmHandler(publisher, lifecycle, reminder, telemetry)
 
@@ -32,7 +31,7 @@ class GameReminderAlarmHandlerTest {
         verifyReported(
             GameReminderEvent.Fired(game, START, foreground = false, stillScheduled = true, delivery = GameReminderDelivery.ALARM)
         )
-        verify(publisher).publishProductGameStartsSoonNotification(game, ringAlarm = true)
+        verify(exactly = 1) { publisher.publishProductGameStartsSoonNotification(game, ringAlarm = true) }
     }
 
     @Test
@@ -61,19 +60,19 @@ class GameReminderAlarmHandlerTest {
     }
 
     private fun withAppIn(state: AppLifecycleState) {
-        whenever(lifecycle.getCurrentState()).thenReturn(state)
+        every { lifecycle.getCurrentState() } returns state
     }
 
     private fun withScheduledGame() {
-        whenever(reminder.scheduledFor(game)).thenReturn(ScheduledProductGame(game.value, START))
+        every { reminder.scheduledFor(game) } returns ScheduledProductGame(game.value, START)
     }
 
     private fun verifyReported(event: GameReminderEvent) {
-        verify(telemetry).report(event)
+        verify(exactly = 1) { telemetry.report(event) }
     }
 
     private fun verifyNothingPosted() {
-        verify(publisher, never()).publishProductGameStartsSoonNotification(any(), anyBoolean())
+        verify(exactly = 0) { publisher.publishProductGameStartsSoonNotification(any(), any()) }
     }
 
     private companion object {

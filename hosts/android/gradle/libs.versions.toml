@@ -61,7 +61,6 @@ sentry-android-gradle = "6.7.1"
 # Matches the SDK auto-installed by sentry-android-gradle 6.7.1 (8.41.0).
 sentry-sdk = "8.41.0"
 protobuf = "3.25.5"
-mockito="5.12.0"
 mockk="1.14.2"
 runtime = "1.9.5"
 web3j = "4.8.9"
@@ -175,7 +174,6 @@ junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidJunit" }
 androidx-test-runner = { group = "androidx.test", name = "runner", version.ref = "androidTestRunner" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
-mockito-core = { group = "org.mockito", name = "mockito-core", version.ref = "mockito" }
 mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
 mockk-android = { group = "io.mockk", name = "mockk-android", version.ref = "mockk" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }

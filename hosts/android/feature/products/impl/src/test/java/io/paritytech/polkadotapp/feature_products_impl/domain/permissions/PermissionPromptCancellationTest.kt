@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.permissions
 
 import androidx.lifecycle.SavedStateHandle
+import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
@@ -25,7 +26,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PermissionPromptCancellationTest {
@@ -174,7 +174,7 @@ class PermissionPromptCancellationTest {
         requester.prompt(product, ProductPermission.BalanceAccess)
     }
 
-    private class PromptNavigation : ProductsRouter by mock(ProductsRouter::class.java) {
+    private class PromptNavigation : ProductsRouter by mockk<ProductsRouter>() {
         var currentId: String? = null
         var closeGate: CompletableDeferred<Unit>? = null
         var stateSaved = false

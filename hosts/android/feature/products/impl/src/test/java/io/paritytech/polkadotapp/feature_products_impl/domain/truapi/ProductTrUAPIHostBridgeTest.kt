@@ -27,30 +27,30 @@ import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.stubbing.Answer
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.HostRejection
 import uniffi.truapi.ProductExecutionKind
 import uniffi.truapi.WsBridgeEndpoint
 
 class ProductTrUAPIHostBridgeTest {
-    private val refusingCore = Answer<Any> { throw IllegalStateException("loopback port unavailable") }
+    private fun refusingCore(): TrUAPIHostRuntime = mockk {
+        every { openProductExecution(any(), any(), any(), any(), any()) } throws IllegalStateException("loopback port unavailable")
+    }
 
     private val gameReminder = mockk<ProductGameReminder>(relaxUnitFun = true)
     private val game = ProductId.fromStoredValue("game.dot")
 
     private fun TestScope.bridge(
         scope: CoroutineScope = CoroutineScope(StandardTestDispatcher(testScheduler)),
-        hostApiInteractor: HostApiInteractor = mock(HostApiInteractor::class.java),
+        hostApiInteractor: HostApiInteractor = mockk(),
     ) = ProductTrUAPIHostBridge(
         hostApiInteractor = hostApiInteractor,
         chainHttpClient = OkHttpClient(),
-        encryptedPreferences = mock(EncryptedPreferences::class.java),
-        confirmationLauncher = mock(TrUAPIConfirmationLauncher::class.java),
+        encryptedPreferences = mockk<EncryptedPreferences>(),
+        confirmationLauncher = mockk<TrUAPIConfirmationLauncher>(),
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
         networkStateService = mockk { every { defaultNetwork } returns MutableStateFlow(null) },
-        dotNsTldProvider = mock(DotNsTldProvider::class.java),
+        dotNsTldProvider = mockk<DotNsTldProvider>(),
         pocketCardStore = mockk { every { observeCards() } returns emptyFlow() },
         productGameReminder = gameReminder,
         extensionVersions = mockk(),
@@ -60,7 +60,7 @@ class ProductTrUAPIHostBridgeTest {
     @Test
     fun `a core that refuses to open the execution fails the attach instead of throwing`() = runTest {
         val outcome = bridge().attach(
-            runtime = mock(TrUAPIHostRuntime::class.java, refusingCore),
+            runtime = refusingCore(),
             productId = ProductId.fromStoredValue("game.dot"),
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
@@ -102,10 +102,12 @@ class ProductTrUAPIHostBridgeTest {
 
     private suspend fun TestScope.attachCapturingBridge(card: ExpandedCardFace?): HostBridge {
         var opened: HostBridge? = null
-        val runtime = mock(TrUAPIHostRuntime::class.java, Answer<Any> { invocation ->
-            opened = invocation.getArgument(0)
-            throw IllegalStateException("captured")
-        })
+        val runtime = mockk<TrUAPIHostRuntime> {
+            every { openProductExecution(any(), any(), any(), any(), any()) } answers {
+                opened = firstArg()
+                throw IllegalStateException("captured")
+            }
+        }
         bridge().attach(
             runtime = runtime,
             productId = game,
@@ -149,10 +151,8 @@ class ProductTrUAPIHostBridgeTest {
         gameBridge.scheduleReminder(1_000u)
         gameBridge.cancelReminder()
 
-        coVerify {
-            gameReminder.schedule(game, 1_000)
-            gameReminder.cancelByProduct(game)
-        }
+        coVerify(exactly = 1) { gameReminder.schedule(game, 1_000) }
+        coVerify(exactly = 1) { gameReminder.cancelByProduct(game) }
     }
 
     @Test

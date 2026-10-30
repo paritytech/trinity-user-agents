@@ -1,14 +1,14 @@
 package io.paritytech.polkadotapp.common.utils.network
 
 import android.net.Network
+import io.mockk.mockk
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
 
 class NetworkPresenceTest {
-    private val wifi: Network = mock(Network::class.java)
-    private val cellular: Network = mock(Network::class.java)
+    private val wifi: Network = mockk()
+    private val cellular: Network = mockk()
 
     private val presence = NetworkPresence()
 

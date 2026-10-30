@@ -59,7 +59,7 @@ This tree is **lazy-loaded** by the `/architect`, `/implementer`, and `/reviewer
 | Adding a screen / sheet navigation entry; Router/Navigator pair | `code/navigation-and-routers.md` |
 | WorkManager / CoroutineWorker / stateful background jobs | `code/workers-and-background-sync.md` |
 | A one-shot user-initiated operation that can stall (submission, chain read, handshake, cross-chain wait) | `code/diagnostics-and-stall-reporting.md` |
-| Writing a unit test (Mockito + helpers + `with*`/`verify*` style) | `code/testing.md` |
+| Writing a unit test (mockk + helpers + `with*`/`verify*` style) | `code/testing.md` |
 | Discovering an unusual Flow operator | `code/flow-operators-reference.md` (reference; on demand) |
 | Discovering whether a Nova widget exists for X | `code/nova-widget-inventory.md` (reference; on demand) |
 | Reviewing a PR/diff | both files in `review/` plus matching docs above |

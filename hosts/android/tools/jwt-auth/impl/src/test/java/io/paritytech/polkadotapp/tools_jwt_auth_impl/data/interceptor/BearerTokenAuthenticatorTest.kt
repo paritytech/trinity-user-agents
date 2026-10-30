@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.tools_jwt_auth_impl.data.interceptor
 
 import com.google.gson.Gson
+import io.mockk.coEvery
+import io.mockk.mockk
 import io.paritytech.polkadotapp.tools_integrity_api.domain.error.IntegrityError
 import io.paritytech.polkadotapp.tools_jwt_auth_api.CallWithBearerToken
 import io.paritytech.polkadotapp.tools_jwt_auth_api.domain.error.AuthError
@@ -13,7 +15,6 @@ import io.paritytech.polkadotapp.tools_jwt_auth_impl.data.manager.JWTTokenProvid
 import io.paritytech.polkadotapp.tools_jwt_auth_impl.data.model.JWTTokenResponse
 import io.paritytech.polkadotapp.tools_jwt_auth_impl.data.model.JwtRequest
 import io.paritytech.polkadotapp.tools_jwt_auth_impl.data.parser.JWTParser
-import kotlinx.coroutines.runBlocking
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
@@ -23,8 +24,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.mockito.Mockito.mock
-import org.mockito.Mockito.`when`
 import retrofit2.Invocation
 import java.io.IOException
 import java.util.concurrent.Executors
@@ -36,12 +35,9 @@ class BearerTokenAuthenticatorTest {
         val tokenStore = createFakeTokenStore()
         val staleJwt = makeValidJWT(exp = 2_000_000_000L)
         tokenStore.saveToken(staleJwt)
-        val authTokenApi = mock(AuthTokenApi::class.java)
+        val authTokenApi = mockk<AuthTokenApi>()
         val freshJwt = makeValidJWT(exp = 3_000_000_000L)
-        runBlocking {
-            `when`(authTokenApi.fetchToken(JwtRequest))
-                .thenReturn(JWTTokenResponse(freshJwt, "fresh-refresh"))
-        }
+        coEvery { authTokenApi.fetchToken(JwtRequest) } returns JWTTokenResponse(freshJwt, "fresh-refresh")
         val authenticator = BearerTokenAuthenticator(
             tokenProvider = JWTTokenProvider(
                 tokenStore = tokenStore,
@@ -72,7 +68,7 @@ class BearerTokenAuthenticatorTest {
         val authenticator = BearerTokenAuthenticator(
             tokenProvider = JWTTokenProvider(
                 tokenStore = tokenStore,
-                authTokenApi = mock(AuthTokenApi::class.java),
+                authTokenApi = mockk<AuthTokenApi>(),
                 timeProvider = FakeTimeProvider(1_000_000_000L),
                 jwtParser = JWTParser(Gson()),
                 gson = Gson(),
@@ -92,11 +88,8 @@ class BearerTokenAuthenticatorTest {
         val tokenStore = createFakeTokenStore()
         val staleJwt = makeValidJWT(exp = 2_000_000_000L)
         tokenStore.saveToken(staleJwt)
-        val authTokenApi = mock(AuthTokenApi::class.java)
-        runBlocking {
-            `when`(authTokenApi.fetchToken(JwtRequest))
-                .thenReturn(JWTTokenResponse(makeValidJWT(exp = 3_000_000_000L), "fresh-refresh"))
-        }
+        val authTokenApi = mockk<AuthTokenApi>()
+        coEvery { authTokenApi.fetchToken(JwtRequest) } returns JWTTokenResponse(makeValidJWT(exp = 3_000_000_000L), "fresh-refresh")
         val authenticator = BearerTokenAuthenticator(
             tokenProvider = JWTTokenProvider(
                 tokenStore = tokenStore,
@@ -123,13 +116,8 @@ class BearerTokenAuthenticatorTest {
         val tokenStore = createFakeTokenStore()
         val staleJwt = makeValidJWT(exp = 2_000_000_000L)
         tokenStore.saveToken(staleJwt)
-        val authTokenApi = mock(AuthTokenApi::class.java)
-        runBlocking {
-            // thenThrow rejects a bare Throwable subclass as a checked exception, so the
-            // sealed error is raised from an answer instead.
-            `when`(authTokenApi.fetchToken(JwtRequest))
-                .thenAnswer { throw AuthError.Integrity(IntegrityError.AttestationRejected) }
-        }
+        val authTokenApi = mockk<AuthTokenApi>()
+        coEvery { authTokenApi.fetchToken(JwtRequest) } throws AuthError.Integrity(IntegrityError.AttestationRejected)
         val authenticator = BearerTokenAuthenticator(
             tokenProvider = JWTTokenProvider(
                 tokenStore = tokenStore,
@@ -162,7 +150,7 @@ class BearerTokenAuthenticatorTest {
         val authenticator = BearerTokenAuthenticator(
             tokenProvider = JWTTokenProvider(
                 tokenStore = tokenStore,
-                authTokenApi = mock(AuthTokenApi::class.java),
+                authTokenApi = mockk<AuthTokenApi>(),
                 timeProvider = FakeTimeProvider(1_000_000_000L),
                 jwtParser = JWTParser(Gson()),
                 gson = Gson(),
