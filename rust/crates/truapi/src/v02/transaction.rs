@@ -19,15 +19,12 @@ pub enum HostCreateTransactionError {
 		/// Human-readable failure reason.
 		reason: String,
 	},
-	/// A declared contact handle names nobody this host has a contact for, or
-	/// does not appear in the call it was declared for, or a handle appears in
-	/// the call without being declared. One refusal for all three, because
-	/// telling them apart would say whether a handle is current.
+	/// A contact handle is unknown, missing from the call, or used without
+	/// being declared. One error for all three, so it does not reveal whether
+	/// a handle is current.
 	UnknownContact,
 	/// The chain stayed unreachable, such as during a halt, so nothing was
-	/// built, sent or signed. A later call can succeed, but bound the
-	/// attempts. Failures a retry cannot fix, such as a chain the host does
-	/// not serve, are `Unknown`.
+	/// signed. Safe to retry, with a bound on the attempts.
 	ChainUnavailable {
 		/// Human-readable failure reason.
 		reason: String,
