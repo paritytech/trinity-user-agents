@@ -181,6 +181,7 @@
 
     <string name="coinage_recovery_worker_notification_title">Confirming payments</string>
     <string name="coinage_recovery_worker_notification_message">Waiting for your recent payments to settle on chain</string>
+    <string name="worker_crashing_notice">%1$s stopped working. Retrying…</string>
     <string name="core_recovery_worker_notification_title">Confirming transactions</string>
     <string name="core_recovery_worker_notification_message">Waiting for your recent transactions to settle on chain</string>
 
@@ -1109,6 +1110,11 @@
     <string name="funding_ended_requested">Requested %1$s</string>
     <string name="funding_ended_method">Method</string>
     <string name="funding_ended_method_bank">Bank transfer</string>
+    <string name="funding_ended_method_crypto_network">Crypto · %1$s</string>
+    <string name="funding_ended_paid">Paid inc. fees</string>
+    <string name="funding_ended_sent">Sent inc. fees</string>
+    <string name="funding_ended_received">Received after fees</string>
+    <string name="funding_ended_withdrawal_amount">Withdrawal amount</string>
     <string name="funding_ended_started">Started</string>
     <string name="funding_ended_completed">Completed</string>
     <string name="funding_ended_ended">Ended</string>
@@ -1125,6 +1131,8 @@
     <string name="funding_ended_card_declined">Your bank declined the payment. Check your card details or try another card.</string>
     <string name="funding_ended_bank_declined">Your bank rejected the transfer. Check with your bank or try another account.</string>
     <string name="funding_ended_refunded_card_unknown">Your top-up didn\'t go through. Your money has been returned to your card.</string>
+    <string name="funding_ended_refunded_card">Your top-up didn\'t go through. Your %1$s has been returned to your card.</string>
+    <string name="funding_ended_refunded_bank">Your %1$s has been returned to your bank account.</string>
     <string name="funding_ended_refunded_bank_unknown">Your money has been returned to your bank account.</string>
     <string name="funding_ended_refunded_crypto">Your top-up didn\'t go through. Your funds have been returned.</string>
     <string name="funding_ended_withdraw_failed">We couldn\'t send your funds. Your %1$s is back in your account.</string>

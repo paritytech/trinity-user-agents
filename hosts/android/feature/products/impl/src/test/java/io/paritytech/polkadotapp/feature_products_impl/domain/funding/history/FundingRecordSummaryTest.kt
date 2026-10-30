@@ -2,12 +2,15 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.funding.history
 
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAssetUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import uniffi.truapi.FundingChoice
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingFailure
 import uniffi.truapi.FundingPayout
+import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.FundingStage
@@ -65,8 +68,7 @@ class FundingRecordSummaryTest {
             FundingRecord(
                 intent = "fs_1",
                 direction = FundingDirection.OUT,
-                rail = FundingRail.BANK,
-                asset = "EUR",
+                choice = CHOICE,
                 providerId = "ramp.dot",
                 requestedAmount = 50.intoBalance(),
                 settledAmount = 30.intoBalance(),
@@ -82,9 +84,26 @@ class FundingRecordSummaryTest {
         )
     }
 
+    // Out, the user receives the quote's receive amount in its asset, at the decimals the quote states.
+    @Test
+    fun `the quoted amount is the quote's provider-side figure in its asset`() {
+        val record = FundingRecord.of(summary(released, FundingStatus.Sent))
+
+        assertEquals(FundingRail.BANK to FundingAssetUnit.of("EUR", 2).format("5100"), record?.rail to record?.quotedAmount)
+    }
+
     @Test
     fun `an open stage makes no record`() {
         assertNull(FundingRecord.of(summary(FundingStage.Open, FundingStatus.WaitingForPayment)))
+    }
+
+    private companion object {
+        val CHOICE = FundingChoice(
+            quote = FundingQuote("q", "50", "5100", "0", "0", null, null, 2u),
+            rail = FundingRail.BANK,
+            asset = "EUR",
+            network = null,
+        )
     }
 
     private fun summary(
@@ -100,8 +119,7 @@ class FundingRecordSummaryTest {
         stage = stage,
         openedAtMs = 1_000uL,
         providerId = "ramp.dot",
-        rail = FundingRail.BANK,
-        asset = "EUR",
+        choice = CHOICE,
         status = status,
         payout = payout,
         refunded = refunded,

@@ -67,6 +67,7 @@ class TrUAPIHostRuntimeProviderTest {
         installations = mockk(),
         extensionVersions = mockk(),
         workerSupervisor = { mockk(relaxed = true) },
+        workerCrashNotice = mockk(relaxed = true),
         dispatchers = testDispatchers(),
     )
 

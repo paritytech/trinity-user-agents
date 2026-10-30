@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.end
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingNetwork
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecord
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecordOutcome
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.FundingRecordPayout
@@ -110,10 +111,15 @@ class FundingEndedMapper(private val cash: FundingCash) {
             FundingRail.CARD -> res(RCommon.string.funding_ended_card_declined)
             else -> res(RCommon.string.funding_ended_top_up_failed)
         }
-        FundingFailureReason.Refunded -> when (record.rail) {
-            FundingRail.BANK -> res(RCommon.string.funding_ended_refunded_bank_unknown)
-            FundingRail.CRYPTO -> res(RCommon.string.funding_ended_refunded_crypto)
-            else -> res(RCommon.string.funding_ended_refunded_card_unknown)
+        FundingFailureReason.Refunded -> {
+            val paid = record.quotedAmount
+            when (record.rail) {
+                FundingRail.BANK -> paid?.let { res(RCommon.string.funding_ended_refunded_bank, it) }
+                    ?: res(RCommon.string.funding_ended_refunded_bank_unknown)
+                FundingRail.CRYPTO -> res(RCommon.string.funding_ended_refunded_crypto)
+                else -> paid?.let { res(RCommon.string.funding_ended_refunded_card, it) }
+                    ?: res(RCommon.string.funding_ended_refunded_card_unknown)
+            }
         }
         FundingFailureReason.Cancelled, FundingFailureReason.Expired, is FundingFailureReason.Other ->
             res(RCommon.string.funding_ended_top_up_failed)
@@ -131,6 +137,7 @@ class FundingEndedMapper(private val cash: FundingCash) {
     }
 
     private fun rows(record: FundingRecord, succeeded: Boolean): List<FundingEndedRow> = buildList {
+        record.quotedAmount?.let { add(FundingEndedRow.Value(paidCaption(record, succeeded), FundingEndedText.Plain(it))) }
         record.settledAmount?.let { settled ->
             val requested = record.requestedAmount?.takeIf { it != settled }?.let(::label)
             val caption = if (record.direction == FundingDirection.IN) RCommon.string.funding_ended_credited else RCommon.string.funding_ended_debited
@@ -140,7 +147,9 @@ class FundingEndedMapper(private val cash: FundingCash) {
             val method = when (rail) {
                 FundingRail.CARD -> res(RCommon.string.funding_rail_card)
                 FundingRail.BANK -> res(RCommon.string.funding_ended_method_bank)
-                FundingRail.CRYPTO -> res(RCommon.string.funding_rail_crypto)
+                FundingRail.CRYPTO -> record.choice?.network?.takeIf { it.isNotEmpty() }
+                    ?.let { res(RCommon.string.funding_ended_method_crypto_network, FundingNetwork(it).name) }
+                    ?: res(RCommon.string.funding_rail_crypto)
             }
             add(FundingEndedRow.Value(RCommon.string.funding_ended_method, method))
         }
@@ -150,6 +159,14 @@ class FundingEndedMapper(private val cash: FundingCash) {
         record.reference?.takeIf { it.isNotEmpty() }?.let { add(FundingEndedRow.Copy(RCommon.string.funding_deposit_reference, it)) }
         add(FundingEndedRow.Moment(RCommon.string.funding_ended_started, record.openedAt))
         add(FundingEndedRow.Moment(if (succeeded) RCommon.string.funding_ended_completed else RCommon.string.funding_ended_ended, record.settledAt))
+    }
+
+    /** What the quoted amount was: paid or sent in, received out, or the amount of a withdrawal that failed. */
+    private fun paidCaption(record: FundingRecord, succeeded: Boolean): Int = when {
+        record.direction == FundingDirection.IN && record.rail == FundingRail.CARD -> RCommon.string.funding_ended_paid
+        record.direction == FundingDirection.IN -> RCommon.string.funding_ended_sent
+        succeeded -> RCommon.string.funding_ended_received
+        else -> RCommon.string.funding_ended_withdrawal_amount
     }
 
     private fun payout(record: FundingRecord): Int? {

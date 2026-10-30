@@ -20,10 +20,12 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import uniffi.truapi.FundingBand
+import uniffi.truapi.FundingChoice
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingFailure
 import uniffi.truapi.FundingPayout
 import uniffi.truapi.FundingProgress
+import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingSessionSummary
@@ -262,8 +264,12 @@ class FundingActivityCenterTest {
         stage = stage,
         openedAtMs = 0uL,
         providerId = "ramp.dot",
-        rail = FundingRail.CARD,
-        asset = "EUR",
+        choice = FundingChoice(
+            quote = FundingQuote("q", "5100", "50", "90", "10", null, null, 2u),
+            rail = FundingRail.CARD,
+            asset = "EUR",
+            network = null,
+        ),
         status = status,
         payout = payout,
         refunded = refunded,
