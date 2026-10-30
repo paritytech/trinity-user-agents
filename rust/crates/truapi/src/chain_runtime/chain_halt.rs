@@ -6,11 +6,11 @@ use subxt_rpcs::Error as RpcError;
 use tracing::warn;
 use truapi::CancellationToken;
 
-use crate::time::{Backoff, Timer, retry_on_until};
+use crate::time::{Backoff, Timer, retry_until_cancelled};
 
 /// The `error.data` dotli sends while it redials a halted chain. dotli
 /// documents it as safe to retry.
-const CHAIN_HALTED: &str = "dotli:chain-halted";
+const CHAIN_HALTED_DATA: &str = "dotli:chain-halted";
 
 /// Pauses between attempts after a halt. They double like dotli's redial
 /// back-off, so each attempt follows another chance to redial.
@@ -25,20 +25,20 @@ pub fn says_chain_halted(error: &RpcError) -> bool {
 		return false;
 	};
 	error.data.as_deref().is_some_and(|data| {
-		serde_json::from_str::<&str>(data.get()).is_ok_and(|data| data == CHAIN_HALTED)
+		serde_json::from_str::<&str>(data.get()).is_ok_and(|data| data == CHAIN_HALTED_DATA)
 	})
 }
 
 /// Run `attempt`, retrying up to [`HALT_RETRIES`] times on [`HALT_PAUSES`]
 /// while its failure `is_retryable`. Only for attempts safe to repeat.
 ///
-/// Cancelling `until` ends a pause and returns the failure that started it,
-/// as a lasting halt does, so check `until` to tell the two apart.
+/// `cancel` firing ends a pause and returns the failure that started it, as
+/// a lasting halt does, so check `cancel` to tell the two apart.
 pub async fn retry_while_halted<Done, Failure, AttemptFuture>(
 	mut attempt: impl FnMut() -> AttemptFuture,
 	is_retryable: impl Fn(&Failure) -> bool,
 	timer: &dyn Timer,
-	until: &CancellationToken,
+	cancel: &CancellationToken,
 ) -> Result<Done, Failure>
 where
 	AttemptFuture: Future<Output = Result<Done, Failure>>,
@@ -47,9 +47,9 @@ where
 	let is_retryable = &is_retryable;
 	let mut attempts = 0;
 	let mut pauses = HALT_PAUSES;
-	let outcome = retry_on_until(
+	let outcome = retry_until_cancelled(
 		timer,
-		until,
+		cancel,
 		|| {
 			attempts += 1;
 			let may_retry = attempts <= HALT_RETRIES;
@@ -105,13 +105,13 @@ mod tests {
 	/// Retry while the chain says it halted, as the core's callers do.
 	async fn retry<Answer, Attempt>(
 		timer: &dyn Timer,
-		until: &CancellationToken,
+		cancel: &CancellationToken,
 		attempt: impl FnMut() -> Attempt,
 	) -> Result<Answer, RpcError>
 	where
 		Attempt: Future<Output = Result<Answer, RpcError>>,
 	{
-		retry_while_halted(attempt, says_chain_halted, timer, until).await
+		retry_while_halted(attempt, says_chain_halted, timer, cancel).await
 	}
 
 	/// Only dotli's marker counts. The same error code without it does not.
@@ -196,12 +196,12 @@ mod tests {
 	#[test]
 	fn a_cancellation_during_a_pause_returns_the_halt_without_asking_again() {
 		let timer = Arc::new(ManualTimer::default());
-		let until = CancellationToken::default();
+		let cancel = CancellationToken::default();
 		let attempts = Arc::new(AtomicUsize::new(0));
 		let ask = {
-			let (timer, until, attempts) = (timer.clone(), until.clone(), attempts.clone());
+			let (timer, cancel, attempts) = (timer.clone(), cancel.clone(), attempts.clone());
 			thread::spawn(move || {
-				block_on(retry(&*timer, &until, || {
+				block_on(retry(&*timer, &cancel, || {
 					attempts.fetch_add(1, Ordering::SeqCst);
 					ready(Err::<(), _>(halted()))
 				}))
@@ -209,7 +209,7 @@ mod tests {
 		};
 		wait_until(|| timer.sleeps() == 1, "the first pause starts");
 
-		until.cancel();
+		cancel.cancel();
 
 		let error = ask.join().unwrap().expect_err("the caller gave up");
 		assert!(says_chain_halted(&error), "{error}");

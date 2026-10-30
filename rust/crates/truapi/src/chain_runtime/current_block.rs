@@ -27,7 +27,7 @@ struct FailedRead {
 	error: CurrentBlockError,
 	/// Whether a halt answered one of the attempt's requests, so another
 	/// attempt can succeed.
-	met_a_halt: bool,
+	halted: bool,
 }
 
 /// Why [`ChainRuntime::current_block`] could not read the chain.
@@ -36,14 +36,14 @@ pub enum CurrentBlockError {
 	/// No connection could be opened, for instance to a chain the host does
 	/// not serve.
 	#[display("{_0}")]
-	NoConnection(RuntimeFailure),
+	NoChainConnection(RuntimeFailure),
 	/// The chain stayed halted, the follow dropped, or the node did not answer
 	/// in time. A later call can succeed.
 	#[display("{_0}")]
-	Unavailable(String),
+	ChainUnavailable(String),
 	/// A failure a retry cannot fix, such as metadata this host cannot use.
 	#[display("{_0}")]
-	Failed(String),
+	Other(String),
 }
 
 impl ChainRuntime {
@@ -62,21 +62,18 @@ impl ChainRuntime {
 		let never_cancelled = CancellationToken::default();
 		let read_block = || async move {
 			let connection = self.subxt_connection(genesis_hash).await.map_err(|failure| {
-				FailedRead { error: CurrentBlockError::NoConnection(failure), met_a_halt: false }
+				FailedRead { error: CurrentBlockError::NoChainConnection(failure), halted: false }
 			})?;
 			*latest_connection.lock().unwrap() = Some(connection.clone());
 			let halts = connection.follow.halts();
 			connection.client.at_current_block().await.map_err(|error| {
-				let met_a_halt = connection.follow.halts() > halts;
-				FailedRead {
-					error: classify(connection.follow.end(), met_a_halt, &error),
-					met_a_halt,
-				}
+				let halted = connection.follow.halts() > halts;
+				FailedRead { error: classify(connection.follow.end(), halted, &error), halted }
 			})
 		};
 		let read = retry_while_halted(
 			read_block,
-			|failed: &FailedRead| failed.met_a_halt,
+			|failed: &FailedRead| failed.halted,
 			&*self.timer,
 			&never_cancelled,
 		)
@@ -90,7 +87,7 @@ impl ChainRuntime {
 				if let Some(connection) = latest_connection.lock().unwrap().take() {
 					connection.end_stalled_follow();
 				}
-				Err(CurrentBlockError::Unavailable(format!(
+				Err(CurrentBlockError::ChainUnavailable(format!(
 					"the chain gave no answer within {CURRENT_BLOCK_TIMEOUT:?}"
 				)))
 			},
@@ -103,7 +100,7 @@ impl ChainRuntime {
 /// Subxt reports every follow end the same way, so `follow_end` decides.
 fn classify(
 	follow_end: Option<FollowEnd>,
-	met_a_halt: bool,
+	halted: bool,
 	error: &OnlineClientAtBlockError,
 ) -> CurrentBlockError {
 	let retryable = match error {
@@ -114,7 +111,7 @@ fn classify(
 		OnlineClientAtBlockError::CannotGetBlockHeader { .. } |
 		OnlineClientAtBlockError::CannotGetSpecVersion { .. } |
 		OnlineClientAtBlockError::CannotGetMetadata { .. } => {
-			met_a_halt ||
+			halted ||
 				matches!(
 					follow_end,
 					Some(FollowEnd::Halted | FollowEnd::Dropped | FollowEnd::Stalled)
@@ -124,9 +121,9 @@ fn classify(
 	};
 	let reason = error.to_string();
 	if retryable {
-		CurrentBlockError::Unavailable(reason)
+		CurrentBlockError::ChainUnavailable(reason)
 	} else {
-		CurrentBlockError::Failed(reason)
+		CurrentBlockError::Other(reason)
 	}
 }
 
@@ -158,23 +155,23 @@ mod tests {
 		thread::spawn(move || block_on(chain.current_block(&GENESIS)).map(drop))
 	}
 
-	fn no_answer() -> CurrentBlockError {
-		CurrentBlockError::Unavailable(format!(
+	fn deadline_error() -> CurrentBlockError {
+		CurrentBlockError::ChainUnavailable(format!(
 			"the chain gave no answer within {CURRENT_BLOCK_TIMEOUT:?}"
 		))
 	}
 
-	/// Products retry on `Unavailable`, so it must only cover failures a later
-	/// call can get past. Unusable metadata stays `Failed` even during a halt.
+	/// Products retry on `ChainUnavailable`, so it must only cover failures a later
+	/// call can get past. Unusable metadata stays `Other` even during a halt.
 	#[test]
 	fn a_failure_is_retryable_only_when_a_later_call_can_get_past_it() {
 		let dropped = || OnlineClientAtBlockError::CannotGetCurrentBlock {
 			reason: BackendError::Rpc(SubxtRpcError::SubscriptionDropped),
 		};
-		let unavailable =
-			|error: &OnlineClientAtBlockError| CurrentBlockError::Unavailable(error.to_string());
-		let failed =
-			|error: &OnlineClientAtBlockError| CurrentBlockError::Failed(error.to_string());
+		let unavailable = |error: &OnlineClientAtBlockError| {
+			CurrentBlockError::ChainUnavailable(error.to_string())
+		};
+		let other = |error: &OnlineClientAtBlockError| CurrentBlockError::Other(error.to_string());
 		let metadata_fetch = || OnlineClientAtBlockError::CannotGetMetadata {
 			block_hash: Hex::from([1; 32]),
 			reason: "subscription dropped".to_string(),
@@ -201,7 +198,7 @@ mod tests {
 		];
 		let classified: Vec<_> = cases
 			.iter()
-			.map(|(follow_end, met_a_halt, error)| classify(*follow_end, *met_a_halt, error))
+			.map(|(follow_end, halted, error)| classify(*follow_end, *halted, error))
 			.collect();
 
 		assert_eq!(
@@ -210,14 +207,14 @@ mod tests {
 				unavailable(&cases[0].2),
 				unavailable(&cases[1].2),
 				unavailable(&cases[2].2),
-				failed(&cases[3].2),
-				failed(&cases[4].2),
+				other(&cases[3].2),
+				other(&cases[4].2),
 				unavailable(&cases[5].2),
 				unavailable(&cases[6].2),
-				failed(&cases[7].2),
+				other(&cases[7].2),
 				unavailable(&cases[8].2),
-				failed(&cases[9].2),
-				failed(&cases[10].2),
+				other(&cases[9].2),
+				other(&cases[10].2),
 			]
 		);
 	}
@@ -240,7 +237,7 @@ mod tests {
 		assert_eq!(sent_count(&provider, "chainHead_v1_header"), 2);
 	}
 
-	/// A chain that stays halted is `Unavailable`, so the product may retry.
+	/// A chain that stays halted is `ChainUnavailable`, so the product may retry.
 	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
 	fn a_read_still_halted_after_every_pause_is_unavailable() {
@@ -255,10 +252,10 @@ mod tests {
 		}
 
 		let error = read.join().unwrap().expect_err("the chain stays halted");
-		assert!(matches!(error, CurrentBlockError::Unavailable(_)), "{error:?}");
+		assert!(matches!(error, CurrentBlockError::ChainUnavailable(_)), "{error:?}");
 	}
 
-	/// A follow refused until the pauses run out is `Unavailable`.
+	/// A follow refused until the pauses run out is `ChainUnavailable`.
 	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
 	fn a_follow_refused_until_the_pauses_run_out_is_unavailable() {
@@ -274,13 +271,13 @@ mod tests {
 		}
 
 		let error = read.join().unwrap().expect_err("no follow is accepted");
-		assert!(matches!(error, CurrentBlockError::Unavailable(_)), "{error:?}");
+		assert!(matches!(error, CurrentBlockError::ChainUnavailable(_)), "{error:?}");
 	}
 
 	/// A refusal that is not a halt will happen again, so it is not retryable.
 	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
-	fn a_follow_refused_for_another_reason_is_failed() {
+	fn a_follow_refused_for_another_reason_is_not_retryable() {
 		let (_provider, chain, _timer) = ScriptedChainHead {
 			refused_follows: usize::MAX,
 			refusal: FollowRefusal::Error(-32001),
@@ -290,7 +287,7 @@ mod tests {
 
 		let error = read_current_block(&chain).join().unwrap().expect_err("no follow is accepted");
 
-		assert!(matches!(error, CurrentBlockError::Failed(_)), "{error:?}");
+		assert!(matches!(error, CurrentBlockError::Other(_)), "{error:?}");
 	}
 
 	/// The deadline ends a stuck read and its follow, so the next call starts
@@ -309,7 +306,7 @@ mod tests {
 		let first = read_current_block(&chain);
 		wait_for_sent(&provider, calls_started(1));
 		timer.advance(CURRENT_BLOCK_TIMEOUT);
-		assert_eq!(first.join().unwrap(), Err(no_answer()));
+		assert_eq!(first.join().unwrap(), Err(deadline_error()));
 		wait_for_sent(&provider, |sent| {
 			sent.iter().any(|request| request.contains("chainHead_v1_unfollow"))
 		});
@@ -318,7 +315,7 @@ mod tests {
 		wait_for_sent(&provider, calls_started(2));
 		assert_eq!(sent_count(&provider, "chainHead_v1_follow"), 2);
 		timer.advance(CURRENT_BLOCK_TIMEOUT);
-		assert_eq!(second.join().unwrap(), Err(no_answer()));
+		assert_eq!(second.join().unwrap(), Err(deadline_error()));
 	}
 
 	/// The deadline also covers a connection that never opens.
@@ -345,7 +342,7 @@ mod tests {
 		wait_until(|| timer.sleeps() == 1, "the deadline starts");
 		timer.advance(CURRENT_BLOCK_TIMEOUT);
 
-		assert_eq!(read.join().unwrap(), Err(no_answer()));
+		assert_eq!(read.join().unwrap(), Err(deadline_error()));
 	}
 
 	/// A chain the host cannot connect to is told apart from a halted one.
@@ -368,7 +365,7 @@ mod tests {
 		let error =
 			block_on(chain.current_block(&GENESIS)).expect_err("the chain cannot be connected");
 
-		assert!(matches!(error, CurrentBlockError::NoConnection(_)), "{error:?}");
+		assert!(matches!(error, CurrentBlockError::NoChainConnection(_)), "{error:?}");
 	}
 
 	#[test]

@@ -239,11 +239,11 @@ impl SsoRequestService {
 		let own_subscription =
 			subscribe_statement_topic(&rpc_client, sso.session_id_own, cx.cancel())
 				.await
-				.map_err(|err| subscribe_failed(cx, &message_id, "own", &err))?;
+				.map_err(|err| subscribe_error(cx, &message_id, "own", &err))?;
 		let peer_subscription =
 			subscribe_statement_topic(&rpc_client, sso.session_id_peer, cx.cancel())
 				.await
-				.map_err(|err| subscribe_failed(cx, &message_id, "peer", &err))?;
+				.map_err(|err| subscribe_error(cx, &message_id, "peer", &err))?;
 		let submit_client = rpc_client.clone();
 		let session_state = self.session_state.clone();
 		let submitting = Arc::new(AtomicBool::new(false));
@@ -295,7 +295,7 @@ impl SsoRequestService {
 			reply_matcher::<R>(&message_id),
 		)
 		.await;
-		let result = result.map_err(|reason| naming_the_call(cx, reason));
+		let result = result.map_err(|reason| with_caller_request_id(cx, reason));
 		match &result {
 			Ok(_) => debug!(action, %message_id, "SSO remote response received"),
 			Err(reason) => warn!(action, %message_id, %reason, "SSO remote message failed"),
@@ -317,7 +317,10 @@ impl SsoRequestService {
 }
 
 /// `reason`, with a cancellation naming the caller's request when it has one.
-fn naming_the_call(cx: &CallContext, reason: SsoRemoteResponseError) -> SsoRemoteResponseError {
+fn with_caller_request_id(
+	cx: &CallContext,
+	reason: SsoRemoteResponseError,
+) -> SsoRemoteResponseError {
 	match reason {
 		SsoRemoteResponseError::Cancelled(err) if !cx.request_id().is_empty() => {
 			SsoRemoteResponseError::Cancelled(err.with_remote_message_id(cx.request_id()))
@@ -328,14 +331,14 @@ fn naming_the_call(cx: &CallContext, reason: SsoRemoteResponseError) -> SsoRemot
 
 /// The error for a failed `label` subscribe: `Cancelled` if the caller gave
 /// up, `ChainUnavailable` if the chain stayed halted, otherwise `Failure`.
-fn subscribe_failed(
+fn subscribe_error(
 	cx: &CallContext,
 	message_id: &str,
 	label: &str,
 	err: &subxt_rpcs::Error,
 ) -> SsoRemoteResponseError {
 	if let Some(reason) = cx.cancel().reason() {
-		return naming_the_call(
+		return with_caller_request_id(
 			cx,
 			SsoRemoteResponseError::Cancelled(CancelError::new(reason, message_id)),
 		);
@@ -399,7 +402,7 @@ mod tests {
 		let reported = [chain_halted_rpc_error(), rpc_refusal(None)]
 			.iter()
 			.map(|err| {
-				AuthorityError::from(subscribe_failed(
+				AuthorityError::from(subscribe_error(
 					&CallContext::default(),
 					"request",
 					"own",

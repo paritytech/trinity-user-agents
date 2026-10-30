@@ -41,12 +41,12 @@ where
 	}
 }
 
-/// [`retry_on`] that stops when `until` is cancelled during a pause, returning
+/// [`retry_on`] that stops when `cancel` fires during a pause, returning
 /// the failure that started it. It never drops an attempt in flight, which
 /// could leave something open, such as a subscription.
-pub async fn retry_on_until<Done, Failure, AttemptFuture>(
+pub async fn retry_until_cancelled<Done, Failure, AttemptFuture>(
 	timer: &dyn Timer,
-	until: &CancellationToken,
+	cancel: &CancellationToken,
 	mut attempt: impl FnMut() -> AttemptFuture,
 	mut pause_after: impl FnMut(&Failure) -> Duration,
 ) -> Result<Done, Failure>
@@ -59,7 +59,7 @@ where
 			ControlFlow::Continue(failure) => failure,
 		};
 		let paused = timer.sleep(pause_after(&failure)).fuse();
-		let cancelled = until.cancelled().fuse();
+		let cancelled = cancel.cancelled().fuse();
 		pin_mut!(paused, cancelled);
 		futures::select_biased! {
 			_ = cancelled => return Err(failure),
@@ -170,13 +170,13 @@ mod tests {
 	#[test]
 	fn retry_on_until_stops_at_a_cancelled_pause() {
 		let timer = PendingTimer;
-		let until = CancellationToken::default();
+		let cancel = CancellationToken::default();
 		let mut attempts = 0;
 
 		let result = block_on(async {
-			let retrying = retry_on_until(
+			let retrying = retry_until_cancelled(
 				&timer,
-				&until,
+				&cancel,
 				|| {
 					attempts += 1;
 					ready(if attempts < 3 {
@@ -188,7 +188,7 @@ mod tests {
 				|_| Duration::from_secs(1),
 			);
 			let cancel = async {
-				until.cancel();
+				cancel.cancel();
 			};
 			futures::join!(retrying, cancel).0
 		});

@@ -336,13 +336,13 @@ pub async fn build_local_transaction(
 ) -> Result<HostCreateTransactionResponse, LocalTransactionError> {
 	let started = Instant::now();
 	let at_block = chain.current_block(&genesis_hash).await.map_err(|error| match error {
-		CurrentBlockError::NoConnection(failure) => LocalTransactionError::NoChainConnection(
+		CurrentBlockError::NoChainConnection(failure) => LocalTransactionError::NoChainConnection(
 			format!("cannot load chain metadata: {failure}"),
 		),
-		CurrentBlockError::Unavailable(reason) => LocalTransactionError::ChainUnavailable(format!(
-			"cannot select a metadata block: {reason}"
-		)),
-		CurrentBlockError::Failed(reason) => {
+		CurrentBlockError::ChainUnavailable(reason) => LocalTransactionError::ChainUnavailable(
+			format!("cannot select a metadata block: {reason}"),
+		),
+		CurrentBlockError::Other(reason) => {
 			LocalTransactionError::Other(format!("cannot select a metadata block: {reason}"))
 		},
 	});
