@@ -77,8 +77,8 @@ const MAX_DECODE_FAILURE_REQUEST_IDS: usize = 1024;
 /// about 15 seconds after the first send.
 const MAX_RESENDS: u32 = 4;
 
-/// Pauses between sends of a statement the People chain did not answer. Under
-/// [`Resend::UntilAnswered`] they stay at the longest once they reach it.
+/// Pauses between sends of a statement the People chain did not answer.
+/// Under [`Resend::UntilAnswered`], the pause stops growing at 8 seconds.
 #[cfg(not(test))]
 const RESEND_PAUSES: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(8));
 #[cfg(test)]

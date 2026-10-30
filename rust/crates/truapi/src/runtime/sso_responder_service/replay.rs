@@ -138,10 +138,11 @@ enum VersionedRequestLedger {
 
 /// Run `execute` for a request at most once across redeliveries.
 ///
-/// `acknowledge` runs once the ledger has room for the request and before the
-/// request is marked as started, so a request the ledger refuses is never
-/// acknowledged, and one whose acknowledgement fails runs when it is
-/// delivered again. A duplicate is acknowledged again but not run.
+/// The request is acknowledged only once the ledger has room for it, so a
+/// request the ledger refuses is never acknowledged. The acknowledgement goes
+/// out before the request is marked as started, so if it fails, the request
+/// runs when it is delivered again. A duplicate is acknowledged again but not
+/// run.
 pub async fn execute_once<T, F, Fut>(
 	storage: &(impl CoreStorage + ?Sized),
 	locks: &SsoReplayLocks,
