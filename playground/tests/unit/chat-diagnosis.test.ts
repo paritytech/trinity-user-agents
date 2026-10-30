@@ -19,6 +19,7 @@ const UNDIAGNOSED_WORKER_METHODS: ReadonlySet<string> = new Set([
   "Funding Provider/settle_cancel",
   "Funding Provider/report",
   "Funding Provider/present_frame",
+  "Funding Provider/close_frame",
 ]);
 
 describe("ChatDiagnosis", () => {
