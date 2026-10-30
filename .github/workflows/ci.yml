@@ -466,12 +466,10 @@ jobs:
   # which cannot reach main as it is: a stack would otherwise hold a Mac per
   # layer on every push. It runs once the pull request is ready and targets
   # main or a release branch, and on-label.yml runs it before then for a pull
-  # request labelled ci:ios-tests. It also waits for the Rust workspace, the
-  # gate that fails most, so a pull request that fails on Linux never takes a
-  # Mac.
+  # request labelled ci:ios-tests.
   ios-app:
     name: iOS app
-    needs: [changes, rust]
+    needs: changes
     if: >-
       github.event_name == 'pull_request'
       && needs.changes.outputs.trusted == 'true'
