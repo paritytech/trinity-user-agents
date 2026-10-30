@@ -316,8 +316,14 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.runtime.open_funding(direction, amount).await?)
 	}
 
-	/// Record that the host wrote ended session `intent` into its own
-	/// history; until then it is handed over again on each resume.
+	/// Every ended funding session, as summaries newest first. The host
+	/// reads it whenever it shows history.
+	pub fn funding_history(&self) -> Vec<crate::host_logic::funding::FundingSessionSummary> {
+		self.runtime.funding_history()
+	}
+
+	/// Record that the host told the user how ended session `intent` went;
+	/// until then it is handed over again on each resume.
 	pub async fn acknowledge_funding_session(&self, intent: String) -> Result<bool, HostRejection> {
 		Ok(self.runtime.acknowledge_funding_session(&intent).await?)
 	}
@@ -538,6 +544,17 @@ impl NativeTrUApiHostRuntime {
 			Err(error) => {
 				tracing::warn!(%error, "worker reference for an id that is not a product id")
 			},
+		}
+	}
+
+	/// Report that the product's worker stopped running without being asked
+	/// to: it crashed or the system killed it. While references remain, the
+	/// host is asked through [`HostCallbacks::request_worker_transition`] to
+	/// start it again. An id that is not a product id is logged and dropped.
+	pub fn worker_exited(&self, product_id: String) {
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().exited(&product_id),
+			Err(error) => tracing::warn!(%error, "worker exit for an id that is not a product id"),
 		}
 	}
 

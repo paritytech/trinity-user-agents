@@ -1138,6 +1138,18 @@ impl WasmPairingHostRuntime {
 		}
 	}
 
+	/// Report that the product's worker stopped running without being asked
+	/// to. While references remain, `"Start"` is reported again to the
+	/// host's `requestWorkerTransition` callback. An id that is not a product
+	/// id is logged and dropped.
+	#[wasm_bindgen(js_name = workerExited)]
+	pub fn worker_exited(&self, product_id: String) {
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().exited(&product_id),
+			Err(error) => tracing::warn!(%error, "worker exit for an id that is not a product id"),
+		}
+	}
+
 	/// Release one reference. The last one reports `"Stop"`, after which the
 	/// host may stop the worker; releasing with none held is a no-op, and so
 	/// is an id that is not a product id.
@@ -1413,6 +1425,18 @@ impl WasmSigningHostRuntime {
 			Err(error) => {
 				tracing::warn!(%error, "worker reference for an id that is not a product id")
 			},
+		}
+	}
+
+	/// Report that the product's worker stopped running without being asked
+	/// to. While references remain, `"Start"` is reported again to the
+	/// host's `requestWorkerTransition` callback. An id that is not a product
+	/// id is logged and dropped.
+	#[wasm_bindgen(js_name = workerExited)]
+	pub fn worker_exited(&self, product_id: String) {
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().exited(&product_id),
+			Err(error) => tracing::warn!(%error, "worker exit for an id that is not a product id"),
 		}
 	}
 

@@ -91,6 +91,22 @@ impl WorkerLedger {
 		self.drain();
 	}
 
+	/// The host reports that the product's worker stopped running without
+	/// being asked to: it crashed or the system killed it. While references
+	/// remain, [`WorkerTransition::Start`] is requested again, and the
+	/// worker is handed its sessions anew once it connects. With none held,
+	/// nothing needs it and this is a no-op.
+	pub fn exited(&self, product_id: &ProductId) {
+		{
+			let mut state = self.state();
+			if !state.references.contains_key(product_id) {
+				return;
+			}
+			state.pending.push_back((product_id.clone(), WorkerTransition::Start));
+		}
+		self.drain();
+	}
+
 	/// Install the host's controller for every transition the ledger requests.
 	/// Set-once, so a host cannot be swapped out from under a live reference.
 	/// Returns whether this call installed it.
@@ -254,6 +270,27 @@ mod tests {
 			]
 		);
 		assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 0);
+	}
+
+	#[test]
+	fn a_worker_that_exits_while_needed_is_started_again() {
+		let (ledger, recorder) = observed();
+		ledger.exited(&ProductId::for_test("a.dot"));
+		assert!(recorder.seen().is_empty(), "a worker nothing needs stays stopped");
+		ledger.acquire(&ProductId::for_test("a.dot"));
+		ledger.acquire(&ProductId::for_test("a.dot"));
+		ledger.exited(&ProductId::for_test("a.dot"));
+		assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 2, "the references stand");
+		ledger.release(&ProductId::for_test("a.dot"));
+		ledger.release(&ProductId::for_test("a.dot"));
+		assert_eq!(
+			recorder.seen(),
+			vec![
+				("a.dot".to_string(), WorkerTransition::Start),
+				("a.dot".to_string(), WorkerTransition::Start),
+				("a.dot".to_string(), WorkerTransition::Stop),
+			]
+		);
 	}
 
 	#[test]

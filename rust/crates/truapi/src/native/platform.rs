@@ -801,6 +801,10 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 			.map_err(v01::GenericError::from)
 	}
 
+	fn close_provider_frame(&self, provider: &ProductContext, intent: String) {
+		self.funding.close_provider_frame(provider.product_id.to_string(), intent);
+	}
+
 	async fn detected_country(&self) -> Option<String> {
 		self.funding.detected_country().await
 	}
@@ -819,10 +823,6 @@ impl crate::runtime::FundingFeed for FundingCallbackPlatform {
 		progress: Option<crate::host_logic::funding::FundingProgress>,
 	) {
 		self.funding.funding_session_changed(intent, status, session, progress);
-	}
-
-	fn funding_history(&self, history: Vec<crate::host_logic::funding::FundingSessionSummary>) {
-		self.funding.funding_history(history);
 	}
 
 	fn funding_in_progress_changed(&self, in_progress: bool) {
