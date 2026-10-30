@@ -47,8 +47,9 @@ fails or breaks a rule, and reports a new `generation` (drop cached chain data),
 - The `js` feature builds the wasm-bindgen surface `@parity/trinity-stack` ships, with TypeScript types for the crate's
   values.
 - `light_spec_genesis` and `Chain::check_light_spec` check a light spec against its chain's genesis hash.
-- `StackReader` keeps each stack's copy current by a `Refresh` policy: it serves the copy it holds, says when to fetch,
+- `StackReader` refreshes each stack's copy by a `Refresh` policy: it serves the copy it has, decides when to fetch,
   and takes the answer, so a descriptor is never a live dependency.
+- `Descriptor::web_url` gives the URL a dotNS name opens at on the stack's `web-gateway`.
 
 Every error is one rule of the RFC, and `Error::code` is its stable name.
 

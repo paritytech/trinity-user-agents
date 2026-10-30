@@ -532,6 +532,150 @@
       }
     },
     {
+      "expect": "ok",
+      "file": "documents/valid-web-gateway-with-query.json",
+      "name": "valid-web-gateway-with-query",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "service-url-not-base",
+      "file": "documents/web-gateway-path-not-base.json",
+      "name": "web-gateway-path-not-base",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "service-url-not-base",
+      "file": "documents/web-gateway-without-slash.json",
+      "name": "web-gateway-without-slash",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "service-url-not-base",
+      "file": "documents/web-gateway-with-fragment.json",
+      "name": "web-gateway-with-fragment",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/web-gateway-on-address.json",
+      "name": "web-gateway-on-address",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/web-gateway-on-wss.json",
+      "name": "web-gateway-on-wss",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/web-gateway-http-on-hostname.json",
+      "name": "web-gateway-http-on-hostname",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/web-gateway-http-on-loopback.json",
+      "name": "web-gateway-http-on-loopback",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "ok",
+      "file": "documents/valid-web-gateway-on-localhost.json",
+      "name": "valid-web-gateway-on-localhost",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/web-gateway-http-on-localhost-prefix.json",
+      "name": "web-gateway-http-on-localhost-prefix",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/web-gateway-http-under-localhost.json",
+      "name": "web-gateway-http-under-localhost",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/web-gateway-http-on-localhost-with-user.json",
+      "name": "web-gateway-http-on-localhost-with-user",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/web-gateway-http-on-localhost-uppercase.json",
+      "name": "web-gateway-http-on-localhost-uppercase",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/web-gateway-http-on-localhost-backslash.json",
+      "name": "web-gateway-http-on-localhost-backslash",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "service-url-not-base",
+      "file": "documents/web-gateway-on-localhost-without-slash.json",
+      "name": "web-gateway-on-localhost-without-slash",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
+      "expect": "invalid-url",
+      "file": "documents/http-on-localhost-outside-web-gateway.json",
+      "name": "http-on-localhost-outside-web-gateway",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
       "expect": "chain-id",
       "file": "documents/eth-rpc-without-chain-id.json",
       "name": "eth-rpc-without-chain-id",
@@ -989,6 +1133,496 @@
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
       },
       "stored": null
+    }
+  ],
+  "webUrls": [
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "http://localhost:5173/?network=previewnet"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": "my-app",
+      "expect": {
+        "url": "http://my-app.localhost:5173/?network=previewnet"
+      },
+      "name": "local-host-form-keeps-port"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "http://localhost:5173/?network=previewnet"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": "sub.my-app.local",
+      "expect": {
+        "url": "http://localhost:5173/sub.my-app?network=previewnet"
+      },
+      "name": "local-path-form-keeps-port"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "https://testnet.li/?network=previewnet"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": "my-app",
+      "expect": {
+        "url": "https://my-app.testnet.li/?network=previewnet"
+      },
+      "name": "host-form-keeps-query"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "https://testnet.li/?network=previewnet"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": "my-app.local",
+      "expect": {
+        "url": "https://my-app.testnet.li/?network=previewnet"
+      },
+      "name": "tld-is-dropped"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "https://testnet.li/?network=previewnet"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": "sub.my-app.local",
+      "expect": {
+        "url": "https://testnet.li/sub.my-app?network=previewnet"
+      },
+      "name": "path-form-keeps-query"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "https://gateway.example/gw/?n=x"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": "my-app",
+      "expect": {
+        "url": "https://my-app.gateway.example/gw/?n=x"
+      },
+      "name": "host-form-under-gateway-path"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "https://gateway.example/gw/?n=x"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": "sub.my-app.local",
+      "expect": {
+        "url": "https://gateway.example/gw/sub.my-app?n=x"
+      },
+      "name": "path-form-under-gateway-path"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [],
+        "tld": "local"
+      },
+      "dotnsName": "my-app",
+      "expect": {
+        "url": null
+      },
+      "name": "no-gateway"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "https://testnet.li/?network=previewnet"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": "My-App",
+      "expect": {
+        "error": "invalid-name"
+      },
+      "name": "name-uppercase"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "https://testnet.li/?network=previewnet"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": "a..b",
+      "expect": {
+        "error": "invalid-name"
+      },
+      "name": "name-empty-label"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "https://testnet.li/?network=previewnet"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": "",
+      "expect": {
+        "error": "invalid-name"
+      },
+      "name": "name-empty"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "https://testnet.li/?network=previewnet"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": ".local",
+      "expect": {
+        "error": "invalid-name"
+      },
+      "name": "name-only-tld"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "https://testnet.li/?network=previewnet"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": "my-app/x",
+      "expect": {
+        "error": "invalid-name"
+      },
+      "name": "name-with-path"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "https://testnet.li/?network=previewnet"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": "sub.my-app",
+      "expect": {
+        "error": "invalid-name"
+      },
+      "name": "subname-without-tld"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "https://testnet.li/?network=previewnet"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": "my-app.dot",
+      "expect": {
+        "error": "invalid-name"
+      },
+      "name": "name-with-another-tld"
     }
   ]
 }

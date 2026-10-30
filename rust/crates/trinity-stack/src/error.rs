@@ -23,6 +23,9 @@ pub enum Error {
 	/// `tld` is not one lowercase DNS label without the leading dot.
 	#[error("tld {0:?} must be one lowercase label of a-z, 0-9 and -")]
 	InvalidTld(String),
+	/// A dotNS name is not lowercase DNS labels joined by dots.
+	#[error("name {0:?} must be labels of a-z, 0-9 and - joined by dots")]
+	InvalidName(String),
 	/// A field that must not be empty is empty.
 	#[error("{0} is empty")]
 	Empty(&'static str),

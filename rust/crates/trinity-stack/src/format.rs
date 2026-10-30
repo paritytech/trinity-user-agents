@@ -47,6 +47,9 @@ pub enum Schemes {
 	Web,
 	/// `stun`, for the URLs of a `stun` service.
 	Stun,
+	/// `https` on a hostname, or `http` on `localhost`, for a `web-gateway`, which takes a name's
+	/// label in front of its host and so cannot be a literal address.
+	Gateway,
 }
 
 /// Parses a URL and checks it against the RFC's scheme rule. Descriptors keep the text as written,
@@ -73,6 +76,13 @@ pub fn url(value: &str, schemes: Schemes) -> Result<Url, Error> {
 		(Schemes::Web, "https" | "wss") => web,
 		(Schemes::Web, "http" | "ws") => web && parsed.host().is_some_and(is_private_literal),
 		(Schemes::Web, _) => false,
+		(Schemes::Gateway, "https") => web && matches!(parsed.host(), Some(Host::Domain(_))),
+		// Also as written: this parser reads `\` as `/`, so `http://localhost\@evil.example/` is
+		// localhost here and evil.example to an RFC 3986 parser.
+		(Schemes::Gateway, "http") => {
+			web && parsed.host_str() == Some("localhost") && written_host(value) == "localhost"
+		},
+		(Schemes::Gateway, _) => false,
 	};
 	if allowed { Ok(parsed) } else { Err(invalid()) }
 }
