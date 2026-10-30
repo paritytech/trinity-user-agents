@@ -29,14 +29,16 @@
 
 use std::{
 	collections::{BTreeMap, HashMap},
+	pin::Pin,
 	sync::{
 		Arc, Mutex,
 		atomic::{AtomicBool, AtomicU32, Ordering},
 	},
+	task::{Context, Poll},
 };
 
 use futures::{
-	StreamExt,
+	Stream, StreamExt,
 	channel::mpsc,
 	stream::{self, BoxStream},
 };
@@ -228,6 +230,11 @@ pub struct MockConfig {
 	pub remote_permissions: PermissionPolicy,
 	/// Whether `feature_supported` reports support.
 	pub feature_supported: bool,
+	/// When set, `feature_supported` answers from `supported_chains`, as a real
+	/// host does, so a chain outside that set is unsupported. It becomes the
+	/// default in a later breaking release. The JS mock's `onlyServedChains` is
+	/// the same option.
+	pub only_served_chains: bool,
 	/// Theme emitted by `subscribe_theme`.
 	pub theme: latest::ThemeVariant,
 	/// BCP 47 language tag the mock reports.
@@ -253,12 +260,50 @@ impl Default for MockConfig {
 			device_permissions: PermissionPolicy::AllowAll,
 			remote_permissions: PermissionPolicy::AllowAll,
 			feature_supported: true,
+			only_served_chains: false,
 			theme: latest::ThemeVariant::Dark,
 			language_tag: "en".to_string(),
 			confirm_user_actions: true,
 			supported_chains: mock_genesis::chain_set(),
 			chain: ChainBehavior::Silent,
 			faults: MockFaults::default(),
+		}
+	}
+}
+
+/// Delivers a preimage to a lookup that is waiting on its key.
+type PreimageSender = mpsc::UnboundedSender<Option<Vec<u8>>>;
+
+/// Lookups waiting on each preimage key.
+type PreimageSubscribers = Arc<Mutex<HashMap<Vec<u8>, Vec<PreimageSender>>>>;
+
+/// One open preimage lookup. Dropping it removes its subscriber, and the key
+/// once no lookup waits on it, as the JS mock does on unsubscribe.
+struct PreimageLookup {
+	receiver: mpsc::UnboundedReceiver<Option<Vec<u8>>>,
+	key: Vec<u8>,
+	subscribers: PreimageSubscribers,
+}
+
+impl Stream for PreimageLookup {
+	type Item = Option<Vec<u8>>;
+
+	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+		self.receiver.poll_next_unpin(cx)
+	}
+}
+
+impl Drop for PreimageLookup {
+	fn drop(&mut self) {
+		// Closing first marks this lookup's sender closed, so the sweep below
+		// removes it along with any other lookup already dropped.
+		self.receiver.close();
+		let Ok(mut subscribers) = self.subscribers.lock() else { return };
+		if let Some(senders) = subscribers.get_mut(&self.key) {
+			senders.retain(|sender| !sender.is_closed());
+			if senders.is_empty() {
+				subscribers.remove(&self.key);
+			}
 		}
 	}
 }
@@ -303,6 +348,7 @@ pub struct MockPlatform {
 	scan_answer: Arc<Mutex<HostScan>>,
 	storage_subscribers:
 		Arc<Mutex<HashMap<String, Vec<mpsc::UnboundedSender<latest::HostLocalStorageChangeItem>>>>>,
+	preimage_subscribers: PreimageSubscribers,
 	chain_status: Arc<Mutex<ChainStatus>>,
 	/// One per live connection; sending ends that connection's response stream.
 	chain_disconnectors: Arc<Mutex<Vec<mpsc::UnboundedSender<()>>>>,
@@ -349,6 +395,7 @@ impl MockPlatform {
 			theme_subscribers: Arc::new(Mutex::new(Vec::new())),
 			scan_answer: Arc::new(Mutex::new(HostScan::Dismissed)),
 			storage_subscribers: Arc::new(Mutex::new(HashMap::new())),
+			preimage_subscribers: Arc::new(Mutex::new(HashMap::new())),
 			chain_status: Arc::new(Mutex::new(ChainStatus::Idle)),
 			chain_disconnectors: Arc::new(Mutex::new(Vec::new())),
 		}
@@ -488,11 +535,42 @@ impl MockPlatform {
 	/// content retrieval. This helper lets tests and host simulators pre-load
 	/// the content-addressed store the mock's `lookup_preimage` reads from, and
 	/// returns the blake2b-256 content address of the value, which is the key
-	/// the core looks it up under.
+	/// the core looks it up under. Lookups already open for that key receive
+	/// the value.
 	pub fn insert_preimage(&self, value: Vec<u8>) -> Vec<u8> {
 		let key = preimage_key(&value);
-		self.preimages.lock().expect("preimages poisoned").insert(key.clone(), value);
+		// Held across the store and the push, as `lookup_preimage` holds it
+		// across its read and its registration, so no lookup falls between them.
+		let mut subscribers =
+			self.preimage_subscribers.lock().expect("preimage subscribers poisoned");
+		let previous = self
+			.preimages
+			.lock()
+			.expect("preimages poisoned")
+			.insert(key.clone(), value.clone());
+		// A key names its content, so a value already held is already what every
+		// open lookup was given.
+		if previous.is_some() {
+			return key;
+		}
+		if let Some(senders) = subscribers.get_mut(&key) {
+			senders.retain(|sender| sender.unbounded_send(Some(value.clone())).is_ok());
+			if senders.is_empty() {
+				subscribers.remove(&key);
+			}
+		}
 		key
+	}
+
+	/// Store `value` under `stored_key`, the key the core reads product storage
+	/// by, as an entry persisted from an earlier session would be, and notify
+	/// that key's subscribers.
+	pub fn write_product_storage(&self, stored_key: String, value: Vec<u8>) {
+		self.storage
+			.lock()
+			.expect("storage poisoned")
+			.insert(product_key(&stored_key), value.clone());
+		self.publish_storage(&stored_key, Some(value));
 	}
 
 	/// Drop the recorded navigations.
@@ -984,12 +1062,21 @@ impl Features for MockPlatform {
 
 	async fn feature_supported(
 		&self,
-		_request: latest::HostFeatureSupportedRequest,
+		request: latest::HostFeatureSupportedRequest,
 	) -> Result<latest::HostFeatureSupportedResponse, latest::GenericError> {
 		if let Some(reason) = &self.config.faults.feature_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}
-		Ok(latest::HostFeatureSupportedResponse { supported: self.config.feature_supported })
+		let latest::HostFeatureSupportedRequest::Chain { genesis_hash } = request;
+		let served = !self.config.only_served_chains ||
+			self.config
+				.supported_chains
+				.chains
+				.iter()
+				.any(|entry| entry.genesis_hash.as_slice() == genesis_hash.as_slice());
+		Ok(latest::HostFeatureSupportedResponse {
+			supported: self.config.feature_supported && served,
+		})
 	}
 }
 
@@ -1119,12 +1206,20 @@ impl PreimageHost for MockPlatform {
 		&self,
 		key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, latest::GenericError>> {
-		let found = self.preimages.lock().expect("preimages poisoned").get(key.as_slice()).cloned();
-		// Emit the current value/miss, then stay open — a live subscription that
-		// never ends, matching `subscribe_theme`, the trait doc, and the JS mock.
+		let key = key.to_vec();
+		let (sender, receiver) = mpsc::unbounded();
+		// The subscribers lock is held across the read and the registration, so
+		// an insert cannot land between them unseen.
+		let mut subscribers =
+			self.preimage_subscribers.lock().expect("preimage subscribers poisoned");
+		sender
+			.unbounded_send(self.preimages.lock().expect("preimages poisoned").get(&key).cloned())
+			.expect("a fresh receiver is open");
+		subscribers.entry(key.clone()).or_default().push(sender);
+		drop(subscribers);
 		Box::pin(
-			stream::once(async move { Ok(found) })
-				.chain(stream::pending::<Result<Option<Vec<u8>>, latest::GenericError>>()),
+			PreimageLookup { receiver, key, subscribers: self.preimage_subscribers.clone() }
+				.map(Ok),
 		)
 	}
 }
@@ -1576,6 +1671,27 @@ mod tests {
 	}
 
 	#[test]
+	fn feature_supported_reports_unserved_chains_only_when_asked() {
+		let supported = |p: &MockPlatform, genesis_hash: Vec<u8>| {
+			block_on(
+				p.feature_supported(latest::HostFeatureSupportedRequest::Chain { genesis_hash }),
+			)
+			.unwrap()
+			.supported
+		};
+		let unserved = vec![0xab; 32];
+		// The default keeps answering every chain as supported.
+		assert!(supported(&MockPlatform::new(), unserved.clone()));
+		let strict = MockPlatform::with_config(MockConfig {
+			only_served_chains: true,
+			..Default::default()
+		});
+		let served = strict.config.supported_chains.chains[0].genesis_hash.to_vec();
+		assert!(supported(&strict, served));
+		assert!(!supported(&strict, unserved));
+	}
+
+	#[test]
 	fn theme_emits_configured_variant_then_stays_open() {
 		let p = MockPlatform::new();
 		let mut stream = p.subscribe_theme();
@@ -1618,6 +1734,68 @@ mod tests {
 		// An unknown key misses.
 		let miss = block_on(p.lookup_preimage([9; 32]).next()).unwrap().unwrap();
 		assert_eq!(miss, None);
+	}
+
+	#[test]
+	fn preimage_lookup_receives_a_later_insert() {
+		let p = MockPlatform::new();
+		let key = MockPlatform::new().insert_preimage(vec![1, 2, 3]);
+		let mut waiting = p.lookup_preimage(key.try_into().expect("a blake2b-256 key is 32 bytes"));
+		let mut other = p.lookup_preimage([9; 32]);
+		assert_eq!(block_on(waiting.next()).unwrap().unwrap(), None);
+		assert_eq!(block_on(other.next()).unwrap().unwrap(), None);
+
+		p.insert_preimage(vec![1, 2, 3]);
+
+		assert_eq!(waiting.next().now_or_never().unwrap().unwrap().unwrap(), Some(vec![1, 2, 3]));
+		// An insert reaches only the lookups waiting on its own key.
+		assert!(other.next().now_or_never().is_none());
+	}
+
+	#[test]
+	fn a_dropped_preimage_lookup_leaves_no_subscriber_behind() {
+		let p = MockPlatform::new();
+		let first = p.lookup_preimage([9; 32]);
+		let second = p.lookup_preimage([9; 32]);
+
+		drop(first);
+		assert_eq!(p.preimage_subscribers.lock().unwrap()[&vec![9; 32]].len(), 1);
+		drop(second);
+
+		assert!(p.preimage_subscribers.lock().unwrap().is_empty());
+	}
+
+	#[test]
+	fn reinserting_a_held_preimage_does_not_deliver_it_again() {
+		let p = MockPlatform::new();
+		let key = p.insert_preimage(vec![1, 2, 3]);
+		let mut lookup = p.lookup_preimage(key.try_into().expect("a blake2b-256 key is 32 bytes"));
+		assert_eq!(block_on(lookup.next()).unwrap().unwrap(), Some(vec![1, 2, 3]));
+
+		p.insert_preimage(vec![1, 2, 3]);
+
+		assert!(lookup.next().now_or_never().is_none());
+	}
+
+	#[test]
+	fn a_dropped_lookup_is_pruned_when_the_next_one_registers() {
+		let p = MockPlatform::new();
+		drop(p.lookup_preimage([9; 32]));
+		let _open = p.lookup_preimage([9; 32]);
+		let subscribers = p.preimage_subscribers.lock().unwrap();
+		assert_eq!(subscribers.get(&vec![9; 32]).map(Vec::len), Some(1));
+	}
+
+	#[test]
+	fn write_product_storage_is_read_back_and_notifies() {
+		let p = MockPlatform::new();
+		let mut updates = p.subscribe_storage("k".to_string());
+		assert_eq!(block_on(updates.next()).unwrap().unwrap().value, None);
+
+		p.write_product_storage("k".to_string(), vec![7]);
+
+		assert_eq!(block_on(ProductStorage::read(&p, "k".to_string())).unwrap(), Some(vec![7]));
+		assert_eq!(updates.next().now_or_never().unwrap().unwrap().unwrap().value, Some(vec![7]));
 	}
 
 	#[test]

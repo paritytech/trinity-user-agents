@@ -114,6 +114,12 @@ export interface TestHostPageOptions {
    * `topology: "main-thread"` to read them from a test.
    */
   logLevel?: string;
+  /**
+   * Product storage held before the product loads, by the product's own keys,
+   * stored as UTF-8: what a product reads once at startup has to be there
+   * before it starts.
+   */
+  productStorage?: Record<string, string>;
 }
 
 /** How the test host answers login at boot. */
@@ -165,8 +171,26 @@ export interface AccountControl {
   ): Promise<string | undefined>;
 }
 
+/**
+ * Product storage control. The core namespaces a product's storage keys, so
+ * seeding goes through the core's own encoding rather than the mock's raw
+ * store, which keeps a suite from depending on that format.
+ */
+export interface StorageControl {
+  /**
+   * Store `value` under the product's own `key`, where the core will read it,
+   * as an entry persisted from an earlier session would be. A string is stored
+   * as UTF-8. `productId` defaults to the product this host runs.
+   */
+  seedProductStorage(
+    key: string,
+    value: Uint8Array | string,
+    productId?: string,
+  ): Promise<void>;
+}
+
 /** What the fixture reaches on `window.__TRUAPI_TEST_HOST__`. */
-export type TestHostControl = MockHost & AccountControl;
+export type TestHostControl = MockHost & AccountControl & StorageControl;
 
 /** The running test host. */
 export interface TestHostPage {
@@ -210,8 +234,9 @@ export function publishTestHostGlobals(control: TestHostControl): () => void {
 /**
  * Boot the test host into `container` and publish its control surface.
  *
- * Resolves once the core is running and the product iframe has its port, so a
- * fixture that awaits this can assume the wire is live.
+ * Resolves once the core is running and the product iframe is created. The
+ * product may still be loading, so a caller waits for the product itself
+ * before relying on the wire.
  */
 export async function startTestHost(
   options: TestHostPageOptions,
@@ -236,8 +261,8 @@ export async function startTestHost(
     ): Promise<void>;
     disconnectSession(): Promise<void>;
   };
-  // The two derivation helpers are pure -- they need `default()` and no
-  // session -- so the worker topology, which keeps the core off this thread,
+  // The derivation and storage-key helpers are pure: they need `default()` and
+  // no session. So the worker topology, which keeps the core off this thread,
   // loads the glue here just to call them.
   const wasmUrl = options.wasmUrl ?? "./wasm/testing/truapi_server.js";
   let derivation: Promise<ProductAccountDerivation> | undefined;
@@ -348,6 +373,18 @@ export async function startTestHost(
   let detach: (() => void) | undefined;
   // Set when the product connects, by whichever topology is running.
   let publishChatAction: ((action: unknown) => Promise<void>) | undefined;
+  // Before the iframe exists, so a product that reads its storage once at
+  // startup finds these entries rather than racing a seed.
+  const seeded = Object.entries(options.productStorage ?? {});
+  if (seeded.length) {
+    const helpers = await deriveHelpers();
+    for (const [key, value] of seeded) {
+      host.writeProductStorage(
+        helpers.productStorageKey(hostProduct, key),
+        new TextEncoder().encode(value),
+      );
+    }
+  }
   const iframeHost = createIframeHost({
     iframeUrl: options.productUrl,
     container: options.container,
@@ -409,6 +446,17 @@ export async function startTestHost(
   const control: TestHostControl = Object.assign(host, {
     getAccounts: () => roster.map((account) => account.name),
     getActiveAccount: () => active?.name,
+    async seedProductStorage(
+      key: string,
+      value: Uint8Array | string,
+      productId?: string,
+    ) {
+      const helpers = await deriveHelpers();
+      host.writeProductStorage(
+        helpers.productStorageKey(productId ?? hostProduct, key),
+        typeof value === "string" ? new TextEncoder().encode(value) : value,
+      );
+    },
     async getProductAccountAddress(productId?: string, index = 0) {
       const target = productId ?? hostProduct;
       const subtree = await (directRuntime
@@ -486,6 +534,7 @@ interface ProductAccountDerivation {
     derivationIndex: Uint8Array,
   ): Uint8Array;
   productAccountAddress(publicKey: Uint8Array): string;
+  productStorageKey(productId: string, key: string): string;
 }
 
 /** The main-thread signing runtime: hands back a product core directly. */

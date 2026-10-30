@@ -134,7 +134,11 @@ export const PASEO_ASSET_HUB = {
   tokenDecimals: 10,
 } as const;
 
-/** The chain a suite gets when it names none. */
+/**
+ * Paseo Asset Hub, for a suite that wants one chain without declaring its own.
+ * Nothing applies it: a suite that names no chain is served none, so pass it
+ * in `networks`.
+ */
 export const DEFAULT_CHAIN = PASEO_ASSET_HUB;
 
 /**
