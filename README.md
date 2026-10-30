@@ -593,7 +593,9 @@ and Dependabot runs get no secrets, and so does the merge queue. So do drafts an
 pull requests into another pull request's branch, which run it once they are
 ready and target main or a release branch, and it starts only after the Rust
 workspace passes. `on-label.yml` runs it before then for a pull request
-labelled `ci:ios-tests`, outside `CI Status`. A push to main
+labelled `ci:ios-tests`, outside `CI Status`. A pull request retargeted to main
+when its base merges keeps its earlier result until it is pushed, or closed and
+reopened. A push to main
 that touches those inputs runs the same suite through `ios-main.yml`, outside
 `CI Status`, and publishes the core pull requests reuse. `preview` is
 macOS time no check needs, so `on-label.yml` builds it once the pull request is
