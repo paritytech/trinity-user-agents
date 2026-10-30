@@ -237,6 +237,14 @@ purse item keys are derived under with `set_installation_provider`, then calls
 the database. `core_database_status()` reports the SQLite version, schema
 version and path. Web hosts do not compile the store.
 
+Secrets the database must not hold go to the host's `EncryptedStorage`: the
+Keychain on iOS, encrypted preferences on Android, a plaintext file in the CLI.
+It reads, writes and deletes values by key and cannot list them, so a feature
+keeps its public rows in the database and stores each secret under a key
+derived from its row. Native hosts install it from their callbacks; any other
+embedder calls `SigningHostRuntime::set_encrypted_storage`. Web hosts do not
+compile it.
+
 ### Durable transactions
 
 The `durable` module runs over the core database. A domain registers presigned

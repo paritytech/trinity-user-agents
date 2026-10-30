@@ -76,7 +76,10 @@ class WebSocketChainProvider(
     /** Opens a connection for [genesisHash]. Null when the genesis is unsupported. */
     fun connect(genesisHash: ByteArray): UInt? {
         val urls = resolver.urlsFor(genesisHash)
-        if (urls.isEmpty()) return null
+        if (urls.isEmpty()) {
+            onLog("chain ${genesisHash.toHexString()} has no host-managed connection; unsupported")
+            return null
+        }
 
         val id = nextId.getAndIncrement().toUInt()
         val connection = ChainConnection(id, urls)
@@ -107,6 +110,7 @@ class WebSocketChainProvider(
      * would otherwise keep treating them as live and never re-dial.
      */
     fun closeAll() {
+        if (connections.isNotEmpty()) onLog("closing ${connections.size} chain connections")
         connections.keys.toList().forEach { id ->
             connections.remove(id)?.close(notifyCore = true)
         }
@@ -145,6 +149,9 @@ class WebSocketChainProvider(
         @Volatile
         private var socket: WebSocket? = null
 
+        @Volatile
+        private var dialledUrl: String? = null
+
         /**
          * Opens the next candidate endpoint. False when the list is exhausted
          * or the connection already finished.
@@ -155,6 +162,8 @@ class WebSocketChainProvider(
         fun connectNextEndpoint(): Boolean {
             if (state.get() == State.FINISHED) return false
             val url = urls.getOrNull(nextCandidate.getAndIncrement()) ?: return false
+            dialledUrl = url
+            onLog("chain connection $id dialling $url")
             val opening = client.newWebSocket(Request.Builder().url(url).build(), this)
             socket = opening
             if (state.get() == State.FINISHED) {
@@ -181,6 +190,7 @@ class WebSocketChainProvider(
 
         override fun onOpen(webSocket: WebSocket, response: Response) {
             state.compareAndSet(State.CONNECTING, State.OPEN)
+            onLog("chain connection $id open on $dialledUrl")
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
@@ -191,10 +201,13 @@ class WebSocketChainProvider(
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            val closeStatus = if (reason.isEmpty()) "$code" else "$code $reason"
+            onLog("chain connection $id closed on $dialledUrl: $closeStatus")
             finish()
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            onLog("chain connection $id failed on $dialledUrl: ${t.describe()}")
             // Only a failure while still connecting is a dead node worth
             // replacing: anything else is a real close.
             if (state.get() == State.CONNECTING && connectNextEndpoint()) return
@@ -215,3 +228,5 @@ class WebSocketChainProvider(
         const val NORMAL_CLOSURE = 1000
     }
 }
+
+private fun Throwable.describe(): String = message?.let { "${javaClass.simpleName}: $it" } ?: javaClass.simpleName

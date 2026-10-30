@@ -53,7 +53,7 @@ use core::{future::Future, time::Duration};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 use std::{
-	collections::HashSet,
+	collections::{BTreeMap, HashSet},
 	sync::{Arc, Mutex},
 };
 
@@ -135,7 +135,7 @@ use web_time::Instant;
 #[cfg(test)]
 use crate::subscription::Spawner;
 use crate::{
-	chain_runtime::RuntimeFailure,
+	chain_runtime::{RuntimeFailure, RuntimeFailureKind},
 	host_internal::{
 		bulletin::preimage_key,
 		permissions::{PermissionsService, TemporaryPermissions},
@@ -1059,7 +1059,124 @@ fn parse_legacy_signer_hex(signer: &str) -> Option<[u8; 32]> {
 }
 
 fn runtime_failure_to_call_error<E>(failure: RuntimeFailure) -> CallError<E> {
+	report_chain_call_failure(&failure);
 	CallError::HostFailure { reason: failure.reason() }
+}
+
+/// How long a chain call has to go without failing before the next failure
+/// counts as a new episode rather than more of the last one.
+const CHAIN_FAILURE_QUIET: Duration = Duration::from_secs(30);
+
+/// Most conditions tracked at once. A reason is part of what tells two
+/// failures apart, and a reason carries text, so the map is bounded rather
+/// than left to grow with however many distinct failures a run produces.
+const CHAIN_FAILURE_CONDITIONS_MAX: usize = 64;
+
+/// What tells one chain call failure from another: its classification, the
+/// method it came from, and why it failed.
+///
+/// The reason is part of it because a connection that drops and a payload that
+/// will not decode are different conditions, and one must not stand in for the
+/// other.
+type ChainFailureKey = (RuntimeFailureKind, &'static str, String, Option<Vec<u8>>);
+
+/// When each condition was last seen, and how many times it has happened in
+/// the episode it belongs to.
+type ChainFailureReports = BTreeMap<ChainFailureKey, (Instant, u64)>;
+
+/// What each chain call failure has done recently.
+static CHAIN_FAILURES: Mutex<ChainFailureReports> = Mutex::new(BTreeMap::new());
+
+/// Report a failed chain call on a widening schedule: the first, the second,
+/// then every doubling.
+///
+/// A connection that drops fails every call made over it afterwards, and each
+/// line reaches a host's log and from there wherever the host ships logs. A
+/// line per call buries the first one, which is the only one that says when the
+/// trouble started. Reporting on a schedule keeps that line, bounds a long
+/// outage to a handful more, and carries the running count on each, so how bad
+/// it is reads off the lines themselves rather than waiting for a tally that
+/// may never come.
+fn report_chain_call_failure(failure: &RuntimeFailure) {
+	// The lock is released before the line is raised: a host's sink runs host
+	// code, which must not be able to re-enter this.
+	let seen = {
+		let mut reported = CHAIN_FAILURES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+		count_failure(
+			&mut reported,
+			(
+				failure.kind(),
+				failure.method(),
+				failure.reason(),
+				failure.chain().map(<[u8]>::to_vec),
+			),
+			Instant::now(),
+			CHAIN_FAILURE_QUIET,
+		)
+	};
+	if !reports_at(seen) {
+		return;
+	}
+	// The chain is named because a failing call says little without it. The
+	// report that sent us looking at this code turned on which chain a
+	// transaction was being built against, and the line never said.
+	match failure.chain() {
+		Some(chain) => tracing::warn!(
+			kind = ?failure.kind(),
+			chain = %hex::encode(chain),
+			reason = %failure,
+			seen,
+			"chain call failed"
+		),
+		None => tracing::warn!(
+			kind = ?failure.kind(),
+			reason = %failure,
+			seen,
+			"chain call failed"
+		),
+	}
+}
+
+/// Whether the `seen`th failure of one condition is one of the reported ones.
+///
+/// The first two, then every doubling, so a thousand failures speak eleven
+/// times rather than a thousand.
+fn reports_at(seen: u64) -> bool {
+	seen <= 2 || seen.is_power_of_two()
+}
+
+/// Count one failure of `key` and answer how many times it has happened in
+/// this episode.
+///
+/// A gap of `quiet` since the last one starts the count again, so a connection
+/// that drops twice in a day reads as two episodes rather than one long one.
+fn count_failure(
+	reported: &mut ChainFailureReports,
+	key: ChainFailureKey,
+	now: Instant,
+	quiet: Duration,
+) -> u64 {
+	// Forgetting everything is the cheap bound: the conditions worth counting
+	// are the ones happening now, and a run that has produced this many
+	// distinct ones has already said so.
+	if reported.len() >= CHAIN_FAILURE_CONDITIONS_MAX && !reported.contains_key(&key) {
+		reported.clear();
+	}
+	let seen = reported.entry(key).or_insert((now, 0));
+	if now.duration_since(seen.0) >= quiet {
+		*seen = (now, 1);
+	} else {
+		seen.0 = now;
+		seen.1 += 1;
+	}
+	seen.1
+}
+
+/// Forget which chain calls have reported, so a test asserting on the line is
+/// not answered by a quiet period another test opened.
+#[cfg(test)]
+pub(crate) fn forget_chain_failures() {
+	CHAIN_FAILURES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
 }
 
 /// Host-UI projection of an active session for `AuthState::Connected`.

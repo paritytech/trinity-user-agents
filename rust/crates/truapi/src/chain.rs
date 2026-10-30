@@ -32,14 +32,15 @@ mod tx_validator;
 pub use account_nonces::AccountNonces;
 pub use block_backend::{BlockBackend, DispatchOutcome};
 pub use extrinsic::{
-	ExtensionError, ExtrinsicBuildError, ExtrinsicBuilder, ExtrinsicService, ExtrinsicServiceDeps,
-	ExtrinsicVersion, InheritedImplication, SubstrateSigner, TransactionExtension,
+	DEFAULT_MORTALITY_PERIOD, ExtensionError, ExtrinsicBuildError, ExtrinsicBuilder,
+	ExtrinsicService, ExtrinsicServiceDeps, ExtrinsicVersion, InheritedImplication,
+	SubstrateSigner, TransactionExtension,
 };
 pub use heads::{ChainHeads, HeadEvent, Heads};
 pub use mortality::{MortalExtrinsic, Mortality, MortalityError};
 pub use storage_watch::{
-	DecodableAtBlock, DecodedEntryChanges, RawStorageChanges, StorageEntryName, StorageWatchError,
-	WatchedHead, WatchedStorage,
+	DecodableAtBlock, DecodedEntryChanges, RawStorageChanges, StorageEntryName, StorageSnapshot,
+	StorageWatchError, WatchedHead, WatchedStorage,
 };
 pub use tx_submitter::{TxSubmitter, WatchEvent};
 pub use tx_validator::TxValidator;
@@ -48,7 +49,8 @@ pub use tx_validator::TxValidator;
 mod tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub use tests::{
-	FixedExtensionVersions, Node, V4OnlyHost, extrinsic_service_serving, method_count, serve,
+	FixedExtensionVersions, Node, V4OnlyHost, extrinsic_service_serving, live_asset_hub,
+	live_asset_hub_genesis, method_count, serve, tokio_spawner,
 };
 
 /// An encoded extrinsic, ready to submit.

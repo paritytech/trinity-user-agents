@@ -9,6 +9,7 @@
 //! schedule a transaction for a [`SubmissionPolicy`] to build, and a policy
 //! builds again any failure it accepts to retry.
 
+#[macro_use]
 mod dao;
 mod engine;
 mod ladder;
@@ -20,7 +21,10 @@ mod search;
 
 #[cfg(test)]
 mod testing;
+#[cfg(test)]
+pub use testing::engine_on;
 
+pub use dao::group_exists;
 pub use engine::{
 	DurableDeps, DurableRequest, DurableSubmission, DurableTxEngine, DurableWorkObserver,
 	EmptyRequest, RecoveryError, RegistrationError,

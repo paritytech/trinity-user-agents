@@ -67,7 +67,7 @@ fn fail_on_chain(
 /// an attempt, and the round made no progress.
 #[test]
 fn a_build_for_a_row_that_changed_meanwhile_starts_no_attempt() {
-	let ready_now = Preparation::Ready(extrinsic_for_index(0));
+	let ready_now = Preparation::Ready { extrinsic: extrinsic_for_index(0), params: None };
 	let harness = racing_harness(ready_now, dao::abandon_submission);
 
 	let id = harness.schedule_one();
@@ -83,7 +83,7 @@ fn a_build_for_a_row_that_changed_meanwhile_starts_no_attempt() {
 #[test]
 fn giving_up_on_a_row_that_changed_meanwhile_fails_nothing() {
 	let started_elsewhere: RaceWrite =
-		|tx, id| dao::start_attempt(tx, id, &extrinsic(100, 100, 64));
+		|tx, id| dao::start_attempt(tx, id, &extrinsic(100, 100, 64), None);
 	let harness = racing_harness(Preparation::GiveUp, started_elsewhere);
 
 	let id = harness.schedule_one();
@@ -130,7 +130,7 @@ fn a_watched_failure_without_a_policy_is_never_rebuilt() {
 #[test]
 fn a_rebuild_into_the_failed_attempts_bytes_is_broadcast_again() {
 	let presigned = extrinsic(1, 100, 64);
-	let same_bytes = Preparation::Ready(presigned.clone());
+	let same_bytes = Preparation::Ready { extrinsic: presigned.clone(), params: None };
 	let rebuilding_the_same =
 		ScriptedPolicy::answering_with(move |ids| answer_all_with(ids, same_bytes.clone()));
 	let harness = ScheduledTxHarness::with_policy(rebuilding_the_same);
