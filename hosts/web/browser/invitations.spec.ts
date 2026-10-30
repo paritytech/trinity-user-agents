@@ -453,11 +453,11 @@ describe("invitations between test users", () => {
             .sort(),
         );
         expect(keys).toEqual([
-          "truapi-web-signing-host:network:paseo:test-user:alice:outbox:v2",
-          "truapi-web-signing-host:network:paseo:test-user:bob:notifications:v1",
-          "truapi-web-signing-host:network:paseo:test-user:bob:received:v2",
-          "truapi-web-signing-host:network:paseo:test-user:carol:notifications:v1",
-          "truapi-web-signing-host:network:paseo:test-user:carol:received:v2",
+          "truapi-web-signing-host:network:paseo:test-user:alice:outbox:v3",
+          "truapi-web-signing-host:network:paseo:test-user:bob:notifications:v2",
+          "truapi-web-signing-host:network:paseo:test-user:bob:received:v3",
+          "truapi-web-signing-host:network:paseo:test-user:carol:notifications:v2",
+          "truapi-web-signing-host:network:paseo:test-user:carol:received:v3",
           // Example Chat's own secrets and replies, in its TrUAPI local storage.
           "truapi-web-signing-host:product:test-user:alice:truapi:product-storage:v1:18:example-chat.paseo:example-chat:invitations:v2",
           "truapi-web-signing-host:product:test-user:bob:truapi:product-storage:v1:18:example-chat.paseo:example-chat:invitations:v2",
@@ -595,7 +595,7 @@ describe("invitations between test users", () => {
         // Clearing Bob's invitations asks first, and Cancel keeps them.
         await page.evaluate(() =>
           localStorage.setItem(
-            "truapi-web-signing-host:network:paseo:test-user:bob:outbox:v2",
+            "truapi-web-signing-host:network:paseo:test-user:bob:outbox:v3",
             "[]",
           ),
         );
@@ -611,7 +611,7 @@ describe("invitations between test users", () => {
         });
         await clear.getByRole("button", { name: "Cancel" }).click();
         expect(await bobKeys()).toContain(
-          "truapi-web-signing-host:network:paseo:test-user:bob:outbox:v2",
+          "truapi-web-signing-host:network:paseo:test-user:bob:outbox:v3",
         );
         await menuAction(page, "clear-test-invitations");
         await Promise.all([

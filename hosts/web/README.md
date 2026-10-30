@@ -821,21 +821,22 @@ agreed API.
     user can press. A declined request waits silently until it expires (one day). The per-conversation chat accounts the
     design asks for, and their allowance, have no API: through TrUAPI a product's statements are signed by its one
     allowance account.
-- **What the demo keeps apart.** Its contacts, identity credentials and handle (`alice.example`) are fixtures. The
-  contacts name each demo user by the root account of their own phrase, the session account the core reports, so the
-  core mints the same handles for them as `contacts.pick` gives; the identity credentials are apart from that account.
-  None of a wallet session's services start: no Nova chat, wallet worker or Pocket runs, so fixture contacts never reach
-  a wallet's chat or a transaction it signs. The session runs only the products' side: the workers the host adds for the
-  demo (Contact Chat) and their chat providers (`ProductsOnlySession` in `src/chat/inbox.ts`). The host's invitation
-  inbox starts with the session, so requests from other tabs arrive; Example Chat does not. **Account status** reads the
-  People chain for the account the phrase derives only when its fold opens. The core looks up the account's DotNS name
-  on Asset Hub once, as it does at every sign-in. Contacts (`fixtures/invitations/test-users.ts`): Alice has Bob and
-  Carol, Bob and Carol have Alice. Lists are kept per network and demo user, under
-  `truapi-web-signing-host:network:<id>:test-user:<user>:notifications:v1`, `...:outbox:v2` (sent) and `...:received:v2`
-  (received, and the sealed reply), and Contact Chat's under `...:contact-chat-outbox:v1` and
-  `...:contact-chat-received:v1`. The `v1` sent and received lists of the earlier prototype are left in place and no
-  longer read; **Clear invitations** removes them too. Example Chat keeps its protocol secrets and topics in its own
-  TrUAPI local storage.
+- **What the demo keeps apart.** Its contacts and handle (`alice.example`) are fixtures. The contacts name each demo
+  user by the identity account their own phrase derives on the network, as chat names people, so the core mints the same
+  handles for them as `contacts.pick` gives. Its host proofs are made with the wallet keys of the user's phrase (see
+  **What is real here**). None of a wallet session's services start: no Nova chat, wallet worker or Pocket runs, so
+  fixture contacts never reach a wallet's chat or a transaction it signs. The session runs only the products' side: the
+  workers the host adds for the demo (Contact Chat) and their chat providers (`ProductsOnlySession` in
+  `src/chat/inbox.ts`). The host's invitation inbox starts with the session, so requests from other tabs arrive; Example
+  Chat does not. **Account status** reads the People chain for the account the phrase derives only when its fold opens.
+  The core looks up the account's DotNS name on Asset Hub once, as it does at every sign-in. Contacts
+  (`fixtures/invitations/test-users.ts`): Alice has Bob and Carol, Bob and Carol have Alice. Lists are kept per network
+  and demo user, under `truapi-web-signing-host:network:<id>:test-user:<user>:notifications:v2`, `...:outbox:v3` (sent)
+  and `...:received:v3` (received, and the sealed reply), and Contact Chat's under `...:contact-chat-outbox:v2` and
+  `...:contact-chat-received:v2`. Earlier lists held requests between fixture identities; they are left in place and no
+  longer read, and **Clear invitations** removes them too. Contact Chat conversations kept before the change hold
+  handles of root accounts, so the host draws their person as **Contact**. Example Chat keeps its protocol secrets and
+  topics in its own TrUAPI local storage.
 - **The proposed API** (`host-requests/1`, `src/invitations/contract.ts`), over a `MessagePort` the product hands over.
   It names a contact by the `ContactHandle` TrUAPI's `contacts.pick` gives; it has no picker of its own. Each call has
   an `id` and one `result`.
@@ -854,25 +855,41 @@ agreed API.
   by the route it arrived on, then opens it with that request's reply key. The request service does not read a route.
   Products never see a request id, route, reply key, evidence or anyone's identity; the recipient's product does not get
   the purpose or the deadline.
-- **What is real here.** X25519 + ChaCha20-Poly1305 sealing, and authentication evidence shaped as v3's `AuthEvidence`
-  (`kind`, a 32-byte `identityMac`, a 64-byte sr25519 `messageSignature`). A request's evidence covers the version, both
-  identities, the product, the purpose, the request id, the times, the return route, the public reply key and the exact
-  payload. A reply's covers the version, both identities, the product, the request id, the digest of the exact request
-  and the exact payload. Kind and identity order keep one direction's evidence from checking as the other's. The
-  sender's host checks a reply against the contact it chose, not a key the reply names. A refused reply does not use up
-  the request. Example Chat's own check is a toy protocol (`fixtures/products/example-chat/setup.ts`).
+- **What is real here.** X25519 + ChaCha20-Poly1305 sealing, and the host proof of the Establish Connection design, v3's
+  `AuthEvidence` (`kind`, a 32-byte `identityMac`, a 64-byte sr25519 `messageSignature`), made with the user's wallet
+  keys (`src/invitations/wallet-auth.ts`). As the design asks, it adapts native chat's identity authentication: the MAC
+  is BLAKE2b-256 keyed with the X25519 secret of the two chat keys, and the identity account signs, as the native app's
+  UID account does. A request is sealed to the recipient's published chat key, the design's inbox key. Before it proves
+  anything, the host checks the keys its phrase derives against the identity account and chat key the core reports for
+  the session, and that the directory publishes that chat key for that account (in the demo, the fixture directory
+  below); otherwise the request service stays off and says why. The sender identity is checked against the chat key
+  published for it, never a key a request names. A request's evidence covers the version, both identities, the product,
+  the purpose, the request id, the times, the return route, the public reply key and the exact payload. A reply's covers
+  the version, both identities, the product, the request id, the digest of the exact request and the exact payload. Kind
+  and identity order keep one direction's evidence from checking as the other's. The sender's host checks a reply
+  against the contact it chose, not a key the reply names. A refused reply does not use up the request. Example Chat's
+  own check is a toy protocol (`fixtures/products/example-chat/setup.ts`).
 - **What is simulated, and not the design's answer.**
   - The contact handle is the core's, but whom it names to the host comes from the fixture directory: the host mints
     handles (`contactHandles`) for every other demo user's session account and names a handle by that index. A name is
     not permission: a transaction resolves a handle only for someone in the picker's contacts, so a demo user known only
     to the directory, such as Carol to Bob, is drawn by name and never paid. The core writes no cache for a minted
     handle.
-  - The identity credential (`fixtures/invitations/fixture-identity.ts`) is a reference profile over keys derived from
-    public demo user ids: the MAC is BLAKE2b-256 keyed with the two identities' static X25519 secret, and the signature
-    is sr25519 over the kind, transcript and MAC. Which key a real host signs with (the native app's wallet/UID account
-    or another), the encoding, the exact transcript, pseudonymous identities per contact and any PQ part are not
-    decided. The directory that says a key is a person is the fixture, and it holds every other test account, so a host
-    takes a request from any of them, not only from the contacts its picker lists.
+  - The host proof is a pilot. The bytes the MAC and the signature cover are this repository's reference profile,
+    unchanged; the design leaves the exact preimage, encoding and labels open. It is classical, shows one identity to
+    every contact, and has had no security review: the tests show it binds what it covers, not that the profile is
+    sound. The demo users' phrases are public, so a proof from one shows only that the derivation and checks work, not
+    who a person is.
+  - The identity account's signature is only the inner proof, inside the sealed envelope. It never signs a post anyone
+    else sees: in the design, a setup request or response is submitted by a notification account, which this demo does
+    not have.
+  - Only the invitation demo runs it. A wallet signed in from the Account picker has no request service, and nothing
+    here reads its published chat key from the chain or registers one.
+  - The chat keys a host reads for its contacts come from a fixture directory (`testUserDirectory`), which answers as
+    the People chain would if each demo user had registered the key its phrase derives; the demo users have no chain
+    records. A real host reads `chainDirectory`; the lookups and refusals (no record, another key type, Asset Hub and
+    the People chain disagree) are the same code. The directory that says a key is a person is the fixture, and it holds
+    every other test account, so a host takes a request from any of them, not only from the contacts its picker lists.
   - Delivery (`fixtures/invitations/local-delivery.ts`) keeps sealed posts in this origin's `localStorage`. Each host
     has an inbox, labelled from its agreement key, and requests go there. A return route is the sender's inbox and a
     random tag, so a reply lands in the sender's inbox and the tag names its request; a recipient's host posts a reply
@@ -887,9 +904,10 @@ agreed API.
     it only keeps them.
 - **Code.** `src/invitations/` is the feature and holds no fixture: `contract.ts` what a product and its host say,
   `ports.ts` what the host needs (contacts, an identity credential, delivery), `binding.ts` the envelopes and the
-  transcripts their evidence covers, `sealing.ts` the sealing, `invitation-service.ts` one user's host side, and
+  transcripts their evidence covers, `sealing.ts` the sealing, `wallet-auth.ts` the host proof with wallet keys,
+  `published-keys.ts` the chat keys read from chain records, `invitation-service.ts` one user's host side, and
   `outbox.ts` and `received.ts` what it keeps. What only tests and the dev server use lives outside it:
-  `fixtures/invitations/` holds the fixture contacts and identities, the local delivery and the demo users,
+  `fixtures/invitations/` holds the fixture contacts and chat-key directory, the local delivery and the demo users,
   `fixtures/notifications/` the sample notifications, `fixtures/products/example-chat/` Example Chat,
   `fixtures/products/contact-chat/` Contact Chat, and `tools/demos/dev-tools.ts` the Developer section.
   `tests/unit/invitations/invitation-flow.test.ts` runs two and three users end to end, and
@@ -1397,8 +1415,9 @@ closed and every request outside this host refused: the dev server's archive of 
 loader in each tab; Alice starts a chat from Chat's **+** and the host's **Send invitation** prompt names Bob; Bob's
 Inbox names Alice and Accept goes to his running worker; Alice's worker connects only after the reply; text goes both
 ways; a reload keeps the conversation and the names; neither worker heard or kept a demo user's name or account; each
-tab's core runs the demo user's own session account; and the handle each worker holds is the one `contacts.pick` gives
-Example Chat, in the same tab, for the same person. Set `CHAT_SCREENSHOTS` to a directory to keep screenshots.
+tab's core reports the identity account the other user's contacts name the demo user by, and each host proved and
+checked with the keys of its user's phrase; and the handle each worker holds is the one `contacts.pick` gives Example
+Chat, in the same tab, for the same person. Set `CHAT_SCREENSHOTS` to a directory to keep screenshots.
 
 `browser/contacts-pick.spec.ts` checks `contacts.pick` for demo users: the host's picker names the product and lists the
 user's two contacts; a pick gives the core's handle, the same for the same person and another for another; Cancel and

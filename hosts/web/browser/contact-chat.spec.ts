@@ -10,9 +10,12 @@
  * ordinary worker loader and frame, the product's TrUAPI storage, the core's
  * contact handles (the ones `contacts.pick` gives, which the host names
  * through the handles the core mints for it), the request service, the v2
- * draft bridge, the host's Chat screen and Inbox. The identity credentials,
- * the delivery and the topics are the local simulated ones; the setup and
- * text layer are fixtures.
+ * draft bridge, the host's Chat screen and Inbox, and the host proofs, made
+ * and checked with the keys each test user's own phrase derives after the
+ * host checked them against the core's session. The chat keys a host reads
+ * for its contacts come from a fixture directory, not the chain; the delivery
+ * and the topics are the local simulated ones; the setup and text layer are
+ * fixtures.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Browser, Frame, Page } from "playwright-core";
@@ -24,7 +27,10 @@ import {
   testBrowser,
   useInvitationDemo,
 } from "./support/fixtures.js";
-import { TEST_USERS } from "../fixtures/invitations/test-users.js";
+import {
+  TEST_USERS,
+  testUserAccount,
+} from "../fixtures/invitations/test-users.js";
 
 const STEP_MS = 60_000;
 const TEST_MS = 240_000;
@@ -32,12 +38,15 @@ const PRODUCT = "contact-chat.paseo";
 
 const [ALICE, BOB] = TEST_USERS;
 
-/** What names Alice and Bob outside a product: their names, usernames and session accounts. */
+const ALICE_ACCOUNT = testUserAccount(ALICE!, "paseo");
+const BOB_ACCOUNT = testUserAccount(BOB!, "paseo");
+
+/** What names Alice and Bob outside a product: their names, usernames and identity accounts. */
 const IDENTIFYING = [
   "alice",
   "bob",
-  ALICE!.account.slice(2),
-  BOB!.account.slice(2),
+  ALICE_ACCOUNT.slice(2),
+  BOB_ACCOUNT.slice(2),
 ];
 
 let browser: Browser;
@@ -79,10 +88,10 @@ async function actAs(page: Page, user: string): Promise<void> {
   await closeTools(page);
 }
 
-/** The root key the core reports for the tab's session. */
+/** The identity account the core reports for the tab's session. */
 async function sessionAccount(page: Page): Promise<string | undefined> {
   const title = (await page.locator("#session").getAttribute("title")) ?? "";
-  return /^Root key (0x[0-9a-f]{64})/.exec(title)?.[1];
+  return /Identity account (0x[0-9a-f]{64})/.exec(title)?.[1];
 }
 
 /** The contact handles Contact Chat keeps for its conversations. */
@@ -184,12 +193,12 @@ describe("Contact Chat between test users", () => {
         await actAs(alice, "alice");
         const bob = await open();
         await actAs(bob, "bob");
-        // Each tab's core runs the test user's own session, the account the
-        // other test user's contacts name them by.
+        // Each tab's core runs the test user's own session, whose identity
+        // account the other test user's contacts name them by.
         expect([
           await sessionAccount(alice),
           await sessionAccount(bob),
-        ]).toEqual([ALICE!.account, BOB!.account]);
+        ]).toEqual([ALICE_ACCOUNT, BOB_ACCOUNT]);
         const aliceWorker = await workerFrame(alice);
         await workerFrame(bob);
 

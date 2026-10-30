@@ -1,5 +1,8 @@
+import { bytesToHex } from "@parity/truapi/scale";
 import type { HexString } from "@parity/truapi/scale";
 import type { ChatContact } from "../../src/chat/provider.js";
+import type { ChainDirectory } from "../../src/chat/nova/directory.js";
+import { ChatKeys } from "../../src/chat/nova/keys.js";
 import type { Person } from "../../src/invitations/ports.js";
 import {
   DEV_ACCOUNTS,
@@ -7,59 +10,29 @@ import {
   type DevAccount,
   type DevAccountId,
 } from "../../src/platform/dev-accounts.js";
-import { digest } from "../../src/invitations/sealing.js";
-import {
-  fixtureCredential,
-  publicIdentity,
-  type FixtureCredential,
-} from "./fixture-identity.js";
 
 /**
  * DEV ONLY. Made-up users a tab can act as instead of a wallet, to try
  * features that need more than one person. Nothing about them is verified.
  *
- * Each is a built-in account ({@link DEV_ACCOUNTS}) with fixture data added:
- * the session is the account's own, and a handle and a contact list are made
- * up. The contacts stand in for the chat contacts a wallet's chat providers
- * would offer the host's picker, and name each user by the root account of
- * their own core session, so the core mints the same contact handles for
- * them as for any person a picker names by account.
+ * Each is a built-in account ({@link DEV_ACCOUNTS}): its keys are the wallet
+ * keys its public phrase derives, as for any wallet, so anyone who has the
+ * phrase can act as it. A username and a contact list are made up. The
+ * contacts stand in for the chat contacts a wallet's chat providers would
+ * offer the host's picker, and name each user by their identity account on
+ * the network, as chat names people.
  */
 export interface TestUser extends DevAccount {
   /** Shown as the user's username. */
   handle: string;
-  /**
-   * The root account of this user's core session: the public key of their
-   * phrase, which the core reports as the session's `publicKey`. The other
-   * test users' contact lists name this user by it.
-   */
-  account: HexString;
   /** Ids of the test users in this user's contacts. */
   contacts: readonly DevAccountId[];
 }
 
-const FIXTURES: Record<
-  DevAccountId,
-  Pick<TestUser, "handle" | "account" | "contacts">
-> = {
-  alice: {
-    handle: "alice.example",
-    account:
-      "0xeebb88dc8ec60ce5b2bb5f3b13c739c1f14305878af645fd561a879caf2e431e",
-    contacts: ["bob", "carol"],
-  },
-  bob: {
-    handle: "bob.example",
-    account:
-      "0xe4fc12368bda53e15e892d007cfde65292baedeec120d89b9368b393f5322a39",
-    contacts: ["alice"],
-  },
-  carol: {
-    handle: "carol.example",
-    account:
-      "0x1095201ab3dce1e90eaf53b58ff8c14eed0ed77b3558897bd755861f06fe5b0b",
-    contacts: ["alice"],
-  },
+const FIXTURES: Record<DevAccountId, Pick<TestUser, "handle" | "contacts">> = {
+  alice: { handle: "alice.example", contacts: ["bob", "carol"] },
+  bob: { handle: "bob.example", contacts: ["alice"] },
+  carol: { handle: "carol.example", contacts: ["alice"] },
 };
 
 export const TEST_USERS: readonly TestUser[] = DEV_ACCOUNTS.map((account) => ({
@@ -72,30 +45,39 @@ export function testUserEntropy(user: TestUser): Uint8Array {
   return devAccountEntropy(user);
 }
 
-/**
- * FIXTURE TRUST BOUNDARY. The identity credential of `user`: an sr25519
- * signing key and an X25519 key, both derived from the public user id, so
- * anyone can derive them. They let the request prototype authenticate and
- * seal for real, and prove nothing about a person. They are apart from the
- * test user's core session account ({@link TestUser.account}), which only
- * names them for contact handles. No real identity, key directory or lookup
- * exists.
- */
-export function fixtureIdentity(user: TestUser): FixtureCredential {
-  return fixtureCredential(
-    digest("truapi-web-host/dev-fixture/identity-signing/1", user.id),
-    digest("truapi-web-host/dev-fixture/identity-agreement/1", user.id),
-  );
+const derived = new Map<string, ChatKeys>();
+
+/** The wallet keys `user`'s phrase derives on the network with `networkSuffix`, as the core derives them. */
+export function testUserKeys(user: TestUser, networkSuffix: string): ChatKeys {
+  const key = `${user.id}:${networkSuffix}`;
+  let keys = derived.get(key);
+  if (keys === undefined) {
+    keys = ChatKeys.fromEntropy(testUserEntropy(user), networkSuffix);
+    derived.set(key, keys);
+  }
+  return keys;
 }
 
-/** `user` as another host's fixture directory knows them. */
-export function personOf(user: TestUser): Person {
+/** `user`'s identity account on the network with `networkSuffix`. */
+export const testUserAccount = (
+  user: TestUser,
+  networkSuffix: string,
+): HexString =>
+  bytesToHex(testUserKeys(user, networkSuffix).identity) as HexString;
+
+/** `user` as another host knows them, once it read their published chat key. */
+export function personOf(
+  user: TestUser,
+  networkSuffix: string,
+  chatKey: Uint8Array,
+): Person {
+  const account = testUserAccount(user, networkSuffix);
   return {
     id: user.id,
-    account: user.account,
+    account,
     name: user.name,
     handle: user.handle,
-    identity: publicIdentity(fixtureIdentity(user)),
+    identity: { signingPublic: account, agreementPublic: bytesToHex(chatKey) },
   };
 }
 
@@ -105,8 +87,41 @@ export function contactsOf(user: TestUser): TestUser[] {
 }
 
 /** `user`'s contacts as the host's contact picker lists them. */
-export function chatContactsOf(user: TestUser): ChatContact[] {
-  return contactsOf(user).map(({ account, name }) => ({ account, name }));
+export function chatContactsOf(
+  user: TestUser,
+  networkSuffix: string,
+): ChatContact[] {
+  return contactsOf(user).map((other) => ({
+    account: testUserAccount(other, networkSuffix),
+    name: other.name,
+  }));
+}
+
+/**
+ * FIXTURE DIRECTORY, in place of the chain. The test users have no chain
+ * records, so this answers as the People chain would if each had registered
+ * its username and the chat key its phrase derives. It proves nothing about
+ * who holds a key; a real host reads `chainDirectory` instead.
+ */
+export function testUserDirectory(networkSuffix: string): ChainDirectory {
+  const byAccount = new Map(
+    TEST_USERS.map((user) => [testUserAccount(user, networkSuffix), user]),
+  );
+  return {
+    names: async () => null,
+    consumer: async (account) => {
+      const user = byAccount.get(bytesToHex(account) as HexString);
+      return user === undefined
+        ? null
+        : {
+            liteUsername: user.id,
+            fullUsername: null,
+            chatKey: testUserKeys(user, networkSuffix).chatPublic,
+          };
+    },
+    owners: async () => ({ assetHub: null, people: null }),
+    hasAllowance: async () => false,
+  };
 }
 
 const TAB_KEY = "truapi-web-signing-host:dev:test-user";
@@ -123,17 +138,18 @@ export function setTabTestUser(storage: Storage, id: string | null): void {
 }
 
 /**
- * The version of each list a test user keeps. The sent and received lists
- * moved to v2 with the host-owned request flow; v1 lists are left as they
- * are and no longer read. Contact Chat's requests are listed apart from
- * Example Chat's.
+ * The version of each list a test user keeps. Each moved on when what it
+ * holds stopped being readable: v2 with the host-owned request flow, then
+ * every list with the wallet's own keys, whose requests name identity
+ * accounts. Earlier lists are left as they are and no longer read. Contact
+ * Chat's requests are listed apart from Example Chat's.
  */
-const PART_VERSION = {
-  notifications: 1,
-  outbox: 2,
-  received: 2,
-  "contact-chat-outbox": 1,
-  "contact-chat-received": 1,
+export const PART_VERSION = {
+  notifications: 2,
+  outbox: 3,
+  received: 3,
+  "contact-chat-outbox": 2,
+  "contact-chat-received": 2,
 } as const;
 
 /** Where a test user's data is kept, per network. */

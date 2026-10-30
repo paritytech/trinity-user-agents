@@ -34,22 +34,24 @@ import {
 } from "../../src/contacts/username-directory.js";
 import type { HandleNames } from "../../src/contacts/contacts.js";
 import { FixtureContacts } from "../../fixtures/invitations/fixture-contacts.js";
-import {
-  FixtureIdentityAuth,
-  publicIdentity,
-} from "../../fixtures/invitations/fixture-identity.js";
+import { sessionChatKeys } from "../../src/chat/nova-session.js";
+import { WalletIdentityAuth } from "../../src/invitations/wallet-auth.js";
+import { ownIdentityProblem } from "../../src/invitations/published-keys.js";
 import { LocalDelivery } from "../../fixtures/invitations/local-delivery.js";
 import { LocalTopics } from "../../fixtures/invitations/local-topics.js";
 import { pageStore } from "../../fixtures/invitations/shared-store.js";
 import * as samples from "../../fixtures/notifications/sample-notifications.js";
 import {
+  PART_VERSION,
   TEST_USERS,
   chatContactsOf,
-  fixtureIdentity,
   setTabTestUser,
   tabTestUser,
+  testUserAccount,
+  testUserDirectory,
   testUserEntropy,
   testUserKey,
+  testUserKeys,
   testUserScope,
   type TestUser,
 } from "../../fixtures/invitations/test-users.js";
@@ -107,6 +109,11 @@ export interface DevToolsDeps {
   showProduct(): void;
   /** The host's names for the contact handles the core mints. */
   handles: HandleNames;
+  /** What the core reports of the signed-in session's keys, once it is signed in. */
+  coreSession(): Promise<{
+    identityAccountId?: string;
+    chatPublicKey?: string;
+  }>;
   /** Bring Chat to the front, at Contact Chat's request. */
   showChat(): void;
   log(line: string): void;
@@ -250,12 +257,15 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
         ? null
         : testUserKey(deps.network.id, testUser.id, "notifications"),
     scope: testUser === null ? null : testUserScope(testUser),
-    contacts: testUser === null ? null : chatContactsOf(testUser),
+    contacts:
+      testUser === null
+        ? null
+        : chatContactsOf(testUser, deps.network.networkSuffix),
     people:
       testUser === null
         ? null
-        : TEST_USERS.filter((user) => user.id !== testUser.id).map(
-            (user) => user.account,
+        : TEST_USERS.filter((user) => user.id !== testUser.id).map((user) =>
+            testUserAccount(user, deps.network.networkSuffix),
           ),
     usernames:
       testUser === null
@@ -263,7 +273,10 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
         : fixtureDirectory(
             "the test users",
             TEST_USERS.filter((user) => user.id !== testUser.id).map(
-              (user) => ({ account: user.account, username: user.id }),
+              (user) => ({
+                account: testUserAccount(user, deps.network.networkSuffix),
+                username: user.id,
+              }),
             ),
           ),
     notificationActions: session?.notificationActions ?? null,
@@ -351,12 +364,23 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
     const timer = setTimeout(task, Math.min(delayMs, 2 ** 31 - 1));
     return () => clearTimeout(timer);
   };
-  const credential = fixtureIdentity(self);
+  const suffix = deps.network.networkSuffix;
+  // The wallet keys of the test user's phrase. Nothing is signed or opened
+  // with them until `start` checked them against the core's session and the
+  // published chat key.
+  const walletKeys = testUserKeys(self, suffix);
+  const auth = new WalletIdentityAuth(walletKeys);
+  const directory = testUserDirectory(suffix);
+  let verified = false;
   deps.notifications.setScope(keys.notifications);
-  const contacts = new FixtureContacts(self, deps.handles);
+  const contacts = new FixtureContacts(self, deps.handles, {
+    networkSuffix: suffix,
+    directory,
+    log: deps.log,
+  });
   const delivery = () =>
     new LocalDelivery({
-      self: publicIdentity(credential).agreementPublic,
+      self: auth.identityFor().agreementPublic,
       network: deps.network.id,
       store: pageStore(),
       now,
@@ -366,7 +390,7 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
     });
   const service = new InvitationService({
     product,
-    auth: new FixtureIdentityAuth(credential, cryptoRandom),
+    auth,
     contacts,
     notifications: deps.notifications,
     storage: localStorage,
@@ -380,7 +404,7 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
     log: deps.log,
   });
 
-  // Contact Chat: its own request service, over the same fixture identity,
+  // Contact Chat: its own request service, over the same wallet keys,
   // contacts and delivery, and its own lists.
   const chatProduct = contactChat(deps.network.networkSuffix);
   const chatKeys = {
@@ -389,7 +413,7 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
   };
   const chatService = new InvitationService({
     product: chatProduct,
-    auth: new FixtureIdentityAuth(credential, cryptoRandom),
+    auth,
     contacts,
     notifications: deps.notifications,
     storage: localStorage,
@@ -408,16 +432,38 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
     now,
   });
   let stopTopics = () => {};
+  /** Contact Chat's request port, held until the wallet keys are checked. */
+  let pendingChat: MessagePort | null = null;
+  /**
+   * Why the wallet keys may not prove this user, or null: they must be the
+   * keys the core's session holds, and the ones published for its identity
+   * account.
+   */
+  const walletProblem = async (): Promise<string | null> => {
+    const core = await deps.coreSession();
+    const checked = sessionChatKeys({
+      entropy: testUserEntropy(self),
+      networkSuffix: suffix,
+      identityAccountId: core.identityAccountId as HexString | undefined,
+      chatPublicKey: core.chatPublicKey as HexString | undefined,
+    });
+    if (typeof checked === "string") return checked;
+    return ownIdentityProblem(directory, walletKeys);
+  };
+  // Naming needs no chat key: the host draws whom a handle names even when
+  // it cannot reach them.
   const handleContacts: HandleContacts = {
     resolve: (handle: ContactHandle) => {
-      const person = contacts.resolve(handle);
-      return person === null
+      const account = deps.handles.accountFor(handle.bytes);
+      const user = account === null ? undefined : contacts.nameOf(account);
+      return account === null || user === undefined
         ? null
-        : { account: person.account, name: person.name, seed: person.handle };
+        : { account, name: user.name, seed: user.handle };
     },
     handleFor: (account) => {
-      const person = contacts.byAccount(account);
-      return person === undefined ? null : contacts.handleFor(person);
+      if (contacts.nameOf(account) === undefined) return null;
+      const bytes = deps.handles.handleFor(account);
+      return bytes === null ? null : { bytes };
     },
   };
   const chatOptions: ChatV2ProviderOptions = {
@@ -499,6 +545,7 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
         },
         onInvitationsPort: (port) => {
           if (current !== generation) return;
+          if (!verified) return port.close();
           service.attachProduct(productPort(port));
           onConnected();
         },
@@ -546,8 +593,14 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
   return {
     chatProduct,
     chatOptions,
-    attachChat: (port) => chatService.attachProduct(productPort(port)),
-    detachChat: () => chatService.detachProduct(),
+    attachChat: (port) => {
+      if (verified) chatService.attachProduct(productPort(port));
+      else pendingChat = port;
+    },
+    detachChat: () => {
+      pendingChat = null;
+      chatService.detachProduct();
+    },
     serveTopics: (port) => {
       stopTopics();
       stopTopics = topics.serve(port);
@@ -590,8 +643,20 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
       deps.useStorage(testUserScope(self));
       await current.activateLocalSession(testUserEntropy(self));
       deps.log(`Signed in to test account ${self.name}.`);
+      const problem = await walletProblem();
+      if (problem !== null) {
+        deps.log(`Invitations stay off: ${problem}`);
+        pendingChat?.close();
+        pendingChat = null;
+        return;
+      }
+      await contacts.refresh();
+      verified = true;
       service.start();
       chatService.start();
+      if (pendingChat !== null)
+        chatService.attachProduct(productPort(pendingChat));
+      pendingChat = null;
     },
     show: (visible) => {
       host.hidden = !visible;
@@ -609,10 +674,13 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
     reset: () => {
       service.stop();
       chatService.stop();
-      for (const key of [...Object.values(keys), ...Object.values(chatKeys)])
-        localStorage.removeItem(key);
-      for (const part of ["outbox", "received"] as const)
-        localStorage.removeItem(testUserKey(deps.network.id, self.id, part, 1));
+      for (const part of Object.keys(
+        PART_VERSION,
+      ) as (keyof typeof PART_VERSION)[])
+        for (let version = 1; version <= PART_VERSION[part]; version += 1)
+          localStorage.removeItem(
+            testUserKey(deps.network.id, self.id, part, version),
+          );
     },
   };
 }

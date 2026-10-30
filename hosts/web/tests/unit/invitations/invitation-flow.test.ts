@@ -33,13 +33,10 @@ import {
 } from "../../../src/invitations/sealing.js";
 import { NotificationStore } from "../../../src/notifications/notifications.js";
 import { MemoryStorage } from "../../support/test-support.js";
-import { hostContactsOf, indexed } from "../../support/host-handles.js";
+import { SUFFIX, hostContactsOf, indexed } from "../../support/host-handles.js";
+import { WalletIdentityAuth } from "../../../src/invitations/wallet-auth.js";
 import * as setup from "../../../fixtures/products/example-chat/setup.js";
 import { FixtureContacts } from "../../../fixtures/invitations/fixture-contacts.js";
-import {
-  FixtureIdentityAuth,
-  publicIdentity,
-} from "../../../fixtures/invitations/fixture-identity.js";
 import {
   LocalDelivery,
   POST_LIFETIME_MS,
@@ -54,10 +51,16 @@ import {
 } from "../../../fixtures/invitations/shared-store.js";
 import {
   TEST_USERS,
-  fixtureIdentity,
-  personOf,
+  personOf as personOn,
+  testUserAccount,
+  testUserDirectory,
+  testUserKeys,
   type TestUser,
 } from "../../../fixtures/invitations/test-users.js";
+
+/** `user` as another test user's host knows them, with the chat key their phrase derives. */
+const personOf = (user: TestUser) =>
+  personOn(user, SUFFIX, testUserKeys(user, SUFFIX).chatPublic);
 
 /**
  * Two or three users' hosts and products, each with its own storage, over one
@@ -113,9 +116,11 @@ class Actor {
   /** Keys this user's host wrote to the shared store. */
   readonly writes: string[] = [];
   readonly log: string[] = [];
-  readonly auth: FixtureIdentityAuth;
+  readonly auth: WalletIdentityAuth;
   readonly store: SharedStore;
   readonly contacts: FixtureContacts;
+  /** Whether this host's reads of published chat keys fail, as an unreachable chain's do. */
+  unreadable = false;
   confirm = true;
   service!: InvitationService;
   private handler: ((value: unknown) => void) | null = null;
@@ -130,8 +135,19 @@ class Actor {
   ) {
     this.notifications = new NotificationStore(this.storage, clock.now);
     this.notifications.setScope(`${user.id}:notifications`);
-    this.auth = new FixtureIdentityAuth(fixtureIdentity(user), cryptoRandom);
-    this.contacts = new FixtureContacts(user, hostContactsOf(user));
+    this.auth = new WalletIdentityAuth(testUserKeys(user, SUFFIX));
+    const directory = testUserDirectory(SUFFIX);
+    this.contacts = new FixtureContacts(user, hostContactsOf(user), {
+      networkSuffix: SUFFIX,
+      directory: {
+        ...directory,
+        consumer: async (account) => {
+          if (this.unreadable) throw new Error("the chain is unreachable");
+          return directory.consumer(account);
+        },
+      },
+    });
+    void this.contacts.refresh();
     const inner = world.store();
     this.store = {
       ...inner,
@@ -153,7 +169,7 @@ class Actor {
       storage: this.storage,
       keys: { sent: "sent", received: "received" },
       delivery: new LocalDelivery({
-        self: publicIdentity(fixtureIdentity(this.user)).agreementPublic,
+        self: this.auth.identityFor().agreementPublic,
         network: NETWORK,
         store: this.store,
         now: this.clock.now,
@@ -427,7 +443,7 @@ for (const kind of ["inbox", "topic"] as const)
         return [
           user.name,
           user.handle,
-          user.account.slice(2),
+          testUserAccount(user, SUFFIX).slice(2),
           identity.signingPublic.slice(2),
           identity.agreementPublic.slice(2),
         ];
@@ -642,9 +658,8 @@ for (const kind of ["inbox", "topic"] as const)
           evidence: AuthEvidence;
         }) => unknown,
       ) => {
-        const plain = new FixtureIdentityAuth(
-          fixtureIdentity(holder),
-          cryptoRandom,
+        const plain = new WalletIdentityAuth(
+          testUserKeys(holder, SUFFIX),
         ).openSealed(fromHex(sealed), REQUEST_SEAL)!;
         return toHex(
           sealTo(
@@ -922,6 +937,35 @@ for (const kind of ["inbox", "topic"] as const)
           }),
         },
       ]);
+    });
+
+    test("a request the user replied to is told again after a restart even when the sender's key cannot be read now, and nothing new is taken from them", async () => {
+      const { alice, bob } = world();
+      await invite(alice, BOB);
+      await accept(bob);
+      bob.unreadable = true;
+      await bob.contacts.refresh();
+      bob.stop();
+      bob.messages.length = 0;
+      bob.start();
+      expect(
+        bob.messages.filter((message) => message.kind === "replied"),
+      ).toEqual([
+        {
+          kind: "replied",
+          request: expect.objectContaining({
+            handle: newest(bob),
+            sender: bob.contacts.handleForIdentity(
+              personOf(ALICE).identity.signingPublic,
+            ),
+          }),
+        },
+      ]);
+      // Authenticating a new request still needs the key: it is ignored.
+      const before = bob.notifications.list().length;
+      await invite(alice, BOB);
+      expect(bob.notifications.list()).toHaveLength(before);
+      expect(bob.log.at(-1)).toContain("the sender is not a contact");
     });
 
     test("the largest payload and purpose the API takes go there and back", async () => {

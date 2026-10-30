@@ -218,9 +218,8 @@ export class InvitationService {
   private tellReplied(port: ProductPort): void {
     for (const item of this.received.list()) {
       if (item.replied === null || this.toldReplied.has(item.handle)) continue;
-      const sender = this.deps.contacts.byIdentity(item.context.from);
-      const handle =
-        sender === undefined ? null : this.deps.contacts.handleFor(sender);
+      // Authenticated when it arrived; naming the sender needs no current key.
+      const handle = this.deps.contacts.handleForIdentity(item.context.from);
       if (handle === null) continue;
       this.toldReplied.add(item.handle);
       port.post({
@@ -421,8 +420,13 @@ export class InvitationService {
     const { contact, purpose, ttlMs, payload } = request.value;
     const product = this.deps.product;
     const person = this.deps.contacts.resolve(contact);
-    if (person === null)
-      return failure("Unknown", "This contact names nobody here.");
+    if (person === null) {
+      const problem = this.deps.contacts.problem(contact);
+      if (problem === null)
+        return failure("Unknown", "This contact names nobody here.");
+      this.deps.log(`${product.name}'s request was not sent: ${problem}`);
+      return failure("Unknown", "Your host cannot reach this contact now.");
+    }
     const confirmed = await this.deps.confirmSend({
       product,
       to: { name: person.name, handle: person.handle },

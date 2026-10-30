@@ -28,12 +28,9 @@ import {
 } from "../../../../src/invitations/sealing.js";
 import { NotificationStore } from "../../../../src/notifications/notifications.js";
 import { MemoryStorage } from "../../../support/test-support.js";
-import { hostContactsOf } from "../../../support/host-handles.js";
+import { SUFFIX, hostContactsOf } from "../../../support/host-handles.js";
+import { WalletIdentityAuth } from "../../../../src/invitations/wallet-auth.js";
 import { FixtureContacts } from "../../../../fixtures/invitations/fixture-contacts.js";
-import {
-  FixtureIdentityAuth,
-  publicIdentity,
-} from "../../../../fixtures/invitations/fixture-identity.js";
 import {
   LocalDelivery,
   inboxOf,
@@ -42,8 +39,10 @@ import { LocalTopics } from "../../../../fixtures/invitations/local-topics.js";
 import { MemoryWorld } from "../../../../fixtures/invitations/shared-store.js";
 import {
   TEST_USERS,
-  fixtureIdentity,
-  personOf,
+  personOf as personOn,
+  testUserAccount,
+  testUserDirectory,
+  testUserKeys,
   type TestUser,
 } from "../../../../fixtures/invitations/test-users.js";
 import {
@@ -123,7 +122,10 @@ class User {
   ) {
     this.notifications = new NotificationStore(this.hostStorage, clock.now);
     this.notifications.setScope(`${user.id}:notifications`);
-    this.contacts = new FixtureContacts(user, hostContactsOf(user));
+    this.contacts = new FixtureContacts(user, hostContactsOf(user), {
+      networkSuffix: SUFFIX,
+      directory: testUserDirectory(SUFFIX),
+    });
   }
 
   /** The host's own contacts, as Contact Chat's provider is lent them. */
@@ -144,16 +146,17 @@ class User {
 
   /** Start the host and the worker (again, over the same storage). */
   async start(): Promise<void> {
-    const credential = fixtureIdentity(this.user);
+    await this.contacts.refresh();
+    const auth = new WalletIdentityAuth(testUserKeys(this.user, SUFFIX));
     this.service = new InvitationService({
       product: PRODUCT,
-      auth: new FixtureIdentityAuth(credential, cryptoRandom),
+      auth,
       contacts: this.contacts,
       notifications: this.notifications,
       storage: this.hostStorage,
       keys: { sent: "sent", received: "received" },
       delivery: new LocalDelivery({
-        self: publicIdentity(credential).agreementPublic,
+        self: auth.identityFor().agreementPublic,
         network: NETWORK,
         store: this.world.store(),
         now: this.clock.now,
@@ -280,7 +283,10 @@ class User {
 
   /** Start a chat with `to` as the host's New chat does. */
   async startWith(to: TestUser, welcome: string): Promise<string> {
-    const roomId = await this.provider.start!.start(to.account, welcome);
+    const roomId = await this.provider.start!.start(
+      testUserAccount(to, SUFFIX),
+      welcome,
+    );
     await settle();
     return roomId;
   }
@@ -337,13 +343,15 @@ const texts = (messages: ChatMessage[]) =>
   }));
 
 /** What names a person outside a product: never in what a product hears or keeps. */
+/** `user` as another test user's host knows them, with the chat key their phrase derives. */
+const personOf = (user: TestUser) =>
+  personOn(user, SUFFIX, testUserKeys(user, SUFFIX).chatPublic);
+
 function identifying(user: TestUser): string[] {
-  const identity = publicIdentity(fixtureIdentity(user));
+  const { identity } = personOf(user);
   return [
     user.name,
     user.handle,
-    user.account,
-    user.account.slice(2),
     identity.signingPublic.slice(2),
     identity.agreementPublic.slice(2),
     inboxOf(identity.agreementPublic),
@@ -548,7 +556,9 @@ describe("Contact Chat between two hosts, by contact handle", () => {
       reason: "Start a new chat with them to send a request",
     });
     // The host offers a new request for the person, in the same room.
-    expect(alice.provider.start!.conversationWith!(BOB.account)).toBeNull();
+    expect(
+      alice.provider.start!.conversationWith!(testUserAccount(BOB, SUFFIX)),
+    ).toBeNull();
     expect(await alice.startWith(BOB, "")).toBe(roomId);
     expect(alice.prompts).toHaveLength(2);
     expect(alice.engine.stored()[0]!.status).toBe("waiting");
