@@ -44,10 +44,16 @@ impl EncryptedStorage for CliCleartextStorage {
 		let _writing = self.writing.lock().expect("cleartext storage mutex poisoned");
 		let mut values = read_values(&self.path)?;
 		values.insert(hex::encode(key), hex::encode(value));
-		let text = serde_json::to_string_pretty(&values)
-			.map_err(|error| file_error("encoding", &self.path, error))?;
-		write_secret_file(&self.path, text.as_bytes())
-			.map_err(|error| file_error("writing", &self.path, error))
+		write_values(&self.path, &values)
+	}
+
+	async fn delete_encrypted(&self, key: &[u8]) -> Result<(), GenericError> {
+		let _writing = self.writing.lock().expect("cleartext storage mutex poisoned");
+		let mut values = read_values(&self.path)?;
+		if values.remove(&hex::encode(key)).is_none() {
+			return Ok(());
+		}
+		write_values(&self.path, &values)
 	}
 }
 
@@ -61,6 +67,13 @@ fn read_values(path: &Path) -> Result<BTreeMap<String, String>, GenericError> {
 	serde_json::from_str(&text).map_err(|error| file_error("decoding", path, error))
 }
 
+/// Replaces the file with `values`.
+fn write_values(path: &Path, values: &BTreeMap<String, String>) -> Result<(), GenericError> {
+	let text = serde_json::to_string_pretty(values)
+		.map_err(|error| file_error("encoding", path, error))?;
+	write_secret_file(path, text.as_bytes()).map_err(|error| file_error("writing", path, error))
+}
+
 /// A failed file operation, naming the file.
 fn file_error(action: &str, path: &Path, error: impl std::fmt::Display) -> GenericError {
 	GenericError { reason: format!("{action} cleartext storage file {}: {error}", path.display()) }
@@ -70,9 +83,8 @@ fn file_error(action: &str, path: &Path, error: impl std::fmt::Display) -> Gener
 mod tests {
 	use super::*;
 
-	/// A receive key's secret is written once and read back when its cheque
-	/// arrives, possibly after a restart, so values must survive a new store
-	/// over the same file, and a key never written reads as absent.
+	/// A secret is read back after a restart, so values must survive a new
+	/// store over the same file, and a key never written reads as absent.
 	#[tokio::test]
 	async fn a_written_value_reads_back_from_a_new_store_and_others_are_absent() {
 		let directory = tempfile::tempdir().expect("temporary directory");
@@ -88,6 +100,23 @@ mod tests {
 
 		assert_eq!(stored.as_deref().map(Vec::as_slice), Some(b"secret".as_slice()));
 		assert_eq!(absent, None);
+	}
+
+	/// A deleted key reads as absent, the others stay, and deleting a key
+	/// that was never written succeeds.
+	#[tokio::test]
+	async fn a_deleted_value_reads_as_absent_and_others_stay() {
+		let directory = tempfile::tempdir().expect("temporary directory");
+		let storage = CliCleartextStorage::new(directory.path().join("cleartext-storage.json"));
+		storage.write_encrypted(b"gone", b"one").await.unwrap();
+		storage.write_encrypted(b"kept", b"two").await.unwrap();
+
+		storage.delete_encrypted(b"gone").await.unwrap();
+		storage.delete_encrypted(b"never").await.unwrap();
+
+		assert_eq!(storage.read_encrypted(b"gone").await.unwrap(), None);
+		let kept = storage.read_encrypted(b"kept").await.unwrap();
+		assert_eq!(kept.as_deref().map(Vec::as_slice), Some(b"two".as_slice()));
 	}
 
 	/// The file holds receive key secrets, so other users must not read it.

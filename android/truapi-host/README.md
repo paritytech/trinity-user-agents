@@ -160,7 +160,7 @@ The `NativeAnnouncedPairing` that `notifyPairingAllowanceAllocation` returns hol
 
 `currentInstallation` on the runtime bridge returns the 32-byte id of the current app installation, the one the host registers for recovery. NFT purse item keys are derived under it. Defaults to a rejection, which fails `createItems`.
 
-`encryptedStorageRead` and `encryptedStorageWrite` on the runtime bridge keep values encrypted at rest and out of backups, such as in encrypted preferences. The core stores the secrets of NFT receive keys there. A missing key reads as null; throw only when the store cannot be read. Defaults to a rejection, which fails `createReceiveKey`.
+`encryptedStorageRead`, `encryptedStorageWrite` and `encryptedStorageDelete` on the runtime bridge keep values encrypted at rest and out of backups, such as in encrypted preferences. The core stores secrets there that its database must not hold. A missing key reads as null; throw when the store cannot be read or a value no longer decrypts. Deleting a missing key succeeds. Defaults to a rejection, which turns off the features that need it.
 
 `durableWorkChanged` on the runtime bridge reports whether the core has durable transactions still awaiting a verdict, starting with the state it finds at launch. While it is `true`, enqueue unique background work requiring a network connection that awaits `runDurableRecovery()`, which returns once nothing is live and throws `RecoveryException` when recovery stopped early, so the work is retried. Defaults to a no-op for a host that runs no durable work.
 

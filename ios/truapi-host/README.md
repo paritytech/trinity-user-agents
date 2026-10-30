@@ -300,11 +300,13 @@ current app installation, the one the host registers for recovery. NFT purse
 item keys are derived under it. Defaults to a rejection, which fails
 `createItems`.
 
-`encryptedStorageRead(key:)` and `encryptedStorageWrite(key:value:)` on the
-runtime bridge keep values encrypted at rest and out of backups, such as Keychain
-items with a `ThisDeviceOnly` accessibility. The core stores the secrets of NFT
-receive keys there. A missing key reads as `nil`; throw only when the store
-cannot be read. Defaults to a rejection, which fails `createReceiveKey`.
+`encryptedStorageRead(key:)`, `encryptedStorageWrite(key:value:)` and
+`encryptedStorageDelete(key:)` on the runtime bridge keep values encrypted at
+rest and out of backups, such as Keychain items with a `ThisDeviceOnly`
+accessibility. The core stores secrets there that its database must not hold. A
+missing key reads as `nil`; throw when the store cannot be read or a value no
+longer decrypts. Deleting a missing key succeeds. Defaults to a rejection,
+which turns off the features that need it.
 
 `durableWorkChanged(pending:)` on the runtime bridge reports whether the core
 has durable transactions still awaiting a verdict, starting with the state it
