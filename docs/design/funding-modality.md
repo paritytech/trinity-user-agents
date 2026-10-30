@@ -276,7 +276,7 @@ History: In progress · Completed.
      $50 CASH
  ●─•─•─●─•─•─○        Started · Received · Added      (out: Received by provider · Sent)
  Checking your payment            band
- Checked with the provider 3s ago  last_heard_at_ms · just now / s / min / h
+ Confirmation 2 of 3 · 4s ago     detail, else "Checked with the provider 3s ago" (last_heard_at_ms)
  Send this exact amount inc. fees   €50.55 ›
  Reference                    5729 4183 6602 ⧉
  Arrives  1–2 business days · Final Cash depends on the rate on arrival
@@ -292,6 +292,23 @@ History: In progress · Completed.
 | crypto: CheckingPayment · PreparingPayout · Sending · Sent | Confirming your {asset} deposit · Exchanging your money for {asset} · Sending your {asset} · Your {asset} is on its way to your wallet |
 | Retrying · Delayed                                         | amber, "don't pay again" on top-ups                                                                                                    |
 | Cancel · Ended                                             | no line                                                                                                                                |
+
+The line under the band is the provider's latest `Progress` fact for the current step, worded by the host, so the
+provider never needs the user's language. It clears when the step moves on; without one the host shows when the provider
+was last heard. Each part after the first is joined with " · "; the line is one line, cut short with "…".
+
+| Fact                             | Line                                                         |
+| -------------------------------- | ------------------------------------------------------------ |
+| none · Checked                   | Checked with the provider just now / 12s ago                 |
+| Confirmations { done, required } | Confirmation 7 of 13 · last block 3s ago (crypto)            |
+| PriceChecked                     | Price checked · 3s ago                                       |
+| Parts { done, total }            | Part 2 of 4 · last part 5s ago                               |
+| Scheduled                        | About 12s left, then Any moment now                          |
+| SentByBank                       | Sent by your bank · Tue 14:02 (inbound bank)                 |
+| ExpectedBy                       | Expected by Thu 3 Nov                                        |
+| InReview                         | The provider is reviewing the payment · 3s ago               |
+| Attempt { n, of }                | Attempt 2 of 3 · next try in 20s                             |
+| Other { text }                   | the provider's text as given, at most 80 characters · 3s ago |
 
 A bank top-up cancelled before paying takes a transfer that arrives within 7 days: it opens again and is added.
 
