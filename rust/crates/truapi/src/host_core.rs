@@ -923,12 +923,23 @@ impl SigningHostRuntime {
 		self.services.install_installation_provider(provider)
 	}
 
+	/// Install the host storage encrypted at rest, which keeps the secrets the
+	/// core database must not hold. Set-once; returns whether this call
+	/// installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn set_encrypted_storage(
+		&self,
+		storage: Arc<dyn crate::encrypted_storage::EncryptedStorage>,
+	) -> bool {
+		self.services.install_encrypted_storage(storage)
+	}
+
 	/// Starts what runs over the core database: the durable transaction
 	/// engine, then NFT purses with the tracker of their holdings. Call it
 	/// once the setters it reads have run: [`Self::set_core_db`],
-	/// [`Self::set_installation_provider`] and
-	/// [`Self::set_durable_work_observer`]. A part whose inputs are missing
-	/// is skipped and logged. A second call does nothing.
+	/// [`Self::set_installation_provider`], [`Self::set_encrypted_storage`]
+	/// and [`Self::set_durable_work_observer`]. A part whose inputs are
+	/// missing is skipped and logged. A second call does nothing.
 	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.start_core_services"))]
 	pub fn start_core_services(&self) {
@@ -955,8 +966,14 @@ impl SigningHostRuntime {
 			tracing::warn!("no installation provider set, NFT purses are off");
 			return;
 		};
-		let keys = Arc::new(Arc::downgrade(&self.signing_host));
-		let deps = crate::nft::NftLedgerDeps { db, installation, keys, durable };
+		if self.services.encrypted_storage().is_none() {
+			tracing::warn!("no encrypted storage set, NFT purses are off");
+		}
+
+		let signing_host = Arc::downgrade(&self.signing_host);
+		let keys = Arc::new(signing_host.clone());
+		let secrets = Arc::new(signing_host);
+		let deps = crate::nft::NftLedgerDeps { db, installation, keys, durable, secrets };
 		let ledger = crate::nft::NftLedger::new(deps);
 		self.services.install_nft_ledger(ledger.clone());
 		start_holding_tracker(&self.services, ledger);
@@ -2210,9 +2227,9 @@ mod tests {
 			product_account::derive_identity_keypair,
 			sso::pairing::{
 				PairingBootstrap, derive_x25519_keypair_from_entropy, establish_sso_session_info,
-				x25519_public_key,
 			},
 			worker::WorkerTransition,
+			x25519_seal::X25519PrivateKey,
 		},
 		test_support::{StubPlatform, runtime_config, test_spawner, wait_until},
 	};
@@ -3897,6 +3914,20 @@ mod tests {
 		assert!(runtime.services.nft_purses().is_none());
 	}
 
+	/// A receive key whose secret the host does not keep could never open a
+	/// cheque, so without encrypted storage there are no purses at all.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn nft_purses_stay_off_without_encrypted_storage() {
+		let (runtime, platform) = test_signing_runtime();
+		runtime.set_core_db(memory_db());
+		runtime.set_installation_provider(platform);
+
+		runtime.start_core_services();
+
+		assert!(runtime.services.nft_purses().is_none());
+	}
+
 	/// The setters only store their inputs, so purses are served once the
 	/// services start and not before.
 	#[cfg(not(target_arch = "wasm32"))]
@@ -3905,6 +3936,9 @@ mod tests {
 		let (runtime, platform) = test_signing_runtime();
 		runtime.set_core_db(memory_db());
 		runtime.set_installation_provider(platform);
+		runtime.set_encrypted_storage(Arc::new(
+			crate::encrypted_storage::MemoryEncryptedStorage::default(),
+		));
 
 		runtime.start_core_services();
 
@@ -3920,6 +3954,9 @@ mod tests {
 		let (runtime, platform) = test_signing_runtime();
 		runtime.set_core_db(memory_db());
 		runtime.set_installation_provider(platform);
+		runtime.set_encrypted_storage(Arc::new(
+			crate::encrypted_storage::MemoryEncryptedStorage::default(),
+		));
 		runtime.start_core_services();
 		let services = Arc::downgrade(&runtime.services);
 
@@ -4050,7 +4087,7 @@ mod tests {
 		let peer_encryption_secret = [0x42; 32];
 		let peer = PairedSsoPeer {
 			statement_account_id: [0x31; 32],
-			encryption_public_key: x25519_public_key(peer_encryption_secret),
+			encryption_public_key: X25519PrivateKey::from(peer_encryption_secret).public_key().0,
 		};
 		let identity =
 			derive_identity_keypair(&[0xab; 32], "testnet").expect("identity derivation succeeds");
@@ -4113,7 +4150,7 @@ mod tests {
 		let runtime = activated_signing_runtime(platform);
 		let peer = PairedSsoPeer {
 			statement_account_id: [0x31; 32],
-			encryption_public_key: x25519_public_key([0x42; 32]),
+			encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
 		};
 
 		let error = futures::executor::block_on(runtime.disconnect_paired_host(peer))

@@ -2709,6 +2709,8 @@ pub enum NftPurseDrainDestination {
 		/// The key's public bytes.
 		key: Bytes32,
 	},
+	/// A cheque the product delivers to its recipient.
+	Cheque,
 }
 
 /// Review shown before a user-confirmed core action continues.

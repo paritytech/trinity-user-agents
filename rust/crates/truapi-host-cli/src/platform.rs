@@ -1023,6 +1023,7 @@ fn drain_destination(destination: &NftPurseDrainDestination) -> String {
 	match destination {
 		NftPurseDrainDestination::Purse { purse } => format!("purse {purse}"),
 		NftPurseDrainDestination::ExternalKey { key } => format!("key 0x{}", hex::encode(key)),
+		NftPurseDrainDestination::Cheque => "a cheque".to_owned(),
 	}
 }
 
