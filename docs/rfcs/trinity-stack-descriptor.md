@@ -219,9 +219,9 @@ schemes.
   read on the same network. A hostname never qualifies, so DNS cannot turn a public name into a private address.
 - A URL MUST NOT carry a user name or password, which would let `https://previewnet.substrate.dev@evil.example/` read as
   previewnet. A literal address MUST be written in canonical form (`10.0.0.1`, never `10.1` or `0x0a.1`): URL parsers
-  disagree on shorthand, so two readers would reach different hosts. A URL MUST NOT contain `\`: browser parsers read it
-  as `/` and RFC 3986 parsers do not, so `https://previewnet.substrate.dev\@evil.example/` would reach previewnet in a
-  browser and `evil.example` elsewhere.
+  disagree on shorthand, so two readers would reach different hosts. A URL MUST NOT contain `\`: in `http`, `https`,
+  `ws` and `wss` URLs browser parsers read it as `/` and RFC 3986 parsers do not, so
+  `https://previewnet.substrate.dev\@evil.example/` would reach previewnet in a browser and `evil.example` elsewhere.
 - An HTTP service URL is a base URL ending in `/`, and readers resolve paths relative to it. `eth-rpc` URLs are JSON-RPC
   endpoints used as given.
 

@@ -40,8 +40,8 @@ pub enum Schemes {
 
 /// Parses a URL and checks it against the RFC's scheme rule. Descriptors keep the text as written,
 /// so the text itself must be the URL: the parser would forgive whitespace, control characters
-/// and a missing `//`, which other readers refuse, and reads `\` as `/`, which RFC 3986 readers
-/// do not.
+/// and a missing `//`, which other readers refuse, and in `http(s)` and `ws(s)` URLs reads `\` as
+/// `/`, which RFC 3986 readers do not.
 pub fn url(value: &str, schemes: Schemes) -> Result<Url, Error> {
 	let invalid = || Error::InvalidUrl(value.to_owned());
 	if value
