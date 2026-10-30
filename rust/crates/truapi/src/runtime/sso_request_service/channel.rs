@@ -236,8 +236,7 @@ impl SsoRequestService {
 			.client("SSO statement-store")
 			.await
 			.map_err(|err| SsoRemoteResponseError::Failure(err.to_string()))?;
-		// Nothing is submitted until both subscriptions are open, so a halt
-		// answering either one can be waited out.
+		// Nothing is submitted yet, so a halt here is safe to wait out.
 		let own_subscription = ask_through_halts(&RealTimer, cx.cancel(), || {
 			subscribe_statement_topic(&rpc_client, sso.session_id_own)
 		})
@@ -323,9 +322,8 @@ fn naming_the_call(cx: &CallContext, reason: SsoRemoteResponseError) -> SsoRemot
 	}
 }
 
-/// Why opening the `label` subscription for `message_id` failed. A caller
-/// that gave up during a halt is cancelled, and a chain still halted after
-/// every pause is `ChainUnavailable`, since the request was never submitted.
+/// The error for a failed `label` subscribe: `Cancelled` if the caller gave
+/// up, `ChainUnavailable` if the chain stayed halted, otherwise `Failure`.
 fn subscribe_failed(
 	cx: &CallContext,
 	message_id: &str,
@@ -398,9 +396,7 @@ mod tests {
 		})
 	}
 
-	/// A halt that outlasted every pause left the request unsent, so the
-	/// product may call again. Any other subscribe failure says nothing about
-	/// a later call.
+	/// Only a lasting halt is retryable, since the request was never sent.
 	#[test]
 	fn only_a_halted_subscribe_is_reported_as_chain_unavailable() {
 		let reported = [refusal(Some(r#""dotli:chain-halted""#)), refusal(None)]

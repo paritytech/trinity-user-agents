@@ -313,9 +313,8 @@ pub enum LocalTransactionError {
 	/// no such chain.
 	#[display("{_0}")]
 	NoChainConnection(String),
-	/// The node could not be asked for the current block or its runtime, as
-	/// while a halted chain is redialed, or did not answer in time. A later
-	/// call can succeed.
+	/// The node could not be asked for the current block or its runtime, such
+	/// as during a halt, or did not answer in time. A later call can succeed.
 	#[display("{_0}")]
 	ChainUnavailable(String),
 	/// The caller's extension list does not fit the runtime's pipeline.

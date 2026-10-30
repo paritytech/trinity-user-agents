@@ -1,16 +1,12 @@
 //! Versioned wrappers for [`Signing`](crate::api::Signing) methods.
 //!
-//! v0.2 gives `create_transaction` its own error for a node that could not be
-//! asked for the chain's current state, and its request and response keep the
-//! v0.1 shape. A v0.1 caller cannot decode the new variant, so it receives
-//! `Unknown` with the same reason.
+//! v0.2 adds `ChainUnavailable` to `create_transaction`'s error and keeps the
+//! v0.1 request and response. A v0.1 caller gets `Unknown` with the same
+//! reason instead.
 //!
-//! `create_transaction_with_legacy_account` stays on v0.1. Only a signing host
-//! builds it itself and can meet that failure; a pairing host relays it to
-//! the signing host, whose answer carries no such variant. A v0.2 would serve
-//! that one host role while stopping new products from reaching every host
-//! that does not serve it yet, so the method reports the failure as
-//! `Unknown`.
+//! `create_transaction_with_legacy_account` stays on v0.1: a pairing host
+//! relays it, so only a signing host could ever report the new variant, and a
+//! v0.2 would cut new products off from every host that has not upgraded.
 
 use crate::{
 	v01, v02,

@@ -165,23 +165,23 @@ pub struct SubxtConnection {
 	follow_end: Arc<OnceLock<FollowEnd>>,
 	/// Stops the backend's driver, which ends its follow.
 	driver: AbortHandle,
-	/// How many of the backend's requests a halt has answered.
+	/// Requests a halt has answered.
 	halts: Arc<AtomicUsize>,
 }
 
 impl SubxtConnection {
-	/// Why the backend's follow ended for good, or `None` while it lives.
+	/// Why the backend's follow ended, or `None` while it runs.
 	fn follow_end(&self) -> Option<FollowEnd> {
 		self.follow_end.get().copied()
 	}
 
-	/// How many of the backend's requests a halt has answered so far.
+	/// How many requests a halt has answered so far.
 	fn halts(&self) -> usize {
 		self.halts.load(Ordering::SeqCst)
 	}
 
-	/// End a follow that stopped answering. The node drops the operations
-	/// started on it, and the next caller builds the client on a new follow.
+	/// End a stuck follow, so the node drops its operations and the next
+	/// caller starts a new one.
 	fn end_stalled_follow(&self) {
 		let _ = self.follow_end.set(FollowEnd::Stalled);
 		self.driver.abort();
@@ -469,8 +469,8 @@ impl ChainRuntime {
 		}
 	}
 
-	/// This runtime waiting on `timer` instead of wall-clock time. A connection
-	/// keeps the timer it opened with, so this applies before the first one.
+	/// This runtime on `timer` instead of wall-clock time. Set it before the
+	/// first connection, which keeps the timer it opened with.
 	#[cfg(test)]
 	pub fn with_timer(mut self, timer: Arc<dyn Timer>) -> Self {
 		self.timer = timer;

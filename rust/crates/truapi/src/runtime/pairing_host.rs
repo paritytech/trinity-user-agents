@@ -1414,10 +1414,8 @@ impl PairingHost {
 			// against; where it cannot, the call fails rather than producing
 			// the prompt-and-signature an ungranted product would have got.
 			//
-			// The failure is not prompt. An unreachable genesis leaves the
-			// metadata read waiting on the chain until its deadline, so the
-			// cost of assembling locally is paid before the grant can be found
-			// wanting.
+			// The failure is not prompt: an unreachable genesis holds the
+			// metadata read until its deadline.
 			return Ok(build_local_transaction(
 				&self.chain,
 				&keypair,

@@ -204,8 +204,8 @@ pub struct StubPlatform {
 	/// test releases them.
 	pub rpc_method_responses_gate: Arc<Mutex<Option<futures::channel::oneshot::Receiver<()>>>>,
 	pub sso_response_script: Option<SsoResponseScript>,
-	/// How many statement subscriptions the SSO script answers with dotli's
-	/// halt error before it acknowledges any.
+	/// How many SSO subscriptions get dotli's halt error before any is
+	/// acknowledged.
 	pub sso_halted_subscribes: usize,
 	/// Every genesis hash handed to `connect`, in order. Lets a test assert
 	/// *which* chain a lookup reached, not merely that it reached one: the
@@ -640,8 +640,7 @@ pub fn sso_peer_disconnect_monitor_responses(
 	]
 }
 
-/// The JSON-RPC error dotli answers a request with while it redials a halted
-/// chain.
+/// dotli's JSON-RPC error while it redials a halted chain.
 pub fn chain_halted_error() -> serde_json::Value {
 	serde_json::json!({
 		"code": -32603,
@@ -650,7 +649,7 @@ pub fn chain_halted_error() -> serde_json::Value {
 	})
 }
 
-/// dotli's answer to `request_id` while it redials a halted chain.
+/// dotli's halt error as the answer to `request_id`.
 pub fn chain_halted_frame(request_id: &str) -> String {
 	serde_json::json!({"jsonrpc": "2.0", "id": request_id, "error": chain_halted_error()})
 		.to_string()
@@ -1302,7 +1301,7 @@ async fn wait_for_rpc_method_id(
 	method: &str,
 	index: usize,
 ) -> String {
-	// Long enough for a request sent after one of the core's halt pauses.
+	// Long enough to outlast a halt pause.
 	for _ in 0..5_000 {
 		let ids = sent
 			.lock()

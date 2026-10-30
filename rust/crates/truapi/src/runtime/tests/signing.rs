@@ -577,8 +577,8 @@ fn create_transaction_accepts_confirmation_then_returns_sso_response() {
 	));
 }
 
-/// A paired host whose statement store answers the first `halted_subscribes`
-/// SSO subscriptions with dotli's halt error, then serves a phone that signs.
+/// A paired host whose first `halted_subscribes` SSO subscriptions get dotli's
+/// halt error, with a phone that signs.
 fn create_transaction_over_halted_store(
 	halted_subscribes: usize,
 ) -> (Arc<StubPlatform>, ProductRuntimeHost) {
@@ -608,10 +608,8 @@ fn create_transaction_over_halted_store(
 	(platform, host)
 }
 
-/// A halt can answer the subscriptions a relayed request opens before it is
-/// sent, as when dotli's protocol frame dies. Nothing was sent yet, so the
-/// request waits out the redial and reaches the phone, instead of failing a
-/// call the user already approved.
+/// A halt before the request is sent is waited out, so a call the user
+/// already approved still reaches the phone.
 #[test]
 fn a_relayed_create_transaction_waits_out_a_halt_before_it_is_sent() {
 	let (platform, host) = create_transaction_over_halted_store(1);
@@ -633,8 +631,7 @@ fn a_relayed_create_transaction_waits_out_a_halt_before_it_is_sent() {
 	);
 }
 
-/// Waiting out a halt can take half a minute, and a product that gives up
-/// must not wait for it, nor have the request sent after it left.
+/// Cancelling during a halt returns at once and never sends the request.
 #[test]
 fn a_relayed_create_transaction_withdrawn_during_a_halt_is_never_sent() {
 	let (platform, host) = create_transaction_over_halted_store(usize::MAX);

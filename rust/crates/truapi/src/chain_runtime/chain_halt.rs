@@ -1,4 +1,4 @@
-//! Asking a host again while it redials a halted chain.
+//! Retrying requests while a host redials a halted chain.
 
 use core::{future::Future, time::Duration};
 
@@ -9,14 +9,12 @@ use truapi::CancellationToken;
 
 use crate::time::Timer;
 
-/// The `error.data` dotli answers a request with while it waits to redial a
-/// halted chain, which it documents as worth asking again.
+/// The `error.data` dotli sends while it redials a halted chain. dotli
+/// documents it as safe to retry.
 const CHAIN_HALTED: &str = "dotli:chain-halted";
 
-/// Pauses before each new attempt after a halt. dotli lets the first redial
-/// of a halted chain through at once, then waits one second and doubles the
-/// wait each time. These pauses double the same way, so each attempt comes
-/// after another chance to redial.
+/// Pauses between attempts after a halt. They double like dotli's redial
+/// back-off, so each attempt follows another chance to redial.
 pub const HALT_PAUSES: [Duration; 5] = [
 	Duration::from_secs(1),
 	Duration::from_secs(2),
@@ -25,8 +23,7 @@ pub const HALT_PAUSES: [Duration; 5] = [
 	Duration::from_secs(16),
 ];
 
-/// Whether `error` is a host saying the chain halted, so the same request can
-/// succeed once the chain is redialed.
+/// Whether `error` says the chain halted, so the request can be retried.
 pub fn says_chain_halted(error: &RpcError) -> bool {
 	let RpcError::User(error) = error else {
 		return false;
@@ -36,16 +33,12 @@ pub fn says_chain_halted(error: &RpcError) -> bool {
 	})
 }
 
-/// Run `request`, and again after each of [`HALT_PAUSES`] while the host says
-/// the chain halted. Any other outcome, and a halt that outlasts every pause,
-/// is returned as it is.
+/// Run `request`, retrying after each of [`HALT_PAUSES`] while it fails with a
+/// halt. Returns the first other outcome, or the last halt.
 ///
-/// Cancelling `until` ends a pause and returns the halt that started it. It
-/// never drops a request in flight, whose answer may open something only that
-/// answer can close, such as a subscription.
-///
-/// Only for a request that changes nothing when a halt answers it, since the
-/// host may have passed it on before the chain halted.
+/// Cancelling `until` ends a pause, not a request in flight, because a
+/// dropped request can leave something open, such as a subscription. Use it
+/// only for requests that are safe to send twice.
 pub async fn ask_through_halts<Answer, Request>(
 	timer: &dyn Timer,
 	until: &CancellationToken,
@@ -100,8 +93,7 @@ mod tests {
 		refusal(Some(r#""dotli:chain-halted""#))
 	}
 
-	/// Only dotli's marker says a later attempt can succeed. The same
-	/// internal-error code without it, or with other data, says nothing.
+	/// Only dotli's marker counts. The same error code without it does not.
 	#[test]
 	fn only_the_halt_marker_says_the_chain_halted() {
 		let answers = [halted(), refusal(None), refusal(Some(r#""other""#)), refusal(Some("7"))];
@@ -111,8 +103,7 @@ mod tests {
 		assert_eq!(halts, vec![true, false, false, false]);
 	}
 
-	/// Asks while the halts last, sleeping each pause in turn, and stops at
-	/// the first answer that is not a halt.
+	/// Retries through each pause and stops at the first answer.
 	#[test]
 	fn a_request_is_asked_again_after_each_halt_until_it_is_answered() {
 		let timer = Arc::new(ManualTimer::default());
@@ -136,8 +127,7 @@ mod tests {
 		assert_eq!(ask.join().unwrap().unwrap(), 2);
 	}
 
-	/// A chain that stays halted is reported, so the caller is not held
-	/// longer than the pauses add up to.
+	/// A chain that stays halted is reported once the pauses run out.
 	#[test]
 	fn a_halt_that_outlasts_every_pause_is_returned() {
 		let timer = Arc::new(ManualTimer::default());
@@ -160,7 +150,7 @@ mod tests {
 		assert_eq!(timer.sleeps(), HALT_PAUSES.len());
 	}
 
-	/// Any other failure is final, so it reaches the caller at once.
+	/// Any other failure is returned at once.
 	#[test]
 	fn a_failure_other_than_a_halt_is_not_asked_again() {
 		let timer = ManualTimer::default();
@@ -175,8 +165,7 @@ mod tests {
 		assert_eq!((attempts.into_inner(), timer.sleeps()), (1, 0));
 	}
 
-	/// A caller that gives up during a pause is answered at once, with the
-	/// halt it was waiting out, and nothing more is sent for it.
+	/// Cancelling during a pause returns at once and sends nothing more.
 	#[test]
 	fn a_cancellation_during_a_pause_returns_the_halt_without_asking_again() {
 		let timer = Arc::new(ManualTimer::default());

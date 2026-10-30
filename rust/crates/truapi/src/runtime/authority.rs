@@ -167,10 +167,8 @@ pub enum AuthorityError {
 	/// The authority cannot service the request.
 	#[display("{reason}")]
 	Unavailable { reason: String },
-	/// The node a transaction is built through could not be asked for the
-	/// chain's current state, or the chain a request is relayed over stayed
-	/// halted before it was sent, so nothing was signed. A later call can
-	/// succeed.
+	/// The chain stayed unreachable, such as during a halt, so nothing was
+	/// signed. A later call can succeed.
 	#[display("{reason}")]
 	ChainUnavailable { reason: String },
 	/// The authority cannot service this request shape (e.g. an unsupported

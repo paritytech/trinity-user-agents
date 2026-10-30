@@ -1,5 +1,4 @@
-//! The chain's current finalized block, for building transactions against its
-//! runtime metadata.
+//! Reading the current finalized block, for building transactions.
 
 use core::{ops::ControlFlow, time::Duration};
 use std::sync::Mutex;
@@ -16,25 +15,22 @@ use super::{
 };
 use crate::time::retry_on;
 
-/// How long reading the current block may take, connecting included: longer
-/// than the pauses between refused follows add up to, so a follow accepted at
-/// the last attempt still serves the read.
+/// Deadline for reading the current block, connecting included. It is longer
+/// than all the halt pauses together, so a late re-follow can still serve.
 const CURRENT_BLOCK_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// Why [`ChainRuntime::current_block`] could not read the chain.
 #[derive(Debug, PartialEq, Eq, Display)]
 pub enum CurrentBlockError {
-	/// No connection to the chain could be opened, for instance because the
-	/// host serves no such chain.
+	/// No connection could be opened, for instance to a chain the host does
+	/// not serve.
 	#[display("{_0}")]
 	NoConnection(RuntimeFailure),
-	/// The node could not be asked: the chain stayed halted, its follow was
-	/// refused until the retries ran out or was dropped, or it gave no answer
+	/// The chain stayed halted, the follow dropped, or the node did not answer
 	/// in time. A later call can succeed.
 	#[display("{_0}")]
 	Unavailable(String),
-	/// The node answered with nothing this host can use, or its provider
-	/// refused the follow for a reason other than a halt.
+	/// A failure a retry cannot fix, such as metadata this host cannot use.
 	#[display("{_0}")]
 	Failed(String),
 }
@@ -44,16 +40,11 @@ impl ChainRuntime {
 	///
 	/// Core scope only, for the same reason as [`Self::online_client`].
 	///
-	/// A read that a halt interrupts, as when the host answers one of its
-	/// requests while it redials the chain, is read again after each of
-	/// [`HALT_PAUSES`].
+	/// A read that meets a halt is retried after each of [`HALT_PAUSES`].
 	///
-	/// The read has a deadline because a provider can hold the connection
-	/// open without completing it, and a runtime call Subxt started on a
-	/// follow that then stopped waits for an answer the next follow never
-	/// sends. A read that misses the deadline on an open follow ends that
-	/// follow, so the node drops what was started on it and the next call
-	/// asks a new one.
+	/// The deadline exists because Subxt never gives up on a runtime call
+	/// whose follow stopped. Missing it ends the follow, so the next call
+	/// starts a fresh one instead of waiting on the stuck one.
 	#[instrument(skip_all, fields(runtime.method = "chain_runtime.current_block"))]
 	pub async fn current_block(
 		&self,
@@ -114,11 +105,9 @@ impl ChainRuntime {
 	}
 }
 
-/// Sort a failure to select the current block by whether a later call can get
-/// past it. An answer this host cannot use fails every time. A failure to ask
-/// is worth asking again when a halt answered one of the read's requests, or
-/// when the follow ended for a reason that can pass, which only the recorded
-/// cause tells, since Subxt reports every end as a dropped subscription.
+/// Whether a later call can get past `error`. A failure to reach the node is
+/// retryable if the read met a halt or the follow ended for a passing reason.
+/// Subxt reports every follow end the same way, so `follow_end` decides.
 fn classify(
 	follow_end: Option<FollowEnd>,
 	met_a_halt: bool,
@@ -168,8 +157,7 @@ mod tests {
 
 	const GENESIS: [u8; 32] = [0xbb; 32];
 
-	/// Read the current block on its own thread, so the test can move the
-	/// clock while the read waits.
+	/// Read on a separate thread, so the test can advance the clock.
 	fn read_current_block(
 		chain: &ChainRuntime,
 	) -> thread::JoinHandle<Result<(), CurrentBlockError>> {
@@ -183,10 +171,8 @@ mod tests {
 		))
 	}
 
-	/// A product retries on `Unavailable`, so it must mean a later call can
-	/// get past the failure: a halt met the read, or the follow ended for a
-	/// reason that can pass. An answer this host cannot use fails every time,
-	/// whatever happened to the chain meanwhile.
+	/// Products retry on `Unavailable`, so it must only cover failures a later
+	/// call can get past. Unusable metadata stays `Failed` even during a halt.
 	#[test]
 	fn a_failure_is_retryable_only_when_a_later_call_can_get_past_it() {
 		let dropped = || OnlineClientAtBlockError::CannotGetCurrentBlock {
@@ -243,10 +229,8 @@ mod tests {
 		);
 	}
 
-	/// What dotli does to a build in flight when its chain halts: it answers
-	/// the read's requests with its halt error, then serves them again once
-	/// the chain is redialed. Seen against dotli, the build failed in
-	/// milliseconds instead of waiting.
+	/// dotli answers requests in flight with its halt error, then serves them
+	/// once the chain is redialed. The read must wait that out.
 	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
 	fn a_read_a_halt_interrupts_is_read_again_after_a_pause() {
@@ -270,8 +254,7 @@ mod tests {
 		assert_eq!(headers, 2);
 	}
 
-	/// A chain that stays halted is reported as one a later call can reach,
-	/// not as a failure the product should give up on.
+	/// A chain that stays halted is `Unavailable`, so the product may retry.
 	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
 	fn a_read_still_halted_after_every_pause_is_unavailable() {
@@ -289,8 +272,7 @@ mod tests {
 		assert!(matches!(error, CurrentBlockError::Unavailable(_)), "{error:?}");
 	}
 
-	/// The halt the retries exist for: the host keeps refusing to follow
-	/// until the pauses run out, and the product is told to ask again.
+	/// A follow refused until the pauses run out is `Unavailable`.
 	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
 	fn a_follow_refused_until_the_pauses_run_out_is_unavailable() {
@@ -309,9 +291,7 @@ mod tests {
 		assert!(matches!(error, CurrentBlockError::Unavailable(_)), "{error:?}");
 	}
 
-	/// A host that refuses the follow for any reason but a halt, such as a
-	/// chain it does not serve, will refuse it again, so the product must not
-	/// be told to retry.
+	/// A refusal that is not a halt will happen again, so it is not retryable.
 	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
 	fn a_follow_refused_for_another_reason_is_failed() {
@@ -327,11 +307,8 @@ mod tests {
 		assert!(matches!(error, CurrentBlockError::Failed(_)), "{error:?}");
 	}
 
-	/// Subxt keeps waiting on a runtime call whose follow stopped, and so does
-	/// a node that never answers one. Only the deadline ends that wait, and
-	/// it ends the follow too: otherwise every later call would wait out the
-	/// same deadline on the same stuck follow, and each would leave another
-	/// operation open on the node.
+	/// The deadline ends a stuck read and its follow, so the next call starts
+	/// a fresh follow instead of waiting on the same stuck one.
 	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
 	fn a_read_that_misses_the_deadline_ends_its_follow() {
@@ -358,8 +335,7 @@ mod tests {
 		assert_eq!(second.join().unwrap(), Err(no_answer()));
 	}
 
-	/// A provider can hold a connection open without completing it, as while
-	/// it redials a halted chain, and the deadline covers that wait too.
+	/// The deadline also covers a connection that never opens.
 	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
 	fn a_connection_that_never_opens_is_unavailable_at_the_deadline() {
@@ -386,9 +362,7 @@ mod tests {
 		assert_eq!(read.join().unwrap(), Err(no_answer()));
 	}
 
-	/// A chain the host cannot connect to, such as one it serves no provider
-	/// for, may never become reachable, so it is told apart from a node that
-	/// could not be asked.
+	/// A chain the host cannot connect to is told apart from a halted one.
 	#[test]
 	fn a_chain_the_host_cannot_connect_to_is_no_connection() {
 		struct NoProvider;

@@ -230,10 +230,10 @@ where
 	unreachable!("the bounded SSO submit loop always returns")
 }
 
-/// Submit with `submit`, and again after each of [`HALT_PAUSES`] while the
-/// statement reaches no peer, as a light client restarted after a halt
-/// reports until it connects some. A light client keeps no store, so a
-/// statement no peer received was never sent and can be submitted again.
+/// Run `submit`, retrying after each of [`HALT_PAUSES`] while the statement
+/// reaches no peer, as a light client reports right after a restart. A light
+/// client keeps no store, so the statement was never sent and is safe to
+/// resubmit.
 pub async fn submit_until_sent<SubmitFn, SubmitFuture>(
 	timer: &dyn Timer,
 	mut submit: SubmitFn,
@@ -266,8 +266,8 @@ where
 }
 
 /// Whether a [`submit`] failure says the statement reached no peer. smoldot
-/// answers every statement-store failure with one code, so only its message
-/// tells this one apart.
+/// uses one error code for all statement-store failures, so this matches the
+/// message.
 pub fn reached_no_peer(reason: &str) -> bool {
 	reason.contains("No connected peers to broadcast the statement") ||
 		reason.contains("connected peers accepted the statement")
@@ -479,15 +479,14 @@ mod tests {
 		));
 	}
 
-	/// smoldot's two answers for a statement that reached no peer, as its
-	/// light client words them.
+	/// smoldot's two messages for a statement that reached no peer.
 	const NO_PEERS: &str =
 		"Statement store error: No connected peers to broadcast the statement to";
 	const NO_PEER_ACCEPTED: &str =
 		"Statement store error: none of the 3 connected peers accepted the statement";
 
-	/// Only a statement that reached no peer is safe to send again. Any
-	/// other rejection, such as a bad proof, would fail the same way.
+	/// Only a statement that reached no peer is resent. Other rejections,
+	/// such as a bad proof, would fail again.
 	#[test]
 	fn only_a_statement_that_reached_no_peer_is_unsent() {
 		let reasons = [NO_PEERS, NO_PEER_ACCEPTED, "statement_submit not accepted: badProof"];
@@ -497,8 +496,7 @@ mod tests {
 		assert_eq!(unsent, vec![true, true, false]);
 	}
 
-	/// A light client restarted after a halt reaches no peer for a few
-	/// seconds, so the statement is sent again once it can be.
+	/// After a restart the light client has no peers for a few seconds.
 	#[test]
 	fn a_statement_that_reached_no_peer_is_submitted_again_after_a_pause() {
 		let timer = Arc::new(crate::time::ManualTimer::default());
@@ -524,7 +522,7 @@ mod tests {
 		assert_eq!(attempts.load(Ordering::SeqCst), 2);
 	}
 
-	/// Any other failure is final, so it is reported at once.
+	/// Any other failure is returned at once.
 	#[test]
 	fn a_rejected_statement_is_not_submitted_again() {
 		let timer = crate::time::ManualTimer::default();

@@ -6512,9 +6512,8 @@ fn a_transaction_naming_an_unresolvable_handle_is_refused() {
 	);
 }
 
-/// A granted host builds the transaction itself. A chain it cannot connect to
-/// may never become reachable, so even a v0.2 product is told `Unknown` rather
-/// than invited to retry, with the reason a v0.1 product gets.
+/// A chain the host cannot connect to may never become reachable, so even a
+/// v0.2 product gets `Unknown`, not `ChainUnavailable`.
 #[test]
 fn a_transaction_for_a_chain_the_host_cannot_connect_to_is_unknown() {
 	let (_platform, host) = granted_pairing_host();
@@ -6549,10 +6548,8 @@ fn a_transaction_for_a_chain_the_host_cannot_connect_to_is_unknown() {
 	);
 }
 
-/// `ChainUnavailable` is the one creation failure a product may retry on
-/// alone, so it must reach the wire as itself rather than fold into `Unknown`.
-/// The legacy-account method stays on v0.1, which has no such variant, so it
-/// reports the same failure as `Unknown` with the same reason.
+/// `ChainUnavailable` must reach a v0.2 product as itself. The legacy-account
+/// method stays on v0.1, so it reports the same failure as `Unknown`.
 #[test]
 fn a_node_that_cannot_be_asked_reaches_create_transaction_as_chain_unavailable() {
 	use super::{legacy_transaction_call_error, transaction_call_error};

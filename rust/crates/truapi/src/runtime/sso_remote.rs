@@ -213,9 +213,8 @@ pub enum SsoRemoteResponseError {
 	/// The paired signing host announced a disconnect.
 	#[display("{}", SSO_PEER_DISCONNECT_REASON)]
 	PeerDisconnected,
-	/// The request never reached the signing host: the statement store stayed
-	/// halted while its subscriptions were opened, or its statement reached
-	/// no peer. A later call can succeed.
+	/// The request never reached the signing host because the chain stayed
+	/// halted or reached no peer. A later call can succeed.
 	#[display("{_0}")]
 	ChainUnavailable(String),
 	/// Submit, subscription, or decode failure.

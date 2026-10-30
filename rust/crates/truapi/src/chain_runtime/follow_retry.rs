@@ -1,6 +1,5 @@
-//! RPC client for the core's Subxt backend that subscribes to
-//! `chainHead_v1_follow` again when the provider refuses it, and records why a
-//! follow ended for good.
+//! RPC client for the core's Subxt backend that retries a follow refused by a
+//! halt and records why a follow ended.
 
 use std::sync::{
 	Arc, OnceLock,
@@ -27,32 +26,25 @@ const CHAIN_HEAD_FOLLOW: &str = "chainHead_v1_follow";
 /// Why a follow sent through [`FollowRetryingRpcClient`] ended for good.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FollowEnd {
-	/// The provider said the chain halted, and still did after every pause.
+	/// The chain was still halted after every pause.
 	Refused,
-	/// The provider refused it for a reason other than a halt, which asking
-	/// again cannot change.
+	/// Refused for a reason other than a halt.
 	Rejected,
 	/// The transport failed, or the follow failed after it started.
 	Dropped,
-	/// The core ended it because a read on it got no answer in time.
+	/// The core ended it after a read on it timed out.
 	Stalled,
 }
 
-/// [`RuntimeCallClient`] that asks again when the provider refuses a chainHead
-/// follow.
+/// [`RuntimeCallClient`] that retries a chainHead follow refused by a halt.
 ///
-/// Subxt ends its follow for good when a re-follow fails, and every call on
-/// that backend fails with it. A provider can refuse a follow and accept one
-/// moments later, as a host does while it waits to redial a halted chain.
-/// Asking again turns the refusal into a slower re-follow, so calls waiting on
-/// the follow keep waiting. Only a refusal saying the chain halted is asked
-/// again. Any other refusal and a transport failure reach Subxt at once, as
-/// does a halt that outlasts every pause, and Subxt ends the follow.
+/// Subxt gives up on its backend after one failed re-follow, so without this
+/// a brief halt fails every call waiting on the follow. Other refusals pass
+/// through at once.
 ///
-/// Subxt reports any end as a dropped subscription, so this client records the
-/// cause in [`Self::follow_end`] before the failure reaches Subxt. It also
-/// counts the requests a halt answered in [`Self::halts`], since Subxt keeps
-/// only the text of some of those failures.
+/// Subxt reports every follow end as a dropped subscription, so this client
+/// records the real cause in [`Self::follow_end`] and counts halted requests
+/// in [`Self::halts`].
 pub struct FollowRetryingRpcClient {
 	inner: RuntimeCallClient,
 	timer: Arc<dyn Timer>,
@@ -71,14 +63,13 @@ impl FollowRetryingRpcClient {
 		self.halts.clone()
 	}
 
-	/// Why this client's follow ended, set before Subxt learns of the end, so
-	/// a call that saw the follow drop always finds it here.
+	/// Why the follow ended. Set before Subxt sees the end, so a failed call
+	/// always finds it.
 	pub fn follow_end(&self) -> Arc<OnceLock<FollowEnd>> {
 		self.follow_end.clone()
 	}
 
-	/// `subscription`, recording a failure of it, which ends the follow for
-	/// Subxt.
+	/// `subscription`, recording an error on it as [`FollowEnd::Dropped`].
 	fn recording_failures(&self, subscription: RawRpcSubscription) -> RawRpcSubscription {
 		let follow_end = self.follow_end.clone();
 		RawRpcSubscription {
@@ -150,8 +141,7 @@ mod tests {
 
 	const GENESIS: [u8; 32] = [0xbb; 32];
 
-	/// Select the current block on its own thread, so the test can move the
-	/// clock while the read waits on the follow.
+	/// Read on a separate thread, so the test can advance the clock.
 	fn select_current_block(
 		chain: &ChainRuntime,
 	) -> thread::JoinHandle<Result<(), Box<OnlineClientAtBlockError>>> {
@@ -164,9 +154,8 @@ mod tests {
 		})
 	}
 
-	/// A refused follow must not fail the calls waiting on it, such as a
-	/// transaction build reading the current block's metadata. They wait for
-	/// the next follow instead.
+	/// Calls waiting on a refused follow wait for the next one instead of
+	/// failing.
 	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
 	fn a_call_waiting_on_a_refused_follow_succeeds_on_the_next_one() {
@@ -181,10 +170,8 @@ mod tests {
 		assert_eq!(follow_count(&provider), 2);
 	}
 
-	/// Each refusal is followed by the next pause, spaced to land after
-	/// dotli's own redials, so the schedule is spelled out here rather than
-	/// read back from the constant. Once the pauses run out the follow ends,
-	/// so a chain that stays halted does not hold calls open.
+	/// The schedule is spelled out rather than read from the constant, since
+	/// it has to track dotli's redials. Once it runs out the follow ends.
 	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
 	fn a_refused_follow_is_asked_again_after_each_pause_until_they_run_out() {
@@ -213,9 +200,8 @@ mod tests {
 		assert_eq!((follow_count(&provider), timer.sleeps()), (schedule.len() + 1, schedule.len()));
 	}
 
-	/// Only a halt is worth waiting out. A host refusing for any other reason,
-	/// even with the internal-error code dotli also uses for a halt, would only
-	/// hold every core call through the pauses before failing it anyway.
+	/// Only a halt is retried, even when another refusal uses the same error
+	/// code.
 	#[cfg_attr(target_arch = "wasm32", ignore)]
 	#[test]
 	fn a_refusal_that_does_not_say_the_chain_halted_is_not_asked_again() {

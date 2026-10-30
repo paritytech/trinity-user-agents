@@ -201,9 +201,9 @@ pub fn wait_for_sent(
 /// How a scripted node refuses a follow.
 #[derive(Clone, Copy)]
 pub enum FollowRefusal {
-	/// dotli's answer while it waits to redial a halted chain.
+	/// dotli's halt error.
 	ChainHalted,
-	/// A JSON-RPC error with this code that says nothing of a halt.
+	/// A plain JSON-RPC error with this code.
 	Error(i32),
 }
 
@@ -216,8 +216,7 @@ pub struct ScriptedChainHead {
 	pub refusal: FollowRefusal,
 	/// Whether it ever finishes a runtime call it started.
 	pub finishes_calls: bool,
-	/// How many header reads it answers with dotli's halt error before it
-	/// serves one, as a host does for requests in flight when a chain halts.
+	/// How many header reads get dotli's halt error before one is served.
 	pub halted_headers: usize,
 }
 
@@ -233,8 +232,7 @@ impl Default for ScriptedChainHead {
 }
 
 impl ScriptedChainHead {
-	/// The node, a core-scope runtime over it, and the clock that runtime
-	/// waits on, which moves only when the test advances it.
+	/// The node, a core-scope runtime over it, and the runtime's manual clock.
 	pub fn serve(self) -> (Arc<ScriptedProvider>, ChainRuntime, Arc<ManualTimer>) {
 		let header = SubstrateHeader::<H256> {
 			parent_hash: H256::zero(),
