@@ -131,20 +131,52 @@ fn an_ephemeral_cheque_under_another_id_answers_corrupted_cheque() {
 	assert_eq!(refused, Err(deposit_refusal(v01::NftPurseDepositError::CorruptedCheque)));
 }
 
+/// Two `Static` cheques of one item each, sealed under ids 9 and 8.
+fn two_static_cheques() -> (Purses, v01::NftPurseCheque, v01::NftPurseCheque) {
+	let (purses, sender, items) = sender_and_receiver(2);
+	let first = sent_cheque(&sender, to_static_key([9; 32]), vec![items[0]]);
+	let second = sent_cheque(&sender, to_static_key([8; 32]), vec![items[1]]);
+	(purses, first, second)
+}
+
 /// The static key is the user's, not a product's, so any product may deposit
 /// a cheque sealed to it, and each follows its own deposit.
 #[test]
 fn a_static_cheque_deposits_from_any_product_into_any_purse() {
-	let (purses, sender, items) = sender_and_receiver(1);
-	let cheque = sent_cheque(&sender, to_static_key([9; 32]), items);
+	let (purses, first, second) = two_static_cheques();
 	let other = purses.other_product();
 
-	let by_receiver = deposit(&purses.host, cheque.clone(), 1);
-	let by_other = deposit(&other, cheque.clone(), SENDER_PURSE);
+	let by_receiver = deposit(&purses.host, first, 1);
+	let by_other = deposit(&other, second.clone(), SENDER_PURSE);
 
 	assert_eq!(by_receiver, Ok(HostNftPurseDepositResponse::V1));
 	assert_eq!(by_other, Ok(HostNftPurseDepositResponse::V1));
-	assert_eq!(first_status_of(&other, &cheque), v01::NftPurseStatus::InProgress);
+	assert_eq!(first_status_of(&other, &second), v01::NftPurseStatus::InProgress);
+}
+
+/// Only one move of an NFT can land, so a second deposit of the same items
+/// would wait for nothing and then fail.
+#[test]
+fn a_static_cheque_another_product_deposited_answers_items_in_use() {
+	let (purses, cheque, _) = two_static_cheques();
+	deposit(&purses.host, cheque.clone(), 1).unwrap();
+
+	let by_other = deposit(&purses.other_product(), cheque, SENDER_PURSE);
+
+	assert_eq!(by_other, Err(deposit_refusal(v01::NftPurseDepositError::ItemsInUse)));
+}
+
+/// A `Static` cheque's id is not sealed, so a changed id must not let the
+/// same items be deposited again.
+#[test]
+fn a_static_cheque_deposited_again_under_another_id_answers_items_in_use() {
+	let (purses, cheque, _) = two_static_cheques();
+	deposit(&purses.host, cheque.clone(), 1).unwrap();
+	let renamed = v01::NftPurseCheque { id: v01::NftPurseChequeId([7; 32]), ..cheque };
+
+	let again = deposit(&purses.host, renamed, 1);
+
+	assert_eq!(again, Err(deposit_refusal(v01::NftPurseDepositError::ItemsInUse)));
 }
 
 /// Retrying a deposit must not move the items twice.
@@ -208,7 +240,8 @@ fn static_receive_key(
 /// The key belongs to the user, so every product publishes the same one.
 #[test]
 fn every_product_gets_the_static_receive_key() {
-	let purses = product_purses(Arc::new(StubPlatform::default()));
+	let platform = StubPlatform { identity_disclosure_confirmed: true, ..Default::default() };
+	let purses = product_purses(Arc::new(platform));
 
 	let by_product = static_receive_key(&purses.host);
 	let by_other = static_receive_key(&purses.other_product());
@@ -216,6 +249,18 @@ fn every_product_gets_the_static_receive_key() {
 	let expected = v01::X25519PublicKey(public_key_of(TEST_STATIC_SECRET));
 	assert_eq!(by_product, Ok(expected));
 	assert_eq!(by_other, Ok(expected));
+}
+
+/// The same key in every product identifies the user across them, so it is
+/// disclosed only with the consent `getUserId` asks for.
+#[test]
+fn the_static_receive_key_is_refused_when_the_user_declines_to_disclose_their_identity() {
+	let purses = product_purses(Arc::new(StubPlatform::default()));
+
+	let refused = static_receive_key(&purses.host);
+
+	let denied = v01::NftPurseStaticReceiveKeyError::PermissionDenied;
+	assert_eq!(refused, Err(CallError::Domain(HostNftPurseStaticReceiveKeyError::V1(denied))));
 }
 
 /// Without a session there is no user whose key it is.

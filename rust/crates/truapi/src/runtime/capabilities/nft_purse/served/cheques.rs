@@ -71,8 +71,9 @@ impl ProductRuntimeHost {
 	}
 
 	/// The key products publish for `Static` cheques. Every product gets the
-	/// same key, so nothing is asked.
-	pub fn static_nft_receive_key(
+	/// same key, which identifies the user across products, so it is
+	/// disclosed only with the consent `getUserId` asks for.
+	pub async fn static_nft_receive_key(
 		&self,
 	) -> Result<
 		latest::HostNftPurseStaticReceiveKeyResponse,
@@ -80,6 +81,8 @@ impl ProductRuntimeHost {
 	> {
 		self.require_session()?;
 		let purses = self.connection.nft_purses()?;
+		let denied = latest::HostNftPurseStaticReceiveKeyError::PermissionDenied;
+		self.connection.require_identity_disclosure(denied).await?;
 		let key = purses.static_receive_key().map_err(host_failure)?;
 		Ok(latest::HostNftPurseStaticReceiveKeyResponse { key })
 	}
@@ -210,7 +213,8 @@ fn deposit_failure(refusal: DepositRefusal) -> CallError<latest::HostNftPurseDep
 	CallError::Domain(domain)
 }
 
-/// A deposit already registered under the cheque id is the product's error.
+/// A deposit already registered under the cheque id, or of items already
+/// being moved, is the product's error.
 /// A host without NFT transfers does not support deposits. Everything else
 /// is the host's failure.
 fn import_registration_failure(
@@ -219,6 +223,9 @@ fn import_registration_failure(
 	match error {
 		RegistrationError::Hook(StartOperationError::OperationExists) => {
 			CallError::Domain(latest::HostNftPurseDepositError::OperationExists)
+		},
+		RegistrationError::Hook(StartOperationError::ItemUnavailable(_)) => {
+			CallError::Domain(latest::HostNftPurseDepositError::ItemsInUse)
 		},
 		RegistrationError::UnknownDomain(_) => CallError::Unsupported,
 		other => host_failure(other),

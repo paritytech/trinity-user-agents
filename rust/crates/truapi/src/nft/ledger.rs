@@ -9,7 +9,9 @@ use super::{
 	dao,
 	handoff::{HandoffError, HandoffRequest, record_handoff, validate_handoff},
 	holding::{HeldItem, record_holdings},
-	import::{ImportPlan, ImportRequest, StartImportError, plan_imports},
+	import::{
+		ImportPlan, ImportRequest, StartImportError, plan_imports, validate_imports_can_start,
+	},
 	imported_secrets::ImportedSecretStore,
 	item::{AllocateItemsError, Allocation, ItemPage, PageRequest, allocate_items_in},
 	keys::{ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSlot},
@@ -205,18 +207,25 @@ impl NftLedger {
 		})
 	}
 
-	/// Stores the secret of every key of `request`, then registers one move per
-	/// key into a fresh key of `request.into`, in one write that checks the
-	/// operation is new. Each move waits for its key to hold an NFT for up to
-	/// an hour from now. Returns once the moves are registered.
+	/// Checks that `request` can start, stores the secret of every key of it,
+	/// then registers one move per key into a fresh key of `request.into` and
+	/// records that each move spends its key, in one write that checks again.
+	/// Each move waits for its key to hold an NFT for up to an hour from now.
+	/// Returns once the moves are registered.
 	pub async fn start_imports(&self, request: ImportRequest) -> Result<(), StartImportError> {
+		let plan = request.plan();
+		self.check_imports_can_start(&plan).await.map_err(RegistrationError::Hook)?;
 		self.imported
 			.store_secrets(&request.keys)
 			.await
 			.map_err(StartImportError::StoreSecrets)?;
 		let installation = self.current_installation().await?;
-		let planned = self.planned_imports(request.plan(), installation);
-		self.durable.execute_with(planned, |_, _| Ok(())).await?;
+		let sources = plan.sources.clone();
+		let planned = self.planned_imports(plan, installation);
+		let record = move |tx: &rusqlite::Transaction<'_>, ids: &[_]| {
+			record_inputs(tx, sources.iter().copied(), ids)
+		};
+		self.durable.execute_with(planned, record).await?;
 		Ok(())
 	}
 
@@ -272,6 +281,13 @@ impl NftLedger {
 	) -> Result<Vec<ItemSlot>, StartOperationError> {
 		let items = self.db.read(move |conn| Ok(validated_return_items(conn, &request))).await??;
 		Ok(items.available.into_iter().map(|item| item.slot).collect())
+	}
+
+	/// Refuses `plan` as [`Self::start_imports`] would before storing any
+	/// secret, without writing.
+	async fn check_imports_can_start(&self, plan: &ImportPlan) -> Result<(), StartOperationError> {
+		let plan = plan.clone();
+		self.db.read(move |conn| Ok(validate_imports_can_start(conn, &plan))).await?
 	}
 
 	/// `plan` as a durable request whose moves are planned in its write.
