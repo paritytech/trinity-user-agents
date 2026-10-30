@@ -222,9 +222,9 @@ mod tests {
 	use super::*;
 	use crate::test_support::StubPlatform;
 
-	fn request(id: &str, expires_at_unix_secs: Option<u64>) -> ReplayRequest<'_> {
-		ReplayRequest { id, expires_at_unix_secs }
-	}
+	/// A request that has not expired at any `now` these tests use.
+	const REQUEST: ReplayRequest<'static> =
+		ReplayRequest { id: "request-1", expires_at_unix_secs: Some(200) };
 
 	fn scope(root: u8, peer: u8, encryption: u8) -> SsoReplayScope {
 		SsoReplayScope {
@@ -313,7 +313,7 @@ mod tests {
 				&platform,
 				&SsoReplayLocks::default(),
 				request_scope,
-				request("fresh", Some(200)),
+				ReplayRequest { id: "fresh", expires_at_unix_secs: Some(200) },
 				100,
 				async { Ok(()) },
 				|| async { Ok::<_, String>("executed") },
@@ -368,7 +368,7 @@ mod tests {
 				&platform,
 				&SsoReplayLocks::default(),
 				request_scope,
-				request("overflow", None),
+				ReplayRequest { id: "overflow", expires_at_unix_secs: None },
 				0,
 				async {
 					acknowledgements.fetch_add(1, Ordering::SeqCst);
@@ -403,7 +403,7 @@ mod tests {
 				&platform,
 				&locks,
 				request_scope,
-				request("request-1", Some(200)),
+				REQUEST,
 				100,
 				async { Ok(()) },
 				|| async { Ok::<_, String>("executed") },
@@ -415,8 +415,8 @@ mod tests {
 				read_ledger(&platform, request_scope).await.unwrap(),
 				RequestLedger {
 					entries: vec![RequestLedgerEntry {
-						request_id: "request-1".to_string(),
-						expires_at_unix_secs: Some(200),
+						request_id: REQUEST.id.to_string(),
+						expires_at_unix_secs: REQUEST.expires_at_unix_secs,
 						state: RequestLedgerState::Completed,
 					}],
 				}
@@ -427,7 +427,7 @@ mod tests {
 				&platform,
 				&reconstructed_locks,
 				request_scope,
-				request("request-1", Some(200)),
+				REQUEST,
 				101,
 				async { Ok(()) },
 				|| async { Ok::<_, String>("executed twice") },
@@ -448,7 +448,7 @@ mod tests {
 				&platform,
 				&SsoReplayLocks::default(),
 				request_scope,
-				request("request-1", Some(200)),
+				REQUEST,
 				100,
 				async { Ok(()) },
 				|| async { Err::<(), _>("simulated process failure".to_string()) },
@@ -460,8 +460,8 @@ mod tests {
 				read_ledger(&platform, request_scope).await.unwrap(),
 				RequestLedger {
 					entries: vec![RequestLedgerEntry {
-						request_id: "request-1".to_string(),
-						expires_at_unix_secs: Some(200),
+						request_id: REQUEST.id.to_string(),
+						expires_at_unix_secs: REQUEST.expires_at_unix_secs,
 						state: RequestLedgerState::Started,
 					}],
 				}
@@ -473,7 +473,7 @@ mod tests {
 				&platform,
 				&SsoReplayLocks::default(),
 				request_scope,
-				request("request-1", Some(200)),
+				REQUEST,
 				101,
 				async { Ok(()) },
 				move || async move {
@@ -502,7 +502,7 @@ mod tests {
 					&platform,
 					&locks,
 					request_scope,
-					request("same-request-id", Some(200)),
+					REQUEST,
 					100,
 					async { Ok(()) },
 					move || async move {
@@ -534,7 +534,7 @@ mod tests {
 					&platform,
 					&locks,
 					scope(1, 2, 3),
-					request("request-1", Some(200)),
+					REQUEST,
 					100,
 					async {
 						acknowledgements.fetch_add(1, Ordering::SeqCst);
