@@ -30,6 +30,7 @@ use parity_scale_codec::Encode;
 use tracing::{debug, instrument, warn};
 
 use crate::{
+	chain_runtime::RuntimeFailureKind,
 	host_internal::{
 		sso_messages::{
 			IncomingSsoRequest, RemoteMessage, RemoteMessageData, SsoResponseCode,
@@ -857,15 +858,17 @@ async fn publish(
 			let statement = statement.clone();
 			async move {
 				match services.statement_store.submit_sso(statement, label).await {
-					Err(StatementSubmitError::Unreachable(reason)) if can_resend => {
-						ControlFlow::Continue(reason)
+					Err(StatementSubmitError::Chain(failure))
+						if can_resend && failure.kind() == RuntimeFailureKind::Unavailable =>
+					{
+						ControlFlow::Continue(failure)
 					},
 					result => ControlFlow::Break(result.map_err(|error| error.to_string())),
 				}
 			}
 		},
-		|reason| {
-			warn!(label, %reason, "People chain unreachable; sending the statement again");
+		|failure| {
+			warn!(label, %failure, "People chain unreachable; sending the statement again");
 			pauses.next_pause()
 		},
 	)

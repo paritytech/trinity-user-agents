@@ -23,7 +23,7 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::{
-	chain_runtime::{ChainRuntime, RuntimeFailure},
+	chain_runtime::{ChainRuntime, RuntimeFailure, rpc_failure},
 	host_logic::statement_store::{
 		SUBMIT_STATEMENT_METHOD, SUBSCRIBE_STATEMENT_METHOD, TopicFilterKind,
 		UNSUBSCRIBE_STATEMENT_METHOD, hex_topic,
@@ -58,13 +58,11 @@ pub enum StatementStoreRpcClientError {
 /// Why a statement submission failed.
 #[derive(Debug, Error, PartialEq)]
 pub enum StatementSubmitError {
-	/// No answer arrived: the People chain could not be reached, or the
-	/// connection broke before the store answered.
-	#[error("{0}")]
-	Unreachable(String),
-	/// The node answered the submission with a JSON-RPC error.
-	#[error("{0}")]
-	Failed(String),
+	/// The submission got no verdict from the store. Kind `Unavailable` means
+	/// the People chain could not be reached, or the connection broke before
+	/// the store answered.
+	#[error(transparent)]
+	Chain(#[from] RuntimeFailure),
 	/// The store answered without accepting the statement.
 	#[error("statement_submit not accepted: {0}")]
 	Rejected(Value),
@@ -75,24 +73,6 @@ impl StatementSubmitError {
 	/// allowance yet.
 	pub fn is_no_allowance(&self) -> bool {
 		matches!(self, Self::Rejected(answer) if answer["reason"] == "noAllowance")
-	}
-}
-
-impl From<StatementStoreRpcClientError> for StatementSubmitError {
-	fn from(error: StatementStoreRpcClientError) -> Self {
-		Self::Unreachable(error.to_string())
-	}
-}
-
-impl From<subxt_rpcs::Error> for StatementSubmitError {
-	fn from(error: subxt_rpcs::Error) -> Self {
-		match error {
-			subxt_rpcs::Error::User(error) => Self::Failed(error.message),
-			subxt_rpcs::Error::Client(_) | subxt_rpcs::Error::DisconnectedWillReconnect(_) => {
-				Self::Unreachable(error.to_string())
-			},
-			error => Self::Failed(error.to_string()),
-		}
 	}
 }
 
@@ -177,11 +157,8 @@ impl StatementStoreRpc {
 			.map_err(rpc_error_message)
 	}
 
-	async fn request_client(
-		&self,
-		label: &'static str,
-	) -> Result<HostRpcClient, StatementStoreRpcClientError> {
-		Ok(self.chain.rpc_client(label, &self.people_chain_genesis_hash).await?)
+	async fn request_client(&self, label: &'static str) -> Result<HostRpcClient, RuntimeFailure> {
+		self.chain.rpc_client(label, &self.people_chain_genesis_hash).await
 	}
 
 	async fn connect(
@@ -234,7 +211,8 @@ pub async fn submit(
 			SUBMIT_STATEMENT_METHOD,
 			rpc_params![format!("0x{}", hex::encode(&statement))],
 		)
-		.await?;
+		.await
+		.map_err(|error| rpc_failure(SUBMIT_STATEMENT_METHOD, error))?;
 	match result.get("status").and_then(Value::as_str) {
 		Some("new") | Some("known") => Ok(()),
 		_ => Err(StatementSubmitError::Rejected(result)),
@@ -311,7 +289,7 @@ mod tests {
 
 	use super::{StatementStoreRpc, StatementSubmitError};
 	use crate::{
-		chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
+		chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure, RuntimeFailureKind},
 		platform::JsonRpcConnection,
 		test_support::{StubPlatform, test_spawner},
 	};
@@ -325,6 +303,8 @@ mod tests {
 		Drops,
 		/// Answers every submission with this status.
 		Answers(&'static str),
+		/// Answers every submission with a JSON-RPC error.
+		Fails,
 	}
 
 	/// Chain whose n-th connection behaves as the n-th scripted [`Upstream`],
@@ -378,19 +358,23 @@ mod tests {
 		fn send(&self, request: String) {
 			self.requests.fetch_add(1, Ordering::SeqCst);
 			let mut sender = self.sender.lock().unwrap();
-			let status = match self.upstream {
+			let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+			let response = match self.upstream {
 				Upstream::Drops => {
 					sender.take();
 					return;
 				},
-				Upstream::Answers(status) => status,
+				Upstream::Answers(status) => json!({
+					"jsonrpc": "2.0",
+					"id": request["id"],
+					"result": { "status": status, "reason": "noAllowance" },
+				}),
+				Upstream::Fails => json!({
+					"jsonrpc": "2.0",
+					"id": request["id"],
+					"error": { "code": -32602, "message": "invalid statement encoding" },
+				}),
 			};
-			let request: serde_json::Value = serde_json::from_str(&request).unwrap();
-			let response = json!({
-				"jsonrpc": "2.0",
-				"id": request["id"],
-				"result": { "status": status, "reason": "noAllowance" },
-			});
 			if let Some(sender) = sender.as_ref() {
 				let _ = sender.unbounded_send(response.to_string());
 			}
@@ -465,16 +449,36 @@ mod tests {
 
 		let result = futures::executor::block_on(statement_store.submit_sso(vec![1], "sso"));
 
-		// Unreachable, not failed: the store never answered, so the caller may
-		// send the same statement again.
+		// Unavailable, not a node failure: the store never answered, so the
+		// caller may send the same statement again.
 		assert_eq!(
 			(
-				matches!(result, Err(StatementSubmitError::Unreachable(_))),
+				matches!(
+					result,
+					Err(StatementSubmitError::Chain(failure))
+						if failure.kind() == RuntimeFailureKind::Unavailable
+				),
 				chain.connects(),
 				chain.requests()
 			),
 			(true, 1, 1)
 		);
+	}
+
+	/// A JSON-RPC error is the node's answer, so it must not read as an
+	/// unreachable chain, or the responder would send the statement again.
+	#[test]
+	fn a_node_error_is_not_reported_as_unreachable() {
+		let chain = PeopleChain::new(vec![Upstream::Fails]);
+		let statement_store = statement_store(&chain);
+
+		let result = futures::executor::block_on(statement_store.submit_sso(vec![1], "sso"));
+
+		assert!(matches!(
+			result,
+			Err(StatementSubmitError::Chain(failure))
+				if failure.kind() == RuntimeFailureKind::HostFailure
+		));
 	}
 
 	#[test]
