@@ -5,6 +5,7 @@
 //! that tag. Layer 1 stores and matches tags but never reads them.
 
 mod dao;
+mod handoff;
 mod holding;
 mod item;
 mod keys;
@@ -14,13 +15,16 @@ mod live;
 mod operation;
 mod purse;
 mod scarcity;
+mod standing;
 #[cfg(test)]
 mod testing;
 
+pub use handoff::{HandoffError, HandoffRequest, HandoffTag};
 pub use holding::HeldItem;
 pub use item::{AllocateItemsError, PageRequest};
 pub use keys::{
-	ItemKey, ItemKeyDeriver, ItemSigner, ItemSlot, item_keys_from_entropy, item_signer_from_entropy,
+	ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSigner, ItemSlot, item_keys_from_entropy,
+	item_secrets_from_entropy, item_signer_from_entropy,
 };
 pub use ledger::{NftLedger, NftLedgerDeps};
 pub use operation::{
@@ -31,5 +35,6 @@ pub use purse::{CreatePurseError, PurseId, PurseRecord, PurseTag, UnknownPurse};
 pub use scarcity::{
 	HoldingTracker, HoldingTrackerDeps, ScarcityTransfersDeps, with_scarcity_transfers,
 };
+pub use standing::ItemRefusal;
 #[cfg(test)]
 pub use testing::{TEST_INSTALLATION, insert_item_row, test_ledger};

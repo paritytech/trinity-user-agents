@@ -13,7 +13,9 @@ rust/crates/
                          its `chain` module builds the core's own extrinsics through
                          `ExtrinsicService`, and, on native targets, its `durable` module follows presigned
                          transactions to a verdict over the core database and builds
-                         scheduled ones through their submission policies; its `nft`
+                         scheduled ones through their submission policies, and its
+                         `encrypted_storage` module holds the host store encrypted at
+                         rest that keeps NFT receive key secrets; its `nft`
                          (purse records, item keys, and the tracker of what they hold on
                          Asset Hub) and `nft_purse` (the NFT purses RFC over them)
                          modules keep NFT purses in the same database, and transfer items
