@@ -212,7 +212,6 @@ struct DocumentCase {
 
 const ADDRESS: [u8; 20] = [0xaa; 20];
 
-/// The base descriptor with `dotns` set.
 fn with_dotns(dotns: Value) -> Value {
 	with(|value| value["dotns"] = dotns)
 }
@@ -450,7 +449,7 @@ fn document_cases() -> Vec<DocumentCase> {
 			with(|value| value["contracts"]["accountDataStore"] = json!(hex(&[0x22; 32]))),
 			"invalid-hex",
 		),
-		plain("dotns-set", with_dotns(two_addresses()), "ok"),
+		plain("valid-dotns", with_dotns(two_addresses()), "ok"),
 		plain(
 			"dotns-without-asset-hub",
 			with(|value| {
@@ -461,7 +460,7 @@ fn document_cases() -> Vec<DocumentCase> {
 			"unknown-chain-role",
 		),
 		plain(
-			"dotns-key-longer-than-bytes32",
+			"dotns-key-of-33-bytes",
 			with_dotns(json!({ "a".repeat(33): hex(&ADDRESS) })),
 			"dotns-key",
 		),

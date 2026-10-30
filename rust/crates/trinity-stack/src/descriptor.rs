@@ -313,7 +313,6 @@ impl Descriptor {
 				{
 					return Err(Error::DotnsKey(key.clone()));
 				}
-				// The registry returns the zero address for a key it leaves unset.
 				if format::hex_bytes::<20>("dotns", address)? == [0; 20] {
 					return Err(Error::DotnsZeroAddress(key.clone()));
 				}

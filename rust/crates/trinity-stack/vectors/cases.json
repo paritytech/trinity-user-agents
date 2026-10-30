@@ -398,8 +398,8 @@
     },
     {
       "expect": "ok",
-      "file": "documents/dotns-set.json",
-      "name": "dotns-set",
+      "file": "documents/valid-dotns.json",
+      "name": "valid-dotns",
       "pointer": {
         "key": null,
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
@@ -416,8 +416,8 @@
     },
     {
       "expect": "dotns-key",
-      "file": "documents/dotns-key-longer-than-bytes32.json",
-      "name": "dotns-key-longer-than-bytes32",
+      "file": "documents/dotns-key-of-33-bytes.json",
+      "name": "dotns-key-of-33-bytes",
       "pointer": {
         "key": null,
         "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
