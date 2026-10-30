@@ -50,10 +50,7 @@ export async function add(
   key: string | undefined,
   options: ProjectOptions = {},
 ): Promise<Outcome & { warnings: string[] }> {
-  if (!NAME.test(name))
-    throw new Error(`${name} is not a stack name: use a-z, 0-9 and -`);
-  if (name === "stacks")
-    throw new Error("stacks is the name of stacks.json; pick another");
+  checkName(name);
   const linked = new URL(target).searchParams.has("url")
     ? decodeLink(target)
     : { url: target };
@@ -277,7 +274,20 @@ async function readStacks(
   options: ProjectOptions,
 ): Promise<Record<string, string>> {
   const bytes = await read("stacks.json", options);
-  return bytes ? JSON.parse(new TextDecoder().decode(bytes)) : {};
+  const stacks: Record<string, string> = bytes
+    ? JSON.parse(new TextDecoder().decode(bytes))
+    : {};
+  // A name becomes a file name, so a hand-edited one must not lead out of the directory.
+  for (const name of Object.keys(stacks)) checkName(name);
+  return stacks;
+}
+
+/** Fails unless `name` can be a stack's file name and a key of `stacks`. */
+function checkName(name: string) {
+  if (!NAME.test(name))
+    throw new Error(`${name} is not a stack name: use a-z, 0-9 and -`);
+  if (name === "stacks")
+    throw new Error("stacks is the name of stacks.json; pick another");
 }
 
 async function writeStacks(

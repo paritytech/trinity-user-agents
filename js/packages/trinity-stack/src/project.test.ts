@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Fetch, encodeLink } from "./index.js";
@@ -187,6 +194,19 @@ describe("trinity-stack add and update", () => {
     expect((await list({ dir })).map(({ name }) => name)).toEqual([
       "constructor",
     ]);
+  });
+
+  test("a hand-edited stacks.json cannot lead a copy out of the directory", async () => {
+    await mkdir(join(dir, "inner"));
+    const inner = join(dir, "inner");
+    await writeFile(
+      join(inner, "stacks.json"),
+      JSON.stringify({ "../up": link }),
+    );
+    await expect(update([], { ...options(), dir: inner })).rejects.toThrow(
+      "is not a stack name",
+    );
+    expect(await files()).toEqual(["inner"]);
   });
 
   test("a link under an https base is read as a link, not a descriptor URL", async () => {
