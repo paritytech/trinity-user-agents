@@ -19,6 +19,7 @@ import {
   HostSignRawRequest,
   HostSignRawWithLegacyAccountRequest,
   LegacyAccountTxPayload,
+  NftPurseOwner,
   ProductAccountId,
   ProductAccountTxPayload,
   ProductProofContext,
@@ -479,9 +480,8 @@ export type HostScan =
    */
   | { tag: "CameraUnavailable"; value?: undefined }
   /**
-   * The requesting App or Widget is not the screen the user sees, so the
-   * host opened nothing. A Worker's request was already checked by the core
-   * and is never answered this way.
+   * The requesting App or Widget is not the screen the user sees, or the
+   * host application is not in front, so the host opened nothing.
    */
   | { tag: "NotVisible"; value?: undefined };
 
@@ -500,6 +500,58 @@ export interface IdentityDisclosureReview {
  * than only display it.
  */
 export type LoginFailureKind = "NoFreeAllowanceSlots" | "Other";
+
+/**
+ * Where items drained from a purse go.
+ */
+export type NftPurseDrainDestination =
+  /**
+   * Fresh keys of this purse.
+   */
+  | { tag: "Purse"; value: { purse: number } }
+  /**
+   * This key, outside every purse.
+   */
+  | { tag: "ExternalKey"; value: { key: Bytes32 } }
+  /**
+   * A cheque the product delivers to its recipient.
+   */
+  | { tag: "Cheque"; value?: undefined }
+  /**
+   * The keys of a deposited cheque, back to its sender.
+   */
+  | { tag: "Refund"; value?: undefined };
+
+/**
+ * Review shown before a product moves items out of an NFT purse it does
+ * not own: Root's, or another product's.
+ */
+export interface NftPurseDrainReview {
+  /**
+   * Product making the request.
+   */
+  callingProductId: string;
+
+  /**
+   * Purse the items leave.
+   */
+  fromPurse: number;
+
+  /**
+   * Who owns that purse.
+   */
+  owner: NftPurseOwner;
+
+  /**
+   * How many items leave it.
+   */
+  itemCount: number;
+
+  /**
+   * Where they go.
+   */
+  destination: NftPurseDrainDestination;
+}
 
 /**
  * Permission request whose authorization status can be inspected or updated
@@ -793,7 +845,11 @@ export type UserConfirmationReview =
   /**
    * Resolve a product's own account subtree over SSO.
    */
-  | { tag: "ProductSubtree"; value: ProductSubtreeReview };
+  | { tag: "ProductSubtree"; value: ProductSubtreeReview }
+  /**
+   * Move items out of an NFT purse the product does not own.
+   */
+  | { tag: "NftPurseDrain"; value: NftPurseDrainReview };
 
 /**
  * Review shown before a product asks to access another product account.
@@ -1110,6 +1166,35 @@ export const LoginFailureKind: S.Codec<LoginFailureKind> = S.lazy(
 );
 
 /**
+ * Where items drained from a purse go.
+ */
+export const NftPurseDrainDestination: S.Codec<NftPurseDrainDestination> =
+  S.lazy(
+    (): S.Codec<NftPurseDrainDestination> =>
+      S.TaggedUnion({
+        Purse: S.Struct({ purse: S.u32 }) as S.Codec<{ purse: number }>,
+        ExternalKey: S.Struct({ key: Bytes32 }) as S.Codec<{ key: Bytes32 }>,
+        Cheque: S._void,
+        Refund: S._void,
+      }),
+  );
+
+/**
+ * Review shown before a product moves items out of an NFT purse it does
+ * not own: Root's, or another product's.
+ */
+export const NftPurseDrainReview: S.Codec<NftPurseDrainReview> = S.lazy(
+  (): S.Codec<NftPurseDrainReview> =>
+    S.Struct({
+      callingProductId: S.str,
+      fromPurse: S.u32,
+      owner: NftPurseOwner,
+      itemCount: S.u32,
+      destination: NftPurseDrainDestination,
+    }) as S.Codec<NftPurseDrainReview>,
+);
+
+/**
  * Permission request whose authorization status can be inspected or updated
  * by host administration UI.
  */
@@ -1309,6 +1394,7 @@ export const UserConfirmationReview: S.Codec<UserConfirmationReview> = S.lazy(
       AccountAccess: [9, AccountAccessReview] as const,
       SignVrf: [10, SignVrfReview] as const,
       ProductSubtree: [11, ProductSubtreeReview] as const,
+      NftPurseDrain: [12, NftPurseDrainReview] as const,
     }),
 );
 
@@ -2091,8 +2177,9 @@ export interface ProductStorage {
  * - Title the viewfinder with the product id. Show `request.hint` under it as the product's words.
  * - Pass every code the camera reads to a `ScanFilter` built from `request`, and never follow a
  *   scanned link.
- * - Answer `HostScan::NotVisible` for an App or Widget that is not on screen. A Worker reaching
- *   the host already passed the core's tap check.
+ * - Answer `HostScan::NotVisible` for an App or Widget that is not on screen, or for any product
+ *   while the host application is not in front. A Worker reaching the host already passed the
+ *   core's tap check.
  * - Close the viewfinder when the core drops the future, and close any still open before opening
  *   another. A JS host is not told about a drop.
  */

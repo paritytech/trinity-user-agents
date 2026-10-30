@@ -4,7 +4,6 @@ import PolkadotUI
 
 enum SelectTokenCellViewModel: Hashable {
     case chainAsset(ChainAssetViewModel)
-    case fiat
 
     struct ChainAssetViewModel: Hashable {
         let chainAssetId: ChainAssetId

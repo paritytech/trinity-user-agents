@@ -18,7 +18,7 @@ use futures::stream::{self, BoxStream, StreamExt};
 use subxt::{Metadata, storage::Address, utils::H256};
 
 use super::HashAndNumber;
-use crate::{chain_runtime::RuntimeFailure, time::Timer};
+use crate::{chain_runtime::RuntimeFailure, stream_extensions::StreamExtensions, time::Timer};
 
 mod codec;
 mod diff;
@@ -103,6 +103,37 @@ type DecodedEntryChangeStream<K, V> =
 const RETRY_DELAY: Duration = Duration::from_secs(5);
 
 impl dyn WatchedStorage {
+	/// The value of each of `keys` of the entry `address` names, at the
+	/// block `at` of `genesis`, read in one request. An absent entry without
+	/// a default is `None`.
+	pub async fn read_entries_at<A>(
+		&self,
+		genesis: H256,
+		at: H256,
+		address: &A,
+		keys: &[A::KeyParts],
+	) -> Result<Vec<Option<A::Value>>, StorageWatchError>
+	where
+		A: Address,
+		A::KeyParts: Clone,
+	{
+		let client = self.client_at_finalized_head(genesis).await?;
+		let encoded = codec::encode_storage_keys(address, keys, &client)?;
+		let snapshot = self.read_raw_keys_at(genesis, at, encoded).await?;
+		snapshot
+			.value
+			.iter()
+			.map(|bytes| {
+				codec::decode_value_or_default(
+					address,
+					bytes.as_deref(),
+					&snapshot.metadata,
+					snapshot.at,
+				)
+			})
+			.collect()
+	}
+
 	/// Starts one watch of `keys` of the entry `address` names on `genesis`,
 	/// at `head`, or returns why it cannot start: the chain is unreachable, or
 	/// the runtime has no such entry. The first item has every key, and later
@@ -235,23 +266,8 @@ fn single_error<T: Send + 'static>(
 fn stop_after_permanent_failure<T: Send + 'static>(
 	changes: BoxStream<'static, Result<T, StorageWatchError>>,
 ) -> BoxStream<'static, Result<T, StorageWatchError>> {
-	take_until_inclusive(changes, |change| {
-		change.as_ref().is_err_and(StorageWatchError::is_permanent)
-	})
-}
-
-/// `items` up to and including the first one `is_last` picks, then nothing.
-pub fn take_until_inclusive<T: Send + 'static>(
-	items: BoxStream<'static, T>,
-	is_last: impl Fn(&T) -> bool + Send + 'static,
-) -> BoxStream<'static, T> {
-	stream::unfold(Some((items, is_last)), |state| async move {
-		let (mut items, is_last) = state?;
-		let item = items.next().await?;
-		let rest = (!is_last(&item)).then_some((items, is_last));
-		Some((item, rest))
-	})
-	.boxed()
+	changes
+		.take_until_inclusive(|change| change.as_ref().is_err_and(StorageWatchError::is_permanent))
 }
 
 /// Turns raw changes of one entry back into the caller's keys and values.
