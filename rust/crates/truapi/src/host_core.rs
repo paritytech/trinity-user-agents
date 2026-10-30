@@ -2228,6 +2228,7 @@ mod tests {
 			sso::pairing::{
 				PairingBootstrap, derive_x25519_keypair_from_entropy, establish_sso_session_info,
 			},
+			statement_store::SUBMIT_STATEMENT_METHOD,
 			worker::WorkerTransition,
 			x25519_seal::X25519PrivateKey,
 		},
@@ -4116,7 +4117,7 @@ mod tests {
 			.iter()
 			.filter_map(|request| {
 				let value: serde_json::Value = serde_json::from_str(request).ok()?;
-				(value["method"] == "statement_submit").then_some(value)
+				(value["method"] == SUBMIT_STATEMENT_METHOD).then_some(value)
 			})
 			.collect::<Vec<_>>();
 		let [submit] = submits.as_slice() else {

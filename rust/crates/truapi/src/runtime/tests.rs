@@ -94,7 +94,7 @@ use crate::{
 		product_manifest::test_manifest_json,
 		sso_messages::{RemoteMessage, RemoteMessageData, Response, v1},
 	},
-	host_logic::product_account::index_bytes,
+	host_logic::{product_account::index_bytes, statement_store::SUBMIT_STATEMENT_METHOD},
 	test_support::*,
 	unix_time::current_unix_secs,
 };
@@ -1509,7 +1509,7 @@ fn a_request_withdrawn_before_it_is_submitted_sends_no_cancel() {
 	// Long enough for a spawned `Cancel` to have been submitted.
 	std::thread::sleep(std::time::Duration::from_millis(200));
 
-	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, "statement_submit"), 0);
+	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD), 0);
 }
 
 /// A host that times out has not been asked to stop, so the phone keeps the
@@ -1584,7 +1584,7 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
 	let platform = Arc::new(StubPlatform {
 		sign_raw_confirmed: true,
 		rpc_method_responses: answers("statement_subscribeStatement", r#""sub""#, 4)
-			.chain(answers("statement_submit", r#"{"status":"new"}"#, 4))
+			.chain(answers(SUBMIT_STATEMENT_METHOD, r#"{"status":"new"}"#, 4))
 			.chain(answers("statement_unsubscribeStatement", "true", 4))
 			.collect(),
 		..Default::default()

@@ -21,6 +21,7 @@ use crate::{
 	host_logic::{
 		session::{SessionInfo, SsoSessionInfo},
 		sso::pairing,
+		statement_store::SUBMIT_STATEMENT_METHOD,
 	},
 	subscription::Spawner,
 };
@@ -1351,7 +1352,7 @@ fn sso_scripted_responses(
 					Some((subscribe_ack_frame(&id, "peer-sub"), 2))
 				},
 				2 => {
-					let id = wait_for_rpc_method_id(sent.clone(), "statement_submit", 0).await;
+					let id = wait_for_rpc_method_id(sent.clone(), SUBMIT_STATEMENT_METHOD, 0).await;
 					Some((statement_submit_ack_frame(&id), 3))
 				},
 				3 => match &script {
