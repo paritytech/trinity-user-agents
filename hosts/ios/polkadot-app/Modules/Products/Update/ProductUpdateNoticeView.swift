@@ -3,6 +3,8 @@ import PolkadotUI
 import SwiftUI
 
 struct ProductUpdateNoticeView: View {
+    private static let iconSize: CGFloat = 24
+
     let productName: String
     let icon: any ImageViewModelProtocol
     let onUpdate: () -> Void
@@ -10,9 +12,16 @@ struct ProductUpdateNoticeView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: DSSpacings.small) {
-            AsyncImageView(viewModel: icon)
-                .frame(width: 24, height: 24)
-                .clipShape(RoundedRectangle(cornerRadius: DSRadii.extraSmall, style: .continuous))
+            // A UIImageView takes its loaded image's size, so the image is processed to the frame it fills.
+            AsyncImageView(
+                viewModel: icon,
+                settings: ImageViewModelSettings(
+                    targetSize: CGSize(width: Self.iconSize, height: Self.iconSize),
+                    cornerRadius: DSRadii.extraSmall
+                )
+            )
+            .frame(width: Self.iconSize, height: Self.iconSize)
+            .clipShape(RoundedRectangle(cornerRadius: DSRadii.extraSmall, style: .continuous))
             Text(.Products.updateNoticeMessage(product: productName))
                 .typography(.bodySmall)
                 .foregroundStyle(Color.fgPrimary)
