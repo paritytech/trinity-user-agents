@@ -440,7 +440,8 @@ has no identity and no rollback protection, and is trusted as far as its source.
 A reader runs from a copy it holds, and fetching only refreshes that copy:
 
 - A reader MAY start from a copy made at build time and verified against its pointer, and MUST treat it as a stored
-  copy, so no fetch lowers a signed stack's `sequence`. A reader with no copy fetches before first use.
+  copy, so no fetch lowers a signed stack's `sequence`. A reader that has both a build copy and a stored one starts from
+  the one with the higher `sequence`. A reader with no copy fetches before first use.
 - A reader whose fetch fails, or returns a descriptor it refuses, MUST keep using the copy it holds. Being unable to
   fetch is never a reason to stop.
 - A reader SHOULD NOT fetch a descriptor per request. It fetches when its user asks, or on a schedule of its own, at
