@@ -42,10 +42,8 @@ where
 }
 
 /// [`retry_on`] that stops when `until` is cancelled during a pause, returning
-/// the failure that started it.
-///
-/// A cancellation ends a pause, never an attempt in flight, because a dropped
-/// request can leave something open, such as a subscription.
+/// the failure that started it. It never drops an attempt in flight, which
+/// could leave something open, such as a subscription.
 pub async fn retry_on_until<Done, Failure, AttemptFuture>(
 	timer: &dyn Timer,
 	until: &CancellationToken,

@@ -30,14 +30,10 @@ pub fn says_chain_halted(error: &RpcError) -> bool {
 }
 
 /// Run `attempt`, retrying up to [`HALT_RETRIES`] times on [`HALT_PAUSES`]
-/// while its failure `is_retryable`. Returns the first other outcome, or the
-/// last failure.
+/// while its failure `is_retryable`. Only for attempts safe to repeat.
 ///
-/// Cancelling `until` ends a pause, as [`retry_on_until`] does, and returns
-/// the failure that started it. That looks the same as a halt that outlasted
-/// every pause, so a caller that cares checks `until` itself.
-///
-/// Use it only for attempts that are safe to repeat.
+/// Cancelling `until` ends a pause and returns the failure that started it,
+/// as a lasting halt does, so check `until` to tell the two apart.
 pub async fn retry_through_halts<Done, Failure, AttemptFuture>(
 	timer: &dyn Timer,
 	until: &CancellationToken,

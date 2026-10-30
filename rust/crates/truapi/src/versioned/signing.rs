@@ -1,12 +1,8 @@
 //! Versioned wrappers for [`Signing`](crate::api::Signing) methods.
 //!
-//! v0.2 adds `ChainUnavailable` to `create_transaction`'s error and keeps the
-//! v0.1 request and response. A v0.1 caller gets `Unknown` with the same
-//! reason instead.
-//!
-//! `create_transaction_with_legacy_account` stays on v0.1: a pairing host
-//! relays it, so only a signing host could ever report the new variant, and a
-//! v0.2 would cut new products off from every host that has not upgraded.
+//! v0.2 adds `ChainUnavailable` to `create_transaction`'s error. A v0.1
+//! caller gets `Unknown` with the same reason. The legacy-account method stays
+//! on v0.1, since only a signing host could ever report the new variant.
 
 use crate::{
 	v01, v02,
@@ -165,9 +161,8 @@ mod tests {
 
 	#[test]
 	fn create_transaction_moves_to_v02_as_a_whole() {
-		// A method's request, response and error share one version, and the
-		// generated client sends the newest request, so a request left on V1
-		// would keep every caller from ever seeing the V2 error.
+		// The client sends the newest request, so a request left on V1 would
+		// hide the V2 error from every caller.
 		assert_eq!(
 			[
 				HostCreateTransactionRequest::LATEST,

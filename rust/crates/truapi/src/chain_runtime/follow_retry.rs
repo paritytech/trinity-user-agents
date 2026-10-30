@@ -36,15 +36,11 @@ pub enum FollowEnd {
 	Stalled,
 }
 
-/// [`RuntimeCallClient`] that retries a chainHead follow refused by a halt.
+/// [`RuntimeCallClient`] that retries a chainHead follow refused by a halt,
+/// since Subxt gives up on its backend after one failed re-follow.
 ///
-/// Subxt gives up on its backend after one failed re-follow, so without this
-/// a brief halt fails every call waiting on the follow. Other refusals pass
-/// through at once.
-///
-/// Subxt reports every follow end as a dropped subscription, so this client
-/// records the real cause in [`Self::follow_end`] and counts halted requests
-/// in [`Self::halts`].
+/// Subxt reports every follow end alike, so this records the cause in
+/// [`Self::follow_end`] and counts halted requests in [`Self::halts`].
 pub struct FollowRetryingRpcClient {
 	inner: RuntimeCallClient,
 	timer: Arc<dyn Timer>,
