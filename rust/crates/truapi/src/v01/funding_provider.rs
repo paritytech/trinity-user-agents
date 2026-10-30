@@ -478,6 +478,27 @@ pub enum HostFundingPresentFrameError {
 	},
 }
 
+/// Request to close the provider screen open for a session.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostFundingCloseFrameRequest {
+	/// Session the screen belongs to.
+	pub intent: String,
+}
+
+/// Error from [`crate::api::FundingProvider::close_frame`].
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostFundingCloseFrameError {
+	/// No open session with this id is assigned to the caller.
+	#[codec(index = 0)]
+	NotFound,
+	/// Catch-all.
+	#[codec(index = 1)]
+	Unknown {
+		/// Human-readable failure reason.
+		reason: String,
+	},
+}
+
 /// An ask for the provider to price.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct ProductFundingQuoteRequest {
