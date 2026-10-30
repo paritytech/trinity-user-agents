@@ -106,14 +106,6 @@ Option 2 remains the better shape on one axis, in that the class in the signatur
 ## Interface
 
 ```rust
-/// What a marker carries, and whether it may leave the device.
-#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
-pub struct Marker {
-    /// Dotted target, e.g. `truapi.chain.follow_budget_reached`.
-    pub target: String,
-    pub class: MarkerClass,
-}
-
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum MarkerClass {
     /// Stays on the device.
@@ -125,13 +117,16 @@ pub enum MarkerClass {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum Severity { Info, Warn, Error }
 
-/// Every host-facing marker and its class. A host reads this once at startup
-/// and matches exactly; a target absent from it is `Local`.
+/// Every marker the core may address to a host, keyed by its dotted target.
+/// A host reads this once and looks up each marker it is handed; a target the
+/// map does not hold is `Local`.
 #[uniffi::export]
-pub fn core_markers() -> Vec<Marker> { /* ... */ }
+pub fn core_markers() -> HashMap<String, MarkerClass> { /* ... */ }
 ```
 
-What a marker may carry is prose for reviewers and stays in the Rust registry beside each entry. It is not in the exported `Record`, because nothing on a device reads it.
+The map is the lookup itself rather than a list a host has to index, so the bindings carry no mirror of the registry struct: only the two enums cross, as `[String: MarkerClass]` in Swift and `Map<String, MarkerClass>` in Kotlin.
+
+What a marker may carry is prose for reviewers. It stays in the Rust registry as the doc comment on each entry, and does not cross, because nothing on a device reads it.
 
 An unregistered target is caught three times over, in this order:
 
