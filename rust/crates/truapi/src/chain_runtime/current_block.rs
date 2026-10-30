@@ -1,10 +1,10 @@
 //! Reading the current finalized block, for building transactions.
 
 use core::time::Duration;
-use std::sync::Mutex;
 
 use derive_more::Display;
 use futures::{FutureExt, TryFutureExt, pin_mut};
+use parking_lot::Mutex;
 use subxt::{
 	client::OnlineClientAtBlock, config::SubstrateConfig, error::OnlineClientAtBlockError,
 };
@@ -64,7 +64,7 @@ impl ChainRuntime {
 			let connection = self.subxt_connection(genesis_hash).await.map_err(|failure| {
 				FailedRead { error: CurrentBlockError::NoChainConnection(failure), halted: false }
 			})?;
-			*latest_connection.lock().unwrap() = Some(connection.clone());
+			*latest_connection.lock() = Some(connection.clone());
 			let halts = connection.follow.halts();
 			connection.client.at_current_block().await.map_err(|error| {
 				let halted = connection.follow.halts() > halts;
@@ -84,7 +84,7 @@ impl ChainRuntime {
 		futures::select! {
 			result = read => result,
 			() = deadline => {
-				if let Some(connection) = latest_connection.lock().unwrap().take() {
+				if let Some(connection) = latest_connection.lock().take() {
 					connection.end_stalled_follow();
 				}
 				Err(CurrentBlockError::ChainUnavailable(format!(
