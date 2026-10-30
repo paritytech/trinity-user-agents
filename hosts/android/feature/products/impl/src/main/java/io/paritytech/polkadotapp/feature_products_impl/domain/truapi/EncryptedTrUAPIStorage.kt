@@ -87,9 +87,15 @@ class EncryptedHostValues(
             ?: throw HostRejection.Rejected("encrypted storage: $field is stored but does not decrypt")
     }
 
+    // The core commits the receive key row right after this returns, so the
+    // secret must already be on disk.
     suspend fun write(key: ByteArray, value: ByteArray) {
-        writeValue(preferences, qualify(key), value)
+        writeValue(preferences, qualify(key), value, persist = ::persistNow)
             ?.let { throw HostRejection.Rejected("encrypted storage: $it") }
+    }
+
+    private fun persistNow(field: String, tagged: String) {
+        check(preferences.putEncryptedStringNow(field, tagged)) { "not written to disk" }
     }
 
     private fun qualify(key: ByteArray) = "$ENCRYPTED_NAMESPACE/${key.toHex()}"
@@ -136,9 +142,14 @@ private fun readValue(preferences: EncryptedPreferences, key: String): ByteArray
 }
 
 /** Returns null on success, or a reason to report to the core. */
-private fun writeValue(preferences: EncryptedPreferences, key: String, value: ByteArray): String? {
+private fun writeValue(
+    preferences: EncryptedPreferences,
+    key: String,
+    value: ByteArray,
+    persist: (String, String) -> Unit = preferences::putEncryptedString,
+): String? {
     val tagged = VALUE_TAG + value.toHex()
-    val failure = runCatching { preferences.putEncryptedString(key, tagged) }.exceptionOrNull()
+    val failure = runCatching { persist(key, tagged) }.exceptionOrNull()
     if (failure != null) return "failed to persist $key: ${failure.message}"
 
     // The encrypt path swallows its own exceptions, so the only reliable
