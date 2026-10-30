@@ -221,7 +221,10 @@ schemes.
   previewnet. A literal address MUST be written in canonical form (`10.0.0.1`, never `10.1` or `0x0a.1`): URL parsers
   disagree on shorthand, so two readers would reach different hosts. A URL MUST NOT contain `\`: in `http`, `https`,
   `ws` and `wss` URLs browser parsers read it as `/` and RFC 3986 parsers do not, so
-  `https://previewnet.substrate.dev\@evil.example/` would reach previewnet in a browser and `evil.example` elsewhere.
+  `https://previewnet.substrate.dev\@evil.example/` would reach previewnet in a browser and `evil.example` elsewhere. A
+  URL MUST be ASCII, with a host outside ASCII written in its `xn--` form and other characters percent-encoded: IDNA
+  readers map some names differently, so `faß.example` would reach `xn--fa-hia.example` in a browser and `fass.example`
+  in Python.
 - An HTTP service URL is a base URL ending in `/`, and readers resolve paths relative to it. `eth-rpc` URLs are JSON-RPC
   endpoints used as given.
 
