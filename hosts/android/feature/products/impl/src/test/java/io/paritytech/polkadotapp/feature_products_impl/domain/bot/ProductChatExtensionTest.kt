@@ -1,10 +1,14 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import android.content.Context
+import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomResult
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomPreviewData
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
@@ -16,6 +20,8 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParamet
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatIcon
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.productIconUri
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
@@ -212,6 +218,48 @@ class ProductChatExtensionTest {
         val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(RecordingWorker()), mockk(), mockk())
 
         assertEquals(null to true, extension.pinnedAndRemovable(ChatId.forExtensionRoom(extensionId, ROOM)))
+    }
+
+    private suspend fun TestScope.registerRoom(status: CreateRoomStatus, icon: String): ChatExtensionContext {
+        val refCounter = FakeRefCounter(RecordingWorker())
+        val hostScope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val context = chatExtensionContext(hostScope, emptyFlow())
+        val chatId = ChatId.forExtensionRoom(extensionId, ROOM)
+        coEvery { context.createRoom(any()) } returns CreateRoomResult(chatId, status)
+
+        try {
+            with(context) { ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk()).startGlobalWork() }
+            advanceUntilIdle()
+            val roomIcon = ProductChatIcon.fromString(icon).getOrThrow()
+            requireNotNull(refCounter.chatSurface).createRoom(CreateProductRoomRequest(ProductChatIdParameter(ROOM), "Polkadot", roomIcon))
+        } finally {
+            hostScope.cancel()
+        }
+
+        return context
+    }
+
+    // A product registers its room on every start, so a later version that renames it or changes its icon must
+    // reach everyone who already has the room, as it does on iOS.
+    @Test
+    fun `registering a room again gives it the product's latest name and icon`() = runTest {
+        val icon = "data:image/png;base64,iVBORw0KGgo="
+
+        val context = registerRoom(CreateRoomStatus.Exists, icon)
+
+        coVerify {
+            context.updateRoomMetadata(
+                ChatId.forExtensionRoom(extensionId, ROOM),
+                withArg { assertEquals("Polkadot" to icon, it.name to it.icon) },
+            )
+        }
+    }
+
+    @Test
+    fun `registering a new room describes it once`() = runTest {
+        val context = registerRoom(CreateRoomStatus.New, "data:image/png;base64,iVBORw0KGgo=")
+
+        coVerify(exactly = 0) { context.updateRoomMetadata(any(), any()) }
     }
 
     // Until the worker registers an icon for its room, the chat shows the one the manifest declares.
