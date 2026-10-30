@@ -18,8 +18,10 @@ use crate::{
 		HostNftPurseRebalancePurseError, HostNftPurseRebalancePurseRequest,
 		HostNftPurseRebalancePurseResponse, HostNftPurseRefundError, HostNftPurseRefundRequest,
 		HostNftPurseRefundResponse, HostNftPurseRevokeChequeError, HostNftPurseRevokeChequeRequest,
-		HostNftPurseRevokeChequeResponse, HostNftPurseTransferItemError,
-		HostNftPurseTransferItemRequest, HostNftPurseTransferItemResponse,
+		HostNftPurseRevokeChequeResponse, HostNftPurseStaticReceiveKeyError,
+		HostNftPurseStaticReceiveKeyRequest, HostNftPurseStaticReceiveKeyResponse,
+		HostNftPurseTransferItemError, HostNftPurseTransferItemRequest,
+		HostNftPurseTransferItemResponse,
 	},
 	wire, wire_trait,
 };
@@ -172,7 +174,15 @@ pub trait NftPurse: Send + Sync {
 		Subscription::interrupted(CallError::unavailable())
 	}
 
-	/// Hand items off in a cheque that the product delivers.
+	/// Hand items off in a cheque that the product delivers. The items are
+	/// spent from then on. The cheque id is the destination's: derived from
+	/// the receive key, or the given static `cheque_id`. A product creating a
+	/// second cheque with the same id gets `OperationExists`.
+	/// `encrypted_secrets` is the ephemeral X25519 key, then the 12-byte nonce,
+	/// then the ChaCha20-Poly1305 ciphertext of the SCALE-encoded 64-byte
+	/// sr25519 secrets in `items` order, each as schnorrkel's
+	/// `SecretKey::to_bytes` writes it (scalar, then nonce), not the
+	/// ed25519-expanded form.
 	///
 	/// ```ts
 	/// const result = await truapi.nftPurse.createCheque({
@@ -304,5 +314,23 @@ pub trait NftPurse: Send + Sync {
 		CallError<HostNftPurseObserveOperationStatusError>,
 	> {
 		Subscription::interrupted(CallError::unavailable())
+	}
+
+	/// The X25519 key a sender seals a `Static` cheque to, so the product can
+	/// publish it. The same for every product.
+	///
+	/// ```ts
+	/// const result = await truapi.nftPurse.staticReceiveKey({});
+	/// assert(result.isOk(), "staticReceiveKey failed:", result);
+	/// console.log("static receive key:", result.value.key);
+	/// ```
+	#[wire(id = 13)]
+	async fn static_receive_key(
+		&self,
+		_cx: &CallContext,
+		_request: HostNftPurseStaticReceiveKeyRequest,
+	) -> Result<HostNftPurseStaticReceiveKeyResponse, CallError<HostNftPurseStaticReceiveKeyError>>
+	{
+		Err(CallError::unavailable())
 	}
 }

@@ -6,6 +6,7 @@ use futures::stream::BoxStream;
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, named_params, types::Value};
 
 use super::{
+	handoff::HandoffTag,
 	holding::HeldItem,
 	keys::{ItemIndex, ItemKey, ItemSlot},
 	purse::{PurseId, PurseRecord, PurseTag},
@@ -163,6 +164,25 @@ pub fn key_standings(
 	Ok(rows.collect::<Result<_, _>>()?)
 }
 
+const MOVING_KEYS: &str = concat!(
+	"SELECT DISTINCT spent.key AS key FROM nft_consumption AS spent
+	JOIN durable_tx AS tx ON tx.id = spent.tx
+	WHERE spent.kind = 'INPUT' AND tx.status IN ",
+	live_statuses!(),
+	" AND spent.key IN rarray(:keys)"
+);
+
+/// Those of `keys` that a live transaction moves, whether the key is ours or
+/// one imported from a cheque.
+pub fn moving_keys(conn: &Connection, keys: &[ItemKey]) -> Result<Vec<ItemKey>, DbError> {
+	let mut statement = conn.prepare_cached(MOVING_KEYS)?;
+	let key_values: Rc<Vec<Value>> =
+		Rc::new(keys.iter().map(|key| Value::Blob(key.0.to_vec())).collect());
+	let rows = statement
+		.query_map(named_params! { ":keys": key_values }, |row| Ok(ItemKey(row.get("key")?)))?;
+	Ok(rows.collect::<Result<_, _>>()?)
+}
+
 const INSERT_INPUT: &str =
 	"INSERT INTO nft_consumption (key, kind, tx) VALUES (:key, 'INPUT', :tx)";
 
@@ -174,6 +194,30 @@ pub fn insert_inputs(
 	let mut statement = tx.prepare_cached(INSERT_INPUT)?;
 	for (key, spender) in inputs {
 		statement.execute(named_params! { ":key": key.0, ":tx": spender.0 })?;
+	}
+	Ok(())
+}
+
+const TAG_IN_USE: &str = "SELECT EXISTS (SELECT 1 FROM nft_consumption WHERE handoff_tag = :tag)";
+
+/// Whether any key was handed off under `tag`.
+pub fn handoff_tag_in_use(conn: &Connection, tag: &HandoffTag) -> Result<bool, DbError> {
+	let mut statement = conn.prepare_cached(TAG_IN_USE)?;
+	Ok(statement.query_row(named_params! { ":tag": tag.0 }, |row| row.get(0))?)
+}
+
+const INSERT_HANDOFF: &str =
+	"INSERT INTO nft_consumption (key, kind, handoff_tag) VALUES (:key, 'HANDOFF', :tag)";
+
+/// Records that each of `keys` is handed off under `tag`.
+pub fn insert_handoffs(
+	tx: &Transaction<'_>,
+	keys: &[ItemKey],
+	tag: &HandoffTag,
+) -> Result<(), DbError> {
+	let mut statement = tx.prepare_cached(INSERT_HANDOFF)?;
+	for key in keys {
+		statement.execute(named_params! { ":key": key.0, ":tag": tag.0 })?;
 	}
 	Ok(())
 }

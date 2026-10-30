@@ -10,11 +10,12 @@ use sp_crypto_hashing::blake2_256;
 use subxt::utils::H256;
 
 use super::{
-	dao::{self, KeyStanding},
+	dao,
 	item::{AllocateItemsError, Allocation, allocate_items_in},
-	keys::{ItemKey, ItemKeyDeriver, ItemSlot},
+	keys::{ItemKey, ItemKeyDeriver},
 	purse::PurseId,
-	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams},
+	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams, TransferSigner},
+	standing::{IdleItem, ItemRefusal, idle_items},
 };
 use crate::{
 	durable::{
@@ -71,6 +72,15 @@ pub enum StartOperationError {
 	Db(#[from] DbError),
 }
 
+impl From<ItemRefusal> for StartOperationError {
+	fn from(refusal: ItemRefusal) -> Self {
+		match refusal {
+			ItemRefusal::NotFound(key) => Self::ItemNotFound(key),
+			ItemRefusal::Unavailable(key) => Self::ItemUnavailable(key),
+		}
+	}
+}
+
 /// Which items an operation transfers and where they go.
 #[derive(Clone)]
 pub enum TransferType {
@@ -92,10 +102,10 @@ pub enum TransferType {
 
 impl TransferType {
 	/// The items the transfers spend, in the order they are registered.
-	pub fn inputs(&self) -> Vec<ItemKey> {
+	pub fn inputs(&self) -> BTreeSet<ItemKey> {
 		match self {
-			Self::Local { inputs, .. } => inputs.iter().copied().collect(),
-			Self::Foreign { input, .. } => vec![*input],
+			Self::Local { inputs, .. } => inputs.clone(),
+			Self::Foreign { input, .. } => BTreeSet::from([*input]),
 		}
 	}
 }
@@ -129,7 +139,7 @@ pub fn plan_transfers(
 	keys: DestinationKeys<'_>,
 ) -> Result<Vec<PolicyParams>, StartOperationError> {
 	validate_operation_unused(tx, &request.operation)?;
-	let sources = idle_items(tx, request.from, &request.transfer.inputs())?;
+	let sources = idle_items::<StartOperationError>(tx, request.from, &request.transfer.inputs())?;
 	let destinations = match request.transfer {
 		TransferType::Local { into, .. } => allocate_destinations(tx, into, sources.len(), keys)?,
 		TransferType::Foreign { into, .. } => vec![into],
@@ -142,8 +152,8 @@ pub fn plan_transfers(
 			let signed_state_nonce = None;
 			TransferParams {
 				source,
-				slot,
-				instance,
+				signer: TransferSigner::Derived(slot),
+				instance: Some(instance),
 				destination,
 				signed_state_nonce,
 				give_up_after,
@@ -160,11 +170,11 @@ pub fn validate_can_start(
 	request: &TransferRequest,
 ) -> Result<(), StartOperationError> {
 	validate_operation_unused(conn, &request.operation)?;
-	idle_items(conn, request.from, &request.transfer.inputs()).map(|_| ())
+	idle_items::<StartOperationError>(conn, request.from, &request.transfer.inputs()).map(|_| ())
 }
 
 /// Refuses `operation` when it is already registered.
-fn validate_operation_unused(
+pub fn validate_operation_unused(
 	conn: &Connection,
 	operation: &OperationKey,
 ) -> Result<(), StartOperationError> {
@@ -174,15 +184,21 @@ fn validate_operation_unused(
 	Ok(())
 }
 
-/// An item that holds an NFT and that nothing spends.
-struct IdleItem {
-	key: ItemKey,
-	slot: ItemSlot,
-	instance: u64,
+/// Refuses the first of `sources` that a live transaction already moves.
+pub fn validate_not_moving(
+	conn: &Connection,
+	sources: &BTreeSet<ItemKey>,
+) -> Result<(), StartOperationError> {
+	let keys: Vec<ItemKey> = sources.iter().copied().collect();
+	let moving = dao::moving_keys(conn, &keys)?;
+	match moving.first() {
+		Some(key) => Err(StartOperationError::ItemUnavailable(*key)),
+		None => Ok(()),
+	}
 }
 
 /// `item_count` fresh keys in `purse`.
-fn allocate_destinations(
+pub fn allocate_destinations(
 	tx: &Transaction<'_>,
 	purse: PurseId,
 	item_count: usize,
@@ -194,29 +210,11 @@ fn allocate_destinations(
 	Ok(allocate_items_in(tx, allocation, keys.deriver)??)
 }
 
-/// Each of `items` with its slot and instance, in order, when every one is
-/// idle in `purse`. Reads every standing in one query.
-fn idle_items(
-	conn: &Connection,
-	purse: PurseId,
-	items: &[ItemKey],
-) -> Result<Vec<IdleItem>, StartOperationError> {
-	let standings = dao::key_standings(conn, purse, items)?;
-	let idle_item = |key: &ItemKey| match standings.get(key) {
-		Some(KeyStanding::Idle { instance, slot }) => {
-			Ok(IdleItem { key: *key, slot: *slot, instance: *instance })
-		},
-		Some(KeyStanding::Spent) => Err(StartOperationError::ItemUnavailable(*key)),
-		None => Err(StartOperationError::ItemNotFound(*key)),
-	};
-	items.iter().map(idle_item).collect()
-}
-
 /// Records that the transfer with each id of `ids` spends the item at the same
 /// position of `items`.
 pub fn record_inputs(
 	tx: &Transaction<'_>,
-	items: &[ItemKey],
+	items: &BTreeSet<ItemKey>,
 	ids: &[DurableTxId],
 ) -> Result<(), StartOperationError> {
 	let inputs: Vec<_> = items.iter().copied().zip(ids.iter().copied()).collect();

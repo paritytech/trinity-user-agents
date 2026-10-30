@@ -112,7 +112,7 @@ pub fn drain_needs_confirmation(caller: &ProductId, owner: &PurseOwner) -> bool 
 }
 
 /// The operation `caller` names `idempotency_key`, scoped to `caller`.
-fn operation_key(caller: &ProductId, idempotency_key: NftPurseIdempotencyKey) -> OperationKey {
+pub fn operation_key(caller: &ProductId, idempotency_key: NftPurseIdempotencyKey) -> OperationKey {
 	OperationKey::new(caller.as_str().as_bytes(), idempotency_key.0)
 }
 
@@ -300,7 +300,7 @@ mod tests {
 	fn the_status_stream_ends_with_its_terminal_status() {
 		let (_dir, db) = open_temporary_core_db();
 		let ledger = test_ledger(db.clone());
-		let purses = NftPurses::new(ledger.clone());
+		let purses = crate::nft_purse::test_purses(db.clone());
 		let caller: ProductId = "tickets.dot".parse().unwrap();
 		let item = held_item_in_new_purses(&ledger);
 		let key = NftPurseIdempotencyKey([1; 32]);

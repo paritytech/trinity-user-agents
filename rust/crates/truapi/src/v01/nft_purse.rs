@@ -362,6 +362,10 @@ pub enum NftPurseCreateChequeError {
 	ItemNotFound,
 	/// Some item is in use.
 	ItemUnavailable,
+	/// `items` is empty.
+	NoItems,
+	/// This product already created a cheque with the same id.
+	OperationExists,
 	/// Any other failure.
 	Other(GenericError),
 }
@@ -398,12 +402,38 @@ pub struct HostNftPurseDepositRequest {
 pub enum NftPurseDepositError {
 	/// `to` does not exist.
 	PurseNotFound,
+	/// `to` is not the purse the cheque's receive key was created into.
+	PurseMismatch,
 	/// The cheque is already deposited.
 	OperationExists,
 	/// The cheque holds no items.
 	EmptyCheque,
 	/// The secrets do not decode, or do not match the items.
 	CorruptedCheque,
+	/// Some of the cheque's items are already being moved, such as by a
+	/// deposit of the same cheque by another product or under another id.
+	ItemsInUse,
+	/// Any other failure.
+	Other(GenericError),
+}
+
+/// Request for the key a sender seals a `Static` cheque to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub struct HostNftPurseStaticReceiveKeyRequest {}
+
+/// The host's static receive key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub struct HostNftPurseStaticReceiveKeyResponse {
+	/// The X25519 key `Static` cheques are sealed to. The same for every
+	/// product.
+	pub key: X25519PublicKey,
+}
+
+/// Why the static receive key could not be read.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum NftPurseStaticReceiveKeyError {
+	/// The user did not consent to disclosing their identity to the product.
+	PermissionDenied,
 	/// Any other failure.
 	Other(GenericError),
 }

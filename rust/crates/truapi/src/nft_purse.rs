@@ -4,24 +4,32 @@
 //! needs; the capability handler asks for it, because the prompt belongs to the
 //! product connection.
 
+mod cheque;
+mod dao;
+mod deposit;
 mod operation;
+mod receive_key;
 
 use core::num::NonZeroU32;
+use std::sync::Arc;
 
 use truapi::latest::{
 	NFT_PURSE_MAX_NAME_BYTES, NftPurseId, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
 	NftPursePurse, RemotePermission,
 };
 
+pub use deposit::DepositRefusal;
 pub use operation::drain_needs_confirmation;
+pub use receive_key::{CreateReceiveKeyError, StaticReceiveSecret};
 
 use crate::{
+	encrypted_storage::EncryptedStorage,
 	nft::{
 		AllocateItemsError, CreatePurseError, ItemKey, NftLedger, PageRequest, PurseId,
 		PurseRecord, PurseTag,
 	},
 	platform::{ProductId, ProductIdError},
-	store::DbError,
+	store::{Db, DbError},
 };
 
 /// Who owns a purse, with a product's id validated and normalized.
@@ -124,16 +132,32 @@ pub type ItemCount = CountUpTo<MAX_ITEMS_PER_CALL>;
 /// A page size `query_purse` accepts.
 pub type PageSize = CountUpTo<MAX_PAGE_SIZE>;
 
+/// What the RFC's purse calls run on.
+pub struct NftPursesDeps {
+	/// Layer 1: purses, items and their transfers.
+	pub ledger: NftLedger,
+	/// The core database, for the tables Layer 2 owns.
+	pub db: Db,
+	/// Keeps the secrets of receive keys.
+	pub encrypted: Arc<dyn EncryptedStorage>,
+	/// Opens `Static` cheques.
+	pub static_secret: Arc<dyn StaticReceiveSecret>,
+}
+
 /// The RFC's purse calls, shared by every product.
 #[derive(Clone)]
 pub struct NftPurses {
 	ledger: NftLedger,
+	db: Db,
+	encrypted: Arc<dyn EncryptedStorage>,
+	static_secret: Arc<dyn StaticReceiveSecret>,
 }
 
 impl NftPurses {
-	/// The RFC calls over `ledger`.
-	pub fn new(ledger: NftLedger) -> Self {
-		Self { ledger }
+	/// The RFC calls over `deps`.
+	pub fn new(deps: NftPursesDeps) -> Self {
+		let NftPursesDeps { ledger, db, encrypted, static_secret } = deps;
+		Self { ledger, db, encrypted, static_secret }
 	}
 
 	/// Creates a purse owned by the product `caller`.
@@ -191,6 +215,33 @@ impl NftPurses {
 	}
 }
 
+/// Purse calls over `db` with the test ledger, encrypted storage in memory and
+/// [`TEST_STATIC_SECRET`].
+#[cfg(test)]
+pub fn test_purses(db: Db) -> NftPurses {
+	let ledger = crate::nft::test_ledger(db.clone());
+	let encrypted = Arc::new(crate::encrypted_storage::MemoryEncryptedStorage::default());
+	let static_secret = Arc::new(FixedStaticSecret(TEST_STATIC_SECRET));
+	NftPurses::new(NftPursesDeps { ledger, db, encrypted, static_secret })
+}
+
+/// The static receive secret of [`test_purses`].
+#[cfg(test)]
+pub const TEST_STATIC_SECRET: [u8; 32] = [0x5e; 32];
+
+/// Always the same static receive secret.
+#[cfg(test)]
+pub struct FixedStaticSecret(pub [u8; 32]);
+
+#[cfg(test)]
+impl StaticReceiveSecret for FixedStaticSecret {
+	fn static_receive_secret(
+		&self,
+	) -> Result<crate::host_logic::x25519_seal::X25519PrivateKey, crate::runtime::AuthorityError> {
+		Ok(crate::host_logic::x25519_seal::X25519PrivateKey::from(self.0))
+	}
+}
+
 /// The grant `caller` needs to read `owner`'s purses, or `None` when they are
 /// its own.
 pub fn read_grant(caller: &ProductId, owner: &PurseOwner) -> Option<RemotePermission> {
@@ -214,14 +265,14 @@ mod tests {
 	use tempfile::TempDir;
 
 	use super::*;
-	use crate::{nft::test_ledger, store::open_temporary_core_db};
+	use crate::store::open_temporary_core_db;
 
 	const PRODUCT: &str = "tickets.dot";
 
 	/// The purse calls, with the directory that keeps their database alive.
 	fn purses() -> (TempDir, NftPurses) {
 		let (dir, db) = open_temporary_core_db();
-		(dir, NftPurses::new(test_ledger(db)))
+		(dir, test_purses(db))
 	}
 
 	fn product_id(id: &str) -> ProductId {
@@ -306,7 +357,7 @@ mod tests {
 	#[test]
 	fn creating_past_the_last_id_is_refused() {
 		let (_dir, db) = open_temporary_core_db();
-		let purses = NftPurses::new(test_ledger(db.clone()));
+		let purses = test_purses(db.clone());
 		let last = PurseId::MAIN.0 - 1;
 		block_on(db.write(move |tx| {
 			tx.execute("INSERT INTO nft_purse (id, name, tag) VALUES (?1, 'last', x'')", [last])?;
@@ -354,7 +405,7 @@ mod tests {
 	#[test]
 	fn a_tag_naming_no_product_is_an_error() {
 		let (_dir, db) = open_temporary_core_db();
-		let purses = NftPurses::new(test_ledger(db.clone()));
+		let purses = test_purses(db.clone());
 		block_on(db.write(|tx| {
 			tx.execute("INSERT INTO nft_purse (id, name, tag) VALUES (0, 'odd', x'ff')", [])?;
 			Ok(())

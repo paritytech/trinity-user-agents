@@ -4,6 +4,7 @@ use std::sync::Weak;
 
 use parity_scale_codec::{Decode, Encode};
 use schnorrkel::Keypair;
+use zeroize::Zeroizing;
 
 use super::purse::PurseId;
 use crate::{
@@ -82,6 +83,75 @@ impl<Signer: ItemSigner> ItemSigner for Weak<Signer> {
 	}
 }
 
+/// The 64-byte sr25519 secret of one item key: its scalar, then its nonce.
+/// Wiped from memory when dropped.
+pub struct ItemSecret(Zeroizing<[u8; 64]>);
+
+impl ItemSecret {
+	/// Wraps the 64 bytes of a secret, as `as_bytes` returns them.
+	pub fn from_bytes(bytes: Zeroizing<[u8; 64]>) -> Self {
+		Self(bytes)
+	}
+
+	/// The secret's bytes, as `schnorrkel::SecretKey::from_bytes` reads them.
+	pub fn as_bytes(&self) -> &[u8; 64] {
+		&self.0
+	}
+}
+
+/// Bytes that are not an sr25519 secret key.
+#[derive(Debug, thiserror::Error)]
+#[error(
+	"the bytes are not an sr25519 secret key: expected a canonical scalar, then a 32-byte nonce"
+)]
+pub struct InvalidItemSecret;
+
+/// An item key the host did not derive, with the secret that signs for it.
+pub struct ImportedItemKey {
+	key: ItemKey,
+	secret: ItemSecret,
+}
+
+impl ImportedItemKey {
+	/// The key `secret` signs for, with that secret. Fails on bytes that are
+	/// not a secret key.
+	pub fn from_secret(secret: ItemSecret) -> Result<Self, InvalidItemSecret> {
+		let parsed =
+			schnorrkel::SecretKey::from_bytes(secret.as_bytes()).map_err(|_| InvalidItemSecret)?;
+		let key = ItemKey(parsed.to_public().to_bytes());
+		Ok(Self { key, secret })
+	}
+
+	/// The public key.
+	pub fn key(&self) -> ItemKey {
+		self.key
+	}
+
+	/// The secret that signs for it.
+	pub fn secret(&self) -> &ItemSecret {
+		&self.secret
+	}
+}
+
+/// Exports item secrets, so items can be handed off. Only
+/// `NftLedger::hand_off` calls it.
+pub trait ItemSecrets: Send + Sync {
+	/// The secret of each of `slots`, in order. Fails without a session.
+	fn derive_item_secrets(&self, slots: &[ItemSlot]) -> Result<Vec<ItemSecret>, AuthorityError>;
+}
+
+/// For an exporter that owns the ledger, which must not keep it alive in
+/// turn. Once the exporter is gone there are no secrets to export.
+impl<Exporter: ItemSecrets> ItemSecrets for Weak<Exporter> {
+	fn derive_item_secrets(&self, slots: &[ItemSlot]) -> Result<Vec<ItemSecret>, AuthorityError> {
+		let Some(exporter) = self.upgrade() else {
+			let reason = "the item secret exporter was dropped".to_string();
+			return Err(AuthorityError::Unavailable { reason });
+		};
+		exporter.derive_item_secrets(slots)
+	}
+}
+
 /// The public key at each of `slots`, derived from the root of `entropy`.
 pub fn item_keys_from_entropy(
 	entropy: &[u8],
@@ -103,6 +173,19 @@ pub fn item_signer_from_entropy(
 	let root = derive_root_keypair_from_entropy(entropy)?;
 	let keypair = item_keypair_under(root, &slot)?;
 	Ok(Sr25519Signer::from_keypair(&keypair))
+}
+
+/// The secret at each of `slots`, derived from the root of `entropy`.
+pub fn item_secrets_from_entropy(
+	entropy: &[u8],
+	slots: &[ItemSlot],
+) -> Result<Vec<ItemSecret>, ProductAccountError> {
+	let root = derive_root_keypair_from_entropy(entropy)?;
+	let item_secret = |slot: &ItemSlot| {
+		let keypair = item_keypair_under(root.clone(), slot)?;
+		Ok(ItemSecret(Zeroizing::new(keypair.secret.to_bytes())))
+	};
+	slots.iter().map(item_secret).collect()
 }
 
 /// The keypair at `slot` under `root`.
@@ -131,5 +214,26 @@ mod tests {
 		let keys = item_keys_from_entropy(&entropy, &[slot]).unwrap();
 
 		assert_eq!(signer.account_id().0, keys[0].0);
+	}
+
+	/// A cheque's receiver rebuilds each item key from its exported secret, so
+	/// the export must carry the full expanded secret of the right key.
+	#[test]
+	fn an_exported_secret_rebuilds_the_key_derived_at_its_slot_and_signs_for_it() {
+		let entropy = [0x42; 16];
+		let slot = ItemSlot {
+			purse: PurseId(3),
+			installation: InstallationId([0x1d; 32]),
+			index: ItemIndex(7),
+		};
+
+		let secrets = item_secrets_from_entropy(&entropy, &[slot]).unwrap();
+		let keys = item_keys_from_entropy(&entropy, &[slot]).unwrap();
+		let imported = schnorrkel::SecretKey::from_bytes(secrets[0].as_bytes()).unwrap();
+		let public = imported.to_public();
+		let signature = imported.sign_simple(b"substrate", b"move", &public);
+
+		assert_eq!(public.to_bytes(), keys[0].0);
+		assert!(public.verify_simple(b"substrate", b"move", &signature).is_ok());
 	}
 }
