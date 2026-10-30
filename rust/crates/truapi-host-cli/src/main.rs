@@ -1984,14 +1984,15 @@ fn persist_paired_host(session: &SigningHostSession, host: &PairedHost) -> Resul
 	Ok(())
 }
 
-/// Longest pause between restarts of a paired responder. A session that ran
-/// for longer than this before failing starts the pauses again from the first.
-const LONGEST_RESPONDER_RETRY_PAUSE: Duration = Duration::from_secs(30);
-
 /// Pauses between restarts of a paired responder, also used when removing a
 /// host that disconnected.
 const RESPONDER_RETRY_PAUSES: Backoff =
-	Backoff::new(Duration::from_secs(1), LONGEST_RESPONDER_RETRY_PAUSE);
+	Backoff::new(Duration::from_secs(1), Duration::from_secs(30));
+
+/// A session that ran for longer than this before failing starts the restart
+/// pauses again from the first. Restarts stay at least this far apart either
+/// way, since a session that ran this long spaced them itself.
+const RESET_RESTART_PAUSES_AFTER: Duration = Duration::from_secs(30);
 
 /// Serve `host` until it sends `Disconnected`, restarting the responder after
 /// a failure or an ended subscription.
@@ -2016,7 +2017,7 @@ async fn supervise_responder(
 		},
 		|(event, served_for)| {
 			terminal_ui::output_event(event);
-			if served_for > LONGEST_RESPONDER_RETRY_PAUSE {
+			if served_for > RESET_RESTART_PAUSES_AFTER {
 				pauses.reset();
 			}
 			pauses.next_pause()

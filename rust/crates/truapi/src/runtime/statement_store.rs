@@ -136,7 +136,7 @@ impl StatementStore for ProductRuntimeHost {
 				let encoded = signed_statement_to_scale(statement.clone())
 					.map_err(|reason| CallError::Domain(latest::GenericError { reason }))?;
 				self.statement_store_rpc()
-					.submit_sso(encoded, "statement-store")
+					.submit_sso(&encoded, "statement-store")
 					.await
 					.map_err(|error| {
 						if let latest::StatementProof::Sr25519 { signer, .. } = statement.proof &&

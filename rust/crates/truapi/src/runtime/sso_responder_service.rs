@@ -64,7 +64,7 @@ use crate::{
 	time::{Backoff, retry},
 	unix_time::current_unix_secs as statement_current_unix_secs,
 };
-use replay::{ReplayExecution, SsoReplayLocks, SsoReplayScope, execute_once};
+use replay::{ReplayExecution, ReplayRequest, SsoReplayLocks, SsoReplayScope, execute_once};
 
 /// RFC-0022 domain for the responder's persistent SSO X25519 key.
 const SSO_ENCRYPTION_DOMAIN: &[u8] = b"sso";
@@ -72,16 +72,42 @@ const SSO_ENCRYPTION_DOMAIN: &[u8] = b"sso";
 /// Upper bound on undecodable request ids acknowledged within one serve loop.
 const MAX_DECODE_FAILURE_REQUEST_IDS: usize = 1024;
 
-/// Times a session statement is sent again while the People chain cannot be
-/// reached. With [`RESEND_PAUSES`], the responder keeps trying for about 15
-/// seconds before the session ends.
+/// Times a statement is sent again under [`Resend::Briefly`]. The pauses
+/// before the resends are 1, 2, 4 and 8 seconds, so the responder gives up
+/// about 15 seconds after the first send.
 const MAX_RESENDS: u32 = 4;
 
-/// Pauses between sends of a session statement the People chain did not answer.
+/// Pauses between sends of a statement the People chain did not answer. Under
+/// [`Resend::UntilAnswered`] they stay at the longest once they reach it.
 #[cfg(not(test))]
 const RESEND_PAUSES: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(8));
 #[cfg(test)]
 const RESEND_PAUSES: Backoff = Backoff::new(Duration::from_millis(1), Duration::from_millis(8));
+
+/// How long the responder keeps sending one of its statements while the People
+/// chain cannot be reached.
+#[derive(Clone, Copy)]
+enum Resend {
+	/// Up to [`MAX_RESENDS`] times, for a statement whose loss the caller can
+	/// recover from. A failed ack ends the session, and the restarted session
+	/// runs the request when it is delivered again.
+	Briefly,
+	/// Until the store answers, for the answer to a request that already ran.
+	/// A redelivered request is not run again, so giving up would leave the
+	/// pairing host without its answer. The store refuses the statement once it
+	/// expires.
+	UntilAnswered,
+}
+
+impl Resend {
+	/// Whether the statement may be sent again after `sends` sends.
+	fn allows_another_after(self, sends: u32) -> bool {
+		match self {
+			Self::Briefly => sends <= MAX_RESENDS,
+			Self::UntilAnswered => true,
+		}
+	}
+}
 
 fn derive_responder_identity(
 	entropy: &[u8],
@@ -385,11 +411,7 @@ impl SsoResponderService {
 			vec![message],
 			fresh_statement_expiry(),
 		)?;
-		self.services
-			.statement_store
-			.submit_sso(statement, "sso-responder disconnect")
-			.await
-			.map_err(|error| error.to_string())
+		publish(&self.services, &statement, "sso-responder disconnect", Resend::Briefly).await
 	}
 
 	/// Tell the pairing host that allowance allocation is under way, moving it off
@@ -486,11 +508,10 @@ async fn submit_handshake_answer(
 		handshake.encode(),
 		fresh_statement_expiry(),
 	)?;
-	services
-		.statement_store
-		.submit(statement, context)
-		.await
-		.map_err(|error| error.to_string())
+	resend_while_unreachable(context, Resend::Briefly, || {
+		services.statement_store.submit(&statement, context)
+	})
+	.await
 }
 
 /// Keep the responder identity and peer for both pairing notices.
@@ -655,7 +676,8 @@ async fn read_statements(
 						SsoResponseCode::DecodingFailed as u8,
 						fresh_statement_expiry(),
 					)?;
-					publish(services, ack, "sso-responder decode-failed ack").await?;
+					publish(services, &ack, "sso-responder decode-failed ack", Resend::Briefly)
+						.await?;
 				}
 				continue;
 			},
@@ -701,9 +723,6 @@ fn withdrawn_targets(incoming: &IncomingSsoRequest) -> Option<Vec<&str>> {
 }
 
 /// Serve one inbound request statement exactly once across redeliveries.
-///
-/// Acks before writing the request to the replay ledger. If the ack fails,
-/// the ledger stays empty for it, so the request runs when it arrives again.
 async fn serve_statement(
 	responder: &SsoResponderService,
 	service: &SigningHostSsoService,
@@ -712,17 +731,17 @@ async fn serve_statement(
 	incoming: IncomingSsoRequest,
 ) -> Result<Option<ResponderExit>, String> {
 	let services = &responder.services;
-	acknowledge_request(services, session, &incoming.request_id).await?;
 	let request_id = incoming.request_id.clone();
-	let expires_at_unix_secs = incoming.expires_at_unix_secs;
+	let request =
+		ReplayRequest { id: &request_id, expires_at_unix_secs: incoming.expires_at_unix_secs };
 	let duplicate_exit = duplicate_request_exit(&incoming);
 	let execution = execute_once(
 		services.platform.as_ref(),
 		&responder.replay_locks,
 		replay_scope,
-		&request_id,
-		expires_at_unix_secs,
+		request,
 		statement_current_unix_secs(),
+		acknowledge_request(services, session, &request_id),
 		|| serve_request(services, service, session, incoming),
 	)
 	.await?;
@@ -767,7 +786,8 @@ async fn serve_request(
 			vec![response],
 			fresh_statement_expiry(),
 		)?;
-		let publish_result = publish(services, statement, "sso-responder response").await;
+		let publish_result =
+			publish(services, &statement, "sso-responder response", Resend::UntilAnswered).await;
 		let elapsed_ms = started.elapsed().as_millis();
 		match publish_result {
 			Ok(()) => {
@@ -837,30 +857,47 @@ async fn acknowledge_request(
 		SsoResponseCode::Success as u8,
 		fresh_statement_expiry(),
 	)?;
-	publish(services, ack, "sso-responder ack").await
+	publish(services, &ack, "sso-responder ack", Resend::Briefly).await
 }
 
-/// Publish one of the responder's own session statements.
+/// Publish one of the responder's own session statements, sending it again
+/// while the People chain cannot be reached, for as long as `resend` allows.
+async fn publish(
+	services: &RuntimeServices,
+	statement: &[u8],
+	label: &'static str,
+	resend: Resend,
+) -> Result<(), String> {
+	resend_while_unreachable(label, resend, || {
+		services.statement_store.submit_sso(statement, label)
+	})
+	.await
+}
+
+/// Run `submit` until the store answers, running it again after a pause while
+/// the People chain cannot be reached, for as long as `resend` allows.
 ///
-/// While the People chain cannot be reached, the same statement is sent
-/// again after a pause, so one dropped connection does not end the session.
 /// The store answers a statement it already holds with `known`, so one that
 /// landed before its connection broke is not duplicated. Any answer from the
 /// store, including a rejection, is final.
-async fn publish(
-	services: &RuntimeServices,
-	statement: Vec<u8>,
+async fn resend_while_unreachable<SubmitFn, SubmitFuture>(
 	label: &'static str,
-) -> Result<(), String> {
+	resend: Resend,
+	submit: SubmitFn,
+) -> Result<(), String>
+where
+	SubmitFn: Fn() -> SubmitFuture,
+	SubmitFuture: Future<Output = Result<(), StatementSubmitError>>,
+{
 	let mut pauses = RESEND_PAUSES;
 	let mut sends = 0;
 	retry(
 		|| {
 			sends += 1;
-			let can_resend = sends <= MAX_RESENDS;
-			let statement = statement.clone();
+			let can_resend = resend.allows_another_after(sends);
+			let submitted = submit();
 			async move {
-				match services.statement_store.submit_sso(statement, label).await {
+				match submitted.await {
 					Err(StatementSubmitError::Chain(failure))
 						if can_resend && failure.kind() == RuntimeFailureKind::Unavailable =>
 					{
@@ -1712,18 +1749,15 @@ mod tests {
 		);
 	}
 
-	/// Serve one product subtree request from a fixed peer over `platform`.
-	fn serve_subtree_request(platform: Arc<StubPlatform>) -> Result<Option<ResponderExit>, String> {
-		let peer = PairedSsoPeer {
+	fn subtree_peer() -> PairedSsoPeer {
+		PairedSsoPeer {
 			statement_account_id: [0x31; 32],
-			encryption_public_key: x25519_public_key([0x42; 32]),
-		};
-		let replay_scope = SsoReplayScope {
-			root_public_key: derive_root_keypair_from_entropy(&ENTROPY).unwrap().public.to_bytes(),
-			peer_statement_account_id: peer.statement_account_id,
-			peer_encryption_public_key: peer.encryption_public_key,
-		};
-		let request = IncomingSsoRequest {
+			encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
+		}
+	}
+
+	fn subtree_request() -> IncomingSsoRequest {
+		IncomingSsoRequest {
 			request_id: "stmt-1".to_string(),
 			expires_at_unix_secs: None,
 			messages: vec![RemoteMessage::request(
@@ -1732,6 +1766,16 @@ mod tests {
 					product_id: ProductId::for_test("browse.dot"),
 				},
 			)],
+		}
+	}
+
+	/// Serve one product subtree request from [`subtree_peer`] over `platform`.
+	fn serve_subtree_request(platform: Arc<StubPlatform>) -> Result<Option<ResponderExit>, String> {
+		let peer = subtree_peer();
+		let replay_scope = SsoReplayScope {
+			root_public_key: derive_root_keypair_from_entropy(&ENTROPY).unwrap().public.to_bytes(),
+			peer_statement_account_id: peer.statement_account_id,
+			peer_encryption_public_key: peer.encryption_public_key,
 		};
 		let (services, signing_host) = signing_fixture(platform);
 		let service = SigningHostSsoService::new(signing_host.clone());
@@ -1742,7 +1786,7 @@ mod tests {
 			&service,
 			&session,
 			replay_scope,
-			request,
+			subtree_request(),
 		))
 	}
 
@@ -1760,11 +1804,11 @@ mod tests {
 			.count()
 	}
 
-	/// The People chain dropping one connection is a pause, not the end of
-	/// the session: the ack goes out again over a fresh connection and the
-	/// request is answered.
+	/// The People chain refusing one connection is a pause, not the end of the
+	/// session: the ack goes out again over a fresh connection and the request
+	/// is answered.
 	#[test]
-	fn a_dropped_connection_does_not_end_the_session() {
+	fn a_failed_connect_does_not_end_the_session() {
 		let platform = Arc::new(StubPlatform {
 			chain_connect_failures: std::sync::Mutex::new(["Connection reset by peer"].into()),
 			// The ack, then the response.
@@ -1775,6 +1819,32 @@ mod tests {
 		let served = serve_subtree_request(platform.clone());
 
 		assert_eq!((served, statement_submits(&platform)), (Ok(None), 2));
+	}
+
+	/// The answer goes out after the request ran, and a redelivered request is
+	/// not run again. So the responder keeps sending the answer for longer than
+	/// it would an ack, instead of ending the session without it.
+	#[test]
+	fn an_answer_is_sent_until_the_people_chain_takes_it() {
+		let platform = Arc::new(StubPlatform {
+			chain_connect_failures: std::sync::Mutex::new(
+				vec!["Connection reset by peer"; MAX_RESENDS as usize + 1].into(),
+			),
+			rpc_method_responses: submit_answers("new", 1),
+			..StubPlatform::default()
+		});
+		let (services, signing_host) = signing_fixture(platform.clone());
+		let service = SigningHostSsoService::new(signing_host);
+		let session = responder_session(&ENTROPY, NETWORK_SUFFIX, subtree_peer()).unwrap();
+
+		let answered = futures::executor::block_on(serve_request(
+			&services,
+			&service,
+			&session,
+			subtree_request(),
+		));
+
+		assert_eq!((answered, statement_submits(&platform)), (Ok(None), 1));
 	}
 
 	/// Only a statement the store never answered is sent again. A rejection

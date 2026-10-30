@@ -124,7 +124,7 @@ impl StatementStoreRpc {
 	/// Submit a SCALE-encoded statement and wait for the JSON-RPC ack.
 	pub async fn submit(
 		&self,
-		statement: Vec<u8>,
+		statement: &[u8],
 		label: &'static str,
 	) -> Result<(), StatementSubmitError> {
 		let rpc_client = self.request_client(label).await?;
@@ -136,10 +136,10 @@ impl StatementStoreRpc {
 	/// Statement Store RPC backend.
 	pub async fn submit_sso(
 		&self,
-		statement: Vec<u8>,
+		statement: &[u8],
 		label: &'static str,
 	) -> Result<(), StatementSubmitError> {
-		retry_until_allowance_visible(label, || self.submit(statement.clone(), label)).await
+		retry_until_allowance_visible(label, || self.submit(statement, label)).await
 	}
 
 	/// Submit a SCALE-encoded statement without waiting for the JSON-RPC ack.
@@ -202,14 +202,11 @@ pub async fn subscribe_match_all(
 /// rejected or invalid statement (e.g. `NoAllowance`, `BadProof`) comes back as
 /// `Ok(SubmitResult)`. Treat only `new`/`known` as success, so allowance/proof
 /// rejections surface instead of being silently dropped.
-pub async fn submit(
-	rpc_client: &RpcClient,
-	statement: Vec<u8>,
-) -> Result<(), StatementSubmitError> {
+pub async fn submit(rpc_client: &RpcClient, statement: &[u8]) -> Result<(), StatementSubmitError> {
 	let result = rpc_client
 		.request::<Value>(
 			SUBMIT_STATEMENT_METHOD,
-			rpc_params![format!("0x{}", hex::encode(&statement))],
+			rpc_params![format!("0x{}", hex::encode(statement))],
 		)
 		.await
 		.map_err(|error| rpc_failure(SUBMIT_STATEMENT_METHOD, error))?;
@@ -221,10 +218,10 @@ pub async fn submit(
 
 pub async fn submit_sso(
 	rpc_client: &RpcClient,
-	statement: Vec<u8>,
+	statement: &[u8],
 	label: &'static str,
 ) -> Result<(), StatementSubmitError> {
-	retry_until_allowance_visible(label, || submit(rpc_client, statement.clone())).await
+	retry_until_allowance_visible(label, || submit(rpc_client, statement)).await
 }
 
 /// Run `submit` until it succeeds, fails with anything but `noAllowance`, or
@@ -406,8 +403,8 @@ mod tests {
 		let statement_store = statement_store(&chain);
 
 		futures::executor::block_on(async {
-			statement_store.submit(vec![1], "first").await.unwrap();
-			statement_store.submit(vec![2], "second").await.unwrap();
+			statement_store.submit(&[1], "first").await.unwrap();
+			statement_store.submit(&[2], "second").await.unwrap();
 		});
 
 		assert_eq!(chain.connects(), 1);
@@ -419,8 +416,8 @@ mod tests {
 		let statement_store = statement_store(&chain);
 
 		let (first, second) = futures::executor::block_on(async {
-			let first = statement_store.submit(vec![1], "first").await;
-			let second = statement_store.submit(vec![2], "second").await;
+			let first = statement_store.submit(&[1], "first").await;
+			let second = statement_store.submit(&[2], "second").await;
 			(first, second)
 		});
 
@@ -437,7 +434,7 @@ mod tests {
 		let chain = PeopleChain::new(vec![Upstream::Answers("rejected")]);
 		let statement_store = statement_store(&chain);
 
-		let result = futures::executor::block_on(statement_store.submit(vec![1], "submit"));
+		let result = futures::executor::block_on(statement_store.submit(&[1], "submit"));
 
 		assert_eq!((result.is_err(), chain.requests()), (true, 1));
 	}
@@ -447,7 +444,7 @@ mod tests {
 		let chain = PeopleChain::new(vec![Upstream::Drops, Upstream::Answers("new")]);
 		let statement_store = statement_store(&chain);
 
-		let result = futures::executor::block_on(statement_store.submit_sso(vec![1], "sso"));
+		let result = futures::executor::block_on(statement_store.submit_sso(&[1], "sso"));
 
 		// Unavailable, not a node failure: the store never answered, so the
 		// caller may send the same statement again.
@@ -472,7 +469,7 @@ mod tests {
 		let chain = PeopleChain::new(vec![Upstream::Fails]);
 		let statement_store = statement_store(&chain);
 
-		let result = futures::executor::block_on(statement_store.submit_sso(vec![1], "sso"));
+		let result = futures::executor::block_on(statement_store.submit_sso(&[1], "sso"));
 
 		assert!(matches!(
 			result,
