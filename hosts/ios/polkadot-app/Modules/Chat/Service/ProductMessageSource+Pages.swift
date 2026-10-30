@@ -27,7 +27,7 @@ extension ProductMessageSource {
     }
 
     func contains(_ messageId: String) -> Bool {
-        pages.contains { $0.ids.contains(messageId) }
+        pages.contains { $0.ids.contains(messageId) } || pending.contains(messageId)
     }
 
     func page(until messageId: String, using load: () async -> ChatPageOutcome) async -> Bool {
@@ -63,6 +63,7 @@ extension ProductMessageSource {
     }
 
     func replaceWindow(with item: ProductChatMessagesQueryItem) {
+        let pendingMessages = pending.compactMap { messages[$0] }
         messages = [:]
         droppedOlder = []
         droppedNewer = []
@@ -74,6 +75,10 @@ extension ProductMessageSource {
         for message in item.messages where messages[message.messageId] == nil {
             messages[message.messageId] = message
             ids.append(message.messageId)
+        }
+
+        for message in pendingMessages {
+            messages[message.messageId] = message
         }
 
         // The first page does not mark the room seen: a message of the contact that the product gives as
