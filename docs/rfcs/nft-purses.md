@@ -49,7 +49,9 @@ RFC must state what the host is and is not obliged to recover.
 - Chain-exposed operations are asynchronous. A call only registers the operation under an idempotency key;
   `observe_operation_status` follows it. Registering a key twice fails.
 - The host tracks which items are in use, either by an active operation or because they were handed off in a cheque,
-  and refuses to consume them again. `revoke_cheque` moves items handed off in a cheque into fresh keys of their purse.
+  and refuses to consume them again. This covers the keys of a received cheque too: while one operation moves an item
+  from a key, whether a purse key or a cheque key, no other operation may move it, since only one move can land.
+  `revoke_cheque` moves items handed off in a cheque into fresh keys of their purse.
 - Products cannot sign arbitrary transactions with purse items, because the host could then not track item status.
   `transfer_item` covers the one external transfer products need.
 - Backup recovery restores assets only. In-use statuses and purse-to-product ownership are not guaranteed to survive,
@@ -367,10 +369,13 @@ enum CreateReceiveKeyError {
 ```rust
 // Receiver side: the X25519 key a sender seals a ChequeDestination::Static cheque to,
 // for the product to publish. The same for every product.
-// Needs no grant or confirmation.
+// The same key in every product identifies the user across products, so it needs the
+// identity disclosure consent `get_user_id` asks for.
 fn static_receive_key() -> Result<X25519PublicKey, StaticReceiveKeyError>;
 
 enum StaticReceiveKeyError {
+    // The user did not consent to disclosing their identity to the product
+    PermissionDenied,
     Other(GenericError),
 }
 ```
@@ -491,11 +496,15 @@ enum CreateChequeError {
 // Revoking again registers moves only for keys whose last move failed, for example after
 // the recipient refunded; it is a no-op while every key is moving or moved.
 // A cheque this product did not create is ChequeNotFound.
+// A cheque whose items another operation is moving, such as a deposit of it on this
+// device, is ItemsInUse.
 fn revoke_cheque(cheque_id: ChequeId) -> Result<(), RevokeChequeError>;
 
 enum RevokeChequeError {
     // This product created no cheque with this id
     ChequeNotFound,
+    // Another operation is moving some of the cheque's items
+    ItemsInUse,
     Other(GenericError),
 }
 ```
@@ -523,6 +532,8 @@ enum DepositError {
     EmptyCheque,
     // The cheque cannot be opened or does not match `items`
     CorruptedCheque,
+    // Another operation is moving some of the cheque's items
+    ItemsInUse,
     Other(GenericError),
 }
 ```
@@ -535,6 +546,11 @@ Who may deposit a cheque depends on its recipient:
   receive keys.
 - A `Static` cheque opens with the host's static receive key (see `static_receive_key`). Any product may deposit it into
   any purse.
+
+A deposit fails with `ItemsInUse` while another operation moves any of the cheque's items, so the same items are
+moved at most once on a host: by another product depositing the same `Static` cheque, by a deposit of it under another
+id (a `Static` cheque's id is not sealed), or by a revoke of a cheque this host created. Once that operation fails, the
+items can be deposited again.
 
 `CorruptedCheque` covers a cheque whose `version` is not 0, whose `items` list a key twice, whose `id` is not the one
 its `ReceiveKey` derives, whose `encrypted_secrets` do not decrypt with the recipient's key or do not decode, that holds
