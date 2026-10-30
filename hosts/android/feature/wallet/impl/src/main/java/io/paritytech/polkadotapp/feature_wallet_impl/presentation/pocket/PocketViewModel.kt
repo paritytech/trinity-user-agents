@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.withLoading
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
+import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequest
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
@@ -62,6 +63,7 @@ class PocketViewModel @Inject constructor(
     spaHost: SpaHost,
 ) : BaseViewModel() {
     private val selectedCardId = MutableStateFlow<String?>(null)
+    private var selectedPageQuery = ""
     private val collectiblesShown = MutableStateFlow(false)
     private val expandedProduct = ExpandedProductPage(this) { scope, url -> with(scope) { spaHost.createSession(url, underCard = true) } }
     private val _openingFaceShown = MutableStateFlow<Boolean?>(null)
@@ -209,33 +211,41 @@ class PocketViewModel @Inject constructor(
 
     // A tab shown for the first time has no product cards until the collection loads.
     init {
-        combine(cards, cardOpenRequests.requested) { held, requested ->
-            held.filterIsInstance<PocketCardUiModel.ProductCard>().firstOrNull { it.key == requested }
+        combine(cards, cardOpenRequests.requested) { held, request ->
+            request?.let {
+                held.filterIsInstance<PocketCardUiModel.ProductCard>().firstOrNull { it.key == request.key }?.to(request)
+            }
         }
             .filterNotNull()
-            .onEach(::openRequestedCard)
+            .onEach { (card, request) -> openRequestedCard(card, request) }
             .launchIn(this)
     }
 
     /**
      * A tap always starts from the list, but a link can arrive with another card open. Switched to
      * straight away, the new card would be drawn over the open one's page until it settled, so the
-     * open card is closed first, as [dismissCard] does, and the list behind it is put back.
+     * open card is closed first, as [dismissCard] does, and the list behind it is put back. A link to
+     * the card already open loads its page with the link's params, or leaves them for it to settle with.
      */
-    private fun openRequestedCard(card: PocketCardUiModel.ProductCard) {
-        cardOpenRequests.consume(card.key)
-        if (selectedCardId.value == card.id) return
+    private fun openRequestedCard(card: PocketCardUiModel.ProductCard, request: PocketCardOpenRequest) {
+        cardOpenRequests.consume(request)
+        if (selectedCardId.value == card.id) {
+            selectedPageQuery = request.pageQuery
+            if (shownProduct.value != null) expandedProduct.open(card.key.launchUrl(request.pageQuery))
+            return
+        }
 
         if (selectedCardId.value != null) dismissCard()
         collectiblesShown.value = false
         removalCandidate.value = null
-        selectCard(card)
+        selectCard(card, request.pageQuery)
     }
 
-    fun selectCard(card: PocketCardUiModel) {
+    fun selectCard(card: PocketCardUiModel, pageQuery: String = "") {
         selectedCardId.value = card.id
+        selectedPageQuery = pageQuery
         if (card is PocketCardUiModel.ProductCard) {
-            expandedProduct.showIfHeld(card.key.launchUrl())
+            expandedProduct.showIfHeld(card.key.launchUrl(pageQuery))
             warmUpProduct(card)
             lookUpOpeningFace(card)
         }
@@ -297,7 +307,7 @@ class PocketViewModel @Inject constructor(
      * one is hosted.
      */
     fun hostExpandedProduct(card: PocketCardUiModel.ProductCard) {
-        if (card.id == selectedCardId.value) expandedProduct.open(card.key.launchUrl())
+        if (card.id == selectedCardId.value) expandedProduct.open(card.key.launchUrl(selectedPageQuery))
     }
 
     /** A press or edit inside a face goes back to the product; a text edit carries the new value as UTF-8. */
@@ -351,7 +361,7 @@ class PocketViewModel @Inject constructor(
     }
 
     private fun List<PocketCardUiModel>.holdsProductAt(url: String): Boolean =
-        filterIsInstance<PocketCardUiModel.ProductCard>().any { it.key.launchUrl() == url }
+        filterIsInstance<PocketCardUiModel.ProductCard>().any { it.key.launches(url) }
 
     private fun closeExpandedCard() {
         expandedProduct.release()

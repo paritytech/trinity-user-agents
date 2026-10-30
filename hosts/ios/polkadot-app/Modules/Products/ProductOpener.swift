@@ -4,7 +4,9 @@ import UIKit
 
 @MainActor
 protocol ProductOpening {
-    func open(productId: ProductId)
+    /// False when the product is already on screen and nothing was navigated.
+    @discardableResult
+    func open(productId: ProductId) -> Bool
 }
 
 @MainActor
@@ -16,13 +18,14 @@ struct ProductOpener: ProductOpening {
     }
 
     /// An existing tab keeps its current page; before the tab bar is up the link is deferred.
-    func open(productId: ProductId) {
+    @discardableResult
+    func open(productId: ProductId) -> Bool {
         let tabBar = UIApplication.shared.mainTabBarController
         guard tabBar?.mountedProductId != productId else {
-            return
+            return false
         }
         if tabBar?.mountExistingTab(where: { $0.dotDomain == productId }) == true {
-            return
+            return true
         }
 
         // Opened directly: the product link is only routed when the products feature is on,
@@ -30,8 +33,12 @@ struct ProductOpener: ProductOpening {
         if tabBar != nil,
            let host = ProductHostFactory(tldProvider: DotNsTldProviderFacade.shared).host(rawString: productId) {
             navigator.openProduct(page: ProductPage(host: host))
-        } else if let url = URL(string: "\(AppConfig.ProductUniversalLink.scheme)://\(productId)") {
-            DeferredLinkHandler.shared.handle(with: url)
+            return true
         }
+        guard let url = URL(string: "\(AppConfig.ProductUniversalLink.scheme)://\(productId)") else {
+            return false
+        }
+        DeferredLinkHandler.shared.handle(with: url)
+        return true
     }
 }
