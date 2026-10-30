@@ -18,8 +18,23 @@ struct PocketDeeplinkParserTests {
             productHost: "game.dot",
             action: .add,
             cardId: PocketCardId(value: "loyalty"),
+            pageQuery: "",
             canonicalUrl: "polkadotapp://pocket/add?product=game.dot&card=loyalty"
         )))
+    }
+
+    /// An open link can name the screen the card's page opens on. The params
+    /// stay encoded, so `a%26b` reaches the page as one value, not two.
+    @Test
+    func carriesAnOpenLinksPageParamsAsEncoded() throws {
+        guard case let .pocket(link) = classify(
+            "polkadotapp://pocket/open?product=game.dot&card=loyalty&open=scratch&tag=a%26b"
+        ) else {
+            Issue.record("expected a pocket link")
+            return
+        }
+
+        #expect(link.pageQuery == "open=scratch&tag=a%26b")
     }
 
     /// A build answers to its own flavor of the scheme, `polkadotappdev` in a
