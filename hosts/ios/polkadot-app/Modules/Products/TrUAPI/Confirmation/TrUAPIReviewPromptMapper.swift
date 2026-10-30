@@ -22,6 +22,7 @@ protocol TrUAPIReviewPromptMapping: Sendable {
     func makePermissionRequest(from review: IdentityDisclosureReview) -> TrUAPIPermissionRequest
     func makePermissionRequest(from review: AccountAccessReview) -> TrUAPIPermissionRequest
     func makeActionRequest(from review: ProductSubtreeReview) -> TrUAPIActionConfirmationRequest
+    func makeActionRequest(from review: NftPurseDrainReview) -> TrUAPIActionConfirmationRequest
     func makePermissionRequest(from review: AccountAliasReview) -> TrUAPIPermissionRequest
     func makeCreateProofRequest(from review: CreateProofReview) throws -> CreateProofConfirmationRequest
     func makeAllowanceRequest(from review: ResourceAllocationReview) throws -> TrUAPIAllowanceRequest
@@ -48,6 +49,24 @@ struct TrUAPIReviewPromptMapper: TrUAPIReviewPromptMapping {
 
     func makeActionRequest(from review: ProductSubtreeReview) -> TrUAPIActionConfirmationRequest {
         .productSubtree(productId: review.productId)
+    }
+
+    func makeActionRequest(from review: NftPurseDrainReview) -> TrUAPIActionConfirmationRequest {
+        let ownerProductId: ProductId? = switch review.owner {
+        case .root: nil
+        case let .product(productId): productId
+        }
+        let destination: NftPurseDrainTarget = switch review.destination {
+        case let .purse(purse): .purse(purse)
+        case let .externalKey(key): .key(hex: key.map { String(format: "%02x", $0) }.joined())
+        }
+        return .nftPurseDrain(
+            productId: review.callingProductId,
+            fromPurse: review.fromPurse,
+            ownerProductId: ownerProductId,
+            itemCount: review.itemCount,
+            destination: destination
+        )
     }
 
     /// An alias is derived within the context product's ring, so it is presented

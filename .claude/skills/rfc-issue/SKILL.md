@@ -1,6 +1,6 @@
 ---
 name: rfc-issue
-description: Write the tracking issue for an RFC — a short Description / Motivation / Requirements / Tasks body labeled `rfc`, written either from an RFC document already in review or from notes when no RFC exists yet. Use for "open a tracking issue for this RFC", "create issues for the open RFCs", or when an idea needs an RFC that nobody has drafted.
+description: Write the tracking issue for an RFC — a short Description / Motivation / Requirements / Tasks body labeled `area:rfc`, written either from an RFC document already in review or from notes when no RFC exists yet. Use for "open a tracking issue for this RFC", "create issues for the open RFCs", or when an idea needs an RFC that nobody has drafted.
 argument-hint: [RFC PR number, RFC path, or a description of the idea]
 ---
 
@@ -18,7 +18,7 @@ remote permission` becomes `RFC: Credential-endpoint remote permission`. The num
 belongs to the document: it changes when the document is renumbered and it collides
 between RFCs in flight.
 
-**Label** — `rfc`.
+**Label** — `area:rfc`.
 
 **Body** — four sections, nothing else:
 
@@ -103,8 +103,8 @@ an RFC amending `product-manifest.md` gets its own issue, but a second PR agains
 same amendment does not.
 
 ```bash
-gh issue list --label rfc --state all --limit 100
-gh issue create --title "RFC: <Title>" --body-file <path> --label rfc
+gh issue list --label area:rfc --state all --limit 100
+gh issue create --title "RFC: <Title>" --body-file <path> --label area:rfc
 ```
 
 ## Related

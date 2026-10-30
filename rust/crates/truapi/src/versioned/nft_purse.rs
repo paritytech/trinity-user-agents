@@ -16,7 +16,7 @@ truapi_macros::versioned_type! {
 	pub enum HostNftPurseListPursesResponse { V1 => v01::HostNftPurseListPursesResponse }
 	pub enum HostNftPurseListPursesError { V1 => v01::NftPurseListPursesError }
 	pub enum HostNftPurseRebalancePurseRequest { V1 => v01::HostNftPurseRebalancePurseRequest }
-	pub enum HostNftPurseRebalancePurseItem { V1 => v01::NftPurseStatus }
+	pub enum HostNftPurseRebalancePurseResponse { V1 }
 	pub enum HostNftPurseRebalancePurseError { V1 => v01::NftPurseRebalancePurseError }
 	pub enum HostNftPurseCreateReceiveKeyRequest { V1 => v01::HostNftPurseCreateReceiveKeyRequest }
 	pub enum HostNftPurseCreateReceiveKeyResponse { V1 => v01::HostNftPurseCreateReceiveKeyResponse }
@@ -31,12 +31,15 @@ truapi_macros::versioned_type! {
 	pub enum HostNftPurseRevokeChequeResponse { V1 }
 	pub enum HostNftPurseRevokeChequeError { V1 => v01::NftPurseRevokeChequeError }
 	pub enum HostNftPurseDepositRequest { V1 => v01::HostNftPurseDepositRequest }
-	pub enum HostNftPurseDepositItem { V1 => v01::NftPurseStatus }
+	pub enum HostNftPurseDepositResponse { V1 }
 	pub enum HostNftPurseDepositError { V1 => v01::NftPurseDepositError }
 	pub enum HostNftPurseRefundRequest { V1 => v01::HostNftPurseRefundRequest }
-	pub enum HostNftPurseRefundItem { V1 => v01::NftPurseStatus }
+	pub enum HostNftPurseRefundResponse { V1 }
 	pub enum HostNftPurseRefundError { V1 => v01::NftPurseRefundError }
 	pub enum HostNftPurseTransferItemRequest { V1 => v01::HostNftPurseTransferItemRequest }
-	pub enum HostNftPurseTransferItemItem { V1 => v01::NftPurseStatus }
+	pub enum HostNftPurseTransferItemResponse { V1 }
 	pub enum HostNftPurseTransferItemError { V1 => v01::NftPurseTransferItemError }
+	pub enum HostNftPurseObserveOperationStatusRequest { V1 => v01::HostNftPurseObserveOperationStatusRequest }
+	pub enum HostNftPurseObserveOperationStatusItem { V1 => v01::NftPurseStatus }
+	pub enum HostNftPurseObserveOperationStatusError { V1 => v01::NftPurseObserveOperationStatusError }
 }
