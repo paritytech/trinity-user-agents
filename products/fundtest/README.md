@@ -67,7 +67,7 @@ named by the report it comes before, and set with `FUNDTEST_<RAIL>_<IN|OUT>_<STA
 | In        | `CREDIT`    | The top-up, `Crediting`                | 3 s  | 3 s  | 3 s     |
 | In        | `DELIVER`   | `Delivered`                            | 2 s  | 2 s  | 2 s     |
 | Out       | `CONVERT`   | `Converting` (preparing the payout)    | 4 s  | 6 s  | 3 s     |
-| Out       | `SEND`      | `Payout` (in transit)                  | 8 s  | 25 s | 10 s    |
+| Out       | `SEND`      | `Details` naming the payout, `Payout`  | 8 s  | 25 s | 10 s    |
 
 Inbound, `AUTHORISE` is the card's 3-D Secure and authorisation, and `RECEIVE` is the card capture, the bank transfer
 arriving, or the demo crypto deposit being made; `CONFIRM` is the card charge settling, the bank transfer clearing, or
@@ -128,11 +128,12 @@ deposit is also named by a mock transaction hash; the worker reads balances, so 
 **Out, any rail.** `Details`, then `/payout` for where to send the money. The worker calls `payment.request` for the
 user's CASH to the reserve account and reports `Collecting { paymentId, amount }`. Once the host reports the payment
 complete, the session is released and the worker simulates the payout: it prepares the payout and reports `Converting`,
-then the payout is in transit until it lands and the worker reports `Payout`. The first `Details` carries the reference
-the payout is made under, since the core takes no `Details` once the session is released. A failed payout is refunded:
-the reserve account tops the user up by what the payment moved (the amount asked, or what a partial claim took), under
-an id fixed by the session's intent, and the worker reports `Refunding { topUpId, amount }`. A user who declines the
-payment ends the session as `Cancelled`, and one without the balance as `InsufficientBalance`.
+then the payout is in transit until it is sent. The worker names it in a `Details`, with a mock id from the rail (an
+end-to-end id `E2E…` on bank, a payout id `po_…` on card, a transaction hash on crypto) and the reference it is made
+under, then reports `Payout`. The core takes a `Details` on a released withdrawal until its payout is settled. A failed
+payout is refunded: the reserve account tops the user up by what the payment moved (the amount asked, or what a partial
+claim took), under an id fixed by the session's intent, and the worker reports `Refunding { topUpId, amount }`. A user
+who declines the payment ends the session as `Cancelled`, and one without the balance as `InsufficientBalance`.
 
 **Cancel.** The core asks the worker with `cancel`. While the user has not paid the session stops and the worker
 answers `Stopped`, and the core ends it as `Failed { Cancelled }`. After that the worker answers:

@@ -1209,10 +1209,7 @@ export class Session {
     if (state.phase === "new") {
       await this.report({
         tag: "Details",
-        value: {
-          transactionId: `ft_${this.intent}`,
-          reference: this.reference,
-        },
+        value: { transactionId: `ft_${this.intent}` },
       });
       state.phase = "awaiting-user";
       await this.save();
@@ -1358,6 +1355,11 @@ export class Session {
       }
       await this.stage("send", sendMs);
       await this.cancelGate();
+      if (!state.payoutNamed) {
+        await this.report({ tag: "Details", value: this.payoutDetails() });
+        state.payoutNamed = true;
+        await this.save();
+      }
       await this.report(
         {
           tag: "Payout",
@@ -1381,6 +1383,19 @@ export class Session {
           () => undefined,
         );
     }
+  }
+
+  /** The mock id the rail's network gives the payout, and the reference it
+   *  is made under: an end-to-end id on bank, a payout id on card, and a
+   *  transaction hash on crypto. */
+  private payoutDetails(): { transactionId: string; reference: string } {
+    const id =
+      this.terms.rail === "Bank"
+        ? `E2E${this.mockId("payout", 8).toUpperCase()}`
+        : this.terms.rail === "Card"
+          ? `po_${this.mockId("payout", 12)}`
+          : `0x${this.mockId("payout", 32)}`;
+    return { transactionId: id, reference: this.reference };
   }
 
   /** Refunds a failed payout from the reserve account, which holds the CASH

@@ -196,6 +196,11 @@ function reportReleased(update: FundingUpdate): string | undefined {
 /** The core's answer to `update` on an open session. */
 function reportOpen(update: FundingUpdate): string | undefined {
   const { core } = world;
+  // A released withdrawal takes `Details` until its payout is settled.
+  const awaitsPayout =
+    core.released &&
+    (core.payout === undefined || (core.payout === "failed" && !core.refunded));
+  if (update.tag === "Details" && awaitsPayout) return undefined;
   if (core.failed || core.released) return "NotFound";
   const moving = core.named.length > 0;
   const started =
@@ -503,7 +508,7 @@ test("a withdrawal that resumes after a stop asks the user to pay once", async (
     ]);
     expect({ point, tags: tags() }).toEqual({
       point,
-      tags: ["Details", "Collecting", "Converting", "Payout"],
+      tags: ["Details", "Collecting", "Converting", "Details", "Payout"],
     });
   }
 });
@@ -524,6 +529,7 @@ test("a payout retried on purpose is reported between the conversion and the out
     "Converting",
     "PayoutRetrying",
     "PayoutRetrying",
+    "Details",
     "Payout",
   ]);
 });
@@ -551,6 +557,7 @@ test("a failed payout is refunded from the reserve account and the top-up is nam
     "Details",
     "Collecting",
     "Converting",
+    "Details",
     "Payout",
     "Refunding",
   ]);
@@ -835,7 +842,7 @@ test("a declined cancel offer lets the payout go through", async () => {
   await userCancels(session);
   await userAnswers(session, false);
   expect(await outcome).toBe("ended");
-  expect(tags()).toEqual(["Converting", "Payout"]);
+  expect(tags()).toEqual(["Converting", "Details", "Payout"]);
   expect(world.topUps).toEqual([]);
 });
 
@@ -863,7 +870,7 @@ test("an open cancel offer holds the payout until the core answers, even past it
   world.core.cancel = "declined";
   await session.cancelDeclined();
   expect(await outcome).toBe("ended");
-  expect(tags()).toEqual(["Converting", "Payout"]);
+  expect(tags()).toEqual(["Converting", "Details", "Payout"]);
 });
 
 test("cents .73 refuse a cancel and the payout goes through", async () => {
@@ -875,7 +882,7 @@ test("cents .73 refuse a cancel and the payout goes through", async () => {
   const answer = await userCancels(session);
   expect(await outcome).toBe("ended");
   expect(answer.tag).toBe("Refused");
-  expect(tags()).toEqual(["Converting", "Payout"]);
+  expect(tags()).toEqual(["Converting", "Details", "Payout"]);
 });
 
 test("a cancel while the user's payment is still completing is refused", async () => {
@@ -1265,5 +1272,39 @@ test("a payout retried before a restart is not reported as retried again", async
   expect(
     await new Session(assignment("Out", amount, writeSaved(saved))).run(),
   ).toBe("ended");
-  expect(tags()).toEqual(["PayoutRetrying", "Payout"]);
+  expect(tags()).toEqual(["PayoutRetrying", "Details", "Payout"]);
+});
+
+test("a payout names its transaction before its outcome, once across a restart", async () => {
+  expect(
+    await new Session(
+      releasedWithdrawal(25n * ONE_CASH, { payoutInMs: 0 }),
+    ).run(),
+  ).toBe("ended");
+  expect(tags()).toEqual(["Converting", "Details", "Payout"]);
+  expect(updateOf("Details")).toEqual({
+    transactionId: expect.stringMatching(/^po_[0-9a-f]{24}$/),
+    reference: "FT-TSESSION",
+  });
+
+  // Stopped after the host took the `Details`: the resumed session reports
+  // only the outcome.
+  world.reports = [];
+  world.core = { ...world.core, payout: undefined };
+  const named = writeSaved({
+    v: 1,
+    amount: (25n * ONE_CASH).toString(),
+    stageAt: { send: Date.now() - 1 },
+    outbound: {
+      phase: "paying-out",
+      paymentId: accounts.paymentIdFor("out-session"),
+      debited: (25n * ONE_CASH).toString(),
+      converted: true,
+      payoutNamed: true,
+    },
+  });
+  expect(
+    await new Session(assignment("Out", 25n * ONE_CASH, named)).run(),
+  ).toBe("ended");
+  expect(tags()).toEqual(["Payout"]);
 });

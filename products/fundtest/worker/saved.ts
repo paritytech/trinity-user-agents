@@ -134,6 +134,8 @@ export interface Saved {
     payoutReported?: boolean;
     /** Where the user asked to be paid, as typed on the payout screen. */
     destination?: string;
+    /** Whether the host took the `Details` naming the payout. */
+    payoutNamed?: boolean;
     /** Failed payout attempts reported with `PayoutRetrying`. */
     retried?: number;
     /** The top-up refunding a failed payout, fixed before it is made. */
