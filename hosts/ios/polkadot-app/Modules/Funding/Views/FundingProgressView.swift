@@ -167,8 +167,11 @@ private extension FundingProgressView {
                     Text(verbatim: note.text)
                         .typography(.bodySmall)
                         .foregroundStyle(note.color)
-                    if let heardAtMs = model.progress?.lastHeardAtMs {
-                        FundingLiveLine(heardAt: Date(milliseconds: heardAtMs))
+                    if let progress = model.progress, progress.lastHeardAtMs != nil || progress.detail != nil {
+                        FundingLiveLine(
+                            heardAt: progress.lastHeardAtMs.map(Date.init(milliseconds:)),
+                            detail: progress.detail
+                        )
                     }
                 }
                 .multilineTextAlignment(.center)
@@ -317,29 +320,99 @@ private extension FundingProgressView {
 
 /// When the provider was last heard from, kept current while on screen:
 /// "just now", then seconds, minutes and hours.
+/// The line under a session's status: the provider's latest fact for the
+/// current step, worded here, or when the provider was last heard. One line,
+/// cut short with "…" when it does not fit.
 struct FundingLiveLine: View {
-    let heardAt: Date
+    let heardAt: Date?
+    let detail: FundingDetail?
 
     static let justNowBelow = 5
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 3)) { context in
-            Text(verbatim: Self.text(heardAt: heardAt, now: context.date))
-                .typography(.captionSmall)
-                .foregroundStyle(.fgTertiary)
+            if let text = Self.text(detail: detail, heardAt: heardAt, now: context.date) {
+                Text(verbatim: text)
+                    .typography(.captionSmall)
+                    .foregroundStyle(.fgTertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
         }
+    }
+
+    static func text(detail: FundingDetail?, heardAt: Date?, now: Date) -> String? {
+        let at = detail?.atMs.map(Date.init(milliseconds:))
+        let ago = at.flatMap { $0 <= now ? duration(Int(now.timeIntervalSince($0))) : nil }
+        let left = at.flatMap { $0 > now ? duration(Int($0.timeIntervalSince(now).rounded(.up))) : nil }
+        let parts: [String?] =
+            switch detail?.fact {
+            case .none,
+                 .checked?:
+                [(at ?? heardAt).map { text(heardAt: $0, now: now) }]
+            case let .confirmations(done, required)?:
+                [
+                    String(localized: .Funding.liveConfirmation(done: "\(done)", required: "\(required)")),
+                    ago.map { String(localized: .Funding.liveLastBlock(time: $0)) },
+                ]
+            case .priceChecked?:
+                [
+                    String(localized: .Funding.livePriceChecked),
+                    ago.map { String(localized: .Funding.liveAgo(time: $0)) }
+                ]
+            case let .parts(done, total)?:
+                [
+                    String(localized: .Funding.livePart(done: "\(done)", total: "\(total)")),
+                    ago.map { String(localized: .Funding.liveLastPart(time: $0)) },
+                ]
+            case .scheduled?:
+                [left
+                    .map { String(localized: .Funding.liveTimeLeft(time: $0)) } ??
+                    String(localized: .Funding.liveAnyMoment)]
+            case .sentByBank?:
+                [String(localized: .Funding.liveSentByBank), at.map(moment)]
+            case .expectedBy?:
+                [at
+                    .map {
+                        String(localized: .Funding
+                            .liveExpectedBy(date: $0.formatted(.dateTime.weekday().day().month())))
+                    }]
+            case .inReview?:
+                [String(localized: .Funding.liveInReview), ago.map { String(localized: .Funding.liveAgo(time: $0)) }]
+            case let .attempt(attempt, attempts)?:
+                [
+                    attempts.map { String(localized: .Funding.liveAttemptOf(n: "\(attempt)", of: "\($0)")) }
+                        ?? String(localized: .Funding.liveAttempt(n: "\(attempt)")),
+                    left.map { String(localized: .Funding.liveNextTry(time: $0)) },
+                ]
+            case let .other(text)?:
+                [text, ago.map { String(localized: .Funding.liveAgo(time: $0)) }]
+            }
+        let line = parts.compactMap(\.self).joined(separator: " · ")
+        if line.isEmpty, let heardAt { return text(heardAt: heardAt, now: now) }
+        return line.isEmpty ? nil : line
     }
 
     static func text(heardAt: Date, now: Date) -> String {
         let seconds = max(0, Int(now.timeIntervalSince(heardAt)))
         guard seconds >= justNowBelow else { return String(localized: .Funding.liveCheckedNow) }
-        let time =
-            switch seconds {
-            case ..<60: "\(seconds)s"
-            case ..<3_600: "\(seconds / 60) min"
-            default: "\(seconds / 3_600) h"
-            }
-        return String(localized: .Funding.liveChecked(time: time))
+        return String(localized: .Funding.liveChecked(time: duration(seconds)))
+    }
+
+    /// "12s", "3 min" or "2 h".
+    static func duration(_ seconds: Int) -> String {
+        switch seconds {
+        case ..<60: "\(seconds)s"
+        case ..<3_600: "\(seconds / 60) min"
+        default: "\(seconds / 3_600) h"
+        }
+    }
+
+    /// "14:02" today, "Tue 14:02" otherwise.
+    static func moment(_ date: Date) -> String {
+        Calendar.current.isDateInToday(date)
+            ? date.formatted(date: .omitted, time: .shortened)
+            : date.formatted(.dateTime.weekday().hour().minute())
     }
 }
 
