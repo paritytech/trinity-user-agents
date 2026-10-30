@@ -105,6 +105,18 @@ impl NftPurses {
 		Ok(key)
 	}
 
+	/// The purse `key` receives into, when `creator` made it on this host.
+	pub async fn receive_key_purse(
+		&self,
+		creator: &ProductId,
+		key: NftPurseReceiveKey,
+	) -> Result<Option<PurseId>, DbError> {
+		let record = self.db.read(move |conn| dao::find_receive_key(conn, &key)).await?;
+		Ok(record
+			.filter(|record| record.creator == creator.as_str())
+			.map(|record| record.purse))
+	}
+
 	/// The public half of the static receive secret. Fails without a session.
 	pub fn static_receive_key(&self) -> Result<X25519PublicKey, AuthorityError> {
 		Ok(self.static_secret.static_receive_secret()?.public_key())

@@ -179,6 +179,20 @@ impl SealedBox {
 		Self::seal_with(&ephemeral, nonce, recipient, plaintext)
 	}
 
+	/// The box as `ephemeral public key ‖ nonce ‖ ciphertext ‖ tag`.
+	pub fn to_bytes(&self) -> Vec<u8> {
+		[self.ephemeral_public.0.as_slice(), &self.encrypted].concat()
+	}
+
+	/// Reads the layout [`Self::to_bytes`] writes. Fails when `bytes` cannot
+	/// hold an ephemeral key.
+	pub fn from_bytes(bytes: &[u8]) -> Result<Self, SealError> {
+		let Some((ephemeral, encrypted)) = bytes.split_first_chunk::<32>() else {
+			return Err(SealError::TooShort(bytes.len()));
+		};
+		Ok(Self { ephemeral_public: X25519PublicKey(*ephemeral), encrypted: encrypted.to_vec() })
+	}
+
 	/// Decrypts the box with the secret of the key it was sealed to.
 	pub fn open(&self, recipient: &X25519PrivateKey) -> Result<Vec<u8>, SealError> {
 		let shared = X25519SharedSecret::from_ecdh(recipient, self.ephemeral_public)?;

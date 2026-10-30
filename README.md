@@ -113,8 +113,8 @@ rust/crates/
   truapi-macros/         TrUAPI wire annotations and inter-host SSO proc macros
   truapi-provider/       Network provider backends (WebSocket RPC or smoldot light-client) and chain-access traits
   truapi-verifiable/     Ring-VRF operations over `verifiable`; a lazily loaded WASM module in the browser
-  trinity-stack/         Trinity stack descriptors: parse, verify, sign, links, reader state;
-                         conformance vectors and JSON Schema
+  trinity-stack/         Trinity stack descriptors: parse, verify, sign, links, reader state,
+                         refresh policy; conformance vectors and JSON Schema
 js/packages/
   truapi/                  @parity/truapi TypeScript client
   truapi-host/            @parity/truapi-host: WASM-backed host runtime; entries `.`
@@ -126,7 +126,8 @@ js/packages/
   truapi-provider/         @parity/truapi-provider: WASM ChainProvider backends
                           (embedded smoldot light client + remote WebSocket RPC)
   trinity-stack/           @parity/trinity-stack: the trinity-stack crate as WASM, plus
-                          reading with a store and publishing
+                          reading with a store and publishing; `/reader` keeps stacks
+                          current from build copies the `trinity-stack` CLI writes
 js/container/              TS lockdown container for the iOS host web view; bundles into
                            ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js
 android/truapi-host/       Kotlin host adapter package over the truapi UniFFI core;
@@ -357,9 +358,26 @@ Whether an item can still go back comes from the core database alone: one
 spent since stays and is listed as unavailable. Each is followed by
 `observeOperationStatus` under `blake2_256("nft-purse/revoke" ‖ chequeId)` or
 `blake2_256("nft-purse/refund" ‖ chequeId)`. Refunding out of Root's or
-another product's purse asks the user through `NftPurseDrain`. Listening for
-payments answers unavailable for now. A host without a core database, such as
-the browser core, answers `Unsupported` to the served calls.
+another product's purse asks the user through `NftPurseDrain`.
+
+Cheques arrive over the People chain's statement store. A sender publishes a
+statement under the receiver's topic whose data seals `SCALE(version, topic,
+cheque)` to the key that opens the cheque, in the same sealed box as the item
+secrets. `listenOneTimePayment` watches `blake2_256("nft-purse/payment-channel"
+‖ receiveKey)` for a key the product made, emits that channel, then the first
+cheque addressed to the key, and ends. `listenPaymentInbox` watches
+`blake2_256("nft-purse/payment-inbox" ‖ identityAccount ‖
+blake2_256(productId) ‖ inboxDomain)` for `Static` cheques, so a product opens
+only its own inboxes. It emits the channel, then everything already stored as
+one batch, possibly empty, then each batch of new cheques. Statements that do
+not open, decode or match are skipped. Both emit cheques already deposited
+again while the store holds them, and a dropped connection ends them with
+`Other`. Receiving a cheque proves nothing about its items: `deposit` checks
+them. Underneath, `StatementStoreApi` watches any topic filter as its stored
+backlog in one batch, then each live page.
+
+A host without a core database, such as the browser core, answers
+`Unsupported` to the served calls.
 
 ### Trinity stack descriptors
 
@@ -618,17 +636,22 @@ request touching the app or the crates its bindings come from;
 `.github/hosts.json` names those inputs. A pull request that changes only those
 crates skips both when main already passed the tests against the same bindings.
 Pull requests from forks and from Dependabot skip it, since the Macs are shared
-and Dependabot runs get no secrets, and so does the merge queue. A push to main
-that touches those inputs runs the same suite through `ios-main.yml`, outside
-`CI Status`, and publishes the core pull requests reuse. `preview` is
+and Dependabot runs get no secrets, and so does the merge queue. So do drafts and
+pull requests into another pull request's branch, which run it once they are
+ready and target main or a release branch. `on-label.yml` runs it before then
+for a pull request labelled `ci:ios-tests`, outside `CI Status`. A pull request
+retargeted to main when its base merges keeps its earlier result until it is
+pushed, or closed and reopened. A push to main that touches those inputs runs
+the same suite through `ios-main.yml`, outside `CI Status`, and publishes the
+core pull requests reuse. `preview` is
 macOS time no check needs, so `on-label.yml` builds it once the pull request is
 labelled `ci:ios-simulator`. The same workflow's
 `TrUAPIHost package (Swift + WebKit)` job compiles the TrUAPIHost and
 TrUAPIProvider packages against the core the app jobs share, on a pull request
 touching their inputs, which the `swift` package in `.github/hosts.json` names,
 and runs their network permission tests. Like the rest of the iOS app it skips
-fork and Dependabot pull requests and the merge queue. The first time a
-pull request touches the iOS or Android app, `build-label-hint.yml` comments with
+fork, Dependabot, draft and stacked pull requests and the merge queue. The first
+time a pull request touches the iOS or Android app, `build-label-hint.yml` comments with
 the labels that build it: `ci:ios-simulator`, `ci:ios-device` and
 `ci:android-device`.
 
