@@ -1314,8 +1314,8 @@ the session has no saved pairing, the CLI:
 At most eight rotations are attempted. Explicit mnemonic and explicit account
 modes return the slot error instead of changing identity. A managed session
 with one or more saved pairings also preserves its signer. Pairing another
-device returns the slot error with guidance to remove a paired device or wait
-for a new allowance period. An exhausted background renewal leaves the current
+device returns the slot error, saying the period is full until the next UTC
+day. An exhausted background renewal leaves the current
 auto-managed account eligible because the saved peers depend on that identity.
 
 ### 12.6 Session identity and naming

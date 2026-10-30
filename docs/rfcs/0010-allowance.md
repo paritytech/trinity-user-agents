@@ -119,7 +119,7 @@ fn host_request_resource_allocation(
 
 **Renewal is not a product concern.** Bulletin slots expire after 2 weeks (+ 2-week grace). Keeping an existing allowance alive across expiry is handled automatically by the Account Holder — it reassigns the same allowance account to a fresh slot before the old one expires, without product or Host involvement. Products do not need to call `host_request_resource_allocation` periodically to stay funded.
 
-**Slot-table saturation.** Each user has a fixed number of Bulletin and SSS slots. When a new allocation is requested but all of the user's slots are already occupied, the Account Holder's authorization UI surfaces the conflict and asks the user to select which existing slot(s) to evict in favor of the new one. The user-facing resolution — including which products and which systems have existing claims — is part of the Account Holder's resource-allocation confirmation UX and not a TrUAPI concern. `NotAvailable` is therefore reserved for cases where the resource simply cannot be granted (e.g. the user declined to evict anything), not for a raw "table full" signal to the product.
+**Slot-table saturation.** Each user has a fixed number of Bulletin and SSS slots. Renewal never evicts an occupied slot. When a new allocation finds all of the user's slots occupied, the resource cannot be granted for that period and the product receives `NotAvailable`. Evicting the lowest-priority, oldest slot past the replacement cooldown for an on-demand allocation is proposed in [trinity-user-agents#1159](https://github.com/paritytech/trinity-user-agents/issues/1159) and is not part of this RFC.
 
 ### Accounts Protocol companion
 
@@ -344,6 +344,8 @@ sequenceDiagram
 2. **Independence from AutoSigning.** If Bulletin / SSS allowance were granted directly to product accounts, granting the allowance would require transferring the product's private key to the Host — which is exactly what AutoSigning does. The two grants would be inseparable: a user approving "let this product submit to Bulletin" would implicitly also approve "let this product sign any transaction as me." Keeping allowance on separate hard-derived accounts means Bulletin / SSS allowance and AutoSigning are independent capabilities that the user grants (or denies) separately, even though the mechanisms themselves are orthogonal.
 
 **Slot reassignment over key rotation.** Whether scaling allowance (repeated `host_request_resource_allocation` calls) or renewing an expiring slot (automatic, Account-Holder-driven), the same allowance account is assigned to an additional / fresh slot rather than rotated to a new account. This keeps the Host's cached key valid across the account's full lifetime and avoids invalidating in-flight submissions.
+
+**Statement-store renewal takes only free slots.** Automatic statement-store renewal never replaces a slot held by another account. When a period has no free slot left, the Account Holder reports the remaining renewal targets as exhausted for that period instead.
 
 **No product or Host control over which slot.** Slot selection is entirely the Account Holder's concern — it owns the slot table and performs the ring-VRF assignment. Neither products nor Hosts address individual slots or can cause a specific slot to be released.
 

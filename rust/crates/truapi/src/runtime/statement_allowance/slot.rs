@@ -347,12 +347,10 @@ pub fn replaceable_slot(
 	target: &[u8; 32],
 	chain_now_seconds: u64,
 	cooldown_seconds: u64,
-	excluded: &[u32],
 ) -> Option<u32> {
 	candidates
 		.iter()
 		.filter(|slot| slot.account_id != *target)
-		.filter(|slot| !excluded.contains(&slot.seq))
 		.filter(|slot| chain_now_seconds.saturating_sub(slot.since) > cooldown_seconds)
 		.min_by_key(|slot| (slot.since, slot.seq))
 		.map(|slot| slot.seq)
@@ -844,14 +842,14 @@ mod tests {
 			occupied(2, [0x98; 32], 2_000),
 		];
 
-		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[]), Some(2),);
+		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60), Some(2),);
 	}
 
 	#[test]
 	fn a_slot_inside_its_cooldown_is_not_replaceable() {
 		let candidates = [occupied(0, [0x99; 32], 9_990)];
 
-		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[]), None,);
+		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60), None,);
 	}
 
 	/// The runtime requires `now > since + cooldown`, so a slot at exactly the
@@ -862,12 +860,12 @@ mod tests {
 		let candidates = [occupied(0, [0x99; 32], 1_000)];
 
 		assert_eq!(
-			replaceable_slot(&candidates, &[0x22; 32], 1_060, 60, &[]),
+			replaceable_slot(&candidates, &[0x22; 32], 1_060, 60),
 			None,
 			"age exactly at the cooldown must not be offered",
 		);
 		assert_eq!(
-			replaceable_slot(&candidates, &[0x22; 32], 1_061, 60, &[]),
+			replaceable_slot(&candidates, &[0x22; 32], 1_061, 60),
 			Some(0),
 			"one second past the cooldown is replaceable",
 		);
@@ -886,14 +884,7 @@ mod tests {
 	fn a_table_of_only_the_targets_own_and_cooling_slots_yields_nothing() {
 		let candidates = [occupied(0, [0x22; 32], 1_000), occupied(1, [0x99; 32], 9_999)];
 
-		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[]), None,);
-	}
-
-	#[test]
-	fn an_excluded_slot_is_skipped_so_a_failed_replacement_moves_on() {
-		let candidates = [occupied(0, [0x99; 32], 1_000), occupied(1, [0x98; 32], 2_000)];
-
-		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[0]), Some(1),);
+		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60), None,);
 	}
 
 	/// Equal ages resolve to the lowest seq, so retries do not oscillate.
@@ -901,26 +892,7 @@ mod tests {
 	fn equal_ages_break_to_the_lowest_seq() {
 		let candidates = [occupied(5, [0x99; 32], 1_000), occupied(2, [0x98; 32], 1_000)];
 
-		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[]), Some(2),);
-	}
-
-	/// A pass that registers several targets protects the slots it has already
-	/// claimed, so target N cannot take the slot target N-1 just got. Without
-	/// this a pass with more targets than slots undoes its own work forever.
-	#[test]
-	fn slots_already_claimed_in_this_pass_are_protected() {
-		let candidates = [
-			occupied(0, [0x01; 32], 1_000),
-			occupied(1, [0x02; 32], 2_000),
-			occupied(2, [0x03; 32], 3_000),
-		];
-
-		// Nothing claimed yet: the oldest goes.
-		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[]), Some(0),);
-		// Having claimed 0 and 1 earlier in the pass, only 2 is available.
-		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[0, 1]), Some(2),);
-		// Once every slot is one this pass claimed, the honest answer is none.
-		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60, &[0, 1, 2]), None,);
+		assert_eq!(replaceable_slot(&candidates, &[0x22; 32], 10_000, 60), Some(2),);
 	}
 
 	/// Excluding a slot because a submission for it is in flight must not read as

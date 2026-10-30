@@ -34,7 +34,9 @@ writes `playground/test-results/e2e-dotli/diagnosis-report.md`. The harness
 uses `HOST_CLI_SIGNER_MNEMONIC` when supplied. Otherwise the CLI provisions
 and reuses an isolated test identity under `.e2e-dotli/`. Set
 `E2E_DOTLI_SIGNING_HOST_BASE_PATH` to use a different state directory while
-debugging. Set `E2E_DOTLI_NETWORK` to override the default `paseo-next-v2`
+debugging. Each pairing takes one of the identity's statement-store slots until
+the next UTC day, so many runs in one day exhaust it; an empty
+`E2E_DOTLI_SIGNING_HOST_BASE_PATH` provisions a fresh identity. Set `E2E_DOTLI_NETWORK` to override the default `paseo-next-v2`
 network. Use
 `E2E_DOTLI_SMOKE=1 make e2e-dotli` to verify the local stack, browser launch,
 login click, TrUAPI debug logs, and QR/deeplink extraction without a phone.

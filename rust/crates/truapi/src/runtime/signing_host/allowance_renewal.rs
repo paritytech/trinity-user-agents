@@ -149,22 +149,58 @@ impl RenewalState {
 	}
 }
 
-/// Discard unreadable entries; later allocations rebuild the ledger.
-async fn read_entries(
+/// The persisted renewal state.
+///
+/// Encoded as the entry list, followed by `renewed` only when it is non-empty,
+/// so a ledger written before products had a renewal history still decodes.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Ledger {
+	/// Promised targets, in track order.
+	entries: Vec<TrackedStatementRenewalTarget>,
+	/// The last period each product target held a slot in after a pass.
+	renewed: Vec<(ProductId, u32)>,
+}
+
+impl Ledger {
+	fn to_bytes(&self) -> Vec<u8> {
+		let mut blob = self.entries.encode();
+		if !self.renewed.is_empty() {
+			self.renewed.encode_to(&mut blob);
+		}
+		blob
+	}
+
+	fn from_bytes(blob: &[u8]) -> Result<Self, StatementRenewalError> {
+		let mut input = blob;
+		let entries = Vec::<TrackedStatementRenewalTarget>::decode(&mut input)?;
+		let renewed = if input.is_empty() {
+			Vec::new()
+		} else {
+			Vec::<(ProductId, u32)>::decode(&mut input)?
+		};
+		if !input.is_empty() {
+			return Err(StatementRenewalError::TrailingLedgerBytes);
+		}
+		Ok(Self { entries, renewed })
+	}
+}
+
+/// Discard an unreadable ledger; later allocations rebuild it.
+async fn read_ledger(
 	storage: &(impl CoreStorage + ?Sized),
-) -> Result<Vec<TrackedStatementRenewalTarget>, StatementRenewalError> {
+) -> Result<Ledger, StatementRenewalError> {
 	let Some(blob) = storage
 		.read_core_storage(CoreStorageKey::StatementRenewalTargets)
 		.await
 		.map_err(StatementRenewalError::ReadLedger)?
 	else {
-		return Ok(Vec::new());
+		return Ok(Ledger::default());
 	};
-	match decode_entries(&blob) {
-		Ok(entries) => Ok(entries),
+	match Ledger::from_bytes(&blob) {
+		Ok(ledger) => Ok(ledger),
 		Err(reason) => {
 			warn!(%reason, "discarding an undecodable renewal ledger");
-			Ok(Vec::new())
+			Ok(Ledger::default())
 		},
 	}
 }
@@ -178,40 +214,29 @@ async fn track_targets(
 	new_targets: Vec<StatementRenewalTarget>,
 ) -> Result<(), StatementRenewalError> {
 	let _guard = ledger_lock.lock().await;
-	let mut entries = read_entries(storage).await?;
+	let mut ledger = read_ledger(storage).await?;
 	let mut changed = false;
 	for target in new_targets {
 		let entry = TrackedStatementRenewalTarget::new(target, owner);
-		if !entries.contains(&entry) {
-			entries.push(entry);
+		if !ledger.entries.contains(&entry) {
+			ledger.entries.push(entry);
 			changed = true;
 		}
 	}
 	if !changed {
 		return Ok(());
 	}
-	write_entries(storage, &entries).await
+	write_ledger(storage, &ledger).await
 }
 
-async fn write_entries(
+async fn write_ledger(
 	storage: &(impl CoreStorage + ?Sized),
-	entries: &[TrackedStatementRenewalTarget],
+	ledger: &Ledger,
 ) -> Result<(), StatementRenewalError> {
 	storage
-		.write_core_storage(CoreStorageKey::StatementRenewalTargets, entries.encode())
+		.write_core_storage(CoreStorageKey::StatementRenewalTargets, ledger.to_bytes())
 		.await
 		.map_err(StatementRenewalError::WriteLedger)
-}
-
-fn decode_entries(
-	blob: &[u8],
-) -> Result<Vec<TrackedStatementRenewalTarget>, StatementRenewalError> {
-	let mut input = blob;
-	let entries = Vec::<TrackedStatementRenewalTarget>::decode(&mut input)?;
-	if !input.is_empty() {
-		return Err(StatementRenewalError::TrailingLedgerBytes);
-	}
-	Ok(entries)
 }
 
 /// Record `targets` in the ledger under the active identity.
