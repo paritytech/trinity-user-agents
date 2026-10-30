@@ -2683,7 +2683,7 @@ mod tests {
 	}
 
 	// A compacted session keeps what its history row shows: the provider,
-	// the rail and asset, how it ended, the payout and the provider's
+	// the quote it was chosen on, how it ended, the payout and the provider's
 	// references, across a restart.
 	#[test]
 	fn a_compacted_withdrawal_keeps_its_history_details_after_a_restart() {
@@ -2745,8 +2745,7 @@ mod tests {
 				after.get("fs_sent").is_none(),
 				row.map(|row| (
 					row.provider_id,
-					row.rail,
-					row.asset,
+					row.choice.map(|choice| (choice.rail, choice.asset, choice.quote.send_amount)),
 					row.status,
 					row.payout,
 					row.transaction_id,
@@ -2757,8 +2756,7 @@ mod tests {
 				true,
 				Some((
 					Some("ramp.dot".to_string()),
-					Some(truapi::latest::FundingRail::Bank),
-					Some("EUR".to_string()),
+					Some((truapi::latest::FundingRail::Bank, "EUR".to_string(), 100)),
 					crate::host_logic::funding::FundingStatus::Sent,
 					Some(truapi::latest::FundingPayout::PaidOut),
 					Some("tx-1".to_string()),

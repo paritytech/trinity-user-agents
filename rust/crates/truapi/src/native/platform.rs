@@ -105,6 +105,10 @@ impl crate::host_logic::worker::WorkerController for CallbackPlatform {
 	fn request_worker_transition(&self, product_id: &ProductId, transition: WorkerTransition) {
 		self.callbacks.request_worker_transition(product_id.clone(), transition);
 	}
+
+	fn worker_crashing(&self, product_id: &ProductId, crashes: u32) {
+		self.callbacks.worker_crashing(product_id.clone(), crashes);
+	}
 }
 
 impl crate::durable::DurableWorkObserver for CallbackPlatform {

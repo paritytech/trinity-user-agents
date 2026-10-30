@@ -50,19 +50,7 @@ struct FundingRecord: Identifiable, Equatable {
 extension FundingRecord {
     /// The record for a session that has ended, or nil while it is open.
     init?(session: FundingSession, progress: FundingProgress?) {
-        let settled: Settled
-        switch session.stage {
-        case .open:
-            return nil
-        case let .delivered(credited, settledAtMs):
-            settled = Settled(outcome: .delivered, amount: credited, atMs: settledAtMs)
-        case let .released(debited, settledAtMs):
-            let cancelled = if case .cancelled = progress?.status { true } else { false }
-            settled = Settled(outcome: cancelled ? .cancelled : .released, amount: debited, atMs: settledAtMs)
-        case let .failed(reason, settledAtMs):
-            let outcome: Outcome = reason == .refunded ? .refunded : .failed(reason)
-            settled = Settled(outcome: outcome, amount: nil, atMs: settledAtMs)
-        }
+        guard let settled = Settled(stage: session.stage, status: progress?.status) else { return nil }
 
         intent = session.intent
         direction = session.direction
@@ -89,27 +77,26 @@ extension FundingRecord {
 
 extension FundingRecord {
     /// The record for an ended session from its summary in the core's
-    /// history. The summary keeps no rail, provider or payment details, so
-    /// those stay empty.
+    /// history. The summary keeps no quote, so what was paid stays empty.
     init?(summary: FundingSessionSummary) {
-        guard let settled = Settled(stage: summary.stage) else { return nil }
+        guard let settled = Settled(stage: summary.stage, status: summary.status) else { return nil }
 
         intent = summary.intent
         direction = summary.direction
-        rail = nil
-        asset = nil
-        providerId = nil
+        rail = summary.rail
+        asset = summary.asset
+        providerId = summary.providerId
         requestedAmount = summary.amount
         settledAmount = settled.amount
         paidAmount = nil
-        paidAsset = nil
+        paidAsset = summary.asset
         paidDecimals = nil
         paidNetwork = nil
         outcome = settled.outcome
-        payout = nil
-        refundedAmount = nil
-        transactionId = nil
-        reference = nil
+        payout = summary.payout.map(Payout.init)
+        refundedAmount = summary.refunded
+        transactionId = summary.transactionId
+        reference = summary.reference
         openedAt = Date(milliseconds: summary.openedAtMs)
         settledAt = Date(milliseconds: settled.atMs)
     }
@@ -122,16 +109,32 @@ private struct Settled {
 }
 
 private extension Settled {
-    init?(stage: FundingStage) {
+    /// How the session ended, as the core's ending `status` names it; the
+    /// stage decides only while the status still reads as in flight.
+    init?(stage: FundingStage, status: FundingStatus?) {
         switch stage {
         case .open:
             return nil
         case let .delivered(credited, settledAtMs):
-            self.init(outcome: .delivered, amount: credited, atMs: settledAtMs)
+            self.init(outcome: Self.outcome(status) ?? .delivered, amount: credited, atMs: settledAtMs)
         case let .released(debited, settledAtMs):
-            self.init(outcome: .released, amount: debited, atMs: settledAtMs)
+            self.init(outcome: Self.outcome(status) ?? .released, amount: debited, atMs: settledAtMs)
         case let .failed(reason, settledAtMs):
-            self.init(outcome: reason == .refunded ? .refunded : .failed(reason), amount: nil, atMs: settledAtMs)
+            let fallback: FundingRecord.Outcome = reason == .refunded ? .refunded : .failed(reason)
+            self.init(outcome: Self.outcome(status) ?? fallback, amount: nil, atMs: settledAtMs)
+        }
+    }
+
+    static func outcome(_ status: FundingStatus?) -> FundingRecord.Outcome? {
+        switch status {
+        case .toppedUp: .delivered
+        case .sent,
+             .paidOutAfterCancel,
+             .payoutFailed: .released
+        case .refunded: .refunded
+        case .cancelled: .cancelled
+        case let .failed(reason): reason == .refunded ? .refunded : .failed(reason)
+        default: nil
         }
     }
 }

@@ -28,6 +28,40 @@ pub enum WorkerTransition {
 pub trait WorkerController: Send + Sync {
 	/// Request that the host start the worker or allow it to stop.
 	fn request_worker_transition(&self, product_id: &ProductId, transition: WorkerTransition);
+
+	/// The product's worker crashed `crashes` times in a row while it was
+	/// needed, so the host tells the user it is not working. The core keeps
+	/// starting it again, waiting longer each time.
+	fn worker_crashing(&self, product_id: &ProductId, crashes: u32) {
+		let _ = (product_id, crashes);
+	}
+}
+
+/// An exit more than this long after the previous one starts a new run of
+/// crashes, in milliseconds.
+pub const CRASH_RUN_WINDOW_MS: u64 = 60_000;
+/// The wait before restarting a worker after its second crash in a run, in
+/// milliseconds; it doubles with each further crash.
+pub const RESTART_BACKOFF_BASE_MS: u64 = 1_000;
+/// The longest wait before restarting a crashed worker, in milliseconds.
+pub const RESTART_BACKOFF_MAX_MS: u64 = 5 * 60_000;
+/// The crash in a run on which the host is told the worker is not working.
+pub const CRASH_NOTICE_AFTER: u32 = 3;
+
+/// What the ledger reports to the host, in the order it happened.
+enum LedgerEvent {
+	Transition(ProductId, WorkerTransition),
+	Crashing(ProductId, u32),
+}
+
+/// A product's run of crashes.
+struct CrashRun {
+	/// Crashes in the run so far.
+	crashes: u32,
+	/// When the last one was reported, in Unix milliseconds.
+	last_exit_ms: u64,
+	/// Whether a restart waits out its backoff.
+	restart_pending: bool,
 }
 
 /// Counts and the transitions they have produced but not yet reported.
@@ -36,8 +70,10 @@ struct LedgerState {
 	/// Reference counts keyed by product id. A product with no references has
 	/// no entry.
 	references: HashMap<ProductId, usize>,
-	/// Transitions in ledger order, waiting for the draining thread.
-	pending: VecDeque<(ProductId, WorkerTransition)>,
+	/// Each product's current run of crashes.
+	crashes: HashMap<ProductId, CrashRun>,
+	/// Events in ledger order, waiting for the draining thread.
+	pending: VecDeque<LedgerEvent>,
 	/// Whether a thread is already draining `pending`.
 	draining: bool,
 }
@@ -65,7 +101,14 @@ impl WorkerLedger {
 			if *count != 1 {
 				return;
 			}
-			state.pending.push_back((product_id.clone(), WorkerTransition::Start));
+			// Started now, so a restart still waiting on its backoff has
+			// nothing left to do.
+			if let Some(run) = state.crashes.get_mut(product_id) {
+				run.restart_pending = false;
+			}
+			state
+				.pending
+				.push_back(LedgerEvent::Transition(product_id.clone(), WorkerTransition::Start));
 		}
 		self.drain();
 	}
@@ -86,23 +129,76 @@ impl WorkerLedger {
 			// The last one: an entry is dropped rather than left at zero, so
 			// every stored count is at least one and none of this can wrap.
 			state.references.remove(product_id);
-			state.pending.push_back((product_id.clone(), WorkerTransition::Stop));
+			state
+				.pending
+				.push_back(LedgerEvent::Transition(product_id.clone(), WorkerTransition::Stop));
 		}
 		self.drain();
 	}
 
-	/// The host reports that the product's worker stopped running without
-	/// being asked to: it crashed or the system killed it. While references
-	/// remain, [`WorkerTransition::Start`] is requested again, and the
-	/// worker is handed its sessions anew once it connects. With none held,
-	/// nothing needs it and this is a no-op.
-	pub fn exited(&self, product_id: &ProductId) {
-		{
+	/// The host reports at `now_ms` that the product's worker stopped
+	/// running without being asked to: it crashed, failed to boot or the
+	/// system killed it. With no references held nothing needs it, and this
+	/// is a no-op that answers `None`.
+	///
+	/// Otherwise the exit joins the product's run of crashes, which starts
+	/// anew after [`CRASH_RUN_WINDOW_MS`] without one. The first crash of a
+	/// run requests [`WorkerTransition::Start`] at once and answers `None`.
+	/// A later one answers the wait before the caller calls
+	/// [`Self::restart`]: [`RESTART_BACKOFF_BASE_MS`], doubling with each
+	/// crash up to [`RESTART_BACKOFF_MAX_MS`]. The run's
+	/// [`CRASH_NOTICE_AFTER`]th crash tells the host through
+	/// [`WorkerController::worker_crashing`].
+	pub fn exited(&self, product_id: &ProductId, now_ms: u64) -> Option<u64> {
+		let wait_ms = {
 			let mut state = self.state();
 			if !state.references.contains_key(product_id) {
+				return None;
+			}
+			let run = state.crashes.entry(product_id.clone()).or_insert(CrashRun {
+				crashes: 0,
+				last_exit_ms: now_ms,
+				restart_pending: false,
+			});
+			if now_ms.saturating_sub(run.last_exit_ms) > CRASH_RUN_WINDOW_MS {
+				run.crashes = 0;
+			}
+			run.crashes = run.crashes.saturating_add(1);
+			run.last_exit_ms = now_ms;
+			let crashes = run.crashes;
+			let wait_ms = restart_backoff_ms(crashes);
+			run.restart_pending = wait_ms.is_some();
+			if crashes == CRASH_NOTICE_AFTER {
+				state.pending.push_back(LedgerEvent::Crashing(product_id.clone(), crashes));
+			}
+			if wait_ms.is_none() {
+				state.pending.push_back(LedgerEvent::Transition(
+					product_id.clone(),
+					WorkerTransition::Start,
+				));
+			}
+			wait_ms
+		};
+		self.drain();
+		wait_ms
+	}
+
+	/// Restart a crashed worker once its backoff has passed: requests
+	/// [`WorkerTransition::Start`] unless nothing holds the worker any more
+	/// or it was started meanwhile.
+	pub fn restart(&self, product_id: &ProductId) {
+		{
+			let mut state = self.state();
+			let held = state.references.contains_key(product_id);
+			let Some(run) = state.crashes.get_mut(product_id) else {
+				return;
+			};
+			if !core::mem::take(&mut run.restart_pending) || !held {
 				return;
 			}
-			state.pending.push_back((product_id.clone(), WorkerTransition::Start));
+			state
+				.pending
+				.push_back(LedgerEvent::Transition(product_id.clone(), WorkerTransition::Start));
 		}
 		self.drain();
 	}
@@ -175,9 +271,28 @@ impl WorkerLedger {
 				};
 				next
 			};
-			controller.request_worker_transition(&next.0, next.1);
+			match next {
+				LedgerEvent::Transition(product_id, transition) => {
+					controller.request_worker_transition(&product_id, transition)
+				},
+				LedgerEvent::Crashing(product_id, crashes) => {
+					controller.worker_crashing(&product_id, crashes)
+				},
+			}
 		}
 	}
+}
+
+/// The wait before restarting a worker on the `crashes`th crash of a run:
+/// none on the first, then [`RESTART_BACKOFF_BASE_MS`] doubling up to
+/// [`RESTART_BACKOFF_MAX_MS`].
+fn restart_backoff_ms(crashes: u32) -> Option<u64> {
+	let doublings = crashes.checked_sub(2)?;
+	Some(
+		RESTART_BACKOFF_BASE_MS
+			.saturating_mul(1u64.checked_shl(doublings).unwrap_or(u64::MAX))
+			.min(RESTART_BACKOFF_MAX_MS),
+	)
 }
 
 /// Clears [`LedgerState::draining`] for a drain that ends without clearing it
@@ -212,6 +327,7 @@ mod tests {
 	#[derive(Default)]
 	struct Recorder {
 		seen: Mutex<Vec<(String, WorkerTransition)>>,
+		crashing: Mutex<Vec<(String, u32)>>,
 	}
 
 	impl Recorder {
@@ -226,6 +342,13 @@ mod tests {
 				.lock()
 				.expect("recorder mutex poisoned")
 				.push((product_id.to_string(), transition));
+		}
+
+		fn worker_crashing(&self, product_id: &ProductId, crashes: u32) {
+			self.crashing
+				.lock()
+				.expect("recorder mutex poisoned")
+				.push((product_id.to_string(), crashes));
 		}
 	}
 
@@ -275,11 +398,11 @@ mod tests {
 	#[test]
 	fn a_worker_that_exits_while_needed_is_started_again() {
 		let (ledger, recorder) = observed();
-		ledger.exited(&ProductId::for_test("a.dot"));
+		assert_eq!(ledger.exited(&ProductId::for_test("a.dot"), 0), None);
 		assert!(recorder.seen().is_empty(), "a worker nothing needs stays stopped");
 		ledger.acquire(&ProductId::for_test("a.dot"));
 		ledger.acquire(&ProductId::for_test("a.dot"));
-		ledger.exited(&ProductId::for_test("a.dot"));
+		assert_eq!(ledger.exited(&ProductId::for_test("a.dot"), 0), None, "restarted at once");
 		assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 2, "the references stand");
 		ledger.release(&ProductId::for_test("a.dot"));
 		ledger.release(&ProductId::for_test("a.dot"));
@@ -289,6 +412,80 @@ mod tests {
 				("a.dot".to_string(), WorkerTransition::Start),
 				("a.dot".to_string(), WorkerTransition::Start),
 				("a.dot".to_string(), WorkerTransition::Stop),
+			]
+		);
+	}
+
+	// A worker that keeps crashing waits longer before each restart, and the
+	// host hears it is not working on the run's third crash; a quiet minute
+	// starts a new run.
+	#[test]
+	fn a_worker_that_keeps_crashing_backs_off_and_the_host_is_told() {
+		let (ledger, recorder) = observed();
+		let product = ProductId::for_test("a.dot");
+		ledger.acquire(&product);
+		let waits: Vec<_> = (0..12).map(|n| ledger.exited(&product, n * 10)).collect();
+		let restarts_before = recorder.seen().len();
+		ledger.restart(&product);
+		ledger.restart(&product);
+		let after_quiet = ledger.exited(&product, 11 * 10 + CRASH_RUN_WINDOW_MS + 1);
+
+		assert_eq!(
+			(
+				waits,
+				recorder.seen().len() - restarts_before,
+				after_quiet,
+				recorder.crashing.lock().expect("recorder mutex poisoned").clone()
+			),
+			(
+				vec![
+					None,
+					Some(1_000),
+					Some(2_000),
+					Some(4_000),
+					Some(8_000),
+					Some(16_000),
+					Some(32_000),
+					Some(64_000),
+					Some(128_000),
+					Some(256_000),
+					Some(RESTART_BACKOFF_MAX_MS),
+					Some(RESTART_BACKOFF_MAX_MS),
+				],
+				// The restart once, not twice, then the new run's at once.
+				2,
+				None,
+				vec![("a.dot".to_string(), CRASH_NOTICE_AFTER)]
+			)
+		);
+	}
+
+	// A restart waiting out its backoff does nothing once nothing holds the
+	// worker, or once it was started again meanwhile.
+	#[test]
+	fn a_pending_restart_is_dropped_when_it_is_no_longer_needed() {
+		let (ledger, recorder) = observed();
+		let product = ProductId::for_test("a.dot");
+		ledger.acquire(&product);
+		ledger.exited(&product, 0);
+		assert!(ledger.exited(&product, 1).is_some());
+		ledger.release(&product);
+		ledger.restart(&product);
+		ledger.acquire(&product);
+		assert!(ledger.exited(&product, 2).is_some());
+		ledger.release(&product);
+		ledger.acquire(&product);
+		ledger.restart(&product);
+
+		assert_eq!(
+			recorder.seen(),
+			vec![
+				("a.dot".to_string(), WorkerTransition::Start),
+				("a.dot".to_string(), WorkerTransition::Start),
+				("a.dot".to_string(), WorkerTransition::Stop),
+				("a.dot".to_string(), WorkerTransition::Start),
+				("a.dot".to_string(), WorkerTransition::Stop),
+				("a.dot".to_string(), WorkerTransition::Start),
 			]
 		);
 	}

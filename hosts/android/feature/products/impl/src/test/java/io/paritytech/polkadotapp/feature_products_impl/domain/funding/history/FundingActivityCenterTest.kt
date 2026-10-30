@@ -7,7 +7,7 @@ import io.mockk.mockk
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStatus
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStep
-import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.FundingSessionEntry
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,11 +20,11 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import uniffi.truapi.FundingBand
-import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingFailure
 import uniffi.truapi.FundingPayout
 import uniffi.truapi.FundingProgress
+import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.FundingStage
@@ -46,6 +46,7 @@ class FundingActivityCenterTest {
     @Test
     fun `an ended top-up is listed and acknowledged`() = runBlocking {
         serve(session("in", FundingDirection.IN, FundingStage.Delivered("50", settledAtMs = 1uL)) to progress(FundingStatus.ToppedUp))
+        recorded = listOf(summary("in", FundingStage.Delivered("50", settledAtMs = 1uL), FundingStatus.ToppedUp))
 
         val activity = center.observe().first()
 
@@ -57,7 +58,7 @@ class FundingActivityCenterTest {
     @Test
     fun `a released withdrawal is acknowledged, and stays in progress until its payout`() = runBlocking {
         serve(session("out", FundingDirection.OUT, FundingStage.Released("50", settledAtMs = 1uL)) to progress(FundingStatus.PreparingPayout))
-        recorded = listOf(summary("out", FundingStage.Released("50", settledAtMs = 1uL)))
+        recorded = listOf(summary("out", FundingStage.Released("50", settledAtMs = 1uL), FundingStatus.PreparingPayout, FundingDirection.OUT))
 
         val activity = center.observe().first()
 
@@ -96,27 +97,30 @@ class FundingActivityCenterTest {
             session("out", FundingDirection.OUT, released) to
                 progress(FundingStatus.PayoutFailed(refunded = "45"), FundingPayout.Failed("rejected"), refunded = "45"),
         )
+        recorded = listOf(
+            summary("out", released, FundingStatus.PayoutFailed(refunded = "45"), FundingDirection.OUT, FundingPayout.Failed("rejected"), "45"),
+        )
         val activity = center.observe().first()
 
         coVerify(exactly = 2) { runtime.acknowledge("out") }
         assertEquals(listOf(FundingActivityStatus.PayoutFailed(45.intoBalance())), activity.history.map { it.status })
     }
 
-    // The core keeps every ended session; one not pushed in this process reads from its summary.
+    // A session from an earlier run is not pushed again once acknowledged, so its row comes from the summary alone.
     @Test
-    fun `ended sessions the core did not push read from its history, and a pushed session wins`() = runBlocking {
-        serve(session("pushed", FundingDirection.IN, FundingStage.Delivered("50", settledAtMs = 3uL)) to progress(FundingStatus.ToppedUp))
+    fun `ended rows read from the core's history, newest first, with the summary's rail`() = runBlocking {
         recorded = listOf(
-            summary("pushed", FundingStage.Delivered("40", settledAtMs = 3uL)),
-            summary("older", FundingStage.Delivered("30", settledAtMs = 2uL)),
-            summary("failed", FundingStage.Failed(FundingFailure.Declined, settledAtMs = 1uL)),
+            summary("newer", FundingStage.Delivered("40", settledAtMs = 3uL), FundingStatus.ToppedUp),
+            summary("failed", FundingStage.Failed(FundingFailure.Declined, settledAtMs = 1uL), FundingStatus.Failed(FundingFailure.Declined)),
+            summary("older", FundingStage.Delivered("30", settledAtMs = 2uL), FundingStatus.ToppedUp),
         )
 
         val activity = center.observe().first()
 
-        assertEquals(listOf("pushed", "older", "failed"), activity.history.map { it.id })
-        assertEquals(listOf(50.intoBalance(), 30.intoBalance(), 50.intoBalance()), activity.history.map { it.amount })
-        coVerify(exactly = 1) { runtime.acknowledge(any()) }
+        assertEquals(listOf("newer", "older", "failed"), activity.history.map { it.id })
+        assertEquals(listOf(40.intoBalance(), 30.intoBalance(), 50.intoBalance()), activity.history.map { it.amount })
+        assertEquals(List(3) { FundingRailType.CARD }, activity.history.map { it.rail })
+        coVerify(exactly = 0) { runtime.acknowledge(any()) }
     }
 
     // The core loads its sessions once funding resumes, which it says by pushing whether funding is in progress.
@@ -127,7 +131,7 @@ class FundingActivityCenterTest {
         val ids = withTimeout(2_000) {
             center.observe().take(2).map { activity ->
                 if (activity.history.isEmpty()) {
-                    recorded = listOf(summary("loaded", FundingStage.Delivered("30", settledAtMs = 2uL)))
+                    recorded = listOf(summary("loaded", FundingStage.Delivered("30", settledAtMs = 2uL), FundingStatus.ToppedUp))
                     inProgress.value = false
                 }
                 activity.history.map { it.id }
@@ -138,15 +142,13 @@ class FundingActivityCenterTest {
     }
 
     @Test
-    fun `an ended session reads in full while the core pushed it, else from its summary`() = runBlocking {
-        serve(session("pushed", FundingDirection.IN, FundingStage.Delivered("50", settledAtMs = 3uL)) to progress(FundingStatus.ToppedUp))
-        recorded = listOf(summary("older", FundingStage.Delivered("30", settledAtMs = 2uL)))
+    fun `an ended session's detail reads from its summary`() = runBlocking {
+        recorded = listOf(summary("older", FundingStage.Delivered("30", settledAtMs = 2uL), FundingStatus.ToppedUp))
 
-        assertEquals("ramp.dot", center.ended("pushed")?.providerId)
-        assertEquals(30.intoBalance(), center.ended("older")?.settledAmount)
+        val record = center.ended("older")
+
+        assertEquals("ramp.dot" to 30.intoBalance(), record?.providerId to record?.settledAmount)
         assertEquals(null, center.ended("missing"))
-        // A pushed session needs no read.
-        coVerify(exactly = 2) { runtime.history() }
     }
 
     @Test
@@ -155,8 +157,6 @@ class FundingActivityCenterTest {
             session("longer", FundingDirection.IN, FundingStage.Open) to progress(FundingStatus.TakingLonger),
             session("retrying", FundingDirection.IN, FundingStage.Open) to progress(FundingStatus.Retrying),
             session("payout", FundingDirection.OUT, FundingStage.Open) to progress(FundingStatus.RetryingPayout),
-            session("failed", FundingDirection.IN, FundingStage.Failed(FundingFailure.Declined, settledAtMs = 1uL)) to
-                progress(FundingStatus.Failed(FundingFailure.Declined)),
         )
 
         val activity = center.observe().first()
@@ -169,7 +169,6 @@ class FundingActivityCenterTest {
             ),
             activity.inFlight.associate { it.id to (it.status as FundingActivityStatus.InProgress).step },
         )
-        assertEquals(listOf(FundingActivityStatus.Failed(FundingFailureReason.Declined)), activity.history.map { it.status })
     }
 
     @Test
@@ -194,16 +193,18 @@ class FundingActivityCenterTest {
         )
     }
 
-    // An accepted cancel ends a withdrawal released, so only the session's cancel tells it from a sent one.
+    // An accepted cancel ends a withdrawal released; the summary's status tells it from a sent one, in any later run.
     @Test
-    fun `a withdrawal cancelled on the provider's terms is kept as cancelled with its refund`() = runBlocking {
-        val cancelled = session(
-            "out",
-            FundingDirection.OUT,
-            FundingStage.Released("50", settledAtMs = 1uL),
-            cancel = FundingCancel.Accepted(fee = "5", refund = "45"),
+    fun `a withdrawal cancelled on the provider's terms is listed as cancelled with its refund`() = runBlocking {
+        recorded = listOf(
+            summary(
+                "out",
+                FundingStage.Released("50", settledAtMs = 1uL),
+                FundingStatus.Cancelled(refunded = "45"),
+                FundingDirection.OUT,
+                refunded = "45",
+            ),
         )
-        serve(cancelled to progress(FundingStatus.Cancelled(refunded = "45"), refunded = "45"))
 
         val activity = center.observe().first()
 
@@ -212,14 +213,16 @@ class FundingActivityCenterTest {
 
     /** The payout went through before the provider could act on the accepted cancel, so the withdrawal stands. */
     @Test
-    fun `a withdrawal paid out after the user accepted a cancel is kept as sent`() = runBlocking {
-        val paidOut = session(
-            "out",
-            FundingDirection.OUT,
-            FundingStage.Released("50", settledAtMs = 1uL),
-            cancel = FundingCancel.Overtaken(fee = "5", refund = "45"),
+    fun `a withdrawal paid out after the user accepted a cancel is listed as sent`() = runBlocking {
+        recorded = listOf(
+            summary(
+                "out",
+                FundingStage.Released("50", settledAtMs = 1uL),
+                FundingStatus.PaidOutAfterCancel,
+                FundingDirection.OUT,
+                FundingPayout.PaidOut,
+            ),
         )
-        serve(paidOut to progress(FundingStatus.PaidOutAfterCancel, payout = FundingPayout.PaidOut))
 
         val activity = center.observe().first()
 
@@ -244,13 +247,28 @@ class FundingActivityCenterTest {
         coVerify(exactly = 1) { runtime.start() }
     }
 
-    private fun summary(intent: String, stage: FundingStage) = FundingSessionSummary(
+    private fun summary(
+        intent: String,
+        stage: FundingStage,
+        status: FundingStatus,
+        direction: FundingDirection = FundingDirection.IN,
+        payout: FundingPayout? = null,
+        refunded: String? = null,
+    ) = FundingSessionSummary(
         intent = intent,
         ownerProductId = null,
-        direction = FundingDirection.IN,
+        direction = direction,
         amount = "50",
         stage = stage,
         openedAtMs = 0uL,
+        providerId = "ramp.dot",
+        rail = FundingRail.CARD,
+        asset = "EUR",
+        status = status,
+        payout = payout,
+        refunded = refunded,
+        transactionId = null,
+        reference = null,
     )
 
     private fun serve(vararg entries: Pair<FundingSession, FundingProgress>) {
@@ -283,7 +301,6 @@ class FundingActivityCenterTest {
         direction: FundingDirection,
         stage: FundingStage,
         acknowledged: Boolean = false,
-        cancel: FundingCancel? = null,
     ) = FundingSession(
         intent = intent,
         ownerProductId = null,
@@ -295,7 +312,7 @@ class FundingActivityCenterTest {
         acknowledged = acknowledged,
         providerId = "ramp.dot",
         assignedAtMs = 0uL,
-        cancel = cancel,
+        cancel = null,
         updates = emptyList(),
         started = emptyList(),
         choice = null,

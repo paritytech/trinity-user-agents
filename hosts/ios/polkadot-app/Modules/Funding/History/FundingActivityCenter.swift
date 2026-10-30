@@ -173,8 +173,8 @@ private extension FundingActivityCenter {
 extension FundingActivityCenter {
     /// The ended sessions, newest first: each one in the core's history, from
     /// the session the core pushed this run where there is one, as that keeps
-    /// the rail, provider and payment details the summary drops, plus any
-    /// ended session pushed before the history listed it.
+    /// the quote it was paid on, plus any ended session pushed before the
+    /// history listed it.
     nonisolated static func historyRecords(
         summaries: [FundingSessionSummary],
         ended: [FundingRecord]
