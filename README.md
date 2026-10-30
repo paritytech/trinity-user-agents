@@ -262,7 +262,7 @@ control of quota and of whether the bytes are backed up or encrypted.
 
 The core builds its own extrinsics through `ExtrinsicService` in the `chain`
 module: statement-store and long-term-storage allowances, PGAS claims, Bulletin
-preimages, and the CLI's dotNS registrations. A caller names the call and the
+preimages, NFT transfers, and the CLI's dotNS registrations. A caller names the call and the
 extensions it cares about; the builder fills every other extension of the
 runtime's pipeline, computes each extension's value from the bytes of the
 extensions after it, signs, and returns a mortal extrinsic born at the finalized
@@ -306,10 +306,19 @@ purses: its own freely, Root's or another product's with the user's
 `//nft//<purse>//<installation>//<index>`, under the installation the host
 reports through `currentInstallation`. A tracker watches
 `Scarcity.NftsByOwner` on Asset Hub at the best block for every key, and
-`queryPurse` pages through the keys that hold an NFT. The same grant covers
-both. Calls that move items answer unavailable for now. A host without a core
-database, such as the browser core, answers `Unsupported` to the four served
-calls.
+`queryPurse` pages through the keys that hold an NFT and that no live transfer
+or handoff spends. The same grant covers both.
+
+`rebalancePurse` and `transferItem` register an operation under an idempotency
+key the product chooses and return; `observeOperationStatus` follows it by that
+key until it is `Cleared` or `Incomplete`. Each transfer is a scheduled durable
+transaction: a fee-less `Scarcity::transfer` signed by the item key when it is
+submitted, and proven landed when its instance is at the destination. What
+each transfer spends is recorded in `nft_consumption`, and a failed transfer
+frees its item again. Transferring items out of Root's or another product's
+purse asks the user through the `NftPurseDrain` confirmation review. The cheque calls answer
+unavailable for now. A host without a core database, such as the browser core,
+answers `Unsupported` to the served calls.
 
 ### Trinity stack descriptors
 
@@ -424,9 +433,9 @@ playground's Diagnosis, since dot.li serves no `Game` surface. Both CLI host
 roles still install an in-memory `CliGameHost` that never rings anything. The
 `truapi` runtime tests cover the product gate, the start-time check, a call
 withdrawn before it reaches the host, the absence of any permission prompt, and
-host failures. Android hosts with Sentry enabled report the reminder lifecycle
-through `host.reminder.*` Sentry events without changing reminder delivery or
-cleanup.
+host failures. Android and iOS hosts with Sentry enabled report the reminder
+lifecycle through `host.reminder.*` Sentry events without changing reminder
+delivery or cleanup.
 
 `Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
 "Host-drawn scanner"). The Android app draws it. Both CLI host roles answer

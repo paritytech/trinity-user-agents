@@ -19,6 +19,11 @@ pub struct NftPurseItemKey(pub [u8; 32]);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
 pub struct NftPurseChequeId(pub [u8; 32]);
 
+/// Key a product chooses for one chain operation. It is scoped to that
+/// product, which follows the operation with `observe_operation_status`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
+pub struct NftPurseIdempotencyKey(pub [u8; 32]);
+
 /// One-time key a receiver hands to the sender to start a payment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode)]
 pub struct NftPurseReceiveKey(pub [u8; 32]);
@@ -97,9 +102,12 @@ pub struct NftPurseClearedItem {
 /// Product-visible clearing reference.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct NftPurseClearingReference {
-	/// Trie root of `leaves`.
+	/// Binary Merkle root of the SCALE-encoded `leaves`, as
+	/// `binary_merkle_tree::merkle_root` computes it with Blake2-256. A
+	/// verifier must check the leaf count.
 	pub root: [u8; 32],
-	/// Source item key and the hash of the transaction that moved it.
+	/// Source item key and the hash of the transaction that moved it,
+	/// sorted by item key.
 	pub leaves: Vec<(NftPurseItemKey, [u8; 32])>,
 }
 
@@ -252,8 +260,10 @@ pub struct HostNftPurseRebalancePurseRequest {
 	pub from: NftPurseId,
 	/// Destination purse.
 	pub to: NftPurseId,
-	/// Items to move. With `to`, the unordered set is the idempotency key.
+	/// Items to move.
 	pub keys: Vec<NftPurseItemKey>,
+	/// Names the operation for `observe_operation_status`.
+	pub idempotency_key: NftPurseIdempotencyKey,
 }
 
 /// Why items could not be moved between purses.
@@ -263,10 +273,14 @@ pub enum NftPurseRebalancePurseError {
 	Denied,
 	/// `from` or `to` does not exist.
 	PurseNotFound,
+	/// `keys` is empty.
+	NoItems,
 	/// Some key is not in `from`.
 	ItemNotFound,
 	/// Some key is in use.
 	ItemUnavailable,
+	/// An operation is already registered under the idempotency key.
+	OperationExists,
 	/// Any other failure.
 	Other(GenericError),
 }
@@ -384,6 +398,8 @@ pub struct HostNftPurseDepositRequest {
 pub enum NftPurseDepositError {
 	/// `to` does not exist.
 	PurseNotFound,
+	/// The cheque is already deposited.
+	OperationExists,
 	/// The cheque holds no items.
 	EmptyCheque,
 	/// The secrets do not decode, or do not match the items.
@@ -406,6 +422,8 @@ pub enum NftPurseRefundError {
 	Denied,
 	/// The cheque is unknown.
 	ChequeNotFound,
+	/// The cheque is already refunded.
+	OperationExists,
 	/// Any other failure.
 	Other(GenericError),
 }
@@ -413,10 +431,12 @@ pub enum NftPurseRefundError {
 /// Request to move one item to a key outside the purses.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostNftPurseTransferItemRequest {
-	/// Item to move. With `destination`, the idempotency key.
+	/// Item to move.
 	pub item: NftPurseItemKey,
 	/// Key that receives it.
 	pub destination: NftPurseItemKey,
+	/// Names the operation for `observe_operation_status`.
+	pub idempotency_key: NftPurseIdempotencyKey,
 }
 
 /// Why an item could not be transferred.
@@ -428,6 +448,25 @@ pub enum NftPurseTransferItemError {
 	ItemNotFound,
 	/// The item is in use.
 	ItemUnavailable,
+	/// An operation is already registered under the idempotency key.
+	OperationExists,
+	/// Any other failure.
+	Other(GenericError),
+}
+
+/// Request for the status of an operation the calling product registered.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostNftPurseObserveOperationStatusRequest {
+	/// The key the operation was registered under, or the cheque id of a
+	/// deposit or refund.
+	pub idempotency_key: NftPurseIdempotencyKey,
+}
+
+/// Why an operation's status cannot be observed.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum NftPurseObserveOperationStatusError {
+	/// The calling product registered no operation under the key.
+	OperationNotFound,
 	/// Any other failure.
 	Other(GenericError),
 }
