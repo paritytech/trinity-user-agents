@@ -455,6 +455,12 @@ impl RuntimeServices {
 		self.encrypted_storage.set(storage).is_ok()
 	}
 
+	/// Whether the host storage encrypted at rest is installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn has_encrypted_storage(&self) -> bool {
+		self.encrypted_storage.get().is_some()
+	}
+
 	/// NFT purses, once their ledger and the encrypted storage are installed.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn nft_purses(&self) -> Option<NftPurses> {

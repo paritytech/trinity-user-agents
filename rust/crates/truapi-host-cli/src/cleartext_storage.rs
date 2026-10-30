@@ -1,6 +1,7 @@
 //! Storage for secrets of the CLI signing host: hex values under hex keys in
-//! one JSON file in its state directory. It is a development host, so the
-//! file is not encrypted; the core only relies on it keeping what it stores.
+//! one JSON file in its state directory, readable by its owner only. It is a
+//! development host, so the file is not encrypted; the core only relies on it
+//! keeping what it stores.
 
 use std::{
 	collections::BTreeMap,
@@ -12,7 +13,7 @@ use std::{
 use truapi::{encrypted_storage::EncryptedStorage, latest::GenericError, platform::async_trait};
 use zeroize::Zeroizing;
 
-use crate::platform::atomic_write;
+use crate::accounts::write_secret_file;
 
 /// The values stored in one file, read and replaced whole on every call.
 pub struct CliCleartextStorage {
@@ -45,7 +46,7 @@ impl EncryptedStorage for CliCleartextStorage {
 		values.insert(hex::encode(key), hex::encode(value));
 		let text = serde_json::to_string_pretty(&values)
 			.map_err(|error| file_error("encoding", &self.path, error))?;
-		atomic_write(&self.path, text.as_bytes())
+		write_secret_file(&self.path, text.as_bytes())
 			.map_err(|error| file_error("writing", &self.path, error))
 	}
 }
@@ -87,5 +88,22 @@ mod tests {
 
 		assert_eq!(stored.as_deref().map(Vec::as_slice), Some(b"secret".as_slice()));
 		assert_eq!(absent, None);
+	}
+
+	/// The file holds receive key secrets, so other users must not read it.
+	#[cfg(unix)]
+	#[tokio::test]
+	async fn the_file_is_readable_by_its_owner_only() {
+		use std::os::unix::fs::PermissionsExt;
+
+		let directory = tempfile::tempdir().expect("temporary directory");
+		let path = directory.path().join("cleartext-storage.json");
+		CliCleartextStorage::new(path.clone())
+			.write_encrypted(b"key", b"secret")
+			.await
+			.unwrap();
+
+		let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+		assert_eq!(mode & 0o777, 0o600);
 	}
 }

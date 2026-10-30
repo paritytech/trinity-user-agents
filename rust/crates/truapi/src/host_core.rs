@@ -936,9 +936,9 @@ impl SigningHostRuntime {
 	/// Starts what runs over the core database: the durable transaction
 	/// engine, then NFT purses with the tracker of their holdings. Call it
 	/// once the setters it reads have run: [`Self::set_core_db`],
-	/// [`Self::set_installation_provider`] and
-	/// [`Self::set_durable_work_observer`]. A part whose inputs are missing
-	/// is skipped and logged. A second call does nothing.
+	/// [`Self::set_installation_provider`], [`Self::set_encrypted_storage`]
+	/// and [`Self::set_durable_work_observer`]. A part whose inputs are
+	/// missing is skipped and logged. A second call does nothing.
 	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.start_core_services"))]
 	pub fn start_core_services(&self) {
@@ -965,6 +965,9 @@ impl SigningHostRuntime {
 			tracing::warn!("no installation provider set, NFT purses are off");
 			return;
 		};
+		if !self.services.has_encrypted_storage() {
+			tracing::warn!("no encrypted storage set, NFT purses are off");
+		}
 
 		let signing_host = Arc::downgrade(&self.signing_host);
 		let keys = Arc::new(signing_host.clone());
