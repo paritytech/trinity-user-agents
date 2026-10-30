@@ -138,11 +138,10 @@ enum VersionedRequestLedger {
 
 /// Run `execute` for a request at most once across redeliveries.
 ///
-/// The request is acknowledged only once the ledger has room for it, so a
-/// request the ledger refuses is never acknowledged. The acknowledgement goes
-/// out before the request is marked as started, so if it fails, the request
-/// runs when it is delivered again. A duplicate is acknowledged again but not
-/// run.
+/// The request is acknowledged after the ledger accepts it and before it is
+/// marked as started. A refused request is never acknowledged, and one whose
+/// acknowledgement failed runs when it is delivered again. A duplicate is
+/// acknowledged but not run.
 pub async fn execute_once<T, F, Fut>(
 	storage: &(impl CoreStorage + ?Sized),
 	locks: &SsoReplayLocks,
@@ -350,8 +349,7 @@ mod tests {
 		assert_eq!(error, "SSO replay ledger is full with 1024 unexpired requests");
 	}
 
-	/// An acknowledged request tells the pairing host an answer is coming, so
-	/// one the ledger refuses must not be acknowledged.
+	/// An ack promises an answer, so a refused request must not get one.
 	#[test]
 	fn full_ledger_rejects_before_acknowledging_or_executing_the_request() {
 		futures::executor::block_on(async {
@@ -521,8 +519,7 @@ mod tests {
 		});
 	}
 
-	/// A redelivered request may be one whose earlier acknowledgement never
-	/// reached the pairing host, so a duplicate is acknowledged again.
+	/// The first ack may not have arrived, so a duplicate is acknowledged again.
 	#[test]
 	fn duplicate_request_is_acknowledged_again_but_not_executed_twice() {
 		futures::executor::block_on(async {

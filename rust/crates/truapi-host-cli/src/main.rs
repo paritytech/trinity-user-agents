@@ -1989,8 +1989,8 @@ fn persist_paired_host(session: &SigningHostSession, host: &PairedHost) -> Resul
 const RESPONDER_RETRY_PAUSES: Backoff =
 	Backoff::new(Duration::from_secs(1), Duration::from_secs(30));
 
-/// If the responder ran for longer than this before it failed, it counts as
-/// having recovered, and the next restart waits one second again.
+/// A responder that ran this long before failing restarts after one second
+/// again.
 const RESET_RESTART_PAUSES_AFTER: Duration = Duration::from_secs(30);
 
 /// Serve `host` until it sends `Disconnected`, restarting the responder after

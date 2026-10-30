@@ -58,9 +58,8 @@ pub enum StatementStoreRpcClientError {
 /// Why a statement submission failed.
 #[derive(Debug, Error, PartialEq)]
 pub enum StatementSubmitError {
-	/// The submission got no verdict from the store. Kind `Unavailable` means
-	/// the People chain could not be reached, or the connection broke before
-	/// the store answered.
+	/// No verdict from the store. Kind `Unavailable` means the People chain was
+	/// unreachable.
 	#[error(transparent)]
 	Chain(#[from] RuntimeFailure),
 	/// The store answered without accepting the statement.
@@ -446,8 +445,7 @@ mod tests {
 
 		let result = futures::executor::block_on(statement_store.submit_sso(&[1], "sso"));
 
-		// Unavailable, not a node failure: the store never answered, so the
-		// caller may send the same statement again.
+		// Unavailable: the store never answered, so the statement may be resent.
 		assert_eq!(
 			(
 				matches!(
@@ -462,8 +460,7 @@ mod tests {
 		);
 	}
 
-	/// A JSON-RPC error is the node's answer, so it must not read as an
-	/// unreachable chain, or the responder would send the statement again.
+	/// A JSON-RPC error is an answer, so it must not read as an unreachable chain.
 	#[test]
 	fn a_node_error_is_not_reported_as_unreachable() {
 		let chain = PeopleChain::new(vec![Upstream::Fails]);

@@ -72,30 +72,23 @@ const SSO_ENCRYPTION_DOMAIN: &[u8] = b"sso";
 /// Upper bound on undecodable request ids acknowledged within one serve loop.
 const MAX_DECODE_FAILURE_REQUEST_IDS: usize = 1024;
 
-/// Times a statement is sent again under [`Resend::Briefly`]. The pauses
-/// before the resends are 1, 2, 4 and 8 seconds, so the responder gives up
-/// about 15 seconds after the first send.
+/// Resends under [`Resend::Briefly`], after 1, 2, 4 and 8 seconds: about 15
+/// seconds in all.
 const MAX_RESENDS: u32 = 4;
 
-/// Pauses between sends of a statement the People chain did not answer.
-/// Under [`Resend::UntilAnswered`], the pause stops growing at 8 seconds.
+/// Pauses between resends, growing to at most 8 seconds.
 #[cfg(not(test))]
 const RESEND_PAUSES: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(8));
 #[cfg(test)]
 const RESEND_PAUSES: Backoff = Backoff::new(Duration::from_millis(1), Duration::from_millis(8));
 
-/// How long the responder keeps sending one of its statements while the People
-/// chain cannot be reached.
+/// How long to resend a statement while the People chain is unreachable.
 #[derive(Clone, Copy)]
 enum Resend {
-	/// Up to [`MAX_RESENDS`] times, for a statement whose loss the caller can
-	/// recover from. A failed ack ends the session, and the restarted session
-	/// runs the request when it is delivered again.
+	/// Up to [`MAX_RESENDS`] times, when the caller can recover from losing it.
 	Briefly,
-	/// Until the store answers, for the answer to a request that already ran.
-	/// A redelivered request is not run again, so giving up would leave the
-	/// pairing host without its answer. The store refuses the statement once it
-	/// expires.
+	/// Until the store answers, for the answer to a request that already ran
+	/// and will not run again.
 	UntilAnswered,
 }
 
@@ -860,8 +853,7 @@ async fn acknowledge_request(
 	publish(services, &ack, "sso-responder ack", Resend::Briefly).await
 }
 
-/// Publish one of the responder's own session statements, sending it again
-/// while the People chain cannot be reached, for as long as `resend` allows.
+/// Publish a session statement, resending it as `resend` allows.
 async fn publish(
 	services: &RuntimeServices,
 	statement: &[u8],
@@ -874,12 +866,9 @@ async fn publish(
 	.await
 }
 
-/// Run `submit` until the store answers, running it again after a pause while
-/// the People chain cannot be reached, for as long as `resend` allows.
-///
-/// The store answers a statement it already holds with `known`, so one that
-/// landed before its connection broke is not duplicated. Any answer from the
-/// store, including a rejection, is final.
+/// Run `submit`, and again after a pause while the People chain is
+/// unreachable, as long as `resend` allows. Any answer from the store is final.
+/// Resending is safe: the store answers `known` for a statement it holds.
 async fn resend_while_unreachable<SubmitFn, SubmitFuture>(
 	label: &'static str,
 	resend: Resend,
@@ -1804,9 +1793,7 @@ mod tests {
 			.count()
 	}
 
-	/// The People chain refusing one connection is a pause, not the end of the
-	/// session: the ack goes out again over a fresh connection and the request
-	/// is answered.
+	/// One refused connection must not end the session.
 	#[test]
 	fn a_failed_connect_does_not_end_the_session() {
 		let platform = Arc::new(StubPlatform {
@@ -1821,9 +1808,8 @@ mod tests {
 		assert_eq!((served, statement_submits(&platform)), (Ok(None), 2));
 	}
 
-	/// The answer goes out after the request ran, and a redelivered request is
-	/// not run again. So the responder keeps sending the answer for longer than
-	/// it would an ack, instead of ending the session without it.
+	/// A request that ran is not run again, so its answer must outlast the
+	/// ack's resend budget.
 	#[test]
 	fn an_answer_is_sent_until_the_people_chain_takes_it() {
 		let platform = Arc::new(StubPlatform {
@@ -1847,8 +1833,7 @@ mod tests {
 		assert_eq!((answered, statement_submits(&platform)), (Ok(None), 1));
 	}
 
-	/// Only a statement the store never answered is sent again. A rejection
-	/// is the store's answer, and sending the statement again repeats it.
+	/// A rejection is the store's answer, so resending would only repeat it.
 	#[test]
 	fn a_rejected_ack_is_not_sent_again() {
 		let platform = Arc::new(StubPlatform {
@@ -1861,10 +1846,8 @@ mod tests {
 		assert_eq!((served.is_err(), statement_submits(&platform)), (true, 1));
 	}
 
-	/// When the People chain stays unreachable, the session ends, and the
-	/// restarted responder receives the request again. It must answer it
-	/// rather than skip it as already handled, or the product waits until
-	/// it times out.
+	/// A request whose ack failed must run when it is delivered again, not be
+	/// skipped as already handled.
 	#[test]
 	fn a_request_whose_ack_failed_is_answered_when_delivered_again() {
 		let core_storage = Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));

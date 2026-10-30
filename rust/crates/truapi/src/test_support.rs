@@ -210,8 +210,8 @@ pub struct StubPlatform {
 	pub chain_connects: Arc<Mutex<Vec<[u8; 32]>>>,
 	/// When set, `connect` fails with this reason.
 	pub chain_connect_error: Option<&'static str>,
-	/// Reasons the next `connect` calls fail with, in order, the way a
-	/// dropped socket does. Once empty, `connect` succeeds again.
+	/// Reasons the next `connect` calls fail with, in order. Then `connect`
+	/// succeeds.
 	pub chain_connect_failures: Mutex<std::collections::VecDeque<&'static str>>,
 	/// When set, `connect` to this one chain fails, while every other chain
 	/// still connects.

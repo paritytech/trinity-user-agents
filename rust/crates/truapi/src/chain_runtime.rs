@@ -1978,8 +1978,8 @@ fn follow_closed() -> RuntimeFailure {
 	RuntimeFailure::unavailable_with_reason(FOLLOW_METHOD, "follow subscription was closed")
 }
 
-/// A transport that failed or closed means the chain is unavailable for now;
-/// any other error is a failure of the node or of decoding its answer.
+/// A failed or closed transport is `Unavailable`; any other error is a
+/// `HostFailure`.
 pub fn rpc_failure(method: &'static str, error: SubxtRpcError) -> RuntimeFailure {
 	match error {
 		SubxtRpcError::Client(_) | SubxtRpcError::DisconnectedWillReconnect(_) => {
