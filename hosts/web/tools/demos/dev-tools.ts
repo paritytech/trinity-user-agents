@@ -1,5 +1,6 @@
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { ContactHandle } from "@parity/truapi";
+import type { HexString } from "@parity/truapi/scale";
 import {
   CONTACT_CHAT_PATH,
   EXAMPLE_CHAT_PATH,
@@ -31,10 +32,8 @@ import {
   fixtureDirectory,
   type UsernameDirectory,
 } from "../../src/contacts/username-directory.js";
-import {
-  FixtureContacts,
-  type PickContact,
-} from "../../fixtures/invitations/fixture-contacts.js";
+import type { HandleNames } from "../../src/contacts/contacts.js";
+import { FixtureContacts } from "../../fixtures/invitations/fixture-contacts.js";
 import {
   FixtureIdentityAuth,
   publicIdentity,
@@ -47,7 +46,6 @@ import {
   TEST_USERS,
   chatContactsOf,
   fixtureIdentity,
-  personOf,
   setTabTestUser,
   tabTestUser,
   testUserEntropy,
@@ -67,10 +65,12 @@ import {
  *
  * The invitation demo is apart from them, chosen in More: a tab acts as a
  * made-up user (Alice, Bob or Carol) whose contacts, identity credentials
- * and handle are fixtures, and invitations between tabs go through the local
- * simulated delivery. The core signs the demo user in with its public test
- * phrase under a storage scope of its own, so products get a real session,
- * real handles from `contacts.pick` and real prompts. None of the wallet
+ * are fixtures, and invitations between tabs go through the local simulated
+ * delivery. The core signs the demo user in with its public test phrase under
+ * a storage scope of its own, so products get a real session, real handles
+ * from `contacts.pick` and real prompts. The host names those handles through
+ * the handles the core mints for the people it knows; the other users'
+ * identity credentials stay fixtures. None of the wallet
  * session's services start: no Nova chat, Pocket or wallet workers, so
  * fixture contacts never reach a wallet's chat or a transaction it signs.
  *
@@ -81,7 +81,7 @@ import {
  * - Contact Chat (`fixtures/products/contact-chat/`), a chat worker, runs
  *   for the test user as an ordinary product worker. The host's Chat shows
  *   its conversations and names each person from the contact handle the
- *   product holds, through the fixture contacts; the product never gets a
+ *   product holds, through the host's handle index; the product never gets a
  *   name. Its text goes on conversation topics through the local simulated
  *   topics (`fixtures/invitations/local-topics.ts`).
  */
@@ -105,8 +105,8 @@ export interface DevToolsDeps {
   tap(productId: string): FrameTap | undefined;
   /** Bring the test account's product, in Browse, to the front, and draw the stage again. */
   showProduct(): void;
-  /** The host's contact picker, the one `contacts.pick` opens. */
-  pickContact: PickContact;
+  /** The host's names for the contact handles the core mints. */
+  handles: HandleNames;
   /** Bring Chat to the front, at Contact Chat's request. */
   showChat(): void;
   log(line: string): void;
@@ -133,6 +133,12 @@ export interface DevSession {
   scope: string | null;
   /** The test user's contacts, for the host's contact picker, or null. */
   contacts: ChatContact[] | null;
+  /**
+   * Everyone the test user's fixture directory knows, by account, or null:
+   * the host may name them by handle, as senders, without resolving them for
+   * a transaction.
+   */
+  people: HexString[] | null;
   /** Where the test user's picker finds people by username: the other test users, or null. */
   usernames: UsernameDirectory | null;
   /** What the Notifications screen can do with the test user's invitations, or null. */
@@ -245,6 +251,12 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
         : testUserKey(deps.network.id, testUser.id, "notifications"),
     scope: testUser === null ? null : testUserScope(testUser),
     contacts: testUser === null ? null : chatContactsOf(testUser),
+    people:
+      testUser === null
+        ? null
+        : TEST_USERS.filter((user) => user.id !== testUser.id).map(
+            (user) => user.account,
+          ),
     usernames:
       testUser === null
         ? null
@@ -341,7 +353,7 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
   };
   const credential = fixtureIdentity(self);
   deps.notifications.setScope(keys.notifications);
-  const contacts = new FixtureContacts(self, deps.pickContact, deps.log);
+  const contacts = new FixtureContacts(self, deps.handles);
   const delivery = () =>
     new LocalDelivery({
       self: publicIdentity(credential).agreementPublic,
@@ -396,24 +408,21 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
     now,
   });
   let stopTopics = () => {};
-  const others = TEST_USERS.filter((user) => user.id !== self.id);
   const handleContacts: HandleContacts = {
     resolve: (handle: ContactHandle) => {
       const person = contacts.resolve(handle);
-      const user = others.find((other) => other.id === person?.id);
-      return person === null || user === undefined
+      return person === null
         ? null
-        : { account: user.account, name: person.name, seed: person.handle };
+        : { account: person.account, name: person.name, seed: person.handle };
     },
     handleFor: (account) => {
-      const user = others.find(
-        (other) => other.account.toLowerCase() === account.toLowerCase(),
-      );
-      return user === undefined ? null : contacts.handleFor(personOf(user));
+      const person = contacts.byAccount(account);
+      return person === undefined ? null : contacts.handleFor(person);
     },
   };
   const chatOptions: ChatV2ProviderOptions = {
     contacts: handleContacts,
+    onNamesChange: (listener) => deps.handles.onChange(listener),
     start: {
       target: (account) => {
         const handle = handleContacts.handleFor(account);

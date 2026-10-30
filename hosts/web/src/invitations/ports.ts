@@ -1,4 +1,4 @@
-import type { ContactHandle, ContactPickOutcome } from "./contract.js";
+import type { ContactHandle } from "./contract.js";
 
 /**
  * What the request service needs from the rest of the host. Each is a
@@ -24,6 +24,8 @@ export interface IdentityKeys {
 /** A person the host knows. Host only: no field reaches a product. */
 export interface Person {
   id: string;
+  /** The account the core mints this person's contact handle from. */
+  account: string;
   name: string;
   /** Shown as the person's username, and seeds their avatar. */
   handle: string;
@@ -32,19 +34,20 @@ export interface Person {
 }
 
 /**
- * PROPOSED host Contacts operations. `contacts.pick` returns a handle the
- * core minted, and the host cannot resolve it outside a transaction; this
- * port is what the request service needs instead.
+ * PROPOSED host Contacts operations. A product picks a contact with
+ * TrUAPI's `contacts.pick`; the host names that handle, and the people it
+ * knows, through the handles the core mints for them. Naming someone is not
+ * permission: a transaction still resolves a handle only for a contact.
  */
 export interface ContactService {
-  /** Show the host's picker for `product`, as `contacts.pick` does. */
-  pick(product: Product): Promise<ContactPickOutcome>;
   /** Whom `contact` names, or null when it names nobody now. */
   resolve(contact: ContactHandle): Person | null;
-  /** The contact whose identity has this signing key, to authenticate a sender. */
+  /** The person whose identity has this signing key, to authenticate a sender. */
   byIdentity(signingPublic: string): Person | undefined;
-  /** The handle a product knows `person` by. */
-  handleFor(person: Person): ContactHandle;
+  /** The handle a product knows `person` by, or null when the host cannot name them now. */
+  handleFor(person: Person): ContactHandle | null;
+  /** Calls back whenever {@link handleFor} may answer differently. Answers an unsubscribe. */
+  onChange(listener: () => void): () => void;
 }
 
 export type EvidenceKind = "Request" | "Reply";

@@ -7,27 +7,38 @@
  *
  * What runs for real: the dev server's archive of
  * `fixtures/products/contact-chat/worker.ts`, the archive check, the
- * ordinary worker loader and frame, the product's TrUAPI storage, the
- * request service with the fixture identity and contacts, the v2 draft
- * bridge, the host's Chat screen and Inbox. The delivery and the topics are
- * the local simulated ones; the setup and text layer are fixtures.
+ * ordinary worker loader and frame, the product's TrUAPI storage, the core's
+ * contact handles (the ones `contacts.pick` gives, which the host names
+ * through the handles the core mints for it), the request service, the v2
+ * draft bridge, the host's Chat screen and Inbox. The identity credentials,
+ * the delivery and the topics are the local simulated ones; the setup and
+ * text layer are fixtures.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Browser, Frame, Page } from "playwright-core";
 import {
   type RunningHost,
   closeTools,
+  openTools,
   startHost,
   testBrowser,
   useInvitationDemo,
 } from "./support/fixtures.js";
+import { TEST_USERS } from "../fixtures/invitations/test-users.js";
 
 const STEP_MS = 60_000;
 const TEST_MS = 240_000;
 const PRODUCT = "contact-chat.paseo";
 
-/** What names Alice and Bob outside a product: their names, usernames and fixture accounts. */
-const IDENTIFYING = ["alice", "bob", "a1".repeat(32), "b0".repeat(32)];
+const [ALICE, BOB] = TEST_USERS;
+
+/** What names Alice and Bob outside a product: their names, usernames and session accounts. */
+const IDENTIFYING = [
+  "alice",
+  "bob",
+  ALICE!.account.slice(2),
+  BOB!.account.slice(2),
+];
 
 let browser: Browser;
 let host: RunningHost;
@@ -66,6 +77,39 @@ async function actAs(page: Page, user: string): Promise<void> {
     .filter({ hasNotText: "Signed out" })
     .waitFor({ state: "attached" });
   await closeTools(page);
+}
+
+/** The root key the core reports for the tab's session. */
+async function sessionAccount(page: Page): Promise<string | undefined> {
+  const title = (await page.locator("#session").getAttribute("title")) ?? "";
+  return /^Root key (0x[0-9a-f]{64})/.exec(title)?.[1];
+}
+
+/** The contact handles Contact Chat keeps for its conversations. */
+async function heldHandles(frame: Frame): Promise<string[]> {
+  const record = await frame.evaluate(
+    () =>
+      (window as unknown as WorkerWindow).__contactChatWorker!.record() ?? "",
+  );
+  return [...record.matchAll(/"contact":"(0x[0-9a-f]{64})"/g)].map(
+    (match) => match[1]!,
+  );
+}
+
+/** Open Example Chat, press its Pick a contact, choose `name`, and read the handle `contacts.pick` gave it. */
+async function pickInExampleChat(page: Page, name: string): Promise<string> {
+  await openTools(page, "more");
+  await page.click('[data-action="open-example-chat"]');
+  const product = page.frameLocator(".test-product iframe");
+  await product.locator('[data-action="pick-contact"]').waitFor();
+  await closeTools(page);
+  await product.locator('[data-action="pick-contact"]').click();
+  const picker = page.locator("dialog.prompt", { hasText: "Choose a contact" });
+  await picker.getByRole("button", { name: new RegExp(`^${name}\\b`) }).click();
+  await picker.waitFor({ state: "detached" });
+  const row = product.locator('[data-list="picked"] .row').first();
+  await row.waitFor();
+  return (await row.getAttribute("data-id"))!;
 }
 
 /** Contact Chat's worker frame, once it runs. */
@@ -140,6 +184,12 @@ describe("Contact Chat between test users", () => {
         await actAs(alice, "alice");
         const bob = await open();
         await actAs(bob, "bob");
+        // Each tab's core runs the test user's own session, the account the
+        // other test user's contacts name them by.
+        expect([
+          await sessionAccount(alice),
+          await sessionAccount(bob),
+        ]).toEqual([ALICE!.account, BOB!.account]);
         const aliceWorker = await workerFrame(alice);
         await workerFrame(bob);
 
@@ -223,6 +273,19 @@ describe("Contact Chat between test users", () => {
               (window as unknown as WorkerWindow).__contactChatWorker!.errors,
           ),
         ).toEqual([]);
+
+        // The handle each worker holds is the core's: the one `contacts.pick`
+        // gives another product of the same user for the same person.
+        const aliceHolds = await heldHandles(aliceWorker);
+        const bobHolds = await heldHandles(bobWorker);
+        expect([
+          aliceHolds,
+          bobHolds,
+          [await pickInExampleChat(alice, "Bob")],
+          [await pickInExampleChat(bob, "Alice")],
+        ]).toEqual([aliceHolds, bobHolds, aliceHolds, bobHolds]);
+        expect(aliceHolds).toHaveLength(1);
+        expect(aliceHolds[0]).not.toBe(bobHolds[0]);
         expect(outside).toEqual([]);
         expect(errors).toEqual([]);
       } finally {
