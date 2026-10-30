@@ -201,6 +201,22 @@ enum FundingUpdate {
     Payout { outcome: FundingPayout },                // Out: once, after release
     Refunding { top_up_id: [u8; 32], amount: u128 }, // Out: once, after a failed payout or an accepted cancel
     PayoutRetrying,                                   // Out: after release, before Payout, at each retry
+    Progress { detail: FundingDetail },               // while the provider works on it, outside the order, not kept
+}
+
+struct FundingDetail { fact: FundingFact, at_ms: Option<u64> }  // at_ms: an age when past, a countdown when due
+
+enum FundingFact {
+    Checked,                                  // "Checked with the provider · 3s ago"
+    Confirmations { done: u32, required: u32 }, // crypto: "Confirmation 7 of 13 · last block 3s ago"
+    PriceChecked,                             // "Price checked · 3s ago"
+    Parts { done: u32, total: u32 },          // "Part 2 of 4 · last part 5s ago"
+    Scheduled,                                // "About 12s left"
+    SentByBank,                               // inbound bank: "Sent by your bank · Tue 14:02"
+    ExpectedBy,                               // "Expected by Thu 3 Nov"
+    InReview,                                 // "The provider is reviewing the payment"
+    Attempt { n: u32, of: Option<u32> },      // "Attempt 2 of 3 · next try in 20s"
+    Other { text: String },                   // last resort, shown as given
 }
 
 enum FundingDeposit {
@@ -227,6 +243,15 @@ enum FundingDeposit {
 - A report on a session the user chose a provider for while the overlay is still up is stored like any other.
 - `Deposit` and `Details` carry what the host draws: where and what the user pays, and the provider's references. The
   latest of each is shown.
+- `Progress` carries the line under the host's status: a fact about the current step that the host words in the user's
+  language, so a provider never needs the user's locale. The latest is shown until the session moves to another step,
+  and each one counts as hearing from the provider, as often as it checks. It is not kept in the session or its
+  history, and it does not hold off the taking-longer notice, which follows the provider's steps. A fact that does not
+  fit the session fails with `InvalidDetail`: a count past its total or with a zero total, `Confirmations` off a crypto
+  session, `SentByBank` off an inbound bank one, an `Attempt` from 0 or past its `of`. `Other` is for a step no fact
+  describes and is shown untranslated: at most 80 characters and 320 bytes of plain text on one line, without control,
+  invisible or direction-changing characters. The host draws it as the provider's line under its own status, never in
+  place of the status, a failure or a cancel.
 
 ### `present_frame`
 

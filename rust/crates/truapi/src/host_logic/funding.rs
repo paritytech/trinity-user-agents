@@ -13,10 +13,10 @@
 use parity_scale_codec::{Decode, Encode};
 use tracing::error;
 use truapi::latest::{
-	FundingAssignment, FundingCancelAnswer, FundingCancelDecision, FundingDeposit,
-	FundingDirection, FundingFailure, FundingFrameTarget, FundingPayout, FundingQuote, FundingRail,
-	FundingReceived, FundingUpdate, GenericError, HostFundingReportError,
-	HostFundingStatusSubscribeItem,
+	FUNDING_DETAIL_MAX_BYTES, FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer,
+	FundingCancelDecision, FundingDeposit, FundingDetail, FundingDirection, FundingFact,
+	FundingFailure, FundingFrameTarget, FundingPayout, FundingQuote, FundingRail, FundingReceived,
+	FundingUpdate, GenericError, HostFundingReportError, HostFundingStatusSubscribeItem,
 };
 use url::Url;
 
@@ -164,6 +164,23 @@ pub struct FundingSession {
 	/// The refund of a failed payout, once the provider reported starting
 	/// it.
 	pub refund: Option<FundingRefund>,
+	/// The provider's latest `Progress`. Not stored, since the provider
+	/// reports it again as it checks.
+	#[codec(skip)]
+	pub detail: Option<FundingDetailRecord>,
+}
+
+/// A provider's latest `Progress`, with the step it was reported in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingDetailRecord {
+	/// The fact and its time.
+	pub detail: FundingDetail,
+	/// The session's step when it was reported; the detail is shown only
+	/// while the session is still on it.
+	pub step: u32,
+	/// When it was reported, in Unix milliseconds.
+	pub at_ms: u64,
 }
 
 /// The top-up a provider gives a failed payout back with, and what it
@@ -215,10 +232,14 @@ pub struct FundingProgress {
 	pub steps: Vec<FundingProgressStep>,
 	/// The line under the milestones, saying what is happening now.
 	pub band: FundingBand,
-	/// When the provider last reported on the session, or took it, in Unix
-	/// milliseconds, for "Checked with the provider 12s ago". `None` until a
-	/// provider takes the session.
+	/// When the provider last reported on the session, a `Progress`
+	/// included, or took it, in Unix milliseconds, for "Checked with the
+	/// provider 12s ago". `None` until a provider takes the session.
 	pub last_heard_at_ms: Option<u64>,
+	/// The line under the band: the provider's latest `Progress` fact for
+	/// the current step. `None` when it reported none for this step, and the
+	/// host shows "Checked with the provider" with `last_heard_at_ms`.
+	pub detail: Option<FundingDetail>,
 	/// When the session failed, if it did.
 	pub failed_at_ms: Option<u64>,
 	/// The provider's transaction id, from its latest `Details`.
@@ -768,6 +789,7 @@ impl FundingSession {
 			started: Vec::new(),
 			choice: None,
 			refund: None,
+			detail: None,
 		}
 	}
 
@@ -880,7 +902,13 @@ impl FundingSession {
 				.updates
 				.last()
 				.map(|record| record.at_ms)
+				.max(self.detail.as_ref().map(|record| record.at_ms))
 				.max(self.assigned_at_ms),
+			detail: self
+				.detail
+				.as_ref()
+				.filter(|record| record.step == self.step())
+				.map(|record| record.detail.clone()),
 			failed_at_ms: match self.stage {
 				FundingStage::Failed { settled_at_ms, .. } => Some(settled_at_ms),
 				_ => None,
@@ -1099,6 +1127,16 @@ impl FundingSession {
 		if self.provider_id.as_deref() != Some(provider_id) {
 			return Err(HostFundingReportError::NotFound);
 		}
+		if let FundingUpdate::Progress { detail } = update {
+			if !self.serves_provider() {
+				return Err(HostFundingReportError::NotFound);
+			}
+			if !self.fits(&detail) {
+				return Err(HostFundingReportError::InvalidDetail);
+			}
+			self.detail = Some(FundingDetailRecord { detail, step: self.step(), at_ms: now_ms });
+			return Ok(());
+		}
 		if matches!(
 			update,
 			FundingUpdate::PaymentReceived { .. } |
@@ -1225,6 +1263,55 @@ impl FundingSession {
 		}
 		self.acknowledged = false;
 		Ok(())
+	}
+
+	/// Which step the session is on, for telling whether a `Progress` is
+	/// still current: its stage and how many of the provider's steps it
+	/// reported. References and deposit instructions do not move it.
+	fn step(&self) -> u32 {
+		let stage = match self.stage {
+			FundingStage::Open => 0,
+			FundingStage::Failed { .. } => 1,
+			FundingStage::Delivered { .. } => 2,
+			FundingStage::Released { .. } => 3,
+		};
+		let steps = self
+			.updates
+			.iter()
+			.filter(|record| {
+				!matches!(
+					record.update,
+					FundingUpdate::Deposit { .. } | FundingUpdate::Details { .. }
+				)
+			})
+			.count();
+		u32::try_from(steps).unwrap_or(u32::MAX >> 2) << 2 | stage
+	}
+
+	/// Whether `detail` fits the session: counts within their totals, a
+	/// confirmation count on a crypto session, a bank's send on an inbound
+	/// bank one, and an `Other` text within its limits.
+	fn fits(&self, detail: &FundingDetail) -> bool {
+		let rail = self.choice.as_ref().map(|choice| choice.rail);
+		match &detail.fact {
+			FundingFact::Confirmations { done, required } => {
+				*required > 0 &&
+					done <= required &&
+					rail.is_none_or(|rail| rail == FundingRail::Crypto)
+			},
+			FundingFact::Parts { done, total } => *total > 0 && done <= total,
+			FundingFact::SentByBank => {
+				self.direction == FundingDirection::In &&
+					rail.is_none_or(|rail| rail == FundingRail::Bank)
+			},
+			FundingFact::Attempt { n, of } => *n > 0 && of.is_none_or(|of| of >= *n),
+			FundingFact::Other { text } => plain_line(text),
+			FundingFact::Checked |
+			FundingFact::PriceChecked |
+			FundingFact::Scheduled |
+			FundingFact::ExpectedBy |
+			FundingFact::InReview => true,
+		}
 	}
 
 	/// Whether the session's provider still has work on it: it is in flight,
@@ -1769,8 +1856,24 @@ fn update_rank(update: &FundingUpdate) -> Option<u8> {
 		FundingUpdate::Details { .. } |
 		FundingUpdate::Payout { .. } |
 		FundingUpdate::Refunding { .. } |
-		FundingUpdate::PayoutRetrying => return None,
+		FundingUpdate::PayoutRetrying |
+		FundingUpdate::Progress { .. } => return None,
 	})
+}
+
+/// Whether `text` is a non-empty line of plain text within the `Other`
+/// limits: no line breaks, control characters, invisible characters or
+/// characters that change the text's direction.
+fn plain_line(text: &str) -> bool {
+	let hidden = |c: char| {
+		c.is_control() ||
+			matches!(c, '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' |
+				'\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}')
+	};
+	!text.trim().is_empty() &&
+		text.len() <= FUNDING_DETAIL_MAX_BYTES &&
+		text.chars().count() <= FUNDING_DETAIL_MAX_CHARS &&
+		!text.chars().any(hidden)
 }
 
 /// Why a session operation failed.
@@ -3113,6 +3216,118 @@ mod tests {
 			taken(session, *id, amount);
 		}
 		session.report(PROVIDER, update, |id| *id, at_ms).expect("reported");
+	}
+
+	fn detail(fact: FundingFact, at_ms: u64) -> FundingUpdate {
+		FundingUpdate::Progress { detail: FundingDetail { fact, at_ms: Some(at_ms) } }
+	}
+
+	// The line under the status says what the provider is doing within a
+	// step, so it must not outlive the step, and each check is news that
+	// the provider is still there.
+	#[test]
+	fn a_progress_detail_shows_for_its_step_and_counts_as_hearing_from_the_provider() {
+		let mut session = chosen(FundingDirection::In, FundingRail::Crypto);
+		report_at(
+			&mut session,
+			FundingUpdate::PaymentReceived { finalized: false, mismatch: None },
+			NOW + 1_000,
+		);
+		let confirmations = FundingFact::Confirmations { done: 2, required: 3 };
+		report_at(&mut session, detail(confirmations.clone(), NOW + 1_500), NOW + 2_000);
+		let progress = session.progress(NOW + 3_000);
+		assert_eq!(
+			progress.detail,
+			Some(FundingDetail { fact: confirmations, at_ms: Some(NOW + 1_500) })
+		);
+		assert_eq!(progress.last_heard_at_ms, Some(NOW + 2_000));
+		assert_eq!(session.updates.len(), 1, "a progress detail is not kept in the history");
+
+		report_at(
+			&mut session,
+			FundingUpdate::Details { transaction_id: Some("tx".into()), reference: None },
+			NOW + 4_000,
+		);
+		assert!(
+			session.progress(NOW + 4_000).detail.is_some(),
+			"a reference does not move the step"
+		);
+
+		report_at(
+			&mut session,
+			FundingUpdate::PaymentReceived { finalized: true, mismatch: None },
+			NOW + 5_000,
+		);
+		let progress = session.progress(NOW + 5_000);
+		assert_eq!(progress.detail, None);
+		assert_eq!(progress.last_heard_at_ms, Some(NOW + 5_000));
+	}
+
+	#[test]
+	fn a_progress_detail_that_does_not_fit_the_session_is_refused() {
+		let mut card = chosen(FundingDirection::In, FundingRail::Card);
+		let mut crypto = chosen(FundingDirection::In, FundingRail::Crypto);
+		let mut out = chosen(FundingDirection::Out, FundingRail::Bank);
+		let invalid = Err(HostFundingReportError::InvalidDetail);
+		let other = |text: &str| detail(FundingFact::Other { text: text.to_string() }, NOW);
+		assert_eq!(
+			report(&mut card, detail(FundingFact::Confirmations { done: 1, required: 3 }, NOW)),
+			invalid
+		);
+		assert_eq!(
+			report(&mut crypto, detail(FundingFact::Confirmations { done: 4, required: 3 }, NOW)),
+			invalid
+		);
+		assert_eq!(
+			report(&mut crypto, detail(FundingFact::Confirmations { done: 0, required: 0 }, NOW)),
+			invalid
+		);
+		assert_eq!(
+			report(&mut card, detail(FundingFact::Parts { done: 3, total: 2 }, NOW)),
+			invalid
+		);
+		assert_eq!(
+			report(&mut card, detail(FundingFact::Attempt { n: 0, of: None }, NOW)),
+			invalid
+		);
+		assert_eq!(
+			report(&mut card, detail(FundingFact::Attempt { n: 3, of: Some(2) }, NOW)),
+			invalid
+		);
+		assert_eq!(report(&mut out, detail(FundingFact::SentByBank, NOW)), invalid);
+		assert_eq!(report(&mut card, other("")), invalid);
+		assert_eq!(report(&mut card, other("two\nlines")), invalid);
+		assert_eq!(report(&mut card, other("Pay \u{202E}niaga")), invalid);
+		assert_eq!(report(&mut card, other("zero\u{200B}width")), invalid);
+		assert_eq!(report(&mut card, other(&"a".repeat(FUNDING_DETAIL_MAX_CHARS + 1))), invalid);
+		assert_eq!(report(&mut card, other(&"€".repeat(FUNDING_DETAIL_MAX_CHARS))), Ok(()));
+		assert_eq!(
+			report(&mut card, other(&"𝄞".repeat(FUNDING_DETAIL_MAX_CHARS))),
+			Ok(()),
+			"320 bytes"
+		);
+		assert_eq!(
+			report(&mut crypto, detail(FundingFact::Confirmations { done: 3, required: 3 }, NOW)),
+			Ok(())
+		);
+		assert_eq!(
+			report(&mut out, detail(FundingFact::Attempt { n: 2, of: Some(3) }, NOW)),
+			Ok(())
+		);
+		assert!(card.updates.is_empty() && crypto.updates.is_empty() && out.updates.is_empty());
+	}
+
+	#[test]
+	fn a_progress_detail_is_not_stored_and_not_taken_once_the_session_ended() {
+		let mut session = served(FundingDirection::In);
+		assert_eq!(report(&mut session, detail(FundingFact::Checked, NOW)), Ok(()));
+		let stored = FundingSession::decode(&mut &session.encode()[..]).expect("decodes");
+		assert_eq!(stored.detail, None);
+		reported(&mut session, &[FundingUpdate::Failed { reason: FundingFailure::Expired }]);
+		assert_eq!(
+			report(&mut session, detail(FundingFact::Checked, NOW)),
+			Err(HostFundingReportError::NotFound)
+		);
 	}
 
 	fn steps(progress: &FundingProgress) -> Vec<(FundingStep, Option<u64>)> {
