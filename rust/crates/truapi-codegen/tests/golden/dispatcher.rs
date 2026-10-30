@@ -1495,25 +1495,20 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_subscription(wire_table::NFT_PURSE_REBALANCE_PURSE, move |request_id: String, request: versioned::nft_purse::HostNftPurseRebalancePurseRequest| {
+        dispatcher.on_request(wire_table::NFT_PURSE_REBALANCE_PURSE, move |request_id: String, request: versioned::nft_purse::HostNftPurseRebalancePurseRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
                 let target_version = request.version();
-                let cx = CallContext::with_request_id(request_id);
-                let stream = host.rebalance_purse(&cx, request).await;
-                let stream = futures::StreamExt::map(
-                    stream,
-                    move |item: Result<versioned::nft_purse::HostNftPurseRebalancePurseItem, truapi::CallError<versioned::nft_purse::HostNftPurseRebalancePurseError>>| {
-                        item.map(|item| {
-                            <versioned::nft_purse::HostNftPurseRebalancePurseItem as truapi::versioned::FromLatest>::from_latest(
-                                truapi::versioned::IntoLatest::into_latest(item),
-                                target_version,
-                            )
-                        })
-                        .map_err(|error| downgrade_call_error(error, target_version))
-                    },
-                );
-                Ok(subscription_stream(stream))
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::nft_purse::HostNftPurseRebalancePurseResponse, truapi::CallError<versioned::nft_purse::HostNftPurseRebalancePurseError>> =
+                    match host.rebalance_purse(&cx, request).await {
+                        Ok(response) => Ok(<versioned::nft_purse::HostNftPurseRebalancePurseResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
             })
         });
     }
@@ -1600,41 +1595,74 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_subscription(wire_table::NFT_PURSE_DEPOSIT, move |request_id: String, request: versioned::nft_purse::HostNftPurseDepositRequest| {
+        dispatcher.on_request(wire_table::NFT_PURSE_DEPOSIT, move |request_id: String, request: versioned::nft_purse::HostNftPurseDepositRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
                 let target_version = request.version();
-                let cx = CallContext::with_request_id(request_id);
-                let stream = host.deposit(&cx, request).await;
-                let stream = futures::StreamExt::map(
-                    stream,
-                    move |item: Result<versioned::nft_purse::HostNftPurseDepositItem, truapi::CallError<versioned::nft_purse::HostNftPurseDepositError>>| {
-                        item.map(|item| {
-                            <versioned::nft_purse::HostNftPurseDepositItem as truapi::versioned::FromLatest>::from_latest(
-                                truapi::versioned::IntoLatest::into_latest(item),
-                                target_version,
-                            )
-                        })
-                        .map_err(|error| downgrade_call_error(error, target_version))
-                    },
-                );
-                Ok(subscription_stream(stream))
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::nft_purse::HostNftPurseDepositResponse, truapi::CallError<versioned::nft_purse::HostNftPurseDepositError>> =
+                    match host.deposit(&cx, request).await {
+                        Ok(response) => Ok(<versioned::nft_purse::HostNftPurseDepositResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
             })
         });
     }
     {
         let host = host.clone();
-        dispatcher.on_subscription(wire_table::NFT_PURSE_REFUND, move |request_id: String, request: versioned::nft_purse::HostNftPurseRefundRequest| {
+        dispatcher.on_request(wire_table::NFT_PURSE_REFUND, move |request_id: String, request: versioned::nft_purse::HostNftPurseRefundRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::nft_purse::HostNftPurseRefundResponse, truapi::CallError<versioned::nft_purse::HostNftPurseRefundError>> =
+                    match host.refund(&cx, request).await {
+                        Ok(response) => Ok(<versioned::nft_purse::HostNftPurseRefundResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::NFT_PURSE_TRANSFER_ITEM, move |request_id: String, request: versioned::nft_purse::HostNftPurseTransferItemRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::nft_purse::HostNftPurseTransferItemResponse, truapi::CallError<versioned::nft_purse::HostNftPurseTransferItemError>> =
+                    match host.transfer_item(&cx, request).await {
+                        Ok(response) => Ok(<versioned::nft_purse::HostNftPurseTransferItemResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_subscription(wire_table::NFT_PURSE_OBSERVE_OPERATION_STATUS, move |request_id: String, request: versioned::nft_purse::HostNftPurseObserveOperationStatusRequest| {
             let host = host.clone();
             Box::pin(async move {
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
-                let stream = host.refund(&cx, request).await;
+                let stream = host.observe_operation_status(&cx, request).await;
                 let stream = futures::StreamExt::map(
                     stream,
-                    move |item: Result<versioned::nft_purse::HostNftPurseRefundItem, truapi::CallError<versioned::nft_purse::HostNftPurseRefundError>>| {
+                    move |item: Result<versioned::nft_purse::HostNftPurseObserveOperationStatusItem, truapi::CallError<versioned::nft_purse::HostNftPurseObserveOperationStatusError>>| {
                         item.map(|item| {
-                            <versioned::nft_purse::HostNftPurseRefundItem as truapi::versioned::FromLatest>::from_latest(
+                            <versioned::nft_purse::HostNftPurseObserveOperationStatusItem as truapi::versioned::FromLatest>::from_latest(
                                 truapi::versioned::IntoLatest::into_latest(item),
                                 target_version,
                             )
@@ -1648,25 +1676,20 @@ where
     }
     {
         let host = host;
-        dispatcher.on_subscription(wire_table::NFT_PURSE_TRANSFER_ITEM, move |request_id: String, request: versioned::nft_purse::HostNftPurseTransferItemRequest| {
+        dispatcher.on_request(wire_table::NFT_PURSE_STATIC_RECEIVE_KEY, move |request_id: String, request: versioned::nft_purse::HostNftPurseStaticReceiveKeyRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
                 let target_version = request.version();
-                let cx = CallContext::with_request_id(request_id);
-                let stream = host.transfer_item(&cx, request).await;
-                let stream = futures::StreamExt::map(
-                    stream,
-                    move |item: Result<versioned::nft_purse::HostNftPurseTransferItemItem, truapi::CallError<versioned::nft_purse::HostNftPurseTransferItemError>>| {
-                        item.map(|item| {
-                            <versioned::nft_purse::HostNftPurseTransferItemItem as truapi::versioned::FromLatest>::from_latest(
-                                truapi::versioned::IntoLatest::into_latest(item),
-                                target_version,
-                            )
-                        })
-                        .map_err(|error| downgrade_call_error(error, target_version))
-                    },
-                );
-                Ok(subscription_stream(stream))
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::nft_purse::HostNftPurseStaticReceiveKeyResponse, truapi::CallError<versioned::nft_purse::HostNftPurseStaticReceiveKeyError>> =
+                    match host.static_receive_key(&cx, request).await {
+                        Ok(response) => Ok(<versioned::nft_purse::HostNftPurseStaticReceiveKeyResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
             })
         });
     }

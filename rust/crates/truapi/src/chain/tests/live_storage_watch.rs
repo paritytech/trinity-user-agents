@@ -45,7 +45,9 @@ impl RuntimeChainProvider for SingleNodeChainProvider {
 	}
 }
 
-fn live_asset_hub_genesis() -> H256 {
+/// Genesis of the live Asset Hub, or of the one `LIVE_ASSET_HUB_GENESIS`
+/// names.
+pub fn live_asset_hub_genesis() -> H256 {
 	let hex = std::env::var("LIVE_ASSET_HUB_GENESIS").unwrap_or_else(|_| ASSET_HUB_GENESIS.into());
 	let bytes = hex::decode(hex.trim_start_matches("0x")).expect("LIVE_ASSET_HUB_GENESIS is hex");
 	H256::from_slice(&bytes)
@@ -53,14 +55,24 @@ fn live_asset_hub_genesis() -> H256 {
 
 /// The chain runtime over the live node, its tasks on the test's runtime.
 fn live_chain_runtime(genesis: H256) -> Arc<dyn WatchedStorage> {
+	Arc::new(live_asset_hub(genesis))
+}
+
+/// The chain runtime over the live Asset Hub node with `genesis`, or the one
+/// `LIVE_ASSET_HUB_WS` names, its tasks on the test's runtime.
+pub fn live_asset_hub(genesis: H256) -> ChainRuntime {
 	let url = std::env::var("LIVE_ASSET_HUB_WS").unwrap_or_else(|_| ASSET_HUB_WS.into());
 	let source = ChainSource::rpc_node(url.parse().expect("LIVE_ASSET_HUB_WS is a URL"));
 	let provider = EmbeddedChainProvider::builder().chain(genesis.0, source).build();
+	ChainRuntime::new(Arc::new(SingleNodeChainProvider(provider)), tokio_spawner())
+}
+
+/// Runs tasks on the test's tokio runtime.
+pub fn tokio_spawner() -> Spawner {
 	let handle = tokio::runtime::Handle::current();
-	let spawner: Spawner = Arc::new(move |task| {
+	Arc::new(move |task| {
 		handle.spawn(task);
-	});
-	Arc::new(ChainRuntime::new(Arc::new(SingleNodeChainProvider(provider)), spawner))
+	})
 }
 
 /// The next report of `changes`, failing the test on an error or a stall.
