@@ -131,6 +131,9 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         onAcceptChatRequest = contract::onAcceptChatRequest,
         onDeclineChatRequest = contract::onDeclineChatRequest,
         onUnblockUserClick = contract::onUnblockUserClick,
+        onLoadOlderMessages = contract::onLoadOlderMessages,
+        onLoadNewerMessages = contract::onLoadNewerMessages,
+        onShowNewestMessages = contract::onShowNewestMessages,
         onAllowIdentitySigningClick = contract::onAllowIdentitySigningClick,
         onDeclineIdentitySigningClick = contract::onDeclineIdentitySigningClick,
         isActionMenuVisible = popupState is MessagePopUpUiState.ActionMenu,
@@ -202,6 +205,9 @@ private fun ChatFeedScreenInternal(
     onAcceptChatRequest: () -> Unit,
     onDeclineChatRequest: () -> Unit,
     onUnblockUserClick: () -> Unit,
+    onLoadOlderMessages: () -> Unit,
+    onLoadNewerMessages: () -> Unit,
+    onShowNewestMessages: () -> Unit,
     onAllowIdentitySigningClick: () -> Unit,
     onDeclineIdentitySigningClick: () -> Unit,
     isActionMenuVisible: Boolean,
@@ -263,10 +269,13 @@ private fun ChatFeedScreenInternal(
                             slideInNewMessages = customAppearance != null,
                             showNewMessagesSeparator = config.showNewMessagesSeparator,
                             dateSeparatorStyle = customAppearance?.dateSeparatorStyle,
+                            onLoadOlderMessages = onLoadOlderMessages,
+                            onLoadNewerMessages = onLoadNewerMessages,
+                            onShowNewestMessages = onShowNewestMessages,
                         )
                     }
 
-                    if (it.messages.isEmpty() && emptyRoomText != null) {
+                    if (it.isEmptyRoom && emptyRoomText != null) {
                         EmptyRoomText(
                             modifier = Modifier
                                 .align(Alignment.Center)
@@ -388,6 +397,9 @@ private fun ChatFeedPreview() {
                     onAcceptChatRequest = {},
                     onDeclineChatRequest = {},
                     onUnblockUserClick = {},
+                    onLoadOlderMessages = {},
+                    onLoadNewerMessages = {},
+                    onShowNewestMessages = {},
                     onAllowIdentitySigningClick = {},
                     onDeclineIdentitySigningClick = {},
                     isActionMenuVisible = false,

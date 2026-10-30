@@ -18,7 +18,7 @@ final class ChatInteractor {
     private var footerTask: Task<Void, Never>?
     /// The last open or close of the room. Each one waits for the one before it.
     var roomTask: Task<Void, Never>?
-    private let state = ChatInteractorState()
+    let state = ChatInteractorState()
 
     private let notificationsCleaner: any PushNotificationsCleaning
 

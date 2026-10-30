@@ -1,5 +1,6 @@
 import Foundation
 import Operation_iOS
+import PolkadotUI
 import Testing
 @testable import polkadot_app
 
@@ -29,6 +30,15 @@ struct ChatRoomReadinessTests {
         }
 
         #expect(try #require(output.listModel).readiness == .unavailable)
+    }
+
+    /// The native chat shows no row while it loads messages, and none for a page that failed: the chat asks a failed
+    /// page again when the user scrolls near its end.
+    @Test func aFailedPageIsAskedAgainWithoutARow() {
+        let paging = ChatViewLayout.ViewModel.Paging(paging: ChatPagingState(older: .failed, newer: .loading))
+
+        #expect(paging.older == .more)
+        #expect(paging.newer == .loading)
     }
 }
 
