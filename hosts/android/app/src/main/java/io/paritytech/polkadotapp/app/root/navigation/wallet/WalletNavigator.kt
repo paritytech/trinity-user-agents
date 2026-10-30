@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.app.R
 import io.paritytech.polkadotapp.app.root.navigation.BaseNavigator
 import io.paritytech.polkadotapp.app.root.navigation.NavigationHolder
 import io.paritytech.polkadotapp.common.utils.toPayloadBundle
+import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaSheetPayload
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.SendEnterAmountPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
@@ -42,6 +43,14 @@ class PocketNavigator @Inject constructor(
         performNavigation(
             actionId = R.id.action_global_to_spaSheetBottomSheet,
             args = SpaSheetPayload(url).toPayloadBundle()
+        )
+    }
+
+    override fun openSpaBrowser(payload: SpaBrowserPayload) {
+        if (isCurrentDestination(R.id.spaBrowserFragment)) return
+        performNavigation(
+            actionId = R.id.action_global_to_spaBrowserFragment,
+            args = payload.toPayloadBundle(SpaBrowserPayload::class.java.name),
         )
     }
 }

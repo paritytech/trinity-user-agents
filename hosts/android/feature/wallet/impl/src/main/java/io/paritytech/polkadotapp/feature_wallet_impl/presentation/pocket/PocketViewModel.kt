@@ -16,6 +16,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOp
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
@@ -93,6 +94,14 @@ class PocketViewModel @Inject constructor(
 
     private val warmedPrivilegedProducts = ConcurrentHashMap.newKeySet<ProductId>()
 
+    private val bindings = ConcurrentHashMap<String, CardBinding>()
+
+    /**
+     * Kept for as long as the screen lives. A card expanding draws a second copy of itself, which
+     * would otherwise fetch the same image again and show nothing until it arrived.
+     */
+    private val resolvedFaceImages = ConcurrentHashMap<Pair<String, JsImageSource>, Uri>()
+
     // The balance card keeps its place; the product-backed collection follows, pinned cards first.
     // A collection the host cannot read costs the user their product cards, never the balance card
     // standing beside them.
@@ -145,8 +154,6 @@ class PocketViewModel @Inject constructor(
         )
 
     private class CardBinding(val scope: CoroutineScope, val bindings: ProductFaceBindings)
-
-    private val bindings = ConcurrentHashMap<String, CardBinding>()
 
     /**
      * One set of bindings per card, however many copies of it are drawn: expanding a card draws a
@@ -296,7 +303,7 @@ class PocketViewModel @Inject constructor(
     }
 
     fun openCollectibles() {
-        collectiblesUrl.value?.let { router.openSpaSheet(it.toString()) }
+        collectiblesUrl.value?.let { router.openSpaBrowser(SpaBrowserPayload.ByUrl(it.toString())) }
     }
 
     /**
@@ -318,12 +325,6 @@ class PocketViewModel @Inject constructor(
         }
         interactor.sendFaceAction(card.key, actionId, payload)
     }
-
-    /**
-     * Kept for as long as the screen lives. A card expanding draws a second copy of itself, which
-     * would otherwise fetch the same image again and show nothing until it arrived.
-     */
-    private val resolvedFaceImages = ConcurrentHashMap<Pair<String, JsImageSource>, Uri>()
 
     private suspend fun resolveFaceImage(card: PocketCardUiModel.ProductCard, source: JsImageSource): Uri? =
         resolvedFaceImages[card.id to source]
