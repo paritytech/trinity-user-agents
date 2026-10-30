@@ -767,7 +767,7 @@ fn refresh_documents() -> Vec<(&'static str, Vec<u8>)> {
 /// The refresh cases of the reference `StackReader`: a policy, the copies a reader starts from,
 /// and steps in order, each with what the reader answers. They pin this crate's choices where
 /// the RFC leaves a reader its own, so they are informative, unlike `cases.json`. `serves` names
-/// the copy in use by its `sequence`, null when the caller waits. `stores` says whether the reader
+/// the copy in use by its `sequence`, null when the caller waits. `stores` is whether the reader
 /// handed back bytes to store. A `restart` starts a new reader from its build copy and what the
 /// last step stored.
 fn refresh_cases() -> Vec<Value> {
@@ -780,7 +780,7 @@ fn refresh_cases() -> Vec<Value> {
 	let max_age = json!({ "maxAge": 3600 });
 	vec![
 		case(
-			"never-serves-the-build-copy-until-asked",
+			"never-serves-the-build-copy-until-requested",
 			json!("never"),
 			Some("refresh/42.json"),
 			vec![

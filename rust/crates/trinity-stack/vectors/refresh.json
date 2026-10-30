@@ -1,7 +1,7 @@
 [
   {
     "build": "refresh/42.json",
-    "name": "never-serves-the-build-copy-until-asked",
+    "name": "never-serves-the-build-copy-until-requested",
     "pointer": {
       "key": "0xea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
       "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"

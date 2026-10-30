@@ -1,6 +1,6 @@
 //! Keeps each stack's copy current by a refresh policy, so a descriptor is never a live
-//! dependency: a reader serves the copy it holds, and a fetch only refreshes it. The caller
-//! fetches, stores and keeps time; [`StackReader`] decides when, and what to use.
+//! dependency: a reader serves the copy it has, and a fetch only refreshes it. The caller
+//! fetches, stores and tracks time; [`StackReader`] decides when, and what to use.
 
 use crate::{
 	Accepted, Error, Fetched, Pointer, Status, Verified, accept, envelope::open, format,
@@ -9,7 +9,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// When a [`StackReader`] fetches a stack it already holds a copy of. A stack it holds no copy
+/// When a [`StackReader`] fetches a stack it already has a copy of. A stack it has no copy
 /// of is fetched on first use under every policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refresh {
@@ -61,7 +61,7 @@ pub struct CurrentStack {
 	pub expired: bool,
 }
 
-/// What [`StackReader::get`] says.
+/// What [`StackReader::get`] returns.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "js", derive(tsify::Tsify), tsify(hashmap_as_object))]
 pub struct StackRead {
@@ -78,7 +78,7 @@ pub struct StackRead {
 pub struct Refreshed {
 	/// What `accept` decided, and the copy now in use.
 	pub accepted: Accepted,
-	/// Bytes to store under the pointer's `stack_id`, when what the reader keeps changed. They
+	/// Bytes to store under the pointer's `stack_id`, when what the reader stores changed. They
 	/// go back to [`StackReader::load`] as `stored`.
 	#[serde(serialize_with = "format::serialize_optional_bytes")]
 	#[cfg_attr(feature = "js", tsify(type = "Uint8Array | undefined"))]
@@ -127,7 +127,7 @@ struct StackCopy {
 	etag: Option<String>,
 }
 
-/// What the store keeps per stack.
+/// What the store has per stack.
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StoredRecord {
@@ -139,7 +139,7 @@ struct StoredRecord {
 /// When to fetch a stack.
 #[derive(Clone, Debug, Default)]
 struct FetchState {
-	/// Asked and not completed yet.
+	/// Started and not finished yet.
 	pending: bool,
 	requested_at: Option<i64>,
 	completed: bool,
@@ -217,7 +217,7 @@ impl StackReader {
 		Ok(())
 	}
 
-	/// The copy to use now, and a fetch to make when the policy says the copy is due, or when
+	/// The copy to use now, and a fetch to make when the policy makes the copy due, or when
 	/// there is none. A pointer [`StackReader::load`] never saw starts with no copy.
 	pub fn get(&mut self, pointer: &Pointer, now_unix_seconds: i64) -> StackRead {
 		let refresh = self.refresh;
@@ -256,7 +256,7 @@ impl StackReader {
 			.collect()
 	}
 
-	/// Takes the answer to the stack's fetch. Fails only when the reader holds no copy and the
+	/// Takes the answer to the stack's fetch. Fails only when the reader has no copy and the
 	/// answer gives it none, which every caller waiting on the fetch then sees.
 	pub fn fetched(
 		&mut self,
@@ -311,7 +311,8 @@ impl Stack {
 			Refresh::Never => false,
 			Refresh::Once => self.fetches.requested_at.is_none(),
 			Refresh::MaxAge(age) => {
-				// A fetch time ahead of the clock was kept under a skewed one, so it says nothing.
+				// A fetch time ahead of the clock was recorded under a skewed one, so it is
+				// ignored.
 				let fetched_at = copy.fetched_at.filter(|at| *at <= now_unix_seconds);
 				fetched_at.max(self.fetches.requested_at).is_none_or(|last| {
 					now_unix_seconds.saturating_sub(last) >= i64::try_from(age).unwrap_or(i64::MAX)
@@ -327,7 +328,7 @@ impl Stack {
 		}
 	}
 
-	/// What the store keeps for this stack; `None` until it holds a descriptor.
+	/// What the store has for this stack; `None` until the reader has a descriptor.
 	fn stored_record(&self) -> Option<Vec<u8>> {
 		let copy = self.copy.as_ref()?;
 		let record = StoredRecord {
