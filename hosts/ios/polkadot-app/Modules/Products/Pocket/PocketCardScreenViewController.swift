@@ -8,8 +8,10 @@ import UIKit
 /// filling the space below.
 ///
 /// The card keeps drawing up here, so it stays live for as long as it is open.
-/// Card and product share one scroll, so the gesture that reads the product
-/// also carries the card away and leaves the product the whole screen.
+/// The face moves with a drag on it, and with the product's own scrolling:
+/// it goes away before the product scrolls up, and comes back once the
+/// product is at its top. Where the product takes touches itself, its
+/// scrolling never starts, so drawing on it never moves the face.
 ///
 /// The product is sized to the screen the card leaves it, so a page built to
 /// fit its viewport keeps its bottom edge in view. It is resized only when the
@@ -20,13 +22,15 @@ final class PocketCardScreenViewController: UIViewController {
     private let face: UIHostingController<PocketOpenedCardView>
     private weak var origin: PocketCardOrigin?
 
-    private let scrollView = UIScrollView()
+    private let scrollView = FaceScrollView()
     private var productHeight: Constraint?
 
     private var pendingFaceShown: Bool? = true
     private var userOwnsFace = false
     private var faceMovedSinceOpening = false
     private var pageMoveTarget: CGPoint?
+    private var lastPagePull: CGFloat = 0
+    private var lastPageOffset: CGFloat = 0
     private var isInFlight = false
     private weak var coveredScreen: UIViewController?
 
@@ -56,6 +60,7 @@ final class PocketCardScreenViewController: UIViewController {
         setupScrollView()
         setupFace()
         setupProduct()
+        setupPageDrag()
 
         // The card flies over the page when it is opened and closed.
         scrollView.bringSubviewToFront(face.view)
@@ -105,6 +110,7 @@ final class PocketCardScreenViewController: UIViewController {
     /// Gives the product back unattached. It outlives the screen that opened
     /// it, so a card opened again must find it free to show.
     func handBackProduct() {
+        product.pageScrollView.panGestureRecognizer.removeTarget(self, action: nil)
         for child in children {
             child.willMove(toParent: nil)
             child.view.removeFromSuperview()
@@ -237,10 +243,7 @@ extension PocketCardScreenViewController {
 
 extension PocketCardScreenViewController: UIScrollViewDelegate {
     func scrollViewWillBeginDragging(_: UIScrollView) {
-        userOwnsFace = true
-        faceMovedSinceOpening = true
-        pageMoveTarget = nil
-        growProduct()
+        holdFace()
     }
 
     func scrollViewDidEndDragging(_: UIScrollView, willDecelerate decelerate: Bool) {
@@ -287,17 +290,58 @@ private extension PocketCardScreenViewController {
         scrollView.delegate = self
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.showsVerticalScrollIndicator = false
+    }
 
-        // The product's page keeps its own scrolling for content taller than
-        // the screen, but must not rubber-band a page that fits: that would
-        // swallow the gesture meant to carry the card away.
-        product.pageScrollView.bounces = false
+    func setupPageDrag() {
+        product.pageScrollView.panGestureRecognizer.addTarget(self, action: #selector(followPageDrag))
+    }
+
+    @objc func followPageDrag(_ pan: UIPanGestureRecognizer) {
+        // A close can start mid-drag, and the card must fly from where it stopped.
+        guard !isInFlight else { return }
+
+        let pull = pan.translation(in: view).y
+
+        switch pan.state {
+        case .began:
+            lastPagePull = pull
+            lastPageOffset = product.pageScrollView.contentOffset.y
+        case .changed:
+            moveFaceWithPage(by: pull - lastPagePull)
+            lastPagePull = pull
+        case .ended,
+             .cancelled:
+            guard userOwnsFace else { return }
+
+            userOwnsFace = false
+            moveFace(shown: scrollView.contentOffset.y < PocketOpenedCardView.height / 2, animated: true)
+        default:
+            break
+        }
+    }
+
+    /// The page has already scrolled by `step`, so a step the face takes is undone on the page.
+    func moveFaceWithPage(by step: CGFloat) {
+        let page = product.pageScrollView
+        let faceOffset = scrollView.contentOffset.y
+        let pageWasAtTop = lastPageOffset <= -page.adjustedContentInset.top
+        let faceTarget = step < 0 || pageWasAtTop
+            ? min(max(faceOffset - step, 0), PocketOpenedCardView.height)
+            : faceOffset
+
+        if faceTarget != faceOffset {
+            if !userOwnsFace { holdFace() }
+            scrollView.contentOffset.y = faceTarget
+            page.contentOffset.y = lastPageOffset
+        }
+        lastPageOffset = page.contentOffset.y
     }
 
     /// The scroll is a screenful plus the face, whatever the product's own
     /// height, so the face can always be scrolled away.
     func setupFace() {
         embed(face)
+        scrollView.face = face.view
 
         face.view.snp.makeConstraints { make in
             make.top.leading.trailing.equalTo(scrollView.contentLayoutGuide)
@@ -326,6 +370,13 @@ private extension PocketCardScreenViewController {
         addChild(child)
         scrollView.addSubview(child.view)
         child.didMove(toParent: self)
+    }
+
+    func holdFace() {
+        userOwnsFace = true
+        faceMovedSinceOpening = true
+        pageMoveTarget = nil
+        growProduct()
     }
 
     func placeFace(shown: Bool, animated: Bool) {
@@ -390,5 +441,17 @@ struct PocketOpenedCardView: View {
         PocketCollectionCardView(card: card)
             .padding(.horizontal, PocketCardSize.sideMargin)
             .padding(.vertical, Self.verticalInset)
+    }
+}
+
+/// Scrolls only for drags that start on the face.
+private final class FaceScrollView: UIScrollView {
+    weak var face: UIView?
+
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard super.gestureRecognizerShouldBegin(gestureRecognizer) else { return false }
+        guard gestureRecognizer === panGestureRecognizer else { return true }
+
+        return face?.frame.contains(panGestureRecognizer.location(in: self)) ?? false
     }
 }
