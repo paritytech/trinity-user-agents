@@ -29,6 +29,10 @@
       "types": "./dist/web/index.d.ts",
       "import": "./dist/web/index.js"
     },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "import": "./dist/node/index.js"
+    },
     "./testing": {
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js"
@@ -84,7 +88,8 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"scripts/**/*.{js,mjs,ts}\" \"!src/generated/**\"",
     "typecheck:harness": "tsc -p tsconfig.harness.json",
     "build:wasm": "node scripts/build-wasm.mjs",
-    "test": "bun test"
+    "test": "bun test && npm run test:node",
+    "test:node": "node --test test/node/*.mjs"
   },
   "dependencies": {
     "@noble/hashes": "^2.2.0",
