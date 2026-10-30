@@ -1,11 +1,10 @@
-// The build copies a JavaScript project keeps of its stacks, as docs/design/trinity-stack-library.md
-// describes: `.trinity/` holds each stack's signed copy and a module that bundles them, all
+// The build copies a JavaScript project has of its stacks, as docs/design/trinity-stack-library.md
+// describes: `.trinity/` contains each stack's signed copy and a module that bundles them, all
 // committed with the project.
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Pointer } from "../wasm/trinity_stack.js";
 import {
-  type Accepted,
   type Fetch,
   accept,
   decodeLink,
@@ -38,7 +37,7 @@ export async function add(
   target: string,
   key: string | undefined,
   options: ProjectOptions = {},
-): Promise<Outcome> {
+): Promise<Outcome & { warnings: string[] }> {
   if (!NAME.test(name))
     throw new Error(`${name} is not a stack name: use a-z, 0-9 and -`);
   if (name === "stacks")
@@ -53,27 +52,31 @@ export async function add(
   const stacks = await readStacks(options);
   if (Object.hasOwn(stacks, name))
     throw new Error(`${name} is already added; remove it first`);
-  const { written } = await refresh(name, pointer, options);
+  const { written, warning } = await refresh(name, pointer, options);
   await writeStacks({ ...stacks, [name]: encodeLink(pointer) }, options);
-  return { changed: [...written, "stacks.json", ...(await generate(options))] };
+  return {
+    changed: [...written, "stacks.json", ...(await generate(options))],
+    warnings: warning ? [`${name}: ${warning}`] : [],
+  };
 }
 
 /**
  * Fetches each stack, or those `names` lists, and writes a newer signed copy. Refuses an unsigned
- * or expired stack, and anything that would lower `sequence`. A stack that fails keeps its copy
- * and is named in `failures`, while the others still update. A copy past `validUntil` is written
- * and named in `warnings`. A project with no stacks writes nothing.
+ * or expired stack, and anything that would lower `sequence`. A stack that fails is left as it was
+ * and is named in `failures`, while the others still update. A copy past `validUntil` is still
+ * accepted and named in `warnings`. A project without a stacks.json writes nothing.
  */
 export async function update(
   names: string[],
   options: ProjectOptions = {},
 ): Promise<Outcome & { failures: string[]; warnings: string[] }> {
+  if (names.length === 0 && !(await read("stacks.json", options)))
+    return { changed: [], failures: [], warnings: [] };
   const stacks = await readStacks(options);
   const unknown = names.filter((name) => !Object.hasOwn(stacks, name));
   if (unknown.length > 0)
     throw new Error(`no stack named ${unknown.join(", ")}`);
   const chosen = names.length > 0 ? names : Object.keys(stacks);
-  if (chosen.length === 0) return { changed: [], failures: [], warnings: [] };
   const results = await Promise.allSettled(
     chosen.map(async (name) =>
       refresh(name, decodeLink(stacks[name]), options),
@@ -83,8 +86,8 @@ export async function update(
     result.status === "fulfilled" ? result.value.written : [],
   );
   const warnings = results.flatMap((result, index) =>
-    result.status === "fulfilled" && result.value.stale
-      ? [`${chosen[index]}: the copy is past validUntil`]
+    result.status === "fulfilled" && result.value.warning
+      ? [`${chosen[index]}: ${result.value.warning}`]
       : [],
   );
   const failures = results.flatMap((result, index) =>
@@ -96,7 +99,7 @@ export async function update(
   return { changed, failures, warnings };
 }
 
-/** Each stack's name, link and the copies the project holds. */
+/** Each stack's name, link and the copies the project has. */
 export async function list(options: ProjectOptions = {}) {
   return (await readCopies(options)).map(({ document, ...copy }) => ({
     ...copy,
@@ -117,12 +120,15 @@ export async function remove(
   return { changed: ["stacks.json", ...(await generate(options))] };
 }
 
-/** Fetches one stack and writes its copy when it moved; returns the files it wrote. */
+/**
+ * Fetches one stack and writes its copy when it moved; returns the files it wrote, and a warning
+ * when the copy is past `validUntil`.
+ */
 async function refresh(
   name: string,
   pointer: Pointer,
   options: ProjectOptions,
-): Promise<{ written: string[]; stale: boolean }> {
+): Promise<{ written: string[]; warning?: string }> {
   if (!pointer.key)
     throw new Error("a build copy must be signed; add the stack with its key");
   const file = fileOf(name);
@@ -132,23 +138,31 @@ async function refresh(
     await fetchDescriptor(pointer.url, options),
     options.now,
   );
-  const refusals: Partial<Record<Accepted["status"], string>> = {
-    unreachable: `${pointer.url} is unreachable`,
-    refused: `${pointer.url} serves a descriptor that breaks ${"refused" in accepted ? accepted.refused : "a rule"}`,
-    rollback: `${pointer.url} serves a lower sequence than the committed copy`,
-    conflict: `${pointer.url} serves other content under the committed sequence`,
-  };
-  const refusal = refusals[accepted.status];
-  if (refusal) throw new Error(refusal);
+  switch (accepted.status) {
+    case "unreachable":
+      throw new Error(`${pointer.url} is unreachable`);
+    case "refused":
+      throw new Error(
+        `${pointer.url} serves a descriptor that breaks the rule ${accepted.refused}`,
+      );
+    case "rollback":
+      throw new Error(
+        `${pointer.url} serves a lower sequence than the committed copy`,
+      );
+    case "conflict":
+      throw new Error(
+        `${pointer.url} serves other content under the committed sequence`,
+      );
+  }
   if (accepted.expired)
     throw new Error(`the stack expired at ${accepted.descriptor.expiresAt}`);
-  if (accepted.status !== "updated")
-    return { written: [], stale: accepted.stale };
+  const warning = accepted.stale ? "the copy is past validUntil" : undefined;
+  if (accepted.status !== "updated") return { written: [], warning };
   await write(file, accepted.document, options);
-  return { written: [file], stale: accepted.stale };
+  return { written: [file], warning };
 }
 
-/** Writes `index.js` and `index.d.ts` for the stacks the project holds; returns those it changed. */
+/** Writes `index.js` and `index.d.ts` for the stacks the project has; returns those it changed. */
 async function generate(options: ProjectOptions): Promise<string[]> {
   const bundled = (await readCopies(options)).flatMap(
     ({ name, link, document }) =>
@@ -203,7 +217,7 @@ function fileOf(name: string) {
   return `${name}.json`;
 }
 
-/** Each stack's link and signed copy, as the project holds them. */
+/** Each stack's link and signed copy, as the project has them. */
 async function readCopies(options: ProjectOptions) {
   return Promise.all(
     Object.entries(await readStacks(options)).map(async ([name, link]) => ({

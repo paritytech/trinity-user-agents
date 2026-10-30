@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { type Fetch, encodeLink } from "./index.js";
 import { type ProjectOptions, add, list, remove, update } from "./project.js";
 import { createStackReader } from "./reader.js";
-import { URL_, pointer, publishedAt as at } from "./test-fixtures.js";
+import { MODEL, URL_, pointer, publishedAt as at } from "./test-fixtures.js";
 
 const link = encodeLink(pointer);
 
@@ -75,7 +75,7 @@ describe("trinity-stack add and update", () => {
     expect(stack.descriptor?.generation).toBe("g2");
   });
 
-  test("update refuses a lower sequence, an unreachable stack and an unsigned one, naming the stack", async () => {
+  test("update rejects a lower sequence, an unreachable stack and an unsigned one, naming the stack", async () => {
     await add("local", link, undefined, options());
     const before = await readFile(join(dir, "local.json"));
     served = await at(50);
@@ -90,6 +90,10 @@ describe("trinity-stack add and update", () => {
     expect((await update(["local"], options())).failures).toEqual([
       "local: https://stack.example/.well-known/trinity-stack.json is unreachable",
     ]);
+    served = new TextEncoder().encode("not json");
+    expect((await update(["local"], options())).failures).toEqual([
+      "local: https://stack.example/.well-known/trinity-stack.json serves a descriptor that breaks the rule not-json",
+    ]);
     expect(await readFile(join(dir, "local.json"))).toEqual(before);
     await expect(add("open", URL_, undefined, options())).rejects.toThrow(
       "must be signed",
@@ -97,6 +101,15 @@ describe("trinity-stack add and update", () => {
     await expect(update(["missing"], options())).rejects.toThrow(
       "no stack named missing",
     );
+  });
+
+  test("a copy past validUntil is still written, and named in warnings by add and update", async () => {
+    served = await at(100, "g1", { ...MODEL, validUntil: 1 });
+    const warnings = ["local: the copy is past validUntil"];
+    expect((await add("local", link, undefined, options())).warnings).toEqual(
+      warnings,
+    );
+    expect((await update([], options())).warnings).toEqual(warnings);
   });
 
   test("remove drops the copy and the stack from the module", async () => {

@@ -12,8 +12,8 @@ const USAGE = `usage:
 options:
   --dir <path>  where the stacks live, .trinity by default
 
-update exits 0 when nothing changed, 2 when it wrote something and 1 when a stack failed,
-which keeps its copy while the others update.`;
+update exits 0 when nothing changed, 2 when it wrote something and 1 when a stack failed;
+a stack that fails is left as it was while the others update.`;
 
 try {
   const { positionals, values } = parseArgs({
@@ -29,8 +29,14 @@ try {
   if (values.help || !command) {
     console.log(USAGE);
   } else if (command === "add" && rest.length === 2) {
-    const { changed } = await add(rest[0], rest[1], values.key, options);
+    const { changed, warnings } = await add(
+      rest[0],
+      rest[1],
+      values.key,
+      options,
+    );
     console.log(`wrote ${changed.join(", ")}`);
+    for (const warning of warnings) console.error(warning);
   } else if (command === "update") {
     const { changed, failures, warnings } = await update(rest, options);
     console.log(
