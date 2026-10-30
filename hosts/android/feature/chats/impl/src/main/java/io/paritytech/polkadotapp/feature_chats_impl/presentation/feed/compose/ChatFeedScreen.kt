@@ -5,12 +5,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -25,6 +27,7 @@ import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBr
 import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
 import io.paritytech.polkadotapp.design.components.avatar.Mock
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
+import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.designsystem.colors.LocalPolkadotColors
 import io.paritytech.polkadotapp.designsystem.colors.PolkadotColorsPalette
@@ -65,6 +68,7 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
     val footerRenderer by contract.footerRenderer.collectAsStateWithLifecycle()
     val headerRenderer by contract.headerRenderer.collectAsStateWithLifecycle()
     val customAppearance by contract.customAppearance.collectAsStateWithLifecycle()
+    val emptyRoomText by contract.emptyRoomText.collectAsStateWithLifecycle()
     val revealingMessageId by contract.revealingMessageId.collectAsStateWithLifecycle()
     val popupState = contract.popupState.collectAsStateWithLifecycle().value
     var menuLayoutInfo by remember { mutableStateOf<MessageLayoutInfo?>(null) }
@@ -96,6 +100,7 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         footerRenderer = footerRenderer,
         headerRenderer = headerRenderer,
         customAppearance = customAppearance,
+        emptyRoomText = emptyRoomText,
         revealingMessageId = revealingMessageId,
         onMessageRevealComplete = contract::onMessageRevealComplete,
         toolbarActions = toolbarActions,
@@ -166,6 +171,7 @@ private fun ChatFeedScreenInternal(
     footerRenderer: CustomChatFooterRenderer?,
     headerRenderer: CustomChatHeaderRenderer?,
     customAppearance: CustomChatAppearance?,
+    emptyRoomText: String?,
     revealingMessageId: ChatMessageId?,
     onMessageRevealComplete: (ChatMessageId) -> Unit,
     toolbarActions: ImmutableList<ChatToolbarAction>,
@@ -248,6 +254,16 @@ private fun ChatFeedScreenInternal(
                             slideInNewMessages = customAppearance != null,
                             showNewMessagesSeparator = config.showNewMessagesSeparator,
                             dateSeparatorStyle = customAppearance?.dateSeparatorStyle,
+                        )
+                    }
+
+                    if (it.messages.isEmpty() && emptyRoomText != null) {
+                        EmptyRoomText(
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .padding(bottom = footerHeight)
+                                .padding(horizontal = PolkadotTheme.spacings.extraMedium),
+                            text = emptyRoomText,
                         )
                     }
                 }
@@ -341,6 +357,7 @@ private fun ChatFeedPreview() {
                     footerRenderer = null,
                     headerRenderer = null,
                     customAppearance = null,
+                    emptyRoomText = null,
                     revealingMessageId = null,
                     onMessageRevealComplete = {},
                     toolbarActions = persistentListOf(ChatToolbarAction.VIDEO_CALL),
@@ -382,4 +399,18 @@ private fun ChatToolbarThemeScope(
     } else {
         content()
     }
+}
+
+@Composable
+private fun EmptyRoomText(
+    modifier: Modifier,
+    text: String,
+) {
+    NovaText(
+        modifier = modifier,
+        text = text,
+        style = PolkadotTheme.typography.paragraph.medium,
+        color = PolkadotTheme.colors.fg.secondary,
+        textAlign = TextAlign.Center,
+    )
 }
