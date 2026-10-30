@@ -57,7 +57,17 @@ impl LocalActivation for SigningHost {
 			full_username: None,
 		};
 		let ui_info = connected_session_ui_info(&session);
+		let switched = self
+			.session_state
+			.current()
+			.is_some_and(|previous| previous.public_key != public_key);
 		self.install_local_session(secret, session.clone());
+		// Dropped once the new account is current, so a store still racing
+		// for the previous one fails its session check instead of landing
+		// after the clear.
+		if switched {
+			self.services.drop_secrets_storage_after_session().await;
+		}
 		self.auth_state.connected(&ui_info);
 
 		let services = self.services.clone();

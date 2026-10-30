@@ -246,6 +246,24 @@ pub mod latest {
 	pub type HostScannerScanResponse = LatestOf<versioned::scanner::HostScannerScanResponse>;
 	/// Scanner failure.
 	pub type HostScannerScanError = LatestOf<versioned::scanner::HostScannerScanError>;
+	/// Request to keep a product's secret.
+	pub type HostSecretsStorageWriteRequest =
+		LatestOf<versioned::secrets_storage::HostSecretsStorageWriteRequest>;
+	/// Failure keeping a product's secret.
+	pub type HostSecretsStorageWriteError =
+		LatestOf<versioned::secrets_storage::HostSecretsStorageWriteError>;
+	/// Request to read a product's secret.
+	pub type HostSecretsStorageReadRequest =
+		LatestOf<versioned::secrets_storage::HostSecretsStorageReadRequest>;
+	/// A product's kept secret.
+	pub type HostSecretsStorageReadResponse =
+		LatestOf<versioned::secrets_storage::HostSecretsStorageReadResponse>;
+	/// Failure reading or dropping a product's secret.
+	pub type HostSecretsStorageLookupError =
+		LatestOf<versioned::secrets_storage::HostSecretsStorageReadError>;
+	/// Request to drop a product's secret.
+	pub type HostSecretsStorageClearRequest =
+		LatestOf<versioned::secrets_storage::HostSecretsStorageClearRequest>;
 	/// Contextual alias derivation result.
 	pub type HostAccountGetAliasResponse =
 		LatestOf<versioned::account::HostAccountGetAliasResponse>;
@@ -857,6 +875,10 @@ pub mod encrypted_storage;
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub mod installation;
+
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod product_secrets;
 
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]

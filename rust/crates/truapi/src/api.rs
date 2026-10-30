@@ -20,6 +20,7 @@ pub mod preimage;
 pub mod renderer;
 pub mod resource_allocation;
 pub mod scanner;
+pub mod secrets_storage;
 pub mod signing;
 pub mod statement_store;
 pub mod system;
@@ -46,6 +47,7 @@ pub use preimage::Preimage;
 pub use renderer::Renderer;
 pub use resource_allocation::ResourceAllocation;
 pub use scanner::Scanner;
+pub use secrets_storage::SecretsStorage;
 pub use signing::Signing;
 pub use statement_store::StatementStore;
 pub use system::System;
@@ -55,6 +57,7 @@ pub use worker::Worker;
 /// The unified TrUAPI contract.
 pub trait TrUApi:
 	Account
+	+ SecretsStorage
 	+ Chain
 	+ Chat
 	+ CoinPayment
@@ -86,6 +89,7 @@ pub trait TrUApi:
 
 impl<T> TrUApi for T where
 	T: Account
+		+ SecretsStorage
 		+ Chain
 		+ Chat
 		+ CoinPayment

@@ -332,6 +332,16 @@ revoke and listening for payments answer unavailable for now. A host without a
 core database, such as the browser core, answers `Unsupported` to the served
 calls.
 
+### Product secrets
+
+`SecretsStorage` lets products keep small secrets, such as the tokens they
+obtain from their own services, in the host's encrypted storage (the Keychain
+on iOS, encrypted preferences on Android). A product names a key; the core
+derives the id from the signed-in account, the product and that key, records it
+in the `product_secret` table, and drops every secret on logout, an account
+switch or when the product's state is cleared. A host without a core database
+or encrypted storage, such as the browser core, answers `Unsupported`.
+
 ### Trinity stack descriptors
 
 A stack descriptor describes one deployment of chains and services, as
