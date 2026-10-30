@@ -635,17 +635,22 @@ request touching the app or the crates its bindings come from;
 `.github/hosts.json` names those inputs. A pull request that changes only those
 crates skips both when main already passed the tests against the same bindings.
 Pull requests from forks and from Dependabot skip it, since the Macs are shared
-and Dependabot runs get no secrets, and so does the merge queue. A push to main
-that touches those inputs runs the same suite through `ios-main.yml`, outside
-`CI Status`, and publishes the core pull requests reuse. `preview` is
+and Dependabot runs get no secrets, and so does the merge queue. So do drafts and
+pull requests into another pull request's branch, which run it once they are
+ready and target main or a release branch. `on-label.yml` runs it before then
+for a pull request labelled `ci:ios-tests`, outside `CI Status`. A pull request
+retargeted to main when its base merges keeps its earlier result until it is
+pushed, or closed and reopened. A push to main that touches those inputs runs
+the same suite through `ios-main.yml`, outside `CI Status`, and publishes the
+core pull requests reuse. `preview` is
 macOS time no check needs, so `on-label.yml` builds it once the pull request is
 labelled `ci:ios-simulator`. The same workflow's
 `TrUAPIHost package (Swift + WebKit)` job compiles the TrUAPIHost and
 TrUAPIProvider packages against the core the app jobs share, on a pull request
 touching their inputs, which the `swift` package in `.github/hosts.json` names,
 and runs their network permission tests. Like the rest of the iOS app it skips
-fork and Dependabot pull requests and the merge queue. The first time a
-pull request touches the iOS or Android app, `build-label-hint.yml` comments with
+fork, Dependabot, draft and stacked pull requests and the merge queue. The first
+time a pull request touches the iOS or Android app, `build-label-hint.yml` comments with
 the labels that build it: `ci:ios-simulator`, `ci:ios-device` and
 `ci:android-device`.
 
