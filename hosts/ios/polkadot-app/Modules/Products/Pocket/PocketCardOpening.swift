@@ -9,24 +9,30 @@ import UIKit
 /// executable served here. The origin stays the product's base domain, so the
 /// card sees the same grants and storage its worker does.
 @MainActor
-enum PocketCardOpening {
-    static func open(
-        _ card: PocketCardViewModel,
-        flowState: SPAFlowState,
-        navigator: ModuleNavigating,
-        pocket: ProductPocketService
-    ) {
+struct PocketCardOpening {
+    let flowState: SPAFlowState
+    let navigator: ModuleNavigating
+    let pocket: ProductPocketService
+
+    func open(_ card: PocketCardViewModel, pageQuery: String = "") {
+        guard
+            let url = card.key.launchUrl(pageQuery: pageQuery),
+            let page = flowState.hostProvider.page(url: url)
+        else { return }
+
         navigator.openWallet { wallet, wasOnScreen in
             // A second screen would take the open card's page and leave it blank.
-            guard !pocket.cardHosts.isOnDisplay(card.key) else { return }
+            guard !pocket.cardHosts.isOnDisplay(card.key) else {
+                let widgetURL = debugWidgetURL(for: card.key, pageQuery: pageQuery)
+                pocket.cardHosts.reload(card.key, at: pageQuery) { view in
+                    if let widgetURL { view.navigate(to: widgetURL) } else { view.navigate(to: page) }
+                }
+                return
+            }
 
-            guard
-                let url = card.key.launchUrl,
-                let page = flowState.hostProvider.page(url: url),
-                let product = pocket.cardHosts.product(for: card.key, make: { surface in
-                    makeView(for: card, page: page, surface: surface, flowState: flowState)
-                })
-            else { return }
+            guard let product = pocket.cardHosts.product(for: card.key, pageQuery: pageQuery, make: { surface in
+                makeView(for: card, page: page, pageQuery: pageQuery, surface: surface)
+            }) else { return }
 
             let origin = wallet.viewControllers.first as? PocketCardOrigin
             let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
@@ -46,12 +52,7 @@ enum PocketCardOpening {
 
     /// A link may name a card the Pocket does not hold, which is the one case
     /// the user is told about rather than silently taken into the product.
-    static func open(
-        link: PocketDeeplink,
-        flowState: SPAFlowState,
-        navigator: ModuleNavigating,
-        pocket: ProductPocketService
-    ) {
+    func open(link: PocketDeeplink) {
         let key = PocketCardKey(productId: link.productHost, cardId: link.cardId)
 
         Task { @MainActor in
@@ -60,19 +61,19 @@ enum PocketCardOpening {
                 return
             }
 
-            open(card, flowState: flowState, navigator: navigator, pocket: pocket)
+            open(card, pageQuery: link.pageQuery)
         }
     }
 }
 
 private extension PocketCardOpening {
-    static func makeView(
+    func makeView(
         for card: PocketCardViewModel,
         page: ProductPage,
-        surface: PocketCardSurface,
-        flowState: SPAFlowState
+        pageQuery: String,
+        surface: PocketCardSurface
     ) -> SPAViewProtocol? {
-        let widgetURL = debugWidgetURL(for: card.key)
+        let widgetURL = debugWidgetURL(for: card.key, pageQuery: pageQuery)
         let configuration = SPAConfiguration(
             title: card.title,
             isRootScreen: false,
@@ -88,9 +89,9 @@ private extension PocketCardOpening {
             : SPAViewFactory.createRustView(configuration: configuration, flowState: flowState)
     }
 
-    static func debugWidgetURL(for key: PocketCardKey) -> URL? {
+    func debugWidgetURL(for key: PocketCardKey, pageQuery: String) -> URL? {
         #if DEBUG
-            return DebugPocketCards().widgetURL(for: key)
+            return DebugPocketCards().widgetURL(for: key, pageQuery: pageQuery)
         #else
             return nil
         #endif
