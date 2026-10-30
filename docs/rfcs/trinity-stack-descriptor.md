@@ -241,14 +241,16 @@ schemes.
   ([RFC 6761](https://www.rfc-editor.org/rfc/rfc6761#section-6.3)). It suits a stack run on that machine, such as
   `http://localhost:5173/`.
 
-A reader opens a dotNS name on the stack's `web-gateway` as follows. The name is lowercase labels joined by dots, each
-following the rule for `tld`, and readers refuse any other. A name ending in `.` and the stack's `tld` loses that
-suffix. A name of one label then opens at the gateway URL with the label and a dot prepended to its host. A gateway's
-wildcard certificate covers one label only, so a name of several labels opens at the gateway URL with the name appended
-to its path. Both keep the gateway URL's query: on `https://testnet.li/?network=previewnet`, `my-app.testnet` opens at
-`https://my-app.testnet.li/?network=previewnet` and `sub.my-app.testnet` at
-`https://testnet.li/sub.my-app?network=previewnet`. Reference resolution of the name against the gateway URL drops the
-query, so it does not give these URLs.
+A `web-gateway` MUST resolve names against this stack's dotNS, since a reader cannot check what its query selects. A
+reader opens a dotNS name on the first `web-gateway` URL as follows. The name is lowercase labels joined by dots, each
+following the rule for `tld`. A name of one label is relative to the stack. A name of several labels MUST end in `.` and
+the stack's `tld`, which it then loses, so `my-app.dot` on a stack whose `tld` is `testnet` is refused rather than
+opened as a subname under `dot`. Readers refuse any other name. What is left, if one label, opens at the gateway URL
+with the label and a dot prepended to its host. A gateway's wildcard certificate covers one label only, so what is left,
+if several labels, opens at the gateway URL with them appended to its path. Both keep the gateway URL's query: on
+`https://testnet.li/?network=previewnet`, `my-app.testnet` opens at `https://my-app.testnet.li/?network=previewnet` and
+`sub.my-app.testnet` at `https://testnet.li/sub.my-app?network=previewnet`. Reference resolution of the name against the
+gateway URL drops the query, so it does not give these URLs.
 
 A chain has two kinds of chain spec, for two kinds of reader:
 
