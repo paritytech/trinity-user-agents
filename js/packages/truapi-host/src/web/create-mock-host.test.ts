@@ -616,6 +616,69 @@ describe("createMockHost TestHostAPI parity", () => {
     expect(
       seeded!._unsafeUnwrap().rooms.map((room: ChatRoom) => room.roomId),
     ).toEqual(["alpha", "mike", "zulu"]);
+    // The core checks a room against the one-time read, so it must list the
+    // same rooms as the subscription.
+    const listed = await host.callbacks.chat!.listChatRooms!(product);
+    expect(listed.rooms.map((room: ChatRoom) => room.roomId)).toEqual([
+      "alpha",
+      "mike",
+      "zulu",
+    ]);
+  });
+
+  it("keeps the declarations of each chat room until the room is deleted", async () => {
+    // The Rust `MockPlatform::chat_room_declarations` gives the same view, so
+    // a test reads the declarations of a room on either host.
+    const host = createMockHost();
+    const product = {
+      productId: "p",
+      executionKind: { tag: "Unknown" } as const,
+    };
+    const config = {
+      productSource: true,
+      reactionDetails: false,
+      reportSeen: true,
+    };
+    await host.callbacks.chat!.setChatRoomConfig!(product, {
+      roomId: "main",
+      config,
+    });
+
+    expect(host.chatRoomDeclarations("main")).toEqual({ feed: [], config });
+    expect(host.chatRoomDeclarations("other")).toBeUndefined();
+    expect(
+      await host.callbacks.chat!.readChatRoomConfig!(product, "main"),
+    ).toEqual(config);
+
+    await host.callbacks.chat!.deleteChatRoom!(product, { roomId: "main" });
+    expect(host.chatRoomDeclarations("main")).toBeUndefined();
+  });
+
+  it("deletes the messages of a deleted chat room", async () => {
+    // The Rust `MockPlatform::delete_chat_room` also removes them, so a test
+    // reads the same message log on the two hosts.
+    const host = createMockHost();
+    const product = {
+      productId: "p",
+      executionKind: { tag: "Unknown" } as const,
+    };
+    for (const roomId of ["main", "other"]) {
+      await host.callbacks.chat!.createChatRoom(product, roomId, {
+        roomIdSource: roomId,
+        name: roomId,
+        icon: "https://example.invalid/i.png",
+      });
+      await host.callbacks.chat!.postChatMessage(product, {
+        roomId,
+        payload: { tag: "Text", value: { text: "hi" } },
+      });
+    }
+
+    await host.callbacks.chat!.deleteChatRoom!(product, { roomId: "main" });
+
+    expect(host.getChatMessageLog().map((message) => message.roomId)).toEqual([
+      "other",
+    ]);
   });
 
   it("simulateDisconnect ends a live response stream, not just the status", async () => {
@@ -873,6 +936,11 @@ describe("createMockHost TestHostAPI parity", () => {
         payload: { tag: "Text", value: { text: "hi" } },
       }),
     ).rejects.toThrow("chat down");
+    // A failed room read is not an empty room list. If the core gets an empty
+    // list, it accepts the delete of a room that still exists.
+    await expect(chat.callbacks.chat!.listChatRooms!(product)).rejects.toThrow(
+      "chat down",
+    );
     // The subscription reports the same fault rather than opening a stream
     // that looks healthy and never carries a room.
     const rooms = chat.callbacks.chat!.subscribeChatRooms();
