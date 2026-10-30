@@ -362,6 +362,10 @@ pub enum NftPurseCreateChequeError {
 	ItemNotFound,
 	/// Some item is in use.
 	ItemUnavailable,
+	/// `items` is empty.
+	NoItems,
+	/// This product already created a cheque with the same id.
+	OperationExists,
 	/// Any other failure.
 	Other(GenericError),
 }

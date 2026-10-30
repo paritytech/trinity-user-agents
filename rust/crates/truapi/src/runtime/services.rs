@@ -30,9 +30,10 @@ use crate::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::{
+	encrypted_storage::EncryptedStorage,
 	installation::InstallationIdProvider,
 	nft::{HoldingTracker, NftLedger},
-	nft_purse::NftPurses,
+	nft_purse::{NftPurses, NftPursesDeps},
 };
 use truapi::latest;
 
@@ -105,6 +106,10 @@ pub struct RuntimeServices {
 	/// Provider of the installation id NFT purse item keys are derived under.
 	#[cfg(not(target_arch = "wasm32"))]
 	installation_provider: OnceLock<Arc<dyn InstallationIdProvider>>,
+	/// Host storage encrypted at rest, for secrets the core database must not
+	/// hold.
+	#[cfg(not(target_arch = "wasm32"))]
+	encrypted_storage: OnceLock<Arc<dyn EncryptedStorage>>,
 	/// Host observer told whether durable work is pending. Unset leaves
 	/// recovery to whoever calls it.
 	#[cfg(not(target_arch = "wasm32"))]
@@ -199,6 +204,8 @@ impl RuntimeServices {
 			holding_tracker: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			installation_provider: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			encrypted_storage: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			durable_work_observer: OnceLock::new(),
 			asset_hub_chain_genesis_hash,
@@ -442,10 +449,26 @@ impl RuntimeServices {
 		self.installation_provider.get().cloned()
 	}
 
-	/// NFT purses, once their ledger is installed.
+	/// Install the host storage encrypted at rest. Set-once; returns whether
+	/// this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_encrypted_storage(&self, storage: Arc<dyn EncryptedStorage>) -> bool {
+		self.encrypted_storage.set(storage).is_ok()
+	}
+
+	/// The host storage encrypted at rest, once installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn encrypted_storage(&self) -> Option<Arc<dyn EncryptedStorage>> {
+		self.encrypted_storage.get().cloned()
+	}
+
+	/// NFT purses, once their ledger and the encrypted storage are installed.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn nft_purses(&self) -> Option<NftPurses> {
-		self.nft_ledger.get().cloned().map(NftPurses::new)
+		let ledger = self.nft_ledger.get().cloned()?;
+		let db = self.core_db.get().cloned()?;
+		let encrypted = self.encrypted_storage.get().cloned()?;
+		Some(NftPurses::new(NftPursesDeps { ledger, db, encrypted }))
 	}
 
 	/// Install the host's durable work observer. Returns whether this call

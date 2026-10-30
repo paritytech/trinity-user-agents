@@ -61,6 +61,8 @@ private fun TrUAPIConfirmation.NftPurseDrain.Destination.toDetail() = when (this
         detail(RCommon.string.truapi_confirm_label_nft_to_purse, "$purse")
     is TrUAPIConfirmation.NftPurseDrain.Destination.ExternalKey ->
         detail(RCommon.string.truapi_confirm_label_nft_to_key, keyHex)
+    TrUAPIConfirmation.NftPurseDrain.Destination.Cheque ->
+        detailRes(RCommon.string.truapi_confirm_label_nft_to, RCommon.string.truapi_confirm_value_nft_cheque)
 }
 
 private fun TrUAPIConfirmation.Prompt.build(

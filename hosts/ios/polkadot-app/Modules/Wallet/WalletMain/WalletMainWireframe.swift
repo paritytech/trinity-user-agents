@@ -21,7 +21,7 @@ final class WalletMainWireframe: WalletMainWireframeProtocol, AlertPresentable {
     func showPocketCard(_ card: PocketCardViewModel, from view: WalletMainViewProtocol?) {
         guard let pocket = ProductPocketService.current else { return }
 
-        PocketCardOpening.open(card, origin: view, flowState: flowState, navigator: moduleNavigator, pocket: pocket)
+        PocketCardOpening(flowState: flowState, navigator: moduleNavigator, pocket: pocket).open(card, origin: view)
     }
 
     func confirmPocketCardRemoval(_: PocketCardViewModel, onConfirm: @escaping () -> Void) {

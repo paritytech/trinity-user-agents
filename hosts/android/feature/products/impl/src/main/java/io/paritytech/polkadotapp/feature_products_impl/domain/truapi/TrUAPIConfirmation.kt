@@ -85,6 +85,9 @@ sealed interface TrUAPIConfirmation {
 
             /** A key outside every purse, as hex. */
             data class ExternalKey(val keyHex: String) : Destination
+
+            /** A cheque the product hands to another user. */
+            data object Cheque : Destination
         }
     }
 }

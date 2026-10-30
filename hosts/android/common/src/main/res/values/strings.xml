@@ -911,7 +911,7 @@
     <string name="splash_waiting_for_network_title">Waiting for network connection…</string>
     <string name="splash_waiting_for_network_message">Turn off Airplane Mode or check your internet</string>
 
-    <string name="pocket_digital_dollar_title">%1$s</string>
+    <string name="pocket_digital_dollar_title">Purse</string>
     <string name="pocket_digital_dollar_faucet_top_up">Faucet Top Up</string>
     <string name="pocket_collectibles_open_button">View collectibles</string>
     <string name="pocket_collectibles_title">Collectibles</string>
@@ -1025,6 +1025,8 @@
     <string name="truapi_confirm_label_nft_item_count">Items</string>
     <string name="truapi_confirm_label_nft_to_purse">To purse</string>
     <string name="truapi_confirm_label_nft_to_key">To key</string>
+    <string name="truapi_confirm_label_nft_to">To</string>
+    <string name="truapi_confirm_value_nft_cheque">A cheque for another user</string>
     <string name="truapi_confirm_value_nft_owner_you">Your account</string>
     <string name="truapi_confirm_requested_by">Requested by %1$s</string>
     <string name="truapi_confirm_approve">Approve</string>
