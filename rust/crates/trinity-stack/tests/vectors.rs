@@ -12,7 +12,10 @@ use curve25519_dalek::{
 use serde_json::{Value, json};
 use sha2::{Digest, Sha512};
 use std::{collections::BTreeMap, fs, path::PathBuf};
-use trinity_stack::{Descriptor, Fetched, Pointer, accept, open, public_key, sign};
+use trinity_stack::{
+	CurrentStack, Descriptor, FetchRequest, Fetched, Pointer, Refresh, Served, StackReader, accept,
+	open, public_key, sign,
+};
 
 const SECRET: [u8; 32] = [7; 32];
 const OTHER_SECRET: [u8; 32] = [9; 32];
@@ -869,6 +872,217 @@ fn link_cases() -> Vec<(&'static str, String, Value)> {
 	]
 }
 
+const NEW_GENERATION: &str = "2026-10-15T00:00:00Z";
+
+/// The signed copies the refresh cases fetch and bundle, by file.
+fn refresh_documents() -> Vec<(&'static str, Vec<u8>)> {
+	let at = |sequence: u64, edit: &dyn Fn(&mut Value)| {
+		signed(&with(|value| {
+			value["sequence"] = json!(sequence);
+			edit(value);
+		}))
+	};
+	vec![
+		("refresh/41.json", at(41, &|_| {})),
+		("refresh/42.json", at(42, &|_| {})),
+		("refresh/43.json", at(43, &|value| value["name"] = json!("Renamed"))),
+		(
+			"refresh/43-new-generation.json",
+			at(43, &|value| value["generation"] = json!(NEW_GENERATION)),
+		),
+		("refresh/44.json", at(44, &|_| {})),
+	]
+}
+
+/// The refresh cases of the reference `StackReader`: a policy, the copies a reader starts from,
+/// and steps in order, each with what the reader answers. They pin this crate's choices where
+/// the RFC leaves a reader its own, so they are informative, unlike `cases.json`. `serves` names
+/// the copy in use by its `sequence`, null when the caller waits. `stores` is whether the reader
+/// handed back bytes to store. A `restart` starts a new reader from its build copy and what the
+/// last step stored.
+fn refresh_cases() -> Vec<Value> {
+	let fetch = |etag: Option<&str>| json!({ "ifNoneMatch": etag });
+	let get = |now: i64, serves: Option<u64>, fetch: Value| json!({ "get": now, "expect": { "serves": serves, "fetch": fetch } });
+	let fetched = |document: Option<&str>, etag: Option<&str>, now: i64, expect: Value| json!({ "fetched": { "document": document, "etag": etag, "notModified": false }, "now": now, "expect": expect });
+	let not_modified = |now: i64, expect: Value| json!({ "fetched": { "document": null, "etag": null, "notModified": true }, "now": now, "expect": expect });
+	let outcome = |status: &str, serves: u64, stores: bool| json!({ "status": status, "serves": serves, "stores": stores, "newGeneration": false });
+	let case = |name: &str, refresh: Value, build: Option<&str>, steps: Vec<Value>| json!({ "name": name, "pointer": { "url": URL, "key": key() }, "refresh": refresh, "build": build, "steps": steps });
+	let max_age = json!({ "maxAge": 3600 });
+	vec![
+		case(
+			"never-serves-the-build-copy-until-requested",
+			json!("never"),
+			Some("refresh/42.json"),
+			vec![
+				get(NOW, Some(42), Value::Null),
+				get(NOW + 86_400, Some(42), Value::Null),
+				json!({ "due": NOW + 86_400, "expect": false }),
+				json!({ "refresh": NOW, "expect": { "fetch": fetch(None) } }),
+				json!({ "refresh": NOW, "expect": { "fetch": null } }),
+				fetched(Some("refresh/43.json"), None, NOW, outcome("updated", 43, true)),
+				get(NOW, Some(43), Value::Null),
+			],
+		),
+		case(
+			"once-waits-for-the-first-fetch-and-shares-it",
+			json!("once"),
+			Some("refresh/42.json"),
+			vec![
+				get(NOW, None, fetch(None)),
+				get(NOW, None, Value::Null),
+				fetched(Some("refresh/43.json"), None, NOW, outcome("updated", 43, true)),
+				get(NOW, Some(43), Value::Null),
+				get(NOW + 86_400, Some(43), Value::Null),
+			],
+		),
+		case(
+			"once-uses-its-copy-when-the-server-is-down",
+			json!("once"),
+			Some("refresh/42.json"),
+			vec![
+				get(NOW, None, fetch(None)),
+				fetched(None, None, NOW, outcome("unreachable", 42, false)),
+				get(NOW, Some(42), Value::Null),
+			],
+		),
+		case(
+			"max-age-serves-at-once-and-refreshes-behind",
+			max_age.clone(),
+			Some("refresh/42.json"),
+			vec![
+				get(NOW, Some(42), fetch(None)),
+				get(NOW, Some(42), Value::Null),
+				fetched(
+					Some("refresh/42.json"),
+					Some("\"a\""),
+					NOW,
+					outcome("unchanged", 42, true),
+				),
+				get(NOW + 3_599, Some(42), Value::Null),
+				json!({ "due": NOW + 3_599, "expect": false }),
+				json!({ "due": NOW + 3_600, "expect": true }),
+				get(NOW + 3_600, Some(42), fetch(Some("\"a\""))),
+				not_modified(NOW + 3_600, outcome("unchanged", 42, true)),
+				json!({ "restart": NOW + 3_600, "build": "refresh/42.json" }),
+				get(NOW + 7_199, Some(42), Value::Null),
+				get(NOW + 7_200, Some(42), fetch(Some("\"a\""))),
+			],
+		),
+		case(
+			"max-age-waits-a-full-period-after-a-failure",
+			max_age.clone(),
+			Some("refresh/42.json"),
+			vec![
+				get(NOW, Some(42), fetch(None)),
+				fetched(None, None, NOW, outcome("unreachable", 42, false)),
+				get(NOW + 3_599, Some(42), Value::Null),
+				get(NOW + 3_600, Some(42), fetch(None)),
+			],
+		),
+		case(
+			"a-rollback-uses-the-copy",
+			max_age.clone(),
+			Some("refresh/42.json"),
+			vec![
+				get(NOW, Some(42), fetch(None)),
+				fetched(Some("refresh/41.json"), None, NOW, outcome("rollback", 42, false)),
+				get(NOW, Some(42), Value::Null),
+			],
+		),
+		case(
+			"a-failed-conditional-fetch-is-followed-by-a-plain-one",
+			max_age.clone(),
+			Some("refresh/42.json"),
+			vec![
+				get(NOW, Some(42), fetch(None)),
+				fetched(
+					Some("refresh/42.json"),
+					Some("\"a\""),
+					NOW,
+					outcome("unchanged", 42, true),
+				),
+				get(NOW + 3_600, Some(42), fetch(Some("\"a\""))),
+				fetched(None, None, NOW + 3_600, outcome("unreachable", 42, true)),
+				get(NOW + 7_200, Some(42), fetch(None)),
+			],
+		),
+		case(
+			"a-fetch-time-ahead-of-the-clock-is-due",
+			max_age.clone(),
+			Some("refresh/42.json"),
+			vec![
+				get(NOW + 86_400, Some(42), fetch(None)),
+				fetched(
+					Some("refresh/42.json"),
+					None,
+					NOW + 86_400,
+					outcome("unchanged", 42, true),
+				),
+				json!({ "restart": NOW, "build": "refresh/42.json" }),
+				get(NOW, Some(42), fetch(None)),
+				get(NOW + 1, Some(42), Value::Null),
+			],
+		),
+		json!({
+			"name": "an-unsigned-store-never-moves-back-past-its-build-copy",
+			"pointer": { "url": URL, "key": null },
+			"refresh": "never",
+			"build": "refresh/42.json",
+			"steps": [
+				{ "refresh": NOW, "expect": { "fetch": fetch(None) } },
+				fetched(Some("refresh/43.json"), None, NOW, outcome("updated", 43, true)),
+				{ "restart": NOW, "build": "refresh/44.json" },
+				get(NOW, Some(44), Value::Null),
+				{ "restart": NOW, "build": "refresh/42.json" },
+				get(NOW, Some(43), Value::Null),
+			],
+		}),
+		case(
+			"without-a-copy-every-policy-waits-and-asks-again",
+			json!("never"),
+			None,
+			vec![
+				get(NOW, None, fetch(None)),
+				get(NOW, None, Value::Null),
+				fetched(None, None, NOW, json!({ "error": "unreachable" })),
+				get(NOW, None, fetch(None)),
+				not_modified(NOW, json!({ "error": "unreachable" })),
+				get(NOW, None, fetch(None)),
+				fetched(Some("refresh/42.json"), None, NOW, outcome("updated", 42, true)),
+				get(NOW, Some(42), Value::Null),
+			],
+		),
+		case(
+			"the-store-moves-a-stack-forward-from-its-build-copy-never-back",
+			json!("never"),
+			Some("refresh/42.json"),
+			vec![
+				json!({ "refresh": NOW, "expect": { "fetch": fetch(None) } }),
+				fetched(Some("refresh/43.json"), Some("\"b\""), NOW, outcome("updated", 43, true)),
+				json!({ "restart": NOW, "build": "refresh/42.json" }),
+				get(NOW, Some(43), Value::Null),
+				json!({ "refresh": NOW, "expect": { "fetch": fetch(Some("\"b\"")) } }),
+				json!({ "restart": NOW, "build": "refresh/44.json" }),
+				get(NOW, Some(44), Value::Null),
+			],
+		),
+		case(
+			"a-new-generation-is-reported",
+			json!("never"),
+			Some("refresh/42.json"),
+			vec![
+				json!({ "refresh": NOW, "expect": { "fetch": fetch(None) } }),
+				fetched(
+					Some("refresh/43-new-generation.json"),
+					None,
+					NOW,
+					json!({ "status": "updated", "serves": 43, "stores": true, "newGeneration": true }),
+				),
+			],
+		),
+	]
+}
+
 /// `minimal()`, whose `tld` is `local`, with this `web-gateway`, or none.
 fn with_web_gateway(gateway: Option<&str>) -> Value {
 	let mut value = minimal();
@@ -965,6 +1179,9 @@ fn generate() -> BTreeMap<PathBuf, Vec<u8>> {
 		.into_iter()
 		.map(|(name, link, expect)| json!({ "name": name, "link": link, "expect": expect }))
 		.collect();
+	for (path, bytes) in refresh_documents() {
+		file(path.into(), bytes);
+	}
 	let web_urls: Vec<Value> = web_url_cases()
 		.into_iter()
 		.map(|(name, gateway, dotns_name, expect)| {
@@ -976,6 +1193,9 @@ fn generate() -> BTreeMap<PathBuf, Vec<u8>> {
 	let mut cases = serde_json::to_vec_pretty(&cases).unwrap();
 	cases.push(b'\n');
 	files.insert(PathBuf::from("cases.json"), cases);
+	let mut refresh = serde_json::to_vec_pretty(&refresh_cases()).unwrap();
+	refresh.push(b'\n');
+	files.insert(PathBuf::from("refresh.json"), refresh);
 	files
 }
 
@@ -1116,5 +1336,76 @@ fn every_vector_gets_its_verdict() {
 			Ok(url) => json!({ "url": url }),
 		};
 		assert_eq!(outcome, case["expect"], "{}", case["name"]);
+	}
+}
+
+/// Runs the reference reader's refresh cases, as the JS driver of the same crate does.
+#[test]
+fn every_refresh_case_gets_its_answers() {
+	let cases: Value =
+		serde_json::from_slice(&fs::read(vectors_dir().join("refresh.json")).unwrap()).unwrap();
+	let file = |path: &Value| path.as_str().map(|path| fs::read(vectors_dir().join(path)).unwrap());
+	for case in cases.as_array().unwrap() {
+		run_refresh(case, file);
+	}
+}
+
+/// Runs a refresh vector's steps, checking each answer.
+fn run_refresh(case: &Value, file: impl Fn(&Value) -> Option<Vec<u8>>) {
+	let name = case["name"].as_str().unwrap();
+	let pointer = pointer_of(case);
+	let refresh = match &case["refresh"] {
+		Value::String(policy) if policy == "never" => Refresh::Never,
+		Value::String(policy) if policy == "once" => Refresh::Once,
+		policy => Refresh::MaxAge(policy["maxAge"].as_u64().unwrap()),
+	};
+	let start = |build: &Value, stored: Option<&[u8]>| {
+		let mut reader = StackReader::new(refresh);
+		reader.load(&pointer, file(build).as_deref(), stored).unwrap();
+		reader
+	};
+	let mut stored: Option<Vec<u8>> = None;
+	let mut reader = start(&case["build"], None);
+	let fetch_of = |request: Option<FetchRequest>| {
+		request.map_or(Value::Null, |request| json!({ "ifNoneMatch": request.if_none_match }))
+	};
+	let sequence =
+		|current: Option<CurrentStack>| current.map(|current| current.stack.descriptor.sequence);
+	for (index, step) in case["steps"].as_array().unwrap().iter().enumerate() {
+		let at = |key: &str| step[key].as_i64().unwrap();
+		let outcome = if step.get("get").is_some() {
+			let read = reader.get(&pointer, at("get"));
+			json!({ "serves": sequence(read.current), "fetch": fetch_of(read.fetch) })
+		} else if step.get("refresh").is_some() {
+			json!({ "fetch": fetch_of(reader.refresh(&pointer, at("refresh"))) })
+		} else if step.get("due").is_some() {
+			json!(reader.due(at("due")).contains(&pointer.stack_id()))
+		} else if let Some(served) = step.get("fetched") {
+			let document = file(&served["document"]);
+			let served = match (&document, served["notModified"].as_bool().unwrap()) {
+				(_, true) => Served::NotModified,
+				(Some(bytes), false) => Served::Document { bytes, etag: served["etag"].as_str() },
+				(None, false) => Served::Unreachable,
+			};
+			match reader.fetched(&pointer, served, at("now")) {
+				Err(error) => json!({ "error": error.code() }),
+				Ok(refreshed) => {
+					let stores = refreshed.stored.is_some();
+					stored = refreshed.stored.or(stored);
+					json!({
+						"status": refreshed.accepted.status.code(),
+						"serves": refreshed.accepted.stack.descriptor.sequence,
+						"stores": stores,
+						"newGeneration": refreshed.accepted.new_generation,
+					})
+				},
+			}
+		} else if step.get("restart").is_some() {
+			reader = start(&step["build"], stored.as_deref());
+			continue;
+		} else {
+			panic!("{name} step {index}: unknown step {step}");
+		};
+		assert_eq!(outcome, step["expect"], "{name} step {index}");
 	}
 }
