@@ -178,20 +178,28 @@ fn pgas_balance_key(asset_id: u32, who: &[u8; 32]) -> Vec<u8> {
 /// existing allowance alone should not burn one topping up an account that is
 /// already warm. "Warm" is a whole `PgasClaimAmount` rather than any balance at
 /// all: a dust balance is not what the claim would have provided.
-///
-/// `AssetAccount` leads with its `u128` balance, which is all this needs.
 pub async fn holds_a_full_claim(
 	rpc: &RpcClient,
 	metadata: &Metadata,
 	target: &[u8; 32],
 ) -> Result<bool, StatementAllowanceError> {
-	let asset_id = metadata.constant_u32("Pgas", "PgasAssetId")?;
 	let claim_amount = metadata.constant_u128("Pgas", "PgasClaimAmount")?;
-	let Some(bytes) = rpc.get_storage(&pgas_balance_key(asset_id, target)).await? else {
-		return Ok(false);
+	Ok(pgas_balance(rpc, metadata, target).await? >= claim_amount)
+}
+
+/// `who`'s PGAS balance, 0 when the account holds none.
+///
+/// `AssetAccount` leads with its `u128` balance, which is all this needs.
+pub async fn pgas_balance(
+	rpc: &RpcClient,
+	metadata: &Metadata,
+	who: &[u8; 32],
+) -> Result<u128, StatementAllowanceError> {
+	let asset_id = metadata.constant_u32("Pgas", "PgasAssetId")?;
+	let Some(bytes) = rpc.get_storage(&pgas_balance_key(asset_id, who)).await? else {
+		return Ok(0);
 	};
-	let balance = u128::decode(&mut &bytes[..]).map_err(PgasError::BalanceDecode)?;
-	Ok(balance >= claim_amount)
+	Ok(u128::decode(&mut &bytes[..]).map_err(PgasError::BalanceDecode)?)
 }
 
 /// Claim one PGAS allowance for `target`, proving membership in the
