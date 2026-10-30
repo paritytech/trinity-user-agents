@@ -19,7 +19,7 @@ use std::{
 	time::Instant,
 };
 
-use core::{future::Future, time::Duration};
+use core::{future::Future, ops::ControlFlow, time::Duration};
 
 use futures::{
 	FutureExt, Stream, StreamExt,
@@ -59,6 +59,7 @@ use crate::{
 		sso_service::{Dispatch, SsoWithdrawals},
 		statement_store_rpc::{self, StatementSubmitError},
 	},
+	time::{Backoff, retry},
 	unix_time::current_unix_secs as statement_current_unix_secs,
 };
 use replay::{ReplayExecution, SsoReplayLocks, SsoReplayScope, execute_once};
@@ -70,13 +71,15 @@ const SSO_ENCRYPTION_DOMAIN: &[u8] = b"sso";
 const MAX_DECODE_FAILURE_REQUEST_IDS: usize = 1024;
 
 /// Times a session statement is sent again while the People chain cannot be
-/// reached. The pause doubles from [`FIRST_RESEND_DELAY`], so the responder
-/// keeps trying for about 15 seconds before the session ends.
+/// reached. With [`RESEND_PAUSES`], the responder keeps trying for about 15
+/// seconds before the session ends.
 const MAX_RESENDS: u32 = 4;
+
+/// Pauses between sends of a session statement the People chain did not answer.
 #[cfg(not(test))]
-const FIRST_RESEND_DELAY: Duration = Duration::from_secs(1);
+const RESEND_PAUSES: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(8));
 #[cfg(test)]
-const FIRST_RESEND_DELAY: Duration = Duration::from_millis(1);
+const RESEND_PAUSES: Backoff = Backoff::new(Duration::from_millis(1), Duration::from_millis(8));
 
 fn derive_responder_identity(
 	entropy: &[u8],
@@ -845,22 +848,28 @@ async fn publish(
 	statement: Vec<u8>,
 	label: &'static str,
 ) -> Result<(), String> {
-	let mut delay = FIRST_RESEND_DELAY;
-	for _ in 0..MAX_RESENDS {
-		match services.statement_store.submit_sso(statement.clone(), label).await {
-			Err(StatementSubmitError::Unreachable(reason)) => {
-				warn!(label, %reason, "People chain unreachable; sending the statement again");
-				futures_timer::Delay::new(delay).await;
-				delay *= 2;
-			},
-			result => return result.map_err(|error| error.to_string()),
-		}
-	}
-	services
-		.statement_store
-		.submit_sso(statement, label)
-		.await
-		.map_err(|error| error.to_string())
+	let mut pauses = RESEND_PAUSES;
+	let mut sends = 0;
+	retry(
+		|| {
+			sends += 1;
+			let can_resend = sends <= MAX_RESENDS;
+			let statement = statement.clone();
+			async move {
+				match services.statement_store.submit_sso(statement, label).await {
+					Err(StatementSubmitError::Unreachable(reason)) if can_resend => {
+						ControlFlow::Continue(reason)
+					},
+					result => ControlFlow::Break(result.map_err(|error| error.to_string())),
+				}
+			}
+		},
+		|reason| {
+			warn!(label, %reason, "People chain unreachable; sending the statement again");
+			pauses.next_pause()
+		},
+	)
+	.await
 }
 
 fn duplicate_request_exit(incoming: &IncomingSsoRequest) -> Option<ResponderExit> {
