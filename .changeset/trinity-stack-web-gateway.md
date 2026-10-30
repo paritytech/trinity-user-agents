@@ -1,5 +1,6 @@
 ---
 "@parity/trinity-stack": minor
+"@parity/truapi": minor
 ---
 
 Descriptors can name a `web-gateway`, the gateway that serves the sites of the stack's dotNS names, and an

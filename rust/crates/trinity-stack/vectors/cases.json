@@ -1106,7 +1106,7 @@
         ],
         "tld": "local"
       },
-      "dotnsName": "sub.my-app",
+      "dotnsName": "sub.my-app.local",
       "expect": {
         "url": "http://localhost:5173/sub.my-app?network=previewnet"
       },
@@ -1271,7 +1271,7 @@
         ],
         "tld": "local"
       },
-      "dotnsName": "sub.my-app",
+      "dotnsName": "sub.my-app.local",
       "expect": {
         "url": "https://gateway.example/gw/sub.my-app?n=x"
       },
@@ -1467,6 +1467,72 @@
         "error": "invalid-name"
       },
       "name": "name-with-path"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "https://testnet.li/?network=previewnet"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": "sub.my-app",
+      "expect": {
+        "error": "invalid-name"
+      },
+      "name": "subname-without-tld"
+    },
+    {
+      "descriptor": {
+        "$v": 1,
+        "chains": [
+          {
+            "genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+            "role": "Relay",
+            "rpc": [
+              "ws://127.0.0.1:9944"
+            ]
+          }
+        ],
+        "generation": "g",
+        "id": "local",
+        "name": "Local",
+        "network": "local",
+        "sequence": 0,
+        "services": [
+          {
+            "kind": "web-gateway",
+            "urls": [
+              "https://testnet.li/?network=previewnet"
+            ]
+          }
+        ],
+        "tld": "local"
+      },
+      "dotnsName": "my-app.dot",
+      "expect": {
+        "error": "invalid-name"
+      },
+      "name": "name-with-another-tld"
     }
   ]
 }

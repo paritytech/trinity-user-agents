@@ -836,7 +836,7 @@ fn web_url_cases() -> Vec<(&'static str, Option<&'static str>, &'static str, Val
 		(
 			"local-path-form-keeps-port",
 			local,
-			"sub.my-app",
+			"sub.my-app.local",
 			url("http://localhost:5173/sub.my-app?network=previewnet"),
 		),
 		(
@@ -866,7 +866,7 @@ fn web_url_cases() -> Vec<(&'static str, Option<&'static str>, &'static str, Val
 		(
 			"path-form-under-gateway-path",
 			nested,
-			"sub.my-app",
+			"sub.my-app.local",
 			url("https://gateway.example/gw/sub.my-app?n=x"),
 		),
 		("no-gateway", None, "my-app", json!({ "url": null })),
@@ -874,7 +874,9 @@ fn web_url_cases() -> Vec<(&'static str, Option<&'static str>, &'static str, Val
 		("name-empty-label", previewnet, "a..b", invalid.clone()),
 		("name-empty", previewnet, "", invalid.clone()),
 		("name-only-tld", previewnet, ".local", invalid.clone()),
-		("name-with-path", previewnet, "my-app/x", invalid),
+		("name-with-path", previewnet, "my-app/x", invalid.clone()),
+		("subname-without-tld", previewnet, "sub.my-app", invalid.clone()),
+		("name-with-another-tld", previewnet, "my-app.dot", invalid),
 	]
 }
 

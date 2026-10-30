@@ -219,17 +219,21 @@ impl Descriptor {
 	}
 
 	/// The URL a dotNS name opens at on the stack's most preferred `web-gateway`, or `None` when
-	/// the stack names none. Fails with [`Error::InvalidName`] when the name is not lowercase
-	/// labels joined by dots. A name ending in the stack's `tld` loses it; any other is used as
-	/// given. A one-label name goes in front of the gateway's host, the only level its wildcard
-	/// certificate covers, and a longer one after its path.
+	/// the stack names none. The name is one label, or several ending in the stack's `tld`; fails
+	/// with [`Error::InvalidName`] otherwise, so `my-app.dot` on a `testnet` stack is refused
+	/// rather than opened as a subname under `dot`. A one-label name goes in front of the
+	/// gateway's host, the only level its wildcard certificate covers, and a longer one after its
+	/// path.
 	pub fn web_url(&self, name: &str) -> Result<Option<String>, Error> {
-		let bare = name
-			.strip_suffix(self.tld.as_str())
-			.and_then(|rest| rest.strip_suffix('.'))
-			.unwrap_or(name);
+		let invalid = || Error::InvalidName(name.to_owned());
+		let bare =
+			match name.strip_suffix(self.tld.as_str()).and_then(|rest| rest.strip_suffix('.')) {
+				Some(rest) => rest,
+				None if !name.contains('.') => name,
+				None => return Err(invalid()),
+			};
 		if !bare.split('.').all(is_label) {
-			return Err(Error::InvalidName(name.to_owned()));
+			return Err(invalid());
 		}
 		let Some(gateway) = self
 			.services
@@ -247,7 +251,7 @@ impl Descriptor {
 				.push(bare);
 		} else {
 			let host = format!("{bare}.{}", url.host_str().unwrap_or_default());
-			url.set_host(Some(&host)).map_err(|_| Error::InvalidName(name.to_owned()))?;
+			url.set_host(Some(&host)).map_err(|_| invalid())?;
 		}
 		Ok(Some(url.into()))
 	}
