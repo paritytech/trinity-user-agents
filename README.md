@@ -314,8 +314,9 @@ key the product chooses and return; `observeOperationStatus` follows it by that
 key until it is `Cleared` or `Incomplete`. Each transfer is a scheduled durable
 transaction: a fee-less `Scarcity::transfer` signed by the item key when it is
 submitted, and proven landed when its instance is at the destination. What
-each transfer spends is recorded in `nft_consumption`, and a failed transfer
-frees its item again. Transferring items out of Root's or another product's
+each transfer spends is recorded in `nft_consumption`, whether the key is one
+of ours or a cheque key, and a key a live transfer spends cannot be spent by
+another. A failed transfer frees its item again. Transferring items out of Root's or another product's
 purse asks the user through the `NftPurseDrain` confirmation review.
 
 `createReceiveKey` makes a random X25519 key for a receiver. Its secret goes to
@@ -334,15 +335,20 @@ keys of the purse the product names, under the cheque id, and returns;
 its receive key's secret, and only the product that made the key may deposit
 it, into the key's purse (`PurseMismatch` otherwise). A `Static` cheque opens
 with the host's static receive key, which `staticReceiveKey` returns so a
-product can publish it; for now it is the user's chat key, and any product may
-deposit such a cheque into any purse. The item secrets go to encrypted storage
+product can publish it; for now it is the user's chat key, so it is returned
+only with the user's `getUserId` identity disclosure consent. Any product may
+deposit such a cheque into any purse, but a cheque whose items another deposit
+already moves answers `ItemsInUse`, whichever product deposits it and under
+whatever id. The item secrets go to encrypted storage after those checks and
 before the moves are registered, so each move is signed from its stored secret
 after a restart too. A move waits up to an hour for its cheque key to hold an
 NFT, so a product need not wait for the sender's mint itself.
 
 `revokeCheque` moves the items at the keys of a cheque the product created
 back into fresh keys of the purse they left; another product's cheque answers
-`ChequeNotFound`. Revoking again moves only the keys whose last move failed.
+`ChequeNotFound`. Revoking again moves only the keys whose last move failed,
+and a cheque whose keys a deposit on this device already moves answers
+`ItemsInUse`.
 `refund` moves the items a product deposited from a cheque back to the
 cheque's keys, once every move of the deposit finalized or failed
 (`DepositInProgress` before that), and the sender can then revoke them.

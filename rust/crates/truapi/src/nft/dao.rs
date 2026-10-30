@@ -162,6 +162,25 @@ pub fn key_standings(
 	Ok(rows.collect::<Result<_, _>>()?)
 }
 
+const MOVING_KEYS: &str = concat!(
+	"SELECT DISTINCT spent.key AS key FROM nft_consumption AS spent
+	JOIN durable_tx AS tx ON tx.id = spent.tx
+	WHERE spent.kind = 'INPUT' AND tx.status IN ",
+	live_statuses!(),
+	" AND spent.key IN rarray(:keys)"
+);
+
+/// Those of `keys` that a live transaction moves, whether the key is ours or
+/// one imported from a cheque.
+pub fn moving_keys(conn: &Connection, keys: &[ItemKey]) -> Result<Vec<ItemKey>, DbError> {
+	let mut statement = conn.prepare_cached(MOVING_KEYS)?;
+	let key_values: Rc<Vec<Value>> =
+		Rc::new(keys.iter().map(|key| Value::Blob(key.0.to_vec())).collect());
+	let rows = statement
+		.query_map(named_params! { ":keys": key_values }, |row| Ok(ItemKey(row.get("key")?)))?;
+	Ok(rows.collect::<Result<_, _>>()?)
+}
+
 const INSERT_INPUT: &str =
 	"INSERT INTO nft_consumption (key, kind, tx) VALUES (:key, 'INPUT', :tx)";
 

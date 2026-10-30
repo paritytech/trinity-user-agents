@@ -1,19 +1,22 @@
 //! Imports: moves of NFTs from keys the host did not derive, such as the keys
 //! of a deposited cheque, into fresh keys of one purse.
 
-use rusqlite::Transaction;
+use std::collections::BTreeSet;
+
+use rusqlite::{Connection, Transaction};
 use truapi::latest::GenericError;
 
 use super::{
 	keys::{ImportedItemKey, ItemKey},
 	operation::{
-		DestinationKeys, OperationKey, StartOperationError, allocate_destinations, nft_domain,
+		DestinationKeys, OperationKey, StartOperationError, allocate_destinations,
+		validate_not_moving, validate_operation_unused,
 	},
 	purse::PurseId,
 	scarcity::{TransferParams, TransferSigner},
 };
 use crate::{
-	durable::{PolicyParams, RegistrationError, group_exists},
+	durable::{PolicyParams, RegistrationError},
 	unix_time::current_unix_secs,
 };
 
@@ -45,13 +48,14 @@ pub enum StartImportError {
 
 /// What the registration write needs to plan an import: its keys without
 /// their secrets.
+#[derive(Clone)]
 pub struct ImportPlan {
 	/// The operation the imports form.
 	pub operation: OperationKey,
 	/// The purse the items go into.
 	pub into: PurseId,
 	/// The keys the items are moved from.
-	pub sources: Vec<ItemKey>,
+	pub sources: BTreeSet<ItemKey>,
 }
 
 impl ImportRequest {
@@ -62,18 +66,27 @@ impl ImportRequest {
 	}
 }
 
+/// Refuses `plan` when its operation is already registered or a live
+/// transaction already moves one of its keys, such as another deposit of the
+/// same cheque.
+pub fn validate_imports_can_start(
+	conn: &Connection,
+	plan: &ImportPlan,
+) -> Result<(), StartOperationError> {
+	validate_operation_unused(conn, &plan.operation)?;
+	validate_not_moving(conn, &plan.sources)
+}
+
 /// Works out, inside the registration write, the params of each move of
-/// `plan`, or refuses: the operation exists, or destination keys cannot be
-/// allocated in its purse. A move names no instance until its source is seen
-/// holding one.
+/// `plan`, in the order of its keys, or refuses: the plan cannot start, or
+/// destination keys cannot be allocated in its purse. A move names no
+/// instance until its source is seen holding one.
 pub fn plan_imports(
 	tx: &Transaction<'_>,
 	plan: &ImportPlan,
 	keys: DestinationKeys<'_>,
 ) -> Result<Vec<PolicyParams>, StartOperationError> {
-	if group_exists(tx, &nft_domain(), plan.operation.group())? {
-		return Err(StartOperationError::OperationExists);
-	}
+	validate_imports_can_start(tx, plan)?;
 	let destinations = allocate_destinations(tx, plan.into, plan.sources.len(), keys)?;
 	let give_up_after = current_unix_secs() + IMPORT_WAIT_LIMIT_SECS;
 	let moves = plan.sources.iter().zip(destinations);
@@ -184,7 +197,11 @@ mod tests {
 		let params = stored_params(&importer);
 		let sources: Vec<_> = params.iter().map(|params| params.source).collect();
 		let destinations: BTreeSet<_> = params.iter().map(|params| params.destination).collect();
-		let expected_sources: Vec<_> = (0..2).map(|index| imported_test_key(index).key()).collect();
+		let expected_sources: Vec<_> = (0..2)
+			.map(|index| imported_test_key(index).key())
+			.collect::<BTreeSet<_>>()
+			.into_iter()
+			.collect();
 		assert_eq!(sources, expected_sources);
 		assert_eq!(destinations.len(), 2);
 		for params in &params {
@@ -221,6 +238,27 @@ mod tests {
 		));
 		let moves = block_on(importer.ledger.observe_operation(&operation(1)).next()).unwrap();
 		assert_eq!(moves.unwrap().len(), 1);
+	}
+
+	/// Only one move of a key can land, so a key another import moves is
+	/// refused, before any secret of the refused import is stored.
+	#[test]
+	fn an_import_of_a_key_another_import_moves_is_refused_before_storing_secrets() {
+		let importer = importer();
+		block_on(importer.ledger.start_imports(import_request(operation(1), INTO, 1))).unwrap();
+
+		let overlapping =
+			block_on(importer.ledger.start_imports(import_request(operation(2), INTO, 2)));
+
+		let moved = imported_test_key(0).key();
+		assert!(matches!(
+			overlapping,
+			Err(StartImportError::Registration(RegistrationError::Hook(
+				StartOperationError::ItemUnavailable(key)
+			))) if key == moved
+		));
+		let unmoved = block_on(importer.imported.secret_of(&imported_test_key(1).key())).unwrap();
+		assert!(unmoved.is_none());
 	}
 
 	/// Items go only into a purse that exists, and a refused import registers
