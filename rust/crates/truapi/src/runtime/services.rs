@@ -150,6 +150,24 @@ pub struct RuntimeServices {
 }
 
 impl RuntimeServices {
+	/// The host reports that `product_id`'s worker stopped without being
+	/// asked to. While something holds it, it is started again once the
+	/// ledger's backoff for its run of crashes has passed.
+	pub fn worker_exited(self: &Arc<Self>, product_id: &crate::platform::ProductId) {
+		let Some(wait_ms) = self.worker_ledger.exited(product_id, crate::current_unix_millis())
+		else {
+			return;
+		};
+		let services = Arc::downgrade(self);
+		let product_id = product_id.clone();
+		(self.spawner)(Box::pin(async move {
+			futures_timer::Delay::new(core::time::Duration::from_millis(wait_ms)).await;
+			if let Some(services) = services.upgrade() {
+				services.worker_ledger.restart(&product_id);
+			}
+		}));
+	}
+
 	/// Build role-neutral runtime services from the platform, the host
 	/// identity reported to products, the People-chain genesis hash used by
 	/// statement-store backed protocols, the Bulletin-chain genesis hash used
