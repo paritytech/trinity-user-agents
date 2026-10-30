@@ -77,6 +77,12 @@ add up to 19 s on card, 47 s on bank and 40 s on crypto inbound, and 12 s, 31 s 
 not show "taking longer" on a normal run. Cents `.33` stretch `RECEIVE` inbound and `SEND` outbound past the ETA, and
 cents `.63` wait a `SEND` before each `PayoutRetrying`.
 
+While a stage waits, the worker reports a `Progress` every 5 seconds for the line under the host's status: `Checked`
+while a card is authorised and captured and a bank transfer arrives and clears, `Confirmations` with the time of the
+last block for a crypto deposit, a `Scheduled` countdown to the end of `CONVERT`, `CREDIT` and `SEND`, and
+`Attempt { n, of: 3 }` for each payout attempt of cents `.63`. The on-chain swap to CASH is shown with the one `Other`
+text, "Swapping PAS for CASH on Paseo People".
+
 ### Stopping a session as if the worker crashed
 
 Cents `.51` to `.54` stop the session once at a kill point, just after an external action and before the step after it
@@ -121,8 +127,8 @@ on network `polkadot`, and watches the account. A short payment is answered with
 mode the session account asks the faucet for a drip after 20 seconds, unless a deposit has started to arrive; a session
 that asked for USDT, USDC or CASH switches to the PAS route first, since the faucet gives only PAS. A real transfer from
 a wallet is taken either way. After 30 minutes with nothing received the session fails as `Expired`. Once the deposit
-is final on Asset Hub the session waits for block confirmations (3 by default), each reported as a `Details` whose
-reference carries the count (`FT-… · 2/3 confirmations`), then reports `PaymentReceived { finalized: true }`. A demo
+is final on Asset Hub the session waits for block confirmations (3 by default), each shown as a `Progress` with
+`Confirmations { done, required }`, then reports `PaymentReceived { finalized: true }`. A demo
 deposit is also named by a mock transaction hash; the worker reads balances, so a wallet transfer's hash is not shown.
 
 **Out, any rail.** `Details`, then `/payout` for where to send the money. The worker calls `payment.request` for the

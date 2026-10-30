@@ -9,6 +9,7 @@ import { beforeEach, expect, mock, test } from "bun:test";
 import type {
   FundingAssignment,
   FundingCancelAnswer,
+  FundingFact,
   FundingUpdate,
 } from "@parity/truapi";
 
@@ -81,6 +82,9 @@ interface World {
   reports: string[];
   /** When the host took each of `reports`, Unix ms. */
   reportedAt: number[];
+  /** The `Progress` facts the host showed, which it keeps apart from the
+   *  session's reports. */
+  progress: FundingFact[];
   core: Core;
   /** The state the session last stored. */
   saved: string | undefined;
@@ -121,6 +125,7 @@ beforeEach(() => {
   world = {
     reports: [],
     reportedAt: [],
+    progress: [],
     core: freshCore(),
     saved: undefined,
     checkpoints: [],
@@ -241,6 +246,10 @@ function reportOpen(update: FundingUpdate): string | undefined {
 const client = {
   fundingProvider: {
     report: ({ intent, update }: { intent: string; update: FundingUpdate }) => {
+      if (update.tag === "Progress") {
+        world.progress.push(update.value.detail.fact);
+        return ok();
+      }
       const fault = world.reportFaults.find((each) => each.tag === update.tag);
       if (fault) {
         world.reportFaults.splice(world.reportFaults.indexOf(fault), 1);
@@ -1218,6 +1227,11 @@ test("a stage that fell due before a restart does not wait again", async () => {
     BANK_CONFIRM_MS,
   );
   expect(tags().at(-1)).toBe("Delivered");
+  expect(world.progress).toContainEqual({ tag: "Checked" });
+  expect(world.progress).toContainEqual({
+    tag: "Other",
+    value: { text: "Swapping PAS for CASH on Paseo People" },
+  });
 });
 
 test("a crypto deposit reports each block confirmation before it counts as final", async () => {
@@ -1237,19 +1251,16 @@ test("a crypto deposit reports each block confirmation before it counts as final
     ).run(),
   ).toBe("ended");
   expect(tags()).toEqual([
-    "Details",
-    "Details",
-    "Details",
     "PaymentReceived",
     "Converting",
     "Crediting",
     "Delivered",
   ]);
   expect(
-    world.reports
-      .slice(0, 3)
-      .map((key) => JSON.parse(key).value.reference.split(" · ")[1]),
-  ).toEqual(["1/3 confirmations", "2/3 confirmations", "3/3 confirmations"]);
+    world.progress
+      .filter((fact) => fact.tag === "Confirmations")
+      .map((fact) => fact.value),
+  ).toEqual([0, 1, 2, 3].map((done) => ({ done, required: 3 })));
 });
 
 test("a payout retried before a restart is not reported as retried again", async () => {

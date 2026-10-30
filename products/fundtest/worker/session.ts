@@ -12,6 +12,7 @@
 import type {
   FundingAssignment,
   FundingCancelAnswer,
+  FundingFact,
   FundingFailure,
   FundingUpdate,
 } from "@parity/truapi";
@@ -108,6 +109,28 @@ const RELEASED_REPORT_ATTEMPTS = 10;
 /** Failed payout attempts the `payout-retry` trigger makes before one goes
  *  through. */
 const PAYOUT_RETRIES = 2;
+/** How often a session waiting out a stage tells the host what it checked,
+ *  so the line under the session's status stays fresh. */
+const PROGRESS_EVERY_MS = 5_000;
+
+/** The line under a session's status while it waits out a stage: the fact,
+ *  and its time, the stage's due time for a countdown, the time of each
+ *  check, or a fixed time. */
+interface StageDetail {
+  fact: FundingFact;
+  at: "due" | "now" | number;
+}
+
+/** A stage the host counts down to. */
+const SCHEDULED: StageDetail = { fact: { tag: "Scheduled" }, at: "due" };
+/** A stage the provider checks on until it is done. */
+const CHECKED: StageDetail = { fact: { tag: "Checked" }, at: "now" };
+
+/** Payout attempt `n` of the `payout-retry` trigger's. */
+const attemptOf = (n: number): FundingFact => ({
+  tag: "Attempt",
+  value: { n, of: PAYOUT_RETRIES + 1 },
+});
 /** How long a cancel offer stays open for the user. */
 const CANCEL_OFFER_MS = 5 * 60_000;
 /** The fee a cancel after money moved costs: 1% of the amount, at least half
@@ -583,13 +606,53 @@ export class Session {
    *  reaches it. The due time is stored before the wait, so a restarted
    *  worker continues the remaining wait, and a stage it finished before the
    *  restart does not wait again. */
-  private async stage(name: string, ms: number): Promise<void> {
+  private async stage(
+    name: string,
+    ms: number,
+    detail?: StageDetail,
+  ): Promise<void> {
     const due = (this.saved.stageAt ??= {});
     if (due[name] === undefined) {
       due[name] = Date.now() + ms;
       await this.save();
     }
-    await this.waitUntil(due[name]);
+    const until = due[name];
+    if (detail === undefined) return this.waitUntil(until);
+    // Shown once even when a restart finds the stage due, so a count the
+    // stage reports is never skipped.
+    do {
+      const { fact, at } = detail;
+      const atMs = at === "due" ? until : at === "now" ? Date.now() : at;
+      await this.progress(fact, atMs);
+      await this.waitUntil(Math.min(until, Date.now() + PROGRESS_EVERY_MS));
+    } while (Date.now() < until);
+  }
+
+  /** Tells the host what the session is doing within its step, once. A
+   *  refusal leaves the line under the status as it was, so it is only
+   *  logged. */
+  private async progress(fact: FundingFact, atMs?: number): Promise<void> {
+    const client = await truapi();
+    await client.fundingProvider
+      .report({
+        intent: this.intent,
+        update: {
+          tag: "Progress",
+          value: {
+            detail: {
+              fact,
+              atMs: atMs === undefined ? undefined : BigInt(atMs),
+            },
+          },
+        },
+      })
+      .match(
+        () => undefined,
+        (error) =>
+          console.info(
+            `[fundtest] ${this.intent}: ${fact.tag} not shown: ${describe(error)}`,
+          ),
+      );
   }
 
   /** Waits until `at`, Unix ms. */
@@ -698,18 +761,25 @@ export class Session {
       await this.awaitFinalDeposit();
       await this.awaitConfirmations();
       await this.report({ tag: "PaymentReceived", value: { finalized: true } });
-      await this.stage("convert", this.inStages.convert);
+      await this.stage("convert", this.inStages.convert, SCHEDULED);
       await this.report({ tag: "Converting" });
       state.phase = "converting";
       await this.save();
     }
     if (state.phase === "converting") {
+      await this.progress(
+        {
+          tag: "Other",
+          value: { text: "Swapping PAS for CASH on Paseo People" },
+        },
+        Date.now(),
+      );
       await this.convert();
       state.phase = "crediting";
       await this.save();
     }
     if (state.phase === "crediting") {
-      await this.stage("credit", this.inStages.credit);
+      await this.stage("credit", this.inStages.credit, SCHEDULED);
       await this.cancelGate();
       await this.credit();
       await this.killAt(4);
@@ -782,13 +852,13 @@ export class Session {
   private async awaitFiatArrival(): Promise<void> {
     const stages = this.inStages;
     if (this.terms.rail === "Card") {
-      await this.stage("authorise", stages.authorise);
+      await this.stage("authorise", stages.authorise, CHECKED);
       await this.report({
         tag: "Details",
         value: { transactionId: `pi_${this.mockId("card", 12)}` },
       });
     }
-    await this.stage("receive", this.arrivalMs(stages.receive));
+    await this.stage("receive", this.arrivalMs(stages.receive), CHECKED);
     if (this.terms.rail === "Bank") {
       await this.report({
         tag: "Details",
@@ -802,21 +872,24 @@ export class Session {
 
   /** The payment becoming final with the provider, once the deposit is on
    *  chain: a card charge settling, a bank transfer clearing, or a crypto
-   *  deposit's block confirmations, which report the count so far in the
-   *  reference of a `Details`. */
+   *  deposit's block confirmations, each shown with the time of its block. */
   private async awaitConfirmations(): Promise<void> {
     const { confirm } = this.inStages;
-    if (this.terms.rail !== "Crypto") return this.stage("confirm", confirm);
-    const needed = CONFIG.cryptoConfirmations;
-    for (let count = 1; count <= needed; count++) {
-      await this.stage(`confirm-${count}`, confirm);
-      await this.report({
-        tag: "Details",
-        value: {
-          reference: `${this.reference} · ${count}/${needed} confirmations`,
-        },
+    if (this.terms.rail !== "Crypto") {
+      return this.stage("confirm", confirm, CHECKED);
+    }
+    const required = CONFIG.cryptoConfirmations;
+    for (let done = 0; done < required; done++) {
+      const lastBlock = this.saved.stageAt?.[`confirm-${done}`];
+      await this.stage(`confirm-${done + 1}`, confirm, {
+        fact: { tag: "Confirmations", value: { done, required } },
+        at: lastBlock ?? "now",
       });
     }
+    await this.progress(
+      { tag: "Confirmations", value: { done: required, required } },
+      Date.now(),
+    );
   }
 
   /** Crypto: the deposit address, until enough has arrived. */
@@ -1335,7 +1408,7 @@ export class Session {
     try {
       const stages = this.outStages;
       if (!state.converted) {
-        await this.stage("convert", stages.convert);
+        await this.stage("convert", stages.convert, SCHEDULED);
         await this.report({ tag: "Converting" }, true);
         state.converted = true;
         await this.save();
@@ -1347,13 +1420,22 @@ export class Session {
       if (this.trigger === "payout-retry") {
         while ((state.retried ?? 0) < PAYOUT_RETRIES) {
           const attempt = state.retried ?? 0;
-          await this.stage(`send-${attempt}`, sendMs);
+          await this.stage(`send-${attempt}`, sendMs, {
+            fact: attemptOf(attempt + 1),
+            at: "due",
+          });
           await this.report({ tag: "PayoutRetrying" }, true);
           state.retried = attempt + 1;
           await this.save();
         }
       }
-      await this.stage("send", sendMs);
+      await this.stage(
+        "send",
+        sendMs,
+        state.retried === undefined
+          ? SCHEDULED
+          : { fact: attemptOf(state.retried + 1), at: "due" },
+      );
       await this.cancelGate();
       if (!state.payoutNamed) {
         await this.report({ tag: "Details", value: this.payoutDetails() });
