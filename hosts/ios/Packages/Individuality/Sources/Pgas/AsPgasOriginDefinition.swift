@@ -9,18 +9,18 @@ public struct AsPgasOriginInput {
     let personDeps: PersonProofDependency
     let proofContext: Data
     let day: UInt32
-    let revision: UInt32
+    let proofParams: MembersProofParams
 
     public init(
         personDeps: PersonProofDependency,
         proofContext: Data,
         day: UInt32,
-        revision: UInt32
+        proofParams: MembersProofParams
     ) {
         self.personDeps = personDeps
         self.proofContext = proofContext
         self.day = day
-        self.revision = revision
+        self.proofParams = proofParams
     }
 }
 
@@ -36,14 +36,8 @@ public final class AsPgasOriginDefinition: ExtrinsicOriginDefining {
         extrinsicVersion: Extrinsic.Version,
         purpose _: ExtrinsicOriginPurpose
     ) -> CompoundOperationWrapper<ExtrinsicOriginDefinitionResponse> {
-        let proofParamsOperation = AsyncTaskOperation { [input] in
-            try await input.personDeps
-                .proofParamsFetcher
-                .fetchParams(blockHash: nil)
-        }
-
         let resultOperation = ClosureOperation<ExtrinsicOriginDefinitionResponse> { [input] in
-            let proofParams = try proofParamsOperation.extractNoCancellableResultData()
+            let proofParams = input.proofParams
 
             let memberKey = try input.personDeps.keyManager.getMemberKey()
             guard proofParams.ringMembers.contains(memberKey) else {
@@ -61,7 +55,7 @@ public final class AsPgasOriginDefinition: ExtrinsicOriginDefining {
             let pgasInfo = PGASPallet.AsPgasInfo(
                 vrfManager: input.personDeps.keyManager,
                 ringIndex: input.personDeps.origin.ringIndex,
-                revision: input.revision,
+                revision: proofParams.revision,
                 proofParams: proofParams,
                 collection: collection,
                 proofContext: input.proofContext,
@@ -84,11 +78,6 @@ public final class AsPgasOriginDefinition: ExtrinsicOriginDefining {
             )
         }
 
-        resultOperation.addDependency(proofParamsOperation)
-
-        return CompoundOperationWrapper(
-            targetOperation: resultOperation,
-            dependencies: [proofParamsOperation]
-        )
+        return CompoundOperationWrapper(targetOperation: resultOperation)
     }
 }

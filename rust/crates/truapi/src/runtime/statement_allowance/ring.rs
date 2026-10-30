@@ -115,7 +115,7 @@ pub struct RingParams {
 	pub exponent: u8,
 	/// Ring index these members belong to.
 	pub ring_index: u32,
-	/// Finalized block hash the ring snapshot was read at.
+	/// People block hash the ring snapshot was read at.
 	pub block_hash: String,
 }
 

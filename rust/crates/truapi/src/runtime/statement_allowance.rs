@@ -495,16 +495,30 @@ pub struct CollectionCandidate {
 	pub entropy: [u8; 32],
 }
 
-// Pin all reads to one finalized block so the membership snapshot is consistent.
+/// People block a ring is located at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RingHead {
+	/// The finalized head, whose snapshot cannot be reorged away.
+	Finalized,
+	/// The best head, which can already hold a revision Asset Hub imported
+	/// before People finalized it.
+	Best,
+}
+
+// Pin all reads to one block so the membership snapshot is consistent.
 async fn find_including_ring(
 	rpc: &RpcClient,
 	metadata: &Metadata,
 	collection: PersonhoodCollection,
 	signer: &dyn PersonhoodSigner,
 	lookback: u32,
+	head: RingHead,
 ) -> Result<Option<RingParams>, StatementAllowanceError> {
 	let member = signer.member(collection)?;
-	let at = rpc.finalized_head().await?;
+	let at = match head {
+		RingHead::Finalized => rpc.finalized_head().await?,
+		RingHead::Best => rpc.best_head().await?,
+	};
 	let exponent = ring::read_ring_exponent(rpc, metadata, collection, &at).await?;
 	let current = ring::read_current_ring_index_at(rpc, collection, &at).await?;
 	let oldest = current.saturating_sub(lookback);
@@ -537,10 +551,22 @@ pub async fn find_including_rings(
 	collections: &[PersonhoodCollection],
 	lookback: u32,
 ) -> Result<Vec<RingParams>, StatementAllowanceError> {
+	find_including_rings_at(rpc, metadata, signer, collections, lookback, RingHead::Finalized).await
+}
+
+/// [`find_including_rings`], reading each ring at the People block `head` names.
+pub async fn find_including_rings_at(
+	rpc: &RpcClient,
+	metadata: &Metadata,
+	signer: &dyn PersonhoodSigner,
+	collections: &[PersonhoodCollection],
+	lookback: u32,
+	head: RingHead,
+) -> Result<Vec<RingParams>, StatementAllowanceError> {
 	let mut memberships = Vec::new();
 	let mut first_error = None;
 	for &collection in collections {
-		match find_including_ring(rpc, metadata, collection, signer, lookback).await {
+		match find_including_ring(rpc, metadata, collection, signer, lookback, head).await {
 			Ok(Some(ring)) => {
 				// A ring whose exponent has no proof domain cannot be proved
 				// against, so it must not enter the set: selecting it would fail
@@ -2005,6 +2031,46 @@ mod tests {
 		assert_eq!(memberships.len(), 1, "LitePeople should still resolve");
 		assert_eq!(memberships[0].collection, PersonhoodCollection::LitePeople);
 		assert_eq!(memberships[0].members, vec![proof::member_key_now(lite_entropy)]);
+	}
+
+	/// A rebuilt PGAS proof needs a revision Asset Hub may hold before People
+	/// finalizes it, so the best-head lookup must read the whole ring at the best
+	/// block rather than at the finalized one.
+	#[test]
+	fn a_best_head_lookup_reads_the_ring_at_the_best_block() {
+		let metadata = test_fixtures::people();
+		let candidates = pooled_candidates();
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
+		let lite_entropy = candidates[1].entropy;
+		let page = format!(r#""0x04{}""#, hex::encode(proof::member_key_now(lite_entropy)));
+		let responses = [
+			r#""0xbe57""#.to_string(),
+			LIVE_LITE_COLLECTION.to_string(),
+			r#""0x00000000""#.to_string(),
+			page,
+			"null".to_string(),
+			"null".to_string(),
+		];
+		let scripted = ScriptedRpc::new(responses.iter().map(String::as_str).collect::<Vec<_>>());
+		let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
+
+		let memberships = futures::executor::block_on(find_including_rings_at(
+			&rpc,
+			metadata,
+			&signer,
+			&[PersonhoodCollection::LitePeople],
+			u32::MAX,
+			RingHead::Best,
+		))
+		.unwrap();
+
+		assert_eq!(memberships[0].block_hash, "0xbe57");
+		let calls = scripted.calls();
+		assert_eq!(calls[0], ("chain_getBlockHash".to_string(), "[]".to_string()));
+		assert!(
+			calls[1..].iter().all(|(_, params)| params.contains("0xbe57")),
+			"every ring read is pinned to the best block: {calls:?}"
+		);
 	}
 
 	/// Every candidate failing is an outage, not an answer. Reporting it as "no

@@ -193,7 +193,8 @@ extension ServiceCoordinator {
 
         let accountManager = ProductsAccountManager(
             entropyManager: RootEntropyManager.shared,
-            allowanceSupport: allowanceSupport
+            allowanceSupport: allowanceSupport,
+            logger: Logger.shared
         )
 
         let turnService = TURNCredentialsService(

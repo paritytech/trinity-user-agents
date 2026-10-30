@@ -183,6 +183,7 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 		PersonhoodCollection::People,
 		ring_index,
 		revision,
+		alloc::pgas::RING_REVISION_WAIT,
 	)
 	.await
 	.context("wait for Asset Hub to import the People ring root revision")?;

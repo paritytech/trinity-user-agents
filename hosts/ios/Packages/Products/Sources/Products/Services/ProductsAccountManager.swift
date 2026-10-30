@@ -3,17 +3,21 @@ import SubstrateSdk
 import KeyDerivation
 import Individuality
 import UIKitExt
+import SDKLogger
 
 public final class ProductsAccountManager: @unchecked Sendable {
     private let accountHolder: ProductAccountHolding
     private let allowanceSupport: AllowanceSupport?
+    private let logger: SDKLoggerProtocol?
 
     public init(
         entropyManager: RootEntropyManaging,
-        allowanceSupport: AllowanceSupport?
+        allowanceSupport: AllowanceSupport?,
+        logger: SDKLoggerProtocol? = nil
     ) {
         accountHolder = ProductAccountHolder(entropyManager: entropyManager)
         self.allowanceSupport = allowanceSupport
+        self.logger = logger
     }
 }
 
@@ -156,6 +160,7 @@ private extension ProductsAccountManager {
                 return .allocated(.smartContractAllowance)
             }
         } catch {
+            logger?.error("Allocating \(resource) for \(productId) failed: \(error)")
             return .notAvailable
         }
     }
