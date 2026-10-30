@@ -118,6 +118,16 @@ class EncryptedTrUAPIStorageTest {
         assertArrayEquals(byteArrayOf(20), encrypted.read(byteArrayOf(1)))
     }
 
+    /** The core records the receive key right after the write, so a secret still in memory could be lost with it. */
+    @Test
+    fun `an encrypted value not written to disk is reported`() = runTest {
+        val encrypted = EncryptedHostValues(prefs.failingCommits())
+
+        val failure = runCatching { encrypted.write(byteArrayOf(1), byteArrayOf(20)) }.exceptionOrNull()
+
+        assertTrue("expected HostRejection, got $failure", failure is HostRejection)
+    }
+
     /** An unknown receive key and an unreadable secret must not look alike to the core. */
     @Test
     fun `an encrypted value that never was stored is a miss, an undecryptable one an error`() = runTest {
@@ -133,16 +143,25 @@ class EncryptedTrUAPIStorageTest {
 
 private class FakeEncryptedPreferences(
     private val dropWrites: Boolean = false,
+    private val failCommits: Boolean = false,
 ) : EncryptedPreferences {
     private val values = mutableMapOf<String, String>()
 
     /** Mirrors EncryptionUtil storing "" when it cannot encrypt. */
     fun swallowingWrites() = FakeEncryptedPreferences(dropWrites = true)
 
+    /** Keeps values in memory, as `apply()` does, but never reaches the disk. */
+    fun failingCommits() = FakeEncryptedPreferences(failCommits = true)
+
     fun corrupt() = values.keys.forEach { values[it] = "" }
 
     override fun putEncryptedString(field: String, value: String) {
         values[field] = if (dropWrites) "" else value
+    }
+
+    override fun putEncryptedStringNow(field: String, value: String): Boolean {
+        putEncryptedString(field, value)
+        return !failCommits
     }
 
     override fun getDecryptedString(field: String): String? = values[field]
