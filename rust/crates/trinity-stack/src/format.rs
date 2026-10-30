@@ -29,6 +29,17 @@ pub fn serialize_bytes<S: serde::Serializer>(
 	serializer.serialize_bytes(bytes)
 }
 
+/// [`serialize_bytes`] for bytes that may be absent: `undefined` in JS.
+pub fn serialize_optional_bytes<S: serde::Serializer>(
+	bytes: &Option<Vec<u8>>,
+	serializer: S,
+) -> Result<S::Ok, S::Error> {
+	match bytes {
+		Some(bytes) => serializer.serialize_bytes(bytes),
+		None => serializer.serialize_none(),
+	}
+}
+
 /// Which schemes a URL may use where it appears.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Schemes {

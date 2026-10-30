@@ -12,6 +12,7 @@
 use std::sync::Arc;
 
 use core::{future::Future, time::Duration};
+use futures::stream::{self, BoxStream, Stream, StreamExt};
 use serde_json::{Value, json};
 
 use crate::platform::{JsonRpcConnection, Platform, ProviderError};
@@ -25,12 +26,21 @@ use tracing::warn;
 use crate::{
 	chain_runtime::{ChainRuntime, RuntimeFailure},
 	host_logic::statement_store::{
-		SUBMIT_STATEMENT_METHOD, SUBSCRIBE_STATEMENT_METHOD, TopicFilterKind,
-		UNSUBSCRIBE_STATEMENT_METHOD, hex_topic,
+		NewStatements, SUBMIT_STATEMENT_METHOD, SUBSCRIBE_STATEMENT_METHOD, StatementBatches,
+		StatementStoreApi, StatementWatchError, TopicFilter, TopicFilterKind,
+		UNSUBSCRIBE_STATEMENT_METHOD, hex_topic, parse_new_statements_result,
+		validated_topic_filter,
 	},
 	host_rpc_client::HostRpcClient,
+	stream_extensions::StreamExtensions as _,
 	subscription::Spawner,
 };
+
+#[cfg(test)]
+mod live_people;
+
+#[cfg(test)]
+pub use live_people::{LIVE_WAIT, LivePeopleStatements};
 
 /// One attempt plus ten retries, 2 s apart, matching the native iOS and Android hosts.
 const SSO_NO_ALLOWANCE_RETRY_ATTEMPTS: usize = 11;
@@ -145,6 +155,118 @@ impl StatementStoreRpc {
 			.map(Arc::from)
 			.map_err(|error| StatementStoreRpcClientError::Connect { label, error })
 	}
+}
+
+#[async_trait::async_trait]
+impl StatementStoreApi for StatementStoreRpc {
+	async fn start_statement_watch(
+		&self,
+		filter: TopicFilter,
+	) -> Result<StatementBatches, StatementWatchError> {
+		let (kind, topics) =
+			validated_topic_filter(filter).map_err(StatementWatchError::NotStarted)?;
+		let rpc_client = self
+			.client("statement-watch")
+			.await
+			.map_err(|error| StatementWatchError::NotStarted(error.to_string()))?;
+		start_statement_watch_over(&rpc_client, kind, &topics).await
+	}
+}
+
+/// Starts watching the statements `kind` and `topics` match over
+/// `rpc_client`, as [`StatementStoreApi::start_statement_watch`] describes.
+async fn start_statement_watch_over(
+	rpc_client: &RpcClient,
+	kind: TopicFilterKind,
+	topics: &[[u8; 32]],
+) -> Result<StatementBatches, StatementWatchError> {
+	let subscription = subscribe(rpc_client, kind, topics)
+		.await
+		.map_err(|error| StatementWatchError::NotStarted(rpc_error_message(error)))?;
+	let subscription_id = subscription
+		.subscription_id()
+		.map(ToString::to_string)
+		.ok_or_else(|| StatementWatchError::NotStarted("the subscription has no id".to_owned()))?;
+	let pages =
+		subscription.map(move |notification| parse_statement_page(&subscription_id, notification));
+	Ok(backlog_then_live_batches(pages).take_until_inclusive(Result::is_err))
+}
+
+/// Joins every page up to and including the first with `remaining == Some(0)`
+/// into one batch, then passes each later page on as its own batch. An `Err`
+/// passes on as it is.
+fn backlog_then_live_batches<E: Send + 'static>(
+	pages: impl Stream<Item = Result<NewStatements, E>> + Send + 'static,
+) -> BoxStream<'static, Result<Vec<Vec<u8>>, E>> {
+	let state = SubscriptionState::CollectingInitial(Vec::new());
+	let batching = BatchedPages { pages: pages.boxed(), state };
+	stream::unfold(batching, BatchedPages::next_batch).boxed()
+}
+
+/// Where a subscription is in delivering its statements.
+enum SubscriptionState {
+	/// Collecting the statements already stored, joined so far.
+	CollectingInitial(Vec<Vec<u8>>),
+	/// The stored statements are delivered; each page is new statements.
+	WatchingUpdates,
+}
+
+/// A subscription's pages, and where it is in delivering them.
+struct BatchedPages<E> {
+	pages: BoxStream<'static, Result<NewStatements, E>>,
+	state: SubscriptionState,
+}
+
+/// The state after one page, and the batch that page completed, if any.
+struct PageOutcome<E> {
+	state: SubscriptionState,
+	batch: Option<Result<Vec<Vec<u8>>, E>>,
+}
+
+impl<E> BatchedPages<E> {
+	/// The next batch, with the pages that yield the ones after it, or `None`
+	/// once the pages end.
+	async fn next_batch(mut self) -> Option<(Result<Vec<Vec<u8>>, E>, Self)> {
+		loop {
+			let page = self.pages.next().await?;
+			let state = core::mem::replace(&mut self.state, SubscriptionState::WatchingUpdates);
+			let outcome = take_page(state, page);
+			self.state = outcome.state;
+			if let Some(batch) = outcome.batch {
+				return Some((batch, self));
+			}
+		}
+	}
+}
+
+/// Adds `page` to the initial statements while they are being collected, and
+/// makes a batch of them once `page` completes them, or of `page` alone after
+/// that.
+fn take_page<E>(state: SubscriptionState, page: Result<NewStatements, E>) -> PageOutcome<E> {
+	let page = match page {
+		Ok(page) => page,
+		Err(error) => return PageOutcome { state, batch: Some(Err(error)) },
+	};
+	let SubscriptionState::CollectingInitial(mut initial) = state else {
+		let batch = Some(Ok(page.statements));
+		return PageOutcome { state: SubscriptionState::WatchingUpdates, batch };
+	};
+	initial.extend(page.statements);
+	if page.remaining == Some(0) {
+		return PageOutcome { state: SubscriptionState::WatchingUpdates, batch: Some(Ok(initial)) };
+	}
+	PageOutcome { state: SubscriptionState::CollectingInitial(initial), batch: None }
+}
+
+/// The page a statement subscription notification carries.
+fn parse_statement_page(
+	subscription_id: &str,
+	notification: Result<Value, subxt_rpcs::Error>,
+) -> Result<NewStatements, StatementWatchError> {
+	let value = notification
+		.map_err(|error| StatementWatchError::Subscription(rpc_error_message(error)))?;
+	parse_new_statements_result(subscription_id.to_string(), &value)
+		.map_err(StatementWatchError::MalformedPage)
 }
 
 /// Subscribe to statements matching the requested topic filter.
@@ -266,11 +388,17 @@ mod tests {
 	};
 	use serde_json::json;
 
-	use super::{StatementStoreRpc, is_no_allowance_rejection};
+	use futures::executor::{block_on, block_on_stream};
+
+	use super::{LIVE_WAIT, LivePeopleStatements, StatementStoreRpc, is_no_allowance_rejection};
 	use crate::{
 		chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
+		host_logic::statement_store::{
+			MAX_MATCH_ALL_TOPICS, NewStatements, StatementStoreApi, StatementWatchError,
+			TopicFilter, hex_topic,
+		},
 		platform::JsonRpcConnection,
-		test_support::{StubPlatform, test_spawner},
+		test_support::{StubPlatform, statement_page_frame, subscribe_ack_frame, test_spawner},
 	};
 
 	const PEOPLE_GENESIS: [u8; 32] = [0x11; 32];
@@ -433,5 +561,154 @@ mod tests {
 		assert!(!is_no_allowance_rejection(
 			r#"statement_submit not accepted: {"reason":"badProof","status":"rejected"}"#
 		));
+	}
+
+	/// A statement store whose subscription connection answers with `frames`.
+	fn watching_statement_store(frames: Vec<String>) -> (StatementStoreRpc, Arc<StubPlatform>) {
+		let platform = Arc::new(StubPlatform { rpc_responses: frames, ..Default::default() });
+		let chain = PeopleChain::new(vec![Upstream::Drops]);
+		let statement_store = StatementStoreRpc::new(
+			platform.clone(),
+			ChainRuntime::new(chain, test_spawner()),
+			PEOPLE_GENESIS,
+			test_spawner(),
+		);
+		(statement_store, platform)
+	}
+
+	/// The watch subscribes with the filter it is given, and hands over the
+	/// stored statements as one batch before each new page.
+	#[test]
+	fn a_statement_watch_subscribes_with_its_filter_and_batches_the_backlog() {
+		let (statement_store, platform) = watching_statement_store(vec![
+			subscribe_ack_frame("truapi:1", "watch"),
+			statement_page_frame("watch", vec![vec![1]], Some(1)),
+			statement_page_frame("watch", vec![vec![2]], Some(0)),
+			statement_page_frame("watch", vec![vec![3]], None),
+		]);
+		let filter = TopicFilter::MatchAll(vec![[7; 32]]);
+
+		let batches = block_on(statement_store.start_statement_watch(filter)).unwrap();
+		let batches = block_on_stream(batches).take(2).map(Result::unwrap).collect::<Vec<_>>();
+
+		assert_eq!(batches, vec![vec![vec![1], vec![2]], vec![vec![3]]]);
+		let sent = platform.sent_rpc.lock().unwrap();
+		let request: serde_json::Value = serde_json::from_str(&sent[0]).unwrap();
+		assert_eq!(request["params"][0], json!({ "matchAll": [hex_topic(&[7; 32])] }));
+	}
+
+	/// A page the node garbled is a failure the reader sees, not a page that
+	/// silently never arrived.
+	#[test]
+	fn a_malformed_page_ends_the_statement_watch_with_an_error() {
+		let malformed = json!({
+			"jsonrpc": "2.0",
+			"method": "statement_subscribeStatement",
+			"params": { "subscription": "watch", "result": { "event": "somethingElse" } },
+		});
+		let (statement_store, platform) = watching_statement_store(vec![
+			subscribe_ack_frame("truapi:1", "watch"),
+			malformed.to_string(),
+			statement_page_frame("watch", vec![vec![1]], Some(0)),
+		]);
+		let filter = TopicFilter::MatchAny(vec![[7; 32]]);
+
+		let batches = block_on(statement_store.start_statement_watch(filter)).unwrap();
+		let mut batches = block_on_stream(batches);
+
+		assert!(matches!(batches.next(), Some(Err(StatementWatchError::MalformedPage(_)))));
+		assert!(batches.next().is_none());
+		let sent = platform.sent_rpc.lock().unwrap();
+		let request: serde_json::Value = serde_json::from_str(&sent[0]).unwrap();
+		assert_eq!(request["params"][0], json!({ "matchAny": [hex_topic(&[7; 32])] }));
+	}
+
+	/// A filter the RPC would refuse fails before any connection opens.
+	#[test]
+	fn a_statement_watch_with_too_many_topics_does_not_start() {
+		let (statement_store, platform) = watching_statement_store(vec![]);
+		let topics = vec![[7; 32]; MAX_MATCH_ALL_TOPICS + 1];
+		let filter = TopicFilter::MatchAll(topics);
+
+		let started = block_on(statement_store.start_statement_watch(filter));
+
+		assert!(matches!(started, Err(StatementWatchError::NotStarted(_))));
+		assert_eq!(platform.chain_connects.lock().unwrap().len(), 0);
+	}
+
+	/// The live People chain answers a watch of a topic nobody uses with one
+	/// empty batch, which is what tells an inbox it caught up. Run with
+	/// `cargo test -p truapi --lib live_statement_watch -- --ignored`.
+	#[tokio::test(flavor = "multi_thread")]
+	#[ignore = "needs the live Paseo People Next chain"]
+	async fn live_statement_watch_of_an_unused_topic_starts_with_one_empty_batch() {
+		let statements = LivePeopleStatements::connect().await;
+		let filter = TopicFilter::MatchAll(vec![rand::random()]);
+
+		let mut batches = statements.start_statement_watch(filter).await.unwrap();
+		let first = tokio::time::timeout(LIVE_WAIT, batches.next()).await;
+
+		assert_eq!(first.unwrap().map(Result::unwrap), Some(vec![]));
+	}
+
+	fn statement_page(statements: &[u8], remaining: Option<u64>) -> Result<NewStatements, String> {
+		let statements = statements.iter().map(|statement| vec![*statement]).collect();
+		Ok(NewStatements { remote_subscription_id: "sub".to_string(), statements, remaining })
+	}
+
+	fn batches_of(pages: Vec<Result<NewStatements, String>>) -> Vec<Result<Vec<Vec<u8>>, String>> {
+		block_on_stream(super::backlog_then_live_batches(futures::stream::iter(pages))).collect()
+	}
+
+	/// A product reading an inbox gets everything already there in one item,
+	/// then each new page as it arrives.
+	#[test]
+	fn the_backlog_is_one_batch_and_each_later_page_its_own() {
+		let pages = vec![
+			statement_page(&[1, 2], Some(1)),
+			statement_page(&[3], Some(0)),
+			statement_page(&[4], None),
+			statement_page(&[5], None),
+		];
+
+		let expected =
+			vec![Ok(vec![vec![1], vec![2], vec![3]]), Ok(vec![vec![4]]), Ok(vec![vec![5]])];
+		assert_eq!(batches_of(pages), expected);
+	}
+
+	/// An empty topic still reports that the backlog is complete.
+	#[test]
+	fn an_empty_backlog_is_one_empty_batch() {
+		let pages = vec![statement_page(&[], Some(0))];
+
+		assert_eq!(batches_of(pages), vec![Ok(vec![])]);
+	}
+
+	/// The node may interleave new statements, which carry no `remaining`,
+	/// with the backlog pages.
+	#[test]
+	fn a_page_without_remaining_before_the_backlog_ends_joins_the_backlog() {
+		let pages = vec![
+			statement_page(&[1], Some(1)),
+			statement_page(&[2], None),
+			statement_page(&[3], Some(0)),
+		];
+
+		assert_eq!(batches_of(pages), vec![Ok(vec![vec![1], vec![2], vec![3]])]);
+	}
+
+	/// A failure must reach the reader, wherever it happens.
+	#[test]
+	fn errors_pass_on_before_and_after_the_backlog() {
+		let failure = "transport".to_string();
+		let pages = vec![
+			statement_page(&[1], Some(1)),
+			Err(failure.clone()),
+			statement_page(&[2], Some(0)),
+			Err(failure.clone()),
+		];
+
+		let expected = vec![Err(failure.clone()), Ok(vec![vec![1], vec![2]]), Err(failure)];
+		assert_eq!(batches_of(pages), expected);
 	}
 }
