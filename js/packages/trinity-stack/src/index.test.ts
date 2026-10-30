@@ -19,6 +19,7 @@ import {
   read,
   sameStack,
   stackId,
+  webUrl,
 } from "./index.js";
 
 const VECTORS = new URL(
@@ -94,6 +95,21 @@ describe("conformance vectors", () => {
       let outcome: unknown;
       try {
         outcome = decodeLink(vector.link);
+      } catch (error) {
+        if (!isTrinityStackError(error)) throw error;
+        outcome = { error: error.code };
+      }
+      expect(outcome).toEqual(vector.expect);
+    });
+  }
+
+  for (const vector of cases.webUrls) {
+    test(`web URL ${vector.name}`, () => {
+      const bytes = new TextEncoder().encode(JSON.stringify(vector.descriptor));
+      const { descriptor } = parse(bytes);
+      let outcome: unknown;
+      try {
+        outcome = { url: webUrl(descriptor, vector.dotnsName) ?? null };
       } catch (error) {
         if (!isTrinityStackError(error)) throw error;
         outcome = { error: error.code };

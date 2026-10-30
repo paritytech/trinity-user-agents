@@ -12,8 +12,18 @@ use std::collections::{BTreeMap, HashSet};
 pub const VERSION: u64 = 1;
 
 /// The service kinds `$v: 1` defines. Readers drop entries of any other kind before validating.
-pub const SERVICE_KINDS: &[&str] =
-	&["dub", "turn", "stun", "ipfs-gateway", "hop", "eth-rpc", "storage-provider", "faucet"];
+pub const SERVICE_KINDS: &[&str] = &[
+	"dub",
+	"turn",
+	"stun",
+	"ipfs-gateway",
+	"hop",
+	"eth-rpc",
+	"storage-provider",
+	"faucet",
+	"web-gateway",
+	"evm-explorer",
+];
 
 /// A validated `$v: 1` descriptor, with unknown fields and service kinds already dropped.
 ///
@@ -64,6 +74,10 @@ pub struct Descriptor {
 	/// Asset Hub contracts readers need that the chains do not point to, by name.
 	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
 	pub contracts: Option<BTreeMap<String, String>>,
+	/// dotNS contract addresses by `DotnsConstants` key, such as `storeFactory`, and
+	/// `protocolRegistry` for the registry itself.
+	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
+	pub dotns: Option<BTreeMap<String, String>>,
 	/// Chain role and instance of the Coinage pallet.
 	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
 	pub coinage: Option<Coinage>,
@@ -208,6 +222,44 @@ impl Descriptor {
 		self.chains.iter().find(|chain| chain.role == role)
 	}
 
+	/// The URL a dotNS name opens at on the stack's most preferred `web-gateway`, or `None` when
+	/// the stack names none. The name is one label, or several ending in the stack's `tld`; fails
+	/// with [`Error::InvalidName`] otherwise, so `my-app.dot` on a `testnet` stack is refused
+	/// rather than opened as a subname under `dot`. A one-label name goes in front of the
+	/// gateway's host, the only level its wildcard certificate covers, and a longer one after its
+	/// path.
+	pub fn web_url(&self, name: &str) -> Result<Option<String>, Error> {
+		let invalid = || Error::InvalidName(name.to_owned());
+		let bare =
+			match name.strip_suffix(self.tld.as_str()).and_then(|rest| rest.strip_suffix('.')) {
+				Some(rest) => rest,
+				None if !name.contains('.') => name,
+				None => return Err(invalid()),
+			};
+		if !bare.split('.').all(is_label) {
+			return Err(invalid());
+		}
+		let Some(gateway) = self
+			.services
+			.iter()
+			.find(|service| service.kind == "web-gateway")
+			.and_then(|service| service.urls.first())
+		else {
+			return Ok(None);
+		};
+		let mut url = format::url(gateway, Schemes::Gateway)?;
+		if bare.contains('.') {
+			url.path_segments_mut()
+				.map_err(|()| Error::InvalidUrl(gateway.clone()))?
+				.pop_if_empty()
+				.push(bare);
+		} else {
+			let host = format!("{bare}.{}", url.host_str().unwrap_or_default());
+			url.set_host(Some(&host)).map_err(|_| invalid())?;
+		}
+		Ok(Some(url.into()))
+	}
+
 	/// Checks the RFC's format rules on known fields.
 	fn validate(&self) -> Result<(), Error> {
 		if self.generation.is_empty() {
@@ -273,12 +325,21 @@ impl Descriptor {
 			if service.urls.is_empty() {
 				return Err(Error::Empty("urls"));
 			}
-			let schemes = if service.kind == "stun" { Schemes::Stun } else { Schemes::Web };
+			let schemes = match service.kind.as_str() {
+				"stun" => Schemes::Stun,
+				"web-gateway" => Schemes::Gateway,
+				_ => Schemes::Web,
+			};
+			// A web gateway's query picks the stack it serves, and readers keep it.
+			let query_allowed = service.kind == "web-gateway";
 			for url in &service.urls {
 				let parsed = format::url(url, schemes)?;
 				let is_http = matches!(parsed.scheme(), "http" | "https");
-				let is_base =
-					url.ends_with('/') && parsed.query().is_none() && parsed.fragment().is_none();
+				// As written: the parser adds a slash to an empty path.
+				let before_query = url.split(['?', '#']).next().unwrap_or_default();
+				let is_base = before_query.ends_with('/') &&
+					parsed.fragment().is_none() &&
+					(query_allowed || parsed.query().is_none());
 				if is_http && service.kind != "eth-rpc" && !is_base {
 					return Err(Error::ServiceUrlNotBase(url.clone()));
 				}
@@ -300,6 +361,20 @@ impl Descriptor {
 		}
 		for address in self.contracts.iter().flat_map(|contracts| contracts.values()) {
 			format::hex_bytes::<20>("contracts", address)?;
+		}
+		if let Some(dotns) = &self.dotns {
+			self.require_chain("AssetHub")?;
+			for (key, address) in dotns {
+				// The protocol registry keys an address by a `bytes32`.
+				if !(1..=32).contains(&key.len()) ||
+					!key.bytes().all(|byte| byte.is_ascii_alphanumeric())
+				{
+					return Err(Error::DotnsKey(key.clone()));
+				}
+				if format::hex_bytes::<20>("dotns", address)? == [0; 20] {
+					return Err(Error::DotnsZeroAddress(key.clone()));
+				}
+			}
 		}
 		Ok(())
 	}

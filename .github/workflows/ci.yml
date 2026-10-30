@@ -354,7 +354,7 @@ jobs:
             fi
           }
 
-          gate workflows '^(\.github/workflows/|\.github/actions/|\.github/labeler\.yml$|\.github/CODEOWNERS$|\.github/hosts\.json$|hosts/[a-z]+/\.github/|scripts/(lint-composite-shell|check-path-routing|ci-gates)\.py$)'
+          gate workflows '^(\.github/workflows/|\.github/actions/|\.github/areas\.yml$|\.github/labels\.yml$|\.github/CODEOWNERS$|\.github/hosts\.json$|hosts/[a-z]+/\.github/|scripts/(lint-composite-shell|check-path-routing|ci-gates)\.py$)'
           # The packaging path has its own inputs: the archive layout in the
           # Makefile, the runner bundle, the generated sources cli-dist refuses
           # to build without, and the dependency set the musl link has to
@@ -1170,8 +1170,8 @@ jobs:
           set -euo pipefail
 
           pr="$(gh pr view "$PR_NUMBER" --json title,labels)"
-          if jq -e '(.title | startswith("release:")) or any(.labels[]; .name == "no-changeset")' <<<"$pr" >/dev/null; then
-            echo "Release PR or explicit no-changeset opt-out."
+          if jq -e '(.title | startswith("release:")) or any(.labels[]; .name == "ci:no-changeset")' <<<"$pr" >/dev/null; then
+            echo "Release PR or an explicit \`ci:no-changeset\` opt-out."
             exit 0
           fi
 
@@ -1180,7 +1180,7 @@ jobs:
             exit 0
           fi
 
-          echo "::error::This change reaches a published artifact but adds no changeset, so it would ship undescribed and at a version level chosen by some other change. Run \`npm run changeset\`, or add the \`no-changeset\` label if it genuinely ships nothing."
+          echo "::error::This change reaches a published artifact but adds no changeset, so it would ship undescribed and at a version level chosen by some other change. Run \`npm run changeset\`, or add the \`ci:no-changeset\` label if it genuinely ships nothing."
           exit 1
 
   ci-status:
