@@ -7,20 +7,24 @@ protocol APSignVrfHandling: Sendable {
 }
 
 typealias SignVrfWalletFactory = @Sendable (ProductAccountId) throws -> RawKeypairProviding
+typealias BlessedProductCheck = @Sendable (ProductId) -> Bool
 
 final class APSignVrfHandler: @unchecked Sendable {
     private let callingProductId: ProductId?
+    private let isBlessed: BlessedProductCheck
     private let confirmationRequester: SignVrfConfirming
     private let walletFactory: SignVrfWalletFactory
     private let logger: LoggerProtocol
 
     init(
         callingProductId: ProductId?,
+        isBlessed: @escaping BlessedProductCheck,
         confirmationRequester: SignVrfConfirming,
         walletFactory: @escaping SignVrfWalletFactory,
         logger: LoggerProtocol
     ) {
         self.callingProductId = callingProductId
+        self.isBlessed = isBlessed
         self.confirmationRequester = confirmationRequester
         self.walletFactory = walletFactory
         self.logger = logger
@@ -52,6 +56,10 @@ private extension APSignVrfHandler {
     }
 
     func confirmSigning(of payload: SignVrfPayload) async throws {
+        if let callingProductId, callingProductId == payload.account.productId, isBlessed(callingProductId) {
+            return
+        }
+
         let request = SignVrfConfirmationRequest(
             callingProductId: callingProductId,
             payload: payload

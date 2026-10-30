@@ -9,9 +9,13 @@ import Testing
 struct APSignVrfHandlerTests {
     let confirmation = MockSignVrfConfirmation()
 
-    func makeHandler(callingProductId: ProductId? = "caller.product") -> APSignVrfHandling {
+    func makeHandler(
+        callingProductId: ProductId? = "caller.product",
+        blessed: Set<ProductId> = []
+    ) -> APSignVrfHandling {
         APSignVrfHandler(
             callingProductId: callingProductId,
+            isBlessed: { blessed.contains($0) },
             confirmationRequester: confirmation,
             walletFactory: {
                 try DynamicDerivedWallet(
@@ -63,6 +67,25 @@ struct APSignVrfHandlerTests {
         let payload = makePayload(productId: "caller.product")
 
         _ = try await makeHandler(callingProductId: "caller.product").signVrf(payload)
+
+        #expect(confirmation.requests.count == 1)
+    }
+
+    @Test("Blessed caller signing with its own account does not prompt")
+    func blessedOwnerSkipsPrompt() async throws {
+        confirmation.decision = .rejected
+        let payload = makePayload(productId: "peopl.testnet")
+
+        _ = try await makeHandler(callingProductId: "peopl.testnet", blessed: ["peopl.testnet"]).signVrf(payload)
+
+        #expect(confirmation.requests.isEmpty)
+    }
+
+    @Test("Blessed caller signing with another product's account still prompts")
+    func blessedCallerForeignAccountPrompts() async throws {
+        let payload = makePayload(productId: "target.product")
+
+        _ = try await makeHandler(callingProductId: "peopl.testnet", blessed: ["peopl.testnet"]).signVrf(payload)
 
         #expect(confirmation.requests.count == 1)
     }
