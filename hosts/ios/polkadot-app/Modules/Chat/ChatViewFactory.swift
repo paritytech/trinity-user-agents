@@ -110,6 +110,14 @@ enum ChatViewFactory {
         presenter.view = view
         interactor.presenter = presenter
 
+        if let productRoom = ChatProductRoomPresenter(chatId: chatId) {
+            productRoom.backgroundObserver = ChatRoomBackgroundObserver(
+                openRoom: { [weak interactor] in interactor?.openRoom() },
+                closeRoom: { [weak interactor] in interactor?.closeRoom() }
+            )
+            presenter.productRoom = productRoom
+        }
+
         flowState.extensionsRegistry.getExtensions(for: chatId).forEach { chatExtension in
             chatExtension.attach(presentationView: view)
         }

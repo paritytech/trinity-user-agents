@@ -2,6 +2,7 @@ import Foundation
 import PolkadotUI
 import Products
 import SubstrateSdk
+import TrUAPIHost
 import UIKitExt
 
 /// A chat extension bot that delegates all behavior to a JavaScript product script.
@@ -13,7 +14,7 @@ import UIKitExt
 ///
 /// This bot just provides the bridge for JS to send messages to the chat.
 /// Each instance is created by ``ProductBotFactory`` for a specific ``Product``.
-final class ProductBot: ChatExtensionBot {
+final class ProductBot: ChatExtensionBot, @unchecked Sendable {
     let product: Product
     private let description: String?
     private let runtime: ChatRuntimeProtocol
@@ -77,6 +78,41 @@ final class ProductBot: ChatExtensionBot {
         initTask = nil
         await runtime.dispose()
         logger.debug("Disposed product bot: \(product.name)")
+    }
+}
+
+// MARK: - Product rooms
+
+extension ProductBot: ProductChatQuerying {
+    func messagesPage(_ request: ProductChatMessagesQueryRequest) async throws -> ProductChatMessagesQueryItem {
+        try await productQuerying().messagesPage(request)
+    }
+
+    func userAction(_ request: ProductChatUserActionRequest) async throws -> ProductChatUserActionItem {
+        try await productQuerying().userAction(request)
+    }
+}
+
+extension ProductBot: ChatRoomLifecycle {
+    /// A runtime without room lifecycle, the native one, holds its worker for the whole session.
+    func open(roomId: String) async throws {
+        try await (runtime as? ChatRoomLifecycle)?.open(roomId: roomId)
+    }
+
+    func close(roomId: String) async {
+        await (runtime as? ChatRoomLifecycle)?.close(roomId: roomId)
+    }
+}
+
+private extension ProductBot {
+    /// The native runtime serves no product-source room, so its rooms show "unavailable".
+    struct UnservedProductQuery: Error {}
+
+    func productQuerying() throws -> ProductChatQuerying {
+        guard let querying = runtime as? ProductChatQuerying else {
+            throw UnservedProductQuery()
+        }
+        return querying
     }
 }
 

@@ -180,6 +180,20 @@ class ProductChatExtensionTest {
         assertTrue(requireNotNull(refCounter.chatSurface).deliverLiveFeedUpdate(ProductChatIdParameter(ROOM), update))
     }
 
+    @Test
+    fun `a room screen opens and closes the room of the product`() = runTest {
+        val worker = RecordingWorker()
+        val extension = extension(FakeRefCounter(worker))
+        withChatHost(ownRooms = flowOf(listOf(room))) { extension.startGlobalWork() }
+
+        val lifecycle = requireNotNull(extension.roomLifecycle(room))
+        lifecycle.open(room)
+        lifecycle.close(room)
+
+        assertEquals(listOf("open" to ProductChatIdParameter(ROOM), "close" to ProductChatIdParameter(ROOM)), worker.roomCalls)
+        assertEquals(null, extension.roomLifecycle(ChatId.forExtension(extensionId)))
+    }
+
     private fun textMessage(text: String) = ChatMessage.new(
         chatId = ChatId.forExtensionRoom(extensionId, ROOM),
         content = ChatMessage.Content.Text(text),
