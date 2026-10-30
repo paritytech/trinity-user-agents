@@ -432,13 +432,8 @@ pub async fn subscribe_statement_topic(
 	until: &CancellationToken,
 ) -> Result<RpcSubscription<Value>, subxt_rpcs::Error> {
 	let topics = [topic];
-	retry_while_halted(
-		&RealTimer,
-		until,
-		|| statement_store_rpc::subscribe_match_all(rpc_client, &topics),
-		says_chain_halted,
-	)
-	.await
+	let subscribe = || statement_store_rpc::subscribe_match_all(rpc_client, &topics);
+	retry_while_halted(subscribe, says_chain_halted, &RealTimer, until).await
 }
 
 /// Adapt a subscription into a page stream, labelling errors with `label`.

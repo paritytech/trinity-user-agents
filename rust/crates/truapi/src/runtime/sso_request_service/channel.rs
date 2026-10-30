@@ -253,17 +253,19 @@ impl SsoRequestService {
 				return Err(SsoRemoteResponseError::LocalDisconnected);
 			}
 			submit_started.store(true, Ordering::Release);
+			let submit_statement = || {
+				statement_store_rpc::submit_sso(
+					&submit_client,
+					statement.clone(),
+					"pairing-host request",
+				)
+			};
+			let reached_no_peer = |reason: &String| statement_store_rpc::reached_no_peer(reason);
 			retry_while_halted(
+				submit_statement,
+				reached_no_peer,
 				&RealTimer,
 				&CancellationToken::default(),
-				|| {
-					statement_store_rpc::submit_sso(
-						&submit_client,
-						statement.clone(),
-						"pairing-host request",
-					)
-				},
-				|reason| statement_store_rpc::reached_no_peer(reason),
 			)
 			.await
 			.map_err(|err| {

@@ -141,13 +141,10 @@ impl RpcClientT for FollowRetryingRpcClient {
 			return self.inner.subscribe_raw(sub, params, unsub);
 		}
 		Box::pin(async move {
-			let result = retry_while_halted(
-				&*self.timer,
-				&CancellationToken::default(),
-				|| self.inner.subscribe_raw(sub, params.clone(), unsub),
-				says_chain_halted,
-			)
-			.await;
+			let follow = || self.inner.subscribe_raw(sub, params.clone(), unsub);
+			let never_cancelled = CancellationToken::default();
+			let result =
+				retry_while_halted(follow, says_chain_halted, &*self.timer, &never_cancelled).await;
 			let error = match result {
 				Ok(subscription) => return Ok(self.recording_failures(subscription)),
 				Err(error) => error,

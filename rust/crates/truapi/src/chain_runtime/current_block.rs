@@ -60,26 +60,25 @@ impl ChainRuntime {
 	) -> Result<OnlineClientAtBlock<SubstrateConfig>, CurrentBlockError> {
 		let latest_connection = &Mutex::new(None::<SubxtConnection>);
 		let never_cancelled = CancellationToken::default();
+		let read_block = || async move {
+			let connection = self.subxt_connection(genesis_hash).await.map_err(|failure| {
+				FailedRead { error: CurrentBlockError::NoConnection(failure), met_a_halt: false }
+			})?;
+			*latest_connection.lock().unwrap() = Some(connection.clone());
+			let halts = connection.follow.halts();
+			connection.client.at_current_block().await.map_err(|error| {
+				let met_a_halt = connection.follow.halts() > halts;
+				FailedRead {
+					error: classify(connection.follow.end(), met_a_halt, &error),
+					met_a_halt,
+				}
+			})
+		};
 		let read = retry_while_halted(
+			read_block,
+			|failed: &FailedRead| failed.met_a_halt,
 			&*self.timer,
 			&never_cancelled,
-			|| async move {
-				let connection =
-					self.subxt_connection(genesis_hash).await.map_err(|failure| FailedRead {
-						error: CurrentBlockError::NoConnection(failure),
-						met_a_halt: false,
-					})?;
-				*latest_connection.lock().unwrap() = Some(connection.clone());
-				let halts = connection.follow.halts();
-				connection.client.at_current_block().await.map_err(|error| {
-					let met_a_halt = connection.follow.halts() > halts;
-					FailedRead {
-						error: classify(connection.follow.end(), met_a_halt, &error),
-						met_a_halt,
-					}
-				})
-			},
-			|failed| failed.met_a_halt,
 		)
 		.map_err(|failed| failed.error)
 		.fuse();

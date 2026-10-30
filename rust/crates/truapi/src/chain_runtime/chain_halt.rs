@@ -35,10 +35,10 @@ pub fn says_chain_halted(error: &RpcError) -> bool {
 /// Cancelling `until` ends a pause and returns the failure that started it,
 /// as a lasting halt does, so check `until` to tell the two apart.
 pub async fn retry_while_halted<Done, Failure, AttemptFuture>(
-	timer: &dyn Timer,
-	until: &CancellationToken,
 	mut attempt: impl FnMut() -> AttemptFuture,
 	is_retryable: impl Fn(&Failure) -> bool,
+	timer: &dyn Timer,
+	until: &CancellationToken,
 ) -> Result<Done, Failure>
 where
 	AttemptFuture: Future<Output = Result<Done, Failure>>,
@@ -111,7 +111,7 @@ mod tests {
 	where
 		Attempt: Future<Output = Result<Answer, RpcError>>,
 	{
-		retry_while_halted(timer, until, attempt, says_chain_halted).await
+		retry_while_halted(attempt, says_chain_halted, timer, until).await
 	}
 
 	/// Only dotli's marker counts. The same error code without it does not.
