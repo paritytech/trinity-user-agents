@@ -44,9 +44,11 @@ class ChatMessageUiMapper @Inject constructor(
         reactions: Map<ChatMessageId, List<ChatMessageReaction>>,
         revisions: Map<ChatMessageId, MessageRevision>,
         customMessageRenderers: Map<String, CustomChatMessageRenderer<*>> = emptyMap(),
-        activeCall: ActiveCallState? = null
+        activeCall: ActiveCallState? = null,
+        /** Replied messages that [messages] does not hold, for the quotes of their replies. */
+        replyQuotes: Map<ChatMessageId, ChatMessage> = emptyMap(),
     ): ImmutableList<ChatMessageUiModel> {
-        val messagesById: Map<String, ChatMessage> = messages.associateBy { it.id }
+        val messagesById: Map<String, ChatMessage> = replyQuotes + messages.associateBy { it.id }
         val callContext = buildCallResolutionContext(messages, activeCall)
 
         return messages.mapNotNull { message ->
