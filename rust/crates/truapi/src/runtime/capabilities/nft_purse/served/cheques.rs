@@ -184,6 +184,9 @@ fn revoke_failure(
 		RegistrationError::Hook(StartOperationError::TagNotFound) => {
 			CallError::Domain(latest::HostNftPurseRevokeChequeError::ChequeNotFound)
 		},
+		RegistrationError::Hook(StartOperationError::ItemUnavailable(_)) => {
+			CallError::Domain(latest::HostNftPurseRevokeChequeError::ItemsInUse)
+		},
 		RegistrationError::UnknownDomain(_) => CallError::Unsupported,
 		other => host_failure(other),
 	}

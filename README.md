@@ -346,7 +346,9 @@ NFT, so a product need not wait for the sender's mint itself.
 
 `revokeCheque` moves the items at the keys of a cheque the product created
 back into fresh keys of the purse they left; another product's cheque answers
-`ChequeNotFound`. Revoking again moves only the keys whose last move failed.
+`ChequeNotFound`. Revoking again moves only the keys whose last move failed,
+and a cheque whose keys a deposit on this device already moves answers
+`ItemsInUse`.
 `refund` moves the items a product deposited from a cheque back to the
 cheque's keys, once every move of the deposit finalized or failed
 (`DepositInProgress` before that), and the sender can then revoke them.

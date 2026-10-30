@@ -382,6 +382,9 @@ pub struct HostNftPurseRevokeChequeRequest {
 pub enum NftPurseRevokeChequeError {
 	/// This product created no cheque with this id.
 	ChequeNotFound,
+	/// Some of the cheque's items are already being moved, such as by a
+	/// deposit of the cheque on this device.
+	ItemsInUse,
 	/// Any other failure.
 	Other(GenericError),
 }

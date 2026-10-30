@@ -11,11 +11,15 @@ use super::{
 	keys::{ItemKey, ItemSlot},
 	operation::{
 		DestinationKeys, OperationKey, StartOperationError, TransferState, allocate_destinations,
-		latest_per_source, nft_domain, progress_of,
+		latest_per_source, nft_domain, progress_of, record_inputs, validate_not_moving,
 	},
 	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams, TransferSigner},
 };
-use crate::{durable, durable::PolicyParams, unix_time::current_unix_secs};
+use crate::{
+	durable,
+	durable::{DurableTxId, PolicyParams},
+	unix_time::current_unix_secs,
+};
 
 /// Reclaims of the keys handed off under `tag`, registered as `operation`.
 /// Registering it again adds moves only for keys whose last move failed.
@@ -29,7 +33,8 @@ pub struct ReclaimRequest {
 /// Works out, inside the registration write, one move for each key handed
 /// off under `request.tag` that has no move in the operation yet or whose
 /// latest move failed. Answers no move when every key is moving or moved,
-/// and refuses when nothing was handed off under the tag.
+/// and refuses when nothing was handed off under the tag, or when another
+/// operation, such as a deposit of the cheque, moves one of those keys.
 pub fn plan_reclaims(
 	tx: &Transaction<'_>,
 	request: &ReclaimRequest,
@@ -44,6 +49,8 @@ pub fn plan_reclaims(
 	if sources.is_empty() {
 		return Ok(Vec::new());
 	}
+	let source_keys = sources.iter().map(|(key, _)| *key).collect();
+	validate_not_moving(tx, &source_keys)?;
 	let destinations = allocate_destinations(tx, purse, sources.len(), keys)?;
 	let give_up_after = current_unix_secs() + TRANSFER_WAIT_LIMIT_SECS;
 	Ok(sources
@@ -53,6 +60,19 @@ pub fn plan_reclaims(
 			reclaim_params(source, slot, destination, give_up_after)
 		})
 		.collect())
+}
+
+/// Records that each move of `operation` with an id of `ids`, just
+/// registered, spends its key.
+pub fn record_reclaim_inputs(
+	tx: &Transaction<'_>,
+	operation: &OperationKey,
+	ids: &[DurableTxId],
+) -> Result<(), StartOperationError> {
+	let group = durable::group(tx, &nft_domain(), operation.group())?;
+	let registered = group.into_iter().filter(|state| ids.contains(&state.id)).collect();
+	let sources = progress_of(registered)?.into_iter().map(|transfer| transfer.consumed);
+	record_inputs(tx, sources, ids)
 }
 
 /// The keys of `handed_off` that `operation` has not moved yet, or whose
@@ -107,8 +127,9 @@ mod tests {
 	use crate::{
 		durable::{DurableTxId, RegistrationError},
 		nft::{
-			HandoffRequest, NftLedger, PurseId, PurseTag, TransferProgress, item_keys_from_entropy,
-			keys::ItemIndex,
+			HandoffRequest, ImportRequest, NftLedger, PurseId, PurseTag, StartImportError,
+			TransferProgress, item_keys_from_entropy,
+			keys::{ImportedItemKey, ItemIndex, item_secrets_from_entropy},
 			testing::{
 				TEST_ENTROPY, TEST_INSTALLATION, allocate_held_items, fail_transfer,
 				stored_transfer_params, test_ledger,
@@ -151,6 +172,23 @@ mod tests {
 		tag: HandoffTag,
 	) -> Result<(), RegistrationError<StartOperationError>> {
 		block_on(ledger.start_reclaims(ReclaimRequest { operation: operation(), tag }))
+	}
+
+	/// Imports the handed-off keys with their secrets, as a deposit of the
+	/// cheque on this device does.
+	fn deposit_cheque(ledger: &NftLedger) -> Result<(), StartImportError> {
+		let slots: Vec<_> = (0..2)
+			.map(|index| ItemSlot {
+				purse: PURSE,
+				installation: TEST_INSTALLATION,
+				index: ItemIndex(index),
+			})
+			.collect();
+		let secrets = item_secrets_from_entropy(&TEST_ENTROPY, &slots).unwrap();
+		let keys = secrets.into_iter().map(|secret| ImportedItemKey::from_secret(secret).unwrap());
+		let operation = OperationKey::new(b"depositor", [8; 32]);
+		let request = ImportRequest { operation, into: PURSE, keys: keys.collect() };
+		block_on(ledger.start_imports(request))
 	}
 
 	fn transfers_of(ledger: &NftLedger) -> Vec<TransferProgress> {
@@ -229,6 +267,38 @@ mod tests {
 			.map(|transfer| transfer.state)
 			.collect();
 		assert_eq!(states, vec![TransferState::Waiting, TransferState::Waiting]);
+	}
+
+	/// Only one move of a key can land, so a revoke must not race a deposit of
+	/// the same cheque on this device.
+	#[test]
+	fn a_reclaim_of_keys_a_deposit_moves_is_refused() {
+		let handed_off = handed_off();
+		deposit_cheque(&handed_off.ledger).unwrap();
+
+		let refused = reclaim(&handed_off.ledger, tag());
+
+		assert!(matches!(
+			refused,
+			Err(RegistrationError::Hook(StartOperationError::ItemUnavailable(_)))
+		));
+	}
+
+	/// A reclaim records what it spends, so a later deposit of the cheque on
+	/// this device sees the keys are moving.
+	#[test]
+	fn a_deposit_of_keys_a_reclaim_moves_is_refused() {
+		let handed_off = handed_off();
+		reclaim(&handed_off.ledger, tag()).unwrap();
+
+		let refused = deposit_cheque(&handed_off.ledger);
+
+		assert!(matches!(
+			refused,
+			Err(StartImportError::Registration(RegistrationError::Hook(
+				StartOperationError::ItemUnavailable(_)
+			)))
+		));
 	}
 
 	/// A cheque of another product, or one never created, is not found.

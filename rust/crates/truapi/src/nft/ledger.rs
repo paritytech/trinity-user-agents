@@ -21,7 +21,7 @@ use super::{
 		validate_can_start,
 	},
 	purse::{CreatePurseError, PurseId, PurseRecord, PurseTag},
-	reclaim::{ReclaimRequest, plan_reclaims},
+	reclaim::{ReclaimRequest, plan_reclaims, record_reclaim_inputs},
 	returns::{
 		ReturnRequest, StartedReturn, plan_returns, read_return_items, validated_return_items,
 	},
@@ -232,18 +232,23 @@ impl NftLedger {
 	/// Registers, under `request.operation`, one move for each key handed off
 	/// under `request.tag` that has no move yet or whose latest move failed,
 	/// each into a fresh key of the purse it was handed off from. Registers
-	/// nothing when every key is moving or moved. Each move waits for its key
-	/// to hold an NFT for up to 30 minutes from now.
+	/// nothing when every key is moving or moved, and records that each move
+	/// spends its key. Each move waits for its key to hold an NFT for up to 30
+	/// minutes from now.
 	pub async fn start_reclaims(
 		&self,
 		request: ReclaimRequest,
 	) -> Result<(), RegistrationError<StartOperationError>> {
 		let installation = self.current_installation().await?;
-		let group = request.operation.group().clone();
+		let operation = request.operation.clone();
+		let group = operation.group().clone();
 		let planned = self.planned_in_write(group, installation, move |tx, keys| {
 			plan_reclaims(tx, &request, keys)
 		});
-		self.durable.execute_with(planned, |_, _| Ok(())).await.map(|_| ())
+		let record = move |tx: &rusqlite::Transaction<'_>, ids: &[_]| {
+			record_reclaim_inputs(tx, &operation, ids)
+		};
+		self.durable.execute_with(planned, record).await.map(|_| ())
 	}
 
 	/// Once every move of `request.import` is final, registers under
