@@ -69,8 +69,8 @@ releases. A build can add to the list but never remove from it. Only a Built-in 
 name a reserved value.
 
 - A build pins, from the bundled copy of each stack allowed reserved values, what a refresh must not change: its genesis
-  hashes, TLD, `assets`, `contracts`, `coinage` and the relay's light-sync checkpoint. A refresh may move the checkpoint
-  forward only when the light client verifies the new one from the pinned one.
+  hashes, TLD, `assets`, `contracts`, `dotns`, `coinage` and the relay's light-sync checkpoint. A refresh may move the
+  checkpoint forward only when the light client verifies the new one from the pinned one.
 - A fork of Polkadot keeps Polkadot's genesis hashes and `dot`, and nothing on the chain tells a host it is a fork
   rather than an impostor. polkadot-test is such a fork, so it runs only where a build ships it and marks it, as
   Parity's mainnet-fork build does.
@@ -86,8 +86,7 @@ Polkadot descriptor its apps ship. Each part is either checked against the chain
 | genesis hashes and the light-sync checkpoint | the chain specs in polkadot-sdk                            | pinned by the build; later checkpoints verified from it                                    |
 | bootnodes, RPC, eth-rpc and IPFS endpoints   | open lists that any provider meeting the criteria may join | untrusted: chain reads go through the light client, and content is checked against its CID |
 | DUB                                          | PCF                                                        | the attester's allowance on People                                                         |
-| dotNS contracts                              | PCF                                                        | discovery from `DotnsGateway.DispatcherAddress`                                            |
-| `assets`, `contracts`, `coinage`             | PCF                                                        | pinned by the build                                                                        |
+| `assets`, `contracts`, `dotns`, `coinage`    | PCF                                                        | pinned by the build                                                                        |
 | the choice among the above                   | the publisher, such as PCF for its apps                    | the signature on the descriptor                                                            |
 
 The publisher gains no power it lacks today: it already ships the binary and edits the Firebase values the apps read.
