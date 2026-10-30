@@ -17,6 +17,7 @@ mod bootstrap;
 mod bulletin_lookup;
 mod chain;
 mod chat;
+mod cleartext_storage;
 mod contacts;
 mod dotns_read;
 mod frame_server;
@@ -1862,6 +1863,9 @@ fn build_signing_runtime(
 	.with_context(|| format!("opening the core database in {}", storage_path.display()))?;
 	let installation_path = storage_path.join("installation");
 	let installation = Arc::new(installation::CliInstallation::new(installation_path));
+	let cleartext_storage_path = storage_path.join("cleartext-storage.json");
+	let cleartext_storage =
+		Arc::new(cleartext_storage::CliCleartextStorage::new(cleartext_storage_path));
 	let platform = CliPlatform::new(
 		network,
 		Some(CliStoragePaths::new(storage_path, product_storage_dir)),
@@ -1894,6 +1898,7 @@ fn build_signing_runtime(
 	runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
 	runtime.set_core_db(core_db);
 	runtime.set_installation_provider(installation);
+	runtime.set_encrypted_storage(cleartext_storage);
 	runtime.start_core_services();
 	runtime.start_statement_allowance_renewal();
 	Ok((runtime, platform))
