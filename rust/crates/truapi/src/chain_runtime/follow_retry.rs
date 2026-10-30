@@ -15,7 +15,7 @@ use subxt_rpcs::{
 use truapi::CancellationToken;
 
 use super::{
-	chain_halt::{retry_through_halts, says_chain_halted},
+	chain_halt::{retry_while_halted, says_chain_halted},
 	runtime_call_client::RuntimeCallClient,
 };
 use crate::time::Timer;
@@ -141,7 +141,7 @@ impl RpcClientT for FollowRetryingRpcClient {
 			return self.inner.subscribe_raw(sub, params, unsub);
 		}
 		Box::pin(async move {
-			let result = retry_through_halts(
+			let result = retry_while_halted(
 				&*self.timer,
 				&CancellationToken::default(),
 				|| self.inner.subscribe_raw(sub, params.clone(), unsub),

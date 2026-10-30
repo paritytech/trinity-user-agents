@@ -17,7 +17,7 @@ use super::{
 	SsoRequestService,
 };
 use crate::{
-	chain_runtime::{retry_through_halts, says_chain_halted},
+	chain_runtime::{retry_while_halted, says_chain_halted},
 	host_internal::{
 		sso_messages::{
 			RemoteMessage, RemoteMessageData, SsoSessionStatement, Withdrawal,
@@ -236,23 +236,14 @@ impl SsoRequestService {
 			.client("SSO statement-store")
 			.await
 			.map_err(|err| SsoRemoteResponseError::Failure(err.to_string()))?;
-		// Nothing is submitted yet, so a halt here is safe to wait out.
-		let own_subscription = retry_through_halts(
-			&RealTimer,
-			cx.cancel(),
-			|| subscribe_statement_topic(&rpc_client, sso.session_id_own),
-			says_chain_halted,
-		)
-		.await
-		.map_err(|err| subscribe_failed(cx, &message_id, "own", &err))?;
-		let peer_subscription = retry_through_halts(
-			&RealTimer,
-			cx.cancel(),
-			|| subscribe_statement_topic(&rpc_client, sso.session_id_peer),
-			says_chain_halted,
-		)
-		.await
-		.map_err(|err| subscribe_failed(cx, &message_id, "peer", &err))?;
+		let own_subscription =
+			subscribe_statement_topic(&rpc_client, sso.session_id_own, cx.cancel())
+				.await
+				.map_err(|err| subscribe_failed(cx, &message_id, "own", &err))?;
+		let peer_subscription =
+			subscribe_statement_topic(&rpc_client, sso.session_id_peer, cx.cancel())
+				.await
+				.map_err(|err| subscribe_failed(cx, &message_id, "peer", &err))?;
 		let submit_client = rpc_client.clone();
 		let session_state = self.session_state.clone();
 		let submitting = Arc::new(AtomicBool::new(false));
@@ -262,7 +253,7 @@ impl SsoRequestService {
 				return Err(SsoRemoteResponseError::LocalDisconnected);
 			}
 			submit_started.store(true, Ordering::Release);
-			retry_through_halts(
+			retry_while_halted(
 				&RealTimer,
 				&CancellationToken::default(),
 				|| {

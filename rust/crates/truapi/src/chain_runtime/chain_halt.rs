@@ -34,7 +34,7 @@ pub fn says_chain_halted(error: &RpcError) -> bool {
 ///
 /// Cancelling `until` ends a pause and returns the failure that started it,
 /// as a lasting halt does, so check `until` to tell the two apart.
-pub async fn retry_through_halts<Done, Failure, AttemptFuture>(
+pub async fn retry_while_halted<Done, Failure, AttemptFuture>(
 	timer: &dyn Timer,
 	until: &CancellationToken,
 	mut attempt: impl FnMut() -> AttemptFuture,
@@ -77,7 +77,7 @@ where
 	}
 }
 
-/// The pauses [`retry_through_halts`] takes, in order.
+/// The pauses [`retry_while_halted`] takes, in order.
 #[cfg(test)]
 pub fn halt_schedule() -> Vec<Duration> {
 	let mut pauses = HALT_PAUSES;
@@ -111,7 +111,7 @@ mod tests {
 	where
 		Attempt: Future<Output = Result<Answer, RpcError>>,
 	{
-		retry_through_halts(timer, until, attempt, says_chain_halted).await
+		retry_while_halted(timer, until, attempt, says_chain_halted).await
 	}
 
 	/// Only dotli's marker counts. The same error code without it does not.

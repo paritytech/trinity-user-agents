@@ -10,11 +10,13 @@ use std::{
 
 use super::statement_store_rpc;
 use crate::{
+	chain_runtime::{retry_while_halted, says_chain_halted},
 	host_internal::{
 		sso_messages::{Response, SsoSessionStatement, decode_sso_session_statement, v1},
 		sso_wire::SsoRequest,
 	},
 	host_logic::{session::SsoSessionInfo, statement_store::parse_new_statements_result},
+	time::RealTimer,
 	unix_time::current_unix_secs,
 };
 
@@ -422,12 +424,21 @@ fn handle_sso_remote_statement_page<T>(
 	Ok(None)
 }
 
-/// Live statement-store subscription for a single topic.
+/// Live statement-store subscription for a single topic, waiting out a chain
+/// halt until `until` is cancelled.
 pub async fn subscribe_statement_topic(
 	rpc_client: &RpcClient,
 	topic: [u8; 32],
+	until: &CancellationToken,
 ) -> Result<RpcSubscription<Value>, subxt_rpcs::Error> {
-	statement_store_rpc::subscribe_match_all(rpc_client, &[topic]).await
+	let topics = [topic];
+	retry_while_halted(
+		&RealTimer,
+		until,
+		|| statement_store_rpc::subscribe_match_all(rpc_client, &topics),
+		says_chain_halted,
+	)
+	.await
 }
 
 /// Adapt a subscription into a page stream, labelling errors with `label`.

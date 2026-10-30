@@ -12,7 +12,7 @@ use tracing::instrument;
 use truapi::CancellationToken;
 
 use super::{
-	ChainRuntime, RuntimeFailure, SubxtConnection, chain_halt::retry_through_halts,
+	ChainRuntime, RuntimeFailure, SubxtConnection, chain_halt::retry_while_halted,
 	follow_retry::FollowEnd,
 };
 
@@ -60,7 +60,7 @@ impl ChainRuntime {
 	) -> Result<OnlineClientAtBlock<SubstrateConfig>, CurrentBlockError> {
 		let latest_connection = &Mutex::new(None::<SubxtConnection>);
 		let never_cancelled = CancellationToken::default();
-		let read = retry_through_halts(
+		let read = retry_while_halted(
 			&*self.timer,
 			&never_cancelled,
 			|| async move {
