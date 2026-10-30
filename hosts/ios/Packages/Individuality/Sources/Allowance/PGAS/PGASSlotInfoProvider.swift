@@ -78,7 +78,8 @@ private extension PGASSlotInfoProvider {
             fullVrfManager: keyResolver.fullKeyManager,
             fullCollectionId: PeoplePallet.membersIdentifier,
             connection: peopleConnection,
-            runtimeCodingService: peopleRuntimeProvider
+            runtimeCodingService: peopleRuntimeProvider,
+            noPersonStrategy: .untilIncluded
         ).pickPersonOrigin()
 
         let codingFactory = try await runtimeProvider.fetchCoderFactoryOperation().asyncExecute()
