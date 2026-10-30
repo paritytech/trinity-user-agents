@@ -10,27 +10,27 @@
 
 # Everything, so no path is left without an owner. Later entries win, so a more
 # specific line below overrides this one.
-*                       @paritytech/host-sdk-team @paritytech/host-team
+*                       @paritytech/host-sdk-team @paritytech/hosts-team
 
 # The shared core. A change here reaches every host at once, which is why it is
 # named separately even though it resolves to the same reviewers today.
-/rust/crates/           @paritytech/host-sdk-team @paritytech/host-team
+/rust/crates/           @paritytech/host-sdk-team @paritytech/hosts-team
 
 # The hosts, kept apart from each other rather than treated as one area.
-/hosts/ios/             @paritytech/host-sdk-team @paritytech/host-team
-/ios/                   @paritytech/host-sdk-team @paritytech/host-team
-/hosts/android/         @paritytech/host-sdk-team @paritytech/host-team
-/android/               @paritytech/host-sdk-team @paritytech/host-team
+/hosts/ios/             @paritytech/host-sdk-team @paritytech/hosts-team
+/ios/                   @paritytech/host-sdk-team @paritytech/hosts-team
+/hosts/android/         @paritytech/host-sdk-team @paritytech/hosts-team
+/android/               @paritytech/host-sdk-team @paritytech/hosts-team
 
 # The client, the playground and the explorer.
-/js/                    @paritytech/host-sdk-team @paritytech/host-team
-/playground/            @paritytech/host-sdk-team @paritytech/host-team
-/explorer/              @paritytech/host-sdk-team @paritytech/host-team
+/js/                    @paritytech/host-sdk-team @paritytech/hosts-team
+/playground/            @paritytech/host-sdk-team @paritytech/hosts-team
+/explorer/              @paritytech/host-sdk-team @paritytech/hosts-team
 
 # The pipelines themselves. A change here can alter what every other gate does,
 # including the ones that would otherwise catch it.
-/.github/workflows/     @paritytech/host-sdk-team @paritytech/host-team
-/.github/actions/       @paritytech/host-sdk-team @paritytech/host-team
+/.github/workflows/     @paritytech/host-sdk-team @paritytech/hosts-team
+/.github/actions/       @paritytech/host-sdk-team @paritytech/hosts-team
 
 # Documents and proposals.
-/docs/                  @paritytech/host-sdk-team @paritytech/host-team
+/docs/                  @paritytech/host-sdk-team @paritytech/hosts-team
