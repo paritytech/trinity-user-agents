@@ -488,6 +488,29 @@ pub fn signed_test_statement(data: Vec<u8>) -> Vec<u8> {
 	.encode()
 }
 
+/// JSON-RPC methods in the stub RPC log, in the order they were sent.
+pub fn recorded_rpc_methods(sent_rpc: &Mutex<Vec<String>>) -> Vec<String> {
+	sent_rpc
+		.lock()
+		.expect("rpc list mutex poisoned")
+		.iter()
+		.map(|request| {
+			serde_json::from_str::<serde_json::Value>(request).unwrap()["method"]
+				.as_str()
+				.unwrap()
+				.to_string()
+		})
+		.collect()
+}
+
+/// How many requests in the stub RPC log called `method`.
+pub fn recorded_rpc_method_count(sent_rpc: &Mutex<Vec<String>>, method: &str) -> usize {
+	recorded_rpc_methods(sent_rpc)
+		.iter()
+		.filter(|candidate| candidate.as_str() == method)
+		.count()
+}
+
 /// Last submitted SSO remote message decoded from the stub RPC log.
 pub fn submitted_remote_message(
 	platform: &Arc<StubPlatform>,

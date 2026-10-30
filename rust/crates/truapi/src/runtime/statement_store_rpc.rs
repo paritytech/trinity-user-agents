@@ -23,7 +23,7 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::{
-	chain_runtime::{ChainRuntime, RuntimeFailure, rpc_failure},
+	chain_runtime::{ChainRuntime, RuntimeFailure, RuntimeFailureKind, rpc_failure},
 	host_logic::statement_store::{
 		SUBMIT_STATEMENT_METHOD, SUBSCRIBE_STATEMENT_METHOD, TopicFilterKind,
 		UNSUBSCRIBE_STATEMENT_METHOD, hex_topic,
@@ -72,6 +72,12 @@ impl StatementSubmitError {
 	/// allowance yet.
 	pub fn is_no_allowance(&self) -> bool {
 		matches!(self, Self::Rejected(answer) if answer["reason"] == "noAllowance")
+	}
+
+	/// Whether the People chain was unreachable, so the statement may be
+	/// sent again.
+	pub fn is_unreachable(&self) -> bool {
+		matches!(self, Self::Chain(failure) if failure.kind() == RuntimeFailureKind::Unavailable)
 	}
 }
 
@@ -445,17 +451,8 @@ mod tests {
 
 		let result = futures::executor::block_on(statement_store.submit_sso(&[1], "sso"));
 
-		// Unavailable: the store never answered, so the statement may be resent.
 		assert_eq!(
-			(
-				matches!(
-					result,
-					Err(StatementSubmitError::Chain(failure))
-						if failure.kind() == RuntimeFailureKind::Unavailable
-				),
-				chain.connects(),
-				chain.requests()
-			),
+			(result.is_err_and(|error| error.is_unreachable()), chain.connects(), chain.requests()),
 			(true, 1, 1)
 		);
 	}

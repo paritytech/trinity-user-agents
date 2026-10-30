@@ -2063,10 +2063,19 @@ async fn forget_disconnected_peer(
 	}
 }
 
+/// The catalog and profile that record `session`'s paired hosts, if it has a
+/// profile.
+fn paired_host_catalog(session: &SigningHostSession) -> Option<(SessionCatalog, SessionProfile)> {
+	session.profile.clone().map(|profile| (session.catalog.clone(), profile))
+}
+
 fn start_paired_host_responder(session: &mut SigningHostSession, host: PairedHost) {
 	let statement_account_id = host.statement_account_id();
-	let persisted = session.profile.clone().map(|profile| (session.catalog.clone(), profile));
-	let task = tokio::spawn(supervise_responder(session.runtime.clone(), host, persisted));
+	let task = tokio::spawn(supervise_responder(
+		session.runtime.clone(),
+		host,
+		paired_host_catalog(session),
+	));
 	session.responders.insert(statement_account_id, task);
 	terminal_ui::output_event(SystemEvent::SigningHostResponderStarted);
 }
@@ -2781,8 +2790,7 @@ fn mark_current_account_exhausted(session: &SigningHostSession) -> Result<()> {
 
 async fn respond_to_deeplink(session: &mut SigningHostSession, deeplink: String) -> Result<()> {
 	let host = establish_paired_host(session, &deeplink).await?;
-	let persisted = session.profile.clone().map(|profile| (session.catalog.clone(), profile));
-	supervise_responder(session.runtime.clone(), host, persisted).await;
+	supervise_responder(session.runtime.clone(), host, paired_host_catalog(session)).await;
 	Ok(())
 }
 

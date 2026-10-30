@@ -144,27 +144,6 @@ fn preimage_reports_bulletin_allocation_rejection_with_context() {
 	);
 }
 
-fn recorded_rpc_methods(sent_rpc: &Mutex<Vec<String>>) -> Vec<String> {
-	sent_rpc
-		.lock()
-		.expect("rpc list mutex poisoned")
-		.iter()
-		.map(|request| {
-			serde_json::from_str::<serde_json::Value>(request).unwrap()["method"]
-				.as_str()
-				.unwrap()
-				.to_string()
-		})
-		.collect()
-}
-
-fn recorded_rpc_method_count(sent_rpc: &Mutex<Vec<String>>, method: &str) -> usize {
-	recorded_rpc_methods(sent_rpc)
-		.iter()
-		.filter(|candidate| candidate.as_str() == method)
-		.count()
-}
-
 #[test]
 fn feature_supported_round_trips_through_runtime() {
 	let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());

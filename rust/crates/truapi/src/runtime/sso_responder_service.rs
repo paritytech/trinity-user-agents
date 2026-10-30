@@ -30,7 +30,6 @@ use parity_scale_codec::Encode;
 use tracing::{debug, instrument, warn};
 
 use crate::{
-	chain_runtime::RuntimeFailureKind,
 	host_internal::{
 		sso_messages::{
 			IncomingSsoRequest, RemoteMessage, RemoteMessageData, SsoResponseCode,
@@ -229,6 +228,15 @@ impl PairedSsoPeer {
 	pub fn from_deeplink(deeplink: &str) -> Result<Self, PairingDeeplinkDecodeError> {
 		Ok(PairingProposal::from_deeplink(deeplink)?.peer)
 	}
+
+	/// The replay ledger scope for this peer's requests to `root_public_key`.
+	fn replay_scope(self, root_public_key: [u8; 32]) -> SsoReplayScope {
+		SsoReplayScope {
+			root_public_key,
+			peer_statement_account_id: self.statement_account_id,
+			peer_encryption_public_key: self.encryption_public_key,
+		}
+	}
 }
 
 /// Longest metadata value a pairing prompt renders; the rest is dropped.
@@ -355,14 +363,7 @@ impl SsoResponderService {
 			observer.device_paired(peer);
 		}
 
-		Ok(EstablishedPairing {
-			session,
-			replay_scope: SsoReplayScope {
-				root_public_key: root.public.to_bytes(),
-				peer_statement_account_id: peer.statement_account_id,
-				peer_encryption_public_key: peer.encryption_public_key,
-			},
-		})
+		Ok(EstablishedPairing { session, replay_scope: peer.replay_scope(root.public.to_bytes()) })
 	}
 
 	/// Resume a previously paired SSO session from its persisted public peer keys.
@@ -374,16 +375,7 @@ impl SsoResponderService {
 		let root = derive_root_keypair_from_entropy(&entropy)
 			.map_err(|err| format!("root account derivation failed: {err}"))?;
 		let session = responder_session(&entropy, self.signing_host.network_suffix(), peer)?;
-		serve_session(
-			self,
-			session,
-			SsoReplayScope {
-				root_public_key: root.public.to_bytes(),
-				peer_statement_account_id: peer.statement_account_id,
-				peer_encryption_public_key: peer.encryption_public_key,
-			},
-		)
-		.await
+		serve_session(self, session, peer.replay_scope(root.public.to_bytes())).await
 	}
 
 	/// Notify a paired host that this signing host is ending their SSO session.
@@ -663,14 +655,14 @@ async fn read_statements(
 				if let Some(request_id) = error.request_id &&
 					decode_failure_request_ids.insert(request_id.clone())
 				{
-					let ack = build_signed_session_response_statement(
+					acknowledge_request(
+						services,
 						session,
-						request_id,
-						SsoResponseCode::DecodingFailed as u8,
-						fresh_statement_expiry(),
-					)?;
-					publish(services, &ack, "sso-responder decode-failed ack", Resend::Briefly)
-						.await?;
+						&request_id,
+						SsoResponseCode::DecodingFailed,
+						"sso-responder decode-failed ack",
+					)
+					.await?;
 				}
 				continue;
 			},
@@ -734,7 +726,13 @@ async fn serve_statement(
 		replay_scope,
 		request,
 		statement_current_unix_secs(),
-		acknowledge_request(services, session, &request_id),
+		acknowledge_request(
+			services,
+			session,
+			&request_id,
+			SsoResponseCode::Success,
+			"sso-responder ack",
+		),
 		|| serve_request(services, service, session, incoming),
 	)
 	.await?;
@@ -843,14 +841,16 @@ async fn acknowledge_request(
 	services: &RuntimeServices,
 	session: &SsoSessionInfo,
 	request_id: &str,
+	code: SsoResponseCode,
+	label: &'static str,
 ) -> Result<(), String> {
 	let ack = build_signed_session_response_statement(
 		session,
 		request_id.to_string(),
-		SsoResponseCode::Success as u8,
+		code as u8,
 		fresh_statement_expiry(),
 	)?;
-	publish(services, &ack, "sso-responder ack", Resend::Briefly).await
+	publish(services, &ack, label, Resend::Briefly).await
 }
 
 /// Publish a session statement, resending it as `resend` allows.
@@ -887,17 +887,15 @@ where
 			let submitted = submit();
 			async move {
 				match submitted.await {
-					Err(StatementSubmitError::Chain(failure))
-						if can_resend && failure.kind() == RuntimeFailureKind::Unavailable =>
-					{
-						ControlFlow::Continue(failure)
+					Err(error) if can_resend && error.is_unreachable() => {
+						ControlFlow::Continue(error)
 					},
 					result => ControlFlow::Break(result.map_err(|error| error.to_string())),
 				}
 			}
 		},
-		|failure| {
-			warn!(label, %failure, "People chain unreachable; sending the statement again");
+		|error| {
+			warn!(label, %error, "People chain unreachable; sending the statement again");
 			pauses.next_pause()
 		},
 	)
@@ -981,10 +979,10 @@ mod tests {
 		);
 	}
 	use crate::{
-		host_logic::statement_store::decode_verified_statement_data,
+		host_logic::statement_store::{SUBMIT_STATEMENT_METHOD, decode_verified_statement_data},
 		platform::{HostInfo, Platform, PlatformInfo, SigningHostConfig},
 		runtime::{HostSession, authority::ProductAuthority, services::RuntimeServices},
-		test_support::{StubPlatform, test_spawner},
+		test_support::{StubPlatform, recorded_rpc_method_count, test_spawner},
 	};
 	use std::sync::Arc;
 	use truapi::latest as api;
@@ -1139,10 +1137,7 @@ mod tests {
 
 	fn pairing_fixture(submit_status: &'static str) -> (Arc<RuntimeServices>, Arc<SigningHost>) {
 		signing_fixture(Arc::new(StubPlatform {
-			rpc_method_responses: vec![(
-				"statement_submit",
-				format!(r#"{{"status":"{submit_status}"}}"#),
-			)],
+			rpc_method_responses: submit_answers(submit_status, 1),
 			..Default::default()
 		}))
 	}
@@ -1151,10 +1146,7 @@ mod tests {
 	/// told a new device joined.
 	#[test]
 	fn a_paired_device_is_reported_to_the_host() {
-		let peer = PairedSsoPeer {
-			statement_account_id: [0x31; 32],
-			encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
-		};
+		let peer = paired_peer();
 		let (services, signing_host) = pairing_fixture("new");
 		let observer = Arc::new(RecordingPairingObserver::default());
 		assert!(services.install_device_pairing_observer(observer.clone()));
@@ -1172,10 +1164,7 @@ mod tests {
 	/// announce a device over a session that does not exist.
 	#[test]
 	fn a_handshake_that_never_landed_reports_no_device() {
-		let peer = PairedSsoPeer {
-			statement_account_id: [0x31; 32],
-			encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
-		};
+		let peer = paired_peer();
 		// Neither "new" nor "known", so the submit is rejected.
 		let (services, signing_host) = pairing_fixture("ignored");
 		let observer = Arc::new(RecordingPairingObserver::default());
@@ -1198,10 +1187,7 @@ mod tests {
 
 	#[test]
 	fn pairing_without_an_observer_still_answers_the_handshake() {
-		let peer = PairedSsoPeer {
-			statement_account_id: [0x31; 32],
-			encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
-		};
+		let peer = paired_peer();
 		let (services, signing_host) = pairing_fixture("new");
 
 		futures::executor::block_on(
@@ -1738,7 +1724,7 @@ mod tests {
 		);
 	}
 
-	fn subtree_peer() -> PairedSsoPeer {
+	fn paired_peer() -> PairedSsoPeer {
 		PairedSsoPeer {
 			statement_account_id: [0x31; 32],
 			encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
@@ -1758,14 +1744,11 @@ mod tests {
 		}
 	}
 
-	/// Serve one product subtree request from [`subtree_peer`] over `platform`.
+	/// Serve one product subtree request from [`paired_peer`] over `platform`.
 	fn serve_subtree_request(platform: Arc<StubPlatform>) -> Result<Option<ResponderExit>, String> {
-		let peer = subtree_peer();
-		let replay_scope = SsoReplayScope {
-			root_public_key: derive_root_keypair_from_entropy(&ENTROPY).unwrap().public.to_bytes(),
-			peer_statement_account_id: peer.statement_account_id,
-			peer_encryption_public_key: peer.encryption_public_key,
-		};
+		let peer = paired_peer();
+		let replay_scope = peer
+			.replay_scope(derive_root_keypair_from_entropy(&ENTROPY).unwrap().public.to_bytes());
 		let (services, signing_host) = signing_fixture(platform);
 		let service = SigningHostSsoService::new(signing_host.clone());
 		let responder = SsoResponderService::new(services, signing_host);
@@ -1780,17 +1763,7 @@ mod tests {
 	}
 
 	fn submit_answers(status: &str, count: usize) -> Vec<(&'static str, String)> {
-		vec![("statement_submit", format!(r#"{{"status":"{status}"}}"#)); count]
-	}
-
-	fn statement_submits(platform: &StubPlatform) -> usize {
-		platform
-			.sent_rpc
-			.lock()
-			.unwrap()
-			.iter()
-			.filter(|request| request.contains("statement_submit"))
-			.count()
+		vec![(SUBMIT_STATEMENT_METHOD, format!(r#"{{"status":"{status}"}}"#)); count]
 	}
 
 	/// One refused connection must not end the session.
@@ -1805,7 +1778,10 @@ mod tests {
 
 		let served = serve_subtree_request(platform.clone());
 
-		assert_eq!((served, statement_submits(&platform)), (Ok(None), 2));
+		assert_eq!(
+			(served, recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD)),
+			(Ok(None), 2)
+		);
 	}
 
 	/// A request that ran is not run again, so its answer must outlast the
@@ -1821,7 +1797,7 @@ mod tests {
 		});
 		let (services, signing_host) = signing_fixture(platform.clone());
 		let service = SigningHostSsoService::new(signing_host);
-		let session = responder_session(&ENTROPY, NETWORK_SUFFIX, subtree_peer()).unwrap();
+		let session = responder_session(&ENTROPY, NETWORK_SUFFIX, paired_peer()).unwrap();
 
 		let answered = futures::executor::block_on(serve_request(
 			&services,
@@ -1830,7 +1806,10 @@ mod tests {
 			subtree_request(),
 		));
 
-		assert_eq!((answered, statement_submits(&platform)), (Ok(None), 1));
+		assert_eq!(
+			(answered, recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD)),
+			(Ok(None), 1)
+		);
 	}
 
 	/// A rejection is the store's answer, so resending would only repeat it.
@@ -1843,7 +1822,13 @@ mod tests {
 
 		let served = serve_subtree_request(platform.clone());
 
-		assert_eq!((served.is_err(), statement_submits(&platform)), (true, 1));
+		assert_eq!(
+			(
+				served.is_err(),
+				recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD)
+			),
+			(true, 1)
+		);
 	}
 
 	/// A request whose ack failed must run when it is delivered again, not be
@@ -1866,7 +1851,11 @@ mod tests {
 		let redelivered = serve_subtree_request(reconnected.clone());
 
 		assert_eq!(
-			(failed_ack.is_err(), redelivered, statement_submits(&reconnected)),
+			(
+				failed_ack.is_err(),
+				redelivered,
+				recorded_rpc_method_count(&reconnected.sent_rpc, SUBMIT_STATEMENT_METHOD)
+			),
 			(true, Ok(None), 2)
 		);
 	}
