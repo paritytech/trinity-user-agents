@@ -41,8 +41,8 @@ impl ChainRuntime {
 	///
 	/// Core scope only, for the same reason as [`Self::online_client`].
 	///
-	/// A read that meets a halt is retried after each of
-	/// [`HALT_PAUSES`](super::chain_halt::HALT_PAUSES).
+	/// A read that meets a halt is retried as
+	/// [`retry_through_halts`] does.
 	///
 	/// The deadline exists because Subxt never gives up on a runtime call
 	/// whose follow stopped. Missing it ends the follow, so the next call
@@ -131,7 +131,7 @@ mod tests {
 
 	use super::*;
 	use crate::{
-		chain_runtime::{RuntimeChainProvider, chain_halt::HALT_PAUSES},
+		chain_runtime::{RuntimeChainProvider, chain_halt::halt_schedule},
 		platform::JsonRpcConnection,
 		test_support::{
 			FollowRefusal, ScriptedChainHead, sent_count, test_spawner, wait_for_sent, wait_until,
@@ -224,8 +224,8 @@ mod tests {
 
 		// The first sleep is the read's deadline, the second the pause.
 		wait_until(|| timer.sleeps() == 2, "the pause starts");
-		assert_eq!(timer.remaining(), vec![CURRENT_BLOCK_TIMEOUT, HALT_PAUSES[0]]);
-		timer.advance(HALT_PAUSES[0]);
+		assert_eq!(timer.remaining(), vec![CURRENT_BLOCK_TIMEOUT, halt_schedule()[0]]);
+		timer.advance(halt_schedule()[0]);
 
 		read.join().unwrap().expect("the read after the pause is served");
 		assert_eq!(sent_count(&provider, "chainHead_v1_header"), 2);
@@ -240,7 +240,7 @@ mod tests {
 				.serve();
 		let read = read_current_block(&chain);
 
-		for (pause_index, pause) in HALT_PAUSES.into_iter().enumerate() {
+		for (pause_index, pause) in halt_schedule().into_iter().enumerate() {
 			wait_until(|| timer.sleeps() == pause_index + 2, "the next pause starts");
 			timer.advance(pause);
 		}
@@ -259,7 +259,7 @@ mod tests {
 		let read = read_current_block(&chain);
 
 		// The first sleep is the read's deadline, and each later one a pause.
-		for (attempt, pause) in HALT_PAUSES.into_iter().enumerate() {
+		for (attempt, pause) in halt_schedule().into_iter().enumerate() {
 			wait_until(|| timer.sleeps() == attempt + 2, "the next pause starts");
 			timer.advance(pause);
 		}
@@ -366,7 +366,7 @@ mod tests {
 	fn the_deadline_outlasts_every_pause() {
 		// A follow accepted on its last chance must still be able to serve the
 		// read before the deadline ends it.
-		let pauses: Duration = HALT_PAUSES.iter().sum();
+		let pauses: Duration = halt_schedule().iter().sum();
 		assert!(CURRENT_BLOCK_TIMEOUT > pauses, "{CURRENT_BLOCK_TIMEOUT:?} <= {pauses:?}");
 	}
 }

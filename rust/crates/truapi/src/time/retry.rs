@@ -3,6 +3,9 @@
 
 use core::{ops::ControlFlow, time::Duration};
 
+use futures::{FutureExt, pin_mut};
+use truapi::CancellationToken;
+
 use super::{RealTimer, Timer};
 
 /// Runs `attempt` until it returns `Break`, sleeping between attempts.
@@ -34,6 +37,35 @@ where
 		match attempt().await {
 			ControlFlow::Break(done) => return done,
 			ControlFlow::Continue(failure) => timer.sleep(pause_after(failure)).await,
+		}
+	}
+}
+
+/// [`retry_on`] that stops when `until` is cancelled during a pause, returning
+/// the failure that started it.
+///
+/// A cancellation ends a pause, never an attempt in flight, because a dropped
+/// request can leave something open, such as a subscription.
+pub async fn retry_on_until<Done, Failure, AttemptFuture>(
+	timer: &dyn Timer,
+	until: &CancellationToken,
+	mut attempt: impl FnMut() -> AttemptFuture,
+	mut pause_after: impl FnMut(&Failure) -> Duration,
+) -> Result<Done, Failure>
+where
+	AttemptFuture: Future<Output = ControlFlow<Done, Failure>>,
+{
+	loop {
+		let failure = match attempt().await {
+			ControlFlow::Break(done) => return Ok(done),
+			ControlFlow::Continue(failure) => failure,
+		};
+		let paused = timer.sleep(pause_after(&failure)).fuse();
+		let cancelled = until.cancelled().fuse();
+		pin_mut!(paused, cancelled);
+		futures::select_biased! {
+			_ = cancelled => return Err(failure),
+			() = paused => {},
 		}
 	}
 }
@@ -133,6 +165,46 @@ mod tests {
 			(done, failures, timer.waits.into_inner()),
 			(3, vec![1, 2], vec![Duration::from_secs(10), Duration::from_secs(20)])
 		);
+	}
+
+	/// Cancelling during a pause returns the failure that started it, and no
+	/// further attempt is made.
+	#[test]
+	fn retry_on_until_stops_at_a_cancelled_pause() {
+		let timer = PendingTimer;
+		let until = CancellationToken::default();
+		let mut attempts = 0;
+
+		let result = block_on(async {
+			let retrying = retry_on_until(
+				&timer,
+				&until,
+				|| {
+					attempts += 1;
+					ready(if attempts < 3 {
+						ControlFlow::Continue(attempts)
+					} else {
+						ControlFlow::Break(())
+					})
+				},
+				|_| Duration::from_secs(1),
+			);
+			let cancel = async {
+				until.cancel();
+			};
+			futures::join!(retrying, cancel).0
+		});
+
+		assert_eq!((result, attempts), (Err(1), 1));
+	}
+
+	/// Every wait stays pending, so only a cancellation can end it.
+	struct PendingTimer;
+
+	impl Timer for PendingTimer {
+		fn sleep(&self, _duration: Duration) -> BoxFuture<'static, ()> {
+			Box::pin(futures::future::pending())
+		}
 	}
 
 	#[test]

@@ -138,7 +138,7 @@ mod tests {
 	use subxt::error::{BackendError, OnlineClientAtBlockError, RpcError as SubxtRpcError};
 
 	use crate::{
-		chain_runtime::{ChainRuntime, chain_halt::HALT_PAUSES},
+		chain_runtime::{ChainRuntime, chain_halt::halt_schedule},
 		test_support::{FollowRefusal, ScriptedChainHead, sent_count, wait_until},
 	};
 
@@ -167,7 +167,7 @@ mod tests {
 		let read = select_current_block(&chain);
 
 		wait_until(|| timer.sleeps() == 1, "the first pause starts");
-		timer.advance(HALT_PAUSES[0]);
+		timer.advance(halt_schedule()[0]);
 
 		read.join().unwrap().expect("the second follow serves the block");
 		assert_eq!(sent_count(&provider, "chainHead_v1_follow"), 2);

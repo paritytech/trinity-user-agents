@@ -1,13 +1,12 @@
 //! Retrying requests while a host redials a halted chain.
 
-use core::{fmt::Debug, future::Future, time::Duration};
+use core::{fmt::Debug, future::Future, ops::ControlFlow, time::Duration};
 
-use futures::{FutureExt, pin_mut};
 use subxt_rpcs::Error as RpcError;
 use tracing::warn;
 use truapi::CancellationToken;
 
-use crate::time::Timer;
+use crate::time::{Backoff, Timer, retry_on_until};
 
 /// The `error.data` dotli sends while it redials a halted chain. dotli
 /// documents it as safe to retry.
@@ -15,13 +14,10 @@ const CHAIN_HALTED: &str = "dotli:chain-halted";
 
 /// Pauses between attempts after a halt. They double like dotli's redial
 /// back-off, so each attempt follows another chance to redial.
-pub const HALT_PAUSES: [Duration; 5] = [
-	Duration::from_secs(1),
-	Duration::from_secs(2),
-	Duration::from_secs(4),
-	Duration::from_secs(8),
-	Duration::from_secs(16),
-];
+pub const HALT_PAUSES: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(16));
+
+/// How many times an attempt is retried after a halt.
+pub const HALT_RETRIES: usize = 5;
 
 /// Whether `error` says the chain halted, so the request can be retried.
 pub fn says_chain_halted(error: &RpcError) -> bool {
@@ -33,12 +29,11 @@ pub fn says_chain_halted(error: &RpcError) -> bool {
 	})
 }
 
-/// Run `attempt`, retrying after each of [`HALT_PAUSES`] while its failure
-/// `is_retryable`. Returns the first other outcome, or the last failure.
+/// Run `attempt`, retrying up to [`HALT_RETRIES`] times on [`HALT_PAUSES`]
+/// while its failure `is_retryable`. Returns the first other outcome, or the
+/// last failure. Cancelling `until` ends a pause, as [`retry_on_until`] does.
 ///
-/// Cancelling `until` ends a pause, not an attempt in flight, because a
-/// dropped request can leave something open, such as a subscription. Use it
-/// only for attempts that are safe to repeat.
+/// Use it only for attempts that are safe to repeat.
 pub async fn retry_through_halts<Answer, Failure, Attempt>(
 	timer: &dyn Timer,
 	until: &CancellationToken,
@@ -49,21 +44,40 @@ where
 	Attempt: Future<Output = Result<Answer, Failure>>,
 	Failure: Debug,
 {
-	for pause in HALT_PAUSES {
-		let failure = match attempt().await {
-			Err(failure) if is_retryable(&failure) => failure,
-			answer => return answer,
-		};
-		warn!(?pause, ?failure, "retrying after a chain halt");
-		let paused = timer.sleep(pause).fuse();
-		let cancelled = until.cancelled().fuse();
-		pin_mut!(paused, cancelled);
-		futures::select_biased! {
-			_ = cancelled => return Err(failure),
-			() = paused => {},
-		}
-	}
-	attempt().await
+	let is_retryable = &is_retryable;
+	let mut retries_left = HALT_RETRIES;
+	let mut pauses = HALT_PAUSES;
+	retry_on_until(
+		timer,
+		until,
+		|| {
+			let may_retry = retries_left > 0;
+			retries_left = retries_left.saturating_sub(1);
+			let attempt = attempt();
+			async move {
+				match attempt.await {
+					Err(failure) if may_retry && is_retryable(&failure) => {
+						ControlFlow::Continue(failure)
+					},
+					result => ControlFlow::Break(result),
+				}
+			}
+		},
+		|failure| {
+			let pause = pauses.next_pause();
+			warn!(?pause, ?failure, "retrying after a chain halt");
+			pause
+		},
+	)
+	.await
+	.unwrap_or_else(Err)
+}
+
+/// The pauses [`retry_through_halts`] takes, in order.
+#[cfg(test)]
+pub fn halt_schedule() -> Vec<Duration> {
+	let mut pauses = HALT_PAUSES;
+	(0..HALT_RETRIES).map(|_| pauses.next_pause()).collect()
 }
 
 #[cfg(test)]
@@ -126,7 +140,7 @@ mod tests {
 			})
 		};
 
-		for (sleep, pause) in HALT_PAUSES[..2].iter().enumerate() {
+		for (sleep, pause) in halt_schedule()[..2].iter().enumerate() {
 			wait_until(|| timer.sleeps() == sleep + 1, "the next pause starts");
 			assert_eq!(timer.remaining(), vec![*pause]);
 			timer.advance(*pause);
@@ -148,14 +162,14 @@ mod tests {
 			})
 		};
 
-		for (sleep, pause) in HALT_PAUSES.into_iter().enumerate() {
+		for (sleep, pause) in halt_schedule().into_iter().enumerate() {
 			wait_until(|| timer.sleeps() == sleep + 1, "the next pause starts");
 			timer.advance(pause);
 		}
 
 		let error = ask.join().unwrap().expect_err("the chain stays halted");
 		assert!(says_chain_halted(&error), "{error}");
-		assert_eq!(timer.sleeps(), HALT_PAUSES.len());
+		assert_eq!(timer.sleeps(), HALT_RETRIES);
 	}
 
 	/// Any other failure is returned at once.
