@@ -59,7 +59,8 @@ jobs:
             }
 
             // A glob with `**` matches across directories and `*` within one.
-            const glob = g => new RegExp('^' + g
+            // github-script already passes a `glob` helper, so this takes another name.
+            const pattern = g => new RegExp('^' + g
               .replace(/[.+^${}()|[\]\\]/g, '\\$&')
               .replace(/\*\*\//g, '\u0001')
               .replace(/\*\*/g, '\0')
@@ -83,8 +84,8 @@ jobs:
               const label = line.match(/^"([^"]+)":\s*$/);
               const path = line.match(/^\s+-\s+"([^"]+)"\s*$/);
               if (label) areas[current = label[1]] = { include: [], exclude: [] };
-              else if (path && current && path[1].startsWith('!')) areas[current].exclude.push(glob(path[1].slice(1)));
-              else if (path && current) areas[current].include.push(glob(path[1]));
+              else if (path && current && path[1].startsWith('!')) areas[current].exclude.push(pattern(path[1].slice(1)));
+              else if (path && current) areas[current].include.push(pattern(path[1]));
             }
 
             const files = (await github.paginate(github.rest.pulls.listFiles, {
