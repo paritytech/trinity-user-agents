@@ -79,6 +79,12 @@ hosts/imports.json         source repository and imported revision per host,
                            read and updated by scripts/refresh-host-import.sh
 hosts/dotli/               dotli submodule
 docs/                      design docs, RFCs, feature proposals
+ci-dashboard/              CI dashboard: a Bun server for the page, the GitHub and Sentry
+                           webhooks and the scheduled checks, posting through the
+                           relay; tested and its image built by ci.yml's CI dashboard job
+manifest.yaml, manifest-staging.yaml, manifest-production.yaml
+                           the CI dashboard's product manifests; the `products`
+                           ApplicationSet in devops-cloud-infra reads them at the root
 scripts/codegen.sh         regenerate the TS client from the Rust crate
 scripts/battery.sh         run the generated battery against both headless CLI host roles,
                            plus the Pocket phase a Worker execution serves

@@ -1,0 +1,7 @@
+# Internal only, so no webhooks reach it, and with no relay token it logs the
+# alerts production would post instead of sending them twice.
+images:
+  ci-host-dashboard:
+    env:
+      DASHBOARD_URL: https://ci-host-dashboard.parity-stg.parity.io
+      GITHUB_TOKEN: ref+vault://kv/argo-cd/ci-host-dashboard/devops-parity-stg#GITHUB_TOKEN

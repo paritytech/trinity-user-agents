@@ -1,0 +1,34 @@
+# The CI dashboard in ci-dashboard/, run as a product on Parity's clusters by
+# the products ApplicationSet in paritytech/devops-cloud-infra. That
+# ApplicationSet and build-manifest.yml read these files from the repository
+# root, so they cannot live under ci-dashboard/.
+registry: europe-docker.pkg.dev/parity-mgmt/ci-host-dashboard
+
+images:
+  ci-host-dashboard:
+    dockerfile: ci-dashboard/Dockerfile
+    context: ci-dashboard
+    port: 8080
+    http:
+      path: /
+    probes:
+      readiness:
+        path: /up
+      liveness:
+        path: /up
+        periodSeconds: 30
+        failureThreshold: 3
+    # Check state, so a restart neither forgets an outage nor posts it twice.
+    # With a volume the chart makes a StatefulSet, and one replica owns it.
+    persistence:
+      size: 1Gi
+      mountPath: /data
+    # The server idles near 20 MB; the daily smoke checks peak near 140 MB
+    # while npm installs the packages.
+    resources:
+      requests:
+        cpu: 20m
+        memory: 128Mi
+      limits:
+        cpu: 1000m
+        memory: 512Mi

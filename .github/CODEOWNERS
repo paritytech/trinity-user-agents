@@ -31,6 +31,10 @@
 # including the ones that would otherwise catch it.
 /.github/workflows/     @paritytech/host-sdk-team
 /.github/actions/       @paritytech/host-sdk-team
+/ci-dashboard/          @paritytech/host-sdk-team
+/manifest.yaml            @paritytech/host-sdk-team
+/manifest-staging.yaml    @paritytech/host-sdk-team
+/manifest-production.yaml @paritytech/host-sdk-team
 
 # Documents and proposals.
 /docs/                  @paritytech/host-sdk-team

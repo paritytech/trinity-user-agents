@@ -142,6 +142,9 @@ hosts/dotli/               dotli host, vendored as a submodule
 hosts/imports.json         Source repository and imported revision per host
 e2e/host-playground/       host-playground suite run inside the native host apps; see its README
 docs/                      Design docs, RFCs, feature proposals
+ci-dashboard/              CI dashboard server: nightlies, releases, workflows, nodes, and Matrix alerts
+                           through the host team's relay; see its README
+manifest*.yaml             The CI dashboard's deployment on Parity's clusters, read from the root
 scripts/codegen.sh         Regenerate the TS client from the Rust source
 scripts/refresh-host-import.sh
                            Refresh a vendored host tree from its source repository

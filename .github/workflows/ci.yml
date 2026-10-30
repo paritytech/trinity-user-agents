@@ -288,6 +288,7 @@ jobs:
     outputs:
       cli_package: ${{ steps.filter.outputs.cli_package }}
       workflows: ${{ steps.filter.outputs.workflows }}
+      ci_dashboard: ${{ steps.filter.outputs.ci_dashboard }}
       needs_changeset: ${{ steps.filter.outputs.needs_changeset }}
       adds_changeset: ${{ steps.filter.outputs.adds_changeset }}
       # From .github/hosts.json, one set per host: whether a core input
@@ -341,6 +342,7 @@ jobs:
             {
               echo "cli_package=true"
               echo "workflows=true"
+              echo "ci_dashboard=true"
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -355,6 +357,9 @@ jobs:
           }
 
           gate workflows '^(\.github/workflows/|\.github/actions/|\.github/areas\.yml$|\.github/labels\.yml$|\.github/CODEOWNERS$|\.github/hosts\.json$|hosts/[a-z]+/\.github/|scripts/(lint-composite-shell|check-path-routing|ci-gates)\.py$)'
+          # The dashboard reads the workflow files it watches from config.json,
+          # so a renamed workflow runs its tests too.
+          gate ci_dashboard '^(ci-dashboard/|manifest(-staging|-production)?\.yaml$|\.github/workflows/)'
           # The packaging path has its own inputs: the archive layout in the
           # Makefile, the runner bundle, the generated sources cli-dist refuses
           # to build without, and the dependency set the musl link has to
@@ -1183,6 +1188,31 @@ jobs:
           echo "::error::This change reaches a published artifact but adds no changeset, so it would ship undescribed and at a version level chosen by some other change. Run \`npm run changeset\`, or add the \`ci:no-changeset\` label if it genuinely ships nothing."
           exit 1
 
+  # The CI dashboard server (ci-dashboard/): its tests, its scripts, and its
+  # image, built but not pushed. A push to Artifact Registry is added with the
+  # deployment; see ci-dashboard/README.md.
+  ci-dashboard:
+    name: CI dashboard
+    needs: changes
+    if: needs.changes.outputs.ci_dashboard == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.2"
+
+      - run: shellcheck ci-dashboard/smoke.sh ci-dashboard/entrypoint.sh
+
+      - run: bun test ci-dashboard/test
+
+      - name: Build the image
+        run: docker build --tag ci-host-dashboard ci-dashboard
+
   ci-status:
     name: CI Status
     if: always()
@@ -1217,6 +1247,7 @@ jobs:
         explorer,
         e2e,
         workflow-lint,
+        ci-dashboard,
         release-guard,
         changeset-guard,
       ]
@@ -1258,7 +1289,7 @@ jobs:
             android-bindings provider-android-bindings ios-app android-app
             cli-package ts-client
             ts-host host-wasm ts-debugger ts-trinity-stack bundle-size playground explorer e2e workflow-lint
-            release-guard changeset-guard
+            ci-dashboard release-guard changeset-guard
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           GH_TOKEN: ${{ github.token }}

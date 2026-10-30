@@ -1,0 +1,13 @@
+# Public, for the GitHub and Sentry webhooks. Alerts go through the host
+# team's relay (paritytech/ci-host-matrix-relay); the room must be on its
+# allowlist. Until MATRIX_ROOM_IDS is set, alerts are only logged.
+images:
+  ci-host-dashboard:
+    env:
+      DASHBOARD_URL: https://ci-host-dashboard.parity-prod.parity.io
+      NOTIFICATION_BOT_URL: https://ci-host-matrix-relay.paritytech.io
+      MATRIX_ROOM_IDS: ""
+      GITHUB_TOKEN: ref+vault://kv/argo-cd/ci-host-dashboard/devops-parity-prod#GITHUB_TOKEN
+      NOTIFICATION_BOT_TOKEN: ref+vault://kv/argo-cd/ci-host-dashboard/devops-parity-prod#NOTIFICATION_BOT_TOKEN
+      GITHUB_WEBHOOK_SECRET: ref+vault://kv/argo-cd/ci-host-dashboard/devops-parity-prod#GITHUB_WEBHOOK_SECRET
+      SENTRY_CLIENT_SECRET: ref+vault://kv/argo-cd/ci-host-dashboard/devops-parity-prod#SENTRY_CLIENT_SECRET
