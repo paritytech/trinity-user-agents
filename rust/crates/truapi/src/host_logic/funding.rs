@@ -67,11 +67,9 @@ pub struct FundingSessionSummary {
 	pub opened_at_ms: u64,
 	/// The provider that served it, `None` when none took it.
 	pub provider_id: Option<String>,
-	/// The rail the user paid or was paid by, from the quote it was chosen
-	/// on.
-	pub rail: Option<FundingRail>,
-	/// The asset symbol the user paid with or received.
-	pub asset: Option<String>,
+	/// The quote the provider was chosen on, with its rail, asset and
+	/// network. `None` when no provider took it.
+	pub choice: Option<FundingChoice>,
 	/// How the host shows its ending: the row's status.
 	pub status: FundingStatus,
 	/// The provider's payout outcome on a withdrawal, once it reported one.
@@ -102,8 +100,7 @@ impl FundingSession {
 			stage: self.stage.clone(),
 			opened_at_ms: self.opened_at_ms,
 			provider_id: self.provider_id.clone(),
-			rail: self.choice.as_ref().map(|choice| choice.rail),
-			asset: self.choice.as_ref().map(|choice| choice.asset.clone()),
+			choice: self.choice.clone(),
 			status: self.status(ended_at_ms),
 			payout: self.payout().cloned(),
 			refunded: self.refund.as_ref().and_then(|refund| refund.refunded),
@@ -1123,6 +1120,13 @@ impl FundingSession {
 				return Err(HostFundingReportError::OutOfOrder);
 			}
 			return self.report_after_release(update, host_id, now_ms);
+		}
+		// A released withdrawal's provider still works on its payout, so it
+		// can name the payout's transaction or reference until it reports
+		// how the payout went.
+		if matches!(update, FundingUpdate::Details { .. }) && self.awaits_provider() {
+			self.updates.push(FundingUpdateRecord { update, at_ms: now_ms });
+			return Ok(());
 		}
 		if self.is_terminal() {
 			return Err(HostFundingReportError::NotFound);
@@ -3403,6 +3407,37 @@ mod tests {
 	// session is open, in either direction: before any step, once funds move,
 	// and after it is done but before the core settled the session. Once the
 	// session ended, nothing more is taken.
+	// A released withdrawal awaiting its payout takes the payout's details;
+	// once the payout is reported, the session is no longer the provider's.
+	#[test]
+	fn details_are_taken_while_a_released_withdrawal_awaits_its_payout() {
+		let mut session = session(FundingDirection::Out);
+		assert!(session.assign("ramp.dot", None, 0));
+		session.updates.push(FundingUpdateRecord {
+			update: FundingUpdate::Collecting { payment_id: [4; 32], amount: 100 },
+			at_ms: 0,
+		});
+		assert!(session.settle(100, 0));
+		let details = |id: &str| FundingUpdate::Details {
+			transaction_id: Some(id.to_string()),
+			reference: None,
+		};
+
+		let awaiting = session.report("ramp.dot", details("payout-1"), |id| *id, 1);
+		let paid = session.report(
+			"ramp.dot",
+			FundingUpdate::Payout { outcome: FundingPayout::PaidOut },
+			|id| *id,
+			2,
+		);
+		let after = session.report("ramp.dot", details("payout-2"), |id| *id, 3);
+
+		assert_eq!(
+			(awaiting, paid, after, session.transaction_id()),
+			(Ok(()), Ok(()), Err(HostFundingReportError::NotFound), Some("payout-1".to_string()))
+		);
+	}
+
 	#[test]
 	fn details_are_taken_while_the_session_is_open() {
 		let details =
@@ -3421,12 +3456,9 @@ mod tests {
 		reported(&mut outbound, &[FundingUpdate::Collecting { payment_id: [2; 32], amount: 100 }]);
 		let collecting = report(&mut outbound, details());
 		assert!(outbound.settle(100, NOW));
-		let ended = report(&mut outbound, details());
+		let awaiting_payout = report(&mut outbound, details());
 
-		assert_eq!(
-			(fresh, done, collecting, ended),
-			(Ok(()), Ok(()), Ok(()), Err(HostFundingReportError::NotFound))
-		);
+		assert_eq!((fresh, done, collecting, awaiting_payout), (Ok(()), Ok(()), Ok(()), Ok(())));
 	}
 
 	fn usdt_deposit(amount: u128) -> FundingDeposit {
