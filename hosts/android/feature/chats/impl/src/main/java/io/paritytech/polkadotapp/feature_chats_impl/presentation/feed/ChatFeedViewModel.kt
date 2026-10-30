@@ -195,6 +195,9 @@ class ChatFeedViewModel @Inject constructor(
         menuActionsProvider.getToolbarActions(openChatRequest, inputStateType, addMenuIconForcibly = hasRenderer)
     }.stateInBackground(initialValue = persistentListOf())
 
+    override val showPrivacyWarning = interactor.subscribeIsIdentitySigningAllowed(chatId)
+        .stateInBackground(initialValue = false)
+
     override val popupState = combine(
         messagePopupSection,
         reactions,
@@ -371,6 +374,7 @@ class ChatFeedViewModel @Inject constructor(
 
                 ChatUserInputState.AcceptChatRequest,
                 ChatUserInputState.UnblockUser,
+                ChatUserInputState.IdentitySigningConsentRequired,
                 ChatUserInputState.Nothing,
                 ChatUserInputState.PeerLeft,
                 ChatUserInputState.UserDeclinedChatRequest,
@@ -424,6 +428,16 @@ class ChatFeedViewModel @Inject constructor(
             .onFailure { showPresentationError(UnexpectedPresentationError(it)) }
     }
 
+    override fun onAllowIdentitySigningClick() = launchUnit {
+        interactor.allowIdentitySigning(chatId)
+            .onFailure { showPresentationError(UnexpectedPresentationError(it)) }
+    }
+
+    override fun onDeclineIdentitySigningClick() = launchUnit {
+        interactor.declineIdentitySigning(chatId)
+            .onFailure { showPresentationError(UnexpectedPresentationError(it)) }
+    }
+
     override fun onStartCallClick(withVideo: Boolean) = launchUnit {
         val permissions = buildList {
             add(Manifest.permission.RECORD_AUDIO)
@@ -454,6 +468,10 @@ class ChatFeedViewModel @Inject constructor(
         }
 
         menuState.update { it.copy(isVisible = true, type = type) }
+    }
+
+    override fun onPrivacyWarningClick() {
+        menuState.update { it.copy(isVisible = true, type = ChatMenuType.PrivacyDisclaimer) }
     }
 
     override fun onCopyUsernameClick() = launchUnit {
@@ -729,6 +747,7 @@ class ChatFeedViewModel @Inject constructor(
             is ChatUserInputState.Nothing, ChatUserInputState.UserDeclinedChatRequest -> ChatInputUiState.Hidden
             is ChatUserInputState.PeerLeft -> ChatInputUiState.PeerLeft
             is ChatUserInputState.UnblockUser -> ChatInputUiState.UnblockUser
+            is ChatUserInputState.IdentitySigningConsentRequired -> ChatInputUiState.IdentitySigningConsent
             is ChatUserInputState.WaitChatRequestApproval -> ChatInputUiState.WaitChatRequestApproval
             is ChatUserInputState.SendChatRequest -> {
                 ChatInputUiState.SendMessage(messageInputState.clearRelation(), isChatRequest = true)

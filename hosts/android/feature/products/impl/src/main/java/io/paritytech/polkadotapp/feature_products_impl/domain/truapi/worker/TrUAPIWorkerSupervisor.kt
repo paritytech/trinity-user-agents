@@ -7,7 +7,6 @@ import io.paritytech.polkadotapp.common.utils.childScope
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
-import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.WebViewRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
@@ -18,6 +17,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIChain
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ChatWebViewConfig
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.ChatWebViewProvider
+import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ChatWorkerNavigation
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -58,6 +58,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val webViewProviderFactory: ChatWebViewProvider.Factory,
     private val bootstrapInstaller: TrUAPIBootstrapInstaller,
     private val refCounter: Lazy<ProductWorkerRefCounter>,
+    private val navigation: ChatWorkerNavigation,
     dispatchers: CoroutineDispatchers,
 ) {
     private class RunningWorker(val scope: CoroutineScope) {
@@ -141,7 +142,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 runtime,
                 productId,
                 chainDirectory.resolve(),
-                ignoredNavigation(),
+                navigation.policy(productId, worker.scope),
                 ProductExecutionKind.WORKER,
                 chat = if (script.includesChat) {
                     ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId))
@@ -181,11 +182,6 @@ class TrUAPIWorkerSupervisor @Inject constructor(
         worker.webViewRuntime?.dispose()
         worker.scope.cancel()
     }
-
-    // A worker has no screen of its own to navigate; a `navigate_to` from it is logged and dropped.
-    private fun ignoredNavigation() = NavigationPolicy.DeeplinkNavigation(
-        onDeeplinkNavigation = { Timber.d("Ignored navigation from a Pocket worker: %s", it) },
-    )
 
     companion object {
         // Generous: a cold WebView on a slow device fetching a worker archive over dotNS.

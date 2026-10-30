@@ -3,7 +3,7 @@ name: host-playground e2e
 # Runs host-playground inside the iOS and Android host apps built from this commit.
 # See e2e/host-playground/README.md.
 # Each nightly calls this for its own platform and commit. on-label.yml calls
-# it for both platforms on a pull request labelled host-playground-e2e, never
+# it for both platforms on a pull request labelled ci:host-playground-e2e, never
 # one from a fork.
 on:
   workflow_dispatch:
@@ -54,8 +54,6 @@ on:
       E2E_ANDROID_MNEMONIC:
         required: false
       GOOGLE_SERVICE_INFO_RELEASE_BASE64:
-        required: false
-      MELD_BASIC_AUTH_TOKEN:
         required: false
       SENTRY_DSN_IOS:
         required: false
@@ -234,7 +232,6 @@ jobs:
         uses: ./hosts/ios/.github/actions/configure-secrets
         with:
           sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
-          meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
 
       - name: Build the E2E simulator app
         run: e2e/host-playground/ios/build.sh
