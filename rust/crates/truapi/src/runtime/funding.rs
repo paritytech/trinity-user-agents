@@ -188,11 +188,6 @@ pub trait FundingFeed: Send + Sync {
 		progress: Option<crate::host_logic::funding::FundingProgress>,
 	);
 
-	/// Every ended session the host recorded or the core compacted, as
-	/// summaries newest first, once each time funding resumes, so a host
-	/// that lost its own history rebuilds it.
-	fn funding_history(&self, history: Vec<FundingSessionSummary>);
-
 	/// Whether a provider still works on any session: once funding resumes,
 	/// and again whenever it changes. A host that remembers it starts
 	/// funding at its next launch, so the providers carry on from their last
@@ -568,15 +563,14 @@ impl FundingRegistry {
 		self.lock_sessions().values().any(provider_works_on)
 	}
 
-	/// Every ended session the host recorded or the core compacted into the
-	/// pack, as summaries newest first, each once: what a host rebuilds its
-	/// own history from when that history was lost.
+	/// Every ended session, held in full or compacted into the pack, as
+	/// summaries newest first, each once: what the host shows as history.
 	pub fn history(&self) -> Vec<FundingSessionSummary> {
 		let mut history: Vec<_> = {
 			let sessions = self.lock_sessions();
 			let recorded = sessions
 				.values()
-				.filter(|session| session.is_terminal() && session.acknowledged)
+				.filter(|session| session.is_terminal())
 				.map(FundingSession::summary);
 			let pack = self.lock_pack();
 			let compacted =
@@ -596,8 +590,8 @@ impl FundingRegistry {
 		self.lock_pack().get(intent).map(|summary| summary.owner_product_id.clone())
 	}
 
-	/// Record that the host has written ended session `intent` into its own
-	/// history, so it is no longer handed over. Once newer recorded sessions
+	/// Record that the host told the user how ended session `intent` went,
+	/// so it is no longer handed over. Once newer recorded sessions
 	/// push it out of the full record it is compacted into the pack, where its
 	/// owner can still read how it ended. Returns whether the session was ended
 	/// and not yet acknowledged.
@@ -1614,8 +1608,8 @@ impl RuntimeServices {
 			loop {
 				let loaded = registry
 					.commit(current_unix_millis(), |sessions| {
-						// Ended sessions the host has not recorded are
-						// handed over again, so its history gets every
+						// Ended sessions the host has not acknowledged are
+						// handed over again, so the user hears every
 						// outcome.
 						let pending = sessions
 							.values()
@@ -1626,12 +1620,7 @@ impl RuntimeServices {
 					})
 					.await;
 				match loaded {
-					Ok(()) => {
-						if let Some(feed) = registry.feed() {
-							feed.funding_history(registry.history());
-						}
-						break;
-					},
+					Ok(()) => break,
 					// Left for the newer app that wrote them; retrying cannot
 					// read them.
 					Err(error @ FundingSessionError::NewerFormat { .. }) => {
@@ -2578,6 +2567,8 @@ mod tests {
 			Ok(truapi::latest::FundingFrameOutcome::Closed)
 		}
 
+		fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
+
 		fn funding_session_changed(&self, intent: String, _status: HostFundingStatusSubscribeItem) {
 			let registry = self.registry.get().and_then(Weak::upgrade).expect("registry alive");
 			// Calling back while the lock is held would hang, so that is
@@ -2653,6 +2644,19 @@ mod tests {
 		assert_eq!(block_on(stored_sessions(&db)), vec![session("fs_2", NOW)]);
 	}
 
+	// History is the core's: a session is listed as soon as it ends, before
+	// the host acknowledges it, and an open one is not.
+	#[test]
+	fn history_lists_every_ended_session_whether_acknowledged_or_not() {
+		let registry = registry_on(&open_memory_core_db());
+		insert(&registry, session("fs_open", NOW));
+		insert(&registry, session("fs_ended", NOW - DAY_MS));
+		block_on(registry.sweep(NOW)).expect("expired");
+		let ended = registry.get("fs_ended").expect("kept");
+
+		assert_eq!((ended.acknowledged, registry.history()), (false, vec![ended.summary()]));
+	}
+
 	// A product that reloads after the host recorded its session must still
 	// learn how it ended, not read it as a session that never existed.
 	#[test]
@@ -2680,7 +2684,7 @@ mod tests {
 
 	// A recorded session pushed out by newer ones of its owner is compacted,
 	// not dropped: after a restart its owner still reads how it ended, and
-	// the host can rebuild its history from every recorded session.
+	// history still lists every ended session.
 	#[test]
 	fn a_compacted_session_still_answers_its_owner_after_a_restart() {
 		let db = open_memory_core_db();

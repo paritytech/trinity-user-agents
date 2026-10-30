@@ -37,9 +37,7 @@ use futures::stream::{self, BoxStream, StreamExt};
 use truapi::{
 	FundingFeed, SigningHostRuntime,
 	host_logic::{
-		funding::{
-			CancelTerms, FundingCancel, FundingProgress, FundingSession, FundingSessionSummary,
-		},
+		funding::{CancelTerms, FundingCancel, FundingProgress, FundingSession},
 		funding_providers::{FundingOptions, FundingProviderEntry, FundingProviderOrigin},
 	},
 	latest::{
@@ -309,6 +307,14 @@ impl FundingPlatform for CliFundingHost {
 		Ok(if done { finished } else { FundingFrameOutcome::Dismissed })
 	}
 
+	fn close_provider_frame(&self, provider: &ProductContext, intent: String) {
+		self.transcript.record(serde_json::json!({
+			"kind": "frame_closed",
+			"intent": intent,
+			"provider": provider.product_id.as_str(),
+		}));
+	}
+
 	/// The country `TRUAPI_FUNDING_COUNTRY` names, standing in for the one the
 	/// device detects.
 	async fn detected_country(&self) -> Option<String> {
@@ -346,8 +352,6 @@ impl FundingFeed for CliFundingHost {
 		}));
 		self.ask_about_offer(intent, session.as_ref());
 	}
-
-	fn funding_history(&self, _history: Vec<FundingSessionSummary>) {}
 
 	fn funding_in_progress_changed(&self, _in_progress: bool) {}
 

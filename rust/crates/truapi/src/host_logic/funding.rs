@@ -24,8 +24,8 @@ use crate::platform::ProductId;
 
 /// How long a session may stay open before it expires.
 const SESSION_WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
-/// How many ended sessions the host has not recorded yet the core keeps in
-/// full, newest first, so a host that never records them cannot grow the
+/// How many ended sessions the host has not acknowledged yet the core keeps
+/// in full, newest first, so a host that never acknowledges them cannot grow the
 /// stored sessions without bound. Older ones are compacted into the session
 /// pack.
 const UNACKNOWLEDGED_LIMIT: usize = 200;
@@ -46,7 +46,7 @@ pub const LATE_ARRIVAL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 /// owner, newest first. Older ones are compacted into the session pack.
 pub(crate) const RECORDED_PER_OWNER: usize = 64;
 
-/// An ended session the host recorded, compacted once newer recorded sessions
+/// An ended session the host acknowledged, compacted once newer acknowledged sessions
 /// of its owner pushed it out of the full record. It keeps what history needs,
 /// so its owner can still read how it ended and the host can still list it;
 /// the pack is never trimmed.
@@ -127,8 +127,8 @@ pub struct FundingSession {
 	/// When the session expires if no provider takes it, in Unix
 	/// milliseconds.
 	pub deadline_ms: u64,
-	/// Whether the host has recorded the session's outcome in its own
-	/// history. An ended session is handed to the host until it has.
+	/// Whether the host has told the user how the session ended. An ended
+	/// session is handed to the host until it has.
 	pub acknowledged: bool,
 	/// Product id of the provider the user chose. `None` until they choose.
 	pub provider_id: Option<String>,
@@ -1181,7 +1181,7 @@ impl FundingSession {
 	/// Whether the session ended but its provider still owes the user: a
 	/// released withdrawal whose payout outcome it has not reported, or
 	/// whose refund, after a failed payout or a cancel the user accepted, is
-	/// not settled yet. Whether the host recorded the session does not
+	/// not settled yet. Whether the host acknowledged the session does not
 	/// matter.
 	pub fn awaits_provider(&self) -> bool {
 		matches!(self.stage, FundingStage::Released { .. }) &&
@@ -1822,8 +1822,8 @@ impl<D> From<FundingSessionError> for crate::CallError<D> {
 
 /// Split `sessions` into those kept in full and the ended ones to compact.
 /// Kept in full: every one its provider still has work on, the ended ones the
-/// host has not recorded yet, newest first up to a fixed bound, and the newest
-/// ended ones it has recorded, up to a fixed bound per owner. The ended ones
+/// host has not acknowledged yet, newest first up to a fixed bound, and the newest
+/// ended ones it has acknowledged, up to a fixed bound per owner. The ended ones
 /// past either bound go to the pack, so no outcome is lost.
 pub fn retained(
 	sessions: impl IntoIterator<Item = FundingSession>,
