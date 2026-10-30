@@ -176,7 +176,18 @@ type SpecFile = {
 };
 
 type Service = {
-  kind: "dub" | "turn" | "stun" | "ipfs-gateway" | "hop" | "eth-rpc" | "storage-provider" | "faucet" | string;
+  kind:
+    | "dub"
+    | "turn"
+    | "stun"
+    | "ipfs-gateway"
+    | "hop"
+    | "eth-rpc"
+    | "storage-provider"
+    | "faucet"
+    | "web-gateway"
+    | "evm-explorer"
+    | string;
   urls: string[]; // Endpoints, most preferred first. Not empty.
   chainId?: number; // Required for eth-rpc, absent otherwise: the EVM chain id.
 };
@@ -217,10 +228,11 @@ schemes.
   address MUST NOT be the zero address, which the registry returns for a key it leaves unset.
 - When `fork` is set, every chain MUST have `forkedAt`, and no chain may have it otherwise. `fork.of` follows the same
   rules as a pointer.
-- URLs, in the descriptor and in a pointer, MUST use `https`, `wss` or, for `stun` services, `stun`. The one exception
-  is a URL whose host is a literal address in a private range (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`,
+- URLs, in the descriptor and in a pointer, MUST use `https`, `wss` or, for `stun` services, `stun`. One exception is a
+  URL whose host is a literal address in a private range (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`,
   `192.168.0.0/16`, `::1`, `fc00::/7`, `fe80::/10`), which MAY use `http` or `ws`, so a stack running on a laptop can be
-  read on the same network. A hostname never qualifies, so DNS cannot turn a public name into a private address.
+  read on the same network. A hostname never qualifies for it, so DNS cannot turn a public name into a private address.
+  A `web-gateway` has an exception of its own, below.
 - A URL MUST NOT carry a user name or password, which would let `https://previewnet.substrate.dev@evil.example/` read as
   previewnet. A literal address MUST be written in canonical form (`10.0.0.1`, never `10.1` or `0x0a.1`): URL parsers
   disagree on shorthand, so two readers would reach different hosts. A URL MUST NOT contain `\`: in `http`, `https`,
@@ -228,6 +240,23 @@ schemes.
   `https://previewnet.substrate.dev\@evil.example/` would reach previewnet in a browser and `evil.example` elsewhere.
 - An HTTP service URL is a base URL ending in `/`, and readers resolve paths relative to it. `eth-rpc` URLs are JSON-RPC
   endpoints used as given.
+- A `web-gateway` URL MUST name a host, never an address, use `https`, carry no fragment, and have a path that ends in
+  `/` as written. It MAY carry a query, so one gateway can serve several stacks. A gateway whose host is written exactly
+  `localhost` MAY use `http`: a gateway puts a name's label in front of its host, so it cannot be a literal address, and
+  `localhost` and the names under it stay on the reader's machine
+  ([RFC 6761](https://www.rfc-editor.org/rfc/rfc6761#section-6.3)). It suits a stack run on that machine, such as
+  `http://localhost:5173/`.
+
+A `web-gateway` MUST resolve names against this stack's dotNS, since a reader cannot check what its query selects. A
+reader opens a dotNS name on the first `web-gateway` URL as follows. The name is lowercase labels joined by dots, each
+following the rule for `tld`. A name of one label is relative to the stack. A name of several labels MUST end in `.` and
+the stack's `tld`, which it then loses, so `my-app.dot` on a stack whose `tld` is `testnet` is refused rather than
+opened as a subname under `dot`. Readers refuse any other name. What is left, if one label, opens at the gateway URL
+with the label and a dot prepended to its host. A gateway's wildcard certificate covers one label only, so what is left,
+if several labels, opens at the gateway URL with them appended to its path. Both keep the gateway URL's query: on
+`https://testnet.li/?network=previewnet`, `my-app.testnet` opens at `https://my-app.testnet.li/?network=previewnet` and
+`sub.my-app.testnet` at `https://testnet.li/sub.my-app?network=previewnet`. Reference resolution of the name against the
+gateway URL drops the query, so it does not give these URLs.
 
 A chain has two kinds of chain spec, for two kinds of reader:
 
@@ -251,6 +280,8 @@ The service kinds `$v: 1` defines:
 | `eth-rpc`          | Ethereum JSON-RPC in front of Asset Hub                 | JSON-RPC URLs, with `chainId`                                                                   |
 | `storage-provider` | a Web3 Storage provider node                            | base URLs                                                                                       |
 | `faucet`           | a page or API that funds test accounts                  | base URLs                                                                                       |
+| `web-gateway`      | the gateway serving the sites of its dotNS names        | a name opens under the URL, as described above                                                  |
+| `evm-explorer`     | an Ethereum block explorer for Asset Hub                | base URLs; readers link `tx/<hash>` and `address/<address>` under them                          |
 
 The DUB's API, including `api/v1/turn/issue` and the access token it requires, is described in the DUB's
 [API reference](https://github.com/paritytech/device-uniqueness-backend-community/blob/main/docs/api-reference/openapi.json).
