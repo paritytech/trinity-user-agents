@@ -158,6 +158,38 @@ NOTES:
 ### Function Conventions
 
 - Place private methods to the separate Swift extension
+- Use `guard` for early exits; use `if` only when both branches continue
+
+### Review rules
+
+The shared rules for both apps are in the root `AGENTS.md` under Host apps. These
+are the iOS ones reviewers enforce most.
+
+- Put code in the lowest package that knows its dependencies (SubstrateSdkExt,
+  Individuality, PolkadotUI, StructuredConcurrency), not in a feature.
+- Write new service APIs as `async`/`AsyncSequence`. Bridge legacy operations with
+  `asyncExecute()`; add no new `CompoundOperationWrapper` or hand-written
+  continuations.
+- Mark presenter-facing output protocols `@MainActor`. Never hop with
+  `MainActor.run` or `DispatchQueue.main` inside an interactor.
+- Interactors, services and operation factories never import `UIKit`, `SwiftUI` or
+  `PolkadotUI`.
+- Hold shared mutable state in an `actor` or `OSAllocatedUnfairLock`. No `NSLock`
+  and no `@unchecked Sendable` boxes.
+- A long-lived `Task` captures `self` weakly and is cancelled in `deinit` and
+  before it is replaced.
+- Decode bridge and SSO input into typed `Codable` structs with typed ids, and keep
+  ids as `Data`/`AccountId` until the display or storage edge.
+- Encode with the SDK helpers (`scaleEncoded()`, `toHex(includePrefix:)`); never
+  pack bytes by hand.
+- Never force-unwrap or trap on persisted or external data. `fatalError` is for
+  programmer invariants only, and a failed read means unknown, not absent.
+- Update part of a Core Data entity through a dedicated mapper, never by fetching,
+  modifying and saving.
+- Required dependencies are non-optional. Depend on the narrowest protocol, never
+  on `ServiceCoordinator` or a concrete service.
+- Add `.xcstrings` keys by hand with `en` and `es-ES`; never commit auto-extracted
+  or empty keys.
 
 ## Dependencies
 

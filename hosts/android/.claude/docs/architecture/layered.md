@@ -47,14 +47,14 @@ feature/<name>/
 - ViewModels with `Contract` interfaces (see `code/state-management.md`).
 - Compose screens (see `code/ui-compose.md`).
 - **No business logic** here. ViewModels orchestrate; interactors do the work.
-- UI state types — distinct from domain models when extra presentation-only fields are needed (formatted strings, selected, pressed). When the domain model is already pure Kotlin and the UI doesn't need extra fields, the VM may emit the domain model directly.
+- UI state types — always distinct from domain models. They carry raw values, enums and `UiModel`s (selected, pressed), never domain models, formatted strings or `@StringRes`. Locale-sensitive formatting happens in the composable through the `Local*` formatters.
 
 ## Mapping rules
 
 | Boundary | Mapping is | Lives in |
 |---|---|---|
 | DTO ↔ domain | **Mandatory.** Always map at the data layer. | `impl/data/mappers/` |
-| Domain ↔ UI state | **Optional.** Map only when UI adds fields (selected, formatted, isLoading, etc.) | `impl/presentation/<screen>/mapper/` if non-trivial, else inline in VM |
+| Domain ↔ UI state | **Mandatory.** The screen never receives a domain model. | `impl/presentation/<screen>/mapper/` if non-trivial, else inline in VM |
 | Domain ↔ database entity | **Mandatory.** Room entities never escape the data layer. | `impl/data/mappers/` |
 
 ✓ **Extension function form** for pure mappings:
@@ -126,7 +126,7 @@ class IsPersonOnboardedUseCase @Inject constructor(private val statusUseCase: Pe
 ViewModels are responsible for:
 - Calling interactors (never repositories directly — those belong to the interactor).
 - Producing the screen's `LoadingState<UiState>` / `XxxUiState` stream — combining the flows the interactor exposes into the final shape the screen consumes.
-- Handing the screen the right structure for it to render: domain models passed through when no extra fields needed, sealed `XxxError` types so the Compose mapper resolves them to `stringResource(...)`.
+- Handing the screen the right structure for it to render: `UiModel`s with raw values, and sealed `XxxError` types so the composable resolves them to `stringResource(...)`.
 
 **Flow composition is not VM-exclusive.** Interactors and use cases routinely `combine` / `map` / `flatMapLatest` over the streams their dependencies expose — that's how domain orchestration is built. The VM's job is the *outermost* composition that ends in `stateIn` for the screen. If the same composition recurs across two VMs, it belongs in an interactor (single-feature) or a use case (cross-feature), not duplicated.
 
@@ -156,7 +156,7 @@ override val state = combine(
 
 ViewModels are **not** the place to:
 - Construct domain entities for direct chain submission (use an interactor).
-- Format dates/numbers/balances (use a mapper or extension).
+- Format dates/numbers/balances. The composable does it with the `Local*` formatters.
 - Hold mutable state that any other class also reads — that's a shared state holder, not VM state.
 - Reach for repositories directly bypassing the interactor.
 

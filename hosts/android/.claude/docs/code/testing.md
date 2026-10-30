@@ -8,10 +8,10 @@ The patterns below are the result of repeated correction during recent reviews. 
 
 ## Stack
 
-- **Mockito 5** (`org.mockito:mockito-core` — inline mock-maker is the default, final classes including `data class` work without `open`). **Not MockK.**
+- **MockK** (`io.mockk:mockk`, and `mockk-android` for instrumentation tests) for new tests. Existing Mockito tests stay until they are rewritten; do not mix the two in one test class. Rules 1 and 2 below apply to the Mockito tests.
 - **JUnit 4**.
 - **`kotlinx.coroutines.runBlocking`** for suspend-fn driving. **Not** `runTest` — the project's existing tests use plain `runBlocking`; match that.
-- Test infrastructure (matchers, `whenever`, common helpers) lives in `test-shared/.../MockitoHelpers.kt`. Don't reinvent locally.
+- Mockito test infrastructure (matchers, `whenever`, common helpers) lives in `test-shared/.../MockitoHelpers.kt`. Don't reinvent locally.
 
 ```kotlin
 import io.paritytech.polkadotapp.test_shared.any
