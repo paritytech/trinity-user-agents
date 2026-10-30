@@ -256,10 +256,6 @@ private extension ChatWireframe {
         chatMetadata: ChatMetadata,
         delegate: ChatMoreActionsDelegate
     ) {
-        guard case .person = chatMetadata.chatId else {
-            return
-        }
-
         let leaveChatView = LeaveChatViewFactory.createView(
             username: chatMetadata.peerMetadata.name,
             onDelete: {

@@ -20,7 +20,8 @@ extension NSPredicate {
         return NSPredicate(format: "%K == %@", #keyPath(CDChat.identifier), chatContactId.rawRepresentation)
     }
 
-    static func roomChatsForExtension(_ extensionId: ChatExtension.Id) -> NSPredicate {
+    /// Every chat of the extension, including the roomless one a native product posts into.
+    static func chatsForExtension(_ extensionId: ChatExtension.Id) -> NSPredicate {
         let extensionType = NSPredicate(
             format: "%K == %d",
             #keyPath(CDChat.chatType),
@@ -33,12 +34,16 @@ extension NSPredicate {
             extensionId
         )
 
+        return NSCompoundPredicate(andPredicateWithSubpredicates: [extensionType, extensionMatch])
+    }
+
+    static func roomChatsForExtension(_ extensionId: ChatExtension.Id) -> NSPredicate {
         let hasRoom = NSPredicate(
             format: "%K != nil",
             #keyPath(CDChat.roomMetadata)
         )
 
-        return NSCompoundPredicate(andPredicateWithSubpredicates: [extensionType, extensionMatch, hasRoom])
+        return NSCompoundPredicate(andPredicateWithSubpredicates: [chatsForExtension(extensionId), hasRoom])
     }
 
     static func chatWithActiveIncomingRequests() -> NSPredicate {
