@@ -2257,6 +2257,14 @@ mod tests {
 			run(vec![(OTHER, EXPIRED), (LEFT, 0), (OTHER, LIVE), (CLAIMANT, LIVE)], Some(4)),
 			Ok(Some(ClaimBlocker::HeldBy(OTHER)))
 		);
+		// An emptied entry is dead even while its `joinedAt` is live.
+		assert_eq!(
+			run([vec![(LEFT, LIVE); 5], vec![(CLAIMANT, LIVE)]].concat(), Some(4)),
+			Ok(Some(ClaimBlocker::ClearFirst { dead: 5 }))
+		);
+		// The claim stops at the claimant's own reservation, so nothing behind it counts.
+		assert_eq!(run([vec![(CLAIMANT, LIVE)], dead(5)].concat(), Some(4)), Ok(None));
+		assert_eq!(run(vec![(CLAIMANT, LIVE), (OTHER, LIVE)], Some(4)), Ok(None));
 		assert_eq!(run(dead(4), Some(4)), Ok(None));
 		assert_eq!(run(dead(5), Some(4)), Ok(Some(ClaimBlocker::ClearFirst { dead: 5 })));
 		assert_eq!(run(vec![(CLAIMANT, NOW - DURATION)], Some(4)), Ok(None));

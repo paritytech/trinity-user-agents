@@ -2175,15 +2175,17 @@ account per `DotnsGateway.LiteLabelOwner`; and runtimes whose
 
 A gateway claim clears at most `MAX_QUEUE_STEPS_PER_CALL` expired or emptied
 reservations from the front of the queue, and a reverted claim keeps none of
-that clearing. When more of them stand in front of the claim (dotNS 1.1.0 and
-later), the command first clears the queue with
+that clearing. The command reads the queue again after the ring revision wait,
+right before the claim. When more of them stand in front of the claim then
+(dotNS 1.1.0 and later), it first clears the queue with
 `DotnsPopController.expireReservation(label)`, sent as a `Revive.call` signed by
 the account, with the weight and storage deposit limits of a dry-run from it.
 The dry-run reports those limits even when the account cannot fund the
 deposit, and any other dry-run failure stops the command. The fee and the
-storage deposit are paid in PGAS: when the account's balance does not cover
-both, the command claims PGAS into the account with the same People ring
-membership (`Pgas.claim_pgas`, one daily slot), and dry-runs again. It stops
+storage deposit are paid in PGAS: when the dry-run reports the deposit
+unfunded or the account's balance does not cover both, the command claims PGAS
+into the account with the same People ring membership (`Pgas.claim_pgas`, one
+daily slot), and dry-runs again. It stops
 when that dry-run still fails, and after inclusion it reads the queue again and
 stops if the claim would still revert. Clearing prints, before
 `REGISTER_SUBMITTED`:

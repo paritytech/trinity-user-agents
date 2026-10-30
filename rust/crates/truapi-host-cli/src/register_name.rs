@@ -82,17 +82,9 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 		bail!("label {label:?} is already registered on dotNS and cannot be registered again");
 	}
 	// A claim the reservation queue refuses reverts in the gateway call, and the
-	// alias wait below would only time out. Too many expired or emptied
-	// reservations in front of the claim are cleared before it is built.
-	let clear_queue_first = match reader.claim_blocker(label, &account_to_h160(&who_public)).await?
-	{
-		None => false,
-		Some(ClaimBlocker::HeldBy(holder)) => return Err(held_by_other(label, &holder)),
-		Some(ClaimBlocker::ClearFirst { dead }) => {
-			println!("REGISTER_QUEUE_BLOCKED label={label} dead={dead}");
-			true
-		},
-	};
+	// alias wait below would only time out, so a name another account holds
+	// fails here, before the proof is built.
+	dead_reservations_to_clear(&mut reader, label, &who_public).await?;
 	// The gateway rejects a second registration for the account and a lite
 	// link the account does not own; both are storage reads, so ask first.
 	if reader.account_alias(&who_public).await?.is_some() {
@@ -205,7 +197,11 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 		genesis: H256(config.network.asset_hub_genesis),
 	};
 	let who_signer = Sr25519Signer::from_keypair(&who);
-	if clear_queue_first {
+	// Reservations in front of the claim can expire during the proof and the
+	// revision wait, so the queue is read again right before the claim. Too many
+	// expired or emptied ones are cleared first.
+	if let Some(dead) = dead_reservations_to_clear(&mut reader, label, &who_public).await? {
+		println!("REGISTER_QUEUE_BLOCKED label={label} dead={dead}");
 		clear_reservation_queue(QueueClear {
 			reader: &mut reader,
 			label,
@@ -300,13 +296,15 @@ async fn clear_reservation_queue(clear: QueueClear<'_>) -> Result<()> {
 	// storage deposit the account cannot pay.
 	let unfunded_deposit =
 		asset_hub_metadata.error_indices("Revive", "StorageDepositNotEnoughFunds")?;
+	let deposit_unfunded = priced.dry_run.fails_with(unfunded_deposit);
 	if let Err(error) = &priced.dry_run.result &&
-		!priced.dry_run.fails_with(unfunded_deposit)
+		!deposit_unfunded
 	{
 		bail!("DotnsPopController.expireReservation({label:?}) fails in a dry-run: {error}");
 	}
-	if alloc::pgas::pgas_balance(asset_hub_rpc, asset_hub_metadata, &who_public).await? <
-		priced.cost
+	if deposit_unfunded ||
+		alloc::pgas::pgas_balance(asset_hub_rpc, asset_hub_metadata, &who_public).await? <
+			priced.cost
 	{
 		let network_suffix = alloc::slot::read_network_suffix(asset_hub_rpc).await?;
 		let claimed = alloc::pgas::claim_pgas(alloc::pgas::PgasClaim {
@@ -403,6 +401,21 @@ impl ClearCall<'_> {
 		let fee = query_fee(rpc, extrinsic.extrinsic.bytes()).await?;
 		let cost = fee.saturating_add(dry_run.storage_deposit);
 		Ok(PricedClear { dry_run, extrinsic, cost })
+	}
+}
+
+/// The expired or emptied reservations to clear before `who` can claim `label`,
+/// or `None` when the claim clears them itself. Fails when another account's
+/// reservation holds the name.
+async fn dead_reservations_to_clear(
+	reader: &mut AssetHubReader,
+	label: &str,
+	who: &[u8; 32],
+) -> Result<Option<u64>> {
+	match reader.claim_blocker(label, &account_to_h160(who)).await? {
+		None => Ok(None),
+		Some(ClaimBlocker::HeldBy(holder)) => Err(held_by_other(label, &holder)),
+		Some(ClaimBlocker::ClearFirst { dead }) => Ok(Some(dead)),
 	}
 }
 
