@@ -46,8 +46,8 @@
     "accountDataStore": "0x2222222222222222222222222222222222222222"
   },
   "dotns": {
-    "registrar": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "resolver": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    "protocolRegistry": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "registrar": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "generation": "2026-09-17T16:15:00Z",
   "id": "previewnet",

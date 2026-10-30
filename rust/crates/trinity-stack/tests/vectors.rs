@@ -449,7 +449,11 @@ fn document_cases() -> Vec<DocumentCase> {
 			with(|value| value["contracts"]["accountDataStore"] = json!(hex(&[0x22; 32]))),
 			"invalid-hex",
 		),
-		plain("valid-dotns", with_dotns(two_addresses()), "ok"),
+		plain(
+			"valid-dotns",
+			with_dotns(json!({ "registrar": hex(&ADDRESS), "protocolRegistry": hex(&[0xbb; 20]) })),
+			"ok",
+		),
 		plain(
 			"dotns-without-asset-hub",
 			with(|value| {

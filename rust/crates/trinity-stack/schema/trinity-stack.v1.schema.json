@@ -47,7 +47,7 @@
       "additionalProperties": { "type": "string", "pattern": "^0x[0-9a-f]{40}$" }
     },
     "dotns": {
-      "description": "dotNS contract addresses by protocol registry key, such as storeFactory.",
+      "description": "dotNS contract addresses by DotnsConstants key, such as storeFactory, and protocolRegistry for the registry itself.",
       "type": "object",
       "propertyNames": { "pattern": "^[A-Za-z0-9]{1,32}$" },
       "additionalProperties": {

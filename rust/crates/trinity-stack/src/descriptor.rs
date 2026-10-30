@@ -64,7 +64,8 @@ pub struct Descriptor {
 	/// Asset Hub contracts readers need that the chains do not point to, by name.
 	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
 	pub contracts: Option<BTreeMap<String, String>>,
-	/// dotNS contract addresses by protocol registry key, such as `storeFactory`.
+	/// dotNS contract addresses by `DotnsConstants` key, such as `storeFactory`, and
+	/// `protocolRegistry` for the registry itself.
 	#[serde(default, deserialize_with = "unwrap_or_skip::deserialize")]
 	pub dotns: Option<BTreeMap<String, String>>,
 	/// Chain role and instance of the Coinage pallet.
