@@ -45,7 +45,9 @@ use crate::{
 	host_internal::extrinsic::Sr25519Signer,
 	host_logic::product_account::{derive_root_keypair_from_entropy, derive_sr25519_hard_path},
 	nft::HoldingTracker,
-	nft_purse::{FixedStaticSecret, ItemCount, NftPurses, NftPursesDeps, PageSize},
+	nft_purse::{
+		FixedStaticSecret, ItemCount, NftPurses, NftPursesDeps, PageSize, ScriptedStatements,
+	},
 	platform::ProductId,
 	store::{Db, open_temporary_core_db},
 	time::RealTimer,
@@ -283,13 +285,15 @@ where
 		.unwrap_or_else(|_| panic!("timed out waiting for {what}"))
 }
 
-/// The purse calls over the live ledger, with receive key secrets in memory
-/// and a static receive secret fresh for this run.
+/// The purse calls over the live ledger, with receive key secrets in memory,
+/// a static receive secret fresh for this run and no statement store.
 fn live_product_purses(purses: &LivePurses) -> NftPurses {
 	let ledger = purses.ledger.clone();
 	let encrypted = Arc::new(MemoryEncryptedStorage::default());
 	let static_secret = Arc::new(FixedStaticSecret(rand::random()));
-	NftPurses::new(NftPursesDeps { ledger, db: purses.db.clone(), encrypted, static_secret })
+	let statements = Arc::new(ScriptedStatements::default());
+	let db = purses.db.clone();
+	NftPurses::new(NftPursesDeps { ledger, db, encrypted, static_secret, statements })
 }
 
 #[tokio::test(flavor = "multi_thread")]

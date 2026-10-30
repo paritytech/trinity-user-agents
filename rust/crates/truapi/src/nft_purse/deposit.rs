@@ -8,7 +8,6 @@ use truapi::latest::{
 use super::{
 	NftPurses,
 	cheque::{CorruptedCheque, cheque_id_for, open_cheque},
-	dao,
 	operation::operation_key,
 	receive_key::ReceiveSecretError,
 };
@@ -123,14 +122,12 @@ impl NftPurses {
 		if cheque.id != derived {
 			return Err(DepositRefusal::ChequeIdMismatch { id: cheque.id, derived });
 		}
-		let record = self
-			.db
-			.read(move |conn| dao::find_receive_key(conn, &key))
+		let receive_key_purse = self
+			.receive_key_purse(depositor, key)
 			.await?
-			.filter(|record| record.creator == depositor.as_str())
 			.ok_or(DepositRefusal::UnknownReceiveKey(key))?;
-		if record.purse != to {
-			return Err(DepositRefusal::PurseMismatch { receive_key_purse: record.purse, to });
+		if receive_key_purse != to {
+			return Err(DepositRefusal::PurseMismatch { receive_key_purse, to });
 		}
 		Ok(())
 	}
