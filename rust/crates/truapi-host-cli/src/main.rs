@@ -1989,41 +1989,46 @@ fn persist_paired_host(session: &SigningHostSession, host: &PairedHost) -> Resul
 const RESPONDER_RETRY_PAUSES: Backoff =
 	Backoff::new(Duration::from_secs(1), Duration::from_secs(30));
 
-fn spawn_supervised_responder(
+/// A responder that ran this long before failing restarts after one second
+/// again.
+const RESET_RESTART_PAUSES_AFTER: Duration = Duration::from_secs(30);
+
+/// Serve `host` until it sends `Disconnected`, restarting the responder after
+/// a failure or an ended subscription.
+async fn supervise_responder(
 	runtime: Arc<SigningHostRuntime>,
 	host: PairedHost,
 	persisted: Option<(SessionCatalog, SessionProfile)>,
-) -> tokio::task::JoinHandle<()> {
-	tokio::spawn(async move {
-		let peer = paired_sso_peer(&host);
-		let mut pauses = RESPONDER_RETRY_PAUSES;
-		retry(
-			|| async {
-				match runtime.resume_pairing(peer).await {
-					Ok(ResponderExit::PeerDisconnected) => ControlFlow::Break(()),
-					Ok(exit @ ResponderExit::SubscriptionEnded) => {
-						ControlFlow::Continue(SystemEvent::SigningHostExit {
-							outcome: format!("{exit:?}"),
-						})
-					},
-					Err(error) => ControlFlow::Continue(SystemEvent::SigningHostError {
-						reason: error.reason,
-					}),
-				}
-			},
-			|event| {
-				terminal_ui::output_event(event);
-				pauses.next_pause()
-			},
-		)
-		.await;
-		if let Some((catalog, profile)) = &persisted {
-			forget_disconnected_peer(&runtime, peer, catalog, profile, &mut pauses).await;
-		}
-		terminal_ui::output_event(SystemEvent::SigningHostExit {
-			outcome: format!("{:?}", ResponderExit::PeerDisconnected),
-		});
-	})
+) {
+	let peer = paired_sso_peer(&host);
+	let mut pauses = RESPONDER_RETRY_PAUSES;
+	retry(
+		|| async {
+			let started = std::time::Instant::now();
+			let event = match runtime.resume_pairing(peer).await {
+				Ok(ResponderExit::PeerDisconnected) => return ControlFlow::Break(()),
+				Ok(exit @ ResponderExit::SubscriptionEnded) => {
+					SystemEvent::SigningHostExit { outcome: format!("{exit:?}") }
+				},
+				Err(error) => SystemEvent::SigningHostError { reason: error.reason },
+			};
+			ControlFlow::Continue((event, started.elapsed()))
+		},
+		|(event, served_for)| {
+			terminal_ui::output_event(event);
+			if served_for > RESET_RESTART_PAUSES_AFTER {
+				pauses.reset();
+			}
+			pauses.next_pause()
+		},
+	)
+	.await;
+	if let Some((catalog, profile)) = &persisted {
+		forget_disconnected_peer(&runtime, peer, catalog, profile, &mut pauses).await;
+	}
+	terminal_ui::output_event(SystemEvent::SigningHostExit {
+		outcome: format!("{:?}", ResponderExit::PeerDisconnected),
+	});
 }
 
 /// Remove a disconnected pairing host from the session and stop renewing its
@@ -2058,10 +2063,19 @@ async fn forget_disconnected_peer(
 	}
 }
 
+/// The catalog and profile that record `session`'s paired hosts, if it has a
+/// profile.
+fn paired_host_catalog(session: &SigningHostSession) -> Option<(SessionCatalog, SessionProfile)> {
+	session.profile.clone().map(|profile| (session.catalog.clone(), profile))
+}
+
 fn start_paired_host_responder(session: &mut SigningHostSession, host: PairedHost) {
 	let statement_account_id = host.statement_account_id();
-	let persisted = session.profile.clone().map(|profile| (session.catalog.clone(), profile));
-	let task = spawn_supervised_responder(session.runtime.clone(), host, persisted);
+	let task = tokio::spawn(supervise_responder(
+		session.runtime.clone(),
+		host,
+		paired_host_catalog(session),
+	));
 	session.responders.insert(statement_account_id, task);
 	terminal_ui::output_event(SystemEvent::SigningHostResponderStarted);
 }
@@ -2776,15 +2790,7 @@ fn mark_current_account_exhausted(session: &SigningHostSession) -> Result<()> {
 
 async fn respond_to_deeplink(session: &mut SigningHostSession, deeplink: String) -> Result<()> {
 	let host = establish_paired_host(session, &deeplink).await?;
-	let exit = session
-		.runtime
-		.resume_pairing(paired_sso_peer(&host))
-		.await
-		.map_err(SessionOperationError::Pairing)?;
-	if exit == ResponderExit::PeerDisconnected && session.profile.is_some() {
-		remove_paired_host_locally(session, &host.statement_account_id()).await?;
-	}
-	terminal_ui::output_event(SystemEvent::SigningHostExit { outcome: format!("{exit:?}") });
+	supervise_responder(session.runtime.clone(), host, paired_host_catalog(session)).await;
 	Ok(())
 }
 

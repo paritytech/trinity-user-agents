@@ -23,7 +23,7 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::{
-	chain_runtime::{ChainRuntime, RuntimeFailure},
+	chain_runtime::{ChainRuntime, RuntimeFailure, RuntimeFailureKind, rpc_failure},
 	host_logic::statement_store::{
 		SUBMIT_STATEMENT_METHOD, SUBSCRIBE_STATEMENT_METHOD, TopicFilterKind,
 		UNSUBSCRIBE_STATEMENT_METHOD, hex_topic,
@@ -53,6 +53,32 @@ pub enum StatementStoreRpcClientError {
 	/// The pooled People-chain connection could not be opened.
 	#[error(transparent)]
 	Chain(#[from] RuntimeFailure),
+}
+
+/// Why a statement submission failed.
+#[derive(Debug, Error, PartialEq)]
+pub enum StatementSubmitError {
+	/// No verdict from the store. Kind `Unavailable` means the People chain was
+	/// unreachable.
+	#[error(transparent)]
+	Chain(#[from] RuntimeFailure),
+	/// The store answered without accepting the statement.
+	#[error("statement_submit not accepted: {0}")]
+	Rejected(Value),
+}
+
+impl StatementSubmitError {
+	/// Whether the store rejected the statement because its signer has no
+	/// allowance yet.
+	pub fn is_no_allowance(&self) -> bool {
+		matches!(self, Self::Rejected(answer) if answer["reason"] == "noAllowance")
+	}
+
+	/// Whether the People chain was unreachable, so the statement may be
+	/// sent again.
+	pub fn is_unreachable(&self) -> bool {
+		matches!(self, Self::Chain(failure) if failure.kind() == RuntimeFailureKind::Unavailable)
+	}
 }
 
 /// People-chain statement-store RPC client factory.
@@ -101,16 +127,24 @@ impl StatementStoreRpc {
 	}
 
 	/// Submit a SCALE-encoded statement and wait for the JSON-RPC ack.
-	pub async fn submit(&self, statement: Vec<u8>, label: &'static str) -> Result<(), String> {
-		let rpc_client = self.request_client(label).await.map_err(|err| err.to_string())?;
+	pub async fn submit(
+		&self,
+		statement: &[u8],
+		label: &'static str,
+	) -> Result<(), StatementSubmitError> {
+		let rpc_client = self.request_client(label).await?;
 		submit(&RpcClient::new(rpc_client), statement).await
 	}
 
 	/// Submit an SSO statement, tolerating the short propagation window after
 	/// an allowance registration is included but not yet visible to the
 	/// Statement Store RPC backend.
-	pub async fn submit_sso(&self, statement: Vec<u8>, label: &'static str) -> Result<(), String> {
-		retry_until_allowance_visible(label, || self.submit(statement.clone(), label)).await
+	pub async fn submit_sso(
+		&self,
+		statement: &[u8],
+		label: &'static str,
+	) -> Result<(), StatementSubmitError> {
+		retry_until_allowance_visible(label, || self.submit(statement, label)).await
 	}
 
 	/// Submit a SCALE-encoded statement without waiting for the JSON-RPC ack.
@@ -128,11 +162,8 @@ impl StatementStoreRpc {
 			.map_err(rpc_error_message)
 	}
 
-	async fn request_client(
-		&self,
-		label: &'static str,
-	) -> Result<HostRpcClient, StatementStoreRpcClientError> {
-		Ok(self.chain.rpc_client(label, &self.people_chain_genesis_hash).await?)
+	async fn request_client(&self, label: &'static str) -> Result<HostRpcClient, RuntimeFailure> {
+		self.chain.rpc_client(label, &self.people_chain_genesis_hash).await
 	}
 
 	async fn connect(
@@ -176,26 +207,26 @@ pub async fn subscribe_match_all(
 /// rejected or invalid statement (e.g. `NoAllowance`, `BadProof`) comes back as
 /// `Ok(SubmitResult)`. Treat only `new`/`known` as success, so allowance/proof
 /// rejections surface instead of being silently dropped.
-pub async fn submit(rpc_client: &RpcClient, statement: Vec<u8>) -> Result<(), String> {
+pub async fn submit(rpc_client: &RpcClient, statement: &[u8]) -> Result<(), StatementSubmitError> {
 	let result = rpc_client
 		.request::<Value>(
 			SUBMIT_STATEMENT_METHOD,
-			rpc_params![format!("0x{}", hex::encode(&statement))],
+			rpc_params![format!("0x{}", hex::encode(statement))],
 		)
 		.await
-		.map_err(rpc_error_message)?;
+		.map_err(|error| rpc_failure(SUBMIT_STATEMENT_METHOD, error))?;
 	match result.get("status").and_then(Value::as_str) {
 		Some("new") | Some("known") => Ok(()),
-		_ => Err(format!("statement_submit not accepted: {result}")),
+		_ => Err(StatementSubmitError::Rejected(result)),
 	}
 }
 
 pub async fn submit_sso(
 	rpc_client: &RpcClient,
-	statement: Vec<u8>,
+	statement: &[u8],
 	label: &'static str,
-) -> Result<(), String> {
-	retry_until_allowance_visible(label, || submit(rpc_client, statement.clone())).await
+) -> Result<(), StatementSubmitError> {
+	retry_until_allowance_visible(label, || submit(rpc_client, statement)).await
 }
 
 /// Run `submit` until it succeeds, fails with anything but `noAllowance`, or
@@ -203,18 +234,15 @@ pub async fn submit_sso(
 async fn retry_until_allowance_visible<SubmitFn, SubmitFuture>(
 	label: &'static str,
 	submit: SubmitFn,
-) -> Result<(), String>
+) -> Result<(), StatementSubmitError>
 where
 	SubmitFn: Fn() -> SubmitFuture,
-	SubmitFuture: Future<Output = Result<(), String>>,
+	SubmitFuture: Future<Output = Result<(), StatementSubmitError>>,
 {
 	for attempt in 1..=SSO_NO_ALLOWANCE_RETRY_ATTEMPTS {
 		match submit().await {
 			Ok(()) => return Ok(()),
-			Err(reason)
-				if is_no_allowance_rejection(&reason) &&
-					attempt < SSO_NO_ALLOWANCE_RETRY_ATTEMPTS =>
-			{
+			Err(error) if error.is_no_allowance() && attempt < SSO_NO_ALLOWANCE_RETRY_ATTEMPTS => {
 				warn!(
 					label,
 					attempt,
@@ -223,15 +251,10 @@ where
 				);
 				futures_timer::Delay::new(SSO_NO_ALLOWANCE_RETRY_DELAY).await;
 			},
-			Err(reason) => return Err(reason),
+			Err(error) => return Err(error),
 		}
 	}
 	unreachable!("the bounded SSO submit loop always returns")
-}
-
-/// Whether a [`submit`] failure is a `noAllowance` rejection.
-pub fn is_no_allowance_rejection(reason: &str) -> bool {
-	reason.contains("noAllowance")
 }
 
 /// Statement-store topic filter encoded as JSON-RPC params.
@@ -266,9 +289,9 @@ mod tests {
 	};
 	use serde_json::json;
 
-	use super::{StatementStoreRpc, is_no_allowance_rejection};
+	use super::{StatementStoreRpc, StatementSubmitError};
 	use crate::{
-		chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
+		chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure, RuntimeFailureKind},
 		platform::JsonRpcConnection,
 		test_support::{StubPlatform, test_spawner},
 	};
@@ -282,6 +305,8 @@ mod tests {
 		Drops,
 		/// Answers every submission with this status.
 		Answers(&'static str),
+		/// Answers every submission with a JSON-RPC error.
+		Fails,
 	}
 
 	/// Chain whose n-th connection behaves as the n-th scripted [`Upstream`],
@@ -335,19 +360,23 @@ mod tests {
 		fn send(&self, request: String) {
 			self.requests.fetch_add(1, Ordering::SeqCst);
 			let mut sender = self.sender.lock().unwrap();
-			let status = match self.upstream {
+			let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+			let response = match self.upstream {
 				Upstream::Drops => {
 					sender.take();
 					return;
 				},
-				Upstream::Answers(status) => status,
+				Upstream::Answers(status) => json!({
+					"jsonrpc": "2.0",
+					"id": request["id"],
+					"result": { "status": status, "reason": "noAllowance" },
+				}),
+				Upstream::Fails => json!({
+					"jsonrpc": "2.0",
+					"id": request["id"],
+					"error": { "code": -32602, "message": "invalid statement encoding" },
+				}),
 			};
-			let request: serde_json::Value = serde_json::from_str(&request).unwrap();
-			let response = json!({
-				"jsonrpc": "2.0",
-				"id": request["id"],
-				"result": { "status": status, "reason": "noAllowance" },
-			});
 			if let Some(sender) = sender.as_ref() {
 				let _ = sender.unbounded_send(response.to_string());
 			}
@@ -379,8 +408,8 @@ mod tests {
 		let statement_store = statement_store(&chain);
 
 		futures::executor::block_on(async {
-			statement_store.submit(vec![1], "first").await.unwrap();
-			statement_store.submit(vec![2], "second").await.unwrap();
+			statement_store.submit(&[1], "first").await.unwrap();
+			statement_store.submit(&[2], "second").await.unwrap();
 		});
 
 		assert_eq!(chain.connects(), 1);
@@ -392,8 +421,8 @@ mod tests {
 		let statement_store = statement_store(&chain);
 
 		let (first, second) = futures::executor::block_on(async {
-			let first = statement_store.submit(vec![1], "first").await;
-			let second = statement_store.submit(vec![2], "second").await;
+			let first = statement_store.submit(&[1], "first").await;
+			let second = statement_store.submit(&[2], "second").await;
 			(first, second)
 		});
 
@@ -410,7 +439,7 @@ mod tests {
 		let chain = PeopleChain::new(vec![Upstream::Answers("rejected")]);
 		let statement_store = statement_store(&chain);
 
-		let result = futures::executor::block_on(statement_store.submit(vec![1], "submit"));
+		let result = futures::executor::block_on(statement_store.submit(&[1], "submit"));
 
 		assert_eq!((result.is_err(), chain.requests()), (true, 1));
 	}
@@ -420,18 +449,37 @@ mod tests {
 		let chain = PeopleChain::new(vec![Upstream::Drops, Upstream::Answers("new")]);
 		let statement_store = statement_store(&chain);
 
-		let result = futures::executor::block_on(statement_store.submit_sso(vec![1], "sso"));
+		let result = futures::executor::block_on(statement_store.submit_sso(&[1], "sso"));
 
-		assert_eq!((result.is_err(), chain.connects(), chain.requests()), (true, 1, 1));
+		assert_eq!(
+			(result.is_err_and(|error| error.is_unreachable()), chain.connects(), chain.requests()),
+			(true, 1, 1)
+		);
+	}
+
+	/// A JSON-RPC error is an answer, so it must not read as an unreachable chain.
+	#[test]
+	fn a_node_error_is_not_reported_as_unreachable() {
+		let chain = PeopleChain::new(vec![Upstream::Fails]);
+		let statement_store = statement_store(&chain);
+
+		let result = futures::executor::block_on(statement_store.submit_sso(&[1], "sso"));
+
+		assert!(matches!(
+			result,
+			Err(StatementSubmitError::Chain(failure))
+				if failure.kind() == RuntimeFailureKind::HostFailure
+		));
 	}
 
 	#[test]
 	fn identifies_no_allowance_submit_rejections() {
-		assert!(is_no_allowance_rejection(
-			r#"statement_submit not accepted: {"reason":"noAllowance","status":"rejected"}"#
-		));
-		assert!(!is_no_allowance_rejection(
-			r#"statement_submit not accepted: {"reason":"badProof","status":"rejected"}"#
-		));
+		let rejected = |reason| {
+			StatementSubmitError::Rejected(json!({ "status": "rejected", "reason": reason }))
+		};
+		assert_eq!(
+			(rejected("noAllowance").is_no_allowance(), rejected("badProof").is_no_allowance()),
+			(true, false)
+		);
 	}
 }

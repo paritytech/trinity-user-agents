@@ -325,7 +325,7 @@ fn sign_raw_accepts_confirmation_then_returns_sso_response() {
 		vec![
 			"statement_subscribeStatement",
 			"statement_subscribeStatement",
-			"statement_submit",
+			SUBMIT_STATEMENT_METHOD,
 			"statement_unsubscribeStatement",
 			"statement_unsubscribeStatement",
 		]
@@ -654,7 +654,7 @@ fn a_signature_withdrawn_during_sso_setup_is_never_submitted() {
 			("statement_subscribeStatement", r#""peer-sub""#.to_string()),
 			("statement_unsubscribeStatement", "true".to_string()),
 			("statement_unsubscribeStatement", "true".to_string()),
-			("statement_submit", r#"{"status":"new"}"#.to_string()),
+			(SUBMIT_STATEMENT_METHOD, r#"{"status":"new"}"#.to_string()),
 		],
 		rpc_method_responses_gate: Arc::new(Mutex::new(Some(gate))),
 		..Default::default()
@@ -680,7 +680,7 @@ fn a_signature_withdrawn_during_sso_setup_is_never_submitted() {
 	release.send(()).unwrap();
 	call.join().expect("sign_raw thread panicked");
 
-	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, "statement_submit"), 0);
+	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD), 0);
 }
 
 #[test]

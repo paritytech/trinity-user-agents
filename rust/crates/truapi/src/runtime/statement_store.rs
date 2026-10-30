@@ -136,16 +136,16 @@ impl StatementStore for ProductRuntimeHost {
 				let encoded = signed_statement_to_scale(statement.clone())
 					.map_err(|reason| CallError::Domain(latest::GenericError { reason }))?;
 				self.statement_store_rpc()
-					.submit_sso(encoded, "statement-store")
+					.submit_sso(&encoded, "statement-store")
 					.await
-					.map_err(|reason| {
+					.map_err(|error| {
 						if let latest::StatementProof::Sr25519 { signer, .. } = statement.proof &&
-							statement_store_rpc::is_no_allowance_rejection(&reason)
+							error.is_no_allowance()
 						{
 							self.accounts.forget_statement_store_allowance_key(signer);
 						}
 						CallError::Domain(latest::GenericError {
-							reason: format!("statement-store submit failed: {reason}"),
+							reason: format!("statement-store submit failed: {error}"),
 						})
 					})?;
 				self.connection.services.cache_statement(statement);
@@ -424,9 +424,12 @@ mod tests {
 		*,
 	};
 	use crate::{
-		host_logic::product_account::{
-			SR25519_SIGNING_CONTEXT, derive_product_keypair, derive_root_keypair_from_entropy,
-			index_bytes,
+		host_logic::{
+			product_account::{
+				SR25519_SIGNING_CONTEXT, derive_product_keypair, derive_root_keypair_from_entropy,
+				index_bytes,
+			},
+			statement_store::SUBMIT_STATEMENT_METHOD,
 		},
 		platform::{CoreStorageKey, ProductContext},
 		test_support::{
@@ -815,7 +818,7 @@ mod tests {
 		let sent = platform.sent_rpc.lock().expect("rpc list mutex poisoned");
 		assert_eq!(sent.len(), 1);
 		let request: serde_json::Value = serde_json::from_str(&sent[0]).unwrap();
-		assert_eq!(request["method"], "statement_submit");
+		assert_eq!(request["method"], SUBMIT_STATEMENT_METHOD);
 		let statement_hex = request["params"][0].as_str().unwrap();
 		let statement =
 			hex::decode(statement_hex.strip_prefix("0x").unwrap_or(statement_hex)).unwrap();

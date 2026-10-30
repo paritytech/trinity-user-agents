@@ -21,6 +21,7 @@ use crate::{
 	host_logic::{
 		session::{SessionInfo, SsoSessionInfo},
 		sso::pairing,
+		statement_store::SUBMIT_STATEMENT_METHOD,
 	},
 	subscription::Spawner,
 };
@@ -210,6 +211,9 @@ pub struct StubPlatform {
 	pub chain_connects: Arc<Mutex<Vec<[u8; 32]>>>,
 	/// When set, `connect` fails with this reason.
 	pub chain_connect_error: Option<&'static str>,
+	/// Reasons the next `connect` calls fail with, in order. Then `connect`
+	/// succeeds.
+	pub chain_connect_failures: Mutex<std::collections::VecDeque<&'static str>>,
 	/// When set, `connect` to this one chain fails, while every other chain
 	/// still connects.
 	pub unreachable_genesis: Option<[u8; 32]>,
@@ -483,6 +487,29 @@ pub fn signed_test_statement(data: Vec<u8>) -> Vec<u8> {
 	)
 	.unwrap()
 	.encode()
+}
+
+/// JSON-RPC methods in the stub RPC log, in the order they were sent.
+pub fn recorded_rpc_methods(sent_rpc: &Mutex<Vec<String>>) -> Vec<String> {
+	sent_rpc
+		.lock()
+		.expect("rpc list mutex poisoned")
+		.iter()
+		.map(|request| {
+			serde_json::from_str::<serde_json::Value>(request).unwrap()["method"]
+				.as_str()
+				.unwrap()
+				.to_string()
+		})
+		.collect()
+}
+
+/// How many requests in the stub RPC log called `method`.
+pub fn recorded_rpc_method_count(sent_rpc: &Mutex<Vec<String>>, method: &str) -> usize {
+	recorded_rpc_methods(sent_rpc)
+		.iter()
+		.filter(|candidate| candidate.as_str() == method)
+		.count()
 }
 
 /// Last submitted SSO remote message decoded from the stub RPC log.
@@ -1325,7 +1352,7 @@ fn sso_scripted_responses(
 					Some((subscribe_ack_frame(&id, "peer-sub"), 2))
 				},
 				2 => {
-					let id = wait_for_rpc_method_id(sent.clone(), "statement_submit", 0).await;
+					let id = wait_for_rpc_method_id(sent.clone(), SUBMIT_STATEMENT_METHOD, 0).await;
 					Some((statement_submit_ack_frame(&id), 3))
 				},
 				3 => match &script {
@@ -1812,6 +1839,14 @@ impl ChainProvider for StubPlatform {
 			.expect("chain connect mutex poisoned")
 			.push(genesis_hash);
 		if let Some(reason) = self.chain_connect_error {
+			return Err(ProviderError::Host { reason: reason.to_string() });
+		}
+		let failure = self
+			.chain_connect_failures
+			.lock()
+			.expect("chain connect failure mutex poisoned")
+			.pop_front();
+		if let Some(reason) = failure {
 			return Err(ProviderError::Host { reason: reason.to_string() });
 		}
 		if self.unreachable_genesis == Some(genesis_hash) {
