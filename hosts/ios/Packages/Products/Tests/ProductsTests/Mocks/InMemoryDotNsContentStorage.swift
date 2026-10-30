@@ -40,7 +40,7 @@ final class InMemoryDotNsContentStorage: DotNsContentStorageProtocol, @unchecked
         saved.withLock { $0.removeAll() }
     }
 
-    func storedContents() -> [DotNsStoredContent] {
-        saved.withLock { $0.map { DotNsStoredContent(contentHash: $0.key, modifiedAt: $0.value) } }
+    func storedContents() -> [DotNsContentLocalMetadata] {
+        saved.withLock { $0.map { DotNsContentLocalMetadata(contentHash: $0.key, modifiedAt: $0.value) } }
     }
 }

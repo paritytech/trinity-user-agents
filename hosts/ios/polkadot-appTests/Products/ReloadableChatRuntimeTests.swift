@@ -1,4 +1,5 @@
 import Foundation
+import Products
 import Testing
 import UIKit
 import UIKitExt
@@ -6,12 +7,10 @@ import UIKitExt
 
 @MainActor
 struct ReloadableChatRuntimeTests {
-    private struct Unavailable: Error {}
-
     @Test func reloadMovesTheChatOntoTheNewRuntime() async throws {
         let current = MockChatRuntime()
         let replacement = MockChatRuntime()
-        let runtime = ReloadableChatRuntime(runtime: current) { replacement }
+        let runtime = try makeRuntime(current, replacement)
         let view = StubPresentationView()
 
         try await runtime.start(messagingSupport: ProductsNativeApi.MessagingSupport(bot: nil, context: nil))
@@ -31,7 +30,7 @@ struct ReloadableChatRuntimeTests {
 
     @Test func reloadBeforeTheChatStartedDoesNotStartTheReplacement() async throws {
         let replacement = MockChatRuntime()
-        let runtime = ReloadableChatRuntime(runtime: MockChatRuntime()) { replacement }
+        let runtime = try makeRuntime(MockChatRuntime(), replacement)
 
         try await runtime.reload()
 
@@ -40,9 +39,9 @@ struct ReloadableChatRuntimeTests {
 
     @Test func failedReloadKeepsTheCurrentRuntime() async throws {
         let current = MockChatRuntime()
-        let runtime = ReloadableChatRuntime(runtime: current) { throw Unavailable() }
+        let runtime = try makeRuntime(current)
 
-        await #expect(throws: Unavailable.self) { try await runtime.reload() }
+        await #expect(throws: StubChatRuntimeFactory.Exhausted.self) { try await runtime.reload() }
         try await runtime.onUserMessage(text: "hello", roomId: nil)
 
         #expect(current.disposeCount == 0)
@@ -51,13 +50,23 @@ struct ReloadableChatRuntimeTests {
 
     @Test func reloadAfterDisposeDiscardsTheReplacement() async throws {
         let replacement = MockChatRuntime()
-        let runtime = ReloadableChatRuntime(runtime: MockChatRuntime()) { replacement }
+        let runtime = try makeRuntime(MockChatRuntime(), replacement)
 
         await runtime.dispose()
         try await runtime.reload()
 
         #expect(replacement.disposeCount == 1)
         #expect(replacement.startCount == 0)
+    }
+}
+
+private extension ReloadableChatRuntimeTests {
+    func makeRuntime(_ runtimes: ChatRuntimeProtocol...) throws -> ReloadableChatRuntime {
+        try ReloadableChatRuntime(
+            resolved: .legacy(id: "shop.dot"),
+            runtimeFactory: StubChatRuntimeFactory(runtimes: runtimes),
+            contentLoader: StubProductContentLoader()
+        )
     }
 }
 

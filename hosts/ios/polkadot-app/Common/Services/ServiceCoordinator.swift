@@ -327,7 +327,6 @@ extension ServiceCoordinator {
 
         let (chatExtensionsRegistry, productWorkerFacade) = createChatExtensionsRegistry(
             accountManager: accountManager,
-            truapiRuntimeProvider: truapiRuntimeProvider,
             spaFlowState: spaFlowState,
             productFileProvider: productFileProvider,
             pocket: pocket

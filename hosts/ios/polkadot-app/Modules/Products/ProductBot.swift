@@ -16,7 +16,7 @@ import UIKitExt
 final class ProductBot: ChatExtensionBot {
     let product: Product
     private let description: String?
-    private let runtime: ReloadableChatRuntime
+    private let runtime: ReloadableChatRuntimeProtocol
     private let resolveImage: WidgetImageResolver
     private let logger: LoggerProtocol
 
@@ -33,7 +33,7 @@ final class ProductBot: ChatExtensionBot {
     init(
         product: Product,
         description: String?,
-        runtime: ReloadableChatRuntime,
+        runtime: ReloadableChatRuntimeProtocol,
         resolveImage: WidgetImageResolver,
         logger: LoggerProtocol = Logger.shared
     ) {

@@ -11,7 +11,6 @@ extension ServiceCoordinator {
     @MainActor
     static func createChatExtensionsRegistry(
         accountManager: ProductsAccountManaging,
-        truapiRuntimeProvider: TrUAPIHostRuntimeProviding,
         spaFlowState: SPAFlowState,
         productFileProvider: any ChatProductFileProviding,
         pocket: ProductPocketService?
@@ -34,10 +33,11 @@ extension ServiceCoordinator {
 
         let botFactory = ProductBotFactory(
             contentLoader: spaFlowState.contentLoader,
-            productFileProvider: productFileProvider,
-            runtimeProvider: truapiRuntimeProvider,
-            workers: { pocket?.workers },
-            workerManager: workerFacade.manager,
+            runtimeFactory: ChatRuntimeFactory(
+                productFileProvider: productFileProvider,
+                workers: { pocket?.workers },
+                workerManager: workerFacade.manager
+            ),
             productImages: spaFlowState.productImages
         )
 

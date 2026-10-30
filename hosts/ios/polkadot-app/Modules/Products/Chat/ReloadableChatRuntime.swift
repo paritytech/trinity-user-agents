@@ -3,9 +3,11 @@ import os
 import Products
 import UIKitExt
 
-final class ReloadableChatRuntime: ChatRuntimeProtocol, @unchecked Sendable {
-    typealias RuntimeMaking = @Sendable () async throws -> ChatRuntimeProtocol
+protocol ReloadableChatRuntimeProtocol: ChatRuntimeProtocol {
+    func reload() async throws
+}
 
+final class ReloadableChatRuntime: ReloadableChatRuntimeProtocol, @unchecked Sendable {
     private struct State {
         var runtime: ChatRuntimeProtocol
         var messagingSupport: ProductsNativeApi.MessagingSupport?
@@ -13,16 +15,25 @@ final class ReloadableChatRuntime: ChatRuntimeProtocol, @unchecked Sendable {
         var disposed = false
     }
 
-    private let makeRuntime: RuntimeMaking
+    private let productId: ProductId
+    private let runtimeFactory: ChatRuntimeMaking
+    private let contentLoader: ProductContentLoading
     private let state: OSAllocatedUnfairLock<State>
 
-    init(runtime: ChatRuntimeProtocol, makeRuntime: @escaping RuntimeMaking) {
-        self.makeRuntime = makeRuntime
-        state = OSAllocatedUnfairLock(uncheckedState: State(runtime: runtime))
+    init(
+        resolved: ResolvedProduct,
+        runtimeFactory: ChatRuntimeMaking,
+        contentLoader: ProductContentLoading
+    ) throws {
+        productId = resolved.id
+        self.runtimeFactory = runtimeFactory
+        self.contentLoader = contentLoader
+        state = try OSAllocatedUnfairLock(uncheckedState: State(runtime: runtimeFactory.makeRuntime(for: resolved)))
     }
 
     func reload() async throws {
-        let replacement = try await makeRuntime()
+        let latest = try await contentLoader.openWorker(productId)
+        let replacement = try runtimeFactory.makeRuntime(for: latest)
 
         let swap = state.withLock { state -> (ChatRuntimeProtocol, State)? in
             guard !state.disposed else { return nil }

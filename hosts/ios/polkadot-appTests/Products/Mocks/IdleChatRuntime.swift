@@ -3,7 +3,7 @@ import UIKitExt
 @testable import polkadot_app
 
 /// Accepts every call and does nothing, for a bot that needs no worker.
-final class IdleChatRuntime: ChatRuntimeProtocol, @unchecked Sendable {
+final class IdleChatRuntime: ReloadableChatRuntimeProtocol, @unchecked Sendable {
     func start(messagingSupport _: ProductsNativeApi.MessagingSupport) async throws {}
     func onUserMessage(text _: String, roomId _: String?) async throws {}
 
@@ -26,4 +26,5 @@ final class IdleChatRuntime: ChatRuntimeProtocol, @unchecked Sendable {
 
     @MainActor func attach(presentationView _: ControllerBackedProtocol) {}
     func dispose() async {}
+    func reload() async throws {}
 }

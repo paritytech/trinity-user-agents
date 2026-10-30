@@ -89,8 +89,8 @@ extension ProductContentLoader: ProductContentLoading {
         let (manifest, content) = try await retrying(
             productId,
             policy: policy,
-            onPhase: onPhase,
-            diagnosing: true
+            trigger: .open,
+            onPhase: onPhase
         ) { [fetcher] in
             onPhase(.resolving)
 
@@ -203,7 +203,7 @@ private extension ProductContentLoader {
         let served = await servedContentIds(of: applied.product)
 
         do {
-            let latest = try await retrying(productId, policy: timing.refreshPolicy) { [fetcher] in
+            let latest = try await retrying(productId, policy: timing.refreshPolicy, trigger: .refresh) { [fetcher] in
                 try await Self.fetchLatest(productId, kinds: Array(served.keys), using: fetcher)
             }
 
@@ -280,13 +280,11 @@ private extension ProductContentLoader {
     func retrying<T: Sendable>(
         _ productId: ProductId,
         policy: ProductLoadPolicy,
+        trigger: ProductLoadTrigger,
         onPhase: @escaping ProductLoadPhaseHandler = { _ in },
-        diagnosing: Bool = false,
         _ operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
-        let diagnosis = diagnosing
-            ? await ProductLoadDiagnosis(productId: productId, diagnostics: environment.diagnostics)
-            : nil
+        let diagnosis = await environment.diagnostics.diagnosis(of: productId, trigger: trigger)
 
         let strategy = NetworkFetchRetryStrategy(
             classifier: ProductLoadErrorClassifier(),

@@ -9,7 +9,7 @@ public enum DotNsContentStorageError: Error {
     case invalidContentHash(String)
 }
 
-public struct DotNsStoredContent: Equatable, Sendable {
+public struct DotNsContentLocalMetadata: Equatable, Sendable {
     public let contentHash: String
     public let modifiedAt: Date
 
@@ -26,7 +26,7 @@ public protocol DotNsContentStorageProtocol {
     func deleteContent(contentHash: String) throws
     func loadContent(contentHash: String, relativePath: String) -> Data?
     func deleteAll() throws
-    func storedContents() -> [DotNsStoredContent]
+    func storedContents() -> [DotNsContentLocalMetadata]
 }
 
 public final class DotNsContentStorage: DotNsContentStorageProtocol {
@@ -98,7 +98,7 @@ public final class DotNsContentStorage: DotNsContentStorageProtocol {
         try fileManager.removeItem(at: baseDirectory)
     }
 
-    public func storedContents() -> [DotNsStoredContent] {
+    public func storedContents() -> [DotNsContentLocalMetadata] {
         let entries = (try? fileManager.contentsOfDirectory(
             at: baseDirectory,
             includingPropertiesForKeys: [.contentModificationDateKey]
@@ -112,7 +112,7 @@ public final class DotNsContentStorage: DotNsContentStorageProtocol {
             let modifiedAt = (try? entry.resourceValues(forKeys: [.contentModificationDateKey]))?
                 .contentModificationDate ?? .distantPast
 
-            return DotNsStoredContent(contentHash: contentHash, modifiedAt: modifiedAt)
+            return DotNsContentLocalMetadata(contentHash: contentHash, modifiedAt: modifiedAt)
         }
     }
 }

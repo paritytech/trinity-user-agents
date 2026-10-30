@@ -28,6 +28,11 @@ public struct ProductLoadDiagnostics: Sendable {
     }
 }
 
+enum ProductLoadTrigger {
+    case open
+    case refresh
+}
+
 struct ProductLoadAttempts {
     let productId: ProductId
     private(set) var failed = 0
@@ -87,6 +92,16 @@ actor ProductLoadDiagnosis {
 }
 
 extension ProductLoadDiagnostics {
+    /// A background refresh has no one waiting on it, so its failures are not flow-breaking.
+    func diagnosis(of productId: ProductId, trigger: ProductLoadTrigger) async -> ProductLoadDiagnosis? {
+        switch trigger {
+        case .open:
+            await ProductLoadDiagnosis(productId: productId, diagnostics: self)
+        case .refresh:
+            nil
+        }
+    }
+
     func reportStall(_ attempts: ProductLoadAttempts, error: Error, at date: Date) {
         var counters = Self.counters(for: error)
         counters["attempts"] = attempts.failed
