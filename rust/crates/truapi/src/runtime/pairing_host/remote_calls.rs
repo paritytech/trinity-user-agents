@@ -265,6 +265,11 @@ impl PairingHost {
 
 	/// Ask the paired signing host to allocate product resources, caching any
 	/// returned allowance keys.
+	///
+	/// Each request asks for one more slot, unless an earlier one never
+	/// answered the product: the phone may still have granted that one, so
+	/// the next asks for the existing slot instead. A product retrying a slow
+	/// approval must not cost the person a second slot.
 	pub async fn remote_allocate_resources(
 		&self,
 		cx: &CallContext,
@@ -273,7 +278,25 @@ impl PairingHost {
 		request: latest::HostRequestResourceAllocationRequest,
 	) -> Result<latest::HostRequestResourceAllocationResponse, AuthorityError> {
 		let lifecycle_epoch = self.session.current_session_lifecycle_epoch();
-		let outcomes = self
+		let unanswered = session
+			.sso
+			.as_ref()
+			.map(|sso| (SsoSessionKey::from_session(sso), product_id.clone()));
+		// Marked before the request goes out, so a call dropped mid-wait
+		// still leaves the mark for the product's next request.
+		let retrying = unanswered.clone().is_some_and(|key| {
+			!self
+				.unanswered_allocations
+				.lock()
+				.expect("unanswered allocation mutex poisoned")
+				.insert(key)
+		});
+		let on_existing = if retrying {
+			OnExistingAllowancePolicy::Ignore
+		} else {
+			OnExistingAllowancePolicy::Increase
+		};
+		let answer = self
 			.session
 			.call(
 				cx,
@@ -281,11 +304,22 @@ impl PairingHost {
 				ResourceAllocationRequest {
 					calling_product_id: product_id.clone(),
 					resources: request.resources,
-					on_existing: OnExistingAllowancePolicy::Increase,
+					on_existing,
 				},
 			)
-			.await?
-			.map_err(remote_authority_error)?;
+			.await;
+		// A withdrawn call answers `Cancelled` to the product even when the
+		// phone granted it, so only an answer the product receives clears it.
+		if let Some(key) = unanswered &&
+			answer.is_ok() &&
+			!cx.cancel().is_cancelled()
+		{
+			self.unanswered_allocations
+				.lock()
+				.expect("unanswered allocation mutex poisoned")
+				.remove(&key);
+		}
+		let outcomes = answer?.map_err(remote_authority_error)?;
 		self.cache_allowance_outcomes(cx, session, lifecycle_epoch, product_id, &outcomes)
 			.await?;
 		Ok(latest::HostRequestResourceAllocationResponse {
