@@ -154,7 +154,7 @@ pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 }
 
 pub struct EventCallbacks {
-	pub logs: Mutex<Vec<String>>,
+	pub logs: Mutex<Vec<(String, String)>>,
 	pub face_requests: Mutex<Vec<bool>>,
 	pub chat_room_status: Mutex<v01::ChatRoomRegistrationStatus>,
 	pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
@@ -272,8 +272,8 @@ impl EventCallbacks {
 
 #[async_trait::async_trait]
 impl HostCallbacks for EventCallbacks {
-	fn on_core_log(&self, marker: String, _detail: String) {
-		self.logs.lock().expect("logs mutex poisoned").push(marker);
+	fn on_core_log(&self, marker: String, detail: String) {
+		self.logs.lock().expect("logs mutex poisoned").push((marker, detail));
 	}
 	fn request_worker_transition(&self, product_id: ProductId, transition: WorkerTransition) {
 		self.worker_demand
@@ -291,6 +291,23 @@ impl HostCallbacks for EventCallbacks {
 	}
 	async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
 		Ok(vec![7; 32])
+	}
+	async fn encrypted_storage_read(
+		&self,
+		_key: Vec<u8>,
+	) -> Result<Option<Vec<u8>>, HostRejection> {
+		Ok(None)
+	}
+	async fn encrypted_storage_write(
+		&self,
+		_key: Vec<u8>,
+		_value: Vec<u8>,
+	) -> Result<(), HostRejection> {
+		Ok(())
+	}
+
+	async fn encrypted_storage_delete(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
+		Ok(())
 	}
 	async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
 		Ok(())
@@ -2452,6 +2469,23 @@ fn start_ws_bridge_twice_returns_already_running() {
 		async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
 			Ok(vec![0; 32])
 		}
+		async fn encrypted_storage_read(
+			&self,
+			_key: Vec<u8>,
+		) -> Result<Option<Vec<u8>>, HostRejection> {
+			Ok(None)
+		}
+		async fn encrypted_storage_write(
+			&self,
+			_key: Vec<u8>,
+			_value: Vec<u8>,
+		) -> Result<(), HostRejection> {
+			Ok(())
+		}
+
+		async fn encrypted_storage_delete(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
+			Ok(())
+		}
 		async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
 			Ok(())
 		}
@@ -2624,6 +2658,23 @@ fn pending_permission_decision_does_not_stall_bridge() {
 		fn device_paired(&self, _device: PairedSsoPeer) {}
 		async fn current_installation(&self) -> Result<Vec<u8>, HostRejection> {
 			Ok(vec![0; 32])
+		}
+		async fn encrypted_storage_read(
+			&self,
+			_key: Vec<u8>,
+		) -> Result<Option<Vec<u8>>, HostRejection> {
+			Ok(None)
+		}
+		async fn encrypted_storage_write(
+			&self,
+			_key: Vec<u8>,
+			_value: Vec<u8>,
+		) -> Result<(), HostRejection> {
+			Ok(())
+		}
+
+		async fn encrypted_storage_delete(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
+			Ok(())
 		}
 		async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
 			Ok(())
@@ -2901,6 +2952,84 @@ fn closing_an_execution_releases_its_callbacks_while_the_host_lives() {
 	drop(host);
 }
 
+/// Creating a host installs the core's log sink, and the marker the core
+/// raises through tracing on the way up proves the layer that forwards marked
+/// targets actually reaches a host. Raised at `INFO`, below the console floor,
+/// because a host's log must not depend on anyone lowering the trace level.
+///
+/// The sink is process-wide and nothing makes installing it atomic with the
+/// marker, so another test's host can take it in between and collect this
+/// one's line. That is retried rather than serialised: a sink that does not
+/// route misses every attempt, which is the regression worth catching.
+#[test]
+fn starting_a_host_proves_the_core_log_channel_reaches_it() {
+	let mut last = Vec::new();
+	for _ in 0..8 {
+		let callbacks = Arc::new(EventCallbacks::new());
+		let host = NativeTrUApiHostRuntime::with_runtime_config(
+			callbacks.clone(),
+			native_host_runtime_config(),
+		)
+		.expect("create host");
+		let seen = callbacks.logs.lock().expect("logs mutex poisoned").clone();
+		drop(host);
+		if seen.iter().any(|(marker, _)| marker == "truapi.core.started") {
+			return;
+		}
+		last = seen;
+	}
+	panic!("the core's start marker never reached the host: {last:?}");
+}
+
+/// The core's log sink must not be what keeps a host alive. It is process-wide
+/// and nothing clears it, so a strong handle would pin a torn-down host's
+/// object graph and go on delivering into it.
+#[test]
+fn the_core_log_sink_does_not_retain_a_dropped_host() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let weak = Arc::downgrade(&callbacks);
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		callbacks.clone(),
+		native_host_runtime_config(),
+	)
+	.expect("create host");
+
+	drop(host);
+	drop(callbacks);
+
+	// Tests share the native executor, so a task still draining can hold the
+	// last strong handle for a moment. A sink holding one never lets go.
+	crate::test_support::wait_until(
+		|| weak.upgrade().is_none(),
+		"the core log sink retained the host's callbacks",
+	);
+}
+
+/// A host that fails to start must not take the running host's log with it.
+/// The sink is process-wide and its registration clears the slot as it drops,
+/// so it is installed only once this runtime is certain to exist.
+#[test]
+fn a_failed_host_start_leaves_the_running_host_logging() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		callbacks.clone(),
+		native_host_runtime_config(),
+	)
+	.expect("create host");
+
+	let mut doomed = native_host_runtime_config();
+	doomed.database_directory = "/truapi-probe-that-cannot-be-opened".to_string();
+	let failed =
+		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), doomed);
+	assert!(failed.is_err(), "the probe config was supposed to fail");
+
+	assert!(
+		crate::logging::host_sink_installed(),
+		"a host that failed to start cleared the running host's sink",
+	);
+	drop(host);
+}
+
 #[test]
 fn bridge_logs_follow_the_host_and_authenticated_execution() {
 	use futures::SinkExt;
@@ -2950,7 +3079,7 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
 					.lock()
 					.expect("logs mutex poisoned")
 					.iter()
-					.any(|marker| marker == "truapi.ws_bridge.text_frame_ignored")
+					.any(|(marker, _)| marker == "truapi.ws_bridge.text_frame_ignored")
 			})
 		},
 		"connection did not process the text frame",
@@ -2961,8 +3090,8 @@ fn bridge_logs_follow_the_host_and_authenticated_execution() {
 			.lock()
 			.expect("logs mutex poisoned")
 			.iter()
+			.map(|(marker, _)| marker.clone())
 			.filter(|marker| marker.starts_with("truapi.ws_bridge."))
-			.cloned()
 			.collect::<Vec<_>>()
 	});
 	assert_eq!(

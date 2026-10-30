@@ -1,6 +1,7 @@
 import AsyncExtensions
 import Foundation
 import FoundationExt
+import IssueMonitoring
 import Keystore_iOS
 import Products
 import UIKit
@@ -29,20 +30,24 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
         let applicationStateStreams: ApplicationStateStreamFactory
         let productOpener: ProductOpening
         let dateProvider: CurrentDateProviding
+        let diagnostics: GameReminderDiagnostics
     }
 
     static func makeDefault() -> ProductGameReminderCenter {
-        ProductGameReminderCenter(
+        let diagnostics = GameReminderDiagnostics(recorder: IssueMonitoringFactory.createHostEventRecorder())
+        return ProductGameReminderCenter(
             dependencies: Dependencies(
                 services: ProductGameReminderServicesFactory(
                     settingsManager: SettingsManager.shared,
-                    localNotificationService: UserNotificationService.shared
+                    localNotificationService: UserNotificationService.shared,
+                    diagnostics: diagnostics
                 ),
                 settingsManager: SettingsManager.shared,
                 applicationState: UIApplication.shared,
                 applicationStateStreams: ApplicationStateStreamFactory(),
                 productOpener: ProductOpener(),
-                dateProvider: NowDateProvider()
+                dateProvider: NowDateProvider(),
+                diagnostics: diagnostics
             )
         )
     }
@@ -66,12 +71,15 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
     private let applicationStateStreams: ApplicationStateStreamFactory
     private let productOpener: ProductOpening
     private let dateProvider: CurrentDateProviding
+    private let diagnostics: GameReminderDiagnostics
 
     /// One pair per product: AlarmKit serialises its calls per instance.
     private var reminders: [ProductId: Reminders] = [:]
     private let pillSubject = AsyncCurrentValueSubject<ProductGamePill?>(nil)
     private var wakeUp: Task<Void, Never>?
     private var becameActive: Task<Void, Never>?
+    private var alarmAlerts: Task<Void, Never>?
+    private var firedAlarmIds: Set<UUID> = []
 
     init(dependencies: Dependencies) {
         services = dependencies.services
@@ -80,6 +88,7 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
         applicationStateStreams = dependencies.applicationStateStreams
         productOpener = dependencies.productOpener
         dateProvider = dependencies.dateProvider
+        diagnostics = dependencies.diagnostics
     }
 
     /// Held reminders, soonest first.
@@ -101,6 +110,7 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
 
     func start() {
         observeBecomingActive()
+        observeAlarmAlerts()
         refresh()
     }
 
@@ -129,16 +139,20 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
     }
 
     func cancel(productId: ProductId) {
-        guard slot(for: productId) != nil else {
+        guard let slot = slot(for: productId) else {
             return
         }
         drop(productId)
+        diagnostics.cancelled(productId: slot.productId, startsAt: slot.startsAt)
         refresh()
     }
 
     func refresh() {
         wakeUp?.cancel()
         wakeUp = nil
+
+        // A refresh can drop a past slot, so capture an alarm already ringing before walking the slots.
+        recordFired(services.currentAlertingAlarmIds())
 
         let now = dateProvider.now
         var pill: Slot?
@@ -156,7 +170,9 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
                 drop(slot.productId)
                 if !isLate, !opened {
                     opened = true
-                    productOpener.open(productId: slot.productId)
+                    if productOpener.open(productId: slot.productId) {
+                        diagnostics.productOpened(productId: slot.productId, startsAt: slot.startsAt, source: .autoOpen)
+                    }
                 }
                 continue
             }
@@ -281,6 +297,41 @@ private extension ProductGameReminderCenter {
                 }
                 refresh()
             }
+        }
+    }
+
+    /// AlarmKit rings outside the app, so a ring is seen only while the app runs, and only once per alarm.
+    func observeAlarmAlerts() {
+        guard alarmAlerts == nil else {
+            return
+        }
+        let alerts = services.alertingAlarms()
+        alarmAlerts = Task { [weak self] in
+            for await alarmIds in alerts {
+                guard let self else {
+                    return
+                }
+                recordFired(alarmIds)
+            }
+        }
+    }
+
+    func recordFired(_ alarmIds: @autoclosure () -> Set<UUID>) {
+        diagnostics.fired { ringingSlots(alarmIds()) }
+    }
+
+    func ringingSlots(_ alarmIds: Set<UUID>) -> [(productId: ProductId, startsAt: Date)] {
+        guard !alarmIds.isEmpty else {
+            return []
+        }
+        return slots.compactMap { slot in
+            guard let alarmId = settingsManager.string(for: GameReminderStorageKeys.product(slot.productId).alarmId)
+                .flatMap(UUID.init(uuidString:)),
+                alarmIds.contains(alarmId),
+                firedAlarmIds.insert(alarmId).inserted else {
+                return nil
+            }
+            return (slot.productId, slot.startsAt)
         }
     }
 
