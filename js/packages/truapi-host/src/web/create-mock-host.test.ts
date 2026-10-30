@@ -599,8 +599,8 @@ describe("createMockHost TestHostAPI parity", () => {
       executionKind: { tag: "Unknown" } as const,
     };
     for (const roomId of ["zulu", "alpha", "mike"]) {
-      await host.callbacks.chat!.createChatRoom(product, {
-        roomId,
+      await host.callbacks.chat!.createChatRoom(product, roomId, {
+        roomIdSource: roomId,
         name: roomId,
         icon: "https://example.invalid/i.png",
       });
@@ -708,7 +708,12 @@ describe("createMockHost TestHostAPI parity", () => {
     const rooms = host.callbacks.chat!.subscribeChatRooms();
     await host.callbacks.chat!.createChatRoom(
       { productId: "p", executionKind: { tag: "Unknown" } },
-      { roomId: "lobby", name: "Lobby", icon: "https://example.invalid/i.png" },
+      "lobby",
+      {
+        roomIdSource: "lobby",
+        name: "Lobby",
+        icon: "https://example.invalid/i.png",
+      },
     );
 
     const seen = await drain(rooms, 2);
@@ -849,8 +854,8 @@ describe("createMockHost TestHostAPI parity", () => {
     };
     const chat = createMockHost({ faults: { chatError: "chat down" } });
     await expect(
-      chat.callbacks.chat!.createChatRoom(product, {
-        roomId: "r",
+      chat.callbacks.chat!.createChatRoom(product, "r", {
+        roomIdSource: "r",
         name: "R",
         icon: "https://example.invalid/i.png",
       }),

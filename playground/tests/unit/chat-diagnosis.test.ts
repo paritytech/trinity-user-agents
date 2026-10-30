@@ -8,11 +8,15 @@ import { WORKER_DIAGNOSIS_METHODS, ChatDiagnosis } from "../../worker/diagnosis"
  * diagnosis. The CLI battery drives Pocket over the real wire instead. Naming
  * each method rather than the whole service keeps the guard on the rest of it,
  * so a third Pocket method fails the check below until it is either diagnosed
- * or listed here.
+ * or listed here. The host asks the Chat queries, so a worker can only answer
+ * them, and the diagnosis cannot start them.
  */
 const UNDIAGNOSED_WORKER_METHODS: ReadonlySet<string> = new Set([
   "Pocket/list_subscribe",
   "Pocket/remove_card",
+  "Chat/messages_query",
+  "Chat/user_action",
+  "Chat/reactions_query",
 ]);
 
 describe("ChatDiagnosis", () => {

@@ -2,6 +2,7 @@ import { getClientSync } from "@parity/truapi/sandbox";
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import type {
   CallErrorValue,
+  ChatMessage,
   HostChatActionSubscribeItem,
   HostChatListSubscribeItem,
   HostRendererActionSubscribeItem,
@@ -15,17 +16,21 @@ import {
   CHAT_DIAGNOSIS_COPY_ACTION,
   CHAT_DIAGNOSIS_REFRESH_ACTION,
   ChatDiagnosis,
+  type WorkerDiagnosisMethod,
 } from "./diagnosis";
 import { servePocket } from "./pocket";
 
-const ROOM_ID = "truapi-playground";
+const ROOM_ID_SOURCE = "truapi-playground";
 const ROOM_NAME = "TrUAPI Playground";
 const DIAGNOSIS_COMMAND = "!diagnose";
 const ECHO_COMMAND = "!echo";
 const RENDER_MESSAGE_TYPE = "truapi-chat-diagnosis";
 const BOT_ID = "truapi-diagnosis-bot";
+// A one-pixel PNG: the icon rules of `createRoom` accept an inline image.
+const DIAGNOSIS_ROOM_ICON =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-const diagnosticRoomId = `${ROOM_ID}-diagnosis-${runId}`;
+const diagnosticRoomSource = `${ROOM_ID_SOURCE}-diagnosis-${runId}`;
 const renderPayload = bytesToHex(
   new TextEncoder().encode(JSON.stringify({ version: 1, runId })),
 );
@@ -36,12 +41,16 @@ if (!client) {
 }
 const chat = client.chat;
 const renderer = client.renderer;
+// The host makes the room id, so each call to this room waits for it.
+const playgroundRoom = ensureRoom(ROOM_ID_SOURCE, ROOM_NAME);
 let customMessageId: string | undefined;
 let finalReportPosted = false;
 type RenderInstance = {
   messageId: string;
   send: (node: RendererNode) => void;
-  interrupt: (reason?: CallErrorValue<VersionedProductRendererRenderError>) => void;
+  interrupt: (
+    reason?: CallErrorValue<VersionedProductRendererRenderError>,
+  ) => void;
   disposed: boolean;
 };
 const activeRenderInstances = new Set<RenderInstance>();
@@ -113,11 +122,10 @@ await runStartupDiagnosis().catch((error: unknown) => {
 });
 
 async function runStartupDiagnosis(): Promise<void> {
-  await ensureRoom(ROOM_ID, ROOM_NAME);
+  await playgroundRoom;
 
-  const roomAppeared = waitForRoom(chat.listSubscribe(), diagnosticRoomId);
   const first = await chat.createRoom({
-    roomId: diagnosticRoomId,
+    roomIdSource: diagnosticRoomSource,
     name: `TrUAPI Diagnosis ${runId}`,
     icon: "",
   });
@@ -130,8 +138,10 @@ async function runStartupDiagnosis(): Promise<void> {
     );
   }
 
+  const diagnosticRoomId = first.value.roomId;
+
   const second = await chat.createRoom({
-    roomId: diagnosticRoomId,
+    roomIdSource: diagnosticRoomSource,
     name: `TrUAPI Diagnosis ${runId}`,
     icon: "",
   });
@@ -145,9 +155,17 @@ async function runStartupDiagnosis(): Promise<void> {
       `second createRoom returned ${second.value.status}, expected Exists`,
     );
   }
-  diagnosis.pass("Chat/create_room", "created once, then returned Exists");
+  if (second.value.roomId !== diagnosticRoomId) {
+    throw new Error(
+      `second createRoom returned the room ${second.value.roomId}, expected ${diagnosticRoomId}`,
+    );
+  }
+  diagnosis.pass(
+    "Chat/create_room",
+    "created once, then returned Exists with the same room id",
+  );
 
-  await roomAppeared;
+  await waitForRoom(chat.listSubscribe(), diagnosticRoomId);
   diagnosis.pass("Chat/list_subscribe", "observed the newly created room");
 
   // The diagnosis asks the user to type a command, so its room keeps the input.
@@ -180,6 +198,166 @@ async function runStartupDiagnosis(): Promise<void> {
   diagnosis.pass("Chat/post_message", "posted text and custom messages");
 
   await runBotRegistrationProbe();
+  await runRoomDeclarationProbe();
+}
+
+/**
+ * Makes the Chat Extension v2 calls on a separate room. The diagnosis room
+ * keeps its messages, and a host without these calls shows only these rows red.
+ * After the first failure, the calls that did not run fail with it.
+ */
+async function runRoomDeclarationProbe(): Promise<void> {
+  // The calls of the probe, in the order it makes them.
+  const methods: readonly WorkerDiagnosisMethod[] = [
+    "Chat/set_room_config",
+    "Chat/set_room_metadata",
+    "Chat/set_room_preview",
+    "Chat/update_feed",
+    "Chat/delete_room",
+  ];
+  const message: ChatMessage = {
+    messageId: "diagnosis",
+    origin: { participantId: "product" },
+    timestamp: BigInt(Date.now()),
+    body: { tag: "Text", value: { text: "Chat Extension v2 diagnosis" } },
+    status: "Sent",
+    reactions: [],
+    request: false,
+  };
+  let step = 0;
+  const done = (details: string): void => {
+    diagnosis.pass(methods[step], details);
+    step += 1;
+  };
+  // Set while the room exists, so a failed run can remove it.
+  let roomId: string | undefined;
+  try {
+    roomId = await ensureRoom(
+      `${diagnosticRoomSource}-v2`,
+      `TrUAPI Diagnosis v2 ${runId}`,
+    );
+
+    // These values are not the defaults, so a host that ignores the declaration
+    // keeps other values. No call reads the config back.
+    const config = await chat.setRoomConfig({
+      roomId,
+      config: {
+        productSource: false,
+        reactionDetails: true,
+        reportSeen: true,
+      },
+    });
+    if (config.isErr()) {
+      throw new Error(`setRoomConfig failed: ${JSON.stringify(config.error)}`);
+    }
+    done(
+      "declared a room the host stores, with reaction details and seen reports; no call reads the config back",
+    );
+
+    const metadata = await chat.setRoomMetadata({
+      roomId,
+      metadata: {
+        name: `TrUAPI Diagnosis v2 ${runId}`,
+        description: "Chat Extension v2",
+        icon: DIAGNOSIS_ROOM_ICON,
+        placeholder: "The diagnosis writes here",
+      },
+    });
+    if (metadata.isErr()) {
+      throw new Error(
+        `setRoomMetadata failed: ${JSON.stringify(metadata.error)}`,
+      );
+    }
+    done(
+      "replaced the name, the description, the icon and the empty-room text",
+    );
+
+    const preview = await chat.setRoomPreview({
+      roomId,
+      preview: {
+        timestamp: message.timestamp,
+        badge: { tag: "UnreadCount", value: { count: 1 } },
+        lastMessage: message,
+        unseenReactions: 0,
+        pinned: true,
+        activity: { text: "Diagnosis running", ongoing: true },
+      },
+    });
+    if (preview.isErr()) {
+      throw new Error(
+        `setRoomPreview failed: ${JSON.stringify(preview.error)}`,
+      );
+    }
+    done("replaced the chat list preview, pinned, with an activity line");
+
+    const feed = await chat.updateFeed({
+      roomId,
+      update: { tag: "New", value: message },
+    });
+    if (feed.isErr()) {
+      throw new Error(`updateFeed failed: ${JSON.stringify(feed.error)}`);
+    }
+    const custom = await chat.updateFeed({
+      roomId,
+      update: {
+        tag: "New",
+        value: {
+          ...message,
+          messageId: "diagnosis-custom",
+          body: {
+            tag: "Custom",
+            value: {
+              message: { messageType: "truapi-diagnosis-v2", payload: "0x01" },
+              alt: "Chat Extension v2 custom message",
+            },
+          },
+        },
+      },
+    });
+    if (custom.isErr()) {
+      throw new Error(
+        `updateFeed of a custom body failed: ${JSON.stringify(custom.error)}`,
+      );
+    }
+    const removable = await chat.updateFeed({
+      roomId,
+      update: {
+        tag: "New",
+        value: { ...message, messageId: "diagnosis-deleted" },
+      },
+    });
+    if (removable.isErr()) {
+      throw new Error(
+        `updateFeed of a message to delete failed: ${JSON.stringify(removable.error)}`,
+      );
+    }
+    const removed = await chat.updateFeed({
+      roomId,
+      update: { tag: "Deleted", value: { messageId: "diagnosis-deleted" } },
+    });
+    if (removed.isErr()) {
+      throw new Error(
+        `updateFeed of a deletion failed: ${JSON.stringify(removed.error)}`,
+      );
+    }
+    done(
+      "stored a text and a custom message of the product, and deleted a third message",
+    );
+
+    const deleted = await chat.deleteRoom({ roomId });
+    if (deleted.isErr()) {
+      throw new Error(`deleteRoom failed: ${JSON.stringify(deleted.error)}`);
+    }
+    done("deleted the room");
+    roomId = undefined;
+  } catch (error) {
+    for (const id of methods.slice(step)) {
+      diagnosis.fail(id, error);
+    }
+  } finally {
+    // A failed run removes its room, so no diagnosis room stays in the chat list.
+    if (roomId) await chat.deleteRoom({ roomId });
+  }
 }
 
 /**
@@ -214,19 +392,22 @@ async function runBotRegistrationProbe(): Promise<void> {
   }
 }
 
-async function ensureRoom(roomId: string, name: string): Promise<void> {
-  const result = await chat.createRoom({ roomId, name, icon: "" });
+async function ensureRoom(roomIdSource: string, name: string): Promise<string> {
+  const result = await chat.createRoom({ roomIdSource, name, icon: "" });
   if (result.isErr()) {
     throw new Error(
-      `Unable to create the Playground room: ${JSON.stringify(result.error)}`,
+      `Unable to create the room ${roomIdSource}: ${JSON.stringify(result.error)}`,
     );
   }
+  return result.value.roomId;
 }
 
 function handleRenderRequest(
   request: ProductRendererRenderRequest,
   send: (node: RendererNode) => void,
-  interrupt: (reason?: CallErrorValue<VersionedProductRendererRenderError>) => void,
+  interrupt: (
+    reason?: CallErrorValue<VersionedProductRendererRenderError>,
+  ) => void,
 ): () => void {
   if (request.context.tag !== "ChatMessage") {
     throw new Error(`unsupported renderer context: ${request.context.tag}`);
@@ -252,7 +433,12 @@ function handleRenderRequest(
     throw new Error("render request did not preserve the custom payload");
   }
 
-  const instance: RenderInstance = { messageId, send, interrupt, disposed: false };
+  const instance: RenderInstance = {
+    messageId,
+    send,
+    interrupt,
+    disposed: false,
+  };
   if (customMessageId) activateRenderInstance(instance);
   else pendingRenderInstances.add(instance);
   return () => {
@@ -303,7 +489,7 @@ async function handleAction(
 
   const text = action.payload.value.value.text.trim();
   if (text === DIAGNOSIS_COMMAND) {
-    if (action.roomId !== ROOM_ID) {
+    if (action.roomId !== (await playgroundRoom)) {
       throw new Error(`diagnosis command was delivered for ${action.roomId}`);
     }
     diagnosis.pass(
@@ -353,7 +539,7 @@ async function publishFinalReportIfComplete(): Promise<void> {
   if (!diagnosis.isComplete() || finalReportPosted) return;
   finalReportPosted = true;
   const result = await chat.postMessage({
-    roomId: ROOM_ID,
+    roomId: await playgroundRoom,
     payload: { tag: "Text", value: { text: diagnosis.markdown() } },
   });
   if (result.isErr()) {
@@ -367,7 +553,10 @@ async function publishFinalReportIfComplete(): Promise<void> {
 async function postMessage(
   payload: Parameters<typeof chat.postMessage>[0]["payload"],
 ): Promise<string> {
-  const result = await chat.postMessage({ roomId: ROOM_ID, payload });
+  const result = await chat.postMessage({
+    roomId: await playgroundRoom,
+    payload,
+  });
   if (result.isErr()) {
     throw new Error(
       `Unable to post a Playground Chat message: ${JSON.stringify(result.error)}`,

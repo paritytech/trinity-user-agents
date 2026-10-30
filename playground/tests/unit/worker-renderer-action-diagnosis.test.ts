@@ -27,11 +27,13 @@ const OBSERVABLE_INTEROP: symbol | string =
   (typeof Symbol === "function" && (Symbol as { observable?: symbol }).observable) ||
   "@@observable";
 
-function fakeObservable<Item>() {
+function fakeObservable<Item>({ replayLatest = false } = {}) {
   const observers = new Set<Partial<Observer<Item>>>();
+  let latest: { value: Item } | undefined;
   const observable = {
     subscribe(observer: Partial<Observer<Item>> = {}) {
       observers.add(observer);
+      if (replayLatest && latest) observer.next?.(latest.value);
       return {
         unsubscribe: () => observers.delete(observer),
         subscriptionId: "fake-subscription",
@@ -44,6 +46,7 @@ function fakeObservable<Item>() {
   return {
     observable,
     emit(value: Item): void {
+      latest = { value };
       for (const observer of observers) observer.next?.(value);
     },
   };
@@ -56,7 +59,10 @@ function fakeObservable<Item>() {
  */
 test("worker diagnosis completes after !diagnose alone, without a renderer action", async () => {
   const chatActions = fakeObservable<HostChatActionSubscribeItem>();
-  const chatRooms = fakeObservable<HostChatListSubscribeItem>();
+  // A host's room list starts with the rooms that exist.
+  const chatRooms = fakeObservable<HostChatListSubscribeItem>({
+    replayLatest: true,
+  });
   const rendererActions = fakeObservable<HostRendererActionSubscribeItem>();
   const pocketCards = fakeObservable<HostPocketListSubscribeItem>();
 
@@ -75,18 +81,23 @@ test("worker diagnosis completes after !diagnose alone, without a renderer actio
     chat: {
       createRoom(request: HostChatCreateRoomRequest) {
         createRoomCalls += 1;
-        // First call is the static Playground room; the rest are the
-        // per-run diagnostic room (New, then Exists).
+        // First call is the static Playground room, the next two are the
+        // per-run diagnostic room (New, then Exists), and the last is the
+        // room of the Chat Extension v2 probe.
+        const roomId = `room-of-${request.roomIdSource}`;
         if (createRoomCalls === 1) {
-          return okAsync<HostChatCreateRoomResponse, never>({ status: "Exists" });
+          return okAsync<HostChatCreateRoomResponse, never>({
+            status: "Exists",
+            roomId,
+          });
         }
         const status = createRoomCalls === 2 ? "New" : "Exists";
         if (status === "New") {
           chatRooms.emit({
-            rooms: [{ roomId: request.roomId, participatingAs: "RoomHost" }],
+            rooms: [{ roomId, participatingAs: "RoomHost" }],
           });
         }
-        return okAsync<HostChatCreateRoomResponse, never>({ status });
+        return okAsync<HostChatCreateRoomResponse, never>({ status, roomId });
       },
       registerBot() {
         registerBotCalls += 1;
@@ -96,6 +107,11 @@ test("worker diagnosis completes after !diagnose alone, without a renderer actio
       },
       listSubscribe: () => chatRooms.observable,
       setRoomFooter: () => okAsync<undefined, never>(undefined),
+      setRoomConfig: () => okAsync<undefined, never>(undefined),
+      setRoomMetadata: () => okAsync<undefined, never>(undefined),
+      setRoomPreview: () => okAsync<undefined, never>(undefined),
+      updateFeed: () => okAsync<undefined, never>(undefined),
+      deleteRoom: () => okAsync<undefined, never>(undefined),
       postMessage(request: HostChatPostMessageRequest) {
         postMessageCalls.push(request);
         const payload: ChatMessageContent = request.payload;
@@ -160,6 +176,8 @@ test("worker diagnosis completes after !diagnose alone, without a renderer actio
       value: { tag: "Text", value: { text: "!diagnose" } },
     },
   });
+  // The worker posts into its room after the room id resolves.
+  await new Promise((resolve) => setTimeout(resolve, 0));
 
   const finalReport = postMessageCalls.at(-1);
   if (finalReport?.payload.tag !== "Text") {
