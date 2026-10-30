@@ -22,7 +22,7 @@ use crate::{
 /// variants added later decode alongside the ones a row was written with.
 const SESSION_FORMAT: u16 = 2;
 /// Format of a stored summary.
-const SUMMARY_FORMAT: u16 = 1;
+const SUMMARY_FORMAT: u16 = 2;
 
 /// A table of records keyed by intent, with its queries.
 struct Table {

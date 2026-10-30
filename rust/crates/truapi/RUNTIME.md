@@ -497,7 +497,9 @@ for raw bytes signed inside the `<Bytes>` watermark.
   is kept and served whether or not the host acknowledged it, and is handed
   over again when the provider reports. Of the rest it acknowledged, the core keeps
   the newest 64 per product in full and compacts older ones into the
-  session pack (intent, owner, direction, amounts, outcome and times), which
+  session pack (intent, owner, direction, amounts, outcome and times, the
+  provider, rail and asset, the row's status, the payout, the refund and the
+  provider's references), which
   it never trims, so a product watching a compacted session still gets its
   terminal item. It keeps the 200 newest ended sessions the host has not
   acknowledged in full too, and compacts older ones the same way.
