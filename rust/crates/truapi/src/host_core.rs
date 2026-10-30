@@ -923,6 +923,17 @@ impl SigningHostRuntime {
 		self.services.install_installation_provider(provider)
 	}
 
+	/// Install the host storage encrypted at rest, which keeps the secrets the
+	/// core database must not hold. Set-once; returns whether this call
+	/// installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn set_encrypted_storage(
+		&self,
+		storage: Arc<dyn crate::encrypted_storage::EncryptedStorage>,
+	) -> bool {
+		self.services.install_encrypted_storage(storage)
+	}
+
 	/// Starts what runs over the core database: the durable transaction
 	/// engine, then NFT purses with the tracker of their holdings. Call it
 	/// once the setters it reads have run: [`Self::set_core_db`],
