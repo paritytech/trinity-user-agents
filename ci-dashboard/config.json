@@ -176,14 +176,5 @@
       "url": "https://github.com/paritytech/trinity-user-agents/releases/download/nightly-android/app-gp-nightly.apk",
       "method": "HEAD"
     }
-  ],
-  "announcements": {
-    "skipTags": [
-      "android-*",
-      "simulator-*",
-      "nightly-android",
-      "truapi-host-cli-stable",
-      "truapi-provider-dev*"
-    ]
-  }
+  ]
 }

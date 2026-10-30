@@ -23,10 +23,6 @@ export type Deps = {
   refresh: () => void;
   status: () => Status;
   notify: (message: Message) => Promise<void>;
-  /** Whether a published release exists for a tag. */
-  releaseExists: (tag: string) => Promise<boolean>;
-  /** How long a pushed tag is given for its release to appear. */
-  tagGraceMs: number;
   githubWebhookSecret: string;
   sentryClientSecret: string;
 };
@@ -95,8 +91,6 @@ export function createApp(deps: Deps) {
       );
       if (outcome.refresh) deps.refresh();
       inBackground(deps, outcome.message);
-      // GitHub gives up on a webhook after ten seconds, so this runs on its own.
-      if (outcome.tag) void announceTag(deps, outcome.tag);
       return json({ ok: true });
     }
 
@@ -132,25 +126,6 @@ export function createApp(deps: Deps) {
 
     return new Response("Not found", { status: 404 });
   };
-}
-
-/**
- * Posts a pushed tag once its grace period passes with no release for it. A
- * failed release lookup is logged and not posted, so a GitHub outage does
- * not announce every tag.
- */
-export async function announceTag(
-  deps: Pick<Deps, "notify" | "releaseExists" | "tagGraceMs">,
-  tag: { name: string; message: Message },
-): Promise<void> {
-  try {
-    await Bun.sleep(deps.tagGraceMs);
-    if (!(await deps.releaseExists(tag.name))) {
-      await deps.notify(tag.message);
-    }
-  } catch (error) {
-    console.error(`Tag ${tag.name}:`, error);
-  }
 }
 
 export async function serveSite(

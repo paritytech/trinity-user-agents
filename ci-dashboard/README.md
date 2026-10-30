@@ -22,7 +22,6 @@ The page shows:
 | When                | What                                                                                                                                                                                                                                     |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | GitHub webhook      | A failed run of a watched workflow, or of Release, is posted to Matrix. A published release that is not a prerelease is announced; nightlies announce themselves. Either refreshes the page's GitHub data.                               |
-| GitHub webhook      | A versioned tag pushed without a release is posted if no release for it appears within a minute. Nightly, pointer and dev tags in `announcements.skipTags`, pre-releases and tags without a version are left out.                        |
 | GitHub webhook      | A package version published to GitHub Packages, such as the Android AAR `release-android.yml` publishes, is posted. Snapshots and pre-releases are left out.                                                                             |
 | Sentry webhook      | A new issue in one of the projects in `config.json` is posted to Matrix.                                                                                                                                                                 |
 | Every minute        | Each RPC endpoint and published link is checked. One that fails two checks in a row is posted, and again when it recovers.                                                                                                               |
@@ -96,8 +95,7 @@ The container starts as root only to hand the volume at `/data` to the `node` us
 ### Webhooks
 
 - **GitHub:** a repository webhook to `https://ci-host-dashboard.parity-prod.parity.io/webhooks/github`, content type
-  `application/json`, with `GITHUB_WEBHOOK_SECRET` as its secret, for **Workflow runs**, **Releases**, **Branch or tag
-  creation** and **Packages**.
+  `application/json`, with `GITHUB_WEBHOOK_SECRET` as its secret, for **Workflow runs**, **Releases** and **Packages**.
 - **Sentry:** an internal integration with its webhook URL set to
   `https://ci-host-dashboard.parity-prod.parity.io/webhooks/sentry` and the **issue** webhook on. Its client secret is
   `SENTRY_CLIENT_SECRET`. Also set `sentry.organization` in `config.json`.
