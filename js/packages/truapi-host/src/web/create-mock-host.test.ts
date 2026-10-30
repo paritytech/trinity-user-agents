@@ -53,6 +53,13 @@ async function drain<T>(
 }
 
 describe("createMockHost callbacks", () => {
+  // Product secrets need encrypted storage, which only native hosts have, so
+  // the test host must not grow one that products could come to rely on.
+  it("serves no encrypted storage, so secrets storage answers Unsupported", () => {
+    const { callbacks } = createMockHost();
+    expect(Object.keys(callbacks)).not.toContain("encryptedStorage");
+  });
+
   it("product storage round-trips and is namespaced from core", async () => {
     const { callbacks } = createMockHost();
     await callbacks.productStorage.write("k", new Uint8Array([1, 2, 3]));

@@ -34,6 +34,7 @@ use crate::{
 	installation::InstallationIdProvider,
 	nft::{HoldingTracker, NftLedger},
 	nft_purse::NftPurses,
+	product_secrets::ProductSecrets,
 };
 use truapi::latest;
 
@@ -79,6 +80,10 @@ pub struct RuntimeServices {
 	/// Host Game adapter, installed once at startup by a host that can hold
 	/// reminders. Unset leaves every product Game call `Unsupported`.
 	game_platform: OnceLock<Arc<dyn GamePlatform>>,
+	/// Held across a secrets storage write's session and count checks and its
+	/// write, and across a clear, so two writes cannot both pass the
+	/// per-product cap and no write lands after a sign-out's clear.
+	secrets_storage_writes: futures::lock::Mutex<()>,
 	/// Host scanner, installed once at startup by a host that can draw a
 	/// viewfinder. Unset leaves every product scan `Unsupported`.
 	scanner_platform: OnceLock<Arc<dyn ScannerPlatform>>,
@@ -191,6 +196,7 @@ impl RuntimeServices {
 			contacts_platform: OnceLock::new(),
 			contact_handles: Default::default(),
 			game_platform: OnceLock::new(),
+			secrets_storage_writes: futures::lock::Mutex::new(()),
 			scanner_platform: OnceLock::new(),
 			scan_open: AtomicBool::new(false),
 			device_pairing_observer: OnceLock::new(),
@@ -346,6 +352,49 @@ impl RuntimeServices {
 		self.game_platform.get().cloned()
 	}
 
+	/// Drop every product's secrets once a session has ended or the
+	/// signed-in account changed. The session is already gone, so a failure is
+	/// only logged: the secrets are keyed to the account, and no other account
+	/// can read them either way.
+	pub async fn drop_secrets_storage_after_session(&self) {
+		if let Err(error) = self.clear_secrets_storage(None).await {
+			tracing::warn!(reason = %error.reason, "product secrets were not dropped when the session ended");
+		}
+	}
+
+	/// The lock a secrets storage write holds from its session check to its
+	/// write, and a clear holds while it drops secrets.
+	pub async fn secrets_storage_writes(&self) -> futures::lock::MutexGuard<'_, ()> {
+		self.secrets_storage_writes.lock().await
+	}
+
+	/// Drop the secrets kept for `product_id`, or every product's when it
+	/// is `None`. Nothing to drop without [`Self::product_secrets`].
+	///
+	/// Holds [`Self::secrets_storage_writes`], so a write already past its session
+	/// check finishes first and its secret is dropped too, and one still
+	/// waiting sees the session change before it writes.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn clear_secrets_storage(
+		&self,
+		product_id: Option<&str>,
+	) -> Result<(), latest::GenericError> {
+		let Some(secrets) = self.product_secrets() else {
+			return Ok(());
+		};
+		let _writes = self.secrets_storage_writes().await;
+		secrets.clear(product_id).await
+	}
+
+	/// The browser core keeps no product secrets, so there are none to drop.
+	#[cfg(target_arch = "wasm32")]
+	pub async fn clear_secrets_storage(
+		&self,
+		_product_id: Option<&str>,
+	) -> Result<(), latest::GenericError> {
+		Ok(())
+	}
+
 	/// Install the host's contacts adapter. Answers whether this call was the
 	/// one that installed it.
 	pub fn install_contacts_platform(&self, platform: Arc<dyn ContactsPlatform>) -> bool {
@@ -460,6 +509,37 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn encrypted_storage(&self) -> Option<Arc<dyn EncryptedStorage>> {
 		self.encrypted_storage.get().cloned()
+	}
+
+	/// Products' secrets, once both the core database and the encrypted
+	/// storage are installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn product_secrets(&self) -> Option<ProductSecrets> {
+		let db = self.core_db.get()?.clone();
+		Some(ProductSecrets::new(db, self.encrypted_storage()?))
+	}
+
+	/// Install an empty in-memory core database and encrypted storage, and
+	/// return the storage so a test can see which secrets the host holds.
+	#[cfg(all(test, not(target_arch = "wasm32")))]
+	pub(crate) fn install_memory_secrets(
+		&self,
+	) -> Arc<crate::encrypted_storage::MemoryEncryptedStorage> {
+		use crate::store::{DbConfig, DbLocation};
+
+		let db = futures::executor::block_on(Db::open(DbConfig {
+			location: DbLocation::Memory,
+			migrations: crate::store::core_migrations,
+			readers: 1,
+		}))
+		.expect("database opens");
+		let storage = Arc::new(crate::encrypted_storage::MemoryEncryptedStorage::default());
+		assert!(self.install_core_db(db), "a test installs the core database once");
+		assert!(
+			self.install_encrypted_storage(storage.clone()),
+			"a test installs the storage once"
+		);
+		storage
 	}
 
 	/// NFT purses, once their ledger is installed.

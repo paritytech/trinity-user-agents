@@ -245,6 +245,21 @@ derived from its row. Native hosts install it from their callbacks; any other
 embedder calls `SigningHostRuntime::set_encrypted_storage`. Web hosts do not
 compile it.
 
+SecretsStorage keeps a product's small secrets, such as the tokens it obtained
+from its own services. The product names a key; the core hashes the signed-in
+account, the product and that key into the id, so no product or account can
+name another's. The `product_secret` table records each id with its product and
+account, and the secret goes to `EncryptedStorage` under `product-secret/<id>`.
+A secret is written after its row and deleted before it, so a crash leaves at
+most a row whose secret reads as absent, never an unindexed secret. Values are opaque bytes the core
+does not interpret. It requires a session, checks the key (1 to 64 of
+`[a-z0-9._-]`), the 8192-byte value limit and the 16-key cap per product and
+account, and caches nothing. It clears every secret on logout, disconnect,
+session reset and an account switch, and a product's secrets when that
+product's state is cleared. Storage the host cannot read is an error, not an
+absent value. Without a core database and encrypted storage, as on the browser
+host, every `secretsStorage` call answers `Unsupported`.
+
 ### Durable transactions
 
 The `durable` module runs over the core database. A domain registers presigned

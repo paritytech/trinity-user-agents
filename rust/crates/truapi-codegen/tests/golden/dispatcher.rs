@@ -14,6 +14,7 @@ use parity_scale_codec::Encode;
 use truapi::CallContext;
 use truapi::api::{
     Account,
+    SecretsStorage,
     Chain,
     Chat,
     CoinPayment,
@@ -56,6 +57,7 @@ where
     P: truapi::api::TrUApi + 'static,
 {
     register_account(dispatcher, host.clone());
+    register_secrets_storage(dispatcher, host.clone());
     register_chain(dispatcher, host.clone());
     register_chat(dispatcher, host.clone());
     register_coin_payment(dispatcher, host.clone());
@@ -304,6 +306,69 @@ where
                 let result: Result<versioned::account::HostRequestLoginResponse, truapi::CallError<versioned::account::HostRequestLoginError>> =
                     match host.request_login(&cx, request).await {
                         Ok(response) => Ok(<versioned::account::HostRequestLoginResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+}
+
+fn register_secrets_storage<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
+where
+    P: SecretsStorage + Send + Sync + 'static,
+{
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::SECRETS_STORAGE_READ, move |request_id: String, request: versioned::secrets_storage::HostSecretsStorageReadRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::secrets_storage::HostSecretsStorageReadResponse, truapi::CallError<versioned::secrets_storage::HostSecretsStorageReadError>> =
+                    match host.read(&cx, request).await {
+                        Ok(response) => Ok(<versioned::secrets_storage::HostSecretsStorageReadResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
+        dispatcher.on_request(wire_table::SECRETS_STORAGE_WRITE, move |request_id: String, request: versioned::secrets_storage::HostSecretsStorageWriteRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::secrets_storage::HostSecretsStorageWriteResponse, truapi::CallError<versioned::secrets_storage::HostSecretsStorageWriteError>> =
+                    match host.write(&cx, request).await {
+                        Ok(response) => Ok(<versioned::secrets_storage::HostSecretsStorageWriteResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_request(wire_table::SECRETS_STORAGE_CLEAR, move |request_id: String, request: versioned::secrets_storage::HostSecretsStorageClearRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::secrets_storage::HostSecretsStorageClearResponse, truapi::CallError<versioned::secrets_storage::HostSecretsStorageClearError>> =
+                    match host.clear(&cx, request).await {
+                        Ok(response) => Ok(<versioned::secrets_storage::HostSecretsStorageClearResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),

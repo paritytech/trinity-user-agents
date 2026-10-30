@@ -9666,3 +9666,373 @@ fn two_chains_failing_alike_are_counted_apart() {
 		"one chain's failures were answered by another chain's count",
 	);
 }
+
+fn onramp_secret() -> Vec<u8> {
+	b"eyJhbGciOiJIUzI1NiJ9.e30.sig".to_vec()
+}
+
+fn write_secret(
+	host: &ProductRuntimeHost,
+	key: &str,
+	value: Vec<u8>,
+) -> Result<
+	truapi::versioned::secrets_storage::HostSecretsStorageWriteResponse,
+	CallError<truapi::versioned::secrets_storage::HostSecretsStorageWriteError>,
+> {
+	futures::executor::block_on(truapi::api::SecretsStorage::write(
+		host,
+		&CallContext::default(),
+		truapi::versioned::secrets_storage::HostSecretsStorageWriteRequest::V1(
+			v01::HostSecretsStorageWriteRequest { key: key.to_string(), value },
+		),
+	))
+}
+
+fn read_secret(
+	host: &ProductRuntimeHost,
+	key: &str,
+) -> Result<
+	Option<Vec<u8>>,
+	CallError<truapi::versioned::secrets_storage::HostSecretsStorageReadError>,
+> {
+	futures::executor::block_on(truapi::api::SecretsStorage::read(
+		host,
+		&CallContext::default(),
+		truapi::versioned::secrets_storage::HostSecretsStorageReadRequest::V1(
+			v01::HostSecretsStorageReadRequest { key: key.to_string() },
+		),
+	))
+	.map(|truapi::versioned::secrets_storage::HostSecretsStorageReadResponse::V1(response)| {
+		response.value
+	})
+}
+
+fn clear_secret(
+	host: &ProductRuntimeHost,
+	key: &str,
+) -> Result<
+	truapi::versioned::secrets_storage::HostSecretsStorageClearResponse,
+	CallError<truapi::versioned::secrets_storage::HostSecretsStorageClearError>,
+> {
+	futures::executor::block_on(truapi::api::SecretsStorage::clear(
+		host,
+		&CallContext::default(),
+		truapi::versioned::secrets_storage::HostSecretsStorageClearRequest::V1(
+			v01::HostSecretsStorageClearRequest { key: key.to_string() },
+		),
+	))
+}
+
+// The core derives the id from the product, so another product reading the
+// same key must never receive the secret.
+#[test]
+fn a_kept_secret_is_returned_only_to_the_product_that_wrote_it() {
+	let services = payment_services();
+	services.install_memory_secrets();
+	let wallet = payment_host(&services, "wallet.dot", true);
+	let shop = payment_host(&services, "shop.dot", true);
+
+	let written = write_secret(&wallet, "onramp", onramp_secret());
+
+	assert_eq!(
+		(written, read_secret(&wallet, "onramp"), read_secret(&shop, "onramp")),
+		(
+			Ok(truapi::versioned::secrets_storage::HostSecretsStorageWriteResponse::V1),
+			Ok(Some(onramp_secret())),
+			Ok(None),
+		)
+	);
+}
+
+// Secrets belong to the account that signed in, so a different account using
+// the same product on the same device never reads them.
+#[test]
+fn a_kept_secret_is_returned_only_to_the_account_that_wrote_it() {
+	let services = payment_services();
+	services.install_memory_secrets();
+	let alice = payment_host(&services, "wallet.dot", true);
+	let (host_config, product) = runtime_config("wallet.dot");
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let bob = ProductRuntimeHost::from_services(
+		services.clone(),
+		crate::host_core::ConnectionAdapters::from_services(&services),
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&bob, SessionInfo { public_key: [0xb0; 32], ..session_info() });
+
+	write_secret(&alice, "onramp", onramp_secret()).expect("secret written");
+
+	assert_eq!(
+		(read_secret(&alice, "onramp"), read_secret(&bob, "onramp")),
+		(Ok(Some(onramp_secret())), Ok(None))
+	);
+}
+
+// Secrets storage is meant for a handful of credentials, so a product keeps a
+// bounded number of keys. Replacing one it already keeps stays allowed at the
+// limit.
+#[test]
+fn a_product_keeps_a_bounded_number_of_keys() {
+	let services = payment_services();
+	services.install_memory_secrets();
+	let wallet = payment_host(&services, "wallet.dot", true);
+	let max = crate::host_logic::secrets_storage::MAX_KEYS_PER_PRODUCT;
+	for index in 0..max {
+		write_secret(&wallet, &format!("key-{index}"), onramp_secret())
+			.expect("a secret within the limit is kept");
+	}
+
+	assert_eq!(
+		(
+			write_secret(&wallet, "one-too-many", onramp_secret()),
+			write_secret(&wallet, "key-0", onramp_secret()),
+		),
+		(
+			Err(CallError::Domain(
+				truapi::versioned::secrets_storage::HostSecretsStorageWriteError::V1(
+					v01::HostSecretsStorageWriteError::TooManyKeys { max }
+				)
+			)),
+			Ok(truapi::versioned::secrets_storage::HostSecretsStorageWriteResponse::V1),
+		)
+	);
+}
+
+// The cap is per account: secrets another account left for the same product,
+// such as ones whose clear failed on sign-out, must not use up the next
+// account's keys.
+#[test]
+fn the_key_cap_counts_only_the_signed_in_account() {
+	let services = payment_services();
+	services.install_memory_secrets();
+	let alice = payment_host(&services, "wallet.dot", true);
+	let (host_config, product) = runtime_config("wallet.dot");
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let bob = ProductRuntimeHost::from_services(
+		services.clone(),
+		crate::host_core::ConnectionAdapters::from_services(&services),
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&bob, SessionInfo { public_key: [0xb0; 32], ..session_info() });
+	let max = crate::host_logic::secrets_storage::MAX_KEYS_PER_PRODUCT;
+	for index in 0..max {
+		write_secret(&alice, &format!("key-{index}"), onramp_secret())
+			.expect("a secret within the limit is kept");
+	}
+
+	assert_eq!(
+		write_secret(&bob, "onramp", onramp_secret()),
+		Ok(truapi::versioned::secrets_storage::HostSecretsStorageWriteResponse::V1)
+	);
+}
+
+// Two writes of new keys racing at the last free slot must not both get in:
+// the count check and the write happen under one lock, so the second sees the
+// first's secret.
+#[test]
+fn concurrent_writes_cannot_pass_the_key_cap() {
+	let services = payment_services();
+	let keeper = services.install_memory_secrets();
+	let wallet = payment_host(&services, "wallet.dot", true);
+	let max = crate::host_logic::secrets_storage::MAX_KEYS_PER_PRODUCT;
+	for index in 0..max - 1 {
+		write_secret(&wallet, &format!("key-{index}"), onramp_secret())
+			.expect("a secret within the limit is kept");
+	}
+
+	let cx = CallContext::default();
+	let write = |key: &'static str| {
+		truapi::api::SecretsStorage::write(
+			&wallet,
+			&cx,
+			truapi::versioned::secrets_storage::HostSecretsStorageWriteRequest::V1(
+				v01::HostSecretsStorageWriteRequest {
+					key: key.to_string(),
+					value: onramp_secret(),
+				},
+			),
+		)
+	};
+	let (first, second) =
+		futures::executor::block_on(futures::future::join(write("racer-one"), write("racer-two")));
+
+	assert_eq!(
+		(first.is_ok(), second, keeper.stored().len() as u32),
+		(
+			true,
+			Err(CallError::Domain(
+				truapi::versioned::secrets_storage::HostSecretsStorageWriteError::V1(
+					v01::HostSecretsStorageWriteError::TooManyKeys { max }
+				)
+			)),
+			max,
+		)
+	);
+}
+
+// A write waiting on the lock while the user signs out must not land after
+// the sign-out drops secrets: it checks the session again once it holds the
+// lock.
+#[test]
+fn a_write_racing_sign_out_keeps_no_secret() {
+	let services = payment_services();
+	let keeper = services.install_memory_secrets();
+	let wallet = payment_host(&services, "wallet.dot", true);
+	let cx = CallContext::default();
+	let mut write = Box::pin(truapi::api::SecretsStorage::write(
+		&wallet,
+		&cx,
+		truapi::versioned::secrets_storage::HostSecretsStorageWriteRequest::V1(
+			v01::HostSecretsStorageWriteRequest {
+				key: "onramp".to_string(),
+				value: onramp_secret(),
+			},
+		),
+	));
+
+	let writes = futures::executor::block_on(services.secrets_storage_writes());
+	assert!(futures::FutureExt::now_or_never(write.as_mut()).is_none(), "write waits on the lock");
+	wallet.test_session_state().clear_session();
+	drop(writes);
+	futures::executor::block_on(services.drop_secrets_storage_after_session());
+
+	assert_eq!(
+		(futures::executor::block_on(write), keeper.stored().len()),
+		(Err(CallError::Denied), 0)
+	);
+}
+
+// Switching the paired account drops the previous account's secrets, as
+// signing out does. Pairing the same account again keeps them.
+#[test]
+fn a_paired_account_switch_drops_product_secrets() {
+	let services = payment_services();
+	let keeper = services.install_memory_secrets();
+	let (host_config, product) = runtime_config("wallet.dot");
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let wallet = ProductRuntimeHost::from_services(
+		services.clone(),
+		crate::host_core::ConnectionAdapters::from_services(&services),
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+
+	futures::executor::block_on(
+		pairing_host.session().set_connected_session_for_tests(session_info()),
+	);
+	write_secret(&wallet, "onramp", onramp_secret()).expect("secret written");
+	futures::executor::block_on(
+		pairing_host.session().set_connected_session_for_tests(session_info()),
+	);
+	let kept_for_same_account = keeper.stored().len();
+	futures::executor::block_on(
+		pairing_host.session().set_connected_session_for_tests(SessionInfo {
+			public_key: [0xb0; 32],
+			..session_info()
+		}),
+	);
+
+	assert_eq!((kept_for_same_account, keeper.stored().len()), (1, 0));
+}
+
+// A product writes again when it finds no secret, so a cleared secret has to
+// read as absent, and clearing it twice is not an error.
+#[test]
+fn a_cleared_secret_reads_as_absent() {
+	let services = payment_services();
+	services.install_memory_secrets();
+	let wallet = payment_host(&services, "wallet.dot", true);
+	write_secret(&wallet, "onramp", onramp_secret()).expect("secret written");
+
+	let cleared = clear_secret(&wallet, "onramp");
+	let cleared_again = clear_secret(&wallet, "onramp");
+
+	let cleared_ok = Ok(truapi::versioned::secrets_storage::HostSecretsStorageClearResponse::V1);
+	assert_eq!(
+		(cleared, cleared_again, read_secret(&wallet, "onramp")),
+		(cleared_ok.clone(), cleared_ok, Ok(None))
+	);
+}
+
+// The key goes into the id the core derives, and the host keeps values in
+// storage meant for small secrets, so the core refuses a bad key or an
+// oversized value before the host sees either.
+#[test]
+fn a_bad_key_or_oversized_value_is_refused_before_the_host_sees_it() {
+	let services = payment_services();
+	let keeper = services.install_memory_secrets();
+	let wallet = payment_host(&services, "wallet.dot", true);
+	let limit = crate::host_logic::secrets_storage::MAX_VALUE_BYTES;
+
+	let refusals = (
+		write_secret(&wallet, "On/Ramp", onramp_secret()),
+		write_secret(&wallet, "onramp", vec![1; limit as usize + 1]),
+		read_secret(&wallet, ""),
+		clear_secret(&wallet, "../onramp"),
+		keeper.calls(),
+	);
+
+	assert_eq!(
+		refusals,
+		(
+			Err(CallError::Domain(
+				truapi::versioned::secrets_storage::HostSecretsStorageWriteError::V1(
+					v01::HostSecretsStorageWriteError::InvalidKey
+				)
+			)),
+			Err(CallError::Domain(
+				truapi::versioned::secrets_storage::HostSecretsStorageWriteError::V1(
+					v01::HostSecretsStorageWriteError::TooLarge { max: limit }
+				)
+			)),
+			Err(CallError::Domain(
+				truapi::versioned::secrets_storage::HostSecretsStorageReadError::V1(
+					v01::HostSecretsStorageLookupError::InvalidKey
+				)
+			)),
+			Err(CallError::Domain(
+				truapi::versioned::secrets_storage::HostSecretsStorageClearError::V1(
+					v01::HostSecretsStorageLookupError::InvalidKey
+				)
+			)),
+			0,
+		)
+	);
+}
+
+// Secrets belong to the signed-in user and are dropped on sign-out, so a
+// product without a session reaches no storage; a host without one says so.
+#[test]
+fn secrets_storage_needs_a_session_and_encrypted_storage() {
+	let services = payment_services();
+	let unsupported = payment_host(&services, "wallet.dot", true);
+	let unsupported_answers = (
+		write_secret(&unsupported, "onramp", onramp_secret()),
+		read_secret(&unsupported, "onramp"),
+		clear_secret(&unsupported, "onramp"),
+	);
+	let keeper = services.install_memory_secrets();
+	let signed_out = payment_host(&services, "wallet.dot", false);
+
+	assert_eq!(
+		(
+			unsupported_answers,
+			(
+				write_secret(&signed_out, "onramp", onramp_secret()),
+				read_secret(&signed_out, "onramp"),
+				clear_secret(&signed_out, "onramp"),
+			),
+			keeper.calls(),
+		),
+		(
+			(Err(CallError::Unsupported), Err(CallError::Unsupported), Err(CallError::Unsupported)),
+			(Err(CallError::Denied), Err(CallError::Denied), Err(CallError::Denied)),
+			0,
+		)
+	);
+}
