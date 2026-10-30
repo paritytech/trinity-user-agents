@@ -164,7 +164,7 @@ describe("createStackReader", () => {
     reader.close();
   });
 
-  test("a conditional fetch the server's CORS refuses is retried at once without the ETag, every time", async () => {
+  test("a conditional fetch the server's CORS blocks is retried at once without the ETag, every time", async () => {
     const newer = await at(200);
     const { fetch, requests } = server((request) => {
       if (request.headers.has("if-none-match"))
@@ -210,7 +210,7 @@ describe("createStackReader", () => {
     expect(requests.length).toBe(0);
   });
 
-  test("a stack passed to get runs from its own copy, and a store that failed is asked again", async () => {
+  test("a stack passed to get runs from its own copy, and a store that failed is read again", async () => {
     const { fetch, requests } = down();
     let failing = true;
     const reader = createStackReader({
@@ -231,7 +231,61 @@ describe("createStackReader", () => {
     expect(requests.length).toBe(0);
   });
 
-  test("a stack it holds no copy of is fetched, and fails when it cannot be", async () => {
+  test("a store that fails to write still leaves the fetch serving, and listeners told, the new copy", async () => {
+    const newer = await at(200);
+    const reader = createStackReader({
+      bundled: [bundle(await at(100))],
+      fetch: server(() => new Response(newer)).fetch,
+      store: {
+        get: () => undefined,
+        set: () => {
+          throw new Error("quota exceeded");
+        },
+      },
+    });
+    const told: number[] = [];
+    reader.onChange(({ descriptor }) => told.push(descriptor.sequence));
+    const errors: unknown[] = [];
+    const reported = globalThis.reportError;
+    globalThis.reportError = (error: unknown) => errors.push(error);
+    try {
+      expect((await reader.get(pointer)).descriptor.sequence).toBe(200);
+    } finally {
+      globalThis.reportError = reported;
+    }
+    expect(told).toEqual([200]);
+    expect(errors).toEqual([new Error("quota exceeded")]);
+  });
+
+  test("a conditional fetch to a server that is down retries within the same timeout", async () => {
+    const newer = await at(200);
+    let up = true;
+    const { fetch, requests } = server((request) => {
+      if (!up)
+        return new Promise<Response>((_, reject) =>
+          request.signal.addEventListener("abort", () =>
+            reject(request.signal.reason),
+          ),
+        );
+      return new Response(newer, { headers: { etag: "e1" } });
+    });
+    const reader = createStackReader({
+      bundled: [bundle(await at(100))],
+      refresh: "never",
+      fetch,
+      timeoutMs: 200,
+    });
+    await reader.refresh(pointer);
+    up = false;
+    const started = Date.now();
+    expect((await reader.refresh(pointer)).descriptor.sequence).toBe(200);
+    expect(Date.now() - started).toBeLessThan(400);
+    expect(
+      requests.map((request) => request.headers.get("if-none-match")),
+    ).toEqual([null, "e1"]);
+  });
+
+  test("a stack it has no copy of is fetched, and fails when it cannot be", async () => {
     const reader = createStackReader({ refresh: "never", fetch: down().fetch });
     await expect(reader.get(pointer)).rejects.toMatchObject({
       code: "unreachable",

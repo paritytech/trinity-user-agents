@@ -1,6 +1,6 @@
 // Keeps a project's stacks current, as docs/design/trinity-stack-library.md describes: it runs
 // from the copies its build bundled, and a fetch only refreshes them. The trinity-stack crate's
-// `StackReader` makes every decision; this module fetches, stores and keeps time.
+// `StackReader` makes every decision; this module fetches, stores and tracks time.
 import type {
   Chain,
   CurrentStack,
@@ -9,7 +9,7 @@ import type {
   Pointer,
   Service,
 } from "../wasm/trinity_stack.js";
-import { type Fetch, fetchServed } from "./fetch.js";
+import { DEFAULT_TIMEOUT_MS, type Fetch, fetchServed } from "./fetch.js";
 import { type Store, stackId } from "./index.js";
 import { unixSeconds } from "./time.js";
 import { wasm } from "./wasm.js";
@@ -21,7 +21,7 @@ export type Bundled = {
   document: string;
 };
 
-/** When the reader fetches a stack it holds a copy of. `maxAgeMs` is at least 1000. */
+/** When the reader fetches a stack it has a copy of. `maxAgeMs` is at least 1000. */
 export type RefreshPolicy = "never" | "once" | { maxAgeMs: number };
 
 /** A stack the reader moved to a newer descriptor. */
@@ -37,7 +37,7 @@ export type Requirements = { chains?: string[]; services?: string[] };
 
 export type StackReader = {
   /**
-   * The copy to use. It waits only for a stack the reader holds no copy of, and under `"once"`
+   * The copy to use. It waits only for a stack the reader has no copy of, and under `"once"`
    * for the stack's first fetch. Throws naming what is missing when the stack lacks a chain or
    * service `require` lists.
    */
@@ -54,9 +54,9 @@ export type StackReader = {
 };
 
 /**
- * A reader over the copies `bundled` holds, typically the `stacks` of the module
+ * A reader over the copies in `bundled`, typically the `stacks` of the module
  * `trinity-stack update` generates, and any `Bundled` a call passes. It never fetches per
- * request: `refresh` says when it does.
+ * request: `refresh` decides when it does.
  */
 export function createStackReader(
   options: {
@@ -120,18 +120,26 @@ export function createStackReader(
     const fetching = (async () => {
       let served;
       try {
-        const fetchOptions = {
-          fetch: options.fetch,
-          timeoutMs: options.timeoutMs,
-        };
+        const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+        const deadline = Date.now() + timeoutMs;
         served = await fetchServed(request.url, {
-          ...fetchOptions,
+          fetch: options.fetch,
+          timeoutMs,
           ifNoneMatch: request.ifNoneMatch,
         });
         // A browser cannot send `If-None-Match` to a server whose CORS does not allow it, so a
-        // conditional fetch that failed is retried at once without it.
-        if (request.ifNoneMatch && !served.document && !served.notModified)
-          served = await fetchServed(request.url, fetchOptions);
+        // conditional fetch that failed is retried at once without it, within the same timeout.
+        const remainingMs = deadline - Date.now();
+        if (
+          request.ifNoneMatch &&
+          !served.document &&
+          !served.notModified &&
+          remainingMs > 0
+        )
+          served = await fetchServed(request.url, {
+            fetch: options.fetch,
+            timeoutMs: remainingMs,
+          });
       } catch (error) {
         // A custom fetch's own bug: answer the reader so the stack does not stay pending.
         try {
@@ -146,7 +154,6 @@ export function createStackReader(
         served.notModified,
         now(),
       );
-      // Before the store, so a store that fails cannot hide the change from listeners.
       if (accepted.status === "updated")
         for (const listener of listeners) {
           try {
@@ -159,7 +166,13 @@ export function createStackReader(
             report(error);
           }
         }
-      if (stored) await options.store?.set(storeKey(id), stored);
+      // The reader already uses the new copy, so a store that fails costs only the next start.
+      if (stored)
+        try {
+          await options.store?.set(storeKey(id), stored);
+        } catch (error) {
+          report(error);
+        }
       const { descriptor, signed, stale, expired } = accepted;
       return { descriptor, signed, stale, expired };
     })();

@@ -209,7 +209,7 @@ await reader.refresh(stacks.previewnet);
 
 `createStackReader` is the package's driver for the crate's `StackReader`: it fetches with `fetch`, keeps records in the
 project's store, runs background refreshes on a timer and shares a pending fetch between callers. Every decision below
-is the crate's, so a host that drives the same reader behaves the same way.
+is the crate's, except that browser retry, so a host that drives the same reader behaves the same way.
 
 The project picks how far to trust its build copy:
 
@@ -228,8 +228,10 @@ never connects to a chain itself, so it leaves that check to the client, which a
   nothing fetches per request. A server sees one request per process with `"once"`, one per reader per `maxAgeMs` with
   `{ maxAgeMs }`, and none with `"never"` until the project asks.
 - **Refreshes are conditional.** The reader keeps the `ETag` it was served and sends `If-None-Match`, so an unchanged
-  stack costs a `304` with no body. A conditional fetch that fails is retried at once without the header, since a
-  browser cannot send it cross-origin to a server whose CORS does not allow it, and would otherwise never refresh.
+  stack costs a `304` with no body. A browser cannot send the header cross-origin to a server whose CORS does not allow
+  it, so `createStackReader` retries a failed conditional fetch at once without it, within the same timeout. The crate
+  itself only drops the `ETag` after a failed conditional fetch, so any driver's next fetch is plain; a native host
+  never meets that CORS rule.
 - **The copy it starts from** is the store's when it has a higher `sequence` than the build's, or the same content, and
   otherwise the build's, signed or not: the store can only move a stack forward from the build copy, never back.
 - **The store is the project's own, and optional.** A web app passes one over `localStorage` or IndexedDB, so a reload
