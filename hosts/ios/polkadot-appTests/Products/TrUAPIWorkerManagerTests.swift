@@ -67,33 +67,37 @@ struct TrUAPIWorkerManagerTests {
     }
 
     /// iOS kills a worker's content process while the app is in the background,
-    /// and the script dies with it. The core keeps counting the references that
-    /// wanted the worker, so it never sends another start: unless the manager
-    /// boots a fresh worker itself, chat and Pocket faces for the product stay
-    /// dead until the app restarts.
+    /// and the script dies with it. The core still counts the references that
+    /// wanted the worker, so it is told, and its `.start` boots a fresh one.
     @Test
-    func bootsAFreshWorkerWhenItsEngineDies() async throws {
+    func reportsTheExitWhenItsEngineDies() async throws {
         let builder = StubWorkerBuilder()
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+        let references = StubWorkerReferences()
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]), references: references)
 
         manager.demandChanged(productId: "game.paseo", transition: .start)
         try await execution(of: "game.paseo", in: manager)
         let dead = try #require(builder.executions["game.paseo"])
         try #require(builder.engines["game.paseo"]).terminate()
         try await withTimeout(.hangGuard) { await dead.awaitClose() }
+        try await noExecution(of: "game.paseo", in: manager)
+        try await barrier(manager)
+        #expect(references.exited == ["game.paseo"])
+
+        manager.demandChanged(productId: "game.paseo", transition: .start)
         let rebooted = try await execution(of: "game.paseo", in: manager)
 
         #expect(rebooted !== dead)
-        #expect(builder.built == ["game.paseo", "game.paseo"])
+        #expect(builder.built == ["game.paseo", "barrier.paseo", "game.paseo"])
     }
 
     /// An engine of a worker that was already stopped can still die afterwards.
-    /// Rebooting it would run a worker nobody holds a reference to, and the core
-    /// would never send the stop that clears it.
+    /// The host stopped it, so it is no exit to report.
     @Test
-    func doesNotRebootAWorkerThatWasStopped() async throws {
+    func doesNotReportTheExitOfAWorkerThatWasStopped() async throws {
         let builder = StubWorkerBuilder()
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+        let references = StubWorkerReferences()
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]), references: references)
 
         manager.demandChanged(productId: "game.paseo", transition: .start)
         try await execution(of: "game.paseo", in: manager)
@@ -105,6 +109,7 @@ struct TrUAPIWorkerManagerTests {
 
         #expect(builder.built == ["game.paseo", "barrier.paseo"])
         #expect(manager.currentExecution(of: "game.paseo") == nil)
+        #expect(references.exited.isEmpty)
     }
 
     /// A worker whose engine fails once it is already in the running map must

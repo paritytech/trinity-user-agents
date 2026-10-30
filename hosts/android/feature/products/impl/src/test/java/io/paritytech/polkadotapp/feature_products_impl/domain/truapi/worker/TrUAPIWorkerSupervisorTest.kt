@@ -8,6 +8,7 @@ import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
 import io.mockk.verify
 import io.parity.truapi.ChatHostBridge
+import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
@@ -46,6 +47,7 @@ class TrUAPIWorkerSupervisorTest {
     private val workerScopes = mutableListOf<CoroutineScope>()
     private val policyScopes = mutableListOf<CoroutineScope>()
     private var includesChat = true
+    private val runtime = mockk<TrUAPIHostRuntime>(relaxed = true)
 
     @Before
     fun parseScriptUrls() {
@@ -61,11 +63,13 @@ class TrUAPIWorkerSupervisorTest {
     @After
     fun restoreUri() = unmockkStatic(Uri::class)
 
-    // A dead renderer takes the worker's running script with it, and the core still wants the worker,
-    // so nothing else would ever bring it back: its card would sit on a dead execution.
+    // A dead renderer takes the worker's running script with it. The core is told the worker exited,
+    // and asks for it again while it still holds it, so its card does not sit on a dead execution.
     @Test
-    fun `a running worker whose renderer died boots again`() = runTest {
+    fun `a running worker whose renderer died is reported exited and boots again`() = runTest {
         val supervisor = supervisor()
+        // The core still holds the worker, so it answers the exit with a start.
+        every { runtime.workerExited(PRODUCT.value) } answers { supervisor.onDemandChanged(PRODUCT, WorkerDemand.START) }
         val seen = mutableListOf<TrUAPIProductExecution?>()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { supervisor.execution(PRODUCT).toList(seen) }
 
@@ -74,7 +78,23 @@ class TrUAPIWorkerSupervisorTest {
         rendererGoneListeners.getValue(providers.single()).forEach { it() }
         advanceUntilIdle()
 
+        verify(exactly = 1) { runtime.workerExited(PRODUCT.value) }
         assertEquals(listOf(null, executions[0], null, executions[1]), seen)
+    }
+
+    // The core asked for the stop, so it knows; reporting it as an exit would start the worker again.
+    @Test
+    fun `a worker the core stopped is not reported exited`() = runTest {
+        val supervisor = supervisor()
+
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        advanceUntilIdle()
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.STOP)
+        advanceUntilIdle()
+        rendererGoneListeners.getValue(providers.single()).forEach { it() }
+        advanceUntilIdle()
+
+        verify(exactly = 0) { runtime.workerExited(any()) }
     }
 
     @Test
@@ -123,7 +143,7 @@ class TrUAPIWorkerSupervisorTest {
 
     private fun TestScope.supervisor() = TrUAPIWorkerSupervisor(
         runtimeProvider = {
-            mockk<TrUAPIHostRuntimeProvider> { coEvery { runtime() } returns Result.success(mockk()) }
+            mockk<TrUAPIHostRuntimeProvider> { coEvery { runtime() } returns Result.success(runtime) }
         },
         hostBridgeFactory = object : ProductTrUAPIHostBridge.Factory {
             override fun create(scope: CoroutineScope) = bridge()

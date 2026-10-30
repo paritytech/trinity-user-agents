@@ -2682,6 +2682,92 @@ mod tests {
 		);
 	}
 
+	// A compacted session keeps what its history row shows: the provider,
+	// the rail and asset, how it ended, the payout and the provider's
+	// references, across a restart.
+	#[test]
+	fn a_compacted_withdrawal_keeps_its_history_details_after_a_restart() {
+		let db = open_memory_core_db();
+		let before = registry_on(&db);
+		let mut sent = FundingSession {
+			direction: FundingDirection::Out,
+			acknowledged: true,
+			..session("fs_sent", NOW - 1)
+		};
+		assert!(sent.assign("ramp.dot", None, NOW - 1));
+		sent.choice = Some(crate::host_logic::funding::FundingChoice {
+			quote: truapi::latest::FundingQuote {
+				quote_id: "q".into(),
+				send_amount: 100,
+				receive_amount: 95,
+				provider_fee: 5,
+				network_fee: 0,
+				eta_secs: None,
+				expires_at: None,
+				asset_decimals: 2,
+			},
+			rail: truapi::latest::FundingRail::Bank,
+			asset: "EUR".into(),
+			network: None,
+		});
+		for update in [
+			FundingUpdate::Collecting { payment_id: [4; 32], amount: 100 },
+			FundingUpdate::Details {
+				transaction_id: Some("tx-1".into()),
+				reference: Some("ref-1".into()),
+			},
+			FundingUpdate::Payout { outcome: truapi::latest::FundingPayout::PaidOut },
+		] {
+			sent.updates
+				.push(crate::host_logic::funding::FundingUpdateRecord { update, at_ms: NOW - 1 });
+		}
+		assert!(sent.settle(100, NOW - 1));
+		let newer = |n: u64| FundingSession {
+			acknowledged: true,
+			stage: FundingStage::Delivered { credited: 1, settled_at_ms: NOW + n },
+			..session(&format!("fs_{n}"), NOW)
+		};
+		block_on(before.commit(NOW, |sessions| {
+			sessions.insert("fs_sent".to_string(), sent);
+			for n in 0..RECORDED_PER_OWNER as u64 {
+				sessions.insert(format!("fs_{n}"), newer(n));
+			}
+			((), Vec::new())
+		}))
+		.expect("stored");
+
+		let after = registry_on(&db);
+		block_on(after.sweep(NOW)).expect("loaded");
+		let row = after.history().into_iter().find(|row| row.intent == "fs_sent");
+
+		assert_eq!(
+			(
+				after.get("fs_sent").is_none(),
+				row.map(|row| (
+					row.provider_id,
+					row.rail,
+					row.asset,
+					row.status,
+					row.payout,
+					row.transaction_id,
+					row.reference
+				))
+			),
+			(
+				true,
+				Some((
+					Some("ramp.dot".to_string()),
+					Some(truapi::latest::FundingRail::Bank),
+					Some("EUR".to_string()),
+					crate::host_logic::funding::FundingStatus::Sent,
+					Some(truapi::latest::FundingPayout::PaidOut),
+					Some("tx-1".to_string()),
+					Some("ref-1".to_string())
+				))
+			)
+		);
+	}
+
 	// A recorded session pushed out by newer ones of its owner is compacted,
 	// not dropped: after a restart its owner still reads how it ended, and
 	// history still lists every ended session.

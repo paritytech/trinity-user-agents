@@ -86,11 +86,11 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     private final class Boot: Sendable {}
 
     /// What the transition queue applies: the ledger's transitions, and the
-    /// reboot of a worker whose engine died. A reboot shares the queue so that
-    /// it never overtakes a stop the ledger sent before it.
+    /// exit of a worker whose engine died. An exit shares the queue so that it
+    /// never overtakes a stop the ledger sent before it.
     private enum Command: Sendable {
         case transition(WorkerTransition)
-        case reboot(Boot)
+        case exited(Boot)
     }
 
     private let builder: any TrUAPIWorkerBuilding
@@ -171,7 +171,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         for await (productId, command) in transitions.stream {
             switch command {
             case let .transition(transition): await apply(transition, to: productId)
-            case let .reboot(boot): await reboot(productId, after: boot)
+            case let .exited(boot): await exited(productId, after: boot)
             }
         }
     }
@@ -254,7 +254,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             // the script that subscribes to it comes up inside `start()`.
             await bridge.begin()
             try await runtime.start { [weak self] in
-                self?.transitions.continuation.yield((productId, .reboot(boot)))
+                self?.transitions.continuation.yield((productId, .exited(boot)))
             }
 
             guard case let .running(worker)? = held[productId], worker.boot === boot else { return }
@@ -279,12 +279,18 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         }
     }
 
-    private func reboot(_ productId: ProductId, after boot: Boot) async {
+    /// The core still counts the references that wanted the worker, so it is
+    /// told the worker is gone and sends `.start` again if any remain.
+    private func exited(_ productId: ProductId, after boot: Boot) async {
         guard case let .running(worker)? = held[productId], worker.boot === boot else { return }
 
-        logger.error("[truapi] \(productId)'s worker engine died, rebooting it")
+        logger.error("[truapi] \(productId)'s worker engine died")
         await stop(productId)
-        start(productId)
+        do {
+            try references().workerExited(productId: productId)
+        } catch {
+            logger.error("[truapi] \(productId)'s worker exit could not be reported: \(error)")
+        }
     }
 
     private func stop(_ productId: ProductId) async {

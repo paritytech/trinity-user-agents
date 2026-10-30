@@ -386,10 +386,11 @@ public protocol FundingHostBridge: AnyObject, Sendable {
         progress: FundingProgress?
     )
 
-    /// Every ended session the host acknowledged or the core compacted, as
-    /// summaries newest first, once each time funding resumes, so the host
-    /// rebuilds its own history when that was lost. Called inline.
-    func fundingHistory(_ history: [FundingSessionSummary])
+    /// Close the frame ``presentProviderFrame(providerId:intent:target:)``
+    /// shows for provider `providerId`'s session `intent`, answering that call
+    /// `.closed`, and show the session sheet in its place. Does nothing when
+    /// no frame is open for it. Called inline.
+    func closeProviderFrame(providerId: String, intent: String)
 
     /// Whether a provider still works on any session: once funding resumes,
     /// and again whenever it changes. A host that keeps it starts funding at
@@ -712,8 +713,8 @@ private final class FundingCallbackAdapter: NativeFundingCallbacks, @unchecked S
         bridge.fundingSessionChanged(intent: intent, status: status, session: session, progress: progress)
     }
 
-    func fundingHistory(history: [FundingSessionSummary]) {
-        bridge.fundingHistory(history)
+    func closeProviderFrame(providerId: String, intent: String) {
+        bridge.closeProviderFrame(providerId: providerId, intent: intent)
     }
 
     func fundingInProgressChanged(inProgress: Bool) {
@@ -1172,8 +1173,14 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.confirmFundingCancel(intent: intent, terms: terms)
     }
 
-    /// Record that the host wrote ended session `intent` into its own
-    /// history. Until then the core hands it over again on each resume.
+    /// Every ended funding session, as summaries newest first. Read it
+    /// whenever history is shown.
+    public func fundingHistory() -> [FundingSessionSummary] {
+        inner.fundingHistory()
+    }
+
+    /// Record that the host told the user how ended session `intent` went.
+    /// Until then the core hands it over again on each resume.
     @discardableResult
     public func acknowledgeFundingSession(intent: String) async throws -> Bool {
         try await inner.acknowledgeFundingSession(intent: intent)
@@ -1319,6 +1326,14 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// host may stop the worker. Releasing with none held is a no-op.
     public func releaseWorker(productId: String) {
         inner.releaseWorker(productId: productId)
+    }
+
+    /// Report that the product's worker stopped without the host asking, as
+    /// on a crash or a system kill. While references remain, `.start` is
+    /// reported again through
+    /// ``HostBridge/requestWorkerTransition(productId:transition:)``.
+    public func workerExited(productId: String) {
+        inner.workerExited(productId: productId)
     }
 
     /// Tell the pairing host behind `deeplink` that allowance allocation is

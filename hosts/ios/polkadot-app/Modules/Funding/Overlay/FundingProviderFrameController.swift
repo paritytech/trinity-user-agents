@@ -14,11 +14,18 @@ import UIKit
 /// or once the host sees the provider's part done, the payment seen or the
 /// session over, and `Dismissed` only when it could not be shown at all.
 final class FundingProviderFrameController: UIViewController {
+    let providerId: String
     private let page: UIViewController
     private let showsSentFunds: Bool
     private var completion: ((FundingFrameOutcome) -> Void)?
 
-    init(page: UIViewController, showsSentFunds: Bool, completion: @escaping (FundingFrameOutcome) -> Void) {
+    init(
+        providerId: String,
+        page: UIViewController,
+        showsSentFunds: Bool,
+        completion: @escaping (FundingFrameOutcome) -> Void
+    ) {
+        self.providerId = providerId
         self.page = page
         self.showsSentFunds = showsSentFunds
         self.completion = completion
@@ -72,13 +79,15 @@ final class FundingProviderFrameController: UIViewController {
         dismiss(animated: true)
     }
 
-    /// Answers the core once and takes the frame down.
-    func finish(_ outcome: FundingFrameOutcome) {
+    /// Answers the core once and takes the frame down, then runs `dismissed`.
+    func finish(_ outcome: FundingFrameOutcome, dismissed: (() -> Void)? = nil) {
         guard let completion else { return }
         self.completion = nil
 
         if presentingViewController != nil {
-            dismiss(animated: true)
+            dismiss(animated: true, completion: dismissed)
+        } else {
+            dismissed?()
         }
         completion(outcome)
     }

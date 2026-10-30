@@ -16,7 +16,7 @@ class FundingFrameContext(
     val target: ProviderFrameTarget,
     val showsSentFunds: Boolean,
 ) {
-    private val outcome = CompletableDeferred<ProviderFrameOutcome>()
+    private val outcome = CompletableDeferred<FrameAnswer>()
 
     /** Whether the screen is up, so the CASH card does not open it a second time. */
     @Volatile
@@ -33,10 +33,20 @@ class FundingFrameContext(
         }
 
     fun answer(answer: ProviderFrameOutcome) {
-        outcome.complete(answer)
+        outcome.complete(FrameAnswer(answer, byProvider = false))
     }
 
-    suspend fun awaitOutcome(): ProviderFrameOutcome = outcome.await()
+    /** The provider closed its own screen: answers [ProviderFrameOutcome.Closed], unless an answer came first. */
+    fun closeByProvider() {
+        outcome.complete(FrameAnswer(ProviderFrameOutcome.Closed, byProvider = true))
+    }
+
+    suspend fun awaitOutcome(): ProviderFrameOutcome = outcome.await().outcome
+
+    /** Whether the answer was the provider closing its screen; suspends until answered. */
+    suspend fun awaitClosedByProvider(): Boolean = outcome.await().byProvider
+
+    private data class FrameAnswer(val outcome: ProviderFrameOutcome, val byProvider: Boolean)
 }
 
 @Singleton

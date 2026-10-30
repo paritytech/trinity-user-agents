@@ -46,4 +46,11 @@ interface FundingOverlay {
 
     /** Shows [target] for provider [providerId]'s session [intent] and answers how it closed. */
     suspend fun presentProviderFrame(providerId: ProductId, intent: String, target: ProviderFrameTarget): ProviderFrameOutcome
+
+    /**
+     * Closes the frame [presentProviderFrame] shows for provider [providerId]'s session [intent], answering it
+     * [ProviderFrameOutcome.Closed], and shows the session's sheet in its place. Does nothing when no frame of that
+     * provider is open for the session. Returns at once.
+     */
+    fun closeProviderFrame(providerId: ProductId, intent: String)
 }

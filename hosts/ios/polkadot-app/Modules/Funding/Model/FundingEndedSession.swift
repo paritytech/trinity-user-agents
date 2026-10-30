@@ -1,9 +1,9 @@
 import Foundation
 import TrUAPIHost
 
-/// An ended session as its detail screen draws it: the host's record of it,
-/// plus the quote and the steps the core reported while it still holds the
-/// session. Without them the steps are rebuilt from the outcome.
+/// An ended session as its detail screen draws it: its record, plus the quote
+/// and the steps the core reported when it pushed the session this run.
+/// Without them the steps are rebuilt from the outcome.
 struct FundingEndedSession: Equatable {
     enum Outcome: Equatable {
         case succeeded
@@ -127,7 +127,7 @@ private extension FundingEndedSession {
     }
 
     /// The milestones the core reports for a session of this direction, for
-    /// a record the core has dropped.
+    /// a record drawn from the core's summary.
     static func steps(direction: FundingDirection, rail _: FundingRail?) -> [FundingStep] {
         switch direction {
         case .out: [.started, .received, .sent]

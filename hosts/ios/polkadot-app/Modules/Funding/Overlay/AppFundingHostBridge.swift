@@ -19,21 +19,22 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
     func presentProviderFrame(providerId: String, intent: String, target: FundingFrameTarget) async
         -> FundingFrameOutcome
 
+    /// The provider closed its frame for session `intent`: answer it
+    /// `.closed` and show the session sheet in its place.
+    func closeProviderFrame(providerId: String, intent: String)
+
     func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem)
 
     /// What session `intent`'s overlay offers changed in the session book.
     func fundingOptionsChanged(intent: String)
-
-    /// The core's recorded history arrived in the session book.
-    func fundingHistoryChanged()
 
     func fundingQuotesChanged(intent: String, quotes: FundingQuoteList)
 
     /// Shows session `intent` again after the user left it running.
     func reopen(intent: String)
 
-    /// Shows an ended session's detail screen, from what the core still
-    /// holds of it or else from the host's record.
+    /// Shows an ended session's detail screen, from the session the core
+    /// pushed this run or else from its history record.
     func showEnded(_ record: FundingRecord)
 
     /// Shows the sessions in flight in `direction`, with a way to start
@@ -80,6 +81,10 @@ final class AppFundingHostBridge: FundingHostBridge, @unchecked Sendable {
         await overlay.presentProviderFrame(providerId: providerId, intent: intent, target: target)
     }
 
+    func closeProviderFrame(providerId: String, intent: String) {
+        overlay.closeProviderFrame(providerId: providerId, intent: intent)
+    }
+
     func fundingSessionChanged(
         intent: String,
         status: HostFundingStatusSubscribeItem,
@@ -88,11 +93,6 @@ final class AppFundingHostBridge: FundingHostBridge, @unchecked Sendable {
     ) {
         book.record(intent: intent, session: session, progress: progress)
         overlay.fundingSessionChanged(intent: intent, status: status)
-    }
-
-    func fundingHistory(_ history: [FundingSessionSummary]) {
-        book.record(history: history)
-        overlay.fundingHistoryChanged()
     }
 
     func fundingInProgressChanged(_ inProgress: Bool) {

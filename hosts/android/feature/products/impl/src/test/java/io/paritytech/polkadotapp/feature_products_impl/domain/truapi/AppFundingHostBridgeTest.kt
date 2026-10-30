@@ -3,7 +3,11 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
+import io.mockk.runs
+import io.mockk.verify
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlay
@@ -27,7 +31,6 @@ import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingPresentOutcome
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingSession
-import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.FundingStage
 import uniffi.truapi.FundingStatus
 import uniffi.truapi.HostFundingStatusSubscribeItem
@@ -157,13 +160,21 @@ class AppFundingHostBridgeTest {
     }
 
     @Test
-    fun `the history and the in-progress flag are kept as pushed`() {
-        assertEquals(null to null, bridge.history().value to bridge.inProgress().value)
+    fun `the in-progress flag is kept as pushed`() {
+        assertEquals(null, bridge.inProgress().value)
 
-        bridge.fundingHistory(emptyList())
         bridge.fundingInProgressChanged(true)
 
-        assertEquals(emptyList<FundingSessionSummary>() to true, bridge.history().value to bridge.inProgress().value)
+        assertEquals(true, bridge.inProgress().value)
+    }
+
+    @Test
+    fun `a provider closing its frame reaches the overlay`() {
+        every { overlay.closeProviderFrame(any(), any()) } just runs
+
+        bridge.closeProviderFrame("ramp.dot", "intent")
+
+        verify { overlay.closeProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent") }
     }
 
     private fun options(min: String) = FundingOptions(

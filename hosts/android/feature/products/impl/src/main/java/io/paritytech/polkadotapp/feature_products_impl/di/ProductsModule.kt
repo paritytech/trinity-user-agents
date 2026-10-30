@@ -41,12 +41,10 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHo
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.PocketCardRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.RealPocketCardRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.BrowserTabRepository
-import io.paritytech.polkadotapp.feature_products_impl.data.repository.FundingHistoryRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductFundingOperationRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIntegrationRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.RealBrowserTabRepository
-import io.paritytech.polkadotapp.feature_products_impl.data.repository.RealFundingHistoryRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.RealProductFundingOperationRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.RealProductIntegrationRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.RealProductRepository
@@ -403,9 +401,6 @@ internal interface ProductsModule {
 
     @Binds
     fun bindFundingRuntime(impl: TrUAPIFundingRuntime): FundingRuntime
-
-    @Binds
-    fun bindFundingHistoryRepository(impl: RealFundingHistoryRepository): FundingHistoryRepository
 
     @Binds
     @Singleton

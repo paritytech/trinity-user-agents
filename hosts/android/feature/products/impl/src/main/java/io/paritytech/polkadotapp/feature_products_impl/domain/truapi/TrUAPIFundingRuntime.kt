@@ -29,7 +29,10 @@ class TrUAPIFundingRuntime @Inject constructor(
 
     override val sessions: StateFlow<Map<String, FundingSessionEntry>> = bridge.sessions()
 
-    override val history: StateFlow<List<FundingSessionSummary>?> = bridge.history()
+    override val inProgress: StateFlow<Boolean?> = bridge.inProgress()
+
+    override suspend fun history(): Result<List<FundingSessionSummary>> =
+        runtimeProvider.runtime().mapCatching { it.fundingHistory() }
 
     override fun options(intent: String): Flow<FundingOptions?> =
         bridge.options().map { it[intent] }.distinctUntilChanged()

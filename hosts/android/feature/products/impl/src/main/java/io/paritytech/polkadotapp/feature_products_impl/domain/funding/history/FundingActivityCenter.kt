@@ -6,8 +6,8 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActi
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStatus
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
-import io.paritytech.polkadotapp.feature_products_impl.data.repository.FundingHistoryRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isOpen
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.FundingSessionEntry
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toBalance
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toDomain
@@ -21,54 +21,63 @@ import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSession
-import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.FundingStage
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Instant
 
 /**
- * The CASH card's funding lists: sessions still in the core, then the ended ones the host keeps.
+ * The CASH card's funding lists: sessions still in flight, then the ended ones, which the core keeps.
  *
- * An ended session is written to the host's store, then acknowledged. The core still keeps a released withdrawal
- * until its payout is reported, and a failed payout until its refund settles; such a session comes back
- * unacknowledged when the provider reports, and its row is rewritten by intent.
+ * The ended list is read from the core each time it is built: on the first collection, whenever the core pushes a
+ * session, and once funding resumes, which is when the core has loaded its sessions. A session the core pushed in
+ * this process reads in full; the rest read from the core's summary, which keeps only how the session ended.
  *
- * Once per process the store is checked against the summaries the core pushes when funding resumes, and a row lost
- * from the store is rebuilt from the core's summary.
+ * An ended session the core has not been told about is acknowledged once its row is built, since that row tells the
+ * user how it went. The core keeps a released withdrawal until its payout is reported, and a failed payout until its
+ * refund settles; such a session comes back unacknowledged when the provider reports, and is acknowledged again.
  */
 @Singleton
 class FundingActivityCenter @Inject constructor(
     private val runtime: FundingRuntime,
-    private val history: FundingHistoryRepository,
 ) {
     private val reloadMutex = Mutex()
 
-    /** Whether lost rows were rebuilt from the core's history; read and set under [reloadMutex]. */
-    private var historyRestored = false
+    /**
+     * The pushed sessions already acknowledged in this process, as pushed: one the core hands back after a late report
+     * differs, so it is acknowledged again. Read and written under [reloadMutex].
+     */
+    private val acknowledged = mutableSetOf<FundingSessionEntry>()
 
-    /** Built again whenever the core pushes a session or its history. Starts the core, which then pushes them. */
+    /** Built again whenever the core pushes a session or resumes funding. Starts the core, which then pushes them. */
     fun observe(): Flow<FundingActivity> =
-        combine(runtime.sessions, runtime.history) { sessions, recorded -> sessions.values to recorded }
+        combine(runtime.sessions, runtime.inProgress) { sessions, _ -> sessions.values }
             .onStart { runtime.start().logFailure("Failed to start the core for funding activity") }
-            .map { (sessions, recorded) -> reloadMutex.withLock { reload(sessions, recorded) } }
+            .map { sessions -> reloadMutex.withLock { reload(sessions) } }
 
-    private suspend fun reload(
-        sessions: Collection<FundingSessionEntry>,
-        recorded: List<FundingSessionSummary>?,
-    ): FundingActivity {
+    /** The ended session [intent] as the user is shown it, or `null` when the core holds no ended session by that id. */
+    suspend fun ended(intent: String): FundingRecord? {
+        runtime.sessions.value[intent]?.let { (session, progress) -> return FundingRecord.of(session, progress) }
+        return runtime.history()
+            .logFailure("Funding history read failed")
+            .getOrNull()
+            ?.firstOrNull { it.intent == intent }
+            ?.let(FundingRecord::of)
+    }
+
+    private suspend fun reload(sessions: Collection<FundingSessionEntry>): FundingActivity {
         val entries = sessions.sortedByDescending { it.session.openedAtMs }
 
         val inFlight = entries.mapNotNull { inFlightItem(it.session, it.progress) }
         val inFlightIds = inFlight.mapTo(mutableSetOf()) { it.id }
 
-        settle(entries)
-        if (!historyRestored && recorded != null) historyRestored = restoreHistory(recorded)
-        val ended = entries.mapNotNull { FundingRecord.of(it.session, it.progress) }
+        val pushed = entries.mapNotNull { FundingRecord.of(it.session, it.progress) }
+        val pushedIds = pushed.mapTo(mutableSetOf()) { it.intent }
+        val summaries = runtime.history().logFailure("Funding history read failed").getOrDefault(emptyList())
+        val records = (pushed + summaries.filter { it.intent !in pushedIds }.mapNotNull(FundingRecord::of))
+            .filter { it.intent !in inFlightIds }
 
-        val stored = history.records().logFailure("Funding history read failed").getOrDefault(emptyList())
-        val storedIds = stored.mapTo(mutableSetOf()) { it.intent }
-        val records = (stored + ended.filter { it.intent !in storedIds }).filter { it.intent !in inFlightIds }
+        acknowledgeEnded(entries)
 
         return FundingActivity(
             inFlight = inFlight,
@@ -78,29 +87,15 @@ class FundingActivityCenter @Inject constructor(
         )
     }
 
-    /** One row per ended session the host has not acknowledged yet; a failed write leaves it unacknowledged for next time. */
-    private suspend fun settle(entries: List<FundingSessionEntry>) {
+    /** Acknowledges each ended session the core has not been told about; a failed call is tried again on the next reload. */
+    private suspend fun acknowledgeEnded(entries: List<FundingSessionEntry>) {
         entries
-            .filter { !it.session.acknowledged }
-            .forEach { (session, progress) ->
-                val record = FundingRecord.of(session, progress) ?: return@forEach
-                val saved = history.save(record).logFailure("Funding history write failed").isSuccess
-                if (saved) runtime.acknowledge(record.intent).logFailure("Funding acknowledgement failed")
+            .filter { !it.session.acknowledged && !it.session.stage.isOpen && it !in acknowledged }
+            .forEach { entry ->
+                runtime.acknowledge(entry.session.intent)
+                    .logFailure("Funding acknowledgement failed")
+                    .onSuccess { acknowledged += entry }
             }
-    }
-
-    /**
-     * Writes a row for every session the core says the host recorded that the store lacks; a stored row wins. Returns
-     * whether the store could be read, so a failed pass is tried again on the next reload.
-     */
-    private suspend fun restoreHistory(recorded: List<FundingSessionSummary>): Boolean {
-        val stored = history.records().logFailure("Funding history read failed").getOrNull() ?: return false
-        val storedIds = stored.mapTo(mutableSetOf()) { it.intent }
-        recorded
-            .filter { it.intent !in storedIds }
-            .mapNotNull(FundingRecord::of)
-            .forEach { history.save(it).logFailure("Funding history rebuild failed") }
-        return true
     }
 
     /** The row of a session the core still has in progress, or `null` once its status is final. */
