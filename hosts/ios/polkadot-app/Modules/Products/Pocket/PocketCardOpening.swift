@@ -14,40 +14,39 @@ struct PocketCardOpening {
     let navigator: ModuleNavigating
     let pocket: ProductPocketService
 
-    func open(_ card: PocketCardViewModel, origin: PocketCardOrigin?, pageQuery: String = "") {
+    func open(_ card: PocketCardViewModel, pageQuery: String = "") {
         guard
             let url = card.key.launchUrl(pageQuery: pageQuery),
             let page = flowState.hostProvider.page(url: url)
         else { return }
 
-        // A second screen would take the open card's page and leave it blank.
-        guard !pocket.cardHosts.isOnDisplay(card.key) else {
-            let widgetURL = debugWidgetURL(for: card.key, pageQuery: pageQuery)
-            pocket.cardHosts.reload(card.key, at: pageQuery) { view in
-                if let widgetURL { view.navigate(to: widgetURL) } else { view.navigate(to: page) }
+        navigator.openWallet { wallet, wasOnScreen in
+            // A second screen would take the open card's page and leave it blank.
+            guard !pocket.cardHosts.isOnDisplay(card.key) else {
+                let widgetURL = debugWidgetURL(for: card.key, pageQuery: pageQuery)
+                pocket.cardHosts.reload(card.key, at: pageQuery) { view in
+                    if let widgetURL { view.navigate(to: widgetURL) } else { view.navigate(to: page) }
+                }
+                return
             }
-            return
-        }
 
-        guard let product = pocket.cardHosts.product(for: card.key, pageQuery: pageQuery, make: { surface in
-            makeView(for: card, page: page, pageQuery: pageQuery, surface: surface)
-        }) else { return }
+            guard let product = pocket.cardHosts.product(for: card.key, pageQuery: pageQuery, make: { surface in
+                makeView(for: card, page: page, pageQuery: pageQuery, surface: surface)
+            }) else { return }
 
-        let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
-        if origin == nil {
-            navigator.presentFullScreen(screen)
-        } else {
-            // The card flies between the Pocket and its screen, so the Pocket stays in the window under it.
-            navigator.presentOverFullScreen(screen, animatedBy: screen)
-        }
-        product.surface.claim(screen)
+            let origin = wallet.viewControllers.first as? PocketCardOrigin
+            let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
+            PocketCardNavigation.show(screen, on: wallet, animated: wasOnScreen) {
+                product.surface.claim(screen)
+            }
 
-        Task { [weak screen] in
-            let shown = await PocketCardFaceOnOpen.faceShown(
-                for: card.key,
-                cards: PublishedPocketCards.makeDefault(products: flowState.productResolver)
-            )
-            screen?.applyOpeningFace(shown: shown)
+            Task { [weak screen] in
+                let shown = await PocketCardFaceOnOpen.faceShown(
+                    for: card.key,
+                    cards: PublishedPocketCards.makeDefault(products: flowState.productResolver)
+                )
+                screen?.applyOpeningFace(shown: shown)
+            }
         }
     }
 
@@ -62,7 +61,7 @@ struct PocketCardOpening {
                 return
             }
 
-            open(card, origin: nil, pageQuery: link.pageQuery)
+            open(card, pageQuery: link.pageQuery)
         }
     }
 }

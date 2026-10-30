@@ -216,6 +216,7 @@ private final class RecordingWalletView: UIViewController, WalletMainViewProtoco
     func didReceive(pocketCards _: [PocketCardViewModel]) {}
     func didReceive(titleViewModel _: NetworkStatusTitleView.ViewModel) {}
     func frame(of _: PocketCardKey) -> CGRect? { nil }
+    var openCard: PocketCardKey? { nil }
     func setOpenCard(_: PocketCardKey?) {}
     func moveOpenCard(by _: CGSize, clearingPocket _: Bool, animated _: Bool) {}
 }
@@ -228,7 +229,7 @@ private final class RecordingWireframe: WalletMainWireframeProtocol {
         openedProduct = page.host.toDotDomain()
     }
 
-    func showPocketCard(_: PocketCardViewModel, from _: WalletMainViewProtocol?) {}
+    func showPocketCard(_: PocketCardViewModel) {}
     func confirmPocketCardRemoval(_: PocketCardViewModel, onConfirm _: @escaping () -> Void) {}
 }
 
