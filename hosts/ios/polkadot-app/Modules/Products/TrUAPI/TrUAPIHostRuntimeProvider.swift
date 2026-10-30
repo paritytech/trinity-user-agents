@@ -185,6 +185,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             AppFundingEnvironment(router: router.productsRouter, bundledProducts: bundledProducts)
         }
         runtime.setFunding(AppFundingHostBridge(overlay: overlay))
+        bridge.onWorkerCrashing { [weak overlay] productId in overlay?.workerCrashing(productId: productId) }
         let bundledProviders = bundledProducts.fundingProviders
         if !bundledProviders.isEmpty {
             do {

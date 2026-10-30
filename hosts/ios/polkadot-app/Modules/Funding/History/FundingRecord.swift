@@ -77,21 +77,23 @@ extension FundingRecord {
 
 extension FundingRecord {
     /// The record for an ended session from its summary in the core's
-    /// history. The summary keeps no quote, so what was paid stays empty.
+    /// history.
     init?(summary: FundingSessionSummary) {
         guard let settled = Settled(stage: summary.stage, status: summary.status) else { return nil }
 
         intent = summary.intent
         direction = summary.direction
-        rail = summary.rail
-        asset = summary.asset
+        rail = summary.choice?.rail
+        asset = summary.choice?.asset
         providerId = summary.providerId
         requestedAmount = summary.amount
         settledAmount = settled.amount
-        paidAmount = nil
-        paidAsset = summary.asset
-        paidDecimals = nil
-        paidNetwork = nil
+        paidAmount = summary.choice.map { choice in
+            summary.direction == .in ? choice.quote.sendAmount : choice.quote.receiveAmount
+        }
+        paidAsset = summary.choice?.asset
+        paidDecimals = summary.choice?.quote.assetDecimals
+        paidNetwork = summary.choice?.network
         outcome = settled.outcome
         payout = summary.payout.map(Payout.init)
         refundedAmount = summary.refunded

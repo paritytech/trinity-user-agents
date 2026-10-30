@@ -30,6 +30,9 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
 
     func fundingQuotesChanged(intent: String, quotes: FundingQuoteList)
 
+    /// Product `productId`'s worker keeps crashing while the core restarts it.
+    func workerCrashing(productId: String)
+
     /// Shows session `intent` again after the user left it running.
     func reopen(intent: String)
 
