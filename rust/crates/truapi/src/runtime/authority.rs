@@ -167,6 +167,10 @@ pub enum AuthorityError {
 	/// The authority cannot service the request.
 	#[display("{reason}")]
 	Unavailable { reason: String },
+	/// The chain stayed unreachable, such as during a halt, so nothing was
+	/// signed. A later call can succeed.
+	#[display("{reason}")]
+	ChainUnavailable { reason: String },
 	/// The authority cannot service this request shape (e.g. an unsupported
 	/// transaction-extension version).
 	#[display("{reason}")]
@@ -190,6 +194,7 @@ impl From<SsoRemoteResponseError> for AuthorityError {
 			},
 			SsoRemoteResponseError::LocalDisconnected |
 			SsoRemoteResponseError::PeerDisconnected => Self::Disconnected,
+			SsoRemoteResponseError::ChainUnavailable(reason) => Self::ChainUnavailable { reason },
 			SsoRemoteResponseError::Failure(reason) => match reason.as_str() {
 				"Rejected" | "User rejected" => Self::Rejected,
 				SSO_LOCAL_DISCONNECT_REASON | SSO_PEER_DISCONNECT_REASON => Self::Disconnected,
@@ -218,7 +223,8 @@ impl From<ExtrinsicPayloadError> for AuthorityError {
 	}
 }
 
-/// A chain the host cannot reach is `Unavailable`; a request shape it cannot
+/// A chain the host cannot connect to is `Unavailable`, and a connected node
+/// that cannot be asked is `ChainUnavailable`; a request shape it cannot
 /// assemble is `NotSupported`.
 impl From<LocalTransactionError> for AuthorityError {
 	fn from(err: LocalTransactionError) -> Self {
@@ -227,8 +233,11 @@ impl From<LocalTransactionError> for AuthorityError {
 			LocalTransactionError::UnsupportedExtensions(_) => {
 				Self::NotSupported { reason: err.to_string() }
 			},
-			LocalTransactionError::ChainUnavailable(_) => {
+			LocalTransactionError::NoChainConnection(_) => {
 				Self::Unavailable { reason: err.to_string() }
+			},
+			LocalTransactionError::ChainUnavailable(_) => {
+				Self::ChainUnavailable { reason: err.to_string() }
 			},
 			LocalTransactionError::Other(_) => Self::Unknown { reason: err.to_string() },
 		}
@@ -260,6 +269,7 @@ impl From<AuthorityError> for HostAccountSignVrfError {
 			},
 			AuthorityError::Cancelled(err) => Self::Unknown { reason: err.to_string() },
 			AuthorityError::Unavailable { reason } |
+			AuthorityError::ChainUnavailable { reason } |
 			AuthorityError::NotSupported { reason } |
 			AuthorityError::Unknown { reason } => Self::Unknown { reason },
 		}

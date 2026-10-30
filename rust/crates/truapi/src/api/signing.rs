@@ -42,6 +42,10 @@ pub trait Signing: Send + Sync {
 	/// signing something that names somebody else. A call paying nobody from
 	/// the picker leaves it empty.
 	///
+	/// Fails as `ChainUnavailable` when the chain stays unreachable, such as
+	/// during a halt. Nothing was signed, so the call can be retried. Bound the
+	/// attempts, and expect a confirmed call to prompt again.
+	///
 	/// ```ts
 	/// const productContext = await truapi.system.getProductContext();
 	/// assert(productContext.isOk(), "getProductContext failed:", productContext);

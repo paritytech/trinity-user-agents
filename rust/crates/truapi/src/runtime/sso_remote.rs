@@ -10,11 +10,13 @@ use std::{
 
 use super::statement_store_rpc;
 use crate::{
+	chain_runtime::{retry_while_halted, says_chain_halted},
 	host_internal::{
 		sso_messages::{Response, SsoSessionStatement, decode_sso_session_statement, v1},
 		sso_wire::SsoRequest,
 	},
 	host_logic::{session::SsoSessionInfo, statement_store::parse_new_statements_result},
+	time::RealTimer,
 	unix_time::current_unix_secs,
 };
 
@@ -167,7 +169,8 @@ pub struct CancelError {
 }
 
 impl CancelError {
-	fn new(reason: CancellationReason, remote_message_id: &str) -> Self {
+	/// The request sent as `remote_message_id`, cancelled for `reason`.
+	pub fn new(reason: CancellationReason, remote_message_id: &str) -> Self {
 		Self { reason, remote_message_id: remote_message_id.to_string() }
 	}
 
@@ -212,6 +215,10 @@ pub enum SsoRemoteResponseError {
 	/// The paired signing host announced a disconnect.
 	#[display("{}", SSO_PEER_DISCONNECT_REASON)]
 	PeerDisconnected,
+	/// The request never reached the signing host because the chain stayed
+	/// halted or reached no peer. A later call can succeed.
+	#[display("{_0}")]
+	ChainUnavailable(String),
 	/// Submit, subscription, or decode failure.
 	#[display("{_0}")]
 	#[from]
@@ -417,12 +424,16 @@ fn handle_sso_remote_statement_page<T>(
 	Ok(None)
 }
 
-/// Live statement-store subscription for a single topic.
+/// Live statement-store subscription for a single topic, waiting out a chain
+/// halt unless `cancel` fires first.
 pub async fn subscribe_statement_topic(
 	rpc_client: &RpcClient,
 	topic: [u8; 32],
+	cancel: &CancellationToken,
 ) -> Result<RpcSubscription<Value>, subxt_rpcs::Error> {
-	statement_store_rpc::subscribe_match_all(rpc_client, &[topic]).await
+	let topics = [topic];
+	let subscribe = || statement_store_rpc::subscribe_match_all(rpc_client, &topics);
+	retry_while_halted(subscribe, says_chain_halted, &RealTimer, cancel).await
 }
 
 /// Adapt a subscription into a page stream, labelling errors with `label`.

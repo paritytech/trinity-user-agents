@@ -1244,6 +1244,7 @@ fn account_get_authority_error(err: AuthorityError) -> CallError<latest::HostAcc
 			latest::HostAccountGetError::Unknown { reason: err.to_string() }
 		},
 		AuthorityError::Unavailable { reason } |
+		AuthorityError::ChainUnavailable { reason } |
 		AuthorityError::NotSupported { reason } |
 		AuthorityError::Unknown { reason } => latest::HostAccountGetError::Unknown { reason },
 	};
@@ -1332,6 +1333,7 @@ fn signing_call_error(err: AuthorityError) -> CallError<latest::HostSignPayloadE
 			latest::HostSignPayloadError::Unknown { reason: err.to_string() }
 		},
 		AuthorityError::Unavailable { reason } |
+		AuthorityError::ChainUnavailable { reason } |
 		AuthorityError::NotSupported { reason } |
 		AuthorityError::Unknown { reason } => latest::HostSignPayloadError::Unknown { reason },
 	})
@@ -1353,10 +1355,21 @@ fn transaction_call_error(err: AuthorityError) -> CallError<latest::HostCreateTr
 		AuthorityError::NotSupported { reason } => {
 			latest::HostCreateTransactionError::NotSupported { reason }
 		},
+		AuthorityError::ChainUnavailable { reason } => {
+			latest::HostCreateTransactionError::ChainUnavailable { reason }
+		},
 		AuthorityError::Unavailable { reason } | AuthorityError::Unknown { reason } => {
 			latest::HostCreateTransactionError::Unknown { reason }
 		},
 	})
+}
+
+/// [`transaction_call_error`] for the legacy-account method, which stays on
+/// v0.1 and so reports `ChainUnavailable` as `Unknown`.
+fn legacy_transaction_call_error(
+	err: AuthorityError,
+) -> CallError<latest::HostCreateTransactionWithLegacyAccountError> {
+	transaction_call_error(err).map_domain(latest::HostCreateTransactionError::into_v01)
 }
 
 #[crate::platform::async_trait]

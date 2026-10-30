@@ -11,11 +11,20 @@ use futures::{
 	channel::mpsc as fut_mpsc,
 	stream::{BoxStream, StreamExt},
 };
-use serde_json::Value;
+use parity_scale_codec::Encode;
+use serde_json::{Value, json};
+use sp_crypto_hashing::blake2_256;
+use subxt::{
+	config::substrate::{Digest, SubstrateHeader},
+	utils::H256,
+};
 
 use crate::{
-	chain_runtime::{RuntimeChainProvider, RuntimeFailure},
+	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
+	host_internal::extrinsic::tests::bulletin_runtime_call,
 	platform::JsonRpcConnection,
+	test_support::{chain_halted_error, test_spawner},
+	time::ManualTimer,
 };
 
 type Responder = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
@@ -187,4 +196,135 @@ pub fn wait_for_sent(
 		std::thread::sleep(std::time::Duration::from_millis(10));
 	}
 	provider.sent.lock().unwrap().clone()
+}
+
+/// How a scripted node refuses a follow.
+#[derive(Clone, Copy)]
+pub enum FollowRefusal {
+	/// dotli's halt error.
+	ChainHalted,
+	/// A plain JSON-RPC error with this code.
+	Error(i32),
+}
+
+/// A chainHead node serving the bulletin fixture, as scripted.
+#[derive(Clone, Copy)]
+pub struct ScriptedChainHead {
+	/// How many follows it refuses before accepting one.
+	pub refused_follows: usize,
+	/// The answer to each refused follow.
+	pub refusal: FollowRefusal,
+	/// Whether it ever finishes a runtime call it started.
+	pub finishes_calls: bool,
+	/// How many header reads get dotli's halt error before one is served.
+	pub halted_headers: usize,
+}
+
+impl Default for ScriptedChainHead {
+	fn default() -> Self {
+		Self {
+			refused_follows: 0,
+			refusal: FollowRefusal::ChainHalted,
+			finishes_calls: true,
+			halted_headers: 0,
+		}
+	}
+}
+
+impl ScriptedChainHead {
+	/// The node, a core-scope runtime over it, and the runtime's manual clock.
+	pub fn serve(self) -> (Arc<ScriptedProvider>, ChainRuntime, Arc<ManualTimer>) {
+		let header = SubstrateHeader::<H256> {
+			parent_hash: H256::zero(),
+			number: 1,
+			state_root: H256::zero(),
+			extrinsics_root: H256::zero(),
+			digest: Digest::default(),
+		};
+		let finalized = H256(blake2_256(&header.encode()));
+		let follows = AtomicUsize::new(0);
+		let headers = AtomicUsize::new(0);
+		let operations = AtomicUsize::new(0);
+		let provider = Arc::new(ScriptedProvider::with_frames(move |request| {
+			let request: Value = serde_json::from_str(request).unwrap();
+			let reply = |result: Value| {
+				json!({"jsonrpc": "2.0", "id": request["id"], "result": result}).to_string()
+			};
+			let follow_event = |result: Value| {
+				json!({
+					"jsonrpc": "2.0",
+					"method": "chainHead_v1_followEvent",
+					"params": {"subscription": "follow", "result": result}
+				})
+				.to_string()
+			};
+			match request["method"].as_str().unwrap() {
+				"chainHead_v1_follow"
+					if follows.fetch_add(1, Ordering::SeqCst) < self.refused_follows =>
+				{
+					let error = match self.refusal {
+						FollowRefusal::ChainHalted => chain_halted_error(),
+						FollowRefusal::Error(code) => {
+							json!({"code": code, "message": "follow refused"})
+						},
+					};
+					vec![json!({"jsonrpc": "2.0", "id": request["id"], "error": error}).to_string()]
+				},
+				"chainHead_v1_follow" => vec![
+					reply(json!("follow")),
+					follow_event(json!({
+						"event": "initialized",
+						"finalizedBlockHashes": [finalized],
+						"finalizedBlockRuntime": null
+					})),
+				],
+				"chainHead_v1_header"
+					if headers.fetch_add(1, Ordering::SeqCst) < self.halted_headers =>
+				{
+					vec![
+						json!({"jsonrpc": "2.0", "id": request["id"], "error": chain_halted_error()})
+							.to_string(),
+					]
+				},
+				"chainHead_v1_header" => {
+					vec![reply(json!(format!("0x{}", hex::encode(header.encode()))))]
+				},
+				"chainHead_v1_call" => {
+					let operation_id =
+						format!("call-{}", operations.fetch_add(1, Ordering::SeqCst));
+					let started = reply(json!({"result": "started", "operationId": operation_id}));
+					if !self.finishes_calls {
+						return vec![started];
+					}
+					let output = bulletin_runtime_call(request["params"][2].as_str().unwrap())
+						.expect("a runtime call the fixture answers");
+					vec![
+						started,
+						follow_event(json!({
+							"event": "operationCallDone",
+							"operationId": operation_id,
+							"output": format!("0x{}", hex::encode(output))
+						})),
+					]
+				},
+				_ => vec![reply(Value::Null)],
+			}
+		}));
+		let timer = Arc::new(ManualTimer::default());
+		let chain = ChainRuntime::new(provider.clone(), test_spawner()).with_timer(timer.clone());
+		(provider, chain, timer)
+	}
+}
+
+/// How many `method` requests the core sent.
+pub fn sent_count(provider: &ScriptedProvider, method: &str) -> usize {
+	provider
+		.sent
+		.lock()
+		.unwrap()
+		.iter()
+		.filter(|request| {
+			serde_json::from_str::<Value>(request).is_ok_and(|request| request["method"] == method)
+		})
+		.count()
 }

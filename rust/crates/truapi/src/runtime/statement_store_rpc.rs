@@ -229,6 +229,18 @@ where
 	unreachable!("the bounded SSO submit loop always returns")
 }
 
+/// Parts of smoldot's messages for a statement that reached no peer
+/// (`StatementSubmitError::NotSent` in smoldot-light's statement service).
+const NO_PEER_MESSAGES: [&str; 2] =
+	["No connected peers to broadcast the statement", "connected peers accepted the statement"];
+
+/// Whether a [`submit`] failure says the statement reached no peer. smoldot
+/// uses one error code for all statement-store failures, so this matches the
+/// message.
+pub fn reached_no_peer(reason: &str) -> bool {
+	NO_PEER_MESSAGES.iter().any(|message| reason.contains(message))
+}
+
 /// Whether a [`submit`] failure is a `noAllowance` rejection.
 pub fn is_no_allowance_rejection(reason: &str) -> bool {
 	reason.contains("noAllowance")
@@ -266,7 +278,7 @@ mod tests {
 	};
 	use serde_json::json;
 
-	use super::{StatementStoreRpc, is_no_allowance_rejection};
+	use super::{StatementStoreRpc, is_no_allowance_rejection, reached_no_peer};
 	use crate::{
 		chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
 		platform::JsonRpcConnection,
@@ -433,5 +445,22 @@ mod tests {
 		assert!(!is_no_allowance_rejection(
 			r#"statement_submit not accepted: {"reason":"badProof","status":"rejected"}"#
 		));
+	}
+
+	/// smoldot's two messages for a statement that reached no peer.
+	const NO_PEERS: &str =
+		"Statement store error: No connected peers to broadcast the statement to";
+	const NO_PEER_ACCEPTED: &str =
+		"Statement store error: none of the 3 connected peers accepted the statement";
+
+	/// Only a statement that reached no peer is resent. Other rejections,
+	/// such as a bad proof, would fail again.
+	#[test]
+	fn only_a_statement_that_reached_no_peer_is_unsent() {
+		let reasons = [NO_PEERS, NO_PEER_ACCEPTED, "statement_submit not accepted: badProof"];
+
+		let unsent: Vec<bool> = reasons.iter().map(|reason| reached_no_peer(reason)).collect();
+
+		assert_eq!(unsent, vec![true, true, false]);
 	}
 }
