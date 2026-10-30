@@ -2443,6 +2443,160 @@
         }
       }
     },
+    "live.ago" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(time)@ ago"
+          }
+        }
+      }
+    },
+    "live.confirmation" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Confirmation %1$(done)@ of %2$(required)@"
+          }
+        }
+      }
+    },
+    "live.lastBlock" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "last block %1$(time)@ ago"
+          }
+        }
+      }
+    },
+    "live.priceChecked" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Price checked"
+          }
+        }
+      }
+    },
+    "live.part" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Part %1$(done)@ of %2$(total)@"
+          }
+        }
+      }
+    },
+    "live.lastPart" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "last part %1$(time)@ ago"
+          }
+        }
+      }
+    },
+    "live.timeLeft" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "About %1$(time)@ left"
+          }
+        }
+      }
+    },
+    "live.anyMoment" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Any moment now"
+          }
+        }
+      }
+    },
+    "live.sentByBank" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sent by your bank"
+          }
+        }
+      }
+    },
+    "live.expectedBy" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expected by %1$(date)@"
+          }
+        }
+      }
+    },
+    "live.inReview" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The provider is reviewing the payment"
+          }
+        }
+      }
+    },
+    "live.attempt" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Attempt %1$(n)@"
+          }
+        }
+      }
+    },
+    "live.attemptOf" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Attempt %1$(n)@ of %2$(of)@"
+          }
+        }
+      }
+    },
+    "live.nextTry" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "next try in %1$(time)@"
+          }
+        }
+      }
+    },
     "cancel.bodyBank" : {
       "extractionState" : "manual",
       "localizations" : {

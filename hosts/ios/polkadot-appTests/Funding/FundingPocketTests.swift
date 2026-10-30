@@ -77,6 +77,19 @@ struct FundingPocketTests {
         #expect(FundingLiveLine.text(heardAt: now - 12, now: now) == "Checked with the provider 12s ago")
         #expect(FundingLiveLine.text(heardAt: now - 180, now: now) == "Checked with the provider 3 min ago")
         #expect(FundingLiveLine.text(heardAt: now - 7_300, now: now) == "Checked with the provider 2 h ago")
+        let at = { (offset: TimeInterval) in UInt64((now + offset).timeIntervalSince1970 * 1_000) }
+        let line = { (fact: FundingFact, offset: TimeInterval?) in
+            FundingLiveLine.text(detail: FundingDetail(fact: fact, atMs: offset.map(at)), heardAt: now - 30, now: now)
+        }
+        #expect(line(.confirmations(done: 2, required: 3), -4) == "Confirmation 2 of 3 · last block 4s ago")
+        #expect(line(.parts(done: 1, total: 4), nil) == "Part 1 of 4")
+        #expect(line(.scheduled, 12) == "About 12s left")
+        #expect(line(.scheduled, -1) == "Any moment now")
+        #expect(line(.attempt(n: 2, of: 3), 20) == "Attempt 2 of 3 · next try in 20s")
+        #expect(line(.checked, -12) == "Checked with the provider 12s ago")
+        #expect(line(.other(text: "Swapping PAS for CASH"), -3) == "Swapping PAS for CASH · 3s ago")
+        #expect(line(.expectedBy, nil) == "Checked with the provider 30s ago")
+        #expect(FundingLiveLine.text(detail: nil, heardAt: nil, now: now) == nil)
     }
 
     @Test

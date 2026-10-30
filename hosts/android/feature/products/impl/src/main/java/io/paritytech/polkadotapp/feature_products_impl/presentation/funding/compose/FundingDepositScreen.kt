@@ -34,7 +34,7 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.Fund
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingLiveProgressUi
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingCircleButton
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
-import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingLastHeard
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingLiveLine
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingTimelineCard
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.fundingProblemText
 import kotlinx.coroutines.delay
@@ -165,7 +165,7 @@ private fun LiveProgress(figure: String, progress: FundingLiveProgressUi) {
             band = progress.band?.let { band -> band.arg?.let { stringResource(band.text, it) } ?: stringResource(band.text) },
             bandWarning = progress.band?.warning == true,
         )
-        progress.lastHeardAtMs?.let { FundingLastHeard(lastHeardAtMs = it) }
+        FundingLiveLine(detail = progress.detail, lastHeardAtMs = progress.lastHeardAtMs)
     }
 }
 

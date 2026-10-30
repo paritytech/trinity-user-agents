@@ -608,7 +608,11 @@ for raw bytes signed inside the `<Bytes>` watermark.
   `Adding`, `Added` in; `Converting`, `PreparingPayout`, `Sending`, `Sent`
   out; `Retrying`, `Delayed`, `Cancel` or `Ended` otherwise), and
   `last_heard_at_ms` when the provider last reported, for "Checked with the
-  provider 12s ago". It also carries
+  provider 12s ago". `detail` is the line under the band: the provider's
+  latest `Progress` fact for the current step (confirmations, parts, a
+  countdown, a bank's send, an attempt, or an untranslated `Other` text of at
+  most 80 characters), cleared when the step moves on and never stored; each
+  `Progress` also moves `last_heard_at_ms`. It also carries
   when the session failed, the latest transaction id and reference the
   provider reported with `Details`, the latest `Deposit` instructions for the
   host to draw (a crypto address with network, asset, amount, whether it is
