@@ -11,8 +11,6 @@ enum SettingsKey: String {
     case playerTooltipShown
     case swipeTooltipShown
     case selectedCurrencyCode
-    case fiatOnrampSessionIds
-    case fiatOnrampTrackedTransactionIds
     case productGameReminders
     case deviceEncryptId = "deviceEncryptId.v3"
     case installationKeyId = "io.polkadot.app.entropy.id.v3"

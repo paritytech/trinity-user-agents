@@ -2,7 +2,7 @@
 /// nor show a message; the camera tile stays empty.
 @MainActor
 final class EmbeddedQRScannerWireframe: QRScannerWireframeProtocol {
-    func askOpenSettings(from _: QRScannerViewProtocol?) {}
+    func askOpenSettings(from _: QRScannerViewProtocol?, completion _: ((ApplicationSettingsAlertResult) -> Void)?) {}
 
     func didDenyCameraAccess(from _: QRScannerViewProtocol?) {}
 }

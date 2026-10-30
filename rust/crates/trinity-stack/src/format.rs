@@ -51,12 +51,13 @@ pub enum Schemes {
 
 /// Parses a URL and checks it against the RFC's scheme rule. Descriptors keep the text as written,
 /// so the text itself must be the URL: the parser would forgive whitespace, control characters
-/// and a missing `//`, which other readers refuse.
+/// and a missing `//`, which other readers refuse, and in `http(s)` and `ws(s)` URLs reads `\` as
+/// `/`, which RFC 3986 readers do not.
 pub fn url(value: &str, schemes: Schemes) -> Result<Url, Error> {
 	let invalid = || Error::InvalidUrl(value.to_owned());
 	if value
 		.chars()
-		.any(|character| character.is_whitespace() || character.is_control())
+		.any(|character| character.is_whitespace() || character.is_control() || character == '\\')
 	{
 		return Err(invalid());
 	}
@@ -155,9 +156,13 @@ mod tests {
 
 	#[test]
 	fn a_url_is_read_as_written() {
-		for refused in
-			[" https://a.example/", "https://a.example/\n", "https://a.exa\tmple/", "wss:a.example"]
-		{
+		for refused in [
+			" https://a.example/",
+			"https://a.example/\n",
+			"https://a.exa\tmple/",
+			"wss:a.example",
+			"https://a.example\\@evil.example/",
+		] {
 			assert!(url(refused, Schemes::Web).is_err(), "{refused:?}");
 		}
 		assert!(url("stun:stun.example:3478 ", Schemes::Stun).is_err());
