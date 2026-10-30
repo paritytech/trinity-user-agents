@@ -43,10 +43,10 @@ enum PocketCardFlightTiming {
 
 /// Carries an opened card between its place in the Pocket and the top of its
 /// screen. The Pocket draws the card while it moves, so the card keeps its depth
-/// in the stack; the screen fades its bar, carries its page under the card, and
-/// draws the card itself only at rest. A card the Pocket cannot place when the
-/// flight starts fades with the rest of the screen: the Pocket may no longer be
-/// what the screen opens from or closes to.
+/// in the stack; the screen carries its page under the card, and draws the card
+/// itself only at rest. A card the Pocket cannot place when the flight starts
+/// fades with the rest of the screen: the Pocket may no longer be what the
+/// screen opens from or closes to.
 final class PocketCardFlight: NSObject, UIViewControllerAnimatedTransitioning {
     /// The page is shown only once the Pocket's cards have left it, and is gone
     /// before they come back over it.

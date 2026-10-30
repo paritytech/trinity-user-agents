@@ -46,20 +46,20 @@ struct PocketCardHostsTests {
     /// build a second screen that takes its page, and closing that one would
     /// leave the card under it blank.
     @Test
-    func knowsWhetherACardIsOpenOnScreen() async throws {
+    func knowsWhetherACardIsOpenOnScreen() throws {
         let hosts = PocketCardHosts()
         let product = try #require(hosts.product(for: loyalty) { _ in StubSPAView() })
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: product.view)
+        let navigation = UINavigationController(rootViewController: UIViewController())
         let beforeOpening = hosts.isOnDisplay(loyalty)
 
-        let window = try await openCard(screen)
+        navigation.pushViewController(screen, animated: false)
         product.surface.claim(screen)
         let whileOpen = [hosts.isOnDisplay(loyalty), hosts.isOnDisplay(trophy)]
-        await closeCard(screen)
+        navigation.popViewController(animated: false)
 
         #expect([beforeOpening, hosts.isOnDisplay(loyalty)] == [false, false])
         #expect(whileOpen == [true, false])
-        withExtendedLifetime(window) {}
     }
 
     /// A card the collection no longer holds has no next tap, so the product
