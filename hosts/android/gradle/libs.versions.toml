@@ -71,6 +71,7 @@ blurhash = "0.3.0"
 design-system = "1.0.4"
 
 [libraries]
+sentry = { group = "io.sentry", name = "sentry", version.ref = "sentry-sdk" }
 sentry-android = { group = "io.sentry", name = "sentry-android", version.ref = "sentry-sdk" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "core-ktx" }

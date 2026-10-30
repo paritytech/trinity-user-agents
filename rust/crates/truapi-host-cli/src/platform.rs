@@ -30,11 +30,11 @@ use truapi::{
 	latest as api,
 	platform::{
 		AuthState, ChainProvider, CoreStorage, CoreStorageKey, CreateTransactionReview,
-		DevicePermissionStatus, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
-		PermissionDecision, PermissionStatusHost, Permissions, PreimageHost, ProductContext,
-		ProductId, ProductOperations, ProductStorage, ProductStorageKey, ProviderError,
-		SessionUiInfo, SignPayloadReview, SignRawReview, ThemeHost, UserConfirmation,
-		UserConfirmationReview,
+		DevicePermissionStatus, Features, JsonRpcConnection, LocaleHost, Navigation,
+		NftPurseDrainDestination, Notifications, PermissionDecision, PermissionStatusHost,
+		Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
+		ProductStorageKey, ProviderError, SessionUiInfo, SignPayloadReview, SignRawReview,
+		ThemeHost, UserConfirmation, UserConfirmationReview,
 	},
 	v01,
 };
@@ -170,6 +170,7 @@ pub struct CliPlatform {
 	chain: WsChainProvider,
 	/// Chain roles this host serves, answered by `Features::supported_chains`.
 	chains: truapi::platform::HostChainSet,
+	extension_versions: truapi::platform::ExtensionVersionMap,
 	product_storage: Mutex<HashMap<ProductId, HashMap<String, Vec<u8>>>>,
 	core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
 	/// Device-scoped core slots, kept outside the per-user namespaces that
@@ -255,6 +256,7 @@ impl CliPlatform {
 		Arc::new(Self {
 			chain: WsChainProvider::new(network.people_ws, network.live_chain_endpoints),
 			chains: network.host_chain_set(),
+			extension_versions: network.extension_versions(),
 			product_storage: Mutex::new(product_storage),
 			core_storage: Mutex::new(core_storage),
 			device_storage: Mutex::new(device_storage),
@@ -783,6 +785,15 @@ impl Permissions for CliPlatform {
 }
 
 #[async_trait]
+impl truapi::platform::ExtrinsicVersionHost for CliPlatform {
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<truapi::platform::ExtensionVersionMap, api::GenericError> {
+		Ok(self.extension_versions.clone())
+	}
+}
+
+#[async_trait]
 impl Features for CliPlatform {
 	async fn feature_supported(
 		&self,
@@ -994,7 +1005,25 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
                 review.product_id
             ),
         ),
+        UserConfirmationReview::NftPurseDrain(review) => (
+            "move NFT purse items",
+            format!(
+                "Product {} requested to move {} item(s) out of purse {}, owned by {}, to {}.",
+                review.calling_product_id,
+                review.item_count,
+                review.from_purse,
+                review.owner,
+                drain_destination(&review.destination),
+            ),
+        ),
     }
+}
+
+fn drain_destination(destination: &NftPurseDrainDestination) -> String {
+	match destination {
+		NftPurseDrainDestination::Purse { purse } => format!("purse {purse}"),
+		NftPurseDrainDestination::ExternalKey { key } => format!("key 0x{}", hex::encode(key)),
+	}
 }
 
 impl ThemeHost for CliPlatform {

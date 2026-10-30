@@ -110,4 +110,10 @@ pub struct HostInfo {
 	/// Host-native version string, e.g. a semver such as `"1.2.3"`. Hosts
 	/// should report a non-empty value; the format is the host's own.
 	pub version: String,
+	/// Version of the TrUAPI release whose runtime the host embeds, e.g.
+	/// `"0.25.0"`.
+	///
+	/// A product built before this field ignores it, since it decodes the
+	/// first three fields and leaves the trailing bytes unread.
+	pub truapi_version: String,
 }

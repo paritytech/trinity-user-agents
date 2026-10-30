@@ -16,12 +16,19 @@ enum QRCaptureServiceError: Error {
     case unsupportedFormat
 }
 
+/// One code the camera read. `text` is nil for a code with no string form.
+struct CapturedCode {
+    let type: AVMetadataObject.ObjectType
+    let text: String?
+}
+
 protocol QRCaptureServiceDelegate: AnyObject {
     /// Called on the main thread before the session starts, while it is stopped: attaching a preview layer then
     /// avoids reconfiguring a running session.
     func qrCapture(service: QRCaptureServiceProtocol, willStart captureSession: AVCaptureSession)
     func qrCapture(service: QRCaptureServiceProtocol, didSetup captureSession: AVCaptureSession)
-    func qrCapture(service: QRCaptureServiceProtocol, didReceive code: String)
+    /// Every code in one frame, in the order the camera reports them.
+    func qrCapture(service: QRCaptureServiceProtocol, didReceive codes: [CapturedCode])
     func qrCapture(service: QRCaptureServiceProtocol, didFailure error: Error)
 }
 
@@ -37,13 +44,16 @@ final class QRCaptureService: NSObject {
 
     weak var delegate: QRCaptureServiceDelegate?
     var delegateQueue: DispatchQueue
+    private let metadataObjectTypes: [AVMetadataObject.ObjectType]
 
     init(
         delegate: QRCaptureServiceDelegate?,
-        delegateQueue: DispatchQueue? = nil
+        delegateQueue: DispatchQueue? = nil,
+        metadataObjectTypes: [AVMetadataObject.ObjectType] = [.qr]
     ) {
         self.delegate = delegate
         self.delegateQueue = delegateQueue ?? QRCaptureService.processingQueue
+        self.metadataObjectTypes = metadataObjectTypes
 
         super.init()
     }
@@ -77,7 +87,7 @@ final class QRCaptureService: NSObject {
         self.captureSession = captureSession
 
         output.setMetadataObjectsDelegate(self, queue: QRCaptureService.processingQueue)
-        output.metadataObjectTypes = [.qr]
+        output.metadataObjectTypes = metadataObjectTypes
     }
 
     private func startAuthorizedSession() {
@@ -114,9 +124,9 @@ final class QRCaptureService: NSObject {
         }
     }
 
-    private func notifyDelegateWithCode(_ code: String) {
+    private func notifyDelegate(with codes: [CapturedCode]) {
         run(in: delegateQueue) {
-            self.delegate?.qrCapture(service: self, didReceive: code)
+            self.delegate?.qrCapture(service: self, didReceive: codes)
         }
     }
 
@@ -185,15 +195,14 @@ extension QRCaptureService: AVCaptureMetadataOutputObjectsDelegate {
             return
         }
 
-        guard let metadata = metadataObjects.first as? AVMetadataMachineReadableCodeObject else {
+        let codes = metadataObjects
+            .compactMap { $0 as? AVMetadataMachineReadableCodeObject }
+            .map { CapturedCode(type: $0.type, text: $0.stringValue) }
+
+        guard !codes.isEmpty else {
             return
         }
 
-        guard let possibleCode = metadata.stringValue else {
-            notifyDelegate(with: QRCaptureServiceError.unsupportedFormat)
-            return
-        }
-
-        notifyDelegateWithCode(possibleCode)
+        notifyDelegate(with: codes)
     }
 }

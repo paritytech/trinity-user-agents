@@ -35,6 +35,7 @@ class RealProductGameReminder @Inject constructor(
     private val calendar: ProductGameCalendar,
     private val osAccess: ProductGameOsAccess,
     private val timeProvider: TimeProvider,
+    private val telemetry: GameReminderTelemetry,
 ) : ProductGameReminder {
     private val lock = Mutex()
 
@@ -49,6 +50,8 @@ class RealProductGameReminder @Inject constructor(
     fun scheduledFor(productId: ProductId): ScheduledProductGame? =
         currentlyScheduled().firstOrNull { it.productId == productId.value }
 
+    override fun scheduledStartFor(productId: ProductId): Long? = scheduledFor(productId)?.startsAtMillis
+
     // An alarm needs both notifications and exact alarms; without exact alarms a notification still reminds.
     override suspend fun schedule(productId: ProductId, startsAtMillis: Long): Result<Unit> = requestLock.withLock {
         val leadMillis = startsAtMillis - now()
@@ -58,12 +61,22 @@ class RealProductGameReminder @Inject constructor(
             if (leadMillis >= CALENDAR_MIN_LEAD.inWholeMilliseconds && osAccess.requestCalendar()) {
                 calendar.addGame(startsAtMillis)
             }
-        }
+        }.onFailure { telemetry.report(GameReminderEvent.NotScheduled(productId, startsAtMillis, GameReminderSkipReason.NOT_AUTHORIZED)) }
     }
 
     override suspend fun cancel(productId: ProductId) {
-        requestLock.withLock {
-            lock.withLock { scheduledFor(productId)?.let(::remove) }
+        cancelHeld(productId)
+    }
+
+    override suspend fun cancelByProduct(productId: ProductId) {
+        cancelHeld(productId)?.let { game ->
+            telemetry.report(GameReminderEvent.Cancelled(productId, game.startsAtMillis))
+        }
+    }
+
+    private suspend fun cancelHeld(productId: ProductId): ScheduledProductGame? = requestLock.withLock {
+        lock.withLock {
+            scheduledFor(productId)?.also(::remove)
         }
     }
 

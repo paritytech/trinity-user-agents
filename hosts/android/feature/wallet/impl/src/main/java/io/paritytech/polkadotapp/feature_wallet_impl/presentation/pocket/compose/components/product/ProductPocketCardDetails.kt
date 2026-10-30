@@ -77,7 +77,7 @@ fun ProductPocketCardDetails(
     val fold = rememberExpandedCardFoldState()
 
     // One WebView per product: a screen still drawn for another card must not take it.
-    val session = shownProduct?.takeIf { it.url == card.key.launchUrl() }?.session
+    val session = shownProduct?.takeIf { card.key.launches(it.url) }?.session
 
     // The product is asked for only once the card has arrived, so its WebView is not built while the
     // card is still travelling. The fold starts after the arrival, so the shared-element transition

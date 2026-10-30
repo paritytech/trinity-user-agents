@@ -1,14 +1,15 @@
-use core::time::Duration;
+use core::{iter, ops::ControlFlow, time::Duration};
 use std::sync::{
 	Arc, Mutex,
 	atomic::{AtomicBool, Ordering},
 };
 
 use crate::platform::{
-	AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus, Features,
-	JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision, Permissions,
-	PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage, ProviderError,
-	ThemeHost, UserConfirmation, UserConfirmationReview, async_trait,
+	AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus,
+	ExtrinsicVersionHost, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
+	PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId, ProductOperations,
+	ProductStorage, ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
+	async_trait,
 };
 use futures::{
 	FutureExt,
@@ -24,6 +25,7 @@ use crate::{
 	host_internal::bulletin::preimage_key,
 	host_logic::worker::WorkerTransition,
 	installation::{InstallationId, InstallationIdProvider},
+	time::{RealTimer, Timer, retry},
 };
 
 use super::{
@@ -248,6 +250,22 @@ impl Features for CallbackPlatform {
 			.on_core_log("truapi.native.callback.supported_chains".to_string(), String::new());
 
 		self.callbacks.supported_chains().map_err(v01::GenericError::from)
+	}
+}
+
+#[async_trait]
+impl ExtrinsicVersionHost for CallbackPlatform {
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<crate::platform::ExtensionVersionMap, v01::GenericError> {
+		self.callbacks.on_core_log(
+			"truapi.native.callback.transaction_extension_versions".to_string(),
+			String::new(),
+		);
+		self.callbacks
+			.transaction_extension_versions()
+			.await
+			.map_err(v01::GenericError::from)
 	}
 }
 
@@ -516,7 +534,7 @@ const PREIMAGE_RETRY_PAUSE_SLOW: Duration = Duration::from_secs(30);
 const PREIMAGE_RETRY_PAUSE_FAST: Duration = Duration::from_millis(1);
 #[cfg(test)]
 const PREIMAGE_RETRY_PAUSE_SLOW: Duration = Duration::from_millis(4);
-const PREIMAGE_FAST_RETRIES: u32 = 5;
+const PREIMAGE_FAST_RETRIES: usize = 5;
 
 impl PreimageHost for CallbackPlatform {
 	fn lookup_preimage(
@@ -549,32 +567,42 @@ impl PreimageHost for CallbackPlatform {
 	}
 }
 
-/// Retry the host lookup until it returns bytes that hash to `digest` or an
-/// error.
+/// Retry a host lookup that missed until it returns bytes that hash to
+/// `digest` or an error.
 async fn lookup_until_found(
 	callbacks: Arc<dyn HostCallbacks>,
 	digest: [u8; 32],
 ) -> Result<Vec<u8>, HostRejection> {
 	let key_hex = hex_lower(&digest);
 	callbacks.on_core_log("truapi.native.preimage.retrying".to_string(), key_hex.clone());
+	let mut fast_pauses = iter::repeat_n(PREIMAGE_RETRY_PAUSE_FAST, PREIMAGE_FAST_RETRIES);
+	let mut next_pause = move || fast_pauses.next().unwrap_or(PREIMAGE_RETRY_PAUSE_SLOW);
+	// The first lookup already missed, so even the first retry waits.
+	RealTimer.sleep(next_pause()).await;
 	let mut retries = 0u32;
-	loop {
-		let pause = if retries < PREIMAGE_FAST_RETRIES {
-			PREIMAGE_RETRY_PAUSE_FAST
-		} else {
-			PREIMAGE_RETRY_PAUSE_SLOW
-		};
-		futures_timer::Delay::new(pause).await;
-		retries += 1;
-		let value = callbacks.lookup_preimage(digest.to_vec()).await?;
-		if let Some(value) = value.filter(|bytes| preimage_key(bytes) == digest) {
-			callbacks.on_core_log(
-				"truapi.native.preimage.found".to_string(),
-				format!("{key_hex} on retry {retries}"),
-			);
-			return Ok(value);
-		}
+	let found = retry(
+		|| {
+			retries += 1;
+			async {
+				match callbacks.lookup_preimage(digest.to_vec()).await {
+					Ok(Some(value)) if preimage_key(&value) == digest => {
+						ControlFlow::Break(Ok(value))
+					},
+					Ok(_) => ControlFlow::Continue(()),
+					Err(rejection) => ControlFlow::Break(Err(rejection)),
+				}
+			}
+		},
+		|()| next_pause(),
+	)
+	.await;
+	if found.is_ok() {
+		callbacks.on_core_log(
+			"truapi.native.preimage.found".to_string(),
+			format!("{key_hex} on retry {retries}"),
+		);
 	}
+	found
 }
 
 /// [`crate::platform::ChatPlatform`] served by host-provided

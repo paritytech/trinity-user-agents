@@ -51,7 +51,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     }
 
     func onCoreLog(marker: String, detail: String) {
-        logger.debug("[truapi:host:\(marker)] \(detail)")
+        logger.logCoreLine(marker: marker, detail: detail)
     }
 
     /// Demand is runtime-wide, so it arrives here rather than on a product's
@@ -130,17 +130,12 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         TrUAPISupportedChains.make(chainRegistry: chainRegistry)
     }
 
-    func authStateChanged(state: AuthState) {
-        let detail =
-            switch state {
-            case .disconnected: "disconnected"
-            case .pairing: "pairing"
-            case .connected: "connected"
-            case .loginFailed: "login failed"
-            case .authenticating: "authenticating"
-            }
+    func transactionExtensionVersions() async throws -> ExtensionVersionMap {
+        try TrUAPIExtensionVersions.make(chainRegistry: chainRegistry)
+    }
 
-        logger.debug("[truapi:host] auth state: \(detail)")
+    func authStateChanged(state: AuthState) {
+        logger.info("[truapi.auth] \(state.logMarker)")
     }
 }
 

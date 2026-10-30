@@ -94,6 +94,8 @@ pub enum ConfirmKind {
 	SignVrf,
 	/// [`UserConfirmationReview::ProductSubtree`].
 	ProductSubtree,
+	/// [`UserConfirmationReview::NftPurseDrain`].
+	NftPurseDrain,
 }
 
 impl ConfirmKind {
@@ -112,6 +114,7 @@ impl ConfirmKind {
 			},
 			UserConfirmationReview::SignVrf(_) => ConfirmKind::SignVrf,
 			UserConfirmationReview::ProductSubtree(_) => ConfirmKind::ProductSubtree,
+			UserConfirmationReview::NftPurseDrain(_) => ConfirmKind::NftPurseDrain,
 		}
 	}
 }
@@ -965,6 +968,8 @@ impl Permissions for MockPlatform {
 		)))
 	}
 }
+
+impl crate::platform::ExtrinsicVersionHost for MockPlatform {}
 
 #[async_trait]
 impl Features for MockPlatform {
