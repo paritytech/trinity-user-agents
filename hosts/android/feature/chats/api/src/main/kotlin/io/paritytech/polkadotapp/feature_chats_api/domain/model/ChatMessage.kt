@@ -158,6 +158,9 @@ data class ChatMessage(
          *                or [Result.failure] if deserialization failed.
          */
         data class Custom<T>(val rendererId: String, val content: Result<T>) : Content
+
+        /** A body of a product that the other kinds cannot hold (Chat Extension v2). */
+        data class ProductBody(val body: ProductMessageBody) : Content
     }
 
     enum class Status(val deliveryRank: Int) {

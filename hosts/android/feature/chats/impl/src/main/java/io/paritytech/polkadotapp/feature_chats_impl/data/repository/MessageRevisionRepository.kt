@@ -35,6 +35,8 @@ interface MessageRevisionRepository {
         messageId: ChatMessageId,
         customContentDecoder: CustomContentDecoder
     ): List<MessageRevision>
+
+    suspend fun deleteRevisions(messageId: ChatMessageId)
 }
 
 class RealMessageRevisionRepository @Inject constructor(
@@ -74,6 +76,10 @@ class RealMessageRevisionRepository @Inject constructor(
         return messageRevisionDao.getRevisionsForMessage(messageId).map {
             it.toDomain(customContentDecoder)
         }
+    }
+
+    override suspend fun deleteRevisions(messageId: ChatMessageId) {
+        messageRevisionDao.deleteForMessage(messageId)
     }
 
     private fun MessageRevisionLocal.toDomain(

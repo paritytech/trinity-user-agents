@@ -5,7 +5,7 @@ import AsyncExtensions
 import AsyncAlgorithms
 import Products
 
-protocol ChatExtensionDiscoverContextProtocol: ChatProductRoomDeclaring {
+protocol ChatExtensionDiscoverContextProtocol: ChatProductRoomDeclaring, ChatProductFeedApplying {
     @discardableResult
     func sendNewMessage(
         from chatBot: ChatExtensionBotProtocol,
