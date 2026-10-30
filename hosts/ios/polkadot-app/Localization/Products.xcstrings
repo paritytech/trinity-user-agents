@@ -1,6 +1,50 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "action.nftPurseDrain.owner.you": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "your account"
+          }
+        }
+      }
+    },
+    "action.nftPurseDrain.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move NFT Items"
+          }
+        }
+      }
+    },
+    "action.nftPurseDrain.toKey.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ wants to move %2$(itemCount)@ item(s) out of purse %3$(fromPurse)@, owned by %4$(owner)@, to the key %5$(key)@."
+          }
+        }
+      }
+    },
+    "action.nftPurseDrain.toPurse.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ wants to move %2$(itemCount)@ item(s) out of purse %3$(fromPurse)@, owned by %4$(owner)@, into purse %5$(toPurse)@."
+          }
+        }
+      }
+    },
     "action.productSubtree.body": {
       "extractionState": "manual",
       "localizations": {
