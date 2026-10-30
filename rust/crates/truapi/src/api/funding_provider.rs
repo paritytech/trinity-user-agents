@@ -3,6 +3,7 @@
 use crate::{
 	CallContext, CallError,
 	versioned::funding_provider::{
+		HostFundingCloseFrameError, HostFundingCloseFrameRequest, HostFundingCloseFrameResponse,
 		HostFundingPresentFrameError, HostFundingPresentFrameRequest,
 		HostFundingPresentFrameResponse, HostFundingReportError, HostFundingReportRequest,
 		HostFundingReportResponse, ProductFundingAssignError, ProductFundingAssignRequest,
@@ -149,6 +150,27 @@ pub trait FundingProvider: Send + Sync {
 		_cx: &CallContext,
 		_request: HostFundingPresentFrameRequest,
 	) -> Result<HostFundingPresentFrameResponse, CallError<HostFundingPresentFrameError>> {
+		Err(CallError::unavailable())
+	}
+
+	/// Close the screen `present_frame` opened for a session once the
+	/// provider is done with it, such as a card payment the user made. That
+	/// `present_frame` call answers `Closed`, and the host shows the
+	/// session's progress in its place. Closing a session with no screen
+	/// open does nothing.
+	///
+	/// ```ts
+	/// const result = await truapi.fundingProvider.closeFrame({
+	///   intent: "fs_example",
+	/// });
+	/// console.log("provider frame closed:", result);
+	/// ```
+	#[wire(id = 6)]
+	async fn close_frame(
+		&self,
+		_cx: &CallContext,
+		_request: HostFundingCloseFrameRequest,
+	) -> Result<HostFundingCloseFrameResponse, CallError<HostFundingCloseFrameError>> {
 		Err(CallError::unavailable())
 	}
 }

@@ -90,13 +90,15 @@ pub trait FundingProvider {
     #[wire(id = 5)] // an App route or an external https page, answers once the frame closes
     async fn present_frame(&self, cx, request: HostFundingPresentFrameRequest)
         -> Result<HostFundingPresentFrameResponse, HostFundingPresentFrameError>;
+    #[wire(id = 6)] // the provider is done with its screen; the host shows the session instead
+    async fn close_frame(&self, cx, request: HostFundingCloseFrameRequest) -> Result<(), HostFundingCloseFrameError>;
 }
 ```
 
 ```
 CORE   --- quote(ask) ----------------------> WORKER   every provider, each quote round
 CORE   --- assign(session) -----------------> WORKER   user picked it; again after a restart
-WORKER --- report / present_frame ----------> CORE     while it works the session
+WORKER --- report / present_frame / close_frame -> CORE  while it works the session
 CORE   --- cancel(intent) ------------------> WORKER   user asked to cancel
 CORE   --- settle_cancel(decision) ---------> WORKER   user answered the offer
 ```
@@ -209,7 +211,7 @@ enum FundingDeposit {
 
 - Only the provider a session is assigned to may report on it, and updates only move forward. Otherwise the report
   fails with `NotFound` or `OutOfOrder`.
-- The core stores each report before answering and keeps the session until the host has written it to its history. After that it keeps the newest 64 recorded sessions per product in full, and the newest 200 the host has not recorded yet; older ones are compacted into a session pack it never trims (intent, owner, direction, amounts, outcome and times), so a product watching any session it opened gets its terminal item instead of `NotFound`, and the core hands the host every recorded session, full or compacted, through `funding_history` each time funding resumes, to rebuild its own history if it was lost. Sessions and the pack are stored in the core database, one versioned row per session, and each change is written in one transaction: a row that does not decode is skipped and left in place, one in a newer format, left by a newer app before a downgrade, is left untouched while funding stays unavailable, and one in an older format is dropped.
+- The core stores each report before answering and keeps the session until the host has told the user how it ended. After that it keeps the newest 64 acknowledged sessions per product in full, and the newest 200 the host has not acknowledged yet; older ones are compacted into a session pack it never trims (intent, owner, direction, amounts, outcome and times), so a product watching any session it opened gets its terminal item instead of `NotFound`, and the host reads every ended session, full or compacted, with `funding_history()` whenever it shows history. Sessions and the pack are stored in the core database, one versioned row per session, and each change is written in one transaction: a row that does not decode is skipped and left in place, one in a newer format, left by a newer app before a downgrade, is left untouched while funding stays unavailable, and one in an older format is dropped.
 - A worker names the session when it starts funds: `payment.topUp` and `payment.request` take `funding: Some(intent)`
   for an open session it serves in that direction, or fail with `FundingNotServed`. A withdrawal whose payout failed
   takes top-ups too, as its refund, and a top-up the user cancelled before paying takes one as a payment that arrived
@@ -251,6 +253,9 @@ enum FundingFrameOutcome {
   scripts, forms, popups and the camera.
 - When the page navigates to `return_url`, the host closes the frame and hands the URL back, so the worker reads the
   result from its query. This works the same in an iframe and a native WebView, where a page has no parent to post to.
+- When the provider is done with a screen, such as a card payment the user made, its worker calls
+  `close_frame(intent)`. The host closes the frame, the open `present_frame` answers `Closed`, and the host shows the
+  session sheet in its place, so the user sees the session move on without closing anything.
 
 ## Outcome
 
@@ -293,6 +298,9 @@ The host app can be closed or crash at any point; a session carries on from its 
   payment requests recorded for it, by id. On start the core reloads them, takes the worker of every session a provider
   still serves, follows each named top-up and payment again, and assigns each session to its worker again once that
   worker connects.
+- **When only the worker crashes.** The host reports it with `worker_exited`. While a session or an open overlay still
+  holds that worker, the core asks the host to start it again, and assigns it every session it serves once it connects,
+  each with its `last_update`.
 - **What the provider does.** It writes its own state for the session to its storage before every external action: a
   request to its onramp, a faucet, a `payment.topUp` or `payment.request`. It derives the ids of its top-ups, payment
   requests and onramp orders from the session and the step, so repeating one after a crash finds it (`AlreadyExists`)

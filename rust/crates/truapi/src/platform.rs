@@ -3019,6 +3019,12 @@ pub trait FundingPlatform: Send + Sync {
 		target: truapi::latest::FundingFrameTarget,
 	) -> Result<truapi::latest::FundingFrameOutcome, GenericError>;
 
+	/// Close the frame `present_provider_frame` shows for `provider`'s
+	/// session `intent`, answering that call `Closed`, and show the
+	/// session's progress in its place. Does nothing when no frame is
+	/// open for it.
+	fn close_provider_frame(&self, provider: &ProductContext, intent: String);
+
 	/// The country the user is likely in, as an ISO 3166-1 alpha-2 code, for
 	/// the quotes the core asks before the user picks one. Best effort,
 	/// without asking for any permission: the device's coarse location when
