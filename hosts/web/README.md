@@ -695,17 +695,20 @@ chat worker**. **Host (default)** switches back. The choice is kept per network 
     (random, single use, ten minutes, ended with the worker's grant, refused for a blocked person). The worker resolves
     it with `resolveContact` on the identity bridge, because the Nova wire addresses, seals and signs the request to the
     person's account, and the engine sends the request. Two starts for one person send one request.
-  - This is not `contacts.pick`: a TrUAPI contact handle names a person to the core, which resolves it only for a
-    transaction, and gives the host no way to learn which handle it minted. A chat engine in a product that must address
-    a peer needs a resolve-for-chat capability that does not exist yet; the reference stands in for it.
+  - This is not `contacts.pick`: a TrUAPI contact handle names a person to the core, which resolves it to an account
+    only for a transaction. The host can name a handle (`contactHandles`), but a product cannot. A chat engine in a
+    product that must address a peer by account, as the Nova wire does, needs a resolve-for-chat capability that does
+    not exist yet; the reference stands in for it.
   - The people of the worker's rooms are offered in the host's own **+** only. They are not `ChatProvider.contacts`, so
     no product's `contacts.pick` offers them and none becomes a payment recipient.
   - Both also take a contact handle in place of an account or a reference:
     `setRoomContact { roomId, contact: { handle, state } }`, a `Contact { handle }` participant, and
-    `startConversation { handle, welcome? }`. The host names and draws the person only from its own contacts
-    (`ChatV2ProviderOptions.contacts`); a handle that names no one there is drawn as **Contact**, whatever the product
-    put in the room's metadata. The state `Invite` means no request is open: the composer asks for a new chat, and **+**
-    offers the request form again. Contact Chat (below, in the invitation demo) uses this form.
+    `startConversation { handle, welcome? }`. The handle is the core's, the one `contacts.pick` gives. The host names
+    and draws the person only from its own contacts (`ChatV2ProviderOptions.contacts`), through the handles the core
+    mints for the people it knows (`HostContacts`, `contactHandles`); a handle that names no one there is drawn as
+    **Contact**, whatever the product put in the room's metadata. The state `Invite` means no request is open: the
+    composer asks for a new chat, and **+** offers the request form again. Contact Chat (below, in the invitation demo)
+    uses this form.
 - **What it does not do yet.** Text only. A chat request someone sent shows as their conversation, and the first reply
   accepts it; declining, blocking, reactions, files and calls stay with the host's engine. A failed message shows as
   failed without its reason, which the v2 draft's status update cannot carry. Without the history copy the worker starts
@@ -781,8 +784,8 @@ agreed API.
   open any product with the search button to try it as Alice, or **More** → **Open Example Chat**, the demo's product,
   which then shows in Browse. In a second tab choose **Bob**.
   - **Pick a contact** in Example Chat calls `contacts.pick` and lists the core's handle, never a name.
-  - **New chat** → **Choose contact** opens the same host picker and gives Example Chat a fixture contact handle.
-    **Invite** opens the host's **Send invitation** prompt, which names the person. Example Chat shows **Waiting**.
+  - **New chat** → **Choose contact** calls `contacts.pick` too, and the invitation goes to that handle. **Invite**
+    opens the host's **Send invitation** prompt, which names the person. Example Chat shows **Waiting**.
   - Bob's **Inbox** badge, on Chat's Inbox tab and in the Apps shelf, shows 1 until the row shows in his list.
     **Accept** opens Bob's Example Chat if it is not open, hands it the invitation payload, and it checks it, makes both
     conversation topics and its response, and replies through its host. Bob's host seals the reply for Alice and posts
@@ -813,31 +816,32 @@ agreed API.
     claim of security. The topics go through the draft topic relay (`src/chat/draft/topic-relay.ts`), whose host end
     here is `fixtures/invitations/local-topics.ts`, posts kept in this origin's `localStorage` for seven days, with no
     signer, channel or allowance: it stands in for TrUAPI's `statementStore`, which a demo user cannot reach.
-  - **Gaps it shows.** The handles are the fixture's, not the core's (see below). The host asks twice when a chat starts
-    from its own **+**: once in the request form and once in **Send invitation**. Nothing lets the user cancel a waiting
-    request from Chat: the v2 draft has no product action a user can press. A declined request waits silently until it
-    expires (one day). The per-conversation chat accounts the design asks for, and their allowance, have no API: through
-    TrUAPI a product's statements are signed by its one allowance account.
-- **What the demo keeps apart.** Its contacts, identity credentials, handle (`alice.example`) and the accounts its
-  contacts are named by are fixtures, unrelated to the account the phrase derives, so none of a wallet session's
-  services start: no Nova chat, wallet worker or Pocket runs, so fixture contacts never reach a wallet's chat or a
-  transaction it signs. The session runs only the products' side: the workers the host adds for the demo (Contact Chat)
-  and their chat providers (`ProductsOnlySession` in `src/chat/inbox.ts`). The host's invitation inbox starts with the
-  session, so requests from other tabs arrive; Example Chat does not. **Account status** reads the People chain for the
-  account the phrase derives only when its fold opens. The core looks up the account's DotNS name on Asset Hub once, as
-  it does at every sign-in. Contacts (`fixtures/invitations/test-users.ts`): Alice has Bob and Carol, Bob and Carol have
-  Alice. Lists are kept per network and demo user, under
+  - **Gaps it shows.** The host asks twice when a chat starts from its own **+**: once in the request form and once in
+    **Send invitation**. Nothing lets the user cancel a waiting request from Chat: the v2 draft has no product action a
+    user can press. A declined request waits silently until it expires (one day). The per-conversation chat accounts the
+    design asks for, and their allowance, have no API: through TrUAPI a product's statements are signed by its one
+    allowance account.
+- **What the demo keeps apart.** Its contacts, identity credentials and handle (`alice.example`) are fixtures. The
+  contacts name each demo user by the root account of their own phrase, the session account the core reports, so the
+  core mints the same handles for them as `contacts.pick` gives; the identity credentials are apart from that account.
+  None of a wallet session's services start: no Nova chat, wallet worker or Pocket runs, so fixture contacts never reach
+  a wallet's chat or a transaction it signs. The session runs only the products' side: the workers the host adds for the
+  demo (Contact Chat) and their chat providers (`ProductsOnlySession` in `src/chat/inbox.ts`). The host's invitation
+  inbox starts with the session, so requests from other tabs arrive; Example Chat does not. **Account status** reads the
+  People chain for the account the phrase derives only when its fold opens. The core looks up the account's DotNS name
+  on Asset Hub once, as it does at every sign-in. Contacts (`fixtures/invitations/test-users.ts`): Alice has Bob and
+  Carol, Bob and Carol have Alice. Lists are kept per network and demo user, under
   `truapi-web-signing-host:network:<id>:test-user:<user>:notifications:v1`, `...:outbox:v2` (sent) and `...:received:v2`
   (received, and the sealed reply), and Contact Chat's under `...:contact-chat-outbox:v1` and
   `...:contact-chat-received:v1`. The `v1` sent and received lists of the earlier prototype are left in place and no
   longer read; **Clear invitations** removes them too. Example Chat keeps its protocol secrets and topics in its own
   TrUAPI local storage.
 - **The proposed API** (`host-requests/1`, `src/invitations/contract.ts`), over a `MessagePort` the product hands over.
-  It reuses TrUAPI's `ContactHandle` and `ContactPickOutcome`. Each call has an `id` and one `result`.
-  - Sender: `pickContact` (answers a `ContactPickOutcome`, as `contacts.pick` does), `request` (contact handle, purpose,
-    expiry, payload; answers a request handle), `complete` (only after an authenticated reply reached the product; stops
-    the reposts; sends nothing) and `cancel`. The host pushes `outgoing` (status) and `response` (an authenticated
-    reply's payload).
+  It names a contact by the `ContactHandle` TrUAPI's `contacts.pick` gives; it has no picker of its own. Each call has
+  an `id` and one `result`.
+  - Sender: `request` (contact handle, purpose, expiry, payload; answers a request handle), `complete` (only after an
+    authenticated reply reached the product; stops the reposts; sends nothing) and `cancel`. The host pushes `outgoing`
+    (status) and `response` (an authenticated reply's payload).
   - Recipient, only after the user chose Accept: the host pushes `acceptIntent` (request handle, sender handle,
     payload), and the product calls `reply` (request handle, payload), `refuse` or `open`.
   - Statuses are `waiting`, `completed`, `cancelled` and `expired`: there is no delivered, declined or accepted status
@@ -858,9 +862,11 @@ agreed API.
   sender's host checks a reply against the contact it chose, not a key the reply names. A refused reply does not use up
   the request. Example Chat's own check is a toy protocol (`fixtures/products/example-chat/setup.ts`).
 - **What is simulated, and not the design's answer.**
-  - The contact handle is 32 bytes the dev tools mint per demo user and person. It stands in for the `contacts.pick`
-    handle: the core gives the host no way to resolve that handle outside a transaction, so sending to it needs a
-    host-only core operation (resolve or check a handle).
+  - The contact handle is the core's, but whom it names to the host comes from the fixture directory: the host mints
+    handles (`contactHandles`) for every other demo user's session account and names a handle by that index. A name is
+    not permission: a transaction resolves a handle only for someone in the picker's contacts, so a demo user known only
+    to the directory, such as Carol to Bob, is drawn by name and never paid. The core writes no cache for a minted
+    handle.
   - The identity credential (`fixtures/invitations/fixture-identity.ts`) is a reference profile over keys derived from
     public demo user ids: the MAC is BLAKE2b-256 keyed with the two identities' static X25519 secret, and the signature
     is sr25519 over the kind, transcript and MAC. Which key a real host signs with (the native app's wallet/UID account
@@ -1390,8 +1396,9 @@ notifications are as they were; and that on a phone nothing scrolls sideways and
 closed and every request outside this host refused: the dev server's archive of the worker runs through the ordinary
 loader in each tab; Alice starts a chat from Chat's **+** and the host's **Send invitation** prompt names Bob; Bob's
 Inbox names Alice and Accept goes to his running worker; Alice's worker connects only after the reply; text goes both
-ways; a reload keeps the conversation and the names; and neither worker heard or kept a demo user's name or account. Set
-`CHAT_SCREENSHOTS` to a directory to keep screenshots.
+ways; a reload keeps the conversation and the names; neither worker heard or kept a demo user's name or account; each
+tab's core runs the demo user's own session account; and the handle each worker holds is the one `contacts.pick` gives
+Example Chat, in the same tab, for the same person. Set `CHAT_SCREENSHOTS` to a directory to keep screenshots.
 
 `browser/contacts-pick.spec.ts` checks `contacts.pick` for demo users: the host's picker names the product and lists the
 user's two contacts; a pick gives the core's handle, the same for the same person and another for another; Cancel and

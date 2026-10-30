@@ -61,6 +61,7 @@ const credentialOf = (name: string) =>
   );
 const person = (id: string, name: string): Person => ({
   id,
+  account: toHex(digest("test-account", id)),
   name,
   handle: `${id}.example`,
   identity: publicIdentity(credentialOf(id)),
@@ -170,27 +171,35 @@ class FakeProduct implements ProductPort {
   }
 }
 
+/** Whether the host can name people by handle yet, as its handle index answers, and who listens. */
+class Naming {
+  ready = true;
+  readonly listeners = new Set<() => void>();
+  set(ready: boolean): void {
+    this.ready = ready;
+    for (const listener of [...this.listeners]) listener();
+  }
+}
+
 /** Ada's and Lin's directory: each knows the other. */
-function contacts(self: Person, picks: Person[]): ContactService {
+function contacts(self: Person, naming: Naming): ContactService {
   const people = [ADA, LIN].filter((other) => other.id !== self.id);
   return {
-    pick: async () => {
-      const chosen = picks.shift();
-      return chosen === undefined
-        ? { tag: "Dismissed" }
-        : { tag: "Picked", value: { handle: handleOf(chosen) } };
-    },
     resolve: (contact) =>
       people.find((other) => handleOf(other).bytes === contact.bytes) ?? null,
     byIdentity: (key) =>
       people.find((other) => other.identity.signingPublic === key),
-    handleFor: handleOf,
+    handleFor: (who) => (naming.ready ? handleOf(who) : null),
+    onChange: (listener) => {
+      naming.listeners.add(listener);
+      return () => naming.listeners.delete(listener);
+    },
   };
 }
 
 function host(
   self: Person,
-  options: { storage?: MemoryStorage; clock?: Clock; picks?: Person[] } = {},
+  options: { storage?: MemoryStorage; clock?: Clock; naming?: Naming } = {},
 ) {
   const storage = options.storage ?? new MemoryStorage();
   const clock = options.clock ?? new Clock();
@@ -201,7 +210,7 @@ function host(
   const service = new InvitationService({
     product: PRODUCT,
     auth: new FixtureIdentityAuth(credentialOf(self.id), cryptoRandom),
-    contacts: contacts(self, options.picks ?? []),
+    contacts: contacts(self, options.naming ?? new Naming()),
     notifications,
     storage,
     keys: { sent: `${self.id}:sent`, received: `${self.id}:received` },
@@ -472,6 +481,83 @@ describe("the request service, receiving", () => {
     again.delivery.receive!.request(sealed);
     expect(again.notifications.list()).toHaveLength(1);
   });
+
+  test("a sender the host cannot name yet is told about once it can, once, with nothing posted again", async () => {
+    const storage = new MemoryStorage();
+    const clock = new Clock();
+    const lin = host(LIN, { storage, clock });
+    const { handle, context } = receive(lin);
+    const accepting = lin.service.requestAccept(handle);
+    await lin.product.call({
+      call: "reply",
+      handle,
+      payload: REPLY,
+      open: false,
+    });
+    await accepting;
+    lin.service.stop();
+
+    const naming = new Naming();
+    naming.ready = false;
+    const again = host(LIN, { storage, clock, naming });
+    expect(again.product.received).toEqual([]);
+    const replied: HostMessage = {
+      kind: "replied",
+      request: { handle, sender: handleOf(ADA), repliedAt: START },
+    };
+    naming.set(true);
+    naming.set(true);
+    expect(again.product.received).toEqual([replied]);
+    // Reading the lists again tells everything again, as it always has.
+    again.service.reload();
+    expect(again.product.received).toEqual([replied, replied]);
+    expect(again.delivery.calls).toEqual([
+      `postReply ${context.returnRoute} ${handle}`,
+    ]);
+
+    // A stopped service no longer listens.
+    again.service.stop();
+    expect(naming.listeners.size).toBe(0);
+  });
+
+  test("a reply the product made this attach is not told back to it when names change", async () => {
+    const naming = new Naming();
+    const lin = host(LIN, { naming });
+    const { handle } = receive(lin);
+    const accepting = lin.service.requestAccept(handle);
+    await lin.product.call({
+      call: "reply",
+      handle,
+      payload: REPLY,
+      open: false,
+    });
+    await accepting;
+    const before = lin.product.received.length;
+    naming.set(true);
+    expect(lin.product.received.slice(before)).toEqual([]);
+  });
+
+  test("Accept waits for nothing it cannot name: it says so, sends nothing, and works once the host can", async () => {
+    const naming = new Naming();
+    naming.ready = false;
+    const lin = host(LIN, { naming });
+    const { handle } = receive(lin);
+    await expect(lin.service.requestAccept(handle)).rejects.toThrow(
+      "Your host cannot name the sender yet. Try again.",
+    );
+    expect(lin.product.received).toEqual([]);
+    expect(lin.notifications.get(handle)!.state.tag).toBe("pending");
+    naming.set(true);
+    const accepting = lin.service.requestAccept(handle);
+    await lin.product.call({
+      call: "reply",
+      handle,
+      payload: REPLY,
+      open: false,
+    });
+    await accepting;
+    expect(lin.notifications.get(handle)!.state.tag).toBe("accepted");
+  });
 });
 
 describe("the request service, across tabs and malformed input", () => {
@@ -609,15 +695,7 @@ describe("the request service, sending", () => {
     });
 
   test("the host makes the request id and reply key, takes a return route from its delivery, and watches it before it posts", async () => {
-    const ada = host(ADA, { picks: [LIN] });
-    expect(await ada.product.call({ call: "pickContact" })).toEqual({
-      ok: true,
-      outcome: { tag: "Picked", value: { handle: handleOf(LIN) } },
-    });
-    expect(await ada.product.call({ call: "pickContact" })).toEqual({
-      ok: true,
-      outcome: { tag: "Dismissed" },
-    });
+    const ada = host(ADA);
     const first = await sendTo(ada);
     const second = await sendTo(ada);
     const [one, two] = ada.service.outbox.list();
@@ -732,8 +810,8 @@ describe("a product's calls", () => {
   });
 
   test("a call without an id, of a removed or unknown kind, or an earlier version's hello, is not read", () => {
-    expect(readProductCall({ call: "pickContact" })).toBeNull();
-    for (const call of ["verify", "accept", "send", "decline"])
+    expect(readProductCall({ call: "request" })).toBeNull();
+    for (const call of ["pickContact", "verify", "accept", "send", "decline"])
       expect(readProductCall({ id: 1, call, handle: "x" })).toBeNull();
     expect(
       readProductCall({ id: 1, call: "refuse", handle: "x", reason: " " }),

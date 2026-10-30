@@ -145,6 +145,9 @@ export class InvitationService {
   private readonly accepting = new Map<string, PendingAccept>();
   /** Replied requests the user opened, which the product may answer by coming to the front. */
   private readonly opening = new Set<string>();
+  /** Received requests the attached product was told it replied to, by handle. */
+  private readonly toldReplied = new Set<string>();
+  private stopContacts: () => void = () => {};
 
   constructor(private readonly deps: InvitationServiceDeps) {
     this.outbox = new Outbox(deps.storage, deps.keys.sent, deps.now);
@@ -153,6 +156,10 @@ export class InvitationService {
   }
 
   start(): void {
+    // A sender the host could not name yet is told about once it can.
+    this.stopContacts = this.deps.contacts.onChange(() => {
+      if (this.product !== null) this.tellReplied(this.product);
+    });
     this.deps.delivery.listen({
       request: (sealed) => this.receiveRequest(sealed),
       reply: (route, sealed) => this.receiveReply(route, sealed),
@@ -169,6 +176,7 @@ export class InvitationService {
   stop(): void {
     if (this.stopped) return;
     this.stopped = true;
+    this.stopContacts();
     this.deps.delivery.close();
     this.detachProduct();
     this.cancelExpiry?.();
@@ -198,17 +206,31 @@ export class InvitationService {
             payload: reply.payload,
           });
     }
+    this.toldReplied.clear();
+    this.tellReplied(port);
+  }
+
+  /**
+   * Tell `port`'s product each request it replied to that it was not told
+   * about yet, once the host can name the sender. Only the view: nothing is
+   * sent or posted again.
+   */
+  private tellReplied(port: ProductPort): void {
     for (const item of this.received.list()) {
+      if (item.replied === null || this.toldReplied.has(item.handle)) continue;
       const sender = this.deps.contacts.byIdentity(item.context.from);
-      if (item.replied !== null && sender !== undefined)
-        port.post({
-          kind: "replied",
-          request: {
-            handle: item.handle,
-            sender: this.deps.contacts.handleFor(sender),
-            repliedAt: item.replied.at,
-          },
-        });
+      const handle =
+        sender === undefined ? null : this.deps.contacts.handleFor(sender);
+      if (handle === null) continue;
+      this.toldReplied.add(item.handle);
+      port.post({
+        kind: "replied",
+        request: {
+          handle: item.handle,
+          sender: handle,
+          repliedAt: item.replied.at,
+        },
+      });
     }
   }
 
@@ -216,6 +238,7 @@ export class InvitationService {
     this.product?.close();
     this.product = null;
     this.opening.clear();
+    this.toldReplied.clear();
     this.failAccepts(`${this.deps.product.name} closed before it answered.`);
   }
 
@@ -254,6 +277,9 @@ export class InvitationService {
     const sender = this.deps.contacts.byIdentity(received.context.from);
     if (sender === undefined)
       return refuse("The sender is no longer one of your contacts.");
+    const senderHandle = this.deps.contacts.handleFor(sender);
+    if (senderHandle === null)
+      return refuse("Your host cannot name the sender yet. Try again.");
     const product = this.product;
     if (product === null)
       return refuse(`${this.deps.product.name} is not open.`);
@@ -285,7 +311,7 @@ export class InvitationService {
       kind: "acceptIntent",
       request: {
         handle,
-        sender: this.deps.contacts.handleFor(sender),
+        sender: senderHandle,
         payload: received.payload,
       },
     });
@@ -374,11 +400,6 @@ export class InvitationService {
 
   private async answer(call: ProductCall): Promise<CallResult> {
     switch (call.call) {
-      case "pickContact":
-        return {
-          ok: true,
-          outcome: await this.deps.contacts.pick(this.deps.product),
-        };
       case "request":
         return this.send(call.request);
       case "complete":
@@ -536,6 +557,7 @@ export class InvitationService {
       this.deps.random,
     );
     this.received.markReplied(handle, sealed, this.deps.now());
+    this.toldReplied.add(handle);
     this.postReply(received, sealed);
     this.deps.log(
       `${this.deps.product.name} replied to request ${short(handle)}; the host sealed it for ${sender.name} and posted it on the request's return route.`,

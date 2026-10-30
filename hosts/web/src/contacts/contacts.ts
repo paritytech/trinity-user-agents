@@ -37,6 +37,12 @@ import {
  * them in this page only, so a handle the product holds keeps naming them
  * after the core forgets its cached handles; after a reload, or once the
  * session ends or the user blocks them, it names nobody.
+ *
+ * To draw a handle a product holds as the person it names, the host keeps an
+ * index of the handles the core mints for the people it may name
+ * ({@link HostContactsDeps.mint}). The index is for naming only: whom a
+ * transaction pays is still decided by {@link HostContacts.platform}'s lookup
+ * over the contacts alone.
  */
 
 /** Whom the user chose in the picker. */
@@ -75,7 +81,45 @@ export interface HostContactsDeps {
   onSessionChange(listener: () => void): () => void;
   /** Tell the core someone left, so a handle it cached stops resolving. */
   removed(): void;
+  /**
+   * The handles the core knows `accounts` by under its signed-in session, in
+   * order: the ones `contacts.pick` gives products. Undefined without a
+   * session. The core caches none of them, so naming someone never makes a
+   * transaction resolve them.
+   */
+  mint(
+    accounts: readonly HexString[],
+  ): Promise<readonly HexString[] | undefined>;
+  /**
+   * People the host may draw by name beyond its contacts, such as everyone a
+   * test user's fixture directory knows. They are never offered in the picker
+   * and never resolved for a transaction.
+   */
+  named?(): readonly HexString[];
+  /** Run `task` after `delayMs`; answers a cancel. Defaults to `setTimeout`. */
+  schedule?(task: () => void, delayMs: number): () => void;
   log?(line: string): void;
+}
+
+/**
+ * Where the handle index stands. `ready` holds the core's answer for the
+ * current session and people, even when that names nobody; `failed` means
+ * the core gave none after every retry. Either of the other two names only
+ * people a previous answer named and who are still there.
+ */
+export type HandleIndexStatus = "signed-out" | "pending" | "ready" | "failed";
+
+/** How long to wait before each new mint after one failed, in order. Then the index waits for the next change. */
+export const MINT_RETRY_MS: readonly number[] = [500, 2_000, 8_000];
+
+/** The host's names for contact handles, for a feature that draws them. */
+export interface HandleNames {
+  /** The account `handle` names among the people the host may name now, or null. */
+  accountFor(handle: string): HexString | null;
+  /** The handle the person with `account` is known by, or null when the host may not name them now. */
+  handleFor(account: string): HexString | null;
+  /** Calls back whenever the answers above may have changed. */
+  onChange(listener: () => void): () => void;
 }
 
 /**
@@ -106,21 +150,161 @@ export function byRecent(contacts: readonly ChatContact[]): ChatContact[] {
 const sameAccount = (left: string, right: string): boolean =>
   left.toLowerCase() === right.toLowerCase();
 
-export class HostContacts {
+export class HostContacts implements HandleNames {
   private known = new Set<string>();
   /** People found by username and picked this session, by lower-case account. */
   private picked = new Map<string, HexString>();
   /** Counts sessions, so a choice made in one is not an answer in the next. */
   private session = 0;
+  /** Whom each handle names, by lower-case handle. */
+  private byHandle = new Map<string, HexString>();
+  /** Each named person's handle, by lower-case account. */
+  private byAccount = new Map<string, HexString>();
+  /** The accounts the last mint asked for, so a change that names no one new asks again for nothing. */
+  private indexed: string | null = null;
+  /** Counts every change a mint answer may not outlive: a session, a person gone, a new list. */
+  private indexVersion = 0;
+  /** The core session the index is for, by its public key. */
+  private coreSession: string | null = null;
+  private indexStatus: HandleIndexStatus = "signed-out";
+  private cancelRetry: () => void = () => {};
+  private readonly handleListeners = new Set<() => void>();
 
   constructor(private readonly deps: HostContactsDeps) {
     this.known = this.accounts();
-    deps.onChange(() => this.follow());
+    deps.onChange(() => {
+      this.follow();
+      this.reindex(false);
+    });
     deps.onSessionChange(() => {
       this.session += 1;
       this.picked.clear();
       this.deps.removed();
+      this.reindex(true);
     });
+  }
+
+  /**
+   * Follow the core's signed-in session, by its public key, or null when no
+   * one is signed in. A new session drops every handle, since each is minted
+   * under the session's key.
+   */
+  followSession(key: string | null): void {
+    if (key === this.coreSession) return;
+    this.coreSession = key;
+    this.reindex(true);
+  }
+
+  /** Where the handle index stands now. */
+  status(): HandleIndexStatus {
+    return this.indexStatus;
+  }
+
+  accountFor(handle: string): HexString | null {
+    return this.byHandle.get(handle.toLowerCase()) ?? null;
+  }
+
+  handleFor(account: string): HexString | null {
+    return this.byAccount.get(account.toLowerCase()) ?? null;
+  }
+
+  onChange(listener: () => void): () => void {
+    this.handleListeners.add(listener);
+    return () => this.handleListeners.delete(listener);
+  }
+
+  /** Everyone the host may name now, once each: the resolvable, then the other people it knows, less the blocked. */
+  private named(): HexString[] {
+    const blocked = this.blocked();
+    const seen = new Set<string>();
+    return [...this.resolvable(), ...(this.deps.named?.() ?? [])].filter(
+      (account) => {
+        const key = account.toLowerCase();
+        if (blocked.has(key) || seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      },
+    );
+  }
+
+  /**
+   * Ask the core for the handles of everyone the host may name. Someone no
+   * longer named leaves the index at once, without waiting for the answer;
+   * `fresh` empties it, for a new session. An answer that a later change
+   * overtook is dropped, and so is a retry it scheduled.
+   */
+  private reindex(fresh: boolean): void {
+    const accounts = this.named();
+    const key = accounts.map((account) => account.toLowerCase()).join(",");
+    if (!fresh && key === this.indexed) return;
+    const version = ++this.indexVersion;
+    this.cancelRetry();
+    this.indexed = key;
+    const keep = new Set(key.split(","));
+    let dropped = false;
+    for (const [handle, account] of this.byHandle)
+      if (fresh || !keep.has(account.toLowerCase())) {
+        this.byHandle.delete(handle);
+        this.byAccount.delete(account.toLowerCase());
+        dropped = true;
+      }
+    this.indexStatus = this.coreSession === null ? "signed-out" : "pending";
+    if (dropped) this.handlesChanged();
+    if (this.coreSession !== null) this.mint(accounts, version, 0);
+  }
+
+  /** One mint for `version`, the `attempt`th since it started. */
+  private mint(
+    accounts: readonly HexString[],
+    version: number,
+    attempt: number,
+  ): void {
+    const failed = (reason: string) => {
+      if (version !== this.indexVersion) return;
+      const delay = MINT_RETRY_MS[attempt];
+      if (delay === undefined) {
+        this.indexed = null;
+        this.indexStatus = "failed";
+        this.deps.log?.(`The core minted no contact handles: ${reason}`);
+        this.handlesChanged();
+        return;
+      }
+      const schedule =
+        this.deps.schedule ??
+        ((task: () => void, ms: number) => {
+          const timer = setTimeout(task, ms);
+          return () => clearTimeout(timer);
+        });
+      this.cancelRetry = schedule(() => {
+        if (version === this.indexVersion)
+          this.mint(accounts, version, attempt + 1);
+      }, delay);
+    };
+    this.deps.mint(accounts).then(
+      (handles) => {
+        if (version !== this.indexVersion) return;
+        // Signed in here, so no answer means the core is not there yet.
+        if (handles === undefined) return failed("the core has no session");
+        if (handles.length !== accounts.length)
+          return failed(
+            `${handles.length} handles for ${accounts.length} accounts`,
+          );
+        this.byHandle.clear();
+        this.byAccount.clear();
+        accounts.forEach((account, index) => {
+          const handle = handles[index]!.toLowerCase() as HexString;
+          this.byHandle.set(handle, account);
+          this.byAccount.set(account.toLowerCase(), handle);
+        });
+        this.indexStatus = "ready";
+        this.handlesChanged();
+      },
+      (error: unknown) => failed(String(error)),
+    );
+  }
+
+  private handlesChanged(): void {
+    for (const listener of [...this.handleListeners]) listener();
   }
 
   private blocked(): Set<string> {
@@ -186,8 +370,10 @@ export class HostContacts {
         from: product.productId,
       });
       if (chosen === null) return { tag: "Dismissed" };
-      if (chosen.found)
+      if (chosen.found) {
         this.picked.set(chosen.account.toLowerCase(), chosen.account);
+        this.reindex(false);
+      }
       return { tag: "Picked", value: { account: chosen.account } };
     },
   };

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { validateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
+import * as sr25519 from "@scure/sr25519";
+import { miniSecret } from "../../../../src/chat/nova/keys.js";
 import {
   TEST_USERS,
   chatContactsOf,
@@ -23,11 +25,24 @@ describe("test users", () => {
     ]);
   });
 
-  test("Alice has two contacts to choose from; each list names others only, by made-up accounts", () => {
-    const [alice, bob] = TEST_USERS;
+  // Contacts name each user by their own session's root account, so the
+  // core mints for them the handles it gives a product that picked them.
+  test("each is named by the root account of its own phrase, the one the core signs in as", () => {
+    for (const user of TEST_USERS)
+      expect(user.account).toBe(
+        `0x${Buffer.from(
+          sr25519.getPublicKey(
+            sr25519.secretFromSeed(miniSecret(testUserEntropy(user))),
+          ),
+        ).toString("hex")}`,
+      );
+  });
+
+  test("Alice has two contacts to choose from; each list names others only", () => {
+    const [alice, bob, carol] = TEST_USERS;
     expect(chatContactsOf(alice!)).toEqual([
-      { account: `0x${"b0".repeat(32)}`, name: "Bob" },
-      { account: `0x${"c4".repeat(32)}`, name: "Carol" },
+      { account: bob!.account, name: "Bob" },
+      { account: carol!.account, name: "Carol" },
     ]);
     expect(chatContactsOf(bob!).map((contact) => contact.name)).toEqual([
       "Alice",

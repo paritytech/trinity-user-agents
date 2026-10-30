@@ -607,6 +607,8 @@ export async function mountChatScreen(root: HTMLElement): Promise<ChatHarness> {
         if (change.type === "session") listener();
       }),
     removed: () => {},
+    // No core runs here, so the host names no contact handle.
+    mint: async () => undefined,
   });
   const screen = new ChatScreen(
     root,

@@ -33,6 +33,7 @@ import {
 } from "../../../src/invitations/sealing.js";
 import { NotificationStore } from "../../../src/notifications/notifications.js";
 import { MemoryStorage } from "../../support/test-support.js";
+import { hostContactsOf, indexed } from "../../support/host-handles.js";
 import * as setup from "../../../fixtures/products/example-chat/setup.js";
 import { FixtureContacts } from "../../../fixtures/invitations/fixture-contacts.js";
 import {
@@ -114,7 +115,7 @@ class Actor {
   readonly log: string[] = [];
   readonly auth: FixtureIdentityAuth;
   readonly store: SharedStore;
-  pickAnswer: TestUser | null = null;
+  readonly contacts: FixtureContacts;
   confirm = true;
   service!: InvitationService;
   private handler: ((value: unknown) => void) | null = null;
@@ -130,6 +131,7 @@ class Actor {
     this.notifications = new NotificationStore(this.storage, clock.now);
     this.notifications.setScope(`${user.id}:notifications`);
     this.auth = new FixtureIdentityAuth(fixtureIdentity(user), cryptoRandom);
+    this.contacts = new FixtureContacts(user, hostContactsOf(user));
     const inner = world.store();
     this.store = {
       ...inner,
@@ -146,9 +148,7 @@ class Actor {
     this.service = new InvitationService({
       product: PRODUCT,
       auth: this.auth,
-      contacts: new FixtureContacts(this.user, async () =>
-        this.pickAnswer === null ? null : { account: this.pickAnswer.account },
-      ),
+      contacts: this.contacts,
       notifications: this.notifications,
       storage: this.storage,
       keys: { sent: "sent", received: "received" },
@@ -245,21 +245,28 @@ function ok(result: CallResult): Extract<CallResult, { ok: true }> {
   return result;
 }
 
+/** The handle `contacts.pick` gives `actor`'s product for `to`: the one the core mints. */
+async function picked(actor: Actor, to: TestUser): Promise<ContactHandle> {
+  await indexed();
+  const handle = actor.contacts.handleFor(personOf(to));
+  if (handle === null)
+    throw new Error(`${actor.user.id}'s host cannot name ${to.id}`);
+  return handle;
+}
+
 /** Alice's product: pick `to`, make an invitation, and ask the host to send it. */
 async function invite(
   alice: Actor,
   to: TestUser,
   options: { ttlMs?: number; payload?: string } = {},
 ): Promise<Sent> {
-  alice.pickAnswer = to;
-  const picked = ok(await alice.call({ call: "pickContact" }));
-  if (picked.outcome?.tag !== "Picked") throw new Error("nothing picked");
+  const contact = await picked(alice, to);
   const { payload, secrets } = setup.createInvitation(cryptoRandom);
   const sent = ok(
     await alice.call({
       call: "request",
       request: {
-        contact: picked.outcome.value.handle,
+        contact,
         purpose: "Chat?",
         ttlMs: options.ttlMs ?? HOUR,
         payload: options.payload ?? payload,
@@ -920,14 +927,12 @@ for (const kind of ["inbox", "topic"] as const)
     test("the largest payload and purpose the API takes go there and back", async () => {
       const { alice, bob } = world();
       const largest = `0x${"ab".repeat(PAYLOAD_MAX_BYTES)}`;
-      alice.pickAnswer = BOB;
-      const picked = ok(await alice.call({ call: "pickContact" }));
+      const contact = await picked(alice, BOB);
       const sent = ok(
         await alice.call({
           call: "request",
           request: {
-            contact: (picked.outcome as { value: { handle: ContactHandle } })
-              .value.handle,
+            contact,
             purpose: "\u0007".repeat(PURPOSE_MAX_CHARS),
             ttlMs: HOUR,
             payload: largest,
@@ -992,16 +997,8 @@ for (const kind of ["inbox", "topic"] as const)
     test("the sender asks its user, and a product cannot send to a handle the host does not know", async () => {
       const { alice, bob } = world();
       alice.confirm = false;
-      alice.pickAnswer = BOB;
-      const picked = ok(await alice.call({ call: "pickContact" }));
-      const handle = (picked.outcome as { value: { handle: ContactHandle } })
-        .value.handle;
+      const handle = await picked(alice, BOB);
       expect(handle.bytes).toMatch(/^0x[0-9a-f]{64}$/);
-      alice.pickAnswer = null;
-      expect(await alice.call({ call: "pickContact" })).toEqual({
-        ok: true,
-        outcome: { tag: "Dismissed" },
-      });
       const send = (contact: ContactHandle) =>
         alice.call({
           call: "request",

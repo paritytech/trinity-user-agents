@@ -95,7 +95,7 @@ import {
   routeDirectory,
 } from "./contacts/username-directory.js";
 import { chainDirectory, lookupOwner } from "./chat/nova/directory.js";
-import { bytesToHex, type HexString } from "@parity/truapi/scale";
+import { bytesToHex, hexToBytes, type HexString } from "@parity/truapi/scale";
 import { accountProofs } from "./chat/account-proofs.js";
 import { ProductChat } from "./chat/product-chat.js";
 import { ProductWorkers } from "./products/product-workers.js";
@@ -483,8 +483,13 @@ const devSession =
             : tools.tap(productId, runtime.coreWireSchemaHash),
         showProduct: () => void navigation.selectDestination("browse"),
         showChat: () => void navigation.selectDestination("chat"),
-        pickContact: (asker): Promise<{ account: string } | null> =>
-          hostContacts.choose(asker),
+        handles: {
+          accountFor: (handle): HexString | null =>
+            hostContacts.accountFor(handle),
+          handleFor: (account): HexString | null =>
+            hostContacts.handleFor(account),
+          onChange: (listener): (() => void) => hostContacts.onChange(listener),
+        },
         log: linesFor("host"),
       });
 notifications?.screen.setActions(devSession?.notificationActions ?? null);
@@ -570,6 +575,11 @@ const hostContacts = new HostContacts({
       if (change.type === "session") listener();
     }),
   removed: () => runtime?.notifyContactsChanged(),
+  mint: async (accounts) =>
+    (await runtime?.contactHandles(accounts.map(hexToBytes)))?.map(
+      (handle) => bytesToHex(handle) as HexString,
+    ),
+  named: (): readonly HexString[] => devSession?.people ?? [],
   log: linesFor("host"),
 });
 /** The Developer menu's chat engine switch, with the Nova chat worker's state. */
@@ -1693,6 +1703,9 @@ accountStatusFold.addEventListener("toggle", () => {
 
 function renderSession(state: AuthState): void {
   lastAuthState = state;
+  hostContacts.followSession(
+    state.tag === "Connected" ? state.value.publicKey : null,
+  );
   const wallet = walletSession.active;
   if (state.tag === "Connected" && wallet !== null) {
     // Public facts only, kept so the picker can tell wallets apart signed out.

@@ -22,10 +22,14 @@ import {
   type DevTab,
   useInvitationDemo,
 } from "./support/fixtures.js";
+import { TEST_USERS } from "../fixtures/invitations/test-users.js";
 
 const STEP_MS = 60_000;
 const TEST_MS = 240_000;
 const HANDLE = /^0x[0-9a-f]{64}$/;
+/** A test user's core session account, as it would show in hex. */
+const accountOf = (id: string): string =>
+  TEST_USERS.find((user) => user.id === id)!.account.slice(2);
 
 let browser: Browser;
 let host: RunningHost;
@@ -239,7 +243,12 @@ describe("contacts.pick for test users", () => {
 
         // The product saw handles only: no name and no account of a contact.
         const shown = await product.locator("main").innerText();
-        for (const secret of ["Bob", "Carol", "b0".repeat(32), "c4".repeat(32)])
+        for (const secret of [
+          "Bob",
+          "Carol",
+          accountOf("bob"),
+          accountOf("carol"),
+        ])
           expect(shown).not.toContain(secret);
 
         // Another product gets the same handle for the same person.
@@ -389,8 +398,8 @@ describe("contacts.pick for test users", () => {
         for (const secret of [
           "Alice",
           "carol",
-          "a1".repeat(32),
-          "c4".repeat(32),
+          accountOf("alice"),
+          accountOf("carol"),
         ])
           expect(shown).not.toContain(secret);
 

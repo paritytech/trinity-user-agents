@@ -28,6 +28,7 @@ import {
 } from "../../../../src/invitations/sealing.js";
 import { NotificationStore } from "../../../../src/notifications/notifications.js";
 import { MemoryStorage } from "../../../support/test-support.js";
+import { hostContactsOf } from "../../../support/host-handles.js";
 import { FixtureContacts } from "../../../../fixtures/invitations/fixture-contacts.js";
 import {
   FixtureIdentityAuth,
@@ -122,25 +123,21 @@ class User {
   ) {
     this.notifications = new NotificationStore(this.hostStorage, clock.now);
     this.notifications.setScope(`${user.id}:notifications`);
-    this.contacts = new FixtureContacts(user, async () => null);
+    this.contacts = new FixtureContacts(user, hostContactsOf(user));
   }
 
   /** The host's own contacts, as Contact Chat's provider is lent them. */
   handleContacts(): HandleContacts {
-    const others = TEST_USERS.filter((other) => other.id !== this.user.id);
     return {
       resolve: (handle) => {
         const person = this.contacts.resolve(handle);
-        const user = others.find((other) => other.id === person?.id);
-        return person === null || user === undefined
+        return person === null
           ? null
-          : { account: user.account, name: person.name, seed: person.handle };
+          : { account: person.account, name: person.name, seed: person.handle };
       },
       handleFor: (account) => {
-        const user = others.find((other) => other.account === account);
-        return user === undefined
-          ? null
-          : this.contacts.handleFor(personOf(user));
+        const person = this.contacts.byAccount(account);
+        return person === undefined ? null : this.contacts.handleFor(person);
       },
     };
   }
@@ -418,10 +415,10 @@ describe("Contact Chat between two hosts, by contact handle", () => {
     const [aliceSide] = alice.engine.stored();
     const [bobSide] = bob.engine.stored();
     expect(aliceSide!.contact).toBe(
-      alice.contacts.handleFor(personOf(BOB)).bytes,
+      alice.contacts.handleFor(personOf(BOB))!.bytes,
     );
     expect(bobSide!.contact).toBe(
-      bob.contacts.handleFor(personOf(ALICE)).bytes,
+      bob.contacts.handleFor(personOf(ALICE))!.bytes,
     );
     // The two hosts' handles for one conversation differ, and neither is an account.
     expect(aliceSide!.contact).not.toBe(bobSide!.contact);
@@ -454,7 +451,7 @@ describe("Contact Chat between two hosts, by contact handle", () => {
     await alice.startWith(BOB, "");
 
     // A handle Carol's host gave for Bob names no one in Alice's host.
-    const carolsHandle = carol.contacts.handleFor(personOf(BOB));
+    const carolsHandle = carol.contacts.handleFor(personOf(BOB))!;
     const forged: ContactHandle = {
       bytes: toHex(cryptoRandom(32)) as ContactHandle["bytes"],
     };
@@ -476,7 +473,7 @@ describe("Contact Chat between two hosts, by contact handle", () => {
     for (const [roomId, handle] of [
       ["carols", carolsHandle],
       ["forged", forged],
-      ["bobs", alice.contacts.handleFor(personOf(BOB))],
+      ["bobs", alice.contacts.handleFor(personOf(BOB))!],
     ] as const) {
       await declaring.createRoom({
         roomId,

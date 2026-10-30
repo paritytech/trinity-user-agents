@@ -33,10 +33,10 @@ import {
  *
  * - **Pick a contact** calls `contacts.pick`. The host draws its picker; the
  *   product gets the core's opaque handle, or why there is none.
- * - **New chat** uses the proposed request service
- *   (`src/invitations/contract.ts`): choose a contact through the host and get
- *   a contact handle, make the invitation payload with `./setup.ts`, and ask
- *   the host to send it. A reply reaches this product only after its host
+ * - **New chat** chooses a contact with `contacts.pick` too, then uses the
+ *   proposed request service (`src/invitations/contract.ts`): make the
+ *   invitation payload with `./setup.ts`, and ask the host to send it to the
+ *   handle. A reply reaches this product only after its host
  *   authenticated it; the product checks it with `./setup.ts`, keeps the
  *   conversation topics, and only then calls `complete`. Waiting invitations
  *   can be cancelled.
@@ -377,10 +377,10 @@ choose.addEventListener("click", async () => {
   busy = true;
   inviteNote = "";
   render();
-  const result = await call({ call: "pickContact" });
+  const result = await client.contacts.pick({});
   busy = false;
-  if (result.ok && result.outcome?.tag === "Picked")
-    chosen = result.outcome.value.handle;
+  if (result.isOk() && result.value.outcome.tag === "Picked")
+    chosen = result.value.outcome.value.handle;
   else inviteNote = "No contact chosen.";
   render();
 });

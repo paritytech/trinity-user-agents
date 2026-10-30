@@ -19,14 +19,20 @@ import {
  * features that need more than one person. Nothing about them is verified.
  *
  * Each is a built-in account ({@link DEV_ACCOUNTS}) with fixture data added:
- * the session is the account's own, and a handle, a contact account and a
- * contact list are made up. The contacts stand in for the chat contacts a
- * wallet's chat providers would offer the host's picker.
+ * the session is the account's own, and a handle and a contact list are made
+ * up. The contacts stand in for the chat contacts a wallet's chat providers
+ * would offer the host's picker, and name each user by the root account of
+ * their own core session, so the core mints the same contact handles for
+ * them as for any person a picker names by account.
  */
 export interface TestUser extends DevAccount {
   /** Shown as the user's username. */
   handle: string;
-  /** The account the other test users' contact lists name this user by. */
+  /**
+   * The root account of this user's core session: the public key of their
+   * phrase, which the core reports as the session's `publicKey`. The other
+   * test users' contact lists name this user by it.
+   */
   account: HexString;
   /** Ids of the test users in this user's contacts. */
   contacts: readonly DevAccountId[];
@@ -38,17 +44,20 @@ const FIXTURES: Record<
 > = {
   alice: {
     handle: "alice.example",
-    account: `0x${"a1".repeat(32)}`,
+    account:
+      "0xeebb88dc8ec60ce5b2bb5f3b13c739c1f14305878af645fd561a879caf2e431e",
     contacts: ["bob", "carol"],
   },
   bob: {
     handle: "bob.example",
-    account: `0x${"b0".repeat(32)}`,
+    account:
+      "0xe4fc12368bda53e15e892d007cfde65292baedeec120d89b9368b393f5322a39",
     contacts: ["alice"],
   },
   carol: {
     handle: "carol.example",
-    account: `0x${"c4".repeat(32)}`,
+    account:
+      "0x1095201ab3dce1e90eaf53b58ff8c14eed0ed77b3558897bd755861f06fe5b0b",
     contacts: ["alice"],
   },
 };
@@ -67,8 +76,9 @@ export function testUserEntropy(user: TestUser): Uint8Array {
  * FIXTURE TRUST BOUNDARY. The identity credential of `user`: an sr25519
  * signing key and an X25519 key, both derived from the public user id, so
  * anyone can derive them. They let the request prototype authenticate and
- * seal for real, and prove nothing about a person. They are not the test
- * user's core session account. No real identity, key directory or lookup
+ * seal for real, and prove nothing about a person. They are apart from the
+ * test user's core session account ({@link TestUser.account}), which only
+ * names them for contact handles. No real identity, key directory or lookup
  * exists.
  */
 export function fixtureIdentity(user: TestUser): FixtureCredential {
@@ -82,6 +92,7 @@ export function fixtureIdentity(user: TestUser): FixtureCredential {
 export function personOf(user: TestUser): Person {
   return {
     id: user.id,
+    account: user.account,
     name: user.name,
     handle: user.handle,
     identity: publicIdentity(fixtureIdentity(user)),

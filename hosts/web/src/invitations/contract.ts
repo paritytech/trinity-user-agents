@@ -1,4 +1,4 @@
-import type { ContactHandle, ContactPickOutcome } from "@parity/truapi";
+import type { ContactHandle } from "@parity/truapi";
 
 /**
  * DRAFT, NOT TRUAPI. A proposed host request/reply service between a product
@@ -6,11 +6,9 @@ import type { ContactHandle, ContactPickOutcome } from "@parity/truapi";
  * request to a contact and the contact's product replies through its host.
  * Chat invitations are its first use. Nothing here is agreed.
  *
- * It reuses TrUAPI's Contacts types: a contact is named by a
- * {@link ContactHandle}, and `pickContact` answers a
- * {@link ContactPickOutcome}, as `contacts.pick` does. The handle it answers is
- * minted by the dev tools, not the core, because the core gives the host no
- * way to resolve its own handles outside a transaction.
+ * A contact is named by the {@link ContactHandle} TrUAPI's `contacts.pick`
+ * gives the product: the service has no picker of its own. The host names a
+ * handle through the handles the core mints for the people it knows.
  *
  * Who owns what:
  * - The product owns its payload: protocol starter material, keys and
@@ -53,7 +51,7 @@ export const TTL_MAX_MS = 7 * 24 * 60 * 60_000;
  */
 export type RequestHandle = string;
 
-export type { ContactHandle, ContactPickOutcome };
+export type { ContactHandle };
 
 /** The hello a product frame posts to its parent, with one `MessagePort`. */
 export interface ProductHello {
@@ -108,7 +106,6 @@ export interface RepliedView {
  * Product to host. Each answers with one `result` of the same `id`.
  *
  * Sender side:
- * - `pickContact`: the host's picker; answers a {@link ContactPickOutcome}.
  * - `request`: send a request to a contact, after the host asks its user.
  *   Answers the {@link OutgoingView}.
  * - `complete`: the product checked a reply its host delivered and is done;
@@ -121,7 +118,6 @@ export interface RepliedView {
  * - `open`: bring the product to the front, answering an `openIntent`.
  */
 export type ProductCall =
-  | { id: number; call: "pickContact" }
   | { id: number; call: "request"; request: unknown }
   | { id: number; call: "complete"; handle: RequestHandle }
   | { id: number; call: "cancel"; handle: RequestHandle }
@@ -147,9 +143,7 @@ export type FailureReason =
 
 export type Failure = { ok: false; reason: FailureReason; detail: string };
 
-export type CallResult =
-  | { ok: true; outcome?: ContactPickOutcome; request?: OutgoingView }
-  | Failure;
+export type CallResult = { ok: true; request?: OutgoingView } | Failure;
 
 /**
  * Host to product.
@@ -249,8 +243,6 @@ export function readProductCall(value: unknown): ProductCall | null {
     typeof call[key] === "string" ? (call[key] as string) : null;
   const handle = text("handle");
   switch (call.call) {
-    case "pickContact":
-      return { id, call: "pickContact" };
     case "request":
       return { id, call: "request", request: call.request };
     case "complete":

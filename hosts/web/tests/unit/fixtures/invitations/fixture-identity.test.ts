@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { Person } from "../../../../src/invitations/ports.js";
-import { cryptoRandom, digest } from "../../../../src/invitations/sealing.js";
+import {
+  cryptoRandom,
+  digest,
+  toHex,
+} from "../../../../src/invitations/sealing.js";
 import {
   FixtureIdentityAuth,
   fixtureCredential,
@@ -15,6 +19,7 @@ const credential = (name: string, agreement = name) =>
   fixtureCredential(digest("signing", name), digest("agreement", agreement));
 const personOf = (name: string, agreement = name): Person => ({
   id: name,
+  account: toHex(digest("account", name)),
   name,
   handle: `${name}.example`,
   identity: publicIdentity(credential(name, agreement)),
