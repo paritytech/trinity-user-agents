@@ -285,6 +285,10 @@ impl HostCallbacks for EventCallbacks {
 	) -> Result<(), HostRejection> {
 		Ok(())
 	}
+
+	async fn encrypted_storage_delete(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
+		Ok(())
+	}
 	async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
 		Ok(())
 	}
@@ -2185,6 +2189,10 @@ fn start_ws_bridge_twice_returns_already_running() {
 		) -> Result<(), HostRejection> {
 			Ok(())
 		}
+
+		async fn encrypted_storage_delete(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
+			Ok(())
+		}
 		async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
 			Ok(())
 		}
@@ -2369,6 +2377,10 @@ fn pending_permission_decision_does_not_stall_bridge() {
 			_key: Vec<u8>,
 			_value: Vec<u8>,
 		) -> Result<(), HostRejection> {
+			Ok(())
+		}
+
+		async fn encrypted_storage_delete(&self, _key: Vec<u8>) -> Result<(), HostRejection> {
 			Ok(())
 		}
 		async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {

@@ -109,7 +109,8 @@ pub struct RuntimeServices {
 	/// Provider of the installation id NFT purse item keys are derived under.
 	#[cfg(not(target_arch = "wasm32"))]
 	installation_provider: OnceLock<Arc<dyn InstallationIdProvider>>,
-	/// Host storage encrypted at rest, for receive key secrets of NFT purses.
+	/// Host storage encrypted at rest, for secrets the core database must not
+	/// hold.
 	#[cfg(not(target_arch = "wasm32"))]
 	encrypted_storage: OnceLock<Arc<dyn EncryptedStorage>>,
 	/// Host observer told whether durable work is pending. Unset leaves

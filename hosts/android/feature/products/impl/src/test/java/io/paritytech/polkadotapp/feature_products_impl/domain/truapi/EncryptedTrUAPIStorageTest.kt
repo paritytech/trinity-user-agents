@@ -105,7 +105,7 @@ class EncryptedTrUAPIStorageTest {
         assertArrayEquals(byteArrayOf(42), EncryptedHostCoreStorage(prefs).read(byteArrayOf(1)))
     }
 
-    /** Receive key secrets must not collide with, or be cleared as, a core storage slot of the same key. */
+    /** Secrets must not collide with, or be cleared as, a core storage slot of the same key. */
     @Test
     fun `encrypted values stay apart from core storage`() = runTest {
         val core = EncryptedHostCoreStorage(prefs)
@@ -118,17 +118,7 @@ class EncryptedTrUAPIStorageTest {
         assertArrayEquals(byteArrayOf(20), encrypted.read(byteArrayOf(1)))
     }
 
-    /** The core records the receive key right after the write, so a secret still in memory could be lost with it. */
-    @Test
-    fun `an encrypted value not written to disk is reported`() = runTest {
-        val encrypted = EncryptedHostValues(prefs.failingCommits())
-
-        val failure = runCatching { encrypted.write(byteArrayOf(1), byteArrayOf(20)) }.exceptionOrNull()
-
-        assertTrue("expected HostRejection, got $failure", failure is HostRejection)
-    }
-
-    /** An unknown receive key and an unreadable secret must not look alike to the core. */
+    /** An absent secret and an unreadable one must not look alike to the core. */
     @Test
     fun `an encrypted value that never was stored is a miss, an undecryptable one an error`() = runTest {
         val encrypted = EncryptedHostValues(prefs)
@@ -138,6 +128,29 @@ class EncryptedTrUAPIStorageTest {
         assertNull(encrypted.read(byteArrayOf(2)))
         val failure = runCatching { encrypted.read(byteArrayOf(1)) }.exceptionOrNull()
         assertTrue(failure is HostRejection)
+    }
+
+    /** The core records what a secret belongs to right after the write, so a secret still in memory could be lost with it. */
+    @Test
+    fun `an encrypted value not written to disk is reported`() = runTest {
+        val encrypted = EncryptedHostValues(prefs.failingCommits())
+
+        val failure = runCatching { encrypted.write(byteArrayOf(1), byteArrayOf(20)) }.exceptionOrNull()
+
+        assertTrue("expected HostRejection, got $failure", failure is HostRejection)
+    }
+
+    @Test
+    fun `a deleted encrypted value is a miss, and deleting none succeeds`() = runTest {
+        val encrypted = EncryptedHostValues(prefs)
+        encrypted.write(byteArrayOf(1), byteArrayOf(20))
+        encrypted.write(byteArrayOf(2), byteArrayOf(30))
+
+        encrypted.delete(byteArrayOf(1))
+        encrypted.delete(byteArrayOf(3))
+
+        assertNull(encrypted.read(byteArrayOf(1)))
+        assertArrayEquals(byteArrayOf(30), encrypted.read(byteArrayOf(2)))
     }
 }
 

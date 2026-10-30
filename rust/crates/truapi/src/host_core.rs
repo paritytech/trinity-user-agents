@@ -923,8 +923,9 @@ impl SigningHostRuntime {
 		self.services.install_installation_provider(provider)
 	}
 
-	/// Install the host storage encrypted at rest, which keeps the secrets of
-	/// NFT receive keys. Set-once; returns whether this call installed it.
+	/// Install the host storage encrypted at rest, which keeps the secrets the
+	/// core database must not hold. Set-once; returns whether this call
+	/// installed it.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn set_encrypted_storage(
 		&self,

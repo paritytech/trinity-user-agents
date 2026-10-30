@@ -214,7 +214,8 @@ pub trait HostCallbacks: Send + Sync {
 
 	/// Read a value the host keeps encrypted at rest: the Keychain on iOS,
 	/// encrypted preferences on Android. Return `None` when nothing is stored
-	/// under `key`, and an error only when the store cannot be read.
+	/// under `key`, and an error when the store cannot be read or the value
+	/// no longer decrypts.
 	///
 	/// Runtime-wide, so invoked only on the callbacks the runtime was built
 	/// with.
@@ -230,6 +231,12 @@ pub trait HostCallbacks: Send + Sync {
 		key: Vec<u8>,
 		value: Vec<u8>,
 	) -> Result<(), HostRejection>;
+
+	/// Delete the value stored under `key`. Deleting nothing succeeds.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with.
+	async fn encrypted_storage_delete(&self, key: Vec<u8>) -> Result<(), HostRejection>;
 
 	/// Read a value from the host's scoped key-value store.
 	async fn local_storage_read(
