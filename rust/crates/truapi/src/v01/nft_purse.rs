@@ -410,6 +410,9 @@ pub enum NftPurseDepositError {
 	EmptyCheque,
 	/// The secrets do not decode, or do not match the items.
 	CorruptedCheque,
+	/// Some of the cheque's items are already being moved, such as by a
+	/// deposit of the same cheque by another product or under another id.
+	ItemsInUse,
 	/// Any other failure.
 	Other(GenericError),
 }
@@ -429,6 +432,8 @@ pub struct HostNftPurseStaticReceiveKeyResponse {
 /// Why the static receive key could not be read.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum NftPurseStaticReceiveKeyError {
+	/// The user did not consent to disclosing their identity to the product.
+	PermissionDenied,
 	/// Any other failure.
 	Other(GenericError),
 }

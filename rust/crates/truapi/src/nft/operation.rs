@@ -174,7 +174,7 @@ pub fn validate_can_start(
 }
 
 /// Refuses `operation` when it is already registered.
-fn validate_operation_unused(
+pub fn validate_operation_unused(
 	conn: &Connection,
 	operation: &OperationKey,
 ) -> Result<(), StartOperationError> {
@@ -182,6 +182,19 @@ fn validate_operation_unused(
 		return Err(StartOperationError::OperationExists);
 	}
 	Ok(())
+}
+
+/// Refuses the first of `sources` that a live transaction already moves.
+pub fn validate_not_moving(
+	conn: &Connection,
+	sources: &BTreeSet<ItemKey>,
+) -> Result<(), StartOperationError> {
+	let keys: Vec<ItemKey> = sources.iter().copied().collect();
+	let moving = dao::moving_keys(conn, &keys)?;
+	match moving.first() {
+		Some(key) => Err(StartOperationError::ItemUnavailable(*key)),
+		None => Ok(()),
+	}
 }
 
 /// `item_count` fresh keys in `purse`.
