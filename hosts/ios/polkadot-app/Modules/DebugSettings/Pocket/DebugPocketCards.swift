@@ -77,11 +77,11 @@ struct DebugPocketCards: DebugPocketCardsStoring {
     /// The page is loaded as typed rather than through the card's launch
     /// address, so it is handed the launch address's query in place of any
     /// typed item of the same name, with the typed encoding kept as it is.
-    func widgetURL(for key: PocketCardKey) -> URL? {
+    func widgetURL(for key: PocketCardKey, pageQuery: String = "") -> URL? {
         guard
             let widgetUrl = cards(of: key.productId).first(where: { $0.definition?.id == key.cardId })?.widgetUrl,
             var components = URLComponents(url: widgetUrl, resolvingAgainstBaseURL: false),
-            let launchUrl = key.launchUrl,
+            let launchUrl = key.launchUrl(pageQuery: pageQuery),
             let launchItems = URLComponents(url: launchUrl, resolvingAgainstBaseURL: false)?.percentEncodedQueryItems
         else { return nil }
 

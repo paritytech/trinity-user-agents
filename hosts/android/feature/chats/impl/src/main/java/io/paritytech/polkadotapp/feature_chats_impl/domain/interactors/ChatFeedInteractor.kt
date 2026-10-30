@@ -58,6 +58,8 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.chatDisplay.ChatDispl
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.IncomingChatRequestProcessor
 import io.paritytech.polkadotapp.feature_chats_impl.domain.error.ChatRequestError
 import io.paritytech.polkadotapp.feature_chats_impl.domain.hop.FileUpload
+import io.paritytech.polkadotapp.feature_chats_impl.domain.identitySigning.IdentitySigningConsent
+import io.paritytech.polkadotapp.feature_chats_impl.domain.identitySigning.IdentitySigningConsentUseCase
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatFeedSnapshot
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomSourceContext
 import io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource.ChatRoomSourceContextFactory
@@ -72,6 +74,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.Message
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.ProductAttachmentStager
 import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.attachments.withOutbox
 import io.paritytech.polkadotapp.feature_chats_impl.domain.roomPolicy.ChatRoomPolicyProvider
+import io.paritytech.polkadotapp.feature_chats_impl.domain.sessions.signer.ContactChatSigners
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -110,6 +113,8 @@ class ChatFeedInteractor @Inject internal constructor(
     private val attachmentMetaBuilder: AttachmentMetaBuilder,
     private val attachmentFileStorage: AttachmentFileStorage,
     private val hopNodeUrlProvider: HopNodeUrlProvider,
+    private val chatSigners: ContactChatSigners,
+    private val identitySigningConsent: IdentitySigningConsentUseCase,
     private val roomSourceContextFactory: ChatRoomSourceContextFactory,
     private val attachmentStager: ProductAttachmentStager,
 ) {
@@ -217,6 +222,8 @@ class ChatFeedInteractor @Inject internal constructor(
         text: String,
         replyToMessageId: ChatMessageId?
     ): ChatSourceActionOutcome {
+        reopenIdentitySigningConsent(chatId)
+
         val content = ChatMessage.Content.Text(text)
 
         // A product-source room keeps the message in the outbox, under the UUID that the host chose, until the product
@@ -277,6 +284,8 @@ class ChatFeedInteractor @Inject internal constructor(
         if (fileSize > MAX_ATTACHMENT_SIZE) {
             throw FileTooLargeException(fileSize, MAX_ATTACHMENT_SIZE)
         }
+
+        reopenIdentitySigningConsent(chatId)
 
         // we have to make a copy since this uri will become unavailable once user closes the app
         // this process is quick, so we can do that right when we received original uri
@@ -385,9 +394,14 @@ class ChatFeedInteractor @Inject internal constructor(
     suspend fun getCustomMessageRenderersForChat(chatId: ChatId): Map<String, CustomChatMessageRenderer<*>> =
         chatEngine.getCustomRenderersForChat(chatId)
 
+    // A blocked chat signs nothing, and after unblocking it asks again before signing with the identity account.
     suspend fun blockUser(chatId: ChatId): Result<Unit> = runCatching {
         chatId.onContact { contactChat ->
-            contactsRepository.setBlocked(contactChat.contactAccountId, true)
+            contactsRepository.withTransaction {
+                contactsRepository.setBlocked(contactChat.contactAccountId, true)
+                identitySigningConsent.revoke(contactChat.contactAccountId)
+            }
+            releaseChatSigner(contactChat.contactAccountId)
         }
     }
 
@@ -398,9 +412,41 @@ class ChatFeedInteractor @Inject internal constructor(
     }
 
     suspend fun leaveChat(chatId: ChatId): Result<Unit> {
+        // LeftChat is signed by the chat signer, so the slot is released only after it was sent.
         tryNotifyPeerLeftChat(chatId)
+        chatId.onContact { contactChat -> releaseChatSigner(contactChat.contactAccountId) }
 
         return deleteContactChatLocalData(chatId)
+    }
+
+    fun subscribeIsIdentitySigningAllowed(chatId: ChatId): Flow<Boolean> {
+        val contactChat = chatId.contactOrNull() ?: return flowOf { false }
+
+        return identitySigningConsent.subscribe(contactChat.contactAccountId)
+            .map { consent -> consent == IdentitySigningConsent.GRANTED }
+    }
+
+    suspend fun allowIdentitySigning(chatId: ChatId): Result<Unit> {
+        val contactChat = chatId.contactOrNull() ?: return Result.success(Unit)
+
+        return identitySigningConsent.allow(contactChat.contactAccountId)
+    }
+
+    suspend fun declineIdentitySigning(chatId: ChatId): Result<Unit> {
+        val contactChat = chatId.contactOrNull() ?: return Result.success(Unit)
+
+        return identitySigningConsent.decline(contactChat.contactAccountId)
+    }
+
+    private suspend fun reopenIdentitySigningConsent(chatId: ChatId) {
+        val contactChat = chatId.contactOrNull() ?: return
+
+        identitySigningConsent.reopenIfDeclined(contactChat.contactAccountId)
+            .logFailure("Failed to reopen the identity signing consent")
+    }
+
+    private suspend fun releaseChatSigner(contactAccountId: AccountId) {
+        chatSigners.release(contactAccountId).logFailure("Failed to release chat signer slot")
     }
 
     suspend fun sendEdit(chatId: ChatId, messageId: ChatMessageId, newText: String): ChatSourceActionOutcome {
@@ -466,9 +512,14 @@ class ChatFeedInteractor @Inject internal constructor(
     }
 
     private fun subscribeUserInputStateForContact(contactId: AccountId): Flow<ChatUserInputState> {
-        return contactsRepository.subscribeContactWithChatRequest(contactId).map { contactWithRequest ->
+        return combine(
+            contactsRepository.subscribeContactWithChatRequest(contactId),
+            identitySigningConsent.subscribe(contactId),
+        ) { contactWithRequest, consent ->
             when {
                 contactWithRequest == null -> ChatUserInputState.SendChatRequest
+
+                consent == IdentitySigningConsent.REQUESTED -> ChatUserInputState.IdentitySigningConsentRequired
 
                 contactWithRequest.pendingChatRequest != null && contactWithRequest.pendingChatRequest?.isOutgoing() == true -> ChatUserInputState.WaitChatRequestApproval
 

@@ -78,12 +78,8 @@ extension PocketOpenService {
                         // presentation.
                         UIWindow.topWindow?.topmostViewController?.present(view, animated: true)
                     case .open:
-                        PocketCardOpening.open(
-                            link: link,
-                            flowState: flowState,
-                            navigator: moduleNavigator,
-                            pocket: pocket
-                        )
+                        PocketCardOpening(flowState: flowState, navigator: moduleNavigator, pocket: pocket)
+                            .open(link: link)
                     }
                 }
             },
