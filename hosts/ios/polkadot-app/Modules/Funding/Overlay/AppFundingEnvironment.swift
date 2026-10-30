@@ -76,6 +76,14 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
         return SPAViewFactory.createView(configuration: configuration, flowState: flowState)?.controller
     }
 
+    func showNotice(_ message: String) {
+        UIWindow.topWindow?.rootViewController?.topModalViewController.showToast(
+            message: message,
+            type: .error,
+            duration: 4
+        )
+    }
+
     func fundingActivityChanged() {
         FundingActivityCenter.shared.refresh()
     }

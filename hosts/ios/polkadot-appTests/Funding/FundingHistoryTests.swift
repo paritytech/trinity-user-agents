@@ -27,13 +27,17 @@ struct FundingHistoryTests {
         let record = try #require(FundingRecord(summary: summary("old", settledAtMs: 1_000)))
         let item = FundingActivityItem(record: record)
 
+        let ended = FundingEndedSession(record: record)
+
         #expect(record.providerId == "provider")
-        #expect(record.rail == .card)
-        #expect(record.asset == "EUR")
+        #expect(record.rail == .crypto)
+        #expect(record.asset == "USDC")
+        #expect(record.paidNetwork == "polkadot")
+        #expect(ended.quotedAmount == FundingAssetUnit(code: "USDC", decimals: 2).format("4600"))
         #expect(record.transactionId == "tx")
         #expect(record.reference == "ref")
         #expect(item.status == .toppedUp)
-        #expect(item.rail == .card)
+        #expect(item.rail == .crypto)
     }
 
     @Test
@@ -183,8 +187,7 @@ private func summary(_ intent: String, settledAtMs: UInt64) -> FundingSessionSum
         stage: delivered(settledAtMs),
         openedAtMs: openedAtMs,
         providerId: "provider",
-        rail: .card,
-        asset: "EUR",
+        choice: FundingChoice(quote: quote(send: "4600"), rail: .crypto, asset: "USDC", network: "polkadot"),
         status: .toppedUp,
         payout: nil,
         refunded: nil,
@@ -202,8 +205,7 @@ private func withdrawal(status: FundingStatus, payout: FundingPayout?, refunded:
         stage: .released(debited: "50000000", settledAtMs: openedAtMs + 1_000),
         openedAtMs: openedAtMs,
         providerId: "provider",
-        rail: .bank,
-        asset: "EUR",
+        choice: FundingChoice(quote: quote(send: "50000000"), rail: .bank, asset: "EUR", network: nil),
         status: status,
         payout: payout,
         refunded: refunded,
@@ -212,10 +214,10 @@ private func withdrawal(status: FundingStatus, payout: FundingPayout?, refunded:
     )
 }
 
-private func session(_ intent: String, stage: FundingStage) -> FundingSession {
-    let quote = FundingQuote(
+private func quote(send: U128) -> FundingQuote {
+    FundingQuote(
         quoteId: "quote",
-        sendAmount: "50000000",
+        sendAmount: send,
         receiveAmount: "50000000",
         providerFee: "0",
         networkFee: "0",
@@ -223,7 +225,10 @@ private func session(_ intent: String, stage: FundingStage) -> FundingSession {
         expiresAt: nil,
         assetDecimals: 2
     )
-    return FundingSession(
+}
+
+private func session(_ intent: String, stage: FundingStage) -> FundingSession {
+    FundingSession(
         intent: intent,
         ownerProductId: nil,
         direction: .in,
@@ -237,7 +242,7 @@ private func session(_ intent: String, stage: FundingStage) -> FundingSession {
         cancel: nil,
         updates: [],
         started: [],
-        choice: FundingChoice(quote: quote, rail: .card, asset: "EUR", network: nil),
+        choice: FundingChoice(quote: quote(send: "50000000"), rail: .card, asset: "EUR", network: nil),
         refund: nil
     )
 }
@@ -306,6 +311,12 @@ private final class WindowEnvironment: FundingOverlayEnvironment {
 
     func fundingActivityChanged() {}
 
+    private(set) var notices: [String] = []
+
+    func showNotice(_ message: String) {
+        notices.append(message)
+    }
+
     func waitUntil(_ condition: @escaping @MainActor (WindowEnvironment) -> Bool) async throws {
         try await withTimeout(.hangGuard) { @MainActor [self] in
             while !condition(self) {
@@ -318,5 +329,23 @@ private final class WindowEnvironment: FundingOverlayEnvironment {
 private struct PlaceholderBranding: FundingProviderBranding {
     func brand(for providerId: String) async -> FundingProviderBrand {
         .placeholder(for: providerId)
+    }
+}
+
+/// A worker that keeps crashing is named to the user while the core retries.
+@MainActor
+struct FundingWorkerCrashingTests {
+    @Test
+    func aCrashingProviderIsNamedOverWhateverIsOnScreen() async {
+        let environment = WindowEnvironment()
+        let coordinator = FundingOverlayCoordinator(
+            runtime: StubFundingRuntime(),
+            environment: environment,
+            book: FundingSessionBook()
+        )
+
+        await coordinator.workerCrashing(productId: "ramp.dot")
+
+        #expect(environment.notices == [String(localized: .Funding.providerCrashing(provider: "Ramp"))])
     }
 }

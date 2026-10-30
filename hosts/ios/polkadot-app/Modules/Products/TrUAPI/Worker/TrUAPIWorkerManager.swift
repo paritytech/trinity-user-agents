@@ -272,10 +272,11 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             guard held[productId]?.belongsTo(boot) == true else { return }
 
             logger.error("[truapi] \(productId)'s worker failed to start: \(error)")
-            // A failed boot left in the map would swallow every later start,
-            // while the core keeps counting the reference the holder took and
-            // so never sends another stop to clear it.
+            // A failed boot left in the map would swallow every later start.
+            // The core still counts the reference the holder took, so it is
+            // told, and starts the worker again after its backoff.
             await stop(productId)
+            reportExit(of: productId)
         }
     }
 
@@ -286,6 +287,10 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
 
         logger.error("[truapi] \(productId)'s worker engine died")
         await stop(productId)
+        reportExit(of: productId)
+    }
+
+    private func reportExit(of productId: ProductId) {
         do {
             try references().workerExited(productId: productId)
         } catch {

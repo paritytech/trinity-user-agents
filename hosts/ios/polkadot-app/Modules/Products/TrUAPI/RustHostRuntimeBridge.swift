@@ -1,4 +1,5 @@
 import Foundation
+import os
 import TrUAPIHost
 import ChainRegistry
 import SubstrateSdk
@@ -23,6 +24,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     private let backedUpInstallation: TrUAPIBackedUpInstallation
     private let logger: LoggerProtocol
     private weak var runtime: TrUAPIHostRuntime?
+    private let crashNotice = OSAllocatedUnfairLock<(@Sendable (String) -> Void)?>(initialState: nil)
 
     init(
         chainRegistry: ChainRegistryProtocol,
@@ -59,6 +61,17 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     /// the manager hands the transition off rather than acting on it here.
     func requestWorkerTransition(productId: String, transition: WorkerTransition) {
         workerManager?.demandChanged(productId: productId, transition: transition)
+    }
+
+    /// Where a worker that keeps crashing is reported to the user. Set once
+    /// the overlay that shows it exists.
+    func onWorkerCrashing(_ notice: @escaping @Sendable (String) -> Void) {
+        crashNotice.withLock { $0 = notice }
+    }
+
+    func workerCrashing(productId: String, crashes: UInt32) {
+        logger.error("[truapi] \(productId)'s worker crashed \(crashes) times in a row")
+        crashNotice.withLock { $0 }?(productId)
     }
 
     func navigateTo(url: String) async throws {
