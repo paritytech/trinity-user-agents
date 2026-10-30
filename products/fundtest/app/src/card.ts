@@ -45,10 +45,7 @@ void start("/card", (intent, view) => {
       ...(amount === undefined ? {} : { amount }),
     });
     if (sent) {
-      status(
-        "Payment sent. You can close this screen; the funds follow in a few minutes.",
-        "done",
-      );
+      status("Payment sent. The funds follow in a few minutes.", "done");
     } else {
       pay.disabled = false;
       status(

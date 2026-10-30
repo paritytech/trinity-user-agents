@@ -33,7 +33,7 @@ void start("/payout", (intent, view) => {
     });
     if (handed) {
       status(
-        "Confirmed. Approve the payment from your balance when asked; you can close this screen.",
+        "Confirmed. Approve the payment from your balance when asked.",
         "done",
       );
     } else {

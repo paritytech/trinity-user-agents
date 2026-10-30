@@ -1,10 +1,10 @@
 // Presenting the provider's screens and hearing back from them.
 //
-// `presentFrame` answers only once the frame closes, and nothing in TrUAPI
-// lets a screen close its own frame, so the worker does not wait for it: the
-// screen writes what the user did to the product's storage, and the worker
-// takes that as soon as it lands. A frame that closes before the screen wrote
-// anything was left by the user.
+// `presentFrame` answers only once the frame closes, so the worker does not
+// wait for it: the screen writes what the user did to the product's storage,
+// and the worker takes that as soon as it lands and closes the frame with
+// `closeFrame`, so the host shows the session in its place. A frame that
+// closes before the screen wrote anything was left by the user.
 
 import {
   actionKey,
@@ -96,7 +96,10 @@ export async function presentScreen<K extends ScreenAction["kind"]>(
   });
   try {
     // Whichever settles first: the action, or the frame closing without one.
-    return await Promise.race([acted, closed]);
+    const action = await Promise.race([acted, closed]);
+    // Closing a frame the user already closed does nothing.
+    if (action) await closeFrame(intent);
+    return action;
   } finally {
     signal.removeEventListener("abort", stop);
     stop();
@@ -105,6 +108,16 @@ export async function presentScreen<K extends ScreenAction["kind"]>(
       console.warn(`[fundtest] ${route} frame: ${String(error)}`),
     );
   }
+}
+
+/** Closes the session's screen, so the host shows the session in its place. */
+async function closeFrame(intent: string): Promise<void> {
+  const client = await truapi();
+  await client.fundingProvider.closeFrame({ intent }).match(
+    () => undefined,
+    (error) =>
+      console.warn(`[fundtest] could not close the screen: ${String(error)}`),
+  );
 }
 
 /** Drops what a session left in the product's storage, its state included. */

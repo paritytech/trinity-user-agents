@@ -183,9 +183,9 @@ granted and the only ask a demo crypto deposit makes. The faucet answers with `A
 The worker and the App are the same product, so they share one storage namespace. Before it presents a screen, the
 worker writes the session's view under `fundtest:view:<intent>` (and the session id under `fundtest:active:<route>`, for
 a host that drops the query string). The screen writes what the user did under `fundtest:action:<intent>`, and the
-worker hears it through `localStorage.subscribe`. TrUAPI has no call for a screen to close its own frame, so the worker
-does not wait for `presentFrame` to answer: it moves on as soon as the action lands, and the screen asks the user to
-close it. A frame closed before any action counts as the user leaving. The keys are in `shared/channel.ts`.
+worker hears it through `localStorage.subscribe`. The worker does not wait for `presentFrame` to answer: as soon as the
+action lands it closes the frame with `fundingProvider.closeFrame`, the host shows the session sheet in its place, and
+the session moves on. A frame closed before any action counts as the user leaving. The keys are in `shared/channel.ts`.
 
 ## Reuse of getcash-community
 

@@ -46,10 +46,7 @@ void start("/bank", (intent, view) => {
       ...(amount === undefined ? {} : { amount }),
     });
     if (handed) {
-      status(
-        "Thanks. The transfer is matched by its reference; you can close this screen.",
-        "done",
-      );
+      status("Thanks. The transfer is matched by its reference.", "done");
     } else {
       sent.disabled = false;
       status("The provider could not be told. Try again.", "error");
