@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import {
-  FixtureIdentityAuth,
-  fixtureCredential,
-  publicIdentity,
-} from "../../../fixtures/invitations/fixture-identity.js";
+import { ChatKeys } from "../../../src/chat/nova/keys.js";
+import { WalletIdentityAuth } from "../../../src/invitations/wallet-auth.js";
 import { NotificationStore } from "../../../src/notifications/notifications.js";
 import { MemoryStorage } from "../../support/test-support.js";
 import {
@@ -42,9 +39,9 @@ import {
 } from "../../../src/invitations/sealing.js";
 
 /**
- * The request service against fakes of its contacts and delivery, with the
- * reference fixture identity profile. The two-user flow over the dev fixtures
- * is in `tests/unit/invitations/invitation-flow.test.ts`.
+ * The request service against fakes of its contacts and delivery, with
+ * wallet keys of made-up entropy. The two-user flow over the dev fixtures is
+ * in `tests/unit/invitations/invitation-flow.test.ts`.
  */
 
 const START = Date.UTC(2026, 9, 21, 12, 0, 0);
@@ -54,17 +51,25 @@ const PRODUCT = { id: "chat.example", name: "Example Chat" };
 const PAYLOAD = `0x${"ab".repeat(64)}`;
 const REPLY = `0x${"cd".repeat(64)}`;
 
-const credentialOf = (name: string) =>
-  fixtureCredential(
-    digest("test-signing", name),
-    digest("test-agreement", name),
-  );
+const keys = new Map<string, ChatKeys>();
+/** Wallet keys of made-up entropy, derived once each. */
+const keysOf = (id: string): ChatKeys => {
+  let derived = keys.get(id);
+  if (derived === undefined) {
+    derived = ChatKeys.fromEntropy(digest("test-entropy", id), "test");
+    keys.set(id, derived);
+  }
+  return derived;
+};
 const person = (id: string, name: string): Person => ({
   id,
-  account: toHex(digest("test-account", id)),
+  account: toHex(keysOf(id).identity),
   name,
   handle: `${id}.example`,
-  identity: publicIdentity(credentialOf(id)),
+  identity: {
+    signingPublic: toHex(keysOf(id).identity),
+    agreementPublic: toHex(keysOf(id).chatPublic),
+  },
 });
 const ADA = person("ada", "Ada");
 const LIN = person("lin", "Lin");
@@ -189,7 +194,12 @@ function contacts(self: Person, naming: Naming): ContactService {
       people.find((other) => handleOf(other).bytes === contact.bytes) ?? null,
     byIdentity: (key) =>
       people.find((other) => other.identity.signingPublic === key),
+    problem: () => null,
     handleFor: (who) => (naming.ready ? handleOf(who) : null),
+    handleForIdentity: (key) => {
+      const who = people.find((other) => other.identity.signingPublic === key);
+      return who === undefined || !naming.ready ? null : handleOf(who);
+    },
     onChange: (listener) => {
       naming.listeners.add(listener);
       return () => naming.listeners.delete(listener);
@@ -209,7 +219,7 @@ function host(
   const shown: number[] = [];
   const service = new InvitationService({
     product: PRODUCT,
-    auth: new FixtureIdentityAuth(credentialOf(self.id), cryptoRandom),
+    auth: new WalletIdentityAuth(keysOf(self.id)),
     contacts: contacts(self, options.naming ?? new Naming()),
     notifications,
     storage,
@@ -231,7 +241,7 @@ function host(
 /** A request from Ada to Lin, as Ada's host seals it. */
 function fromAda(overrides: Partial<RequestContext> = {}) {
   return sealRequest(
-    new FixtureIdentityAuth(credentialOf("ada"), cryptoRandom),
+    new WalletIdentityAuth(keysOf("ada")),
     LIN,
     {
       product: PRODUCT,

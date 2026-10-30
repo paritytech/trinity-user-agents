@@ -22,14 +22,17 @@ import {
   type DevTab,
   useInvitationDemo,
 } from "./support/fixtures.js";
-import { TEST_USERS } from "../fixtures/invitations/test-users.js";
+import {
+  TEST_USERS,
+  testUserAccount,
+} from "../fixtures/invitations/test-users.js";
 
 const STEP_MS = 60_000;
 const TEST_MS = 240_000;
 const HANDLE = /^0x[0-9a-f]{64}$/;
-/** A test user's core session account, as it would show in hex. */
+/** A test user's identity account, as it would show in hex. */
 const accountOf = (id: string): string =>
-  TEST_USERS.find((user) => user.id === id)!.account.slice(2);
+  testUserAccount(TEST_USERS.find((user) => user.id === id)!, "paseo").slice(2);
 
 let browser: Browser;
 let host: RunningHost;

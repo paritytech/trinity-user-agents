@@ -490,6 +490,10 @@ const devSession =
             hostContacts.handleFor(account),
           onChange: (listener): (() => void) => hostContacts.onChange(listener),
         },
+        coreSession: () =>
+          lastAuthState.tag === "Connected"
+            ? Promise.resolve(lastAuthState.value)
+            : new Promise((resolve) => connectedWaiters.push(resolve)),
         log: linesFor("host"),
       });
 notifications?.screen.setActions(devSession?.notificationActions ?? null);
@@ -1358,6 +1362,10 @@ const accountStatusRefresh = element<HTMLButtonElement>(
   "account-status-refresh",
 );
 let lastAuthState: AuthState = { tag: "Disconnected" };
+/** Who waits for the core to report a signed-in session. */
+const connectedWaiters: ((
+  session: Extract<AuthState, { tag: "Connected" }>["value"],
+) => void)[] = [];
 /** The chain and People genesis the status reads from, once the network is up. */
 let chainAccess: Pick<Network, "chain" | "genesis" | "networkSuffix"> | null =
   null;
@@ -1703,6 +1711,8 @@ accountStatusFold.addEventListener("toggle", () => {
 
 function renderSession(state: AuthState): void {
   lastAuthState = state;
+  if (state.tag === "Connected")
+    for (const resolve of connectedWaiters.splice(0)) resolve(state.value);
   hostContacts.followSession(
     state.tag === "Connected" ? state.value.publicKey : null,
   );

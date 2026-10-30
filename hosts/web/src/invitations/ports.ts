@@ -24,12 +24,15 @@ export interface IdentityKeys {
 /** A person the host knows. Host only: no field reaches a product. */
 export interface Person {
   id: string;
-  /** The account the core mints this person's contact handle from. */
+  /** The identity account: the core mints this person's contact handle from it. */
   account: string;
   name: string;
   /** Shown as the person's username, and seeds their avatar. */
   handle: string;
-  /** The identity this person shows this host's user. */
+  /**
+   * The identity this person shows this host's user: their identity account
+   * and the chat key the chain publishes for it.
+   */
   identity: IdentityKeys;
 }
 
@@ -40,12 +43,19 @@ export interface Person {
  * permission: a transaction still resolves a handle only for a contact.
  */
 export interface ContactService {
-  /** Whom `contact` names, or null when it names nobody now. */
+  /** Whom `contact` names, with the keys to reach them, or null when it names nobody the host can reach now. */
   resolve(contact: ContactHandle): Person | null;
+  /** Why the host cannot reach someone `contact` names, for the host's own log; null when it can, or names nobody. */
+  problem(contact: ContactHandle): string | null;
   /** The person whose identity has this signing key, to authenticate a sender. */
   byIdentity(signingPublic: string): Person | undefined;
   /** The handle a product knows `person` by, or null when the host cannot name them now. */
   handleFor(person: Person): ContactHandle | null;
+  /**
+   * The handle a product knows the person with this identity by, for naming
+   * a sender the host already authenticated; needs no current chat key.
+   */
+  handleForIdentity(signingPublic: string): ContactHandle | null;
   /** Calls back whenever {@link handleFor} may answer differently. Answers an unsubscribe. */
   onChange(listener: () => void): () => void;
 }
@@ -65,9 +75,8 @@ export interface AuthEvidence {
  * PROPOSED. The host's identity credential: it authenticates as this user to
  * a contact, checks a contact's evidence, and opens what is sealed to the
  * user. The credential never leaves it; the request service only builds the
- * transcripts it covers. Which identity key a real host uses, and the exact
- * profile, are not decided; `fixtures/invitations/fixture-identity.ts` is a
- * reference profile over made-up keys.
+ * transcripts it covers. `wallet-auth.ts` is a pilot over the user's wallet
+ * keys; the production profile is not decided.
  */
 export interface IdentityAuth {
   /** The identity this host's user shows `peer`. */

@@ -124,15 +124,28 @@ export function openSealed(
   sealed: Uint8Array,
   purpose: string,
 ): Uint8Array | null {
+  return openSealedWith(
+    (ephemeral) => x25519Agree(recipient.secret, ephemeral),
+    recipient.public,
+    sealed,
+    purpose,
+  );
+}
+
+/**
+ * {@link openSealed} for a recipient whose secret stays with whoever holds
+ * it: `agree` answers the X25519 secret it shares with a public key.
+ */
+export function openSealedWith(
+  agree: (peer: Uint8Array) => Uint8Array,
+  recipientPublic: Uint8Array,
+  sealed: Uint8Array,
+  purpose: string,
+): Uint8Array | null {
   if (sealed.length < 32 + 16) return null;
   const ephemeral = sealed.subarray(0, 32);
   try {
-    const key = sealKey(
-      x25519Agree(recipient.secret, ephemeral),
-      ephemeral,
-      recipient.public,
-      purpose,
-    );
+    const key = sealKey(agree(ephemeral), ephemeral, recipientPublic, purpose);
     return chacha20poly1305(key, NONCE).decrypt(sealed.subarray(32));
   } catch {
     return null;
