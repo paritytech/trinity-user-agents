@@ -29,9 +29,9 @@ import kotlin.time.Instant
 /**
  * The CASH card's funding lists: sessions still in flight, then the ended ones, which the core keeps.
  *
- * The ended list is read from the core each time it is built: on the first collection, whenever the core pushes a
- * session, and once funding resumes, which is when the core has loaded its sessions. A session the core pushed in
- * this process reads in full; the rest read from the core's summary, which keeps only how the session ended.
+ * The ended list is read from the core's history each time it is built: on the first collection, whenever the core
+ * pushes a session, and once funding resumes, which is when the core has loaded its sessions. Every ended session,
+ * from this run or an earlier one, reads from its summary, which carries all its row and detail show.
  *
  * An ended session the core has not been told about is acknowledged once its row is built, since that row tells the
  * user how it went. The core keeps a released withdrawal until its payout is reported, and a failed payout until its
@@ -56,14 +56,12 @@ class FundingActivityCenter @Inject constructor(
             .map { sessions -> reloadMutex.withLock { reload(sessions) } }
 
     /** The ended session [intent] as the user is shown it, or `null` when the core holds no ended session by that id. */
-    suspend fun ended(intent: String): FundingRecord? {
-        runtime.sessions.value[intent]?.let { (session, progress) -> return FundingRecord.of(session, progress) }
-        return runtime.history()
+    suspend fun ended(intent: String): FundingRecord? =
+        runtime.history()
             .logFailure("Funding history read failed")
             .getOrNull()
             ?.firstOrNull { it.intent == intent }
             ?.let(FundingRecord::of)
-    }
 
     private suspend fun reload(sessions: Collection<FundingSessionEntry>): FundingActivity {
         val entries = sessions.sortedByDescending { it.session.openedAtMs }
@@ -71,11 +69,11 @@ class FundingActivityCenter @Inject constructor(
         val inFlight = entries.mapNotNull { inFlightItem(it.session, it.progress) }
         val inFlightIds = inFlight.mapTo(mutableSetOf()) { it.id }
 
-        val pushed = entries.mapNotNull { FundingRecord.of(it.session, it.progress) }
-        val pushedIds = pushed.mapTo(mutableSetOf()) { it.intent }
-        val summaries = runtime.history().logFailure("Funding history read failed").getOrDefault(emptyList())
-        val records = (pushed + summaries.filter { it.intent !in pushedIds }.mapNotNull(FundingRecord::of))
+        val records = runtime.history()
+            .logFailure("Funding history read failed")
+            .getOrDefault(emptyList())
             .filter { it.intent !in inFlightIds }
+            .mapNotNull(FundingRecord::of)
 
         acknowledgeEnded(entries)
 
