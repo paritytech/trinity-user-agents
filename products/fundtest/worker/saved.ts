@@ -105,14 +105,15 @@ export interface Saved {
   amount?: string;
   /** A cancel offer the user has not declined. */
   cancel?: SavedCancel;
+  /** When each simulated stage the session reached is due, Unix ms, by
+   *  stage name. Kept so a restart continues a wait rather than starting it
+   *  again. */
+  stageAt?: Record<string, number>;
   inbound?: {
     phase: InboundPhase;
     plan?: SavedPlan;
     /** When a crypto deposit address stops taking payment, Unix ms. */
     depositExpiresAt?: number;
-    /** When the simulated card or bank payment arrives, Unix ms. Kept so a
-     *  restart does not start the wait again. */
-    arrivesAt?: number;
     /** Whether part of the user's payment reached the provider, after which a
      *  cancel is a request rather than a stop. */
     paymentSeen?: boolean;
@@ -133,9 +134,8 @@ export interface Saved {
     payoutReported?: boolean;
     /** Where the user asked to be paid, as typed on the payout screen. */
     destination?: string;
-    /** When the simulated payout arrives, Unix ms. Kept so a restart does
-     *  not start the wait again. */
-    payoutAt?: number;
+    /** Failed payout attempts reported with `PayoutRetrying`. */
+    retried?: number;
     /** The top-up refunding a failed payout, fixed before it is made. */
     refund?: { id: `0x${string}`; amount: string };
   };

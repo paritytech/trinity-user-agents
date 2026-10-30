@@ -12,8 +12,25 @@ import type {
   FundingUpdate,
 } from "@parity/truapi";
 
-process.env.FUNDTEST_CARD_ARRIVAL_MS = "0";
-process.env.FUNDTEST_PAYOUT_MS = "0";
+// Every simulated stage is instant, but for a bank top-up's, which the
+// timing cases below measure.
+for (const rail of ["CARD", "BANK", "CRYPTO"]) {
+  for (const stage of [
+    "AUTHORISE",
+    "RECEIVE",
+    "CONFIRM",
+    "CONVERT",
+    "CREDIT",
+    "DELIVER",
+  ])
+    process.env[`FUNDTEST_${rail}_IN_${stage}_MS`] = "0";
+  for (const stage of ["CONVERT", "SEND"])
+    process.env[`FUNDTEST_${rail}_OUT_${stage}_MS`] = "0";
+}
+const BANK_RECEIVE_MS = 120;
+const BANK_CONFIRM_MS = 60;
+process.env.FUNDTEST_BANK_IN_RECEIVE_MS = String(BANK_RECEIVE_MS);
+process.env.FUNDTEST_BANK_IN_CONFIRM_MS = String(BANK_CONFIRM_MS);
 process.env.FUNDTEST_REPORT_RETRY_MS = "1";
 
 const ONE_CASH = 1_000_000n;
@@ -62,6 +79,8 @@ interface Core {
 interface World {
   /** Every update the host took, in order. */
   reports: string[];
+  /** When the host took each of `reports`, Unix ms. */
+  reportedAt: number[];
   core: Core;
   /** The state the session last stored. */
   saved: string | undefined;
@@ -101,6 +120,7 @@ let world: World;
 beforeEach(() => {
   world = {
     reports: [],
+    reportedAt: [],
     core: freshCore(),
     saved: undefined,
     checkpoints: [],
@@ -231,6 +251,7 @@ const client = {
         : reportOpen(update);
       if (refusal) return refused(refusal);
       world.reports.push(reportKey(update));
+      world.reportedAt.push(Date.now());
       return ok();
     },
     presentFrame: () =>
@@ -435,6 +456,7 @@ test("a top-up that resumes after a stop is credited once, under one id", async 
       tags: [
         "AwaitingPayment",
         "Details",
+        "Details",
         "PaymentReceived",
         "PaymentReceived",
         "Converting",
@@ -627,7 +649,8 @@ test("a session resumed after its payment was due does not wait again", async ()
       writeSaved({
         v: 1,
         amount: amount.toString(),
-        inbound: { phase: "fiat-sent", arrivesAt: Date.now() - 1, claims: [] },
+        stageAt: { receive: Date.now() - 1 },
+        inbound: { phase: "fiat-sent", claims: [] },
       }),
     ),
     quote: {
@@ -697,11 +720,11 @@ function releasedWithdrawal(
     v: 1,
     amount: amount.toString(),
     ...(cancel === undefined ? {} : { cancel }),
+    stageAt: { send: Date.now() + payoutInMs },
     outbound: {
       phase: "paying-out",
       paymentId,
       debited: debited.toString(),
-      payoutAt: Date.now() + payoutInMs,
     },
   });
   return assignment("Out", amount, world.saved);
@@ -1084,4 +1107,163 @@ test("a session an error keeps stopping gives up once no money moved for it", as
     tag: "Failed",
     value: { reason: { tag: "Other", value: { code: "provider_stuck" } } },
   });
+});
+
+// Simulated stages ------------------------------------------------------------
+
+/** A top-up assignment on `rail`, quoted so the session runs on it. */
+function onRail(rail: "Bank" | "Crypto", saved?: Saved): Handed {
+  const amount = 25n * ONE_CASH;
+  return {
+    ...assignment(
+      "In",
+      amount,
+      saved === undefined ? undefined : writeSaved(saved),
+    ),
+    quote: {
+      quoteId: quoteIdOf(
+        {
+          direction: "In",
+          rail,
+          asset: rail === "Bank" ? "EUR" : "PAS",
+          amount,
+        },
+        Date.now() + 60_000,
+      ),
+    } as FundingAssignment["quote"],
+  };
+}
+
+/** When the host took the first update tagged `tag`, and its finalized
+ *  flag for a `PaymentReceived`. */
+function reportedAt(tag: string, finalized?: boolean): number {
+  const index = world.reports.findIndex((key) => {
+    const update = JSON.parse(key) as FundingUpdate;
+    return (
+      update.tag === tag &&
+      (finalized === undefined ||
+        (update.tag === "PaymentReceived" &&
+          update.value.finalized === finalized))
+    );
+  });
+  expect(index).toBeGreaterThanOrEqual(0);
+  return world.reportedAt[index]!;
+}
+
+// Timers can fire a millisecond early.
+const SLACK_MS = 5;
+
+test("a bank top-up waits for the transfer, then for it to clear, reporting each stage", async () => {
+  const session = onRail("Bank");
+  world.storage.set(actionKey(session.intent), toStored({ kind: "bank-sent" }));
+  expect(await new Session(session).run()).toBe("ended");
+  expect(tags()).toEqual([
+    "AwaitingPayment",
+    "Details",
+    "Deposit",
+    "Details",
+    "PaymentReceived",
+    "PaymentReceived",
+    "Converting",
+    "Crediting",
+    "Delivered",
+  ]);
+  // The transfer arriving names its end-to-end id.
+  expect(JSON.parse(world.reports[3]!).value.transactionId).toMatch(
+    /^E2E[0-9A-F]{16}$/,
+  );
+  expect(
+    reportedAt("PaymentReceived", false) - reportedAt("Deposit"),
+  ).toBeGreaterThanOrEqual(BANK_RECEIVE_MS - SLACK_MS);
+  expect(
+    reportedAt("PaymentReceived", true) - reportedAt("PaymentReceived", false),
+  ).toBeGreaterThanOrEqual(BANK_CONFIRM_MS - SLACK_MS);
+});
+
+// A restart must neither cut a stage short nor start it again.
+test("a stage a restart interrupted waits only for what was left of it", async () => {
+  const started = Date.now();
+  const left = 40;
+  await new Session(
+    onRail("Bank", {
+      v: 1,
+      amount: (25n * ONE_CASH).toString(),
+      stageAt: { receive: started + left },
+      inbound: { phase: "fiat-sent", claims: [] },
+    }),
+  ).run();
+  const waited = reportedAt("PaymentReceived", false) - started;
+  expect(waited).toBeGreaterThanOrEqual(left - SLACK_MS);
+  expect(waited).toBeLessThan(BANK_RECEIVE_MS);
+});
+
+test("a stage that fell due before a restart does not wait again", async () => {
+  const started = Date.now();
+  await new Session(
+    onRail("Bank", {
+      v: 1,
+      amount: (25n * ONE_CASH).toString(),
+      stageAt: { receive: started - 1, confirm: started - 1 },
+      inbound: { phase: "fiat-sent", claims: [] },
+    }),
+  ).run();
+  expect(reportedAt("PaymentReceived", true) - started).toBeLessThan(
+    BANK_CONFIRM_MS,
+  );
+  expect(tags().at(-1)).toBe("Delivered");
+});
+
+test("a crypto deposit reports each block confirmation before it counts as final", async () => {
+  world.pas = DEPOSIT;
+  expect(
+    await new Session(
+      onRail("Crypto", {
+        v: 1,
+        amount: (25n * ONE_CASH).toString(),
+        inbound: {
+          phase: "arriving",
+          plan: SAVED_PLAN,
+          paymentSeen: true,
+          claims: [],
+        },
+      }),
+    ).run(),
+  ).toBe("ended");
+  expect(tags()).toEqual([
+    "Details",
+    "Details",
+    "Details",
+    "PaymentReceived",
+    "Converting",
+    "Crediting",
+    "Delivered",
+  ]);
+  expect(
+    world.reports
+      .slice(0, 3)
+      .map((key) => JSON.parse(key).value.reference.split(" · ")[1]),
+  ).toEqual(["1/3 confirmations", "2/3 confirmations", "3/3 confirmations"]);
+});
+
+test("a payout retried before a restart is not reported as retried again", async () => {
+  const amount = withCents(63);
+  // The core released the session and took its `Converting` and first
+  // `PayoutRetrying` before the worker stopped.
+  releasedWithdrawal(amount);
+  const saved: Saved = {
+    v: 1,
+    amount: amount.toString(),
+    outbound: {
+      phase: "paying-out",
+      paymentId: accounts.paymentIdFor("out-session"),
+      debited: amount.toString(),
+      converted: true,
+      retried: 1,
+    },
+  };
+  world.core.converting = true;
+  expect(
+    await new Session(assignment("Out", amount, writeSaved(saved))).run(),
+  ).toBe("ended");
+  expect(tags()).toEqual(["PayoutRetrying", "Payout"]);
 });

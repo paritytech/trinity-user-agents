@@ -7,6 +7,7 @@ import {
   quoteIdOf,
   termsOfQuoteId,
 } from "../worker/quotes";
+import { CONFIG, ETA_SECS, STAGES } from "../worker/config";
 
 const NOW = 1_800_000_000_000;
 const CASH = 1_000_000n;
@@ -170,5 +171,47 @@ describe("quote ids", () => {
         amount: 100n * CASH,
       }),
     ).toBe(9_790n);
+  });
+});
+
+// The host shows a session as taking longer once the quoted ETA passed since
+// the provider's latest report, so a normal run must never wait that long
+// between two reports: here, not even for all its simulated stages and the
+// on-chain leg (the faucet drip, the swap and the claim) together.
+describe("quoted ETAs", () => {
+  const CHAIN_ALLOWANCE_MS = 180_000;
+  for (const rail of ["Card", "Bank", "Crypto"] as const) {
+    test(`a normal ${rail} session ends within its ETA`, () => {
+      const inbound = STAGES.In[rail];
+      const inboundMs =
+        inbound.authorise +
+        inbound.receive +
+        inbound.confirm * (rail === "Crypto" ? CONFIG.cryptoConfirmations : 1) +
+        inbound.convert +
+        inbound.credit +
+        inbound.deliver;
+      const outbound = STAGES.Out[rail];
+      const outboundMs = outbound.convert + outbound.send;
+      const etaMs = Number(ETA_SECS[rail]) * 1_000;
+      expect(inboundMs + CHAIN_ALLOWANCE_MS).toBeLessThan(etaMs);
+      expect(outboundMs + CHAIN_ALLOWANCE_MS).toBeLessThan(etaMs);
+    });
+  }
+
+  // A demo should finish in about a minute on a simulator, the bank the
+  // slowest.
+  test("the simulated stages take up to a minute, bank the longest", () => {
+    const total = (rail: "Card" | "Bank" | "Crypto") =>
+      Object.values(STAGES.In[rail]).reduce((sum, ms) => sum + ms, 0) +
+      (rail === "Crypto"
+        ? STAGES.In.Crypto.confirm * (CONFIG.cryptoConfirmations - 1)
+        : 0);
+    expect(total("Bank")).toBeLessThanOrEqual(60_000);
+    expect(total("Bank")).toBeGreaterThan(total("Card"));
+    expect(total("Bank")).toBeGreaterThan(total("Crypto"));
+    const out = (rail: "Card" | "Bank" | "Crypto") =>
+      STAGES.Out[rail].convert + STAGES.Out[rail].send;
+    expect(out("Bank")).toBeGreaterThan(out("Card"));
+    expect(out("Bank")).toBeGreaterThan(out("Crypto"));
   });
 });

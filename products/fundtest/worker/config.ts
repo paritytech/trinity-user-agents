@@ -95,12 +95,98 @@ const number = (value: string | undefined, fallback: number) => {
 
 /** Expected seconds until the funds arrive, by rail: the upper end of card's
  *  one to five minutes, bank's one to two days (`FUNDTEST_BANK_ETA_SECS`, so
- *  a dev build can see a slow bank payment through), crypto's few minutes. */
+ *  a dev build can see a slow bank payment through), crypto's few minutes.
+ *  The host counts a session as taking longer once this long passed since
+ *  the provider's latest report, so each must outlast the longest of the
+ *  rail's {@link STAGES} plus the on-chain leg, and does with the defaults. */
 export const ETA_SECS = {
   Card: 300n,
   Bank: BigInt(number(env.FUNDTEST_BANK_ETA_SECS, 172_800)),
   Crypto: 600n,
 } as const;
+
+/** The simulated waits of an inbound session, milliseconds, each named by
+ *  the report it comes before. The on-chain leg between them (the faucet
+ *  drip, the swap, the claim) takes its own, real, time on top. */
+export interface InboundStages {
+  /** Card only: 3-D Secure and the authorisation, before the `Details`
+   *  naming the authorised charge. */
+  authorise: number;
+  /** The payment reaching the provider, before `PaymentReceived` unfinalized:
+   *  the capture on card, the transfer arriving on bank, the demo deposit
+   *  being made on crypto. */
+  receive: number;
+  /** The payment becoming final, before `PaymentReceived` finalized: the
+   *  charge settling on card, the transfer clearing on bank, and on crypto
+   *  each of `confirmations` block confirmations. */
+  confirm: number;
+  /** Before `Converting`. */
+  convert: number;
+  /** Before the top-up and its `Crediting`. */
+  credit: number;
+  /** Before `Delivered`, once the credit is final. */
+  deliver: number;
+}
+
+/** The simulated waits of an outbound session after its release,
+ *  milliseconds. */
+export interface OutboundStages {
+  /** Preparing the payout, before `Converting`. */
+  convert: number;
+  /** The payout in transit, before `Payout`, and before each
+   *  `PayoutRetrying` of a payout retried on purpose. */
+  send: number;
+}
+
+/** Each rail's waits, read from `FUNDTEST_<RAIL>_<IN|OUT>_<STAGE>_MS`. The
+ *  defaults follow the order of a real provider's waits, compressed so a
+ *  session runs in under a minute on a simulator: bank is the slowest, crypto
+ *  waits on confirmations, card is quick. */
+export const STAGES: {
+  In: Record<"Card" | "Bank" | "Crypto", InboundStages>;
+  Out: Record<"Card" | "Bank" | "Crypto", OutboundStages>;
+} = {
+  In: {
+    Card: {
+      authorise: number(env.FUNDTEST_CARD_IN_AUTHORISE_MS, 4_000),
+      receive: number(env.FUNDTEST_CARD_IN_RECEIVE_MS, 3_000),
+      confirm: number(env.FUNDTEST_CARD_IN_CONFIRM_MS, 4_000),
+      convert: number(env.FUNDTEST_CARD_IN_CONVERT_MS, 3_000),
+      credit: number(env.FUNDTEST_CARD_IN_CREDIT_MS, 3_000),
+      deliver: number(env.FUNDTEST_CARD_IN_DELIVER_MS, 2_000),
+    },
+    Bank: {
+      authorise: 0,
+      receive: number(env.FUNDTEST_BANK_IN_RECEIVE_MS, 30_000),
+      confirm: number(env.FUNDTEST_BANK_IN_CONFIRM_MS, 8_000),
+      convert: number(env.FUNDTEST_BANK_IN_CONVERT_MS, 4_000),
+      credit: number(env.FUNDTEST_BANK_IN_CREDIT_MS, 3_000),
+      deliver: number(env.FUNDTEST_BANK_IN_DELIVER_MS, 2_000),
+    },
+    Crypto: {
+      authorise: 0,
+      receive: number(env.FUNDTEST_CRYPTO_IN_RECEIVE_MS, 20_000),
+      confirm: number(env.FUNDTEST_CRYPTO_IN_CONFIRM_MS, 4_000),
+      convert: number(env.FUNDTEST_CRYPTO_IN_CONVERT_MS, 3_000),
+      credit: number(env.FUNDTEST_CRYPTO_IN_CREDIT_MS, 3_000),
+      deliver: number(env.FUNDTEST_CRYPTO_IN_DELIVER_MS, 2_000),
+    },
+  },
+  Out: {
+    Card: {
+      convert: number(env.FUNDTEST_CARD_OUT_CONVERT_MS, 4_000),
+      send: number(env.FUNDTEST_CARD_OUT_SEND_MS, 8_000),
+    },
+    Bank: {
+      convert: number(env.FUNDTEST_BANK_OUT_CONVERT_MS, 6_000),
+      send: number(env.FUNDTEST_BANK_OUT_SEND_MS, 25_000),
+    },
+    Crypto: {
+      convert: number(env.FUNDTEST_CRYPTO_OUT_CONVERT_MS, 3_000),
+      send: number(env.FUNDTEST_CRYPTO_OUT_SEND_MS, 10_000),
+    },
+  },
+};
 
 /** Build-time configuration, read from `FUNDTEST_*` variables. */
 export const CONFIG = {
@@ -108,14 +194,12 @@ export const CONFIG = {
    *  so a session completes without a wallet. A real transfer is taken either
    *  way. */
   demoCrypto: String(env.FUNDTEST_DEMO_CRYPTO ?? "1") !== "0",
-  /** Wait before a card payment arrives, milliseconds. */
-  cardArrivalMs: number(env.FUNDTEST_CARD_ARRIVAL_MS, 5_000),
-  /** Wait after "I've sent funds" before a bank transfer arrives. */
-  bankArrivalMs: number(env.FUNDTEST_BANK_ARRIVAL_MS, 30_000),
-  /** Wait before a demo crypto deposit is made. */
-  cryptoArrivalMs: number(env.FUNDTEST_CRYPTO_ARRIVAL_MS, 20_000),
-  /** Wait between the user's payment completing and the payout arriving. */
-  payoutMs: number(env.FUNDTEST_PAYOUT_MS, 15_000),
+  /** Block confirmations a crypto deposit waits for, each `confirm` apart,
+   *  before it counts as final. At least one. */
+  cryptoConfirmations: Math.max(
+    1,
+    Math.floor(number(env.FUNDTEST_CRYPTO_IN_CONFIRMATIONS, 3)),
+  ),
   /** First wait before a report the host failed to take is made again; each
    *  later wait doubles, up to 30 seconds. */
   reportRetryMs: number(env.FUNDTEST_REPORT_RETRY_MS, 1_000),

@@ -19,7 +19,7 @@ The product has two executables:
 | Step                                          | Real or simulated                                                          |
 | --------------------------------------------- | -------------------------------------------------------------------------- |
 | Quotes                                        | Simulated: fixed prices (below), answered from the worker                  |
-| Card charge, bank transfer                    | Simulated: a screen and a wait                                             |
+| Card charge, bank transfer                    | Simulated: a screen and a wait per stage (below)                           |
 | The deposit reaching Asset Hub                | Real: a public faucet drip of PAS to the session account                   |
 | A crypto deposit                              | Real: from the user's wallet, or a faucet drip of PAS in demo mode         |
 | Conversion on Asset Hub, transfer to People   | Real: getcash's pipeline, one `PolkadotXcm.execute` by the session account |
@@ -51,6 +51,32 @@ The cents of the amount choose what goes wrong:
 A crypto deposit made from a wallet ignores `.13`: the refund case only runs in demo mode, before any drip. A bank
 payment quotes a two-day ETA, so `.33` on bank is seen through only with a short `FUNDTEST_BANK_ETA_SECS`.
 
+### Stage timing
+
+Between the reports, each simulated stage waits for a time configured per rail and direction, so a session moves
+through the host's milestones the way a real onramp or offramp would. The on-chain leg (the faucet drip landing, the
+swap and the transfer to People, the claim) takes its own, real, time on top, usually well under a minute. Each wait is
+named by the report it comes before, and set with `FUNDTEST_<RAIL>_<IN|OUT>_<STAGE>_MS`:
+
+| Direction | Stage       | Report after the wait                  | Card | Bank | Crypto  |
+| --------- | ----------- | -------------------------------------- | ---- | ---- | ------- |
+| In        | `AUTHORISE` | `Details` naming the charge            | 4 s  |      |         |
+| In        | `RECEIVE`   | `PaymentReceived { finalized: false }` | 3 s  | 30 s | 20 s    |
+| In        | `CONFIRM`   | `PaymentReceived { finalized: true }`  | 4 s  | 8 s  | 4 s × 3 |
+| In        | `CONVERT`   | `Converting`                           | 3 s  | 4 s  | 3 s     |
+| In        | `CREDIT`    | The top-up, `Crediting`                | 3 s  | 3 s  | 3 s     |
+| In        | `DELIVER`   | `Delivered`                            | 2 s  | 2 s  | 2 s     |
+| Out       | `CONVERT`   | `Converting` (preparing the payout)    | 4 s  | 6 s  | 3 s     |
+| Out       | `SEND`      | `Payout` (in transit)                  | 8 s  | 25 s | 10 s    |
+
+Inbound, `AUTHORISE` is the card's 3-D Secure and authorisation, and `RECEIVE` is the card capture, the bank transfer
+arriving, or the demo crypto deposit being made; `CONFIRM` is the card charge settling, the bank transfer clearing, or
+each block confirmation of a crypto deposit (`FUNDTEST_CRYPTO_IN_CONFIRMATIONS`, 3 by default). The simulated stages
+add up to 19 s on card, 47 s on bank and 40 s on crypto inbound, and 12 s, 31 s and 13 s outbound. The quoted ETAs
+(5 minutes, 2 days, 10 minutes) count from the provider's latest report, so they outlast any one wait and the host does
+not show "taking longer" on a normal run. Cents `.33` stretch `RECEIVE` inbound and `SEND` outbound past the ETA, and
+cents `.63` wait a `SEND` before each `PayoutRetrying`.
+
 ### Stopping a session as if the worker crashed
 
 Cents `.51` to `.54` stop the session once at a kill point, just after an external action and before the step after it
@@ -74,30 +100,39 @@ user, product and label, so the account survives a restart and its secret is nev
 the reserve (label `onramp:eph:fundtest:collection`), collects outbound payments and the PAS a drip leaves over.
 
 **Card in.** `AwaitingPayment` and `Details`, then `/card`. Pay first asks the user to allow network access to the
-faucet (below), then a short wait stands in for the card network and the session reports
+faucet (below), then the card network's stages follow, each after its own wait (see "Stage timing" below): the
+authorisation, reported as a `Details` naming the charge (`pi_…`), and the capture, reported as
 `PaymentReceived { finalized: false }`. The worker sizes a PAS deposit for the pool route with getcash's sizing, and the
 session account asks the faucet for a drip. Once the drip lands, the session account sends everything above the deposit
 to the reserve, because getcash's pool tier converts the whole native balance. Once the deposit is final it reports
 `PaymentReceived { finalized: true }` and `Converting`, swaps the PAS to CASH through the asset-conversion pool and
 sends the CASH to People in one `PolkadotXcm.execute`, claims it with `payment.topUp`, and reports
-`Crediting { topUpId, amount }` and `Delivered`.
+`Crediting { topUpId, amount }` and `Delivered`. Before `PaymentReceived { finalized: true }` the charge settles, and
+`Converting`, the top-up and `Delivered` each come after a short wait too.
 
 **Bank in.** The same, except that the worker reports `Deposit { Bank }` with a documentation IBAN and a reference
-first, `/bank` shows those details, and the wait after "I've sent funds" is longer (30 seconds by default).
+first, `/bank` shows those details, and the wait after "I've sent funds" for the transfer to arrive is the longest of
+any stage (30 seconds by default). The arrival names the transfer's end-to-end id (`E2E…`) in a `Details`, and the
+transfer clears before `PaymentReceived { finalized: true }`.
 
 **Crypto in.** The worker sizes the deposit for the chosen asset (CASH needs no conversion, USDT goes through the PSM,
 USDC through the PSM or the pool, PAS through the pool), reports `Deposit { Crypto }` with the session account's address
 on network `polkadot`, and watches the account. A short payment is answered with a new `Deposit` for the rest. In demo
 mode the session account asks the faucet for a drip after 20 seconds, unless a deposit has started to arrive; a session
 that asked for USDT, USDC or CASH switches to the PAS route first, since the faucet gives only PAS. A real transfer from
-a wallet is taken either way. After 30 minutes with nothing received the session fails as `Expired`.
+a wallet is taken either way. After 30 minutes with nothing received the session fails as `Expired`. Once the deposit
+is final on Asset Hub the session waits for block confirmations (3 by default), each reported as a `Details` whose
+reference carries the count (`FT-… · 2/3 confirmations`), then reports `PaymentReceived { finalized: true }`. A demo
+deposit is also named by a mock transaction hash; the worker reads balances, so a wallet transfer's hash is not shown.
 
 **Out, any rail.** `Details`, then `/payout` for where to send the money. The worker calls `payment.request` for the
 user's CASH to the reserve account and reports `Collecting { paymentId, amount }`. Once the host reports the payment
-complete, the session is released and the worker simulates the payout. A failed payout is refunded: the reserve account
-tops the user up by what the payment moved (the amount asked, or what a partial claim took), under an id fixed by the
-session's intent, and the worker reports `Refunding { topUpId, amount }`. A user who declines the payment ends the
-session as `Cancelled`, and one without the balance as `InsufficientBalance`.
+complete, the session is released and the worker simulates the payout: it prepares the payout and reports `Converting`,
+then the payout is in transit until it lands and the worker reports `Payout`. The first `Details` carries the reference
+the payout is made under, since the core takes no `Details` once the session is released. A failed payout is refunded:
+the reserve account tops the user up by what the payment moved (the amount asked, or what a partial claim took), under
+an id fixed by the session's intent, and the worker reports `Refunding { topUpId, amount }`. A user who declines the
+payment ends the session as `Cancelled`, and one without the balance as `InsufficientBalance`.
 
 **Cancel.** The core asks the worker with `cancel`. While the user has not paid the session stops and the worker
 answers `Stopped`, and the core ends it as `Failed { Cancelled }`. After that the worker answers:
@@ -136,8 +171,8 @@ Every action a resumed step can repeat is safe to repeat:
   waits for the first.
 - A report the host already took is refused as `OutOfOrder`, which the worker ignores. An update after the release is
   tried again for a few seconds first, since the host answers the same way before it has marked the session released.
-- A waited-for arrival, such as a bank transfer or the payout, has its due time stored, so a restart does not start the
-  wait again.
+- Each simulated stage has its due time stored when the session reaches it, so a restart continues the wait that was
+  left rather than starting it again, and a stage that fell due before the restart does not wait at all.
 
 An action the user took on a screen is in product storage and is taken without showing the screen again.
 
@@ -219,15 +254,13 @@ overridden to this repository's build, so the worker holds one TrUAPI client and
 Configuration is read at build time from `FUNDTEST_*` variables, from the environment or a `.env.local` file in this
 directory (ignored by git):
 
-| Variable                     | Default  | Meaning                                                                       |
-| ---------------------------- | -------- | ----------------------------------------------------------------------------- |
-| `FUNDTEST_DEMO_CRYPTO`       | `1`      | `0` stops demo crypto deposits from the faucet; only a wallet transfer counts |
-| `FUNDTEST_CARD_ARRIVAL_MS`   | `5000`   | Wait between Pay and the card payment arriving                                |
-| `FUNDTEST_BANK_ARRIVAL_MS`   | `30000`  | Wait between "I've sent funds" and the transfer arriving                      |
-| `FUNDTEST_CRYPTO_ARRIVAL_MS` | `20000`  | Wait before a demo crypto deposit is asked for                                |
-| `FUNDTEST_PAYOUT_MS`         | `15000`  | Wait between the release and the simulated payout                             |
-| `FUNDTEST_BANK_ETA_SECS`     | `172800` | The ETA a bank quote gives, and so how late `.33` on bank arrives             |
-| `FUNDTEST_REPORT_RETRY_MS`   | `1000`   | First wait before a report the host failed to take is made again              |
+| Variable                               | Default   | Meaning                                                                                    |
+| -------------------------------------- | --------- | ------------------------------------------------------------------------------------------ |
+| `FUNDTEST_DEMO_CRYPTO`                 | `1`       | `0` stops demo crypto deposits from the faucet; only a wallet transfer counts              |
+| `FUNDTEST_<RAIL>_<IN\|OUT>_<STAGE>_MS` | see above | The wait before each simulated stage, by rail and direction ("Stage timing")               |
+| `FUNDTEST_CRYPTO_IN_CONFIRMATIONS`     | `3`       | Block confirmations a crypto deposit waits for, each `FUNDTEST_CRYPTO_IN_CONFIRM_MS` apart |
+| `FUNDTEST_BANK_ETA_SECS`               | `172800`  | The ETA a bank quote gives, and so how late `.33` on bank arrives                          |
+| `FUNDTEST_REPORT_RETRY_MS`             | `1000`    | First wait before a report the host failed to take is made again                           |
 
 The bundle carries no secret. The worker asks the faucet only when the build targets the Paseo Next v2 testnet
 (getcash's `network.json` says `testnet` and the Asset Hub genesis is Paseo Next v2's); otherwise card and bank fail

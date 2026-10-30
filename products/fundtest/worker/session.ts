@@ -22,6 +22,7 @@ import {
 } from "@getsome/funding";
 import { TOKENS } from "@getsome/core";
 import type { EphemeralKeypairWithSecret } from "@getsome/ephemeral";
+import { blake2b } from "@noble/hashes/blake2.js";
 import type { ScreenAction, SessionView } from "../shared/channel";
 import { FAUCET_PERMISSION } from "../shared/faucet";
 import { toHex } from "../shared/hex";
@@ -45,6 +46,7 @@ import {
   MAX_AMOUNT,
   MIN_AMOUNT,
   ONE_CASH,
+  STAGES,
 } from "./config";
 import {
   Aborted,
@@ -559,29 +561,51 @@ export class Session {
     }
   }
 
-  /** How long a simulated arrival on `rail` takes. */
+  /** How long a simulated arrival on `rail` takes: past the quoted ETA for
+   *  a session made slow on purpose. */
   private arrivalMs(normalMs: number): number {
     return this.trigger === "slow"
       ? Number(ETA_SECS[this.terms.rail]) * 1_000 + PAST_ETA_MS
       : normalMs;
   }
 
-  /** How long the simulated card or bank payment takes to arrive. */
-  private fiatArrivalMs(): number {
-    return this.arrivalMs(
-      this.terms.rail === "Card" ? CONFIG.cardArrivalMs : CONFIG.bankArrivalMs,
-    );
+  /** The simulated waits of this session's inbound rail. */
+  private get inStages() {
+    return STAGES.In[this.terms.rail];
   }
 
-  /** How long the simulated payout takes, its failed attempts included. */
-  private payoutWaitMs(): number {
-    const attempts = this.trigger === "payout-retry" ? PAYOUT_RETRIES + 1 : 1;
-    return attempts * this.arrivalMs(CONFIG.payoutMs);
+  /** The simulated waits of this session's outbound rail. */
+  private get outStages() {
+    return STAGES.Out[this.terms.rail];
+  }
+
+  /** Waits out stage `name`, `ms` long from the first time the session
+   *  reaches it. The due time is stored before the wait, so a restarted
+   *  worker continues the remaining wait, and a stage it finished before the
+   *  restart does not wait again. */
+  private async stage(name: string, ms: number): Promise<void> {
+    const due = (this.saved.stageAt ??= {});
+    if (due[name] === undefined) {
+      due[name] = Date.now() + ms;
+      await this.save();
+    }
+    await this.waitUntil(due[name]);
   }
 
   /** Waits until `at`, Unix ms. */
   private waitUntil(at: number): Promise<void> {
     return sleep(Math.max(0, at - Date.now()), this.signal);
+  }
+
+  /** A mock id the rail's network would give the session, fixed by the
+   *  session so a resumed one reports the same: `bytes` bytes of a hash of
+   *  the intent and `label`, as hex. */
+  private mockId(label: string, bytes: number): string {
+    return toHex(
+      blake2b(new TextEncoder().encode(`fundtest:${label}:${this.intent}`), {
+        dkLen: bytes,
+      }),
+    ).slice(2);
   }
 
   private get reference(): string {
@@ -653,13 +677,7 @@ export class Session {
       else await this.awaitFiatPayment();
     }
     if (state.phase === "fiat-sent") {
-      await this.waitUntil(
-        state.arrivesAt ?? Date.now() + this.fiatArrivalMs(),
-      );
-      await this.report({
-        tag: "PaymentReceived",
-        value: { finalized: false },
-      });
+      await this.awaitFiatArrival();
       if (this.trigger === "refund") {
         throw new SessionFailure({ tag: "Refunded" });
       }
@@ -678,7 +696,9 @@ export class Session {
     }
     if (state.phase === "arriving") {
       await this.awaitFinalDeposit();
+      await this.awaitConfirmations();
       await this.report({ tag: "PaymentReceived", value: { finalized: true } });
+      await this.stage("convert", this.inStages.convert);
       await this.report({ tag: "Converting" });
       state.phase = "converting";
       await this.save();
@@ -689,9 +709,11 @@ export class Session {
       await this.save();
     }
     if (state.phase === "crediting") {
+      await this.stage("credit", this.inStages.credit);
       await this.cancelGate();
       await this.credit();
       await this.killAt(4);
+      await this.stage("deliver", this.inStages.deliver);
       await this.report({ tag: "Delivered" });
       await forgetSession(this.intent);
       state.phase = "done";
@@ -749,9 +771,52 @@ export class Session {
       throw new SessionFailure({ tag: "Declined" });
     }
     if (isBank && !hadAmount) await reportBankDeposit();
-    state.arrivesAt = Date.now() + this.fiatArrivalMs();
     state.phase = "fiat-sent";
     await this.save();
+  }
+
+  /** Card and bank, once the user paid: the payment on its way to the
+   *  provider. A card is authorised (3-D Secure), which names the charge,
+   *  then captured; a bank transfer takes the rail's longest wait to arrive,
+   *  and names its end-to-end id when it does. */
+  private async awaitFiatArrival(): Promise<void> {
+    const stages = this.inStages;
+    if (this.terms.rail === "Card") {
+      await this.stage("authorise", stages.authorise);
+      await this.report({
+        tag: "Details",
+        value: { transactionId: `pi_${this.mockId("card", 12)}` },
+      });
+    }
+    await this.stage("receive", this.arrivalMs(stages.receive));
+    if (this.terms.rail === "Bank") {
+      await this.report({
+        tag: "Details",
+        value: {
+          transactionId: `E2E${this.mockId("bank", 8).toUpperCase()}`,
+        },
+      });
+    }
+    await this.report({ tag: "PaymentReceived", value: { finalized: false } });
+  }
+
+  /** The payment becoming final with the provider, once the deposit is on
+   *  chain: a card charge settling, a bank transfer clearing, or a crypto
+   *  deposit's block confirmations, which report the count so far in the
+   *  reference of a `Details`. */
+  private async awaitConfirmations(): Promise<void> {
+    const { confirm } = this.inStages;
+    if (this.terms.rail !== "Crypto") return this.stage("confirm", confirm);
+    const needed = CONFIG.cryptoConfirmations;
+    for (let count = 1; count <= needed; count++) {
+      await this.stage(`confirm-${count}`, confirm);
+      await this.report({
+        tag: "Details",
+        value: {
+          reference: `${this.reference} · ${count}/${needed} confirmations`,
+        },
+      });
+    }
   }
 
   /** Crypto: the deposit address, until enough has arrived. */
@@ -788,18 +853,19 @@ export class Session {
     await reportDeposit(deposit);
 
     if (CONFIG.demoCrypto) {
+      const arrival = this.stage(
+        "receive",
+        this.arrivalMs(this.inStages.receive),
+      );
       if (this.trigger === "refund") {
-        await sleep(this.arrivalMs(CONFIG.cryptoArrivalMs), this.signal);
+        await arrival;
         await this.report({
           tag: "PaymentReceived",
           value: { finalized: false },
         });
         throw new SessionFailure({ tag: "Refunded" });
       }
-      this.demoDeposit = sleep(
-        this.arrivalMs(CONFIG.cryptoArrivalMs),
-        this.signal,
-      )
+      this.demoDeposit = arrival
         .then(() => this.makeDemoDeposit())
         .catch((error: unknown) => {
           if (error instanceof SessionFailure || error instanceof Killed)
@@ -846,6 +912,14 @@ export class Session {
     });
     await this.markPaymentSeen();
     await this.report({ tag: "PaymentReceived", value: { finalized: false } });
+    // The worker reads balances and never sees a wallet transfer's hash, so
+    // only a demo deposit names one, a mock.
+    if (CONFIG.demoCrypto) {
+      await this.report({
+        tag: "Details",
+        value: { transactionId: `0x${this.mockId("deposit", 32)}` },
+      });
+    }
     state.phase = "arriving";
     await this.save();
   }
@@ -1135,7 +1209,10 @@ export class Session {
     if (state.phase === "new") {
       await this.report({
         tag: "Details",
-        value: { transactionId: `ft_${this.intent}` },
+        value: {
+          transactionId: `ft_${this.intent}`,
+          reference: this.reference,
+        },
       });
       state.phase = "awaiting-user";
       await this.save();
@@ -1218,7 +1295,6 @@ export class Session {
       // payment again.
       if (paid) {
         state.debited = debited.toString();
-        state.payoutAt = Date.now() + this.payoutWaitMs();
         state.phase = "paying-out";
         await this.save();
       } else {
@@ -1244,8 +1320,10 @@ export class Session {
     await forgetSession(this.intent);
   }
 
-  /** The simulated payout to the destination the user typed, due at
-   *  `payoutAt`. The CASH stays with the reserve account. Answers whether the
+  /** The simulated payout to the destination the user typed: the provider
+   *  prepares it and reports `Converting`, then it is in transit until it
+   *  lands, after a failed attempt per `PayoutRetrying` for a payout retried
+   *  on purpose. The CASH stays with the reserve account. Answers whether the
    *  payout failed. */
   private async payOut(
     state: NonNullable<Saved["outbound"]>,
@@ -1258,21 +1336,27 @@ export class Session {
         () => undefined,
       );
     try {
+      const stages = this.outStages;
       if (!state.converted) {
+        await this.stage("convert", stages.convert);
         await this.report({ tag: "Converting" }, true);
         state.converted = true;
         await this.save();
       }
       await this.killAt(3);
-      if (this.trigger === "payout-retry" && !state.payoutReported) {
-        for (let attempt = 0; attempt < PAYOUT_RETRIES; attempt++) {
-          await sleep(this.arrivalMs(CONFIG.payoutMs), this.signal);
-          await this.report({ tag: "PayoutRetrying" }, true);
-        }
-      }
       const failed = this.trigger === "refund";
       if (state.payoutReported) return failed;
-      await this.waitUntil(state.payoutAt ?? Date.now() + this.payoutWaitMs());
+      const sendMs = this.arrivalMs(stages.send);
+      if (this.trigger === "payout-retry") {
+        while ((state.retried ?? 0) < PAYOUT_RETRIES) {
+          const attempt = state.retried ?? 0;
+          await this.stage(`send-${attempt}`, sendMs);
+          await this.report({ tag: "PayoutRetrying" }, true);
+          state.retried = attempt + 1;
+          await this.save();
+        }
+      }
+      await this.stage("send", sendMs);
       await this.cancelGate();
       await this.report(
         {
