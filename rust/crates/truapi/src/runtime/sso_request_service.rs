@@ -153,9 +153,6 @@ pub struct SsoRequestService {
 	session_store_activation: futures::lock::Mutex<()>,
 	session_lifecycle: Mutex<SessionLifecycle>,
 	owner: Weak<dyn PairedSessionOwner>,
-	/// Drops the secrets products kept when the session ends or changes
-	/// account.
-	services: Arc<RuntimeServices>,
 	#[cfg(test)]
 	external_session_activation_pause: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
 	/// Change notifications the sync task has finished reconciling.
@@ -190,7 +187,6 @@ impl SsoRequestService {
 			session_store_activation: futures::lock::Mutex::new(()),
 			session_lifecycle: Mutex::new(SessionLifecycle::default()),
 			owner,
-			services: services.clone(),
 			#[cfg(test)]
 			external_session_activation_pause: Mutex::new(None),
 			#[cfg(test)]
@@ -511,7 +507,6 @@ impl SsoRequestService {
 		self.stop_session_channel(previous.as_ref());
 		if clear_auth_session {
 			let _ = self.platform.clear_core_storage(CoreStorageKey::AuthSession).await;
-			self.services.drop_secrets_storage_after_session().await;
 		}
 		if let Some(owner) = self.owner.upgrade() {
 			owner.session_cleared(previous.as_ref()).await;
@@ -548,15 +543,6 @@ impl SsoRequestService {
 			lifecycle.external_session_active = external_session;
 			previous
 		};
-		// Dropped once the new account is current, so a store still racing
-		// for the previous one fails its session check instead of landing
-		// after the clear.
-		if previous
-			.as_ref()
-			.is_some_and(|previous| previous.public_key != session.public_key)
-		{
-			self.services.drop_secrets_storage_after_session().await;
-		}
 		if previous.as_ref() != Some(&session) {
 			self.stop_session_channel(previous.as_ref());
 		}
@@ -570,14 +556,6 @@ impl SsoRequestService {
 	#[cfg(test)]
 	pub async fn set_connected_session_for_tests(&self, session: SessionInfo) {
 		self.set_connected_session(session).await;
-	}
-
-	/// Act as if the wallet ended the current SSO session.
-	#[cfg(test)]
-	pub async fn peer_disconnected_for_test(&self) {
-		let session = self.session_state.current().expect("test session must be installed");
-		let sso = session.sso.as_ref().expect("test session must contain SSO");
-		self.handle_signing_host_disconnected(SsoSessionKey::from_session(sso)).await;
 	}
 
 	/// Single funnel for peer-initiated disconnects. Every detection source

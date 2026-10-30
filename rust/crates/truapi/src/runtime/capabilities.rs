@@ -10,5 +10,4 @@ mod platform;
 mod preimage;
 mod resources;
 mod scanner;
-mod secrets_storage;
 mod signing;

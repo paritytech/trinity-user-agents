@@ -851,10 +851,6 @@ function hex(bytes: Uint8Array): string {
  * Build an in-memory mock host. The returned `callbacks` implement every
  * `RequiredHostCallbacks` capability; the accessor methods expose what the core
  * did.
- *
- * The test host keeps no product secrets: the browser host callbacks carry no
- * encrypted storage, so every `secretsStorage` call a product makes answers
- * `Unsupported`, as it does in the browser host.
  */
 export function createMockHost(config: MockHostConfig = {}): MockHost {
   const {

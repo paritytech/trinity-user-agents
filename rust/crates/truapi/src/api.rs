@@ -1,39 +1,4 @@
 //! Unified TrUAPI trait set.
-//!
-//! Each trait's wire id, set by `#[wire_trait(id = N)]`, is permanent once
-//! released. Codegen rejects two traits with one id in a tree; this table
-//! also holds ids taken by work not merged yet, so a collision shows in
-//! review instead of after both land. Claim the next free id here.
-//!
-//! | Id | Trait |
-//! |----|-------|
-//! | 1 | `System` |
-//! | 2 | `Account` |
-//! | 3 | `Chain` |
-//! | 4 | `Chat` |
-//! | 5 | `CoinPayment` |
-//! | 6 | `Entropy` |
-//! | 7 | `LocalStorage` |
-//! | 8 | `Notifications` |
-//! | 9 | `Payment` |
-//! | 10 | `Permissions` |
-//! | 11 | `Preimage` |
-//! | 12 | `ResourceAllocation` |
-//! | 13 | `Signing` |
-//! | 14 | `StatementStore` |
-//! | 15 | `Theme` |
-//! | 16 | `Locale` |
-//! | 17 | `Renderer` |
-//! | 18 | `Pocket` |
-//! | 19 | `Worker` |
-//! | 20 | `Contacts` |
-//! | 21 | `Game` |
-//! | 22 | `Funding` |
-//! | 23 | reserved: expanded card face |
-//! | 24 | `FundingProvider` |
-//! | 25 | `Scanner` |
-//! | 26 | `NftPurse` |
-//! | 27 | `SecretsStorage` |
 
 pub mod account;
 pub mod chain;
@@ -55,7 +20,6 @@ pub mod preimage;
 pub mod renderer;
 pub mod resource_allocation;
 pub mod scanner;
-pub mod secrets_storage;
 pub mod signing;
 pub mod statement_store;
 pub mod system;
@@ -82,7 +46,6 @@ pub use preimage::Preimage;
 pub use renderer::Renderer;
 pub use resource_allocation::ResourceAllocation;
 pub use scanner::Scanner;
-pub use secrets_storage::SecretsStorage;
 pub use signing::Signing;
 pub use statement_store::StatementStore;
 pub use system::System;
@@ -92,7 +55,6 @@ pub use worker::Worker;
 /// The unified TrUAPI contract.
 pub trait TrUApi:
 	Account
-	+ SecretsStorage
 	+ Chain
 	+ Chat
 	+ CoinPayment
@@ -124,7 +86,6 @@ pub trait TrUApi:
 
 impl<T> TrUApi for T where
 	T: Account
-		+ SecretsStorage
 		+ Chain
 		+ Chat
 		+ CoinPayment

@@ -52,7 +52,6 @@ pub fn generate_wasm_bridge_file(
 /// (e.g. `JsonRpc` -> `jsonrpc`) that it is hardcoded.
 const TRAIT_MODULE_MAP: &[(&str, &str)] = &[
 	("Account", "account"),
-	("SecretsStorage", "secrets_storage"),
 	("Chain", "chain"),
 	("Chat", "chat"),
 	("Contacts", "contacts"),

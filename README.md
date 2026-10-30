@@ -311,19 +311,6 @@ both. Calls that move items answer unavailable for now. A host without a core
 database, such as the browser core, answers `Unsupported` to the four served
 calls.
 
-### Core secrets
-
-Secrets the core database must not hold go to the host's encrypted storage
-(`encryptedStorageRead`, `encryptedStorageWrite` and `encryptedStorageDelete`
-on the runtime bridge: the Keychain on iOS, encrypted preferences on Android).
-`CoreSecrets` indexes each one in the `core_secret` table by kind, product and
-account, so the core counts and clears secrets without the host listing
-anything. `SecretsStorage` lets products keep small secrets this way, such as the tokens
-they obtain from their own services: a product names a key, the core derives
-the id from the signed-in account, the product and that key, and drops every
-secret on logout, an account switch or when the product's state is cleared. A host without a core
-database or encrypted storage, such as the browser core, answers `Unsupported`.
-
 ### Trinity stack descriptors
 
 A stack descriptor describes one deployment of chains and services, as
