@@ -15,6 +15,8 @@ TrUAPI (Triangle User-Agent Programming Interface) is the API surface that hosts
 
 - [TrUAPI reference](https://docs.polkadot.com/reference/apps/protocol/truapi/)
 - [Rust API reference](https://paritytech.github.io/trinity-user-agents/)
+- [Labels](docs/labels.md)
+- [Building the apps for development](docs/local-app-builds.md)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 
@@ -261,7 +263,7 @@ control of quota and of whether the bytes are backed up or encrypted.
 
 The core builds its own extrinsics through `ExtrinsicService` in the `chain`
 module: statement-store and long-term-storage allowances, PGAS claims, Bulletin
-preimages, and the CLI's dotNS registrations. A caller names the call and the
+preimages, NFT transfers, and the CLI's dotNS registrations. A caller names the call and the
 extensions it cares about; the builder fills every other extension of the
 runtime's pipeline, computes each extension's value from the bytes of the
 extensions after it, signs, and returns a mortal extrinsic born at the finalized
@@ -305,10 +307,59 @@ purses: its own freely, Root's or another product's with the user's
 `//nft//<purse>//<installation>//<index>`, under the installation the host
 reports through `currentInstallation`. A tracker watches
 `Scarcity.NftsByOwner` on Asset Hub at the best block for every key, and
-`queryPurse` pages through the keys that hold an NFT. The same grant covers
-both. Calls that move items answer unavailable for now. A host without a core
-database, such as the browser core, answers `Unsupported` to the four served
-calls.
+`queryPurse` pages through the keys that hold an NFT and that no live transfer
+or handoff spends. The same grant covers both.
+
+`rebalancePurse` and `transferItem` register an operation under an idempotency
+key the product chooses and return; `observeOperationStatus` follows it by that
+key until it is `Cleared` or `Incomplete`. Each transfer is a scheduled durable
+transaction: a fee-less `Scarcity::transfer` signed by the item key when it is
+submitted, and proven landed when its instance is at the destination. What
+each transfer spends is recorded in `nft_consumption`, whether the key is one
+of ours or a cheque key, and a key a live transfer spends cannot be spent by
+another. A failed transfer frees its item again. Transferring items out of Root's or another product's
+purse asks the user through the `NftPurseDrain` confirmation review.
+
+`createReceiveKey` makes a random X25519 key for a receiver. Its secret goes to
+the host's encrypted storage (`encryptedStorageRead` and `encryptedStorageWrite`
+on the runtime bridge: the Keychain on iOS, encrypted preferences on Android),
+and the core database records only the public key, its purse and its creator.
+`createCheque` hands items to a receive key or a static X25519 key: it seals
+the 64-byte sr25519 secret of each item to that key with an ephemeral X25519
+key, HKDF-SHA256 and ChaCha20-Poly1305, and records the items as handed off
+under the cheque id, so they are spent from then on. A second cheque with the
+same id from the same product answers `OperationExists`.
+
+`deposit` opens a received cheque and registers one move per item into fresh
+keys of the purse the product names, under the cheque id, and returns;
+`observeOperationStatus` follows it by that id. An `Ephemeral` cheque opens with
+its receive key's secret, and only the product that made the key may deposit
+it, into the key's purse (`PurseMismatch` otherwise). A `Static` cheque opens
+with the host's static receive key, which `staticReceiveKey` returns so a
+product can publish it; for now it is the user's chat key, so it is returned
+only with the user's `getUserId` identity disclosure consent. Any product may
+deposit such a cheque into any purse, but a cheque whose items another deposit
+already moves answers `ItemsInUse`, whichever product deposits it and under
+whatever id. The item secrets go to encrypted storage after those checks and
+before the moves are registered, so each move is signed from its stored secret
+after a restart too. A move waits up to an hour for its cheque key to hold an
+NFT, so a product need not wait for the sender's mint itself.
+
+`revokeCheque` moves the items at the keys of a cheque the product created
+back into fresh keys of the purse they left; another product's cheque answers
+`ChequeNotFound`. Revoking again moves only the keys whose last move failed,
+and a cheque whose keys a deposit on this device already moves answers
+`ItemsInUse`.
+`refund` moves the items a product deposited from a cheque back to the
+cheque's keys, once every move of the deposit finalized or failed
+(`DepositInProgress` before that), and the sender can then revoke them.
+Whether an item can still go back comes from the core database alone: one
+spent since stays and is listed as unavailable. Each is followed by
+`observeOperationStatus` under `blake2_256("nft-purse/revoke" ‖ chequeId)` or
+`blake2_256("nft-purse/refund" ‖ chequeId)`. Refunding out of Root's or
+another product's purse asks the user through `NftPurseDrain`. Listening for
+payments answers unavailable for now. A host without a core database, such as
+the browser core, answers `Unsupported` to the served calls.
 
 ### Trinity stack descriptors
 
@@ -346,6 +397,12 @@ so `make dev` leaves the board empty with no error.
 2. `truapi-codegen` reads rustdoc JSON for that crate and generates the TypeScript client under git-ignored paths in `js/packages/truapi/`.
 3. Higher-level SDKs wrap the typed client; the transport encodes SCALE frames and ships them over WebSocket, `MessagePort`, or `postMessage` in iframe mode to the host.
 4. The host decodes the frame and dispatches to the matching trait method. Runtime handlers execute inside `version(request).exec(...)` using `latest` payloads. The helper converts responses, subscription items, and domain errors to the request version, including early failures and subscription interruptions, before the host encodes and sends them.
+
+Methods marked `#[wire(host_initiated, id = N)]` run in the other direction. An
+`async fn` returning `Result` generates an asynchronous Rust caller and a TypeScript
+`onMethod` handler returning a typed result, carried by a one-item subscription.
+A method returning `Subscription` generates a streaming handler. See the
+[client handler contract](js/packages/truapi/README.md#host-initiated-requests).
 
 Wire ids are append-only per trait: a trait id is never reassigned and a method id is never renumbered or reused within its trait, so deployed products stay compatible across protocol revisions. New methods take the next free method ids in their own trait and leave every other trait untouched. Trait 255 is permanently reserved for a correlated protocol error, allowing either peer to reject API messages introduced after it was released instead of leaving the caller pending.
 
@@ -417,9 +474,9 @@ playground's Diagnosis, since dot.li serves no `Game` surface. Both CLI host
 roles still install an in-memory `CliGameHost` that never rings anything. The
 `truapi` runtime tests cover the product gate, the start-time check, a call
 withdrawn before it reaches the host, the absence of any permission prompt, and
-host failures. Android hosts with Sentry enabled report the reminder lifecycle
-through `host.reminder.*` Sentry events without changing reminder delivery or
-cleanup.
+host failures. Android and iOS hosts with Sentry enabled report the reminder
+lifecycle through `host.reminder.*` Sentry events without changing reminder
+delivery or cleanup.
 
 `Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
 "Host-drawn scanner"). The Android app draws it. Both CLI host roles answer
@@ -550,6 +607,9 @@ Then open `hosts/ios/polkadot-app.xcodeproj`. Rerun it after changing anything
 the bindings are generated from, which is the `truapi` or `truapi-provider`
 crates. `SIM_ONLY=1` halves it by skipping
 the device slice, which is enough for Simulator but not for an archive.
+`make ios-sim-run` builds the app for the simulator with the dev configuration
+and launches it, bootstrapping first when the core is missing; see
+[docs/local-app-builds.md](docs/local-app-builds.md) for the credentials it needs.
 
 Because the app builds against the core in this tree, a core change that breaks
 it fails here rather than at the next version bump. CI's `iOS app` job,
@@ -562,15 +622,15 @@ and Dependabot runs get no secrets, and so does the merge queue. A push to main
 that touches those inputs runs the same suite through `ios-main.yml`, outside
 `CI Status`, and publishes the core pull requests reuse. `preview` is
 macOS time no check needs, so `on-label.yml` builds it once the pull request is
-labelled `ios-simulator-build`. The same workflow's
+labelled `ci:ios-simulator`. The same workflow's
 `TrUAPIHost package (Swift + WebKit)` job compiles the TrUAPIHost and
 TrUAPIProvider packages against the core the app jobs share, on a pull request
 touching their inputs, which the `swift` package in `.github/hosts.json` names,
 and runs their network permission tests. Like the rest of the iOS app it skips
 fork and Dependabot pull requests and the merge queue. The first time a
 pull request touches the iOS or Android app, `build-label-hint.yml` comments with
-the labels that build it: `ios-simulator-build`, `ios-device-build` and
-`android-device-build`.
+the labels that build it: `ci:ios-simulator`, `ci:ios-device` and
+`ci:android-device`.
 
 - `build`, a DevCI compile, failing on any build warning the committed baseline
   does not already have
@@ -599,7 +659,7 @@ on the simulator, the emulator or a phone, without a deploy. See
 
 ### A build that installs on a phone
 
-Label a pull request `ios-device-build` and `ios-device-preview.yml` produces a
+Label a pull request `ci:ios-device` and `ios-device-preview.yml` produces a
 signed ad-hoc archive attached to the run, named for the commit it was built
 from. It uploads nowhere: not to Apple, not to any distribution service.
 
@@ -615,7 +675,7 @@ preview itself is tracked on #681.
 
 ### An Android build that installs on a phone
 
-Label a pull request `android-device-build` and `android-device-preview.yml`
+Label a pull request `ci:android-device` and `android-device-preview.yml`
 attaches an installable APK to the run. Android needs no provisioning, so it
 installs on any phone rather than only on registered devices, and it is signed
 with the shared develop key so a new build replaces the last one rather than
@@ -703,7 +763,7 @@ Remote Config, keyed on an `environment` signal the build sets.
 ### Instrumented tests
 
 `android-instrumented-tests.yml` boots an emulator and runs the app module's
-connected tests. It starts from the `android-instrumented-tests` label rather
+connected tests. It starts from the `ci:android-emulator-tests` label rather
 than from every commit, because the runner is macOS and a cold emulator costs
 minutes before the first assertion. `workflow_dispatch` runs it without a pull
 request to carry the label.

@@ -75,6 +75,8 @@ internal fun ChatInputRow(
     onAcceptChatRequest: () -> Unit,
     onDeclineChatRequest: () -> Unit,
     onUnblockUserClick: () -> Unit,
+    onAllowIdentitySigningClick: () -> Unit,
+    onDeclineIdentitySigningClick: () -> Unit,
     onHeightChanged: (Dp) -> Unit,
 ) {
     val density = LocalDensity.current
@@ -144,6 +146,13 @@ internal fun ChatInputRow(
                         onUnblock = onUnblockUserClick
                     )
                 }
+
+                ChatInputUiState.IdentitySigningConsent -> {
+                    IdentitySigningConsentInput(
+                        onAllow = onAllowIdentitySigningClick,
+                        onDecline = onDeclineIdentitySigningClick
+                    )
+                }
             }
         }
     }
@@ -158,7 +167,8 @@ private fun footerBackgroundBrush(state: ChatInputUiState): Brush = when (state)
         )
     )
 
-    is ChatInputUiState.AcceptChatRequest -> SolidColor(PolkadotTheme.colors.bg.surface.container)
+    is ChatInputUiState.AcceptChatRequest,
+    is ChatInputUiState.IdentitySigningConsent -> SolidColor(PolkadotTheme.colors.bg.surface.container)
 
     is ChatInputUiState.Hidden,
     is ChatInputUiState.PeerLeft,
@@ -375,7 +385,9 @@ private fun ChatInputRowPreview() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
-            onUnblockUserClick = {}
+            onUnblockUserClick = {},
+            onAllowIdentitySigningClick = {},
+            onDeclineIdentitySigningClick = {}
         )
     }
 }
@@ -412,7 +424,9 @@ private fun ChatInputRowPreview_WithReply() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
-            onUnblockUserClick = {}
+            onUnblockUserClick = {},
+            onAllowIdentitySigningClick = {},
+            onDeclineIdentitySigningClick = {}
         )
     }
 }
@@ -442,7 +456,9 @@ private fun ChatInputRowPreview_WithEdit() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
-            onUnblockUserClick = {}
+            onUnblockUserClick = {},
+            onAllowIdentitySigningClick = {},
+            onDeclineIdentitySigningClick = {}
         )
     }
 }
@@ -466,7 +482,9 @@ private fun ChatInputRowPreview_InviteToChat() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
-            onUnblockUserClick = {}
+            onUnblockUserClick = {},
+            onAllowIdentitySigningClick = {},
+            onDeclineIdentitySigningClick = {}
         )
     }
 }
@@ -487,7 +505,9 @@ private fun ChatInputRowPreview_AcceptRequest() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
-            onUnblockUserClick = {}
+            onUnblockUserClick = {},
+            onAllowIdentitySigningClick = {},
+            onDeclineIdentitySigningClick = {}
         )
     }
 }
@@ -508,7 +528,9 @@ private fun ChatInputRowPreview_WaitingForAccept() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
-            onUnblockUserClick = {}
+            onUnblockUserClick = {},
+            onAllowIdentitySigningClick = {},
+            onDeclineIdentitySigningClick = {}
         )
     }
 }
@@ -529,7 +551,9 @@ private fun ChatInputRowPreview_PeerLeft() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
-            onUnblockUserClick = {}
+            onUnblockUserClick = {},
+            onAllowIdentitySigningClick = {},
+            onDeclineIdentitySigningClick = {}
         )
     }
 }
@@ -550,6 +574,8 @@ private fun ChatInputRowPreview_UnblockUser() {
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
             onUnblockUserClick = {},
+            onAllowIdentitySigningClick = {},
+            onDeclineIdentitySigningClick = {},
             onAttachClick = {}
         )
     }
