@@ -21,9 +21,9 @@ truapi_macros::versioned_type! {
 	pub enum HostNftPurseCreateReceiveKeyRequest { V1 => v01::HostNftPurseCreateReceiveKeyRequest }
 	pub enum HostNftPurseCreateReceiveKeyResponse { V1 => v01::HostNftPurseCreateReceiveKeyResponse }
 	pub enum HostNftPurseCreateReceiveKeyError { V1 => v01::NftPurseCreateReceiveKeyError }
-	pub enum HostNftPurseListenForPaymentRequest { V1 => v01::HostNftPurseListenForPaymentRequest }
-	pub enum HostNftPurseListenForPaymentItem { V1 => v01::HostNftPurseListenForPaymentItem }
-	pub enum HostNftPurseListenForPaymentError { V1 => v01::NftPurseListenForPaymentError }
+	pub enum HostNftPurseListenOneTimePaymentRequest { V1 => v01::HostNftPurseListenOneTimePaymentRequest }
+	pub enum HostNftPurseListenOneTimePaymentItem { V1 => v01::HostNftPurseListenOneTimePaymentItem }
+	pub enum HostNftPurseListenOneTimePaymentError { V1 => v01::NftPurseListenOneTimePaymentError }
 	pub enum HostNftPurseCreateChequeRequest { V1 => v01::HostNftPurseCreateChequeRequest }
 	pub enum HostNftPurseCreateChequeResponse { V1 => v01::HostNftPurseCreateChequeResponse }
 	pub enum HostNftPurseCreateChequeError { V1 => v01::NftPurseCreateChequeError }
@@ -45,4 +45,7 @@ truapi_macros::versioned_type! {
 	pub enum HostNftPurseStaticReceiveKeyRequest { V1 => v01::HostNftPurseStaticReceiveKeyRequest }
 	pub enum HostNftPurseStaticReceiveKeyResponse { V1 => v01::HostNftPurseStaticReceiveKeyResponse }
 	pub enum HostNftPurseStaticReceiveKeyError { V1 => v01::NftPurseStaticReceiveKeyError }
+	pub enum HostNftPurseListenPaymentInboxRequest { V1 => v01::HostNftPurseListenPaymentInboxRequest }
+	pub enum HostNftPurseListenPaymentInboxItem { V1 => v01::HostNftPurseListenPaymentInboxItem }
+	pub enum HostNftPurseListenPaymentInboxError { V1 => v01::NftPurseListenPaymentInboxError }
 }

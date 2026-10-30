@@ -10,7 +10,7 @@
 
 use serde_json::Value;
 
-use super::StatementStoreParseError;
+use super::{StatementStoreParseError, TopicFilter};
 
 /// Statement-store RPC method used to open a topic subscription.
 pub const SUBSCRIBE_STATEMENT_METHOD: &str = "statement_subscribeStatement";
@@ -41,6 +41,34 @@ pub enum TopicFilterKind {
 	MatchAll,
 	/// Accept any listed topic match.
 	MatchAny,
+}
+
+/// The filter kind and topics of `filter`. Fails when it lists more topics
+/// than the statement-store RPC accepts.
+pub fn validated_topic_filter(
+	filter: TopicFilter,
+) -> Result<(TopicFilterKind, Vec<[u8; 32]>), String> {
+	match filter {
+		TopicFilter::MatchAll(topics) => {
+			if topics.len() > MAX_MATCH_ALL_TOPICS {
+				return Err(format!(
+					"MatchAll has {} topics, maximum is {}",
+					topics.len(),
+					MAX_MATCH_ALL_TOPICS
+				));
+			}
+			Ok((TopicFilterKind::MatchAll, topics))
+		},
+		TopicFilter::MatchAny(topics) => {
+			if topics.len() > MAX_MATCH_ANY_TOPICS {
+				let topic_count = topics.len();
+				return Err(format!(
+					"MatchAny has {topic_count} topics, maximum is {MAX_MATCH_ANY_TOPICS}"
+				));
+			}
+			Ok((TopicFilterKind::MatchAny, topics))
+		},
+	}
 }
 
 /// Parse a statement-store subscription result value.

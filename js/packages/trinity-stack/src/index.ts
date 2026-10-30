@@ -9,6 +9,8 @@ import type {
   SpecFile,
   Verified,
 } from "../wasm/trinity_stack.js";
+import { type Fetch, fetchServed } from "./fetch.js";
+import { unixSeconds } from "./time.js";
 import { wasm } from "./wasm.js";
 
 // Generated from the crate's types by the wasm build.
@@ -18,6 +20,7 @@ export type {
   Block,
   Chain,
   Coinage,
+  CurrentStack,
   Descriptor,
   Fork,
   ForkSource,
@@ -154,7 +157,7 @@ export async function publish(
   return { document, descriptor: parse(plain).descriptor, state };
 }
 
-/** Where a reader keeps the last accepted document of each stack. */
+/** Where a reader keeps what it knows of each stack, under keys derived from its `stackId`. */
 export interface Store {
   get(id: string): Uint8Array | undefined | Promise<Uint8Array | undefined>;
   set(id: string, document: Uint8Array): void | Promise<void>;
@@ -194,11 +197,11 @@ export async function read(
   return accepted;
 }
 
-/** The part of `fetch` that `read` uses. */
-export type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
-
-/** How long `read` waits for a descriptor, body included, before treating it as unreachable. */
-export const DEFAULT_TIMEOUT_MS = 10_000;
+export {
+  DEFAULT_TIMEOUT_MS,
+  type Fetch,
+  MAX_DESCRIPTOR_BYTES,
+} from "./fetch.js";
 
 /**
  * The bytes a descriptor URL serves, or undefined when it is unreachable: a failed request, a
@@ -217,67 +220,5 @@ export async function fetchDescriptor(
   url: string,
   options: { fetch?: Fetch; timeoutMs?: number } = {},
 ): Promise<Uint8Array | undefined> {
-  wasm.stackId({ url });
-  const controller = new AbortController();
-  const timer = setTimeout(
-    () => controller.abort(),
-    options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-  );
-  try {
-    const response = await (options.fetch ?? fetch)(url, {
-      cache: "no-store",
-      redirect: "error",
-      signal: controller.signal,
-    });
-    const bytes = response.ok ? await readCapped(response) : undefined;
-    if (!bytes) controller.abort();
-    return bytes;
-  } catch (error) {
-    const aborted =
-      error instanceof DOMException &&
-      (error.name === "AbortError" || error.name === "TimeoutError");
-    if (!options.fetch || error instanceof TypeError || aborted)
-      return undefined;
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/** The largest descriptor `fetchDescriptor` reads. A descriptor is a few kilobytes. */
-export const MAX_DESCRIPTOR_BYTES = 1024 * 1024;
-
-// Reads through `getReader`: Safari before 27 cannot iterate a `ReadableStream` with `for await`.
-async function readCapped(response: Response): Promise<Uint8Array | undefined> {
-  if (Number(response.headers.get("content-length")) > MAX_DESCRIPTOR_BYTES)
-    return undefined;
-  if (!response.body) return new Uint8Array(await response.arrayBuffer());
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    length += value.length;
-    if (length > MAX_DESCRIPTOR_BYTES) {
-      await reader.cancel();
-      return undefined;
-    }
-    chunks.push(value);
-  }
-  const bytes = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return bytes;
-}
-
-/** Seconds since the epoch; an invalid `Date` would otherwise turn off staleness and expiry. */
-function unixSeconds(date: Date): number {
-  const milliseconds = date.getTime();
-  if (Number.isNaN(milliseconds))
-    throw new RangeError("now is an invalid Date");
-  return Math.floor(milliseconds / 1000);
+  return (await fetchServed(url, options)).document;
 }
