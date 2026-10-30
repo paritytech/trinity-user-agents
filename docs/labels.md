@@ -103,7 +103,8 @@ Each starts as soon as it is added and follows the branch from then on. The [REA
 
 | Label | Runs |
 | --- | --- |
-| `ci:ios-simulator` | Builds the iOS app, runs its tests and attaches a simulator build |
+| `ci:ios-simulator` | Builds the iOS app for the simulator and attaches it |
+| `ci:ios-tests` | Runs the iOS app's tests on a draft or a pull request that does not target main, which skip them otherwise |
 | `ci:ios-device` | Attaches a signed iOS build for registered devices |
 | `ci:android-device` | Attaches an Android APK for any phone |
 | `ci:android-emulator-tests` | Runs the Android instrumented tests on an emulator |

@@ -165,10 +165,15 @@ labels:
   # it is added and follows the branch from then on.
   - name: "ci:ios-simulator"
     color: "c5def5"
-    description: "Build the iOS app, run its tests and attach a simulator build"
+    description: "Build the iOS app for the simulator and attach it"
     target: prs
     addedBy: humans
     previously: [ios-simulator-build]
+  - name: "ci:ios-tests"
+    color: "c5def5"
+    description: "Run the iOS app's tests on a draft or a pull request that does not target main"
+    target: prs
+    addedBy: humans
   - name: "ci:ios-device"
     color: "c5def5"
     description: "Attach a signed iOS build that installs on a registered device"

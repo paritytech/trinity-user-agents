@@ -1,7 +1,8 @@
 name: CI
 
 on:
-  # ready_for_review starts the iOS app a draft skipped.
+  # ready_for_review reruns CI on the same commit, which is how a draft gets
+  # the iOS app it skipped.
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
@@ -464,9 +465,10 @@ jobs:
   # Not for a draft, or for a pull request into another pull request's branch,
   # which cannot reach main as it is: a stack would otherwise hold a Mac per
   # layer on every push. It runs once the pull request is ready and targets
-  # main or a release branch, and the ci:ios-simulator label runs it before
-  # then. It also waits for the Rust workspace, the gate that fails most, so
-  # a pull request that fails on Linux never takes a Mac.
+  # main or a release branch, and on-label.yml runs it before then for a pull
+  # request labelled ci:ios-tests. It also waits for the Rust workspace, the
+  # gate that fails most, so a pull request that fails on Linux never takes a
+  # Mac.
   ios-app:
     name: iOS app
     needs: [changes, rust]
