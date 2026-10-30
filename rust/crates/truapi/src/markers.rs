@@ -224,67 +224,91 @@ pub const WS_BRIDGE_LISTENER_LOST: Marker =
 pub const WS_BRIDGE_RELISTEN_FAILED: Marker =
 	export("truapi.ws_bridge.relisten_failed", Severity::Error);
 
-/// Every marker the core addresses to a host.
+/// Every marker the core addresses to a host, ordered by target.
 ///
 /// A host reads this once and matches a target exactly. Anything missing is
 /// [`MarkerClass::Local`], so a marker added later stays on the device until
-/// it is listed here.
+/// it is listed here. The order is what lets [`class_of`] bisect, which it is
+/// asked to do once per event this crate raises.
 pub const MARKERS: &[Marker] = &[
-	CORE_STARTED,
 	CHAIN_FOLLOW_BUDGET_REACHED,
-	TRACING_WARN,
-	TRACING_ERROR,
-	NATIVE_NAVIGATE_TO,
-	NATIVE_PUSH_NOTIFICATION,
+	CORE_STARTED,
+	NATIVE_AUTH_STATE_CHANGED,
 	NATIVE_CANCEL_NOTIFICATION,
+	NATIVE_CHAIN_CLOSE_FAILED,
+	NATIVE_CHAIN_CLOSING,
+	NATIVE_CHAIN_CONNECTED,
+	NATIVE_CHAIN_SEND_FAILED,
 	NATIVE_CONFIRM_PERMISSION,
 	NATIVE_CONFIRM_USER_ACTION,
 	NATIVE_DEVICE_PERMISSION,
 	NATIVE_DEVICE_PERMISSION_STATUS,
-	NATIVE_REMOTE_PERMISSION,
 	NATIVE_FEATURE_SUPPORTED,
+	NATIVE_NAVIGATE_TO,
+	NATIVE_PUSH_NOTIFICATION,
+	NATIVE_REMOTE_PERMISSION,
+	NATIVE_SET_EXPANDED_CARD_FACE_SHOWN,
 	NATIVE_SUPPORTED_CHAINS,
 	NATIVE_TRANSACTION_EXTENSION_VERSIONS,
-	NATIVE_AUTH_STATE_CHANGED,
-	NATIVE_SET_EXPANDED_CARD_FACE_SHOWN,
-	NATIVE_CHAIN_CONNECTED,
-	NATIVE_CHAIN_CLOSING,
-	NATIVE_CHAIN_CLOSE_FAILED,
-	NATIVE_CHAIN_SEND_FAILED,
 	NATIVE_CHAIN_RESPONSES_REUSED,
 	NATIVE_HOST_RUNTIME_BOOT,
 	NATIVE_PREIMAGE_FOUND,
 	NATIVE_PREIMAGE_RETRYING,
-	WS_BRIDGE_STARTED,
-	WS_BRIDGE_SHUTDOWN,
-	WS_BRIDGE_CONNECTION_OPEN,
-	WS_BRIDGE_CONNECTION_CLOSED,
-	WS_BRIDGE_RELISTENED,
+	TRACING_ERROR,
+	TRACING_WARN,
+	WS_BRIDGE_ACCEPT_ERROR,
 	WS_BRIDGE_BIND_PORT_IGNORED,
-	WS_BRIDGE_TEXT_FRAME_IGNORED,
+	WS_BRIDGE_CONNECTION_CLOSED,
 	WS_BRIDGE_CONNECTION_LIMIT_EXECUTION,
 	WS_BRIDGE_CONNECTION_LIMIT_TOTAL,
-	WS_BRIDGE_HANDSHAKE_BACKLOG_EVICTED,
-	WS_BRIDGE_HANDSHAKE_TIMEOUT,
-	WS_BRIDGE_REJECT_UNAUTHORIZED,
+	WS_BRIDGE_CONNECTION_OPEN,
 	WS_BRIDGE_CONNECTION_REVOKED_DURING_SETUP,
-	WS_BRIDGE_ACCEPT_ERROR,
 	WS_BRIDGE_FRAME_ERROR,
+	WS_BRIDGE_HANDSHAKE_BACKLOG_EVICTED,
 	WS_BRIDGE_HANDSHAKE_ERROR,
-	WS_BRIDGE_READ_ERROR,
-	WS_BRIDGE_SEND_ERROR,
+	WS_BRIDGE_HANDSHAKE_TIMEOUT,
 	WS_BRIDGE_LISTENER_LOST,
+	WS_BRIDGE_READ_ERROR,
+	WS_BRIDGE_REJECT_UNAUTHORIZED,
 	WS_BRIDGE_RELISTEN_FAILED,
+	WS_BRIDGE_RELISTENED,
+	WS_BRIDGE_SEND_ERROR,
+	WS_BRIDGE_SHUTDOWN,
+	WS_BRIDGE_STARTED,
+	WS_BRIDGE_TEXT_FRAME_IGNORED,
 ];
 
 /// The class of `target`, or `None` when the table does not list it.
 pub fn class_of(target: &str) -> Option<MarkerClass> {
-	MARKERS.iter().find(|marker| marker.target == target).map(|marker| marker.class)
+	MARKERS
+		.binary_search_by_key(&target, |marker| marker.target)
+		.ok()
+		.map(|at| MARKERS[at].class)
 }
 
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn the_table_is_ordered_so_the_lookup_can_bisect() {
+		let targets: Vec<_> = MARKERS.iter().map(|marker| marker.target).collect();
+		let mut sorted = targets.clone();
+		sorted.sort_unstable();
+		assert_eq!(targets, sorted, "MARKERS is out of order, so class_of would miss entries");
+	}
+
+	#[test]
+	fn every_entry_is_reachable_through_the_lookup() {
+		for marker in MARKERS {
+			assert_eq!(
+				class_of(marker.target),
+				Some(marker.class),
+				"{} is unreachable",
+				marker.target
+			);
+		}
+	}
 
 	#[test]
 	fn every_target_is_listed_once() {

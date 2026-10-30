@@ -7,6 +7,7 @@ use std::{
 };
 
 use crate::{
+	logging::{HOST_SINK_DETAIL_MAX_CHARS, truncate_to_chars},
 	markers,
 	platform::{
 		CoreAdmin, PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductContext,
@@ -1099,6 +1100,22 @@ impl NativeProductExecution {
 }
 
 #[uniffi::export]
+/// Hands one bridge line to `callbacks`, if the table lists its marker.
+///
+/// The bridge raises its markers straight at the host rather than through the
+/// tracing layer, so the table check and the detail cap the layer applies are
+/// applied here instead. An unlisted marker is dropped, because nothing
+/// downstream knows what its detail carries.
+pub(crate) fn forward_bridge_line(callbacks: &dyn HostCallbacks, marker: &str, detail: &str) {
+	if markers::class_of(marker).is_none() {
+		return;
+	}
+	callbacks.on_core_log(
+		marker.to_string(),
+		truncate_to_chars(detail, HOST_SINK_DETAIL_MAX_CHARS).to_string(),
+	);
+}
+
 impl NativeProductExecution {
 	/// Register this execution with its own token on the host's shared listener.
 	/// `bind_port` applies only when the listener first starts.
@@ -1113,7 +1130,7 @@ impl NativeProductExecution {
 		let logger: BridgeLogger = {
 			let callbacks = self.callbacks.clone();
 			Arc::new(move |marker: &str, detail: &str| {
-				callbacks.on_core_log(marker.to_string(), detail.to_string());
+				forward_bridge_line(callbacks.as_ref(), marker, detail);
 			})
 		};
 		let runtime = self.runtime.clone();
