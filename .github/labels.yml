@@ -171,7 +171,7 @@ labels:
     previously: [ios-simulator-build]
   - name: "ci:ios-tests"
     color: "c5def5"
-    description: "Run the iOS app's tests on a draft or a pull request that does not target main"
+    description: "Run the iOS app's tests on a draft or a pull request into neither main nor a release branch"
     target: prs
     addedBy: humans
   - name: "ci:ios-device"
