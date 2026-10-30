@@ -3,8 +3,7 @@
 A funding provider moves money into or out of a user's CASH balance: a card or bank payment, or a crypto deposit,
 becomes CASH (inbound), or CASH becomes a payout to the user's bank, card or wallet (outbound). This guide is for teams
 building one. The [RFC](../rfcs/funding-modality.md) is the full contract, and the
-[design doc](../design/funding-modality.md) shows what the user sees; `products/fundtest` is a working provider to copy
-from.
+[design doc](../design/funding-modality.md) shows what the user sees.
 
 ## What you build
 
@@ -179,12 +178,13 @@ reporting holds the session for good.
 
 ## 9. Test it
 
-- Read `products/fundtest`: its Worker runs every flow above, and amounts ending in particular cents choose a failure, a
-  refund, a retried payout or a crash at each kill point. Its `test/resume.test.ts` runs sessions against a fake host
-  that orders reports as the core does.
 - `make e2e-funding-cli` runs the funding battery against a scripted host.
-- A testnet build of the iOS or Android app bundles providers from a local checkout
-  (`hosts/ios/Runscripts/bundle-funding-provider.sh`, `hosts/android/scripts/bundle-funding-provider.sh`).
+- Run your sessions against a fake host that takes reports in the core's order and refuses the rest, so an out-of-order
+  report fails your tests rather than a user's session.
+- Stop the Worker at each step, after the external action and before the next save, and check that the resumed session
+  finishes and moves no funds twice.
+- Give yourself a way to choose each failure on testnet, such as a declined payment, a refund, a retried payout or a
+  late arrival, so every ending can be run on a device.
 
 ## Checklist
 
