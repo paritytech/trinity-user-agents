@@ -804,17 +804,23 @@ impl SigningHostRuntime {
 	}
 
 	/// Install the feed the host draws its funding screens from: sessions,
-	/// history, whether funding is in progress, and the overlay's options.
+	/// whether funding is in progress, and the overlay's options.
 	/// Install it before [`Self::set_funding_platform`], which resumes
 	/// funding. Set-once; returns whether this call installed it.
 	pub fn set_funding_feed(&self, feed: Arc<dyn crate::runtime::FundingFeed>) -> bool {
 		self.services.funding().install_feed(feed)
 	}
 
-	/// Record that the host wrote ended session `intent` into its own
-	/// history. Until it does, the session is handed over again through
-	/// `funding_session_changed` each time funding resumes; the host reads
-	/// the full record with `funding_session`.
+	/// Every ended funding session, as summaries newest first: the ones
+	/// held in full and the ones compacted, which are kept for good. The
+	/// host reads it whenever it shows history.
+	pub fn funding_history(&self) -> Vec<crate::host_logic::funding::FundingSessionSummary> {
+		self.services.funding().history()
+	}
+
+	/// Record that the host told the user how ended session `intent` went.
+	/// Until it does, the session is handed over again through
+	/// `funding_session_changed` each time funding resumes.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.acknowledge_funding_session"))]
 	pub async fn acknowledge_funding_session(
 		&self,

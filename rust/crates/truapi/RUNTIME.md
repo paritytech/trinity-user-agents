@@ -305,7 +305,11 @@ session/SSO crypto, key derivation, and permission policy, while all I/O
 
 `host_logic::worker::WorkerLedger` holds the reference count per product
 worker from the Worker Lifecycle RFC, one per host in `RuntimeServices`. Both
-bindings expose it as `acquire_worker` and `release_worker`. Every `Start` or
+bindings expose it as `acquire_worker` and `release_worker`, and the host
+reports a worker that stopped without being asked, because it crashed or the
+system killed it, with `worker_exited`: while references remain the ledger
+requests `Start` again, and the core hands the restarted worker its funding
+sessions once it connects. Every `Start` or
 `Stop` the counts produce is requested through the host's
 `request_worker_transition` callback, in the order the ledger produced it and one
 at a time, whether the host asked for the transition or the core took the
@@ -468,37 +472,37 @@ for raw bytes signed inside the `<Bytes>` watermark.
   `set_funding_providers`, `get_funding_quote`, `stop_funding_quotes`,
   `select_funding_options`, `select_funding_provider`, `cancel_funding`,
   `confirm_funding_cancel` and `acknowledge_funding_session`. Each of these
-  reports something the user did or the host owns; the host reads nothing
-  back. Everything it draws, the core pushes through the callbacks, the
+  reports something the user did or the host owns. The host reads back only
+  `funding_history`, whenever it shows history. Everything else it draws,
+  the core pushes through the callbacks, the
   `FundingFeed` a Rust host installs with `set_funding_feed` before its
   funding platform:
   `funding_session_changed` carries a session's status, the session as the
   core holds it (choice, cancel offer, amounts) and its progress;
   `funding_options_changed` carries what the overlay offers;
-  `funding_history` and `funding_in_progress_changed` come once each time
-  funding resumes, and the latter again whenever it changes, so the host
+  `funding_in_progress_changed` comes once each time funding resumes and
+  again whenever it changes, so the host
   keeps a launch marker that starts funding at its next launch. Amounts
   cross the FFI as decimal strings.
   Sessions are stored in the core database, one row each; a row the core
   cannot read is skipped and left in place.
-  The host owns the funding history. A session is stored only once the user
+  The core owns the funding history. A session is stored only once the user
   starts it in the overlay. When funding resumes, every session in flight
-  and every ended one the host has not recorded comes through
+  and every ended one the host has not acknowledged comes through
   `funding_session_changed` again. An ended
   session is handed to the host through `funding_session_changed` each time
-  funding resumes until the host calls `acknowledge_funding_session`, so the
-  host's history writes every outcome once. A released withdrawal whose
+  funding resumes until the host calls `acknowledge_funding_session` once it
+  has told the user how it ended. A released withdrawal whose
   provider still owes its payout outcome, or the refund of a failed payout,
-  is kept and served whether or not the host recorded it, and is handed over
-  again when the provider reports. Of the rest it recorded, the core keeps
+  is kept and served whether or not the host acknowledged it, and is handed
+  over again when the provider reports. Of the rest it acknowledged, the core keeps
   the newest 64 per product in full and compacts older ones into the
   session pack (intent, owner, direction, amounts, outcome and times), which
   it never trims, so a product watching a compacted session still gets its
   terminal item. It keeps the 200 newest ended sessions the host has not
-  recorded in full too, and compacts older ones the same way.
-  `funding_history` hands over every ended session the host recorded or the
-  core compacted, as a summary newest first, so a host that lost its history
-  rebuilds it from there. A product opens a session with
+  acknowledged in full too, and compacts older ones the same way.
+  `funding_history()` returns every ended session, held in full or
+  compacted, as a summary newest first. A product opens a session with
   `request({ direction, amount? })`, which answers at once with its `intent`,
   and watches it with `statusSubscribe({ intent })`; another product's
   session reads as `NotFound`. The overlay runs on a task of its own, so no
@@ -643,8 +647,11 @@ for raw bytes signed inside the `<Bytes>` watermark.
   never answered; the worker keeps its own state in its storage. The worker
   calls the core: `report` stores each update on the session (only from the
   assigned provider, only forward; `Details` may come at any point while the
-  session is open), and `presentFrame` asks the host to
-  show one of its screens through `present_provider_frame`. The core holds the
+  session is open), `presentFrame` asks the host to
+  show one of its screens through `present_provider_frame`, and `closeFrame`
+  closes it through `close_provider_frame` once the provider is done with it,
+  such as a card payment the user made: the open `presentFrame` answers
+  `Closed` and the host shows the session sheet in its place. The core holds the
   provider's worker while a session is assigned and open, and stores an
   assigned session from then on, even while its overlay is up. It records each
   top-up (inbound) or payment request (outbound) the worker starts while

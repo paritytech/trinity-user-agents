@@ -2865,9 +2865,9 @@ struct RecordingFundingPlatform {
 	presented: Mutex<Vec<(Option<ProductId>, crate::platform::FundingPresentation)>>,
 	announced: Mutex<Vec<String>>,
 	framed: Mutex<Vec<truapi::latest::FundingFrameTarget>>,
+	closed: Mutex<Vec<String>>,
 	country: Option<String>,
 	in_progress: Mutex<Vec<bool>>,
-	history: Mutex<Vec<Vec<crate::host_logic::funding::FundingSessionSummary>>>,
 }
 
 impl RecordingFundingPlatform {
@@ -2877,9 +2877,9 @@ impl RecordingFundingPlatform {
 			presented: Mutex::new(Vec::new()),
 			announced: Mutex::new(Vec::new()),
 			framed: Mutex::new(Vec::new()),
+			closed: Mutex::new(Vec::new()),
 			country: None,
 			in_progress: Mutex::new(Vec::new()),
-			history: Mutex::new(Vec::new()),
 		})
 	}
 
@@ -2916,6 +2916,10 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
 
+	fn close_provider_frame(&self, _provider: &ProductContext, intent: String) {
+		self.closed.lock().expect("closed mutex poisoned").push(intent);
+	}
+
 	async fn detected_country(&self) -> Option<String> {
 		self.country.clone()
 	}
@@ -2937,10 +2941,6 @@ impl crate::runtime::FundingFeed for RecordingFundingPlatform {
 		_session: Option<crate::host_logic::funding::FundingSession>,
 		_progress: Option<crate::host_logic::funding::FundingProgress>,
 	) {
-	}
-
-	fn funding_history(&self, history: Vec<crate::host_logic::funding::FundingSessionSummary>) {
-		self.history.lock().expect("history mutex poisoned").push(history);
 	}
 
 	fn funding_in_progress_changed(&self, in_progress: bool) {
@@ -3125,6 +3125,8 @@ impl crate::platform::FundingPlatform for ObservingFundingPlatform {
 	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
+
+	fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
 }
 
 // An app killed while the overlay is up must not come back to a session the
@@ -3177,6 +3179,8 @@ impl crate::platform::FundingPlatform for StorageFailingFundingPlatform {
 	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
+
+	fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
 }
 
 // A session the user left the overlay without, or that could not be stored
@@ -3426,6 +3430,8 @@ impl crate::platform::FundingPlatform for GatedFundingPlatform {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
 
+	fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
+
 	fn funding_session_changed(
 		&self,
 		_intent: String,
@@ -3444,8 +3450,6 @@ impl crate::runtime::FundingFeed for GatedFundingPlatform {
 		_progress: Option<crate::host_logic::funding::FundingProgress>,
 	) {
 	}
-
-	fn funding_history(&self, _history: Vec<crate::host_logic::funding::FundingSessionSummary>) {}
 
 	fn funding_in_progress_changed(&self, _in_progress: bool) {}
 
@@ -9242,8 +9246,8 @@ fn wait_for_stage(
 }
 
 // When funding resumes, the host hears of each session a provider still
-// works on, that one still does, and the history it can rebuild from, so it
-// keeps what it draws and its launch marker without asking.
+// works on and that one still does, so it keeps what it draws and its
+// launch marker without asking.
 #[test]
 fn funding_resumes_by_telling_the_host_what_a_provider_still_works_on() {
 	let db = crate::store::open_memory_core_db();
@@ -9270,7 +9274,7 @@ fn funding_resumes_by_telling_the_host_what_a_provider_still_works_on() {
 	assert!(relaunched.funding().install_feed(host.clone()));
 	assert!(relaunched.install_funding_platform(host.clone()));
 	wait_until(
-		|| !host.history.lock().expect("history mutex poisoned").is_empty(),
+		|| !host.in_progress.lock().expect("in-progress mutex poisoned").is_empty(),
 		"funding resumed",
 	);
 
@@ -9278,9 +9282,8 @@ fn funding_resumes_by_telling_the_host_what_a_provider_still_works_on() {
 		(
 			host.announced.lock().expect("announced mutex poisoned").clone(),
 			host.in_progress.lock().expect("in-progress mutex poisoned").clone(),
-			host.history.lock().expect("history mutex poisoned").clone(),
 		),
-		(vec![intent], vec![true], vec![Vec::new()])
+		(vec![intent], vec![true])
 	);
 }
 
@@ -9364,6 +9367,96 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 			assignment(None, Some(crediting)),
 			Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 1_000 }),
 		)
+	);
+}
+
+// A provider closes the screen it showed for a session it serves, so the
+// host shows the session in its place; a session it does not serve is
+// `NotFound` and the host hears nothing.
+#[test]
+fn a_provider_closes_its_screen_for_a_session_it_serves() {
+	let services = funding_services();
+	let host = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(host.clone()));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot", None))
+			.expect("selected")
+	);
+	let worker = provider_worker(&services, "ramp.dot");
+	let close = |intent: &str| {
+		futures::executor::block_on(truapi::api::FundingProvider::close_frame(
+			&worker,
+			&CallContext::default(),
+			truapi::versioned::funding_provider::HostFundingCloseFrameRequest::V1(
+				v01::HostFundingCloseFrameRequest { intent: intent.to_string() },
+			),
+		))
+		.map(|_| ())
+	};
+
+	let served = close(&intent);
+	let unserved = close("fs_someone_else");
+
+	assert_eq!(
+		(served, unserved, host.closed.lock().expect("closed mutex poisoned").clone()),
+		(
+			Ok(()),
+			Err(CallError::Domain(
+				truapi::versioned::funding_provider::HostFundingCloseFrameError::V1(
+					v01::HostFundingCloseFrameError::NotFound
+				)
+			)),
+			vec![intent]
+		)
+	);
+}
+
+// A provider's worker that crashes mid-session is started again while the
+// session still holds it, and the restarted worker is handed the session
+// once it connects.
+#[test]
+fn a_provider_worker_that_crashes_mid_session_is_started_and_assigned_again() {
+	use crate::host_logic::worker::WorkerTransition::Start;
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let workers = Arc::new(DemandRecorder::default());
+	assert!(services.worker_ledger.install_worker_controller(workers.clone()));
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot", None))
+			.expect("selected")
+	);
+	let crashed = connect_provider(&services, "ramp.dot");
+	let assigned = crashed.calls(1);
+	let crashed: Arc<dyn crate::runtime::FundingProviderLink> = crashed;
+	services.funding().unlink("ramp.dot", &crashed);
+	let before_crash = workers.seen().len();
+
+	services.worker_ledger.exited(&ProductId::for_test("ramp.dot"));
+	let restarted = connect_provider(&services, "ramp.dot").calls(1);
+
+	assert_eq!(
+		(workers.seen().split_off(before_crash), restarted),
+		(vec![("ramp.dot".to_string(), Start)], assigned)
 	);
 }
 
@@ -10579,6 +10672,8 @@ impl crate::platform::FundingPlatform for SelectThenCloseFundingPlatform {
 	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
+
+	fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
 }
 
 // A provider chosen in the overlay may start work before the overlay closes,

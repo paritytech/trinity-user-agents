@@ -498,6 +498,12 @@ pub trait NativeFundingCallbacks: Send + Sync {
 		target: v01::FundingFrameTarget,
 	) -> Result<v01::FundingFrameOutcome, HostRejection>;
 
+	/// Close the frame `present_provider_frame` shows for provider
+	/// `provider_id`'s session `intent`, answering that call `Closed`, and
+	/// show the session sheet in its place. Does nothing when no frame is
+	/// open for it.
+	fn close_provider_frame(&self, provider_id: String, intent: String);
+
 	/// The country the user is likely in, as an ISO 3166-1 alpha-2 code:
 	/// the device's coarse location when already permitted, then its SIM or
 	/// network country, then its locale's region. Never asks for a
@@ -518,11 +524,6 @@ pub trait NativeFundingCallbacks: Send + Sync {
 		session: Option<crate::host_logic::funding::FundingSession>,
 		progress: Option<crate::host_logic::funding::FundingProgress>,
 	);
-
-	/// Every ended session the host recorded or the core compacted, as
-	/// summaries newest first, once each time funding resumes, so the host
-	/// rebuilds its own history when that was lost.
-	fn funding_history(&self, history: Vec<crate::host_logic::funding::FundingSessionSummary>);
 
 	/// Whether a provider still works on any session: once funding resumes,
 	/// and again whenever it changes. The host keeps it to start funding at

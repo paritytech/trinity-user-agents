@@ -3289,17 +3289,19 @@ fn screening_normalizes_and_trims() {
 	assert!(screen_pocket_card_id("   ".to_string()).is_err());
 }
 
+/// A session change as the core pushed it: the intent, the session and its
+/// progress.
+type PushedChange = (
+	String,
+	Option<crate::host_logic::funding::FundingSession>,
+	Option<crate::host_logic::funding::FundingProgress>,
+);
+
 /// A native funding overlay the user starts at once, recording what the
 /// core hands it.
 #[derive(Default)]
 struct RecordingNativeFunding {
-	changes: Mutex<
-		Vec<(
-			String,
-			Option<crate::host_logic::funding::FundingSession>,
-			Option<crate::host_logic::funding::FundingProgress>,
-		)>,
-	>,
+	changes: Mutex<Vec<PushedChange>>,
 	/// The intents whose options the overlay held when it was shown.
 	options_before_shown: Mutex<Vec<String>>,
 	options: Mutex<Vec<String>>,
@@ -3329,6 +3331,8 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 		Ok(v01::FundingFrameOutcome::Closed)
 	}
 
+	fn close_provider_frame(&self, _provider_id: String, _intent: String) {}
+
 	fn funding_session_changed(
 		&self,
 		intent: String,
@@ -3341,8 +3345,6 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 			.expect("changes mutex poisoned")
 			.push((intent, session, progress));
 	}
-
-	fn funding_history(&self, _history: Vec<crate::host_logic::funding::FundingSessionSummary>) {}
 
 	fn funding_in_progress_changed(&self, in_progress: bool) {
 		self.in_progress.lock().expect("in-progress mutex poisoned").push(in_progress);

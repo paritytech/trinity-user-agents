@@ -21,4 +21,7 @@ truapi_macros::versioned_type! {
 	pub enum HostFundingPresentFrameRequest { V1 => v01::HostFundingPresentFrameRequest }
 	pub enum HostFundingPresentFrameResponse { V1 => v01::HostFundingPresentFrameResponse }
 	pub enum HostFundingPresentFrameError { V1 => v01::HostFundingPresentFrameError }
+	pub enum HostFundingCloseFrameRequest { V1 => v01::HostFundingCloseFrameRequest }
+	pub enum HostFundingCloseFrameResponse { V1 }
+	pub enum HostFundingCloseFrameError { V1 => v01::HostFundingCloseFrameError }
 }
