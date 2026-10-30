@@ -126,6 +126,8 @@ class ChatFeedInteractorProductRoomTest {
         attachmentMetaBuilder = mockk(relaxed = true),
         attachmentFileStorage = mockk(relaxed = true),
         hopNodeUrlProvider = mockk(relaxed = true),
+        chatSigners = mockk(relaxed = true),
+        identitySigningConsent = mockk(relaxed = true),
         roomSourceContextFactory = roomSourceContextFactory,
     )
 }
