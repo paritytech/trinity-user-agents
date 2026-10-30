@@ -1,4 +1,4 @@
-//! Schema version 6: the secrets products keep through `SecretsStorage`.
+//! Schema version 7: the secrets products keep through `SecretsStorage`.
 
 use rusqlite_migration::M;
 

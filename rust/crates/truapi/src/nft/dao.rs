@@ -6,6 +6,7 @@ use futures::stream::BoxStream;
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, named_params, types::Value};
 
 use super::{
+	handoff::HandoffTag,
 	holding::HeldItem,
 	keys::{ItemIndex, ItemKey, ItemSlot},
 	purse::{PurseId, PurseRecord, PurseTag},
@@ -174,6 +175,30 @@ pub fn insert_inputs(
 	let mut statement = tx.prepare_cached(INSERT_INPUT)?;
 	for (key, spender) in inputs {
 		statement.execute(named_params! { ":key": key.0, ":tx": spender.0 })?;
+	}
+	Ok(())
+}
+
+const TAG_IN_USE: &str = "SELECT EXISTS (SELECT 1 FROM nft_consumption WHERE handoff_tag = :tag)";
+
+/// Whether any key was handed off under `tag`.
+pub fn handoff_tag_in_use(conn: &Connection, tag: &HandoffTag) -> Result<bool, DbError> {
+	let mut statement = conn.prepare_cached(TAG_IN_USE)?;
+	Ok(statement.query_row(named_params! { ":tag": tag.0 }, |row| row.get(0))?)
+}
+
+const INSERT_HANDOFF: &str =
+	"INSERT INTO nft_consumption (key, kind, handoff_tag) VALUES (:key, 'HANDOFF', :tag)";
+
+/// Records that each of `keys` is handed off under `tag`.
+pub fn insert_handoffs(
+	tx: &Transaction<'_>,
+	keys: &[ItemKey],
+	tag: &HandoffTag,
+) -> Result<(), DbError> {
+	let mut statement = tx.prepare_cached(INSERT_HANDOFF)?;
+	for key in keys {
+		statement.execute(named_params! { ":key": key.0, ":tag": tag.0 })?;
 	}
 	Ok(())
 }

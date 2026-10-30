@@ -31,7 +31,9 @@ use truapi::latest::{
 };
 
 #[cfg(test)]
-use crate::host_logic::sso::pairing::{AEAD_NONCE_LEN, encrypt_session_statement_data_with_nonce};
+use crate::host_logic::{
+	sso::pairing::encrypt_session_statement_data_with_nonce, x25519_seal::AEAD_NONCE_LEN,
+};
 use crate::{
 	host_logic::{
 		session::SsoSessionInfo,

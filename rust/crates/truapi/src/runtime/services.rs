@@ -33,7 +33,7 @@ use crate::{
 	encrypted_storage::EncryptedStorage,
 	installation::InstallationIdProvider,
 	nft::{HoldingTracker, NftLedger},
-	nft_purse::NftPurses,
+	nft_purse::{NftPurses, NftPursesDeps},
 	product_secrets::ProductSecrets,
 };
 use truapi::latest;
@@ -542,10 +542,13 @@ impl RuntimeServices {
 		storage
 	}
 
-	/// NFT purses, once their ledger is installed.
+	/// NFT purses, once their ledger and the encrypted storage are installed.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn nft_purses(&self) -> Option<NftPurses> {
-		self.nft_ledger.get().cloned().map(NftPurses::new)
+		let ledger = self.nft_ledger.get().cloned()?;
+		let db = self.core_db.get().cloned()?;
+		let encrypted = self.encrypted_storage.get().cloned()?;
+		Some(NftPurses::new(NftPursesDeps { ledger, db, encrypted }))
 	}
 
 	/// Install the host's durable work observer. Returns whether this call
