@@ -27,7 +27,7 @@ use std::{
 	collections::{BTreeMap, HashMap, HashSet},
 	sync::{
 		Arc, Mutex, OnceLock,
-		atomic::{AtomicBool, AtomicU64, Ordering},
+		atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 	},
 };
 #[cfg(target_arch = "wasm32")]
@@ -165,12 +165,19 @@ pub struct SubxtConnection {
 	follow_end: Arc<OnceLock<FollowEnd>>,
 	/// Stops the backend's driver, which ends its follow.
 	driver: AbortHandle,
+	/// How many of the backend's requests a halt has answered.
+	halts: Arc<AtomicUsize>,
 }
 
 impl SubxtConnection {
 	/// Why the backend's follow ended for good, or `None` while it lives.
 	fn follow_end(&self) -> Option<FollowEnd> {
 		self.follow_end.get().copied()
+	}
+
+	/// How many of the backend's requests a halt has answered so far.
+	fn halts(&self) -> usize {
+		self.halts.load(Ordering::SeqCst)
 	}
 
 	/// End a follow that stopped answering. The node drops the operations
@@ -1367,6 +1374,7 @@ impl ChainConnection {
 			self.timer.clone(),
 		);
 		let follow_end = rpc.follow_end();
+		let halts = rpc.halts();
 		let (backend, driver) =
 			ChainHeadBackend::<SubstrateConfig>::builder().build(RpcClient::new(rpc));
 		let (driver_handle, driver_registration) = AbortHandle::new_pair();
@@ -1394,7 +1402,7 @@ impl ChainConnection {
 		let client = OnlineClient::from_backend_with_config(config, backend.clone())
 			.await
 			.map_err(|error| RuntimeFailure::host_failure(METHOD, error.to_string()))?;
-		Ok(SubxtConnection { client, follow_end, driver: driver_handle })
+		Ok(SubxtConnection { client, follow_end, driver: driver_handle, halts })
 	}
 
 	/// The config every Subxt client on this connection is built with. It

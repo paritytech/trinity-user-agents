@@ -1,17 +1,20 @@
 //! The chain's current finalized block, for building transactions against its
 //! runtime metadata.
 
-use core::time::Duration;
-use std::sync::OnceLock;
+use core::{ops::ControlFlow, time::Duration};
+use std::sync::Mutex;
 
 use derive_more::Display;
 use futures::{FutureExt, pin_mut};
 use subxt::{
 	client::OnlineClientAtBlock, config::SubstrateConfig, error::OnlineClientAtBlockError,
 };
-use tracing::instrument;
+use tracing::{instrument, warn};
 
-use super::{ChainRuntime, RuntimeFailure, follow_retry::FollowEnd};
+use super::{
+	ChainRuntime, RuntimeFailure, SubxtConnection, chain_halt::HALT_PAUSES, follow_retry::FollowEnd,
+};
+use crate::time::retry_on;
 
 /// How long reading the current block may take, connecting included: longer
 /// than the pauses between refused follows add up to, so a follow accepted at
@@ -25,9 +28,9 @@ pub enum CurrentBlockError {
 	/// host serves no such chain.
 	#[display("{_0}")]
 	NoConnection(RuntimeFailure),
-	/// The node could not be asked: its follow was refused until the retries
-	/// ran out or was dropped, or it gave no answer in time. A later call can
-	/// succeed.
+	/// The node could not be asked: the chain stayed halted, its follow was
+	/// refused until the retries ran out or was dropped, or it gave no answer
+	/// in time. A later call can succeed.
 	#[display("{_0}")]
 	Unavailable(String),
 	/// The node answered with nothing this host can use, or its provider
@@ -41,6 +44,10 @@ impl ChainRuntime {
 	///
 	/// Core scope only, for the same reason as [`Self::online_client`].
 	///
+	/// A read that a halt interrupts, as when the host answers one of its
+	/// requests while it redials the chain, is read again after each of
+	/// [`HALT_PAUSES`].
+	///
 	/// The read has a deadline because a provider can hold the connection
 	/// open without completing it, and a runtime call Subxt started on a
 	/// follow that then stopped waits for an answer the next follow never
@@ -52,26 +59,51 @@ impl ChainRuntime {
 		&self,
 		genesis_hash: &[u8],
 	) -> Result<OnlineClientAtBlock<SubstrateConfig>, CurrentBlockError> {
-		let connected = OnceLock::new();
-		let read = async {
-			let connection = self
-				.subxt_connection(genesis_hash)
-				.await
-				.map_err(CurrentBlockError::NoConnection)?;
-			let _ = connected.set(connection.clone());
-			connection
-				.client
-				.at_current_block()
-				.await
-				.map_err(|error| classify(connection.follow_end(), &error))
-		}
+		let connected = Mutex::new(None::<SubxtConnection>);
+		let mut pauses = HALT_PAUSES.into_iter();
+		let read = retry_on(
+			&*self.timer,
+			|| {
+				let pause = pauses.next();
+				let connected = &connected;
+				async move {
+					let connection = match self.subxt_connection(genesis_hash).await {
+						Ok(connection) => connection,
+						Err(failure) => {
+							return ControlFlow::Break(Err(CurrentBlockError::NoConnection(
+								failure,
+							)));
+						},
+					};
+					*connected.lock().unwrap() = Some(connection.clone());
+					let halts = connection.halts();
+					let error = match connection.client.at_current_block().await {
+						Ok(block) => return ControlFlow::Break(Ok(block)),
+						Err(error) => error,
+					};
+					let met_a_halt = connection.halts() > halts;
+					match pause {
+						Some(pause) if met_a_halt => ControlFlow::Continue((pause, error)),
+						_ => ControlFlow::Break(Err(classify(
+							connection.follow_end(),
+							met_a_halt,
+							&error,
+						))),
+					}
+				}
+			},
+			|(pause, error)| {
+				warn!(?pause, %error, "the chain halted under the current block read; reading again");
+				pause
+			},
+		)
 		.fuse();
 		let deadline = self.timer.sleep(CURRENT_BLOCK_TIMEOUT).fuse();
 		pin_mut!(read, deadline);
 		futures::select! {
 			result = read => result,
 			() = deadline => {
-				if let Some(connection) = connected.get() {
+				if let Some(connection) = connected.lock().unwrap().take() {
 					connection.end_stalled_follow();
 				}
 				Err(CurrentBlockError::Unavailable(format!(
@@ -84,10 +116,14 @@ impl ChainRuntime {
 
 /// Sort a failure to select the current block by whether a later call can get
 /// past it. An answer this host cannot use fails every time. A failure to ask
-/// is worth asking again only when the follow ended for a reason that can
-/// pass, which only the recorded cause tells, since Subxt reports every end as
-/// a dropped subscription.
-fn classify(follow_end: Option<FollowEnd>, error: &OnlineClientAtBlockError) -> CurrentBlockError {
+/// is worth asking again when a halt answered one of the read's requests, or
+/// when the follow ended for a reason that can pass, which only the recorded
+/// cause tells, since Subxt reports every end as a dropped subscription.
+fn classify(
+	follow_end: Option<FollowEnd>,
+	met_a_halt: bool,
+	error: &OnlineClientAtBlockError,
+) -> CurrentBlockError {
 	let retryable = match error {
 		// A follow that moved on no longer holds the block it reported.
 		OnlineClientAtBlockError::BlockHeaderNotFound { .. } => true,
@@ -96,7 +132,11 @@ fn classify(follow_end: Option<FollowEnd>, error: &OnlineClientAtBlockError) -> 
 		OnlineClientAtBlockError::CannotGetBlockHeader { .. } |
 		OnlineClientAtBlockError::CannotGetSpecVersion { .. } |
 		OnlineClientAtBlockError::CannotGetMetadata { .. } => {
-			matches!(follow_end, Some(FollowEnd::Refused | FollowEnd::Dropped | FollowEnd::Stalled))
+			met_a_halt ||
+				matches!(
+					follow_end,
+					Some(FollowEnd::Refused | FollowEnd::Dropped | FollowEnd::Stalled)
+				)
 		},
 		_ => false,
 	};
@@ -144,9 +184,9 @@ mod tests {
 	}
 
 	/// A product retries on `Unavailable`, so it must mean a later call can
-	/// get past the failure: the follow ended for a reason that can pass, and
-	/// the node was not the problem. An answer this host cannot use fails
-	/// every time, whatever happened to the follow meanwhile.
+	/// get past the failure: a halt met the read, or the follow ended for a
+	/// reason that can pass. An answer this host cannot use fails every time,
+	/// whatever happened to the chain meanwhile.
 	#[test]
 	fn a_failure_is_retryable_only_when_a_later_call_can_get_past_it() {
 		let dropped = || OnlineClientAtBlockError::CannotGetCurrentBlock {
@@ -168,35 +208,85 @@ mod tests {
 		};
 
 		let cases = [
-			(Some(FollowEnd::Refused), dropped()),
-			(Some(FollowEnd::Dropped), dropped()),
-			(Some(FollowEnd::Stalled), dropped()),
-			(Some(FollowEnd::Rejected), dropped()),
-			(None, dropped()),
-			(Some(FollowEnd::Refused), metadata_fetch()),
-			(None, metadata_fetch()),
-			(None, stale_block),
-			(None, unusable()),
-			(Some(FollowEnd::Dropped), unusable()),
+			(Some(FollowEnd::Refused), false, dropped()),
+			(Some(FollowEnd::Dropped), false, dropped()),
+			(Some(FollowEnd::Stalled), false, dropped()),
+			(Some(FollowEnd::Rejected), false, dropped()),
+			(None, false, dropped()),
+			(None, true, metadata_fetch()),
+			(Some(FollowEnd::Refused), false, metadata_fetch()),
+			(None, false, metadata_fetch()),
+			(None, false, stale_block),
+			(None, false, unusable()),
+			(Some(FollowEnd::Dropped), true, unusable()),
 		];
-		let classified: Vec<_> =
-			cases.iter().map(|(follow_end, error)| classify(*follow_end, error)).collect();
+		let classified: Vec<_> = cases
+			.iter()
+			.map(|(follow_end, met_a_halt, error)| classify(*follow_end, *met_a_halt, error))
+			.collect();
 
 		assert_eq!(
 			classified,
 			vec![
-				unavailable(&cases[0].1),
-				unavailable(&cases[1].1),
-				unavailable(&cases[2].1),
-				failed(&cases[3].1),
-				failed(&cases[4].1),
-				unavailable(&cases[5].1),
-				failed(&cases[6].1),
-				unavailable(&cases[7].1),
-				failed(&cases[8].1),
-				failed(&cases[9].1),
+				unavailable(&cases[0].2),
+				unavailable(&cases[1].2),
+				unavailable(&cases[2].2),
+				failed(&cases[3].2),
+				failed(&cases[4].2),
+				unavailable(&cases[5].2),
+				unavailable(&cases[6].2),
+				failed(&cases[7].2),
+				unavailable(&cases[8].2),
+				failed(&cases[9].2),
+				failed(&cases[10].2),
 			]
 		);
+	}
+
+	/// What dotli does to a build in flight when its chain halts: it answers
+	/// the read's requests with its halt error, then serves them again once
+	/// the chain is redialed. Seen against dotli, the build failed in
+	/// milliseconds instead of waiting.
+	#[cfg_attr(target_arch = "wasm32", ignore)]
+	#[test]
+	fn a_read_a_halt_interrupts_is_read_again_after_a_pause() {
+		let (provider, chain, timer) =
+			ScriptedChainHead { halted_headers: 1, ..ScriptedChainHead::default() }.serve();
+		let read = read_current_block(&chain);
+
+		// The first sleep is the read's deadline, the second the pause.
+		wait_until(|| timer.sleeps() == 2, "the pause starts");
+		assert_eq!(timer.remaining(), vec![CURRENT_BLOCK_TIMEOUT, HALT_PAUSES[0]]);
+		timer.advance(HALT_PAUSES[0]);
+
+		read.join().unwrap().expect("the read after the pause is served");
+		let headers = provider
+			.sent
+			.lock()
+			.unwrap()
+			.iter()
+			.filter(|request| request.contains("chainHead_v1_header"))
+			.count();
+		assert_eq!(headers, 2);
+	}
+
+	/// A chain that stays halted is reported as one a later call can reach,
+	/// not as a failure the product should give up on.
+	#[cfg_attr(target_arch = "wasm32", ignore)]
+	#[test]
+	fn a_read_still_halted_after_every_pause_is_unavailable() {
+		let (_provider, chain, timer) =
+			ScriptedChainHead { halted_headers: usize::MAX, ..ScriptedChainHead::default() }
+				.serve();
+		let read = read_current_block(&chain);
+
+		for (pause_index, pause) in HALT_PAUSES.into_iter().enumerate() {
+			wait_until(|| timer.sleeps() == pause_index + 2, "the next pause starts");
+			timer.advance(pause);
+		}
+
+		let error = read.join().unwrap().expect_err("the chain stays halted");
+		assert!(matches!(error, CurrentBlockError::Unavailable(_)), "{error:?}");
 	}
 
 	/// The halt the retries exist for: the host keeps refusing to follow

@@ -2,9 +2,12 @@
 //! `chainHead_v1_follow` again when the provider refuses it, and records why a
 //! follow ended for good.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{
+	Arc, OnceLock,
+	atomic::{AtomicUsize, Ordering},
+};
 
-use futures::StreamExt;
+use futures::{StreamExt, TryFutureExt};
 use serde_json::value::RawValue;
 use subxt_rpcs::{
 	Error as RpcError,
@@ -47,17 +50,25 @@ pub enum FollowEnd {
 /// does a halt that outlasts every pause, and Subxt ends the follow.
 ///
 /// Subxt reports any end as a dropped subscription, so this client records the
-/// cause in [`Self::follow_end`] before the failure reaches Subxt.
+/// cause in [`Self::follow_end`] before the failure reaches Subxt. It also
+/// counts the requests a halt answered in [`Self::halts`], since Subxt keeps
+/// only the text of some of those failures.
 pub struct FollowRetryingRpcClient {
 	inner: RuntimeCallClient,
 	timer: Arc<dyn Timer>,
 	follow_end: Arc<OnceLock<FollowEnd>>,
+	halts: Arc<AtomicUsize>,
 }
 
 impl FollowRetryingRpcClient {
 	/// Retry refused follows sent through `inner`, pausing on `timer`.
 	pub fn new(inner: RuntimeCallClient, timer: Arc<dyn Timer>) -> Self {
-		Self { inner, timer, follow_end: Arc::default() }
+		Self { inner, timer, follow_end: Arc::default(), halts: Arc::default() }
+	}
+
+	/// How many requests sent through this client a halt has answered.
+	pub fn halts(&self) -> Arc<AtomicUsize> {
+		self.halts.clone()
 	}
 
 	/// Why this client's follow ended, set before Subxt learns of the end, so
@@ -90,7 +101,12 @@ impl RpcClientT for FollowRetryingRpcClient {
 		method: &'a str,
 		params: Option<Box<RawValue>>,
 	) -> RawRpcFuture<'a, Box<RawValue>> {
-		self.inner.request_raw(method, params)
+		let halts = self.halts.clone();
+		Box::pin(self.inner.request_raw(method, params).inspect_err(move |error| {
+			if says_chain_halted(error) {
+				halts.fetch_add(1, Ordering::SeqCst);
+			}
+		}))
 	}
 
 	fn subscribe_raw<'a>(

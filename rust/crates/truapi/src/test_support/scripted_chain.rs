@@ -216,11 +216,19 @@ pub struct ScriptedChainHead {
 	pub refusal: FollowRefusal,
 	/// Whether it ever finishes a runtime call it started.
 	pub finishes_calls: bool,
+	/// How many header reads it answers with dotli's halt error before it
+	/// serves one, as a host does for requests in flight when a chain halts.
+	pub halted_headers: usize,
 }
 
 impl Default for ScriptedChainHead {
 	fn default() -> Self {
-		Self { refused_follows: 0, refusal: FollowRefusal::ChainHalted, finishes_calls: true }
+		Self {
+			refused_follows: 0,
+			refusal: FollowRefusal::ChainHalted,
+			finishes_calls: true,
+			halted_headers: 0,
+		}
 	}
 }
 
@@ -237,6 +245,7 @@ impl ScriptedChainHead {
 		};
 		let finalized = H256(blake2_256(&header.encode()));
 		let follows = AtomicUsize::new(0);
+		let headers = AtomicUsize::new(0);
 		let operations = AtomicUsize::new(0);
 		let provider = Arc::new(ScriptedProvider::with_frames(move |request| {
 			let request: Value = serde_json::from_str(request).unwrap();
@@ -271,6 +280,14 @@ impl ScriptedChainHead {
 						"finalizedBlockRuntime": null
 					})),
 				],
+				"chainHead_v1_header"
+					if headers.fetch_add(1, Ordering::SeqCst) < self.halted_headers =>
+				{
+					vec![
+						json!({"jsonrpc": "2.0", "id": request["id"], "error": chain_halted_error()})
+							.to_string(),
+					]
+				},
 				"chainHead_v1_header" => {
 					vec![reply(json!(format!("0x{}", hex::encode(header.encode()))))]
 				},
