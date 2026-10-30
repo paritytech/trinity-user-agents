@@ -563,9 +563,11 @@ private extension ChatUserAction {
     }
 }
 
-private func waitUntil(_ condition: @Sendable () async -> Bool) async {
-    for _ in 0 ..< 500 where await !condition() {
-        try? await Task.sleep(for: .milliseconds(2))
+private extension ProductMessageSourceTests {
+    func waitUntil(_ condition: @Sendable () async -> Bool) async {
+        for _ in 0 ..< 500 where await !condition() {
+            try? await Task.sleep(for: .milliseconds(2))
+        }
     }
 }
 
