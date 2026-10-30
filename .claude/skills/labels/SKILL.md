@@ -11,7 +11,7 @@ description: Label pull requests and issues in this repository, and add, rename 
 
 - Do not add `area:` or `size:` labels. A pull request carries no area, and `pr-triage.yml` sets the size from the lines changed.
 - Do not set `status:waiting-on-review`; `pr-triage.yml` sets it whenever a pull request that is not a draft has no status.
-- Add a `ci:` label only to get what it runs, and only when the change needs it: `ci:ios-simulator` or `ci:ios-device` for the iOS app, `ci:android-device` for an APK, `ci:android-emulator-tests`, `ci:host-playground-e2e`. Each one starts macOS or emulator jobs on every later push, so do not add them by default.
+- Add a `ci:` label only to get what it runs, and only when the change needs it: `ci:ios-simulator` or `ci:ios-device` for the iOS app, `ci:ios-tests` for its tests on a draft or stacked pull request, `ci:android-device` for an APK, `ci:android-emulator-tests`, `ci:host-playground-e2e`. Each one starts macOS or emulator jobs on every later push, so do not add them by default.
 - Add `ci:no-changeset` only when the change ships nothing, as docs/RELEASE_PROCESS.md describes.
 - To label the issue the pull request finishes, write `Closes #N` in the body. The issue gets its `area:` labels when the pull request merges.
 

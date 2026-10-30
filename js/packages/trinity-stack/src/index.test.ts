@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { readFile } from "node:fs/promises";
 import {
   type Model,
   type SpecFile,
@@ -21,18 +20,8 @@ import {
   stackId,
   webUrl,
 } from "./index.js";
+import { cases, file, pointerOf } from "./test-fixtures.js";
 
-const VECTORS = new URL(
-  "../../../../rust/crates/trinity-stack/vectors/",
-  import.meta.url,
-);
-const cases = JSON.parse(
-  await readFile(new URL("cases.json", VECTORS), "utf8"),
-);
-const file = async (path: string | null) =>
-  path === null
-    ? undefined
-    : new Uint8Array(await readFile(new URL(path, VECTORS)));
 const codeOf = (run: () => unknown) => {
   try {
     run();
@@ -42,10 +31,6 @@ const codeOf = (run: () => unknown) => {
     return error.code;
   }
 };
-const pointerOf = (pointer: { url: string; key: string | null }) => ({
-  url: pointer.url,
-  key: pointer.key ?? undefined,
-});
 
 // The same files the Rust crate runs, so the wasm build cannot drift from the native one.
 describe("conformance vectors", () => {

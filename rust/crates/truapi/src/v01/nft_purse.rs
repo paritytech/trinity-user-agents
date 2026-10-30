@@ -310,26 +310,51 @@ pub enum NftPurseCreateReceiveKeyError {
 
 /// Request to wait for a cheque sent to a receive key.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub struct HostNftPurseListenForPaymentRequest {
+pub struct HostNftPurseListenOneTimePaymentRequest {
 	/// Receive key from `create_receive_key`.
 	pub key: NftPurseReceiveKey,
 }
 
-/// Stream item of `listen_for_payment`.
+/// Stream item of `listen_one_time_payment`.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub enum HostNftPurseListenForPaymentItem {
+pub enum HostNftPurseListenOneTimePaymentItem {
 	/// The channel the host listens on, emitted first.
 	Channel(NftPursePaymentTransmissionChannel),
-	/// The cheque, once it arrives.
+	/// The cheque, once it arrives. The last item.
 	Cheque(NftPurseCheque),
 }
 
 /// Why the host could not listen for a payment.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub enum NftPurseListenForPaymentError {
-	/// The receive key is unknown.
+pub enum NftPurseListenOneTimePaymentError {
+	/// The receive key is unknown, or another product made it.
 	ReceiveKeyNotFound,
 	/// Any other failure.
+	Other(GenericError),
+}
+
+/// Request to listen to one of the caller's payment inboxes.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostNftPurseListenPaymentInboxRequest {
+	/// Which of the caller's inboxes to listen to. The product picks it and
+	/// publishes it with its payment instructions.
+	pub inbox_domain: [u8; 32],
+}
+
+/// Stream item of `listen_payment_inbox`.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostNftPurseListenPaymentInboxItem {
+	/// The channel the host listens on, emitted first.
+	Channel(NftPursePaymentTransmissionChannel),
+	/// The cheques already stored, possibly none, the first time; each later
+	/// batch of new cheques after that.
+	Cheques(Vec<NftPurseCheque>),
+}
+
+/// Why the host could not listen to a payment inbox.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum NftPurseListenPaymentInboxError {
+	/// Any failure.
 	Other(GenericError),
 }
 
