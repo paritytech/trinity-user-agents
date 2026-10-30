@@ -153,13 +153,14 @@ npx trinity-stack list
 npx trinity-stack remove <name>
 ```
 
-They keep one directory in the project:
+They write one directory in the project:
 
 ```
 .trinity/
   stacks.json             { "previewnet": "polkadotapp://stack?key=0x4d43…&url=…", … }, edited by add and remove
   previewnet.json         the signed descriptor, byte for byte as served
-  .gitignore              index.js and index.d.ts
+  .gitignore              index.js and index.d.ts; written by add when missing
+  .npmignore              empty, so npm still packs the module; written by add when missing
   index.js, index.d.ts    generated from the files above, ready to import; not committed
 ```
 
@@ -170,7 +171,8 @@ They keep one directory in the project:
   module. It exits 0 when no committed file changed, 1 on an error and 2 when one did, so a scheduled CI job can open a
   pull request whenever a stack moved and leave it to review.
 - **`generate`** rebuilds the module from the committed files and fetches nothing, so a project's `prepare` script runs
-  it the way polkadot-api projects run `papi generate`.
+  it the way polkadot-api projects run `papi generate`, usually as `postinstall`, which every package manager runs. It
+  fails when a stack in stacks.json has no copy, rather than leave that stack out of the module.
 - **The generated module** carries each stack as data, not as a file to load:
 
   ```ts
@@ -186,8 +188,8 @@ They keep one directory in the project:
 
 - **The copies are committed, the module is not.** The signed copies are the input a reviewer checks, and the module
   only repeats them as JavaScript, so committing it would put every change in git twice. Rebuilding it needs no network,
-  so a build stays reproducible from the committed files alone, as polkadot-api keeps `.papi/metadata` and ignores the
-  descriptors it generates from it.
+  so a build stays reproducible from the committed files alone, as polkadot-api projects commit `.papi/metadata` and
+  ignore the descriptors generated from it.
 
 `truapi-host stack bundle` stays for host builds that do not run Node. Both apply the same crate rules.
 

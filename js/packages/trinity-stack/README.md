@@ -34,13 +34,18 @@ npx trinity-stack add previewnet "polkadotapp://stack?key=0x4d43…&url=…"
 npx trinity-stack update   # exits 2 when a committed file changed, so a scheduled job can open a pull request
 ```
 
-They write `.trinity/`: `stacks.json` and each stack's signed copy, committed with the project, and an `index.js` that
-bundles them, which `.trinity/.gitignore` leaves out of git. `trinity-stack generate` rebuilds `index.js` from the
-committed files without fetching, so a project runs it before it builds:
+They write `.trinity/`: `stacks.json` and each stack's signed copy, committed with the project, and an `index.js` and
+`index.d.ts` that bundle them, which `.trinity/.gitignore` leaves out of git. `trinity-stack generate` rebuilds those
+two from the committed files without fetching, so a project runs it on install, as polkadot-api projects run
+`papi generate`:
 
 ```json
-{ "scripts": { "prepare": "trinity-stack generate" } }
+{ "scripts": { "postinstall": "trinity-stack generate" } }
 ```
+
+A build that installs with scripts turned off runs `npx trinity-stack generate` before it builds. `add` writes
+`.gitignore` and an empty `.npmignore` only when they are missing, and the `.npmignore` keeps the module in a package
+the project publishes.
 
 A stack that fails to update is left as it was, and `update` exits 1. At run time a reader serves those copies and
 refreshes them by the policy the project picks:
