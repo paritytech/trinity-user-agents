@@ -10,6 +10,10 @@ protocol TrUAPIWorkerReferencing: Sendable {
     func acquireWorker(productId: ProductId)
 
     func releaseWorker(productId: ProductId)
+
+    /// The worker stopped without the host asking, so the core starts it
+    /// again while any reference remains.
+    func workerExited(productId: ProductId)
 }
 
 extension TrUAPIHostRuntime: TrUAPIWorkerReferencing {}
