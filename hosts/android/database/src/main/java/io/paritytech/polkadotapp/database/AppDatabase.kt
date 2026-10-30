@@ -150,7 +150,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainNodeLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
 
 @Database(
-    version = 72,
+    version = 73,
     entities = [
         ProductFundingOperationLocal::class,
         ChainLocal::class,
@@ -296,6 +296,8 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         AutoMigration(from = 70, to = 71),
         // Add chat_acceptances, chat_identity_signing_consents and statement_store_slot_allocations.tag
         AutoMigration(from = 71, to = 72),
+        // Add chat_room_declarations (what products declare for their rooms, Chat Extension v2)
+        AutoMigration(from = 72, to = 73),
     ]
 )
 @TypeConverters(

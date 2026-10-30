@@ -11,7 +11,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
-class Migration71To72Test {
+class Migration72To73Test {
     @get:Rule
     val helper = MigrationTestHelper(
         InstrumentationRegistry.getInstrumentation(),
@@ -22,7 +22,7 @@ class Migration71To72Test {
     // declarations, and a new row starts at configuration generation 0.
     @Test
     fun keepsTheMessagesAndStartsWithoutDeclarations() {
-        helper.createDatabase(TEST_DB, 71).apply {
+        helper.createDatabase(TEST_DB, 72).apply {
             execSQL(
                 "INSERT INTO chat_messages (id, chatId, timestamp, updatedAt, sortOrder, status, type, searchableContent, " +
                     "content, replyToMessageId, isInternal, origintype, originkey) " +
@@ -31,7 +31,7 @@ class Migration71To72Test {
             close()
         }
 
-        val migrated = helper.runMigrationsAndValidate(TEST_DB, 72, true)
+        val migrated = helper.runMigrationsAndValidate(TEST_DB, 73, true)
         try {
             assertEquals(listOf(listOf("m1", "hi")), migrated.rows("SELECT id, searchableContent FROM chat_messages"))
             assertEquals(emptyList<List<String?>>(), migrated.rows("SELECT chatId FROM chat_room_declarations"))
