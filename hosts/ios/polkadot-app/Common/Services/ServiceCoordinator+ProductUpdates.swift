@@ -6,6 +6,7 @@ extension ServiceCoordinator {
     static func registerProductUpdates(
         contentLoader: ProductContentLoading,
         workerReloader: ProductWorkerReloading,
+        iconFactory: ProductIconViewModelMaking,
         logger: LoggerProtocol
     ) {
         MainActor.assumeIsolated {
@@ -16,7 +17,7 @@ extension ServiceCoordinator {
             let coordinator = ProductUpdateCoordinator(
                 contentLoader: contentLoader,
                 workerReloader: workerReloader,
-                noticePresenter: ProductUpdateNoticePresenter(application: .shared),
+                noticePresenter: ProductUpdateNoticePresenter(application: .shared, iconFactory: iconFactory),
                 applicationStateStreams: ApplicationStateStreamFactory(),
                 logger: logger
             )

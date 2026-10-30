@@ -341,6 +341,7 @@ extension ServiceCoordinator {
                 truapiWorkers: { [pocket] in pocket?.workers },
                 chatExtensions: chatExtensionsRegistry
             ),
+            iconFactory: spaFlowState.iconViewModelFactory,
             logger: logger
         )
 

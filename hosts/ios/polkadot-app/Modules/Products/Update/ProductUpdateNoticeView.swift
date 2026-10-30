@@ -1,36 +1,46 @@
 import DesignSystem
+import PolkadotUI
 import SwiftUI
 
 struct ProductUpdateNoticeView: View {
     let productName: String
+    let icon: any ImageViewModelProtocol
     let onUpdate: () -> Void
     let onDismiss: () -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: DSSpacings.small) {
+            AsyncImageView(viewModel: icon)
+                .frame(width: 24, height: 24)
+                .clipShape(RoundedRectangle(cornerRadius: DSRadii.extraSmall, style: .continuous))
             Text(.Products.updateNoticeMessage(product: productName))
-                .typography(.bodyMedium)
+                .typography(.bodySmall)
                 .foregroundStyle(Color.fgPrimary)
-                .multilineTextAlignment(.leading)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Button(action: onUpdate) {
                 Text(.Products.updateNoticeAction)
-                    .typography(.bodyMedium)
-                    .foregroundStyle(Color.fgPrimary)
             }
+            .buttonStyle(.ds(style: .primary, shape: .pill, size: .small))
             Button(action: onDismiss) {
                 Image(systemName: "xmark")
+                    .font(.system(size: 16, weight: .medium))
                     .foregroundStyle(Color.fgSecondary)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel(Text(.Common.close))
         }
-        .padding(EdgeInsets(top: 16, leading: 20, bottom: 16, trailing: 20))
-        .background(Color.bgSurfaceContainer)
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.strokePrimary, lineWidth: 1)
+        .padding(EdgeInsets(
+            top: DSSpacings.extraSmall,
+            leading: DSSpacings.small,
+            bottom: DSSpacings.extraSmall,
+            trailing: DSSpacings.extraSmall
+        ))
+        .frame(minHeight: 44)
+        .background(
+            Color.bgSurfaceContainer,
+            in: RoundedRectangle(cornerRadius: DSRadii.medium, style: .continuous)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 }

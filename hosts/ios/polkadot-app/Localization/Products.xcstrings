@@ -1310,7 +1310,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "New version of %1$(product)@ available"
+            "value": "%1$(product)@ has an update"
           }
         }
       }

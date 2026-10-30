@@ -200,6 +200,7 @@ private extension ProductUpdateCoordinator {
         noticeContentId = contentId
 
         noticePresenter.show(
+            productId: presence.productId,
             productName: presence.displayName,
             onUpdate: { [weak self] in _ = self?.applyPendingUpdate(of: contentId) },
             onDismiss: { [weak self] in self?.dismissNotice(of: contentId) }

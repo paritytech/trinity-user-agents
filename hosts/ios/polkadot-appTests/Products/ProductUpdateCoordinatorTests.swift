@@ -68,6 +68,7 @@ struct ProductUpdateCoordinatorTests {
         await notice.waitForShows(1)
 
         #expect(notice.shownProductNames == ["Shop"])
+        #expect(notice.shownProductIds == [Self.productId])
         #expect(loader.appliedUpdates.isEmpty)
         #expect(first.serveCount == 0)
     }
@@ -107,7 +108,8 @@ struct ProductUpdateCoordinatorTests {
         #expect(!loader.appliedUpdates.contains(update))
 
         coordinator.unregister(secondId)
-        await loader.waitForApplies(2)
+        // Both releases `deliver` sent are applied too, in either order.
+        await loader.waitForApplies(3)
 
         #expect(loader.appliedUpdates.contains(update))
         #expect(first.serveCount == 0)

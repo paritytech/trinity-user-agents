@@ -1,15 +1,23 @@
 import Foundation
+import Products
 @testable import polkadot_app
 
 @MainActor
 final class StubProductUpdateNoticePresenter: ProductUpdateNoticePresenting {
+    private(set) var shownProductIds: [ProductId] = []
     private(set) var shownProductNames: [String] = []
     private(set) var isShowing = false
     private var onUpdate: (() -> Void)?
     private var onDismiss: (() -> Void)?
     private var showWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
-    func show(productName: String, onUpdate: @escaping () -> Void, onDismiss: @escaping () -> Void) {
+    func show(
+        productId: ProductId,
+        productName: String,
+        onUpdate: @escaping () -> Void,
+        onDismiss: @escaping () -> Void
+    ) {
+        shownProductIds.append(productId)
         shownProductNames.append(productName)
         isShowing = true
         self.onUpdate = onUpdate
