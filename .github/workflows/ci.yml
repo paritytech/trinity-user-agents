@@ -1,7 +1,9 @@
 name: CI
 
 on:
+  # ready_for_review starts the iOS app a draft skipped.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main, release/v0.3.2]
   merge_group:
@@ -458,13 +460,23 @@ jobs:
   # queue, which has no Mac capacity for it yet. A push to main runs it through
   # ios-main.yml instead, so a Mac run never holds back what waits on this
   # workflow's verdict: the deploys and the release.
+  #
+  # Not for a draft, or for a pull request into another pull request's branch,
+  # which cannot reach main as it is: a stack would otherwise hold a Mac per
+  # layer on every push. It runs once the pull request is ready and targets
+  # main or a release branch, and the ci:ios-simulator label runs it before
+  # then. It also waits for the Rust workspace, the gate that fails most, so
+  # a pull request that fails on Linux never takes a Mac.
   ios-app:
     name: iOS app
-    needs: changes
+    needs: [changes, rust]
     if: >-
       github.event_name == 'pull_request'
       && needs.changes.outputs.trusted == 'true'
       && github.actor != 'dependabot[bot]'
+      && !github.event.pull_request.draft
+      && (github.event.pull_request.base.ref == 'main'
+          || startsWith(github.event.pull_request.base.ref, 'release/'))
       && (needs.changes.outputs.ios_core == 'true' || needs.changes.outputs.ios_tree == 'true'
           || needs.changes.outputs.package_swift == 'true')
     uses: ./.github/workflows/ios-app.yml
