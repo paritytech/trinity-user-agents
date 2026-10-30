@@ -8,8 +8,10 @@ import UIKit
 /// filling the space below.
 ///
 /// The card keeps drawing up here, so it stays live for as long as it is open.
-/// The user moves the face by dragging it or the navigation bar. A drag on
-/// the product stays the product's, which may draw with it.
+/// The face moves with a drag on it, and with the product's own scrolling:
+/// it goes away before the product scrolls up, and comes back once the
+/// product is at its top. Where the product takes touches itself, its
+/// scrolling never starts, so drawing on it never moves the face.
 ///
 /// The product is sized to the screen the card leaves it, so a page built to
 /// fit its viewport keeps its bottom edge in view. It is resized only when the
@@ -27,7 +29,8 @@ final class PocketCardScreenViewController: UIViewController {
     private var userOwnsFace = false
     private var faceMovedSinceOpening = false
     private var pageMoveTarget: CGPoint?
-    private var barDragStart: CGFloat?
+    private var lastPagePull: CGFloat = 0
+    private var lastPageOffset: CGFloat = 0
     private var isInFlight = false
     private weak var coveredScreen: UIViewController?
 
@@ -57,7 +60,7 @@ final class PocketCardScreenViewController: UIViewController {
         setupScrollView()
         setupFace()
         setupProduct()
-        setupBarDrag()
+        setupPageDrag()
 
         // The card flies over the page when it is opened and closed.
         scrollView.bringSubviewToFront(face.view)
@@ -107,6 +110,7 @@ final class PocketCardScreenViewController: UIViewController {
     /// Gives the product back unattached. It outlives the screen that opened
     /// it, so a card opened again must find it free to show.
     func handBackProduct() {
+        product.pageScrollView.panGestureRecognizer.removeTarget(self, action: nil)
         for child in children {
             child.willMove(toParent: nil)
             child.view.removeFromSuperview()
@@ -129,32 +133,6 @@ final class PocketCardScreenViewController: UIViewController {
         guard isOnDisplay, !faceMovedSinceOpening else { return }
 
         placeFace(shown: shown, animated: true)
-    }
-
-    /// Follows a drag on the navigation bar by `distance` from where it started.
-    func dragFace(by distance: CGFloat) {
-        // A close can start mid-drag, and the card must fly from where it stopped.
-        guard !isInFlight else { return }
-
-        if barDragStart == nil {
-            holdFace()
-            scrollView.isScrollEnabled = false
-        }
-        let start = barDragStart ?? scrollView.contentOffset.y
-        barDragStart = start
-
-        let offset = min(max(start - distance, 0), PocketOpenedCardView.height)
-        scrollView.setContentOffset(CGPoint(x: 0, y: offset), animated: false)
-    }
-
-    func releaseFace() {
-        barDragStart = nil
-        userOwnsFace = false
-        scrollView.isScrollEnabled = true
-
-        guard !isInFlight else { return }
-
-        moveFace(shown: scrollView.contentOffset.y < PocketOpenedCardView.height / 2, animated: true)
     }
 
     /// From the start of its presentation until its dismissal starts, even
@@ -289,17 +267,6 @@ extension PocketCardScreenViewController: UIScrollViewDelegate {
     }
 }
 
-// MARK: - UIGestureRecognizerDelegate
-
-extension PocketCardScreenViewController: UIGestureRecognizerDelegate {
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard let pan = gestureRecognizer as? UIPanGestureRecognizer, !isInFlight, !userOwnsFace else { return false }
-
-        let velocity = pan.velocity(in: view)
-        return abs(velocity.y) > abs(velocity.x)
-    }
-}
-
 // MARK: - Private
 
 private extension PocketCardScreenViewController {
@@ -323,28 +290,51 @@ private extension PocketCardScreenViewController {
         scrollView.delegate = self
         scrollView.contentInsetAdjustmentBehavior = .never
         scrollView.showsVerticalScrollIndicator = false
-
-        // The page does not rubber-band, as on Android.
-        product.pageScrollView.bounces = false
     }
 
-    func setupBarDrag() {
-        let pan = UIPanGestureRecognizer(target: self, action: #selector(followBarDrag))
-        pan.delegate = self
-        navigationController?.navigationBar.addGestureRecognizer(pan)
+    func setupPageDrag() {
+        product.pageScrollView.panGestureRecognizer.addTarget(self, action: #selector(followPageDrag))
     }
 
-    @objc func followBarDrag(_ pan: UIPanGestureRecognizer) {
+    @objc func followPageDrag(_ pan: UIPanGestureRecognizer) {
+        // A close can start mid-drag, and the card must fly from where it stopped.
+        guard !isInFlight else { return }
+
+        let pull = pan.translation(in: view).y
+
         switch pan.state {
-        case .began,
-             .changed:
-            dragFace(by: pan.translation(in: view).y)
+        case .began:
+            lastPagePull = pull
+            lastPageOffset = product.pageScrollView.contentOffset.y
+        case .changed:
+            moveFaceWithPage(by: pull - lastPagePull)
+            lastPagePull = pull
         case .ended,
              .cancelled:
-            releaseFace()
+            guard userOwnsFace else { return }
+
+            userOwnsFace = false
+            moveFace(shown: scrollView.contentOffset.y < PocketOpenedCardView.height / 2, animated: true)
         default:
             break
         }
+    }
+
+    /// The page has already scrolled by `step`, so a step the face takes is undone on the page.
+    func moveFaceWithPage(by step: CGFloat) {
+        let page = product.pageScrollView
+        let faceOffset = scrollView.contentOffset.y
+        let pageWasAtTop = lastPageOffset <= -page.adjustedContentInset.top
+        let faceTarget = step < 0 || pageWasAtTop
+            ? min(max(faceOffset - step, 0), PocketOpenedCardView.height)
+            : faceOffset
+
+        if faceTarget != faceOffset {
+            if !userOwnsFace { holdFace() }
+            scrollView.contentOffset.y = faceTarget
+            page.contentOffset.y = lastPageOffset
+        }
+        lastPageOffset = page.contentOffset.y
     }
 
     /// The scroll is a screenful plus the face, whatever the product's own
@@ -455,18 +445,13 @@ struct PocketOpenedCardView: View {
 }
 
 /// Scrolls only for drags that start on the face.
-final class FaceScrollView: UIScrollView {
+private final class FaceScrollView: UIScrollView {
     weak var face: UIView?
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard super.gestureRecognizerShouldBegin(gestureRecognizer) else { return false }
         guard gestureRecognizer === panGestureRecognizer else { return true }
 
-        return movesFace(from: panGestureRecognizer.location(in: self))
-    }
-
-    /// Whether a drag starting at `point`, in this view's coordinates, is on the face.
-    func movesFace(from point: CGPoint) -> Bool {
-        face?.frame.contains(point) ?? false
+        return face?.frame.contains(panGestureRecognizer.location(in: self)) ?? false
     }
 }
