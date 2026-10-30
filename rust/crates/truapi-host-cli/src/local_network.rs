@@ -113,8 +113,9 @@ fn parse(mut base: NetworkConfig, json: &str) -> Result<NetworkConfig> {
 
 	// NetworkConfig is Copy with process-lifetime references. Match the existing
 	// backend override's ownership model; validate everything before retaining it.
-	base.identity_backend_base =
-		Box::leak(local.identity_backend_base.trim_end_matches('/').to_owned().into_boxed_str());
+	base.identity_backend_base = Some(Box::leak(
+		local.identity_backend_base.trim_end_matches('/').to_owned().into_boxed_str(),
+	));
 	base.people_ws = Box::leak(local.people.ws.into_boxed_str());
 	base.asset_hub_ws = Box::leak(local.asset_hub.ws.into_boxed_str());
 	base.bulletin_ws = Box::leak(local.bulletin.ws.into_boxed_str());
@@ -154,7 +155,7 @@ mod tests {
 			let resolved = parse(base, &config(base.id).to_string()).unwrap();
 			assert_eq!(resolved.id, base.id);
 			assert_eq!(resolved.network_suffix, base.network_suffix);
-			assert_eq!(resolved.identity_backend_base, "http://127.0.0.1:8092/api/v1");
+			assert_eq!(resolved.identity_backend_base, Some("http://127.0.0.1:8092/api/v1"));
 			assert_eq!(resolved.live_chain_endpoints.len(), 3);
 			for role in resolved.host_chain_set().chains {
 				let route = resolved

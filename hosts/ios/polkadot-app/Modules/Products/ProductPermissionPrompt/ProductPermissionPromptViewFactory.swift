@@ -146,6 +146,12 @@ private extension ProductPermissionPromptViewFactory {
                 body: String(localized: .Products.permissionBodyUserIdentityAccess),
                 icon: makeIcon(systemName: "person.text.rectangle")
             )
+        case let .nftPurseRead(ownerProductId):
+            PromptContent(
+                title: String(localized: .Products.permissionTitleRemote(productId: productId)),
+                body: NftPurseReadCopy.description(ownerProductId: ownerProductId),
+                icon: makeIcon(systemName: "square.stack.3d.up.fill")
+            )
         }
     }
 
@@ -188,6 +194,8 @@ private extension ProductPermissionPromptViewFactory {
             )
         case .userIdentityAccess:
             "- " + String(localized: .Products.permissionBodyUserIdentityAccess)
+        case let .nftPurseRead(ownerProductId):
+            "- " + NftPurseReadCopy.description(ownerProductId: ownerProductId)
         }
     }
 
@@ -252,5 +260,15 @@ private extension ProductPermissionPromptViewFactory {
         let config = UIImage.SymbolConfiguration(pointSize: 60, weight: .regular)
         return UIImage(systemName: systemName, withConfiguration: config)?
             .withTintColor(.fgPrimary, renderingMode: .alwaysOriginal)
+    }
+}
+
+/// What reading another owner's NFT purses reveals, shared by the prompt and the settings list.
+enum NftPurseReadCopy {
+    static func description(ownerProductId: String?) -> String {
+        guard let ownerProductId else {
+            return String(localized: .Products.permissionBodyNftPurseReadRoot)
+        }
+        return String(localized: .Products.permissionBodyNftPurseReadProduct(ownerProductId: ownerProductId))
     }
 }

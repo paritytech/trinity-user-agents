@@ -9,6 +9,7 @@
 //! schedule a transaction for a [`SubmissionPolicy`] to build, and a policy
 //! builds again any failure it accepts to retry.
 
+#[macro_use]
 mod dao;
 mod engine;
 mod ladder;
@@ -17,11 +18,13 @@ mod oracle;
 mod ownership;
 mod policy;
 mod search;
-mod time;
 
 #[cfg(test)]
 mod testing;
+#[cfg(test)]
+pub use testing::engine_on;
 
+pub use dao::group_exists;
 pub use engine::{
 	DurableDeps, DurableRequest, DurableSubmission, DurableTxEngine, DurableWorkObserver,
 	EmptyRequest, RecoveryError, RegistrationError,
@@ -36,4 +39,3 @@ pub use oracle::{
 	Unobservable,
 };
 pub use policy::{PolicyError, Preparation, SubmissionPolicy};
-pub use time::{RealTimer, Timer};

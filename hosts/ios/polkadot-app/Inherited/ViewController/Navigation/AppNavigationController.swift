@@ -1,5 +1,6 @@
 import DesignSystem
 import UIKit
+import UIKitExt
 
 protocol HiddableBarWhenPushed: AnyObject {}
 
@@ -267,3 +268,5 @@ private extension NavigationBarSettings {
         return appearance
     }
 }
+
+extension AppNavigationController: ControllerBackedProtocol {}

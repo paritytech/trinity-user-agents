@@ -21,6 +21,18 @@ use crate::network::ChainEndpoint;
 /// Broadcast backlog for inbound JSON-RPC frames per connection.
 const INBOUND_CHANNEL_CAPACITY: usize = 1024;
 
+/// The CLI's answer to which chains build as V5, for its own extrinsics.
+pub struct PresetExtensionVersions(pub truapi::platform::ExtensionVersionMap);
+
+#[async_trait]
+impl truapi::platform::ExtrinsicVersionHost for PresetExtensionVersions {
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<truapi::platform::ExtensionVersionMap, truapi::latest::GenericError> {
+		Ok(self.0.clone())
+	}
+}
+
 /// Chain provider that maps a requested genesis hash to a WebSocket endpoint.
 ///
 /// The all-zero genesis (the headless SSO sentinel) and any unmapped genesis
@@ -88,9 +100,7 @@ impl ChainProvider for WsChainProvider {
 	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
 		let url = self.url_for(&genesis_hash);
 		debug!(genesis = %hex::encode(genesis_hash), %url, "chain connect");
-		let connection = WsJsonRpcConnection::connect(url)
-			.await
-			.map_err(|reason| ProviderError::Transport { reason })?;
+		let connection = WsJsonRpcConnection::connect(url).await?;
 		Ok(Box::new(connection))
 	}
 }
@@ -111,10 +121,11 @@ pub struct WsJsonRpcConnection {
 }
 
 impl WsJsonRpcConnection {
-	async fn connect(url: &str) -> Result<Self, String> {
-		let (stream, _response) = connect_async(url)
-			.await
-			.map_err(|err| format!("statement-store websocket connect failed: {err}"))?;
+	async fn connect(url: &str) -> Result<Self, ProviderError> {
+		let (stream, _response) =
+			connect_async(url).await.map_err(|err| ProviderError::Transport {
+				reason: format!("statement-store websocket connect failed: {err}"),
+			})?;
 		let (mut write, mut read) = stream.split();
 		let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Message>();
 		let (inbound_tx, initial_inbound) = broadcast::channel(INBOUND_CHANNEL_CAPACITY);

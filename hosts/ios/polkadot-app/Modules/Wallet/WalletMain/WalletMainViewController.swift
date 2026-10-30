@@ -159,7 +159,7 @@ extension WalletMainViewController: WalletMainViewProtocol {
         rootView.viewModel.expandedSection = .assetDetails
         setOverlayCloseButton()
         resetRightButton()
-        setTitleCenter(PaymentAssetBranding.shared.current.symbol)
+        setTitleCenter(String(localized: .walletMainPurse))
     }
 
     private func showIdentityDetailsOverlay() {

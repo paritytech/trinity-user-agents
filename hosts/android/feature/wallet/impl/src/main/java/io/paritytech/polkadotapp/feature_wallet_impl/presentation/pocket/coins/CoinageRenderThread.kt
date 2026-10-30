@@ -41,6 +41,7 @@ class CoinageRenderThread(
     private var gridBudget = DEFAULT_GRID_BUDGET
     private var focus: CoinageArrangement.Focus? = null
     private var window = 0f
+    private var coinSet = CoinageScene.CoinSet.SHIPPED
     private var needsRetarget = true
     private var needsFollow = false
     private var needsDraw = false
@@ -90,7 +91,8 @@ class CoinageRenderThread(
         stripHeight: Float,
         gridBudget: Float,
         focus: CoinageArrangement.Focus?,
-        window: Float
+        window: Float,
+        coinSet: CoinageScene.CoinSet
     ) = synchronized(lock) {
         val relaid = coins != this.coins ||
             isExpanded != this.isExpanded ||
@@ -98,7 +100,8 @@ class CoinageRenderThread(
             stripHeight != this.stripHeight ||
             gridBudget != this.gridBudget ||
             focus?.id != this.focus?.id ||
-            focus?.band != this.focus?.band
+            focus?.band != this.focus?.band ||
+            coinSet != this.coinSet
         val scrolled = !relaid && focus != this.focus
         val redrawn = window != this.window
 
@@ -109,6 +112,7 @@ class CoinageRenderThread(
         this.gridBudget = gridBudget
         this.focus = focus
         this.window = window
+        this.coinSet = coinSet
 
         if (relaid) needsRetarget = true
         if (scrolled) needsFollow = true
@@ -209,6 +213,7 @@ class CoinageRenderThread(
         val retarget: Boolean
         val follow: Boolean
         val offset: Float
+        val set: CoinageScene.CoinSet
         val pending: List<Tap>
 
         synchronized(lock) {
@@ -221,6 +226,7 @@ class CoinageRenderThread(
             needsFollow = false
             needsDraw = false
             offset = window
+            set = coinSet
             pending = taps.toList()
             taps.clear()
         }
@@ -229,10 +235,10 @@ class CoinageRenderThread(
 
         if (retarget) retarget(ready.designs) else if (follow) follow()
 
-        for (tap in pending) tap.onResult(CoinageScene.coinAt(tap.x, tap.y, field))
+        for (tap in pending) tap.onResult(CoinageScene.coinAt(tap.x, tap.y, field, set))
 
         val moved = advance()
-        val batches = CoinageScene.batches(field, ready.designs, offset)
+        val batches = CoinageScene.batches(field, ready.designs, offset, set)
 
         ready.draw(
             batches = batches,
@@ -284,6 +290,7 @@ class CoinageRenderThread(
         val strip: Float
         val budget: Float
         val picked: CoinageArrangement.Focus?
+        val set: CoinageScene.CoinSet
 
         synchronized(lock) {
             snapshot = coins
@@ -292,6 +299,7 @@ class CoinageRenderThread(
             strip = stripHeight
             budget = gridBudget
             picked = focus
+            set = coinSet
         }
 
         if (width <= 0f) return
@@ -303,7 +311,8 @@ class CoinageRenderThread(
             areaHeight = budget,
             designs = designs,
             stripHeight = strip,
-            focus = picked
+            focus = picked,
+            set = set
         )
 
         field.retarget(

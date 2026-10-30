@@ -69,6 +69,7 @@ import uniffi.truapi.NativePocketRemoval
 import uniffi.truapi.NativeRendererObserver
 import uniffi.truapi.DevicePermissionStatus
 import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
 import uniffi.truapi.NativeAnnouncedPairing
@@ -317,8 +318,16 @@ interface HostBridge {
     fun supportedChains(): HostChainSet = HostChainSet(network = "", chains = emptyList())
 
     /**
-     * Observe demand on a product's worker crossing zero. `Start` means run
-     * the worker now, `Stop` that nothing wants it any more. Every transition
+     * The chains this host builds as V5 general transactions, each with its
+     * transaction extension pipeline; every other chain is built as V4. The
+     * core builds its own extrinsics the same way. Defaults to none.
+     */
+    @Throws(HostRejection::class)
+    suspend fun transactionExtensionVersions(): ExtensionVersionMap = ExtensionVersionMap(chains = emptyList())
+
+    /**
+     * Request a product worker transition. `Start` means run the worker now;
+     * `Stop` means it is no longer needed and may stop. Every transition
      * arrives here in ledger order, the ones the app asks for by taking a
      * reference of its own included.
      *
@@ -330,7 +339,7 @@ interface HostBridge {
      * re-entrantly: marshal the work off rather than blocking on another
      * thread from inside it.
      */
-    fun workerDemandChanged(productId: String, transition: WorkerTransition) {}
+    fun requestWorkerTransition(productId: String, transition: WorkerTransition) {}
 
     /**
      * Begin a pending operation. [label] is a log/UI hint, empty when the
@@ -368,10 +377,49 @@ interface HostBridge {
      * While [pending] is true, keep a background task running that awaits
      * [TrUAPIHostRuntime.runDurableRecovery]; false means nothing needs it.
      * Reported on change, starting with the state the runtime finds at
-     * launch. Runtime-wide, like [workerDemandChanged], and arrives on a core
+     * launch. Runtime-wide, like [requestWorkerTransition], and arrives on a core
      * thread: marshal the work off rather than blocking.
      */
     fun durableWorkChanged(pending: Boolean) {}
+
+    /**
+     * The 32-byte id of the current app installation, created on first use.
+     * NFT purse item keys are derived under it, so it must be the id the host
+     * registers for recovery. Runtime-wide, like [durableWorkChanged].
+     * Defaults to a rejection for a host that keeps no installation id.
+     */
+    @Throws(HostRejection::class)
+    suspend fun currentInstallation(): ByteArray =
+        throw HostRejection.Rejected("this host keeps no installation id")
+
+    /**
+     * A value the host keeps encrypted at rest and out of backups, such as in
+     * encrypted preferences. Returns null when nothing is stored under [key],
+     * and throws when the store cannot be read or the value no longer
+     * decrypts. The core keeps secrets here that its database must not hold.
+     * Runtime-wide, like [durableWorkChanged]. Defaults to a rejection for a
+     * host with no such store, which turns off the features that need it.
+     */
+    @Throws(HostRejection::class)
+    suspend fun encryptedStorageRead(key: ByteArray): ByteArray? =
+        throw HostRejection.Rejected("this host keeps no encrypted storage")
+
+    /**
+     * Stores [value] under [key], encrypted at rest and excluded from backups,
+     * replacing any earlier value. Runtime-wide, like [durableWorkChanged].
+     * Defaults to a rejection.
+     */
+    @Throws(HostRejection::class)
+    suspend fun encryptedStorageWrite(key: ByteArray, value: ByteArray): Unit =
+        throw HostRejection.Rejected("this host keeps no encrypted storage")
+
+    /**
+     * Deletes the value stored under [key]. Deleting nothing succeeds.
+     * Runtime-wide, like [durableWorkChanged]. Defaults to a rejection.
+     */
+    @Throws(HostRejection::class)
+    suspend fun encryptedStorageDelete(key: ByteArray): Unit =
+        throw HostRejection.Rejected("this host keeps no encrypted storage")
 
     /** Product-scoped key-value storage for the Rust core. */
     val storage: HostStorage
@@ -506,8 +554,8 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     }
 
     // Infallible across the FFI for the same reason `onCoreLog` is.
-    override fun workerDemandChanged(productId: String, transition: WorkerTransition) {
-        runCatching { bridge.workerDemandChanged(productId, transition) }
+    override fun requestWorkerTransition(productId: String, transition: WorkerTransition) {
+        runCatching { bridge.requestWorkerTransition(productId, transition) }
     }
 
     // Infallible across the FFI for the same reason `onCoreLog` is.
@@ -519,6 +567,18 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override fun durableWorkChanged(pending: Boolean) {
         runCatching { bridge.durableWorkChanged(pending) }
     }
+
+    override suspend fun currentInstallation(): ByteArray =
+        withHostRejection { bridge.currentInstallation() }
+
+    override suspend fun encryptedStorageRead(key: ByteArray): ByteArray? =
+        withHostRejection { bridge.encryptedStorageRead(key) }
+
+    override suspend fun encryptedStorageWrite(key: ByteArray, value: ByteArray) =
+        withHostRejection { bridge.encryptedStorageWrite(key, value) }
+
+    override suspend fun encryptedStorageDelete(key: ByteArray) =
+        withHostRejection { bridge.encryptedStorageDelete(key) }
 
     override suspend fun navigateTo(url: String) =
         withNavigateRejection { bridge.navigateTo(url) }
@@ -600,6 +660,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
 
     override fun supportedChains(): HostChainSet =
         withHostRejection { bridge.supportedChains() }
+
+    override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
+        withHostRejection { bridge.transactionExtensionVersions() }
 
     override suspend fun localStorageRead(key: String): ByteArray? =
         withStorageException { bridge.storage.read(key) }
@@ -1035,7 +1098,7 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     /**
      * Take one reference on the product's worker for a modality holder that is
      * on screen or in flight. The first one reports a start transition to
-     * [HostBridge.workerDemandChanged], which is where the host starts the
+     * [HostBridge.requestWorkerTransition], which is where the host starts the
      * worker. Pair every call with one [releaseWorker].
      */
     fun acquireWorker(productId: String) {

@@ -29,12 +29,12 @@ use crate::platform::{
 	AccountAccessReview, AuthPresenter, AuthState, ChainProvider,
 	CoreStorage as PlatformCoreStorage, CoreStorageKey, CreateTransactionReview,
 	Features as PlatformFeatures, HostInfo, JsonRpcConnection, LocaleHost,
-	Navigation as PlatformNavigation, Notifications as PlatformNotifications, PairingHostConfig,
-	Permissions as PlatformPermissions, PlatformInfo, PreimageHost, ProductContext, ProductId,
-	ProductOperations as PlatformProductOperations, ProductStorage as PlatformProductStorage,
-	ProductSubtreeReview, ProviderError, ResourceAllocationReview, SignPayloadReview,
-	SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost, UserConfirmation,
-	UserConfirmationReview,
+	Navigation as PlatformNavigation, NftPurseDrainReview, Notifications as PlatformNotifications,
+	PairingHostConfig, Permissions as PlatformPermissions, PlatformInfo, PreimageHost,
+	ProductContext, ProductId, ProductOperations as PlatformProductOperations,
+	ProductStorage as PlatformProductStorage, ProductSubtreeReview, ProviderError,
+	ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
+	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::{
 	Stream,
@@ -53,7 +53,9 @@ use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey
 
 mod scripted_chain;
 
-pub use scripted_chain::{ScriptedProvider, extract_id, notification_sender, wait_for_sent};
+pub use scripted_chain::{
+	ScriptedProvider, extract_id, later_notification_sender, notification_sender, wait_for_sent,
+};
 
 /// Block until `condition` holds, failing with `message` after two seconds.
 /// Background runtime tasks run on their own threads, so a test that observes
@@ -115,6 +117,8 @@ pub struct StubPlatform {
 	pub account_access_confirmed: bool,
 	pub account_access_error: Option<&'static str>,
 	pub account_access_reviews: Arc<Mutex<Vec<AccountAccessReview>>>,
+	/// Holds the account-access prompt open until the sender fires.
+	pub account_access_confirmation_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
 	/// Permission answers retain their lifetime separately from action confirmations.
 	pub permission_confirmation_decisions:
 		Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
@@ -122,6 +126,8 @@ pub struct StubPlatform {
 	/// pre-consent behavior where a cold own-account resolve was not gated.
 	pub product_subtree_denied: bool,
 	pub product_subtree_reviews: Arc<Mutex<Vec<ProductSubtreeReview>>>,
+	pub nft_purse_drain_confirmed: bool,
+	pub nft_purse_drain_reviews: Arc<Mutex<Vec<NftPurseDrainReview>>>,
 	pub identity_disclosure_confirmed: bool,
 	pub identity_disclosure_error: Option<&'static str>,
 	pub identity_disclosure_calls: Arc<AtomicUsize>,
@@ -1130,6 +1136,16 @@ pub fn core_storage_test_key(key: CoreStorageKey) -> String {
 	format!("core:{}", hex::encode(key.encode()))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[crate::platform::async_trait]
+impl crate::installation::InstallationIdProvider for StubPlatform {
+	async fn current_installation(
+		&self,
+	) -> Result<crate::installation::InstallationId, v01::GenericError> {
+		Ok(crate::nft::TEST_INSTALLATION)
+	}
+}
+
 #[crate::platform::async_trait]
 impl PlatformNavigation for StubPlatform {
 	async fn navigate_to(&self, url: String) -> Result<(), v01::HostNavigateToError> {
@@ -1211,6 +1227,8 @@ impl PlatformPermissions for StubPlatform {
 		})
 	}
 }
+
+impl crate::platform::ExtrinsicVersionHost for StubPlatform {}
 
 #[crate::platform::async_trait]
 impl PlatformFeatures for StubPlatform {
@@ -1912,6 +1930,14 @@ impl UserConfirmation for StubPlatform {
 					.lock()
 					.expect("account access review list mutex poisoned")
 					.push(review);
+				let gate = self
+					.account_access_confirmation_gate
+					.lock()
+					.expect("account access gate mutex poisoned")
+					.take();
+				if let Some(gate) = gate {
+					gate.await.expect("account access gate was released");
+				}
 				(self.account_access_error, self.account_access_confirmed)
 			},
 			UserConfirmationReview::IdentityDisclosure(_) => {
@@ -1939,6 +1965,13 @@ impl UserConfirmation for StubPlatform {
 					.expect("product subtree review list mutex poisoned")
 					.push(review);
 				(None, !self.product_subtree_denied)
+			},
+			UserConfirmationReview::NftPurseDrain(review) => {
+				self.nft_purse_drain_reviews
+					.lock()
+					.expect("NFT purse drain review list mutex poisoned")
+					.push(review);
+				(None, self.nft_purse_drain_confirmed)
 			},
 		};
 		if let Some(reason) = error {
@@ -1980,7 +2013,7 @@ impl LocaleHost for StubPlatform {
 impl PreimageHost for StubPlatform {
 	fn lookup_preimage(
 		&self,
-		_key: Vec<u8>,
+		_key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, v01::GenericError>> {
 		let value = self.preimage_lookup_value.clone();
 		Box::pin(stream::once(async move { Ok(value) }))

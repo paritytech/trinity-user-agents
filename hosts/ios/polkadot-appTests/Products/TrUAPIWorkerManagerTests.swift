@@ -66,6 +66,47 @@ struct TrUAPIWorkerManagerTests {
         #expect(running.stopWsBridgeCallCount == 1)
     }
 
+    /// iOS kills a worker's content process while the app is in the background,
+    /// and the script dies with it. The core keeps counting the references that
+    /// wanted the worker, so it never sends another start: unless the manager
+    /// boots a fresh worker itself, chat and Pocket faces for the product stay
+    /// dead until the app restarts.
+    @Test
+    func bootsAFreshWorkerWhenItsEngineDies() async throws {
+        let builder = StubWorkerBuilder()
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+
+        manager.demandChanged(productId: "game.paseo", transition: .start)
+        try await execution(of: "game.paseo", in: manager)
+        let dead = try #require(builder.executions["game.paseo"])
+        try #require(builder.engines["game.paseo"]).terminate()
+        try await withTimeout(.hangGuard) { await dead.awaitClose() }
+        let rebooted = try await execution(of: "game.paseo", in: manager)
+
+        #expect(rebooted !== dead)
+        #expect(builder.built == ["game.paseo", "game.paseo"])
+    }
+
+    /// An engine of a worker that was already stopped can still die afterwards.
+    /// Rebooting it would run a worker nobody holds a reference to, and the core
+    /// would never send the stop that clears it.
+    @Test
+    func doesNotRebootAWorkerThatWasStopped() async throws {
+        let builder = StubWorkerBuilder()
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+
+        manager.demandChanged(productId: "game.paseo", transition: .start)
+        try await execution(of: "game.paseo", in: manager)
+        let engine = try #require(builder.engines["game.paseo"])
+        manager.demandChanged(productId: "game.paseo", transition: .stop)
+        try await noExecution(of: "game.paseo", in: manager)
+        engine.terminate()
+        try await barrier(manager)
+
+        #expect(builder.built == ["game.paseo", "barrier.paseo"])
+        #expect(manager.currentExecution(of: "game.paseo") == nil)
+    }
+
     /// A worker whose engine fails once it is already in the running map must
     /// leave nothing behind: the core keeps counting the reference the card
     /// holds, so no further stop arrives to clear a half-started entry, and

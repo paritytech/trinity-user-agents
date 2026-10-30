@@ -30,22 +30,10 @@ extension AcceptIncomingChatRequestMapper: CoreDataMapperProtocol {
         using context: NSManagedObjectContext
     ) throws {
         switch model {
-        case let .existing(requestId, messageExchangeMode, acceptorDevice):
-            try populateExisting(
-                entity: entity,
-                requestId: requestId,
-                messageExchangeMode: messageExchangeMode,
-                acceptorDevice: acceptorDevice,
-                using: context
-            )
-        case let .new(remoteModel, messageExchangeMode, acceptorDevice):
-            try populateNotExisting(
-                entity: entity,
-                remote: remoteModel,
-                messageExchangeMode: messageExchangeMode,
-                acceptorDevice: acceptorDevice,
-                using: context
-            )
+        case let .existing(requestId, acceptorDevice):
+            try populateExisting(entity: entity, requestId: requestId, acceptorDevice: acceptorDevice, using: context)
+        case let .new(remoteModel, acceptorDevice):
+            try populateNotExisting(entity: entity, remote: remoteModel, acceptorDevice: acceptorDevice, using: context)
         }
     }
 }
@@ -54,8 +42,7 @@ private extension AcceptIncomingChatRequestMapper {
     func populateNotExisting(
         entity: CoreDataEntity,
         remote: ChatRequest.ValidatedRemoteModel,
-        messageExchangeMode: MessageExchangeMode,
-        acceptorDevice: Chat.PeerDevice?,
+        acceptorDevice: Chat.PeerDevice,
         using context: NSManagedObjectContext
     ) throws {
         guard entity.identifier == nil else {
@@ -81,7 +68,6 @@ private extension AcceptIncomingChatRequestMapper {
         try context.setupAcceptMessage(
             for: remote.requestId,
             peerAccountId: remote.peerAccountId,
-            messageExchangeMode: messageExchangeMode,
             acceptorDevice: acceptorDevice
         )
 
@@ -90,13 +76,18 @@ private extension AcceptIncomingChatRequestMapper {
             request: entity,
             using: context
         )
+
+        try storeRequesterDevice(
+            requestId: remote.requestId,
+            on: entity.contact ?? context.first(for: .contact(for: remote.peerAccountId)),
+            using: context
+        )
     }
 
     func populateExisting(
         entity: CoreDataEntity,
         requestId: String,
-        messageExchangeMode: MessageExchangeMode,
-        acceptorDevice: Chat.PeerDevice?,
+        acceptorDevice: Chat.PeerDevice,
         using context: NSManagedObjectContext
     ) throws {
         guard entity.identifier != nil else {
@@ -111,14 +102,33 @@ private extension AcceptIncomingChatRequestMapper {
         entity.touchParent()
         entity.contact?.acceptedAt = Date()
         entity.contact?.pendingDevicesFanOut = true
+        try storeRequesterDevice(requestId: requestId, on: entity.contact, using: context)
         entity.contact = nil
 
         try context.setupAcceptMessage(
             for: requestId,
             peerAccountId: peerAccountId,
-            messageExchangeMode: messageExchangeMode,
             acceptorDevice: acceptorDevice
         )
+    }
+
+    // The requester's device is known from the request, so the session can use the device route at once.
+    func storeRequesterDevice(
+        requestId: String,
+        on contact: CDChatContact?,
+        using context: NSManagedObjectContext
+    ) throws {
+        guard
+            let contact,
+            let deviceEntity: CDChatRequestPeerDevice = try context.first(
+                for: .chatRequestPeerDeviceByRequestId(requestId)
+            )
+        else {
+            return
+        }
+
+        let device = try ChatRequestPeerDeviceMapper().transform(entity: deviceEntity).peerDevice
+        try context.addPeerDevice(device, to: contact)
     }
 
     func markPendingDevicesFanOut(

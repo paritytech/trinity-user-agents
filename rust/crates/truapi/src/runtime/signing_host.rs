@@ -16,6 +16,8 @@ use truapi::latest::{
 	HostAccountRingVrfSignRequest, ProductAccountId, RingLocation, RingLocationJunction,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+use allowance_renewal::StatementRenewalError;
 pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::TrackedStatementRenewalTarget;
@@ -25,11 +27,12 @@ pub use sso_service::SigningHostSsoService;
 use super::{
 	HostSession, RuntimeServices,
 	authority::{
-		AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
+		AccountCaller, AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
 		CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
 		SignRawAuthorityRequest, StatementStoreAllowanceKey, authority_session_validation_id,
 	},
 	connected_session_ui_info,
+	product_consent::ProductConsent,
 	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure},
 	validate_vrf_transcript,
 };
@@ -43,9 +46,8 @@ use crate::{
 		entropy::derive_product_entropy,
 		features::genesis_for,
 		product_account::{
-			ProductAccountError, SR25519_SIGNING_CONTEXT, derivation_index_bytes,
-			derive_full_person_ring_vrf_entropy, derive_identity_keypair,
-			derive_lite_person_ring_vrf_entropy, derive_product_keypair,
+			SR25519_SIGNING_CONTEXT, derivation_index_bytes, derive_full_person_ring_vrf_entropy,
+			derive_identity_keypair, derive_lite_person_ring_vrf_entropy, derive_product_keypair,
 			derive_product_subtree_keypair, derive_ring_vrf_entropy,
 			derive_root_keypair_from_entropy, personhood_product_id,
 		},
@@ -155,6 +157,8 @@ pub struct SigningHost {
 	network_suffix: String,
 	session_state: Arc<SessionState>,
 	auth_state: AuthStateMachine,
+	/// Account-access decisions and reviews for local and paired callers.
+	consent: ProductConsent,
 	ring_resolver: Arc<dyn RingResolver>,
 	/// Unchecked grants and withheld resources for test-host suites. Compiled
 	/// only into a build carrying `test-host`, which is off by default and which
@@ -194,6 +198,7 @@ impl SigningHost {
 			submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
 			session_state: SessionState::new(),
 			auth_state: AuthStateMachine::new(platform.clone()),
+			consent: ProductConsent::new(platform.clone()),
 			ring_resolver,
 			root_entropy: Mutex::new(None),
 			local_grants: Mutex::new(LocalGrantState::default()),
@@ -274,6 +279,7 @@ impl SigningHost {
 			submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
 			session_state: SessionState::new(),
 			auth_state: AuthStateMachine::new(platform.clone()),
+			consent: ProductConsent::new(platform.clone()),
 			ring_resolver,
 			root_entropy: Mutex::new(None),
 			local_grants: Mutex::new(LocalGrantState::default()),
@@ -306,10 +312,10 @@ impl SigningHost {
 
 	fn product_subtree_secret(&self, product_id: &ProductId) -> Result<[u8; 64], AuthorityError> {
 		let entropy = self.root_entropy()?;
-		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
+		let root = derive_root_keypair_from_entropy(&entropy)?;
 		derive_product_subtree_keypair(&root, product_id)
 			.map(|keypair| keypair.secret.to_bytes())
-			.map_err(product_authority_error)
+			.map_err(Into::into)
 	}
 
 	/// Paired-host requests the pairing host can still withdraw.
@@ -324,12 +330,12 @@ impl SigningHost {
 	) -> Result<(), AuthorityError> {
 		let (_, activation_generation) = self.require_current_session(session)?;
 		let entropy = self.root_entropy()?;
-		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
+		let root = derive_root_keypair_from_entropy(&entropy)?;
 		let owner = root.public.to_bytes();
 		if owner != session.public_key {
 			return Err(AuthorityError::Disconnected);
 		}
-		derive_product_subtree_keypair(&root, product_id).map_err(product_authority_error)?;
+		derive_product_subtree_keypair(&root, product_id)?;
 
 		let mut state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
 		if state.activation_generation != activation_generation {
@@ -386,6 +392,7 @@ impl SigningHost {
 	/// Fence in-flight grant work and revoke this product's grants from the
 	/// current local activation while preserving unrelated products.
 	pub fn clear_product_state(&self, product_id: &ProductId) {
+		self.consent.forget_allowed_once_for(product_id);
 		self.local_grants
 			.lock()
 			.expect("local AutoSigning grant mutex poisoned")
@@ -401,9 +408,8 @@ impl SigningHost {
 		let Ok(entropy) = self.root_entropy() else {
 			return Ok(None);
 		};
-		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
-		let subtree =
-			derive_product_subtree_keypair(&root, product_id).map_err(product_authority_error)?;
+		let root = derive_root_keypair_from_entropy(&entropy)?;
+		let subtree = derive_product_subtree_keypair(&root, product_id)?;
 		Ok(Some(subtree.public.to_bytes()))
 	}
 
@@ -417,7 +423,7 @@ impl SigningHost {
 		account: &v01::ProductAccountId,
 	) -> Result<([u8; 32], schnorrkel::Keypair), AuthorityError> {
 		let entropy = self.root_entropy()?;
-		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
+		let root = derive_root_keypair_from_entropy(&entropy)?;
 		let owner = root.public.to_bytes();
 		derive_product_keypair(
 			&root,
@@ -425,7 +431,7 @@ impl SigningHost {
 			derivation_index_bytes(&account.derivation_index),
 		)
 		.map(|keypair| (owner, keypair))
-		.map_err(product_authority_error)
+		.map_err(Into::into)
 	}
 
 	fn product_keypair(
@@ -437,12 +443,13 @@ impl SigningHost {
 
 	fn identity_keypair(&self) -> Result<schnorrkel::Keypair, AuthorityError> {
 		let entropy = self.root_entropy()?;
-		derive_identity_keypair(&entropy, &self.network_suffix).map_err(product_authority_error)
+		derive_identity_keypair(&entropy, &self.network_suffix).map_err(Into::into)
 	}
 
 	fn install_local_session(&self, secret: Zeroizing<Vec<u8>>, session: SessionInfo) {
 		let mut state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
 		state.advance_activation();
+		self.consent.forget_allowed_once();
 		*self.root_entropy.lock().expect("signing host entropy mutex poisoned") = Some(secret);
 		self.session_state.set_session(session);
 	}
@@ -450,6 +457,7 @@ impl SigningHost {
 	fn clear_local_session(&self) {
 		let mut state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
 		state.advance_activation();
+		self.consent.forget_allowed_once();
 		self.root_entropy.lock().expect("signing host entropy mutex poisoned").take();
 		self.session_state.clear_session();
 	}
@@ -671,6 +679,23 @@ impl SigningHost {
 		))
 	}
 
+	async fn require_account_access(
+		&self,
+		cx: &CallContext,
+		requester: &ProductId,
+		owner: &ProductId,
+	) -> Result<(), RingVrfError> {
+		let access = self.consent.account_access(requester, owner, self.platform.as_ref());
+		let status = super::until_cancelled(cx, access)
+			.await?
+			.map_err(|error| RingVrfError::Unknown { reason: error.to_string() })?;
+		if status == PermissionAuthorizationStatus::Authorized {
+			Ok(())
+		} else {
+			Err(RingVrfError::Rejected)
+		}
+	}
+
 	pub async fn ring_vrf_providers(
 		&self,
 		ring: &v01::RingLocation,
@@ -706,39 +731,28 @@ impl SigningHost {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-		calling_product_id: &ProductId,
+		caller: AccountCaller<'_>,
 		request: v01::HostAccountSignVrfRequest,
-		authenticated_caller: bool,
 	) -> Result<v01::VrfSignature, AuthorityError> {
 		self.require_current_session(session)?;
 		validate_vrf_transcript(&request).map_err(|reason| AuthorityError::Unknown { reason })?;
 		let keypair = self.product_keypair(&request.account)?;
 		let (current, activation_generation) = self.require_current_session(session)?;
+		let calling_product_id = caller.product_id().ok_or(AuthorityError::Rejected)?;
 		let owner = &request.account.dot_ns_identifier;
-		let granted = authenticated_caller &&
-			(super::authority::is_blessed_owner(calling_product_id, owner) ||
-				self.has_auto_signing_grant(
-					activation_generation,
-					current.public_key,
-					calling_product_id,
-					owner,
-				));
-		if !granted {
-			let confirmed = super::until_cancelled(
-				cx,
-				self.platform
-					.confirm_user_action(UserConfirmationReview::SignVrf(SignVrfReview {
-						calling_product_id: calling_product_id.clone(),
-						request: request.clone(),
-					})),
-			)
-			.await?
-			.map_err(|err| AuthorityError::Unknown {
-				reason: format!("VRF signing confirmation failed: {err:?}"),
-			})?;
-			if !confirmed {
-				return Err(AuthorityError::Rejected);
-			}
+		let auto_signing = matches!(caller, AccountCaller::Local { .. }) &&
+			self.has_auto_signing_grant(
+				activation_generation,
+				current.public_key,
+				calling_product_id,
+				owner,
+			);
+		if !auto_signing {
+			let review = UserConfirmationReview::SignVrf(SignVrfReview {
+				calling_product_id: calling_product_id.clone(),
+				request: request.clone(),
+			});
+			self.consent.review(cx, caller, self.platform.as_ref(), review).await?;
 		}
 		let (pre_output, proof) = crate::dynamic_vrf::sign_dynamic_vrf(
 			&keypair,
@@ -755,19 +769,19 @@ impl SigningHost {
 	pub async fn track_statement_renewal_targets(
 		&self,
 		targets: Vec<StatementRenewalTarget>,
-	) -> Result<(), String> {
+	) -> Result<(), StatementRenewalError> {
 		allowance_renewal::track(self, targets).await
 	}
 
 	/// Every statement account the ledger currently tracks.
 	pub async fn statement_renewal_targets(
 		&self,
-	) -> Result<Vec<TrackedStatementRenewalTarget>, String> {
+	) -> Result<Vec<TrackedStatementRenewalTarget>, StatementRenewalError> {
 		allowance_renewal::list(self).await
 	}
 
 	/// Root public key the active identity records its fixed entries under.
-	pub fn statement_renewal_owner_key(&self) -> Result<[u8; 32], String> {
+	pub fn statement_renewal_owner_key(&self) -> Result<[u8; 32], StatementRenewalError> {
 		allowance_renewal::active_owner_key(self)
 	}
 
@@ -775,14 +789,17 @@ impl SigningHost {
 	pub async fn untrack_statement_renewal_account(
 		&self,
 		account_id: &[u8; 32],
-	) -> Result<bool, String> {
+	) -> Result<bool, StatementRenewalError> {
 		allowance_renewal::untrack_account_for_signing_host(self, account_id).await
 	}
 
 	/// Run one statement-store renewal pass over the tracked targets.
 	pub async fn renew_statement_allowances(
 		&self,
-	) -> Result<crate::runtime::statement_allowance::renewal::StatementRenewalReport, String> {
+	) -> Result<
+		crate::runtime::statement_allowance::renewal::StatementRenewalReport,
+		StatementRenewalError,
+	> {
 		allowance_renewal::renew_now(&self.services, self).await
 	}
 
@@ -838,6 +855,10 @@ impl ProductAuthority for SigningHost {
 		self.current_local_session()
 	}
 
+	fn consent(&self) -> &ProductConsent {
+		&self.consent
+	}
+
 	async fn product_subtree_public_key(
 		&self,
 		_cx: &CallContext,
@@ -846,10 +867,10 @@ impl ProductAuthority for SigningHost {
 	) -> Result<[u8; 32], AuthorityError> {
 		self.require_current_session(session)?;
 		let entropy = self.root_entropy()?;
-		let root = derive_root_keypair_from_entropy(&entropy).map_err(product_authority_error)?;
+		let root = derive_root_keypair_from_entropy(&entropy)?;
 		derive_product_subtree_keypair(&root, product_id)
 			.map(|keypair| keypair.public.to_bytes())
-			.map_err(product_authority_error)
+			.map_err(Into::into)
 	}
 
 	async fn subtree_resolution_reaches_account_holder(
@@ -894,7 +915,9 @@ impl ProductAuthority for SigningHost {
 		calling_product_id: &ProductId,
 		request: v01::HostAccountSignVrfRequest,
 	) -> Result<v01::VrfSignature, AuthorityError> {
-		self.sign_vrf_request(cx, session, calling_product_id, request, true).await
+		let product = ProductContext::new(calling_product_id.clone());
+		self.sign_vrf_request(cx, session, AccountCaller::Local { product: &product }, request)
+			.await
 	}
 
 	async fn sign_payload(
@@ -1021,52 +1044,45 @@ impl ProductAuthority for SigningHost {
 
 	async fn account_alias(
 		&self,
-		_cx: &CallContext,
+		cx: &CallContext,
 		session: &AuthoritySession,
 		request: ProductRequest<HostAccountGetAliasRequest>,
 	) -> Result<v01::ContextualAlias, RingVrfError> {
 		self.require_current_session(session)?;
 		// Aliases expose the same identity as `create_proof`, so both must enforce
 		// the same RFC-0024 grant and context restrictions.
-		let granted = match self
-			.require_ring_vrf_key_access(
-				request.calling_product_id.clone(),
-				&request.payload.key_handle,
-			)
-			.await
-		{
-			Ok(granted) => Some(granted),
+		let key_access = crate::runtime::product_manifest::ring_vrf_key_access_granted_or_consent(
+			&self.services,
+			self.platform.as_ref(),
+			request.calling_product_id.clone(),
+			&request.payload.key_handle,
+		)
+		.await;
+		let granted = match key_access {
+			Ok(access) => Some(access),
 			Err(RingVrfError::NotAllowlisted) => None,
 			Err(err) => return Err(err),
 		};
 		// The context is held to the same rule as on `create_proof`: the alias and
 		// the proof come from one VRF evaluation.
 		let key_handle = match granted {
-			Some((key_handle, access)) => {
+			Some(access) => {
 				crate::runtime::product_manifest::require_context_access(
 					&self.services,
 					&access,
 					&request.payload.context,
 				)
 				.await?;
-				key_handle
+				v01::ProductAccountId {
+					dot_ns_identifier: access.owner,
+					derivation_index: request.payload.key_handle.derivation_index.clone(),
+				}
 			},
 			None => {
 				// Permission lookups and prompts must use the same canonical identifiers.
 				let requester = &request.calling_product_id;
 				let owner = request.payload.key_handle.dot_ns_identifier.clone();
-				match super::account_access_authorization(
-					self.services.platform.as_ref(),
-					requester,
-					&owner,
-				)
-				.await
-				.map_err(|err| RingVrfError::Unknown { reason: err.to_string() })?
-				{
-					PermissionAuthorizationStatus::Authorized => {},
-					PermissionAuthorizationStatus::Denied |
-					PermissionAuthorizationStatus::NotDetermined => return Err(RingVrfError::Rejected),
-				}
+				self.require_account_access(cx, requester, &owner).await?;
 				v01::ProductAccountId {
 					dot_ns_identifier: owner,
 					derivation_index: request.payload.key_handle.derivation_index.clone(),
@@ -1155,7 +1171,7 @@ impl ProductAuthority for SigningHost {
 
 	async fn list_ring_vrf_keys(
 		&self,
-		_cx: &CallContext,
+		cx: &CallContext,
 		session: &AuthoritySession,
 		request: ProductRequest<HostAccountListRingVrfKeysRequest>,
 	) -> Result<Vec<v01::RegisteredRingVrfKey>, RingVrfError> {
@@ -1167,18 +1183,7 @@ impl ProductAuthority for SigningHost {
 			.map_err(|err| RingVrfError::Unknown { reason: err.to_string() })?;
 		let caller = &request.calling_product_id;
 		if *caller != owner {
-			match super::account_access_authorization(
-				self.services.platform.as_ref(),
-				caller,
-				&owner,
-			)
-			.await
-			.map_err(|err| RingVrfError::Unknown { reason: err.to_string() })?
-			{
-				PermissionAuthorizationStatus::Authorized => {},
-				PermissionAuthorizationStatus::Denied |
-				PermissionAuthorizationStatus::NotDetermined => return Err(RingVrfError::Rejected),
-			}
+			self.require_account_access(cx, caller, &owner).await?;
 		}
 
 		self.register_builtin_personhood_keys_if_needed(session, &owner).await?;
@@ -1303,10 +1308,7 @@ impl ProductAuthority for SigningHost {
 		#[cfg(feature = "test-host")]
 		self.resource_controls
 			.refuse_withheld(&v01::AllocatableResource::StatementStoreAllowance)?;
-		let period = statement_allowance::slot::current_period(
-			allowance::current_unix_secs()
-				.map_err(allowance::AllowanceAllocationError::into_authority_error)?,
-		);
+		let period = statement_allowance::slot::current_period(allowance::current_unix_secs()?);
 		if let Some(key) = self
 			.local_grants
 			.lock()
@@ -1321,7 +1323,7 @@ impl ProductAuthority for SigningHost {
 			OnExistingAllowancePolicy::Ignore,
 		)
 		.await
-		.map_err(allowance::AllowanceAllocationError::into_authority_error)
+		.map_err(Into::into)
 	}
 
 	#[cfg(feature = "test-host")]
@@ -1354,8 +1356,7 @@ impl ProductAuthority for SigningHost {
 			product_id,
 			OnExistingAllowancePolicy::Ignore,
 		)
-		.await
-		.map_err(allowance::AllowanceAllocationError::into_authority_error)?;
+		.await?;
 		BulletinAllowanceKey::from_secret_bytes(secret)
 	}
 
@@ -1376,8 +1377,7 @@ impl ProductAuthority for SigningHost {
 			product_id,
 			OnExistingAllowancePolicy::Increase,
 		)
-		.await
-		.map_err(allowance::AllowanceAllocationError::into_authority_error)?;
+		.await?;
 		BulletinAllowanceKey::from_secret_bytes(secret)
 	}
 
@@ -1426,18 +1426,38 @@ fn local_session_validation_id(session: &SessionInfo, activation_generation: u64
 	id
 }
 
-fn product_authority_error(err: ProductAccountError) -> AuthorityError {
-	AuthorityError::Unavailable { reason: err.to_string() }
+#[cfg(not(target_arch = "wasm32"))]
+impl crate::nft::ItemKeyDeriver for SigningHost {
+	fn derive_item_keys(
+		&self,
+		slots: &[crate::nft::ItemSlot],
+	) -> Result<Vec<crate::nft::ItemKey>, AuthorityError> {
+		let entropy = self.root_entropy()?;
+		crate::nft::item_keys_from_entropy(&entropy, slots).map_err(AuthorityError::from)
+	}
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl crate::nft::ItemSigner for SigningHost {
+	fn item_signer(
+		&self,
+		slot: crate::nft::ItemSlot,
+	) -> Result<crate::host_internal::extrinsic::Sr25519Signer, AuthorityError> {
+		let entropy = self.root_entropy()?;
+		crate::nft::item_signer_from_entropy(&entropy, slot).map_err(AuthorityError::from)
+	}
 }
 
 #[cfg(test)]
 mod tests {
+	mod activation;
 	mod allowance_keys;
 	mod auto_signing;
 	mod cross_product_account;
 	#[cfg(feature = "test-host")]
 	mod local_preimages;
 	mod raw_signing;
+	mod remote_consent;
 	#[cfg(feature = "test-host")]
 	mod withheld_resources;
 
@@ -1768,6 +1788,231 @@ mod tests {
 				v01::HostAccountCreateProofError::NotAllowlisted
 			)))
 		);
+	}
+
+	/// A refusal reaches the host log with what it was judged by.
+	///
+	/// The wire answers `NotAllowlisted` for every reason, so one device
+	/// refusing a grant every other device admits is only explicable from this
+	/// line: how old its cached copy was, or that it cached a miss, and what
+	/// the manifest lists for the caller.
+	///
+	/// The publisher can list any number of scopes, so a long list is cut by
+	/// the host sink after the source rather than pushing the source out.
+	#[test]
+	fn a_refusal_tells_the_host_what_it_judged_by() {
+		let many_scopes = format!(r#"{{"dim2":[{}]}}"#, [r#""storage""#; 60].join(","));
+		let cases = [
+			(Some(r#"{"someone-else":["context"]}"#), "not granted", "None".to_string()),
+			(Some(r#"{"dim2":["storage"]}"#), "not granted", "Some([Storage])".to_string()),
+			(
+				Some(many_scopes.as_str()),
+				"not granted",
+				format!("Some([{}])", ["Storage"; 60].join(", ")),
+			),
+			(None, "manifest unavailable", "None".to_string()),
+		];
+		let (judged, expected): (Vec<_>, Vec<_>) = cases
+			.into_iter()
+			.map(|(trusted_products, because, scopes)| {
+				(
+					refusal_lines_from_an_hour_old_cache(trusted_products),
+					vec![refusal_line(&format!(
+						"because={because}, entry=dim2, caller=dim2.dot, owner=peopl.dot, \
+						 source=cache, 3600 s old, scopes={scopes}"
+					))],
+				)
+			})
+			.unzip();
+		assert_eq!(judged, expected);
+	}
+
+	/// A lookup that read no manifest names the failure in the refusal, so it
+	/// is not mistaken for a product that publishes none.
+	#[test]
+	fn a_failed_lookup_is_named_in_the_refusal() {
+		let lines = crate::logging::testing::host_sink_lines(|| {
+			let _ = foreign_proof_through_the_authority(None);
+		});
+		assert_eq!(
+			lines,
+			vec![
+				"truapi.tracing.warn truapi::runtime::product_manifest: root manifest lookup \
+				 failed {target=peopl.dot, reason=Asset Hub follow initialization timed out}"
+					.to_string(),
+				refusal_line(
+					"because=manifest unavailable, entry=dim2, caller=dim2.dot, \
+					 owner=peopl.dot, source=dotNS lookup failed: Asset Hub follow \
+					 initialization timed out, scopes=None"
+				),
+			]
+		);
+	}
+
+	/// A refused signature reaches the host log as a refused proof does.
+	#[test]
+	fn a_refused_signature_tells_the_host_what_it_judged_by() {
+		let seeded_at_secs = crate::unix_time::current_unix_secs();
+		let lines = crate::logging::testing::host_sink_lines(|| {
+			let _ = foreign_ring_vrf_sign_through_the_authority(Some(
+				r#"{"someone-else":["context"]}"#,
+			));
+		});
+		assert_eq!(
+			pin_cache_ages(lines, seeded_at_secs, 0),
+			vec![refusal_line(
+				"because=not granted, entry=dim2, caller=dim2.dot, owner=peopl.dot, \
+				 source=cache, 0 s old, scopes=None"
+			)]
+		);
+	}
+
+	/// A refusal by the context check names the context it refused.
+	///
+	/// A stored denial lists the scopes the manifest grants, which shows the
+	/// manifest was not the reason. A context on another network reads no
+	/// manifest at all, so its line has no source.
+	#[test]
+	fn a_context_refusal_tells_the_host_which_context() {
+		let context_grants = Some(r#"{"dim2next":["context"]}"#);
+		let seeded_at_secs = crate::unix_time::current_unix_secs();
+		let denied = crate::logging::testing::host_sink_lines(|| {
+			let _ = third_product_context(
+				OWNER_GRANTS_DIM2NEXT,
+				context_grants,
+				context_of("dim2.dot"),
+				|platform| deny_account_access(platform, "dim2next.dot", "dim2.dot"),
+			);
+		});
+		let off_network = crate::logging::testing::host_sink_lines(|| {
+			let _ = third_product_context(
+				OWNER_GRANTS_DIM2NEXT,
+				context_grants,
+				context_of("dim2.paseo"),
+				|_| {},
+			);
+		});
+		let denied_line = refusal_line(
+			"because=user denied, entry=dim2next, caller=dim2next.dot, owner=peopl.dot, \
+			 context=dim2.dot, source=cache, 0 s old, scopes=Some([Context])",
+		);
+		let off_network_line = refusal_line(
+			"because=context on another network, entry=dim2next, caller=dim2next.dot, \
+			 owner=peopl.dot, context=dim2.paseo, scopes=None",
+		);
+		assert_eq!(
+			(pin_cache_ages(denied, seeded_at_secs, 0), off_network),
+			(
+				vec![denied_line.clone(), denied_line],
+				vec![off_network_line.clone(), off_network_line]
+			),
+			"one line for the proof and one for the alias read"
+		);
+	}
+
+	/// A granted proof and alias read stay off the host log.
+	#[test]
+	fn a_granted_proof_warns_nobody() {
+		let lines = crate::logging::testing::host_sink_lines(|| {
+			let (proof, alias) = third_product_context(
+				OWNER_GRANTS_DIM2NEXT,
+				Some(r#"{"dim2next":["context"]}"#),
+				context_of("dim2.dot"),
+				|_| {},
+			);
+			assert!(proof.is_ok() && alias.is_ok(), "both are granted: {proof:?}, {alias:?}");
+		});
+		assert_eq!(lines, Vec::<String>::new());
+	}
+
+	/// An alias read the owner did not grant falls back to the consent the user
+	/// already gave, so the key-grant refusal on the way is not a refusal.
+	#[test]
+	fn a_consented_alias_read_warns_nobody() {
+		let platform =
+			Arc::new(StubPlatform { account_access_confirmed: true, ..StubPlatform::default() });
+		// Cached, so no failed chain lookup warns on the way.
+		cache_grant(&platform, "peopl.dot", r#"{"someone-else":["context"]}"#);
+		let authority =
+			SigningHostRole::new_with_ring_resolver(platform.clone(), full_person_ring_resolver());
+		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+			.expect("activation succeeds");
+		let session = authority.current_session().expect("active session");
+		let ring_location = full_person_ring_location();
+		register_full_person_key(&authority, &session, &ring_location);
+
+		let lines = crate::logging::testing::host_sink_lines(|| {
+			futures::executor::block_on(authority.account_alias(
+				&CallContext::default(),
+				&session,
+				ProductRequest {
+					calling_product_id: ProductId::for_test("myapp.dot"),
+					payload: HostAccountGetAliasRequest {
+						key_handle: full_person_key_handle(),
+						context: context_of("other.dot"),
+						ring_location,
+					},
+				},
+			))
+			.expect("the user consented to the read");
+		});
+		assert_eq!(lines, Vec::<String>::new());
+	}
+
+	/// The host log line of a ring-VRF refusal carrying `fields`, cut where the
+	/// host sink cuts it.
+	fn refusal_line(fields: &str) -> String {
+		let detail: String =
+			format!("truapi::runtime::product_manifest: ring-VRF access refused {{{fields}}}")
+				.chars()
+				.take(crate::logging::HOST_SINK_DETAIL_MAX_CHARS)
+				.collect();
+		format!("truapi.tracing.warn {detail}")
+	}
+
+	/// `lines` with each cache age a lookup since `seeded_at_secs` can report
+	/// written as `age_at_seeding`, the age the entry had when it was seeded.
+	fn pin_cache_ages(lines: Vec<String>, seeded_at_secs: u64, age_at_seeding: u64) -> Vec<String> {
+		// The clock may tick between seeding and the lookup.
+		let elapsed = crate::unix_time::current_unix_secs() - seeded_at_secs;
+		let ages = age_at_seeding..=age_at_seeding + elapsed;
+		lines
+			.into_iter()
+			.map(|line| {
+				ages.clone().fold(line, |line, age| {
+					line.replace(
+						&format!("cache, {age} s old"),
+						&format!("cache, {age_at_seeding} s old"),
+					)
+				})
+			})
+			.collect()
+	}
+
+	/// The host log lines of `dim2.dot` asking for the key of `peopl.dot`, with
+	/// the manifest of `peopl.dot` cached an hour ago listing `trusted_products`,
+	/// or `None` for a cached answer that it publishes no manifest.
+	fn refusal_lines_from_an_hour_old_cache(trusted_products: Option<&str>) -> Vec<String> {
+		const HOUR_SECS: u64 = 60 * 60;
+		let seeded_at_secs = crate::unix_time::current_unix_secs();
+		let fetched_at_secs = seeded_at_secs - HOUR_SECS;
+		let json = trusted_products.map(crate::host_internal::product_manifest::test_manifest_json);
+		let lines = crate::logging::testing::host_sink_lines(|| {
+			let _ = foreign_proof_through_the_authority_with(None, |platform| {
+				futures::executor::block_on(
+					<StubPlatform as crate::platform::CoreStorage>::write_core_storage(
+						platform,
+						CoreStorageKey::product_manifest(&ProductId::for_test("peopl.dot")),
+						crate::runtime::product_manifest::encode_cached_root_manifest(
+							json.as_deref(),
+							fetched_at_secs,
+						),
+					),
+				)
+				.expect("stub core storage accepts the entry");
+			});
+		});
+		pin_cache_ages(lines, seeded_at_secs, HOUR_SECS)
 	}
 
 	/// **The one that matters.** Nothing in the request can stand in for the
@@ -2341,16 +2586,18 @@ mod tests {
 		let platform = Arc::new(StubPlatform {
 			// The user declines, so the refusal is written by the production
 			// path rather than by a test helper: this has to pin where
-			// `account_access_authorization` files it, not where a fixture does.
+			// `ProductConsent::account_access` files it, not where a fixture does.
 			account_access_confirmed: false,
 			..StubPlatform::default()
 		});
 		cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
-		futures::executor::block_on(crate::runtime::account_access_authorization(
-			platform.as_ref(),
-			&ProductId::for_test("ordinary.dot"),
-			&ProductId::for_test("peopl.dot"),
-		))
+		futures::executor::block_on(
+			crate::runtime::product_consent::ProductConsent::new(platform.clone()).account_access(
+				&ProductId::for_test("ordinary.dot"),
+				&ProductId::for_test("peopl.dot"),
+				platform.as_ref(),
+			),
+		)
 		.expect("the stub records the declined decision");
 		let (services, _authority) =
 			signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());

@@ -231,6 +231,14 @@ type IndexedVariantValue<
       : { tag: K; value: T }
     : never;
 
+/** Thrown when a tagged union's encoded index names none of its variants. */
+export class UnknownDiscriminantError extends Error {
+  constructor(index: number) {
+    super(`Unknown enum discriminant: ${index}`);
+    this.name = "UnknownDiscriminantError";
+  }
+}
+
 /**
  * Builds a tagged union codec with explicit SCALE discriminants.
  *
@@ -279,7 +287,7 @@ export function indexedTaggedUnion<
       const index = u8.dec(input);
       const variant = byIndex.get(index);
       if (!variant) {
-        throw new Error(`Unknown enum discriminant: ${index}`);
+        throw new UnknownDiscriminantError(index);
       }
       const [tag, codec] = variant;
       return { tag, value: codec.dec(input) } as Output;

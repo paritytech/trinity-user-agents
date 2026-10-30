@@ -203,6 +203,7 @@ export async function runAutoSigningE2e(
             callData: "0x0400",
             extensions: [],
             txExtVersion: 0,
+            contacts: [],
           }),
       ));
     if (failure) {

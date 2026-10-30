@@ -18,23 +18,11 @@ struct ProductGameReminderCenterTests {
         now: Date,
         alarmAvailable: Bool = true,
         settings: SettingsManagerProtocol = InMemorySettingsManager()
-    ) -> (center: ProductGameReminderCenter, fakes: Fakes) {
-        let fakes = Fakes(now: now, alarmAvailable: alarmAvailable)
-        let center = ProductGameReminderCenter(
-            dependencies: .init(
-                services: fakes,
-                settingsManager: settings,
-                applicationState: fakes,
-                applicationStateStreams: ApplicationStateStreamFactory(),
-                productOpener: fakes,
-                dateProvider: fakes
-            )
-        )
-        center.start()
-        return (center, fakes)
+    ) -> (center: ProductGameReminderCenter, fakes: GameReminderCenterFakes) {
+        GameReminderCenterFakes.makeCenter(now: now, alarmAvailable: alarmAvailable, settings: settings)
     }
 
-    @Test("A schedule rings an alarm at the native lead time when AlarmKit is available")
+    @Test("A schedule rings an alarm at the start when AlarmKit is available")
     func scheduleRingsAlarm() async {
         let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-3_600))
 
@@ -240,121 +228,4 @@ struct ProductGameReminderCenterTests {
         #expect(center.slots.isEmpty)
         #expect(fakes.calendar.added.isEmpty)
     }
-}
-
-private extension ProductGameReminderCenter {
-    func schedule(productId: String, startsAt: Date, addCalendarEvent: Bool) async {
-        await schedule(productId: productId, startsAt: startsAt, ringAlarm: true, addCalendarEvent: addCalendarEvent)
-    }
-}
-
-/// The reminder call the center makes for a product's start, at the native 20 s lead time.
-private func reminderCall(_ startsAt: Date, _ productId: String) -> RecordingGameReminder.Call {
-    .init(gameDate: startsAt, productId: productId, timingSeconds: 20)
-}
-
-// MARK: - Fakes
-
-private final class Fakes: @unchecked Sendable {
-    var now: Date
-    var applicationState: UIApplication.State = .active
-    var opened: [String] = []
-    let calendar = RecordingCalendar()
-    private let alarmAvailable: Bool
-    private var alarms: [String: RecordingGameReminder] = [:]
-    private var notifications: [String: RecordingGameReminder] = [:]
-
-    init(now: Date, alarmAvailable: Bool) {
-        self.now = now
-        self.alarmAvailable = alarmAvailable
-    }
-
-    func alarm(for productId: String) -> RecordingGameReminder {
-        reminder(in: &alarms, for: productId)
-    }
-
-    func notification(for productId: String) -> RecordingGameReminder {
-        reminder(in: &notifications, for: productId)
-    }
-
-    private func reminder(
-        in store: inout [String: RecordingGameReminder],
-        for productId: String
-    ) -> RecordingGameReminder {
-        if let reminder = store[productId] {
-            return reminder
-        }
-        let reminder = RecordingGameReminder()
-        store[productId] = reminder
-        return reminder
-    }
-}
-
-extension Fakes: ProductGameReminderServicesMaking, ApplicationStateProviding, ProductOpening, CurrentDateProviding {
-    func makeAlarm(for productId: String) -> (any GameStartReminderServicing)? {
-        alarmAvailable ? alarm(for: productId) : nil
-    }
-
-    func makeNotification(for productId: String) -> any GameStartReminderServicing {
-        notification(for: productId)
-    }
-
-    func makeCalendar() -> any GameCalendarServicing {
-        calendar
-    }
-
-    func open(productId: String) {
-        opened.append(productId)
-    }
-}
-
-private final class RecordingGameReminder: GameStartReminderServicing {
-    struct Call: Equatable {
-        let gameDate: Date
-        let productId: ProductId
-        let timingSeconds: Int
-    }
-
-    private(set) var scheduled: [Call] = []
-    private(set) var cancelCount = 0
-
-    func scheduleReminder(gameDate: Date, productId: ProductId, timingSeconds: Int) {
-        scheduled.append(Call(gameDate: gameDate, productId: productId, timingSeconds: timingSeconds))
-    }
-
-    func cancelReminder() {
-        cancelCount += 1
-    }
-}
-
-private final class RecordingCalendar: GameCalendarServicing {
-    struct Event: Equatable {
-        let title: String
-        let startDate: Date
-        let endDate: Date
-        let remindBefore: TimeInterval?
-    }
-
-    var writeAccess = true
-    var onRequestWriteAccess: (@MainActor () -> Void)?
-    private(set) var added: [Event] = []
-
-    func requestWriteAccess() async -> Bool {
-        await onRequestWriteAccess?()
-        return writeAccess
-    }
-
-    func addEvent(for game: CalendarGameModel) throws {
-        added.append(
-            Event(title: game.title, startDate: game.startDate, endDate: game.endDate, remindBefore: game.remindBefore)
-        )
-    }
-
-    func savedReminder() -> GameCalendarReminder? {
-        nil
-    }
-
-    func saveReminder(_: GameCalendarReminder) {}
-
-    func clearReminder() {}
 }

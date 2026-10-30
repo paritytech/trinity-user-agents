@@ -61,5 +61,6 @@ internal class DimensionsRemote(
 
 internal class RootManifest(
     val displayName: String,
+    val description: String?,
     val icon: ProductIcon?,
 )

@@ -1,6 +1,8 @@
 use derive_more::Display;
 use parity_scale_codec::{Decode, Encode};
 
+use super::NftPurseOwner;
+
 /// Device-capability permission requested from the host (RFC 0002).
 ///
 /// Lasting grants and denials survive app restarts. A host may also offer a
@@ -16,6 +18,7 @@ use parity_scale_codec::{Decode, Encode};
 #[allow(clippy::upper_case_acronyms)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 #[cfg_attr(test, derive(strum::VariantArray))]
+#[cfg_attr(feature = "mock", derive(strum::IntoStaticStr))]
 pub enum HostDevicePermissionRequest {
 	/// Showing system notifications.
 	#[display("notifications")]
@@ -57,6 +60,7 @@ pub enum HostDevicePermissionRequest {
 /// yet granted.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(feature = "mock", derive(strum::IntoStaticStr))]
 pub enum RemotePermission {
 	/// Outbound HTTP/WebSocket access to a set of domains. External navigation
 	/// uses [`HostDevicePermissionRequest::OpenUrl`] instead.
@@ -92,6 +96,14 @@ pub enum RemotePermission {
 	/// than by the user.
 	#[display("see your balance")]
 	BalanceAccess,
+	/// Reading the NFT purses of an owner other than the caller: listing them,
+	/// querying their items and creating item keys in them. A grant covers
+	/// that owner only.
+	#[display("see the NFT purses of {owner}")]
+	NftPurseRead {
+		/// Whose purses.
+		owner: NftPurseOwner,
+	},
 }
 
 /// remote-permission request (RFC 0002).

@@ -15,6 +15,8 @@ TrUAPI (Triangle User-Agent Programming Interface) is the API surface that hosts
 
 - [TrUAPI reference](https://docs.polkadot.com/reference/apps/protocol/truapi/)
 - [Rust API reference](https://paritytech.github.io/trinity-user-agents/)
+- [Labels](docs/labels.md)
+- [Building the apps for development](docs/local-app-builds.md)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 
@@ -146,6 +148,8 @@ scripts/refresh-host-import.sh
 scripts/battery.sh         Run the generated battery against both headless CLI host roles,
                            plus the Pocket phase a Worker execution serves
 scripts/bundle-size.mjs    Measure the JS and WASM the truapi-* packages ship, against a baseline
+scripts/ci-gates.py        Evaluate .github/hosts.json, what each host is built from, into the
+                           ci.yml change gates
 ```
 
 Taking a screenshot opens **Report app issue** wherever the shake-opened Debug
@@ -185,6 +189,9 @@ The [container permission boundary](js/container/README.md) documents the protec
 operations and the built-ins that remain mutable for product compatibility.
 Native bindings expose the canonical Rust domain and protocol value types;
 native-only adapter types are limited to lifecycle and callback behavior.
+The core requests product worker transitions through `requestWorkerTransition`
+(`request_worker_transition` in Rust). `Start` requires the worker to run;
+`Stop` permits it to stop when no references remain.
 On iOS, a wallet host that manages its own statement-store SSO session can call
 `handleSsoRequest` (routes one decrypted remote message through the core,
 returning a typed outcome: response bytes to post back, a disconnect marker, or
@@ -252,6 +259,25 @@ host owns where the bytes live. The crate stores nothing itself: a host implemen
 `StorageClient` over storage it already owns, on web and native alike, so it keeps
 control of quota and of whether the bytes are backed up or encrypted.
 
+### Building extrinsics
+
+The core builds its own extrinsics through `ExtrinsicService` in the `chain`
+module: statement-store and long-term-storage allowances, PGAS claims, Bulletin
+preimages, NFT transfers, and the CLI's dotNS registrations. A caller names the call and the
+extensions it cares about; the builder fills every other extension of the
+runtime's pipeline, computes each extension's value from the bytes of the
+extensions after it, signs, and returns a mortal extrinsic born at the finalized
+head. Submitting it stays with the caller.
+
+The extrinsic version follows the host: `transactionExtensionVersions()` lists the
+chains the host builds as V5 general transactions and the extension pipeline each
+uses, and every other chain is V4. A host that never builds V5 can leave the
+callback at its default, an empty list, but then the core cannot build the
+allowance, PGAS or dotNS extrinsics, which are authorized by a proof and exist
+only as V5. Each authorizer is a typed transaction extension (`AsResourcesExtension`,
+`AsPgasExtension`, `AsDotnsGatewayExtension`) whose value encodes against the
+runtime's type by name.
+
 ### Durable transactions
 
 Native signing hosts keep a ledger of signed transactions in the core database,
@@ -269,6 +295,31 @@ policy too.
 The host keeps recovery alive. `durableWorkChanged(pending: true)` asks it to
 run a background task that awaits `runDurableRecovery()`, which returns once
 nothing is live: a WorkManager worker on Android, a `BGProcessingTask` on iOS.
+
+### NFT purses
+
+Native signing hosts serve the `NftPurse` API from the
+[NFT purses RFC](https://github.com/paritytech/trinity-user-agents/pull/1495) over
+the core database. A product creates purses it owns and lists any owner's
+purses: its own freely, Root's or another product's with the user's
+`NftPurseRead` grant for that owner. Every user has the Root-owned main purse.
+`createItems` derives receiving keys in a purse on the hard path
+`//nft//<purse>//<installation>//<index>`, under the installation the host
+reports through `currentInstallation`. A tracker watches
+`Scarcity.NftsByOwner` on Asset Hub at the best block for every key, and
+`queryPurse` pages through the keys that hold an NFT and that no live transfer
+or handoff spends. The same grant covers both.
+
+`rebalancePurse` and `transferItem` register an operation under an idempotency
+key the product chooses and return; `observeOperationStatus` follows it by that
+key until it is `Cleared` or `Incomplete`. Each transfer is a scheduled durable
+transaction: a fee-less `Scarcity::transfer` signed by the item key when it is
+submitted, and proven landed when its instance is at the destination. What
+each transfer spends is recorded in `nft_consumption`, and a failed transfer
+frees its item again. Transferring items out of Root's or another product's
+purse asks the user through the `NftPurseDrain` confirmation review. The cheque calls answer
+unavailable for now. A host without a core database, such as the browser core,
+answers `Unsupported` to the served calls.
 
 ### Trinity stack descriptors
 
@@ -307,6 +358,12 @@ so `make dev` leaves the board empty with no error.
 3. Higher-level SDKs wrap the typed client; the transport encodes SCALE frames and ships them over WebSocket, `MessagePort`, or `postMessage` in iframe mode to the host.
 4. The host decodes the frame and dispatches to the matching trait method. Runtime handlers execute inside `version(request).exec(...)` using `latest` payloads. The helper converts responses, subscription items, and domain errors to the request version, including early failures and subscription interruptions, before the host encodes and sends them.
 
+Methods marked `#[wire(host_initiated, id = N)]` run in the other direction. An
+`async fn` returning `Result` generates an asynchronous Rust caller and a TypeScript
+`onMethod` handler returning a typed result, carried by a one-item subscription.
+A method returning `Subscription` generates a streaming handler. See the
+[client handler contract](js/packages/truapi/README.md#host-initiated-requests).
+
 Wire ids are append-only per trait: a trait id is never reassigned and a method id is never renumbered or reused within its trait, so deployed products stay compatible across protocol revisions. New methods take the next free method ids in their own trait and leave every other trait untouched. Trait 255 is permanently reserved for a correlated protocol error, allowing either peer to reject API messages introduced after it was released instead of leaving the caller pending.
 
 ## Develop
@@ -329,6 +386,8 @@ CI and `make check` enforce Rust formatting, including the runtime module tree, 
 Rust linting treats correctness and complexity diagnostics as errors, and public Rust items must have documentation.
 
 Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
+
+Rust helpers retain typed errors for pairing, dotNS lookups, and allowance renewal. Shared `From` conversions support `?`, and dotNS diagnostics render each cause once. CLI filesystem and session errors retain concrete causes and their operation or path. Pairing failures sent to another host contain a public reason, including allowance exhaustion; local paths and detailed causes remain in the signing host's diagnostics.
 
 The runtime's shared RPC fixture matches scripted replies against requests on the same connection, since request IDs can repeat across connections. Its platform-wide request log records all connections for assertions.
 
@@ -375,7 +434,9 @@ playground's Diagnosis, since dot.li serves no `Game` surface. Both CLI host
 roles still install an in-memory `CliGameHost` that never rings anything. The
 `truapi` runtime tests cover the product gate, the start-time check, a call
 withdrawn before it reaches the host, the absence of any permission prompt, and
-host failures.
+host failures. Android and iOS hosts with Sentry enabled report the reminder
+lifecycle through `host.reminder.*` Sentry events without changing reminder
+delivery or cleanup.
 
 `Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
 "Host-drawn scanner"). The Android app draws it. Both CLI host roles answer
@@ -506,17 +567,30 @@ Then open `hosts/ios/polkadot-app.xcodeproj`. Rerun it after changing anything
 the bindings are generated from, which is the `truapi` or `truapi-provider`
 crates. `SIM_ONLY=1` halves it by skipping
 the device slice, which is enough for Simulator but not for an archive.
+`make ios-sim-run` builds the app for the simulator with the dev configuration
+and launches it, bootstrapping first when the core is missing; see
+[docs/local-app-builds.md](docs/local-app-builds.md) for the credentials it needs.
 
 Because the app builds against the core in this tree, a core change that breaks
-it fails here rather than at the next version bump. Every push to main runs the
-jobs below. A pull request touching the app, or the crates its bindings come
-from, always runs `test`; `build` and `preview` are macOS time no test needs, so
-they run once it is labelled `ios-simulator-build`. CI's
-`iOS package (Swift + WebKit)` job also compiles the TrUAPIHost package against
-the core on a pull request touching `ios/` or the core crates. The first time a
+it fails here rather than at the next version bump. CI's `iOS app` job,
+`ios-app.yml`, is part of `CI Status` and runs `build` and `test` on every pull
+request touching the app or the crates its bindings come from;
+`.github/hosts.json` names those inputs. A pull request that changes only those
+crates skips both when main already passed the tests against the same bindings.
+Pull requests from forks and from Dependabot skip it, since the Macs are shared
+and Dependabot runs get no secrets, and so does the merge queue. A push to main
+that touches those inputs runs the same suite through `ios-main.yml`, outside
+`CI Status`, and publishes the core pull requests reuse. `preview` is
+macOS time no check needs, so `on-label.yml` builds it once the pull request is
+labelled `ci:ios-simulator`. The same workflow's
+`TrUAPIHost package (Swift + WebKit)` job compiles the TrUAPIHost and
+TrUAPIProvider packages against the core the app jobs share, on a pull request
+touching their inputs, which the `swift` package in `.github/hosts.json` names,
+and runs their network permission tests. Like the rest of the iOS app it skips
+fork and Dependabot pull requests and the merge queue. The first time a
 pull request touches the iOS or Android app, `build-label-hint.yml` comments with
-the labels that build it: `ios-simulator-build`, `ios-device-build` and
-`android-device-build`.
+the labels that build it: `ci:ios-simulator`, `ci:ios-device` and
+`ci:android-device`.
 
 - `build`, a DevCI compile, failing on any build warning the committed baseline
   does not already have
@@ -545,7 +619,7 @@ on the simulator, the emulator or a phone, without a deploy. See
 
 ### A build that installs on a phone
 
-Label a pull request `ios-device-build` and `ios-device-preview.yml` produces a
+Label a pull request `ci:ios-device` and `ios-device-preview.yml` produces a
 signed ad-hoc archive attached to the run, named for the commit it was built
 from. It uploads nowhere: not to Apple, not to any distribution service.
 
@@ -561,7 +635,7 @@ preview itself is tracked on #681.
 
 ### An Android build that installs on a phone
 
-Label a pull request `android-device-build` and `android-device-preview.yml`
+Label a pull request `ci:android-device` and `android-device-preview.yml`
 attaches an installable APK to the run. Android needs no provisioning, so it
 installs on any phone rather than only on registered devices, and it is signed
 with the shared develop key so a new build replaces the last one rather than
@@ -572,6 +646,19 @@ auth, Firebase auth, push and backup, so a preview built from it cannot sign in.
 A pull request opened from a fork cannot reach the configuration and signing key
 this needs, and is told so rather than handed a build that misleads. Push the
 branch to this repository to get one.
+
+### The iOS nightly
+
+`ios-nightly-prepare.yml` runs at 20:00 UTC when main has moved since the last
+night whose run succeeded, and on dispatch by someone in `IOS_SIGNING_ACTORS`.
+One run is the whole night: it prepares the build, fetches the core main
+published for the same inputs or builds it once, then uploads to TestFlight,
+publishes the simulator `.app` as a prerelease and runs the host-playground e2e
+from that core, all from one commit, and announces the night once. A failed leg
+is re-run in place with "Re-run failed jobs"; the TestFlight upload re-runs only
+for someone in the same list. A re-run never announces the night a second
+time. A re-run reuses the night's build number, so once an upload has reached
+App Store Connect a failed TestFlight leg needs a new night instead.
 
 ### Android builds that reach testers
 
@@ -636,7 +723,7 @@ Remote Config, keyed on an `environment` signal the build sets.
 ### Instrumented tests
 
 `android-instrumented-tests.yml` boots an emulator and runs the app module's
-connected tests. It starts from the `android-instrumented-tests` label rather
+connected tests. It starts from the `ci:android-emulator-tests` label rather
 than from every commit, because the runner is macOS and a cold emulator costs
 minutes before the first assertion. `workflow_dispatch` runs it without a pull
 request to carry the label.
@@ -766,6 +853,10 @@ use a different state directory while debugging.
 - **v0.1**: initial protocol version.
 - **v0.2**: See [`docs/design/releases/v0.2.md`](docs/design/releases/v0.2.md) for the rationale behind each change.
 - **v0.3**: current protocol version.
+
+If a product sends a request in a newer version than the host knows, the
+call fails with `Unsupported`. See
+[Request versions](docs/design/truapi-protocol.md#request-versions).
 
 ## Deploy
 

@@ -1,5 +1,65 @@
 # @parity/truapi-debugger
 
+## 0.1.14
+
+### Patch Changes
+
+- Updated dependencies [f67e9cb]
+- Updated dependencies [b5e1aa4]
+- Updated dependencies [0eb93a9]
+- Updated dependencies [ff34f26]
+- Updated dependencies [d61da55]
+- Updated dependencies [f67e9cb]
+- Updated dependencies [f231850]
+- Updated dependencies [dce190f]
+- Updated dependencies [8c23b5e]
+- Updated dependencies [e9b6d73]
+- Updated dependencies [0c77379]
+- Updated dependencies [747865c]
+- Updated dependencies [f67e9cb]
+- Updated dependencies [c18c267]
+- Updated dependencies [f67e9cb]
+  - @parity/truapi@0.27.0
+
+## 0.1.13
+
+### Patch Changes
+
+- Updated dependencies [10a36af]
+- Updated dependencies [19f5b48]
+- Updated dependencies [9a172e1]
+- Updated dependencies [9064140]
+- Updated dependencies [eb57f87]
+- Updated dependencies [a8623e2]
+- Updated dependencies [5ee4351]
+- Updated dependencies [5ee4351]
+- Updated dependencies [ddb729f]
+- Updated dependencies [82db857]
+- Updated dependencies [073b4f2]
+- Updated dependencies [8b58680]
+- Updated dependencies [28fa81c]
+- Updated dependencies [7bf5a3e]
+- Updated dependencies [eb035fe]
+- Updated dependencies [eb035fe]
+- Updated dependencies [eb035fe]
+- Updated dependencies [eb035fe]
+- Updated dependencies [eb035fe]
+- Updated dependencies [28fa81c]
+- Updated dependencies [743f0ba]
+- Updated dependencies [98e4550]
+- Updated dependencies [98e4550]
+- Updated dependencies [98e4550]
+- Updated dependencies [98e4550]
+- Updated dependencies [def1bb9]
+- Updated dependencies [6864e42]
+- Updated dependencies [8c6f4c9]
+- Updated dependencies [93fee0a]
+- Updated dependencies [93fee0a]
+- Updated dependencies [7472b77]
+- Updated dependencies [822e310]
+- Updated dependencies [6ce480f]
+  - @parity/truapi@0.26.0
+
 ## 0.1.12
 
 ### Patch Changes

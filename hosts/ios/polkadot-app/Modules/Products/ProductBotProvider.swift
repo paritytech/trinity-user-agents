@@ -71,9 +71,9 @@ final class ProductBotProvider: ProductBotProviding {
                     for product in products {
                         guard await builds.needsBuild(product.identifier) else { continue }
 
-                        await builds.register(product.identifier) {
+                        await builds.register(product.identifier) { [self] in
                             let bot = await makeBot(for: product)
-                            bot.map { continuation.yield(.botBuilt($0)) }
+                            if let bot { continuation.yield(.botBuilt(bot)) }
                             await builds.finished(product.identifier, built: bot != nil)
                         }
                     }

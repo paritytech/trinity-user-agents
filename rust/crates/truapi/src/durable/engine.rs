@@ -21,12 +21,12 @@ use super::{
 	model::{DomainId, DurableTxId, DurableTxState, DurableTxStatus, GroupId},
 	oracle::DurableRegistry,
 	ownership::Ownership,
-	time::Timer,
 };
 use crate::{
 	chain::{BlockBackend, ChainHeads, TxSubmitter, TxValidator},
 	store::{Db, DbError},
 	subscription::Spawner,
+	time::Timer,
 };
 use executor::SubmissionExecutor;
 use wake::WakeSignal;
@@ -147,7 +147,7 @@ mod tests {
 	use super::*;
 	use crate::{
 		chain::MortalExtrinsic,
-		durable::testing::{FakeChain, extrinsic, test_engine, without_plan},
+		durable::testing::{FakeChain, extrinsic, pending_presigned, test_engine, without_plan},
 	};
 
 	fn domain() -> DomainId {
@@ -168,10 +168,7 @@ mod tests {
 		let mut group = engine.observe_group(&domain(), &GroupId::new("op"));
 
 		assert_eq!(block_on(status.next()).unwrap().unwrap(), Some(DurableTxStatus::Pending));
-		assert_eq!(
-			block_on(group.next()).unwrap().unwrap(),
-			vec![DurableTxState { id, status: DurableTxStatus::Pending }]
-		);
+		assert_eq!(block_on(group.next()).unwrap().unwrap(), vec![pending_presigned(id, 1)]);
 		assert_eq!(block_on(engine.status(id)).unwrap(), Some(DurableTxStatus::Pending));
 		assert_eq!(block_on(engine.status(DurableTxId(99))).unwrap(), None);
 	}

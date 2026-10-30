@@ -40,7 +40,7 @@ use crate::bootstrap;
 use truapi::{
 	ChannelId, DebugSink, FrameSink, PairingHostRuntime, ProductContext, ProductRuntime,
 	ProductRuntimeError, SigningHostRuntime,
-	platform::{ProductExecutionKind, ProductId},
+	platform::{ProductExecutionKind, ProductId, ProductIdError},
 };
 
 /// Pause after a failed `accept()` before trying again.
@@ -73,12 +73,18 @@ pub struct ProductSelection {
 	execution_kind: ProductExecutionKind,
 }
 
+/// The requested product does not identify a supported execution context.
+#[derive(Debug, derive_more::Display, derive_more::Error, derive_more::From)]
+#[display("invalid product id")]
+pub struct ProductSelectionError(ProductIdError);
+
 impl ProductSelection {
 	/// Validate and normalize the initial product id.
-	pub fn new(product_id: String, execution_kind: ProductExecutionKind) -> Result<Arc<Self>> {
-		let product_id = product_id
-			.parse::<ProductId>()
-			.map_err(|error| anyhow::anyhow!("invalid product id: {error}"))?;
+	pub fn new(
+		product_id: String,
+		execution_kind: ProductExecutionKind,
+	) -> Result<Arc<Self>, ProductSelectionError> {
+		let product_id = product_id.parse::<ProductId>()?;
 		let product = ProductContext::new_with_execution(product_id, execution_kind);
 		let (current, _) = watch::channel(product);
 		Ok(Arc::new(Self { current, execution_kind }))
@@ -1073,8 +1079,16 @@ mod tests {
 		assert!(product.select(ProductId::for_test("localhost:3000")));
 		assert_eq!(product.current().as_str(), "localhost:3000");
 		assert!(!product.select(ProductId::for_test("LOCALHOST:3000")));
-		assert!(
-			ProductSelection::new("example.com".to_string(), ProductExecutionKind::App).is_err()
+		let error = ProductSelection::new("example.com".to_string(), ProductExecutionKind::App)
+			.err()
+			.expect("public DNS names are not product ids");
+		assert_eq!(
+			std::error::Error::source(&error).and_then(|source| source.downcast_ref()),
+			Some(&ProductIdError::Invalid { product_id: "example.com".to_string() })
+		);
+		assert_eq!(
+			format!("{:#}", anyhow::Error::new(error)),
+			"invalid product id: product_id must be a dotNS or localhost product identifier, got \"example.com\""
 		);
 		Ok(())
 	}

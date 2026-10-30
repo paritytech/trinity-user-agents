@@ -11,6 +11,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.HostLocalStorageReadException
+import uniffi.truapi.HostRejection
 
 class EncryptedTrUAPIStorageTest {
     private val prefs = FakeEncryptedPreferences()
@@ -102,6 +103,44 @@ class EncryptedTrUAPIStorageTest {
         first.write(byteArrayOf(1), byteArrayOf(42))
 
         assertArrayEquals(byteArrayOf(42), EncryptedHostCoreStorage(prefs).read(byteArrayOf(1)))
+    }
+
+    /** Secrets must not collide with, or be cleared as, a core storage slot of the same key. */
+    @Test
+    fun `encrypted values stay apart from core storage`() = runTest {
+        val core = EncryptedHostCoreStorage(prefs)
+        val encrypted = EncryptedHostValues(prefs)
+
+        core.write(byteArrayOf(1), byteArrayOf(10))
+        encrypted.write(byteArrayOf(1), byteArrayOf(20))
+        core.clear(byteArrayOf(1))
+
+        assertArrayEquals(byteArrayOf(20), encrypted.read(byteArrayOf(1)))
+    }
+
+    /** An absent secret and an unreadable one must not look alike to the core. */
+    @Test
+    fun `an encrypted value that never was stored is a miss, an undecryptable one an error`() = runTest {
+        val encrypted = EncryptedHostValues(prefs)
+        encrypted.write(byteArrayOf(1), byteArrayOf(20))
+        prefs.corrupt()
+
+        assertNull(encrypted.read(byteArrayOf(2)))
+        val failure = runCatching { encrypted.read(byteArrayOf(1)) }.exceptionOrNull()
+        assertTrue(failure is HostRejection)
+    }
+
+    @Test
+    fun `a deleted encrypted value is a miss, and deleting none succeeds`() = runTest {
+        val encrypted = EncryptedHostValues(prefs)
+        encrypted.write(byteArrayOf(1), byteArrayOf(20))
+        encrypted.write(byteArrayOf(2), byteArrayOf(30))
+
+        encrypted.delete(byteArrayOf(1))
+        encrypted.delete(byteArrayOf(3))
+
+        assertNull(encrypted.read(byteArrayOf(1)))
+        assertArrayEquals(byteArrayOf(30), encrypted.read(byteArrayOf(2)))
     }
 }
 

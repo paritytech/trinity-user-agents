@@ -53,8 +53,8 @@ use truapi::{
 		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
 		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
-		ProductAccountId, ProductAccountTxPayload, ProductProofContext, RemotePermission,
-		RemotePermissionRequest, RingLocation,
+		NftPurseOwner, ProductAccountId, ProductAccountTxPayload, ProductProofContext,
+		RemotePermission, RemotePermissionRequest, RingLocation,
 	},
 	v01::HostAccountSignVrfRequest,
 };
@@ -1153,6 +1153,37 @@ pub trait Features: Send + Sync {
 	/// Enumerate the chains this host serves (RFC 0026). The core resolves
 	/// `get_chain_info` requests against the returned set.
 	async fn supported_chains(&self) -> Result<HostChainSet, GenericError>;
+}
+
+/// A chain the host builds as V5 general transactions, and the transaction
+/// extension pipeline it uses there.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ChainExtensionVersion {
+	/// Genesis hash of the chain.
+	pub genesis_hash: Bytes32,
+	/// The pipeline's number in the chain's metadata.
+	pub extension_version: u8,
+}
+
+/// The chains a host builds as V5 general transactions. A chain not listed is
+/// built as V4.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ExtensionVersionMap {
+	/// One entry per V5 chain.
+	pub chains: Vec<ChainExtensionVersion>,
+}
+
+/// Which chains the host builds as V5 general transactions. The core builds
+/// its own extrinsics the same way, so both agree on every chain.
+#[async_trait]
+pub trait ExtrinsicVersionHost: Send + Sync {
+	/// The chains the host builds as V5, each with its pipeline. A host that
+	/// never builds V5 lists none.
+	async fn transaction_extension_versions(&self) -> Result<ExtensionVersionMap, GenericError> {
+		Ok(ExtensionVersionMap::default())
+	}
 }
 
 /// Core-owned host-private storage slots. Products never address these slots;
@@ -2647,6 +2678,39 @@ pub struct ProductSubtreeReview {
 	pub product_id: ProductId,
 }
 
+/// Review shown before a product moves items out of an NFT purse it does
+/// not own: Root's, or another product's.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct NftPurseDrainReview {
+	/// Product making the request.
+	pub calling_product_id: ProductId,
+	/// Purse the items leave.
+	pub from_purse: u32,
+	/// Who owns that purse.
+	pub owner: NftPurseOwner,
+	/// How many items leave it.
+	pub item_count: u32,
+	/// Where they go.
+	pub destination: NftPurseDrainDestination,
+}
+
+/// Where items drained from a purse go.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum NftPurseDrainDestination {
+	/// Fresh keys of this purse.
+	Purse {
+		/// The purse's id.
+		purse: u32,
+	},
+	/// This key, outside every purse.
+	ExternalKey {
+		/// The key's public bytes.
+		key: Bytes32,
+	},
+}
+
 /// Review shown before a user-confirmed core action continues.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -2679,6 +2743,9 @@ pub enum UserConfirmationReview {
 	/// Resolve a product's own account subtree over SSO.
 	#[codec(index = 11)]
 	ProductSubtree(ProductSubtreeReview),
+	/// Move items out of an NFT purse the product does not own.
+	#[codec(index = 12)]
+	NftPurseDrain(NftPurseDrainReview),
 }
 
 /// Local user confirmation UI for sensitive core-owned operations.
@@ -2726,10 +2793,11 @@ pub trait LocaleHost: Send + Sync {
 /// content retrieval (P2P/IPFS lookup).
 #[async_trait]
 pub trait PreimageHost: Send + Sync {
-	/// Emits current value/miss immediately, then future updates.
+	/// Emits current value/miss immediately, then future updates. `key` is
+	/// the blake2b-256 digest of the preimage.
 	fn lookup_preimage(
 		&self,
-		key: Vec<u8>,
+		key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, GenericError>>;
 }
 
@@ -3182,9 +3250,8 @@ pub enum HostScan {
 	/// The device has no camera, or the user refused the host application one.
 	/// The host has already told the user how to turn it on.
 	CameraUnavailable,
-	/// The requesting App or Widget is not the screen the user sees, so the
-	/// host opened nothing. A Worker's request was already checked by the core
-	/// and is never answered this way.
+	/// The requesting App or Widget is not the screen the user sees, or the
+	/// host application is not in front, so the host opened nothing.
 	NotVisible,
 }
 
@@ -3194,8 +3261,9 @@ pub enum HostScan {
 /// - Title the viewfinder with the product id. Show `request.hint` under it as the product's words.
 /// - Pass every code the camera reads to a `ScanFilter` built from `request`, and never follow a
 ///   scanned link.
-/// - Answer [`HostScan::NotVisible`] for an App or Widget that is not on screen. A Worker reaching
-///   the host already passed the core's tap check.
+/// - Answer [`HostScan::NotVisible`] for an App or Widget that is not on screen, or for any product
+///   while the host application is not in front. A Worker reaching the host already passed the
+///   core's tap check.
 /// - Close the viewfinder when the core drops the future, and close any still open before opening
 ///   another. A JS host is not told about a drop.
 #[async_trait]
@@ -3216,6 +3284,7 @@ pub trait Platform:
 	+ Notifications
 	+ Permissions
 	+ Features
+	+ ExtrinsicVersionHost
 	+ ProductStorage
 	+ CoreStorage
 	+ ChainProvider
@@ -3233,6 +3302,7 @@ impl<T> Platform for T where
 		+ Notifications
 		+ Permissions
 		+ Features
+		+ ExtrinsicVersionHost
 		+ ProductStorage
 		+ CoreStorage
 		+ ChainProvider

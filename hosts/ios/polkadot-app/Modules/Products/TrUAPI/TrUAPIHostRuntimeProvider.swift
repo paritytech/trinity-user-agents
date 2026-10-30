@@ -42,6 +42,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let settingsManager: SettingsManagerProtocol
     private let coreStorage: TrUAPILocalStoring
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
+    private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
     private let logger: LoggerProtocol
 
@@ -90,6 +91,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     /// Serve top-ups, payments and balance to the core from `paymentsSupport`. Approvals and
     /// privacy warnings are presented like the core's own host-level prompts.
     func attach(paymentsSupport: PaymentsSupport, hostProvider: ProductHostProviding) {
+        backedUpInstallation.attach(paymentsSupport.coinageService.backedUpInstallationProvider)
         let productsRouter = confirmationRouterFacade.productsRouter
         let bridge = RustPaymentsBridge(
             payments: ProductPayments(
@@ -145,6 +147,8 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             chainConnections: chainConnections,
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
             workerManager: workerManager,
+            backedUpInstallation: backedUpInstallation,
+            encryptedStorage: TrUAPIEncryptedStorage(keychain: Keychain()),
             logger: logger
         )
 
@@ -158,6 +162,10 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             routerFacade: confirmationRouterFacade
         )
         runtime.setContacts(contactsBridge)
+        runtime.setScanner(AppScannerHostBridge(
+            routerFacade: confirmationRouterFacade,
+            visibility: ProductVisibility(application: UIApplication.shared)
+        ))
         paymentsBridge?.install(on: runtime)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),

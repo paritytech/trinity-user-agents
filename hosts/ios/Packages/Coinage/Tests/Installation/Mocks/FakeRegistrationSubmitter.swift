@@ -16,25 +16,21 @@ final class FakeRegistrationSubmitter: InstallationRegistrationSubmitting, @unch
     private let state = OSAllocatedUnfairLock<(attempts: [InstallationRegistrationTarget], failNext: Int)>(
         initialState: ([], 0)
     )
+    private let attemptsSubject = AsyncCurrentValueSubject<[InstallationRegistrationTarget]>([])
     private let gate: AsyncStream<Void>.Continuation
     private let gateStream: AsyncStream<Void>
-    private let attemptCount: AsyncStream<Int>.Continuation
-    private let attemptCountStream: AsyncStream<Int>
     private var gated = false
 
     init(engine: FakeRegistrationEngine) {
         self.engine = engine
         (gateStream, gate) = AsyncStream<Void>.makeStream()
-        (attemptCountStream, attemptCount) = AsyncStream<Int>.makeStream()
     }
 
     var attempts: [InstallationRegistrationTarget] { state.withLock { $0.attempts } }
 
-    func waitForAttempts(_ count: Int) async {
-        guard attempts.count < count else { return }
-        for await total in attemptCountStream where total >= count {
-            return
-        }
+    /// Every attempt started so far; replays the current list.
+    func subscribeAttempts() -> AnyAsyncSequence<[InstallationRegistrationTarget]> {
+        attemptsSubject.eraseToAnyAsyncSequence()
     }
 
     func failNextAttempts(_ count: Int) {
@@ -52,10 +48,11 @@ final class FakeRegistrationSubmitter: InstallationRegistrationSubmitting, @unch
     }
 
     func submitAttempt(target: InstallationRegistrationTarget) async throws -> DurableTxId {
-        state.withLock {
-            $0.attempts.append(target)
-            attemptCount.yield($0.attempts.count)
+        let attempts = state.withLock { state in
+            state.attempts.append(target)
+            return state.attempts
         }
+        attemptsSubject.send(attempts)
 
         if gated {
             for await _ in gateStream {

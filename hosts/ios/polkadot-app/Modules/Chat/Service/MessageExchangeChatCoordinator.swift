@@ -19,14 +19,13 @@ final class MessageExchangeChatCoordinator {
     private let pushService: ChatPushServicing
     private let serviceFactory: MessageExchageServiceMaking
     private let messageCompacterFactory: (any ChatMessageCompactorMaking)?
+    private let signerResolver: PeerSessionSignerResolving
     private let chainRegistry: ChainRegistryProtocol
     private let chatChainId: ChainModel.Id
     let workQueue: DispatchQueue
     private let operationQueue: OperationQueue
-    private let senderDeviceActivator: SenderDeviceActivator
     private let deviceMessageBroadcaster: DeviceMessageBroadcaster
     private let pendingDeviceFanOutProcessor: PendingDeviceFanOutProcessor
-    private let messageExchangeModeProvider: MessageExchangeModeProviding
     private let statementStoreMonitor: StatementStoreActivityMonitoring
 
     private var contactsProvider: StreamableProvider<Chat.Contact>?
@@ -47,8 +46,8 @@ final class MessageExchangeChatCoordinator {
         pushIdFactory: ChatPushIdMaking,
         pushMessageCoder: ChatPushMessageCoding,
         notificationPayloadBuilder: ChatNotificationPayloadBuilding,
-        chatRequestStoreService: ChatRequestStoreServicing,
         messageCompacterFactory: (any ChatMessageCompactorMaking)?,
+        signerResolver: PeerSessionSignerResolving,
         chatChainId: ChainModel.Id = AppConfig.Chains.chatChain,
         chainRegistry: ChainRegistryProtocol = ChainRegistryFacade.sharedRegistry,
         tokenProvider: JWTTokenProviding,
@@ -56,7 +55,6 @@ final class MessageExchangeChatCoordinator {
         messagesStorageService: MessagesLocalStorageServicing = MessagesLocalStorageService(),
         contactsStorageService: ContactsLocalStorageServicing = ContactsLocalStorageService(),
         chatContactDataProviderFactory: ChatContactDataProviderMaking,
-        messageExchangeModeProvider: MessageExchangeModeProviding,
         statementStoreMonitor: StatementStoreActivityMonitoring,
         workQueue: DispatchQueue = DispatchQueue(label: "ChatCoordinator.workQueue", qos: .utility),
         operationQueue: OperationQueue = OperationManagerFacade.sharedDefaultQueue,
@@ -88,20 +86,10 @@ final class MessageExchangeChatCoordinator {
             logger: logger
         )
 
-        var processors: [IncomingMessageProcessing] = [
-            ChatRequestAcceptProcessor(
-                messageExchangeModeProvider: messageExchangeModeProvider,
-                requestStoreService: chatRequestStoreService,
-                messageStoreService: messagesStorageService,
-                contactsStorageService: contactsStorageService,
-                logger: logger
-            ),
-            pushNotificationService
-        ]
+        var processors: [IncomingMessageProcessing] = [pushNotificationService]
 
         let deviceUpdateProcessor = MultideviceComponentFactory.makeDeviceUpdateProcessor(
             contactsStorageService: contactsStorageService,
-            messageExchangeModeProvider: messageExchangeModeProvider,
             workQueue: workQueue,
             operationQueue: operationQueue,
             logger: logger
@@ -119,26 +107,16 @@ final class MessageExchangeChatCoordinator {
         )
 
         self.messageCompacterFactory = messageCompacterFactory
+        self.signerResolver = signerResolver
         self.chatChainId = chatChainId
         self.workQueue = workQueue
         self.chatContactDataProviderFactory = chatContactDataProviderFactory
         self.serviceFactory = serviceFactory
         self.chainRegistry = chainRegistry
-        self.messageExchangeModeProvider = messageExchangeModeProvider
         self.statementStoreMonitor = statementStoreMonitor
-        senderDeviceActivator = MultideviceComponentFactory.makeSenderDeviceActivator(
-            contactsStorageService: contactsStorageService,
-            chatRequestStoreService: chatRequestStoreService,
-            messageExchangeModeProvider: messageExchangeModeProvider,
-            logger: logger
-        )
-        deviceMessageBroadcaster = MultideviceComponentFactory.makeDeviceMessageBroadcaster(
-            messageExchangeModeProvider: messageExchangeModeProvider,
-            logger: logger
-        )
+        deviceMessageBroadcaster = MultideviceComponentFactory.makeDeviceMessageBroadcaster(logger: logger)
         pendingDeviceFanOutProcessor = MultideviceComponentFactory.makePendingDeviceFanOutProcessor(
             chatContactDataProviderFactory: chatContactDataProviderFactory,
-            messageExchangeModeProvider: messageExchangeModeProvider,
             logger: logger
         )
         self.logger = logger
@@ -197,6 +175,7 @@ private extension MessageExchangeChatCoordinator {
 
             exchangeService = try serviceFactory.makeService(
                 statementStoreConnection: statementStoreMonitor.observing(statementStoreConnection),
+                statementSignerResolver: signerResolver,
                 delegate: AnyPeerSessionDelegate(self),
                 compactorFactory: compactorFactory
             )
@@ -259,10 +238,9 @@ private extension MessageExchangeChatCoordinator {
 
         var sessionRequests = Set<MessageExchange.SessionRequest>()
 
-        // we don't want to create incoming session until user approves the request
-        // also do not include blocked contacts
+        // A session needs a peer device: requests and acceptances travel outside sessions.
         let sessionContacts = contactsByAccountId.filter {
-            !$0.value.hasIncomingChatRequest && !$0.value.isBlocked
+            $0.value.chatRequest == nil && !$0.value.devices.isEmpty && !$0.value.isBlocked
         }
 
         for (_, contact) in sessionContacts {
@@ -302,14 +280,6 @@ extension MessageExchangeChatCoordinator {
             } else {
                 logger.warning("Missing contact for sent messages: \(peer.accountId.toHex())")
             }
-
-            // TODO: Move sender device activation to delivered callback once MDS
-            // responses are stable.
-            senderDeviceActivator.handleSentMessages(
-                messages,
-                to: peer,
-                withError: error
-            )
         }
     }
 

@@ -72,6 +72,8 @@ pub struct NativeTrUApiHostRuntime {
 	payments: OnceLock<Arc<PaymentCallbackPlatform>>,
 	/// The balance view changes are pushed to, once installed.
 	balance: OnceLock<Arc<BalanceCallbackPlatform>>,
+	/// Forwards core warnings to the host of this runtime until the runtime drops.
+	_host_sink: crate::logging::HostSinkRegistration,
 }
 
 impl NativeTrUApiHostRuntime {
@@ -82,6 +84,31 @@ impl NativeTrUApiHostRuntime {
 		log_detail: &str,
 	) -> Result<Arc<Self>, NativeRuntimeConfigError> {
 		crate::logging::init();
+		// Installed before the rest of startup, so the warnings raised on the way
+		// up reach this host rather than falling in a gap. A runtime that does
+		// not finish starting puts back the sink it displaced as its
+		// registration drops, so a failed start cannot silence a host that is
+		// already running.
+		//
+		// Events the core addresses to a host, and its warnings, reach this log
+		// regardless of the trace level, which defaults to ERROR and so drops
+		// everything the core would otherwise say about itself. The callbacks are
+		// held weakly so a line in flight cannot resurrect a host being torn down.
+		let log_callbacks = Arc::downgrade(&callbacks);
+		let host_sink = crate::logging::set_host_sink(Arc::new(move |marker, detail| {
+			if let Some(callbacks) = log_callbacks.upgrade() {
+				callbacks.on_core_log(marker.to_string(), detail.to_string());
+			}
+		}));
+		// Raised through tracing rather than called directly, so a host log
+		// carries proof that the layer forwarding to this sink is alive. A host
+		// that reaches a later condition and sees nothing can tell a quiet core
+		// from a channel that was never wired.
+		tracing::info!(
+			target: "truapi.core.started",
+			"truapi {} is logging to this host",
+			env!("CARGO_PKG_VERSION"),
+		);
 		callbacks.on_core_log(log_marker.to_string(), log_detail.to_string());
 		let executor = shared_native_executor().map_err(|err| {
 			NativeRuntimeConfigError::RuntimeUnavailable { reason: err.to_string() }
@@ -106,21 +133,30 @@ impl NativeTrUApiHostRuntime {
 			spawner.clone(),
 		));
 		assert!(
-			runtime.worker_ledger().install_demand_observer(platform.clone()),
-			"a freshly built runtime installs its worker demand observer once"
+			runtime.worker_ledger().install_worker_controller(platform.clone()),
+			"a freshly built runtime installs its worker controller once"
 		);
 		assert!(
 			runtime.set_durable_work_observer(platform.clone()),
 			"a freshly built runtime installs its durable work observer once"
 		);
 		assert!(
-			runtime.set_device_pairing_observer(platform),
+			runtime.set_device_pairing_observer(platform.clone()),
 			"a freshly built runtime installs its device pairing observer once"
 		);
 		assert!(
 			runtime.set_core_db(core_db),
 			"a freshly built runtime installs its core database once"
 		);
+		assert!(
+			runtime.set_installation_provider(platform.clone()),
+			"a freshly built runtime installs its installation provider once"
+		);
+		assert!(
+			runtime.set_encrypted_storage(platform),
+			"a freshly built runtime installs its encrypted storage once"
+		);
+		runtime.start_core_services();
 		if let Some(secret) = runtime_config.local_session_secret {
 			futures::executor::block_on(runtime.activate_local_session_with_identity(
 				secret,
@@ -141,6 +177,7 @@ impl NativeTrUApiHostRuntime {
 			top_up: OnceLock::new(),
 			payments: OnceLock::new(),
 			balance: OnceLock::new(),
+			_host_sink: host_sink,
 		}))
 	}
 
@@ -451,7 +488,7 @@ impl NativeTrUApiHostRuntime {
 
 	/// Take one reference on the product's worker for a modality holder. The
 	/// first one reports [`WorkerTransition::Start`] to the runtime's
-	/// [`HostCallbacks::worker_demand_changed`]; pair every call with one
+	/// [`HostCallbacks::request_worker_transition`]; pair every call with one
 	/// [`Self::release_worker`]. An id that is not a product id is logged and
 	/// dropped.
 	pub fn acquire_worker(&self, product_id: String) {
@@ -1128,6 +1165,29 @@ mod tests {
 	use futures::stream::StreamExt;
 	use std::sync::{Arc, atomic::Ordering};
 	use truapi::v01;
+
+	/// The runtime owns its log sink, so core warnings reach the callbacks it was built with.
+	#[test]
+	fn the_runtime_forwards_core_warnings_to_its_callbacks() {
+		let callbacks = Arc::new(EventCallbacks::new());
+		let mut config = native_host_runtime_config();
+		config.local_session_secret = None;
+		config.local_session_lite_username = None;
+		let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
+			.expect("host runtime config should be valid");
+
+		crate::logging::testing::forward(
+			&host._host_sink,
+			"truapi.tracing.warn",
+			"chain call failed",
+		);
+
+		let logs = callbacks.logs.lock().unwrap();
+		assert!(
+			logs.contains(&("truapi.tracing.warn".to_string(), "chain call failed".to_string())),
+			"{logs:?}"
+		);
+	}
 
 	#[test]
 	fn a_worker_write_reaches_a_storage_subscription_in_the_products_other_execution() {

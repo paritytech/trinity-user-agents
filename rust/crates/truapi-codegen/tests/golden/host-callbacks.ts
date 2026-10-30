@@ -19,6 +19,7 @@ import {
   HostSignRawRequest,
   HostSignRawWithLegacyAccountRequest,
   LegacyAccountTxPayload,
+  NftPurseOwner,
   ProductAccountId,
   ProductAccountTxPayload,
   ProductProofContext,
@@ -124,6 +125,22 @@ export type AuthState =
    * in-progress presentation until a terminal state is emitted.
    */
   | { tag: "Authenticating"; value?: undefined };
+
+/**
+ * A chain the host builds as V5 general transactions, and the transaction
+ * extension pipeline it uses there.
+ */
+export interface ChainExtensionVersion {
+  /**
+   * Genesis hash of the chain.
+   */
+  genesisHash: Bytes32;
+
+  /**
+   * The pipeline's number in the chain's metadata.
+   */
+  extensionVersion: number;
+}
 
 /**
  * Core-owned host-private storage slots. Products never address these slots;
@@ -311,6 +328,17 @@ export type ExpandedCardFaceOutcome =
   | "Unsupported";
 
 /**
+ * The chains a host builds as V5 general transactions. A chain not listed is
+ * built as V4.
+ */
+export interface ExtensionVersionMap {
+  /**
+   * One entry per V5 chain.
+   */
+  chains: Array<ChainExtensionVersion>;
+}
+
+/**
  * How the user left the funding overlay.
  */
 export type FundingPresentOutcome = "Started" | "Dismissed";
@@ -446,9 +474,8 @@ export type HostScan =
    */
   | { tag: "CameraUnavailable"; value?: undefined }
   /**
-   * The requesting App or Widget is not the screen the user sees, so the
-   * host opened nothing. A Worker's request was already checked by the core
-   * and is never answered this way.
+   * The requesting App or Widget is not the screen the user sees, or the
+   * host application is not in front, so the host opened nothing.
    */
   | { tag: "NotVisible"; value?: undefined };
 
@@ -467,6 +494,50 @@ export interface IdentityDisclosureReview {
  * than only display it.
  */
 export type LoginFailureKind = "NoFreeAllowanceSlots" | "Other";
+
+/**
+ * Where items drained from a purse go.
+ */
+export type NftPurseDrainDestination =
+  /**
+   * Fresh keys of this purse.
+   */
+  | { tag: "Purse"; value: { purse: number } }
+  /**
+   * This key, outside every purse.
+   */
+  | { tag: "ExternalKey"; value: { key: Bytes32 } };
+
+/**
+ * Review shown before a product moves items out of an NFT purse it does
+ * not own: Root's, or another product's.
+ */
+export interface NftPurseDrainReview {
+  /**
+   * Product making the request.
+   */
+  callingProductId: string;
+
+  /**
+   * Purse the items leave.
+   */
+  fromPurse: number;
+
+  /**
+   * Who owns that purse.
+   */
+  owner: NftPurseOwner;
+
+  /**
+   * How many items leave it.
+   */
+  itemCount: number;
+
+  /**
+   * Where they go.
+   */
+  destination: NftPurseDrainDestination;
+}
 
 /**
  * Permission request whose authorization status can be inspected or updated
@@ -760,7 +831,11 @@ export type UserConfirmationReview =
   /**
    * Resolve a product's own account subtree over SSO.
    */
-  | { tag: "ProductSubtree"; value: ProductSubtreeReview };
+  | { tag: "ProductSubtree"; value: ProductSubtreeReview }
+  /**
+   * Move items out of an NFT purse the product does not own.
+   */
+  | { tag: "NftPurseDrain"; value: NftPurseDrainReview };
 
 /**
  * Review shown before a product asks to access another product account.
@@ -802,6 +877,18 @@ export const AuthState: S.Codec<AuthState> = S.lazy(
       }) as S.Codec<{ kind: LoginFailureKind; reason: string }>,
       Authenticating: S._void,
     }),
+);
+
+/**
+ * A chain the host builds as V5 general transactions, and the transaction
+ * extension pipeline it uses there.
+ */
+export const ChainExtensionVersion: S.Codec<ChainExtensionVersion> = S.lazy(
+  (): S.Codec<ChainExtensionVersion> =>
+    S.Struct({
+      genesisHash: Bytes32,
+      extensionVersion: S.u8,
+    }) as S.Codec<ChainExtensionVersion>,
 );
 
 /**
@@ -937,6 +1024,17 @@ export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
 );
 
 /**
+ * The chains a host builds as V5 general transactions. A chain not listed is
+ * built as V4.
+ */
+export const ExtensionVersionMap: S.Codec<ExtensionVersionMap> = S.lazy(
+  (): S.Codec<ExtensionVersionMap> =>
+    S.Struct({
+      chains: S.Vector(ChainExtensionVersion),
+    }) as S.Codec<ExtensionVersionMap>,
+);
+
+/**
  * How the user left the funding overlay.
  */
 export const FundingPresentOutcome: S.Codec<FundingPresentOutcome> = S.lazy(
@@ -1051,6 +1149,33 @@ export const IdentityDisclosureReview: S.Codec<IdentityDisclosureReview> =
  */
 export const LoginFailureKind: S.Codec<LoginFailureKind> = S.lazy(
   (): S.Codec<LoginFailureKind> => S.Status("NoFreeAllowanceSlots", "Other"),
+);
+
+/**
+ * Where items drained from a purse go.
+ */
+export const NftPurseDrainDestination: S.Codec<NftPurseDrainDestination> =
+  S.lazy(
+    (): S.Codec<NftPurseDrainDestination> =>
+      S.TaggedUnion({
+        Purse: S.Struct({ purse: S.u32 }) as S.Codec<{ purse: number }>,
+        ExternalKey: S.Struct({ key: Bytes32 }) as S.Codec<{ key: Bytes32 }>,
+      }),
+  );
+
+/**
+ * Review shown before a product moves items out of an NFT purse it does
+ * not own: Root's, or another product's.
+ */
+export const NftPurseDrainReview: S.Codec<NftPurseDrainReview> = S.lazy(
+  (): S.Codec<NftPurseDrainReview> =>
+    S.Struct({
+      callingProductId: S.str,
+      fromPurse: S.u32,
+      owner: NftPurseOwner,
+      itemCount: S.u32,
+      destination: NftPurseDrainDestination,
+    }) as S.Codec<NftPurseDrainReview>,
 );
 
 /**
@@ -1253,6 +1378,7 @@ export const UserConfirmationReview: S.Codec<UserConfirmationReview> = S.lazy(
       AccountAccess: [9, AccountAccessReview] as const,
       SignVrf: [10, SignVrfReview] as const,
       ProductSubtree: [11, ProductSubtreeReview] as const,
+      NftPurseDrain: [12, NftPurseDrainReview] as const,
     }),
 );
 
@@ -1585,6 +1711,18 @@ export interface ExpandedCardHost {
 }
 
 /**
+ * Which chains the host builds as V5 general transactions. The core builds
+ * its own extrinsics the same way, so both agree on every chain.
+ */
+export interface ExtrinsicVersionHost {
+  /**
+   * The chains the host builds as V5, each with its pipeline. A host that
+   * never builds V5 lists none.
+   */
+  transactionExtensionVersions?(): Promise<ExtensionVersionMap>;
+}
+
+/**
  * Feature-support probing. The host answers whether it can service a given
  * capability (currently scoped to per-chain support).
  */
@@ -1854,7 +1992,8 @@ export interface PocketPlatform {
  */
 export interface PreimageHost {
   /**
-   * Emits current value/miss immediately, then future updates.
+   * Emits current value/miss immediately, then future updates. `key` is
+   * the blake2b-256 digest of the preimage.
    */
   lookupPreimage(
     key: Uint8Array,
@@ -1945,8 +2084,9 @@ export interface ProductStorage {
  * - Title the viewfinder with the product id. Show `request.hint` under it as the product's words.
  * - Pass every code the camera reads to a `ScanFilter` built from `request`, and never follow a
  *   scanned link.
- * - Answer `HostScan::NotVisible` for an App or Widget that is not on screen. A Worker reaching
- *   the host already passed the core's tap check.
+ * - Answer `HostScan::NotVisible` for an App or Widget that is not on screen, or for any product
+ *   while the host application is not in front. A Worker reaching the host already passed the
+ *   core's tap check.
  * - Close the viewfinder when the core drops the future, and close any still open before opening
  *   another. A JS host is not told about a drop.
  */
@@ -2035,6 +2175,7 @@ export interface HostCallbacks {
   notifications: Notifications;
   permissions: Permissions;
   features: Features;
+  extrinsicVersion: ExtrinsicVersionHost;
   productStorage: ProductStorage;
   coreStorage: CoreStorage;
   chain: ChainProvider;
@@ -2057,6 +2198,7 @@ export interface RequiredHostCallbacks {
   notifications: Required<Notifications>;
   permissions: Required<Permissions>;
   features: Required<Features>;
+  extrinsicVersion: Required<ExtrinsicVersionHost>;
   productStorage: Required<ProductStorage>;
   coreStorage: Required<CoreStorage>;
   chain: Required<ChainProvider>;

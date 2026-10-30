@@ -26,6 +26,7 @@ pub mod login_failure;
 mod pairing_host;
 mod payment_id;
 mod product_accounts;
+mod product_consent;
 pub mod product_manifest;
 mod product_subtree;
 mod renderer;
@@ -52,12 +53,12 @@ use core::{future::Future, time::Duration};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 use std::{
-	collections::HashSet,
+	collections::{BTreeMap, HashSet},
 	sync::{Arc, Mutex},
 };
 
 pub use actions::ActionChannel;
-use authority::{AuthorityCancelError, AuthoritySession};
+use authority::{AccountCaller, AuthorityCancelError, AuthoritySession};
 pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
@@ -86,7 +87,7 @@ pub use vrf::ring_vrf_member;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{
-	AccountAccessReview, ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview,
+	ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision, Platform,
 	ProductContext, ProductId, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
 	normalize_chat_identifier, validate_chat_icon, validate_chat_message_content,
@@ -134,10 +135,10 @@ use web_time::Instant;
 #[cfg(test)]
 use crate::subscription::Spawner;
 use crate::{
-	chain_runtime::RuntimeFailure,
+	chain_runtime::{RuntimeFailure, RuntimeFailureKind},
 	host_internal::{
 		bulletin::preimage_key,
-		permissions::{PermissionsService, TemporaryPermissions, cross_product_signature_key},
+		permissions::{PermissionsService, TemporaryPermissions},
 		product_manifest::Granted,
 		sso_messages::RingVrfError,
 	},
@@ -191,17 +192,17 @@ enum LegacySigner {
 	Identity([u8; 32]),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, derive_more::From)]
 enum LegacySignerError {
 	Unavailable,
-	ProductDerivation(String),
+	ProductDerivation(AuthorityError),
 }
 
 impl LegacySignerError {
 	fn into_reason(self, unavailable_reason: &'static str) -> String {
 		match self {
 			Self::Unavailable => unavailable_reason.to_string(),
-			Self::ProductDerivation(reason) => reason,
+			Self::ProductDerivation(error) => error.to_string(),
 		}
 	}
 
@@ -469,45 +470,6 @@ impl ProductConnection {
 		}
 	}
 
-	async fn confirm_user_action_if_needed(
-		&self,
-		review: UserConfirmationReview,
-	) -> Result<bool, v01::GenericError> {
-		if self.product_id().has_trusted_remote_permissions() {
-			return Ok(true);
-		}
-		self.platform.confirm_user_action(review).await
-	}
-
-	/// Confirm a signature with one of `owner`'s accounts. When the account
-	/// belongs to another product, the user is asked once per kind and owning
-	/// product for the rest of this execution. Prompts open one at a time, and a
-	/// signature the user already approved never waits for one.
-	async fn confirm_signature(
-		&self,
-		kind: CrossProductSignatureKind,
-		owner: &ProductId,
-		review: impl FnOnce() -> UserConfirmationReview,
-	) -> Result<bool, v01::GenericError> {
-		if owner == self.product_id() {
-			return self.confirm_user_action_if_needed(review()).await;
-		}
-		let approval = cross_product_signature_key(self.product_id(), owner, kind);
-		let permissions = &self.temporary_permissions;
-		if permissions.authorize(&approval, false) {
-			return Ok(true);
-		}
-		let _prompt = permissions.signature_prompt().await;
-		if permissions.authorize(&approval, false) {
-			return Ok(true);
-		}
-		let approved = self.confirm_user_action_if_needed(review()).await?;
-		if approved {
-			permissions.grant(approval);
-		}
-		Ok(approved)
-	}
-
 	async fn require_chain_submit<E>(&self, denied_error: E) -> Result<(), CallError<E>> {
 		self.require_remote_permission(latest::RemotePermission::ChainSubmit, denied_error)
 			.await
@@ -716,6 +678,22 @@ impl ProductRuntimeHost {
 		&self.connection
 	}
 
+	/// Store `status` for one of this product's permissions. A changed answer about
+	/// another product's accounts also ends this product's Allow once answers.
+	pub async fn set_permission_authorization_status(
+		&self,
+		request: PermissionAuthorizationRequest,
+		status: PermissionAuthorizationStatus,
+	) -> Result<(), latest::GenericError> {
+		let account_access =
+			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
+		self.connection.set_permission_authorization_status(request, status).await?;
+		if account_access {
+			self.accounts.consent().forget_allowed_once_for(self.connection.product_id());
+		}
+		Ok(())
+	}
+
 	/// Test constructor building a standalone pairing-host runtime.
 	#[cfg(test)]
 	pub fn new<P>(
@@ -851,6 +829,34 @@ impl ProductRuntimeHost {
 		self.host_session.disconnect().await;
 	}
 
+	/// Confirm with the user unless this host's product may skip the review.
+	async fn confirm(
+		&self,
+		cx: &CallContext,
+		review: UserConfirmationReview,
+	) -> Result<(), AuthorityError> {
+		let caller = AccountCaller::Local { product: &self.connection.product };
+		self.accounts
+			.consent()
+			.review(cx, caller, self.connection.platform.as_ref(), review)
+			.await
+	}
+
+	/// Confirm a signature with one of `owner`'s accounts, once per kind for this
+	/// execution when another product owns it.
+	async fn confirm_signature(
+		&self,
+		cx: &CallContext,
+		kind: CrossProductSignatureKind,
+		owner: &ProductId,
+		review: UserConfirmationReview,
+	) -> Result<(), AuthorityError> {
+		self.accounts
+			.consent()
+			.review_signature(cx, &self.connection, kind, owner, review)
+			.await
+	}
+
 	/// Whether this product may use `owner`'s accounts.
 	pub async fn may_use_product_account(&self, owner: &ProductId, cx: &CallContext) -> bool {
 		if self.connection.product_id().is_localhost() {
@@ -907,7 +913,7 @@ impl ProductRuntimeHost {
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
-	) -> Result<[u8; 32], String> {
+	) -> Result<[u8; 32], AuthorityError> {
 		self.product_account_public_key(
 			cx,
 			session,
@@ -915,7 +921,6 @@ impl ProductRuntimeHost {
 			&v01::DerivationIndex::Index(0),
 		)
 		.await
-		.map_err(|err| err.to_string())
 	}
 
 	async fn classify_legacy_address_signer(
@@ -939,10 +944,7 @@ impl ProductRuntimeHost {
 		if session.identity_account_id == Some(requested_key) {
 			return Ok(LegacySigner::Identity(requested_key));
 		}
-		let product_public_key = self
-			.legacy_slot_zero_public_key(cx, session)
-			.await
-			.map_err(LegacySignerError::ProductDerivation)?;
+		let product_public_key = self.legacy_slot_zero_public_key(cx, session).await?;
 		if requested_key == product_public_key {
 			return Ok(LegacySigner::Product);
 		}
@@ -1045,52 +1047,6 @@ impl ProductRuntimeHost {
 	}
 }
 
-async fn account_access_authorization(
-	platform: &dyn Platform,
-	requesting_product_id: &ProductId,
-	target_product_id: &ProductId,
-) -> Result<PermissionAuthorizationStatus, AccountAccessAuthorizationError> {
-	if requesting_product_id == target_product_id ||
-		requesting_product_id.has_trusted_remote_permissions()
-	{
-		return Ok(PermissionAuthorizationStatus::Authorized);
-	}
-
-	let target = target_product_id.bare_label();
-	let caller = requesting_product_id.bare_label();
-	let cached = crate::host_internal::permissions::account_access_status(platform, caller, target)
-		.await
-		.map_err(AccountAccessAuthorizationError::PermissionStorage)?;
-	if cached != PermissionAuthorizationStatus::NotDetermined {
-		return Ok(cached);
-	}
-
-	let decision = platform
-		.confirm_permission(UserConfirmationReview::AccountAccess(AccountAccessReview {
-			requesting_product_id: requesting_product_id.clone(),
-			target_product_id: target_product_id.clone(),
-		}))
-		.await
-		.map_err(AccountAccessAuthorizationError::Confirmation)?;
-	let status = match decision {
-		PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
-		PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
-		PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
-	};
-	crate::host_internal::permissions::set_account_access_status(platform, caller, target, status)
-		.await
-		.map_err(AccountAccessAuthorizationError::PermissionStorage)?;
-	Ok(status)
-}
-
-#[derive(Debug, thiserror::Error)]
-enum AccountAccessAuthorizationError {
-	#[error("permission storage failed: {0:?}")]
-	PermissionStorage(v01::GenericError),
-	#[error("account access confirmation failed: {0:?}")]
-	Confirmation(v01::GenericError),
-}
-
 fn parse_legacy_signer_hex(signer: &str) -> Option<[u8; 32]> {
 	let raw = signer
 		.strip_prefix("0x")
@@ -1103,7 +1059,124 @@ fn parse_legacy_signer_hex(signer: &str) -> Option<[u8; 32]> {
 }
 
 fn runtime_failure_to_call_error<E>(failure: RuntimeFailure) -> CallError<E> {
+	report_chain_call_failure(&failure);
 	CallError::HostFailure { reason: failure.reason() }
+}
+
+/// How long a chain call has to go without failing before the next failure
+/// counts as a new episode rather than more of the last one.
+const CHAIN_FAILURE_QUIET: Duration = Duration::from_secs(30);
+
+/// Most conditions tracked at once. A reason is part of what tells two
+/// failures apart, and a reason carries text, so the map is bounded rather
+/// than left to grow with however many distinct failures a run produces.
+const CHAIN_FAILURE_CONDITIONS_MAX: usize = 64;
+
+/// What tells one chain call failure from another: its classification, the
+/// method it came from, and why it failed.
+///
+/// The reason is part of it because a connection that drops and a payload that
+/// will not decode are different conditions, and one must not stand in for the
+/// other.
+type ChainFailureKey = (RuntimeFailureKind, &'static str, String, Option<Vec<u8>>);
+
+/// When each condition was last seen, and how many times it has happened in
+/// the episode it belongs to.
+type ChainFailureReports = BTreeMap<ChainFailureKey, (Instant, u64)>;
+
+/// What each chain call failure has done recently.
+static CHAIN_FAILURES: Mutex<ChainFailureReports> = Mutex::new(BTreeMap::new());
+
+/// Report a failed chain call on a widening schedule: the first, the second,
+/// then every doubling.
+///
+/// A connection that drops fails every call made over it afterwards, and each
+/// line reaches a host's log and from there wherever the host ships logs. A
+/// line per call buries the first one, which is the only one that says when the
+/// trouble started. Reporting on a schedule keeps that line, bounds a long
+/// outage to a handful more, and carries the running count on each, so how bad
+/// it is reads off the lines themselves rather than waiting for a tally that
+/// may never come.
+fn report_chain_call_failure(failure: &RuntimeFailure) {
+	// The lock is released before the line is raised: a host's sink runs host
+	// code, which must not be able to re-enter this.
+	let seen = {
+		let mut reported = CHAIN_FAILURES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+		count_failure(
+			&mut reported,
+			(
+				failure.kind(),
+				failure.method(),
+				failure.reason(),
+				failure.chain().map(<[u8]>::to_vec),
+			),
+			Instant::now(),
+			CHAIN_FAILURE_QUIET,
+		)
+	};
+	if !reports_at(seen) {
+		return;
+	}
+	// The chain is named because a failing call says little without it. The
+	// report that sent us looking at this code turned on which chain a
+	// transaction was being built against, and the line never said.
+	match failure.chain() {
+		Some(chain) => tracing::warn!(
+			kind = ?failure.kind(),
+			chain = %hex::encode(chain),
+			reason = %failure,
+			seen,
+			"chain call failed"
+		),
+		None => tracing::warn!(
+			kind = ?failure.kind(),
+			reason = %failure,
+			seen,
+			"chain call failed"
+		),
+	}
+}
+
+/// Whether the `seen`th failure of one condition is one of the reported ones.
+///
+/// The first two, then every doubling, so a thousand failures speak eleven
+/// times rather than a thousand.
+fn reports_at(seen: u64) -> bool {
+	seen <= 2 || seen.is_power_of_two()
+}
+
+/// Count one failure of `key` and answer how many times it has happened in
+/// this episode.
+///
+/// A gap of `quiet` since the last one starts the count again, so a connection
+/// that drops twice in a day reads as two episodes rather than one long one.
+fn count_failure(
+	reported: &mut ChainFailureReports,
+	key: ChainFailureKey,
+	now: Instant,
+	quiet: Duration,
+) -> u64 {
+	// Forgetting everything is the cheap bound: the conditions worth counting
+	// are the ones happening now, and a run that has produced this many
+	// distinct ones has already said so.
+	if reported.len() >= CHAIN_FAILURE_CONDITIONS_MAX && !reported.contains_key(&key) {
+		reported.clear();
+	}
+	let seen = reported.entry(key).or_insert((now, 0));
+	if now.duration_since(seen.0) >= quiet {
+		*seen = (now, 1);
+	} else {
+		seen.0 = now;
+		seen.1 += 1;
+	}
+	seen.1
+}
+
+/// Forget which chain calls have reported, so a test asserting on the line is
+/// not answered by a quiet period another test opened.
+#[cfg(test)]
+pub(crate) fn forget_chain_failures() {
+	CHAIN_FAILURES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
 }
 
 /// Host-UI projection of an active session for `AuthState::Connected`.
@@ -1149,6 +1222,9 @@ fn account_get_authority_error(err: AuthorityError) -> CallError<latest::HostAcc
 	let error = match err {
 		AuthorityError::Disconnected => latest::HostAccountGetError::NotConnected,
 		AuthorityError::Rejected => latest::HostAccountGetError::Rejected,
+		AuthorityError::ConfirmationFailed(error) => {
+			return CallError::HostFailure { reason: error.reason };
+		},
 		AuthorityError::Cancelled(err) => {
 			latest::HostAccountGetError::Unknown { reason: err.to_string() }
 		},
@@ -1232,6 +1308,11 @@ fn signing_call_error(err: AuthorityError) -> CallError<latest::HostSignPayloadE
 		AuthorityError::Rejected | AuthorityError::Disconnected => {
 			latest::HostSignPayloadError::Rejected
 		},
+		AuthorityError::ConfirmationFailed(error) => {
+			return CallError::HostFailure {
+				reason: format!("sign payload confirmation failed: {error:?}"),
+			};
+		},
 		AuthorityError::Cancelled(err) => {
 			latest::HostSignPayloadError::Unknown { reason: err.to_string() }
 		},
@@ -1245,6 +1326,11 @@ fn transaction_call_error(err: AuthorityError) -> CallError<latest::HostCreateTr
 	CallError::Domain(match err {
 		AuthorityError::Rejected | AuthorityError::Disconnected => {
 			latest::HostCreateTransactionError::Rejected
+		},
+		AuthorityError::ConfirmationFailed(error) => {
+			return CallError::HostFailure {
+				reason: format!("create transaction confirmation failed: {error:?}"),
+			};
 		},
 		AuthorityError::Cancelled(err) => {
 			latest::HostCreateTransactionError::Unknown { reason: err.to_string() }
