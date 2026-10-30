@@ -70,11 +70,11 @@ impl ChainRuntime {
 						met_a_halt: false,
 					})?;
 				*latest_connection.lock().unwrap() = Some(connection.clone());
-				let halts = connection.halts();
+				let halts = connection.follow.halts();
 				connection.client.at_current_block().await.map_err(|error| {
-					let met_a_halt = connection.halts() > halts;
+					let met_a_halt = connection.follow.halts() > halts;
 					FailedRead {
-						error: classify(connection.follow_end(), met_a_halt, &error),
+						error: classify(connection.follow.end(), met_a_halt, &error),
 						met_a_halt,
 					}
 				})
@@ -118,7 +118,7 @@ fn classify(
 			met_a_halt ||
 				matches!(
 					follow_end,
-					Some(FollowEnd::Refused | FollowEnd::Dropped | FollowEnd::Stalled)
+					Some(FollowEnd::Halted | FollowEnd::Dropped | FollowEnd::Stalled)
 				)
 		},
 		_ => false,
@@ -188,13 +188,13 @@ mod tests {
 		};
 
 		let cases = [
-			(Some(FollowEnd::Refused), false, dropped()),
+			(Some(FollowEnd::Halted), false, dropped()),
 			(Some(FollowEnd::Dropped), false, dropped()),
 			(Some(FollowEnd::Stalled), false, dropped()),
-			(Some(FollowEnd::Rejected), false, dropped()),
+			(Some(FollowEnd::Refused), false, dropped()),
 			(None, false, dropped()),
 			(None, true, metadata_fetch()),
-			(Some(FollowEnd::Refused), false, metadata_fetch()),
+			(Some(FollowEnd::Halted), false, metadata_fetch()),
 			(None, false, metadata_fetch()),
 			(None, false, stale_block),
 			(None, false, unusable()),

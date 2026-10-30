@@ -12,13 +12,12 @@ use subxt_rpcs::{
 	Error as RpcError,
 	client::{RawRpcFuture, RawRpcSubscription, RpcClientT},
 };
+use truapi::CancellationToken;
 
 use super::{
 	chain_halt::{retry_through_halts, says_chain_halted},
 	runtime_call_client::RuntimeCallClient,
 };
-use truapi::CancellationToken;
-
 use crate::time::Timer;
 
 const CHAIN_HEAD_FOLLOW: &str = "chainHead_v1_follow";
@@ -27,53 +26,89 @@ const CHAIN_HEAD_FOLLOW: &str = "chainHead_v1_follow";
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FollowEnd {
 	/// The chain was still halted after every pause.
-	Refused,
+	Halted,
 	/// Refused for a reason other than a halt.
-	Rejected,
+	Refused,
 	/// The transport failed, or the follow failed after it started.
 	Dropped,
 	/// The core ended it after a read on it timed out.
 	Stalled,
 }
 
+impl FollowEnd {
+	/// Why a follow that failed with `error` ended.
+	fn for_error(error: &RpcError) -> Self {
+		if says_chain_halted(error) {
+			Self::Halted
+		} else if matches!(error, RpcError::User(_)) {
+			Self::Refused
+		} else {
+			Self::Dropped
+		}
+	}
+}
+
+/// What the RPC client under Subxt reports about its follow.
+#[derive(Default)]
+pub struct FollowReport {
+	end: OnceLock<FollowEnd>,
+	halts: AtomicUsize,
+}
+
+impl FollowReport {
+	/// Why the follow ended, or `None` while it runs. Set before Subxt sees
+	/// the end, so a failed call always finds it.
+	pub fn end(&self) -> Option<FollowEnd> {
+		self.end.get().copied()
+	}
+
+	/// How many requests a halt has answered so far.
+	pub fn halts(&self) -> usize {
+		self.halts.load(Ordering::Relaxed)
+	}
+
+	/// Record why the follow ended. The first cause recorded wins.
+	pub fn record_end(&self, end: FollowEnd) {
+		let _ = self.end.set(end);
+	}
+
+	fn count_halt(&self) {
+		self.halts.fetch_add(1, Ordering::Relaxed);
+	}
+}
+
 /// [`RuntimeCallClient`] that retries a chainHead follow refused by a halt,
 /// since Subxt gives up on its backend after one failed re-follow.
 ///
-/// Subxt reports every follow end alike, so this records the cause in
-/// [`Self::follow_end`] and counts halted requests in [`Self::halts`].
+/// Subxt reports every follow end alike, so this records the cause and counts
+/// halted requests in a [`FollowReport`] the core keeps.
 pub struct FollowRetryingRpcClient {
 	inner: RuntimeCallClient,
 	timer: Arc<dyn Timer>,
-	follow_end: Arc<OnceLock<FollowEnd>>,
-	halts: Arc<AtomicUsize>,
+	report: Arc<FollowReport>,
 }
 
 impl FollowRetryingRpcClient {
 	/// Retry refused follows sent through `inner`, pausing on `timer`.
 	pub fn new(inner: RuntimeCallClient, timer: Arc<dyn Timer>) -> Self {
-		Self { inner, timer, follow_end: Arc::default(), halts: Arc::default() }
+		Self { inner, timer, report: Arc::default() }
 	}
 
-	/// How many requests sent through this client a halt has answered.
-	pub fn halts(&self) -> Arc<AtomicUsize> {
-		self.halts.clone()
-	}
-
-	/// Why the follow ended. Set before Subxt sees the end, so a failed call
-	/// always finds it.
-	pub fn follow_end(&self) -> Arc<OnceLock<FollowEnd>> {
-		self.follow_end.clone()
+	/// What this client reports about its follow, for the core to keep once
+	/// Subxt owns the client.
+	pub fn report(&self) -> Arc<FollowReport> {
+		self.report.clone()
 	}
 
 	/// `subscription`, recording an error on it as [`FollowEnd::Dropped`].
 	fn recording_failures(&self, subscription: RawRpcSubscription) -> RawRpcSubscription {
-		let follow_end = self.follow_end.clone();
+		let report = self.report.clone();
 		RawRpcSubscription {
 			stream: subscription
 				.stream
 				.inspect(move |item| {
 					if item.is_err() {
-						let _ = follow_end.set(FollowEnd::Dropped);
+						report.record_end(FollowEnd::Dropped);
 					}
 				})
 				.boxed(),
@@ -88,10 +123,10 @@ impl RpcClientT for FollowRetryingRpcClient {
 		method: &'a str,
 		params: Option<Box<RawValue>>,
 	) -> RawRpcFuture<'a, Box<RawValue>> {
-		let halts = self.halts.clone();
+		let report = self.report.clone();
 		Box::pin(self.inner.request_raw(method, params).inspect_err(move |error| {
 			if says_chain_halted(error) {
-				halts.fetch_add(1, Ordering::SeqCst);
+				report.count_halt();
 			}
 		}))
 	}
@@ -113,14 +148,12 @@ impl RpcClientT for FollowRetryingRpcClient {
 				says_chain_halted,
 			)
 			.await;
-			let ended = match &result {
-				Ok(_) => return result.map(|subscription| self.recording_failures(subscription)),
-				Err(error) if says_chain_halted(error) => FollowEnd::Refused,
-				Err(RpcError::User(_)) => FollowEnd::Rejected,
-				Err(_) => FollowEnd::Dropped,
+			let error = match result {
+				Ok(subscription) => return Ok(self.recording_failures(subscription)),
+				Err(error) => error,
 			};
-			let _ = self.follow_end.set(ended);
-			result
+			self.report.record_end(FollowEnd::for_error(&error));
+			Err(error)
 		})
 	}
 }

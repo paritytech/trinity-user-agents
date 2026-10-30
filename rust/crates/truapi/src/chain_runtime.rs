@@ -27,7 +27,7 @@ use std::{
 	collections::{BTreeMap, HashMap, HashSet},
 	sync::{
 		Arc, Mutex, OnceLock,
-		atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+		atomic::{AtomicBool, AtomicU64, Ordering},
 	},
 };
 #[cfg(target_arch = "wasm32")]
@@ -84,7 +84,7 @@ mod follow_retry;
 
 pub use chain_halt::{retry_through_halts, says_chain_halted};
 pub use current_block::CurrentBlockError;
-use follow_retry::{FollowEnd, FollowRetryingRpcClient};
+use follow_retry::{FollowEnd, FollowReport, FollowRetryingRpcClient};
 
 mod runtime_call_cache;
 mod runtime_call_client;
@@ -161,29 +161,17 @@ type SubxtConnectionSetup = Shared<BoxFuture<'static, Result<SubxtConnection, Ru
 pub struct SubxtConnection {
 	/// Client whose chain config pins the host-configured genesis hash.
 	pub client: OnlineClient<SubstrateConfig>,
-	/// Why the backend's follow ended, once it has.
-	follow_end: Arc<OnceLock<FollowEnd>>,
+	/// What the backend's RPC client has learned about its follow.
+	follow: Arc<FollowReport>,
 	/// Stops the backend's driver, which ends its follow.
 	driver: AbortHandle,
-	/// Requests a halt has answered.
-	halts: Arc<AtomicUsize>,
 }
 
 impl SubxtConnection {
-	/// Why the backend's follow ended, or `None` while it runs.
-	fn follow_end(&self) -> Option<FollowEnd> {
-		self.follow_end.get().copied()
-	}
-
-	/// How many requests a halt has answered so far.
-	fn halts(&self) -> usize {
-		self.halts.load(Ordering::SeqCst)
-	}
-
 	/// End a stuck follow, so the node drops its operations and the next
 	/// caller starts a new one.
 	fn end_stalled_follow(&self) {
-		let _ = self.follow_end.set(FollowEnd::Stalled);
+		self.follow.record_end(FollowEnd::Stalled);
 		self.driver.abort();
 	}
 }
@@ -1373,8 +1361,7 @@ impl ChainConnection {
 			self.runtime_call_client.without_waiting(),
 			self.timer.clone(),
 		);
-		let follow_end = rpc.follow_end();
-		let halts = rpc.halts();
+		let follow = rpc.report();
 		let (backend, driver) =
 			ChainHeadBackend::<SubstrateConfig>::builder().build(RpcClient::new(rpc));
 		let (driver_handle, driver_registration) = AbortHandle::new_pair();
@@ -1402,7 +1389,7 @@ impl ChainConnection {
 		let client = OnlineClient::from_backend_with_config(config, backend.clone())
 			.await
 			.map_err(|error| RuntimeFailure::host_failure(METHOD, error.to_string()))?;
-		Ok(SubxtConnection { client, follow_end, driver: driver_handle, halts })
+		Ok(SubxtConnection { client, follow, driver: driver_handle })
 	}
 
 	/// The config every Subxt client on this connection is built with. It
