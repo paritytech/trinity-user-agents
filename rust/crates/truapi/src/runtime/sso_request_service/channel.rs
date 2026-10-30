@@ -17,7 +17,7 @@ use super::{
 	SsoRequestService,
 };
 use crate::{
-	chain_runtime::{ask_through_halts, says_chain_halted},
+	chain_runtime::{retry_through_halts, says_chain_halted},
 	host_internal::{
 		sso_messages::{
 			RemoteMessage, RemoteMessageData, SsoSessionStatement, Withdrawal,
@@ -37,7 +37,7 @@ use futures::{
 	future::{AbortHandle, Abortable},
 };
 use tracing::{debug, instrument, warn};
-use truapi::{CallContext, CancellationReason};
+use truapi::{CallContext, CancellationReason, CancellationToken};
 
 /// Active peer-disconnect watcher for one SSO session; aborts on drop.
 pub struct SsoDisconnectMonitor {
@@ -237,14 +237,20 @@ impl SsoRequestService {
 			.await
 			.map_err(|err| SsoRemoteResponseError::Failure(err.to_string()))?;
 		// Nothing is submitted yet, so a halt here is safe to wait out.
-		let own_subscription = ask_through_halts(&RealTimer, cx.cancel(), || {
-			subscribe_statement_topic(&rpc_client, sso.session_id_own)
-		})
+		let own_subscription = retry_through_halts(
+			&RealTimer,
+			cx.cancel(),
+			|| subscribe_statement_topic(&rpc_client, sso.session_id_own),
+			says_chain_halted,
+		)
 		.await
 		.map_err(|err| subscribe_failed(cx, &message_id, "own", &err))?;
-		let peer_subscription = ask_through_halts(&RealTimer, cx.cancel(), || {
-			subscribe_statement_topic(&rpc_client, sso.session_id_peer)
-		})
+		let peer_subscription = retry_through_halts(
+			&RealTimer,
+			cx.cancel(),
+			|| subscribe_statement_topic(&rpc_client, sso.session_id_peer),
+			says_chain_halted,
+		)
 		.await
 		.map_err(|err| subscribe_failed(cx, &message_id, "peer", &err))?;
 		let submit_client = rpc_client.clone();
@@ -256,13 +262,18 @@ impl SsoRequestService {
 				return Err(SsoRemoteResponseError::LocalDisconnected);
 			}
 			submit_started.store(true, Ordering::Release);
-			statement_store_rpc::submit_until_sent(&RealTimer, || {
-				statement_store_rpc::submit_sso(
-					&submit_client,
-					statement.clone(),
-					"pairing-host request",
-				)
-			})
+			retry_through_halts(
+				&RealTimer,
+				&CancellationToken::default(),
+				|| {
+					statement_store_rpc::submit_sso(
+						&submit_client,
+						statement.clone(),
+						"pairing-host request",
+					)
+				},
+				|reason| statement_store_rpc::reached_no_peer(reason),
+			)
 			.await
 			.map_err(|err| {
 				let reason = format!("SSO statement submit failed: {err}");
@@ -382,24 +393,17 @@ async fn wait_for_sso_peer_disconnect(
 
 #[cfg(test)]
 mod tests {
-	use serde_json::value::RawValue;
-	use subxt_rpcs::UserError;
-
 	use super::*;
-	use crate::runtime::authority::AuthorityError;
-
-	fn refusal(data: Option<&str>) -> subxt_rpcs::Error {
-		subxt_rpcs::Error::User(UserError {
-			code: -32603,
-			message: "Chain transport halted".to_string(),
-			data: data.map(|data| RawValue::from_string(data.to_string()).unwrap()),
-		})
-	}
+	use crate::{
+		runtime::authority::AuthorityError,
+		test_support::{chain_halted_rpc_error, rpc_refusal},
+	};
 
 	/// Only a lasting halt is retryable, since the request was never sent.
 	#[test]
 	fn only_a_halted_subscribe_is_reported_as_chain_unavailable() {
-		let reported = [refusal(Some(r#""dotli:chain-halted""#)), refusal(None)]
+		let reason = |err| format!("SSO own statement-store subscribe failed: {err}");
+		let reported = [chain_halted_rpc_error(), rpc_refusal(None)]
 			.iter()
 			.map(|err| {
 				AuthorityError::from(subscribe_failed(
@@ -414,15 +418,8 @@ mod tests {
 		assert_eq!(
 			reported,
 			vec![
-				AuthorityError::ChainUnavailable {
-					reason: format!(
-						"SSO own statement-store subscribe failed: {}",
-						refusal(Some(r#""dotli:chain-halted""#))
-					),
-				},
-				AuthorityError::Unknown {
-					reason: format!("SSO own statement-store subscribe failed: {}", refusal(None)),
-				},
+				AuthorityError::ChainUnavailable { reason: reason(chain_halted_rpc_error()) },
+				AuthorityError::Unknown { reason: reason(rpc_refusal(None)) },
 			]
 		);
 	}

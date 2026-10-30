@@ -82,7 +82,7 @@ mod chain_halt;
 mod current_block;
 mod follow_retry;
 
-pub use chain_halt::{HALT_PAUSES, ask_through_halts, says_chain_halted};
+pub use chain_halt::{retry_through_halts, says_chain_halted};
 pub use current_block::CurrentBlockError;
 use follow_retry::{FollowEnd, FollowRetryingRpcClient};
 

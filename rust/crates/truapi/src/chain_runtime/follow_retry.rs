@@ -14,7 +14,7 @@ use subxt_rpcs::{
 };
 
 use super::{
-	chain_halt::{ask_through_halts, says_chain_halted},
+	chain_halt::{retry_through_halts, says_chain_halted},
 	runtime_call_client::RuntimeCallClient,
 };
 use truapi::CancellationToken;
@@ -110,9 +110,12 @@ impl RpcClientT for FollowRetryingRpcClient {
 			return self.inner.subscribe_raw(sub, params, unsub);
 		}
 		Box::pin(async move {
-			let result = ask_through_halts(&*self.timer, &CancellationToken::default(), || {
-				self.inner.subscribe_raw(sub, params.clone(), unsub)
-			})
+			let result = retry_through_halts(
+				&*self.timer,
+				&CancellationToken::default(),
+				|| self.inner.subscribe_raw(sub, params.clone(), unsub),
+				says_chain_halted,
+			)
 			.await;
 			let ended = match &result {
 				Ok(_) => return result.map(|subscription| self.recording_failures(subscription)),
@@ -136,7 +139,7 @@ mod tests {
 
 	use crate::{
 		chain_runtime::{ChainRuntime, chain_halt::HALT_PAUSES},
-		test_support::{FollowRefusal, ScriptedChainHead, follow_count, wait_until},
+		test_support::{FollowRefusal, ScriptedChainHead, sent_count, wait_until},
 	};
 
 	const GENESIS: [u8; 32] = [0xbb; 32];
@@ -167,7 +170,7 @@ mod tests {
 		timer.advance(HALT_PAUSES[0]);
 
 		read.join().unwrap().expect("the second follow serves the block");
-		assert_eq!(follow_count(&provider), 2);
+		assert_eq!(sent_count(&provider, "chainHead_v1_follow"), 2);
 	}
 
 	/// The schedule is spelled out rather than read from the constant, since
@@ -183,7 +186,10 @@ mod tests {
 		let schedule = [1, 2, 4, 8, 16].map(Duration::from_secs);
 		for (attempt, pause) in schedule.into_iter().enumerate() {
 			wait_until(|| timer.sleeps() == attempt + 1, "the next pause starts");
-			assert_eq!((follow_count(&provider), timer.remaining()), (attempt + 1, vec![pause]));
+			assert_eq!(
+				(sent_count(&provider, "chainHead_v1_follow"), timer.remaining()),
+				(attempt + 1, vec![pause])
+			);
 			timer.advance(pause);
 		}
 
@@ -197,7 +203,10 @@ mod tests {
 			),
 			"{error}"
 		);
-		assert_eq!((follow_count(&provider), timer.sleeps()), (schedule.len() + 1, schedule.len()));
+		assert_eq!(
+			(sent_count(&provider, "chainHead_v1_follow"), timer.sleeps()),
+			(schedule.len() + 1, schedule.len())
+		);
 	}
 
 	/// Only a halt is retried, even when another refusal uses the same error
@@ -214,6 +223,6 @@ mod tests {
 
 		select_current_block(&chain).join().unwrap().expect_err("no follow is accepted");
 
-		assert_eq!((follow_count(&provider), timer.sleeps()), (1, 0));
+		assert_eq!((sent_count(&provider, "chainHead_v1_follow"), timer.sleeps()), (1, 0));
 	}
 }

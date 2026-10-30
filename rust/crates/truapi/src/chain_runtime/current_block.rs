@@ -1,19 +1,20 @@
 //! Reading the current finalized block, for building transactions.
 
-use core::{ops::ControlFlow, time::Duration};
+use core::time::Duration;
 use std::sync::Mutex;
 
 use derive_more::Display;
-use futures::{FutureExt, pin_mut};
+use futures::{FutureExt, TryFutureExt, pin_mut};
 use subxt::{
 	client::OnlineClientAtBlock, config::SubstrateConfig, error::OnlineClientAtBlockError,
 };
-use tracing::{instrument, warn};
+use tracing::instrument;
+use truapi::CancellationToken;
 
 use super::{
-	ChainRuntime, RuntimeFailure, SubxtConnection, chain_halt::HALT_PAUSES, follow_retry::FollowEnd,
+	ChainRuntime, RuntimeFailure, SubxtConnection, chain_halt::retry_through_halts,
+	follow_retry::FollowEnd,
 };
-use crate::time::retry_on;
 
 /// Deadline for reading the current block, connecting included. It is longer
 /// than all the halt pauses together, so a late re-follow can still serve.
@@ -40,7 +41,8 @@ impl ChainRuntime {
 	///
 	/// Core scope only, for the same reason as [`Self::online_client`].
 	///
-	/// A read that meets a halt is retried after each of [`HALT_PAUSES`].
+	/// A read that meets a halt is retried after each of
+	/// [`HALT_PAUSES`](super::chain_halt::HALT_PAUSES).
 	///
 	/// The deadline exists because Subxt never gives up on a runtime call
 	/// whose follow stopped. Missing it ends the follow, so the next call
@@ -50,51 +52,33 @@ impl ChainRuntime {
 		&self,
 		genesis_hash: &[u8],
 	) -> Result<OnlineClientAtBlock<SubstrateConfig>, CurrentBlockError> {
-		let connected = Mutex::new(None::<SubxtConnection>);
-		let mut pauses = HALT_PAUSES.into_iter();
-		let read = retry_on(
+		let latest_connection = &Mutex::new(None::<SubxtConnection>);
+		let never_cancelled = CancellationToken::default();
+		let read = retry_through_halts(
 			&*self.timer,
-			|| {
-				let pause = pauses.next();
-				let connected = &connected;
-				async move {
-					let connection = match self.subxt_connection(genesis_hash).await {
-						Ok(connection) => connection,
-						Err(failure) => {
-							return ControlFlow::Break(Err(CurrentBlockError::NoConnection(
-								failure,
-							)));
-						},
-					};
-					*connected.lock().unwrap() = Some(connection.clone());
-					let halts = connection.halts();
-					let error = match connection.client.at_current_block().await {
-						Ok(block) => return ControlFlow::Break(Ok(block)),
-						Err(error) => error,
-					};
+			&never_cancelled,
+			|| async move {
+				let connection = self
+					.subxt_connection(genesis_hash)
+					.await
+					.map_err(|failure| (CurrentBlockError::NoConnection(failure), false))?;
+				*latest_connection.lock().unwrap() = Some(connection.clone());
+				let halts = connection.halts();
+				connection.client.at_current_block().await.map_err(|error| {
 					let met_a_halt = connection.halts() > halts;
-					match pause {
-						Some(pause) if met_a_halt => ControlFlow::Continue((pause, error)),
-						_ => ControlFlow::Break(Err(classify(
-							connection.follow_end(),
-							met_a_halt,
-							&error,
-						))),
-					}
-				}
+					(classify(connection.follow_end(), met_a_halt, &error), met_a_halt)
+				})
 			},
-			|(pause, error)| {
-				warn!(?pause, %error, "the chain halted under the current block read; reading again");
-				pause
-			},
+			|(_, met_a_halt)| *met_a_halt,
 		)
+		.map_err(|(error, _)| error)
 		.fuse();
 		let deadline = self.timer.sleep(CURRENT_BLOCK_TIMEOUT).fuse();
 		pin_mut!(read, deadline);
 		futures::select! {
 			result = read => result,
 			() = deadline => {
-				if let Some(connection) = connected.lock().unwrap().take() {
+				if let Some(connection) = latest_connection.lock().unwrap().take() {
 					connection.end_stalled_follow();
 				}
 				Err(CurrentBlockError::Unavailable(format!(
@@ -150,7 +134,7 @@ mod tests {
 		chain_runtime::{RuntimeChainProvider, chain_halt::HALT_PAUSES},
 		platform::JsonRpcConnection,
 		test_support::{
-			FollowRefusal, ScriptedChainHead, follow_count, test_spawner, wait_for_sent, wait_until,
+			FollowRefusal, ScriptedChainHead, sent_count, test_spawner, wait_for_sent, wait_until,
 		},
 		time::ManualTimer,
 	};
@@ -244,14 +228,7 @@ mod tests {
 		timer.advance(HALT_PAUSES[0]);
 
 		read.join().unwrap().expect("the read after the pause is served");
-		let headers = provider
-			.sent
-			.lock()
-			.unwrap()
-			.iter()
-			.filter(|request| request.contains("chainHead_v1_header"))
-			.count();
-		assert_eq!(headers, 2);
+		assert_eq!(sent_count(&provider, "chainHead_v1_header"), 2);
 	}
 
 	/// A chain that stays halted is `Unavailable`, so the product may retry.
@@ -330,7 +307,7 @@ mod tests {
 
 		let second = read_current_block(&chain);
 		wait_for_sent(&provider, calls_started(2));
-		assert_eq!(follow_count(&provider), 2);
+		assert_eq!(sent_count(&provider, "chainHead_v1_follow"), 2);
 		timer.advance(CURRENT_BLOCK_TIMEOUT);
 		assert_eq!(second.join().unwrap(), Err(no_answer()));
 	}

@@ -316,13 +316,15 @@ impl ScriptedChainHead {
 	}
 }
 
-/// How many `chainHead_v1_follow` requests the core sent.
-pub fn follow_count(provider: &ScriptedProvider) -> usize {
+/// How many `method` requests the core sent.
+pub fn sent_count(provider: &ScriptedProvider, method: &str) -> usize {
 	provider
 		.sent
 		.lock()
 		.unwrap()
 		.iter()
-		.filter(|request| request.contains("chainHead_v1_follow"))
+		.filter(|request| {
+			serde_json::from_str::<Value>(request).is_ok_and(|request| request["method"] == method)
+		})
 		.count()
 }

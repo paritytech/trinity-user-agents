@@ -54,8 +54,8 @@ use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey
 mod scripted_chain;
 
 pub use scripted_chain::{
-	FollowRefusal, ScriptedChainHead, ScriptedProvider, extract_id, follow_count,
-	later_notification_sender, notification_sender, wait_for_sent,
+	FollowRefusal, ScriptedChainHead, ScriptedProvider, extract_id, later_notification_sender,
+	notification_sender, sent_count, wait_for_sent,
 };
 
 /// Block until `condition` holds, failing with `message` after two seconds.
@@ -653,6 +653,21 @@ pub fn chain_halted_error() -> serde_json::Value {
 pub fn chain_halted_frame(request_id: &str) -> String {
 	serde_json::json!({"jsonrpc": "2.0", "id": request_id, "error": chain_halted_error()})
 		.to_string()
+}
+
+/// dotli's halt error as the core's RPC client receives it.
+pub fn chain_halted_rpc_error() -> subxt_rpcs::Error {
+	subxt_rpcs::Error::User(serde_json::from_value(chain_halted_error()).unwrap())
+}
+
+/// A JSON-RPC error with dotli's halt code and `data`, but not its marker
+/// unless `data` is it.
+pub fn rpc_refusal(data: Option<serde_json::Value>) -> subxt_rpcs::Error {
+	let mut error = serde_json::json!({"code": -32603, "message": "refused"});
+	if let Some(data) = data {
+		error["data"] = data;
+	}
+	subxt_rpcs::Error::User(serde_json::from_value(error).unwrap())
 }
 
 /// JSON-RPC subscription acknowledgement frame.

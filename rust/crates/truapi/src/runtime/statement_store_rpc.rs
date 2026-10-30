@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use core::{future::Future, ops::ControlFlow, time::Duration};
+use core::{future::Future, time::Duration};
 use serde_json::{Value, json};
 
 use crate::platform::{JsonRpcConnection, Platform, ProviderError};
@@ -23,14 +23,13 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::{
-	chain_runtime::{ChainRuntime, HALT_PAUSES, RuntimeFailure},
+	chain_runtime::{ChainRuntime, RuntimeFailure},
 	host_logic::statement_store::{
 		SUBMIT_STATEMENT_METHOD, SUBSCRIBE_STATEMENT_METHOD, TopicFilterKind,
 		UNSUBSCRIBE_STATEMENT_METHOD, hex_topic,
 	},
 	host_rpc_client::HostRpcClient,
 	subscription::Spawner,
-	time::{Timer, retry_on},
 };
 
 /// One attempt plus ten retries, 2 s apart, matching the native iOS and Android hosts.
@@ -230,41 +229,6 @@ where
 	unreachable!("the bounded SSO submit loop always returns")
 }
 
-/// Run `submit`, retrying after each of [`HALT_PAUSES`] while the statement
-/// reaches no peer, as a light client reports right after a restart. A light
-/// client keeps no store, so the statement was never sent and is safe to
-/// resubmit.
-pub async fn submit_until_sent<SubmitFn, SubmitFuture>(
-	timer: &dyn Timer,
-	mut submit: SubmitFn,
-) -> Result<(), String>
-where
-	SubmitFn: FnMut() -> SubmitFuture,
-	SubmitFuture: Future<Output = Result<(), String>>,
-{
-	let mut pauses = HALT_PAUSES.into_iter();
-	retry_on(
-		timer,
-		|| {
-			let attempt = submit();
-			let pause = pauses.next();
-			async move {
-				match (attempt.await, pause) {
-					(Err(reason), Some(pause)) if reached_no_peer(&reason) => {
-						ControlFlow::Continue((pause, reason))
-					},
-					(result, _) => ControlFlow::Break(result),
-				}
-			}
-		},
-		|(pause, reason)| {
-			warn!(?pause, %reason, "the statement reached no peer; submitting it again");
-			pause
-		},
-	)
-	.await
-}
-
 /// Whether a [`submit`] failure says the statement reached no peer. smoldot
 /// uses one error code for all statement-store failures, so this matches the
 /// message.
@@ -310,7 +274,7 @@ mod tests {
 	};
 	use serde_json::json;
 
-	use super::{StatementStoreRpc, is_no_allowance_rejection, reached_no_peer, submit_until_sent};
+	use super::{StatementStoreRpc, is_no_allowance_rejection, reached_no_peer};
 	use crate::{
 		chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
 		platform::JsonRpcConnection,
@@ -494,46 +458,5 @@ mod tests {
 		let unsent: Vec<bool> = reasons.iter().map(|reason| reached_no_peer(reason)).collect();
 
 		assert_eq!(unsent, vec![true, true, false]);
-	}
-
-	/// After a restart the light client has no peers for a few seconds.
-	#[test]
-	fn a_statement_that_reached_no_peer_is_submitted_again_after_a_pause() {
-		let timer = Arc::new(crate::time::ManualTimer::default());
-		let attempts = Arc::new(AtomicUsize::new(0));
-		let submitting = {
-			let (timer, attempts) = (timer.clone(), attempts.clone());
-			std::thread::spawn(move || {
-				futures::executor::block_on(submit_until_sent(&*timer, || {
-					let attempt = attempts.fetch_add(1, Ordering::SeqCst);
-					futures::future::ready(if attempt == 0 {
-						Err(NO_PEERS.to_string())
-					} else {
-						Ok(())
-					})
-				}))
-			})
-		};
-
-		crate::test_support::wait_until(|| timer.sleeps() == 1, "the pause starts");
-		timer.advance(crate::chain_runtime::HALT_PAUSES[0]);
-
-		assert_eq!(submitting.join().unwrap(), Ok(()));
-		assert_eq!(attempts.load(Ordering::SeqCst), 2);
-	}
-
-	/// Any other failure is returned at once.
-	#[test]
-	fn a_rejected_statement_is_not_submitted_again() {
-		let timer = crate::time::ManualTimer::default();
-		let attempts = AtomicUsize::new(0);
-
-		let result = futures::executor::block_on(submit_until_sent(&timer, || {
-			attempts.fetch_add(1, Ordering::SeqCst);
-			futures::future::ready(Err("statement_submit not accepted: badProof".to_string()))
-		}));
-
-		assert!(result.is_err());
-		assert_eq!((attempts.into_inner(), timer.sleeps()), (1, 0));
 	}
 }

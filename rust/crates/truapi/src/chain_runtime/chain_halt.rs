@@ -1,6 +1,6 @@
 //! Retrying requests while a host redials a halted chain.
 
-use core::{future::Future, time::Duration};
+use core::{fmt::Debug, future::Future, time::Duration};
 
 use futures::{FutureExt, pin_mut};
 use subxt_rpcs::Error as RpcError;
@@ -33,35 +33,37 @@ pub fn says_chain_halted(error: &RpcError) -> bool {
 	})
 }
 
-/// Run `request`, retrying after each of [`HALT_PAUSES`] while it fails with a
-/// halt. Returns the first other outcome, or the last halt.
+/// Run `attempt`, retrying after each of [`HALT_PAUSES`] while its failure
+/// `is_retryable`. Returns the first other outcome, or the last failure.
 ///
-/// Cancelling `until` ends a pause, not a request in flight, because a
+/// Cancelling `until` ends a pause, not an attempt in flight, because a
 /// dropped request can leave something open, such as a subscription. Use it
-/// only for requests that are safe to send twice.
-pub async fn ask_through_halts<Answer, Request>(
+/// only for attempts that are safe to repeat.
+pub async fn retry_through_halts<Answer, Failure, Attempt>(
 	timer: &dyn Timer,
 	until: &CancellationToken,
-	mut request: impl FnMut() -> Request,
-) -> Result<Answer, RpcError>
+	mut attempt: impl FnMut() -> Attempt,
+	is_retryable: impl Fn(&Failure) -> bool,
+) -> Result<Answer, Failure>
 where
-	Request: Future<Output = Result<Answer, RpcError>>,
+	Attempt: Future<Output = Result<Answer, Failure>>,
+	Failure: Debug,
 {
 	for pause in HALT_PAUSES {
-		let halt = match request().await {
-			Err(error) if says_chain_halted(&error) => error,
+		let failure = match attempt().await {
+			Err(failure) if is_retryable(&failure) => failure,
 			answer => return answer,
 		};
-		warn!(?pause, error = %halt, "the chain halted; asking again");
+		warn!(?pause, ?failure, "retrying after a chain halt");
 		let paused = timer.sleep(pause).fuse();
 		let cancelled = until.cancelled().fuse();
 		pin_mut!(paused, cancelled);
 		futures::select_biased! {
-			_ = cancelled => return Err(halt),
+			_ = cancelled => return Err(failure),
 			() = paused => {},
 		}
 	}
-	request().await
+	attempt().await
 }
 
 #[cfg(test)]
@@ -75,28 +77,34 @@ mod tests {
 	};
 
 	use futures::{executor::block_on, future::ready};
-	use serde_json::value::RawValue;
-	use subxt_rpcs::UserError;
 
 	use super::*;
-	use crate::{test_support::wait_until, time::ManualTimer};
+	use crate::{
+		test_support::{chain_halted_rpc_error as halted, rpc_refusal, wait_until},
+		time::ManualTimer,
+	};
 
-	fn refusal(data: Option<&str>) -> RpcError {
-		RpcError::User(UserError {
-			code: -32603,
-			message: "refused".to_string(),
-			data: data.map(|data| RawValue::from_string(data.to_string()).unwrap()),
-		})
-	}
-
-	fn halted() -> RpcError {
-		refusal(Some(r#""dotli:chain-halted""#))
+	/// Retry while the chain says it halted, as the core's callers do.
+	async fn retry<Answer, Attempt>(
+		timer: &dyn Timer,
+		until: &CancellationToken,
+		attempt: impl FnMut() -> Attempt,
+	) -> Result<Answer, RpcError>
+	where
+		Attempt: Future<Output = Result<Answer, RpcError>>,
+	{
+		retry_through_halts(timer, until, attempt, says_chain_halted).await
 	}
 
 	/// Only dotli's marker counts. The same error code without it does not.
 	#[test]
 	fn only_the_halt_marker_says_the_chain_halted() {
-		let answers = [halted(), refusal(None), refusal(Some(r#""other""#)), refusal(Some("7"))];
+		let answers = [
+			halted(),
+			rpc_refusal(None),
+			rpc_refusal(Some(serde_json::json!("other"))),
+			rpc_refusal(Some(serde_json::json!(7))),
+		];
 
 		let halts: Vec<bool> = answers.iter().map(says_chain_halted).collect();
 
@@ -111,7 +119,7 @@ mod tests {
 		let ask = {
 			let (timer, attempts) = (timer.clone(), attempts.clone());
 			thread::spawn(move || {
-				block_on(ask_through_halts(&*timer, &CancellationToken::default(), || {
+				block_on(retry(&*timer, &CancellationToken::default(), || {
 					let attempt = attempts.fetch_add(1, Ordering::SeqCst);
 					ready(if attempt < 2 { Err(halted()) } else { Ok(attempt) })
 				}))
@@ -134,7 +142,7 @@ mod tests {
 		let ask = {
 			let timer = timer.clone();
 			thread::spawn(move || {
-				block_on(ask_through_halts(&*timer, &CancellationToken::default(), || {
+				block_on(retry(&*timer, &CancellationToken::default(), || {
 					ready(Err::<(), _>(halted()))
 				}))
 			})
@@ -156,9 +164,9 @@ mod tests {
 		let timer = ManualTimer::default();
 		let attempts = AtomicUsize::new(0);
 
-		let result = block_on(ask_through_halts(&timer, &CancellationToken::default(), || {
+		let result = block_on(retry(&timer, &CancellationToken::default(), || {
 			attempts.fetch_add(1, Ordering::SeqCst);
-			ready(Err::<(), _>(refusal(None)))
+			ready(Err::<(), _>(rpc_refusal(None)))
 		}));
 
 		assert!(result.is_err());
@@ -174,7 +182,7 @@ mod tests {
 		let ask = {
 			let (timer, until, attempts) = (timer.clone(), until.clone(), attempts.clone());
 			thread::spawn(move || {
-				block_on(ask_through_halts(&*timer, &until, || {
+				block_on(retry(&*timer, &until, || {
 					attempts.fetch_add(1, Ordering::SeqCst);
 					ready(Err::<(), _>(halted()))
 				}))
