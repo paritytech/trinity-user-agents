@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFail
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingReasonText
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import kotlinx.collections.immutable.ImmutableList
+import uniffi.truapi.FundingDetail
 import uniffi.truapi.FundingRail
 import java.math.BigDecimal
 import kotlin.time.Instant
@@ -265,6 +266,8 @@ data class FundingLiveProgressUi(
     val timeline: FundingTimelineUi,
     val band: FundingBandUi?,
     val lastHeardAtMs: Long?,
+    /** The provider's latest fact for the current step, for the line under the band. */
+    val detail: FundingDetail?,
 )
 
 /** The line under the milestones; amber when the provider is retrying or late. */

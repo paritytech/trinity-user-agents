@@ -177,6 +177,7 @@ class AppFundingOverlayTest {
         steps = steps.toList(),
         band = FundingBand.AWAITING_PAYMENT,
         lastHeardAtMs = null,
+        detail = null,
         failedAtMs = null,
         transactionId = null,
         reference = null,
@@ -211,5 +212,6 @@ class AppFundingOverlayTest {
             network = null,
         ),
         refund = null,
+        detail = null,
     )
 }

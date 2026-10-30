@@ -269,6 +269,7 @@ class FundingCancelViewModelTest {
         steps = emptyList(),
         band = FundingBand.AWAITING_PAYMENT,
         lastHeardAtMs = null,
+        detail = null,
         failedAtMs = null,
         transactionId = null,
         reference = null,

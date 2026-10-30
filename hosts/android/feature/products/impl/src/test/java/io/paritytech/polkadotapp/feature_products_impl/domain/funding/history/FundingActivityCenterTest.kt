@@ -289,6 +289,7 @@ class FundingActivityCenterTest {
         steps = emptyList(),
         band = FundingBand.AWAITING_PAYMENT,
         lastHeardAtMs = null,
+        detail = null,
         failedAtMs = null,
         transactionId = null,
         reference = null,
@@ -323,5 +324,6 @@ class FundingActivityCenterTest {
         started = emptyList(),
         choice = null,
         refund = null,
+        detail = null,
     )
 }

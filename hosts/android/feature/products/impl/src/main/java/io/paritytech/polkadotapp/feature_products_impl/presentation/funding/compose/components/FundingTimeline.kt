@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components
 
+import android.content.res.Resources
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,8 +14,10 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
@@ -24,9 +27,16 @@ import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingDotState
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingLivePart
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.fundingLiveParts
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimelineUi
 import kotlinx.coroutines.delay
+import uniffi.truapi.FundingDetail
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val MILESTONE_SIZE = 20.dp
@@ -35,9 +45,6 @@ private val DOT_SIZE = 8.dp
 private val CURRENT_DOT_SIZE = 10.dp
 private val LINE_HEIGHT = 2.dp
 private const val LAST_HEARD_TICK_MS = 3_000L
-private const val SECONDS_PER_MINUTE = 60L
-private const val SECONDS_PER_HOUR = 3_600L
-private const val JUST_NOW_SECONDS = 5L
 
 /** The milestones card: the dots and their labels, then the band line under them on a darker strip. */
 @Composable
@@ -156,27 +163,42 @@ private fun FundingDotState.color(): Color = when (this) {
     FundingDotState.PENDING -> PolkadotTheme.colors.fg.tertiary
 }
 
-/** "Checked with the provider 12s ago", recounted every few seconds from [lastHeardAtMs]. */
+/**
+ * The line under the band: the provider's latest [detail] for the current step, or "Checked with the
+ * provider 12s ago" from [lastHeardAtMs], recounted every few seconds. One line, cut short with "…".
+ */
 @Composable
-fun FundingLastHeard(lastHeardAtMs: Long, modifier: Modifier = Modifier) {
-    val seconds by produceState(initialValue = secondsSince(lastHeardAtMs), lastHeardAtMs) {
+fun FundingLiveLine(detail: FundingDetail?, lastHeardAtMs: Long?, modifier: Modifier = Modifier) {
+    val nowMs by produceState(initialValue = System.currentTimeMillis(), detail, lastHeardAtMs) {
         while (true) {
-            value = secondsSince(lastHeardAtMs)
+            value = System.currentTimeMillis()
             delay(LAST_HEARD_TICK_MS)
         }
     }
+    val parts = fundingLiveParts(detail, lastHeardAtMs, nowMs)
+    if (parts.isEmpty()) return
+    val resources = LocalContext.current.resources
     NovaText(
         modifier = modifier.fillMaxWidth(),
-        text = when {
-            seconds < JUST_NOW_SECONDS -> stringResource(RCommon.string.funding_last_heard_now)
-            seconds < SECONDS_PER_MINUTE -> stringResource(RCommon.string.funding_last_heard_seconds, seconds.toInt())
-            seconds < SECONDS_PER_HOUR -> stringResource(RCommon.string.funding_last_heard_minutes, (seconds / SECONDS_PER_MINUTE).toInt())
-            else -> stringResource(RCommon.string.funding_last_heard_hours, (seconds / SECONDS_PER_HOUR).toInt())
-        },
+        text = parts.joinToString(" · ") { it.resolve(resources) },
         style = PolkadotTheme.typography.caption.medium,
         color = PolkadotTheme.colors.fg.tertiary,
         textAlign = TextAlign.Center,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
     )
 }
 
-private fun secondsSince(atMs: Long): Long = ((System.currentTimeMillis() - atMs) / 1_000L).coerceAtLeast(0)
+private fun FundingLivePart.resolve(resources: Resources): String = when (this) {
+    is FundingLivePart.Res -> resources.getString(id, *args.map { (it as? FundingLivePart)?.resolve(resources) ?: it }.toTypedArray())
+    is FundingLivePart.Verbatim -> text
+    is FundingLivePart.Moment -> {
+        val at = Instant.ofEpochMilli(atMs).atZone(ZoneId.systemDefault())
+        val pattern = when {
+            dayOnly -> "EEE d MMM"
+            at.toLocalDate() == LocalDate.now() -> "HH:mm"
+            else -> "EEE HH:mm"
+        }
+        DateTimeFormatter.ofPattern(pattern).format(at)
+    }
+}

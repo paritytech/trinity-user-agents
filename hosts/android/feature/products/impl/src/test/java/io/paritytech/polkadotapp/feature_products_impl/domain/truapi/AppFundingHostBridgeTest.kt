@@ -200,12 +200,14 @@ class AppFundingHostBridgeTest {
         started = emptyList(),
         choice = null,
         refund = null,
+        detail = null,
     )
 
     private fun progress(status: FundingStatus) = FundingProgress(
         steps = emptyList(),
         band = FundingBand.CONVERTING,
         lastHeardAtMs = null,
+        detail = null,
         failedAtMs = null,
         transactionId = null,
         reference = null,

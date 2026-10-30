@@ -342,6 +342,7 @@ fun FundingFlowState.toDepositUiState(progress: FundingProgress?, start: Funding
                 timeline = FundingTimeline.live(live.steps, live.band, direction, failed = start.failure != null),
                 band = bandLine(live.band, (live.deposit as? FundingDeposit.Crypto)?.asset ?: asset),
                 lastHeardAtMs = live.lastHeardAtMs?.toLong(),
+                detail = live.detail,
             )
         },
         content = start.failure?.let { FundingDepositContent.Problem(FundingSummaryProblem.Failed(it)) } ?: content,
