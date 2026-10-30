@@ -37,6 +37,7 @@ describe("trinity-stack add and update", () => {
     const { changed } = await add("local", link, undefined, options());
     expect(changed.sort()).toEqual([
       ".gitignore",
+      ".npmignore",
       "index.d.ts",
       "index.js",
       "local.json",
@@ -91,7 +92,7 @@ describe("trinity-stack add and update", () => {
       dir,
       fetch: () => Promise.reject(new Error("generate must not fetch")),
     };
-    expect((await generate(offline)).sort()).toEqual([
+    expect((await generate(offline)).changed.sort()).toEqual([
       "index.d.ts",
       "index.js",
     ]);
@@ -100,6 +101,28 @@ describe("trinity-stack add and update", () => {
     // A fresh clone before `prepare`: update rebuilds the module but reports no committed change.
     await rm(join(dir, "index.js"));
     expect((await update([], options())).changed).toEqual([]);
+  });
+
+  test("the ignore files are written once, so a project's own edits to them stay", async () => {
+    await add("local", link, undefined, options());
+    await writeFile(join(dir, ".gitignore"), "index.js\nindex.d.ts\n*.local\n");
+    await rm(join(dir, ".npmignore"));
+    expect((await generate({ dir })).changed).toEqual([]);
+    served = await at(200);
+    expect((await update([], options())).changed).toEqual(["local.json"]);
+    expect(await readFile(join(dir, ".gitignore"), "utf8")).toContain(
+      "*.local",
+    );
+    expect(await files()).not.toContain(".npmignore");
+  });
+
+  test("generate fails without stacks.json, and when a stack has no copy", async () => {
+    await expect(generate({ dir: join(dir, "missing") })).rejects.toThrow(
+      "no stacks.json",
+    );
+    await add("local", link, undefined, options());
+    await rm(join(dir, "local.json"));
+    await expect(generate({ dir })).rejects.toThrow("no copy of local");
   });
 
   test("update rejects a lower sequence, an unreachable stack and an unsigned one, naming the stack", async () => {
@@ -144,6 +167,7 @@ describe("trinity-stack add and update", () => {
     await remove("local", { dir });
     expect(await files()).toEqual([
       ".gitignore",
+      ".npmignore",
       "index.d.ts",
       "index.js",
       "stacks.json",

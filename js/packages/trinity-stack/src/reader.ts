@@ -14,7 +14,7 @@ import { type Store, stackId } from "./index.js";
 import { unixSeconds } from "./time.js";
 import { wasm } from "./wasm.js";
 
-/** A stack a build bundled, as `trinity-stack update` generates it. */
+/** A stack a build bundled, as `trinity-stack generate` writes it. */
 export type Bundled = {
   pointer: Pointer;
   /** The signed document, as served. */
@@ -55,7 +55,7 @@ export type StackReader = {
 
 /**
  * A reader over the copies in `bundled`, typically the `stacks` of the module
- * `trinity-stack update` generates, and any `Bundled` a call passes. It never fetches per
+ * `trinity-stack generate` writes, and any `Bundled` a call passes. It never fetches per
  * request: `refresh` decides when it does.
  */
 export function createStackReader(

@@ -1,6 +1,6 @@
 // The build copies a JavaScript project has of its stacks, as docs/design/trinity-stack-library.md
-// describes: `.trinity/` contains each stack's signed copy and a module that bundles them, all
-// committed with the project.
+// describes: `.trinity/` contains each stack's signed copy, committed with the project, and a
+// generated module that bundles them, which `.trinity/.gitignore` leaves out of git.
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Pointer } from "../wasm/trinity_stack.js";
@@ -23,13 +23,22 @@ export type ProjectOptions = {
   now?: Date;
 };
 
-/** What a command wrote. `update` exits 2 when it wrote anything, so CI can open a pull request. */
+/** The files a command changed. */
 export type Outcome = { changed: string[] };
 
 const NAME = /^[a-z0-9][a-z0-9-]*$/;
 
 /** The files `generate` rebuilds, which `.gitignore` leaves out of git. */
 const GENERATED = ["index.js", "index.d.ts"];
+
+/**
+ * The ignore files `add` writes when they are missing. npm packs a directory by its `.gitignore`
+ * unless it has a `.npmignore`, so the empty one keeps the module in a published package.
+ */
+const IGNORES = [
+  [".gitignore", GENERATED.map((file) => `${file}\n`).join("")],
+  [".npmignore", ""],
+] as const;
 
 /**
  * Adds a stack under `name` from a link, or a URL and its key, then writes its copy as
@@ -57,8 +66,19 @@ export async function add(
     throw new Error(`${name} is already added; remove it first`);
   const { written, warning } = await refresh(name, pointer, options);
   await writeStacks({ ...stacks, [name]: encodeLink(pointer) }, options);
+  const ignores: string[] = [];
+  for (const [file, text] of IGNORES)
+    if (!(await read(file, options))) {
+      await write(file, new TextEncoder().encode(text), options);
+      ignores.push(file);
+    }
   return {
-    changed: [...written, "stacks.json", ...(await generate(options))],
+    changed: [
+      ...written,
+      "stacks.json",
+      ...ignores,
+      ...(await writeModule(options)),
+    ],
     warnings: warning ? [`${name}: ${warning}`] : [],
   };
 }
@@ -66,9 +86,10 @@ export async function add(
 /**
  * Fetches each stack, or those `names` lists, and writes a newer signed copy. Refuses an unsigned
  * or expired stack, and anything that would lower `sequence`. A stack that fails is left as it was
- * and is named in `failures`, while the others still update. A copy past `validUntil` is still
- * accepted and named in `warnings`. `changed` lists only committed files, not the ones `generate`
- * rebuilds. A project without a stacks.json writes nothing.
+ * and is listed in `failures`, while the others still update. A copy past `validUntil` is still
+ * accepted and listed in `warnings`. `changed` lists the copies it wrote, not `index.js` or
+ * `index.d.ts`, so it is empty exactly when git sees no change. A project without a stacks.json
+ * writes nothing.
  */
 export async function update(
   names: string[],
@@ -99,9 +120,7 @@ export async function update(
       ? [`${chosen[index]}: ${messageOf(result.reason)}`]
       : [],
   );
-  // Only committed files count, so the exit code tells a scheduled job whether git changed.
-  const generated = await generate(options);
-  changed.push(...generated.filter((file) => !GENERATED.includes(file)));
+  await writeModule(options);
   return { changed, failures, warnings };
 }
 
@@ -123,7 +142,7 @@ export async function remove(
   delete stacks[name];
   await writeStacks(stacks, options);
   await rm(join(dir(options), fileOf(name)), { force: true });
-  return { changed: ["stacks.json", ...(await generate(options))] };
+  return { changed: ["stacks.json", ...(await writeModule(options))] };
 }
 
 /**
@@ -169,12 +188,23 @@ async function refresh(
 }
 
 /**
- * Rebuilds `index.js` and `index.d.ts` from stacks.json and the committed copies, with no fetch,
- * and writes the `.gitignore` that leaves them out of git. Returns the files it changed.
+ * Rebuilds `index.js` and `index.d.ts` from stacks.json and the committed copies, with no fetch.
+ * Fails when there is no stacks.json, or when a stack in it has no copy.
  */
-export async function generate(
-  options: ProjectOptions = {},
-): Promise<string[]> {
+export async function generate(options: ProjectOptions = {}): Promise<Outcome> {
+  if (!(await read("stacks.json", options)))
+    throw new Error(`no stacks.json in ${dir(options)}; add a stack first`);
+  const copies = await readCopies(options);
+  const missing = copies.filter(({ document }) => !document);
+  if (missing.length > 0)
+    throw new Error(
+      `no copy of ${missing.map(({ name }) => name).join(", ")}; run trinity-stack update`,
+    );
+  return { changed: await writeModule(options) };
+}
+
+/** Writes `index.js` and `index.d.ts` for the stacks that have a copy; returns those it changed. */
+async function writeModule(options: ProjectOptions): Promise<string[]> {
   const bundled = (await readCopies(options)).flatMap(
     ({ name, link, document }) =>
       document
@@ -211,7 +241,6 @@ export async function generate(
     "};\n";
   const changed: string[] = [];
   for (const [file, text] of [
-    [".gitignore", GENERATED.map((file) => `${file}\n`).join("")],
     ["index.js", module],
     ["index.d.ts", declarations],
   ] as const) {
