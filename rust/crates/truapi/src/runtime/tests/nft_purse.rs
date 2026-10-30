@@ -5,7 +5,7 @@ use truapi::{
 		HostNftPurseCreateItemsResponse, HostNftPurseCreatePurseError,
 		HostNftPurseCreatePurseRequest, HostNftPurseCreatePurseResponse,
 		HostNftPurseListPursesError, HostNftPurseListPursesRequest, HostNftPurseListPursesResponse,
-		HostNftPurseListenForPaymentRequest, HostNftPurseQueryPurseError,
+		HostNftPurseListenOneTimePaymentRequest, HostNftPurseQueryPurseError,
 		HostNftPurseQueryPurseRequest, HostNftPurseQueryPurseResponse,
 	},
 };
@@ -371,24 +371,9 @@ fn querying_an_unknown_purse_is_refused_without_a_prompt() {
 	assert_eq!(requested_permissions(&platform), vec![]);
 }
 
-// Methods of later stages stay unavailable, so products can feature-detect them.
-#[test]
-fn methods_of_later_stages_are_unavailable() {
-	let (_dir, host) = nft_host(Arc::new(StubPlatform::default()), true);
-	let request =
-		v01::HostNftPurseListenForPaymentRequest { key: v01::NftPurseReceiveKey([1; 32]) };
-
-	let mut payments = futures::executor::block_on(host.listen_for_payment(
-		&CallContext::default(),
-		HostNftPurseListenForPaymentRequest::V1(request),
-	));
-
-	let first = futures::executor::block_on(futures::StreamExt::next(&mut payments));
-	assert_eq!(first, Some(Err(CallError::unavailable())));
-}
-
 mod cheques;
 mod deposits;
+mod payments;
 
 mod operations {
 	//! The chain operations of NFT purses through the product-facing trait.

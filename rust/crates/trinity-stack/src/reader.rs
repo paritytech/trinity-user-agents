@@ -115,13 +115,17 @@ fn finish(
 	new_generation: bool,
 	now_unix_seconds: i64,
 ) -> Accepted {
-	let passed = |time: Option<u32>| time.is_some_and(|time| now_unix_seconds >= i64::from(time));
 	Accepted {
-		stale: passed(stack.descriptor.valid_until),
-		expired: passed(stack.descriptor.expires_at),
+		stale: passed(stack.descriptor.valid_until, now_unix_seconds),
+		expired: passed(stack.descriptor.expires_at, now_unix_seconds),
 		status,
 		document: document.to_vec(),
 		stack,
 		new_generation,
 	}
+}
+
+/// Whether a descriptor's `validUntil` or `expiresAt`, when set, has passed.
+pub fn passed(time: Option<u32>, now_unix_seconds: i64) -> bool {
+	time.is_some_and(|time| now_unix_seconds >= i64::from(time))
 }
