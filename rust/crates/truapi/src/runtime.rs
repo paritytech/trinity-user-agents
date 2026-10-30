@@ -470,6 +470,19 @@ impl ProductConnection {
 		}
 	}
 
+	/// Require the user's consent to disclose their identity to this product,
+	/// prompting only when no decision is stored.
+	async fn require_identity_disclosure<E>(&self, denied_error: E) -> Result<(), CallError<E>> {
+		match self.identity_disclosure_authorization().await {
+			Ok(PermissionAuthorizationStatus::Authorized) => Ok(()),
+			Ok(
+				PermissionAuthorizationStatus::Denied |
+				PermissionAuthorizationStatus::NotDetermined,
+			) => Err(CallError::Domain(denied_error)),
+			Err(reason) => Err(CallError::HostFailure { reason }),
+		}
+	}
+
 	async fn require_chain_submit<E>(&self, denied_error: E) -> Result<(), CallError<E>> {
 		self.require_remote_permission(latest::RemotePermission::ChainSubmit, denied_error)
 			.await

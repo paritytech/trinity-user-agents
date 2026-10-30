@@ -14,7 +14,7 @@ use super::{
 	item::{AllocateItemsError, Allocation, allocate_items_in},
 	keys::{ItemKey, ItemKeyDeriver},
 	purse::PurseId,
-	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams},
+	scarcity::{TRANSFER_WAIT_LIMIT_SECS, TransferParams, TransferSigner},
 	standing::{IdleItem, ItemRefusal, idle_items},
 };
 use crate::{
@@ -152,8 +152,8 @@ pub fn plan_transfers(
 			let signed_state_nonce = None;
 			TransferParams {
 				source,
-				slot,
-				instance,
+				signer: TransferSigner::Derived(slot),
+				instance: Some(instance),
 				destination,
 				signed_state_nonce,
 				give_up_after,
@@ -174,7 +174,7 @@ pub fn validate_can_start(
 }
 
 /// Refuses `operation` when it is already registered.
-fn validate_operation_unused(
+pub fn validate_operation_unused(
 	conn: &Connection,
 	operation: &OperationKey,
 ) -> Result<(), StartOperationError> {
@@ -184,8 +184,21 @@ fn validate_operation_unused(
 	Ok(())
 }
 
+/// Refuses the first of `sources` that a live transaction already moves.
+pub fn validate_not_moving(
+	conn: &Connection,
+	sources: &BTreeSet<ItemKey>,
+) -> Result<(), StartOperationError> {
+	let keys: Vec<ItemKey> = sources.iter().copied().collect();
+	let moving = dao::moving_keys(conn, &keys)?;
+	match moving.first() {
+		Some(key) => Err(StartOperationError::ItemUnavailable(*key)),
+		None => Ok(()),
+	}
+}
+
 /// `item_count` fresh keys in `purse`.
-fn allocate_destinations(
+pub fn allocate_destinations(
 	tx: &Transaction<'_>,
 	purse: PurseId,
 	item_count: usize,

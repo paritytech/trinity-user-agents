@@ -90,12 +90,8 @@ impl BuiltTransfer {
 	fn of(entry: &DurableTxEntry) -> Option<Self> {
 		let plan = entry.plan.as_ref()?;
 		let params = TransferParams::try_from(&plan.params).ok()?;
-		params.signed_state_nonce.map(|signed_state_nonce| Self {
-			id: entry.id,
-			instance: params.instance,
-			destination: params.destination,
-			signed_state_nonce,
-		})
+		let (instance, signed_state_nonce) = params.instance.zip(params.signed_state_nonce)?;
+		Some(Self { id: entry.id, instance, destination: params.destination, signed_state_nonce })
 	}
 
 	/// Whether `held`, what the destination holds, is the instance as this
@@ -144,7 +140,7 @@ mod tests {
 			keys::ItemIndex,
 			scarcity::{
 				chain::{KeyLocks, TransferContext},
-				policy::TRANSFER_POLICY,
+				policy::{TRANSFER_POLICY, TransferSigner},
 			},
 		},
 	};
@@ -206,12 +202,12 @@ mod tests {
 	fn transfer_entry(signed_state_nonce: Option<u64>) -> DurableTxEntry {
 		let params = TransferParams {
 			source: SOURCE,
-			slot: ItemSlot {
+			signer: TransferSigner::Derived(ItemSlot {
 				purse: PurseId(0),
 				installation: TEST_INSTALLATION,
 				index: ItemIndex(0),
-			},
-			instance: INSTANCE,
+			}),
+			instance: Some(INSTANCE),
 			destination: DESTINATION,
 			signed_state_nonce,
 			give_up_after: 0,

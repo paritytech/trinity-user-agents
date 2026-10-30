@@ -42,4 +42,7 @@ truapi_macros::versioned_type! {
 	pub enum HostNftPurseObserveOperationStatusRequest { V1 => v01::HostNftPurseObserveOperationStatusRequest }
 	pub enum HostNftPurseObserveOperationStatusItem { V1 => v01::NftPurseStatus }
 	pub enum HostNftPurseObserveOperationStatusError { V1 => v01::NftPurseObserveOperationStatusError }
+	pub enum HostNftPurseStaticReceiveKeyRequest { V1 => v01::HostNftPurseStaticReceiveKeyRequest }
+	pub enum HostNftPurseStaticReceiveKeyResponse { V1 => v01::HostNftPurseStaticReceiveKeyResponse }
+	pub enum HostNftPurseStaticReceiveKeyError { V1 => v01::NftPurseStaticReceiveKeyError }
 }

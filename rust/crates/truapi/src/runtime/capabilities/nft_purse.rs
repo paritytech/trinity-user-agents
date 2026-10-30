@@ -18,14 +18,16 @@ mod browser {
 			HostNftPurseCreatePurseError, HostNftPurseCreatePurseRequest,
 			HostNftPurseCreatePurseResponse, HostNftPurseCreateReceiveKeyError,
 			HostNftPurseCreateReceiveKeyRequest, HostNftPurseCreateReceiveKeyResponse,
+			HostNftPurseDepositError, HostNftPurseDepositRequest, HostNftPurseDepositResponse,
 			HostNftPurseListPursesError, HostNftPurseListPursesRequest,
 			HostNftPurseListPursesResponse, HostNftPurseObserveOperationStatusError,
 			HostNftPurseObserveOperationStatusItem, HostNftPurseObserveOperationStatusRequest,
 			HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest,
 			HostNftPurseQueryPurseResponse, HostNftPurseRebalancePurseError,
 			HostNftPurseRebalancePurseRequest, HostNftPurseRebalancePurseResponse,
-			HostNftPurseTransferItemError, HostNftPurseTransferItemRequest,
-			HostNftPurseTransferItemResponse,
+			HostNftPurseStaticReceiveKeyError, HostNftPurseStaticReceiveKeyRequest,
+			HostNftPurseStaticReceiveKeyResponse, HostNftPurseTransferItemError,
+			HostNftPurseTransferItemRequest, HostNftPurseTransferItemResponse,
 		},
 	};
 
@@ -90,6 +92,25 @@ mod browser {
 			_request: HostNftPurseRebalancePurseRequest,
 		) -> Result<HostNftPurseRebalancePurseResponse, CallError<HostNftPurseRebalancePurseError>>
 		{
+			Err(CallError::Unsupported)
+		}
+
+		async fn deposit(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseDepositRequest,
+		) -> Result<HostNftPurseDepositResponse, CallError<HostNftPurseDepositError>> {
+			Err(CallError::Unsupported)
+		}
+
+		async fn static_receive_key(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseStaticReceiveKeyRequest,
+		) -> Result<
+			HostNftPurseStaticReceiveKeyResponse,
+			CallError<HostNftPurseStaticReceiveKeyError>,
+		> {
 			Err(CallError::Unsupported)
 		}
 
