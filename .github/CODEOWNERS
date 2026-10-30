@@ -4,33 +4,33 @@
 # formats and cannot be one file, so scripts/check-path-routing.py holds them to
 # the same set and CI runs it.
 #
-# This requests a review. It does not gate one: the branch ruleset already
-# requires a team review on every file, so an entry here decides who is asked,
-# not whether anyone is.
+# The branch ruleset requires a code owner's review, so an entry here decides
+# both who is asked and whose approval counts. Every entry names both teams,
+# and an approval from either one satisfies it.
 
 # Everything, so no path is left without an owner. Later entries win, so a more
 # specific line below overrides this one.
-*                       @paritytech/host-sdk-team
+*                       @paritytech/host-sdk-team @paritytech/host-team
 
 # The shared core. A change here reaches every host at once, which is why it is
 # named separately even though it resolves to the same reviewers today.
-/rust/crates/           @paritytech/host-sdk-team
+/rust/crates/           @paritytech/host-sdk-team @paritytech/host-team
 
 # The hosts, kept apart from each other rather than treated as one area.
-/hosts/ios/             @paritytech/host-sdk-team
-/ios/                   @paritytech/host-sdk-team
-/hosts/android/         @paritytech/host-sdk-team
-/android/               @paritytech/host-sdk-team
+/hosts/ios/             @paritytech/host-sdk-team @paritytech/host-team
+/ios/                   @paritytech/host-sdk-team @paritytech/host-team
+/hosts/android/         @paritytech/host-sdk-team @paritytech/host-team
+/android/               @paritytech/host-sdk-team @paritytech/host-team
 
 # The client, the playground and the explorer.
-/js/                    @paritytech/host-sdk-team
-/playground/            @paritytech/host-sdk-team
-/explorer/              @paritytech/host-sdk-team
+/js/                    @paritytech/host-sdk-team @paritytech/host-team
+/playground/            @paritytech/host-sdk-team @paritytech/host-team
+/explorer/              @paritytech/host-sdk-team @paritytech/host-team
 
 # The pipelines themselves. A change here can alter what every other gate does,
 # including the ones that would otherwise catch it.
-/.github/workflows/     @paritytech/host-sdk-team
-/.github/actions/       @paritytech/host-sdk-team
+/.github/workflows/     @paritytech/host-sdk-team @paritytech/host-team
+/.github/actions/       @paritytech/host-sdk-team @paritytech/host-team
 
 # Documents and proposals.
-/docs/                  @paritytech/host-sdk-team
+/docs/                  @paritytech/host-sdk-team @paritytech/host-team
