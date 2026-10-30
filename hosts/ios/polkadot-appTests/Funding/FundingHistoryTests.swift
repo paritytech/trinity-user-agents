@@ -19,8 +19,44 @@ struct FundingHistoryTests {
 
         let record = try #require(records.first)
         #expect(records.map(\.intent) == ["old"])
-        #expect(record.providerId == nil)
         #expect(record.settledAmount == "50000000")
+    }
+
+    @Test
+    func aSessionFromAnEarlierRunKeepsItsDetails() throws {
+        let record = try #require(FundingRecord(summary: summary("old", settledAtMs: 1_000)))
+        let item = FundingActivityItem(record: record)
+
+        #expect(record.providerId == "provider")
+        #expect(record.rail == .card)
+        #expect(record.asset == "EUR")
+        #expect(record.transactionId == "tx")
+        #expect(record.reference == "ref")
+        #expect(item.status == .toppedUp)
+        #expect(item.rail == .card)
+    }
+
+    @Test
+    func theSummarysStatusDecidesHowItEnded() throws {
+        let cancelled = try #require(FundingRecord(
+            summary: withdrawal(status: .cancelled(refunded: "40000000"), payout: nil, refunded: "40000000")
+        ))
+        let payoutFailed = try #require(FundingRecord(
+            summary: withdrawal(
+                status: .payoutFailed(refunded: "50000000"),
+                payout: .failed(reason: "rejected"),
+                refunded: "50000000"
+            )
+        ))
+        let sent = try #require(FundingRecord(
+            summary: withdrawal(status: .paidOutAfterCancel, payout: .paidOut, refunded: nil)
+        ))
+
+        #expect(FundingActivityItem(record: cancelled).status == .cancelled(refunded: "40000000"))
+        #expect(FundingActivityItem(record: payoutFailed).status == .payoutFailed(refunded: "50000000"))
+        #expect(FundingEndedSession(record: payoutFailed).outcome == .payoutFailed(reason: "rejected"))
+        #expect(FundingActivityItem(record: sent).status == .sent)
+        #expect(FundingEndedSession(record: sent).payoutState == .paidOut)
     }
 
     @Test
@@ -145,7 +181,34 @@ private func summary(_ intent: String, settledAtMs: UInt64) -> FundingSessionSum
         direction: .in,
         amount: "50000000",
         stage: delivered(settledAtMs),
-        openedAtMs: openedAtMs
+        openedAtMs: openedAtMs,
+        providerId: "provider",
+        rail: .card,
+        asset: "EUR",
+        status: .toppedUp,
+        payout: nil,
+        refunded: nil,
+        transactionId: "tx",
+        reference: "ref"
+    )
+}
+
+private func withdrawal(status: FundingStatus, payout: FundingPayout?, refunded: U128?) -> FundingSessionSummary {
+    FundingSessionSummary(
+        intent: "out",
+        ownerProductId: nil,
+        direction: .out,
+        amount: "50000000",
+        stage: .released(debited: "50000000", settledAtMs: openedAtMs + 1_000),
+        openedAtMs: openedAtMs,
+        providerId: "provider",
+        rail: .bank,
+        asset: "EUR",
+        status: status,
+        payout: payout,
+        refunded: refunded,
+        transactionId: nil,
+        reference: nil
     )
 }
 
