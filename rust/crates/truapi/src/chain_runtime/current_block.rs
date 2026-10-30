@@ -47,16 +47,12 @@ pub enum CurrentBlockError {
 }
 
 impl ChainRuntime {
-	/// Subxt client at the current finalized block of `genesis_hash`.
+	/// Subxt client at the current finalized block of `genesis_hash`. Core
+	/// scope only, like [`Self::online_client`].
 	///
-	/// Core scope only, for the same reason as [`Self::online_client`].
-	///
-	/// A read that meets a halt is retried as
-	/// [`retry_through_halts`] does.
-	///
-	/// The deadline exists because Subxt never gives up on a runtime call
-	/// whose follow stopped. Missing it ends the follow, so the next call
-	/// starts a fresh one instead of waiting on the stuck one.
+	/// Retries through a halt. The deadline is there because Subxt never
+	/// abandons a runtime call whose follow stopped; missing it ends that
+	/// follow, so the next call starts a fresh one.
 	#[instrument(skip_all, fields(runtime.method = "chain_runtime.current_block"))]
 	pub async fn current_block(
 		&self,
