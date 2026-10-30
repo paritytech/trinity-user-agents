@@ -112,17 +112,17 @@ pub mod latest {
 		ImageSource, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination,
 		NftPurseChequeId, NftPurseChequeRecipient, NftPurseClearedItem, NftPurseClearingReference,
 		NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
-		NftPursePurse, NftPurseReceiveKey, NftPurseStatus, OperationStartedResult,
-		PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId, ProductProofContext,
-		RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
-		RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
-		RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
-		RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode, ResourceAllocationError,
-		RingLocation, RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi,
-		RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size, Statement,
-		StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps,
-		TextProps, ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
-		VrfSignature, X25519PublicKey,
+		NftPursePaymentTransmissionChannel, NftPursePurse, NftPurseReceiveKey, NftPurseStatus,
+		OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId,
+		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest,
+		RemotePermission, RemoteStatementStoreCreateProofError,
+		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
+		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
+		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
+		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
+		SignedStatement, Size, Statement, StatementProof, StatementTopic, StorageQueryItem,
+		StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
+		TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature, X25519PublicKey,
 	};
 
 	/// Latest payload type of a versioned envelope.
@@ -431,6 +431,24 @@ pub mod latest {
 	/// NFT operation status failure.
 	pub type HostNftPurseObserveOperationStatusError =
 		LatestOf<versioned::nft_purse::HostNftPurseObserveOperationStatusError>;
+	/// NFT one-time payment listen request.
+	pub type HostNftPurseListenOneTimePaymentRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseListenOneTimePaymentRequest>;
+	/// NFT one-time payment listen item.
+	pub type HostNftPurseListenOneTimePaymentItem =
+		LatestOf<versioned::nft_purse::HostNftPurseListenOneTimePaymentItem>;
+	/// NFT one-time payment listen failure.
+	pub type HostNftPurseListenOneTimePaymentError =
+		LatestOf<versioned::nft_purse::HostNftPurseListenOneTimePaymentError>;
+	/// NFT payment inbox listen request.
+	pub type HostNftPurseListenPaymentInboxRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseListenPaymentInboxRequest>;
+	/// NFT payment inbox listen item.
+	pub type HostNftPurseListenPaymentInboxItem =
+		LatestOf<versioned::nft_purse::HostNftPurseListenPaymentInboxItem>;
+	/// NFT payment inbox listen failure.
+	pub type HostNftPurseListenPaymentInboxError =
+		LatestOf<versioned::nft_purse::HostNftPurseListenPaymentInboxError>;
 	/// NFT static receive key request.
 	pub type HostNftPurseStaticReceiveKeyRequest =
 		LatestOf<versioned::nft_purse::HostNftPurseStaticReceiveKeyRequest>;

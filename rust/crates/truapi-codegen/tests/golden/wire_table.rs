@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "2ecf8188b3a7f2b4";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "1ddad8b65de84b98";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -626,8 +626,8 @@ pub const NFT_PURSE_CREATE_RECEIVE_KEY: MethodIds = MethodIds {
     method_id: 5,
 };
 
-/// Wire discriminants for `nft_purse_listen_for_payment`.
-pub const NFT_PURSE_LISTEN_FOR_PAYMENT: MethodIds = MethodIds {
+/// Wire discriminants for `nft_purse_listen_one_time_payment`.
+pub const NFT_PURSE_LISTEN_ONE_TIME_PAYMENT: MethodIds = MethodIds {
     trait_id: 26,
     method_id: 6,
 };
@@ -672,6 +672,12 @@ pub const NFT_PURSE_OBSERVE_OPERATION_STATUS: MethodIds = MethodIds {
 pub const NFT_PURSE_STATIC_RECEIVE_KEY: MethodIds = MethodIds {
     trait_id: 26,
     method_id: 13,
+};
+
+/// Wire discriminants for `nft_purse_listen_payment_inbox`.
+pub const NFT_PURSE_LISTEN_PAYMENT_INBOX: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 14,
 };
 
 /// The full wire table. Trait ids and per-trait method ordering are
@@ -1067,8 +1073,8 @@ pub const WIRE_TABLE: &[WireEntry] = &[
         kind: WireKind::Request(NFT_PURSE_CREATE_RECEIVE_KEY),
     },
     WireEntry {
-        method: "nft_purse_listen_for_payment",
-        kind: WireKind::Subscription(NFT_PURSE_LISTEN_FOR_PAYMENT),
+        method: "nft_purse_listen_one_time_payment",
+        kind: WireKind::Subscription(NFT_PURSE_LISTEN_ONE_TIME_PAYMENT),
     },
     WireEntry {
         method: "nft_purse_create_cheque",
@@ -1097,5 +1103,9 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "nft_purse_static_receive_key",
         kind: WireKind::Request(NFT_PURSE_STATIC_RECEIVE_KEY),
+    },
+    WireEntry {
+        method: "nft_purse_listen_payment_inbox",
+        kind: WireKind::Subscription(NFT_PURSE_LISTEN_PAYMENT_INBOX),
     },
 ];
