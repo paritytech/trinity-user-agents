@@ -43,7 +43,7 @@ pub enum Schemes {
 /// and a missing `//`, which other readers refuse, and in `http(s)` and `ws(s)` URLs reads `\` as
 /// `/`, which RFC 3986 readers do not. A URL must also be ASCII, since IDNA readers map some
 /// hosts differently: `faß.example` is `xn--fa-hia.example` to the parser and `fass.example` to
-/// Python.
+/// Python's standard library.
 pub fn url(value: &str, schemes: Schemes) -> Result<Url, Error> {
 	let invalid = || Error::InvalidUrl(value.to_owned());
 	if value
@@ -122,6 +122,7 @@ mod tests {
 			"http://192.168.1.2",
 			"wss://8.8.8.8/",
 			"https://A.Example/",
+			"https://xn--fa-hia.example/caf%C3%A9",
 		] {
 			assert!(url(allowed, Schemes::Web).is_ok(), "{allowed}");
 		}
