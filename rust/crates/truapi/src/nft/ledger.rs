@@ -9,6 +9,10 @@ use super::{
 	dao,
 	handoff::{HandoffError, HandoffRequest, record_handoff, validate_handoff},
 	holding::{HeldItem, record_holdings},
+	import::{
+		ImportPlan, ImportRequest, StartImportError, plan_imports, validate_imports_can_start,
+	},
+	imported_secrets::ImportedSecretStore,
 	item::{AllocateItemsError, Allocation, ItemPage, PageRequest, allocate_items_in},
 	keys::{ItemKey, ItemKeyDeriver, ItemSecret, ItemSecrets, ItemSlot},
 	operation::{
@@ -19,7 +23,9 @@ use super::{
 	scarcity::TRANSFER_POLICY,
 };
 use crate::{
-	durable::{DurableRequest, DurableTxEngine, PolicyId, RegistrationError},
+	durable::{
+		DurableRequest, DurableTxEngine, GroupId, PolicyId, PolicyParams, RegistrationError,
+	},
 	installation::{InstallationId, InstallationIdProvider},
 	store::{Db, DbError},
 };
@@ -36,6 +42,8 @@ pub struct NftLedgerDeps {
 	pub durable: Arc<DurableTxEngine>,
 	/// Exports the secrets of items handed off.
 	pub secrets: Arc<dyn ItemSecrets>,
+	/// Keeps the secrets of imported keys.
+	pub imported: ImportedSecretStore,
 }
 
 /// Layer 1's store of purses and their items.
@@ -46,13 +54,14 @@ pub struct NftLedger {
 	keys: Arc<dyn ItemKeyDeriver>,
 	durable: Arc<DurableTxEngine>,
 	secrets: Arc<dyn ItemSecrets>,
+	imported: ImportedSecretStore,
 }
 
 impl NftLedger {
 	/// A ledger over `deps`.
 	pub fn new(deps: NftLedgerDeps) -> Self {
-		let NftLedgerDeps { db, installation, keys, durable, secrets } = deps;
-		Self { db, installation, keys, durable, secrets }
+		let NftLedgerDeps { db, installation, keys, durable, secrets, imported } = deps;
+		Self { db, installation, keys, durable, secrets, imported }
 	}
 
 	/// Records a purse under the next free id, one past the largest below
@@ -162,13 +171,72 @@ impl NftLedger {
 		request: TransferRequest,
 		installation: InstallationId,
 	) -> DurableRequest<StartOperationError> {
-		let group = Some(request.operation.group().clone());
-		let deriver = self.keys.clone();
-		let plan = move |tx: &rusqlite::Transaction<'_>| {
-			let keys = DestinationKeys { installation, deriver: deriver.as_ref() };
+		let group = request.operation.group().clone();
+		self.planned_in_write(group, installation, move |tx, keys| {
 			plan_transfers(tx, &request, keys)
-		};
-		DurableRequest::scheduled_in(nft_domain(), group, PolicyId::new(TRANSFER_POLICY), plan)
+		})
+	}
+
+	/// A durable request of the operation `group` whose transfers `plan` works
+	/// out in the registration write, allocating destination keys under
+	/// `installation`.
+	fn planned_in_write<Plan>(
+		&self,
+		group: GroupId,
+		installation: InstallationId,
+		plan: Plan,
+	) -> DurableRequest<StartOperationError>
+	where
+		Plan: FnOnce(
+				&rusqlite::Transaction<'_>,
+				DestinationKeys<'_>,
+			) -> Result<Vec<PolicyParams>, StartOperationError>
+			+ Send
+			+ 'static,
+	{
+		let deriver = self.keys.clone();
+		let policy = PolicyId::new(TRANSFER_POLICY);
+		DurableRequest::scheduled_in(nft_domain(), Some(group), policy, move |tx| {
+			plan(tx, DestinationKeys { installation, deriver: deriver.as_ref() })
+		})
+	}
+
+	/// Checks that `request` can start, stores the secret of every key of it,
+	/// then registers one move per key into a fresh key of `request.into` and
+	/// records that each move spends its key, in one write that checks again.
+	/// Each move waits for its key to hold an NFT for up to an hour from now.
+	/// Returns once the moves are registered.
+	pub async fn start_imports(&self, request: ImportRequest) -> Result<(), StartImportError> {
+		let plan = request.plan();
+		self.check_imports_can_start(&plan).await.map_err(RegistrationError::Hook)?;
+		self.imported
+			.store_secrets(&request.keys)
+			.await
+			.map_err(StartImportError::StoreSecrets)?;
+		let installation = self.current_installation().await?;
+		let sources = plan.sources.clone();
+		let planned = self.planned_imports(plan, installation);
+		let record =
+			move |tx: &rusqlite::Transaction<'_>, ids: &[_]| record_inputs(tx, &sources, ids);
+		self.durable.execute_with(planned, record).await?;
+		Ok(())
+	}
+
+	/// Refuses `plan` as [`Self::start_imports`] would before storing any
+	/// secret, without writing.
+	async fn check_imports_can_start(&self, plan: &ImportPlan) -> Result<(), StartOperationError> {
+		let plan = plan.clone();
+		self.db.read(move |conn| Ok(validate_imports_can_start(conn, &plan))).await?
+	}
+
+	/// `plan` as a durable request whose moves are planned in its write.
+	fn planned_imports(
+		&self,
+		plan: ImportPlan,
+		installation: InstallationId,
+	) -> DurableRequest<StartOperationError> {
+		let group = plan.operation.group().clone();
+		self.planned_in_write(group, installation, move |tx, keys| plan_imports(tx, &plan, keys))
 	}
 
 	/// Every transfer of `operation`, in registration order, now and after every

@@ -404,6 +404,11 @@ pub mod latest {
 	/// NFT cheque creation failure.
 	pub type HostNftPurseCreateChequeError =
 		LatestOf<versioned::nft_purse::HostNftPurseCreateChequeError>;
+	/// NFT cheque deposit request.
+	pub type HostNftPurseDepositRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseDepositRequest>;
+	/// NFT cheque deposit failure.
+	pub type HostNftPurseDepositError = LatestOf<versioned::nft_purse::HostNftPurseDepositError>;
 	/// NFT item transfer request.
 	pub type HostNftPurseTransferItemRequest =
 		LatestOf<versioned::nft_purse::HostNftPurseTransferItemRequest>;
@@ -416,6 +421,15 @@ pub mod latest {
 	/// NFT operation status failure.
 	pub type HostNftPurseObserveOperationStatusError =
 		LatestOf<versioned::nft_purse::HostNftPurseObserveOperationStatusError>;
+	/// NFT static receive key request.
+	pub type HostNftPurseStaticReceiveKeyRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseStaticReceiveKeyRequest>;
+	/// The host's NFT static receive key.
+	pub type HostNftPurseStaticReceiveKeyResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseStaticReceiveKeyResponse>;
+	/// NFT static receive key failure.
+	pub type HostNftPurseStaticReceiveKeyError =
+		LatestOf<versioned::nft_purse::HostNftPurseStaticReceiveKeyError>;
 	/// The calling product's Pocket cards.
 	pub type HostPocketListSubscribeItem = LatestOf<versioned::pocket::HostPocketListSubscribeItem>;
 	/// Pocket card removal request.

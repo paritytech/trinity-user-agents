@@ -14,6 +14,7 @@ use super::*;
 use crate::{
 	encrypted_storage::{EncryptedStorage, MemoryEncryptedStorage},
 	nft::{PurseId, test_ledger},
+	nft_purse::{FixedStaticSecret, TEST_STATIC_SECRET},
 	store::open_temporary_core_db,
 };
 
@@ -44,7 +45,13 @@ pub fn nft_host_with_storage(
 	assert!(services.install_core_db(db.clone()));
 	assert!(services.install_nft_ledger(test_ledger(db)));
 	assert!(services.install_encrypted_storage(encrypted));
+	assert!(services.install_static_receive_secret(test_static_secret()));
 	(dir, payment_host(&services, PRODUCT, with_session))
+}
+
+/// The static receive secret every test host opens `Static` cheques with.
+fn test_static_secret() -> Arc<FixedStaticSecret> {
+	Arc::new(FixedStaticSecret(TEST_STATIC_SECRET))
 }
 
 fn create(
@@ -379,6 +386,7 @@ fn methods_of_later_stages_are_unavailable() {
 }
 
 mod cheques;
+mod deposits;
 
 mod operations {
 	//! The chain operations of NFT purses through the product-facing trait.
@@ -428,6 +436,7 @@ mod operations {
 		assert!(services.install_core_db(db));
 		assert!(services.install_nft_ledger(ledger.clone()));
 		assert!(services.install_encrypted_storage(encrypted));
+		assert!(services.install_static_receive_secret(test_static_secret()));
 		let host = payment_host(&services, PRODUCT, true);
 		create(&host, "Tickets").unwrap();
 		create(&host, "Spare").unwrap();

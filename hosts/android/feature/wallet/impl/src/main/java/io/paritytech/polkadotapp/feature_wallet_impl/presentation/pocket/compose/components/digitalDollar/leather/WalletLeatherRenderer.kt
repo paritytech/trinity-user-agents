@@ -14,7 +14,7 @@ import java.nio.ByteBuffer
  * `wallet.frag` are shipped unchanged; the drop shadow is not drawn, because the card sits in a stack with the
  * identity card peeking under it. The quad fills the surface, which is sized to the card.
  *
- * Every method runs on the thread holding the GL context.
+ * Every instance method runs on the thread holding the GL context.
  */
 internal class WalletLeatherRenderer(private val assets: AssetManager) {
     private var program = 0
@@ -27,7 +27,7 @@ internal class WalletLeatherRenderer(private val assets: AssetManager) {
         vertexArray = IntArray(1).also { GLES30.glGenVertexArrays(1, it, 0) }[0]
         GLES30.glGenTextures(2, textures, 0)
 
-        val image = bitmap(IMAGE, premultiplied = true)
+        val image = picture(assets)
         bind(unit = 0, filter = GLES30.GL_LINEAR)
         GLUtils.texImage2D(GLES30.GL_TEXTURE_2D, 0, image, 0)
         image.recycle()
@@ -87,7 +87,7 @@ internal class WalletLeatherRenderer(private val assets: AssetManager) {
 
     /** An id map, so its bytes go up as data: no colour conversion, no premultiplying, nearest sampling. */
     private fun uploadRegions() {
-        val map = bitmap(REGIONS, premultiplied = false)
+        val map = assets.bitmap(REGIONS, premultiplied = false)
         val rgba = ByteBuffer.allocateDirect(map.byteCount)
         map.copyPixelsToBuffer(rgba)
 
@@ -106,17 +106,6 @@ internal class WalletLeatherRenderer(private val assets: AssetManager) {
     }
 
     private fun text(name: String) = assets.open("$FOLDER/$name").bufferedReader().use { it.readText() }
-
-    private fun bitmap(name: String, premultiplied: Boolean): Bitmap = assets.open("$FOLDER/$name").use { stream ->
-        val options = BitmapFactory.Options().apply {
-            inPreferredConfig = Bitmap.Config.ARGB_8888
-            inPremultiplied = premultiplied
-            inScaled = false
-            inPreferredColorSpace = ColorSpace.get(ColorSpace.Named.SRGB)
-        }
-
-        checkNotNull(BitmapFactory.decodeStream(stream, null, options)) { "cannot decode $FOLDER/$name" }
-    }
 
     private fun link(vertex: String, fragment: String): Int {
         val linked = GLES30.glCreateProgram()
@@ -172,5 +161,18 @@ internal class WalletLeatherRenderer(private val assets: AssetManager) {
 
         /** The photo's own shadows take no highlight, as the reference's `params.json` ships. */
         private const val OCCLUSION = 1f
+
+        fun picture(assets: AssetManager): Bitmap = assets.bitmap(IMAGE, premultiplied = true)
+
+        private fun AssetManager.bitmap(name: String, premultiplied: Boolean): Bitmap = open("$FOLDER/$name").use { stream ->
+            val options = BitmapFactory.Options().apply {
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+                inPremultiplied = premultiplied
+                inScaled = false
+                inPreferredColorSpace = ColorSpace.get(ColorSpace.Named.SRGB)
+            }
+
+            checkNotNull(BitmapFactory.decodeStream(stream, null, options)) { "cannot decode $FOLDER/$name" }
+        }
     }
 }

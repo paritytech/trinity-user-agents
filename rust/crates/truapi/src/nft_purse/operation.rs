@@ -112,7 +112,7 @@ pub fn drain_needs_confirmation(caller: &ProductId, owner: &PurseOwner) -> bool 
 }
 
 /// The operation `caller` names `idempotency_key`, scoped to `caller`.
-fn operation_key(caller: &ProductId, idempotency_key: NftPurseIdempotencyKey) -> OperationKey {
+pub fn operation_key(caller: &ProductId, idempotency_key: NftPurseIdempotencyKey) -> OperationKey {
 	OperationKey::new(caller.as_str().as_bytes(), idempotency_key.0)
 }
 
