@@ -4,8 +4,8 @@ name: Label builds
 # running on every commit. Each job calls one workflow and starts when its label
 # is added, and again on each later push, so the result follows the branch
 # instead of pinning to whichever commit was the head when someone asked. The
-# simulator preview and the instrumented tests also start when the pull request
-# is opened or reopened with the label on.
+# simulator preview, the iOS tests and the instrumented tests also start when
+# the pull request is opened or reopened with the label on.
 #
 # `labeled` fires for every label, so each job matches only its own label being
 # added. Matching on the label being present would let any other label, added
@@ -45,6 +45,31 @@ jobs:
       pull-requests: write
     with:
       preview: true
+
+  # The suite ci.yml skips for a draft or a pull request into another pull
+  # request's branch. Only then, so a pull request ci.yml already runs it for
+  # never runs it twice, and outside CI Status, since it is asked for rather
+  # than required.
+  ios-tests:
+    name: iOS tests
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && (github.event.pull_request.draft
+          || (github.event.pull_request.base.ref != 'main'
+              && !startsWith(github.event.pull_request.base.ref, 'release/')))
+      && ((github.event.action == 'labeled' && github.event.label.name == 'ci:ios-tests')
+          || (github.event.action != 'labeled'
+              && contains(github.event.pull_request.labels.*.name, 'ci:ios-tests')))
+    concurrency:
+      group: ios-tests-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    uses: ./.github/workflows/ios-app.yml
+    secrets: inherit
+    permissions:
+      contents: read
+      actions: read
+      checks: write
+      pull-requests: write
 
   ios-device-preview:
     name: iOS device preview
