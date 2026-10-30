@@ -13,6 +13,7 @@ public struct CollectiblesCardView: View {
     public var body: some View {
         ZStack {
             Image(.imageCollectibles)
+                .saturation(isExpanded ? 1 : 0)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: isExpanded ? .center : .top)
                 .clipped()
                 .motionShine(.collectibles(isExpanded: isExpanded))
