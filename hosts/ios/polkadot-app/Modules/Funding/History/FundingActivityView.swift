@@ -53,9 +53,11 @@ struct FundingHistoryView: View {
     /// Refreshes while the screen is open, so a step reached without a status
     /// change still shows.
     private func follow() async {
+        center.beginShowingHistory()
+        defer { center.endShowingHistory() }
         while !Task.isCancelled {
-            center.refresh()
             try? await Task.sleep(for: .seconds(10))
+            center.refresh()
         }
     }
 }

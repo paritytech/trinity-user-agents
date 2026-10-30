@@ -65,24 +65,35 @@ pub struct FundingSessionSummary {
 	pub stage: FundingStage,
 	/// When the session was opened, in Unix milliseconds.
 	pub opened_at_ms: u64,
+	/// The provider that served it, `None` when none took it.
+	pub provider_id: Option<String>,
+	/// The rail the user paid or was paid by, from the quote it was chosen
+	/// on.
+	pub rail: Option<FundingRail>,
+	/// The asset symbol the user paid with or received.
+	pub asset: Option<String>,
+	/// How the host shows its ending: the row's status.
+	pub status: FundingStatus,
+	/// The provider's payout outcome on a withdrawal, once it reported one.
+	pub payout: Option<FundingPayout>,
+	/// What a refund returned to the balance once its claims were final.
+	pub refunded: Option<u128>,
+	/// The provider's latest transaction id.
+	pub transaction_id: Option<String>,
+	/// The provider's latest reference.
+	pub reference: Option<String>,
 }
 
 impl From<FundingSession> for FundingSessionSummary {
 	fn from(session: FundingSession) -> Self {
-		Self {
-			intent: session.intent,
-			owner_product_id: session.owner_product_id,
-			direction: session.direction,
-			amount: session.amount,
-			stage: session.stage,
-			opened_at_ms: session.opened_at_ms,
-		}
+		session.summary()
 	}
 }
 
 impl FundingSession {
 	/// The session as history keeps it, leaving the session as it is.
 	pub fn summary(&self) -> FundingSessionSummary {
+		let ended_at_ms = self.stage.settled_at_ms().unwrap_or(self.opened_at_ms);
 		FundingSessionSummary {
 			intent: self.intent.clone(),
 			owner_product_id: self.owner_product_id.clone(),
@@ -90,6 +101,14 @@ impl FundingSession {
 			amount: self.amount,
 			stage: self.stage.clone(),
 			opened_at_ms: self.opened_at_ms,
+			provider_id: self.provider_id.clone(),
+			rail: self.choice.as_ref().map(|choice| choice.rail),
+			asset: self.choice.as_ref().map(|choice| choice.asset.clone()),
+			status: self.status(ended_at_ms),
+			payout: self.payout().cloned(),
+			refunded: self.refund.as_ref().and_then(|refund| refund.refunded),
+			transaction_id: self.transaction_id(),
+			reference: self.reference(),
 		}
 	}
 }
@@ -248,38 +267,45 @@ pub struct FundingProgress {
 /// ended ones under "Completed", where `{moment}` reads "Today at 12:45",
 /// "Yesterday at 12:45", "Jun 12 at 16:40" or, in another year,
 /// "Jun 12, 2025".
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingStatus {
 	/// Inbound bank: waiting for the user's transfer.
 	///
 	/// Shown as "Waiting for your transfer".
+	#[codec(index = 0)]
 	WaitingForTransfer,
 	/// Inbound card: waiting for the user to pay on the provider's screens.
 	///
 	/// Shown as "Waiting for your payment".
+	#[codec(index = 1)]
 	WaitingForPayment,
 	/// Inbound crypto: waiting for the user's deposit.
 	///
 	/// Shown as "Waiting for your deposit".
+	#[codec(index = 2)]
 	WaitingForDeposit,
 	/// Inbound: the provider has the payment and is turning it into the
 	/// user's balance asset.
 	///
 	/// Shown as "On its way".
+	#[codec(index = 3)]
 	ConvertingToCash,
 	/// Inbound: the provider started crediting the user's balance.
 	///
 	/// Shown as "Adding to your balance".
+	#[codec(index = 4)]
 	AddingToBalance,
 	/// Outbound: the user started the withdrawal and pays the provider.
 	///
 	/// Shown as "Withdrawal initiated".
+	#[codec(index = 5)]
 	TransactionInitiated,
 	/// Outbound crypto, after release: the provider converts what it
 	/// collected to `asset`.
 	///
 	/// Shown as "Converting to {asset}…".
+	#[codec(index = 6)]
 	ConvertingTo {
 		/// The asset the user receives.
 		asset: String,
@@ -288,16 +314,19 @@ pub enum FundingStatus {
 	/// payout.
 	///
 	/// Shown as "Preparing your payout".
+	#[codec(index = 7)]
 	PreparingPayout,
 	/// Outbound, after release: a payout attempt failed and the provider
 	/// is trying again.
 	///
 	/// Shown as "The provider is retrying the payout", in amber.
+	#[codec(index = 8)]
 	RetryingPayout,
 	/// Inbound: the provider is retrying, with another top-up after one
 	/// claimed only part of the amount.
 	///
 	/// Shown as "The provider is retrying. Don't pay again", in amber.
+	#[codec(index = 9)]
 	Retrying,
 	/// Nothing came from the provider for longer than its quote said the
 	/// session takes; on a top-up, only once the provider holds the user's
@@ -306,24 +335,29 @@ pub enum FundingStatus {
 	/// Shown in amber as "Delayed, don't pay again" on a top-up, which only
 	/// gets here once the user paid, and "Taking longer than usual" on a
 	/// withdrawal.
+	#[codec(index = 10)]
 	TakingLonger,
 	/// Inbound, ended: the balance was credited.
 	///
 	/// Shown as "{moment}".
+	#[codec(index = 11)]
 	ToppedUp,
 	/// Outbound, ended: the provider paid the user out.
 	///
 	/// Shown as "{moment}".
+	#[codec(index = 12)]
 	Sent,
 	/// Inbound, ended: the provider gave the user's payment back instead of
 	/// crediting it.
 	///
 	/// Shown as "Refunded · {moment}".
+	#[codec(index = 13)]
 	Refunded,
 	/// Outbound: the payout failed after the balance was debited. `refunded`
 	/// is what the provider's refund returned, once final.
 	///
 	/// Shown as "Payout failed · {moment}"; the amount is unsigned.
+	#[codec(index = 14)]
 	PayoutFailed {
 		/// What came back to the balance. `None` until the refund's claims
 		/// are final.
@@ -333,6 +367,7 @@ pub enum FundingStatus {
 	///
 	/// Shown as "Expired · {moment}" when it expired, otherwise "Payment
 	/// failed · {moment}"; the detail screen gives the reason.
+	#[codec(index = 15)]
 	Failed {
 		/// Why.
 		reason: FundingFailure,
@@ -340,12 +375,14 @@ pub enum FundingStatus {
 	/// The user asked to cancel and the provider has not answered.
 	///
 	/// Shown as "Cancel requested, waiting for the provider".
+	#[codec(index = 16)]
 	CancelRequested,
 	/// The provider can cancel on these terms and waits for the user, who
 	/// answers with `confirm_funding_cancel`. The offer's expiry is on the
 	/// session's `cancel`.
 	///
 	/// Shown as "Cancel offer waiting for you".
+	#[codec(index = 17)]
 	CancelOffered {
 		/// What the provider keeps, in payment balance units.
 		fee: u128,
@@ -356,6 +393,7 @@ pub enum FundingStatus {
 	/// session carries on.
 	///
 	/// Shown as "The provider can't cancel".
+	#[codec(index = 18)]
 	CancelRefused {
 		/// Why, as the provider put it.
 		reason: String,
@@ -364,11 +402,13 @@ pub enum FundingStatus {
 	/// the user.
 	///
 	/// Shown as "Cancelling…".
+	#[codec(index = 19)]
 	Cancelling,
 	/// Outbound, ended: cancelled on the provider's terms after the balance
 	/// was debited. `refunded` is what came back, once final.
 	///
 	/// Shown as "Cancelled · {moment}".
+	#[codec(index = 20)]
 	Cancelled {
 		/// What came back to the balance. `None` until the refund's claims
 		/// are final.
@@ -378,6 +418,7 @@ pub enum FundingStatus {
 	/// first, so the money reached its destination.
 	///
 	/// Shown as "{moment}".
+	#[codec(index = 21)]
 	PaidOutAfterCancel,
 }
 
@@ -847,14 +888,8 @@ impl FundingSession {
 				FundingStage::Failed { settled_at_ms, .. } => Some(settled_at_ms),
 				_ => None,
 			},
-			transaction_id: self.latest(|update| match update {
-				FundingUpdate::Details { transaction_id, .. } => transaction_id.as_ref(),
-				_ => None,
-			}),
-			reference: self.latest(|update| match update {
-				FundingUpdate::Details { reference, .. } => reference.as_ref(),
-				_ => None,
-			}),
+			transaction_id: self.transaction_id(),
+			reference: self.reference(),
 			deposit: self.latest(|update| match update {
 				FundingUpdate::Deposit { deposit } => Some(deposit),
 				_ => None,
@@ -1033,6 +1068,22 @@ impl FundingSession {
 	/// anything from.
 	fn latest<T: Clone>(&self, field: impl Fn(&FundingUpdate) -> Option<&T>) -> Option<T> {
 		self.updates.iter().rev().find_map(|record| field(&record.update)).cloned()
+	}
+
+	/// The provider's latest transaction id.
+	fn transaction_id(&self) -> Option<String> {
+		self.latest(|update| match update {
+			FundingUpdate::Details { transaction_id, .. } => transaction_id.as_ref(),
+			_ => None,
+		})
+	}
+
+	/// The provider's latest reference.
+	fn reference(&self) -> Option<String> {
+		self.latest(|update| match update {
+			FundingUpdate::Details { reference, .. } => reference.as_ref(),
+			_ => None,
+		})
 	}
 
 	/// Store `update` from `provider_id`. A `Failed` update ends the session.

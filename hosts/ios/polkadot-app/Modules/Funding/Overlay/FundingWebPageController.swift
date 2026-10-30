@@ -17,6 +17,7 @@ import WebKit
 /// navigated to. Closing it, or the frame going off screen any other way,
 /// answers `Dismissed`.
 final class FundingWebPageController: UIViewController {
+    let providerId: String
     private let url: URL
     private let returnURL: URL?
     private let webView: WKWebView
@@ -24,7 +25,8 @@ final class FundingWebPageController: UIViewController {
     private var completion: ((FundingFrameOutcome) -> Void)?
     private var secureObservation: NSKeyValueObservation?
 
-    init(url: URL, returnURL: URL?, completion: @escaping (FundingFrameOutcome) -> Void) {
+    init(providerId: String, url: URL, returnURL: URL?, completion: @escaping (FundingFrameOutcome) -> Void) {
+        self.providerId = providerId
         self.url = url
         self.returnURL = returnURL
         self.completion = completion
@@ -99,14 +101,16 @@ final class FundingWebPageController: UIViewController {
         origin.isSecure = webView.url?.scheme?.lowercased() == "https" && webView.hasOnlySecureContent
     }
 
-    /// Answers the core once and takes the frame down.
-    func finish(_ outcome: FundingFrameOutcome) {
+    /// Answers the core once and takes the frame down, then runs `dismissed`.
+    func finish(_ outcome: FundingFrameOutcome, dismissed: (() -> Void)? = nil) {
         guard let completion else { return }
         self.completion = nil
 
         webView.stopLoading()
         if presentingViewController != nil, !isBeingDismissed {
-            dismiss(animated: true)
+            dismiss(animated: true, completion: dismissed)
+        } else {
+            dismissed?()
         }
         completion(outcome)
     }

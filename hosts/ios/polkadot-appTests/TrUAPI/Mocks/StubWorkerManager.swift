@@ -139,4 +139,12 @@ final class StubWorkerReferences: TrUAPIWorkerReferencing, @unchecked Sendable {
             $0.log.append("release \(productId)")
         }
     }
+
+    var exited: [ProductId] {
+        records.withLock { $0.log.filter { $0.hasPrefix("exited ") }.map { String($0.dropFirst(7)) } }
+    }
+
+    func workerExited(productId: ProductId) {
+        records.withLock { _ = $0.log.append("exited \(productId)") }
+    }
 }

@@ -1,8 +1,8 @@
 import Foundation
 import TrUAPIHost
 
-/// One ended funding session as the host keeps it, once the core has handed
-/// it over and dropped it.
+/// One ended funding session as the history draws it: from the session the
+/// core pushed, or from its summary in the core's history.
 struct FundingRecord: Identifiable, Equatable {
     enum Outcome: Equatable {
         case delivered
@@ -27,8 +27,7 @@ struct FundingRecord: Identifiable, Equatable {
     let requestedAmount: U128?
     let settledAmount: U128?
     /// What the user paid for value in, or receives for value out, in
-    /// `paidAsset`, from the quote the session ran on. Kept so the detail
-    /// screen can show it once the core has dropped the quote.
+    /// `paidAsset`, from the quote the session ran on.
     let paidAmount: U128?
     let paidAsset: String?
     /// Decimals of `paidAsset`, as the quote counted it.
@@ -89,8 +88,9 @@ extension FundingRecord {
 }
 
 extension FundingRecord {
-    /// The record for a session the core recorded, from its summary. The
-    /// summary keeps no rail, provider or payment details, so those stay empty.
+    /// The record for an ended session from its summary in the core's
+    /// history. The summary keeps no rail, provider or payment details, so
+    /// those stay empty.
     init?(summary: FundingSessionSummary) {
         guard let settled = Settled(stage: summary.stage) else { return nil }
 
@@ -152,54 +152,10 @@ extension FundingRecord.Payout {
     }
 }
 
-extension FundingFailure {
-    /// A stable name for the record, so a stored failure reads back the same.
-    var code: String {
-        switch self {
-        case .regionUnavailable: "regionUnavailable"
-        case .verificationRequired: "verificationRequired"
-        case .verificationRefused: "verificationRefused"
-        case .belowMinimum: "belowMinimum"
-        case .aboveMaximum: "aboveMaximum"
-        case .insufficientBalance: "insufficientBalance"
-        case .expired: "expired"
-        case .wrongAssetOrChain: "wrongAssetOrChain"
-        case .providerTimeout: "providerTimeout"
-        case .cancelled: "cancelled"
-        case .refunded: "refunded"
-        case .declined: "declined"
-        case let .other(code, _): code
-        }
-    }
-
-    /// The failure a stored ``code`` names, with the message an `Other`
-    /// failure was stored with.
-    init(code: String, message: String?) {
-        let named: [FundingFailure] = [
-            .regionUnavailable, .verificationRequired, .verificationRefused, .belowMinimum, .aboveMaximum,
-            .insufficientBalance, .expired, .wrongAssetOrChain, .providerTimeout, .cancelled, .refunded,
-            .declined
-        ]
-        self = named.first { $0.code == code } ?? .other(code: code, message: message ?? "")
-    }
-
-    /// The message an `Other` failure carries.
-    var message: String? {
-        guard case let .other(_, message) = self else { return nil }
-        return message
-    }
-}
-
 extension Date {
     init(milliseconds: UInt64) {
         self.init(timeIntervalSince1970: TimeInterval(milliseconds) / 1_000)
     }
-}
-
-/// Where ended funding sessions are kept once the core lets go of them.
-protocol FundingHistoryStoring: Sendable {
-    func records() async throws -> [FundingRecord]
-    func save(_ record: FundingRecord) async throws
 }
 
 extension FundingRecord {

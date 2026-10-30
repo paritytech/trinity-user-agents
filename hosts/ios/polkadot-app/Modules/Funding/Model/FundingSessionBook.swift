@@ -3,21 +3,26 @@ import os
 import TrUAPIHost
 
 /// What the core last pushed about funding: each session with its progress,
-/// what each overlay offers, and the history it recorded. The core sends each
-/// with every change, and again when funding resumes, so the screens read
-/// them here rather than from the core.
+/// and what each overlay offers. The core sends each with every change, and
+/// again when funding resumes, so the screens read them here rather than from
+/// the core.
 final class FundingSessionBook: Sendable {
     static let shared = FundingSessionBook()
 
     struct Entry: Sendable {
         var session: FundingSession
         let progress: FundingProgress?
+
+        /// A withdrawal stays in flight after its release until its payout
+        /// is reported.
+        var isInFlight: Bool {
+            progress?.status.isInFlight ?? session.stage.isOpen
+        }
     }
 
     private struct State: Sendable {
         var entries: [String: Entry] = [:]
         var options: [String: FundingOptions] = [:]
-        var history: [FundingSessionSummary]?
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
@@ -37,10 +42,9 @@ final class FundingSessionBook: Sendable {
         return progress(intent: intent)?.steps.contains { $0.reachedAtMs != nil && $0.step != .started } ?? false
     }
 
-    /// The sessions the core still hands over: those in flight, and ended
-    /// ones the host has not recorded.
-    func unrecorded() -> [Entry] {
-        state.withLock { $0.entries.values.filter { !$0.session.acknowledged } }
+    /// Every session the core pushed this run, in flight and ended.
+    func entries() -> [Entry] {
+        state.withLock { Array($0.entries.values) }
     }
 
     /// Keeps the session as the core holds it, or drops it once the core
@@ -56,9 +60,18 @@ final class FundingSessionBook: Sendable {
         }
     }
 
-    /// The host wrote ended session `intent` into its own history.
-    func markRecorded(intent: String) {
-        state.withLock { $0.entries[intent]?.session.acknowledged = true }
+    /// The user was shown how ended session `intent` went, so the core stops
+    /// handing it over on each resume. Does nothing while it is in flight or
+    /// once it is acknowledged.
+    func acknowledgeShown(intent: String, runtime: FundingRuntime) async {
+        guard setAcknowledged(intent: intent, to: true) else { return }
+
+        do {
+            _ = try await runtime.acknowledgeFundingSession(intent: intent)
+        } catch {
+            _ = setAcknowledged(intent: intent, to: false)
+            Logger.shared.error("[funding] \(intent): acknowledging the ended session failed: \(error)")
+        }
     }
 
     func options(intent: String) -> FundingOptions? {
@@ -73,14 +86,18 @@ final class FundingSessionBook: Sendable {
     func forgetOptions(intent: String) {
         state.withLock { $0.options[intent] = nil }
     }
+}
 
-    /// Every ended session the core recorded, newest first, once it has sent
-    /// them.
-    var history: [FundingSessionSummary]? {
-        state.withLock { $0.history }
-    }
-
-    func record(history: [FundingSessionSummary]) {
-        state.withLock { $0.history = history }
+private extension FundingSessionBook {
+    /// Whether this call changed it; an acknowledgement only lands on an ended
+    /// session.
+    func setAcknowledged(intent: String, to acknowledged: Bool) -> Bool {
+        state.withLock { state in
+            guard let entry = state.entries[intent], !entry.isInFlight,
+                  entry.session.acknowledged != acknowledged
+            else { return false }
+            state.entries[intent]?.session.acknowledged = acknowledged
+            return true
+        }
     }
 }
