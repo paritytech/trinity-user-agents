@@ -70,9 +70,9 @@ class EncryptedHostCoreStorage(
 }
 
 /**
- * Values the core keeps encrypted at rest, such as the secrets of NFT receive
- * keys, apart from its core storage slots. Shared preferences are excluded from
- * backups, and the AndroidKeyStore key wrapping them never leaves the device.
+ * Secrets the core keeps encrypted at rest, apart from its core storage slots.
+ * Shared preferences are excluded from backups, and the AndroidKeyStore key
+ * wrapping them never leaves the device.
  *
  * Unlike core storage, a stored value that no longer decrypts is an error, not
  * a miss: the core must not mistake an unreadable secret for an unknown key.
@@ -87,8 +87,8 @@ class EncryptedHostValues(
             ?: throw HostRejection.Rejected("encrypted storage: $field is stored but does not decrypt")
     }
 
-    // The core commits the receive key row right after this returns, so the
-    // secret must already be on disk.
+    // The core records what a secret belongs to right after this returns, so
+    // the secret must already be on disk.
     suspend fun write(key: ByteArray, value: ByteArray) {
         writeValue(preferences, qualify(key), value, persist = ::persistNow)
             ?.let { throw HostRejection.Rejected("encrypted storage: $it") }
@@ -96,6 +96,11 @@ class EncryptedHostValues(
 
     private fun persistNow(field: String, tagged: String) {
         check(preferences.putEncryptedStringNow(field, tagged)) { "not written to disk" }
+    }
+
+    fun delete(key: ByteArray) {
+        runCatching { preferences.removeKey(qualify(key)) }
+            .getOrElse { throw HostRejection.Rejected("encrypted storage: failed to delete: ${it.message}") }
     }
 
     private fun qualify(key: ByteArray) = "$ENCRYPTED_NAMESPACE/${key.toHex()}"

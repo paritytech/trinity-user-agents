@@ -807,6 +807,10 @@ mod tests {
 		async fn write_encrypted(&self, _: &[u8], _: &[u8]) -> Result<(), GenericError> {
 			Err(GenericError { reason: "the store is locked".into() })
 		}
+
+		async fn delete_encrypted(&self, _: &[u8]) -> Result<(), GenericError> {
+			Err(GenericError { reason: "the store is locked".into() })
+		}
 	}
 
 	/// A signer with no session.

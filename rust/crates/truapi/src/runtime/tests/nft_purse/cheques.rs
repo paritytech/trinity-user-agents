@@ -32,6 +32,10 @@ impl EncryptedStorage for RejectingStorage {
 	async fn write_encrypted(&self, _key: &[u8], _value: &[u8]) -> Result<(), v01::GenericError> {
 		Err(v01::GenericError { reason: "this host keeps no encrypted storage".to_owned() })
 	}
+
+	async fn delete_encrypted(&self, _key: &[u8]) -> Result<(), v01::GenericError> {
+		Err(v01::GenericError { reason: "this host keeps no encrypted storage".to_owned() })
+	}
 }
 
 pub fn create_receive_key(

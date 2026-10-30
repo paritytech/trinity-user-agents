@@ -253,6 +253,8 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         override suspend fun encryptedStorageWrite(key: ByteArray, value: ByteArray) =
             encryptedStorage.write(key, value)
 
+        override suspend fun encryptedStorageDelete(key: ByteArray) = encryptedStorage.delete(key)
+
         override suspend fun navigateTo(url: String) {
             throw HostNavigateToException.Unknown("navigation unavailable at host level")
         }

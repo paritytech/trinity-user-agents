@@ -137,6 +137,10 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         try encryptedStorage.write(key: key, value: value)
     }
 
+    func encryptedStorageDelete(key: Data) async throws {
+        try encryptedStorage.delete(key: key)
+    }
+
     func supportedChains() throws -> HostChainSet {
         TrUAPISupportedChains.make(chainRegistry: chainRegistry)
     }

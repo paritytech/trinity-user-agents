@@ -1,6 +1,6 @@
 # Reviewers requested from the paths a pull request touches.
 #
-# The same roots drive labelling in .github/labeler.yml. The two are different
+# The same roots drive the areas in .github/areas.yml. The two are different
 # formats and cannot be one file, so scripts/check-path-routing.py holds them to
 # the same set and CI runs it.
 #

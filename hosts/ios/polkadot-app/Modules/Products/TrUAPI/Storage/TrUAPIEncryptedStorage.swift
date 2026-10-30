@@ -2,9 +2,9 @@ import Foundation
 import Keystore_iOS
 import SubstrateSdk
 
-/// Keychain-backed values the Rust core keeps encrypted at rest, such as the
-/// secrets of NFT receive keys. `Keychain()` items are `ThisDeviceOnly`, so they
-/// never reach another device. One item per core key, hex-encoded after a prefix.
+/// Keychain-backed secrets the Rust core keeps encrypted at rest. `Keychain()`
+/// items are `ThisDeviceOnly`, so they never reach another device. One item per
+/// core key, hex-encoded after a prefix.
 final class TrUAPIEncryptedStorage: @unchecked Sendable {
     private static let keyPrefix = "truapi.encrypted."
 
@@ -30,6 +30,11 @@ final class TrUAPIEncryptedStorage: @unchecked Sendable {
     func write(key: Data, value: Data) throws {
         let identifier = identifier(for: key)
         try keychain.saveKey(value, with: identifier)
+    }
+
+    /// Deletes the value under `key`; deleting a missing one succeeds.
+    func delete(key: Data) throws {
+        try keychain.deleteKeyIfExists(for: identifier(for: key))
     }
 
     private func identifier(for key: Data) -> String {
