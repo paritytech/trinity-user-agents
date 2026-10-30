@@ -5,6 +5,7 @@ struct ChatViewModelActions {
     let reply: (_ messageId: String) -> Void
     let copy: (_ content: String) -> Void
     let edit: (_ messageId: String) -> Void
+    let delete: (_ messageId: String) -> Void
     let toggleReaction: (_ messageId: String, _ emoji: String) -> Void
     let showReactionDetails: (_ messageId: String) -> Void
     let acceptChatRequest: () -> Void

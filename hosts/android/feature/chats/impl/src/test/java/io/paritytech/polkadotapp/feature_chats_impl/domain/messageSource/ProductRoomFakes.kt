@@ -3,6 +3,8 @@ package io.paritytech.polkadotapp.feature_chats_impl.domain.messageSource
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQuerying
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessageStatusModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
@@ -30,17 +32,24 @@ internal fun productMessage(
     request = false,
 )
 
-/** The pages of a product, as a test writes them. It keeps every request. */
+/** The pages and user actions of a product, as a test writes them. It keeps every request. */
 internal class ScriptedProductChatQuerying(
     private val answerPage: suspend (ChatPageAnchorModel, Int) -> Result<ProductMessagesPage> = { _, _ ->
         Result.success(ProductMessagesPage(emptyList(), next = null))
     },
+    private val answerAction: suspend (ChatUserActionModel) -> Result<ChatUserActionOutcome> = { Result.success(ChatUserActionOutcome.Acknowledged) },
 ) : ProductChatQuerying {
     val pageRequests = CopyOnWriteArrayList<ChatPageAnchorModel>()
+    val actionRequests = CopyOnWriteArrayList<ChatUserActionModel>()
 
     override suspend fun messagesPage(chatId: ChatId, anchor: ChatPageAnchorModel, pageSize: Int): Result<ProductMessagesPage> {
         pageRequests += anchor
         return answerPage(anchor, pageSize)
+    }
+
+    override suspend fun userAction(chatId: ChatId, action: ChatUserActionModel): Result<ChatUserActionOutcome> {
+        actionRequests += action
+        return answerAction(action)
     }
 }
 
