@@ -17,9 +17,8 @@
 //!   TLS tunnels in `wss_tunnel`; on `wasm32` it runs on a vendored browser platform (JS event
 //!   loop, browser `WebSocket`, which speaks TLS itself). `EmbeddedChainProvider::lifecycle`
 //!   reports its sync progress per chain.
-//! - `networks` feature — a bundled catalog so `connect(genesis_hash)` resolves the whole network
-//!   (relay wiring + statement placement included) from the genesis hash alone, with no prior
-//!   registration.
+//! - `networks` feature — a bundled catalog: `add_network` registers a whole network by name, and a
+//!   provider built with `catalog()` resolves any bundled network from its genesis hash.
 //! - `js` feature — a JavaScript-facing API (the `js` module) on `wasm32`, so web hosts can consume
 //!   the provider directly without a Rust caller.
 //!

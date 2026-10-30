@@ -6,7 +6,9 @@
 //! over the browser's `WebSocket`. Each connect adds the chain again: smoldot
 //! deduplicates identical chains internally while giving every add its own
 //! [`ChainId`], request queue, and response stream, which yields natural
-//! per-connection isolation.
+//! per-connection isolation. smoldot stops a chain once its last add is removed,
+//! so [`keep_chains_running`](crate::EmbeddedChainProviderBuilder::keep_chains_running)
+//! adds each chain once more on the client's own account and never removes it.
 //!
 //! Readiness: a connection holds back the requests it is sent until smoldot
 //! first reports the chain as synced, then forwards them in the order they
@@ -186,11 +188,12 @@ struct LightInner {
 }
 
 /// A chain the client is running and how many things hold it.
+#[derive(Default)]
 struct AddedChain {
-	/// Set for a relay this crate added behind a parachain, which no connection
-	/// owns and so must be removed here when the last holder goes. A chain that
-	/// only ever had connections leaves this `None`: each connection removes the
-	/// chain it added itself.
+	/// The add this crate made on its own account, JSON-RPC disabled: a relay
+	/// behind a parachain, or a chain kept running. Removed here when the last
+	/// holder goes. `None` while only connections hold the chain, since each
+	/// removes its own add.
 	implicit_id: Option<ChainId>,
 	/// The ids smoldot gave each live connection to this chain. Any of them,
 	/// like `implicit_id`, reports the lifecycle of the chain.
@@ -203,11 +206,18 @@ pub struct LightState {
 	inner: OnceLock<Arc<Mutex<LightInner>>>,
 	/// Handed to [`new_platform`] when the client starts.
 	connection_types: crate::connection_types::ConnectionTypes,
+	/// Whether a chain keeps running after its last connection closes; see
+	/// [`keep_running`].
+	keep_running: bool,
 }
 
 impl LightState {
-	pub fn new(connection_types: crate::connection_types::ConnectionTypes) -> Self {
-		LightState { inner: OnceLock::new(), connection_types }
+	/// A client that starts on the first connect.
+	pub fn new(
+		connection_types: crate::connection_types::ConnectionTypes,
+		keep_running: bool,
+	) -> Self {
+		LightState { inner: OnceLock::new(), connection_types, keep_running }
 	}
 
 	fn inner(&self) -> &Arc<Mutex<LightInner>> {
@@ -289,26 +299,40 @@ impl LightState {
 		}
 
 		let relay_genesis = relay.as_ref().map(|(genesis, _)| *genesis);
-		let relay_id = match &relay {
-			None => None,
-			Some((genesis, relay_source)) => Some(add_relay(&mut guard, *genesis, relay_source)?),
-		};
+		let relay_id = relay
+			.as_ref()
+			.map(|(genesis, relay_source)| add_relay(&mut guard, *genesis, relay_source))
+			.transpose()?;
 
-		let added = guard
-			.client
-			.add_chain(AddChainConfig {
-				user_data: (),
-				specification: specification.as_ref(),
-				database_content: database_content.as_deref().unwrap_or(""),
-				potential_relay_chains: relay_id.into_iter(),
-				json_rpc: AddChainConfigJsonRpc::Enabled {
-					max_pending_requests: NonZero::new(MAX_PENDING_REQUESTS)
-						.expect("budget is non-zero"),
-					max_subscriptions: MAX_SUBSCRIPTIONS,
-				},
-				statement_protocol_config: statement_protocol.then(statement_protocol_config),
-			})
-			.map_err(|err| ProviderError::AddChain { reason: err.to_string() });
+		let held = if self.keep_running {
+			keep_running(
+				&mut guard,
+				genesis_hash,
+				&specification,
+				database_content.as_deref(),
+				*statement_protocol,
+				relay.as_ref(),
+			)
+		} else {
+			Ok(())
+		};
+		let added = held.and_then(|()| {
+			guard
+				.client
+				.add_chain(AddChainConfig {
+					user_data: (),
+					specification: specification.as_ref(),
+					database_content: database_content.as_deref().unwrap_or(""),
+					potential_relay_chains: relay_id.into_iter(),
+					json_rpc: AddChainConfigJsonRpc::Enabled {
+						max_pending_requests: NonZero::new(MAX_PENDING_REQUESTS)
+							.expect("budget is non-zero"),
+						max_subscriptions: MAX_SUBSCRIPTIONS,
+					},
+					statement_protocol_config: statement_protocol.then(statement_protocol_config),
+				})
+				.map_err(|err| ProviderError::AddChain { reason: err.to_string() })
+		});
 
 		// No connection is constructed on the error path, so nothing would ever
 		// release the reference taken on the relay above (smoldot rejects the
@@ -325,11 +349,7 @@ impl LightState {
 
 		// Counted only once the add succeeded, so a failed connect leaves no
 		// chain behind that `is_added` would report as running.
-		let entry = guard.added.entry(genesis_hash).or_insert(AddedChain {
-			implicit_id: None,
-			connection_ids: Vec::new(),
-			refcount: 0,
-		});
+		let entry = guard.added.entry(genesis_hash).or_default();
 		entry.connection_ids.push(success.chain_id);
 		entry.refcount += 1;
 		guard.connections += 1;
@@ -396,24 +416,72 @@ fn add_relay(
 		return Err(ProviderError::UnknownRelay { relay: relay_genesis });
 	};
 
-	let specification = dialable_spec(specification);
+	add_implicit(
+		guard,
+		relay_genesis,
+		&dialable_spec(specification),
+		database_content.as_deref(),
+		*statement_protocol,
+		None,
+	)
+}
+
+/// Keep `genesis_hash` running for the life of the client through an add of its
+/// own that is never released. A parachain's hold also holds its relay.
+/// `specification` is already [`dialable_spec`].
+fn keep_running(
+	guard: &mut LightInner,
+	genesis_hash: [u8; 32],
+	specification: &str,
+	database_content: Option<&str>,
+	statement_protocol: bool,
+	relay: Option<&([u8; 32], ChainSource)>,
+) -> Result<(), ProviderError> {
+	if guard.added.get(&genesis_hash).is_some_and(|chain| chain.implicit_id.is_some()) {
+		return Ok(());
+	}
+	let relay_id = relay
+		.map(|(genesis, relay_source)| add_relay(guard, *genesis, relay_source))
+		.transpose()?;
+	let held = add_implicit(
+		guard,
+		genesis_hash,
+		specification,
+		database_content,
+		statement_protocol,
+		relay_id,
+	);
+	if held.is_err() &&
+		let Some((genesis, _)) = relay
+	{
+		release_chain(guard, *genesis);
+	}
+	held.map(drop)
+}
+
+/// Add `genesis_hash` on the client's own account, with JSON-RPC disabled, and
+/// take one reference on it for the caller.
+fn add_implicit(
+	guard: &mut LightInner,
+	genesis_hash: [u8; 32],
+	specification: &str,
+	database_content: Option<&str>,
+	statement_protocol: bool,
+	relay: Option<ChainId>,
+) -> Result<ChainId, ProviderError> {
 	let success = guard
 		.client
 		.add_chain(AddChainConfig {
 			user_data: (),
-			specification: specification.as_ref(),
-			database_content: database_content.as_deref().unwrap_or(""),
-			potential_relay_chains: core::iter::empty(),
+			specification,
+			database_content: database_content.unwrap_or(""),
+			potential_relay_chains: relay.into_iter(),
 			json_rpc: AddChainConfigJsonRpc::Disabled,
 			statement_protocol_config: statement_protocol.then(statement_protocol_config),
 		})
 		.map_err(|err| ProviderError::AddChain { reason: err.to_string() })?;
 
-	let entry = guard.added.entry(relay_genesis).or_insert(AddedChain {
-		implicit_id: None,
-		connection_ids: Vec::new(),
-		refcount: 0,
-	});
+	let entry = guard.added.entry(genesis_hash).or_default();
 	entry.implicit_id = Some(success.chain_id);
 	entry.refcount += 1;
 	Ok(success.chain_id)
@@ -785,6 +853,33 @@ mod tests {
 		assert!(!provider.is_connected(RELAY_GENESIS));
 		second.close();
 		assert!(!provider.is_connected(RELAY_GENESIS), "close is idempotent");
+	}
+
+	/// A chain connected once per use would otherwise restart with no peers each
+	/// time, and its relay with it.
+	#[test]
+	fn a_kept_chain_outlives_its_connections() {
+		let provider = EmbeddedChainProvider::builder()
+			.chain(RELAY_GENESIS, ChainSource::light_client(RELAY_SPEC).build())
+			.parachain(
+				PARACHAIN_GENESIS,
+				ChainSource::light_client(PARACHAIN_SPEC).build(),
+				RELAY_GENESIS,
+			)
+			.keep_chains_running()
+			.build();
+
+		for _ in 0..2 {
+			block_on(provider.connect(PARACHAIN_GENESIS))
+				.expect("parachain connects")
+				.close();
+		}
+
+		for genesis in [PARACHAIN_GENESIS, RELAY_GENESIS] {
+			assert!(provider.is_connected(genesis));
+			let mut lifecycle = provider.lifecycle(genesis).expect("the kept chain is running");
+			block_on(lifecycle.next()).expect("the kept chain reports its state");
+		}
 	}
 
 	/// The ceiling is there for a consumer that never closes what it opens, so

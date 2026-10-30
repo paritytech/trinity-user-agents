@@ -234,8 +234,8 @@ fn refuse_real_identity_genesis(config: &NetworkConfig) -> anyhow::Result<()> {
 	Ok(())
 }
 
-/// Asks every endpoint that differs from the preset's for its genesis, and
-/// refuses one that is not the chain it is routed as.
+/// Checks the genesis of each endpoint whose URL differs from the preset's for
+/// that chain, and refuses one that cannot answer or reports another.
 async fn verify_rerouted_endpoints(
 	config: &NetworkConfig,
 	preset: &NetworkConfig,
@@ -243,7 +243,11 @@ async fn verify_rerouted_endpoints(
 	use truapi::statement_allowance as alloc;
 
 	for endpoint in config.live_chain_endpoints {
-		if preset.live_chain_endpoints.iter().any(|chain| chain.ws == endpoint.ws) {
+		if preset
+			.live_chain_endpoints
+			.iter()
+			.any(|chain| chain.genesis == endpoint.genesis && chain.ws == endpoint.ws)
+		{
 			continue;
 		}
 		let rpc = alloc::rpc::RpcClient::new(
@@ -937,6 +941,25 @@ mod tests {
 			.expect_err("an endpoint that cannot report its genesis is refused");
 		assert!(error.to_string().contains("ws://127.0.0.1:9"), "{error}");
 		assert!(verify_rerouted_endpoints(&preset, &preset).await.is_ok());
+	}
+
+	/// People pointed at the preset's Asset Hub URL is still a reroute, so it is
+	/// checked.
+	#[tokio::test]
+	async fn a_role_pointed_at_another_roles_preset_url_is_checked() {
+		const UNREACHABLE: &str = "ws://127.0.0.1:9";
+		let preset = apply_chain_overrides(
+			Network::PaseoNextV2.preset(),
+			ChainOverrides { asset_hub_ws: Some(UNREACHABLE.to_string()), ..Default::default() },
+		);
+		let rerouted = apply_chain_overrides(
+			preset,
+			ChainOverrides { people_ws: Some(UNREACHABLE.to_string()), ..Default::default() },
+		);
+		let error = verify_rerouted_endpoints(&rerouted, &preset)
+			.await
+			.expect_err("People at Asset Hub's URL is asked for its genesis");
+		assert!(error.to_string().contains(UNREACHABLE), "{error}");
 	}
 
 	/// The case the override check exists for: a test preset pointed at a real

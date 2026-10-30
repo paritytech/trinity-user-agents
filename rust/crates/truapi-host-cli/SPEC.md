@@ -1810,9 +1810,9 @@ the shared service-trait contract requires dispatch futures to be `Send`.
 
 Every chain connection the CLI makes goes through `CliChainProvider`
 (`src/chain.rs`) over `truapi-provider`, on the backend `--chain-backend` selects
-(§4.3). Routing (§14.1) is the same on both. Only a routed genesis reaches the
-provider, which would otherwise look the hash up in its bundled catalog and
-start the light client. The genesis check of a rerouted endpoint (§14.1) uses a
+(§4.3). Routing (§14.1) is the same on both. Neither backend resolves a genesis
+from the bundled catalog, so the light client runs only the chains of the
+selected network. The genesis check of a rerouted endpoint (§14.1) uses a
 provider for that endpoint alone, over RPC. A request from one of the CLI's own
 commands, or the setup of a subscription, fails after 60 seconds without an
 answer.
@@ -1820,8 +1820,9 @@ answer.
 With `rpc`, each routed chain is registered as its endpoint's RPC node, and every
 connect opens a fresh WebSocket. [`ws.rs`](../truapi-provider/src/ws.rs) sets
 the limits and timeouts. The connection sends a ping after the keepalive
-interval without an outgoing request, and is treated as dead if nothing arrives
-within the read timeout. The response stream ends when the socket closes or
+interval without an outgoing request, and is treated as dead if no byte arrives
+within the read timeout, so a large message that is still arriving keeps it
+open. The response stream ends when the socket closes or
 dies, a send fails, the queue fills, a message exceeds the size limit, or
 `close()` is called. The core's chain runtime then opens a new connection on its
 next call for that chain.
@@ -1830,11 +1831,13 @@ With `light-client`, the embedded smoldot light client syncs the chains from the
 specs `truapi-provider` bundles, which cover `paseo-next-v2` and `previewnet`. It
 cannot be combined with the `HOST_CLI_*_WS` overrides or
 `HOST_CLI_LOCAL_NETWORK_CONFIG`. One light client per network serves the process
-and keeps one idle connection per chain, since smoldot stops a chain when its
-last connection closes. A chain's first request waits for it to sync. A PGAS
+and keeps each chain running after its last connection closes, so a chain syncs
+once per process. A chain's first request waits for it to sync. A PGAS
 claim on Asset Hub, such as `pgas-check --submit`, is dropped: smoldot validates a
-transaction before broadcasting it, and the proof Asset Hub's nodes return for
-that validation is missing entries the validation reads.
+transaction before broadcasting it, and the validation checks that the PGAS asset
+exists. Asset Hub's nodes prove that with the asset's trie entry, which holds
+only the hash of its value, but smoldot answers an existence check by reading the
+whole value and refuses the proof.
 
 `wss://` certificates are verified with the root certificates built into the
 binary, on both backends, not with certificate authorities added to the
