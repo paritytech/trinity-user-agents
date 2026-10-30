@@ -3,17 +3,16 @@ import Observation
 import os
 import TrUAPIHost
 
-/// The CASH card's funding lists: the sessions the core last pushed, then the
-/// ended ones the host keeps.
+/// The CASH card's funding lists: the sessions in flight the core last
+/// pushed, then the ended ones from the core's history, read again on every
+/// refresh.
 ///
-/// A session that is no longer in flight is written to the host's store, then
-/// acknowledged, after which the core drops it. A withdrawal stays in flight
-/// until its payout is reported. When a late report brings an acknowledged
-/// session back, such as a failed payout's refund, its row is written again.
+/// An ended session is acknowledged once the history has shown it, after
+/// which the core stops handing it over on each resume.
 @MainActor
 @Observable
 final class FundingActivityCenter {
-    static let shared = FundingActivityCenter(store: CoreDataFundingHistoryStore())
+    static let shared = FundingActivityCenter()
 
     private(set) var inFlight: [FundingActivityItem] = []
     private(set) var history: [FundingActivityItem] = []
@@ -22,18 +21,15 @@ final class FundingActivityCenter {
     private(set) var justFinished: [String: Date] = [:]
 
     private var records: [String: FundingRecord] = [:]
-    private let store: FundingHistoryStoring
     private let book: FundingSessionBook
-    private let rebuilder: FundingHistoryRebuilder
+    private var historyShown = 0
     private var refreshTask: Task<Void, Never>?
     /// Draws the sessions again when one turns to taking longer.
     private var longerTask: Task<Void, Never>?
     private var needsRefresh = false
 
-    init(store: FundingHistoryStoring, book: FundingSessionBook = .shared) {
-        self.store = store
+    init(book: FundingSessionBook = .shared) {
         self.book = book
-        rebuilder = FundingHistoryRebuilder(store: store)
     }
 
     /// The runtime is built off the main thread, so it and its overlay are
@@ -82,8 +78,19 @@ final class FundingActivityCenter {
         Self.attached.withLock { $0.overlay }?.showHistory()
     }
 
-    /// Draws the sessions the core last pushed and settles the ended ones.
-    /// Calls that arrive while one is running are folded into one more pass.
+    /// The history is on screen until the matching ``endShowingHistory()``,
+    /// so the ended sessions it draws are acknowledged.
+    func beginShowingHistory() {
+        historyShown += 1
+        refresh()
+    }
+
+    func endShowingHistory() {
+        historyShown -= 1
+    }
+
+    /// Draws the sessions the core last pushed and its history. Calls that
+    /// arrive while one is running are folded into one more pass.
     func refresh() {
         guard refreshTask == nil else {
             needsRefresh = true
@@ -113,14 +120,9 @@ private extension FundingActivityCenter {
     }
 
     func reload() async {
-        guard let runtime else {
-            await loadStored(coreSessions: [])
-            return
-        }
+        let sessions = book.entries()
 
-        let sessions = book.unrecorded()
-
-        let moving = sessions.filter { Self.isInFlight($0.session, progress: $0.progress) }
+        let moving = sessions.filter(\.isInFlight)
         justFinished = Self.finished(
             before: inFlight.map(\.id),
             after: moving.map(\.session.intent),
@@ -133,31 +135,23 @@ private extension FundingActivityCenter {
         scheduleTakingLonger(moving.compactMap(\.progress?.longerAtMs))
 
         let ended = sessions
-            .filter { !Self.isInFlight($0.session, progress: $0.progress) }
+            .filter { !$0.isInFlight }
             .compactMap { FundingRecord(session: $0.session, progress: $0.progress) }
-        await settle(ended, runtime: runtime)
-        if let history = book.history {
-            await rebuilder.rebuildOnce { history }
+        let runtime = runtime
+        var summaries: [FundingSessionSummary] = []
+        if let runtime {
+            summaries = await Task.detached { runtime.fundingHistory() }.value
         }
-        await loadStored(coreSessions: ended)
-    }
+        let inFlightIds = Set(inFlight.map(\.id))
+        let records = Self.historyRecords(summaries: summaries, ended: ended)
+            .filter { !inFlightIds.contains($0.intent) }
 
-    static func isInFlight(_ session: FundingSession, progress: FundingProgress?) -> Bool {
-        progress?.status.isInFlight ?? session.stage.isOpen
-    }
+        self.records = Dictionary(records.map { ($0.intent, $0) }) { first, _ in first }
+        history = records.filter { !$0.isCancelledUnpaid }.map(FundingActivityItem.init(record:))
 
-    /// Writes each ended session to history, then acknowledges it. A session
-    /// whose write or acknowledgement fails stays unacknowledged, so the core
-    /// hands it over again.
-    func settle(_ ended: [FundingRecord], runtime: FundingRuntime) async {
-        for record in ended {
-            do {
-                try await store.save(record)
-                _ = try await runtime.acknowledgeFundingSession(intent: record.intent)
-                book.markRecorded(intent: record.intent)
-            } catch {
-                Logger.shared.error("[funding] \(record.intent): keeping the ended session failed: \(error)")
-            }
+        guard historyShown > 0, let runtime else { return }
+        for record in records {
+            await book.acknowledgeShown(intent: record.intent, runtime: runtime)
         }
     }
 
@@ -174,30 +168,24 @@ private extension FundingActivityCenter {
             self?.refresh()
         }
     }
-
-    /// The store's rows, plus any ended session the store could not take, so
-    /// nothing the core still holds goes missing from the list.
-    func loadStored(coreSessions: [FundingRecord]) async {
-        let stored: [FundingRecord]
-        do {
-            stored = try await store.records()
-        } catch {
-            Logger.shared.error("[funding] reading the history failed: \(error)")
-            stored = []
-        }
-        let storedIds = Set(stored.map(\.intent))
-        let records = stored + coreSessions.filter { !storedIds.contains($0.intent) }
-
-        self.records = Dictionary(records.map { ($0.intent, $0) }) { _, latest in latest }
-        let inFlightIds = Set(inFlight.map(\.id))
-        history = records
-            .filter { !inFlightIds.contains($0.intent) && !$0.isCancelledUnpaid }
-            .sorted { $0.settledAt > $1.settledAt }
-            .map(FundingActivityItem.init(record:))
-    }
 }
 
 extension FundingActivityCenter {
+    /// The ended sessions, newest first: each one in the core's history, from
+    /// the session the core pushed this run where there is one, as that keeps
+    /// the rail, provider and payment details the summary drops, plus any
+    /// ended session pushed before the history listed it.
+    nonisolated static func historyRecords(
+        summaries: [FundingSessionSummary],
+        ended: [FundingRecord]
+    ) -> [FundingRecord] {
+        let pushed = Dictionary(ended.map { ($0.intent, $0) }) { first, _ in first }
+        let listed = summaries.compactMap { pushed[$0.intent] ?? FundingRecord(summary: $0) }
+        let listedIds = Set(listed.map(\.intent))
+        return (listed + ended.filter { !listedIds.contains($0.intent) })
+            .sorted { $0.settledAt > $1.settledAt }
+    }
+
     /// The sessions that just left In progress, added to those still within
     /// their arrival window.
     nonisolated static func finished(

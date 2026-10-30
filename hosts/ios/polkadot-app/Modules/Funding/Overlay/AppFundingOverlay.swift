@@ -17,8 +17,7 @@ protocol FundingOverlayEnvironment: AnyObject {
     func present(_ controller: UIViewController) -> Bool
     /// The provider product's page at `route`, as the app shows products.
     func providerPage(providerId: String, route: String, title: String) -> UIViewController?
-    /// A session or the history the core recorded changed, for the CASH
-    /// card's lists.
+    /// A session changed, for the CASH card's lists.
     func fundingActivityChanged()
 }
 
@@ -53,16 +52,16 @@ final class AppFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
         await frame(providerId: providerId, intent: intent, target: target)
     }
 
+    func closeProviderFrame(providerId: String, intent: String) {
+        Task { @MainActor in coordinator?.closeFrame(providerId: providerId, intent: intent) }
+    }
+
     func fundingSessionChanged(intent: String, status _: HostFundingStatusSubscribeItem) {
         Task { @MainActor in coordinator?.sessionChanged(intent: intent) }
     }
 
     func fundingOptionsChanged(intent: String) {
         Task { @MainActor in coordinator?.optionsChanged(intent: intent) }
-    }
-
-    func fundingHistoryChanged() {
-        Task { @MainActor in coordinator?.historyChanged() }
     }
 
     func fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {
@@ -110,7 +109,7 @@ private extension AppFundingOverlay {
         case let .app(route):
             return await coordinator.presentFrame(providerId: providerId, intent: intent, route: route)
         case let .page(url, returnUrl):
-            return await coordinator.presentPage(url: url, returnUrl: returnUrl)
+            return await coordinator.presentPage(providerId: providerId, intent: intent, url: url, returnUrl: returnUrl)
         }
     }
 }
@@ -124,6 +123,7 @@ final class FundingOverlayCoordinator {
     private let environment: FundingOverlayEnvironment
     private var flows: [String: FundingFlowModel] = [:]
     private var frames: [String: FundingProviderFrameController] = [:]
+    private var pages: [String: FundingWebPageController] = [:]
 
     init(runtime: FundingRuntime, environment: FundingOverlayEnvironment, book: FundingSessionBook = .shared) {
         self.runtime = runtime
@@ -168,9 +168,11 @@ final class FundingOverlayCoordinator {
             guard let frame = self?.frames[intent], frame.presentingViewController == nil else { return }
             _ = self?.environment.present(frame)
         }
+        acknowledgeShown(intent: intent)
     }
 
-    /// An ended session the core has dropped is drawn from the host's record.
+    /// An ended session the core did not push this run is drawn from its
+    /// history record.
     func showEnded(_ record: FundingRecord) {
         if book.session(intent: record.intent) != nil {
             reopen(intent: record.intent)
@@ -186,6 +188,23 @@ final class FundingOverlayCoordinator {
             sheet?.dismissIfPresented { self?.startOver(direction: record.direction) }
         }
         _ = environment.present(sheet)
+    }
+
+    /// The provider closed its frame for session `intent`: the frame answers
+    /// `.closed`, and the session's progress shows in its place when the frame
+    /// was on screen. A hidden frame only answers.
+    func closeFrame(providerId: String, intent: String) {
+        if let frame = frames[intent], frame.providerId == providerId {
+            let shown = frame.presentingViewController != nil
+            frame.finish(.closed, dismissed: { [weak self] in
+                if shown { self?.showProgress(intent: intent) }
+            })
+        } else if let page = pages[intent], page.providerId == providerId {
+            let shown = page.presentingViewController != nil
+            page.finish(.closed, dismissed: { [weak self] in
+                if shown { self?.showProgress(intent: intent) }
+            })
+        }
     }
 
     /// The sessions in flight in `direction`, over whatever is on screen. A
@@ -227,6 +246,7 @@ final class FundingOverlayCoordinator {
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 let frame = FundingProviderFrameController(
+                    providerId: providerId,
                     page: page,
                     showsSentFunds: rail == .bank
                 ) { [weak self] outcome in
@@ -250,19 +270,25 @@ final class FundingOverlayCoordinator {
     /// Shows an external page in a frame the host owns, answering
     /// `.returned` when it reaches `returnUrl` and `.dismissed` when the user
     /// closes it.
-    func presentPage(url: String, returnUrl: String?) async -> FundingFrameOutcome {
+    func presentPage(providerId: String, intent: String, url: String, returnUrl: String?) async
+        -> FundingFrameOutcome {
         guard !Task.isCancelled, let pageURL = URL(string: url) else { return .dismissed }
 
         let presented = Presented<FundingWebPageController>()
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 let page = FundingWebPageController(
+                    providerId: providerId,
                     url: pageURL,
                     returnURL: returnUrl.flatMap(URL.init(string:))
-                ) { outcome in
+                ) { [weak self] outcome in
+                    if let self, pages[intent] === presented.controller {
+                        pages[intent] = nil
+                    }
                     continuation.resume(returning: outcome)
                 }
                 presented.controller = page
+                pages[intent] = page
                 if !environment.present(page) {
                     page.finish(.dismissed)
                 }
@@ -277,15 +303,14 @@ final class FundingOverlayCoordinator {
         if let frame = frames[intent], book.paymentMoved(intent: intent) {
             frame.finish(.closed)
         }
+        if flows[intent] != nil {
+            acknowledgeShown(intent: intent)
+        }
         environment.fundingActivityChanged()
     }
 
     func optionsChanged(intent: String) {
         flows[intent]?.refreshOptions()
-    }
-
-    func historyChanged() {
-        environment.fundingActivityChanged()
     }
 
     func quotesChanged(intent: String, quotes: FundingQuoteList) {
@@ -338,6 +363,22 @@ private extension FundingOverlayCoordinator {
         }
     }
 
+    /// The session sheet's progress screen for `intent`: the open sheet, or
+    /// the session shown again when none is.
+    func showProgress(intent: String) {
+        if let model = flows[intent] {
+            model.showProgress()
+        } else {
+            reopen(intent: intent)
+        }
+    }
+
+    /// An ended session on screen has told the user how it went.
+    func acknowledgeShown(intent: String) {
+        guard let runtime else { return }
+        Task { [book] in await book.acknowledgeShown(intent: intent, runtime: runtime) }
+    }
+
     /// A new session the same way, opened once the sheet before it is gone.
     func startOver(direction: FundingDirection) {
         guard let runtime else { return }
@@ -349,141 +390,6 @@ private extension FundingOverlayCoordinator {
                 Logger.shared.error("[funding] starting over failed: \(error)")
             }
         }
-    }
-}
-
-/// The overlay sheet. A swipe down is the user leaving, the same as Close.
-final class FundingSheetController: UIHostingController<FundingSheetView>, UIAdaptivePresentationControllerDelegate {
-    private let model: FundingFlowModel
-    private var onAppear: (() -> Void)?
-
-    init(model: FundingFlowModel, onAppear: (() -> Void)? = nil) {
-        self.model = model
-        self.onAppear = onAppear
-        super.init(rootView: FundingSheetView(model: model))
-
-        presentAsFundingSheet()
-        presentationController?.delegate = self
-    }
-
-    @available(*, unavailable)
-    @MainActor dynamic required init?(coder _: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = .clear
-    }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        let onAppear = onAppear
-        self.onAppear = nil
-        onAppear?()
-    }
-
-    /// Dismisses from the presenter, so a provider's screen still over the
-    /// sheet goes with it.
-    func dismissIfPresented(completion: (() -> Void)? = nil) {
-        guard let presenter = presentingViewController, !isBeingDismissed else {
-            completion?()
-            return
-        }
-        presenter.dismiss(animated: true, completion: completion)
-    }
-
-    func presentationControllerDidDismiss(_: UIPresentationController) {
-        model.close()
-    }
-}
-
-/// A list of sessions, on the same sheet as the overlay.
-final class FundingListSheetController: UIHostingController<AnyView> {
-    init() {
-        super.init(rootView: AnyView(EmptyView()))
-        presentAsFundingSheet()
-    }
-
-    @available(*, unavailable)
-    @MainActor dynamic required init?(coder _: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = .clear
-    }
-
-    func show(_ content: some View) {
-        rootView = AnyView(content.fundingScreen())
-    }
-
-    func dismissIfPresented(completion: @escaping () -> Void) {
-        guard presentingViewController != nil, !isBeingDismissed else {
-            completion()
-            return
-        }
-        dismiss(animated: true, completion: completion)
-    }
-}
-
-/// An ended session the core has dropped, on the same sheet as the overlay.
-final class FundingEndedSheetController: UIHostingController<FundingEndedSheetView> {
-    var onStartOver: (() -> Void)?
-
-    init(ended: FundingEndedSession, cash: FundingCash, branding: FundingProviderBranding) {
-        super.init(rootView: FundingEndedSheetView(ended: ended, cash: cash, branding: branding))
-
-        rootView.onClose = { [weak self] in self?.dismiss(animated: true) }
-        rootView.onStartOver = { [weak self] in self?.onStartOver?() }
-        presentAsFundingSheet()
-    }
-
-    @available(*, unavailable)
-    @MainActor dynamic required init?(coder _: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = .clear
-    }
-
-    func dismissIfPresented(completion: @escaping () -> Void) {
-        guard presentingViewController != nil, !isBeingDismissed else {
-            completion()
-            return
-        }
-        dismiss(animated: true, completion: completion)
-    }
-}
-
-struct FundingEndedSheetView: View {
-    let ended: FundingEndedSession
-    let cash: FundingCash
-    let branding: FundingProviderBranding
-    var onClose: () -> Void = {}
-    var onStartOver: () -> Void = {}
-
-    var body: some View {
-        FundingEndedView(
-            ended: ended,
-            cash: cash,
-            branding: branding,
-            onClose: onClose,
-            onStartOver: onStartOver
-        )
-        .fundingScreen()
-    }
-}
-
-private extension UIViewController {
-    func presentAsFundingSheet() {
-        modalPresentationStyle = .pageSheet
-        sheetPresentationController?.detents = [.custom { $0.maximumDetentValue * 0.92 }]
-        sheetPresentationController?.prefersGrabberVisible = true
-        sheetPresentationController?.preferredCornerRadius = 32
     }
 }
 
