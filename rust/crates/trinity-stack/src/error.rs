@@ -41,9 +41,16 @@ pub enum Error {
 	/// A `paraId` is missing on a parachain, present on the relay, or repeated.
 	#[error("paraId: {0}")]
 	ParaId(String),
-	/// `Asset.chain` or `coinage.chain` names a role no chain has.
+	/// `Asset.chain` or `coinage.chain` names a role no chain has, or `dotns` is set on a stack
+	/// without an `AssetHub`.
 	#[error("no chain has role {0:?}")]
 	UnknownChainRole(String),
+	/// A `dotns` key is not 1 to 32 ASCII letters and digits.
+	#[error("dotns key {0:?} must be 1 to 32 ASCII letters and digits")]
+	DotnsKey(String),
+	/// A `dotns` address is the zero address, which the registry returns for an unset key.
+	#[error("dotns key {0:?} has the zero address; leave an unset key out")]
+	DotnsZeroAddress(String),
 	/// A hex value is not lowercase, 0x-prefixed and of the right length.
 	#[error("{field} is not {bytes} bytes of lowercase 0x-prefixed hex")]
 	InvalidHex {

@@ -210,6 +210,16 @@ struct DocumentCase {
 	expect: &'static str,
 }
 
+const ADDRESS: [u8; 20] = [0xaa; 20];
+
+fn with_dotns(dotns: Value) -> Value {
+	with(|value| value["dotns"] = dotns)
+}
+
+fn two_addresses() -> Value {
+	json!({ "registrar": hex(&ADDRESS), "resolver": hex(&[0xbb; 20]) })
+}
+
 fn document_cases() -> Vec<DocumentCase> {
 	let plain =
 		|name, value: Value, expect| DocumentCase { name, bytes: bytes(&value), key: None, expect };
@@ -437,6 +447,47 @@ fn document_cases() -> Vec<DocumentCase> {
 		plain(
 			"contract-address-long",
 			with(|value| value["contracts"]["accountDataStore"] = json!(hex(&[0x22; 32]))),
+			"invalid-hex",
+		),
+		plain(
+			"valid-dotns",
+			with_dotns(json!({ "registrar": hex(&ADDRESS), "protocolRegistry": hex(&[0xbb; 20]) })),
+			"ok",
+		),
+		plain(
+			"dotns-without-asset-hub",
+			with(|value| {
+				value["dotns"] = two_addresses();
+				value["chains"].as_array_mut().unwrap().remove(1);
+				value.as_object_mut().unwrap().remove("assets");
+			}),
+			"unknown-chain-role",
+		),
+		plain(
+			"dotns-key-of-33-bytes",
+			with_dotns(json!({ "a".repeat(33): hex(&ADDRESS) })),
+			"dotns-key",
+		),
+		plain("dotns-key-empty", with_dotns(json!({ "": hex(&ADDRESS) })), "dotns-key"),
+		plain("dotns-key-of-32-bytes", with_dotns(json!({ "a".repeat(32): hex(&ADDRESS) })), "ok"),
+		plain(
+			"dotns-key-with-an-underscore",
+			with_dotns(json!({ "store_factory": hex(&ADDRESS) })),
+			"dotns-key",
+		),
+		plain(
+			"dotns-key-not-ascii",
+			with_dotns(json!({ "régistrar": hex(&ADDRESS) })),
+			"dotns-key",
+		),
+		plain(
+			"dotns-address-zero",
+			with_dotns(json!({ "registrar": hex(&[0; 20]) })),
+			"dotns-zero-address",
+		),
+		plain(
+			"dotns-address-uppercase",
+			with_dotns(json!({ "registrar": hex(&ADDRESS).to_uppercase().replace("0X", "0x") })),
 			"invalid-hex",
 		),
 		plain(
