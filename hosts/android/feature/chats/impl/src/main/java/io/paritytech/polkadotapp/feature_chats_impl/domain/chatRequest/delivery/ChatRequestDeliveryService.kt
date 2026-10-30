@@ -16,7 +16,8 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ContactWithChatR
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ChatRequestRepository
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.ContactsRepository
 import io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.OutgoingChatRequestPayload
-import kotlinx.coroutines.delay
+import io.paritytech.polkadotapp.feature_chats_impl.domain.identitySigning.IdentitySigningGate
+import io.paritytech.polkadotapp.feature_chats_impl.domain.identitySigning.awaitRetry
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
@@ -24,14 +25,8 @@ import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.minutes
-import kotlin.time.Duration.Companion.seconds
 
 private const val DELIVERY_CONNECTION_TAG = "ChatRequestDelivery"
-private const val MAX_BACKOFF_DOUBLINGS = 8
-private val FIRST_RETRY_DELAY = 2.seconds
-private val MAX_RETRY_DELAY = 5.minutes
 
 /** First delivery of recorded outgoing chat requests, one coroutine per request, retried until it lands. */
 @Singleton
@@ -44,6 +39,7 @@ class ChatRequestDeliveryService @Inject constructor(
     private val chainConnectionRefCounter: ChainConnectionRefCounter,
     private val knownChains: KnownChains,
     private val coroutineDispatchers: CoroutineDispatchers,
+    private val identitySigningGate: IdentitySigningGate,
 ) : AppInitializer {
     private val inFlight: MutableSet<ChatRequestId> = ConcurrentHashMap.newKeySet()
 
@@ -74,11 +70,21 @@ class ChatRequestDeliveryService @Inject constructor(
     private suspend fun deliverUntilDone(contact: Contact, request: ChatRequest) {
         var attempt = 0
 
-        while (isStillAwaitingDelivery(contact, request) && deliver(contact, request).isFailure) {
+        while (isStillAwaitingDelivery(contact, request)) {
+            val outcome = deliver(contact, request)
+            if (outcome.isSuccess) break
+
+            val error = outcome.exceptionOrNull()
+            if (error?.endsDelivery() == true) {
+                Timber.i("chatRequestDelivery: request ${request.id} fails: ${error.message}")
+                publisher.markFailed(request).logFailure("Chat request ${request.id} could not be marked failed")
+                break
+            }
+
             attempt++
-            val retryIn = retryDelay(attempt)
+            val retryIn = DELIVERY_RETRY_DELAY.delayFor(attempt)
             Timber.i("chatRequestDelivery: request ${request.id} attempt $attempt failed; retrying in $retryIn")
-            delay(retryIn)
+            identitySigningGate.awaitRetry(contact.accountId, error, retryIn)
         }
         Timber.i("chatRequestDelivery: finished with request ${request.id} after ${attempt + 1} attempts")
     }
@@ -116,10 +122,5 @@ class ChatRequestDeliveryService @Inject constructor(
                 .flatMap { signer -> publisher.publishFirstDelivery(request, payload, signer) }
                 .onSuccess { Timber.i("chatRequestDelivery: request ${request.id} delivered") }
         }
-    }
-
-    private fun retryDelay(attempt: Int): Duration {
-        val exponential = FIRST_RETRY_DELAY * (1 shl attempt.coerceAtMost(MAX_BACKOFF_DOUBLINGS))
-        return exponential.coerceAtMost(MAX_RETRY_DELAY)
     }
 }
