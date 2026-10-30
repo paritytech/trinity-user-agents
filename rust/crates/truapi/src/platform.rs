@@ -38,28 +38,29 @@ use truapi::{
 	latest::{
 		AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage,
 		ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta, ChatMessage,
-		ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatPreviewReaction, ChatReaction,
-		ChatReactionSummary, ChatReply, ChatReplyPreview, ChatResource, ChatRichText,
-		ChatRoomActivity, ChatRoomBadge, ChatRoomConfig, ChatRoomMetadata, ChatRoomPreview,
-		ChatRoomRegistrationStatus, CodeFormat, FundingDirection, GenericError,
-		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatDeleteRoomRequest,
-		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
-		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-		HostChatRegisterBotResponse, HostChatSetRoomConfigRequest, HostChatSetRoomFooterRequest,
-		HostChatSetRoomMetadataRequest, HostChatSetRoomPreviewRequest, HostChatUpdateFeedError,
-		HostChatUpdateFeedRequest, HostDevicePermissionRequest, HostFeatureSupportedRequest,
-		HostFeatureSupportedResponse, HostFundingStatusSubscribeItem, HostLocalStorageChangeItem,
-		HostLocaleSubscribeItem, HostNavigateToError, HostPaymentBalanceSubscribeError,
-		HostPaymentBalanceSubscribeItem, HostPaymentError, HostPaymentRequest,
-		HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem, HostPaymentTopUpError,
-		HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
-		HostPaymentTopUpStatusSubscribeItem, HostPlatform, HostPocketListSubscribeItem,
-		HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPushNotificationRequest,
-		HostPushNotificationResponse, HostScannerScanRequest, HostSignPayloadRequest,
-		HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
+		ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatPageAnchor,
+		ChatPreviewReaction, ChatReaction, ChatReactionDetail, ChatReactionSummary, ChatReply,
+		ChatReplyPreview, ChatResource, ChatRichText, ChatRoomActivity, ChatRoomBadge,
+		ChatRoomConfig, ChatRoomMetadata, ChatRoomPreview, ChatRoomRegistrationStatus,
+		ChatUserAction, CodeFormat, FundingDirection, GenericError, HostChatCreateRoomError,
+		HostChatCreateRoomRequest, HostChatDeleteRoomRequest, HostChatListSubscribeItem,
+		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
+		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+		HostChatSetRoomConfigRequest, HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
+		HostChatSetRoomPreviewRequest, HostChatUpdateFeedError, HostChatUpdateFeedRequest,
+		HostDevicePermissionRequest, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
+		HostFundingStatusSubscribeItem, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
+		HostNavigateToError, HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem,
+		HostPaymentError, HostPaymentRequest, HostPaymentStatusSubscribeError,
+		HostPaymentStatusSubscribeItem, HostPaymentTopUpError, HostPaymentTopUpRequest,
+		HostPaymentTopUpStatusSubscribeError, HostPaymentTopUpStatusSubscribeItem, HostPlatform,
+		HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
+		HostPushNotificationRequest, HostPushNotificationResponse, HostScannerScanRequest,
+		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
 		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
-		NftPurseOwner, ProductAccountId, ProductAccountTxPayload, ProductProofContext,
+		NftPurseOwner, ProductAccountId, ProductAccountTxPayload, ProductChatMessagesQueryItem,
+		ProductChatMessagesQueryRequest, ProductChatReactionsQueryItem, ProductProofContext,
 		RemotePermission, RemotePermissionRequest, RingLocation,
 	},
 	v01::HostAccountSignVrfRequest,
@@ -599,6 +600,12 @@ pub const CHAT_DESCRIPTION_MAX_BYTES: usize = 1024;
 /// Largest accepted number of reaction summaries on one message.
 pub const CHAT_REACTIONS_MAX: usize = 64;
 
+/// Largest page of messages a host may ask for.
+pub const CHAT_MESSAGES_PAGE_MAX: u32 = 100;
+
+/// Largest accepted length for a page cursor, in bytes.
+pub const CHAT_CURSOR_MAX_BYTES: usize = 1024;
+
 /// Largest accepted number of `update_feed` calls for one room in one second.
 pub const CHAT_FEED_UPDATES_PER_SECOND: u32 = 20;
 
@@ -611,6 +618,24 @@ pub const CHAT_HOP_FILE_MAX_BYTES: u64 = 128 * 1024 * 1024;
 
 /// The longest node URL of a [`ChatResource::Hop`].
 pub const CHAT_HOP_NODE_MAX_CHARS: usize = 256;
+
+/// Validate a user action a host sends to the product: the id a host chose
+/// for a new message is an identifier like every message id.
+pub fn validate_chat_user_action(action: ChatUserAction) -> Result<ChatUserAction, ChatFieldError> {
+	Ok(match action {
+		ChatUserAction::NewMessage { body, reply_to, message_id, timestamp } => {
+			ChatUserAction::NewMessage {
+				body,
+				reply_to,
+				message_id: message_id
+					.map(|id| normalize_chat_identifier("messageId", &id))
+					.transpose()?,
+				timestamp,
+			}
+		},
+		action => action,
+	})
+}
 
 /// Validate the resource of a media item: a HOP file.
 fn validate_chat_media_resource(
@@ -650,6 +675,17 @@ fn validate_chat_description(field: &'static str, value: &str) -> Result<String,
 		return Err(ChatFieldError::TooLong { field, limit: CHAT_DESCRIPTION_MAX_BYTES });
 	}
 	validate_chat_body(field, value)
+}
+
+/// Bound and screen an opaque page cursor.
+fn validate_chat_cursor(field: &'static str, cursor: String) -> Result<String, ChatFieldError> {
+	if cursor.len() > CHAT_CURSOR_MAX_BYTES {
+		return Err(ChatFieldError::TooLong { field, limit: CHAT_CURSOR_MAX_BYTES });
+	}
+	if cursor.chars().any(is_display_unsafe) {
+		return Err(ChatFieldError::UnsafeCharacter { field });
+	}
+	Ok(cursor)
 }
 
 /// Reject a list longer than `limit`.
@@ -884,6 +920,68 @@ pub fn validate_chat_feed_update(update: ChatFeedUpdate) -> Result<ChatFeedUpdat
 	})
 }
 
+/// Validate a page of messages a host asks for.
+pub fn validate_chat_messages_query(
+	request: ProductChatMessagesQueryRequest,
+) -> Result<ProductChatMessagesQueryRequest, ChatFieldError> {
+	let cursor = |cursor: Option<String>| {
+		cursor.map(|cursor| validate_chat_cursor("cursor", cursor)).transpose()
+	};
+	Ok(ProductChatMessagesQueryRequest {
+		room_id: normalize_chat_identifier("roomId", &request.room_id)?,
+		anchor: match request.anchor {
+			ChatPageAnchor::After { cursor: after } => {
+				ChatPageAnchor::After { cursor: cursor(after)? }
+			},
+			ChatPageAnchor::Before { cursor: before } => {
+				ChatPageAnchor::Before { cursor: cursor(before)? }
+			},
+		},
+		page_size: check_chat_page_size(request.page_size, CHAT_MESSAGES_PAGE_MAX)?,
+	})
+}
+
+fn check_chat_page_size(page_size: u32, max: u32) -> Result<u32, ChatFieldError> {
+	if !(1..=max).contains(&page_size) {
+		return Err(ChatFieldError::OutOfRange { field: "pageSize", min: 1, max: max.into() });
+	}
+	Ok(page_size)
+}
+
+/// Validate a page of messages a product answers for a page of `page_size`.
+pub fn validate_chat_messages_page(
+	page: ProductChatMessagesQueryItem,
+	page_size: u32,
+) -> Result<ProductChatMessagesQueryItem, ChatFieldError> {
+	check_chat_count("messages", &page.messages, page_size as usize)?;
+	Ok(ProductChatMessagesQueryItem {
+		messages: page.messages.into_iter().map(validate_chat_message).collect::<Result<_, _>>()?,
+		next: page.next.map(|next| validate_chat_cursor("next", next)).transpose()?,
+	})
+}
+
+/// Validate who reacted to a message, as a product answers it.
+pub fn validate_chat_reactions_answer(
+	answer: ProductChatReactionsQueryItem,
+) -> Result<ProductChatReactionsQueryItem, ChatFieldError> {
+	Ok(ProductChatReactionsQueryItem {
+		reactions: answer
+			.reactions
+			.into_iter()
+			.map(|reaction| {
+				Ok(ChatReactionDetail {
+					participant_id: normalize_chat_identifier(
+						"participantId",
+						&reaction.participant_id,
+					)?,
+					emoji: validate_chat_emoji("emoji", &reaction.emoji)?,
+					timestamp: reaction.timestamp,
+				})
+			})
+			.collect::<Result<_, ChatFieldError>>()?,
+	})
+}
+
 /// Scheme a URL parser would resolve, with the characters parsers ignore
 /// removed so `java\tscript:` and a leading NUL cannot hide one.
 fn icon_scheme(candidate: &str) -> Option<String> {
@@ -1026,6 +1124,16 @@ pub enum ChatFieldError {
 	RejectedScheme {
 		/// Offending field name.
 		field: &'static str,
+	},
+	/// The value is outside its accepted range.
+	#[display("{field} must be from {min} to {max}")]
+	OutOfRange {
+		/// Offending field name.
+		field: &'static str,
+		/// Smallest accepted value.
+		min: u64,
+		/// Largest accepted value.
+		max: u64,
 	},
 }
 
@@ -3011,6 +3119,48 @@ mod tests {
 		);
 	}
 
+	#[test]
+	fn a_query_asks_a_bounded_page() {
+		let messages = |page_size, cursor: usize| ProductChatMessagesQueryRequest {
+			room_id: "room".to_string(),
+			anchor: ChatPageAnchor::Before { cursor: Some("c".repeat(cursor)) },
+			page_size,
+		};
+		assert!(
+			validate_chat_messages_query(messages(CHAT_MESSAGES_PAGE_MAX, CHAT_CURSOR_MAX_BYTES))
+				.is_ok()
+		);
+		for page_size in [0, CHAT_MESSAGES_PAGE_MAX + 1] {
+			assert_eq!(
+				validate_chat_messages_query(messages(page_size, 1)),
+				Err(ChatFieldError::OutOfRange {
+					field: "pageSize",
+					min: 1,
+					max: CHAT_MESSAGES_PAGE_MAX.into()
+				})
+			);
+		}
+		assert_eq!(
+			validate_chat_messages_query(messages(1, CHAT_CURSOR_MAX_BYTES + 1)),
+			Err(ChatFieldError::TooLong { field: "cursor", limit: CHAT_CURSOR_MAX_BYTES })
+		);
+	}
+
+	// A product answers no more than the host asked for, so a page cannot grow
+	// the cache past what the screen requested.
+	#[test]
+	fn an_answer_holds_no_more_than_the_page_asked() {
+		let page = |count: usize| ProductChatMessagesQueryItem {
+			messages: (0..count).map(|index| text_message(&format!("m{index}"))).collect(),
+			next: None,
+		};
+		assert!(validate_chat_messages_page(page(3), 3).is_ok());
+		assert_eq!(
+			validate_chat_messages_page(page(4), 3),
+			Err(ChatFieldError::TooMany { field: "messages", limit: 3 })
+		);
+	}
+
 	// The core screens the quote of a reply as it screens the message that it
 	// quotes.
 	#[test]
@@ -3629,7 +3779,8 @@ pub trait ChatPlatform: Send + Sync {
 
 	/// The configuration the product last declared for a room, or the default
 	/// configuration when it declared none. The core reads it to decide
-	/// whether a room keeps its messages in the host.
+	/// whether a room keeps its messages in the host and which queries the
+	/// product answers.
 	async fn read_chat_room_config(
 		&self,
 		_product: &ProductContext,

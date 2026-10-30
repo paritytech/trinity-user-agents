@@ -17,6 +17,7 @@
 //! none leaves `contacts.pick` answering `Unsupported`.
 
 mod callbacks;
+mod chat_query;
 mod config;
 mod errors;
 mod events;
@@ -39,6 +40,9 @@ pub use callbacks::{
 	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
 	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
 	NativePocketRemoval, NativeScannerCallbacks, NativeTopUpCallbacks,
+};
+pub use chat_query::{
+	NativeChatQuery, NativeChatQueryAnswer, NativeChatQueryObserver, NativeChatQueryRefusal,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
 pub use errors::{
