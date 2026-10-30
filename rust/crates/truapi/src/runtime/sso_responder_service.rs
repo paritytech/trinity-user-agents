@@ -658,7 +658,7 @@ async fn read_statements(
 					acknowledge_request(
 						services,
 						session,
-						&request_id,
+						request_id,
 						SsoResponseCode::DecodingFailed,
 						"sso-responder decode-failed ack",
 					)
@@ -729,7 +729,7 @@ async fn serve_statement(
 		acknowledge_request(
 			services,
 			session,
-			&request_id,
+			request_id.clone(),
 			SsoResponseCode::Success,
 			"sso-responder ack",
 		),
@@ -840,13 +840,13 @@ async fn serve_request(
 async fn acknowledge_request(
 	services: &RuntimeServices,
 	session: &SsoSessionInfo,
-	request_id: &str,
+	request_id: String,
 	code: SsoResponseCode,
 	label: &'static str,
 ) -> Result<(), String> {
 	let ack = build_signed_session_response_statement(
 		session,
-		request_id.to_string(),
+		request_id,
 		code as u8,
 		fresh_statement_expiry(),
 	)?;
