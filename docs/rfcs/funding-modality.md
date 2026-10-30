@@ -300,7 +300,9 @@ The host app can be closed or crash at any point; a session carries on from its 
   worker connects.
 - **When only the worker crashes.** The host reports it with `worker_exited`. While a session or an open overlay still
   holds that worker, the core asks the host to start it again, and assigns it every session it serves once it connects,
-  each with its `last_update`.
+  each with its `last_update`. Crashes less than a minute apart form a run: the first restart is immediate, then each
+  waits 1 s, doubling up to 5 min. On the run's third crash the host hears `worker_crashing` and tells the user the
+  provider is not working, while the core keeps retrying.
 - **What the provider does.** It writes its own state for the session to its storage before every external action: a
   request to its onramp, a faucet, a `payment.topUp` or `payment.request`. It derives the ids of its top-ups, payment
   requests and onramp orders from the session and the step, so repeating one after a crash finds it (`AlreadyExists`)

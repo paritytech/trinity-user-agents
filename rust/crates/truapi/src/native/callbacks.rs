@@ -181,6 +181,12 @@ pub trait HostCallbacks: Send + Sync {
 	/// on another thread from inside it.
 	fn request_worker_transition(&self, product_id: ProductId, transition: WorkerTransition);
 
+	/// The product's worker crashed `crashes` times in a row while it was
+	/// needed: tell the user that product is not working. The core keeps
+	/// starting it again, waiting longer each time, so this needs no answer.
+	/// Can arrive on any thread.
+	fn worker_crashing(&self, product_id: ProductId, crashes: u32);
+
 	/// A device finished pairing with this signing host.
 	///
 	/// The core has no chat of its own, so announcing the new device to the

@@ -553,7 +553,7 @@ impl NativeTrUApiHostRuntime {
 	/// start it again. An id that is not a product id is logged and dropped.
 	pub fn worker_exited(&self, product_id: String) {
 		match product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().exited(&product_id),
+			Ok(product_id) => self.runtime.worker_exited(&product_id),
 			Err(error) => tracing::warn!(%error, "worker exit for an id that is not a product id"),
 		}
 	}
