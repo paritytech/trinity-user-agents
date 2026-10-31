@@ -730,6 +730,15 @@
       }
     },
     {
+      "expect": "invalid-url",
+      "file": "documents/url-with-non-ascii-host.json",
+      "name": "url-with-non-ascii-host",
+      "pointer": {
+        "key": null,
+        "url": "https://previewnet.substrate.dev/.well-known/trinity-stack.json"
+      }
+    },
+    {
       "expect": "forked-at",
       "file": "documents/fork-without-forked-at.json",
       "name": "fork-without-forked-at",

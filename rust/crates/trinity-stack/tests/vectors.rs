@@ -641,6 +641,11 @@ fn document_cases() -> Vec<DocumentCase> {
 			"invalid-url",
 		),
 		plain(
+			"url-with-non-ascii-host",
+			with(|value| value["services"][0]["urls"] = json!(["https://faß.example/"])),
+			"invalid-url",
+		),
+		plain(
 			"fork-without-forked-at",
 			with(|value| value["fork"] = json!({ "of": { "url": URL }, "at": TWO_HOURS_AGO })),
 			"forked-at",
