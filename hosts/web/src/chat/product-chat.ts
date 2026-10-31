@@ -16,9 +16,8 @@ import { subscription } from "../platform/subscription.js";
  * which checks the caller is a worker and screens what it sends: text, rich
  * text with media, action buttons, file links, custom messages, and its own
  * reactions to its messages. These rooms
- * are the products' own: they are kept apart from the person-to-person
- * conversations of the host's Nova chat, per network and wallet, in this
- * browser's `localStorage`.
+ * are the products' own, kept per network and wallet in this browser's
+ * `localStorage`.
  */
 
 export interface ProductRoom {

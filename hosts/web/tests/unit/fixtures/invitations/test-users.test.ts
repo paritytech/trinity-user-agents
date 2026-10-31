@@ -5,8 +5,8 @@ import * as sr25519 from "@scure/sr25519";
 import {
   deriveChatSecret,
   deriveIdentitySecret,
-} from "../../../../src/chat/nova/keys.js";
-import { x25519PublicKey } from "../../../../src/chat/nova/crypto.js";
+} from "../../../../src/invitations/chat-keys.js";
+import { x25519PublicKey } from "../../../../src/platform/crypto.js";
 import {
   TEST_USERS,
   chatContactsOf,

@@ -1,4 +1,4 @@
-import { Reader } from "../../platform/scale-reader.js";
+import { Reader } from "./scale-reader.js";
 
 /** SCALE pieces the chat wire is written with. Integers are little-endian. */
 
@@ -83,12 +83,6 @@ export function readOption<T>(
   if (tag === 0) return null;
   if (tag === 1) return read(reader);
   throw new Error(`an option tag is ${tag}`);
-}
-
-/** Read a `Vec<T>`. */
-export function readList<T>(reader: Reader, read: (reader: Reader) => T): T[] {
-  const count = reader.compact();
-  return Array.from({ length: count }, () => read(reader));
 }
 
 export function equalBytes(left: Uint8Array, right: Uint8Array): boolean {

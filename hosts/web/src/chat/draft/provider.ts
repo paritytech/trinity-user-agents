@@ -60,8 +60,7 @@ import type { ChatV2Change, ChatV2Host, V2Room } from "./host.js";
  *   (`start_conversation`). The product gets an opaque reference or the
  *   person's contact handle, never the name the picker showed.
  *
- * The provider never touches the product rooms TrUAPI Chat keeps, or the Nova
- * chat.
+ * The provider never touches the product rooms TrUAPI Chat keeps.
  */
 
 /** What the host lends one chat product's provider. */

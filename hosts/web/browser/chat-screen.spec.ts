@@ -2,8 +2,9 @@
  * Headless-browser test of the Chat screen over its chat providers, mounted
  * alone on a stand-in page of the host's Vite server by
  * `browser/support/chat-screen-harness.ts`. The chat product provider talks to the
- * synthetic chat product over the Chat Extension v2 draft bridge in the page;
- * the Nova and product room providers have stand-ins behind them. Nothing reaches a network: every request outside this host is
+ * synthetic chat product over the Chat Extension v2 draft bridge in the page,
+ * and a second one, the people product, to a stand-in conversation engine; the
+ * product room provider has a stand-in behind it. Nothing reaches a network: every request outside this host is
  * refused and counted. Set CHAT_SCREENSHOTS to a directory to keep
  * screenshots of the synthetic screens. It needs a Chromium: playwright-core
  * finds the one it installs, or set CHROMIUM_PATH.
@@ -127,10 +128,10 @@ describe("chat screen over providers", () => {
       const found = picker.locator(".prompt-lookup");
       const startedChats = () =>
         harness(page, (chat) =>
-          chat.asked().filter((line) => line.startsWith("nova startChat")),
+          chat.asked().filter((line) => line.startsWith("people start")),
         );
       try {
-        await row(page, `nova/0x${"4b".repeat(32)}`).waitFor();
+        await row(page, "chat-v2:people.test/kim").waitFor();
 
         // The picker, not a screen of its own: the contacts, here Kim, and no product named.
         await page.click('[aria-label="New chat"]');
@@ -183,7 +184,7 @@ describe("chat screen over providers", () => {
           .locator(".chat-error", { hasText: "Not in this test." })
           .waitFor();
         expect(await startedChats()).toEqual([
-          `nova startChat 0x${"7e".repeat(32)} hello`,
+          `people start 0x${"7e".repeat(32)} hello`,
         ]);
         await back(page);
 
@@ -207,15 +208,107 @@ describe("chat screen over providers", () => {
   );
 
   test(
+    "blocks a host contact from their conversation, lists the blocked, and Unblock offers them in the picker again",
+    async () => {
+      const { context, page, outside } = await open();
+      const picker = page.locator("dialog.prompt", { hasText: "New chat" });
+      const offered = async () => {
+        await page.click('[aria-label="New chat"]');
+        await picker.waitFor();
+        const names = await picker
+          .locator(".prompt-list button")
+          .allInnerTexts();
+        await page.keyboard.press("Escape");
+        await picker.waitFor({ state: "detached" });
+        return names.sort();
+      };
+      const blockedNames = () =>
+        page.locator(".chat-blocked .chat-row-title").allInnerTexts();
+      const removals = () => harness(page, (chat) => chat.removals());
+      try {
+        await row(page, "chat-v2:people.test/kim").waitFor();
+        expect(await offered()).toEqual(["kim.01"]);
+        const before = await removals();
+
+        // A product room's person is not a host contact: no options.
+        await row(page, "chat-v2:chat.test/ada").click();
+        await page.locator('[aria-label="Back to chats"]').waitFor();
+        expect(await page.locator('[data-action="chat-options"]').count()).toBe(
+          0,
+        );
+        await back(page);
+
+        // Kim is: Block, from her conversation's options, after the user confirms.
+        await row(page, "chat-v2:people.test/kim").click();
+        await page.click('[data-action="chat-options"]');
+        await page.click('dialog.prompt button:has-text("Block")');
+        const confirm = page.locator("dialog.prompt", {
+          hasText: "Block kim.01?",
+        });
+        await confirm.getByRole("button", { name: "Cancel" }).click();
+        expect(await removals()).toBe(before);
+        await page.click('[data-action="chat-options"]');
+        await page.click('dialog.prompt button:has-text("Block")');
+        await confirm
+          .locator('button[data-tone="destructive"]', { hasText: "Block" })
+          .click();
+        await page
+          .locator('[data-action="chat-options"]')
+          .waitFor({ state: "detached" });
+        // The core is told, so her handle stops resolving.
+        expect(await removals()).toBe(before + 1);
+        await back(page);
+        expect(await offered()).toEqual([]);
+
+        await page.click('[data-action="blocked"]');
+        expect((await blockedNames()).sort()).toEqual(["kim.01", "lou.01"]);
+        await screenshot(page, "blocked");
+        await page.locator('[data-action="unblock"]').first().click();
+        await page.locator('[data-action="unblock"]').first().click();
+        await page
+          .locator(".chat-empty-title", { hasText: "No one is blocked" })
+          .waitFor();
+        await back(page);
+        expect(await offered()).toEqual(["kim.01", "lou.01"]);
+
+        // With no one blocked, Blocked stays reachable, and Block a contact
+        // opens the host's picker over its contacts only.
+        await page.click('[data-action="blocked"]');
+        await page.click('[data-action="block-contact"]');
+        const choose = page.locator("dialog.prompt", {
+          hasText: "Block a contact",
+        });
+        expect(
+          (await choose.locator(".prompt-list button").allInnerTexts()).sort(),
+        ).toEqual(["kim.01", "lou.01"]);
+        await page.keyboard.press("Escape");
+        await choose.waitFor({ state: "detached" });
+        expect(await blockedNames()).toEqual([]);
+        await page.click('[data-action="block-contact"]');
+        await choose.getByRole("button", { name: /^lou\.01\b/ }).click();
+        await page.locator(".chat-blocked .chat-row-title").waitFor();
+        expect(await blockedNames()).toEqual(["lou.01"]);
+        expect(await removals()).toBe(before + 2);
+        await back(page);
+        expect(await offered()).toEqual(["kim.01"]);
+        expect(outside).toEqual([]);
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
     "a person chosen outside Chat opens their chat, or a request sent only when asked, with focus in it",
     async () => {
       const { context, page, outside } = await open();
       const startedChats = () =>
         harness(page, (chat) =>
-          chat.asked().filter((line) => line.startsWith("nova startChat")),
+          chat.asked().filter((line) => line.startsWith("people start")),
         );
       try {
-        await row(page, `nova/0x${"4b".repeat(32)}`).waitFor();
+        await row(page, "chat-v2:people.test/kim").waitFor();
         expect(
           await harness(page, (chat) =>
             chat.startWith(`0x${"4b".repeat(32)}`, "kim.01", false),
@@ -263,7 +356,11 @@ describe("chat screen over providers", () => {
           );
         // One list, newest activity first, whatever provider holds the conversation.
         expect(new Set(order.map((id) => id!.split("/")[0]))).toEqual(
-          new Set(["nova", "product:quiz.test", "chat-v2:chat.test"]),
+          new Set([
+            "chat-v2:people.test",
+            "product:quiz.test",
+            "chat-v2:chat.test",
+          ]),
         );
         const times = await page
           .locator("[data-conversation]")
@@ -273,17 +370,8 @@ describe("chat screen over providers", () => {
             ),
           );
         expect(times).toEqual([...times].sort((left, right) => right - left));
-        // Only Nova has requests, starting a chat, and an account of its own.
-        expect(await page.locator(".chat-request").innerText()).toContain(
-          "sam.01",
-        );
+        // One New chat, for the provider that starts chats.
         expect(await page.locator('[aria-label="New chat"]').count()).toBe(1);
-        expect(await page.locator(".chat-identity").innerText()).toContain(
-          "Polkadot chat · Listening",
-        );
-        expect(await page.getAttribute("#chat-screen", "data-pending")).toBe(
-          "1",
-        );
         // The chat product counts unread messages; the others do not.
         expect(
           await row(page, "chat-v2:chat.test/lin")
@@ -293,8 +381,13 @@ describe("chat screen over providers", () => {
         expect(await page.locator(".chat-unread").count()).toBe(1);
         await screenshot(page, "inbox");
 
-        // A Nova conversation opens in the same view.
-        await row(page, `nova/0x${"4b".repeat(32)}`).click();
+        // Kim's conversation opens in the same view, named by the host.
+        expect(
+          await row(page, "chat-v2:people.test/kim")
+            .locator(".chat-row-title")
+            .innerText(),
+        ).toBe("kim.01");
+        await row(page, "chat-v2:people.test/kim").click();
         await message(page, "Yes, see you")
           .locator(".chat-tick", { hasText: "delivered" })
           .waitFor();
@@ -555,56 +648,10 @@ describe("chat screen over providers", () => {
   );
 
   test(
-    "reacts, blocks and unblocks, and leaves, through the providers that offer them",
+    "reacts in a product room through its worker, and the user's own messages take none",
     async () => {
       const { context, page, outside } = await open();
       try {
-        // Nova: react to Kim's message, then change the emoji.
-        await row(page, `nova/0x${"4b".repeat(32)}`).click();
-        const kimSays = message(page, "See you at ten?");
-        await kimSays.locator('[data-action="react"]').click();
-        await kimSays
-          .locator('.chat-reaction-picker [data-emoji="👍"]')
-          .click();
-        await kimSays
-          .locator('.chat-reaction[data-self="true"][data-emoji="👍"]')
-          .waitFor();
-        await kimSays.locator('[data-action="react"]').click();
-        await kimSays
-          .locator('.chat-reaction-picker [data-emoji="❤️"]')
-          .click();
-        await kimSays
-          .locator('.chat-reaction[data-self="true"][data-emoji="❤️"]')
-          .waitFor();
-        expect(await kimSays.locator('[data-emoji="👍"]').count()).toBe(0);
-        await screenshot(page, "reactions");
-
-        // Block from the conversation's options: it leaves the list, then comes back.
-        await page.click('[data-action="chat-options"]');
-        await page.click('dialog.prompt button:has-text("Block")');
-        await page.click(
-          'dialog.prompt button[data-tone="destructive"]:has-text("Block")',
-        );
-        await page.locator(".chat-list").waitFor();
-        expect(await row(page, `nova/0x${"4b".repeat(32)}`).count()).toBe(0);
-        await page.click('[data-action="blocked"]');
-        await screenshot(page, "blocked");
-        await page.click('[data-action="unblock"]');
-        await page
-          .locator(".chat-empty-title", { hasText: "No one is blocked" })
-          .waitFor();
-        await back(page);
-
-        // Leave: the conversation goes after the user confirms.
-        await row(page, `nova/0x${"4b".repeat(32)}`).click();
-        await page.click('[data-action="chat-options"]');
-        await page.click('dialog.prompt button:has-text("Leave chat")');
-        await page.click(
-          'dialog.prompt button[data-tone="destructive"]:has-text("Leave")',
-        );
-        await page.locator(".chat-list").waitFor();
-        expect(await row(page, `nova/0x${"4b".repeat(32)}`).count()).toBe(0);
-
         // A product room: the user's reaction goes to the worker as MessagePosted(Reaction).
         await row(page, "product:quiz.test/quiz").click();
         const welcome = message(page, "Welcome to the quiz");
@@ -630,158 +677,8 @@ describe("chat screen over providers", () => {
 
         const asked = await harness(page, (chat) => chat.asked());
         expect(asked).toEqual([
-          "nova react k1 👍",
-          "nova react k1 ❤️",
-          "nova block",
-          "nova unblock",
-          "nova leave",
           expect.stringMatching(/^quiz Reaction m-\S+ 🙏$/),
         ]);
-        expect(outside).toEqual([]);
-      } finally {
-        await context.close();
-      }
-    },
-    TEST_MS,
-  );
-
-  test(
-    "sends a file through a HOP node in the page, and fetches it only when asked",
-    async () => {
-      const { context, page, outside } = await open();
-      try {
-        await row(page, `nova/0x${"4b".repeat(32)}`).click();
-        // A generated 1×1 PNG: no real file is read.
-        const png = Buffer.from(
-          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-          "base64",
-        );
-        await page.fill(".chat-composer-input", "a synthetic pixel");
-        await page.setInputFiles(".chat-file-picker", {
-          name: "pixel.png",
-          mimeType: "image/png",
-          buffer: png,
-        });
-        const sent = message(page, "a synthetic pixel");
-        await sent.locator('[data-action="fetch-file"]').waitFor();
-        expect(await sent.locator(".chat-file-meta").first().innerText()).toBe(
-          `image/png · ${png.length} B · 1×1`,
-        );
-        expect(await sent.locator("img").count()).toBe(0);
-        await sent.locator('[data-action="fetch-file"]').click();
-        await sent.locator("img.chat-media").waitFor();
-        expect(
-          await sent
-            .locator("img.chat-media")
-            .evaluate((image) =>
-              (image as HTMLImageElement).src.startsWith("blob:"),
-            ),
-        ).toBe(true);
-        await screenshot(page, "file");
-        expect(await harness(page, (chat) => chat.asked())).toEqual([
-          `nova file pixel.png ${png.length}`,
-          expect.stringMatching(/^nova fetch file-/),
-        ]);
-        expect(outside).toEqual([]);
-      } finally {
-        await context.close();
-      }
-    },
-    TEST_MS,
-  );
-
-  test(
-    "calls over WebRTC with generated media, and stops every track when the call ends",
-    async () => {
-      const { context, page, outside } = await open();
-      try {
-        await row(page, `nova/0x${"4b".repeat(32)}`).click();
-        await page.click('[data-action="video-call"]');
-        await page.locator('.chat-call[data-state="connected"]').waitFor();
-        // Media flows both ways once the second negotiation, over the channel, is done.
-        await page.waitForFunction(() => {
-          const video =
-            document.querySelector<HTMLVideoElement>(".chat-call-remote");
-          const stream = video?.srcObject as MediaStream | null;
-          return (
-            (stream?.getVideoTracks().length ?? 0) > 0 &&
-            (video?.videoWidth ?? 0) > 0
-          );
-        });
-        await page.waitForFunction(
-          () =>
-            (window as unknown as ChatWindow).__chat
-              .kimCall()
-              ?.tracks.some((track) => track.startsWith("video")) === true,
-        );
-        await screenshot(page, "call-connected");
-        await page.click('[data-action="mute"]');
-        await page
-          .locator('[data-action="mute"]', { hasText: "Unmute" })
-          .waitFor();
-        await page.click('[data-action="hang-up"]');
-        await page.locator('.chat-call[data-state="ended"]').waitFor();
-        await page.waitForFunction(
-          () =>
-            (window as unknown as ChatWindow).__chat.kimCall()?.state ===
-            "ended",
-        );
-        // Hanging up stopped the camera and microphone on both sides.
-        expect(
-          await page.evaluate(() =>
-            (
-              document.querySelector<HTMLVideoElement>(".chat-call-local")
-                ?.srcObject as MediaStream | null
-            )
-              ?.getTracks()
-              .map((track) => track.readyState),
-          ),
-        ).toEqual(["ended", "ended"]);
-        await page.locator(".chat-call").waitFor({ state: "hidden" });
-        const asked = await harness(page, (chat) => chat.asked());
-        expect(asked.filter((entry) => entry.includes("call-offer"))).toEqual([
-          "nova call-offer",
-        ]);
-        expect(asked).toContain("kim call-answer");
-        expect(asked.at(-1)).toBe("nova call-closed");
-        expect(outside).toEqual([]);
-      } finally {
-        await context.close();
-      }
-    },
-    TEST_MS,
-  );
-
-  test(
-    "rings for an incoming call, opens nothing until accepted, and ends when the caller hangs up",
-    async () => {
-      const { context, page, outside } = await open();
-      try {
-        await harness(page, (chat) => chat.kimCalls(false));
-        await page.locator('.chat-call[data-state="incoming"]').waitFor();
-        // Nothing of this side is open before the user accepts.
-        expect(
-          await page.evaluate(
-            () =>
-              document.querySelector<HTMLVideoElement>(".chat-call-local")
-                ?.srcObject ?? null,
-          ),
-        ).toBeNull();
-        await screenshot(page, "call-incoming");
-        await page.click('[data-action="accept-call"]');
-        await page.locator('.chat-call[data-state="connected"]').waitFor();
-        await harness(page, (chat) => chat.kimHangsUp());
-        await page.locator('.chat-call[data-state="ended"]').waitFor();
-        expect(
-          await page.evaluate(() =>
-            (
-              document.querySelector<HTMLVideoElement>(".chat-call-local")
-                ?.srcObject as MediaStream | null
-            )
-              ?.getTracks()
-              .map((track) => `${track.kind}:${track.readyState}`),
-          ),
-        ).toEqual(["audio:ended"]);
         expect(outside).toEqual([]);
       } finally {
         await context.close();

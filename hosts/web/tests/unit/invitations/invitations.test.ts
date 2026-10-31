@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ChatKeys } from "../../../src/chat/nova/keys.js";
+import { ChatKeys } from "../../../src/invitations/chat-keys.js";
 import { WalletIdentityAuth } from "../../../src/invitations/wallet-auth.js";
 import { NotificationStore } from "../../../src/notifications/notifications.js";
 import { MemoryStorage } from "../../support/test-support.js";

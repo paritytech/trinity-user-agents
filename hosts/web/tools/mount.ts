@@ -4,8 +4,6 @@ import { workerChannel } from "../src/products/product-workers.js";
 import type { ActivityLog } from "./activity/log.js";
 import { mountActivityLog } from "./activity/view.js";
 import { bindDockResize } from "./dock-resize.js";
-import { mountChatDiagnostics } from "./inspector/chat-diagnostics-view.js";
-import type { ChatDiagnostics } from "./inspector/diagnostics.js";
 import { createFrameTap } from "./inspector/frame-tap.js";
 import { bindViewport } from "./viewport.js";
 import type { WorkerConsoleLog } from "./workers/console-log.js";
@@ -18,8 +16,6 @@ export interface ToolsPage {
   productFrame: HTMLElement;
   /** What the host did, for the inspector's Activity view. */
   activity: ActivityLog;
-  /** The session's chat events and payloads, for the inspector's Chat view. */
-  diagnostics: ChatDiagnostics;
   /** The product workers and their console lines, for the inspector's Workers view. */
   workers: WorkerSource;
   workerConsole: WorkerConsoleLog;
@@ -37,7 +33,6 @@ const INSPECTOR_NOTES = {
   activity:
     "What the host did, by category. Kept in memory in this tab, at most the last 500 events.",
   wire: "Frames stay in this tab and may carry sensitive payloads.",
-  chat: "Chat events are not TrUAPI frames. Metadata only unless payload capture is on; kept in memory and cleared when the session changes.",
   workers:
     "Product workers' state, and their console lines: the workers' own text, kept in memory and cleared when the session changes.",
 } as const;
@@ -45,8 +40,8 @@ const INSPECTOR_NOTES = {
 type InspectorView = keyof typeof INSPECTOR_NOTES;
 
 /**
- * Mount the developer tools' inspector, with its Activity, TrUAPI, Chat and
- * Workers views, the dock's resize handle and the Preview tab's sizes.
+ * Mount the developer tools' inspector, with its Activity, TrUAPI and Workers
+ * views, the dock's resize handle and the Preview tab's sizes.
  */
 export function mountTools(page: ToolsPage): Tools {
   const { element } = page;
@@ -57,10 +52,6 @@ export function mountTools(page: ToolsPage): Tools {
     element("activity-inspector"),
     element<HTMLOListElement>("log"),
     page.activity,
-  );
-  const chatDiagnosticsView = mountChatDiagnostics(
-    element("chat-diagnostics"),
-    page.diagnostics,
   );
   const inspectorNote = element("inspector-note");
   const inspectorViewButtons = [
@@ -99,7 +90,6 @@ export function mountTools(page: ToolsPage): Tools {
     }
     activityView.show(view === "activity");
     inspectorMount.hidden = view !== "wire";
-    chatDiagnosticsView.show(view === "chat");
     workersView.show(view === "workers");
     inspectorNote.textContent = INSPECTOR_NOTES[view];
   }

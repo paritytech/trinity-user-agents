@@ -1,11 +1,9 @@
-import type { ChatObserver } from "./nova/events.js";
 import type { ChatContact, ChatProvider, ProviderEvent } from "./provider.js";
 import type { ChatV2Host } from "./draft/host.js";
 import {
   ChatV2Provider,
   type ChatV2ProviderOptions,
 } from "./draft/provider.js";
-import { startNovaChat, type ChatSession } from "./nova-session.js";
 import {
   ProductRoomProvider,
   type ProductRoomDeps,
@@ -14,13 +12,12 @@ import {
 /**
  * The chat providers of the signed-in session, as the Chat screen sees them.
  *
- * One session (wallet, network and identity) has: the host's Nova chat, one
- * provider per product whose worker is listed or has rooms, and, when the
- * host runs the Chat Extension v2 draft bridge, one chat product provider per
- * listed worker. A session with no wallet keys ({@link ProductsOnlySession})
- * has the products' providers only. All of them run for the session, whichever screen or conversation is in front, and all of them are
- * disposed when the session ends or changes, so nothing one session started
- * answers into the next.
+ * One session (a wallet or a test user, on one network) has one provider per
+ * product whose worker is listed or has rooms, and, when the host runs the
+ * Chat Extension v2 draft bridge, one chat product provider per listed
+ * worker. All of them run for the session, whichever screen or conversation
+ * is in front, and all of them are disposed when the session ends or
+ * changes, so nothing one session started answers into the next.
  */
 
 export type InboxChange =
@@ -31,15 +28,11 @@ export type InboxChange =
 /** What the Chat screen reads from the inbox. */
 export interface ChatInboxView {
   signedIn(): boolean;
-  /** Why the host's own chat is off for this session, or null. */
-  problem(): string | null;
   providers(): readonly ChatProvider[];
   onChange(listener: (change: InboxChange) => void): () => void;
 }
 
 export interface ChatInboxDeps {
-  storage: Storage;
-  diagnostics: ChatObserver;
   rooms: ProductRoomDeps;
   /** The products whose workers are listed for the session. */
   workerNames(): string[];
@@ -51,37 +44,22 @@ export interface ChatInboxDeps {
   chatV2?: ChatV2Host;
   /** What the host lends `productId`'s v2 provider: names for its contact rooms, and starting chats. */
   chatV2Options?(productId: string): ChatV2ProviderOptions;
-  /**
-   * Whether the host's own Nova chat may run for a session, read when the
-   * session starts. Absent means always.
-   */
-  hostChat?(): boolean;
 }
 
-/**
- * A session with no wallet keys, such as a test user of the invitation demo:
- * it has the chat products' providers and no Nova chat.
- */
-export interface ProductsOnlySession {
+/** A signed-in session: a wallet's, or a test user's, which has no wallet keys. */
+export interface InboxSession {
   walletId: string;
   network: string;
+  /** Tells apart two sessions of one wallet, such as another identity. */
+  identity?: string;
 }
 
-export type InboxSession = ChatSession | ProductsOnlySession;
-
-const hasWallet = (session: InboxSession): session is ChatSession =>
-  "entropy" in session;
-
 const sessionKey = (session: InboxSession): string =>
-  hasWallet(session)
-    ? `${session.network}:${session.walletId}:${session.identityAccountId ?? ""}:${session.chatPublicKey ?? ""}`
-    : `${session.network}:${session.walletId}:products-only`;
+  `${session.network}:${session.walletId}:${session.identity ?? ""}`;
 
 export class ChatInbox implements ChatInboxView {
   private session: InboxSession | null = null;
   private key: string | null = null;
-  private refusal: string | null = null;
-  private nova: ChatProvider | null = null;
   private readonly products = new Map<string, ProductRoomProvider>();
   private readonly v2Products = new Map<string, ChatV2Provider>();
   private readonly unsubscribe = new Map<string, () => void>();
@@ -105,32 +83,14 @@ export class ChatInbox implements ChatInboxView {
     return this.session !== null;
   }
 
-  problem(): string | null {
-    return this.refusal;
-  }
-
   providers(): ChatProvider[] {
-    return [
-      ...(this.nova === null ? [] : [this.nova]),
-      ...this.products.values(),
-      ...this.v2Products.values(),
-    ];
-  }
-
-  /** The session's contacts, from every provider that offers them, one entry per account. */
-  contacts(): ChatContact[] {
-    const byAccount = new Map<string, ChatContact>();
-    for (const provider of this.providers())
-      for (const contact of provider.contacts?.() ?? [])
-        if (!byAccount.has(contact.account.toLowerCase()))
-          byAccount.set(contact.account.toLowerCase(), contact);
-    return [...byAccount.values()];
+    return [...this.products.values(), ...this.v2Products.values()];
   }
 
   /**
    * The people of the chat products' contact rooms, named by the host, for
-   * the host's own New chat picker only. They are not {@link contacts}: no
-   * other product gets them, and none is a payment recipient.
+   * the host's own New chat picker only. They are not contacts: no other
+   * product gets them, and none is a payment recipient.
    */
   roomPeople(): ChatContact[] {
     return [...this.v2Products.values()].flatMap((provider) =>
@@ -145,24 +105,10 @@ export class ChatInbox implements ChatInboxView {
     if (key === this.key) return;
     this.key = key;
     for (const provider of this.providers()) this.remove(provider);
-    this.nova = null;
     this.products.clear();
     this.v2Products.clear();
-    // Events of one session are not shown in the next.
-    this.deps.diagnostics.clear();
-    this.refusal = null;
-    if (session !== null) {
-      this.startHostChat(session);
-      this.syncProducts(false);
-    }
+    if (session !== null) this.syncProducts(false);
     this.emit({ type: "session" });
-  }
-
-  private startHostChat(session: InboxSession): void {
-    if (!hasWallet(session) || this.deps.hostChat?.() === false) return;
-    const nova = startNovaChat(session, this.deps);
-    if (typeof nova === "string") this.refusal = nova;
-    else this.nova = this.add(nova);
   }
 
   private add<T extends ChatProvider>(provider: T): T {

@@ -4,7 +4,7 @@ import {
   HostContacts,
   contactHandle,
 } from "../../../../src/contacts/contacts.js";
-import type { ChainDirectory } from "../../../../src/chat/nova/directory.js";
+import type { ChainDirectory } from "../../../../src/platform/chain-directory.js";
 import { FixtureContacts } from "../../../../fixtures/invitations/fixture-contacts.js";
 import {
   TEST_USERS,

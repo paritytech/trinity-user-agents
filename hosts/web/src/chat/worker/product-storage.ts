@@ -1,6 +1,6 @@
 import type { TrUApiClient } from "@parity/truapi";
 import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
-import { utf8 } from "../nova/codec.js";
+import { utf8 } from "../../platform/codec.js";
 
 const errorText = (error: unknown): string =>
   error instanceof Error ? error.message : JSON.stringify(error);

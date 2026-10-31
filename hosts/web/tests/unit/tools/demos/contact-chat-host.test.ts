@@ -13,7 +13,7 @@ import {
   TEST_USERS,
   testUserKeys,
 } from "../../../../fixtures/invitations/test-users.js";
-import { memoryDirectory } from "../../../support/nova-memory.js";
+import { memoryDirectory } from "../../../support/statement-memory.js";
 import { MemoryStorage } from "../../../support/test-support.js";
 
 /**
@@ -49,7 +49,10 @@ const quietDelivery: HostDelivery = {
 };
 
 /** A host whose identity checks answer `answers`, in order, and its timers, run by hand. */
-function host(answers: (IdentityProblem | null)[]) {
+function host(
+  answers: (IdentityProblem | null)[],
+  delivery: HostDelivery = quietDelivery,
+) {
   const keys = testUserKeys(TEST_USERS[0]!, "paseo");
   const timers: { delayMs: number; task: () => void }[] = [];
   const log: string[] = [];
@@ -60,7 +63,7 @@ function host(answers: (IdentityProblem | null)[]) {
     network: "paseo",
     self: bytesToHex(keys.chatPublic),
     auth: new WalletIdentityAuth(keys),
-    delivery: quietDelivery,
+    delivery,
     contacts: new DirectoryContacts({
       handles: {
         accountFor: () => null,
@@ -167,6 +170,21 @@ describe("Contact Chat's identity check for a wallet", () => {
       1,
     ]);
     tab.chat.stop();
+  });
+
+  // Sign-out and a change of wallet stop it: nothing it started may still
+  // listen or post for the wallet that left.
+  test("stopping it closes its delivery, once", async () => {
+    let closed = 0;
+    const tab = host([null], {
+      ...quietDelivery,
+      close: () => (closed += 1),
+    });
+    await tab.chat.start();
+    tab.chat.stop();
+    tab.chat.stop();
+
+    expect(closed).toBe(1);
   });
 
   test("checks no more once it is stopped", async () => {

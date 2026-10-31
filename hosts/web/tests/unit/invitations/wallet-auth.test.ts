@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import * as sr25519 from "@scure/sr25519";
-import type { ChainDirectory } from "../../../src/chat/nova/directory.js";
-import { identityProof } from "../../../src/chat/nova/protocol.js";
+import type { ChainDirectory } from "../../../src/platform/chain-directory.js";
+import { concat, text } from "../../../src/platform/codec.js";
+import { keyedBlake2b256 } from "../../../src/platform/crypto.js";
 import {
   openReply,
   openRequest,
@@ -155,8 +156,8 @@ describe("the wallet host proof", () => {
     ]).toEqual([false, false]);
   });
 
-  // The host proof uses the identity account and chat key Nova chat uses, so
-  // it must not double as Nova's identity proof.
+  // The host proof uses the identity account and chat key native chat uses,
+  // so it must not double as a native chat identity proof.
   test("is not a native chat identity proof", () => {
     const keys = keysOf(ALICE);
     const evidence = authOf(ALICE).evidence(
@@ -164,7 +165,7 @@ describe("the wallet host proof", () => {
       digest("transcript", "one"),
       peer(BOB),
     );
-    const native = identityProof(
+    const native = nativeIdentityProof(
       keys.agree(keysOf(BOB).chatPublic),
       keys.identity,
       keys.identity,
@@ -186,6 +187,18 @@ describe("the wallet host proof", () => {
     ]).toEqual([new Uint8Array([1, 2, 3]), null, null]);
   });
 });
+
+/**
+ * A version 2 native chat request's identity proof, as the Polkadot apps
+ * make it over the same identity and chat keys: the identity and the signing
+ * account, keyed by the secret the two chat keys agree.
+ */
+const nativeIdentityProof = (
+  secret: Uint8Array,
+  identity: Uint8Array,
+  signer: Uint8Array,
+): Uint8Array =>
+  keyedBlake2b256(secret, concat(identity, signer, text("mds-chat-request")));
 
 describe("a request and its reply under wallet keys", () => {
   const PRODUCT = { id: "chat.paseo", name: "Chat" };

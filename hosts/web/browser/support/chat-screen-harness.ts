@@ -3,8 +3,9 @@
  * conversation view and providers, with synthetic data and nothing behind
  * them that reaches a network.
  *
- * - Nova: the real provider over a stand-in engine with one contact and one
- *   request. No keys, statements or chain.
+ * - People: the real Chat Extension v2 draft provider over a stand-in
+ *   conversation engine in this page (`serveConversations`), with one
+ *   conversation, with Kim, a contact of the host's, and starting chats.
  * - Product rooms: the real provider over the host's TrUAPI Chat store, with a
  *   stand-in worker channel that draws a counter card and echoes text.
  * - Chat product: the real Chat Extension v2 draft provider and host end,
@@ -15,12 +16,6 @@
 import type { HexString } from "@parity/truapi/scale";
 import type { RendererNode } from "@parity/truapi";
 import type { ProductContext } from "@parity/truapi-host";
-import type {
-  ChatSnapshot,
-  IncomingCallSignal,
-} from "../../src/chat/nova/engine.js";
-import { CallManager } from "../../src/chat/nova/call.js";
-import { decodeMessage, encodeMessage } from "../../src/chat/nova/protocol.js";
 import type { ChatInboxView, InboxChange } from "../../src/chat/inbox.js";
 import type { ChatProvider } from "../../src/chat/provider.js";
 import { ChatScreen } from "../../src/chat/screen.js";
@@ -30,6 +25,11 @@ import {
   fixtureDirectory,
 } from "../../src/contacts/username-directory.js";
 import { messagePortBridge } from "../../src/chat/draft/contract.js";
+import {
+  serveConversations,
+  type ConversationEngine,
+  type ServedConversations,
+} from "../../src/chat/draft/conversations.js";
 import { ChatV2Host } from "../../src/chat/draft/host.js";
 import {
   chatV2Over,
@@ -40,31 +40,22 @@ import {
   startSyntheticChatProduct,
   type SyntheticChatProduct,
 } from "../../fixtures/products/synthetic-chat-product.js";
-import {
-  NovaChatProvider,
-  type NovaEngine,
-} from "../../src/chat/nova-provider.js";
 import { ProductChat, productChatKey } from "../../src/chat/product-chat.js";
 import {
   ProductRoomProvider,
   type RoomChannel,
 } from "../../src/chat/product-room-provider.js";
 import { MemoryStorage } from "../../tests/support/test-support.js";
-import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
-import * as sr25519 from "@scure/sr25519";
-import { cryptoRandom } from "../../src/chat/nova/crypto.js";
-import { MemoryHopNode } from "../../fixtures/nova/hop-memory.js";
-import { hopDownload, hopUpload } from "../../src/chat/nova/hop.js";
-
-/** The HOP node files go through in this page: in memory, with real sealing and checks. */
-const hopNode = new MemoryHopNode();
-const HOP_URL = "wss://hop.invalid";
-const hopSecret = sr25519.secretFromSeed(new Uint8Array(32).fill(5));
+import {
+  WalletContacts,
+  walletRecordKey,
+} from "../../src/contacts/wallet-contacts.js";
 
 const QUIZ = "quiz.test";
 const CHAT_PRODUCT = "chat.test";
+const PEOPLE = "people.test";
 const KIM = `0x${"4b".repeat(32)}` as HexString;
-const SAM = `0x${"5a".repeat(32)}` as HexString;
+const LOU = `0x${"10".repeat(32)}` as HexString;
 const ZED = `0x${"7e".repeat(32)}` as HexString;
 const EVE = `0x${"e5".repeat(32)}` as HexString;
 
@@ -88,262 +79,49 @@ const quizWorker: ProductContext = { productId: QUIZ, executionKind: "Worker" };
 /** What the stand-ins were asked to do, for the test to read. */
 export const asked: string[] = [];
 
-const YOU = `0x${"11".repeat(32)}` as HexString;
 /**
- * Generated media in place of a camera and microphone: a tone from WebAudio
- * and a canvas whose color changes. No device is opened.
+ * The people product's engine: one conversation, with Kim, by her account,
+ * and starts that it records and refuses.
  */
-async function media(video: boolean): Promise<MediaStream> {
-  const audio = new AudioContext();
-  const tone = audio.createOscillator();
-  const out = audio.createMediaStreamDestination();
-  tone.connect(out);
-  tone.start();
-  const tracks: MediaStreamTrack[] = out.stream.getAudioTracks();
-  if (video) {
-    const canvas = document.createElement("canvas");
-    canvas.width = 160;
-    canvas.height = 120;
-    const paint = canvas.getContext("2d")!;
-    let hue = 0;
-    setInterval(() => {
-      paint.fillStyle = `hsl(${(hue += 7) % 360} 70% 50%)`;
-      paint.fillRect(0, 0, 160, 120);
-    }, 60);
-    tracks.push(...canvas.captureStream(15).getVideoTracks());
-  }
-  return new MediaStream(tracks);
-}
-
-/** A call signal as it would arrive: encoded and decoded through the chat wire. */
-function overWire(
-  account: HexString,
-  id: string,
-  signal: Parameters<CallManager["receive"]>[0]["content"],
-): IncomingCallSignal {
-  const at = Date.now();
-  const content = decodeMessage(
-    encodeMessage({ id, timestampMs: BigInt(at), content: signal }),
-  ).content as IncomingCallSignal["content"];
-  return { account, id, at, content };
-}
-
-/**
- * Kim's side of calls: a real call manager in this page, with
- * generated media. It answers every call it gets.
- */
-const callListeners = new Set<(signal: IncomingCallSignal) => void>();
-let nextCall = 1;
-export const kim = new CallManager({
-  send: async (_account, signal) => {
-    const id = `kim-call-${nextCall++}`;
-    asked.push(`kim ${signal.kind}`);
-    const delivered = overWire(KIM, id, signal);
-    queueMicrotask(() => {
-      for (const listener of callListeners) listener(delivered);
-    });
-    return id;
-  },
-  media,
-  rtc: { iceServers: [] },
-  now: Date.now,
-});
-let kimAnswers = true;
-kim.subscribe(() => {
-  const held = kim.current();
-  if (kimAnswers && held?.session.state === "incoming")
-    void held.session.accept();
-});
-
-function novaEngine(): NovaEngine {
+function peopleEngine(): ConversationEngine {
   const start = Date.UTC(2026, 9, 20, 9, 0, 0);
-  const snapshot: ChatSnapshot = {
-    status: { state: "listening" },
-    account: `0x${"11".repeat(32)}` as HexString,
-    chatKey: `0x${"22".repeat(32)}` as HexString,
-    name: "you.01",
-    chainKey: "matches",
-    canSend: true,
-    requests: [
-      {
-        id: "request-sam",
-        peer: SAM,
-        peerChatKey: null,
-        name: "sam.01",
-        welcome: "Hi, it is Sam from the meetup",
-        at: start + 60_000,
-        version: 2,
-        problem: null,
-      },
-    ],
-    contacts: [
-      {
-        account: KIM,
-        chatKey: `0x${"33".repeat(32)}` as HexString,
-        name: "kim.01",
-        state: "active",
-        messages: [
-          {
-            id: "k1",
-            direction: "in",
-            kind: "text",
-            text: "See you at ten?",
-            at: start,
-            status: "received",
-          },
-          {
-            id: "k2",
-            direction: "out",
-            kind: "text",
-            text: "Yes, see you",
-            at: start + 30_000,
-            status: "acknowledged",
-          },
-        ],
-        outbound: null,
-        expiry: { request: null, response: null },
-        acknowledged: null,
-      },
-    ],
-    skipped: [],
-  };
-  const listeners = new Set<() => void>();
-  const change = () => {
-    for (const listener of listeners) listener();
-  };
   return {
-    snapshot: () => snapshot,
-    onChange: (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    start: async () => {},
-    stop: () => {},
-    accept: async () => {},
-    decline: () => {},
-    startChat: async (target, welcome) => {
-      asked.push(`nova startChat ${target} ${welcome}`);
+    conversations: () => [
+      {
+        id: "kim",
+        title: "Kim",
+        participants: [{ id: "kim", name: "Kim", account: KIM }],
+        composer: { allowed: true },
+        contact: { account: KIM, state: "Established" },
+      },
+    ],
+    messages: () => [
+      {
+        id: "k1",
+        author: { kind: "participant", id: "kim" },
+        text: "See you at ten?",
+        at: start,
+        state: "received",
+      },
+      {
+        id: "k2",
+        author: { kind: "self" },
+        text: "Yes, see you",
+        at: start + 30_000,
+        state: "delivered",
+      },
+    ],
+    send: async () => {
       throw new Error("Not in this test.");
     },
-    send: async () => {},
     retry: async () => {},
-    react: async (account, messageId, emoji) => {
-      asked.push(`nova react ${messageId} ${emoji}`);
-      const target = snapshot.contacts
-        .find((contact) => contact.account === account)
-        ?.messages.find((message) => message.id === messageId);
-      if (target === undefined) return;
-      const mine = target.reactions?.find((entry) => entry.from === "self");
-      target.reactions = [
-        ...(target.reactions ?? []).filter((entry) => entry.from !== "self"),
-        ...(emoji === null || emoji === mine?.emoji
-          ? []
-          : [{ emoji, from: "self" as const }]),
-      ];
-      change();
-    },
-    block: async (account) => {
-      asked.push(`nova block`);
-      const contact = snapshot.contacts.find((c) => c.account === account);
-      if (contact) contact.blocked = true;
-      change();
-    },
-    unblock: async (account) => {
-      asked.push(`nova unblock`);
-      const contact = snapshot.contacts.find((c) => c.account === account);
-      if (contact) delete contact.blocked;
-      change();
-    },
-    fileProblem: () => null,
-    fetchProblem: (attachment) =>
-      attachment.identifier === undefined ? "Not uploaded." : null,
-    sendFile: async (account, file, caption) => {
-      asked.push(`nova file ${file.name} ${file.bytes.length}`);
-      const contact = snapshot.contacts.find((c) => c.account === account)!;
-      const message = {
-        id: `file-${contact.messages.length}`,
-        direction: "out" as const,
-        kind: "text" as const,
-        text: caption,
-        at: Date.now(),
-        status: "pending" as const,
-        attachments: [
-          {
-            node: HOP_URL,
-            kind:
-              file.image === undefined ? ("file" as const) : ("image" as const),
-            mimeType: file.mimeType,
-            size: file.bytes.length,
-            ...file.image,
-            name: file.name,
-          },
-        ],
-      };
-      contact.messages.push(message);
-      change();
-      const sent = await hopUpload(
-        hopNode.connect(),
-        file.bytes,
-        {
-          publicKey: sr25519.getPublicKey(hopSecret),
-          sign: (payload) => sr25519.sign(hopSecret, payload),
-        },
-        { random: cryptoRandom, now: Date.now },
+    start: async (target, welcome) => {
+      asked.push(
+        `people start ${"reference" in target ? target.reference : target.handle.bytes} ${welcome}`,
       );
-      Object.assign(message.attachments[0], {
-        identifier: bytesToHex(sent.identifier),
-        ticket: bytesToHex(sent.ticket),
-      });
-      Object.assign(message, { status: "acknowledged" });
-      change();
+      throw new Error("Not in this test.");
     },
-    cancel: () => {},
-    fetchFile: async (account, messageId, index) => {
-      asked.push(`nova fetch ${messageId}`);
-      const attachment = snapshot.contacts
-        .find((c) => c.account === account)!
-        .messages.find((m) => m.id === messageId)!.attachments![index];
-      return hopDownload(
-        hopNode.connect(),
-        {
-          identifier: hexToBytes(attachment.identifier!),
-          ticket: hexToBytes(attachment.ticket!),
-        },
-        1024 * 1024,
-      );
-    },
-    sendCall: async (account, signal) => {
-      const id = `you-call-${nextCall++}`;
-      asked.push(`nova ${signal.kind}`);
-      if (signal.kind === "call-offer") {
-        snapshot.contacts
-          .find((contact) => contact.account === account)
-          ?.messages.push({
-            id,
-            direction: "out",
-            kind: "call",
-            text: "",
-            at: Date.now(),
-            status: "acknowledged",
-            call: { video: signal.video },
-          });
-        change();
-      }
-      const delivered = overWire(YOU, id, signal);
-      queueMicrotask(() => kim.receive(delivered));
-      return id;
-    },
-    onCall: (listener) => {
-      callListeners.add(listener);
-      return () => callListeners.delete(listener);
-    },
-    leave: async (account) => {
-      asked.push(`nova leave`);
-      snapshot.contacts = snapshot.contacts.filter(
-        (contact) => contact.account !== account,
-      );
-      change();
-    },
+    onChange: () => () => {},
   };
 }
 
@@ -432,13 +210,10 @@ class TestInbox implements ChatInboxView {
     bridge: ChatV2Product;
     product: SyntheticChatProduct;
   } | null = null;
+  private people: ServedConversations | null = null;
 
   signedIn(): boolean {
     return true;
-  }
-
-  problem(): string | null {
-    return null;
   }
 
   providers(): readonly ChatProvider[] {
@@ -508,14 +283,22 @@ class TestInbox implements ChatInboxView {
     });
     const channel = quizChannel(chat);
     this.stopProduct();
+    this.people?.stop();
     this.chatV2?.reset();
-    this.chatV2 = new ChatV2Host({ media: () => null, log: () => {} });
+    this.chatV2 = new ChatV2Host({
+      media: () => null,
+      contactRooms: (productId) => productId === PEOPLE,
+      log: () => {},
+    });
     await this.startProduct();
+    await this.startPeople();
     this.list = [
-      new NovaChatProvider(novaEngine(), undefined, {
-        media,
-        rtc: { iceServers: [] },
-        now: Date.now,
+      new ChatV2Provider(PEOPLE, this.chatV2, Date.now, {
+        names: (account) => (account === KIM ? "kim.01" : null),
+        start: {
+          target: (account) => ({ contact: account }),
+          blocked: () => null,
+        },
       }),
       new ProductRoomProvider(QUIZ, {
         chat,
@@ -538,6 +321,19 @@ class TestInbox implements ChatInboxView {
         this.emit({ type: "provider", providerId: provider.id, event }),
       );
     this.emit({ type: "session" });
+  }
+
+  /** Start the people product's engine behind the bridge, and wait for its rooms. */
+  private async startPeople(): Promise<void> {
+    const channel = new MessageChannel();
+    this.chatV2!.connect(PEOPLE, messagePortBridge(channel.port2));
+    this.people = serveConversations(
+      chatV2Over(messagePortBridge(channel.port1)),
+      peopleEngine(),
+      // Kim's message was read before, so no conversation here has unread messages.
+      { reads: { get: () => "k2", set: () => {} } },
+    );
+    await this.people.ready;
   }
 
   /** Start the chat product, as its worker would start, and wait for its rooms. */
@@ -581,40 +377,76 @@ export interface ChatHarness {
   startWith(account: HexString, name: string, found: boolean): boolean;
   /** What the stand-in engine and worker were asked, in order. */
   asked(): string[];
-  /** Kim's side of the call, as it stands. */
-  kimCall(): { state: string; tracks: string[] } | null;
-  /** Kim calls the user, and does not answer calls until the next session. */
-  kimCalls(video: boolean): Promise<void>;
-  /** Kim hangs up. */
-  kimHangsUp(): void;
+  /** How many times the core was told contacts left. */
+  removals(): number;
+}
+
+/** The wallet's saved chat record: Kim, and Lou, whom the user blocked. */
+function walletContacts(): WalletContacts {
+  const key = walletRecordKey("test", "wallet");
+  const storage = new MemoryStorage();
+  const contact = (account: HexString, name: string, blocked: boolean) => ({
+    account,
+    chatKey: `0x${"cc".repeat(32)}`,
+    name,
+    state: "active",
+    messages: [],
+    outbound: null,
+    expiry: { request: null, response: null },
+    acknowledged: null,
+    ...(blocked ? { blocked } : {}),
+  });
+  storage.setItem(
+    key,
+    JSON.stringify({
+      contacts: [contact(KIM, "kim.01", false), contact(LOU, "lou.01", true)],
+      requests: [],
+      declined: [],
+      left: [],
+    }),
+  );
+  const contacts = new WalletContacts(storage);
+  contacts.setSession({ key, scope: key, offered: () => true });
+  return contacts;
 }
 
 export async function mountChatScreen(root: HTMLElement): Promise<ChatHarness> {
   const inbox = new TestInbox();
+  const saved = walletContacts();
+  let removals = 0;
   const people = new HostContacts({
-    list: () =>
-      inbox.providers().flatMap((provider) => provider.contacts?.() ?? []),
-    onChange: (listener) => inbox.onChange(() => listener()),
+    list: () => saved.contacts(),
+    onChange: (listener) => saved.onChange(listener),
     choose: (asker, contacts, blocked) =>
       chooseContact(asker, contacts, usernames, blocked),
-    blocked: () =>
-      inbox
-        .providers()
-        .flatMap((provider) => provider.blocked?.() ?? [])
-        .map((summary) => summary.id as HexString),
+    blocked: () => saved.blocked(),
     onSessionChange: (listener) =>
       inbox.onChange((change) => {
         if (change.type === "session") listener();
       }),
-    removed: () => {},
+    // The core is told a contact left: their handle stops resolving.
+    removed: () => (removals += 1),
     // No core runs here, so the host names no contact handle.
     mint: async () => undefined,
   });
   const screen = new ChatScreen(
     root,
     inbox,
-    (pending) => (root.dataset.pending = String(pending)),
     () => people.choose({ title: "New chat" }),
+    undefined,
+    {
+      list: () => saved.blockedPeople(),
+      blockable: () => saved.blockable(),
+      choose: () =>
+        chooseContact(
+          { title: "Block a contact" },
+          saved.blockable(),
+          fixtureDirectory("your contacts", []),
+        ),
+      block: (account) => saved.block(account),
+      unblock: (account) => saved.unblock(account),
+      onChange: (listener) => saved.onChange(listener),
+    },
   );
   await inbox.session();
   screen.show(true);
@@ -631,22 +463,6 @@ export async function mountChatScreen(root: HTMLElement): Promise<ChatHarness> {
     startWith: (account, name, found) =>
       screen.startWith({ account, name, found }),
     asked: () => [...asked],
-    kimCall: () => {
-      const held = kim.current();
-      if (held === null) return null;
-      return {
-        state: held.session.state,
-        tracks: [
-          ...(held.session.local?.getTracks() ?? []),
-          ...(held.session.remote?.getTracks() ?? []),
-        ].map((track) => `${track.kind}:${track.readyState}`),
-      };
-    },
-    kimCalls: async (video) => {
-      kimAnswers = false;
-      kim.clear();
-      await kim.start(YOU, video);
-    },
-    kimHangsUp: () => kim.current()?.session.hangUp(),
+    removals: () => removals,
   };
 }

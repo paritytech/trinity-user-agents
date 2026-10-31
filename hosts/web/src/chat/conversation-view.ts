@@ -256,6 +256,12 @@ export class ConversationView {
     readonly provider: ChatProvider,
     readonly conversationId: string,
     private readonly onBack: () => void,
+    /** Blocking the conversation's person, when the host keeps them as a contact. Absent: no options. */
+    private readonly blocking?: {
+      /** The person the user may block now, or null. */
+      person(): { account: string; name: string } | null;
+      block(account: string): void;
+    },
   ) {
     this.epoch = provider.epoch();
     this.thread.setAttribute("role", "log");
@@ -492,7 +498,6 @@ export class ConversationView {
       el("span", "chat-row-title", summary?.title ?? ""),
       el("span", "chat-row-preview", summary?.subtitle ?? this.provider.label),
     );
-    const controls = this.provider.controls?.(this.conversationId) ?? {};
     const more: HTMLElement[] = [];
     const calls = this.provider.calls;
     if (calls !== undefined) {
@@ -516,9 +521,10 @@ export class ConversationView {
         more.push(call);
       }
     }
-    if (controls.block || controls.leave) {
+    const person = this.blocking?.person() ?? null;
+    if (person !== null) {
       const open = button("chat-icon-button chat-more", "⋯", () => {
-        void this.openControls();
+        void this.openControls(person);
       });
       open.setAttribute("aria-label", "Chat options");
       open.dataset.action = "chat-options";
@@ -530,6 +536,36 @@ export class ConversationView {
       heading,
       ...more,
     );
+  }
+
+  /** The conversation's options: blocking its person, after the user confirms. */
+  private async openControls(person: {
+    account: string;
+    name: string;
+  }): Promise<void> {
+    const choice = await ask<"block" | null>({
+      title: person.name,
+      fields: [],
+      layout: "list",
+      choices: [
+        { label: "Block", value: "block", tone: "destructive" },
+        { label: "Cancel", value: null, tone: "cancel" },
+      ],
+      dismissed: null,
+    });
+    if (choice === null) return;
+    const confirmed = await ask<boolean>({
+      title: `Block ${person.name}?`,
+      subtitle:
+        "They are not told. They leave the contact picker, so no product can pick or pay them, and their requests are not answered, until you unblock them in Blocked.",
+      fields: [],
+      choices: [
+        { label: "Cancel", value: false, tone: "cancel" },
+        { label: "Block", value: true, tone: "destructive" },
+      ],
+      dismissed: false,
+    });
+    if (confirmed) this.blocking!.block(person.account);
   }
 
   private drawFooter(): void {
@@ -601,70 +637,6 @@ export class ConversationView {
         this.drawFooter();
       });
     };
-  }
-
-  /** The conversation's own controls, such as blocking or leaving, behind one button. */
-  private async openControls(): Promise<void> {
-    const controls = this.provider.controls?.(this.conversationId) ?? {};
-    const title = this.summary?.title ?? "this chat";
-    type Choice = "block" | "leave" | null;
-    const choice = await ask<Choice>({
-      title,
-      fields: [],
-      layout: "list",
-      choices: [
-        ...(controls.block && this.provider.block !== undefined
-          ? [
-              {
-                label: "Block",
-                value: "block" as const,
-                tone: "destructive" as const,
-              },
-            ]
-          : []),
-        ...(controls.leave && this.provider.leave !== undefined
-          ? [
-              {
-                label: "Leave chat",
-                value: "leave" as const,
-                tone: "destructive" as const,
-              },
-            ]
-          : []),
-        { label: "Cancel", value: null, tone: "cancel" },
-      ],
-      dismissed: null,
-    });
-    if (choice === null) return;
-    const confirmed = await ask<boolean>({
-      title:
-        choice === "block"
-          ? `Block ${title}?`
-          : `Leave the chat with ${title}?`,
-      subtitle:
-        choice === "block"
-          ? "They are not told. Their chat leaves your list and the contact picker, and what they send is not read until you unblock them in Blocked."
-          : "They are told that you left. The chat leaves your list and its messages are kept on this device. They can send a new request later.",
-      fields: [],
-      choices: [
-        { label: "Cancel", value: false, tone: "cancel" },
-        {
-          label: choice === "block" ? "Block" : "Leave",
-          value: true,
-          tone: "destructive",
-        },
-      ],
-      dismissed: false,
-    });
-    if (!confirmed) return;
-    this.error = null;
-    try {
-      if (choice === "block") await this.provider.block!(this.conversationId);
-      else await this.provider.leave!(this.conversationId);
-    } catch (error) {
-      this.error = errorText(error);
-      this.drawFooter();
-    }
   }
 
   /** Send the file the user picked, with what they typed as its caption. */

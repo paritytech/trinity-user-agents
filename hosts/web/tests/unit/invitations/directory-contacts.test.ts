@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bytesToHex } from "@parity/truapi/scale";
 import { DirectoryContacts } from "../../../src/invitations/directory-contacts.js";
-import { memoryDirectory } from "../../support/nova-memory.js";
+import { memoryDirectory } from "../../support/statement-memory.js";
 
 const BOB = new Uint8Array(32).fill(0xb0);
 const BOB_ACCOUNT = bytesToHex(BOB);

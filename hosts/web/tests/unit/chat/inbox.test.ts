@@ -1,11 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { ProductContext } from "@parity/truapi-host";
-import { ChatDiagnostics } from "../../../tools/inspector/diagnostics.js";
 import { ChatInbox, type InboxChange } from "../../../src/chat/inbox.js";
 import { messagePortBridge } from "../../../src/chat/draft/contract.js";
 import { ChatV2Host } from "../../../src/chat/draft/host.js";
 import { chatV2Over } from "../../../src/chat/draft/product.js";
-import type { ChatSession } from "../../../src/chat/nova-session.js";
 import { ProductChat, productChatKey } from "../../../src/chat/product-chat.js";
 import { MemoryStorage } from "../../support/test-support.js";
 
@@ -14,17 +12,7 @@ const worker = (productId: string): ProductContext => ({
   executionKind: "Worker",
 });
 
-/** A session whose Nova chat stays off, so only product providers run. */
-const session = (walletId: string): ChatSession =>
-  ({
-    walletId,
-    entropy: new Uint8Array(16).fill(walletId.length),
-    network: "paseo",
-    networkSuffix: "paseo",
-    identityAccountId: undefined,
-    chatPublicKey: undefined,
-    username: undefined,
-  }) as unknown as ChatSession;
+const session = (walletId: string) => ({ walletId, network: "paseo" });
 
 function setup() {
   const storage = new MemoryStorage();
@@ -33,8 +21,6 @@ function setup() {
   const workers = new Set<() => void>();
   let names: string[] = [];
   const inbox = new ChatInbox({
-    storage,
-    diagnostics: new ChatDiagnostics(),
     rooms: {
       chat,
       channel: () => null,
@@ -71,7 +57,6 @@ describe("chat inbox", () => {
   test("has one room provider per listed worker or product with rooms, and one chat product provider per listed worker", async () => {
     const { inbox, chat, signIn, setWorkers } = setup();
     signIn("w1");
-    expect(inbox.problem()).toContain("did not report");
     expect(ids(inbox)).toEqual([]);
     setWorkers(["game.paseo"]);
     await chat.platform.createChatRoom(worker("quiz.paseo"), {

@@ -1,14 +1,14 @@
 import * as sr25519 from "@scure/sr25519";
 import type { NotificationClaim } from "@parity/truapi-host/web";
-import { deriveHardSecret } from "../chat/nova/keys.js";
+import { deriveHardSecret } from "./chat-keys.js";
 import {
   decodeStatement,
   encodeSigned,
   statementHash,
   verifyStatement,
-} from "../chat/nova/statement.js";
-import type { StatementStoreLike } from "../chat/nova/engine.js";
-import { isStored } from "../chat/nova/statement-store.js";
+} from "../platform/statement.js";
+import type { StatementStoreLike } from "../platform/statement-store.js";
+import { isStored } from "../platform/statement-store.js";
 import type { DeliveryReceiver, HostDelivery, IdentityKeys } from "./ports.js";
 import { digest, fromHex, toHex } from "./sealing.js";
 

@@ -17,7 +17,11 @@ import {
   usernameLookup,
 } from "../../../src/contacts/contacts.js";
 import type { PromptLookupView } from "../../../src/app/prompt.js";
-import { settle } from "../../support/test-support.js";
+import { MemoryStorage, settle } from "../../support/test-support.js";
+import {
+  WalletContacts,
+  walletRecordKey,
+} from "../../../src/contacts/wallet-contacts.js";
 
 const product: ProductContext = {
   productId: "pay.paseo",
@@ -403,6 +407,43 @@ describe("the host's names for contact handles", () => {
       host.contacts.handleFor(KIM),
       host.contacts.handleFor(SAM),
     ]).toEqual([null, null]);
+  });
+
+  // A block must reach the core at once: a handle a product holds for the
+  // person stops resolving, so no transaction pays them.
+  test("blocking a saved contact tells the core, and their handle no longer resolves", async () => {
+    const storage = new MemoryStorage();
+    const key = walletRecordKey("paseo", "w1");
+    storage.setItem(
+      key,
+      JSON.stringify({
+        contacts: [{ account: KIM, name: "kim.01", state: "active" }],
+        requests: [],
+      }),
+    );
+    const saved = new WalletContacts(storage);
+    saved.setSession({ key, scope: key, offered: () => true });
+    let removed = 0;
+    const contacts = new HostContacts({
+      list: () => saved.contacts(),
+      onChange: (listener) => saved.onChange(listener),
+      choose: async () => null,
+      blocked: () => saved.blocked(),
+      onSessionChange: () => () => {},
+      removed: () => (removed += 1),
+      mint: async (accounts) =>
+        accounts.map((account) => contactHandle(KEY, account)),
+    });
+    const resolve = () =>
+      contacts.platform
+        .contacts({ handleKey: KEY, handles: [contactHandle(KEY, KIM)] })
+        .then((matches) => matches.accounts[0]);
+    expect([await resolve(), removed]).toEqual([KIM, 0]);
+
+    saved.block(KIM);
+    expect([await resolve(), removed]).toEqual([undefined, 1]);
+    saved.unblock(KIM);
+    expect(await resolve()).toBe(KIM);
   });
 
   test("a new chat session, or a change that names no one new, asks the core again only when it must", async () => {

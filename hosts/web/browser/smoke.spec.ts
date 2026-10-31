@@ -853,7 +853,7 @@ describe("the dock", () => {
   );
 
   test(
-    "refuses Chat for the public phrase and stores nothing",
+    "runs no wallet chat for the public phrase, and stores nothing",
     async () => {
       const context = await newContext();
       try {
@@ -865,20 +865,30 @@ describe("the dock", () => {
           "Sign in to chat",
         );
 
+        // Contact Chat for this wallet is on, so only the phrase keeps it off.
+        await page.evaluate(() =>
+          sessionStorage.setItem(
+            "truapi-web-signing-host:dev:wallet-contact-chat",
+            "on",
+          ),
+        );
         await signIn(page);
+        await logged(
+          page,
+          "host",
+          "Contact Chat does not run for this wallet: Not available for the public development phrase.",
+        );
         await page
           .locator(".chat-empty-title")
-          .filter({ hasText: "Chat is unavailable" })
+          .filter({ hasText: "Add your first contact" })
           .waitFor();
-        expect(await page.locator(".chat-empty-body").innerText()).toContain(
-          "public development phrase",
-        );
-        expect(
-          await page.getAttribute("#chat-screen", "data-chat-engine"),
-        ).toBe("off");
+        expect(await page.locator('[aria-label="New chat"]').count()).toBe(0);
+        expect(await page.locator("#worker-frames iframe").count()).toBe(0);
         expect(
           await page.evaluate(() =>
-            Object.keys(localStorage).filter((key) => key.includes(":chat:")),
+            Object.keys(localStorage).filter(
+              (key) => key.includes(":chat:") || key.includes(":requests:"),
+            ),
           ),
         ).toEqual([]);
       } finally {
@@ -889,57 +899,34 @@ describe("the dock", () => {
   );
 
   test(
-    "starts Chat at sign-in, with Chat hidden, and stops it at sign-out",
+    "runs the wallet's Contact Chat at sign-in, with Chat hidden, and stops it at sign-out",
     async () => {
       const context = await newContext();
       // No chain traffic: the light client gets no peer, so nothing is read
-      // or published, while the engine still starts and subscribes.
+      // or published.
       await context.routeWebSocket(/.*/, (socket) => socket.close());
       try {
         const page = await openHost(context);
-        await signInWith(page, SYNTHETIC_MNEMONIC);
-        // Chat runs for the session while Browse or Pocket is in front.
-        await page.click('#dock [data-destination="pocket"]');
-        await page.waitForFunction(
-          () =>
-            document.querySelector<HTMLElement>("#chat-screen")?.dataset
-              .chatEngine !== "off",
+        await page.evaluate(() =>
+          sessionStorage.setItem(
+            "truapi-web-signing-host:dev:wallet-contact-chat",
+            "on",
+          ),
         );
+        await page.click('#dock [data-destination="pocket"]');
+        await signInWith(page, SYNTHETIC_MNEMONIC);
+        // Its worker, the only one, runs for the session while Pocket is in front.
+        await page
+          .locator("#worker-frames iframe")
+          .waitFor({ state: "attached" });
         expect(await page.locator("#chat-screen").isHidden()).toBe(true);
 
         await page.click('#dock [data-destination="chat"]');
-        // The host derives the identity and chat key and does not run when
-        // either differs from what the core reports.
-        const who = page.locator(".chat-identity-who");
-        await who.waitFor();
-        const identity = (await page.getAttribute("#session", "title"))?.match(
-          /Identity account (0x[0-9a-f]{64})/,
-        )?.[1];
-        expect(identity).toBeDefined();
-        expect(await who.getAttribute("title")).toContain(
-          `Identity account ${identity}`,
-        );
+        expect(await page.locator('[aria-label="New chat"]').count()).toBe(1);
         // There are no controls to turn chat or writes on.
         expect(
           await page.locator('[data-action^="chat-"], .chat-toggle').count(),
         ).toBe(0);
-
-        // The inspector's Chat view lists the engine's events with no product
-        // open, apart from the TrUAPI traces.
-        await openTools(page, "inspector");
-        await page.click('[data-inspector-view="chat"]');
-        await page.locator("#chat-diagnostics").waitFor({ state: "visible" });
-        expect(await page.locator("#inspector-mount").isHidden()).toBe(true);
-        await page
-          .locator(".chat-diag-row", { hasText: "starting" })
-          .first()
-          .waitFor();
-        expect(await page.locator("#product-slot iframe").count()).toBe(0);
-        const diagnostics = await page.locator("#chat-diagnostics").innerText();
-        expect(diagnostics).not.toContain(identity!);
-        await page.click('[data-inspector-view="wire"]');
-        expect(await page.locator("#inspector-mount").isVisible()).toBe(true);
-        await page.click('[data-inspector-view="chat"]');
 
         await openMenu(page);
         await page.click("#sign-out");
@@ -947,11 +934,15 @@ describe("the dock", () => {
           .locator(".chat-empty-title")
           .filter({ hasText: "Sign in to chat" })
           .waitFor();
+        await page
+          .locator("#worker-frames iframe")
+          .waitFor({ state: "detached" });
+        // The host wrote no chat record of its own.
         expect(
-          await page.getAttribute("#chat-screen", "data-chat-engine"),
-        ).toBe("off");
-        // The signed-out session's events are gone.
-        expect(await page.locator(".chat-diag-row").count()).toBe(0);
+          await page.evaluate(() =>
+            Object.keys(localStorage).filter((key) => key.includes(":chat:")),
+          ),
+        ).toEqual([]);
       } finally {
         await context.close();
       }
@@ -1247,7 +1238,7 @@ describe("contacts", () => {
   const SAM = `0x${"5a".repeat(32)}`;
   const PENDING = `0x${"6c".repeat(32)}`;
 
-  /** A saved Nova chat record, in the shape `src/chat/nova/store.ts` keeps: two accepted contacts and one request still waiting. */
+  /** A wallet's saved chat record (`src/contacts/wallet-contacts.ts`): two accepted contacts and one request still waiting. */
   const contact = (
     account: string,
     name: string,
@@ -1435,7 +1426,7 @@ describe("chat as a product", () => {
   });
   const WALLET_ID = "chat-product-fixture-wallet";
   const KIM = `0x${"4b".repeat(32)}`;
-  /** A saved Nova chat record with one accepted contact, so the picker has someone. */
+  /** A wallet's saved chat record with one accepted contact, so the picker has someone. */
   const RECORD = {
     contacts: [
       {
@@ -1475,7 +1466,7 @@ describe("chat as a product", () => {
       });
       const context = await browser.newContext();
       context.setDefaultTimeout(STEP_MS);
-      // No chain: Nova starts from its saved record and reaches no one.
+      // No chain: the picker offers the wallet's saved contacts and nothing reaches anyone.
       await context.routeWebSocket(/.*/, (socket) => socket.close());
       await serveNames(context, [
         {

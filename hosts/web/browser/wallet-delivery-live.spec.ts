@@ -9,7 +9,7 @@
  * request form and the host's Send prompt. The tab's network refuses every
  * submission (`tools/demos/no-submit.ts`), and the test checks it was
  * never even asked for one: the request ends paused with the claim the
- * runtime would accept, Nova chat never starts, and nothing leaves. A failed
+ * runtime would accept, and nothing leaves. A failed
  * run keeps its evidence (`browser/support/live.ts`).
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -79,9 +79,6 @@ suite(
             .waitFor();
           const paused = await problem.first().innerText();
           const guard = (await guardOf(page))!;
-          const engine = await page
-            .locator("#chat-screen")
-            .getAttribute("data-chat-engine");
           console.log(
             JSON.stringify({ paused, guard, firstNote: sent.firstNote }),
           );
@@ -96,7 +93,6 @@ suite(
             ),
           ).toEqual([]);
           expect(guard.passed.state_call ?? 0).toBeGreaterThan(0);
-          expect(engine).toBe("off");
           expect(errors).toEqual([]);
         } catch (error) {
           if (page !== null)

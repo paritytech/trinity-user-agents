@@ -1,15 +1,15 @@
-import { equalBytes } from "../../src/chat/nova/codec.js";
+import { equalBytes } from "../../src/platform/codec.js";
 import type {
   AccountNames,
   ChainDirectory,
   PeopleConsumer,
-} from "../../src/chat/nova/directory.js";
-import type { StatementStoreLike } from "../../src/chat/nova/engine.js";
-import { decodeStatement } from "../../src/chat/nova/statement.js";
+} from "../../src/platform/chain-directory.js";
+import type { StatementStoreLike } from "../../src/platform/statement-store.js";
+import { decodeStatement } from "../../src/platform/statement.js";
 import type {
   SubmitResult,
   TopicFilter,
-} from "../../src/chat/nova/statement-store.js";
+} from "../../src/platform/statement-store.js";
 
 /**
  * A statement store in memory with the store's own rules: a subscription gets

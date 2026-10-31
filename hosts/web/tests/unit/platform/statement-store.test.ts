@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { MemoryStatementRpc } from "../../../../fixtures/nova/memory-rpc.js";
-import { StatementStore } from "../../../../src/chat/nova/statement-store.js";
+import { MemoryStatementRpc } from "../../support/statement-rpc-memory.js";
+import { StatementStore } from "../../../src/platform/statement-store.js";
 
 describe("statement store tap", () => {
   test("sees each JSON-RPC text exactly as it is sent and received", async () => {

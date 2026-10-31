@@ -1087,44 +1087,12 @@ body[data-surface="browse"] .stage-empty {
   padding: 0 16px 16px;
 }
 
-.chat-identity {
-  margin: 0 0 16px;
-  padding: 12px 14px;
-  border-radius: 16px;
-  background: var(--chat-surface);
-}
-
-.chat-identity p {
-  margin: 0;
-}
-
 .chat-identity-line {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 13px;
   color: var(--chat-secondary);
-}
-
-.chat-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--chat-secondary);
-}
-
-.chat-identity[data-status="ready"] .chat-dot {
-  background: #4ade80;
-}
-
-.chat-identity[data-status="failed"] .chat-dot {
-  background: var(--chat-danger);
-}
-
-.chat-identity-who {
-  margin-top: 4px !important;
-  font-weight: 600;
-  overflow-wrap: anywhere;
 }
 
 .chat-note {
@@ -1151,23 +1119,6 @@ body[data-surface="browse"] .stage-empty {
   color: var(--chat-secondary);
   text-transform: none;
   letter-spacing: 0;
-}
-
-.chat-request {
-  padding: 12px;
-  border-radius: 20px;
-  background: var(--chat-surface);
-}
-
-.chat-request + .chat-request {
-  margin-top: 8px;
-}
-
-.chat-request-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 12px;
 }
 
 .chat-pill {
@@ -1288,17 +1239,6 @@ body[data-surface="browse"] .stage-empty {
 .chat-empty-body {
   margin-top: 6px !important;
   color: var(--chat-secondary);
-}
-
-.chat-skipped {
-  margin-top: 16px;
-  font-size: 12px;
-  color: var(--chat-secondary);
-}
-
-.chat-skipped p {
-  margin: 6px 0 0;
-  overflow-wrap: anywhere;
 }
 
 .chat-form {
@@ -1436,6 +1376,20 @@ body[data-surface="browse"] .stage-empty {
   color: var(--chat-danger);
 }
 
+.chat-inbox-links {
+  margin: 16px 0 0;
+  font-size: 13px;
+  color: var(--chat-secondary);
+}
+
+.chat-blocked > .chat-row {
+  padding: 10px 16px;
+}
+
+.chat-more {
+  font-size: 22px;
+}
+
 .chat-link {
   padding: 0;
   border: none;
@@ -1508,12 +1462,6 @@ body[data-surface="browse"] .stage-empty {
   color: #fff;
   font: 600 12px/20px var(--chat-body-font);
   text-align: center;
-}
-
-.chat-inbox-links {
-  margin: 16px 0 0;
-  font-size: 13px;
-  color: var(--chat-secondary);
 }
 
 .chat-earlier {
@@ -1636,10 +1584,6 @@ button.chat-reaction {
   justify-content: flex-end;
 }
 
-.chat-blocked > .chat-row {
-  padding: 10px 16px;
-}
-
 .chat-attachments {
   display: grid;
   gap: 6px;
@@ -1759,10 +1703,6 @@ button.chat-reaction {
   background: #e5484d;
   border-color: #e5484d;
   color: #fff;
-}
-
-.chat-more {
-  font-size: 22px;
 }
 
 /* Product chats: the cards a product's worker draws. */
@@ -1953,28 +1893,6 @@ button.chat-reaction {
   color: transparent;
 }
 
-/* A count over a dock button: chat requests waiting, or notifications not seen. */
-.dock-badge {
-  position: absolute;
-  top: 6px;
-  left: calc(50% + 4px);
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  box-sizing: border-box;
-  border-radius: 8px;
-  background: #4d8dff;
-  color: #fff;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 16px;
-  text-align: center;
-}
-
-.dock-badge[hidden] {
-  display: none;
-}
-
 /* On Apps: something in the Inbox is not seen yet. Apps' own count is open products. */
 .dock-dot {
   position: absolute;
@@ -2079,69 +1997,6 @@ body[data-loading="on"] .stage-empty {
   background: var(--surface);
   color: var(--text);
   box-shadow: 0 0 0 1px var(--hairline);
-}
-
-.chat-diagnostics {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.chat-diagnostics[hidden] {
-  display: none;
-}
-
-.chat-diag-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 4px 10px;
-  border-bottom: 1px solid var(--hairline);
-  color: var(--muted);
-  font-size: 11.5px;
-}
-
-.chat-diag-clear {
-  width: auto;
-  padding: 2px 8px;
-  font-size: 11.5px;
-}
-
-.chat-diag-list {
-  flex: 1;
-  min-height: 0;
-  margin: 0;
-  padding: 0;
-  overflow: auto;
-  list-style: none;
-  font: 11.5px/1.45 var(--mono);
-}
-
-.chat-diag-row {
-  display: grid;
-  grid-template-columns: auto 72px 1fr;
-  gap: 10px;
-  padding: 3px 10px;
-  border-bottom: 1px solid var(--hairline);
-}
-
-.chat-diag-row time {
-  color: var(--muted);
-}
-
-.chat-diag-type {
-  color: var(--muted);
-}
-
-.chat-diag-text {
-  overflow-wrap: anywhere;
-}
-
-.chat-diag-row[data-problem="true"] .chat-diag-type,
-.chat-diag-row[data-problem="true"] .chat-diag-text {
-  color: var(--warning);
 }
 
 .scrim {
@@ -3413,8 +3268,7 @@ body[data-dev-side="bottom"] .dev-panel:not(.inspector) {
   margin: 0;
 }
 
-.inspector-mount,
-.chat-diagnostics {
+.inspector-mount {
   overflow: hidden;
   border: 1px solid #1d1f24;
   border-radius: 12px;
@@ -3594,20 +3448,6 @@ body[data-search="open"] .dock button:not(.dock-pill) {
   height: 6px;
   border-radius: 50%;
   background: #6bc880;
-}
-
-.dock-badge {
-  top: 5px;
-  left: calc(50% + 5px);
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 9px;
-  font:
-    600 11px/18px Inter,
-    system-ui,
-    sans-serif;
-  box-shadow: 0 0 0 2px #0b0c0f;
 }
 
 /* ---- Sheets over the app: the Apps shelf and the Pill's card ---- */
@@ -4453,8 +4293,7 @@ body[data-search="open"] .product-slot::after {
   text-align: right;
 }
 
-.inspector-mount,
-.chat-diagnostics {
+.inspector-mount {
   border-radius: 0 0 12px 12px;
 }
 

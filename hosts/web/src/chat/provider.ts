@@ -16,13 +16,13 @@ import type { RenderHooks } from "../products/render.js";
  * nudges: after one, the screen reads the provider again, unless the event
  * carries the changed message.
  *
- * This is the web host's own seam, not TrUAPI. Three providers implement it:
- * the host's Nova chat engine, the rooms product workers keep through TrUAPI
- * Chat, and the rooms chat products keep themselves over the Chat Extension
- * v2 draft bridge (`src/chat/draft/`).
+ * This is the web host's own seam, not TrUAPI. Two providers implement it:
+ * the rooms product workers keep through TrUAPI Chat, and the rooms chat
+ * products keep themselves over the Chat Extension v2 draft bridge
+ * (`src/chat/draft/`).
  */
 export interface ChatProvider {
-  /** Unique on the screen, such as `nova` or `product:<productId>`. */
+  /** Unique on the screen, such as `product:<productId>`. */
   readonly id: string;
   /** What the provider is called on the screen. */
   readonly label: string;
@@ -60,15 +60,6 @@ export interface ChatProvider {
     messageId: string,
     emoji: string | null,
   ): Promise<void>;
-  /** What the user can do to the conversation itself now. */
-  controls?(conversationId: string): ConversationControls;
-  /** Block the conversation's person. See {@link ConversationControls.block}. */
-  block?(conversationId: string): Promise<void>;
-  unblock?(conversationId: string): Promise<void>;
-  /** The conversations the user blocked, which the list leaves out. */
-  blocked?(): readonly ConversationSummary[];
-  /** Leave the conversation. See {@link ConversationControls.leave}. */
-  leave?(conversationId: string): Promise<void>;
   /** Sending and opening files, for providers that move them. */
   readonly files?: FileTransfer;
   /** Audio and video calls, for providers that place them. */
@@ -90,32 +81,9 @@ export interface ChatProvider {
   ): () => void;
   /** Starting a conversation, for providers that can. */
   readonly start?: StartChat;
-  /** Requests from people who want to chat, for providers that have them. */
-  readonly requests?: RequestInbox;
-  /** The provider's own account and notes about it, for providers that have one. */
-  account?(): ProviderAccount;
-  /**
-   * The people the user chats with here, for the host's contact picker.
-   * Only a provider whose peers' accounts the host itself established offers
-   * them: a contact can become a payment recipient, so a name or account a
-   * product asserted is not one.
-   */
-  contacts?(): readonly ChatContact[];
   subscribe(listener: (event: ProviderEvent) => void): () => void;
   /** Stop the provider. Nothing it started outlives this. */
   dispose(): void;
-}
-
-/** What a conversation offers now. A control that is absent or false is not shown. */
-export interface ConversationControls {
-  /**
-   * Blocking is local: the person is not told, their conversation leaves
-   * the list and the contact picker, and what they send is not read until
-   * they are unblocked.
-   */
-  block?: boolean;
-  /** Leaving tells the person, then takes the conversation off the list. */
-  leave?: boolean;
 }
 
 /** How a provider moves files. The bytes go through the provider, never a URL a message names. */
@@ -322,23 +290,7 @@ export interface StartChat {
   conversationWith?(account: string): string | null;
 }
 
-export interface ChatRequest {
-  id: string;
-  title: string;
-  seed: string;
-  preview: string;
-  at: number;
-  /** Why it cannot be accepted, when it cannot. */
-  problem: string | null;
-}
-
-export interface RequestInbox {
-  list(): readonly ChatRequest[];
-  /** Accept a request. Resolves to the id of the conversation it opened. */
-  accept(requestId: string): Promise<string>;
-  decline(requestId: string): void;
-}
-
+/** A person the host can name and offer in its contact picker. */
 export interface ChatContact {
   /** The person's 32-byte account. */
   account: HexString;
@@ -346,17 +298,6 @@ export interface ChatContact {
   name: string;
   /** When the last message with them was sent or received, when the provider keeps one. */
   lastActiveAt?: number;
-}
-
-export interface ProviderAccount {
-  /** Who the user is to this provider, as shown. */
-  name: string;
-  /** More about it, for the tooltip. */
-  title: string;
-  /** Things the user should know, such as a missing allowance. */
-  notes: readonly string[];
-  /** Input the provider saw and set aside. */
-  setAside: readonly string[];
 }
 
 /** Messages in one page of a provider's history. */
