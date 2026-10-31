@@ -16,6 +16,13 @@ export const CALLBACK_NAMES = [
   "registerChatBot",
   "postChatMessage",
   "setChatRoomFooter",
+  "listChatRooms",
+  "readChatRoomConfig",
+  "setChatRoomConfig",
+  "setChatRoomMetadata",
+  "setChatRoomPreview",
+  "deleteChatRoom",
+  "updateChatFeed",
   "contacts",
   "pickContact",
   "readCoreStorage",
@@ -204,6 +211,13 @@ function chatRawCallbacks(
     | "postChatMessage"
     | "setChatRoomFooter"
     | "subscribeChatRooms"
+    | "listChatRooms"
+    | "readChatRoomConfig"
+    | "setChatRoomConfig"
+    | "setChatRoomMetadata"
+    | "setChatRoomPreview"
+    | "deleteChatRoom"
+    | "updateChatFeed"
   >
 > {
   return {
@@ -235,6 +249,41 @@ function chatRawCallbacks(
         sendItem,
         sendError,
       ),
+    listChatRooms: (product) =>
+      bridge.callbackRequest("listChatRooms", [product]) as ReturnType<
+        Required<RawCallbacks>["listChatRooms"]
+      >,
+    readChatRoomConfig: (product, roomId) =>
+      bridge.callbackRequest("readChatRoomConfig", [
+        product,
+        roomId,
+      ]) as ReturnType<Required<RawCallbacks>["readChatRoomConfig"]>,
+    setChatRoomConfig: (product, request) =>
+      bridge.callbackRequest("setChatRoomConfig", [
+        product,
+        request,
+      ]) as ReturnType<Required<RawCallbacks>["setChatRoomConfig"]>,
+    setChatRoomMetadata: (product, request) =>
+      bridge.callbackRequest("setChatRoomMetadata", [
+        product,
+        request,
+      ]) as ReturnType<Required<RawCallbacks>["setChatRoomMetadata"]>,
+    setChatRoomPreview: (product, request) =>
+      bridge.callbackRequest("setChatRoomPreview", [
+        product,
+        request,
+      ]) as ReturnType<Required<RawCallbacks>["setChatRoomPreview"]>,
+    deleteChatRoom: (product, request) =>
+      bridge.callbackRequest("deleteChatRoom", [
+        product,
+        request,
+      ]) as ReturnType<Required<RawCallbacks>["deleteChatRoom"]>,
+    updateChatFeed: (product, request, persist) =>
+      bridge.callbackRequest("updateChatFeed", [
+        product,
+        request,
+        persist,
+      ]) as ReturnType<Required<RawCallbacks>["updateChatFeed"]>,
   };
 }
 

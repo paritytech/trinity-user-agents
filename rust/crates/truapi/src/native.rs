@@ -42,7 +42,8 @@ pub use callbacks::{
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
 pub use errors::{
-	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
+	HostRejection, NativeChatFeedRejection, NativeChatFieldError, NativeCoreDatabaseError,
+	NativeRendererError,
 };
 pub use renderer::{NativeRendererObserver, NativeRendererSubscription};
 pub use runtime::{
