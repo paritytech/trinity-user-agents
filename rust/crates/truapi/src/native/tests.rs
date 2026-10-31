@@ -3339,3 +3339,39 @@ fn screening_normalizes_and_trims() {
 	assert_eq!(screen_pocket_card_id("  cafe\u{301}  ".to_string()).unwrap(), "caf\u{e9}");
 	assert!(screen_pocket_card_id("   ".to_string()).is_err());
 }
+
+/// The bridge hands its markers to a host without passing through the tracing
+/// layer, so the table check and the detail cap are applied on that path too.
+mod bridge_lines {
+	use super::*;
+	use crate::{logging::HOST_SINK_DETAIL_MAX_CHARS, native::runtime::forward_bridge_line};
+
+	fn recorded(marker: &str, detail: &str) -> Vec<(String, String)> {
+		let callbacks = EventCallbacks::new();
+		forward_bridge_line(&callbacks, marker, detail);
+		let logs = callbacks.logs.lock().expect("logs mutex poisoned").clone();
+		logs
+	}
+
+	#[test]
+	fn a_listed_marker_reaches_the_host() {
+		let logs = recorded("truapi.ws_bridge.started", "port=1 runtime_id=2");
+		assert_eq!(
+			logs,
+			vec![("truapi.ws_bridge.started".to_string(), "port=1 runtime_id=2".to_string())]
+		);
+	}
+
+	#[test]
+	fn an_unlisted_marker_is_dropped() {
+		assert!(recorded("truapi.ws_bridge.invented", "anything").is_empty());
+	}
+
+	#[test]
+	fn a_long_detail_is_capped_on_this_path_too() {
+		let detail = "x".repeat(HOST_SINK_DETAIL_MAX_CHARS * 3);
+		let logs = recorded("truapi.ws_bridge.read_error", &detail);
+		assert_eq!(logs.len(), 1);
+		assert_eq!(logs[0].1.chars().count(), HOST_SINK_DETAIL_MAX_CHARS);
+	}
+}
