@@ -854,7 +854,7 @@ to `playground/test-results/ios-chat/diagnosis-report.md`. The product builds
 against the workspace-linked `@parity/truapi`. Override the product source,
 identity, SPA URL, room, input, or report path with
 `IOS_CHAT_PRODUCT_DIR`, `IOS_CHAT_PRODUCT_HOST`, `IOS_CHAT_PRODUCT_URL`,
-`TRUAPI_IOS_E2E_CHAT_ROOM_ID`, `TRUAPI_IOS_E2E_CHAT_MESSAGE`, or
+`TRUAPI_IOS_E2E_CHAT_ROOM_ID_SOURCE`, `TRUAPI_IOS_E2E_CHAT_MESSAGE`, or
 `TRUAPI_IOS_E2E_CHAT_REPORT`.
 
 The same harness can run the legacy Product SDK worker from the sibling

@@ -191,17 +191,19 @@ impl crate::platform::ChatPlatform for WasmPlatform {
     async fn create_chat_room(
         &self,
         product: &crate::platform::ProductContext,
+        room_id: String,
         request: latest::HostChatCreateRoomRequest,
-    ) -> Result<latest::HostChatCreateRoomResponse, latest::HostChatCreateRoomError> {
+    ) -> Result<latest::ChatRoomRegistrationStatus, latest::HostChatCreateRoomError> {
         let bytes = invoke_bytes_return(
             &self.bridge.create_chat_room,
             vec![
                 Uint8Array::from(product.encode().as_slice()).into(),
+                JsValue::from_str(&room_id),
                 Uint8Array::from(request.encode().as_slice()).into(),
             ],
         )
         .await?;
-        Ok(decode_bytes::<latest::HostChatCreateRoomResponse>(
+        Ok(decode_bytes::<latest::ChatRoomRegistrationStatus>(
             bytes,
             "createChatRoom response did not decode",
         )?)
