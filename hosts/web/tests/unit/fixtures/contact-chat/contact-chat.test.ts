@@ -28,6 +28,8 @@ import {
 } from "../../../../src/invitations/sealing.js";
 import { NotificationStore } from "../../../../src/notifications/notifications.js";
 import { MemoryStorage } from "../../../support/test-support.js";
+import { KeptStorage } from "../../../support/product-storage.js";
+import type { ProductStorage } from "../../../../src/chat/worker/truapi-ports.js";
 import { SUFFIX, hostContactsOf } from "../../../support/host-handles.js";
 import { WalletIdentityAuth } from "../../../../src/invitations/wallet-auth.js";
 import { FixtureContacts } from "../../../../fixtures/invitations/fixture-contacts.js";
@@ -45,10 +47,7 @@ import {
   testUserKeys,
   type TestUser,
 } from "../../../../fixtures/invitations/test-users.js";
-import {
-  ContactChat,
-  INVITATION_TTL_MS,
-} from "../../../../fixtures/products/contact-chat/engine.js";
+import { ContactChat } from "../../../../fixtures/products/contact-chat/engine.js";
 import {
   openFrame,
   sealFrame,
@@ -102,7 +101,9 @@ class Clock {
 /** One user's host, and Contact Chat as its worker. */
 class User {
   readonly hostStorage = new MemoryStorage();
-  readonly productStorage = new MemoryStorage();
+  /** What the host keeps of Contact Chat's storage, which outlives its worker. */
+  readonly kept = new KeptStorage();
+  productStorage!: ProductStorage;
   readonly notifications: NotificationStore;
   readonly contacts: FixtureContacts;
   readonly prompts: SendPrompt[] = [];
@@ -147,6 +148,7 @@ class User {
   /** Start the host and the worker (again, over the same storage). */
   async start(): Promise<void> {
     await this.contacts.refresh();
+    this.productStorage = await this.kept.open(["record"]);
     const auth = new WalletIdentityAuth(testUserKeys(this.user, SUFFIX));
     this.service = new InvitationService({
       product: PRODUCT,
@@ -536,7 +538,7 @@ describe("Contact Chat between two hosts, by contact handle", () => {
     provider.dispose();
   });
 
-  test("decline is silent: nothing goes back, the request expires, and a new one can be sent", async () => {
+  test("decline is silent: nothing goes back, the request waits until the user cancels it in the host, and a new one can be sent", async () => {
     const { clock, alice, bob } = world();
     await alice.start();
     await bob.start();
@@ -548,9 +550,16 @@ describe("Contact Chat between two hosts, by contact handle", () => {
     expect(bob.provider.conversations()).toEqual([]);
     expect(alice.provider.composer(roomId).kind).toBe("blocked");
 
-    clock.advance(INVITATION_TTL_MS + 1);
+    clock.advance(3 * 24 * 60 * 60_000);
     await settle();
-    expect(alice.engine.stored()[0]!.status).toBe("expired");
+    expect(alice.engine.stored()[0]!.status).toBe("waiting");
+    const sent = alice.engine.stored()[0]!.request!;
+    expect(alice.service.requestCancel(sent)).toEqual({
+      ok: true,
+      request: expect.objectContaining({ status: "cancelled" }),
+    });
+    await settle();
+    expect(alice.engine.stored()[0]!.status).toBe("cancelled");
     expect(alice.provider.composer(roomId)).toEqual({
       kind: "blocked",
       reason: "Start a new chat with them to send a request",

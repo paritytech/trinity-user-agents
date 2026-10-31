@@ -200,6 +200,11 @@ export class HostContacts implements HandleNames {
     return this.indexStatus;
   }
 
+  /** The people {@link HostContactsDeps.named} gives may have changed: ask the core for handles again if so. */
+  namesChanged(): void {
+    this.reindex(false);
+  }
+
   accountFor(handle: string): HexString | null {
     return this.byHandle.get(handle.toLowerCase()) ?? null;
   }

@@ -58,6 +58,14 @@ export interface ContactService {
   handleForIdentity(signingPublic: string): ContactHandle | null;
   /** Calls back whenever {@link handleFor} may answer differently. Answers an unsubscribe. */
   onChange(listener: () => void): () => void;
+  /**
+   * Read the published key of the person with this identity, or of whom
+   * `contact` names, when it is not read yet, so {@link byIdentity} and
+   * {@link resolve} can answer. Absent where every key is read up front.
+   */
+  learn?(
+    person: { identity: string } | { contact: ContactHandle },
+  ): Promise<void>;
 }
 
 export type EvidenceKind = "Request" | "Reply";
@@ -104,6 +112,11 @@ export interface DeliveryReceiver {
   request(sealed: string): void;
   /** A sealed reply on a return route this host watches. */
   reply(route: string, sealed: string): void;
+  /**
+   * Whether the delivery can keep the post under `id` posted: a reason when
+   * it cannot, such as an allowance it lacks, or null once it can again.
+   */
+  posting(id: string, problem: string | null): void;
 }
 
 /**
@@ -118,27 +131,31 @@ export interface DeliveryReceiver {
  *   the request it answers. What a route is, such as a topic or the sender's
  *   inbox with a tag, is the delivery's choice.
  *
- * Each post is repeated until withdrawn or `until`.
+ * A request stays posted until it is withdrawn: the delivery renews it on
+ * its own cadence while this host runs. A reply stays posted until `until`.
+ * Network retention is the delivery's; it says nothing of whether a request
+ * may still be answered.
  */
 export interface HostDelivery {
   listen(receiver: DeliveryReceiver): void;
+  /**
+   * The largest sealed post this delivery carries, in bytes. A request or
+   * reply that seals larger is refused before anything is asked or kept.
+   * Absent: no limit.
+   */
+  readonly maxPostBytes?: number;
   /** A new return route for one request, to this host. */
   returnRoute(): string;
   /** Whether `route` is one this delivery can post a reply on, to `requester`. */
   isReturnRoute(route: string, requester: IdentityKeys): boolean;
-  /** Post a request to `to`, under `id`. */
-  postRequest(
-    to: IdentityKeys,
-    id: string,
-    sealed: string,
-    until: number,
-  ): void;
+  /** Post a request to `to`, under `id`, until it is withdrawn. */
+  postRequest(to: IdentityKeys, id: string, sealed: string): void;
   /** Post a reply on a return route, under `id`. */
   postReply(route: string, id: string, sealed: string, until: number): void;
   /** Hand this host what arrives on a return route of its own, now and as it arrives. */
   watch(route: string): void;
   unwatch(route: string): void;
-  /** Stop posting `id`. What was posted stays until it lapses. */
+  /** Stop posting and renewing `id`. What was posted stays until it lapses. */
   withdraw(id: string): void;
   close(): void;
 }

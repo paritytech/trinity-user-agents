@@ -29,7 +29,7 @@ import {
  * reply, and the transcripts their authentication evidence covers.
  *
  * - A request carries its context (both identities, the product, the request
- *   id, the deadline, the return route the sender's delivery chose and the
+ *   id, when it was made, the return route the sender's delivery chose and the
  *   public reply key),
  *   the product's payload and the sender's evidence over all of it. It is
  *   sealed to the recipient's identity key.
@@ -70,7 +70,6 @@ export interface RequestContext {
   purpose: string;
   requestId: string;
   createdAt: number;
-  deadline: number;
   /** Where the reply reaches the sender, as the sender's delivery chose it. Opaque here. */
   returnRoute: string;
   /** The public reply-envelope key. */
@@ -109,7 +108,6 @@ export function requestTranscript(
     context.purpose,
     context.requestId,
     String(context.createdAt),
-    String(context.deadline),
     context.returnRoute,
     context.replyKey,
     payloadDigest(payload),
@@ -164,7 +162,6 @@ function readRequestContext(value: unknown): RequestContext | null {
     readPurpose(item.purpose).ok &&
     isHexOf(item.requestId, REQUEST_ID_BYTES) &&
     isTime(item.createdAt) &&
-    isTime(item.deadline) &&
     typeof item.returnRoute === "string" &&
     item.returnRoute !== "" &&
     item.returnRoute.length <= ROUTE_MAX_CHARS &&
@@ -177,7 +174,6 @@ function readRequestContext(value: unknown): RequestContext | null {
         purpose: item.purpose as string,
         requestId: item.requestId,
         createdAt: item.createdAt,
-        deadline: item.deadline,
         returnRoute: item.returnRoute,
         replyKey: item.replyKey,
       }
@@ -267,7 +263,17 @@ export function sealRequest(
 
 export type OpenedRequest =
   | { ok: true; peer: Person; context: RequestContext; payload: string }
-  | { ok: false; reason: string };
+  | Refused;
+
+/**
+ * Why an envelope was refused. `sealedElsewhere` when it does not open with
+ * this host's key at all: on a shared inbox, someone else's post.
+ */
+export interface Refused {
+  ok: false;
+  reason: string;
+  sealedElsewhere: boolean;
+}
 
 /**
  * Open a request sealed to this host and authenticate it: from a contact, to
@@ -279,12 +285,21 @@ export function openRequest(
   sealed: string,
   contact: (signingPublic: string) => Person | undefined,
 ): OpenedRequest {
-  const refuse = (reason: string): OpenedRequest => ({ ok: false, reason });
+  const refuse = (reason: string): OpenedRequest => ({
+    ok: false,
+    reason,
+    sealedElsewhere: false,
+  });
   const bytes = hexBytes(sealed);
   if (bytes === null || bytes > ENVELOPE_MAX_BYTES)
     return refuse("not a request");
   const plain = auth.openSealed(fromHex(sealed), REQUEST_SEAL);
-  if (plain === null) return refuse("not sealed to this host");
+  if (plain === null)
+    return {
+      ok: false,
+      reason: "not sealed to this host",
+      sealedElsewhere: true,
+    };
   const opened = parse(plain, readRequestContext);
   if (opened === null) return refuse("not a request");
   const { context, payload, evidence } = opened;
@@ -298,6 +313,23 @@ export function openRequest(
   )
     return refuse("its evidence does not check");
   return { ok: true, peer, context, payload };
+}
+
+/**
+ * Whom a request sealed to this host says it is from, before anything is
+ * checked: only to know whose published key to read before
+ * {@link openRequest} authenticates it. Null when it does not open or read.
+ */
+export function requestSender(
+  auth: IdentityAuth,
+  sealed: string,
+): string | null {
+  const bytes = hexBytes(sealed);
+  if (bytes === null || bytes > ENVELOPE_MAX_BYTES) return null;
+  const plain = auth.openSealed(fromHex(sealed), REQUEST_SEAL);
+  return plain === null
+    ? null
+    : (parse(plain, readRequestContext)?.context.from ?? null);
 }
 
 /** The reply from this host to `peer`'s `request`, authenticated and sealed to its reply key. */
@@ -341,9 +373,7 @@ export interface ExpectedReply {
   replyKey: X25519Pair;
 }
 
-export type OpenedReply =
-  | { ok: true; payload: string }
-  | { ok: false; reason: string };
+export type OpenedReply = { ok: true; payload: string } | Refused;
 
 /**
  * Open a reply with the request's reply key and authenticate it: from the
@@ -355,12 +385,21 @@ export function openReply(
   expected: ExpectedReply,
   sealed: string,
 ): OpenedReply {
-  const refuse = (reason: string): OpenedReply => ({ ok: false, reason });
+  const refuse = (reason: string): OpenedReply => ({
+    ok: false,
+    reason,
+    sealedElsewhere: false,
+  });
   const bytes = hexBytes(sealed);
   if (bytes === null || bytes > ENVELOPE_MAX_BYTES)
     return refuse("not a reply");
   const plain = openSealed(expected.replyKey, fromHex(sealed), REPLY_SEAL);
-  if (plain === null) return refuse("not sealed to this request");
+  if (plain === null)
+    return {
+      ok: false,
+      reason: "not sealed to this request",
+      sealedElsewhere: true,
+    };
   const opened = parse(plain, readReplyContext);
   if (opened === null) return refuse("not a reply");
   const { context, payload, evidence } = opened;

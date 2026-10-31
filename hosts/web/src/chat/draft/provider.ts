@@ -75,13 +75,15 @@ export interface ChatV2ProviderOptions {
   /**
    * What the product gets for a start with `account`: an opaque reference
    * only the host's own services can resolve, or the contact handle the
-   * host knows them by. Throws when the person cannot be offered. Absent: no
-   * start.
+   * host knows them by, which the host may first have to mint. Throws, or
+   * rejects, when the person cannot be offered. Absent: no start.
    */
   start?: {
-    target(account: string): StartRequestTarget;
+    target(account: string): StartRequestTarget | Promise<StartRequestTarget>;
     /** Why a conversation cannot be started now, or null. */
     blocked(): string | null;
+    /** Calls back when {@link blocked} may answer differently. Answers an unsubscribe. */
+    onChange?(listener: () => void): () => void;
   };
 }
 
@@ -282,9 +284,16 @@ export class ChatV2Provider implements ChatProvider {
     private readonly options: ChatV2ProviderOptions = {},
   ) {
     if (options.start !== undefined) this.start = this.starter(options.start);
-    this.stopNames =
-      options.onNamesChange?.(() => this.emit({ type: "conversations" })) ??
+    const stopNames =
+      options.onNamesChange?.(() => this.namesChanged()) ?? (() => {});
+    // A start that was blocked may be open now: the screen draws it again.
+    const stopStart =
+      options.start?.onChange?.(() => this.emit({ type: "status" })) ??
       (() => {});
+    this.stopNames = () => {
+      stopNames();
+      stopStart();
+    };
     this.id = chatV2ProviderId(productId);
     this.label = `${productId} (Chat v2 draft)`;
     this.calls = new V2Calls(productId, host, (roomId) => this.title(roomId));
@@ -294,6 +303,16 @@ export class ChatV2Provider implements ChatProvider {
 
   private emit(event: ProviderEvent): void {
     this.listeners.emit(event);
+  }
+
+  /** The host's names changed: draw every room and its senders again with them. */
+  private namesChanged(): void {
+    this.emit({ type: "conversations" });
+    for (const [roomId, room] of this.state) {
+      if (room.labels.size === 0) continue;
+      room.labels.clear();
+      this.emit({ type: "messages", conversationId: roomId });
+    }
   }
 
   private follow(change: ChatV2Change): void {
@@ -415,7 +434,7 @@ export class ChatV2Provider implements ChatProvider {
         const known = this.roomWith(account);
         if (known !== undefined) return known.roomId;
         const request: ProductChatStartConversationRequest = {
-          ...start.target(account),
+          ...(await start.target(account)),
           ...(welcome === "" ? {} : { welcome }),
         };
         const answer = await this.host.query(

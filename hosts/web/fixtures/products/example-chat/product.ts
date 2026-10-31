@@ -54,9 +54,9 @@ const STATE_KEY = "example-chat:invitations:v2";
 
 const STATUS: Record<string, string> = {
   waiting: "Waiting",
+  paused: "Paused",
   completed: "Connected",
   cancelled: "Cancelled",
-  expired: "Expired",
 };
 
 const STYLE = `
@@ -80,7 +80,7 @@ button:disabled { opacity: .4; cursor: default; }
 .row-top strong { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status { flex: none; font-size: 13px; color: #8c8f98; }
 .row[data-status="completed"] .status, .row[data-status="accepted"] .status { color: #4ade80; }
-.row[data-status="cancelled"] .status, .row[data-status="expired"] .status { color: #ff8f8f; }
+.row[data-status="cancelled"] .status, .row[data-status="paused"] .status { color: #ff8f8f; }
 .detail { font-size: 14px; color: #8c8f98; overflow-wrap: anywhere; }
 `;
 
@@ -219,19 +219,6 @@ purpose.rows = 2;
 purpose.maxLength = 280;
 purpose.value = "Let's chat in Example Chat.";
 purpose.setAttribute("aria-label", "Message");
-const expiry = make("select");
-expiry.name = "expiry";
-expiry.setAttribute("aria-label", "Expires after");
-for (const [label, ms] of [
-  ["2 minutes", 2 * 60_000],
-  ["1 hour", 60 * 60_000],
-  ["1 day", 24 * 60 * 60_000],
-] as const) {
-  const option = make("option", "", `Expires in ${label}`);
-  option.value = String(ms);
-  option.selected = label === "1 hour";
-  expiry.append(option);
-}
 const invite = make("button", "primary", "Invite");
 invite.type = "button";
 invite.dataset.action = "invite";
@@ -239,14 +226,7 @@ const inviteStatus = make("p", "note");
 inviteStatus.setAttribute("role", "status");
 const form = make("section", "card");
 form.dataset.card = "invite";
-form.append(
-  make("h2", "", "New chat"),
-  choose,
-  purpose,
-  expiry,
-  invite,
-  inviteStatus,
-);
+form.append(make("h2", "", "New chat"), choose, purpose, invite, inviteStatus);
 const sentList = make("section");
 sentList.dataset.list = "sent";
 const acceptedList = make("section");
@@ -294,14 +274,9 @@ function render(): void {
     [...sent.values()]
       .sort((left, right) => right.createdAt - left.createdAt)
       .map((item) => {
-        const when =
-          item.status === "waiting"
-            ? `Expires ${clock(item.deadline)}`
-            : item.status === "expired"
-              ? `Expired ${clock(item.deadline)}`
-              : clock(item.closedAt ?? item.deadline);
+        const when = clock(item.closedAt ?? item.createdAt);
         let action: HTMLButtonElement | undefined;
-        if (item.status === "waiting") {
+        if (item.status === "waiting" || item.status === "paused") {
           action = make("button", "secondary small", "Cancel");
           action.type = "button";
           action.dataset.action = "cancel-invitation";
@@ -400,7 +375,6 @@ invite.addEventListener("click", async () => {
     request: {
       contact: chosen,
       purpose: purpose.value,
-      ttlMs: Number(expiry.value),
       payload,
     },
   });

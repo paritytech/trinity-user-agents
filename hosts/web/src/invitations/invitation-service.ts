@@ -6,6 +6,7 @@ import {
   openReply,
   openRequest,
   requestDigest,
+  requestSender,
   sealReply,
   sealRequest,
 } from "./binding.js";
@@ -13,7 +14,6 @@ import {
   readPayload,
   readProductCall,
   readSendRequest,
-  TTL_MAX_MS,
   type CallResult,
   type FailureReason,
   type HostMessage,
@@ -21,7 +21,7 @@ import {
   type ProductCall,
   type RequestHandle,
 } from "./contract.js";
-import { Outbox, type OutgoingRequest } from "./outbox.js";
+import { Outbox, isPending, type OutgoingRequest } from "./outbox.js";
 import type {
   ContactService,
   HostDelivery,
@@ -46,30 +46,47 @@ import {
  * Sending: the product names a contact by handle and gives its payload. The
  * host resolves the contact, asks its user, makes the request id and a reply
  * key pair, asks its delivery for a return route and watches it, then
- * authenticates, seals and posts the request until its deadline. A reply on
- * that route reaches the product only once the host opened and authenticated
- * it. The product's
- * `complete` closes the request and stops the reposts; nothing is sent.
+ * authenticates, seals and posts the request. It has no deadline: it is
+ * pending, and kept posted while this host runs, until the product completes
+ * it or it is cancelled. When the delivery cannot keep it posted it is
+ * paused, still pending, and the host says why. A reply on that route reaches
+ * the product only once the host opened and authenticated it, and only while
+ * the request is pending. The product's `complete` closes the request and
+ * stops the reposts; nothing is sent.
  *
- * Receiving: an authenticated request from a contact, for this product, before
- * its deadline and not seen before, goes to Notifications. Nothing goes back:
+ * Receiving: an authenticated request from a contact, for this product, not
+ * seen before, goes to Notifications. Nothing goes back:
  * not on arrival, not when seen, not on Dismiss. Accept is the user's intent,
  * handed with the payload to the product. Only the product's `reply` accepts
  * it; the host then authenticates, seals and posts the reply on the return
  * route the authenticated request names, once its delivery confirmed it can
  * reach the sender there.
  *
- * Demo choice, not the design's: the recipient's host posts its sealed reply
- * again on the delivery's cadence until the request's deadline, and again
- * when it starts. The design leaves when the recipient resends and stops open.
+ * A reply has no deadline either. The recipient's host posts its sealed
+ * reply when it replies, and posts the same reply again whenever the request
+ * arrives again, including after a restart: the sender's host posts a pending request again on its
+ * delivery's cadence, so a reply that was missed is answered by the next
+ * copy of the request. The delivery keeps trying to post each reply for
+ * {@link REPLY_POSTING_MS}, to ride out a post that failed; that is how long
+ * it retries, not how long the reply counts. When the design has the
+ * recipient resend is open; this is a local choice.
+ *
+ * A request's sender is not found yet, as when their chat key could not be
+ * read: the request is paused with why, kept, and tried again every
+ * {@link REACH_RETRY_MS}.
  */
+
+/** How long the delivery keeps trying to post a reply after it was handed one. A local choice. */
+export const REPLY_POSTING_MS = 60 * 60_000;
+
+/** How often a request whose recipient the host could not find yet is tried again. */
+export const REACH_RETRY_MS = 60_000;
 
 /** What the host asks its user before a request leaves. */
 export interface SendPrompt {
   product: Product;
   to: { name: string; handle: string };
   purpose: string;
-  ttlMs: number;
 }
 
 /** The product's end of its port, as the host holds it. */
@@ -137,9 +154,7 @@ export class InvitationService {
   readonly outbox: Outbox;
   readonly received: ReceivedRequests;
   private product: ProductPort | null = null;
-  private cancelExpiry: (() => void) | null = null;
   /** Deadlines up to this time were handled. */
-  private deadlinesHandledTo: number;
   private stopped = false;
   /** Accepts the user chose that the product has not answered yet, by handle. */
   private readonly accepting = new Map<string, PendingAccept>();
@@ -148,11 +163,13 @@ export class InvitationService {
   /** Received requests the attached product was told it replied to, by handle. */
   private readonly toldReplied = new Set<string>();
   private stopContacts: () => void = () => {};
+  private readonly outgoingListeners = new Set<() => void>();
+  /** Requests whose recipient was not found, by handle: the retry that is due. */
+  private readonly reachRetries = new Map<string, () => void>();
 
   constructor(private readonly deps: InvitationServiceDeps) {
     this.outbox = new Outbox(deps.storage, deps.keys.sent, deps.now);
     this.received = new ReceivedRequests(deps.storage, deps.keys.received);
-    this.deadlinesHandledTo = deps.now();
   }
 
   start(): void {
@@ -161,15 +178,11 @@ export class InvitationService {
       if (this.product !== null) this.tellReplied(this.product);
     });
     this.deps.delivery.listen({
-      request: (sealed) => this.receiveRequest(sealed),
-      reply: (route, sealed) => this.receiveReply(route, sealed),
+      request: (sealed) => void this.receiveRequest(sealed),
+      reply: (route, sealed) => void this.receiveReply(route, sealed),
+      posting: (id, problem) => this.posting(id, problem),
     });
-    for (const item of this.outbox.waiting()) this.post(item);
-    const now = this.deps.now();
-    for (const item of this.received.list())
-      if (item.replied !== null && now < item.context.deadline)
-        this.postReply(item, item.replied.sealed);
-    this.scheduleExpiry();
+    for (const item of this.outbox.pending()) this.post(item);
   }
 
   /** Close the delivery and the product's port, and stop every timer. */
@@ -177,10 +190,10 @@ export class InvitationService {
     if (this.stopped) return;
     this.stopped = true;
     this.stopContacts();
+    for (const cancel of this.reachRetries.values()) cancel();
+    this.reachRetries.clear();
     this.deps.delivery.close();
     this.detachProduct();
-    this.cancelExpiry?.();
-    this.cancelExpiry = null;
     this.failAccepts("This user's host stopped.");
   }
 
@@ -198,7 +211,7 @@ export class InvitationService {
   private replay(port: ProductPort): void {
     for (const item of this.outbox.list()) {
       port.post({ kind: "outgoing", request: this.outgoingView(item) });
-      if (this.outbox.status(item) === "waiting")
+      if (isPending(item))
         for (const reply of item.replies)
           port.post({
             kind: "response",
@@ -269,8 +282,6 @@ export class InvitationService {
     if (this.stopped) return refuse("This user's host stopped.");
     if (received === undefined || item === undefined)
       return refuse("This is not a request to you.");
-    if (this.deps.now() >= item.expiresAt && item.state.tag === "pending")
-      return refuse("This request expired.");
     if (item.state.tag !== "pending")
       return refuse(`This request was already ${item.state.tag}.`);
     const sender = this.deps.contacts.byIdentity(received.context.from);
@@ -339,33 +350,89 @@ export class InvitationService {
     this.outbox.reload();
     this.received.reload();
     for (const item of this.outbox.list())
-      if (item.state.tag !== "waiting") this.stopPosting(item);
+      if (!isPending(item)) this.stopPosting(item);
     if (this.product !== null) this.replay(this.product);
-    this.scheduleExpiry();
+    this.outgoingChanged();
+  }
+
+  /** The user cancelled a pending request in the host: as the product's `cancel`, and the product is told. */
+  requestCancel(handle: RequestHandle): CallResult {
+    const result = this.cancel(handle);
+    const item = this.outbox.get(handle);
+    if (result.ok && item !== undefined) this.pushOutgoing(item);
+    return result;
+  }
+
+  /** The person with this identity once their published key is read, or undefined. */
+  private async learnIdentity(identity: string): Promise<Person | undefined> {
+    if (this.deps.contacts.learn === undefined) return undefined;
+    await this.deps.contacts.learn({ identity });
+    return this.deps.contacts.byIdentity(identity);
+  }
+
+  /** The delivery says whether it can keep a post up; a request it cannot is paused, and the product told. */
+  private posting(id: string, problem: string | null): void {
+    if (this.stopped || !this.outbox.setPaused(id, problem)) return;
+    const item = this.outbox.get(id)!;
+    this.deps.log(
+      problem === null
+        ? `Request ${short(id)} is posted again.`
+        : `Request ${short(id)} is paused: ${problem}`,
+    );
+    this.pushOutgoing(item);
   }
 
   private post(item: OutgoingRequest): void {
     this.deps.delivery.watch(item.context.returnRoute);
     const person = this.deps.contacts.byIdentity(item.context.to);
-    if (person === undefined) return;
-    this.deps.delivery.postRequest(
-      person.identity,
-      item.handle,
-      item.sealed,
-      item.context.deadline,
-    );
+    if (person !== undefined) {
+      // A pause kept from before, such as across a restart, is cleared first:
+      // the delivery reports again if it still cannot post.
+      if (item.paused !== null) this.posting(item.handle, null);
+      this.deps.delivery.postRequest(person.identity, item.handle, item.sealed);
+      return;
+    }
+    // Read their published key first; only then can the request be posted.
+    const { handle } = item;
+    void this.learnIdentity(item.context.to).then((learnt) => {
+      // Another tab, or the user, may have closed it meanwhile.
+      const current = this.outbox.get(handle);
+      if (this.stopped || current === undefined || !isPending(current)) return;
+      if (learnt !== undefined) {
+        this.posting(handle, null);
+        this.deps.delivery.postRequest(learnt.identity, handle, current.sealed);
+        return;
+      }
+      const why =
+        this.deps.contacts.problem(current.contact) ??
+        "their chat key is not read yet";
+      this.posting(handle, `your host cannot find the contact now: ${why}`);
+      this.reachRetries.get(handle)?.();
+      this.reachRetries.set(
+        handle,
+        this.deps.schedule(() => {
+          this.reachRetries.delete(handle);
+          const again = this.outbox.get(handle);
+          if (!this.stopped && again !== undefined && isPending(again))
+            this.post(again);
+        }, REACH_RETRY_MS),
+      );
+    });
   }
 
-  private postReply(item: ReceivedRequest, sealed: string): void {
+  /** Hand the delivery a reply to post, which it keeps trying for {@link REPLY_POSTING_MS}. */
+  private postReply(item: ReceivedRequest, replied: { sealed: string }): void {
     this.deps.delivery.postReply(
       item.context.returnRoute,
       item.handle,
-      sealed,
-      item.context.deadline,
+      replied.sealed,
+      this.deps.now() + REPLY_POSTING_MS,
     );
   }
 
   private stopPosting(item: OutgoingRequest): void {
+    this.reachRetries.get(item.handle)?.();
+    this.reachRetries.delete(item.handle);
     this.deps.delivery.withdraw(item.handle);
     this.deps.delivery.unwatch(item.context.returnRoute);
   }
@@ -376,7 +443,6 @@ export class InvitationService {
       contact: item.contact,
       purpose: item.context.purpose,
       createdAt: item.context.createdAt,
-      deadline: item.context.deadline,
       status: this.outbox.status(item),
       ...(item.state.tag === "waiting" ? {} : { closedAt: item.state.at }),
     };
@@ -384,6 +450,17 @@ export class InvitationService {
 
   private pushOutgoing(item: OutgoingRequest): void {
     this.product?.post({ kind: "outgoing", request: this.outgoingView(item) });
+    this.outgoingChanged();
+  }
+
+  /** Calls back whenever a sent request was added or changed. */
+  onOutgoing(listener: () => void): () => void {
+    this.outgoingListeners.add(listener);
+    return () => this.outgoingListeners.delete(listener);
+  }
+
+  private outgoingChanged(): void {
+    for (const listener of [...this.outgoingListeners]) listener();
   }
 
   private async call(port: ProductPort, value: unknown): Promise<void> {
@@ -417,8 +494,10 @@ export class InvitationService {
   private async send(value: unknown): Promise<CallResult> {
     const request = readSendRequest(value);
     if (!request.ok) return failure("Invalid", request.reason);
-    const { contact, purpose, ttlMs, payload } = request.value;
+    const { contact, purpose, payload } = request.value;
     const product = this.deps.product;
+    if (this.deps.contacts.resolve(contact) === null)
+      await this.deps.contacts.learn?.({ contact });
     const person = this.deps.contacts.resolve(contact);
     if (person === null) {
       const problem = this.deps.contacts.problem(contact);
@@ -427,14 +506,6 @@ export class InvitationService {
       this.deps.log(`${product.name}'s request was not sent: ${problem}`);
       return failure("Unknown", "Your host cannot reach this contact now.");
     }
-    const confirmed = await this.deps.confirmSend({
-      product,
-      to: { name: person.name, handle: person.handle },
-      purpose,
-      ttlMs,
-    });
-    if (!confirmed) return failure("Dismissed", "The user did not send it.");
-    if (this.stopped) return failure("Refused", "This user's host stopped.");
     const { random } = this.deps;
     const replyKey = x25519Pair(random(32));
     const now = this.deps.now();
@@ -446,13 +517,21 @@ export class InvitationService {
         purpose,
         requestId: toHex(random(16)),
         createdAt: now,
-        deadline: now + ttlMs,
         returnRoute: this.deps.delivery.returnRoute(),
         replyKey: toHex(replyKey.public),
       },
       payload,
       random,
     );
+    const tooLarge = this.tooLarge("request", sealed);
+    if (tooLarge !== null) return failure("Invalid", tooLarge);
+    const confirmed = await this.deps.confirmSend({
+      product,
+      to: { name: person.name, handle: person.handle },
+      purpose,
+    });
+    if (!confirmed) return failure("Dismissed", "The user did not send it.");
+    if (this.stopped) return failure("Refused", "This user's host stopped.");
     const item: OutgoingRequest = {
       handle: toHex(random(16)),
       to: person.id,
@@ -464,17 +543,18 @@ export class InvitationService {
       replySecret: toHex(replyKey.secret),
       replies: [],
       state: { tag: "waiting" },
+      paused: null,
     };
     this.outbox.add(item);
+    this.outgoingChanged();
     this.deps.log(
       `Request ${short(item.handle)}: watching its return route, then posting it, sealed for ${person.name}.`,
     );
     this.post(item);
-    this.scheduleExpiry();
     return { ok: true, request: this.outgoingView(item) };
   }
 
-  /** A waiting request of the product's, or why the call is refused. */
+  /** A pending request of the product's, or why the call is refused. */
   private waitingItem(
     handle: RequestHandle,
   ): OutgoingRequest | { failure: CallResult } {
@@ -483,10 +563,14 @@ export class InvitationService {
       return {
         failure: failure("Unknown", "No sent request has this handle."),
       };
-    const status = this.outbox.status(item);
-    return status === "waiting"
+    return isPending(item)
       ? item
-      : { failure: failure("Refused", `This request is ${status}.`) };
+      : {
+          failure: failure(
+            "Refused",
+            `This request is ${this.outbox.status(item)}.`,
+          ),
+        };
   }
 
   private complete(handle: RequestHandle): CallResult {
@@ -495,11 +579,11 @@ export class InvitationService {
     if (item.replies.length === 0)
       return failure("Refused", "No authenticated reply has arrived.");
     this.outbox.close(handle, { tag: "completed", at: this.deps.now() });
+    this.outgoingChanged();
     this.stopPosting(item);
     this.deps.log(
       `Request ${short(handle)} completed by ${this.deps.product.name}; reposting stopped. Nothing is sent.`,
     );
-    this.scheduleExpiry();
     return { ok: true, request: this.outgoingView(item) };
   }
 
@@ -507,11 +591,11 @@ export class InvitationService {
     const item = this.waitingItem(handle);
     if ("failure" in item) return item.failure;
     this.outbox.close(handle, { tag: "cancelled", at: this.deps.now() });
+    this.outgoingChanged();
     this.stopPosting(item);
     this.deps.log(
       `Request ${short(handle)} cancelled; reposting stopped. Nothing is sent.`,
     );
-    this.scheduleExpiry();
     return { ok: true, request: this.outgoingView(item) };
   }
 
@@ -549,10 +633,6 @@ export class InvitationService {
       return settle(failure("Unknown", "The sender is no longer a contact."));
     if (received.replied !== null)
       return settle(failure("Refused", "This request was already answered."));
-    const answered = this.deps.notifications.accept(handle);
-    if (!answered.ok) return settle(failure("Refused", answered.reason));
-    if (!answered.changed)
-      return settle(failure("Refused", "This request was already answered."));
     const sealed = sealReply(
       this.deps.auth,
       sender,
@@ -560,14 +640,31 @@ export class InvitationService {
       payload,
       this.deps.random,
     );
-    this.received.markReplied(handle, sealed, this.deps.now());
+    // Before the request counts as answered, so a reply too large changes nothing.
+    const tooLarge = this.tooLarge("reply", sealed);
+    if (tooLarge !== null) return settle(failure("Invalid", tooLarge));
+    const answered = this.deps.notifications.accept(handle);
+    if (!answered.ok) return settle(failure("Refused", answered.reason));
+    if (!answered.changed)
+      return settle(failure("Refused", "This request was already answered."));
+    const replied = { sealed, at: this.deps.now() };
+    this.received.markReplied(handle, replied.sealed, replied.at);
     this.toldReplied.add(handle);
-    this.postReply(received, sealed);
+    this.postReply(received, replied);
     this.deps.log(
       `${this.deps.product.name} replied to request ${short(handle)}; the host sealed it for ${sender.name} and posted it on the request's return route.`,
     );
     if (open) this.deps.showProduct();
     return settle({ ok: true });
+  }
+
+  /** Why `sealed` is too large for the delivery, for the product to act on, or null. */
+  private tooLarge(kind: "request" | "reply", sealed: string): string | null {
+    const max = this.deps.delivery.maxPostBytes;
+    const bytes = (sealed.length - 2) / 2;
+    return max === undefined || bytes <= max
+      ? null
+      : `The ${kind} is ${bytes} bytes once sealed, and its delivery carries at most ${max}. Send a smaller payload.`;
   }
 
   private refuse(handle: RequestHandle, reason: string): CallResult {
@@ -594,13 +691,22 @@ export class InvitationService {
     return { ok: true };
   }
 
-  /** A sealed request arrived. Kept only when it is new, authentic and in time. */
-  private receiveRequest(sealed: string): void {
+  /** A sealed request arrived. Kept only when it is new and authentic. */
+  private async receiveRequest(sealed: string): Promise<void> {
     if (this.stopped) return;
+    // A sender whose key is not read yet: read it, then check them with it.
+    const sender =
+      this.deps.contacts.learn && requestSender(this.deps.auth, sealed);
+    if (sender && this.deps.contacts.byIdentity(sender) === undefined) {
+      await this.deps.contacts.learn?.({ identity: sender });
+      if (this.stopped) return;
+    }
     const opened = openRequest(this.deps.auth, sealed, (key) =>
       this.deps.contacts.byIdentity(key),
     );
     if (!opened.ok) {
+      // On an inbox other hosts share, most posts are sealed to someone else.
+      if (opened.sealedElsewhere) return;
       this.deps.log(`Ignored a request: ${opened.reason}.`);
       return;
     }
@@ -614,6 +720,13 @@ export class InvitationService {
         this.deps.log(
           `Ignored a request from ${peer.name}: another request of theirs has its id.`,
         );
+      else if (known.replied !== null) {
+        // The sender still waits, so it did not get the reply: post it again.
+        this.postReply(known, known.replied);
+        this.deps.log(
+          `Request ${short(context.requestId)} from ${peer.name} came again; its reply is posted again.`,
+        );
+      }
       return;
     }
     const label = short(context.requestId);
@@ -630,15 +743,6 @@ export class InvitationService {
       return;
     }
     const now = this.deps.now();
-    if (
-      now >= context.deadline ||
-      context.deadline <= context.createdAt ||
-      context.deadline - context.createdAt > TTL_MAX_MS ||
-      context.deadline - now > TTL_MAX_MS
-    ) {
-      this.deps.log(`Ignored request ${label}: its deadline passed.`);
-      return;
-    }
     if (!this.deps.notifications.scoped()) return;
     // The same for every tab of this user, so their lists agree; a product
     // cannot work it out, as it never sees the identities or the request id.
@@ -667,7 +771,7 @@ export class InvitationService {
       product: context.product,
       purpose: context.purpose,
       receivedAt: now,
-      expiresAt: context.deadline,
+      expiresAt: null,
       seenAt: null,
       state: { tag: "pending" },
     } satisfies HostNotification);
@@ -676,82 +780,60 @@ export class InvitationService {
     );
   }
 
-  /** A sealed reply arrived on a return route. Handed to the product only once authenticated. */
-  private receiveReply(route: string, sealed: string): void {
-    if (this.stopped) return;
-    const item = this.outbox.byRoute(route);
-    if (item === undefined) return;
-    const label = short(item.handle);
-    const status = this.outbox.status(item);
-    if (status !== "waiting") {
-      this.deps.log(`Ignored a reply to request ${label}: it is ${status}.`);
-      return;
-    }
-    const peer: Person | undefined = this.deps.contacts.byIdentity(
-      item.context.to,
-    );
-    if (peer === undefined) {
-      this.deps.log(
-        `Ignored a reply to request ${label}: the contact is gone.`,
-      );
-      return;
-    }
-    const opened = openReply(
-      this.deps.auth,
-      {
-        peer,
-        productId: this.deps.product.id,
-        requestId: item.context.requestId,
-        requestDigest: item.digest,
-        replyKey: x25519Pair(fromHex(item.replySecret)),
-      },
-      sealed,
-    );
-    if (!opened.ok) {
-      this.deps.log(`Ignored a reply to request ${label}: ${opened.reason}.`);
-      return;
-    }
-    if (!this.outbox.addReply(item.handle, opened.payload)) return;
-    this.deps.log(
-      `Request ${label}: authenticated a reply from ${peer.name}; ${this.deps.product.name} checks it.`,
-    );
-    this.product?.post({
-      kind: "response",
-      handle: item.handle,
-      payload: opened.payload,
-    });
-  }
-
-  private scheduleExpiry(): void {
-    this.cancelExpiry?.();
-    this.cancelExpiry = null;
-    if (this.stopped) return;
-    const next = this.outbox.nextDeadline();
-    if (next === null) return;
-    this.cancelExpiry = this.deps.schedule(
-      () => this.handleDeadlines(),
-      Math.max(0, next - this.deps.now()),
-    );
-  }
-
-  /** Stop posting what passed its deadline since the last check, and tell the product. */
-  private handleDeadlines(): void {
-    const now = this.deps.now();
-    for (const item of this.outbox.list()) {
-      const { deadline } = item.context;
-      if (
-        item.state.tag === "waiting" &&
-        deadline > this.deadlinesHandledTo &&
-        deadline <= now
-      ) {
-        this.stopPosting(item);
-        this.deps.log(
-          `Request ${short(item.handle)} expired; reposting stopped.`,
-        );
-        this.pushOutgoing(item);
+  /**
+   * A sealed reply arrived on a return route. Every request on that route is
+   * tried, since a route may be shared; the one whose reply key opens it
+   * decides. Handed to the product only once authenticated, and only while
+   * that request is pending. A request that is not pending is tried only
+   * when its contact is known already, so a closed request costs no read.
+   */
+  private async receiveReply(route: string, sealed: string): Promise<void> {
+    for (const { handle } of this.outbox.withRoute(route)) {
+      if (this.stopped) return;
+      let item = this.outbox.get(handle);
+      if (item === undefined) continue;
+      const label = short(handle);
+      let peer = this.deps.contacts.byIdentity(item.context.to);
+      if (peer === undefined && isPending(item)) {
+        peer = await this.learnIdentity(item.context.to);
+        if (this.stopped) return;
+        // It may have been completed or cancelled while the key was read.
+        item = this.outbox.get(handle);
+        if (item === undefined) continue;
       }
+      if (peer === undefined) continue;
+      const opened = openReply(
+        this.deps.auth,
+        {
+          peer,
+          productId: this.deps.product.id,
+          requestId: item.context.requestId,
+          requestDigest: item.digest,
+          replyKey: x25519Pair(fromHex(item.replySecret)),
+        },
+        sealed,
+      );
+      if (!opened.ok && opened.sealedElsewhere) continue;
+      if (!opened.ok) {
+        this.deps.log(`Ignored a reply to request ${label}: ${opened.reason}.`);
+        return;
+      }
+      if (!isPending(item)) {
+        this.deps.log(
+          `Ignored a reply to request ${label}: it is ${this.outbox.status(item)}.`,
+        );
+        return;
+      }
+      if (!this.outbox.addReply(handle, opened.payload)) return;
+      this.deps.log(
+        `Request ${label}: authenticated a reply from ${peer.name}; ${this.deps.product.name} checks it.`,
+      );
+      this.product?.post({
+        kind: "response",
+        handle,
+        payload: opened.payload,
+      });
+      return;
     }
-    this.deadlinesHandledTo = now;
-    this.scheduleExpiry();
   }
 }

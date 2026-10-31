@@ -1,16 +1,15 @@
-import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
-import type { ContactHandle } from "@parity/truapi";
-import type { HexString } from "@parity/truapi/scale";
+import type {
+  NotificationClaim,
+  WorkerPairingHostRuntime,
+} from "@parity/truapi-host/web";
+import { bytesToHex, type HexString } from "@parity/truapi/scale";
 import {
   CONTACT_CHAT_PATH,
   EXAMPLE_CHAT_PATH,
   type DemoWorkerAnswer,
 } from "./local-demo-route.js";
 import type { ChatContact } from "../../src/chat/provider.js";
-import type {
-  ChatV2ProviderOptions,
-  HandleContacts,
-} from "../../src/chat/draft/provider.js";
+import type { ChatV2ProviderOptions } from "../../src/chat/draft/provider.js";
 import {
   parseWorkerManifest,
   type ResolvedWorker,
@@ -34,11 +33,24 @@ import {
 } from "../../src/contacts/username-directory.js";
 import type { HandleNames } from "../../src/contacts/contacts.js";
 import { FixtureContacts } from "../../fixtures/invitations/fixture-contacts.js";
+import type { ChainDirectory } from "../../src/chat/nova/directory.js";
+import type { StatementStoreLike } from "../../src/chat/nova/engine.js";
+import type { Network } from "../../src/platform/network.js";
+import { noSubmitNetwork, type NoSubmitRecord } from "./no-submit.js";
+import { StatementStoreDelivery } from "../../src/invitations/statement-delivery.js";
+import { DirectoryContacts } from "../../src/invitations/directory-contacts.js";
 import { sessionChatKeys } from "../../src/chat/nova-session.js";
 import { WalletIdentityAuth } from "../../src/invitations/wallet-auth.js";
-import { ownIdentityProblem } from "../../src/invitations/published-keys.js";
+import {
+  ownIdentityProblem,
+  type IdentityProblem,
+} from "../../src/invitations/published-keys.js";
 import { LocalDelivery } from "../../fixtures/invitations/local-delivery.js";
-import { LocalTopics } from "../../fixtures/invitations/local-topics.js";
+import {
+  sentRequests,
+  startContactChatHost,
+  type ContactChatHost,
+} from "./contact-chat-host.js";
 import { pageStore } from "../../fixtures/invitations/shared-store.js";
 import * as samples from "../../fixtures/notifications/sample-notifications.js";
 import {
@@ -116,7 +128,35 @@ export interface DevToolsDeps {
   }>;
   /** Bring Chat to the front, at Contact Chat's request. */
   showChat(): void;
+  /** The accounts the signed-in wallet blocked. */
+  blocked(): readonly string[];
+  /** The host's names for people, by account, read from its records and the chain. */
+  names: {
+    name(account: string): string | null;
+    onChange(listener: () => void): () => void;
+  };
+  /** Tell the host's handle index that the people it may name changed. */
+  namedChanged(): void;
   log(line: string): void;
+}
+
+/** A wallet session the core reports, as Contact Chat's requests need it. */
+export interface WalletRequestsSession {
+  walletId: string;
+  entropy: Uint8Array;
+  network: string;
+  networkSuffix: string;
+  identityAccountId: string | undefined;
+  chatPublicKey: string | undefined;
+  /** The chain records chat keys are read from. */
+  directory: ChainDirectory;
+  /** Open the People chain's Statement Store, for the network delivery. */
+  openStatementStore(): Promise<StatementStoreLike>;
+  /** Claim, or with `submit` false only validate, a notification account for today. */
+  claimNotificationAccount(
+    target: Uint8Array,
+    submit: boolean,
+  ): Promise<NotificationClaim>;
 }
 
 /** What the host lends a worker frame of one product over one port. */
@@ -141,11 +181,32 @@ export interface DevSession {
   /** The test user's contacts, for the host's contact picker, or null. */
   contacts: ChatContact[] | null;
   /**
-   * Everyone the test user's fixture directory knows, by account, or null:
-   * the host may name them by handle, as senders, without resolving them for
-   * a transaction.
+   * The people the host may name by handle beyond its contacts, by account:
+   * everyone a test user's fixture directory knows, or whoever sent the
+   * signed-in wallet a request. Naming them does not resolve them for a
+   * transaction.
    */
-  people: HexString[] | null;
+  people(): readonly HexString[];
+  /**
+   * Follow the signed-in wallet: Contact Chat runs for it, with requests
+   * over its own keys. Null ends it. Call it before the session's workers
+   * start, so they see Contact Chat among them.
+   */
+  setWallet(session: WalletRequestsSession | null): void;
+  /**
+   * Whether this tab holds the wallet's Nova chat off: true while the
+   * wallet's Contact Chat requests use the network delivery, so New chat
+   * starts Contact Chat, and Nova neither starts nor answers anything. Fixed
+   * for the page: changing the delivery reloads it.
+   */
+  holdsNova(): boolean;
+  /**
+   * `network`, with every submission refused while the wallet's Contact Chat
+   * only validates claims: no extrinsic and no statement leaves this tab.
+   * What it refused, and every method it let through, are kept on
+   * `window.__truapiNoSubmit` for a test to read.
+   */
+  guardNetwork(network: Network): Network;
   /** Where the test user's picker finds people by username: the other test users, or null. */
   usernames: UsernameDirectory | null;
   /** What the Notifications screen can do with the test user's invitations, or null. */
@@ -157,13 +218,13 @@ export interface DevSession {
   /** Close Example Chat: its frame ends and it stops taking invitations until it opens again. */
   closeExampleChat(): void;
   showProduct(visible: boolean): void;
-  /** The workers the test user runs: Contact Chat. Empty outside the demo. */
+  /** The workers this module adds: Contact Chat, for a test user or a wallet. */
   workerNames(): string[];
   /** Whether `name` is a worker this module resolves. */
   resolvesWorker(name: string): boolean;
   /** Contact Chat's worker, as the dev server describes the archive it built. */
   resolveWorker(): Promise<ResolvedWorker>;
-  /** Whether `productId` may give its rooms contacts: Contact Chat, for a test user. */
+  /** Whether `productId` may give its rooms contacts: Contact Chat. */
   isContactChat(productId: string): boolean;
   /** What the host lends Contact Chat's chat provider, or null for another product. */
   chatOptions(productId: string): ChatV2ProviderOptions | null;
@@ -204,15 +265,6 @@ function button(label: string, action: string, onClick: () => void) {
   return node;
 }
 
-function expiresIn(ms: number): string {
-  const minutes = Math.round(ms / 60_000);
-  if (minutes < 60) return `in ${minutes} min`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `in ${hours} h`;
-  const days = Math.round(hours / 24);
-  return days === 1 ? "in 1 day" : `in ${days} days`;
-}
-
 /** The host's question before a product's invitation leaves. */
 function confirmSend(prompt: SendPrompt): Promise<boolean> {
   return ask<boolean>({
@@ -221,7 +273,10 @@ function confirmSend(prompt: SendPrompt): Promise<boolean> {
     fields: [
       { label: "To", value: prompt.to.name },
       { label: "Message", value: prompt.purpose },
-      { label: "Expires", value: expiresIn(prompt.ttlMs) },
+      {
+        label: "Waits",
+        value: "Until they accept, or you cancel it in your Inbox",
+      },
     ],
     choices: [
       { label: "Cancel", value: false, tone: "cancel" },
@@ -231,12 +286,76 @@ function confirmSend(prompt: SendPrompt): Promise<boolean> {
   });
 }
 
+declare global {
+  interface Window {
+    /** What the no-submit guard of a validate-only tab saw, for a test to read. */
+    __truapiNoSubmit?: NoSubmitRecord;
+  }
+}
+
+/** The host's question before the wallet's requests go on the network. */
+function confirmNetworkDelivery(network: string): Promise<boolean> {
+  return ask<boolean>({
+    title: "Post requests on the network",
+    from: "Developer tools",
+    fields: [
+      { label: "Network", value: network },
+      {
+        label: "Each post",
+        value:
+          "Claims one of your daily notification slots with your personhood, then posts one signed statement to the shared day inbox",
+      },
+      {
+        label: "Runs",
+        value:
+          "While this tab is open: pending requests are posted again each day",
+      },
+    ],
+    choices: [
+      { label: "Cancel", value: false, tone: "cancel" },
+      { label: "Use the network", value: true, tone: "primary" },
+    ],
+    dismissed: false,
+  });
+}
+
 /** How long Accept waits for Example Chat to connect after opening it. */
 const CONNECT_TIMEOUT_MS = 15_000;
 
+/** Where a tab keeps whether Contact Chat runs for its signed-in wallet. */
+const WALLET_CHAT_KEY = "truapi-web-signing-host:dev:wallet-contact-chat";
+
+/**
+ * Where a tab keeps how the wallet's Contact Chat requests travel: absent for
+ * the local simulated delivery, `validate` for the network delivery with
+ * every claim only validated, `network` to claim and post for real.
+ */
+const WALLET_DELIVERY_KEY = "truapi-web-signing-host:dev:wallet-delivery";
+type WalletDelivery = "local" | "validate" | "network";
+
+function walletDelivery(): WalletDelivery {
+  const value = sessionStorage.getItem(WALLET_DELIVERY_KEY);
+  return value === "validate" || value === "network" ? value : "local";
+}
+
 export function startDevTools(deps: DevToolsDeps): DevSession {
   const testUser = tabTestUser(sessionStorage);
+  const networkMode = (): WalletDelivery =>
+    testUser === null && sessionStorage.getItem(WALLET_CHAT_KEY) === "on"
+      ? walletDelivery()
+      : "local";
   const session = testUser === null ? null : startTestUser(deps, testUser);
+  let wallet: { key: string; chat: ContactChatHost } | null = null;
+  /** Contact Chat's host side now: the test user's, or the wallet's. */
+  const chat = (): ContactChatHost | null =>
+    session?.chat ?? wallet?.chat ?? null;
+  const isChat = (productId: string) => chat()?.product.id === productId;
+  /** Who draws the wallet's sent requests; the wallet's Contact Chat changes with the session. */
+  const sentListeners = new Set<() => void>();
+  let stopWalletSent = () => {};
+  const walletSentChanged = () => {
+    for (const listener of [...sentListeners]) listener();
+  };
   const useDemo = (id: string | null) => {
     if (id !== null) deps.leaveWalletSession();
     setTabTestUser(sessionStorage, id);
@@ -261,12 +380,42 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
       testUser === null
         ? null
         : chatContactsOf(testUser, deps.network.networkSuffix),
-    people:
-      testUser === null
-        ? null
-        : TEST_USERS.filter((user) => user.id !== testUser.id).map((user) =>
+    people: () =>
+      testUser !== null
+        ? TEST_USERS.filter((user) => user.id !== testUser.id).map((user) =>
             testUserAccount(user, deps.network.networkSuffix),
-          ),
+          )
+        : ((wallet?.chat.people() ?? []) as HexString[]),
+    holdsNova: () => networkMode() !== "local",
+    guardNetwork: (network) => {
+      if (networkMode() !== "validate") return network;
+      deps.log(
+        "This tab submits nothing: every extrinsic and statement submission is refused before it reaches the network.",
+      );
+      const guarded = noSubmitNetwork(network, deps.log);
+      window.__truapiNoSubmit = guarded.record;
+      return guarded.network;
+    },
+    setWallet: (next) => {
+      if (testUser !== null || sessionStorage.getItem(WALLET_CHAT_KEY) !== "on")
+        return;
+      const key =
+        next === null
+          ? null
+          : `${next.network}:${next.walletId}:${next.identityAccountId ?? ""}:${next.chatPublicKey ?? ""}`;
+      if (key === (wallet?.key ?? null)) return;
+      stopWalletSent();
+      stopWalletSent = () => {};
+      wallet?.chat.stop();
+      wallet = null;
+      walletSentChanged();
+      if (next === null || key === null) return;
+      const started = startWalletChat(deps, next);
+      if (started === null) return;
+      wallet = { key, chat: started };
+      stopWalletSent = started.onSentChange(walletSentChanged);
+      void started.start().then(walletSentChanged);
+    },
     usernames:
       testUser === null
         ? null
@@ -279,13 +428,31 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
               }),
             ),
           ),
-    notificationActions: session?.notificationActions ?? null,
+    notificationActions: session?.notificationActions ?? {
+      canAccept: (item) => wallet?.chat.owns(item.id) ?? false,
+      accept: (item) =>
+        wallet === null
+          ? Promise.reject(new Error("No wallet is signed in."))
+          : wallet.chat.accept(item),
+      destination: (item) =>
+        wallet?.chat.owns(item.id) === true ? "Chat" : null,
+      open: (item) => wallet?.chat.open(item),
+      sent: () => wallet?.chat.sent() ?? [],
+      cancel: (id) => void wallet?.chat.cancel(id),
+      onSentChange: (listener) => {
+        sentListeners.add(listener);
+        return () => sentListeners.delete(listener);
+      },
+    },
     start: (runtime) => session?.start(runtime) ?? Promise.resolve(),
     exampleChatOpen: () => session?.isOpen() ?? false,
     closeExampleChat: () => session?.close(),
     showProduct: (visible) => session?.show(visible),
-    workerNames: () => (session === null ? [] : [session.chatProduct.id]),
-    resolvesWorker: (name) => session?.chatProduct.id === name,
+    workerNames: () => {
+      const current = chat();
+      return current === null ? [] : [current.product.id];
+    },
+    resolvesWorker: isChat,
     resolveWorker: async () => {
       const response = await fetch(`${deps.base}${CONTACT_CHAT_PATH}`, {
         cache: "no-store",
@@ -303,41 +470,119 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
         gateway: window.location.origin,
       };
     },
-    isContactChat: (productId) => session?.chatProduct.id === productId,
+    isContactChat: isChat,
     chatOptions: (productId) =>
-      session?.chatProduct.id === productId ? session.chatOptions : null,
+      isChat(productId) ? (chat()?.chatOptions ?? null) : null,
     requests: {
       connect: (productId, port) =>
-        session?.chatProduct.id === productId
-          ? session.attachChat(port)
-          : port.close(),
+        isChat(productId) ? chat()!.attachChat(port) : port.close(),
       disconnect: (productId) => {
-        if (session?.chatProduct.id === productId) session.detachChat();
+        if (isChat(productId)) chat()!.detachChat();
       },
     },
     topics: {
       connect: (productId, port) =>
-        session?.chatProduct.id === productId
-          ? session.serveTopics(port)
-          : port.close(),
+        isChat(productId) ? chat()!.serveTopics(port) : port.close(),
       disconnect: (productId) => {
-        if (session?.chatProduct.id === productId) session.stopTopics();
+        if (isChat(productId)) chat()!.stopTopics();
       },
     },
   };
 }
 
+/**
+ * Contact Chat for the signed-in wallet, over the keys its entropy derives,
+ * once they are the keys the core reports for the session; null, with the
+ * reason logged, when they are not. People are any identity with a chat key
+ * the chain publishes, but the blocked: whoever the user picks to write to,
+ * and whoever writes to them. Names come from the host's own records and the
+ * chain, never from a request.
+ */
+function startWalletChat(
+  deps: DevToolsDeps,
+  session: WalletRequestsSession,
+): ContactChatHost | null {
+  const keys = sessionChatKeys({
+    entropy: session.entropy,
+    networkSuffix: session.networkSuffix,
+    identityAccountId: session.identityAccountId as HexString | undefined,
+    chatPublicKey: session.chatPublicKey as HexString | undefined,
+  });
+  if (typeof keys === "string") {
+    deps.log(`Contact Chat does not run for this wallet: ${keys}`);
+    return null;
+  }
+  const own = bytesToHex(keys.identity).toLowerCase();
+  const contacts = new DirectoryContacts({
+    handles: deps.handles,
+    directory: session.directory,
+    person: (account, published) => {
+      const key = account.toLowerCase();
+      if (
+        key === own ||
+        deps.blocked().some((blocked) => blocked.toLowerCase() === key)
+      )
+        return undefined;
+      const name =
+        deps.names.name(account) ??
+        published ??
+        `${account.slice(0, 8)}…${account.slice(-6)}`;
+      return { id: key, name, handle: name };
+    },
+    log: deps.log,
+  });
+  const list = (part: "sent" | "received") =>
+    `truapi-web-signing-host:network:${session.network}:requests:${session.walletId}:contact-chat:${part}:v1`;
+  const mode = walletDelivery();
+  // The network delivery keeps its own lists: its requests name the day
+  // inbox as their return route, which the local delivery cannot reach.
+  const lists = (part: "sent" | "received") =>
+    mode === "local" ? list(part) : `${list(part)}:day-inbox`;
+  if (mode !== "local")
+    deps.log(
+      mode === "network"
+        ? "Contact Chat's requests go on the network's day inbox: each post claims a notification slot."
+        : "Contact Chat's requests use the network delivery with claims only validated: nothing is submitted.",
+    );
+  return startContactChatHost({
+    product: contactChat(session.networkSuffix),
+    keys: { sent: lists("sent"), received: lists("received") },
+    network: session.network,
+    self: bytesToHex(keys.chatPublic),
+    auth: new WalletIdentityAuth(keys),
+    ...(mode === "local"
+      ? {}
+      : {
+          delivery: new StatementStoreDelivery({
+            network: session.network,
+            entropy: session.entropy,
+            openStore: () => session.openStatementStore(),
+            claim: (target, submit) =>
+              session.claimNotificationAccount(target, submit),
+            submit: mode === "network",
+            now: () => Date.now(),
+            schedule: (task, delayMs) => {
+              const timer = setTimeout(task, Math.min(delayMs, 2 ** 31 - 1));
+              return () => clearTimeout(timer);
+            },
+            log: deps.log,
+          }),
+        }),
+    contacts,
+    handles: deps.handles,
+    onNamesChange: (listener) => deps.names.onChange(listener),
+    notifications: deps.notifications,
+    verify: () => ownIdentityProblem(session.directory, keys),
+    confirmSend,
+    showChat: deps.showChat,
+    onSenders: deps.namedChanged,
+    log: deps.log,
+  });
+}
+
 interface TestUserSession {
-  /** Contact Chat, which runs as the test user's worker. */
-  chatProduct: Product;
-  /** What the host lends Contact Chat's chat provider: names by handle, and starts by handle. */
-  chatOptions: ChatV2ProviderOptions;
-  /** Serve Contact Chat's request service port, in place of any before it. */
-  attachChat(port: MessagePort): void;
-  detachChat(): void;
-  /** Serve Contact Chat's topic relay port, in place of any before it. */
-  serveTopics(port: MessagePort): void;
-  stopTopics(): void;
+  /** Contact Chat's host side, which runs as the test user's worker. */
+  chat: ContactChatHost;
   notificationActions: NotificationActions;
   start(runtime: WorkerPairingHostRuntime): Promise<void>;
   show(visible: boolean): void;
@@ -404,42 +649,12 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
     log: deps.log,
   });
 
-  // Contact Chat: its own request service, over the same wallet keys,
-  // contacts and delivery, and its own lists.
-  const chatProduct = contactChat(deps.network.networkSuffix);
-  const chatKeys = {
-    sent: testUserKey(deps.network.id, self.id, "contact-chat-outbox"),
-    received: testUserKey(deps.network.id, self.id, "contact-chat-received"),
-  };
-  const chatService = new InvitationService({
-    product: chatProduct,
-    auth,
-    contacts,
-    notifications: deps.notifications,
-    storage: localStorage,
-    keys: chatKeys,
-    delivery: delivery(),
-    now,
-    schedule,
-    random: cryptoRandom,
-    confirmSend,
-    showProduct: () => deps.showChat(),
-    log: deps.log,
-  });
-  const topics = new LocalTopics({
-    network: deps.network.id,
-    store: pageStore(),
-    now,
-  });
-  let stopTopics = () => {};
-  /** Contact Chat's request port, held until the wallet keys are checked. */
-  let pendingChat: MessagePort | null = null;
   /**
    * Why the wallet keys may not prove this user, or null: they must be the
    * keys the core's session holds, and the ones published for its identity
    * account.
    */
-  const walletProblem = async (): Promise<string | null> => {
+  const walletProblem = async (): Promise<IdentityProblem | null> => {
     const core = await deps.coreSession();
     const checked = sessionChatKeys({
       entropy: testUserEntropy(self),
@@ -447,39 +662,30 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
       identityAccountId: core.identityAccountId as HexString | undefined,
       chatPublicKey: core.chatPublicKey as HexString | undefined,
     });
-    if (typeof checked === "string") return checked;
+    if (typeof checked === "string") return { reason: checked, again: false };
     return ownIdentityProblem(directory, walletKeys);
   };
-  // Naming needs no chat key: the host draws whom a handle names even when
-  // it cannot reach them.
-  const handleContacts: HandleContacts = {
-    resolve: (handle: ContactHandle) => {
-      const account = deps.handles.accountFor(handle.bytes);
-      const user = account === null ? undefined : contacts.nameOf(account);
-      return account === null || user === undefined
-        ? null
-        : { account, name: user.name, seed: user.handle };
+  let verifiedOnce: Promise<IdentityProblem | null> = new Promise(() => {});
+  // Contact Chat: its own request service, over the same wallet keys,
+  // contacts and delivery, and its own lists.
+  const chat = startContactChatHost({
+    product: contactChat(suffix),
+    keys: {
+      sent: testUserKey(deps.network.id, self.id, "contact-chat-outbox"),
+      received: testUserKey(deps.network.id, self.id, "contact-chat-received"),
     },
-    handleFor: (account) => {
-      if (contacts.nameOf(account) === undefined) return null;
-      const bytes = deps.handles.handleFor(account);
-      return bytes === null ? null : { bytes };
-    },
-  };
-  const chatOptions: ChatV2ProviderOptions = {
-    contacts: handleContacts,
-    onNamesChange: (listener) => deps.handles.onChange(listener),
-    start: {
-      target: (account) => {
-        const handle = handleContacts.handleFor(account);
-        if (handle === null)
-          throw new Error("Contact Chat cannot reach this person.");
-        return { handle };
-      },
-      blocked: () => null,
-    },
-  };
-
+    network: deps.network.id,
+    self: auth.identityFor().agreementPublic,
+    auth,
+    contacts,
+    handles: deps.handles,
+    notifications: deps.notifications,
+    // Checked once, for both products, in `start`.
+    verify: () => verifiedOnce,
+    confirmSend,
+    showChat: deps.showChat,
+    log: deps.log,
+  });
   const host = el("section", "test-product");
   host.setAttribute("aria-label", product.name);
   host.hidden = true;
@@ -578,56 +784,55 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
   };
 
   window.addEventListener("storage", (event) => {
-    if (event.key === null || Object.values(keys).includes(event.key))
+    if (
+      verified &&
+      (event.key === null || Object.values(keys).includes(event.key))
+    )
       service.reload();
-    if (event.key === null || Object.values(chatKeys).includes(event.key))
-      chatService.reload();
   });
   window.addEventListener("pagehide", () => {
     service.stop();
-    chatService.stop();
-    stopTopics();
     open?.dispose();
   });
 
   return {
-    chatProduct,
-    chatOptions,
-    attachChat: (port) => {
-      if (verified) chatService.attachProduct(productPort(port));
-      else pendingChat = port;
-    },
-    detachChat: () => {
-      pendingChat = null;
-      chatService.detachProduct();
-    },
-    serveTopics: (port) => {
-      stopTopics();
-      stopTopics = topics.serve(port);
-    },
-    stopTopics: () => {
-      stopTopics();
-      stopTopics = () => {};
-    },
+    chat,
     notificationActions: {
-      canAccept: (item) => service.owns(item.id) || chatService.owns(item.id),
+      canAccept: (item) => service.owns(item.id) || chat.owns(item.id),
       // Contact Chat runs as a worker: its Accept needs no frame opened.
       accept: (item) =>
-        chatService.owns(item.id)
-          ? chatService.requestAccept(item.id)
+        chat.owns(item.id)
+          ? chat.accept(item)
           : ensureOpen().then(() => service.requestAccept(item.id)),
       // Example Chat lists what the user accepted; Contact Chat's conversation is in Chat.
       destination: (item) =>
-        chatService.owns(item.id)
+        chat.owns(item.id)
           ? "Chat"
           : service.owns(item.id)
             ? product.name
             : null,
+      sent: () =>
+        [
+          ...sentRequests(service, product, (account) =>
+            contacts.nameOf(account),
+          ),
+          ...chat.sent(),
+        ].sort((left, right) => right.createdAt - left.createdAt),
+      cancel: (id) => {
+        if (!chat.cancel(id)) service.requestCancel(id);
+      },
+      onSentChange: (listener) => {
+        const stops = [
+          service.onOutgoing(listener),
+          chat.onSentChange(listener),
+        ];
+        return () => stops.forEach((each) => each());
+      },
       // An accepted row opens Chat for Contact Chat, and Example Chat as its Accept did.
       open: (item) => {
         if (item.state.tag !== "accepted") return;
-        if (chatService.owns(item.id)) {
-          chatService.requestOpen(item.id);
+        if (chat.owns(item.id)) {
+          chat.open(item);
           return;
         }
         if (!service.owns(item.id)) return;
@@ -643,20 +848,17 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
       deps.useStorage(testUserScope(self));
       await current.activateLocalSession(testUserEntropy(self));
       deps.log(`Signed in to test account ${self.name}.`);
-      const problem = await walletProblem();
+      verifiedOnce = walletProblem();
+      const problem = await verifiedOnce;
       if (problem !== null) {
-        deps.log(`Invitations stay off: ${problem}`);
-        pendingChat?.close();
-        pendingChat = null;
+        deps.log(`Invitations stay off: ${problem.reason}`);
+        await chat.start();
         return;
       }
       await contacts.refresh();
       verified = true;
       service.start();
-      chatService.start();
-      if (pendingChat !== null)
-        chatService.attachProduct(productPort(pendingChat));
-      pendingChat = null;
+      await chat.start();
     },
     show: (visible) => {
       host.hidden = !visible;
@@ -673,7 +875,7 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
     onChange: (listener) => listeners.push(listener),
     reset: () => {
       service.stop();
-      chatService.stop();
+      chat.stop();
       for (const part of Object.keys(
         PART_VERSION,
       ) as (keyof typeof PART_VERSION)[])
@@ -748,7 +950,57 @@ function drawSection(
   store.onChange(renderSamples);
   renderSamples();
 
-  const rows: HTMLElement[] = [demoLabel, demoSelect];
+  const walletChat = el("input");
+  walletChat.type = "checkbox";
+  walletChat.id = "wallet-contact-chat";
+  walletChat.checked = sessionStorage.getItem(WALLET_CHAT_KEY) === "on";
+  walletChat.disabled = testUser !== null;
+  walletChat.title =
+    "Run Contact Chat for the signed-in wallet, with requests proved by its own keys and its contacts' published chat keys. Requests travel as Contact Chat delivery says: between tabs of this browser, or on the network. Switching reloads the tab.";
+  walletChat.addEventListener("change", () => {
+    if (walletChat.checked) sessionStorage.setItem(WALLET_CHAT_KEY, "on");
+    else sessionStorage.removeItem(WALLET_CHAT_KEY);
+    window.location.reload();
+  });
+  const walletChatLabel = el("label", "", "Contact Chat for this wallet");
+  walletChatLabel.htmlFor = walletChat.id;
+  const walletChatRow = el("div", "row");
+  walletChatRow.append(walletChat, walletChatLabel);
+
+  const deliverySelect = el("select");
+  deliverySelect.id = "wallet-delivery";
+  deliverySelect.append(
+    new Option("This browser only", "local"),
+    new Option("Network, validate claims only", "validate"),
+    new Option("Network: claim and post", "network"),
+  );
+  deliverySelect.value = walletDelivery();
+  deliverySelect.disabled = testUser !== null;
+  deliverySelect.title =
+    "How the wallet's Contact Chat requests travel. The network delivery posts to the network's shared day inbox, each post signed by a notification account the core claims with your personhood. Validate only asks the runtime whether each claim would pass and submits nothing. Switching reloads the tab.";
+  deliverySelect.addEventListener("change", () => {
+    const next = deliverySelect.value as WalletDelivery;
+    const apply = () => {
+      if (next === "local") sessionStorage.removeItem(WALLET_DELIVERY_KEY);
+      else sessionStorage.setItem(WALLET_DELIVERY_KEY, next);
+      window.location.reload();
+    };
+    if (next !== "network") return apply();
+    void confirmNetworkDelivery(deps.network.id).then((confirmed) => {
+      if (confirmed) apply();
+      else deliverySelect.value = walletDelivery();
+    });
+  });
+  const deliveryLabel = el("label", "", "Contact Chat delivery");
+  deliveryLabel.htmlFor = deliverySelect.id;
+
+  const rows: HTMLElement[] = [
+    demoLabel,
+    demoSelect,
+    walletChatRow,
+    deliveryLabel,
+    deliverySelect,
+  ];
   if (session !== null) {
     const exampleRow = el("div", "row");
     const openExample = button("", "open-example-chat", () => {

@@ -200,7 +200,6 @@ describe("a request and its reply under wallet keys", () => {
         purpose: "Chat?",
         requestId: toHex(digest("id", "one").slice(0, 16)),
         createdAt: 1,
-        deadline: 2,
         returnRoute: "route:1",
         replyKey: toHex(replyKey.public),
         ...overrides,
@@ -262,9 +261,17 @@ describe("a request and its reply under wallet keys", () => {
         ]),
       ),
     ]).toEqual([
-      { ok: false, reason: "the sender is not a contact" },
-      { ok: false, reason: "not sealed to this host" },
-      { ok: false, reason: "its evidence does not check" },
+      {
+        ok: false,
+        reason: "the sender is not a contact",
+        sealedElsewhere: false,
+      },
+      { ok: false, reason: "not sealed to this host", sealedElsewhere: true },
+      {
+        ok: false,
+        reason: "its evidence does not check",
+        sealedElsewhere: false,
+      },
     ]);
   });
 
@@ -282,7 +289,7 @@ describe("a request and its reply under wallet keys", () => {
       { product: { id: "other.paseo", name: "Chat" } },
       { purpose: "Pay?" },
       { requestId: toHex(digest("id", "two").slice(0, 16)) },
-      { deadline: 3 },
+      { createdAt: 3 },
       { returnRoute: "route:2" },
       { replyKey: toHex(x25519Pair(digest("reply", "two")).public) },
     ];
@@ -304,7 +311,11 @@ describe("a request and its reply under wallet keys", () => {
         opened: openRequest(authOf(BOB), resealed, contacts([peer(ALICE)])),
       }).toEqual({
         change,
-        opened: { ok: false, reason: "its evidence does not check" },
+        opened: {
+          ok: false,
+          reason: "its evidence does not check",
+          sealedElsewhere: false,
+        },
       });
     }
   });
@@ -329,8 +340,15 @@ describe("published chat keys", () => {
       await ownIdentityProblem(absent, keysOf(ALICE)),
     ]).toEqual([
       null,
-      "The chat key published for your identity account is not this wallet's.",
-      "Your identity account: it has no chat identity on chain.",
+      {
+        reason:
+          "The chat key published for your identity account is not this wallet's.",
+        again: false,
+      },
+      {
+        reason: "Your identity account: it has no chat identity on chain.",
+        again: false,
+      },
     ]);
   });
 
@@ -356,8 +374,9 @@ describe("published chat keys", () => {
       {
         ok: false,
         reason: "its chat identity could not be read: Error: offline",
+        unread: true,
       },
-      { ok: false, reason: "it publishes no X25519 chat key" },
+      { ok: false, reason: "it publishes no X25519 chat key", unread: false },
     ]);
   });
 });

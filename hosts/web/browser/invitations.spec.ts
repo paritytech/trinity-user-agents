@@ -155,16 +155,13 @@ async function chooseContact(page: Page, name: string): Promise<string> {
 /** Invite from Example Chat: choose `to`, then confirm the host's Send invitation prompt. */
 async function invite(
   page: Page,
-  options: { purpose: string; expiry: string; to: string },
+  options: { purpose: string; to: string },
 ): Promise<string> {
   const product = exampleChat(page);
   const rows = product.locator('[data-list="sent"] .row');
   const before = await rows.count();
   await chooseContact(page, options.to);
   await product.locator('textarea[name="purpose"]').fill(options.purpose);
-  await product
-    .locator('select[name="expiry"]')
-    .selectOption({ label: `Expires in ${options.expiry}` });
   await product.locator('[data-action="invite"]').click();
   const prompt = page.locator("dialog.prompt", { hasText: "Send invitation" });
   expect(await prompt.innerText()).toContain(options.to);
@@ -276,7 +273,6 @@ describe("invitations between test users", () => {
 
         const first = await invite(alice, {
           purpose: "Let's chat in Example Chat.",
-          expiry: "1 hour",
           to: "Bob",
         });
         expect(await sentStatus(alice, first)).toBe("waiting");
@@ -332,7 +328,6 @@ describe("invitations between test users", () => {
         // Alice's invitation still waits until she cancels it.
         const second = await invite(alice, {
           purpose: "Join my reading group.",
-          expiry: "1 day",
           to: "Carol",
         });
         await eventually(() => badge(carol), 1);
@@ -352,30 +347,28 @@ describe("invitations between test users", () => {
           .click();
         await eventually(() => sentStatus(alice, second), "cancelled");
 
-        // Expired: no completion by its expiry; Bob's row loses its actions.
+        // A request has no deadline: Alice cancels the third under Sent in
+        // her host's Inbox. Nothing goes to Bob, whose row still waits.
         await openInbox(bob);
         const third = await invite(alice, {
           purpose: "Quick question before the meeting.",
-          expiry: "2 minutes",
           to: "Bob",
         });
         await eventually(() => bob.locator(".notification-row").count(), 2);
-        await bob
-          .locator(
-            '.notification-row[data-status="pending"] [data-action="notification-accept"]',
-          )
-          .waitFor();
-        await context.clock.fastForward("03:00");
-        await eventually(() => sentStatus(alice, third), "expired");
-        await eventually(
-          () => bob.locator('.notification-row[data-status="expired"]').count(),
-          1,
-        );
+        await openInbox(alice);
+        await alice
+          .locator(`[data-sent="${third}"] [data-action="sent-cancel"]`)
+          .click();
+        await eventually(() => sentStatus(alice, third), "cancelled");
+        await alice.locator(`[data-sent="${third}"]`).waitFor({
+          state: "detached",
+        });
+        expect(await posts(alice, "reply")).toHaveLength(1);
+        await bob.waitForTimeout(300);
         expect(
-          await bob
-            .locator('.notification-row[data-status="expired"] [data-action]')
-            .count(),
-        ).toBe(0);
+          await bob.locator('.notification-row[data-status="pending"]').count(),
+        ).toBe(1);
+        await alice.click(dockTab("browse"));
 
         // Restarting Example Chat leaves one frame; its rows come back.
         await menuAction(alice, "restart-example-chat");
@@ -432,7 +425,7 @@ describe("invitations between test users", () => {
             .evaluateAll((rows) =>
               rows.map((node) => (node as HTMLElement).dataset.status),
             ),
-        ).toEqual(["expired", "accepted"]);
+        ).toEqual(["accepted"]);
         expect(await badge(bob)).toBe(0);
 
         // Another network shows none of it.
@@ -665,7 +658,6 @@ describe("invitations between test users", () => {
         await invite(alice, {
           purpose:
             "We would like to start a chat about the reading circle schedule and the next three meetings.",
-          expiry: "1 day",
           to: "Bob",
         });
         await eventually(() => badge(bob), 1);

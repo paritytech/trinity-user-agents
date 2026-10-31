@@ -307,11 +307,14 @@ type StorageClient = Pick<TrUApiClient, "localStorage">;
  * A `Storage` the engine reads and writes at once, kept in the product's
  * TrUAPI storage. {@link ProductStorage.load} reads the keys first; each
  * write goes to the host in order, and {@link ProductStorage.flush} waits for
- * them. The host keeps the value per product, so it outlives the worker.
+ * them and rejects while the last write of any key failed. The host keeps the
+ * value per product, so it outlives the worker.
  */
 export class ProductStorage implements Storage {
   private readonly items = new Map<string, string>();
   private writes: Promise<void> = Promise.resolve();
+  /** Keys whose last write failed, with why: the host does not hold their value. */
+  private readonly failed = new Map<string, string>();
 
   private constructor(
     private readonly client: StorageClient,
@@ -350,22 +353,23 @@ export class ProductStorage implements Storage {
   }
 
   setItem(key: string, value: string): void {
-    if (this.items.get(key) === value) return;
+    // The same value again needs no write, unless the last write of it failed.
+    if (this.items.get(key) === value && !this.failed.has(key)) return;
     this.items.set(key, value);
-    this.queue(async () => {
+    this.queue(key, async () => {
       const written = await this.client.localStorage.write({
         key,
         value: bytesToHex(utf8(value)),
       });
-      if (written.isErr()) this.onError(errorText(written.error));
+      return written.isErr() ? errorText(written.error) : null;
     });
   }
 
   removeItem(key: string): void {
     if (!this.items.delete(key)) return;
-    this.queue(async () => {
+    this.queue(key, async () => {
       const cleared = await this.client.localStorage.clear({ key });
-      if (cleared.isErr()) this.onError(errorText(cleared.error));
+      return cleared.isErr() ? errorText(cleared.error) : null;
     });
   }
 
@@ -373,14 +377,31 @@ export class ProductStorage implements Storage {
     for (const key of [...this.items.keys()]) this.removeItem(key);
   }
 
-  /** Resolves once every write so far reached the host. */
-  flush(): Promise<void> {
-    return this.writes;
+  /**
+   * Resolves once every write so far reached the host and the host holds the
+   * last value of every key; rejects while the last write of a key failed.
+   */
+  async flush(): Promise<void> {
+    await this.writes;
+    const [failure] = this.failed.values();
+    if (failure !== undefined)
+      throw new Error(`The worker's storage did not keep a write: ${failure}`);
   }
 
-  private queue(write: () => Promise<void>): void {
-    this.writes = this.writes
-      .then(write)
-      .catch((error: unknown) => this.onError(errorText(error)));
+  /** Run `write` after every earlier one; it answers why it failed, or null. */
+  private queue(key: string, write: () => Promise<string | null>): void {
+    this.writes = this.writes.then(async () => {
+      let failure: string | null;
+      try {
+        failure = await write();
+      } catch (error) {
+        failure = errorText(error);
+      }
+      if (failure === null) this.failed.delete(key);
+      else {
+        this.failed.set(key, failure);
+        this.onError(failure);
+      }
+    });
   }
 }
