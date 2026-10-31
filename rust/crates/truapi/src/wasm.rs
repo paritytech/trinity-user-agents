@@ -1418,6 +1418,55 @@ impl WasmSigningHostRuntime {
 		packed_contact_handles(&accounts, |accounts| self.runtime.contact_handles(accounts))
 	}
 
+	/// Register the 32-byte `target` as a notification statement account for
+	/// the current UTC day, proving the session's personhood; with `submit`
+	/// false, only ask the runtime whether it would accept the claim.
+	///
+	/// Answers `{ period, outcome, seq, collection?, blockHash? }`, where
+	/// `outcome` is `"registered"`, `"alreadyRegistered"` or `"validated"`.
+	/// Host only; the host derives `target` and signs its statement.
+	#[wasm_bindgen(js_name = claimNotificationAccount)]
+	pub async fn claim_notification_account(
+		&self,
+		target: Vec<u8>,
+		submit: bool,
+	) -> Result<JsValue, JsValue> {
+		use crate::statement_allowance::{ClaimSubmission, NotificationAccountOutcome};
+
+		let target = <[u8; 32]>::try_from(target.as_slice())
+			.map_err(|_| JsValue::from_str("a notification account is 32 bytes"))?;
+		let submission =
+			if submit { ClaimSubmission::Submit } else { ClaimSubmission::ValidateOnly };
+		let claim = self
+			.runtime
+			.claim_notification_account(target, submission)
+			.await
+			.map_err(JsValue::from)?;
+		let value = js_sys::Object::new();
+		let set = |key: &str, field: JsValue| Reflect::set(&value, &JsValue::from_str(key), &field);
+		set("period", JsValue::from(claim.period))?;
+		let (outcome, seq, collection, block_hash) = match claim.outcome {
+			NotificationAccountOutcome::Registered { block_hash, seq, collection } => {
+				("registered", seq, Some(collection), Some(block_hash))
+			},
+			NotificationAccountOutcome::AlreadyRegistered { seq } => {
+				("alreadyRegistered", seq, None, None)
+			},
+			NotificationAccountOutcome::Validated { seq, collection } => {
+				("validated", seq, Some(collection), None)
+			},
+		};
+		set("outcome", JsValue::from_str(outcome))?;
+		set("seq", JsValue::from(seq))?;
+		if let Some(collection) = collection {
+			set("collection", JsValue::from_str(collection.metadata_variant()))?;
+		}
+		if let Some(block_hash) = block_hash {
+			set("blockHash", JsValue::from_str(&block_hash))?;
+		}
+		Ok(value.into())
+	}
+
 	/// Revoke one product's grants from the current local activation.
 	#[wasm_bindgen(js_name = clearProductState)]
 	pub async fn clear_product_state(&self, raw_product_id: String) -> Result<(), JsValue> {

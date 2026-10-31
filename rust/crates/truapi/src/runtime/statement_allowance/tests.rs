@@ -1218,3 +1218,395 @@ fn registration_fails_when_the_included_block_lacks_the_slot() {
 	let err = outcome.unwrap_err();
 	assert!(err.to_string().contains("0xb10c"), "unexpected error: {err}");
 }
+
+const NOTIFICATION_TARGET: [u8; 32] = [0x22; 32];
+const NOTIFICATION_PERIOD: u32 = 20_756;
+
+fn lite_entropy() -> [u8; 32] {
+	[0x11; 32]
+}
+
+fn lite_ring() -> RingParams {
+	RingParams {
+		collection: PersonhoodCollection::LitePeople,
+		members: vec![proof::member_key_now(lite_entropy())],
+		exponent: 9,
+		ring_index: 0,
+		block_hash: "0xfinal".to_string(),
+	}
+}
+
+/// Claim [`NOTIFICATION_TARGET`] as a lite person over `rpc`, with `signer`.
+fn run_notification_claim(
+	rpc: RpcClient,
+	signer: &dyn PersonhoodSigner,
+	submission: ClaimSubmission,
+) -> Result<NotificationAccountOutcome, StatementAllowanceError> {
+	let extrinsics = test_fixtures::people_extrinsics();
+	futures::executor::block_on(claim_notification_account(NotificationAccountClaim {
+		rpc: &rpc,
+		metadata: test_fixtures::people(),
+		target_chain: test_fixtures::people_target(&extrinsics),
+		signer,
+		network_suffix: b"paseo",
+		target: &NOTIFICATION_TARGET,
+		period: NOTIFICATION_PERIOD,
+		memberships: core::slice::from_ref(&lite_ring()),
+		submission,
+	}))
+}
+
+/// Answers for the ring revision and the scan of the fixture's two lite
+/// slots of an empty period, then `tail`.
+fn empty_period_then(tail: &[&str]) -> ScriptedRpc {
+	let mut responses = vec!["null"; 3];
+	responses.extend_from_slice(tail);
+	ScriptedRpc::new(responses)
+}
+
+/// A notification claim for [`NOTIFICATION_TARGET`] by a lite person whose
+/// period is empty, answering `tail` after the ring revision and the scan
+/// of the fixture's two lite slots.
+fn scripted_notification_claim(
+	submission: ClaimSubmission,
+	tail: &[&str],
+) -> (Result<NotificationAccountOutcome, StatementAllowanceError>, ScriptedRpc) {
+	let candidates = lite_people(lite_entropy());
+	let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
+	let scripted = empty_period_then(tail);
+	scripted.script_subscription([r#"{"inBlock":"0xb10c"}"#]);
+	let outcome = run_notification_claim(
+		RpcClient::new(HostRpcClient::new(scripted.clone())),
+		&signer,
+		submission,
+	);
+	(outcome, scripted)
+}
+
+fn submissions(scripted: &ScriptedRpc) -> usize {
+	scripted
+		.calls()
+		.iter()
+		.filter(|(method, _)| method == "author_submitAndWatchExtrinsic")
+		.count()
+}
+
+/// A claim the pool already holds an equivalent of, as one from a
+/// concurrent call or an earlier try for the same slot.
+fn duplicate_claim(
+	tail: &[&str],
+) -> (Result<NotificationAccountOutcome, StatementAllowanceError>, ScriptedRpc) {
+	let candidates = lite_people(lite_entropy());
+	let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
+	let scripted = empty_period_then(tail);
+	scripted.script_subscription_errors("Priority is too low: (0 vs 0)", 1);
+	scripted.script_subscription([r#"{"inBlock":"0xb10c"}"#]);
+	let outcome = run_notification_claim(
+		RpcClient::new(HostRpcClient::new(scripted.clone())),
+		&signer,
+		ClaimSubmission::Submit,
+	);
+	(outcome, scripted)
+}
+
+/// The pool's answer is not the chain's: a target the chain registered
+/// meanwhile is the claim's success, with no second slot spent.
+#[test]
+fn a_duplicate_claim_whose_target_is_registered_reports_that_registration() {
+	let alias = format!(r#""0x{}""#, hex::encode([0x33; 32]));
+	let held = notification_registration(NOTIFICATION_TARGET, NOTIFICATION_PERIOD, 0);
+	let (outcome, scripted) = duplicate_claim(&[&alias, &held]);
+
+	assert_eq!(
+		(outcome.unwrap(), submissions(&scripted)),
+		(NotificationAccountOutcome::AlreadyRegistered { seq: 0 }, 1),
+	);
+}
+
+/// Neither the slot nor the target registered: the claim in the pool may
+/// still land, so trying another slot could spend two.
+#[test]
+fn a_duplicate_claim_with_nothing_registered_is_uncertain_and_claims_no_other_slot() {
+	let (outcome, scripted) = duplicate_claim(&["null", "null"]);
+
+	assert_eq!(
+		(outcome.unwrap_err().to_string(), submissions(&scripted)),
+		(
+			format!(
+				"a notification claim for slot 0 of period {NOTIFICATION_PERIOD} may still land; not claiming another"
+			),
+			1,
+		),
+	);
+}
+
+/// The slot went to another account: this claim cannot land, so the next
+/// free slot is claimed.
+#[test]
+fn a_duplicate_claim_whose_slot_went_elsewhere_claims_the_next_one() {
+	let other = notification_registration([0x44; 32], NOTIFICATION_PERIOD, 0);
+	let verified = notification_registration(NOTIFICATION_TARGET, NOTIFICATION_PERIOD, 1);
+	let (outcome, scripted) = duplicate_claim(&["null", &other, &other, "null", &verified]);
+
+	assert_eq!(
+		(outcome.unwrap(), submissions(&scripted)),
+		(
+			NotificationAccountOutcome::Registered {
+				block_hash: "0xb10c".to_string(),
+				seq: 1,
+				collection: PersonhoodCollection::LitePeople,
+			},
+			2,
+		),
+	);
+}
+
+/// A submission whose answer was lost may still have landed: the chain
+/// decides, and nothing is submitted again.
+#[test]
+fn a_failed_submission_whose_target_is_registered_reports_that_registration() {
+	let candidates = lite_people(lite_entropy());
+	let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
+	let alias = format!(r#""0x{}""#, hex::encode([0x33; 32]));
+	let held = notification_registration(NOTIFICATION_TARGET, NOTIFICATION_PERIOD, 0);
+	let scripted = empty_period_then(&[&alias, &held]);
+	scripted.script_subscription_errors("connection reset", 1);
+	let outcome = run_notification_claim(
+		RpcClient::new(HostRpcClient::new(scripted.clone())),
+		&signer,
+		ClaimSubmission::Submit,
+	);
+
+	assert_eq!(
+		(outcome.unwrap(), submissions(&scripted)),
+		(NotificationAccountOutcome::AlreadyRegistered { seq: 0 }, 1),
+	);
+}
+
+/// A transport that ends the signer's session while the slot scan is
+/// answered, as a logout landing during that read.
+struct EndsSessionOnScan {
+	inner: ScriptedRpc,
+	ended: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl subxt_rpcs::client::RpcClientT for EndsSessionOnScan {
+	fn request_raw<'a>(
+		&'a self,
+		method: &'a str,
+		params: Option<Box<subxt_rpcs::client::RawValue>>,
+	) -> subxt_rpcs::client::RawRpcFuture<'a, Box<subxt_rpcs::client::RawValue>> {
+		if method == "state_queryStorageAt" {
+			self.ended.store(true, std::sync::atomic::Ordering::SeqCst);
+		}
+		self.inner.request_raw(method, params)
+	}
+
+	fn subscribe_raw<'a>(
+		&'a self,
+		sub: &'a str,
+		params: Option<Box<subxt_rpcs::client::RawValue>>,
+		unsub: &'a str,
+	) -> subxt_rpcs::client::RawRpcFuture<'a, subxt_rpcs::client::RawRpcSubscription> {
+		self.inner.subscribe_raw(sub, params, unsub)
+	}
+}
+
+/// Personhood keys lent by a session, refused once `ended` is set, as a
+/// wallet's keys are after its session ends.
+struct SessionBoundSigner<'a> {
+	keys: &'a dyn PersonhoodSigner,
+	ended: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl SessionBoundSigner<'_> {
+	fn still_current(&self) -> Result<(), StatementAllowanceError> {
+		if self.ended.load(std::sync::atomic::Ordering::SeqCst) {
+			return Err(crate::runtime::authority::AuthorityError::Disconnected.into());
+		}
+		Ok(())
+	}
+}
+
+impl PersonhoodSigner for SessionBoundSigner<'_> {
+	fn member(
+		&self,
+		collection: PersonhoodCollection,
+	) -> Result<[u8; 32], StatementAllowanceError> {
+		self.still_current()?;
+		self.keys.member(collection)
+	}
+
+	fn alias(
+		&self,
+		collection: PersonhoodCollection,
+		context: &[u8],
+	) -> Result<[u8; 32], StatementAllowanceError> {
+		self.still_current()?;
+		self.keys.alias(collection, context)
+	}
+
+	fn prove(
+		&self,
+		ring: &RingParams,
+		context: &[u8],
+		message: &[u8],
+	) -> Result<Vec<u8>, StatementAllowanceError> {
+		self.still_current()?;
+		self.keys.prove(ring, context, message)
+	}
+}
+
+/// The keys are lent by a session; once it ends, no proof is made and no
+/// claim is submitted, even for a claim already under way.
+#[test]
+fn a_session_that_ends_during_the_scan_submits_no_claim() {
+	let candidates = lite_people(lite_entropy());
+	let keys = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
+	let ended = Arc::new(std::sync::atomic::AtomicBool::new(false));
+	let signer = SessionBoundSigner { keys: &keys, ended: ended.clone() };
+	let scripted = empty_period_then(&[]);
+	scripted.script_subscription([r#"{"inBlock":"0xb10c"}"#]);
+	let outcome = run_notification_claim(
+		RpcClient::new(HostRpcClient::new(EndsSessionOnScan { inner: scripted.clone(), ended })),
+		&signer,
+		ClaimSubmission::Submit,
+	);
+
+	assert_eq!(
+		(outcome.unwrap_err().to_string(), submissions(&scripted)),
+		("Disconnected".to_string(), 0),
+	);
+}
+
+fn notification_registration(account: [u8; 32], period: u32, seq: u8) -> String {
+	format!(r#""0x{}""#, hex::encode((account, period, seq).encode()))
+}
+
+/// The submitted claim must name the target and the free slot the scan
+/// found, or the allowance lands on someone else's account.
+#[test]
+fn a_notification_claim_registers_the_target_in_the_first_free_slot() {
+	let verified = notification_registration(NOTIFICATION_TARGET, NOTIFICATION_PERIOD, 0);
+	let (outcome, scripted) =
+		scripted_notification_claim(ClaimSubmission::Submit, &[verified.as_str()]);
+
+	assert_eq!(
+		outcome.unwrap(),
+		NotificationAccountOutcome::Registered {
+			block_hash: "0xb10c".to_string(),
+			seq: 0,
+			collection: PersonhoodCollection::LitePeople,
+		},
+	);
+	let metadata = subxt::Metadata::decode_from(test_fixtures::PEOPLE_METADATA).unwrap();
+	let call = subxt::ext::frame_decode::extrinsics::encode_call_data(
+		RESOURCES_PALLET,
+		"set_notification_statement_account_for_sequence",
+		&extrinsic::SetNotificationAccountCallArgs {
+			reference: (NOTIFICATION_PERIOD, 0),
+			account_id: NOTIFICATION_TARGET,
+		},
+		&metadata,
+		metadata.types(),
+	)
+	.unwrap();
+	let submitted = scripted
+		.calls()
+		.into_iter()
+		.find(|(method, _)| method == "author_submitAndWatchExtrinsic")
+		.map(|(_, params)| params)
+		.unwrap();
+	assert!(
+		submitted.ends_with(&format!("{}\"]", hex::encode(&call))),
+		"the extrinsic does not end in the claim call: {submitted}"
+	);
+}
+
+#[test]
+fn a_validate_only_claim_submits_nothing() {
+	let head = format!(r#""0x{}""#, hex::encode([0xf1; 32]));
+	let (valid, scripted) =
+		scripted_notification_claim(ClaimSubmission::ValidateOnly, &[&head, r#""0x00""#]);
+	let (refused, _) =
+		scripted_notification_claim(ClaimSubmission::ValidateOnly, &[&head, r#""0x010007e1""#]);
+
+	let validation = scripted
+		.calls()
+		.into_iter()
+		.find(|(method, _)| method == "state_call")
+		.map(|(_, params)| serde_json::from_str::<Value>(&params).unwrap())
+		.unwrap();
+	let finalized = format!("0x{}", hex::encode([0xf1; 32]));
+	assert_eq!(
+		(
+			&validation[0],
+			validation[1].as_str().unwrap().ends_with(&finalized[2..]),
+			&validation[2],
+		),
+		(&json!("TaggedTransactionQueue_validate_transaction"), true, &json!(finalized)),
+		"the claim is validated at the finalized head, in the arguments and as the block"
+	);
+	assert_eq!(
+		(
+			valid.unwrap(),
+			scripted
+				.calls()
+				.iter()
+				.any(|(method, _)| method == "author_submitAndWatchExtrinsic"),
+			refused.unwrap_err().to_string(),
+		),
+		(
+			NotificationAccountOutcome::Validated {
+				seq: 0,
+				collection: PersonhoodCollection::LitePeople,
+			},
+			false,
+			format!(
+				"notification claim (period {NOTIFICATION_PERIOD}, seq 0) does not validate: Invalid::Custom(225)"
+			),
+		),
+	);
+}
+
+/// The runtime registers an account once, so an account from an earlier
+/// period must not look free for a new claim.
+#[test]
+fn a_notification_account_holds_one_period() {
+	let alias = format!(r#""0x{}""#, hex::encode([0x33; 32]));
+	let read = |registration: &str| {
+		let scripted = ScriptedRpc::new([alias.as_str(), registration]);
+		let rpc = RpcClient::new(HostRpcClient::new(scripted));
+		futures::executor::block_on(notification_registration_in(
+			&rpc,
+			&NOTIFICATION_TARGET,
+			NOTIFICATION_PERIOD,
+		))
+		.map_err(|err| err.to_string())
+	};
+	let none = {
+		let rpc = RpcClient::new(HostRpcClient::new(ScriptedRpc::new(["null"])));
+		futures::executor::block_on(notification_registration_in(
+			&rpc,
+			&NOTIFICATION_TARGET,
+			NOTIFICATION_PERIOD,
+		))
+		.map_err(|err| err.to_string())
+	};
+
+	assert_eq!(
+		[
+			none,
+			read(&notification_registration(NOTIFICATION_TARGET, NOTIFICATION_PERIOD, 4)),
+			read(&notification_registration(NOTIFICATION_TARGET, NOTIFICATION_PERIOD - 1, 4)),
+		],
+		[
+			Ok(None),
+			Ok(Some(4)),
+			Err(format!(
+				"account already holds a notification registration from period {}",
+				NOTIFICATION_PERIOD - 1
+			)),
+		],
+	);
+}

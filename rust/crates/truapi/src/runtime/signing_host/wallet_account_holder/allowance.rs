@@ -82,6 +82,15 @@ pub struct StatementStoreAllocation {
 	pub period: u32,
 }
 
+/// A notification claim's period and how it ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationClaim {
+	/// Notification period: the UTC day the claim is for.
+	pub period: u32,
+	/// What the claim did.
+	pub outcome: crate::runtime::statement_allowance::NotificationAccountOutcome,
+}
+
 impl WalletAccountHolder {
 	/// Issue a statement allowance with the period actually found or registered.
 	pub async fn allocate_statement_store_allowance(
@@ -336,6 +345,77 @@ impl WalletAccountHolder {
 			"Bulletin authorization visible"
 		);
 		self.bulletin_secret(session, product_id)
+	}
+
+	/// Register `target` as a notification statement account for the current
+	/// period, proving the wallet's personhood, or only validate the claim.
+	///
+	/// Host only: the host derives and holds `target` and signs its one
+	/// statement, so no secret crosses here. Asking again for an account that
+	/// already holds this period's registration claims nothing.
+	pub async fn claim_notification_account(
+		&self,
+		session: &AuthoritySession,
+		target: [u8; 32],
+		submission: crate::runtime::statement_allowance::ClaimSubmission,
+	) -> Result<NotificationClaim, AllowanceAllocationError> {
+		use crate::runtime::statement_allowance::{
+			self, NotificationAccountOutcome, collection::PersonhoodCollection,
+			find_including_rings,
+		};
+
+		// One claim at a time, from the target's lookup to its confirmation, so
+		// two never take a slot each for what one would have served.
+		let _claiming = self.notification_claims.lock().await;
+		self.require_current_session(session)?;
+		let client = self.services.statement_store.chain_client("notification account").await?;
+		let rpc = client.rpc();
+		let period = statement_allowance::slot::current_period(current_unix_secs()?);
+		if let Some(seq) =
+			statement_allowance::notification_registration_in(rpc, &target, period).await?
+		{
+			self.require_current_session(session)?;
+			return Ok(NotificationClaim {
+				period,
+				outcome: NotificationAccountOutcome::AlreadyRegistered { seq },
+			});
+		}
+		let chain = self.services.chain_context.get(&client).await?;
+		let network_suffix = statement_allowance::slot::read_network_suffix(rpc).await?;
+		let signer = self.personhood_signer(session).await?;
+		let memberships = find_including_rings(
+			rpc,
+			&chain.metadata,
+			&signer,
+			&PersonhoodCollection::ALL,
+			u32::MAX,
+		)
+		.await?;
+		if memberships.is_empty() {
+			self.require_current_session(session)?;
+			return Err(AllowanceAllocationError::MissingPersonhoodMembership {
+				resource: "notification",
+			});
+		}
+		let outcome = statement_allowance::claim_notification_account(
+			statement_allowance::NotificationAccountClaim {
+				rpc,
+				metadata: &chain.metadata,
+				target_chain: client.extrinsic_target(&self.services.extrinsics),
+				signer: &signer,
+				network_suffix: &network_suffix,
+				target: &target,
+				period,
+				memberships: &memberships,
+				submission,
+			},
+		)
+		.await?;
+		debug!(period, ?outcome, "notification account claim");
+		// A claim submitted before the session ended stays on chain; only its
+		// answer is withheld from a session that is gone.
+		self.require_current_session(session)?;
+		Ok(NotificationClaim { period, outcome })
 	}
 
 	fn bulletin_secret(

@@ -981,8 +981,6 @@ pub use platform::{
 	ProductContext, SigningHostConfig, describe_core_storage_key,
 };
 #[cfg(feature = "runtime")]
-pub use runtime::StatementRenewalTarget;
-#[cfg(feature = "runtime")]
 pub use runtime::contacts::contact_handle;
 #[cfg(feature = "runtime")]
 pub use runtime::login_failure::reports_exhausted_period;
@@ -995,6 +993,8 @@ pub use runtime::{
 	AnnouncedPairing, DevicePairingObserver, FundingFeed, MAX_PAIRING_METADATA_CHARS,
 	PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit,
 };
+#[cfg(feature = "runtime")]
+pub use runtime::{NotificationClaim, StatementRenewalTarget};
 #[cfg(feature = "runtime")]
 pub use unix_time::current_unix_millis;
 

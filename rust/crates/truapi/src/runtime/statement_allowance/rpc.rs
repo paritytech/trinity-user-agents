@@ -52,6 +52,9 @@ pub enum RpcError {
 	/// `chain_getFinalizedHead` did not return a hash string.
 	#[error("chain_getFinalizedHead returned non-string")]
 	FinalizedHeadNotString,
+	/// `state_call` did not return a hex string.
+	#[error("state_call returned non-string")]
+	StateCallResultNotString,
 	/// Extrinsic status subscription ended before inclusion.
 	#[error("author_submitAndWatchExtrinsic subscription ended")]
 	SubmitSubscriptionEnded,
@@ -193,6 +196,31 @@ impl RpcClient {
 			.as_str()
 			.map(str::to_owned)
 			.ok_or_else(|| RpcError::FinalizedHeadNotString.into())
+	}
+
+	/// The runtime's SCALE `TransactionValidity` for `extrinsic` at block `at`,
+	/// as if it came from outside the node. Submits nothing.
+	pub async fn validate_transaction(
+		&self,
+		extrinsic: &[u8],
+		at: &str,
+	) -> Result<Vec<u8>, StatementAllowanceError> {
+		/// `TransactionSource::External`.
+		const EXTERNAL: u8 = 2;
+		let argument = [&[EXTERNAL][..], extrinsic, &decode_hex(at)?].concat();
+		// The block goes twice: in the arguments, for the runtime, and as the
+		// block to call the runtime at, so the state it reads is that block's.
+		let answer = self
+			.call(
+				"state_call",
+				json!([
+					"TaggedTransactionQueue_validate_transaction",
+					format!("0x{}", hex::encode(argument)),
+					at,
+				]),
+			)
+			.await?;
+		decode_hex(answer.as_str().ok_or(RpcError::StateCallResultNotString)?)
 	}
 
 	/// Submit an extrinsic and wait for `inBlock` or `finalized`; returns the block hash.

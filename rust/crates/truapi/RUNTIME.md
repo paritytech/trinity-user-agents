@@ -210,8 +210,12 @@ touching the session or other products, `notify_contacts_changed` to drop
 the contact handles the core cached once a contact is removed or blocked, and
 `contact_handles` to mint the handles `contacts.pick` gives for the people the
 host knows, without caching them (served to the web host through WASM; the
-native host runtime does not expose it yet). Calling the wrong operation is
-a compile error, not a runtime `Unavailable`.
+native host runtime does not expose it yet). The signing handle also has
+`claim_notification_account`, which registers an account the host derives as
+today's notification statement account with the session's personhood proof,
+or only validates that claim against the runtime (served to the web host
+through WASM; not exposed natively). Calling the wrong operation is a compile
+error, not a runtime `Unavailable`.
 
 A local session's usernames come from the dotNS contracts on Asset Hub, read
 after activation. A name the host passes is shown until a record answers.

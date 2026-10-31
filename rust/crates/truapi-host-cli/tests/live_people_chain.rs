@@ -22,8 +22,12 @@ use std::{
 	time::{SystemTime, UNIX_EPOCH},
 };
 
-use truapi::statement_allowance::{
-	self as alloc, ChainContextCache, collection::PersonhoodCollection,
+use subxt::utils::H256;
+use truapi::{
+	chain::ExtrinsicService,
+	platform::{ChainExtensionVersion, ExtensionVersionMap, ExtrinsicVersionHost},
+	statement_allowance::{self as alloc, ChainContextCache, collection::PersonhoodCollection},
+	subscription::Spawner,
 };
 
 /// A genesis hash no chain will report, standing in for a host whose configured
@@ -44,6 +48,37 @@ async fn connect() -> alloc::rpc::RpcClient {
 /// keys by.
 async fn stale_scoped_client() -> alloc::ChainClient {
 	alloc::ChainClient::new(connect().await, STALE_CONFIGURED_GENESIS)
+}
+
+/// The People pipeline the CLI builds its own extrinsics with: V5, version 1.
+struct PeopleExtensionVersions(ExtensionVersionMap);
+
+#[async_trait::async_trait]
+impl ExtrinsicVersionHost for PeopleExtensionVersions {
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<ExtensionVersionMap, truapi::latest::GenericError> {
+		Ok(self.0.clone())
+	}
+}
+
+/// An extrinsic service on the live People node that builds as the CLI does,
+/// and the genesis its extrinsics are for.
+async fn people_extrinsics(rpc: &alloc::rpc::RpcClient) -> (ExtrinsicService, H256) {
+	let genesis = alloc::fetch_genesis_hash(rpc).await.expect("read the live genesis hash");
+	let url = people_ws().parse().expect("a valid People endpoint");
+	let provider = truapi_provider::EmbeddedChainProvider::builder()
+		.chain(genesis, truapi_provider::ChainSource::rpc_node(url))
+		.build();
+	let versions = PeopleExtensionVersions(ExtensionVersionMap {
+		chains: vec![ChainExtensionVersion { genesis_hash: genesis, extension_version: 1 }],
+	});
+	let spawner: Spawner = Arc::new(|future| {
+		tokio::spawn(future);
+	});
+	let extrinsics =
+		ExtrinsicService::from_provider(Arc::new(provider), spawner, Arc::new(versions));
+	(extrinsics, H256(genesis))
 }
 
 fn current_period() -> u32 {
@@ -241,4 +276,82 @@ async fn dynamic_resources_values_resolve_on_the_live_chain() {
 		"live Resources views: replacement_cooldown={cooldown}s \
          long_term_storage_claims_per_period={long_term_storage_claims}"
 	);
+}
+
+/// A notification claim the core builds must pass the live runtime's own
+/// validation: the slot context, the call, the `AsResources` variant and the
+/// ring proof are all checked there. Validation only, so nothing is
+/// submitted and no slot is taken.
+///
+/// Proves as the web host's public Alice test account, which must be a
+/// personhood ring member on the chain; the target is a throwaway account
+/// that holds no registration.
+#[tokio::test]
+#[ignore = "needs network access to a live People chain"]
+async fn a_notification_claim_validates_on_the_live_chain() {
+	use truapi::host_logic::product_account::{
+		derive_full_person_ring_vrf_entropy, derive_lite_person_ring_vrf_entropy,
+	};
+
+	const ALICE: &str =
+		"jelly better achieve collect unaware mountain thought cargo oxygen act hood bridge";
+	let entropy = bip39::Mnemonic::parse(ALICE).expect("a valid test phrase").to_entropy();
+	let rpc = connect().await;
+	let cache = ChainContextCache::default();
+	let chain = cache
+		.get(&stale_scoped_client().await)
+		.await
+		.expect("read the live chain context");
+	let network_suffix = alloc::slot::read_network_suffix(&rpc)
+		.await
+		.expect("read the live network suffix");
+	let suffix = String::from_utf8(network_suffix.clone()).expect("network suffix is UTF-8");
+	let candidates = [
+		alloc::CollectionCandidate {
+			collection: PersonhoodCollection::People,
+			entropy: derive_full_person_ring_vrf_entropy(&entropy, &suffix),
+		},
+		alloc::CollectionCandidate {
+			collection: PersonhoodCollection::LitePeople,
+			entropy: derive_lite_person_ring_vrf_entropy(&entropy, &suffix),
+		},
+	];
+	let signer = alloc::FixedPersonhoodSigner::new(&candidates).await.expect("load the prover");
+	let collections = candidates.each_ref().map(|candidate| candidate.collection);
+	let memberships =
+		alloc::find_including_rings(&rpc, &chain.metadata, &signer, &collections, u32::MAX)
+			.await
+			.expect("look up Alice's rings");
+	assert!(!memberships.is_empty(), "the Alice test account is in no personhood ring");
+	let target = [0x5a; 32];
+	let period = current_period();
+	assert_eq!(
+		alloc::notification_registration_in(&rpc, &target, period).await.ok(),
+		Some(None),
+		"the throwaway target already holds a registration"
+	);
+
+	let (extrinsics, genesis) = people_extrinsics(&rpc).await;
+	let outcome = alloc::claim_notification_account(alloc::NotificationAccountClaim {
+		rpc: &rpc,
+		metadata: &chain.metadata,
+		target_chain: alloc::ExtrinsicTarget { extrinsics: &extrinsics, genesis },
+		signer: &signer,
+		network_suffix: &network_suffix,
+		target: &target,
+		period,
+		memberships: &memberships,
+		submission: alloc::ClaimSubmission::ValidateOnly,
+	})
+	.await
+	.expect("the live runtime accepts the claim");
+
+	println!(
+		"validated a notification claim in period {period}: {outcome:?}, memberships {:?}",
+		memberships
+			.iter()
+			.map(|ring| (ring.collection, ring.ring_index))
+			.collect::<Vec<_>>()
+	);
+	assert!(matches!(outcome, alloc::NotificationAccountOutcome::Validated { .. }));
 }

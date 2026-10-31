@@ -41,12 +41,14 @@ pub fn asset_hub() -> &'static Metadata {
 /// Priming them keeps a test's scripted RPC list about the slot table it is
 /// exercising: without this every scan would also have to script the budget
 /// view calls, so adding one read would renumber every later response.
-const PEOPLE_RESOURCE_BUDGETS: [(&str, u32); 5] = [
+const PEOPLE_RESOURCE_BUDGETS: [(&str, u32); 7] = [
 	("get_stmt_store_slots_per_period", 20),
 	("get_lite_stmt_store_slots_per_period", 10),
 	("get_stmt_store_replacement_cooldown", 60),
 	("get_stmt_store_grace_window", 3600),
 	("get_long_term_storage_claims_per_period", 10),
+	("get_notification_slots_per_period", 2),
+	("get_lite_notification_slots_per_period", 1),
 ];
 
 /// People-chain V16 metadata with [`PEOPLE_RESOURCE_BUDGETS`] already resolved.

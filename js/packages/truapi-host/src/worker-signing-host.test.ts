@@ -190,4 +190,37 @@ suite("worker serving a signing host", () => {
       error: "contact accounts are 32 bytes each, got 33 bytes",
     });
   });
+
+  it("refuses a notification account that is not 32 bytes in the core itself", async () => {
+    const { worker } = await signingHost();
+    const answer = new Promise<unknown>((resolve) =>
+      worker.addEventListener("message", (event) => {
+        const data = (event as MessageEvent).data as {
+          kind: string;
+          requestId?: number;
+        };
+        if (
+          data.kind === "claimNotificationAccountResponse" &&
+          data.requestId === -2
+        )
+          resolve(data);
+      }),
+    );
+    globalThis.dispatchEvent(
+      new MessageEvent("message", {
+        data: {
+          kind: "claimNotificationAccount",
+          requestId: -2,
+          target: new Uint8Array(31),
+          submit: false,
+        },
+      }),
+    );
+    expect(await answer).toEqual({
+      kind: "claimNotificationAccountResponse",
+      requestId: -2,
+      ok: false,
+      error: "a notification account is 32 bytes",
+    });
+  });
 });

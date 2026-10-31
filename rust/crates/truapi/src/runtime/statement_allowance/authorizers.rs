@@ -52,6 +52,9 @@ pub enum AsResourcesInfo {
 	RegisterStatementStoreAllowance(Vec<u8>, u32, u32, PersonhoodCollection),
 	/// A long-term-storage claim: proof, ring index, revision, collection.
 	ClaimLongTermStorage(Vec<u8>, u32, u32, PersonhoodCollection),
+	/// A notification-account registration: proof, ring index, revision,
+	/// collection.
+	RegisterNotificationForCollection(Vec<u8>, u32, u32, PersonhoodCollection),
 }
 
 /// Which resource an `AsResources` proof claims.
@@ -59,6 +62,7 @@ pub enum AsResourcesInfo {
 enum ResourcesClaim {
 	StatementStoreAllowance,
 	LongTermStorage,
+	Notification,
 }
 
 /// The People `AsResources` authorizer.
@@ -76,6 +80,11 @@ impl<'a> AsResourcesExtension<'a> {
 	/// Authorizes a long-term-storage claim.
 	pub fn long_term_storage(proof: RingProof<'a>) -> Self {
 		Self { claim: ResourcesClaim::LongTermStorage, proof }
+	}
+
+	/// Authorizes a notification-account registration.
+	pub fn notification(proof: RingProof<'a>) -> Self {
+		Self { claim: ResourcesClaim::Notification, proof }
 	}
 }
 
@@ -108,6 +117,12 @@ impl TransactionExtension for AsResourcesExtension<'_> {
 			ResourcesClaim::LongTermStorage => {
 				AsResourcesInfo::ClaimLongTermStorage(proof, ring_index, revision, ring.collection)
 			},
+			ResourcesClaim::Notification => AsResourcesInfo::RegisterNotificationForCollection(
+				proof,
+				ring_index,
+				revision,
+				ring.collection,
+			),
 		};
 		Ok(Some(info))
 	}

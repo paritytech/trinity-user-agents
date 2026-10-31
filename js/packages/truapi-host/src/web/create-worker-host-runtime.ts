@@ -35,6 +35,7 @@ import type {
   CallbackName,
   HostRole,
   MainToWorker,
+  NotificationClaim,
   SubscriptionName,
   WorkerToMain,
 } from "../worker-protocol.js";
@@ -83,6 +84,22 @@ export interface WorkerPairingHostRuntime {
   contactHandles(
     accounts: readonly Uint8Array[],
   ): Promise<Uint8Array[] | undefined>;
+  /**
+   * Register the 32-byte `target` as a notification statement account for
+   * the current UTC day, proving the session's personhood; with `submit`
+   * false, only ask the runtime whether it would accept the claim, and
+   * submit nothing.
+   *
+   * Signing hosts only. Host only: the host derives `target` and signs its
+   * one statement; no secret crosses here, and products have no call that
+   * reaches this. Rejects without a session, on a pairing host, when no
+   * free slot or no personhood membership is found, or when the runtime is
+   * disposed before the core answers.
+   */
+  claimNotificationAccount(
+    target: Uint8Array,
+    submit: boolean,
+  ): Promise<NotificationClaim>;
   /**
    * Restore the session persisted in the core's `AuthSession` slot. Resolves
    * once product frames may use it, so a host can await this at boot before
@@ -275,6 +292,13 @@ interface RuntimeState {
       reject: (error: Error) => void;
     }
   >;
+  pendingNotificationClaims: Map<
+    number,
+    {
+      resolve: (claim: NotificationClaim) => void;
+      reject: (error: Error) => void;
+    }
+  >;
   pendingDeviceStatementKeys: Map<
     number,
     {
@@ -320,6 +344,7 @@ let nextPermissionAuthorizationRequestId = 0;
 let nextSessionChatIdentityKeyRequestId = 0;
 let nextDeviceStatementKeyRequestId = 0;
 let nextContactHandlesRequestId = 0;
+let nextNotificationClaimRequestId = 0;
 let nextDeviceEncryptionKeyRequestId = 0;
 let nextProductSubtreePublicKeyRequestId = 0;
 let nextProductIdRequestId = 0;
@@ -881,6 +906,19 @@ function handleContactHandlesResponse(
   );
 }
 
+function handleClaimNotificationAccountResponse(
+  state: RuntimeState,
+  msg:
+    | { requestId: number; ok: true; claim: NotificationClaim }
+    | { requestId: number; ok: false; error: string },
+): void {
+  settlePending(
+    state.pendingNotificationClaims,
+    msg.requestId,
+    msg.ok ? { ok: true, value: msg.claim } : { ok: false, error: msg.error },
+  );
+}
+
 function handleDeviceStatementKeyResponse(
   state: RuntimeState,
   msg:
@@ -928,6 +966,7 @@ function rejectPendingRuntimeRequests(state: RuntimeState, error: Error): void {
   rejectAll(state.pendingSetPermissionAuthorizationStatuses, error);
   rejectAll(state.pendingSessionChatIdentityKeys, error);
   rejectAll(state.pendingContactHandles, error);
+  rejectAll(state.pendingNotificationClaims, error);
   rejectAll(state.pendingDeviceStatementKeys, error);
   rejectAll(state.pendingDeviceEncryptionKeys, error);
   rejectAll(state.pendingProductSubtreePublicKeys, error);
@@ -1108,6 +1147,7 @@ export function createWebWorkerPairingHostRuntime(
       pendingSetPermissionAuthorizationStatuses: new Map(),
       pendingSessionChatIdentityKeys: new Map(),
       pendingContactHandles: new Map(),
+      pendingNotificationClaims: new Map(),
       pendingProductSubtreePublicKeys: new Map(),
       pendingProductIds: new Map(),
       pendingDeviceStatementKeys: new Map(),
@@ -1180,6 +1220,9 @@ export function createWebWorkerPairingHostRuntime(
           break;
         case "contactHandlesResponse":
           handleContactHandlesResponse(state, msg);
+          break;
+        case "claimNotificationAccountResponse":
+          handleClaimNotificationAccountResponse(state, msg);
           break;
         case "deviceStatementKeyResponse":
           handleDeviceStatementKeyResponse(state, msg);
@@ -1563,6 +1606,28 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
         );
       return accounts.map((_, index) =>
         handles.slice(index * 32, index * 32 + 32),
+      );
+    },
+    async claimNotificationAccount(
+      target: Uint8Array,
+      submit: boolean,
+    ): Promise<NotificationClaim> {
+      if (target.length !== 32)
+        throw new Error("a notification account is 32 bytes");
+      // A claim has no safe empty value. The check is synchronous with the
+      // send, so the fallback is unreachable.
+      if (state.disposed) throw new Error("worker host runtime is disposed");
+      return sendWorkerRequest<NotificationClaim>(
+        state,
+        state.pendingNotificationClaims,
+        () => ++nextNotificationClaimRequestId,
+        { period: 0, outcome: "alreadyRegistered", seq: 0 },
+        (requestId) => ({
+          kind: "claimNotificationAccount",
+          requestId,
+          target,
+          submit,
+        }),
       );
     },
     acquireWorker(productId: ProductId): void {

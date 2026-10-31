@@ -1070,6 +1070,258 @@ pub async fn claim_long_term_storage(
 	}
 }
 
+/// What a notification claim does once it is built.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaimSubmission {
+	/// Submit it and wait for it to reach a block.
+	Submit,
+	/// Ask the runtime whether it would accept it, and submit nothing.
+	ValidateOnly,
+}
+
+/// Result of a notification-account claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotificationAccountOutcome {
+	/// The claim reached a block and the slot was verified to allow the target.
+	Registered {
+		/// Block hash the claim landed in.
+		block_hash: String,
+		/// Claimed slot sequence.
+		seq: u8,
+		/// Collection whose alias space holds the slot.
+		collection: PersonhoodCollection,
+	},
+	/// The target already holds a registration in this period; nothing built.
+	AlreadyRegistered {
+		/// Its slot sequence.
+		seq: u8,
+	},
+	/// The runtime would accept the claim; nothing was submitted.
+	Validated {
+		/// Slot sequence the claim names.
+		seq: u8,
+		/// Collection whose alias space holds the slot.
+		collection: PersonhoodCollection,
+	},
+}
+
+/// The notification slot `target` holds in `period`, or `None` when it holds
+/// none. An account registered in another period cannot be registered again.
+pub async fn notification_registration_in(
+	rpc: &RpcClient,
+	target: &[u8; 32],
+	period: u32,
+) -> Result<Option<u8>, StatementAllowanceError> {
+	match slot::read_notification_registration_of(rpc, target).await? {
+		None => Ok(None),
+		Some(registration) if registration.period == period => Ok(Some(registration.seq)),
+		Some(registration) => {
+			Err(SlotError::NotificationAccountUsed { registered: registration.period }.into())
+		},
+	}
+}
+
+/// Everything one notification-account claim needs.
+pub struct NotificationAccountClaim<'a> {
+	/// People connection the claim is read and submitted on.
+	pub rpc: &'a RpcClient,
+	/// People runtime metadata.
+	pub metadata: &'a Metadata,
+	/// Where the claim extrinsic is built.
+	pub target_chain: ExtrinsicTarget<'a>,
+	/// Authorizes synchronous personhood operations for the selected wallet.
+	pub signer: &'a dyn PersonhoodSigner,
+	/// People suffix used for the slot context and alias.
+	pub network_suffix: &'a [u8],
+	/// Account that should get the notification allowance.
+	pub target: &'a [u8; 32],
+	/// Notification period: the current UTC day.
+	pub period: u32,
+	/// Rings the person is a member of, in the order to try them.
+	pub memberships: &'a [RingParams],
+	/// Whether to submit the claim or only validate it.
+	pub submission: ClaimSubmission,
+}
+
+/// Register `target` as a notification statement account for `period`, in
+/// the first free slot of the first collection in `memberships` that has one.
+///
+/// The runtime registers an account once, for one slot, and grants it one
+/// statement, so a caller asks [`notification_registration_in`] first and
+/// claims only for an account that holds none, one claim at a time.
+///
+/// A submission that fails, or that the pool already holds an equivalent of,
+/// is settled by what the chain holds, never by trying another slot while
+/// this one may still land: a target the chain now registers is reported
+/// registered; a slot the chain gave someone else moves the claim on; and
+/// anything else is [`SlotError::NotificationClaimUncertain`] or the error.
+/// One claim may still land after it was reported uncertain; a later call
+/// then finds the target registered and claims nothing.
+///
+/// `signer` refuses once its owner's session ends: its last use is the
+/// proof, made with no wait before the submission, so nothing is submitted
+/// after a refusal.
+pub async fn claim_notification_account(
+	params: NotificationAccountClaim<'_>,
+) -> Result<NotificationAccountOutcome, StatementAllowanceError> {
+	let NotificationAccountClaim {
+		rpc,
+		metadata,
+		target_chain,
+		signer,
+		network_suffix,
+		target,
+		period,
+		memberships,
+		submission,
+	} = params;
+	if memberships.is_empty() {
+		return Err(SlotError::NoCollectionMembership.into());
+	}
+	let mut budget: u32 = 0;
+	for ring in memberships {
+		let collection = ring.collection;
+		budget = budget.saturating_add(
+			u32::from(slot::notification_max_seq(rpc, metadata, collection).await?) + 1,
+		);
+		let revision =
+			ring::read_ring_revision(rpc, metadata, collection, ring.ring_index, &ring.block_hash)
+				.await?;
+		loop {
+			let Some(seq) = slot::scan_notification_slot_excluding(
+				rpc,
+				metadata,
+				signer,
+				collection,
+				network_suffix,
+				period,
+				&[],
+			)
+			.await?
+			else {
+				break;
+			};
+			let context = slot::derive_notification_context(network_suffix, period, seq);
+			let proof = RingProof { signer, ring, context, revision };
+			let call = extrinsic::SetNotificationAccountCallArgs {
+				reference: (period, seq),
+				account_id: *target,
+			};
+			let built = target_chain
+				.extrinsics
+				.build_mortal_extrinsic(target_chain.genesis)
+				.with_call_args(
+					RESOURCES_PALLET,
+					"set_notification_statement_account_for_sequence",
+					call,
+				)
+				.with_extension(AsResourcesExtension::notification(proof))
+				.build()
+				.await?;
+			let extrinsic = built.extrinsic.bytes();
+			debug!(period, seq, %collection, ring_index = ring.ring_index, ?submission, "notification claim built");
+
+			if submission == ClaimSubmission::ValidateOnly {
+				return match validate_transaction(rpc, extrinsic).await? {
+					Ok(()) => Ok(NotificationAccountOutcome::Validated { seq, collection }),
+					Err(validity) => {
+						Err(SlotError::NotificationClaimInvalid { period, seq, validity }.into())
+					},
+				};
+			}
+			match rpc.submit_and_watch(extrinsic).await {
+				Ok(block_hash) => {
+					let alias =
+						slot::notification_alias(signer, collection, network_suffix, period, seq)?;
+					if slot::read_notification_account_at(rpc, &alias, &block_hash).await? !=
+						Some(*target)
+					{
+						return Err(SlotError::RegistrationVerificationMismatch {
+							block_hash,
+							period,
+							seq: u32::from(seq),
+						}
+						.into());
+					}
+					return Ok(NotificationAccountOutcome::Registered {
+						block_hash,
+						seq,
+						collection,
+					});
+				},
+				Err(err) => {
+					if let Some(held) = notification_registration_in(rpc, target, period).await? {
+						return Ok(NotificationAccountOutcome::AlreadyRegistered { seq: held });
+					}
+					if !duplicate_submit_error(&err.to_string()) {
+						return Err(err);
+					}
+					let alias =
+						slot::notification_alias(signer, collection, network_suffix, period, seq)?;
+					match slot::read_notification_account(rpc, &alias).await? {
+						// Another claim took the slot, so this one cannot land: claim the next.
+						Some(_) => continue,
+						None => {
+							return Err(
+								SlotError::NotificationClaimUncertain { period, seq }.into()
+							);
+						},
+					}
+				},
+			}
+		}
+	}
+	Err(SlotError::NoFreeNotificationSlot { period, max: budget }.into())
+}
+
+/// Ask the runtime, at the finalized head, whether it would accept
+/// `extrinsic` from outside the node: `Ok` when valid, or its validity answer.
+async fn validate_transaction(
+	rpc: &RpcClient,
+	extrinsic: &[u8],
+) -> Result<Result<(), String>, StatementAllowanceError> {
+	let at = rpc.finalized_head().await?;
+	let bytes = rpc.validate_transaction(extrinsic, &at).await?;
+	Ok(match bytes.first() {
+		Some(0) => Ok(()),
+		_ => Err(transaction_validity_error(&bytes)),
+	})
+}
+
+/// Name a `TransactionValidity` error the way the runtime's enums do.
+fn transaction_validity_error(bytes: &[u8]) -> String {
+	const INVALID: [&str; 13] = [
+		"Call",
+		"Payment",
+		"Future",
+		"Stale",
+		"BadProof",
+		"AncientBirthBlock",
+		"ExhaustsResources",
+		"Custom",
+		"BadMandatory",
+		"MandatoryValidation",
+		"BadSigner",
+		"IndeterminateImplicit",
+		"UnknownOrigin",
+	];
+	const UNKNOWN: [&str; 3] = ["CannotLookup", "NoUnsignedValidator", "Custom"];
+	let named = match bytes {
+		[1, 0, variant, rest @ ..] => INVALID
+			.get(usize::from(*variant))
+			.map(|name| ("Invalid", *name, rest.first().filter(|_| *variant == 7))),
+		[1, 1, variant, rest @ ..] => UNKNOWN
+			.get(usize::from(*variant))
+			.map(|name| ("Unknown", *name, rest.first().filter(|_| *variant == 2))),
+		_ => None,
+	};
+	match named {
+		Some((kind, name, Some(code))) => format!("{kind}::{name}({code})"),
+		Some((kind, name, None)) => format!("{kind}::{name}"),
+		None => format!("0x{}", hex::encode(bytes)),
+	}
+}
+
 /// Fetch Bulletin `TransactionStorage.Authorizations[Account(target)]`.
 pub async fn fetch_bulletin_allowance(
 	rpc: &RpcClient,

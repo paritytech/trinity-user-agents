@@ -7,6 +7,7 @@ mod pairing;
 #[cfg(test)]
 mod tests;
 
+pub use allowance::{AllowanceAllocationError, NotificationClaim};
 pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::{StatementRenewalError, TrackedStatementRenewalTarget};
@@ -57,6 +58,9 @@ pub struct WalletAccountHolder {
 	ring_resolver: Arc<dyn RingResolver>,
 	ring_vrf_registry: Arc<RingVrfRegistryStore>,
 	renewal: allowance_renewal::RenewalState,
+	/// Held through each notification-account claim, from the target's lookup
+	/// to its confirmation.
+	notification_claims: futures::lock::Mutex<()>,
 	/// Unchecked grants and withheld resources for test-host suites. Compiled
 	/// only into a build carrying `test-host`, which is off by default and which
 	/// neither the production browser bundle nor a released native host
@@ -185,6 +189,7 @@ impl WalletAccountHolder {
 			ring_resolver,
 			ring_vrf_registry,
 			renewal: allowance_renewal::RenewalState::default(),
+			notification_claims: Default::default(),
 			#[cfg(feature = "test-host")]
 			resource_controls: Default::default(),
 			network_suffix,

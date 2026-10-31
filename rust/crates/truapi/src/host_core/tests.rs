@@ -2085,7 +2085,7 @@ impl ListedContacts {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl ContactsPlatform for ListedContacts {
 	async fn contacts(
 		&self,

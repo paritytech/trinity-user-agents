@@ -15,7 +15,9 @@ pub use sso_service::SigningHostSsoService;
 use wallet_account_holder::StatementRenewalError;
 #[cfg(not(target_arch = "wasm32"))]
 pub use wallet_account_holder::TrackedStatementRenewalTarget;
-pub use wallet_account_holder::{StatementRenewalTarget, WalletAccountHolder};
+pub use wallet_account_holder::{
+	AllowanceAllocationError, NotificationClaim, StatementRenewalTarget, WalletAccountHolder,
+};
 
 use super::{
 	HostSession, RuntimeServices,
@@ -216,6 +218,17 @@ impl SigningHost {
 		let lifecycle = self.hold_session(session)?;
 		let session = self.wallet.session_state().current().ok_or(AuthorityError::Disconnected)?;
 		Ok((session, lifecycle.revision()))
+	}
+
+	/// Register `target` as a notification statement account for the current
+	/// period under the active wallet session, or only validate the claim.
+	pub async fn claim_notification_account(
+		&self,
+		target: [u8; 32],
+		submission: statement_allowance::ClaimSubmission,
+	) -> Result<NotificationClaim, AllowanceAllocationError> {
+		let session = self.wallet.current_session().ok_or(AuthorityError::Disconnected)?;
+		self.wallet.claim_notification_account(&session, target, submission).await
 	}
 
 	async fn keeps_auto_signing_key(

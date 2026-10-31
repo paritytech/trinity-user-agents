@@ -557,3 +557,18 @@ fn an_exhausted_period_is_reported_whatever_wraps_it() {
 		&SlotError::FreeSlotsAwaitingSubmission { period: 7 }.to_string()
 	));
 }
+/// The runtime's `notification_context(reference)` hashes
+/// `"sys/" ‖ u32_le(1) ‖ u32_le(period) ‖ seq ‖ zero padding` under the
+/// network's product prefix. A wrong family or width would prove a slot the
+/// runtime never checks.
+#[test]
+fn notification_context_follows_the_runtime_layout() {
+	let mut suffix = [0u8; 32];
+	suffix[..4].copy_from_slice(b"sys/");
+	suffix[4..8].copy_from_slice(&1u32.to_le_bytes());
+	suffix[8..12].copy_from_slice(&20_756u32.to_le_bytes());
+	suffix[12] = 7;
+	let expected = blake2_256(&[b"product/peopl.paseo/".as_slice(), &suffix].concat());
+
+	assert_eq!(derive_notification_context(b"paseo", 20_756, 7), expected);
+}

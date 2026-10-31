@@ -349,6 +349,7 @@ transition below reports the resulting `AuthState` the same way.
 | `notifySessionStoreChanged()`   | Tell the core the persisted blob may have changed; it re-reads it.           |
 | `notifyContactsChanged()`       | Tell the core a contact was removed or blocked; it drops cached handles.     |
 | `contactHandles(accounts)`      | Mint the session's contact handles for 32-byte accounts, in order; no cache. |
+| `claimNotificationAccount(target, submit)` | Signing hosts: register a 32-byte account for today's notification slot, or only validate the claim. |
 | `disconnectSession()`           | Log out: clears the session and notifies the peer.                           |
 | `resetSessionState()`           | Drop the local session without notifying the peer.                           |
 

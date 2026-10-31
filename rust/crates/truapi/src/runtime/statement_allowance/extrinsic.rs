@@ -28,6 +28,17 @@ pub struct ClaimLongTermStorageCallArgs {
 	pub account_id: [u8; 32],
 }
 
+/// `Resources.set_notification_statement_account_for_sequence` arguments.
+#[derive(Clone, EncodeAsType)]
+#[encode_as_type(crate_path = "subxt::ext::scale_encode")]
+pub struct SetNotificationAccountCallArgs {
+	/// Notification period and the slot within it. The runtime decodes the
+	/// slot as one byte.
+	pub reference: (u32, u8),
+	/// Account the notification allowance is for.
+	pub account_id: [u8; 32],
+}
+
 /// `Pgas.claim_pgas` arguments.
 #[derive(Clone, EncodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
@@ -88,6 +99,22 @@ mod typed_call_tests {
 		);
 
 		assert_eq!(hex::encode(encoded), expected);
+	}
+
+	/// Only the V16 People capture declares the notification call, and the
+	/// runtime decodes `seq` as one byte: a wider field would shift the account.
+	#[test]
+	fn the_notification_call_has_the_reference_bytes() {
+		let args = SetNotificationAccountCallArgs { reference: (7, 3), account_id: [0x22; 32] };
+
+		let encoded = encode_typed(
+			test_fixtures::PEOPLE_METADATA,
+			"Resources",
+			"set_notification_statement_account_for_sequence",
+			&args,
+		);
+
+		assert_eq!(encoded[2..], [7u32.to_le_bytes().to_vec(), vec![3], vec![0x22; 32]].concat());
 	}
 
 	#[test]

@@ -62,6 +62,15 @@ impl PersonhoodCollection {
 		}
 	}
 
+	/// The `Resources` view function returning the highest notification seq a
+	/// person of this collection may claim in a period.
+	pub fn notification_slots_view(self) -> &'static str {
+		match self {
+			Self::People => "get_notification_slots_per_period",
+			Self::LitePeople => "get_lite_notification_slots_per_period",
+		}
+	}
+
 	/// The `Pgas` constant bounding claims per period for this collection.
 	pub fn pgas_claims_per_period_constant(self) -> &'static str {
 		match self {
