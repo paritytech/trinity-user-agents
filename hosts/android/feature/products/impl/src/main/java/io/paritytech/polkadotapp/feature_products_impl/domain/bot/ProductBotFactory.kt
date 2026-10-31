@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductFeedListeners
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
@@ -19,6 +20,7 @@ class ProductBotFactory @Inject constructor(
     private val workerRefCounter: ProductWorkerRefCounter,
     private val imageResolver: ProductImageResolver,
     private val resolveProduct: ResolveProductUseCase,
+    private val feedListeners: ProductFeedListeners,
 ) {
     fun create(product: Product, origin: ProductChatExtensionOrigin): ProductChatExtension {
         return ProductChatExtension(
@@ -27,6 +29,7 @@ class ProductBotFactory @Inject constructor(
             workerRefCounter = workerRefCounter,
             imageResolver = imageResolver,
             resolveProduct = resolveProduct,
+            feedListeners = feedListeners,
             origin = origin,
         )
     }

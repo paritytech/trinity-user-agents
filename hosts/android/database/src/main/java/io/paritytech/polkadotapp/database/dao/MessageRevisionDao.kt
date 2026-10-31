@@ -32,4 +32,7 @@ interface MessageRevisionDao {
 
     @Query("SELECT * FROM message_revisions WHERE messageId = :messageId ORDER BY timestamp DESC")
     suspend fun getRevisionsForMessage(messageId: String): List<MessageRevisionLocal>
+
+    @Query("DELETE FROM message_revisions WHERE messageId = :messageId")
+    suspend fun deleteForMessage(messageId: String)
 }
