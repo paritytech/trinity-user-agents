@@ -1,5 +1,104 @@
 # @parity/truapi
 
+## 0.28.0
+
+### Minor Changes
+
+- f63cda7: Host-initiated methods returning `Result` generate asynchronous Rust callers and TypeScript handlers
+  returning typed `neverthrow` results over one-item subscriptions. Calls support cooperative cancellation, startup
+  buffering, and connection cleanup through the existing subscription transport.
+- 1136d53: Native hosts serve `NftPurse.createReceiveKey` and `NftPurse.createCheque`. `createReceiveKey` makes a
+  one-time X25519 receive key into any purse, with no grant; its secret is kept in the host's encrypted storage, so a
+  host that does not provide it cannot create receive keys. `createCheque` seals the secret of each item to the receive
+  key or a static X25519 key and returns the cheque for the product to deliver; the items are spent from then on.
+  `encryptedSecrets` is the ephemeral X25519 key, the 12-byte nonce, and the ChaCha20-Poly1305 ciphertext (HKDF-SHA256
+  key) of the SCALE-encoded 64-byte sr25519 secrets in `items` order, each in schnorrkel's `SecretKey::to_bytes` form
+  (scalar, then nonce), not the ed25519-expanded form. An ephemeral cheque id is
+  `blake2_256("nft-purse/cheque-id" ++ receiveKey)`. `NftPurseCreateChequeError` gains `NoItems` and `OperationExists`,
+  the latter for a second cheque with the same id from the same product. Handing off items of a purse the product does
+  not own asks the user through `NftPurseDrain`, whose destination gains `Cheque`. The browser core answers both calls
+  `Unsupported`.
+- 860a5f4: Native hosts serve `NftPurse.deposit` and the new `NftPurse.staticReceiveKey`. `deposit` opens a received
+  cheque and registers one move per item into the purse the product names, under the cheque id, which
+  `observeOperationStatus` follows. An `Ephemeral` cheque may be deposited only by the product that made its receive
+  key, and only into that key's purse: another purse answers the new `NftPurseDepositError.PurseMismatch`, and another
+  product's receive key answers `CorruptedCheque`. A `Static` cheque opens with the key `staticReceiveKey` returns, the
+  same for every product, so it is returned only with the identity disclosure consent `getUserId` asks for
+  (`NftPurseStaticReceiveKeyError.PermissionDenied` otherwise). Any product may deposit a `Static` cheque into any
+  purse, but items another deposit already moves answer the new `NftPurseDepositError.ItemsInUse`. Each move waits up to
+  an hour for its cheque key to hold an NFT. The item secrets are kept in the host's encrypted storage, so each move can
+  be signed again after a restart. The browser core answers both calls `Unsupported`.
+- 54f55e6: Native hosts serve `NftPurse.listenOneTimePayment`, which replaces `listenForPayment`, and the new
+  `NftPurse.listenPaymentInbox`. A sender publishes a statement whose data is the cheque sealed to the receiver's key:
+  the ephemeral X25519 key, the nonce, then the ChaCha20-Poly1305 ciphertext of `SCALE(version: u8 = 0, topic, cheque)`.
+  `listenOneTimePayment` watches `blake2_256("nft-purse/payment-channel" ‖ receiveKey)` for a receive key the product
+  made, emits that channel, then the first cheque addressed to the key, and ends; another product's key answers
+  `ReceiveKeyNotFound`. `listenPaymentInbox` watches
+  `blake2_256("nft-purse/payment-inbox" ‖ identityAccount ‖ blake2_256(productId) ‖ inboxDomain)` for `Static` cheques
+  sealed to the static receive key, emits that channel, then every cheque already stored as one batch, possibly empty,
+  then each batch of new ones. Both emit cheques already deposited again while the store holds them, and end with
+  `Other` when the connection drops. The browser core answers both `Unsupported`.
+- 24f3157: Native hosts serve `NftPurse.rebalancePurse`, `NftPurse.transferItem` and the new
+  `NftPurse.observeOperationStatus`. A chain operation takes an `idempotencyKey` the product chooses and returns once it
+  is registered; a second call under the same key fails with `OperationExists`. `observeOperationStatus` follows any
+  operation the product registered, by its key, until it is `Cleared` or `Incomplete`; deposits and refunds will be
+  followed by their cheque id once they are served. Each transfer is a fee-less Scarcity transfer signed by its item
+  key; an item a live transfer spends is no longer listed by `queryPurse`. Transferring items out of a purse the product
+  does not own asks the user through the new `NftPurseDrain` confirmation review. `deposit` and `refund` take the same
+  shape and still answer unavailable. The browser core answers the new calls `Unsupported`.
+- 4a92efa: Native hosts serve `NftPurse.revokeCheque` and `NftPurse.refund`. `revokeCheque` moves the items at the keys
+  of a cheque the product created back into fresh keys of its purse, and can be repeated to retry the keys whose move
+  failed; another product's cheque answers `ChequeNotFound`, a cheque whose items a deposit on this device already moves
+  answers the new `NftPurseRevokeChequeError.ItemsInUse`, and `NftPurseRevokeChequeError.Denied` is gone. `refund`
+  returns the items a product deposited from a cheque to the cheque's keys once the deposit has settled, and answers
+  which items move and which stay, with the new `NftPurseRefundError.DepositInProgress` and `ItemUnavailable`. Both are
+  followed by `observeOperationStatus` under `blake2_256("nft-purse/revoke" ‖ chequeId)` and
+  `blake2_256("nft-purse/refund" ‖ chequeId)`. Refunding out of a purse the product does not own asks the user through
+  `NftPurseDrain` with the new `Refund` destination. A transfer now moves whatever its item key holds on its first
+  attempt. The browser core answers both calls `Unsupported`.
+- 2c8a677: A descriptor can state its stack's dotNS contract addresses in `dotns`, by protocol registry key, so readers
+  take them from the descriptor instead of reading them from Asset Hub. `truapi-host stack` and `@parity/trinity-stack`
+  validate the keys and addresses.
+- 2dfc294: Descriptors can name a `web-gateway`, the gateway that serves the sites of the stack's dotNS names, and an
+  `evm-explorer`, an Ethereum block explorer for Asset Hub. `webUrl(descriptor, name)` gives the URL a name opens at on
+  the stack's gateway. A `web-gateway` may use plain `http` on `localhost`, for a stack run on the reader's machine.
+
+### Patch Changes
+
+- bbc7d8d: A chain call that fails because its connection dropped or closed carries the reason the transport gave, as in
+  `remote_chain_spec_genesis_hash: RPC error: client error: json-rpc connection closed`. Each failed chain call is also
+  logged as a warning with its failure kind, and a native host receives warnings and errors through `on_core_log` as
+  `truapi.tracing.warn` and `truapi.tracing.error` lines, whatever the log level, each detail capped at 512 characters.
+- f449b93: A chain connection that reaches the node's follow budget says so, naming its chain, the count and every
+  follow holding a slot by its local id. A node allows four `chainHead_v1_follow` per connection and refuses the next
+  one whoever it belongs to, and that refusal surfaces far from the cause: the call that happens to open the next follow
+  fails, often as a metadata error that mentions no follows at all. Naming the occupants while they are still known puts
+  the cause in the record rather than only the consequence.
+
+  Only follows the node has acknowledged are counted. A follow is recorded on intent and gains a remote id once the node
+  answers, so counting intents would report a connection as full while the node still had room. The count is the core's
+  own bookkeeping rather than the node's.
+
+  These reach a host through its log sink rather than the console. The level filter defaults to `ERROR` so routine core
+  traffic stays off a host's log, which also means an ordinary `warn!` never reaches a device. An event whose target
+  starts with `truapi.` is addressed to the host instead, and a layer forwards those to the sink under its own target
+  filter rather than the reloadable level, so they arrive at the default floor without turning on the rest of the
+  crate's warn traffic. Native hosts install their existing `on_core_log` callback as that sink.
+
+  A host runtime raises a start marker as it comes up, so a host log opens with evidence that the channel carrying the
+  rest is alive.
+
+  A product connection reports how many connections its execution holds as it opens and as it closes, so a host log
+  tells a socket that was released from one that is still held.
+
+  A dotNS lookup's follow id names what it reads rather than whose account it reads, so the ids these lines carry hold
+  no account.
+
+- b1e64dc: A scan answers `NotVisible` for any product, a Worker included, when the user has left the host application.
+- c1a894d: A descriptor or pointer URL that is not ASCII is now refused, since IDNA readers map some hosts differently.
+  A host outside ASCII must be written in its `xn--` form. `truapi-host stack` now also refuses a URL that contains `\`,
+  as `@parity/trinity-stack` already does.
+
 ## 0.27.0
 
 ### Minor Changes
