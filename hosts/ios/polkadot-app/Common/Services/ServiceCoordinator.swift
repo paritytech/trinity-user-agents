@@ -335,6 +335,10 @@ extension ServiceCoordinator {
         // Registered so the SPA screen, opened outside this assembly, resolves the
         // same facade.
         RootDependencyLocator.setDependency(productWorkerFacade)
+        // The outbox sends the messages of the user in every product room through the bots of this registry. The
+        // messages that wait from before go now.
+        ProductOutboxDelivery.shared.attach(registry: chatExtensionsRegistry)
+        Task { await ProductOutbox.shared.resume() }
 
         let callCoordinator = RealCallCoordinator(
             presentationManager: ChatChatCallPresentationManager(logger: logger),

@@ -406,6 +406,7 @@ class ChatFeedViewModel @Inject constructor(
 
     override fun onScreenStarted() {
         interactor.openRoom(chatId)
+        launch { interactor.resumeOutbox(chatId) }
     }
 
     override fun onScreenStopped() {
