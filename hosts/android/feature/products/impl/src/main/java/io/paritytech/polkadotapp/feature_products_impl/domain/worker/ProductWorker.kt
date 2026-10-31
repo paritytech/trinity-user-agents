@@ -2,6 +2,9 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.worker
 
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.JsEventDispatcher
@@ -19,6 +22,12 @@ interface ProductWorker : JsEventDispatcher {
     suspend fun openRoom(roomId: ProductChatIdParameter): Result<Unit> = Result.success(Unit)
 
     suspend fun closeRoom(roomId: ProductChatIdParameter) = Unit
+
+    suspend fun messagesPage(
+        roomId: ProductChatIdParameter,
+        anchor: ChatPageAnchorModel,
+        pageSize: Int,
+    ): Result<ProductMessagesPage> = Result.failure(ProductChatQueryException.Unavailable(cause = null))
 
     fun renderMessage(
         roomId: ProductChatIdParameter?,
