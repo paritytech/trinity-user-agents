@@ -3,6 +3,7 @@ import type {
   HostMessage,
   IncomingRequest,
   OutgoingView,
+  RepliedView,
 } from "../../../src/invitations/contract.js";
 import {
   fromHex,
@@ -55,12 +56,16 @@ import type { HostRequests } from "./requests.js";
  *   room's contact and its one participant are the handle, and the host
  *   names them.
  *
- * Decline is silent: a request nobody answers waits until it expires. There
- * is no way yet for the user to cancel one from the host's Chat.
+ * Decline is silent: a request nobody answers stays pending until the
+ * user cancels it in the host.
+ *
+ * Restarts: the conversation is saved, and the save confirmed kept, before
+ * each call to the host that acts on it (request, reply, complete); a save
+ * that fails makes no call. So a restart between the two finds it. A sent request the host knows but this
+ * engine did not keep the handle of is matched again from the host's replay
+ * by its contact; an accepted request whose reply the host took becomes
+ * connected from the host's replay of it.
  */
-
-/** How long an invitation may be answered. */
-export const INVITATION_TTL_MS = 24 * 60 * 60_000;
 
 /** What the recipient's host shows beside an invitation with no first message. */
 export const DEFAULT_PURPOSE = "Wants to chat with you in Contact Chat.";
@@ -76,10 +81,23 @@ type Status =
   | "sending"
   /** Sent; no checked reply yet. */
   | "waiting"
+  /** Sent, but the host cannot keep it posted now. */
+  | "paused"
+  /** The user accepted; the reply is with the host. */
+  | "accepting"
   | "connected"
   | "not-sent"
-  | "cancelled"
-  | "expired";
+  | "cancelled";
+
+const STATUSES: readonly Status[] = [
+  "sending",
+  "waiting",
+  "paused",
+  "accepting",
+  "connected",
+  "not-sent",
+  "cancelled",
+];
 
 interface StoredMessage {
   id: string;
@@ -115,8 +133,13 @@ interface StoredRecord {
   conversations: StoredConversation[];
 }
 
-/** What the engine needs of the product's TrUAPI storage. */
-export type RecordStorage = Pick<Storage, "getItem" | "setItem">;
+/**
+ * What the engine needs of the product's TrUAPI storage. `flush` resolves
+ * once every write so far is kept, and rejects when one was not.
+ */
+export type RecordStorage = Pick<Storage, "getItem" | "setItem"> & {
+  flush(): Promise<void>;
+};
 
 /** Where the conversation topics are: the Statement Store, or a stand-in for it. */
 export interface ConversationTopics {
@@ -138,22 +161,32 @@ export interface ContactChatDeps {
 const CONTACT_STATE: Record<Status, ContactState> = {
   sending: "Outgoing",
   waiting: "Outgoing",
+  paused: "Outgoing",
+  accepting: "Incoming",
   connected: "Established",
   "not-sent": "Invite",
   cancelled: "Invite",
-  expired: "Invite",
 };
 
 const SUBTITLE: Record<Status, string> = {
   sending: "Sending your request",
   waiting: "Request sent",
+  paused: "Request paused",
+  accepting: "Accepting the request",
   connected: "Contact Chat",
   "not-sent": "Request not sent",
   cancelled: "Request cancelled",
-  expired: "Request expired",
 };
 
-const OPEN: readonly Status[] = ["sending", "waiting", "connected"];
+const OPEN: readonly Status[] = [
+  "sending",
+  "waiting",
+  "paused",
+  "accepting",
+  "connected",
+];
+/** Sent and not answered yet. */
+const OUTSTANDING: readonly Status[] = ["sending", "waiting", "paused"];
 
 export class ContactChat implements ConversationEngine {
   private record: StoredRecord;
@@ -161,6 +194,8 @@ export class ContactChat implements ConversationEngine {
   private readonly watching = new Map<string, () => void>();
   /** Replies being checked, so two copies of one are checked once. */
   private readonly checking = new Set<string>();
+  /** Conversations whose invitation this run handed the host and has no answer for yet. */
+  private readonly inviting = new Set<string>();
 
   constructor(private readonly deps: ContactChatDeps) {
     this.record = this.load();
@@ -202,10 +237,10 @@ export class ContactChat implements ConversationEngine {
             ? { allowed: true }
             : {
                 allowed: false,
-                reason:
-                  conversation.status === "sending" ||
-                  conversation.status === "waiting"
-                    ? "Waiting for them to accept"
+                reason: OUTSTANDING.includes(conversation.status)
+                  ? "Waiting for them to accept"
+                  : conversation.status === "accepting"
+                    ? "Accepting their request"
                     : "Start a new chat to ask again",
               },
       };
@@ -241,7 +276,10 @@ export class ContactChat implements ConversationEngine {
     const known = this.record.conversations.find(
       (conversation) => conversation.contact === contact,
     );
-    if (known !== undefined && OPEN.includes(known.status)) return known.id;
+    // One still sending from a run that ended never got the host's answer: ask again.
+    const lost = known?.status === "sending" && !this.inviting.has(known.id);
+    if (known !== undefined && OPEN.includes(known.status) && !lost)
+      return known.id;
     const conversation: StoredConversation = known ?? {
       id: toHex(this.deps.random(16)),
       contact,
@@ -269,15 +307,28 @@ export class ContactChat implements ConversationEngine {
     payload: string,
     welcome: string,
   ): Promise<void> {
+    this.inviting.add(conversation.id);
+    if (!(await this.persist())) {
+      this.inviting.delete(conversation.id);
+      if (conversation.status !== "sending") return;
+      conversation.status = "not-sent";
+      delete conversation.invitation;
+      this.system(
+        conversation,
+        "Your chat request was not sent: Contact Chat could not save it",
+      );
+      this.save();
+      return;
+    }
     const result = await this.deps.requests.call({
       call: "request",
       request: {
         contact: { bytes: conversation.contact },
         purpose: welcome === "" ? DEFAULT_PURPOSE : welcome,
-        ttlMs: INVITATION_TTL_MS,
         payload,
       },
     });
+    this.inviting.delete(conversation.id);
     if (conversation.status !== "sending") return;
     if (result.ok && result.request !== undefined) {
       conversation.request = result.request.handle;
@@ -307,7 +358,7 @@ export class ContactChat implements ConversationEngine {
     const session = conversation.session;
     if (conversation.status !== "connected" || session === undefined)
       throw new Error(
-        conversation.status === "waiting" || conversation.status === "sending"
+        OUTSTANDING.includes(conversation.status)
           ? "They have not accepted yet."
           : "Start a new chat to ask again.",
       );
@@ -371,6 +422,7 @@ export class ContactChat implements ConversationEngine {
         await this.deps.requests.call({ call: "open", handle: message.handle });
         return;
       case "replied":
+        return this.replied(message.request);
       case "result":
         return;
     }
@@ -383,23 +435,64 @@ export class ContactChat implements ConversationEngine {
     );
   }
 
-  /** A sent request changed at the host, or every one on attach. */
+  /**
+   * A sent request changed at the host, or every one on attach. One this
+   * engine lost the handle of, in a restart while the host sent it, is the
+   * outstanding request to the same contact.
+   */
   private outgoing(view: OutgoingView): void {
-    const conversation = this.bySentRequest(view.handle);
-    if (conversation === undefined || conversation.status === "connected")
+    const conversation = this.bySentRequest(view.handle) ?? this.adopt(view);
+    if (
+      conversation === undefined ||
+      !OUTSTANDING.includes(conversation.status)
+    )
       return;
-    if (view.status === "cancelled" || view.status === "expired") {
-      if (conversation.status === view.status) return;
-      conversation.status = view.status;
+    if (view.status === "cancelled") {
+      conversation.status = "cancelled";
       delete conversation.invitation;
-      this.system(
-        conversation,
-        view.status === "expired"
-          ? "Your chat request expired"
-          : "You cancelled your chat request",
-      );
+      this.system(conversation, "You cancelled your chat request");
       this.save();
+      return;
     }
+    const next = view.status === "paused" ? "paused" : "waiting";
+    if (view.status === "completed" || conversation.status === next) return;
+    conversation.status = next;
+    this.save();
+  }
+
+  /** The conversation still sending to `view`'s contact, given the handle the host gave it. */
+  private adopt(view: OutgoingView): StoredConversation | undefined {
+    if (view.status !== "waiting" && view.status !== "paused") return;
+    const contact = view.contact.bytes.toLowerCase();
+    const conversation = this.record.conversations.find(
+      (entry) =>
+        entry.role === "sender" &&
+        entry.contact === contact &&
+        entry.request === undefined &&
+        entry.invitation !== undefined &&
+        (entry.status === "sending" || entry.status === "not-sent"),
+    );
+    if (conversation === undefined) return;
+    conversation.request = view.handle;
+    conversation.status = "waiting";
+    this.system(conversation, "You sent a chat request");
+    this.save();
+    return conversation;
+  }
+
+  /** The host took this side's reply to a request: an accepting conversation is connected. */
+  private async replied(view: RepliedView): Promise<void> {
+    const conversation = this.record.conversations.find(
+      (entry) =>
+        entry.role === "recipient" &&
+        entry.request === view.handle &&
+        entry.status === "accepting",
+    );
+    if (conversation === undefined) return;
+    conversation.status = "connected";
+    this.system(conversation, "You accepted the chat request");
+    this.save();
+    await this.watch(conversation);
   }
 
   /**
@@ -415,7 +508,11 @@ export class ContactChat implements ConversationEngine {
       return;
     }
     const secrets = conversation.invitation;
-    if (conversation.status !== "waiting" || secrets === undefined) return;
+    if (
+      (conversation.status !== "waiting" && conversation.status !== "paused") ||
+      secrets === undefined
+    )
+      return;
     if (this.checking.has(payload)) return;
     const checked = checkResponse(secrets, payload);
     if (!checked.ok) {
@@ -445,7 +542,9 @@ export class ContactChat implements ConversationEngine {
     }
   }
 
+  /** Tell the host the request is complete, once the connection it made is kept. */
   private async complete(handle: string): Promise<void> {
+    if (!(await this.persist())) return;
     const result = await this.deps.requests.call({ call: "complete", handle });
     if (!result.ok && result.reason !== "Refused")
       this.deps.report?.(`complete: ${result.detail}`);
@@ -453,8 +552,10 @@ export class ContactChat implements ConversationEngine {
 
   /**
    * The user chose Accept in the host. The engine checks the invitation,
-   * makes both topics and its response, and replies through the host. The
-   * conversation is kept only once the host took the reply.
+   * makes both topics and its response, keeps the conversation as
+   * accepting, and replies through the host. It is connected once the host
+   * took the reply; a reply the host refuses leaves it accepting, and Accept
+   * can be chosen again.
    */
   private async accept(request: IncomingRequest): Promise<void> {
     const invitation = readInvitation(request.payload);
@@ -478,6 +579,39 @@ export class ContactChat implements ConversationEngine {
       made.response,
       made.topics,
     );
+    const contact = request.sender.bytes.toLowerCase();
+    const known = this.record.conversations.find(
+      (conversation) => conversation.contact === contact,
+    );
+    const conversation: StoredConversation = known ?? {
+      id: toHex(this.deps.random(16)),
+      contact,
+      role: "recipient",
+      status: "accepting",
+      createdAt: this.deps.now(),
+      sent: 0,
+      seen: [],
+      messages: [],
+    };
+    if (known === undefined) this.record.conversations.push(conversation);
+    this.unwatch(conversation);
+    conversation.role = "recipient";
+    conversation.status = "accepting";
+    conversation.request = request.handle;
+    conversation.session = session;
+    conversation.sent = 0;
+    conversation.seen = [];
+    delete conversation.invitation;
+    // Kept before the reply leaves, so a restart in between still has the keys.
+    this.save();
+    if (!(await this.persist())) {
+      await this.deps.requests.call({
+        call: "refuse",
+        handle: request.handle,
+        reason: "Contact Chat could not save the chat. Try again.",
+      });
+      return;
+    }
     const result = await this.deps.requests.call({
       call: "reply",
       handle: request.handle,
@@ -488,29 +622,8 @@ export class ContactChat implements ConversationEngine {
       this.deps.report?.(`reply: ${result.detail}`);
       return;
     }
-    const contact = request.sender.bytes.toLowerCase();
-    const known = this.record.conversations.find(
-      (conversation) => conversation.contact === contact,
-    );
-    const conversation: StoredConversation = known ?? {
-      id: toHex(this.deps.random(16)),
-      contact,
-      role: "recipient",
-      status: "connected",
-      createdAt: this.deps.now(),
-      sent: 0,
-      seen: [],
-      messages: [],
-    };
-    if (known === undefined) this.record.conversations.push(conversation);
-    this.unwatch(conversation);
-    conversation.role = "recipient";
+    if (conversation.status !== "accepting") return;
     conversation.status = "connected";
-    conversation.request = request.handle;
-    conversation.session = session;
-    conversation.sent = 0;
-    conversation.seen = [];
-    delete conversation.invitation;
     this.system(conversation, "You accepted the chat request");
     this.save();
     await this.watch(conversation);
@@ -599,8 +712,13 @@ export class ContactChat implements ConversationEngine {
       const saved = JSON.parse(
         this.deps.storage.getItem(this.deps.recordKey) ?? "null",
       ) as StoredRecord | null;
-      if (saved?.version === 1 && Array.isArray(saved.conversations))
+      if (saved?.version === 1 && Array.isArray(saved.conversations)) {
+        // A status this version does not know, such as an earlier expiry, is a request no longer sent.
+        for (const conversation of saved.conversations)
+          if (!STATUSES.includes(conversation.status))
+            conversation.status = "not-sent";
         return saved;
+      }
     } catch {
       this.deps.report?.("the stored record does not read; starting empty");
     }
@@ -610,6 +728,18 @@ export class ContactChat implements ConversationEngine {
   private save(): void {
     this.deps.storage.setItem(this.deps.recordKey, JSON.stringify(this.record));
     for (const listener of [...this.listeners]) listener();
+  }
+
+  /** Save, and wait until storage confirms it kept every write. False, reported, when it did not. */
+  private async persist(): Promise<boolean> {
+    this.save();
+    try {
+      await this.deps.storage.flush();
+      return true;
+    } catch (error) {
+      this.deps.report?.(`save: ${errorText(error)}`);
+      return false;
+    }
   }
 }
 

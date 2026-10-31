@@ -95,6 +95,7 @@ import {
   routeDirectory,
 } from "./contacts/username-directory.js";
 import { chainDirectory, lookupOwner } from "./chat/nova/directory.js";
+import { StatementStore } from "./chat/nova/statement-store.js";
 import { bytesToHex, hexToBytes, type HexString } from "@parity/truapi/scale";
 import { accountProofs } from "./chat/account-proofs.js";
 import { ProductChat } from "./chat/product-chat.js";
@@ -302,14 +303,16 @@ const productWorkers = new ProductWorkers({
   resolve: (name, network) =>
     localChatDemo?.resolves(name)
       ? localChatDemo.resolve()
-      : novaWorkerMode?.resolves(name)
+      : devSession?.holdsNova() !== true && novaWorkerMode?.resolves(name)
         ? novaWorkerMode.resolve()
         : devSession?.resolvesWorker(name)
           ? devSession.resolveWorker()
           : resolveWorker(name, network),
   defaults: () => [
     ...(localChatDemo?.workerNames() ?? []),
-    ...(novaWorkerMode?.workerNames() ?? []),
+    ...(devSession?.holdsNova() === true
+      ? []
+      : (novaWorkerMode?.workerNames() ?? [])),
     ...(devSession?.workerNames() ?? []),
   ],
   container: workerFrames,
@@ -375,7 +378,8 @@ const chatInbox = new ChatInbox({
   workerNames: () => productWorkers.names(),
   log: linesFor("host"),
   chatV2,
-  hostChat: () => novaWorkerMode?.hostRuns() ?? true,
+  hostChat: () =>
+    devSession?.holdsNova() !== true && (novaWorkerMode?.hostRuns() ?? true),
   // The Nova chat worker's rooms are named by the host, and it starts chats
   // with whom the user chose, through a reference only its identity bridge
   // resolves.
@@ -494,6 +498,9 @@ const devSession =
           lastAuthState.tag === "Connected"
             ? Promise.resolve(lastAuthState.value)
             : new Promise((resolve) => connectedWaiters.push(resolve)),
+        blocked: () => blockedPeople(),
+        names: hostNames,
+        namedChanged: () => hostContacts.namesChanged(),
         log: linesFor("host"),
       });
 notifications?.screen.setActions(devSession?.notificationActions ?? null);
@@ -583,7 +590,7 @@ const hostContacts = new HostContacts({
     (await runtime?.contactHandles(accounts.map(hexToBytes)))?.map(
       (handle) => bytesToHex(handle) as HexString,
     ),
-  named: (): readonly HexString[] => devSession?.people ?? [],
+  named: (): readonly HexString[] => devSession?.people() ?? [],
   log: linesFor("host"),
 });
 /** The Developer menu's chat engine switch, with the Nova chat worker's state. */
@@ -1346,6 +1353,28 @@ function syncChatSession(): void {
   }
   const access = chainAccess;
   const wallet = walletSession.active;
+  // Before the session's workers start, so they see Contact Chat among them.
+  devSession?.setWallet(
+    lastAuthState.tag !== "Connected" || access === null || wallet === null
+      ? null
+      : {
+          walletId: wallet.id,
+          entropy: wallet.entropy,
+          network: activeNetwork.id,
+          networkSuffix: access.networkSuffix,
+          identityAccountId: lastAuthState.value.identityAccountId ?? undefined,
+          chatPublicKey: lastAuthState.value.chatPublicKey ?? undefined,
+          directory: chainDirectory(access.chain, access.genesis),
+          openStatementStore: async () =>
+            new StatementStore(
+              await access.chain.connect(hexToBytes(access.genesis.people)),
+            ),
+          claimNotificationAccount: (target, submit) =>
+            runtime === null
+              ? Promise.reject(new Error("The core is not running."))
+              : runtime.claimNotificationAccount(target, submit),
+        },
+  );
   sessionMembers.sync(
     lastAuthState.tag !== "Connected" || access === null || wallet === null
       ? null
@@ -2119,7 +2148,8 @@ for (const { destination: id, button } of dockButtons)
 closeButton.addEventListener("click", closeFront);
 
 async function boot(): Promise<void> {
-  const connection = await connectNetwork(activeNetwork);
+  const network = await connectNetwork(activeNetwork);
+  const connection = devSession?.guardNetwork(network) ?? network;
   chainAccess = connection;
   activity.record({
     category: "network",

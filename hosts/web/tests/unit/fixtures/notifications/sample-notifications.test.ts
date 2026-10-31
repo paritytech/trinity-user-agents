@@ -32,7 +32,7 @@ describe("sample notifications", () => {
       Math.min(
         ...items
           .filter((item) => statusOf(item, START) === "pending")
-          .map((item) => item.expiresAt),
+          .flatMap((item) => (item.expiresAt === null ? [] : [item.expiresAt])),
       ),
     ).toBe(START + 2 * MINUTE);
   });

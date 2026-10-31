@@ -61,6 +61,7 @@ function pair() {
   ) => {
     const requests: string[] = [];
     const replies: string[] = [];
+    const posting: string[] = [];
     const delivery = new LocalDelivery({
       self: self.agreementPublic,
       network,
@@ -74,8 +75,9 @@ function pair() {
     delivery.listen({
       request: (sealed) => requests.push(sealed),
       reply: (route, sealed) => replies.push(`${route} ${sealed}`),
+      posting: (id, problem) => posting.push(`${id}: ${problem}`),
     });
-    return { delivery, requests, replies };
+    return { delivery, requests, replies, posting };
   };
   return { world, clock, host };
 }
@@ -85,7 +87,7 @@ describe("local delivery", () => {
     const { world, host } = pair();
     const ada = host(ADA);
     const lin = host(LIN);
-    ada.delivery.postRequest(LIN, "one", SEALED, START + HOUR);
+    ada.delivery.postRequest(LIN, "one", SEALED);
     expect(lin.requests).toEqual([SEALED]);
     expect(ada.requests).toEqual([]);
     expect(world.items.size).toBe(1);
@@ -138,7 +140,7 @@ describe("local delivery", () => {
   test("posts again on its cadence until withdrawn, and reaches a host that starts later", () => {
     const { world, clock, host } = pair();
     const ada = host(ADA);
-    ada.delivery.postRequest(LIN, "one", SEALED, START + HOUR);
+    ada.delivery.postRequest(LIN, "one", SEALED);
     clock.advance(REPOST_INTERVAL_MS);
     const lin = host(LIN);
     expect(lin.requests).toEqual([SEALED]);
@@ -153,24 +155,62 @@ describe("local delivery", () => {
     expect(host(LIN).requests).toEqual([]);
   });
 
-  test("stops at `until`, and a lapsed post is not delivered", () => {
+  test("a reply stops at `until`, and a lapsed post is not delivered", () => {
     const { clock, host } = pair();
     const ada = host(ADA);
-    ada.delivery.postRequest(
-      LIN,
+    const route = ada.delivery.returnRoute();
+    host(LIN).delivery.postReply(
+      route,
       "one",
       SEALED,
       START + 2 * REPOST_INTERVAL_MS,
     );
     clock.advance(2 * REPOST_INTERVAL_MS);
-    expect(host(LIN).requests).toEqual([]);
+    ada.delivery.watch(route);
+    expect(ada.replies).toEqual([]);
+  });
+
+  // A paused request is still pending: the host shows why, and the delivery
+  // keeps trying while it runs.
+  test("says when the store will not take a post, and when it takes it again", () => {
+    const { world, clock } = pair();
+    const store = world.store();
+    let full = true;
+    const posting: string[] = [];
+    const delivery = new LocalDelivery({
+      self: ADA.agreementPublic,
+      network: "testnet",
+      store: {
+        ...store,
+        set: (key, value) => {
+          if (full) throw new Error("quota exceeded");
+          store.set(key, value);
+        },
+      },
+      now: clock.now,
+      schedule: clock.schedule,
+      random: cryptoRandom,
+      log: () => {},
+    });
+    delivery.listen({
+      request: () => {},
+      reply: () => {},
+      posting: (id, problem) => posting.push(`${id}: ${problem}`),
+    });
+    delivery.postRequest(LIN, "one", SEALED);
+    full = false;
+    clock.advance(REPOST_INTERVAL_MS);
+    expect(posting).toEqual([
+      "one: the local store did not take it: Error: quota exceeded",
+      "one: null",
+    ]);
   });
 
   test("keeps networks apart, and close stops posting and hearing", () => {
     const { world, clock, host } = pair();
     const ada = host(ADA);
     const other = host(LIN, "othernet");
-    ada.delivery.postRequest(LIN, "one", SEALED, START + HOUR);
+    ada.delivery.postRequest(LIN, "one", SEALED);
     expect(other.requests).toEqual([]);
     const lin = host(LIN);
     lin.delivery.close();

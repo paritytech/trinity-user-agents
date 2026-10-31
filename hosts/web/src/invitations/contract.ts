@@ -16,10 +16,11 @@ import type { ContactHandle } from "@parity/truapi";
  *   unchanged and never reads it.
  * - The sender's host owns the pending request: it resolves the contact,
  *   makes the request id and a reply key pair, takes a return route from its
- *   delivery, authenticates and seals the request, posts it until the
- *   deadline, and watches the return route. It hands the product a reply's payload only after it
- *   authenticated the reply against the contact chosen, the exact request and
- *   the exact payload.
+ *   delivery, authenticates and seals the request, keeps it posted while it
+ *   is pending, and watches the return route. A request has no deadline: it
+ *   is pending until the product completes or cancels it. It hands the
+ *   product a reply's payload only after it authenticated the reply against
+ *   the contact chosen, the exact request and the exact payload.
  * - The recipient's host authenticates the request and renders who sent it.
  *   On the product's `reply` it authenticates, seals and posts the reply on
  *   the return route the authenticated request names. The product never sees proofs, routes, reply keys
@@ -41,8 +42,6 @@ export const PRODUCT_PROTOCOL = "host-requests/1";
 /** The largest payload, from the notification allowance the design tested. */
 export const PAYLOAD_MAX_BYTES = 10_240;
 export const PURPOSE_MAX_CHARS = 280;
-export const TTL_MIN_MS = 60_000;
-export const TTL_MAX_MS = 7 * 24 * 60 * 60_000;
 
 /**
  * A request as one host knows it, opaque to the product and meaningful only
@@ -64,24 +63,22 @@ export interface SendRequest {
   contact: ContactHandle;
   /** What the request is for, shown to the recipient by their host. */
   purpose: string;
-  /** How long the request may be answered. The host sets the deadline. */
-  ttlMs: number;
   /** The product's payload as `0x` hex. The hosts carry it unchanged. */
   payload: string;
 }
 
 /**
- * Where a sent request is. `waiting` until the product completes it, cancels
- * it, or its deadline passes. There is no delivered, declined or answered.
+ * Where a sent request is. Pending (`waiting`, or `paused` while the host
+ * cannot keep it posted) until the product completes it or it is cancelled.
+ * There is no delivered, declined, answered or expired.
  */
-export type OutgoingStatus = "waiting" | "completed" | "cancelled" | "expired";
+export type OutgoingStatus = "waiting" | "paused" | "completed" | "cancelled";
 
 export interface OutgoingView {
   handle: RequestHandle;
   contact: ContactHandle;
   purpose: string;
   createdAt: number;
-  deadline: number;
   status: OutgoingStatus;
   /** When it was completed or cancelled. */
   closedAt?: number;
@@ -138,7 +135,7 @@ export type FailureReason =
   | "Invalid"
   /** The host does not know what the call names. */
   | "Unknown"
-  /** The state does not allow it: closed, expired, already answered, no reply yet. */
+  /** The state does not allow it: closed, already answered, no reply yet. */
   | "Refused";
 
 export type Failure = { ok: false; reason: FailureReason; detail: string };
@@ -212,14 +209,6 @@ export function readSendRequest(value: unknown): Read<SendRequest> {
   if (!contact.ok) return contact;
   const purpose = readPurpose(request.purpose);
   if (!purpose.ok) return purpose;
-  const { ttlMs } = request;
-  if (
-    typeof ttlMs !== "number" ||
-    !Number.isSafeInteger(ttlMs) ||
-    ttlMs < TTL_MIN_MS ||
-    ttlMs > TTL_MAX_MS
-  )
-    return fail("The expiry is outside one minute to seven days.");
   const payload = readPayload(request.payload);
   if (!payload.ok) return payload;
   return {
@@ -227,7 +216,6 @@ export function readSendRequest(value: unknown): Read<SendRequest> {
     value: {
       contact: contact.value,
       purpose: purpose.value,
-      ttlMs,
       payload: payload.value,
     },
   };

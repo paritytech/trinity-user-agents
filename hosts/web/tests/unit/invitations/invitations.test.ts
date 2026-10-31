@@ -4,6 +4,10 @@ import { WalletIdentityAuth } from "../../../src/invitations/wallet-auth.js";
 import { NotificationStore } from "../../../src/notifications/notifications.js";
 import { MemoryStorage } from "../../support/test-support.js";
 import {
+  Outbox,
+  type OutgoingRequest,
+} from "../../../src/invitations/outbox.js";
+import {
   REPLY_SEAL,
   REQUEST_SEAL,
   sealRequest,
@@ -248,7 +252,6 @@ function fromAda(overrides: Partial<RequestContext> = {}) {
       purpose: "Chat?",
       requestId: toHex(cryptoRandom(16)),
       createdAt: START,
-      deadline: START + HOUR,
       returnRoute: `route:${toHex(cryptoRandom(8))}`,
       replyKey: toHex(cryptoRandom(32)),
       ...overrides,
@@ -371,30 +374,6 @@ describe("the request service, receiving", () => {
     await accepting;
   });
 
-  test("the product's reply after the deadline is refused, to it and to the user", async () => {
-    const lin = host(LIN);
-    const { handle } = receive(lin);
-    const accepting = lin.service.requestAccept(handle);
-    lin.clock.at = START + HOUR;
-    expect(
-      await lin.product.call({
-        call: "reply",
-        handle,
-        payload: REPLY,
-        open: true,
-      }),
-    ).toEqual({
-      ok: false,
-      reason: "Refused",
-      detail: "This request expired.",
-    });
-    await expect(accepting).rejects.toThrow("This request expired.");
-    expect(lin.delivery.calls).toEqual([]);
-    await expect(lin.service.requestAccept("sample")).rejects.toThrow(
-      "This is not a request to you.",
-    );
-  });
-
   test("opening a replied request asks the product, which shows itself only when asked", async () => {
     const lin = host(LIN);
     const { handle } = receive(lin);
@@ -446,22 +425,21 @@ describe("the request service, receiving", () => {
     expect(lin.delivery.calls).toEqual([]);
   });
 
-  test("ignores a request for another product, with a lifetime over the limit, or whose deadline passed", () => {
+  // A request has no deadline, so its time is only shown: an old one, or one
+  // from a sender whose clock runs ahead, is still a request.
+  test("ignores a request for another product, and takes one made at any time", () => {
     const lin = host(LIN);
-    lin.delivery.receive!.request(
-      fromAda({
-        createdAt: START + 8 * 24 * HOUR,
-        deadline: START + 8 * 24 * HOUR + HOUR,
-      }).sealed,
-    );
     lin.delivery.receive!.request(
       fromAda({ product: { id: "other.example", name: "Other" } }).sealed,
     );
-    lin.delivery.receive!.request(
-      fromAda({ createdAt: START - 8 * 24 * HOUR }).sealed,
-    );
-    lin.delivery.receive!.request(fromAda({ deadline: START }).sealed);
     expect(lin.notifications.list()).toEqual([]);
+    lin.delivery.receive!.request(
+      fromAda({ createdAt: START + 2 * HOUR }).sealed,
+    );
+    lin.delivery.receive!.request(
+      fromAda({ createdAt: START - 30 * 24 * HOUR }).sealed,
+    );
+    expect(lin.notifications.list()).toHaveLength(2);
   });
 
   test("keeps what it received and replied across a restart, and recognises a repeat", async () => {
@@ -485,18 +463,20 @@ describe("the request service, receiving", () => {
         request: { handle, sender: handleOf(ADA), repliedAt: START },
       },
     ]);
+    // Nothing is posted until the sender, still waiting, posts the request again.
+    expect(again.delivery.calls).toEqual([]);
+    again.delivery.receive!.request(sealed);
+    expect(again.notifications.list()).toHaveLength(1);
     expect(again.delivery.calls).toEqual([
       `postReply ${context.returnRoute} ${handle}`,
     ]);
-    again.delivery.receive!.request(sealed);
-    expect(again.notifications.list()).toHaveLength(1);
   });
 
   test("a sender the host cannot name yet is told about once it can, once, with nothing posted again", async () => {
     const storage = new MemoryStorage();
     const clock = new Clock();
     const lin = host(LIN, { storage, clock });
-    const { handle, context } = receive(lin);
+    const { handle } = receive(lin);
     const accepting = lin.service.requestAccept(handle);
     await lin.product.call({
       call: "reply",
@@ -521,9 +501,7 @@ describe("the request service, receiving", () => {
     // Reading the lists again tells everything again, as it always has.
     again.service.reload();
     expect(again.product.received).toEqual([replied, replied]);
-    expect(again.delivery.calls).toEqual([
-      `postReply ${context.returnRoute} ${handle}`,
-    ]);
+    expect(again.delivery.calls).toEqual([]);
 
     // A stopped service no longer listens.
     again.service.stop();
@@ -693,13 +671,12 @@ describe("the request service, across tabs and malformed input", () => {
 });
 
 describe("the request service, sending", () => {
-  const sendTo = (ada: ReturnType<typeof host>, ttlMs = HOUR) =>
+  const sendTo = (ada: ReturnType<typeof host>) =>
     ada.product.call({
       call: "request",
       request: {
         contact: handleOf(LIN),
         purpose: "Chat?",
-        ttlMs,
         payload: PAYLOAD,
       },
     });
@@ -716,7 +693,6 @@ describe("the request service, sending", () => {
         contact: handleOf(LIN),
         purpose: "Chat?",
         createdAt: START,
-        deadline: START + HOUR,
         status: "waiting",
       },
     });
@@ -756,32 +732,12 @@ describe("the request service, sending", () => {
       } as HostMessage,
     ]);
   });
-
-  test("a request past its deadline is withdrawn and unwatched, and reported once", async () => {
-    const ada = host(ADA);
-    await sendTo(ada, 2 * MINUTE);
-    const [item] = ada.service.outbox.list();
-    ada.clock.advance(2 * MINUTE);
-    expect(ada.delivery.calls.slice(2)).toEqual([
-      `withdraw ${item!.handle}`,
-      `unwatch ${item!.context.returnRoute}`,
-    ]);
-    const reports = () =>
-      ada.product.received.filter(
-        (message) =>
-          message.kind === "outgoing" && message.request.status === "expired",
-      );
-    expect(reports()).toHaveLength(1);
-    ada.clock.advance(HOUR);
-    expect(reports()).toHaveLength(1);
-  });
 });
 
 describe("a product's calls", () => {
   const request = (overrides: Record<string, unknown> = {}) => ({
     contact: handleOf(LIN),
     purpose: "Chat?",
-    ttlMs: HOUR,
     payload: PAYLOAD,
     ...overrides,
   });
@@ -791,10 +747,6 @@ describe("a product's calls", () => {
     expect(readSendRequest(request({ purpose: "x".repeat(281) }))).toEqual({
       ok: false,
       reason: "The purpose is longer than 280 characters.",
-    });
-    expect(readSendRequest(request({ ttlMs: 8 * 24 * HOUR }))).toEqual({
-      ok: false,
-      reason: "The expiry is outside one minute to seven days.",
     });
     expect(readSendRequest(request({ payload: "0x" }))).toEqual({
       ok: false,
@@ -840,5 +792,37 @@ describe("a product's calls", () => {
         {},
       ]),
     ).toBe(true);
+  });
+});
+
+describe("the outbox", () => {
+  /** A request only as the outbox reads it back; nothing here is sealed. */
+  const sent = (handle: string): OutgoingRequest =>
+    ({
+      handle,
+      to: "bob",
+      contact: { bytes: `0x${"aa".repeat(32)}` },
+      context: { createdAt: 1, returnRoute: "route" },
+      payload: "0x01",
+      digest: "0x02",
+      sealed: "0x03",
+      replySecret: "0x04",
+      replies: [],
+      state: { tag: "waiting" },
+      paused: null,
+    }) as unknown as OutgoingRequest;
+
+  // A reply checked before a close and kept after it would reach a product
+  // that closed the request: the outbox itself refuses it.
+  test("keeps a reply only for a pending request", () => {
+    const outbox = new Outbox(new MemoryStorage(), "sent", () => 5);
+    outbox.add(sent("0x0a"));
+    outbox.add(sent("0x0b"));
+    outbox.close("0x0b", { tag: "cancelled", at: 4 });
+
+    expect([
+      outbox.addReply("0x0a", "0x10"),
+      outbox.addReply("0x0b", "0x10"),
+    ]).toEqual([true, false]);
   });
 });

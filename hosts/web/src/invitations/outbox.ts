@@ -9,10 +9,10 @@ import type {
  * The requests a user's product sent, as the sender's host keeps them. Host
  * only: the reply key's secret and the person never reach the product.
  *
- * A request waits until the product completes it, the product cancels it, or
- * its deadline passes (read from the clock). The first of these is final.
- * Nothing from the recipient's host closes it: there is no receipt and no
- * decline. Authenticated replies are kept, so a product that restarts gets
+ * A request is pending until the product completes it or it is cancelled;
+ * the first of these is final. It has no deadline. While the delivery cannot
+ * keep it posted it is paused, and still pending. Nothing from the
+ * recipient's host closes it: there is no receipt and no decline. Authenticated replies are kept, so a product that restarts gets
  * them again, and `complete` is taken only once one arrived.
  */
 
@@ -40,15 +40,18 @@ export interface OutgoingRequest {
   /** Authenticated reply payloads, in the order they arrived. */
   replies: { payload: string; at: number }[];
   state: OutgoingState;
+  /** Why the delivery cannot keep it posted now, or null. Host only. */
+  paused: string | null;
 }
 
-export function outgoingStatus(
-  item: OutgoingRequest,
-  now: number,
-): OutgoingStatus {
+export function outgoingStatus(item: OutgoingRequest): OutgoingStatus {
   if (item.state.tag !== "waiting") return item.state.tag;
-  return now >= item.context.deadline ? "expired" : "waiting";
+  return item.paused === null ? "waiting" : "paused";
 }
+
+/** Whether `item` is still pending: waiting or paused. */
+export const isPending = (item: OutgoingRequest): boolean =>
+  item.state.tag === "waiting";
 
 function isOutgoing(value: unknown): value is OutgoingRequest {
   if (typeof value !== "object" || value === null) return false;
@@ -58,7 +61,8 @@ function isOutgoing(value: unknown): value is OutgoingRequest {
     typeof item.handle === "string" &&
     typeof item.to === "string" &&
     typeof item.contact?.bytes === "string" &&
-    typeof item.context?.deadline === "number" &&
+    typeof item.context?.createdAt === "number" &&
+    (item.paused === null || typeof item.paused === "string") &&
     typeof item.payload === "string" &&
     typeof item.digest === "string" &&
     typeof item.sealed === "string" &&
@@ -109,12 +113,15 @@ export class Outbox {
     return this.items.find((item) => item.handle === handle);
   }
 
-  byRoute(route: string): OutgoingRequest | undefined {
-    return this.items.find((item) => item.context.returnRoute === route);
+  /** Every sent request whose replies come on `route`, newest first. */
+  withRoute(route: string): OutgoingRequest[] {
+    return this.items
+      .filter((item) => item.context.returnRoute === route)
+      .reverse();
   }
 
   status(item: OutgoingRequest): OutgoingStatus {
-    return outgoingStatus(item, this.now());
+    return outgoingStatus(item);
   }
 
   add(item: OutgoingRequest): void {
@@ -122,16 +129,27 @@ export class Outbox {
     this.save();
   }
 
-  /** Requests still waiting. */
-  waiting(): OutgoingRequest[] {
-    return this.items.filter((item) => this.status(item) === "waiting");
+  /** Requests still pending, paused or not. */
+  pending(): OutgoingRequest[] {
+    return this.items.filter(isPending);
   }
 
-  /** Keep an authenticated reply. False when it is a repeat or there is no room. */
+  /** Record whether the delivery can keep a pending request posted. True when that changed. */
+  setPaused(handle: RequestHandle, problem: string | null): boolean {
+    const item = this.get(handle);
+    if (item === undefined || !isPending(item) || item.paused === problem)
+      return false;
+    item.paused = problem;
+    this.save();
+    return true;
+  }
+
+  /** Keep an authenticated reply. False when the request is not pending, it is a repeat, or there is no room. */
   addReply(handle: RequestHandle, payload: string): boolean {
     const item = this.get(handle);
     if (
       item === undefined ||
+      !isPending(item) ||
       item.replies.length >= REPLIES_MAX ||
       item.replies.some((reply) => reply.payload === payload)
     )
@@ -141,21 +159,16 @@ export class Outbox {
     return true;
   }
 
-  /** Close a waiting request. False when it no longer waits. */
+  /** Close a pending request. False when it is no longer pending. */
   close(
     handle: RequestHandle,
     state: Exclude<OutgoingState, { tag: "waiting" }>,
   ) {
     const item = this.get(handle);
-    if (item === undefined || this.status(item) !== "waiting") return false;
+    if (item === undefined || !isPending(item)) return false;
     item.state = state;
+    item.paused = null;
     this.save();
     return true;
-  }
-
-  /** When the next waiting request's deadline passes, or null. */
-  nextDeadline(): number | null {
-    const times = this.waiting().map((item) => item.context.deadline);
-    return times.length === 0 ? null : Math.min(...times);
   }
 }

@@ -18,6 +18,8 @@ import {
 } from "../../../src/invitations/contract.js";
 import {
   InvitationService,
+  REACH_RETRY_MS,
+  REPLY_POSTING_MS,
   type ProductPort,
 } from "../../../src/invitations/invitation-service.js";
 import type { OutgoingRequest } from "../../../src/invitations/outbox.js";
@@ -32,14 +34,13 @@ import {
   x25519Pair,
 } from "../../../src/invitations/sealing.js";
 import { NotificationStore } from "../../../src/notifications/notifications.js";
-import { MemoryStorage } from "../../support/test-support.js";
+import { MemoryStorage, settle } from "../../support/test-support.js";
 import { SUFFIX, hostContactsOf, indexed } from "../../support/host-handles.js";
 import { WalletIdentityAuth } from "../../../src/invitations/wallet-auth.js";
 import * as setup from "../../../fixtures/products/example-chat/setup.js";
 import { FixtureContacts } from "../../../fixtures/invitations/fixture-contacts.js";
 import {
   LocalDelivery,
-  POST_LIFETIME_MS,
   REPOST_INTERVAL_MS,
   deliveryPrefix,
   inboxOf,
@@ -118,9 +119,13 @@ class Actor {
   readonly log: string[] = [];
   readonly auth: WalletIdentityAuth;
   readonly store: SharedStore;
-  readonly contacts: FixtureContacts;
+  contacts!: FixtureContacts;
   /** Whether this host's reads of published chat keys fail, as an unreachable chain's do. */
   unreadable = false;
+  /** Whether the shared store refuses this host's writes, as a full one does. */
+  storeFull = false;
+  /** While set, this host's reads of published chat keys wait for it. */
+  gate: Promise<void> | null = null;
   confirm = true;
   service!: InvitationService;
   private handler: ((value: unknown) => void) | null = null;
@@ -136,27 +141,34 @@ class Actor {
     this.notifications = new NotificationStore(this.storage, clock.now);
     this.notifications.setScope(`${user.id}:notifications`);
     this.auth = new WalletIdentityAuth(testUserKeys(user, SUFFIX));
-    const directory = testUserDirectory(SUFFIX);
-    this.contacts = new FixtureContacts(user, hostContactsOf(user), {
-      networkSuffix: SUFFIX,
-      directory: {
-        ...directory,
-        consumer: async (account) => {
-          if (this.unreadable) throw new Error("the chain is unreachable");
-          return directory.consumer(account);
-        },
-      },
-    });
+    this.forgetKeys();
     void this.contacts.refresh();
     const inner = world.store();
     this.store = {
       ...inner,
       set: (key, value) => {
+        if (this.storeFull) throw new Error("the store is full");
         this.writes.push(key);
         inner.set(key, value);
       },
     };
     this.start();
+  }
+
+  /** People with no chat key read yet, as a host that starts in a new tab has. */
+  forgetKeys(): void {
+    const directory = testUserDirectory(SUFFIX);
+    this.contacts = new FixtureContacts(this.user, hostContactsOf(this.user), {
+      networkSuffix: SUFFIX,
+      directory: {
+        ...directory,
+        consumer: async (account) => {
+          await this.gate;
+          if (this.unreadable) throw new Error("the chain is unreachable");
+          return directory.consumer(account);
+        },
+      },
+    });
   }
 
   /** Start the host (again, after `stop`), over the same storage. */
@@ -274,7 +286,7 @@ async function picked(actor: Actor, to: TestUser): Promise<ContactHandle> {
 async function invite(
   alice: Actor,
   to: TestUser,
-  options: { ttlMs?: number; payload?: string } = {},
+  options: { payload?: string } = {},
 ): Promise<Sent> {
   const contact = await picked(alice, to);
   const { payload, secrets } = setup.createInvitation(cryptoRandom);
@@ -284,7 +296,6 @@ async function invite(
       request: {
         contact,
         purpose: "Chat?",
-        ttlMs: options.ttlMs ?? HOUR,
         payload: options.payload ?? payload,
       },
     }),
@@ -461,9 +472,8 @@ for (const kind of ["inbox", "topic"] as const)
         expect(seenBy(alice)).not.toContain(value.toLowerCase());
       for (const value of [...secret(ALICE), ...wire])
         expect(seenBy(bob)).not.toContain(value.toLowerCase());
-      // Bob's product gets neither the purpose, which his host shows, nor the deadline.
+      // Bob's product does not get the purpose, which his host shows.
       expect(seenBy(bob)).not.toContain("chat?");
-      expect(seenBy(bob)).not.toContain(String(context.deadline));
     });
 
     test("the sender's host refuses a reply bound to anything else, and a refused reply does not use up the request", async () => {
@@ -476,7 +486,7 @@ for (const kind of ["inbox", "topic"] as const)
       const refusals = () =>
         alice.log.filter((line) => line.startsWith("Ignored a reply"));
       const { context } = item;
-      const deadline = context.deadline;
+      const until = START + HOUR;
       const made = setup.respond(sent.secrets.payload, cryptoRandom)!;
       const replyContext: ReplyContext = {
         version: context.version,
@@ -489,7 +499,7 @@ for (const kind of ["inbox", "topic"] as const)
       const signed = (ctx: ReplyContext, payload: string, by = bob) =>
         by.auth.evidence("Reply", replyTranscript(ctx, payload), aliceAsPeer);
       const post = (sealed: string, route = context.returnRoute) =>
-        postOn(carol, route, sealed, deadline);
+        postOn(carol, route, sealed, until);
 
       // From Carol, for Alice's request to Bob.
       post(
@@ -582,9 +592,8 @@ for (const kind of ["inbox", "topic"] as const)
         "Ignored a reply to request " +
           sent.handle.slice(2, 10) +
           ": it is for another identity.",
-        "Ignored a reply to request " +
-          sent.handle.slice(2, 10) +
-          ": not sealed to this request.",
+        // The reply sealed to the other request's key is silent: on a shared
+        // inbox, a post that does not open is someone else's.
       ]);
       expect(alice.responses(sent.handle)).toEqual([]);
       expect(
@@ -646,7 +655,6 @@ for (const kind of ["inbox", "topic"] as const)
           bobPerson.identity,
           toHex(cryptoRandom(16)),
           sealed,
-          toBob.context.deadline,
         );
       /** Open a request sealed to `holder`, change it, and seal it for Bob. */
       const reseal = (
@@ -671,9 +679,9 @@ for (const kind of ["inbox", "topic"] as const)
         );
       };
 
-      // Changed deadline, return topic, reply key or payload of Alice's request to Bob.
+      // Changed time, return topic, reply key or payload of Alice's request to Bob.
       for (const edit of [
-        { deadline: toBob.context.deadline + HOUR },
+        { createdAt: toBob.context.createdAt + 1 },
         { returnRoute: `topic:0x${"11".repeat(32)}` },
         {
           returnRoute: `inbox:${inboxOf(personOf(CAROL).identity.agreementPublic)}:0x${"11".repeat(16)}`,
@@ -743,7 +751,7 @@ for (const kind of ["inbox", "topic"] as const)
         ...Array(6).fill("Ignored a request: its evidence does not check."),
         "Ignored a request: it is for another identity.",
         "Ignored a request: its evidence does not check.",
-        "Ignored a request: not sealed to this host.",
+        // The changed byte breaks the seal, so it reads as someone else's post: no line.
         ...Array(2).fill(
           expect.stringMatching(
             /^Ignored request [0-9a-f]{8}: its return route does not reach Alice\.$/,
@@ -780,6 +788,118 @@ for (const kind of ["inbox", "topic"] as const)
       expect(bob.writes).toEqual([]);
     });
 
+    test("a pause kept across a restart clears once the delivery posts, and comes back when it still cannot", async () => {
+      const { alice } = world();
+      alice.storeFull = true;
+      const sent = await invite(alice, BOB);
+      const paused = alice.outgoing(sent.handle).paused;
+      alice.stop();
+      alice.storeFull = false;
+      alice.start();
+      const resumed = [
+        alice.outgoing(sent.handle).paused,
+        alice.status(sent.handle),
+      ];
+      alice.stop();
+      alice.storeFull = true;
+      alice.start();
+
+      expect({
+        paused,
+        resumed,
+        again: alice.outgoing(sent.handle).paused,
+      }).toEqual({
+        paused: expect.stringContaining("the store is full"),
+        resumed: [null, "waiting"],
+        again: expect.stringContaining("the store is full"),
+      });
+    });
+
+    test("a request whose contact's key cannot be read after a restart is paused, kept, and posted once it reads", async () => {
+      const { clock, alice } = world();
+      const sent = await invite(alice, BOB);
+      alice.stop();
+      alice.forgetKeys();
+      alice.unreadable = true;
+      alice.start();
+      await settle();
+      const paused = alice.outgoing(sent.handle).paused;
+      const status = alice.status(sent.handle);
+      const writes = deliveryWrites(alice).length;
+      // The failed read is not kept as an answer: the next try reads again.
+      alice.unreadable = false;
+      clock.advance(REACH_RETRY_MS);
+      await settle();
+
+      expect({
+        paused,
+        status,
+        after: [alice.outgoing(sent.handle).paused, alice.status(sent.handle)],
+        postedAgain: deliveryWrites(alice).length > writes,
+      }).toEqual({
+        paused: expect.stringMatching(
+          /^your host cannot find the contact now: Bob: its chat identity could not be read: /,
+        ),
+        status: "paused",
+        after: [null, "waiting"],
+        postedAgain: true,
+      });
+    });
+
+    test("a request cancelled in another tab while the reply's key is read takes no reply", async () => {
+      const { clock, alice, bob } = world();
+      const sent = await invite(alice, BOB);
+      alice.stop();
+      alice.forgetKeys();
+      let release = () => {};
+      alice.gate = new Promise((resolve) => (release = resolve));
+      alice.start();
+      await accept(bob);
+      await settle();
+      // Another tab of Alice's cancels it: this tab reads the lists again.
+      const lists = JSON.parse(alice.storage.getItem("sent")!) as {
+        handle: string;
+        state: unknown;
+      }[];
+      for (const item of lists)
+        if (item.handle === sent.handle)
+          item.state = { tag: "cancelled", at: clock.now() };
+      alice.storage.setItem("sent", JSON.stringify(lists));
+      alice.service.reload();
+      release();
+      await settle();
+
+      expect({
+        responses: alice.responses(sent.handle),
+        kept: alice.outgoing(sent.handle).replies,
+        status: alice.status(sent.handle),
+        log: alice.log.filter((line) => line.startsWith("Ignored a reply")),
+      }).toEqual({
+        responses: [],
+        kept: [],
+        status: "cancelled",
+        log: [
+          `Ignored a reply to request ${sent.handle.slice(2, 10)}: it is cancelled.`,
+        ],
+      });
+    });
+
+    test("a reply the sender missed is posted again when its request comes again, however much later", async () => {
+      const { clock, alice, bob } = world();
+      const sent = await invite(alice, BOB);
+      alice.stop();
+      const { made } = await accept(bob);
+      // Long past any retry of the reply, and of a seven-day window.
+      clock.advance(8 * 24 * HOUR + REPLY_POSTING_MS);
+      alice.start();
+      await settle();
+
+      expect({
+        responses: alice.responses(sent.handle),
+        resent: bob.log.filter((line) => line.includes("came again")).length,
+      }).toEqual({ responses: [made!.response], resent: 1 });
+    });
+
     test("cancel stops the reposts; a late reply is ignored and never reaches the product", async () => {
       const { clock, alice, bob } = world();
       const sent = await invite(alice, BOB);
@@ -810,54 +930,19 @@ for (const kind of ["inbox", "topic"] as const)
       );
     });
 
-    test("the deadline stops both sides; posts lapse on their own, sooner than the deadline", async () => {
-      const { clock, alice, bob, shared } = world();
-      const sent = await invite(alice, BOB, { ttlMs: 20 * MINUTE });
-      // Bob's host was offline longer than a post lives; Alice's reposts still reach it.
+    // No deadline: a request waits, reposted while its sender runs, until it
+    // is answered or cancelled, and a late answer still connects.
+    test("a request is pending until answered: reposted while the sender runs, and answered days later", async () => {
+      const { clock, alice, bob } = world();
+      const sent = await invite(alice, BOB);
       bob.stop();
-      clock.advance(POST_LIFETIME_MS + 2 * REPOST_INTERVAL_MS);
+      clock.advance(2 * 24 * HOUR);
       bob.start();
       expect(bob.notifications.list()).toHaveLength(1);
-      const { result } = await accept(bob);
+      const { made, result } = await accept(bob);
       expect(result).toEqual({ ok: true });
-      alice.stop();
-      clock.advance(20 * MINUTE);
-      // Reposts never move the deadline the request was authenticated with.
-      expect(alice.outgoing(sent.handle).context.deadline).toBe(
-        START + 20 * MINUTE,
-      );
-      alice.start();
-      expect(alice.status(sent.handle)).toBe("expired");
-      const writes = [deliveryWrites(alice).length, deliveryWrites(bob).length];
-      clock.advance(3 * REPOST_INTERVAL_MS);
-      expect([
-        deliveryWrites(alice).length,
-        deliveryWrites(bob).length,
-      ]).toEqual(writes);
-      expect(
-        await alice.call({ call: "complete", handle: sent.handle }),
-      ).toEqual({
-        ok: false,
-        reason: "Refused",
-        detail: "This request is expired.",
-      });
-      clock.advance(POST_LIFETIME_MS);
-      expect([...shared.items.keys()]).toEqual([]);
-    });
-
-    test("a request that arrives after its deadline is not kept, and Accept after it is refused", async () => {
-      const { clock, alice, bob } = world();
-      bob.stop();
-      await invite(alice, BOB, { ttlMs: 2 * MINUTE });
-      clock.advance(2 * MINUTE);
-      bob.start();
-      expect(bob.notifications.list()).toEqual([]);
-
-      await invite(alice, BOB, { ttlMs: 2 * MINUTE });
-      clock.advance(2 * MINUTE);
-      await expect(bob.service.requestAccept(newest(bob))).rejects.toThrow(
-        "This request expired.",
-      );
+      expect(alice.responses(sent.handle)).toEqual([made!.response]);
+      expect(alice.status(sent.handle)).toBe("waiting");
     });
 
     test("repeats have one effect: reposts, a second Accept, a second reply, the same reply twice", async () => {
@@ -908,7 +993,7 @@ for (const kind of ["inbox", "topic"] as const)
       });
     });
 
-    test("restarts keep the state: the sender reposts and hands a waiting reply again; the recipient reposts its reply", async () => {
+    test("restarts keep the state: the sender reposts and hands a waiting reply again; the recipient posts its reply again when the request comes again", async () => {
       const { clock, alice, bob } = world();
       const sent = await invite(alice, BOB);
       const { made } = await accept(bob);
@@ -978,7 +1063,6 @@ for (const kind of ["inbox", "topic"] as const)
           request: {
             contact,
             purpose: "\u0007".repeat(PURPOSE_MAX_CHARS),
-            ttlMs: HOUR,
             payload: largest,
           },
         }),
@@ -1046,7 +1130,7 @@ for (const kind of ["inbox", "topic"] as const)
       const send = (contact: ContactHandle) =>
         alice.call({
           call: "request",
-          request: { contact, purpose: "Chat?", ttlMs: HOUR, payload: "0x01" },
+          request: { contact, purpose: "Chat?", payload: "0x01" },
         });
       expect(await send(handle)).toEqual({
         ok: false,

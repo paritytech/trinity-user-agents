@@ -736,7 +736,10 @@ sample data or from the [invitation demo](#invitation-demo-prototype).
   shelf counts its own. Every count reads the same items.
 - **Actions.** A request that waits has **Dismiss**, and **Accept** when the feature that owns it can accept it. Sample
   requests have no owner, so they have Dismiss only. Seen is not answered: a request with no action stays waiting until
-  it expires, and then it has no actions.
+  it expires, if it has an expiry, and then it has no actions. Invitations have none: they wait until answered.
+- **Sent.** The user's own pending requests are listed under **Sent**, by the host's name for the recipient, with
+  **Cancel**. Cancel is local: it stops posting the request and drops a later reply, and nothing goes to the recipient.
+  A request the host cannot keep posted shows **Paused** with why, and stays pending.
   - **Dismiss** takes the request off this list on this device. It is not an answer: nothing is sent, the stored item
     keeps its state and its `dismissedAt`, it still expires, and a repeat delivery does not bring it back.
   - **Accept** is the user's intent, handed to the product that owns the request. The row shows **Accepting…** until the
@@ -791,7 +794,8 @@ agreed API.
     conversation topics and its response, and replies through its host. Bob's host seals the reply for Alice and posts
     it on the request's return route. Alice's host authenticates it and hands the payload to Alice's Example Chat, which
     checks it and only then completes: **Connected**. **Dismiss** takes the row off Bob's list and sends nothing. Alice
-    can **Cancel** a waiting invitation; otherwise it waits until its deadline. Inspector → Activity shows each step.
+    can **Cancel** a waiting invitation in Example Chat or under **Sent** in her Inbox; otherwise it waits. Inspector →
+    Activity shows each step.
 - **Leaving it.** **Sign out** in Account, or **Off** in More, leaves the tab signed out. Signing in to an account in
   the picker, or importing one, reloads the tab signed in to it. The choice is kept for the tab, so a reload keeps it.
   Starting the demo ends the tab's wallet session and leaves saved wallets and their data alone.
@@ -817,10 +821,18 @@ agreed API.
     here is `fixtures/invitations/local-topics.ts`, posts kept in this origin's `localStorage` for seven days, with no
     signer, channel or allowance: it stands in for TrUAPI's `statementStore`, which a demo user cannot reach.
   - **Gaps it shows.** The host asks twice when a chat starts from its own **+**: once in the request form and once in
-    **Send invitation**. Nothing lets the user cancel a waiting request from Chat: the v2 draft has no product action a
-    user can press. A declined request waits silently until it expires (one day). The per-conversation chat accounts the
-    design asks for, and their allowance, have no API: through TrUAPI a product's statements are signed by its one
-    allowance account.
+    **Send invitation**. A declined request waits silently until the sender cancels it under **Sent** in the Inbox. The
+    per-conversation chat accounts the design asks for, and their allowance, have no API: through TrUAPI a product's
+    statements are signed by its one allowance account.
+  - **With a wallet.** Developer tools → **More** → **Contact Chat for this wallet** runs Contact Chat for the wallet
+    signed in from the Account picker, in this tab, instead of a demo user (`tools/demos/contact-chat-host.ts`). Its
+    requests are proved with the wallet's own identity account and chat key, once they match the core's session and the
+    chain publishes that chat key for that account; otherwise they stay off and the log says why. A person is any
+    identity account with a chat key the chain publishes, but the blocked: whoever the user writes to, found by
+    username, and whoever writes to them, named by the host from its records and the chain username. Requests still
+    travel only between tabs of this browser (the local simulated delivery), and Nova chat runs for the wallet as for
+    any sign-in. The built-in test accounts are registered on Paseo Next v2 with their chat keys (`testalice.10`,
+    `testbob.10`, `testcarol.10`), so two tabs signed in to two of them try it with real published keys.
 - **What the demo keeps apart.** Its contacts and handle (`alice.example`) are fixtures. The contacts name each demo
   user by the identity account their own phrase derives on the network, as chat names people, so the core mints the same
   handles for them as `contacts.pick` gives. Its host proofs are made with the wallet keys of the user's phrase (see
@@ -840,21 +852,23 @@ agreed API.
 - **The proposed API** (`host-requests/1`, `src/invitations/contract.ts`), over a `MessagePort` the product hands over.
   It names a contact by the `ContactHandle` TrUAPI's `contacts.pick` gives; it has no picker of its own. Each call has
   an `id` and one `result`.
-  - Sender: `request` (contact handle, purpose, expiry, payload; answers a request handle), `complete` (only after an
+  - Sender: `request` (contact handle, purpose, payload; answers a request handle), `complete` (only after an
     authenticated reply reached the product; stops the reposts; sends nothing) and `cancel`. The host pushes `outgoing`
     (status) and `response` (an authenticated reply's payload).
   - Recipient, only after the user chose Accept: the host pushes `acceptIntent` (request handle, sender handle,
     payload), and the product calls `reply` (request handle, payload), `refuse` or `open`.
-  - Statuses are `waiting`, `completed`, `cancelled` and `expired`: there is no delivered, declined or accepted status
-    for the sender.
+  - Statuses are `waiting`, `paused`, `completed` and `cancelled`. A request has no deadline: it is pending (`waiting`,
+    or `paused` while the host cannot keep it posted) until completed or cancelled. There is no delivered, declined,
+    accepted or expired status for the sender.
 - **Who owns what.** The sender's host makes the request id and a per-request reply key pair and keeps the reply key's
   secret. Its delivery (the `HostDelivery` port) chooses both routes: it reaches the recipient by their identity, and it
   gives the sender a return route for each request, which the sender's host watches before it posts and binds into the
   authenticated request. The recipient's host keeps a request only when its own delivery can reach the sender on that
-  route, and posts its reply there, never on a route from the payload. The sender's host matches a reply to its request
-  by the route it arrived on, then opens it with that request's reply key. The request service does not read a route.
-  Products never see a request id, route, reply key, evidence or anyone's identity; the recipient's product does not get
-  the purpose or the deadline.
+  route, and posts its reply there, never on a route from the payload. The sender's host tries a reply that arrives on a
+  route against each of its requests on that route, and keeps it for the one whose reply key opens it; a post that opens
+  for none is someone else's and is dropped without a log line. The request service does not read a route. Products
+  never see a request id, route, reply key, evidence or anyone's identity; the recipient's product does not get the
+  purpose.
 - **What is real here.** X25519 + ChaCha20-Poly1305 sealing, and the host proof of the Establish Connection design, v3's
   `AuthEvidence` (`kind`, a 32-byte `identityMac`, a 64-byte sr25519 `messageSignature`), made with the user's wallet
   keys (`src/invitations/wallet-auth.ts`). As the design asks, it adapts native chat's identity authentication: the MAC
@@ -881,10 +895,12 @@ agreed API.
     sound. The demo users' phrases are public, so a proof from one shows only that the derivation and checks work, not
     who a person is.
   - The identity account's signature is only the inner proof, inside the sealed envelope. It never signs a post anyone
-    else sees: in the design, a setup request or response is submitted by a notification account, which this demo does
-    not have.
-  - Only the invitation demo runs it. A wallet signed in from the Account picker has no request service, and nothing
-    here reads its published chat key from the chain or registers one.
+    else sees: on the network delivery below a notification account signs each post; the local delivery signs none.
+  - A wallet signed in from the Account picker runs Contact Chat's request service only when the Developer section's
+    Contact Chat for this wallet is on. Its contacts' chat keys are read from the chain (`chainDirectory`); nothing here
+    registers one. The request service starts once the chain shows the wallet's own chat key; until then New chat says
+    the check is running, and is drawn again when it ends. A check the chain could not answer is tried again every 30 s
+    and says why meanwhile; a published key that is not the wallet's keeps requests off, with the reason.
   - The chat keys a host reads for its contacts come from a fixture directory (`testUserDirectory`), which answers as
     the People chain would if each demo user had registered the key its phrase derives; the demo users have no chain
     records. A real host reads `chainDirectory`; the lookups and refusals (no record, another key type, Asset Hub and
@@ -894,23 +910,58 @@ agreed API.
     has an inbox, labelled from its agreement key, and requests go there. A return route is the sender's inbox and a
     random tag, so a reply lands in the sender's inbox and the tag names its request; a recipient's host posts a reply
     only to the inbox of the person who sent the request. The delivery can instead make a random topic per request (the
-    tests run both). Each side posts again every minute and each post lapses after five minutes; these are dev choices,
-    separate from the request's deadline, which reposts never move. No notification account signs a post and no
-    allowance is checked. Inbox labels are linkable, a reply's tag is in the clear, and any script of this origin can
-    read or post.
-  - When the recipient resends its reply and when it stops is open in the design. Here the recipient's host posts the
-    same sealed reply again on the delivery's cadence, and when it starts, until the request's deadline.
+    tests run both). Each side posts again every minute while it runs and each post lapses after five minutes; these are
+    dev choices for network retention, not whether a request may be answered. A post the store will not take pauses the
+    request, which the host shows, and is tried again. No notification account signs a post and no allowance is checked.
+    Inbox labels are linkable, a reply's tag is in the clear, and any script of this origin can read or post.
+  - Network delivery (`src/invitations/statement-delivery.ts`), a DRAFT route, for a wallet only, chosen in the
+    Developer section's Contact Chat delivery (off by default; choosing to claim and post asks first). Every request and
+    reply of every host on a network goes to one Statement Store topic per UTC day, with no recipient or request named
+    in the clear; each host reads today's and yesterday's topic and tries to open everything. Each post is one statement
+    signed by a notification account: a fresh sr25519 account per post and day, hard-derived from the wallet's entropy,
+    which the core registers for the day with the user's personhood proof
+    (`Resources.set_notification_statement_account_for_sequence`, through `claimNotificationAccount`). The runtime
+    grants such an account one statement of at most 10,240 bytes of data (`NotificationAllowance`, read 2026-10-30), and
+    the node checks it. The sealed envelope, not only the payload, must fit: a sealed Contact Chat request measures
+    about 1.2 to 1.5 KB and a reply about 1.4 KB. A request or reply that seals larger than the delivery carries is
+    refused at once (`Invalid`, with its sealed size and the limit), before the user is asked or anything is kept: the
+    payload is hex inside the envelope, so one above about 4.5 KB does not fit. While the tab runs, a pending request is
+    posted again each UTC day with a new account; a failed claim or submission pauses it, keeps it, and is tried again
+    every 15 minutes. The same post on the same day derives the same account, so a restart claims nothing new. "Validate
+    claims only" builds every claim and asks the runtime whether it would accept it, and submits nothing; each request
+    then shows paused with the claim it would have made. In that mode the tab's network also refuses every JSON-RPC
+    submission and broadcast before it reaches the light client (`tools/demos/no-submit.ts`). Its own lists keep its
+    requests apart from the local delivery's. Not interop-tested with the apps, and not the design's Backhaul.
+  - "Network: claim and post" claims and posts for real. Choosing it asks first. How many posts a person makes a day is
+    the chain's limit: each post takes one of the person's daily notification slots, and a claim with none left fails,
+    pausing the request until a later try finds one.
+  - While the network delivery is chosen, the tab holds the wallet's Nova chat off, in the host and as the Nova chat
+    worker: it neither starts nor answers anything, and Chat's New chat starts Contact Chat. Someone chosen there by
+    username gets their contact handle minted for the request; the host names them, and as with a sender, naming them
+    does not make them payable.
+  - When the recipient resends its reply is open in the design. Here a reply has no deadline: the recipient's host posts
+    it when it replies, and posts the same sealed reply again whenever the request arrives again, as it does while the
+    sender's host still waits and reposts it, after a restart too. The delivery keeps trying to post each reply for an
+    hour (`REPLY_POSTING_MS`), to ride out a failed post; that is how long it retries, not how long the reply counts. A
+    request carries the time it was made only to show it; no time refuses it.
+  - A pending request whose contact's chat key cannot be read now, as after a restart with the chain unreachable, is
+    paused with why, kept, and tried again every minute. A read that failed is read again when next asked for; a
+    definite answer (no key, another key type, a conflict) is kept until the keys are read again.
+  - Contact Chat saves its conversation, and waits until the host's storage confirms it kept the write, before it sends
+    a request, replies or completes; a save that fails sends nothing and says so.
   - Example Chat would watch its conversation topics through TrUAPI's `statementStore`; a demo user reaches no chain, so
     it only keeps them.
 - **Code.** `src/invitations/` is the feature and holds no fixture: `contract.ts` what a product and its host say,
   `ports.ts` what the host needs (contacts, an identity credential, delivery), `binding.ts` the envelopes and the
   transcripts their evidence covers, `sealing.ts` the sealing, `wallet-auth.ts` the host proof with wallet keys,
-  `published-keys.ts` the chat keys read from chain records, `invitation-service.ts` one user's host side, and
-  `outbox.ts` and `received.ts` what it keeps. What only tests and the dev server use lives outside it:
-  `fixtures/invitations/` holds the fixture contacts and chat-key directory, the local delivery and the demo users,
-  `fixtures/notifications/` the sample notifications, `fixtures/products/example-chat/` Example Chat,
-  `fixtures/products/contact-chat/` Contact Chat, and `tools/demos/dev-tools.ts` the Developer section.
-  `tests/unit/invitations/invitation-flow.test.ts` runs two and three users end to end, and
+  `published-keys.ts` the chat keys read from chain records, `directory-contacts.ts` the people over them,
+  `statement-delivery.ts` the network delivery, `invitation-service.ts` one user's host side, and `outbox.ts` and
+  `received.ts` what it keeps. What only tests and the dev server use lives outside it: `fixtures/invitations/` holds
+  the fixture contacts and chat-key directory, the local delivery and the demo users, `fixtures/notifications/` the
+  sample notifications, `fixtures/products/example-chat/` Example Chat, `fixtures/products/contact-chat/` Contact Chat,
+  `tools/demos/contact-chat-host.ts` its host side for a demo user or a wallet, and `tools/demos/dev-tools.ts` the
+  Developer section. `tests/unit/invitations/invitation-flow.test.ts` runs two and three users end to end,
+  `tests/unit/invitations/statement-delivery.test.ts` the network delivery over an in-memory store and chain, and
   `tests/unit/fixtures/contact-chat/contact-chat.test.ts` Contact Chat between two hosts. Only a dev server on this
   machine loads the Developer section, so a build has none of it; the host's contact picker reads the demo user's
   contacts in place of the chat contacts.
@@ -1400,15 +1451,15 @@ user, with its choice in More and nothing opened until More opens Example Chat i
 prompt offers the user's contacts and Cancel sends nothing; an invitation shows a badge of 1 in the chosen recipient's
 tab only, and showing in the list is seen, not answered; Accept opens the recipient's Example Chat, reaches the sender's
 product, hands the recipient's product the same setup data and then shows it, and the accepted row opens it again;
-Dismiss sends no answer and the sender's invitation waits until it expires; a request expires on the clock on both
-sides, and its row loses its actions; replays and late or contrary answers change nothing; restarting Example Chat
-restores it, Close ends its frame until it is opened again, and an accepted row opens it; a reload keeps the demo user
-and the lists; another network shows none of it. It also checks that a test account signs in from the picker as a wallet
-does, with Chat and workers running, Sign out and no Forget, and survives a reload; that the same phrase imported is the
-same account on the same path; that the invitation demo is chosen in More, is not listed in the picker, runs no Nova
-chat and no wallet worker, only Contact Chat, and shows none of the wallet's Inbox; that Clear invitations asks first
-and removes only that demo user's lists; that Sign out leaves the demo signed out; and that the saved wallet and its
-notifications are as they were; and that on a phone nothing scrolls sideways and the banner's buttons fit.
+Dismiss sends no answer and the sender's invitation waits; a sender cancels a request under Sent in the host's Inbox,
+and the recipient is not told; replays and late or contrary answers change nothing; restarting Example Chat restores it,
+Close ends its frame until it is opened again, and an accepted row opens it; a reload keeps the demo user and the lists;
+another network shows none of it. It also checks that a test account signs in from the picker as a wallet does, with
+Chat and workers running, Sign out and no Forget, and survives a reload; that the same phrase imported is the same
+account on the same path; that the invitation demo is chosen in More, is not listed in the picker, runs no Nova chat and
+no wallet worker, only Contact Chat, and shows none of the wallet's Inbox; that Clear invitations asks first and removes
+only that demo user's lists; that Sign out leaves the demo signed out; and that the saved wallet and its notifications
+are as they were; and that on a phone nothing scrolls sideways and the banner's buttons fit.
 
 `browser/contact-chat.spec.ts` checks Contact Chat between two demo users in tabs of the normal host, with every socket
 closed and every request outside this host refused: the dev server's archive of the worker runs through the ordinary
@@ -1418,6 +1469,15 @@ ways; a reload keeps the conversation and the names; neither worker heard or kep
 tab's core reports the identity account the other user's contacts name the demo user by, and each host proved and
 checked with the keys of its user's phrase; and the handle each worker holds is the one `contacts.pick` gives Example
 Chat, in the same tab, for the same person. Set `CHAT_SCREENSHOTS` to a directory to keep screenshots.
+
+`browser/wallet-delivery-live.spec.ts` runs only with `TRUAPI_LIVE=1`, against Paseo Next v2: Alice's public test
+account, signed in as a wallet, turns on Contact Chat for this wallet and the network delivery that validates claims
+only, then starts a chat with `testbob.10` from Chat's New chat through the picker's username search and the Send
+prompt. It checks that the request shows paused with the claim the live runtime would accept, that Nova chat never
+started, and that the tab's no-submit guard refused nothing and passed no submission or broadcast method.
+
+A failed live run keeps the tab's guard record, Activity lines and a screenshot under `TRUAPI_LIVE_EVIDENCE`, or the
+temporary directory. No browser test claims or posts.
 
 `browser/contacts-pick.spec.ts` checks `contacts.pick` for demo users: the host's picker names the product and lists the
 user's two contacts; a pick gives the core's handle, the same for the same person and another for another; Cancel and
@@ -1524,7 +1584,8 @@ nothing else of it.
 - `src/pocket/`: the Pocket cards and the Pocket the core's calls see (`pocket.ts`), the screen (`screen.ts`), a card's
   faces (`faces.ts`, `card-view.ts`) and the Widget an opened card runs (`widget.ts`).
 - `src/notifications/`: the Inbox prototype's store and screen.
-- `src/invitations/`: invitations between users' hosts.
+- `src/invitations/`: invitations between users' hosts, and the draft network delivery over the Statement Store
+  (`statement-delivery.ts`).
 - `tools/`: the developer tools. `mount.ts` mounts the inspector and the Preview tab (`viewport.ts`, `dock-resize.ts`).
   `activity/` is the inspector's Activity view: the bounded event list, its filters and its view. `workers/` is the
   inspector's Workers view and the workers' console lines it keeps. `inspector/` collects and shows: `frame-tap.ts`

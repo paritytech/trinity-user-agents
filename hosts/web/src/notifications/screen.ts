@@ -32,6 +32,24 @@ export interface NotificationActions {
   destination(item: HostNotification): string | null;
   /** Ask the owner to show an accepted `item`. */
   open(item: HostNotification): void;
+  /** The requests the user sent that are still pending, newest first, when the owner keeps any. */
+  sent?(): readonly SentRequest[];
+  /** Cancel a pending sent request, in this host: nothing is sent to its recipient. */
+  cancel?(id: string): void;
+  /** Calls back whenever {@link sent} may answer differently. */
+  onSentChange?(listener: () => void): () => void;
+}
+
+/** A request the user sent, as the host draws it. */
+export interface SentRequest {
+  id: string;
+  /** The recipient, named by the host. */
+  to: { name: string; handle: string };
+  product: { id: string; name: string };
+  purpose: string;
+  createdAt: number;
+  /** Paused while the host cannot keep it posted, with why. */
+  paused: string | null;
 }
 
 const KIND_LINE: Record<NotificationKind, string> = {
@@ -133,9 +151,13 @@ export class NotificationsScreen {
 
   /** Let the feature that owns some notifications act on them, or no one. */
   setActions(actions: NotificationActions | null): void {
+    this.stopSent();
     this.actions = actions;
+    this.stopSent = actions?.onSentChange?.(() => this.render()) ?? (() => {});
     this.render();
   }
+
+  private stopSent: () => void = () => {};
 
   show(visible: boolean): void {
     this.visible = visible;
@@ -240,7 +262,9 @@ export class NotificationsScreen {
     const items = this.store.listed();
     const waiting = items.filter((item) => statusOf(item, now) === "pending");
     const earlier = items.filter((item) => statusOf(item, now) !== "pending");
-    if (items.length === 0) body.append(this.empty("Your Inbox is empty"));
+    const sent = this.actions?.sent?.() ?? [];
+    if (items.length === 0 && sent.length === 0)
+      body.append(this.empty("Your Inbox is empty"));
     for (const [title, group, name] of [
       ["Requests", waiting, "pending"],
       ["Earlier", earlier, "earlier"],
@@ -253,7 +277,56 @@ export class NotificationsScreen {
       section.append(el("h3", "chat-section-title", title), list);
       body.append(section);
     }
+    if (sent.length > 0) body.append(this.drawSent(sent));
     return [bar, body];
+  }
+
+  /** The user's pending sent requests: they wait until accepted, or until the user cancels one here. */
+  private drawSent(sent: readonly SentRequest[]): HTMLElement {
+    const section = el("section", "chat-section");
+    section.dataset.group = "sent";
+    const list = el("ul", "chat-list notification-list");
+    for (const request of sent) {
+      const row = el("li", "notification-row");
+      row.dataset.sent = request.id;
+      const text = el("span", "chat-row-text");
+      const top = el("span", "notification-row-top");
+      top.append(
+        el("span", "chat-row-title", `To ${request.to.name}`),
+        el(
+          "span",
+          "notification-time",
+          ago(request.createdAt, this.store.now()),
+        ),
+      );
+      const meta = el("span", "notification-meta");
+      meta.append(
+        `${request.product.name} · `,
+        request.paused === null
+          ? "Waiting"
+          : el("span", "notification-status", "Paused"),
+      );
+      const message = el("span", "notification-message");
+      message.append(el("span", "notification-text", request.purpose));
+      text.append(top, message, meta);
+      const main = el("div", "chat-row notification-main");
+      main.append(
+        avatar({ icon: null, seed: request.to.handle, title: request.to.name }),
+        text,
+      );
+      const actions = el("div", "notification-actions");
+      actions.append(
+        button("chat-pill", "Cancel", "sent-cancel", () =>
+          this.actions?.cancel?.(request.id),
+        ),
+      );
+      row.append(main, actions);
+      if (request.paused !== null)
+        row.append(el("p", "chat-error notification-problem", request.paused));
+      list.append(row);
+    }
+    section.append(el("h3", "chat-section-title", "Sent"), list);
+    return section;
   }
 
   private empty(title: string): HTMLElement {
@@ -288,11 +361,10 @@ export class NotificationsScreen {
     const product = el("span", "notification-product", item.product.name);
     product.title = item.product.id;
     meta.append(`${KIND_LINE[item.kind]} · `, product);
-    meta.append(
-      status === "pending"
-        ? ` · Expires ${until(item.expiresAt, now)}`
-        : el("span", "notification-status", STATUS_LABEL[status]),
-    );
+    if (status !== "pending")
+      meta.append(el("span", "notification-status", STATUS_LABEL[status]));
+    else if (item.expiresAt !== null)
+      meta.append(` · Expires ${until(item.expiresAt, now)}`);
     const text = el("span", "chat-row-text");
     text.append(top, message, meta);
     const content = [

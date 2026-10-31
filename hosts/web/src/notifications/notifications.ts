@@ -40,7 +40,8 @@ export interface HostNotification {
   /** What the sender says the request is for, in their words. */
   purpose: string;
   receivedAt: number;
-  expiresAt: number;
+  /** When it can no longer be answered, or null when it waits until answered. */
+  expiresAt: number | null;
   /** When the item first showed to the user, or null while unseen. */
   seenAt: number | null;
   state: NotificationState;
@@ -64,7 +65,9 @@ export function statusOf(
   now: number,
 ): NotificationStatus {
   if (item.state.tag !== "pending") return item.state.tag;
-  return now >= item.expiresAt ? "expired" : "pending";
+  return item.expiresAt !== null && now >= item.expiresAt
+    ? "expired"
+    : "pending";
 }
 
 const KINDS: readonly NotificationKind[] = ["invitation", "sharing"];
@@ -83,7 +86,7 @@ function isNotification(value: unknown): value is HostNotification {
     typeof item.product.name === "string" &&
     typeof item.purpose === "string" &&
     typeof item.receivedAt === "number" &&
-    typeof item.expiresAt === "number" &&
+    (item.expiresAt === null || typeof item.expiresAt === "number") &&
     (item.seenAt === null || typeof item.seenAt === "number") &&
     (item.dismissedAt === undefined ||
       item.dismissedAt === null ||
@@ -254,7 +257,7 @@ export class NotificationStore {
     const now = this.now();
     const times = this.items
       .filter((item) => statusOf(item, now) === "pending")
-      .map((item) => item.expiresAt);
+      .flatMap((item) => (item.expiresAt === null ? [] : [item.expiresAt]));
     return times.length === 0 ? null : Math.min(...times);
   }
 

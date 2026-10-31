@@ -479,3 +479,31 @@ describe("a conversation the host starts", () => {
     expect(await (await starting("ada", ADA)).start(ADA, "")).toBe("ada");
   });
 });
+
+describe("starting a chat that was blocked", () => {
+  // The Chat screen draws New chat's Send from `blocked` once. Without a
+  // redraw when it opens, Send stays disabled after the host is ready, as a
+  // live run caught with Contact Chat's identity check still running.
+  test("is drawn again when the host says the start may answer differently", () => {
+    let blocked: string | null = "Contact Chat is checking your identity.";
+    const listeners = new Set<() => void>();
+    const host = new ChatV2Host({ media: () => null, log: () => {} });
+    const provider = new ChatV2Provider(PRODUCT, host, Date.now, {
+      start: {
+        target: () => ({ contact: "reference" }),
+        blocked: () => blocked,
+        onChange: (listener) => {
+          listeners.add(listener);
+          return () => listeners.delete(listener);
+        },
+      },
+    });
+    const seen: ProviderEvent[] = [];
+    provider.subscribe((event) => seen.push(event));
+    blocked = null;
+    for (const listener of listeners) listener();
+    provider.dispose();
+
+    expect([seen, listeners.size]).toEqual([[{ type: "status" }], 0]);
+  });
+});

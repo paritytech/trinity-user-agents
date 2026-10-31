@@ -28,9 +28,11 @@ import type { SharedStore } from "./shared-store.js";
  * - `"topic"`: a return route is a random topic of its own, which the sender
  *   watches.
  *
- * A host posts each of its posts again on a cadence until it is withdrawn or
- * its `until` passes, and reads what is posted to it when it starts and as
- * posts arrive.
+ * A host posts each of its posts again on a cadence while it runs: a
+ * request until it is withdrawn, a reply until its `until`. It reads what is
+ * posted to it when it starts and as posts arrive. A post the store will not
+ * take, such as one over its quota, is reported, and tried again on the next
+ * round.
  *
  * Simulated: inbox labels are stable and anyone can link them, a reply's tag
  * is in the clear, the store is readable by any script of this origin, no
@@ -106,7 +108,12 @@ export class LocalDelivery implements HostDelivery {
   /** What this host posts and posts again, by id. */
   private readonly posts = new Map<
     string,
-    { stem: string; post: Omit<Post, "storedUntil">; until: number }
+    {
+      stem: string;
+      post: Omit<Post, "storedUntil">;
+      until: number;
+      problem: string | null;
+    }
   >();
   /** The return routes of this host's that it reads replies on. */
   private readonly routes = new Set<string>();
@@ -146,8 +153,8 @@ export class LocalDelivery implements HostDelivery {
     return TOPIC_ROUTE.test(route);
   }
 
-  postRequest(to: IdentityKeys, id: string, sealed: string, until: number) {
-    this.add(id, `inbox:${inboxOf(to.agreementPublic)}`, { sealed }, until);
+  postRequest(to: IdentityKeys, id: string, sealed: string) {
+    this.add(id, `inbox:${inboxOf(to.agreementPublic)}`, { sealed }, Infinity);
   }
 
   postReply(route: string, id: string, sealed: string, until: number) {
@@ -194,7 +201,7 @@ export class LocalDelivery implements HostDelivery {
     until: number,
   ): void {
     if (this.closed) return;
-    this.posts.set(id, { stem, post, until });
+    this.posts.set(id, { stem, post, until, problem: null });
     this.write(id);
   }
 
@@ -208,13 +215,21 @@ export class LocalDelivery implements HostDelivery {
     }
     const lifetime = this.options.postLifetimeMs ?? POST_LIFETIME_MS;
     const name = toHex(digest("post", entry.post.sealed)).slice(2, 34);
-    this.options.store.set(
-      `${this.prefix}${entry.stem}:${name}`,
-      JSON.stringify({
-        ...entry.post,
-        storedUntil: Math.min(now + lifetime, entry.until),
-      } satisfies Post),
-    );
+    let problem: string | null = null;
+    try {
+      this.options.store.set(
+        `${this.prefix}${entry.stem}:${name}`,
+        JSON.stringify({
+          ...entry.post,
+          storedUntil: Math.min(now + lifetime, entry.until),
+        } satisfies Post),
+      );
+    } catch (error) {
+      problem = `the local store did not take it: ${String(error)}`;
+    }
+    if (problem === entry.problem) return;
+    entry.problem = problem;
+    this.receiver?.posting(id, problem);
   }
 
   private scheduleRepost(): void {
