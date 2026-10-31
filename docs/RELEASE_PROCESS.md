@@ -48,6 +48,10 @@ version, the host dependency, and both lockfiles. A host-runtime-only release ca
 `@parity/trinity-stack` ships the `rust/crates/trinity-stack` crate built to
 WebAssembly, so a change to that crate needs a changeset for the package. Its
 version is independent of the protocol, and a release of it alone skips step 2.
+Such a release is possible only while its changesets are the only ones pending:
+a release consumes every changeset, and both the `Release version check` job
+and the `Release guard` job fail a release that leaves one. With other
+changesets pending, `@parity/trinity-stack` goes out in a full release.
 
 ### 2. Cut the protocol version
 
