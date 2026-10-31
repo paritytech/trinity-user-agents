@@ -3,6 +3,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.worker
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatPageAnchorModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ChatUserActionOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductChatQueryException
 import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.ProductMessagesPage
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
@@ -28,6 +30,9 @@ interface ProductWorker : JsEventDispatcher {
         anchor: ChatPageAnchorModel,
         pageSize: Int,
     ): Result<ProductMessagesPage> = Result.failure(ProductChatQueryException.Unavailable(cause = null))
+
+    suspend fun userAction(roomId: ProductChatIdParameter, action: ChatUserActionModel): Result<ChatUserActionOutcome> =
+        Result.failure(ProductChatQueryException.Unavailable(cause = null))
 
     fun renderMessage(
         roomId: ProductChatIdParameter?,
