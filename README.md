@@ -232,11 +232,13 @@ embedded smoldot light client plus a bundled chain-spec catalog, addressed by
 genesis hash, so the host ships no chain specs and never refreshes them. The light
 client holds at most 32 connections at once and refuses a `connect` past that, so a
 consumer that leaks them fails instead of growing; closing one hands its slot back.
-Connections to a remote node, which only the WASM build compiles, are not counted
-against it. A light-client connection holds its requests until the chain first
+The limit covers only light-client connections; connections to a remote node are
+not capped. A light-client connection holds its requests until the chain first
 syncs and then forwards them in order; chain-spec queries, statement-store and
 Bitswap calls, and the `lifecycle_unstable_*` subscription that reports the sync are forwarded at
 once.
+On native targets every `wss` connection, to a remote node or a light-client bootnode, checks the
+certificate against the webpki roots compiled into the crate, not the operating system's store.
 Every artifact exposes the sync progress of a running chain (phase, peer count,
 stall verdict) as a watch.
 The crate

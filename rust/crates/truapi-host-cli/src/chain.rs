@@ -1,25 +1,31 @@
-//! Native WebSocket `ChainProvider` / `JsonRpcConnection`.
+//! The CLI's `ChainProvider`.
 //!
-//! The headless hosts reach the real People-chain statement store over
-//! WebSocket JSON-RPC (the same node an iOS/web client uses). Every `connect`
-//! opens a fresh socket; the runtime's `HostRpcClient` sits on top and speaks
-//! statement-store RPC.
+//! This module picks which of the network's chains a genesis hash names, and
+//! `truapi-provider` connects to it on the selected backend. When a
+//! connection's response stream ends, the core's chain runtime connects again.
 
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+	collections::{BTreeMap, HashMap, hash_map::Entry},
+	sync::{Arc, Mutex, PoisonError},
+	time::Duration,
+};
 
 use async_trait::async_trait;
-use futures::stream::BoxStream;
-use futures_util::{SinkExt, StreamExt};
-use tokio::sync::{broadcast, mpsc, watch};
-use tokio_stream::wrappers::BroadcastStream;
-use tokio_tungstenite::{connect_async, tungstenite::Message};
-use tracing::{debug, warn};
-use truapi::platform::{ChainProvider, JsonRpcConnection, ProviderError};
+use clap::ValueEnum;
+use subxt_rpcs::client::{RawRpcFuture, RawRpcSubscription, RawValue, RpcClient, RpcClientT};
+use tracing::debug;
+use truapi::{
+	HostRpcClient,
+	platform::{ChainProvider, JsonRpcConnection, ProviderError},
+};
+use truapi_provider::{ChainSource, EmbeddedChainProvider};
 
-use crate::network::ChainEndpoint;
+use crate::network::{ChainEndpoint, NetworkConfig};
 
-/// Broadcast backlog for inbound JSON-RPC frames per connection.
-const INBOUND_CHANNEL_CAPACITY: usize = 1024;
+/// How long a client from [`CliChainProvider::rpc_client`] waits for an answer,
+/// as subxt's own WebSocket client does. Provider connections have no request
+/// timeout, and keepalive pings hold open a node that never answers.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The CLI's answer to which chains build as V5, for its own extrinsics.
 pub struct PresetExtensionVersions(pub truapi::platform::ExtensionVersionMap);
@@ -33,251 +39,393 @@ impl truapi::platform::ExtrinsicVersionHost for PresetExtensionVersions {
 	}
 }
 
-/// Chain provider that maps a requested genesis hash to a WebSocket endpoint.
-///
-/// The all-zero genesis (the headless SSO sentinel) and any unmapped genesis
-/// fall back to the People-chain statement store. Every role the preset serves —
-/// People, Bulletin and Asset Hub — is always routed; the test switch only widens
-/// routing to endpoints the preset carries without serving them as a role.
-pub struct WsChainProvider {
-	fallback_url: String,
-	by_genesis: HashMap<[u8; 32], String>,
+/// How the CLI reaches the chains.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ChainBackend {
+	/// WebSocket JSON-RPC to the network's nodes.
+	Rpc,
+	/// The embedded smoldot light client, which needs no RPC node. A chain's
+	/// first request waits for it to sync.
+	LightClient,
 }
 
-impl WsChainProvider {
-	pub fn new(fallback_url: impl Into<String>, live_chain_endpoints: &[ChainEndpoint]) -> Self {
+/// Chain provider shared by the host runtime, dotNS reads and Bulletin
+/// preimage lookups.
+///
+/// Routing is the same on both backends. Every role the network serves (People,
+/// Bulletin and Asset Hub) is routed to its own chain, and the test switch also
+/// routes endpoints the network carries without serving them. The all-zero SSO
+/// sentinel and any other genesis are answered by People.
+pub struct CliChainProvider {
+	network: NetworkConfig,
+	live_chain_routing: bool,
+	backend: Backend,
+}
+
+enum Backend {
+	/// Each routed chain registered as its endpoint's RPC node.
+	Rpc(Box<EmbeddedChainProvider>),
+	/// The process's light client for the network; see [`LightClient`].
+	LightClient,
+}
+
+impl CliChainProvider {
+	/// Reads the test switch from the `E2E_LIVE_CHAIN` environment variable.
+	pub fn new(network: &NetworkConfig) -> Self {
 		let live_chain_routing = std::env::var("E2E_LIVE_CHAIN").as_deref() == Ok("1");
-		Self::with_live_chain_routing(fallback_url, live_chain_endpoints, live_chain_routing)
+		Self::with_live_chain_routing(network, live_chain_routing)
 	}
 
-	fn with_live_chain_routing(
-		fallback_url: impl Into<String>,
-		live_chain_endpoints: &[ChainEndpoint],
-		live_chain_routing: bool,
-	) -> Self {
-		// People remains the fallback for the SSO sentinel. Bulletin backs preimage
-		// submission and Asset Hub backs PGAS claims, so all three are host
-		// dependencies and must never be gated by the product-facing Chain/* switch.
-		let by_genesis = live_chain_endpoints
-			.iter()
-			.filter(|endpoint| endpoint.required_for_host || live_chain_routing)
-			.map(|endpoint| (endpoint.genesis, endpoint.ws.to_string()))
-			.collect();
-		Self { fallback_url: fallback_url.into(), by_genesis }
+	fn with_live_chain_routing(network: &NetworkConfig, live_chain_routing: bool) -> Self {
+		let backend = match network.chain_backend {
+			ChainBackend::Rpc => Backend::Rpc(Box::new(
+				routed_endpoints(network, live_chain_routing)
+					.fold(EmbeddedChainProvider::builder(), |builder, endpoint| {
+						let url = endpoint
+							.ws
+							.parse()
+							.expect("chain URLs are validated when the network config is resolved");
+						builder.chain(endpoint.genesis, ChainSource::rpc_node(url))
+					})
+					.build(),
+			)),
+			ChainBackend::LightClient => Backend::LightClient,
+		};
+		Self { network: *network, live_chain_routing, backend }
 	}
 
-	/// Whether a genesis is mapped rather than answered by the fallback.
+	/// A provider for `endpoint` alone, over RPC, so a check reaches exactly the
+	/// URL it names on the transport the routed chains use.
+	pub fn for_endpoint(network: &NetworkConfig, endpoint: &'static ChainEndpoint) -> Self {
+		let alone = NetworkConfig {
+			live_chain_endpoints: std::slice::from_ref(endpoint),
+			chain_backend: ChainBackend::Rpc,
+			..*network
+		};
+		Self::with_live_chain_routing(&alone, true)
+	}
+
+	/// A subxt RPC client over a new connection to the chain `genesis_hash`
+	/// routes to. Each request, and each subscription's setup, fails after
+	/// [`REQUEST_TIMEOUT`] without an answer.
+	pub async fn rpc_client(&self, genesis_hash: [u8; 32]) -> Result<RpcClient, ProviderError> {
+		let connection = self.connect(genesis_hash).await?;
+		let client = HostRpcClient::new(Arc::from(connection), crate::tokio_spawner());
+		Ok(RpcClient::new(Timed(client)))
+	}
+
+	/// The routed endpoint that answers `genesis_hash`: its own, otherwise
+	/// People's, and none when People is not routed either.
 	///
-	/// Test-only because production has no reason to care: `url_for` resolves either
-	/// way. A test does, since the fallback is the People URL, so asserting on the
+	/// Only routed hashes reach the provider. Asked for any other, it would look
+	/// the hash up in its bundled catalog and start the light client, whichever
+	/// backend was selected.
+	fn chain_for(&self, genesis_hash: [u8; 32]) -> Option<&'static ChainEndpoint> {
+		let routed = |genesis| {
+			routed_endpoints(&self.network, self.live_chain_routing)
+				.find(move |endpoint| endpoint.genesis == genesis)
+		};
+		routed(genesis_hash).or_else(|| routed(self.network.people_genesis))
+	}
+
+	/// Whether a genesis is routed to its own chain rather than to People.
+	///
+	/// Test-only because production has no reason to care: `chain_for` resolves
+	/// either way. A test does, since People is the fallback, so asserting on the
 	/// resolved URL cannot tell a routed People from a dropped one.
 	#[cfg(test)]
 	fn routes(&self, genesis_hash: &[u8; 32]) -> bool {
-		self.by_genesis.contains_key(genesis_hash)
+		self.chain_for(*genesis_hash)
+			.is_some_and(|endpoint| endpoint.genesis == *genesis_hash)
 	}
 
-	/// The URL a genesis routes to. Test-only, so a routing override can be
+	/// The RPC URL a genesis routes to. Test-only, so a routing override can be
 	/// asserted rather than assumed: an override written to the wrong field
 	/// compiles, changes nothing, and is invisible in timings.
 	#[cfg(test)]
-	pub fn routed_url(&self, genesis_hash: &[u8; 32]) -> &str {
-		self.url_for(genesis_hash)
-	}
-
-	fn url_for(&self, genesis_hash: &[u8; 32]) -> &str {
-		self.by_genesis
-			.get(genesis_hash)
-			.map(String::as_str)
-			.unwrap_or(&self.fallback_url)
+	pub fn routed_url(&self, genesis_hash: &[u8; 32]) -> &'static str {
+		self.chain_for(*genesis_hash).expect("People is routed").ws
 	}
 }
 
+/// The endpoints routed to their own chain.
+fn routed_endpoints(
+	network: &NetworkConfig,
+	live_chain_routing: bool,
+) -> impl Iterator<Item = &'static ChainEndpoint> {
+	// People remains the fallback for the SSO sentinel. Bulletin backs preimage
+	// submission and Asset Hub backs PGAS claims, so all three are host
+	// dependencies and must never be gated by the product-facing Chain/* switch.
+	network
+		.live_chain_endpoints
+		.iter()
+		.filter(move |endpoint| endpoint.required_for_host || live_chain_routing)
+}
+
 #[async_trait]
-impl ChainProvider for WsChainProvider {
+impl ChainProvider for CliChainProvider {
 	async fn connect(
 		&self,
 		genesis_hash: [u8; 32],
 	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
-		let url = self.url_for(&genesis_hash);
-		debug!(genesis = %hex::encode(genesis_hash), %url, "chain connect");
-		let connection = WsJsonRpcConnection::connect(url).await?;
-		Ok(Box::new(connection))
-	}
-}
-
-/// One WebSocket JSON-RPC connection: outbound requests are queued to a writer
-/// task, inbound frames are broadcast to every `responses()` stream.
-///
-/// Every response stream ends once the socket closes or the lease is closed,
-/// which is how the `HostRpcClient` above learns to reconnect.
-pub struct WsJsonRpcConnection {
-	outbound: mpsc::UnboundedSender<Message>,
-	inbound: broadcast::Sender<String>,
-	/// Receiver created before the reader task starts. The first response
-	/// stream takes it so an immediate RPC response cannot race subscription
-	/// setup and disappear while the broadcast channel has no receivers.
-	initial_inbound: Mutex<Option<broadcast::Receiver<String>>>,
-	closed: watch::Sender<bool>,
-}
-
-impl WsJsonRpcConnection {
-	async fn connect(url: &str) -> Result<Self, ProviderError> {
-		let (stream, _response) =
-			connect_async(url).await.map_err(|err| ProviderError::Transport {
-				reason: format!("statement-store websocket connect failed: {err}"),
-			})?;
-		let (mut write, mut read) = stream.split();
-		let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Message>();
-		let (inbound_tx, initial_inbound) = broadcast::channel(INBOUND_CHANNEL_CAPACITY);
-		let (closed, _) = watch::channel(false);
-
-		tokio::spawn(async move {
-			while let Some(message) = outbound_rx.recv().await {
-				if write.send(message).await.is_err() {
-					break;
-				}
-			}
-			let _ = write.close().await;
-		});
-
-		let reader_inbound = inbound_tx.clone();
-		let reader_closed = closed.clone();
-		tokio::spawn(async move {
-			while let Some(message) = read.next().await {
-				match message {
-					Ok(Message::Text(text)) => {
-						let _ = reader_inbound.send(text.to_string());
-					},
-					Ok(Message::Binary(bytes)) => {
-						if let Ok(text) = String::from_utf8(bytes.to_vec()) {
-							let _ = reader_inbound.send(text);
-						}
-					},
-					Ok(Message::Close(_)) | Err(_) => break,
-					Ok(_) => {},
-				}
-			}
-			reader_closed.send_replace(true);
-		});
-
-		Ok(Self {
-			outbound: outbound_tx,
-			inbound: inbound_tx,
-			initial_inbound: Mutex::new(Some(initial_inbound)),
-			closed,
-		})
-	}
-}
-
-impl JsonRpcConnection for WsJsonRpcConnection {
-	fn send(&self, request: String) {
-		if *self.closed.borrow() {
-			return;
+		let chain = self
+			.chain_for(genesis_hash)
+			.ok_or(ProviderError::UnknownGenesis { genesis: genesis_hash })?
+			.genesis;
+		debug!(genesis = %hex::encode(genesis_hash), chain = %hex::encode(chain), "chain connect");
+		match &self.backend {
+			Backend::Rpc(provider) => provider.connect(chain).await,
+			Backend::LightClient => LightClient::shared(self.network.id)?.connect(chain).await,
 		}
-		let _ = self.outbound.send(Message::Text(request));
+	}
+}
+
+/// `C` with [`REQUEST_TIMEOUT`] on every request and subscription setup.
+struct Timed<C>(C);
+
+impl<C: RpcClientT> RpcClientT for Timed<C> {
+	fn request_raw<'a>(
+		&'a self,
+		method: &'a str,
+		params: Option<Box<RawValue>>,
+	) -> RawRpcFuture<'a, Box<RawValue>> {
+		Box::pin(within_request_timeout(method, self.0.request_raw(method, params)))
 	}
 
-	fn responses(&self) -> BoxStream<'static, String> {
-		let receiver = self
-			.initial_inbound
-			.lock()
-			.expect("initial chain response receiver mutex poisoned")
-			.take()
-			.unwrap_or_else(|| self.inbound.subscribe());
-		let mut closed = self.closed.subscribe();
-		BroadcastStream::new(receiver)
-			.filter_map(|item| async move {
-				match item {
-					Ok(response) => Some(response),
-					Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(
-						dropped,
-					)) => {
-						warn!(dropped, "chain response subscriber lagged");
-						None
-					},
-				}
-			})
-			.take_until(async move {
-				let _ = closed.wait_for(|closed| *closed).await;
-			})
-			.boxed()
+	fn subscribe_raw<'a>(
+		&'a self,
+		sub: &'a str,
+		params: Option<Box<RawValue>>,
+		unsub: &'a str,
+	) -> RawRpcFuture<'a, RawRpcSubscription> {
+		Box::pin(within_request_timeout(sub, self.0.subscribe_raw(sub, params, unsub)))
+	}
+}
+
+async fn within_request_timeout<T>(
+	method: &str,
+	call: RawRpcFuture<'_, T>,
+) -> Result<T, subxt_rpcs::Error> {
+	tokio::time::timeout(REQUEST_TIMEOUT, call).await.unwrap_or_else(|_| {
+		Err(subxt_rpcs::Error::Client(Box::new(std::io::Error::new(
+			std::io::ErrorKind::TimedOut,
+			format!("{method}: no answer within {}s", REQUEST_TIMEOUT.as_secs()),
+		))))
+	})
+}
+
+/// The process's light client for one network. Each `EmbeddedChainProvider`
+/// runs its own smoldot client, so every consumer shares this one to reuse one
+/// sync and one set of peers.
+struct LightClient {
+	provider: EmbeddedChainProvider,
+	/// One idle connection per chain for the life of the process. smoldot stops
+	/// a chain once its last connection closes, and consumers connect once per
+	/// use, so without it a chain would start again with no peers.
+	kept_open: tokio::sync::Mutex<HashMap<[u8; 32], Box<dyn JsonRpcConnection>>>,
+}
+
+impl LightClient {
+	/// The light client for `network`, with every chain of that network from
+	/// `truapi-provider`'s bundled catalog registered. Smoldot starts on the
+	/// first connect.
+	fn shared(network: &'static str) -> Result<Arc<Self>, ProviderError> {
+		static CLIENTS: Mutex<BTreeMap<&str, Arc<LightClient>>> = Mutex::new(BTreeMap::new());
+
+		let mut clients = CLIENTS.lock().unwrap_or_else(PoisonError::into_inner);
+		if let Some(client) = clients.get(network) {
+			return Ok(Arc::clone(client));
+		}
+		let (builder, _) = EmbeddedChainProvider::builder().add_network(network)?;
+		let client = Arc::new(Self { provider: builder.build(), kept_open: Default::default() });
+		clients.insert(network, Arc::clone(&client));
+		Ok(client)
 	}
 
-	fn close(&self) {
-		self.closed.send_replace(true);
+	async fn connect(
+		&self,
+		genesis_hash: [u8; 32],
+	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
+		if let Entry::Vacant(slot) = self.kept_open.lock().await.entry(genesis_hash) {
+			slot.insert(self.provider.connect(genesis_hash).await?);
+		}
+		self.provider.connect(genesis_hash).await
 	}
 }
 
 #[cfg(test)]
 mod tests {
-	use clap::ValueEnum;
+	use futures_util::{SinkExt, StreamExt};
+	use tokio_tungstenite::tungstenite::Message;
 
 	use super::*;
 	use crate::network::Network;
 
-	#[test]
-	fn first_response_stream_receives_frames_buffered_during_setup() {
-		let (outbound, _outbound_rx) = mpsc::unbounded_channel();
-		let (inbound, initial_inbound) = broadcast::channel(INBOUND_CHANNEL_CAPACITY);
-		let connection = WsJsonRpcConnection {
-			outbound,
-			inbound: inbound.clone(),
-			initial_inbound: Mutex::new(Some(initial_inbound)),
-			closed: watch::channel(false).0,
-		};
+	/// A node that holds every request open, as one that lost the request does.
+	struct NeverAnswers;
 
-		inbound
-			.send(r#"{"jsonrpc":"2.0","id":1,"result":"ready"}"#.to_string())
-			.expect("initial receiver keeps the frame buffered");
+	impl RpcClientT for NeverAnswers {
+		fn request_raw<'a>(
+			&'a self,
+			_method: &'a str,
+			_params: Option<Box<RawValue>>,
+		) -> RawRpcFuture<'a, Box<RawValue>> {
+			Box::pin(futures::future::pending())
+		}
 
-		let mut responses = connection.responses();
-		let frame = futures::executor::block_on(responses.next()).expect("buffered response");
-		assert_eq!(frame, r#"{"jsonrpc":"2.0","id":1,"result":"ready"}"#);
+		fn subscribe_raw<'a>(
+			&'a self,
+			_sub: &'a str,
+			_params: Option<Box<RawValue>>,
+			_unsub: &'a str,
+		) -> RawRpcFuture<'a, RawRpcSubscription> {
+			Box::pin(futures::future::pending())
+		}
 	}
 
-	/// The runtime keeps a chain connection open across calls and reconnects
-	/// only once its response stream ends. A stream that outlived its socket
-	/// would leave every later request on that chain waiting forever.
-	#[tokio::test]
-	async fn responses_end_when_the_server_closes_the_socket() {
+	/// Keepalive pings hold such a connection open, so without a request timeout
+	/// a command reading the chain, or waiting for its transaction to be
+	/// watched, would wait forever rather than fail.
+	#[tokio::test(start_paused = true)]
+	async fn requests_and_subscriptions_the_node_never_answers_fail() {
+		use subxt_rpcs::client::rpc_params;
+
+		let rpc = RpcClient::new(Timed(NeverAnswers));
+		let request = rpc.request::<serde_json::Value>("state_getStorage", rpc_params![]);
+		let Err(request) =
+			tokio::time::timeout(REQUEST_TIMEOUT * 2, request).await.expect("gives up")
+		else {
+			panic!("nothing answered");
+		};
+		let subscription = rpc.subscribe::<serde_json::Value>(
+			"author_submitAndWatchExtrinsic",
+			rpc_params![],
+			"author_unwatchExtrinsic",
+		);
+		let Err(subscription) =
+			tokio::time::timeout(REQUEST_TIMEOUT * 2, subscription).await.expect("gives up")
+		else {
+			panic!("nothing answered");
+		};
+
+		assert_eq!(
+			[request.to_string(), subscription.to_string()],
+			[
+				"RPC error: client error: state_getStorage: no answer within 60s",
+				"RPC error: client error: author_submitAndWatchExtrinsic: no answer within 60s",
+			]
+		);
+	}
+
+	/// A network whose only route is People at `people_ws`.
+	fn people_only(people_ws: String) -> NetworkConfig {
+		let mut network = Network::default().config();
+		network.live_chain_endpoints = Box::leak(Box::new([ChainEndpoint {
+			genesis: network.people_genesis,
+			ws: Box::leak(people_ws.into_boxed_str()),
+			required_for_host: true,
+		}]));
+		network
+	}
+
+	/// A loopback server that sends `open` on every connection, then closes it.
+	async fn serve_one_frame_per_connection() -> String {
 		let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
 			.await
 			.expect("bind a loopback listener");
 		let url = format!("ws://{}", listener.local_addr().expect("listener address"));
-		let server = tokio::spawn(async move {
-			let (socket, _) = listener.accept().await.expect("accept the client");
-			let mut socket = tokio_tungstenite::accept_async(socket)
-				.await
-				.expect("complete the WebSocket handshake");
-			socket.close(None).await.expect("close the socket");
+		tokio::spawn(async move {
+			loop {
+				let (socket, _) = listener.accept().await.expect("accept the client");
+				let mut socket = tokio_tungstenite::accept_async(socket)
+					.await
+					.expect("complete the WebSocket handshake");
+				socket.send(Message::text("open")).await.expect("send the first frame");
+				socket.close(None).await.expect("close the socket");
+			}
 		});
+		url
+	}
 
-		let connection = WsJsonRpcConnection::connect(&url)
-			.await
-			.expect("connect to the loopback server");
-		let mut responses = connection.responses();
-		server.await.expect("server task");
+	/// The runtime keeps a chain connection open across calls and replaces it
+	/// only once its response stream ends. A stream that outlived its socket
+	/// would leave every later request on that chain waiting forever.
+	#[tokio::test]
+	async fn a_closed_socket_ends_the_stream_and_a_new_connection_replaces_it() {
+		let network = people_only(serve_one_frame_per_connection().await);
+		let provider = CliChainProvider::with_live_chain_routing(&network, false);
 
-		let next = tokio::time::timeout(std::time::Duration::from_secs(5), responses.next())
+		let closed = provider.connect([0; 32]).await.expect("connect to the loopback server");
+		let mut responses = closed.responses();
+		assert_eq!(responses.next().await.as_deref(), Some("open"));
+		let end = tokio::time::timeout(std::time::Duration::from_secs(5), responses.next())
 			.await
 			.expect("the response stream must end once the socket closes");
-		assert_eq!(next, None);
+		assert_eq!(end, None);
+
+		let replacement = provider.connect([0; 32]).await.expect("connect again");
+		assert_eq!(replacement.responses().next().await.as_deref(), Some("open"));
+	}
+
+	/// Over RPC, a catalog chain the network does not route, such as its relay,
+	/// must reach People's RPC node rather than start the light client.
+	#[tokio::test]
+	async fn an_unrouted_catalog_chain_stays_on_rpc() {
+		let network = people_only(serve_one_frame_per_connection().await);
+		let (_, catalog) = truapi_provider::EmbeddedChainProviderBuilder::new()
+			.add_network(network.id)
+			.expect("the default network is bundled");
+		let provider = CliChainProvider::with_live_chain_routing(&network, false);
+
+		let connection = provider.connect(catalog.relay).await.expect("connect to People");
+		let first =
+			tokio::time::timeout(std::time::Duration::from_secs(5), connection.responses().next())
+				.await
+				.expect("the loopback server answers at once");
+		assert_eq!(first.as_deref(), Some("open"));
+	}
+
+	/// Without a People route there is nothing to fall back to. Passing People's
+	/// unregistered genesis on would start the light client from the catalog.
+	#[tokio::test]
+	async fn a_network_without_a_people_route_refuses_the_sentinel() {
+		let mut network = Network::default().config();
+		network.live_chain_endpoints = &[];
+		let provider = CliChainProvider::with_live_chain_routing(&network, false);
+
+		let Err(error) = provider.connect([0; 32]).await else {
+			panic!("nothing is routed, so nothing may connect");
+		};
+		assert_eq!(
+			error.to_string(),
+			format!("no chain registered for genesis 0x{}", "00".repeat(32))
+		);
+	}
+
+	/// A chain dropped between uses would sync again from its checkpoint and
+	/// start with no peers.
+	#[tokio::test]
+	async fn a_light_client_chain_keeps_running_after_its_connection_closes() {
+		let mut network = Network::default().config();
+		network.chain_backend = ChainBackend::LightClient;
+		let provider = CliChainProvider::with_live_chain_routing(&network, false);
+
+		drop(provider.connect(network.people_genesis).await.expect("add People"));
+
+		let light = LightClient::shared(network.id).expect("the default network is bundled");
+		assert!(light.provider.is_connected(network.people_genesis));
 	}
 
 	/// Every role the host says it serves has to route to that role's own chain
-	/// without the test switch. `url_for` answers an unmapped genesis with the
-	/// fallback URL, so a served role that the routing filter drops would connect
-	/// to the People chain while the host claimed to serve something else — and
+	/// without the test switch. An unmapped genesis is answered by People, so a
+	/// served role that the routing filter drops would connect to the People
+	/// chain while the host claimed to serve something else, and
 	/// `ChainContextCache` only warns when the reported genesis diverges.
 	#[test]
 	fn every_served_role_routes_to_its_own_chain() {
 		for network in Network::value_variants() {
 			let config = network.config();
-			let provider = WsChainProvider::with_live_chain_routing(
-				config.people_ws,
-				config.live_chain_endpoints,
-				false,
-			);
+			let provider = CliChainProvider::with_live_chain_routing(&config, false);
 			for entry in config.host_chain_set().chains {
 				let expected = config.url_for_role(entry.identifier).unwrap_or_else(|| {
 					panic!("{} serves {:?} with no preset URL", config.id, entry.identifier)
@@ -289,7 +437,7 @@ mod tests {
 					entry.identifier
 				);
 				assert_eq!(
-					provider.url_for(&entry.genesis_hash),
+					provider.routed_url(&entry.genesis_hash),
 					expected,
 					"{} serves {:?} but routes it elsewhere",
 					config.id,
@@ -305,21 +453,115 @@ mod tests {
 	/// `required_for_host` and the switch could both be deleted with a green suite.
 	#[test]
 	fn the_test_switch_widens_routing_to_endpoints_that_are_not_roles() {
-		const FALLBACK: &str = "wss://fallback.invalid";
-		let optional = [ChainEndpoint {
+		const PEOPLE: &str = "wss://people.invalid";
+		let mut network = people_only(PEOPLE.to_owned());
+		let optional = ChainEndpoint {
 			genesis: [0x5a; 32],
 			ws: "wss://optional.invalid",
 			required_for_host: false,
-		}];
+		};
+		network.live_chain_endpoints =
+			Box::leak(Box::new([network.live_chain_endpoints[0], optional]));
 
-		let gated = WsChainProvider::with_live_chain_routing(FALLBACK, &optional, false);
-		let widened = WsChainProvider::with_live_chain_routing(FALLBACK, &optional, true);
+		let gated = CliChainProvider::with_live_chain_routing(&network, false);
+		let widened = CliChainProvider::with_live_chain_routing(&network, true);
 
 		assert_eq!(
-			gated.url_for(&optional[0].genesis),
-			FALLBACK,
+			gated.routed_url(&optional.genesis),
+			PEOPLE,
 			"an endpoint that is not a role is excluded without the switch"
 		);
-		assert_eq!(widened.url_for(&optional[0].genesis), optional[0].ws, "and included with it");
+		assert_eq!(widened.routed_url(&optional.genesis), optional.ws, "and included with it");
+	}
+
+	/// The genesis check of a rerouted endpoint must ask that URL, whatever the
+	/// network's routing would do with the hash, and nothing else.
+	#[test]
+	fn an_endpoint_provider_reaches_only_its_endpoint() {
+		let network = people_only("wss://people.invalid".to_owned());
+		let optional: &'static ChainEndpoint = Box::leak(Box::new(ChainEndpoint {
+			genesis: [0x5a; 32],
+			ws: "wss://optional.invalid",
+			required_for_host: false,
+		}));
+
+		let alone = CliChainProvider::for_endpoint(&network, optional);
+
+		assert_eq!(alone.routed_url(&optional.genesis), optional.ws);
+		assert!(alone.chain_for(network.people_genesis).is_none(), "People is not this endpoint");
+	}
+
+	/// Ignored by default; needs network access to paseo-next-v2's chains. The
+	/// light client syncs from its bundled checkpoint first, so it runs longer.
+	///
+	/// ```sh
+	/// cargo test -p truapi-host-cli --bin truapi-host reaches_paseo -- --ignored --nocapture
+	/// ```
+	#[tokio::test]
+	#[ignore = "needs network access to the preset's chains"]
+	async fn rpc_reaches_paseo_next_v2() {
+		reach_paseo_next_v2(ChainBackend::Rpc).await;
+	}
+
+	#[tokio::test]
+	#[ignore = "needs network access to the preset's chains"]
+	async fn the_light_client_reaches_paseo_next_v2() {
+		reach_paseo_next_v2(ChainBackend::LightClient).await;
+	}
+
+	/// Every consumer this provider serves reaches its own chain on `backend`, and
+	/// a closed connection is replaced.
+	async fn reach_paseo_next_v2(backend: ChainBackend) {
+		use subxt_rpcs::client::rpc_params;
+
+		use crate::{
+			bulletin_lookup::{BitswapRpc, BlobSource, SourceError},
+			dotns_read::AssetHubReader,
+		};
+
+		let network = NetworkConfig { chain_backend: backend, ..Network::PaseoNextV2.config() };
+		let provider = Arc::new(CliChainProvider::new(&network));
+		let reported_genesis = async |genesis: [u8; 32]| -> String {
+			let rpc = provider.rpc_client(genesis).await.expect("connect");
+			rpc.request("chainSpec_v1_genesisHash", rpc_params![])
+				.await
+				.expect("genesis hash")
+		};
+
+		for genesis in [network.people_genesis, network.asset_hub_genesis, network.bulletin_genesis]
+		{
+			assert_eq!(reported_genesis(genesis).await, format!("0x{}", hex::encode(genesis)));
+		}
+		provider
+			.connect(network.people_genesis)
+			.await
+			.expect("connect to People")
+			.close();
+		assert_eq!(
+			reported_genesis(network.people_genesis).await,
+			format!("0x{}", hex::encode(network.people_genesis)),
+			"a new People connection replaces the closed one"
+		);
+
+		let mut reader = AssetHubReader::connect(&network).await.expect("connect to Asset Hub");
+		assert!(reader.timestamp_secs().await.expect("Asset Hub time") > 0);
+		assert!(reader.dotns_identity(&[0x11; 32]).await.expect("dotNS read").is_none());
+
+		// A light client may have no Bulletin peers yet, so a transient failure is
+		// asked again, as a preimage lookup does.
+		let bitswap = BitswapRpc::new(Arc::clone(&provider), network.bulletin_genesis);
+		let unstored = truapi::preimage_cid(&[0x22; 32]);
+		for _ in 0..10 {
+			match bitswap.get(&unstored).await {
+				Ok(None) => return,
+				Ok(Some(_)) => panic!("nobody stored {unstored}"),
+				Err(SourceError::Transient(reason)) => {
+					eprintln!("bitswap_v1_get: {reason}; asking again");
+					tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+				},
+				Err(SourceError::Permanent(reason)) => panic!("{reason}"),
+			}
+		}
+		panic!("Bulletin never answered bitswap_v1_get");
 	}
 }

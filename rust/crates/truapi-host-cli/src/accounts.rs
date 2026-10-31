@@ -634,7 +634,7 @@ async fn attest_record(
 		entropy,
 		record.lite_username.clone(),
 		reserved_username,
-	)?)
+	))
 	.await
 	.with_context(|| format!("attest account {}", record.name))?;
 	debug!(
@@ -651,16 +651,13 @@ fn attest_config(
 	entropy: Vec<u8>,
 	username_base: String,
 	reserved_username: Option<&str>,
-) -> Result<attestation::AttestConfig> {
-	Ok(attestation::AttestConfig {
-		backend_base: network.identity_backend()?.to_string(),
-		asset_hub_ws: network.asset_hub_ws.to_string(),
-		people_ws: network.people_ws.to_string(),
-		network_suffix: network.network_suffix.to_string(),
+) -> attestation::AttestConfig {
+	attestation::AttestConfig {
+		network,
 		entropy,
 		username_base,
 		reserved_username: reserved_username.map(str::to_string),
-	})
+	}
 }
 
 fn resolved_lite_username(username: &str) -> bool {
@@ -693,7 +690,7 @@ async fn wait_for_ring_membership(network: NetworkConfig, entropy: &[u8]) -> Res
 	const MAX_ATTEMPTS: usize = 30;
 	const SLEEP: Duration = Duration::from_secs(4);
 
-	let people_ws = network.people_ws;
+	let chains = crate::chain::CliChainProvider::new(&network);
 	let candidates = collection_candidates(entropy, network.network_suffix);
 	let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
 	let mut metadata = None;
@@ -706,8 +703,8 @@ async fn wait_for_ring_membership(network: NetworkConfig, entropy: &[u8]) -> Res
 			)),
 			crate::terminal_ui::ActivityState::Running,
 		);
-		let rpc = match alloc::rpc::RpcClient::connect(people_ws).await {
-			Ok(rpc) => rpc,
+		let rpc = match chains.rpc_client(network.people_genesis).await {
+			Ok(rpc) => alloc::rpc::RpcClient::new(rpc),
 			Err(err) => {
 				warn!(
 					attempt,
@@ -812,13 +809,9 @@ pub async fn attest_mnemonic(
 	);
 	let username_base = lite_username_base(username_base)?;
 	let identity = identity_from_mnemonic(mnemonic, network.network_suffix)?;
-	let lite_username = attestation::attest(&attest_config(
-		network,
-		identity.entropy.clone(),
-		username_base,
-		None,
-	)?)
-	.await?;
+	let lite_username =
+		attestation::attest(&attest_config(network, identity.entropy.clone(), username_base, None))
+			.await?;
 	wait_for_ring_membership(network, &identity.entropy).await?;
 	Ok(AttestedIdentity {
 		address: identity.address,

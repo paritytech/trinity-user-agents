@@ -1054,6 +1054,12 @@ discovery (see SPEC.md §21). Both also accept `--frame-listen <address>`
 to opt into a TCP product-frame WebSocket; without it, the CLI creates and
 cleans up a unique temporary Unix socket.
 
+`--chain-backend light-client` (or `TRUAPI_CHAIN_BACKEND=light-client`) syncs the
+chains with the embedded light client instead of dialing the preset's RPC nodes,
+for when public nodes refuse the host, such as a rate-limited CI runner. Every
+command uses the selected backend. The light client is slower than RPC and
+supports only `paseo-next-v2` and `previewnet` (SPEC.md §14.3).
+
 ## Serving a dev server (one process, no terminal)
 
 `truapi-host dev` serves the browser bootstrap. Use `--serve` when a separate
@@ -1106,10 +1112,11 @@ one-shot modes.
 
 ## Scope / gaps
 
-- **Chain methods** route to real `wss://` nodes from the selected `--network`.
-  Every role the preset serves is routed unconditionally; `E2E_LIVE_CHAIN=1` only
-  widens routing to endpoints it carries without serving. A rustls crypto provider is
-  installed at startup for the TLS connections.
+- **Chain methods** route to real `wss://` nodes from the selected `--network`,
+  or to the light client (`--chain-backend`). Every role the preset serves is
+  routed unconditionally; `E2E_LIVE_CHAIN=1` only widens routing to endpoints it
+  carries without serving. A rustls crypto provider is installed at startup for the
+  TLS connections.
 - **Ring-VRF product-account aliases and proofs** are implemented by the
   signing host via the `verifiable` crate (`get_account_alias` and
   `create_account_proof`).

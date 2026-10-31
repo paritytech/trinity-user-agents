@@ -29,6 +29,13 @@ use crate::error::ProviderError;
 /// than letting the buffer grow without bound.
 const REQUEST_BUFFER: usize = 1024;
 
+/// Largest message the transport sends or accepts.
+///
+/// A Bulletin block holds up to 10 MiB of extrinsics and its body arrives
+/// hex-encoded, so a busy block can pass jsonrpsee's 10 MiB default. Bulletin
+/// submission fetches those bodies to find its transaction.
+const MAX_MESSAGE_BYTES: u32 = 64 * 1024 * 1024;
+
 /// Open a WebSocket connection to `url`.
 ///
 /// Requires an ambient tokio runtime; both the handshake and the spawned
@@ -38,9 +45,15 @@ pub async fn connect(url: Url) -> Result<Box<dyn JsonRpcConnection>, ProviderErr
 		return Err(ProviderError::MissingRuntime);
 	}
 
-	let (sender, receiver) =
-		WsTransportClientBuilder::default().build(url.clone()).await.map_err(|err| {
-			ProviderError::Handshake { url: crate::error::redacted(&url), reason: err.to_string() }
+	let (sender, receiver) = WsTransportClientBuilder::default()
+		.with_custom_cert_store(crate::tls::client_config().as_ref().clone())
+		.max_request_size(MAX_MESSAGE_BYTES)
+		.max_response_size(MAX_MESSAGE_BYTES)
+		.build(url.clone())
+		.await
+		.map_err(|err| ProviderError::Handshake {
+			url: crate::error::redacted(&url),
+			reason: err.to_string(),
 		})?;
 
 	Ok(Box::new(WsConnection::start(sender, receiver)))

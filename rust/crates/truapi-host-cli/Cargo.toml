@@ -26,6 +26,10 @@ correctness = "warn"
 
 [dependencies]
 truapi = { path = "../truapi" }
+# Chain connections for the People, Bulletin and Asset Hub host traffic the preset
+# serves as roles, plus `Chain/*` playground methods: RPC nodes over TLS, or the
+# light client with the bundled network catalog. See src/chain.rs.
+truapi-provider = { path = "../truapi-provider", default-features = false, features = ["ws", "networks"] }
 trinity-stack = { path = "../trinity-stack" }
 anyhow = { workspace = true }
 arboard = { workspace = true, features = ["image-data"] }
@@ -56,11 +60,8 @@ subxt = { workspace = true, features = ["native"] }
 subxt-rpcs = { workspace = true, features = ["jsonrpsee", "native"] }
 tar = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "sync", "io-util", "io-std", "net", "time", "signal", "process"] }
-tokio-stream = { workspace = true, features = ["sync"] }
-tokio-tungstenite = { workspace = true, features = ["connect", "rustls-tls-webpki-roots"] }
+tokio-tungstenite = { workspace = true }
 tempfile = { workspace = true }
-# TLS is compiled in for the People, Bulletin and Asset Hub host traffic the preset
-# serves as roles, plus `Chain/*` playground methods. See src/chain.rs.
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["default", "env-filter"] }
 unicode-width = { workspace = true }
@@ -68,3 +69,4 @@ zeroize = { workspace = true, features = ["alloc", "derive"] }
 
 [dev-dependencies]
 truapi = { path = "../truapi", features = ["mock"] }
+tokio = { workspace = true, features = ["test-util"] }

@@ -22,6 +22,10 @@
 //!   registration.
 //! - `js` feature — a JavaScript-facing API (the `js` module) on `wasm32`, so web hosts can consume
 //!   the provider directly without a Rust caller.
+//!
+//! On native targets every `wss` connection, to a remote node or a light-client bootnode, checks
+//! the server certificate against the webpki roots compiled into the crate, not the operating
+//! system's trust store. On `wasm32` the browser checks it.
 
 // The `uniffi` feature pulls in UniFFI's generated scaffolding, which contains
 // `unsafe` extern-"C" glue; scope the allowance to that feature so every other
@@ -58,6 +62,8 @@ pub mod platform;
 mod provider;
 #[cfg(feature = "smoldot")]
 mod storage;
+#[cfg(all(any(feature = "ws", feature = "smoldot"), not(target_arch = "wasm32")))]
+mod tls;
 #[cfg(all(feature = "ws", not(target_arch = "wasm32")))]
 mod ws;
 #[cfg(all(feature = "ws", target_arch = "wasm32"))]

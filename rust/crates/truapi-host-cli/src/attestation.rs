@@ -34,7 +34,8 @@ use truapi::{
 };
 
 use crate::{
-	accounts::IdentityDerivationError, dotns_read::AssetHubReader, network::NetworkConfig,
+	accounts::IdentityDerivationError, chain::CliChainProvider, dotns_read::AssetHubReader,
+	network::NetworkConfig,
 };
 
 /// Env var carrying an optional bearer token for the identity backend.
@@ -243,17 +244,10 @@ where
 
 /// Inputs for one attestation run.
 pub struct AttestConfig {
-	/// Identity backend base URL including `/api/v1`.
-	pub backend_base: String,
-	/// Asset Hub WebSocket URL for the reservation timestamp and the dotNS
-	/// username poll.
-	pub asset_hub_ws: String,
-	/// People WebSocket URL for the runtime version the registration
-	/// signatures follow.
-	pub people_ws: String,
-	/// The network's dotNS TLD without the dot (`paseo`, `testnet`); the
-	/// registered person is `uid.<suffix>` / `peopl.<suffix>`.
-	pub network_suffix: String,
+	/// The network whose identity backend takes the registration, whose People
+	/// and Asset Hub give the signing contexts, and whose Asset Hub serves the
+	/// reservation timestamp and the dotNS username poll.
+	pub network: NetworkConfig,
 	/// BIP-39 entropy of the signing host's root account.
 	pub entropy: Vec<u8>,
 	/// Requested lite username base (6+ lowercase letters, no digits).
@@ -303,9 +297,10 @@ fn availability_status<'a>(body: &'a Value, username_base: &str) -> Option<&'a s
 /// dotNS contracts on Asset Hub record it. Returns the lite username assigned on
 /// chain, including its discriminator.
 pub async fn attest(config: &AttestConfig) -> Result<String> {
+	let backend_base = config.network.identity_backend()?;
 	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
 
-	let mut reader = AssetHubReader::connect(&config.asset_hub_ws).await?;
+	let mut reader = AssetHubReader::connect(&config.network).await?;
 	// Timestamping the reservation signature with Asset Hub chain time. The
 	// gateway rejects values ahead of the chain.
 	let signed_at = reader.timestamp_secs().await.context("read Asset Hub Timestamp.Now")?;
@@ -330,13 +325,15 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 		}
 	}
 
-	let people_signing_context = signing_context_of(&config.people_ws, PEOPLE_LITE_PALLET).await?;
+	let chains = CliChainProvider::new(&config.network);
+	let people_signing_context =
+		signing_context_of(&chains, config.network.people_genesis, PEOPLE_LITE_PALLET).await?;
 	let asset_hub_signing_context =
-		signing_context_of(&config.asset_hub_ws, DOTNS_GATEWAY_PALLET).await?;
-	let verifier = fetch_verifier(&client, &config.backend_base).await?;
+		signing_context_of(&chains, config.network.asset_hub_genesis, DOTNS_GATEWAY_PALLET).await?;
+	let verifier = fetch_verifier(&client, backend_base).await?;
 	let registration = build_lite_registration(
 		&config.entropy,
-		&config.network_suffix,
+		config.network.network_suffix,
 		verifier,
 		&config.username_base,
 		config.reserved_username.as_deref(),
@@ -364,15 +361,23 @@ const PEOPLE_LITE_PALLET: &str = "PeopleLite";
 /// The pallet that checks the dotNS reservation signature.
 const DOTNS_GATEWAY_PALLET: &str = "DotnsGateway";
 
-/// The signing context `pallet` on the chain at `ws` checks account signatures
-/// in, read from its `SigningContext` constant. `None` means the message alone.
-async fn signing_context_of(ws: &str, pallet: &str) -> Result<Option<[u8; 32]>> {
-	let rpc = alloc::rpc::RpcClient::connect(ws)
-		.await
-		.with_context(|| format!("connect {ws}"))?;
+/// The signing context `pallet` on the chain `genesis_hash` names checks account
+/// signatures in, read from its `SigningContext` constant. `None` means the
+/// message alone.
+async fn signing_context_of(
+	chains: &CliChainProvider,
+	genesis_hash: [u8; 32],
+	pallet: &str,
+) -> Result<Option<[u8; 32]>> {
+	let rpc = alloc::rpc::RpcClient::new(
+		chains
+			.rpc_client(genesis_hash)
+			.await
+			.with_context(|| format!("connect to the chain holding {pallet}"))?,
+	);
 	let metadata = alloc::fetch_metadata(&rpc)
 		.await
-		.with_context(|| format!("read {pallet} metadata from {ws}"))?;
+		.with_context(|| format!("read {pallet} metadata"))?;
 	Ok(signing_context_from_constant(metadata.constant(pallet, SIGNING_CONTEXT_CONSTANT)))
 }
 
@@ -584,14 +589,14 @@ async fn fetch_verifier(client: &reqwest::Client, backend_base: &str) -> Result<
 }
 
 /// `POST /usernames` for `reg`, authenticated as the candidate account the
-/// registration was built for (`config.entropy` on `config.network_suffix`).
+/// registration was built for (`config.entropy` on `config.network`).
 async fn submit_registration(
 	client: &reqwest::Client,
 	config: &AttestConfig,
 	signed_at: u64,
 	reg: &truapi::host_logic::attestation::LiteRegistration,
 ) -> Result<()> {
-	let backend_base = config.backend_base.as_str();
+	let backend_base = config.network.identity_backend()?;
 	let url = format!("{backend_base}/usernames");
 	let mut dotns = json!({
 		"signature": hex0x(&reg.dotns_signature),
@@ -614,7 +619,7 @@ async fn submit_registration(
 		client,
 		backend_base,
 		&config.entropy,
-		&config.network_suffix,
+		config.network.network_suffix,
 		|token| client.post(&url).bearer_auth(token).json(&body),
 	)
 	.await
@@ -745,11 +750,10 @@ mod tests {
 			&entropy, "paseo", [9u8; 32], "testing", None, 123, None, None,
 		)?;
 		let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
+		let mut network = crate::network::Network::default().config();
+		network.identity_backend_base = Some(Box::leak(backend_base.into_boxed_str()));
 		let config = AttestConfig {
-			backend_base: backend_base.clone(),
-			asset_hub_ws: String::new(),
-			people_ws: String::new(),
-			network_suffix: "paseo".to_string(),
+			network,
 			entropy: entropy.to_vec(),
 			username_base: "testing".to_string(),
 			reserved_username: None,
