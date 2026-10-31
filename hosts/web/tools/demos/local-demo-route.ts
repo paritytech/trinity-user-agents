@@ -1,11 +1,8 @@
 /**
- * Where the dev server answers for the local chat products
+ * Where the dev server answers for the local chat product
  * (`chat-product-demo-plugin.ts`). Shared by the plugin and the page, and
  * free of other imports so the Vite config can load it.
  */
-
-/** Example Chat's app archive (`fixtures/products/example-chat/product.ts`), under the host's base. */
-export const EXAMPLE_CHAT_PATH = "__chat-product-demo/example-chat.json";
 
 /** Contact Chat's worker (`fixtures/products/contact-chat/worker.ts`), under the host's base. */
 export const CONTACT_CHAT_PATH = "__chat-product-demo/contact-chat-worker.json";

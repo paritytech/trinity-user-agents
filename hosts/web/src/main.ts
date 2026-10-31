@@ -370,17 +370,11 @@ const devSession =
         notifications: notifications.store,
         section: element("developer"),
         marker: element("test-user-marker"),
-        stage: element("product-slot"),
         leaveWalletSession: () => {
           sessionStorage.removeItem(tabWalletKey(activeNetwork.id));
           sessionStorage.removeItem(tabProductKey(activeNetwork.id));
         },
         useStorage: (scope) => storage.useWallet(scope, activeNetwork.id),
-        tap: (productId) =>
-          runtime === null
-            ? undefined
-            : tools.tap(productId, runtime.coreWireSchemaHash),
-        showProduct: () => void navigation.selectDestination("browse"),
         showChat: () => void navigation.selectDestination("chat"),
         handles: {
           accountFor: (handle): HexString | null =>
@@ -984,7 +978,7 @@ function renderDock(): void {
   }
   stageEmptyNote.textContent =
     testUser !== null
-      ? `Search for a product to try it as ${testUser.name}. Example Chat is in More.`
+      ? `Search for a product to try it as ${testUser.name}.`
       : "Pick Chat, Pocket or Browse, or open a product with the search button.";
   renderShelf();
 }
@@ -1059,13 +1053,9 @@ function renderHostScreens(): void {
         : "chat"
       : destination === "pocket"
         ? destination
-        : testUser !== null &&
-            navigation.product === null &&
-            devSession?.exampleChatOpen() === true
-          ? "test-product"
-          : destination === "browse" && navigation.product === null
-            ? "browse"
-            : "product";
+        : destination === "browse" && navigation.product === null
+          ? "browse"
+          : "product";
   document.body.dataset.surface = surface;
   pocketScreen.hidden = surface !== "pocket";
   if (surface === "pocket" && pocketScreen.childElementCount === 0)
@@ -1094,14 +1084,10 @@ function renderHostScreens(): void {
   pocketFaces.setShown(surface === "pocket");
   chatScreen.show(surface === "chat");
   notifications?.screen.show(surface === "inbox");
-  devSession?.showProduct(surface === "test-product");
   browseLanding.show(surface === "browse");
   if (destination === "chat" || destination === "pocket")
     lastHost = destination;
-  renderAppChrome(
-    (surface === "product" && navigation.product !== null) ||
-      surface === "test-product",
-  );
+  renderAppChrome(surface === "product" && navigation.product !== null);
 }
 
 /**
@@ -1119,8 +1105,6 @@ function renderAppChrome(shown: boolean): void {
   const holds = navigation.holdKey() !== null;
   appMinimize.hidden = !holds;
   appClose.hidden = holds;
-  // The test accounts' demo product has no Details in the Product tab.
-  appMore.hidden = document.body.dataset.surface === "test-product";
 }
 
 const appArea = element("viewport-app-area");
@@ -1145,11 +1129,7 @@ function setAppMenu(open: boolean): void {
 }
 
 /** Close the product in front, as the Product tab's Close does. */
-const closeFront = (): void => {
-  if (document.body.dataset.surface === "test-product")
-    devSession?.closeExampleChat();
-  else navigation.closeFront();
-};
+const closeFront = (): void => navigation.closeFront();
 
 // A product in Browse goes to the Apps shelf and Browse shows its landing;
 // any other goes back to the last host screen.

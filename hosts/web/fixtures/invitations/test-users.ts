@@ -142,7 +142,8 @@ export function setTabTestUser(storage: Storage, id: string | null): void {
  * holds stopped being readable: v2 with the host-owned request flow, then
  * every list with the wallet's own keys, whose requests name identity
  * accounts. Earlier lists are left as they are and no longer read. Contact
- * Chat's requests are listed apart from Example Chat's.
+ * Chat's requests are in its own lists; `outbox` and `received` are no
+ * longer written, and clearing a test user's invitations removes them too.
  */
 export const PART_VERSION = {
   notifications: 2,

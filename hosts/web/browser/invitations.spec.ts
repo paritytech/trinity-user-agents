@@ -1,19 +1,14 @@
 /**
- * Headless-browser test of invitations between two test users, each in its
- * own tab of the normal host. No wallet signs in, every socket is closed and
- * every request outside this host is refused, so no chain, backend or peer is
+ * Headless-browser test of invitations between test users, each in its own
+ * tab of the normal host, sent from Chat's New chat through the demo's chat
+ * worker, Contact Chat. No wallet signs in, every socket is closed and every
+ * request outside this host is refused, so no chain, backend or peer is
  * reached. It needs a Chromium: playwright-core finds the one it installs, or
  * set CHROMIUM_PATH.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import type {
-  Browser,
-  BrowserContext,
-  FrameLocator,
-  Locator,
-  Page,
-} from "playwright-core";
+import type { Browser, BrowserContext, Page } from "playwright-core";
 import {
   type RunningHost,
   startHost,
@@ -26,6 +21,7 @@ import {
 
 const STEP_MS = 60_000;
 const TEST_MS = 240_000;
+const PRODUCT = "contact-chat.paseo";
 
 let browser: Browser;
 let host: RunningHost;
@@ -104,20 +100,11 @@ async function actAs(page: Page, user: string): Promise<void> {
   await setMenu(page, false);
 }
 
-/** More → Open Example Chat, and wait until it can take an invitation. */
-async function openExampleChat(page: Page): Promise<void> {
-  await menuAction(page, "open-example-chat");
-  await exampleChat(page).locator('[data-action="invite"]').waitFor();
-}
-
 async function menuAction(page: Page, action: string): Promise<void> {
   await setMenu(page, true, "more");
   await page.click(`[data-action="${action}"]`);
   await setMenu(page, false);
 }
-
-const exampleChat = (page: Page): FrameLocator =>
-  page.frameLocator(".test-product iframe");
 
 const dockTab = (destination: string) =>
   `#dock [data-destination="${destination}"]`;
@@ -136,45 +123,97 @@ async function badge(page: Page): Promise<number> {
 /** Chat, at its Inbox tab. */
 async function openInbox(page: Page): Promise<void> {
   await page.click(dockTab("chat"));
+  const back = page.locator('[aria-label="Back to chats"]');
+  if (await back.isVisible()) await back.click();
   await page.click(inboxTab);
 }
 
-/** Choose a contact for the invitation through the host's picker. */
-async function chooseContact(page: Page, name: string): Promise<string> {
-  const product = exampleChat(page);
-  await product.locator('[data-action="choose-contact"]').click();
-  const picker = page.locator("dialog.prompt", { hasText: "Choose a contact" });
-  await picker.getByRole("button", { name: new RegExp(`^${name}\\b`) }).click();
-  const chosen = product.locator(
-    '[data-action="choose-contact"][data-contact^="0x"]',
-  );
-  await chosen.waitFor();
-  return (await chosen.getAttribute("data-contact"))!;
+/** Chat, at its conversation list. */
+async function openChats(page: Page): Promise<void> {
+  await openInbox(page);
+  await page.click('#chat-tabs [data-chat-tab="chats"]');
 }
 
-/** Invite from Example Chat: choose `to`, then confirm the host's Send invitation prompt. */
-async function invite(
+/** Contact Chat's room with `title`, in Chat's list. */
+const room = (page: Page, title: string) =>
+  page.locator(`[data-conversation^="chat-v2:${PRODUCT}/"]`, {
+    hasText: title,
+  });
+
+/** A system line in the open room. */
+const systemLine = (page: Page, text: string) =>
+  page.locator(".chat-system", { hasText: text });
+
+/**
+ * Chat's New chat: choose `to` in the host's picker, write `purpose` and ask
+ * Contact Chat to start; then answer the host's Send invitation prompt.
+ */
+async function startChat(
   page: Page,
-  options: { purpose: string; to: string },
-): Promise<string> {
-  const product = exampleChat(page);
-  const rows = product.locator('[data-list="sent"] .row');
-  const before = await rows.count();
-  await chooseContact(page, options.to);
-  await product.locator('textarea[name="purpose"]').fill(options.purpose);
-  await product.locator('[data-action="invite"]').click();
+  options: { to: string; purpose: string; send: boolean },
+): Promise<void> {
+  await openChats(page);
+  await page.click('[aria-label="New chat"]');
+  const chooser = page.locator("dialog.prompt", { hasText: "New chat" });
+  await chooser.locator("button", { hasText: options.to }).click();
+  await page.fill(".chat-new-request textarea", options.purpose);
+  await page.click('[data-action="start-chat"]');
   const prompt = page.locator("dialog.prompt", { hasText: "Send invitation" });
   expect(await prompt.innerText()).toContain(options.to);
-  await prompt.getByRole("button", { name: "Send", exact: true }).click();
-  await eventually(() => rows.count(), before + 1);
-  return (await rows.first().getAttribute("data-id"))!;
+  await prompt
+    .getByRole("button", {
+      name: options.send ? "Send" : "Cancel",
+      exact: true,
+    })
+    .click();
+  await prompt.waitFor({ state: "detached" });
 }
 
-const sentRow = (page: Page, id: string): Locator =>
-  exampleChat(page).locator(`[data-list="sent"] .row[data-id="${id}"]`);
+/** Contact Chat's worker in `page`: its stage, what it heard from its host as JSON in order, and its stored record. */
+async function workerState(
+  page: Page,
+): Promise<
+  { stage: string; received: string[]; record: string | null } | undefined
+> {
+  for (const frame of page.frames()) {
+    if (!frame.url().includes("__truapi-worker.html")) continue;
+    const state = await frame
+      .evaluate(() => {
+        const worker = (
+          window as unknown as {
+            __contactChatWorker?: {
+              stage: string;
+              received: string[];
+              record(): string | null;
+            };
+          }
+        ).__contactChatWorker;
+        return worker === undefined
+          ? undefined
+          : {
+              stage: worker.stage,
+              received: worker.received,
+              record: worker.record(),
+            };
+      })
+      .catch(() => undefined);
+    if (state !== undefined) return state;
+  }
+  return undefined;
+}
 
-const sentStatus = (page: Page, id: string) =>
-  sentRow(page, id).getAttribute("data-status");
+const workerHeard = async (page: Page): Promise<string[]> =>
+  (await workerState(page))?.received ?? [];
+
+/** The ids of the sender's pending requests, under Sent in the host's Inbox. */
+async function sentIds(page: Page): Promise<string[]> {
+  await openInbox(page);
+  return page
+    .locator("[data-sent]")
+    .evaluateAll((rows) =>
+      rows.map((row) => (row as HTMLElement).dataset.sent!),
+    );
+}
 
 /** Read until `read` gives `want`, or fail with the last value. */
 async function eventually<T>(read: () => Promise<T>, want: T): Promise<void> {
@@ -218,7 +257,7 @@ const posts = (page: Page, kind: "request" | "reply") =>
 
 describe("invitations between test users", () => {
   test(
-    "connects through a JIT invitation: pick, send, Accept, an authenticated reply, then Connected",
+    "connects through a JIT invitation: New chat, send, Accept, an authenticated reply, then Connected",
     async () => {
       const { context, outside, errors, open } = await session();
       // From the first page on: a clock installed under a running light client breaks its timers.
@@ -232,50 +271,40 @@ describe("invitations between test users", () => {
         await actAs(carol, "carol");
 
         // A test user tab is marked and signed in to the core as that user
-        // with no wallet, and opens nothing until asked: Example Chat shows in
-        // Browse once opened from More.
+        // with no wallet, and opens nothing: Chat shows, and Browse its landing.
         expect(await alice.locator("#test-user-marker").innerText()).toBe(
           "Invitation demo · Alice",
         );
         expect(await alice.locator("#session").innerText()).toContain(
           "Signed in as Alice (invitation demo)",
         );
-        expect(await alice.locator(".test-product iframe").count()).toBe(0);
         expect(await alice.getAttribute("body", "data-surface")).toBe("chat");
-        // Browse shows its landing, and opens nothing for a test account either.
         await alice.click(dockTab("browse"));
         await eventually(
           () => alice.getAttribute("body", "data-surface"),
           "browse",
         );
         expect(await alice.locator("#product-slot iframe").count()).toBe(0);
-        await openExampleChat(alice);
-        expect(await alice.getAttribute("body", "data-surface")).toBe(
-          "test-product",
-        );
-        // Bob's tab has not opened it; Accept below opens it for him.
-        expect(await bob.locator(".test-product iframe").count()).toBe(0);
         expect(await alice.inputValue("#invitation-demo")).toBe("alice");
-        await screenshot(alice, "alice-example-chat");
 
-        // The host's own picker chooses; the product gets an opaque reference.
-        // Cancel on the Send invitation prompt sends nothing.
-        await chooseContact(alice, "Bob");
-        await exampleChat(alice).locator('[data-action="invite"]').click();
-        const prompt = alice.locator("dialog.prompt", {
-          hasText: "Send invitation",
+        // The host's own picker chooses; Cancel on the Send invitation prompt
+        // sends nothing, and the product says so.
+        await startChat(alice, {
+          to: "Bob",
+          purpose: "Shall we talk?",
+          send: false,
         });
-        await prompt.getByRole("button", { name: "Cancel" }).click();
-        await exampleChat(alice)
-          .locator('[data-card="invite"] .note', { hasText: "Not sent." })
-          .waitFor();
+        await systemLine(alice, "Your chat request was not sent").waitFor();
         expect(await posts(alice, "request")).toEqual([]);
 
-        const first = await invite(alice, {
-          purpose: "Let's chat in Example Chat.",
+        await startChat(alice, {
           to: "Bob",
+          purpose: "Let's chat in Contact Chat.",
+          send: true,
         });
-        expect(await sentStatus(alice, first)).toBe("waiting");
+        await systemLine(alice, "You sent a chat request").waitFor();
+        const [first] = await sentIds(alice);
+        expect(first).toBeDefined();
         await eventually(() => badge(bob), 1);
         expect(await badge(carol)).toBe(0);
         expect(await posts(alice, "request")).toHaveLength(1);
@@ -288,26 +317,23 @@ describe("invitations between test users", () => {
         expect(await row.getAttribute("data-status")).toBe("pending");
         const text = await row.innerText();
         expect(text).toContain("Alice");
-        expect(text).toContain("Let's chat in Example Chat.");
-        expect(text).toContain("Chat invitation · Example Chat");
+        expect(text).toContain("Let's chat in Contact Chat.");
+        expect(text).toContain("Chat invitation · Contact Chat");
         const bobRequest = (await row.getAttribute("data-notification"))!;
         await screenshot(bob, "bob-notifications");
 
-        // Accept: Bob's Example Chat checks the payload and replies through
+        // Accept: Bob's Contact Chat checks the payload and replies through
         // its host, which posts the sealed reply on the request's return
         // route. Alice's host authenticates it, her product checks it, and only
         // then is it Connected.
         await row.locator('[data-action="notification-accept"]').click();
-        await eventually(
-          () => bob.getAttribute("body", "data-surface"),
-          "test-product",
-        );
-        const acceptedRow = exampleChat(bob).locator(
-          `[data-list="accepted"] .row[data-id="${bobRequest}"]`,
-        );
-        await acceptedRow.waitFor();
-        await eventually(() => sentStatus(alice, first), "completed");
-        expect(await sentRow(alice, first).innerText()).toContain("Connected");
+        await openChats(bob);
+        await room(bob, "Alice").click();
+        await systemLine(bob, "You accepted the chat request").waitFor();
+        await openChats(alice);
+        await room(alice, "Bob").click();
+        await systemLine(alice, "They accepted your chat request").waitFor();
+        await eventually(async () => (await sentIds(alice)).length, 0);
         const aliceLog = (await alice.locator("#log").textContent())!;
         expect(aliceLog).toContain("authenticated a reply from Bob");
         expect(aliceLog).toContain("reposting stopped. Nothing is sent.");
@@ -315,105 +341,61 @@ describe("invitations between test users", () => {
           "the host sealed it for Alice and posted it on the request's return route",
         );
         expect(await posts(alice, "reply")).toHaveLength(1);
-        // Neither product shows who the other person is.
-        expect(
-          await exampleChat(alice).locator("main").innerText(),
-        ).not.toContain("Bob");
-        expect(
-          await exampleChat(bob).locator("main").innerText(),
-        ).not.toContain("Alice");
         await screenshot(alice, "alice-connected");
 
         // Carol dismisses hers: it leaves her list, nothing goes back, and
-        // Alice's invitation still waits until she cancels it.
-        const second = await invite(alice, {
-          purpose: "Join my reading group.",
+        // Alice's request still waits until she cancels it under Sent in her
+        // host's Inbox.
+        await startChat(alice, {
           to: "Carol",
+          purpose: "Join my reading group.",
+          send: true,
         });
         await eventually(() => badge(carol), 1);
+        const [second] = await sentIds(alice);
         await openInbox(carol);
         await carol
           .locator('.notification-row [data-action="notification-dismiss"]')
           .click();
         await carol.locator(".notification-row").waitFor({ state: "detached" });
         await carol.waitForTimeout(300);
-        expect(await sentStatus(alice, second)).toBe("waiting");
+        expect(await sentIds(alice)).toEqual([second!]);
         // Requests went to Bob and Carol; the one reply is Bob's, and Carol
         // posted nothing.
         expect(await posts(alice, "request")).toHaveLength(2);
         expect(await posts(alice, "reply")).toHaveLength(1);
-        await sentRow(alice, second)
-          .locator('[data-action="cancel-invitation"]')
-          .click();
-        await eventually(() => sentStatus(alice, second), "cancelled");
-
-        // A request has no deadline: Alice cancels the third under Sent in
-        // her host's Inbox. Nothing goes to Bob, whose row still waits.
-        await openInbox(bob);
-        const third = await invite(alice, {
-          purpose: "Quick question before the meeting.",
-          to: "Bob",
-        });
-        await eventually(() => bob.locator(".notification-row").count(), 2);
-        await openInbox(alice);
         await alice
-          .locator(`[data-sent="${third}"] [data-action="sent-cancel"]`)
+          .locator(`[data-sent="${second}"] [data-action="sent-cancel"]`)
           .click();
-        await eventually(() => sentStatus(alice, third), "cancelled");
-        await alice.locator(`[data-sent="${third}"]`).waitFor({
+        await alice.locator(`[data-sent="${second}"]`).waitFor({
           state: "detached",
         });
+        await openChats(alice);
+        await room(alice, "Carol").click();
+        await systemLine(alice, "You cancelled your chat request").waitFor();
         expect(await posts(alice, "reply")).toHaveLength(1);
-        await bob.waitForTimeout(300);
-        expect(
-          await bob.locator('.notification-row[data-status="pending"]').count(),
-        ).toBe(1);
-        await alice.click(dockTab("browse"));
 
-        // Restarting Example Chat leaves one frame; its rows come back.
-        await menuAction(alice, "restart-example-chat");
-        await eventually(
-          () => exampleChat(alice).locator('[data-list="sent"] .row').count(),
-          3,
-        );
-        expect(await alice.locator(".test-product iframe").count()).toBe(1);
-        expect(await sentStatus(alice, first)).toBe("completed");
-        expect(await sentStatus(alice, second)).toBe("cancelled");
-
-        // Close ends Example Chat's frame and leaves Browse's landing; nothing
-        // opens it again until asked, and its rows come back when it does.
-        await alice.locator("#app-close").click();
-        await eventually(
-          () => alice.getAttribute("body", "data-surface"),
-          "browse",
-        );
-        expect(await alice.locator(".test-product iframe").count()).toBe(0);
-        expect(await alice.locator("#app-chrome").isHidden()).toBe(true);
-        await openExampleChat(alice);
-        await eventually(
-          () => exampleChat(alice).locator('[data-list="sent"] .row').count(),
-          3,
-        );
-
-        // Bob closes his; his accepted row opens it again.
-        await bob.click(dockTab("browse"));
-        await eventually(
-          () => bob.getAttribute("body", "data-surface"),
-          "test-product",
-        );
-        await bob.locator("#app-close").click();
-        await eventually(() => bob.locator(".test-product iframe").count(), 0);
+        // Bob's accepted row goes to his Contact Chat as an open intent, and
+        // the host takes the product's answer to it.
         await openInbox(bob);
         await bob
           .locator(
             `.notification-row[data-notification="${bobRequest}"] [data-action="notification-open"]`,
           )
           .click();
-        await eventually(
-          () => bob.getAttribute("body", "data-surface"),
-          "test-product",
-        );
-        await acceptedRow.waitFor();
+        await eventually(async () => {
+          const heard = await workerHeard(bob);
+          const intent = heard.findIndex(
+            (line) =>
+              line.includes('"openIntent"') && line.includes(bobRequest),
+          );
+          return (
+            intent >= 0 &&
+            heard
+              .slice(intent)
+              .includes(JSON.stringify({ result: { ok: true } }))
+          );
+        }, true);
 
         // A reload keeps the test user and both lists.
         await bob.reload();
@@ -435,9 +417,17 @@ describe("invitations between test users", () => {
           alice.selectOption("#network", "previewnet"),
         ]);
         await ready(alice);
-        await openExampleChat(alice);
+        expect(await sentIds(alice)).toEqual([]);
+        expect(await alice.locator(".notification-row").count()).toBe(0);
+        // Contact Chat runs there with none of the conversations it keeps on Paseo.
+        await eventually(
+          async () => (await workerState(alice))?.stage,
+          "running",
+        );
+        expect((await workerState(alice))?.record).toBeNull();
+        await openChats(alice);
         expect(
-          await exampleChat(alice).locator('[data-list="sent"] .row').count(),
+          await alice.locator('[data-conversation^="chat-v2:"]').count(),
         ).toBe(0);
 
         const keys = await alice.evaluate(() =>
@@ -446,14 +436,16 @@ describe("invitations between test users", () => {
             .sort(),
         );
         expect(keys).toEqual([
-          "truapi-web-signing-host:network:paseo:test-user:alice:outbox:v3",
+          "truapi-web-signing-host:network:paseo:test-user:alice:contact-chat-outbox:v2",
+          "truapi-web-signing-host:network:paseo:test-user:bob:contact-chat-received:v2",
           "truapi-web-signing-host:network:paseo:test-user:bob:notifications:v2",
-          "truapi-web-signing-host:network:paseo:test-user:bob:received:v3",
+          "truapi-web-signing-host:network:paseo:test-user:carol:contact-chat-received:v2",
           "truapi-web-signing-host:network:paseo:test-user:carol:notifications:v2",
-          "truapi-web-signing-host:network:paseo:test-user:carol:received:v3",
-          // Example Chat's own secrets and replies, in its TrUAPI local storage.
-          "truapi-web-signing-host:product:test-user:alice:truapi:product-storage:v1:18:example-chat.paseo:example-chat:invitations:v2",
-          "truapi-web-signing-host:product:test-user:bob:truapi:product-storage:v1:18:example-chat.paseo:example-chat:invitations:v2",
+          // Contact Chat's own record and read marks, in its TrUAPI local storage.
+          "truapi-web-signing-host:product:test-user:alice:truapi:product-storage:v1:18:contact-chat.paseo:contact-chat:read:v1",
+          "truapi-web-signing-host:product:test-user:alice:truapi:product-storage:v1:18:contact-chat.paseo:contact-chat:record:v1",
+          "truapi-web-signing-host:product:test-user:bob:truapi:product-storage:v1:18:contact-chat.paseo:contact-chat:read:v1",
+          "truapi-web-signing-host:product:test-user:bob:truapi:product-storage:v1:18:contact-chat.paseo:contact-chat:record:v1",
         ]);
         expect(outside).toEqual([]);
         expect(errors).toEqual([]);
@@ -588,7 +580,7 @@ describe("invitations between test users", () => {
         // Clearing Bob's invitations asks first, and Cancel keeps them.
         await page.evaluate(() =>
           localStorage.setItem(
-            "truapi-web-signing-host:network:paseo:test-user:bob:outbox:v3",
+            "truapi-web-signing-host:network:paseo:test-user:bob:contact-chat-outbox:v2",
             "[]",
           ),
         );
@@ -604,7 +596,7 @@ describe("invitations between test users", () => {
         });
         await clear.getByRole("button", { name: "Cancel" }).click();
         expect(await bobKeys()).toContain(
-          "truapi-web-signing-host:network:paseo:test-user:bob:outbox:v3",
+          "truapi-web-signing-host:network:paseo:test-user:bob:contact-chat-outbox:v2",
         );
         await menuAction(page, "clear-test-invitations");
         await Promise.all([
@@ -652,13 +644,13 @@ describe("invitations between test users", () => {
       try {
         const alice = await open();
         await actAs(alice, "alice");
-        await openExampleChat(alice);
         const bob = await open();
         await actAs(bob, "bob");
-        await invite(alice, {
+        await startChat(alice, {
+          to: "Bob",
           purpose:
             "We would like to start a chat about the reading circle schedule and the next three meetings.",
-          to: "Bob",
+          send: true,
         });
         await eventually(() => badge(bob), 1);
         const sideways = () =>

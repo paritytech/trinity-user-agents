@@ -37,7 +37,7 @@ import { NotificationStore } from "../../../src/notifications/notifications.js";
 import { MemoryStorage, settle } from "../../support/test-support.js";
 import { SUFFIX, hostContactsOf, indexed } from "../../support/host-handles.js";
 import { WalletIdentityAuth } from "../../../src/invitations/wallet-auth.js";
-import * as setup from "../../../fixtures/products/example-chat/setup.js";
+import * as setup from "../../../fixtures/products/contact-chat/setup.js";
 import { FixtureContacts } from "../../../fixtures/invitations/fixture-contacts.js";
 import {
   LocalDelivery,
@@ -67,7 +67,7 @@ const personOf = (user: TestUser) =>
  * Two or three users' hosts and products, each with its own storage, over one
  * shared in-memory store: the real request service, real authentication and
  * sealing with the reference fixture profile, the local delivery, and
- * Example Chat's setup protocol. Only the people and their keys are made up.
+ * Contact Chat's setup protocol. Only the people and their keys are made up.
  */
 
 const START = Date.UTC(2026, 9, 21, 12, 0, 0);

@@ -1,8 +1,8 @@
 /**
  * Contact Chat between two test users of the invitation demo, each in their
  * own tab of the normal host. No wallet signs in, every socket is closed and
- * every request outside this host is refused, so no chain, backend or peer is
- * reached. It needs a Chromium: playwright-core finds the one it installs, or
+ * every request outside this host and its loopback fixture product is
+ * refused, so no chain, backend or peer is reached. It needs a Chromium: playwright-core finds the one it installs, or
  * set CHROMIUM_PATH.
  *
  * What runs for real: the dev server's archive of
@@ -15,14 +15,19 @@
  * host checked them against the core's session. The chat keys a host reads
  * for its contacts come from a fixture directory, not the chain; the delivery
  * is the local simulated one; the setup is a fixture. Contact Chat ends at the
- * connection: it has no text transport, so a message is refused.
+ * connection: it has no text transport, so a message is refused. A second
+ * product, `fixtures/products/contacts-product.ts` served by URL on a loopback
+ * port, asks `contacts.pick` for the same people.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import type { Browser, Frame, Page } from "playwright-core";
+import { createServer, type Server } from "node:http";
+import type { Browser, BrowserContext, Frame, Page } from "playwright-core";
 import {
   type RunningHost,
+  buildFixture,
   closeTools,
-  openTools,
+  freePort,
+  showAddress,
   startHost,
   testBrowser,
   useInvitationDemo,
@@ -51,15 +56,69 @@ const IDENTIFYING = [
 
 let browser: Browser;
 let host: RunningHost;
+/** Another product of the same users: `contacts-product.ts`, served by URL on a port of its own. */
+let other: { url: string; server: Server };
 
 beforeAll(async () => {
   host = await startHost();
   browser = await testBrowser();
+  const code = await buildFixture("contacts-product.ts");
+  const port = await freePort();
+  const server = createServer((request, response) => {
+    if (request.url === "/index.js") {
+      response.writeHead(200, { "content-type": "text/javascript" });
+      return void response.end(code);
+    }
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    response.end(
+      '<!doctype html><meta charset="utf-8"><title>contacts product</title><script type="module" src="/index.js"></script>',
+    );
+  });
+  await new Promise<void>((resolve) =>
+    server.listen(port, "127.0.0.1", () => resolve()),
+  );
+  other = { url: `http://localhost:${port}/`, server };
 }, STEP_MS);
 
 afterAll(async () => {
+  other?.server.close();
   await host?.close();
 });
+
+/** A browser context with every socket closed and every request outside this host and the other product refused. */
+async function offline(): Promise<{
+  context: BrowserContext;
+  outside: string[];
+  errors: string[];
+  open(): Promise<Page>;
+}> {
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 860 },
+  });
+  context.setDefaultTimeout(STEP_MS);
+  await context.routeWebSocket(/.*/, (socket) => socket.close());
+  const outside: string[] = [];
+  await context.route(/.*/, (route) => {
+    const url = route.request().url();
+    if (url.startsWith(host.origin) || url.startsWith(other.url))
+      return route.fallback();
+    outside.push(url);
+    return route.abort();
+  });
+  const errors: string[] = [];
+  return {
+    context,
+    outside,
+    errors,
+    open: async () => {
+      const page = await context.newPage();
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.goto(host.origin);
+      await ready(page);
+      return page;
+    },
+  };
+}
 
 interface WorkerWindow {
   __contactChatWorker?: {
@@ -69,6 +128,10 @@ interface WorkerWindow {
     received: string[];
     starts: string[];
     record(): string | null;
+    pickAndStart(
+      welcome: string,
+    ): Promise<{ roomId: string } | { outcome: string }>;
+    cancel(roomId: string): Promise<void>;
   };
 }
 
@@ -105,20 +168,42 @@ async function heldHandles(frame: Frame): Promise<string[]> {
   );
 }
 
-/** Open Example Chat, press its Pick a contact, choose `name`, and read the handle `contacts.pick` gave it. */
-async function pickInExampleChat(page: Page, name: string): Promise<string> {
-  await openTools(page, "more");
-  await page.click('[data-action="open-example-chat"]');
-  const product = page.frameLocator(".test-product iframe");
-  await product.locator('[data-action="pick-contact"]').waitFor();
-  await closeTools(page);
-  await product.locator('[data-action="pick-contact"]').click();
-  const picker = page.locator("dialog.prompt", { hasText: "Choose a contact" });
-  await picker.getByRole("button", { name: new RegExp(`^${name}\\b`) }).click();
-  await picker.waitFor({ state: "detached" });
-  const row = product.locator('[data-list="picked"] .row').first();
-  await row.waitFor();
-  return (await row.getAttribute("data-id"))!;
+const picker = (page: Page) =>
+  page.locator("dialog.prompt", { hasText: "Choose a contact" });
+
+/** Open the other product by its address, ask `contacts.pick` there, choose `name`, and read the handle it got. */
+async function pickInOtherProduct(page: Page, name: string): Promise<string> {
+  await showAddress(page);
+  await page.fill("#address", other.url);
+  await page.press("#address", "Enter");
+  let frame: Frame | undefined;
+  const deadline = Date.now() + STEP_MS;
+  while (frame === undefined && Date.now() < deadline) {
+    for (const each of page.frames())
+      if (
+        each.url().startsWith(other.url) &&
+        (await each.evaluate(() => "__contacts" in window).catch(() => false))
+      )
+        frame = each;
+    if (frame === undefined) await page.waitForTimeout(200);
+  }
+  if (frame === undefined) throw new Error("the other product did not start");
+  const picked = frame.evaluate(() =>
+    (
+      window as unknown as {
+        __contacts: {
+          pick(): Promise<{
+            outcome?: { value?: { handle: { bytes: string } } };
+          }>;
+        };
+      }
+    ).__contacts.pick(),
+  );
+  await picker(page)
+    .getByRole("button", { name: new RegExp(`^${name}\\b`) })
+    .click();
+  await picker(page).waitFor({ state: "detached" });
+  return (await picked).outcome!.value!.handle.bytes;
 }
 
 /** Contact Chat's worker frame, once it runs. */
@@ -168,26 +253,7 @@ describe("Contact Chat between test users", () => {
   test(
     "invite by contact handle, accept in the host, and connect; the host names everyone",
     async () => {
-      const context = await browser.newContext({
-        viewport: { width: 1280, height: 860 },
-      });
-      context.setDefaultTimeout(STEP_MS);
-      await context.routeWebSocket(/.*/, (socket) => socket.close());
-      const outside: string[] = [];
-      await context.route(/.*/, (route) => {
-        const url = route.request().url();
-        if (url.startsWith(host.origin)) return route.fallback();
-        outside.push(url);
-        return route.abort();
-      });
-      const errors: string[] = [];
-      const open = async () => {
-        const page = await context.newPage();
-        page.on("pageerror", (error) => errors.push(error.message));
-        await page.goto(host.origin);
-        await ready(page);
-        return page;
-      };
+      const { context, outside, errors, open } = await offline();
       try {
         const alice = await open();
         await actAs(alice, "alice");
@@ -295,11 +361,109 @@ describe("Contact Chat between test users", () => {
         expect([
           aliceHolds,
           bobHolds,
-          [await pickInExampleChat(alice, "Bob")],
-          [await pickInExampleChat(bob, "Alice")],
+          [await pickInOtherProduct(alice, "Bob")],
+          [await pickInOtherProduct(bob, "Alice")],
         ]).toEqual([aliceHolds, bobHolds, aliceHolds, bobHolds]);
         expect(aliceHolds).toHaveLength(1);
         expect(aliceHolds[0]).not.toBe(bobHolds[0]);
+        expect(outside).toEqual([]);
+        expect(errors).toEqual([]);
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
+    "the product picks a contact with contacts.pick, requests a chat with that handle through its host, and cancels it itself",
+    async () => {
+      const { context, outside, errors, open } = await offline();
+      try {
+        const alice = await open();
+        await actAs(alice, "alice");
+        const carol = await open();
+        await actAs(carol, "carol");
+        const aliceWorker = await workerFrame(alice);
+        await workerFrame(carol);
+
+        // The product asks the core for a contact; the host's picker names it as the asker.
+        const started = aliceWorker.evaluate(() =>
+          (window as unknown as WorkerWindow).__contactChatWorker!.pickAndStart(
+            "Picked in the product",
+          ),
+        );
+        await picker(alice).waitFor();
+        expect(await picker(alice).innerText()).toContain(PRODUCT);
+        await picker(alice)
+          .getByRole("button", { name: /^Carol\b/ })
+          .click();
+        // The product's request goes to the picked handle; the host names
+        // the person and asks before it leaves.
+        const prompt = alice.locator("dialog.prompt", {
+          hasText: "Send invitation",
+        });
+        expect(await prompt.innerText()).toContain("Carol");
+        await prompt.getByRole("button", { name: "Send", exact: true }).click();
+        const result = await started;
+        if (!("roomId" in result)) throw new Error(JSON.stringify(result));
+        const record = () =>
+          aliceWorker.evaluate(() =>
+            JSON.parse(
+              (
+                window as unknown as WorkerWindow
+              ).__contactChatWorker!.record()!,
+            ),
+          ) as Promise<{
+            conversations: { id: string; contact: string; status: string }[];
+          }>;
+        const conversation = async () =>
+          (await record()).conversations.find(
+            (entry) => entry.id === result.roomId,
+          )!;
+        /** The conversation once its status is `status`, or the last one read. */
+        const reaching = async (status: string) => {
+          const until = Date.now() + STEP_MS;
+          let last = await conversation();
+          while (last.status !== status && Date.now() < until) {
+            await alice.waitForTimeout(100);
+            last = await conversation();
+          }
+          return last;
+        };
+        const sent = await reaching("waiting");
+        expect(sent.status).toBe("waiting");
+        expect(sent.contact).toBe(await pickInOtherProduct(alice, "Carol"));
+
+        // Carol's host authenticated it and names Alice.
+        await chat(carol);
+        await carol.click('#chat-tabs [data-chat-tab="inbox"]');
+        const request = carol.locator(".notification-row").first();
+        await request.waitFor();
+        expect(await request.innerText()).toContain("Alice");
+        expect(await request.innerText()).toContain("Picked in the product");
+
+        // The product cancels its own request; the host stops it, and Carol is not told.
+        await aliceWorker.evaluate(
+          (roomId) =>
+            (window as unknown as WorkerWindow).__contactChatWorker!.cancel(
+              roomId,
+            ),
+          result.roomId,
+        );
+        expect((await reaching("cancelled")).status).toBe("cancelled");
+        await chat(alice);
+        await alice.click('#chat-tabs [data-chat-tab="inbox"]');
+        expect(await alice.locator("[data-sent]").count()).toBe(0);
+        expect(await alice.locator("#log").textContent()).toContain(
+          "cancelled; reposting stopped. Nothing is sent.",
+        );
+        await carol.waitForTimeout(300);
+        expect(
+          await carol
+            .locator('.notification-row[data-status="pending"]')
+            .count(),
+        ).toBe(1);
         expect(outside).toEqual([]);
         expect(errors).toEqual([]);
       } finally {

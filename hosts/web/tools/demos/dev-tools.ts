@@ -5,7 +5,6 @@ import type {
 import { bytesToHex, type HexString } from "@parity/truapi/scale";
 import {
   CONTACT_CHAT_PATH,
-  EXAMPLE_CHAT_PATH,
   type DemoWorkerAnswer,
 } from "./local-demo-route.js";
 import type { ChatContact } from "../../src/chat/provider.js";
@@ -14,19 +13,11 @@ import {
   parseWorkerManifest,
   type ResolvedWorker,
 } from "../../src/products/worker-manifest.js";
-import type { FrameTap } from "../../src/products/tap.js";
-import {
-  InvitationService,
-  productPort,
-  type SendPrompt,
-} from "../../src/invitations/invitation-service.js";
+import type { SendPrompt } from "../../src/invitations/invitation-service.js";
 import type { Product } from "../../src/invitations/ports.js";
-import { cryptoRandom } from "../../src/invitations/sealing.js";
 import type { NotificationStore } from "../../src/notifications/notifications.js";
 import type { NotificationActions } from "../../src/notifications/screen.js";
-import { openProduct, type OpenProduct } from "../../src/products/product.js";
 import { ask } from "../../src/app/prompt.js";
-import { loaderUrl, mountScope } from "../../src/products/loader/mount.js";
 import {
   fixtureDirectory,
   type UsernameDirectory,
@@ -45,13 +36,10 @@ import {
   ownIdentityProblem,
   type IdentityProblem,
 } from "../../src/invitations/published-keys.js";
-import { LocalDelivery } from "../../fixtures/invitations/local-delivery.js";
 import {
-  sentRequests,
   startContactChatHost,
   type ContactChatHost,
 } from "./contact-chat-host.js";
-import { pageStore } from "../../fixtures/invitations/shared-store.js";
 import * as samples from "../../fixtures/notifications/sample-notifications.js";
 import {
   PART_VERSION,
@@ -88,15 +76,12 @@ import {
  * session's services start: no Nova chat, Pocket or wallet workers, so
  * fixture contacts never reach a wallet's chat or a transaction it signs.
  *
- * The demo has two products, each with its own request service:
- *
- * - Example Chat, an app, opens only when asked: from More, or to accept an
- *   invitation. Its Close ends it.
- * - Contact Chat (`fixtures/products/contact-chat/`), a chat worker, runs
- *   for the test user as an ordinary product worker. The host's Chat shows
- *   its conversations and names each person from the contact handle the
- *   product holds, through the host's handle index; the product never gets a
- *   name. A chat ends at the connection: Contact Chat sends no text.
+ * The demo's product is Contact Chat (`fixtures/products/contact-chat/`), a
+ * chat worker with its own request service. It runs for the test user as an
+ * ordinary product worker. The host's Chat shows its conversations and names
+ * each person from the contact handle the product holds, through the host's
+ * handle index; the product never gets a name. A chat ends at the
+ * connection: Contact Chat sends no text.
  */
 
 export interface DevToolsDeps {
@@ -108,16 +93,10 @@ export interface DevToolsDeps {
   section: HTMLElement;
   /** The app bar marker that names the test user. */
   marker: HTMLElement;
-  /** Where Example Chat's frame goes, over the product stage. */
-  stage: HTMLElement;
   /** End this tab's wallet session and product, before acting as a test user. */
   leaveWalletSession(): void;
   /** Keep the core's storage under `scope`, apart from every wallet's. */
   useStorage(scope: string): void;
-  /** What the inspector sees of `productId`'s frames. */
-  tap(productId: string): FrameTap | undefined;
-  /** Bring the test account's product, in Browse, to the front, and draw the stage again. */
-  showProduct(): void;
   /** The host's names for the contact handles the core mints. */
   handles: HandleNames;
   /** What the core reports of the signed-in session's keys, once it is signed in. */
@@ -212,11 +191,6 @@ export interface DevSession {
   notificationActions: NotificationActions | null;
   /** Once the core runs, sign the test user in and start receiving invitations. */
   start(runtime: WorkerPairingHostRuntime): Promise<void>;
-  /** Whether Example Chat is open, so the stage shows it. */
-  exampleChatOpen(): boolean;
-  /** Close Example Chat: its frame ends and it stops taking invitations until it opens again. */
-  closeExampleChat(): void;
-  showProduct(visible: boolean): void;
   /** The workers this module adds: Contact Chat, for a test user or a wallet. */
   workerNames(): string[];
   /** Whether `name` is a worker this module resolves. */
@@ -230,12 +204,6 @@ export interface DevSession {
   /** The request service, for Contact Chat's worker frame only. */
   requests: WorkerPortService;
 }
-
-/** Example Chat's product id and name on a network. */
-export const exampleChat = (networkSuffix: string): Product => ({
-  id: `example-chat.${networkSuffix}`,
-  name: "Example Chat",
-});
 
 /** Contact Chat's product id and name on a network. */
 export const contactChat = (networkSuffix: string): Product => ({
@@ -315,9 +283,6 @@ function confirmNetworkDelivery(network: string): Promise<boolean> {
     dismissed: false,
   });
 }
-
-/** How long Accept waits for Example Chat to connect after opening it. */
-const CONNECT_TIMEOUT_MS = 15_000;
 
 /** Where a tab keeps whether Contact Chat runs for its signed-in wallet. */
 const WALLET_CHAT_KEY = "truapi-web-signing-host:dev:wallet-contact-chat";
@@ -442,9 +407,6 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
       },
     },
     start: (runtime) => session?.start(runtime) ?? Promise.resolve(),
-    exampleChatOpen: () => session?.isOpen() ?? false,
-    closeExampleChat: () => session?.close(),
-    showProduct: (visible) => session?.show(visible),
     workerNames: () => {
       const current = chat();
       return current === null ? [] : [current.product.id];
@@ -575,30 +537,11 @@ interface TestUserSession {
   chat: ContactChatHost;
   notificationActions: NotificationActions;
   start(runtime: WorkerPairingHostRuntime): Promise<void>;
-  show(visible: boolean): void;
-  isOpen(): boolean;
-  /** Open Example Chat, or open it again in a new frame, and bring it to the front. */
-  open(): Promise<void>;
-  /** End Example Chat's frame, and fail an Accept that waits for it. */
-  close(): void;
-  /** Calls back when Example Chat opens or closes. */
-  onChange(listener: () => void): void;
   /** Stop, and remove this test user's lists on this network. */
   reset(): void;
 }
 
 function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
-  const product = exampleChat(deps.network.networkSuffix);
-  const keys = {
-    notifications: testUserKey(deps.network.id, self.id, "notifications"),
-    sent: testUserKey(deps.network.id, self.id, "outbox"),
-    received: testUserKey(deps.network.id, self.id, "received"),
-  };
-  const now = () => Date.now();
-  const schedule = (task: () => void, delayMs: number) => {
-    const timer = setTimeout(task, Math.min(delayMs, 2 ** 31 - 1));
-    return () => clearTimeout(timer);
-  };
   const suffix = deps.network.networkSuffix;
   // The wallet keys of the test user's phrase. Nothing is signed or opened
   // with them until `start` checked them against the core's session and the
@@ -606,36 +549,12 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
   const walletKeys = testUserKeys(self, suffix);
   const auth = new WalletIdentityAuth(walletKeys);
   const directory = testUserDirectory(suffix);
-  let verified = false;
-  deps.notifications.setScope(keys.notifications);
+  deps.notifications.setScope(
+    testUserKey(deps.network.id, self.id, "notifications"),
+  );
   const contacts = new FixtureContacts(self, deps.handles, {
     networkSuffix: suffix,
     directory,
-    log: deps.log,
-  });
-  const delivery = () =>
-    new LocalDelivery({
-      self: auth.identityFor().agreementPublic,
-      network: deps.network.id,
-      store: pageStore(),
-      now,
-      schedule,
-      random: cryptoRandom,
-      log: deps.log,
-    });
-  const service = new InvitationService({
-    product,
-    auth,
-    contacts,
-    notifications: deps.notifications,
-    storage: localStorage,
-    keys,
-    delivery: delivery(),
-    now,
-    schedule,
-    random: cryptoRandom,
-    confirmSend,
-    showProduct: () => deps.showProduct(),
     log: deps.log,
   });
 
@@ -655,9 +574,7 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
     if (typeof checked === "string") return { reason: checked, again: false };
     return ownIdentityProblem(directory, walletKeys);
   };
-  let verifiedOnce: Promise<IdentityProblem | null> = new Promise(() => {});
-  // Contact Chat: its own request service, over the same wallet keys,
-  // contacts and delivery, and its own lists.
+  let verified: Promise<IdentityProblem | null> = new Promise(() => {});
   const chat = startContactChatHost({
     product: contactChat(suffix),
     keys: {
@@ -670,201 +587,38 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
     contacts,
     handles: deps.handles,
     notifications: deps.notifications,
-    // Checked once, for both products, in `start`.
-    verify: () => verifiedOnce,
+    // Checked in `start`, once the core runs the test user's session.
+    verify: () => verified,
     confirmSend,
     showChat: deps.showChat,
     log: deps.log,
-  });
-  const host = el("section", "test-product");
-  host.setAttribute("aria-label", product.name);
-  host.hidden = true;
-  deps.stage.append(host);
-  let runtime: WorkerPairingHostRuntime | null = null;
-  let open: OpenProduct | null = null;
-  /** Settles once the open Example Chat has connected for invitations. */
-  let connected: Promise<void> = Promise.resolve();
-  let onConnected = () => {};
-  /** Counts opens and closes, so an open that a close overtook ends itself. */
-  let generation = 0;
-  const listeners: (() => void)[] = [];
-  const changed = () => {
-    for (const listener of listeners) listener();
-  };
-
-  const closeExampleChat = (): void => {
-    generation += 1;
-    service.detachProduct();
-    open?.dispose();
-    open = null;
-    onConnected();
-  };
-
-  /** Open Example Chat as any product opened by name: from its archive, through the loader, connected to the core. */
-  const openExampleChat = async (): Promise<void> => {
-    if (runtime === null) throw new Error("The core is not running yet.");
-    closeExampleChat();
-    const current = generation;
-    connected = new Promise((resolve) => (onConnected = resolve));
-    const response = await fetch(`${deps.base}${EXAMPLE_CHAT_PATH}`, {
-      cache: "no-store",
-    });
-    if (!response.ok)
-      throw new Error(
-        `The dev server did not build Example Chat: ${await response.text()}`,
-      );
-    const archive = (await response.json()) as DemoWorkerAnswer;
-    const scope = mountScope(deps.base, {
-      walletId: testUserScope(self),
-      productId: product.id,
-      cid: archive.cid,
-      network: deps.network.id,
-    });
-    const opened = await openProduct(
-      runtime,
-      loaderUrl({
-        base: deps.base,
-        origin: window.location.origin,
-        scope,
-        gateway: window.location.origin,
-        kind: archive.kind,
-        start: "/",
-      }),
-      product.id,
-      host,
-      {
-        mounted: true,
-        tap: deps.tap(product.id),
-        onSandboxStatus: (state, detail) => {
-          if (state === "error")
-            deps.log(`Example Chat did not start: ${detail}`);
-        },
-        onInvitationsPort: (port) => {
-          if (current !== generation) return;
-          if (!verified) return port.close();
-          service.attachProduct(productPort(port));
-          onConnected();
-        },
-      },
-    );
-    if (current !== generation) {
-      opened.dispose();
-      return;
-    }
-    open = opened;
-    deps.showProduct();
-    changed();
-  };
-
-  /**
-   * Open Example Chat unless it is, and wait until it can take an
-   * invitation, at most {@link CONNECT_TIMEOUT_MS}. The user chose Accept, so
-   * the product the invitation is for opens for it.
-   */
-  const ensureOpen = async (): Promise<void> => {
-    if (open === null) await openExampleChat();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
-      connected,
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, CONNECT_TIMEOUT_MS);
-      }),
-    ]);
-    clearTimeout(timer);
-  };
-
-  window.addEventListener("storage", (event) => {
-    if (
-      verified &&
-      (event.key === null || Object.values(keys).includes(event.key))
-    )
-      service.reload();
-  });
-  window.addEventListener("pagehide", () => {
-    service.stop();
-    open?.dispose();
   });
 
   return {
     chat,
     notificationActions: {
-      canAccept: (item) => service.owns(item.id) || chat.owns(item.id),
-      // Contact Chat runs as a worker: its Accept needs no frame opened.
-      accept: (item) =>
-        chat.owns(item.id)
-          ? chat.accept(item)
-          : ensureOpen().then(() => service.requestAccept(item.id)),
-      // Example Chat lists what the user accepted; Contact Chat's conversation is in Chat.
-      destination: (item) =>
-        chat.owns(item.id)
-          ? "Chat"
-          : service.owns(item.id)
-            ? product.name
-            : null,
-      sent: () =>
-        [
-          ...sentRequests(service, product, (account) =>
-            contacts.nameOf(account),
-          ),
-          ...chat.sent(),
-        ].sort((left, right) => right.createdAt - left.createdAt),
-      cancel: (id) => {
-        if (!chat.cancel(id)) service.requestCancel(id);
-      },
-      onSentChange: (listener) => {
-        const stops = [
-          service.onOutgoing(listener),
-          chat.onSentChange(listener),
-        ];
-        return () => stops.forEach((each) => each());
-      },
-      // An accepted row opens Chat for Contact Chat, and Example Chat as its Accept did.
+      canAccept: (item) => chat.owns(item.id),
+      accept: (item) => chat.accept(item),
+      destination: (item) => (chat.owns(item.id) ? "Chat" : null),
+      sent: () => chat.sent(),
+      cancel: (id) => void chat.cancel(id),
+      onSentChange: (listener) => chat.onSentChange(listener),
       open: (item) => {
-        if (item.state.tag !== "accepted") return;
-        if (chat.owns(item.id)) {
+        if (item.state.tag === "accepted" && chat.owns(item.id))
           chat.open(item);
-          return;
-        }
-        if (!service.owns(item.id)) return;
-        void ensureOpen().then(
-          () => service.requestOpen(item.id),
-          (error: unknown) =>
-            deps.log(`Example Chat did not open: ${String(error)}`),
-        );
       },
     },
-    async start(current) {
-      runtime = current;
+    async start(runtime) {
       deps.useStorage(testUserScope(self));
-      await current.activateLocalSession(testUserEntropy(self));
+      await runtime.activateLocalSession(testUserEntropy(self));
       deps.log(`Signed in to test account ${self.name}.`);
-      verifiedOnce = walletProblem();
-      const problem = await verifiedOnce;
-      if (problem !== null) {
-        deps.log(`Invitations stay off: ${problem.reason}`);
-        await chat.start();
-        return;
-      }
-      await contacts.refresh();
-      verified = true;
-      service.start();
+      verified = walletProblem();
+      const problem = await verified;
+      if (problem !== null) deps.log(`Invitations stay off: ${problem.reason}`);
+      else await contacts.refresh();
       await chat.start();
     },
-    show: (visible) => {
-      host.hidden = !visible;
-    },
-    isOpen: () => open !== null,
-    open: openExampleChat,
-    close: () => {
-      if (open === null) return;
-      closeExampleChat();
-      deps.log("Example Chat closed.");
-      deps.showProduct();
-      changed();
-    },
-    onChange: (listener) => listeners.push(listener),
     reset: () => {
-      service.stop();
       chat.stop();
       for (const part of Object.keys(
         PART_VERSION,
@@ -892,7 +646,7 @@ function confirmClear(user: TestUser): Promise<boolean> {
       {
         label: "Keeps",
         value:
-          "Wallets, the other test accounts and Example Chat's own records",
+          "Wallets, the other test accounts and Contact Chat's own records",
       },
     ],
     choices: [
@@ -992,30 +746,6 @@ function drawSection(
     deliverySelect,
   ];
   if (session !== null) {
-    const exampleRow = el("div", "row");
-    const openExample = button("", "open-example-chat", () => {
-      const reopening = session.isOpen();
-      session.open().then(
-        () =>
-          deps.log(
-            reopening ? "Example Chat restarted." : "Example Chat opened.",
-          ),
-        (error: unknown) =>
-          deps.log(`Example Chat did not open: ${String(error)}`),
-      );
-    });
-    const renderExample = () => {
-      openExample.textContent = session.isOpen()
-        ? "Restart Example Chat"
-        : "Open Example Chat";
-      openExample.dataset.action = session.isOpen()
-        ? "restart-example-chat"
-        : "open-example-chat";
-    };
-    renderExample();
-    session.onChange(renderExample);
-    exampleRow.append(openExample);
-    rows.push(exampleRow);
     const clearRow = el("div", "row");
     clearRow.append(
       button(

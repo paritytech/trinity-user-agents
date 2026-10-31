@@ -2762,34 +2762,7 @@ button.notification-main:focus-visible {
   }
 }
 
-/* Dev only: a test product over the stage, and the app bar marker naming the test user. */
-body[data-surface="test-product"] .stage-empty {
-  display: none;
-}
-
-.test-product {
-  position: absolute;
-  inset: 0 0 var(--dock-space);
-  z-index: 1;
-  background: #0b0c0f;
-}
-
-.test-product[hidden] {
-  display: none;
-}
-
-/* Below the app's circles, as a product's frame is. */
-.product-frame[data-app-chrome="true"] .test-product {
-  top: var(--app-top);
-}
-
-.test-product iframe {
-  display: block;
-  width: 100%;
-  height: 100%;
-  border: none;
-}
-
+/* Dev only: the app bar marker naming the test user. */
 .test-user-marker {
   flex: none;
   padding: 3px 8px;

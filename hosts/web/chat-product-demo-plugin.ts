@@ -5,29 +5,19 @@ import { cidToString } from "./src/products/archive/cid.js";
 import { Blocks, car } from "./fixtures/archive/builders.js";
 import {
   CONTACT_CHAT_PATH,
-  EXAMPLE_CHAT_PATH,
   LOOPBACK_HOSTNAMES,
   type DemoWorkerAnswer,
 } from "./tools/demos/local-demo-route.js";
 
 const hostRoot = fileURLToPath(new URL(".", import.meta.url));
 
-/** The products this server builds: where each is described, its entry module, and whether it is an app. */
+/** The products this server builds: where each is described, and its entry module. */
 const WORKERS = [
   {
     path: CONTACT_CHAT_PATH,
     entry: "fixtures/products/contact-chat/worker.ts",
   },
-  {
-    path: EXAMPLE_CHAT_PATH,
-    entry: "fixtures/products/example-chat/product.ts",
-    app: true,
-  },
 ];
-
-/** The page an app archive opens with. */
-const APP_PAGE =
-  '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Example Chat</title><script type="module" src="/index.js"></script>';
 
 const MANIFEST = JSON.stringify({
   $v: 1,
@@ -73,12 +63,9 @@ async function bundle(entry: string): Promise<string> {
 }
 
 /** Pack the module as an app archive: a CAR of the site, stored as a UnixFS file. */
-function pack(code: string, app = false): Built {
+function pack(code: string): Built {
   const site = new Blocks();
-  const files: Record<string, string> = app
-    ? { "index.html": APP_PAGE, "index.js": code }
-    : { "index.js": code };
-  const archive = car(site.tree(files), site);
+  const archive = car(site.tree({ "index.js": code }), site);
   const outer = new Blocks();
   const root = outer.file(archive, 256 * 1024);
   return {
@@ -108,14 +95,14 @@ type Middleware = (
 ) => void;
 
 /** Build one worker again on each ask, so a restart picks up an edit, keeping recent archives. */
-function builder(entry: string, app = false) {
+function builder(entry: string) {
   const builds: Built[] = [];
   let building: Promise<Built> | null = null;
   return {
     builds,
     latest: () =>
       (building ??= bundle(entry)
-        .then((code) => pack(code, app))
+        .then(pack)
         .then((built) => {
           if (builds[0]?.cid !== built.cid) builds.unshift(built);
           builds.splice(KEPT_BUILDS);
@@ -128,7 +115,7 @@ function builder(entry: string, app = false) {
 function serveDemo(base: string): Middleware {
   const workers = WORKERS.map((worker) => ({
     ...worker,
-    ...builder(worker.entry, worker.app),
+    ...builder(worker.entry),
   }));
 
   return (request, response, next) => {
@@ -178,10 +165,9 @@ function serveDemo(base: string): Middleware {
 }
 
 /**
- * The local chat products, for the dev server only. It builds Contact Chat,
- * the test users' chat worker, and Example Chat, the test users' app, packs
- * each as an app archive and describes them at {@link CONTACT_CHAT_PATH} and
- * {@link EXAMPLE_CHAT_PATH}. It serves the archives' blocks, and only those,
+ * The local chat product, for the dev server only. It builds Contact Chat,
+ * the test users' chat worker, packs it as an app archive and describes it at
+ * {@link CONTACT_CHAT_PATH}. It serves the archive's blocks, and only those,
  * at `/ipfs/<cid>` as a gateway would. The host's loader fetches and checks the archive as it checks any
  * worker's, so nothing skips the archive check. Requests from or to another
  * machine are refused. A build does not include it.

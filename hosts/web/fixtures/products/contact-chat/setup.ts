@@ -10,7 +10,7 @@ import {
 } from "../../../src/invitations/sealing.js";
 
 /**
- * DEV ONLY. Example Chat's own setup protocol: a toy that shows where a
+ * DEV ONLY. Contact Chat's own setup protocol: a toy that shows where a
  * product's check sits beside its host's. It is not libsignal, MLS or
  * SimpleX, and no chat library or suite is chosen by it. Everything here is
  * product payload; the hosts carry it unchanged.
@@ -75,7 +75,7 @@ export function createInvitation(random: RandomBytes): {
   };
 }
 
-/** The invitation's protocol key, or null when Example Chat cannot use the payload. */
+/** The invitation's protocol key, or null when Contact Chat cannot use the payload. */
 export function readInvitation(
   payload: string,
 ): { protocolKey: string } | null {
@@ -127,7 +127,7 @@ export function respond(
   };
 }
 
-/** Example Chat's own check of a response its host delivered, with the recipient's protocol key. */
+/** Contact Chat's own check of a response its host delivered, with the recipient's protocol key. */
 export function checkResponse(
   secrets: SenderSecrets,
   response: string,
@@ -142,7 +142,7 @@ export function checkResponse(
     !isKey(value.tBA) ||
     !isKey(value.confirm)
   )
-    return { ok: false, reason: "not an Example Chat response" };
+    return { ok: false, reason: "not a Contact Chat response" };
   const topics: Topics = { tAB: value.tAB, tBA: value.tBA };
   const shared = x25519Agree(
     fromHex(secrets.protocolSecret),

@@ -1,11 +1,12 @@
 /**
  * Headless-browser test of `contacts.pick` for test users: each tab of the
- * normal host signs a test user in to the core with a public test phrase,
- * runs Example Chat as an ordinary product, and the host's own picker lists
- * that user's made-up contacts. No wallet is used, every socket is closed and
- * every request outside this host and its loopback fixture product is
- * refused. It needs a Chromium: playwright-core finds the one it installs, or
- * set CHROMIUM_PATH.
+ * normal host signs a test user in to the core with a public test phrase and
+ * opens a product, `fixtures/products/contacts-product.ts`, served by URL on
+ * a loopback port; the host's own picker lists that user's made-up contacts.
+ * The same module on a second port is a second product. No wallet is used,
+ * every socket is closed and every request outside this host and its
+ * loopback fixture products is refused. It needs a Chromium: playwright-core
+ * finds the one it installs, or set CHROMIUM_PATH.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createServer, type Server } from "node:http";
@@ -18,8 +19,6 @@ import {
   startHost,
   testBrowser,
   closeTools,
-  openTools,
-  type DevTab,
   useInvitationDemo,
 } from "./support/fixtures.js";
 import {
@@ -36,13 +35,12 @@ const accountOf = (id: string): string =>
 
 let browser: Browser;
 let host: RunningHost;
-/** A second product, served by URL on a port of its own: `contacts-product.ts`. */
-let second: { url: string; server: Server };
+/** Two products, each `contacts-product.ts` served by URL on a port of its own. */
+let products: { url: string; server: Server }[] = [];
 
-beforeAll(async () => {
-  host = await startHost();
-  browser = await testBrowser();
-  const code = await buildFixture("contacts-product.ts");
+async function serveProduct(
+  code: string,
+): Promise<{ url: string; server: Server }> {
   const port = await freePort();
   const server = createServer((request, response) => {
     if (request.url === "/index.js") {
@@ -51,17 +49,24 @@ beforeAll(async () => {
     }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(
-      '<!doctype html><meta charset="utf-8"><title>second product</title><script type="module" src="/index.js"></script>',
+      '<!doctype html><meta charset="utf-8"><title>contacts product</title><script type="module" src="/index.js"></script>',
     );
   });
   await new Promise<void>((resolve) =>
     server.listen(port, "127.0.0.1", () => resolve()),
   );
-  second = { url: `http://localhost:${port}/`, server };
+  return { url: `http://localhost:${port}/`, server };
+}
+
+beforeAll(async () => {
+  host = await startHost();
+  browser = await testBrowser();
+  const code = await buildFixture("contacts-product.ts");
+  products = [await serveProduct(code), await serveProduct(code)];
 }, STEP_MS);
 
 afterAll(async () => {
-  second?.server.close();
+  for (const product of products) product.server.close();
   await host?.close();
 });
 
@@ -79,7 +84,10 @@ async function session(): Promise<{
   const outside: string[] = [];
   await context.route(/.*/, (route) => {
     const url = route.request().url();
-    if (url.startsWith(host.origin) || url.startsWith(second.url))
+    if (
+      url.startsWith(host.origin) ||
+      products.some((product) => url.startsWith(product.url))
+    )
       return route.fallback();
     outside.push(url);
     return route.abort();
@@ -105,19 +113,7 @@ const ready = (page: Page) =>
     .filter({ hasText: "Core ready" })
     .waitFor({ state: "attached" });
 
-async function setMenu(
-  page: Page,
-  open: boolean,
-  tab: DevTab = "account",
-): Promise<void> {
-  if (open) await openTools(page, tab);
-  else await closeTools(page);
-}
-
-/**
- * More → Invitation demo → the user, then More → Open Example Chat. The
- * tab reloads as that user, and Example Chat opens only when asked.
- */
+/** More → Invitation demo → the user. The tab reloads as that user. */
 async function actAs(page: Page, user: string): Promise<void> {
   await useInvitationDemo(page, user);
   await ready(page);
@@ -125,27 +121,57 @@ async function actAs(page: Page, user: string): Promise<void> {
     .locator("#session")
     .filter({ hasNotText: "Signed out" })
     .waitFor({ state: "attached" });
-  await setMenu(page, true, "more");
-  await page.click('[data-action="open-example-chat"]');
-  await page
-    .frameLocator(".test-product iframe")
-    .locator('[data-action="pick-contact"]')
-    .waitFor();
-  await setMenu(page, false);
+  await closeTools(page);
 }
 
 const picker = (page: Page) =>
   page.locator("dialog.prompt", { hasText: "Choose a contact" });
 
-/** Press Pick a contact in Example Chat and answer the host's picker with `choice`. */
-async function pickInExampleChat(
+/** Open the product at `url` by its address, and answer its frame once its own script ran. */
+async function productFrame(page: Page, url: string): Promise<Frame> {
+  await showAddress(page);
+  await page.fill("#address", url);
+  await page.press("#address", "Enter");
+  const deadline = Date.now() + STEP_MS;
+  while (Date.now() < deadline) {
+    for (const frame of page.frames()) {
+      if (!frame.url().startsWith(url)) continue;
+      if (await frame.evaluate(() => "__contacts" in window).catch(() => false))
+        return frame;
+    }
+    await page.waitForTimeout(200);
+  }
+  throw new Error(`the product at ${url} did not start`);
+}
+
+/** What the product's `contacts.pick` answered, as the core returned it. */
+type PickResult = { outcome?: unknown; error?: unknown };
+
+const pickIn = (frame: Frame): Promise<PickResult> =>
+  frame.evaluate(() =>
+    (
+      window as unknown as {
+        __contacts: { pick(): Promise<PickResult> };
+      }
+    ).__contacts.pick(),
+  );
+
+/** The outcome's tag and, when it picked someone, the handle. */
+function outcomeOf(result: PickResult): { tag: string; handle?: string } {
+  const outcome = result.outcome as
+    | { tag: string; value?: { handle: { bytes: string } } }
+    | undefined;
+  if (outcome === undefined) throw new Error(JSON.stringify(result.error));
+  return { tag: outcome.tag, handle: outcome.value?.handle.bytes };
+}
+
+/** The product asks `contacts.pick`; answer the host's picker with `choice`, or Escape. */
+async function pickWith(
   page: Page,
+  frame: Frame,
   choice: string,
-): Promise<{ outcome: string; handles: string[] }> {
-  const product = page.frameLocator(".test-product iframe");
-  const status = product.locator('[data-card="contacts"] .note');
-  const before = await product.locator('[data-list="picked"] .row').count();
-  await product.locator('[data-action="pick-contact"]').click();
+): Promise<{ tag: string; handle?: string }> {
+  const pending = pickIn(frame);
   await picker(page).waitFor();
   if (choice === "Escape") await page.keyboard.press("Escape");
   else
@@ -153,44 +179,8 @@ async function pickInExampleChat(
       .getByRole("button", { name: new RegExp(`^${choice}\\b`) })
       .click();
   await picker(page).waitFor({ state: "detached" });
-  await product
-    .locator('[data-action="pick-contact"]:not([disabled])')
-    .waitFor();
-  const handles = await product
-    .locator('[data-list="picked"] .row')
-    .evaluateAll((rows) => rows.map((row) => (row as HTMLElement).dataset.id!));
-  const outcome =
-    handles.length > before
-      ? "Picked"
-      : ((await status.getAttribute("data-outcome")) ?? "none");
-  return { outcome, handles };
+  return outcomeOf(await pending);
 }
-
-/** The second product's frame once its own script ran. */
-async function secondProduct(page: Page): Promise<Frame> {
-  await showAddress(page);
-  await page.fill("#address", second.url);
-  await page.press("#address", "Enter");
-  const deadline = Date.now() + STEP_MS;
-  while (Date.now() < deadline) {
-    for (const frame of page.frames()) {
-      if (!frame.url().startsWith(second.url)) continue;
-      if (await frame.evaluate(() => "__contacts" in window).catch(() => false))
-        return frame;
-    }
-    await page.waitForTimeout(200);
-  }
-  throw new Error("the second product did not start");
-}
-
-const pickIn = (frame: Frame) =>
-  frame.evaluate(() =>
-    (
-      window as unknown as {
-        __contacts: { pick(): Promise<{ outcome?: unknown; error?: unknown }> };
-      }
-    ).__contacts.pick(),
-  );
 
 describe("contacts.pick for test users", () => {
   test(
@@ -203,12 +193,14 @@ describe("contacts.pick for test users", () => {
         expect(await alice.locator("#session").innerText()).toContain(
           "Signed in as Alice",
         );
+        const product = await productFrame(alice, products[0]!.url);
 
         // The host draws its own picker for the product, with two contacts to choose from.
-        const product = alice.frameLocator(".test-product iframe");
-        await product.locator('[data-action="pick-contact"]').click();
+        const first = pickIn(product);
         await picker(alice).waitFor();
-        expect(await picker(alice).innerText()).toContain("example-chat.paseo");
+        expect(await picker(alice).innerText()).toContain(
+          new URL(products[0]!.url).host,
+        );
         // One row per contact, by name only; Cancel sits below them.
         expect(
           await picker(alice).locator(".prompt-list button").allInnerTexts(),
@@ -222,30 +214,45 @@ describe("contacts.pick for test users", () => {
           });
         await alice.keyboard.press("Escape");
         await picker(alice).waitFor({ state: "detached" });
+        expect(outcomeOf(await first).tag).toBe("Dismissed");
 
         // Each person is one handle, the same every time; another person is another.
-        const bob = await pickInExampleChat(alice, "Bob");
-        expect(bob.outcome).toBe("Picked");
-        const bobHandle = bob.handles.at(-1)!;
-        expect(bobHandle).toMatch(HANDLE);
-        const carol = await pickInExampleChat(alice, "Carol");
-        const carolHandle = carol.handles.at(-1)!;
-        expect(carolHandle).toMatch(HANDLE);
-        expect(carolHandle).not.toBe(bobHandle);
-        expect((await pickInExampleChat(alice, "Bob")).handles.at(-1)).toBe(
-          bobHandle,
-        );
+        const bob = await pickWith(alice, product, "Bob");
+        expect(bob.tag).toBe("Picked");
+        expect(bob.handle).toMatch(HANDLE);
+        const carol = await pickWith(alice, product, "Carol");
+        expect(carol.handle).toMatch(HANDLE);
+        expect(carol.handle).not.toBe(bob.handle);
+        expect((await pickWith(alice, product, "Bob")).handle).toBe(bob.handle);
 
         // Cancel and Escape name nobody.
-        expect((await pickInExampleChat(alice, "Cancel")).outcome).toBe(
+        expect((await pickWith(alice, product, "Cancel")).tag).toBe(
           "Dismissed",
         );
-        expect((await pickInExampleChat(alice, "Escape")).outcome).toBe(
+        expect((await pickWith(alice, product, "Escape")).tag).toBe(
           "Dismissed",
         );
 
-        // The product saw handles only: no name and no account of a contact.
-        const shown = await product.locator("main").innerText();
+        // Another product gets the same handle for the same person.
+        const other = await productFrame(alice, products[1]!.url);
+        const fromOther = pickIn(other);
+        await picker(alice).waitFor();
+        expect(await picker(alice).innerText()).toContain(
+          new URL(products[1]!.url).host,
+        );
+        await picker(alice)
+          .getByRole("button", { name: /^Bob\b/ })
+          .click();
+        const otherResult = await fromOther;
+        expect(JSON.stringify(otherResult.outcome)).toBe(
+          JSON.stringify({
+            tag: "Picked",
+            value: { handle: { bytes: bob.handle } },
+          }),
+        );
+
+        // The products got handles only: no name and no account of a contact.
+        const shown = JSON.stringify([bob, carol, otherResult]);
         for (const secret of [
           "Bob",
           "Carol",
@@ -254,37 +261,24 @@ describe("contacts.pick for test users", () => {
         ])
           expect(shown).not.toContain(secret);
 
-        // Another product gets the same handle for the same person.
-        const other = await secondProduct(alice);
-        const fromOther = pickIn(other);
-        await picker(alice).waitFor();
-        expect(await picker(alice).innerText()).toContain(
-          new URL(second.url).host,
-        );
-        await picker(alice)
-          .getByRole("button", { name: /^Bob\b/ })
-          .click();
-        expect(JSON.stringify((await fromOther).outcome)).toBe(
-          JSON.stringify({
-            tag: "Picked",
-            value: { handle: { bytes: bobHandle } },
-          }),
-        );
-
         // Another user's handle for the same contact differs: the key is per user.
         const bobTab = await open();
         await actAs(bobTab, "bob");
         const carolTab = await open();
         await actAs(carolTab, "carol");
-        const fromBob = (await pickInExampleChat(bobTab, "Alice")).handles.at(
-          -1,
+        const fromBob = await pickWith(
+          bobTab,
+          await productFrame(bobTab, products[0]!.url),
+          "Alice",
         );
-        const fromCarol = (
-          await pickInExampleChat(carolTab, "Alice")
-        ).handles.at(-1);
-        expect(fromBob).toMatch(HANDLE);
-        expect(fromCarol).toMatch(HANDLE);
-        expect(fromBob).not.toBe(fromCarol);
+        const fromCarol = await pickWith(
+          carolTab,
+          await productFrame(carolTab, products[0]!.url),
+          "Alice",
+        );
+        expect(fromBob.handle).toMatch(HANDLE);
+        expect(fromCarol.handle).toMatch(HANDLE);
+        expect(fromBob.handle).not.toBe(fromCarol.handle);
 
         // No test user's data reached the saved wallets.
         expect(
@@ -313,24 +307,16 @@ describe("contacts.pick for test users", () => {
       try {
         const bob = await open();
         await actAs(bob, "bob");
-        const product = bob.frameLocator(".test-product iframe");
-        const handles = () =>
-          product
-            .locator('[data-list="picked"] .row')
-            .evaluateAll((rows) =>
-              rows.map((row) => (row as HTMLElement).dataset.id!),
-            );
+        const product = await productFrame(bob, products[0]!.url);
+        const results: { tag: string; handle?: string }[] = [];
+        let pending: Promise<PickResult> = Promise.resolve({});
         const openPicker = async () => {
-          await product
-            .locator('[data-action="pick-contact"]:not([disabled])')
-            .click();
+          pending = pickIn(product);
           await picker(bob).waitFor();
         };
         const closed = async () => {
           await picker(bob).waitFor({ state: "detached" });
-          await product
-            .locator('[data-action="pick-contact"]:not([disabled])')
-            .waitFor();
+          results.push(outcomeOf(await pending));
         };
         const search = picker(bob).getByRole("searchbox");
         const found = picker(bob).locator(".prompt-lookup");
@@ -370,8 +356,8 @@ describe("contacts.pick for test users", () => {
           });
         await found.getByRole("button", { name: /^carol\b/ }).click();
         await closed();
-        const [carol] = await handles();
-        expect(carol).toMatch(HANDLE);
+        const [carol] = results;
+        expect(carol!.handle).toMatch(HANDLE);
 
         // The same person found again is the same handle; a contact is another.
         await openPicker();
@@ -383,10 +369,10 @@ describe("contacts.pick for test users", () => {
           .getByRole("button", { name: /^Alice\b/ })
           .click();
         await closed();
-        const [, again, alice] = await handles();
-        expect(again).toBe(carol);
-        expect(alice).toMatch(HANDLE);
-        expect(alice).not.toBe(carol);
+        const [, again, alice] = results;
+        expect(again!.handle).toBe(carol!.handle);
+        expect(alice!.handle).toMatch(HANDLE);
+        expect(alice!.handle).not.toBe(carol!.handle);
 
         // Carol did not become a contact: the next picker lists Alice only.
         await openPicker();
@@ -396,8 +382,8 @@ describe("contacts.pick for test users", () => {
         await bob.keyboard.press("Escape");
         await closed();
 
-        // The product saw handles only.
-        const shown = await product.locator("main").innerText();
+        // The product got handles only.
+        const shown = JSON.stringify(results);
         for (const secret of [
           "Alice",
           "carol",
@@ -423,7 +409,7 @@ describe("contacts.pick for test users", () => {
       const { context, outside, open } = await session();
       try {
         const page = await open();
-        const frame = await secondProduct(page);
+        const frame = await productFrame(page, products[1]!.url);
         const result = await pickIn(frame);
         expect(result.outcome).toBeUndefined();
         expect(JSON.stringify(result.error)).toContain("NotConnected");

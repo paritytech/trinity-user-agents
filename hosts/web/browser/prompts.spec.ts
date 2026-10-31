@@ -91,7 +91,7 @@ async function start(
     .locator("#session")
     .filter({ hasText: "Signed in as Alice" })
     .waitFor({ state: "attached" });
-  expect(await page.locator(".test-product iframe").count()).toBe(0);
+  expect(await page.locator("#product-slot iframe").count()).toBe(0);
   if (productId !== "") {
     await setMenu(page, true, "product");
     await page.click("#product-id-summary");
