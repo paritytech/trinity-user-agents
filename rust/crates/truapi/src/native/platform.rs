@@ -4,12 +4,15 @@ use std::sync::{
 	atomic::{AtomicBool, Ordering},
 };
 
-use crate::platform::{
-	AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus,
-	ExtrinsicVersionHost, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
-	PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId, ProductOperations,
-	ProductStorage, ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
-	async_trait,
+use crate::{
+	markers,
+	platform::{
+		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus,
+		ExtrinsicVersionHost, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
+		PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId,
+		ProductOperations, ProductStorage, ProviderError, ThemeHost, UserConfirmation,
+		UserConfirmationReview, async_trait,
+	},
 };
 use futures::{
 	FutureExt,
@@ -153,7 +156,7 @@ impl InstallationIdProvider for CallbackPlatform {
 impl Navigation for CallbackPlatform {
 	async fn navigate_to(&self, url: String) -> Result<(), v01::HostNavigateToError> {
 		self.callbacks
-			.on_core_log("truapi.native.callback.navigate_to".to_string(), url.clone());
+			.on_core_log(markers::NATIVE_NAVIGATE_TO.target.to_string(), url.clone());
 		self.callbacks.navigate_to(url).await
 	}
 }
@@ -165,7 +168,7 @@ impl Notifications for CallbackPlatform {
 		notification: v01::HostPushNotificationRequest,
 	) -> Result<v01::HostPushNotificationResponse, v01::GenericError> {
 		self.callbacks.on_core_log(
-			"truapi.native.callback.push_notification".to_string(),
+			markers::NATIVE_PUSH_NOTIFICATION.target.to_string(),
 			notification.text.clone(),
 		);
 
@@ -175,7 +178,7 @@ impl Notifications for CallbackPlatform {
 
 	async fn cancel_notification(&self, id: u32) -> Result<(), v01::GenericError> {
 		self.callbacks
-			.on_core_log("truapi.native.callback.cancel_notification".to_string(), id.to_string());
+			.on_core_log(markers::NATIVE_CANCEL_NOTIFICATION.target.to_string(), id.to_string());
 		self.callbacks.cancel_notification(id).map_err(v01::GenericError::from)
 	}
 }
@@ -187,7 +190,7 @@ impl crate::platform::PermissionStatusHost for CallbackPlatform {
 		request: v01::HostDevicePermissionRequest,
 	) -> Result<DevicePermissionStatus, v01::GenericError> {
 		self.callbacks.on_core_log(
-			"truapi.native.callback.device_permission_status".to_string(),
+			markers::NATIVE_DEVICE_PERMISSION_STATUS.target.to_string(),
 			format!("{request}"),
 		);
 
@@ -205,7 +208,7 @@ impl crate::platform::ExpandedCardHost for CallbackPlatform {
 		shown: bool,
 	) -> Result<crate::platform::ExpandedCardFaceOutcome, v01::GenericError> {
 		self.callbacks.on_core_log(
-			"truapi.native.callback.set_expanded_card_face_shown".to_string(),
+			markers::NATIVE_SET_EXPANDED_CARD_FACE_SHOWN.target.to_string(),
 			format!("{shown}"),
 		);
 
@@ -224,7 +227,7 @@ impl Permissions for CallbackPlatform {
 		request: v01::HostDevicePermissionRequest,
 	) -> Result<PermissionDecision, v01::GenericError> {
 		self.callbacks.on_core_log(
-			"truapi.native.callback.device_permission".to_string(),
+			markers::NATIVE_DEVICE_PERMISSION.target.to_string(),
 			format!("{request}"),
 		);
 
@@ -240,7 +243,7 @@ impl Permissions for CallbackPlatform {
 		request: v01::RemotePermissionRequest,
 	) -> Result<PermissionDecision, v01::GenericError> {
 		self.callbacks.on_core_log(
-			"truapi.native.callback.remote_permission".to_string(),
+			markers::NATIVE_REMOTE_PERMISSION.target.to_string(),
 			format!("{request}"),
 		);
 
@@ -258,7 +261,7 @@ impl Features for CallbackPlatform {
 		request: v01::HostFeatureSupportedRequest,
 	) -> Result<v01::HostFeatureSupportedResponse, v01::GenericError> {
 		self.callbacks.on_core_log(
-			"truapi.native.callback.feature_supported".to_string(),
+			markers::NATIVE_FEATURE_SUPPORTED.target.to_string(),
 			format!("{request:?}"),
 		);
 
@@ -268,7 +271,7 @@ impl Features for CallbackPlatform {
 
 	async fn supported_chains(&self) -> Result<crate::platform::HostChainSet, v01::GenericError> {
 		self.callbacks
-			.on_core_log("truapi.native.callback.supported_chains".to_string(), String::new());
+			.on_core_log(markers::NATIVE_SUPPORTED_CHAINS.target.to_string(), String::new());
 
 		self.callbacks.supported_chains().map_err(v01::GenericError::from)
 	}
@@ -280,7 +283,7 @@ impl ExtrinsicVersionHost for CallbackPlatform {
 		&self,
 	) -> Result<crate::platform::ExtensionVersionMap, v01::GenericError> {
 		self.callbacks.on_core_log(
-			"truapi.native.callback.transaction_extension_versions".to_string(),
+			markers::NATIVE_TRANSACTION_EXTENSION_VERSIONS.target.to_string(),
 			String::new(),
 		);
 		self.callbacks
@@ -403,10 +406,8 @@ impl JsonRpcConnection for NativeJsonRpcConnection {
 			return;
 		}
 		if let Err(err) = self.callbacks.chain_send(self.id, request) {
-			self.callbacks.on_core_log(
-				"truapi.native.callback.chain_send_failed".to_string(),
-				err.to_string(),
-			);
+			self.callbacks
+				.on_core_log(markers::NATIVE_CHAIN_SEND_FAILED.target.to_string(), err.to_string());
 		}
 	}
 
@@ -416,7 +417,7 @@ impl JsonRpcConnection for NativeJsonRpcConnection {
 			Some(rx) => rx.boxed(),
 			None => {
 				self.callbacks.on_core_log(
-					"truapi.native.chain.responses_reused".to_string(),
+					markers::NATIVE_CHAIN_RESPONSES_REUSED.target.to_string(),
 					"responses() called more than once".to_string(),
 				);
 				stream::empty().boxed()
@@ -430,12 +431,12 @@ impl JsonRpcConnection for NativeJsonRpcConnection {
 		}
 		self.events.unregister_chain(self.id);
 		self.callbacks.on_core_log(
-			"truapi.native.callback.chain_closing".to_string(),
+			markers::NATIVE_CHAIN_CLOSING.target.to_string(),
 			format!("connection {}", self.id),
 		);
 		if let Err(err) = self.callbacks.chain_close(self.id) {
 			self.callbacks.on_core_log(
-				"truapi.native.callback.chain_close_failed".to_string(),
+				markers::NATIVE_CHAIN_CLOSE_FAILED.target.to_string(),
 				err.to_string(),
 			);
 		}
@@ -486,7 +487,7 @@ impl ChainProvider for CallbackPlatform {
 		// using that chain. Logged on the host's own channel because the
 		// core's tracing level stays at ERROR unless a host raises it.
 		self.callbacks.on_core_log(
-			"truapi.native.callback.chain_connected".to_string(),
+			markers::NATIVE_CHAIN_CONNECTED.target.to_string(),
 			format!("connection {connection_id} for chain {}", hex_lower(&genesis_hash)),
 		);
 		Ok(Box::new(connection))
@@ -496,7 +497,7 @@ impl ChainProvider for CallbackPlatform {
 impl AuthPresenter for CallbackPlatform {
 	fn auth_state_changed(&self, state: crate::platform::AuthState) {
 		self.callbacks
-			.on_core_log("truapi.native.callback.auth_state_changed".to_string(), String::new());
+			.on_core_log(markers::NATIVE_AUTH_STATE_CHANGED.target.to_string(), String::new());
 		self.callbacks.auth_state_changed(state);
 	}
 }
@@ -508,7 +509,7 @@ impl UserConfirmation for CallbackPlatform {
 		review: UserConfirmationReview,
 	) -> Result<PermissionDecision, v01::GenericError> {
 		self.callbacks
-			.on_core_log("truapi.native.callback.confirm_permission".to_string(), String::new());
+			.on_core_log(markers::NATIVE_CONFIRM_PERMISSION.target.to_string(), String::new());
 		self.callbacks.confirm_permission(review).await.map_err(v01::GenericError::from)
 	}
 
@@ -517,7 +518,7 @@ impl UserConfirmation for CallbackPlatform {
 		review: UserConfirmationReview,
 	) -> Result<bool, v01::GenericError> {
 		self.callbacks
-			.on_core_log("truapi.native.callback.confirm_user_action".to_string(), String::new());
+			.on_core_log(markers::NATIVE_CONFIRM_USER_ACTION.target.to_string(), String::new());
 		self.callbacks
 			.confirm_user_action(review)
 			.await
@@ -595,7 +596,7 @@ async fn lookup_until_found(
 	digest: [u8; 32],
 ) -> Result<Vec<u8>, HostRejection> {
 	let key_hex = hex_lower(&digest);
-	callbacks.on_core_log("truapi.native.preimage.retrying".to_string(), key_hex.clone());
+	callbacks.on_core_log(markers::NATIVE_PREIMAGE_RETRYING.target.to_string(), key_hex.clone());
 	let mut fast_pauses = iter::repeat_n(PREIMAGE_RETRY_PAUSE_FAST, PREIMAGE_FAST_RETRIES);
 	let mut next_pause = move || fast_pauses.next().unwrap_or(PREIMAGE_RETRY_PAUSE_SLOW);
 	// The first lookup already missed, so even the first retry waits.
@@ -619,7 +620,7 @@ async fn lookup_until_found(
 	.await;
 	if found.is_ok() {
 		callbacks.on_core_log(
-			"truapi.native.preimage.found".to_string(),
+			markers::NATIVE_PREIMAGE_FOUND.target.to_string(),
 			format!("{key_hex} on retry {retries}"),
 		);
 	}
