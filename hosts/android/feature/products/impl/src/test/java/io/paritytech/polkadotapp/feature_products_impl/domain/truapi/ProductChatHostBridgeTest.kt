@@ -1,14 +1,31 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.mockk.coEvery
+import io.mockk.coVerify
+import io.mockk.mockk
+import io.parity.truapi.HOST_DEFAULT_CHAT_ROOM_CONFIG
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomIconChange
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatPreviewReactionModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomActivityModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomBadgeModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.productRoom.UnknownChatRoomException
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
+import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotMessage
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomResult
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatRoom
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsEngine.HostCallException
 import kotlinx.coroutines.flow.flowOf
@@ -18,15 +35,25 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.ChatCustomMessage
+import uniffi.truapi.ChatMessageBody
+import uniffi.truapi.ChatMessageOrigin
+import uniffi.truapi.ChatMessageStatus
 import uniffi.truapi.ChatMessageContent
+import uniffi.truapi.ChatPreviewReaction
 import uniffi.truapi.ChatReaction
+import uniffi.truapi.ChatRoomActivity
+import uniffi.truapi.ChatRoomBadge
 import uniffi.truapi.ChatRoomFooter
+import uniffi.truapi.ChatRoomMetadata
 import uniffi.truapi.ChatRoomParticipation
+import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
+import uniffi.truapi.ChatMessage as CoreChatMessage
 
 private const val MESSAGING_NOT_SUPPORTED_CODE = "messaging_not_supported"
 private const val ROOM = "jollity"
+private const val BADGE_ICON = "https://example.invalid/badge.png"
 
 class ProductChatHostBridgeTest {
     private val productId = ProductId.fromStoredValue("dim2.dot")
@@ -164,6 +191,180 @@ class ProductChatHostBridgeTest {
             listOf(ProductChatIdParameter(ROOM) to false, ProductChatIdParameter(ROOM) to true),
             api.footers,
         )
+    }
+
+    @Test
+    fun `a room without declarations answers the host default config`() = runTest {
+        val messaging = mockk<ProductChatMessaging>()
+        coEvery { messaging.roomDeclarations(ProductChatIdParameter(ROOM)) } returns Result.success(null)
+
+        assertEquals(HOST_DEFAULT_CHAT_ROOM_CONFIG, ProductChatHostBridge(productId, messaging).roomConfig(ROOM))
+    }
+
+    @Test
+    fun `a declared config is answered as declared`() = runTest {
+        val messaging = mockk<ProductChatMessaging>()
+        val declared = ChatRoomConfigModel.HOST_DEFAULT.copy(reportSeen = true)
+        coEvery { messaging.roomDeclarations(ProductChatIdParameter(ROOM)) } returns
+            Result.success(ChatRoomDeclarations.EMPTY.copy(config = declared))
+
+        val config = ProductChatHostBridge(productId, messaging).roomConfig(ROOM)
+
+        assertTrue(config.reportSeen)
+        assertFalse(config.productSource)
+    }
+
+    @Test
+    fun `each declaration reaches the chat binding as a model`() = runTest {
+        val messaging = mockk<ProductChatMessaging>()
+        val room = ProductChatIdParameter(ROOM)
+        coEvery { messaging.setRoomConfig(any(), any()) } returns Result.success(Unit)
+        coEvery { messaging.setRoomMetadata(any(), any(), any(), any()) } returns Result.success(Unit)
+        coEvery { messaging.setRoomPreview(any(), any()) } returns Result.success(Unit)
+        coEvery { messaging.deleteRoom(any()) } returns Result.success(Unit)
+        val bridge = ProductChatHostBridge(productId, messaging)
+
+        bridge.setRoomConfig(ROOM, HOST_DEFAULT_CHAT_ROOM_CONFIG.copy(reportSeen = true))
+        bridge.setRoomMetadata(ROOM, ChatRoomMetadata("Lobby", "Play here", icon = null, placeholder = null))
+        bridge.setRoomPreview(
+            ROOM,
+            ChatRoomPreview(
+                5uL,
+                ChatRoomBadge.UnreadCount(2u),
+                null,
+                ChatPreviewReaction("👍", byUser = false, message = null, removed = true),
+                3u,
+                pinned = false,
+                activity = null,
+            ),
+        )
+        bridge.deleteRoom(ROOM)
+
+        coVerify { messaging.setRoomConfig(room, ChatRoomConfigModel.HOST_DEFAULT.copy(reportSeen = true)) }
+        coVerify { messaging.setRoomMetadata(room, "Lobby", null, ChatRoomMetadataModel("Play here", placeholder = null)) }
+        coVerify {
+            messaging.setRoomPreview(
+                room,
+                ChatRoomPreviewModel(
+                    5,
+                    ChatRoomBadgeModel.Count(2),
+                    null,
+                    ChatPreviewReactionModel("👍", byUser = false, message = null, removed = true),
+                    3,
+                    pinned = false,
+                    activity = null,
+                ),
+            )
+        }
+        coVerify { messaging.deleteRoom(room) }
+    }
+
+    // Only the product pins a room and gives its activity, so the host keeps each value as the product gives it.
+    @Test
+    fun `the pinning, the image badge, the activity and the empty-room text reach the chat binding`() = runTest {
+        val messaging = mockk<ProductChatMessaging>()
+        val room = ProductChatIdParameter(ROOM)
+        coEvery { messaging.setRoomMetadata(any(), any(), any(), any()) } returns Result.success(Unit)
+        coEvery { messaging.setRoomPreview(any(), any()) } returns Result.success(Unit)
+        val bridge = ProductChatHostBridge(productId, messaging)
+
+        bridge.setRoomMetadata(ROOM, ChatRoomMetadata("Lobby", null, icon = null, placeholder = "No games yet"))
+        bridge.setRoomPreview(
+            ROOM,
+            ChatRoomPreview(null, ChatRoomBadge.Image(BADGE_ICON), null, null, 0u, pinned = true, activity = ChatRoomActivity("Ben is typing", ongoing = true)),
+        )
+
+        coVerify { messaging.setRoomMetadata(room, "Lobby", null, ChatRoomMetadataModel(null, placeholder = "No games yet")) }
+        coVerify {
+            messaging.setRoomPreview(
+                room,
+                ChatRoomPreviewModel(
+                    null,
+                    ChatRoomBadgeModel.Image(BADGE_ICON),
+                    null,
+                    null,
+                    0,
+                    pinned = true,
+                    activity = ChatRoomActivityModel("Ben is typing", ongoing = true),
+                ),
+            )
+        }
+    }
+
+    // The room keeps a new icon as the core screens it, the same as the icon of createRoom.
+    @Test
+    fun `a metadata icon replaces the room icon in the screened form`() = runTest {
+        val messaging = mockk<ProductChatMessaging>()
+        coEvery { messaging.setRoomMetadata(any(), any(), any(), any()) } returns Result.success(Unit)
+
+        ProductChatHostBridge(productId, messaging).setRoomMetadata(ROOM, ChatRoomMetadata("Lobby", null, icon = "https://example.invalid", placeholder = null))
+
+        coVerify {
+            messaging.setRoomMetadata(ProductChatIdParameter(ROOM), "Lobby", RoomIconChange("https://example.invalid/"), ChatRoomMetadataModel(null, placeholder = null))
+        }
+    }
+
+    // An empty icon removes the room icon. It must not reach the binding as "keep the icon".
+    @Test
+    fun `an empty metadata icon removes the room icon`() = runTest {
+        val messaging = mockk<ProductChatMessaging>()
+        coEvery { messaging.setRoomMetadata(any(), any(), any(), any()) } returns Result.success(Unit)
+
+        ProductChatHostBridge(productId, messaging).setRoomMetadata(ROOM, ChatRoomMetadata("Lobby", null, icon = "", placeholder = null))
+
+        coVerify { messaging.setRoomMetadata(ProductChatIdParameter(ROOM), "Lobby", RoomIconChange(null), ChatRoomMetadataModel(null, placeholder = null)) }
+    }
+
+    // The chat list draws a custom message with the renderer of the product that sent it, as it draws a posted one.
+    @Test
+    fun `a custom last message is drawn by the renderer of the product`() = runTest {
+        val messaging = mockk<ProductChatMessaging>()
+        coEvery { messaging.setRoomPreview(any(), any()) } returns Result.success(Unit)
+        val custom = CoreChatMessage(
+            messageId = "m1",
+            origin = ChatMessageOrigin("contact"),
+            timestamp = 5uL,
+            body = ChatMessageBody.Custom(ChatCustomMessage("poll", byteArrayOf(1, 2)), alt = "A poll"),
+            status = ChatMessageStatus.DELIVERED,
+            reply = null,
+            editedAt = null,
+            reactions = emptyList(),
+            request = false,
+        )
+
+        ProductChatHostBridge(productId, messaging).setRoomPreview(ROOM, ChatRoomPreview(null, null, custom, null, 0u, pinned = false, activity = null))
+
+        val drawn = ChatMessage.Content.Custom(
+            rendererId = productId.toChatExtensionId(),
+            content = Result.success(ProductsMessageContent("poll", byteArrayOf(1, 2).toDataByteArray(), "A poll")),
+        )
+        coVerify { messaging.setRoomPreview(ProductChatIdParameter(ROOM), match { it.lastMessage?.content == drawn }) }
+    }
+
+    // The room screen reads the host store only, so a room whose product keeps the messages would show nothing.
+    @Test
+    fun `a room whose product keeps the messages is refused`() = runTest {
+        val messaging = mockk<ProductChatMessaging>()
+
+        val thrown = runCatching {
+            ProductChatHostBridge(productId, messaging).setRoomConfig(ROOM, HOST_DEFAULT_CHAT_ROOM_CONFIG.copy(productSource = true))
+        }.exceptionOrNull()
+
+        assertTrue(thrown is HostRejection)
+        coVerify(exactly = 0) { messaging.setRoomConfig(any(), any()) }
+    }
+
+    @Test
+    fun `a declaration for an unknown room is rejected`() = runTest {
+        val messaging = mockk<ProductChatMessaging>()
+        coEvery { messaging.setRoomPreview(any(), any()) } returns Result.failure(UnknownChatRoomException())
+
+        val thrown = runCatching {
+            ProductChatHostBridge(productId, messaging).setRoomPreview(ROOM, ChatRoomPreview(null, null, null, null, 0u, pinned = false, activity = null))
+        }.exceptionOrNull()
+
+        assertTrue(thrown is HostRejection)
+        assertTrue(thrown!!.message!!.contains("no such chat room"))
     }
 
     private fun bridge(api: FakeChatMessaging) = ProductChatHostBridge(productId, api)

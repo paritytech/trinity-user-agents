@@ -20,6 +20,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomRe
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomResult
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.NewMessagesRoomFilter
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomIconChange
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatOverlay
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
@@ -42,6 +43,10 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageReaction
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatOriginCustomConfiguration
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomConfigModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomDeclarations
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomMetadataModel
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRoomPreviewModel
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatVariant
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ContactOrigin
@@ -74,6 +79,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.chatSummaryOrd
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toDomain
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.DmChatMessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
+import io.paritytech.polkadotapp.feature_chats_impl.domain.productRoom.ProductRoomDeclarer
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.catch
@@ -111,6 +117,7 @@ class ChatEngine @Inject constructor(
     private val originConfigurations: Map<String, @JvmSuppressWildcards ChatOriginCustomConfiguration>,
     private val chatRoomRepository: ChatRoomRepository,
     private val deleteRoomUseCase: DeleteRoomUseCase,
+    private val productRoomDeclarer: ProductRoomDeclarer,
 ) : ChatMessageSender {
     private val savedMessagesFlow = MutableSharedFlow<ChatMessage>(extraBufferCapacity = 64)
 
@@ -785,6 +792,22 @@ class ChatEngine @Inject constructor(
         override fun subscribeOwnRooms(): Flow<List<ChatId>> {
             return chatRoomRepository.subscribeRoomsByExtension(extensionId)
         }
+
+        override suspend fun roomDeclarations(chatId: ChatId): ChatRoomDeclarations? =
+            productRoomDeclarer.declarations(extensionId, chatId)
+
+        override suspend fun setRoomConfig(chatId: ChatId, config: ChatRoomConfigModel): Result<Unit> =
+            productRoomDeclarer.setConfig(extensionId, chatId, config)
+
+        override suspend fun setRoomMetadata(
+            chatId: ChatId,
+            name: String,
+            iconChange: RoomIconChange?,
+            metadata: ChatRoomMetadataModel,
+        ): Result<Unit> = productRoomDeclarer.setMetadata(extensionId, chatId, name, iconChange, metadata)
+
+        override suspend fun setRoomPreview(chatId: ChatId, preview: ChatRoomPreviewModel): Result<Unit> =
+            productRoomDeclarer.setPreview(extensionId, chatId, preview)
     }
 }
 

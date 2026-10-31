@@ -41,6 +41,69 @@ struct ChatExtensionRoomMetadataTests {
         #expect(try await storedRoom()?.message?.messageId == message.messageId)
     }
 
+    /// `set_room_metadata` changes the icon only when the product sends one, and an empty icon removes it.
+    @Test(arguments: [
+        (Chat.RoomIconChange.keep, Optional(pngIcon)),
+        (.replace(otherIcon), Optional(otherIcon)),
+        (.replace(nil), nil)
+    ])
+    func metadataChangesTheIconAsTheProductAsks(change: Chat.RoomIconChange, storedIcon: String?) async throws {
+        let context = makeContext()
+        _ = try await context.createRoom(for: bot, roomId: roomId, name: "Jollity", icon: pngIcon)
+
+        try await context.setRoomMetadata(for: bot, roomId: roomId, name: "Finals", icon: change, placeholder: nil)
+
+        #expect(try await storedRoom()?.roomMetadata == Chat.RoomMetadata(
+            chatRelativeId: roomId,
+            name: "Finals",
+            icon: storedIcon
+        ))
+    }
+
+    /// Each `set_room_metadata` replaces the placeholder of the room, so a nil placeholder removes it.
+    @Test
+    func metadataReplacesThePlaceholder() async throws {
+        let context = makeContext()
+        _ = try await context.createRoom(for: bot, roomId: roomId, name: "Jollity", icon: nil)
+
+        try await context.setRoomMetadata(
+            for: bot,
+            roomId: roomId,
+            name: "Jollity",
+            icon: .keep,
+            placeholder: "No games yet"
+        )
+        #expect(try await storedDeclarations()?.placeholder == "No games yet")
+
+        try await context.setRoomMetadata(for: bot, roomId: roomId, name: "Jollity", icon: .keep, placeholder: nil)
+        #expect(try await storedDeclarations()?.placeholder == nil)
+        #expect(try await storedRoom()?.roomMetadata?.name == "Jollity")
+    }
+
+    /// A save of the chat model never deletes what the product declared for its room.
+    @Test
+    func savingTheRoomChatAgainKeepsItsDeclarations() async throws {
+        let context = makeContext()
+        _ = try await context.createRoom(for: bot, roomId: roomId, name: "Jollity", icon: nil)
+        try await saveDeclarations()
+
+        let withoutMetadata = Chat.LocalModel(
+            peer: .chatExtension(bot.identifier, roomId: roomId),
+            message: nil,
+            unreadDisplayMessageCount: 0,
+            hasIncomingReaction: false,
+            createdAt: Date(),
+            roomMetadata: nil
+        )
+        try await chatRepository.saveOperation({ [withoutMetadata] }, { [] }).asyncExecute()
+        try await savePlacedRoom(name: "Renamed")
+
+        let declarations = try await storedDeclarations()
+        #expect(declarations?.config == config)
+        #expect(declarations?.preview.badge == .unreadCount(2))
+        #expect(try await storedRoom()?.roomMetadata?.name == "Renamed")
+    }
+
     /// The worker's own icon for its room wins over the one its manifest declares.
     @Test
     func aRoomDrawsTheInlineIconItsWorkerRegistered() {
@@ -61,6 +124,7 @@ struct ChatExtensionRoomMetadataTests {
 private let roomId = "jollity"
 private let pngData = Data([0x89, 0x50, 0x4E, 0x47])
 private let pngIcon = "data:image/png;base64," + pngData.base64EncodedString()
+private let otherIcon = "data:image/png;base64," + Data([0x89, 0x50]).base64EncodedString()
 
 private extension ChatExtensionRoomMetadataTests {
     var chatId: Chat.Id {
@@ -94,6 +158,41 @@ private extension ChatExtensionRoomMetadataTests {
             roomMetadata: Chat.RoomMetadata(chatRelativeId: roomId, name: name, icon: nil)
         )
         try await chatRepository.saveOperation({ [chat] }, { [] }).asyncExecute()
+    }
+
+    var config: Chat.RoomConfig {
+        Chat.RoomConfig(productSource: false, reactionDetails: false, reportSeen: true)
+    }
+
+    func saveDeclarations() async throws {
+        let configUpdate = Chat.RoomConfigUpdate(chatId: chatId, config: config)
+        try await storageFacade.createRepository(mapper: AnyCoreDataMapper(
+            ChatRoomDeclarationUpdateMapper<Chat.RoomConfigUpdate>()
+        ))
+        .saveOperation({ [configUpdate] }, { [] })
+        .asyncExecute()
+
+        let preview = Chat.RoomPreviewUpdate(chatId: chatId, preview: Chat.RoomPreview(
+            timestamp: nil,
+            badge: .unreadCount(2),
+            lastMessage: nil,
+            unseenReaction: false,
+            pinned: false,
+            activity: nil
+        ))
+        try await storageFacade.createRepository(mapper: AnyCoreDataMapper(
+            ChatRoomDeclarationUpdateMapper<Chat.RoomPreviewUpdate>()
+        ))
+        .saveOperation({ [preview] }, { [] })
+        .asyncExecute()
+    }
+
+    func storedDeclarations() async throws -> Chat.RoomDeclarations? {
+        try await storageFacade.createRepository(mapper: AnyCoreDataMapper(ChatRoomDeclarationsMapper()))
+            .fetchAllOperation(with: RepositoryFetchOptions())
+            .asyncExecute()
+            .first { $0.chatId == chatId.rawRepresentation }?
+            .declarations
     }
 
     func storedRoom() async throws -> Chat.LocalModel? {
