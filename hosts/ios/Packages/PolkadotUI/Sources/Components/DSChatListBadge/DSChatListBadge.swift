@@ -61,6 +61,45 @@ public struct DSChatListBadge: View, Equatable {
     }
 }
 
+/// An image that a chat list row shows in place of its unread count. Two images with the same key are equal.
+public struct DSChatListBadgeImage: Hashable {
+    public let key: String
+    public let viewModel: any ImageViewModelProtocol
+
+    public init(key: String, viewModel: any ImageViewModelProtocol) {
+        self.key = key
+        self.viewModel = viewModel
+    }
+
+    public static func == (lhs: DSChatListBadgeImage, rhs: DSChatListBadgeImage) -> Bool {
+        lhs.key == rhs.key
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(key)
+    }
+}
+
+/// A small round image in the badge place of a chat list row.
+public struct DSChatListImageBadge: View, Equatable {
+    private let image: DSChatListBadgeImage
+
+    public init(image: DSChatListBadgeImage) {
+        self.image = image
+    }
+
+    public var body: some View {
+        let side = DSChatListBadgeMetrics.badgeMinSize
+
+        AsyncImageView(
+            viewModel: image.viewModel,
+            settings: ImageViewModelSettings(targetSize: CGSize(width: side, height: side))
+        )
+        .frame(width: side, height: side)
+        .clipShape(Circle())
+    }
+}
+
 private enum DSChatListBadgeMetrics {
     static let badgeMinSize: CGFloat = 20
     static let reactionIconSize: CGFloat = 16

@@ -316,6 +316,7 @@ class ChatEngine @Inject constructor(
             order = customChatPreview?.order ?: Order.ByTimestamp,
             roomMetadata = messageSummary.roomMetadata,
             hasUnseenReaction = messageSummary.hasUnseenReaction,
+            activity = null,
             customPreviewRenderer = customPreviewRenderer,
         )
     }

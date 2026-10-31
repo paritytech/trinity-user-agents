@@ -66,6 +66,8 @@ extension Chat {
         let createdAt: Date?
         let roomMetadata: Chat.RoomMetadata?
         var roomFooter: Chat.RoomFooter?
+        /// What the product declared for its room. Nil for a chat that is not a product room.
+        var roomDeclarations: Chat.RoomDeclarations?
 
         var chatId: Chat.Id {
             peer.chatId

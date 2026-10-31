@@ -9,14 +9,33 @@ enum ChatsComparator {
             return chat1.message != nil ? true : false
         }
 
-        let pair1 = (message1.order, message1.timestamp)
-        let pair2 = (message2.order, message2.timestamp)
+        // The preview of a room whose product keeps the messages has no local order, so such a row compares by
+        // time. Any other two rows compare by order first.
+        let byTime = chat1.keepsProductMessages || chat2.keepsProductMessages
+        let pair1 = (byTime ? 0 : message1.order, message1.timestamp)
+        let pair2 = (byTime ? 0 : message2.order, message2.timestamp)
 
         guard pair1 != pair2 else {
             return chat1.identifier.localizedCompare(chat2.identifier) == .orderedAscending
         }
 
         return pair1 > pair2
+    }
+
+    /// The order of the chat list: the rooms that their product pins come first. Each group keeps the order of
+    /// the last message.
+    static func chatListComparator(
+        chat1: Chat.LocalModel,
+        chat2: Chat.LocalModel
+    ) -> Bool {
+        let isPinned1 = chat1.isPinnedByProduct
+        let isPinned2 = chat2.isPinnedByProduct
+
+        guard isPinned1 == isPinned2 else {
+            return isPinned1
+        }
+
+        return lastMessageComparator(chat1: chat1, chat2: chat2)
     }
 
     static func lastMessageAndPinnedComparator(
@@ -31,6 +50,16 @@ enum ChatsComparator {
         }
 
         return lastMessageComparator(chat1: chat1, chat2: chat2)
+    }
+}
+
+private extension Chat.LocalModel {
+    var keepsProductMessages: Bool {
+        roomDeclarations?.effectiveConfig.productSource == true
+    }
+
+    var isPinnedByProduct: Bool {
+        roomDeclarations?.preview.pinned == true
     }
 }
 
