@@ -20,6 +20,7 @@ mod chat;
 pub mod contacts;
 mod dotns_lookup;
 mod funding;
+mod host_grants;
 mod host_session;
 mod identity;
 pub mod login_failure;

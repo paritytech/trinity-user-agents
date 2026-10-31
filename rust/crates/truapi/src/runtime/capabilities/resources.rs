@@ -37,6 +37,7 @@ impl ResourceAllocation for ProductRuntimeHost {
 						reason: "No active session".to_string(),
 					})
 				})?;
+				let grant_revision = self.accounts.grant_revision();
 
 				let review = UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
 					calling_product_id: self.connection.product_id().clone(),
@@ -67,13 +68,16 @@ impl ResourceAllocation for ProductRuntimeHost {
 					cx,
 					RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
 				);
-				remote_authority_call(&cx, self.accounts.allocate_resources(&cx, &session, inner))
-					.await
-					.map_err(|err| {
-						CallError::Domain(latest::ResourceAllocationError::Unknown {
-							reason: err.to_string(),
-						})
+				remote_authority_call(
+					&cx,
+					self.accounts.allocate_resources(&cx, &session, grant_revision, inner),
+				)
+				.await
+				.map_err(|err| {
+					CallError::Domain(latest::ResourceAllocationError::Unknown {
+						reason: err.to_string(),
 					})
+				})
 			})
 			.await
 	}
