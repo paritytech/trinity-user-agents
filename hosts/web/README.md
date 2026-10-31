@@ -503,11 +503,10 @@ known to interoperate with them in every respect.
   no app took part; it cannot catch a misreading shared by both. The sr25519 signatures inside a request are checked
   only by this code's tests. Tested only against this code: the other codecs and the engine's flows (the older route,
   the move to the device route, restarts, duplicates, blocking, device changes), by round trips between two copies of
-  it, and the same flows in the Nova chat worker over the identity bridge. The reaction, leave, attachment and call
-  message layouts, the HOP root entry and the compact SDP are pinned to byte layouts written from the app sources, and
-  the HOP root entry to the iOS app's own test vectors. HOP transfers run against a node in memory and calls against a
-  second call manager in the same page. No captured app traffic, no live HOP node, and no exchange or call with a
-  Polkadot app.
+  it. The reaction, leave, attachment and call message layouts, the HOP root entry and the compact SDP are pinned to
+  byte layouts written from the app sources, and the HOP root entry to the iOS app's own test vectors. HOP transfers run
+  against a node in memory and calls against a second call manager in the same page. No captured app traffic, no live
+  HOP node, and no exchange or call with a Polkadot app.
 
 ### Product chats
 
@@ -604,9 +603,8 @@ TrUAPI codegen gives them. Nothing in this repository's Rust crates, codegen or 
   call send `CallAnswered`; Hang up on an `Active` call sends `CallEnded`. The call is the product's: it rings, places
   and ends it through `setRoomCall` and its own signaling. The media is the host's: `callMedia.start` runs only within
   180 s of a press or an accept in that room, and the host's signals reach the product as `CallSignal` room events,
-  which it carries to the other side. This host has no real call engine for v2 rooms: `start` answers `Unsupported`,
-  except for the local demo below, whose calls get `fixtures/products/synthetic-media.ts`, an engine that opens no
-  device and trades made-up signals.
+  which it carries to the other side. This host has no call engine for v2 rooms: `start` answers `Unsupported`. The unit
+  tests run the bridge's call media against a stand-in engine.
 - **Capabilities** lists `product_source_rooms`, `participants`, `inline_attachments` and `call_buttons`, nothing else.
 - **Where it departs from the reference**, because the provider interface stays as it is: a `Rejected` message stays
   failed instead of being removed; a `Deleted` message outside the newest page goes only when the room is opened again;
@@ -619,101 +617,37 @@ TrUAPI codegen gives them. Nothing in this repository's Rust crates, codegen or 
   limits and most field bounds. Declarations live in memory for the session and are lost on reload, where the RFC keeps
   them across restarts. When a worker stops, its rooms' calls and call media end. The bridge is not TrUAPI, so the
   inspector does not show it.
-- **What runs it today.** No published product speaks the bridge. `fixtures/products/synthetic-chat-product.ts` is a
-  synthetic chat product, with made-up people and messages and no network or peer protocol; it is not the Verbosity chat
-  product.
+- **What runs it today.** No published product speaks the bridge. Contact Chat, the invitation demo's chat worker
+  ([Contact Chat](#invitation-demo-prototype)), runs over it on the dev server.
+  `fixtures/products/synthetic-chat-product.ts` is a synthetic chat product, with made-up people and messages and no
+  network or peer protocol, that the Chat screen's browser tests run on the other side of the bridge in the page; it is
+  not the Verbosity chat product.
 
-#### Local demo
+#### Contact rooms and starting a chat
 
-The dev server can run the synthetic chat product as a product worker, so the bridge can be tried by hand. Run
-`npm run dev`, open `http://localhost:5180` and sign in with a wallet, then Developer tools → **More** → **Chat demo** →
-**Start**. Its rooms (Ada, a group with Ada and Grace, and Lin) join the chat list, and it shows in **Workers** as added
-by this host. **Stop** and **Restart** sit beside it; what it is stays folded under **About the chat demo**.
+Draft additions to the v2 bridge, beside a contact rooms proposal (`setRoomContact` in `paritytech/trinity-user-agents`
+`lc/product-only-chat` at `081dc4e43`, unmerged). `src/chat/draft/conversations.ts` defines `ConversationEngine`
+(conversations, pages of text, send, retry, start, change events) and shows any such engine over the bridge; Contact
+Chat's engine is the one that runs here.
 
-- **How it runs.** `chat-product-demo-plugin.ts`, a dev-server plugin that a build leaves out, builds
-  `fixtures/products/chat-v2-product-worker.ts` into one module, packs it as an app archive, describes it at
-  `__chat-product-demo/worker.json`, and serves that archive's blocks, and only those, at `/ipfs/<cid>`. The host
-  (`tools/demos/local-demo.ts`) adds it as one of its own workers, so the ordinary loader fetches and checks the archive
-  and the core runs it as a `Worker` execution. Its product id is `localhost:<port>`, a development id no published name
-  can take. A restart builds it again, so an edit to the product shows after **Restart**.
-- **Only this machine.** The page offers it only from a dev server reached as `localhost`, `127.0.0.1` or `[::1]`, and
-  the plugin refuses a request from or to another machine.
-- **What to try.** Paging up Ada's 120 messages, sending (pending, then sent, delivered and read, then Ada's answer),
-  `reject me` (refused, stays failed with the reason), a message with `[fail]` in it (fails once, then **Retry**),
-  unread counts on Lin cleared once the messages are on screen, reactions, a file up to 1 MiB sent inline, the group's
-  named senders and its system row, and audio or video calls with Ada: a call you place, and one she rings through the
-  product. Calls use the synthetic engine, which opens no camera or microphone and carries no sound or picture.
-- **Lifetime.** Nothing is saved. **Stop**, signing out, or another wallet or network stops the worker and drops its
-  rooms; a reload or the next session starts with it off. The product keeps its history in memory, so **Restart** or
-  **Stop** loses what was sent. The synthetic call engine serves only the demo's product, and only while it runs.
-- **What it needs.** Nothing outside this host after sign-in. Signing in still starts the wallet's Nova chat and its
-  network as usual; the demo adds no network traffic.
-
-#### Nova chat worker
-
-**Draft, dev server only.** The host's own Nova-compatible chat engine (`src/chat/`) can run inside an ordinary product
-worker instead of the host page, as a chat product would run it. Developer tools → **More** → **Chat engine** → **Nova
-chat worker**. **Host (default)** switches back. The choice is kept per network and wallet.
-
-- **One engine at a time.** The host's engine stops before the worker starts, and the worker and its identity link stop
-  before the host's engine starts again. Both would otherwise acknowledge the same messages and replace each other's
-  statements. A worker that fails to start leaves chat off; it never turns the host's engine back on by itself.
-- **What runs in the worker.** `src/chat/worker/worker.ts`, built by `chat-product-demo-plugin.ts` into an app archive
-  (`__chat-product-demo/nova-worker.json`) and run by the ordinary loader as a `Worker` execution, product id
-  `localhost`. The engine owns the protocol, the history, delivery and acknowledgements. The Statement Store, chain
-  reads and storage go through the product's own TrUAPI client (`src/chat/worker/truapi-ports.ts`):
-  `statement_store.subscribe` and `submit` (the core asks the user once for `StatementSubmit`), `chain.*` for the
-  directory, and `localStorage` for the history, which the core keeps per product, so it survives a worker restart.
-- **What stays in the host.** The wallet's chat keys. The host lends their operations over a page-local identity bridge
-  (`src/chat/draft/identity-bridge.ts`, draft, not TrUAPI): decrypt a request, a session message or a device-route
-  message, check an identity proof, give the pair's public topics for either route, and build, seal and sign a session
-  statement, a device-route statement or a chat request (the request's identity proof is made there). It names the
-  host's one device, public parts only. No operation returns a secret key, an agreed secret or the entropy, and none
-  signs bytes the caller chose. The worker does get plaintext: it is the chat. Only the `localhost` worker gets the
-  bridge, only in worker mode, and only for the session it was granted in; any other frame that asks is refused.
-- **Signing.** `statement_store.submit` encodes the `SignedStatement` again as the store's sorted field list with the
-  proof unchanged (`signed_statement_to_scale` in the core), so the worker's statements carry the same bytes and the
-  same identity signer as the host's engine would send. This was read in the core's code and checked offline in unit
-  tests; it was not checked against a live node or a phone.
-- **History.** The worker keeps its own. **Copy the host's history into the worker** offers one copy at that switch,
-  only taken by a worker with no history yet; the host keeps its record. After that the two diverge: what one engine
-  receives the other does not see.
-- **The seam for other engines.** `src/chat/draft/conversations.ts` defines `ConversationEngine` (conversations, pages
-  of text, send, retry, change events) and shows any such engine over the v2 draft bridge.
-  `src/chat/worker/nova-conversations.ts` is the Nova implementation. An engine over libsignal or OpenMLS would bring
-  its own keys and state and implement the same interface; the identity bridge is Nova's, not a general requirement.
-- **Who a room is with, and starting a chat.** Draft additions to the v2 bridge, beside a contact rooms proposal
-  (`setRoomContact` in `paritytech/trinity-user-agents` `lc/product-only-chat` at `081dc4e43`, unmerged):
-  - `setRoomContact { roomId, contact: { account, state } }`: the worker says whom a room is with, by public account and
-    state (`Outgoing`, `Incoming`, `Established`, `PeerLeft`). Unlike that proposal it carries no username: the host
-    names and draws the person itself (`src/contacts/host-names.ts`: what the user chose in the picker, the host's own
-    chat record, else the username the chain holds) and never tells the product. Only the chat product the user switched
-    to may set a contact, so no other product can make a room look like someone the host knows.
-  - `startConversation { contact, welcome? }`, a host query: **+** opens the host's picker, offering the people of the
-    worker's rooms and username search. Choosing someone already in a room opens it; anyone else gets the request form,
-    and only **Send request** asks the worker. `contact` is an opaque reference the host made for that one start
-    (random, single use, ten minutes, ended with the worker's grant, refused for a blocked person). The worker resolves
-    it with `resolveContact` on the identity bridge, because the Nova wire addresses, seals and signs the request to the
-    person's account, and the engine sends the request. Two starts for one person send one request.
-  - This is not `contacts.pick`: a TrUAPI contact handle names a person to the core, which resolves it to an account
-    only for a transaction. The host can name a handle (`contactHandles`), but a product cannot. A chat engine in a
-    product that must address a peer by account, as the Nova wire does, needs a resolve-for-chat capability that does
-    not exist yet; the reference stands in for it.
-  - The people of the worker's rooms are offered in the host's own **+** only. They are not `ChatProvider.contacts`, so
-    no product's `contacts.pick` offers them and none becomes a payment recipient.
-  - Both also take a contact handle in place of an account or a reference:
-    `setRoomContact { roomId, contact: { handle, state } }`, a `Contact { handle }` participant, and
-    `startConversation { handle, welcome? }`. The handle is the core's, the one `contacts.pick` gives. The host names
-    and draws the person only from its own contacts (`ChatV2ProviderOptions.contacts`), through the handles the core
-    mints for the people it knows (`HostContacts`, `contactHandles`); a handle that names no one there is drawn as
-    **Contact**, whatever the product put in the room's metadata. The state `Invite` means no request is open: the
-    composer asks for a new chat, and **+** offers the request form again. Contact Chat (below, in the invitation demo)
-    uses this form.
-- **What it does not do yet.** Text only. A chat request someone sent shows as their conversation, and the first reply
-  accepts it; declining, blocking, reactions, files and calls stay with the host's engine. A failed message shows as
-  failed without its reason, which the v2 draft's status update cannot carry. Without the history copy the worker starts
-  with no contacts, so it follows no existing conversation until someone sends a new request. While chat runs in the
-  worker, the contact picker other products open has no Nova contacts: the host does not take contacts from a product.
+- `setRoomContact { roomId, contact: { handle, state } }` and a `Contact { handle }` participant: the product says whom
+  a room is with by the core's contact handle, the one `contacts.pick` gives, and the state (`Outgoing`, `Incoming`,
+  `Established`, `PeerLeft`, `Invite`). An `{ account, state }` form also exists; it carries no username either. The
+  host names and draws the person only from its own contacts (`ChatV2ProviderOptions.contacts`), through the handles the
+  core mints for the people it knows (`HostContacts`, `contactHandles`), and never tells the product; a handle that
+  names no one there is drawn as **Contact**, whatever the product put in the room's metadata. Only a product the host
+  lets set contacts (here, Contact Chat) may set one, so no other product can make a room look like someone the host
+  knows. `Invite` means no request is open: the composer asks for a new chat, and **+** offers the request form again.
+- `startConversation { handle, welcome? }`, a host query: **+** opens the host's picker, offering the people of the
+  product's rooms and username search. Choosing someone already in a room opens it; anyone else gets the request form,
+  and only **Send request** asks the product. The contract also has a `{ contact, welcome? }` form, an opaque single-use
+  reference for a host service that resolves it; no host service here makes or resolves one.
+- A TrUAPI contact handle names a person to the core, which resolves it to an account only for a transaction. The host
+  can name a handle (`contactHandles`), but a product cannot. A chat engine in a product that must address a peer by
+  account needs a resolve-for-chat capability that does not exist; Contact Chat reaches people only through its host's
+  request service, by handle.
+- The people of a product's rooms are offered in the host's own **+** only. They are not `ChatProvider.contacts`, so no
+  product's `contacts.pick` offers them and none becomes a payment recipient.
 
 ### Inbox (prototype)
 
@@ -724,9 +658,9 @@ Both read one list, so an item seen, dismissed or accepted in one shows so in th
 profile sharing requests, not every chat message. No sharing, invitation or contact API feeds it: its requests come from
 sample data or from the [invitation demo](#invitation-demo-prototype).
 
-- **Where it shows.** Only on a dev server reached as `localhost`, `127.0.0.1` or `[::1]`, like the
-  [local demo](#local-demo); a build leaves it out with both entries. Developer tools → **More** → **Add sample
-  notifications** fills the list of the signed-in wallet or demo user, and **Clear samples** removes them.
+- **Where it shows.** Only on a dev server reached as `localhost`, `127.0.0.1` or `[::1]`, like the other dev-server
+  demos; a build leaves it out with both entries. Developer tools → **More** → **Add sample notifications** fills the
+  list of the signed-in wallet or demo user, and **Clear samples** removes them.
 - **The look.** The native apps have no Inbox, so this one is built from native parts: one list whose rows follow the
   iOS Chat Requests list (avatar, name and time, the message on two lines, a dot while unseen, and the kind, the product
   it came through and expiry under it). There is no detail page, and an item is never drawn as a conversation.
@@ -811,15 +745,18 @@ agreed API.
   host hands the worker Bob's handle (`startConversation { handle }`), the worker makes its invitation payload and asks
   its own request service to send it, and the host's **Send invitation** prompt asks first. Bob's **Accept** in the
   Inbox goes straight to his running worker, which checks the payload, makes both topics and replies; Alice's host
-  authenticates the reply, her worker checks it and only then calls `complete`. Then text goes both ways on `T_AB` and
-  `T_BA`, and history and names survive a reload. Each host names and draws the other person from the handle; neither
-  worker gets a name, username, account, identity key, request id or route.
-  - **What is a fixture.** The setup is Example Chat's toy (`fixtures/products/example-chat/setup.ts`). The text layer
-    (`fixtures/products/contact-chat/messages.ts`, `contact-chat/fixture-v1`) is one HKDF key per direction from the
-    setup's X25519 secret, ChaCha20-Poly1305 frames with a counter: no ratchet, no forward secrecy, no padding, and no
-    claim of security. The topics go through the draft topic relay (`src/chat/draft/topic-relay.ts`), whose host end
-    here is `fixtures/invitations/local-topics.ts`, posts kept in this origin's `localStorage` for seven days, with no
-    signer, channel or allowance: it stands in for TrUAPI's `statementStore`, which a demo user cannot reach.
+  authenticates the reply, her worker checks it and only then calls `complete`: **Connected**. Both workers keep what
+  the setup agreed, in their own storage and before their host replies or completes: the two conversation topics, `T_AB`
+  and `T_BA`, and the X25519 secret of the two protocol keys. That secret is the product's session state: no contact
+  handle, request, reply, chat bridge message or host record carries it. It sits in the worker's own TrUAPI storage,
+  which this host keeps, so a trusted host can still read it. The conversation and names survive a reload. Each host
+  names and draws the other person from the handle; neither worker gets a name, username, account, identity key, request
+  id or route.
+  - **It ends at the connection.** Contact Chat has no text transport. A connected room says "Connected · sending is not
+    supported yet" under its name. The host's composer stays enabled, because the v2 draft has no way for a product to
+    disable it after creating the room, but a message is refused and the failed bubble says why. No text goes on `T_AB`
+    or `T_BA`.
+  - **What is a fixture.** The setup is Example Chat's toy (`fixtures/products/example-chat/setup.ts`).
   - **Gaps it shows.** The host asks twice when a chat starts from its own **+**: once in the request form and once in
     **Send invitation**. A declined request waits silently until the sender cancels it under **Sent** in the Inbox. The
     per-conversation chat accounts the design asks for, and their allowance, have no API: through TrUAPI a product's
@@ -1036,8 +973,8 @@ it are five tabs:
   state, Close, Reset its data, What it may use, Details), and Workers.
 - **Preview:** the app's size and its frame, described below.
 - **Inspector:** the Activity view, the TrUAPI traces, the Chat diagnostics and the Workers view.
-- **More:** Versions, and the dev server's own controls (the invitation demo, Example Chat, sample Inbox items, the chat
-  engine and the chat demo).
+- **More:** Versions, and the dev server's own controls (the invitation demo, Example Chat, Contact Chat for this wallet
+  and sample Inbox items).
 
 **Search field.** The Docklet's middle button, the Pill, opens a card with one field, **Find a person or app**
 (`src/app/search-card.ts`, `src/app/address-recents.ts`). Typing only edits the text and lists suggestions; it opens
@@ -1114,8 +1051,8 @@ failed with its reason. The selected worker shows how long it has been in that s
 its run number, and, while it runs, its record, content, version and entry. **Traces** opens the TrUAPI view at the
 worker's channel, narrowed through the TrUAPI view's own channel chips; when the worker has sent no frame yet, the note
 says so. **Restart** is offered only for a worker the user added that runs for Chat alone, where a new frame changes
-nothing else the host relies on; the host's own workers, the Nova chat worker and the local demo among them, and a
-worker Pocket holds, have none, and **Remove** stays in Product → Workers.
+nothing else the host relies on; the host's own workers, Contact Chat among them, and a worker Pocket holds, have none,
+and **Remove** stays in Product → Workers.
 
 The worker's **Console** shows what it wrote to its console, its uncaught errors and its unhandled rejections. The
 worker shell loads `truapi-sandbox/console.js` (`src/products/loader/console.ts`) as a classic script before the entry
@@ -1345,25 +1282,6 @@ opens, so the light client reaches no chain. It checks that:
   asks for a page; every message it posts shows as the product's, even those its own model says Ada, Grace or the user
   sent; what the user types reaches it with no message id, so the bubble stays `sent`; and it can open the contact
   picker and get a handle, which nothing turns into someone it can chat with;
-- the local chat product demo, with a synthetic wallet, every socket closed and every request outside this host refused,
-  starts from the Developer menu and runs through the dev server's archive, the same loader and the core, and speaks the
-  Chat Extension v2 draft bridge: capabilities list only what the host serves; the list draws its rooms from their
-  declarations without asking for messages; the host pages history from the product with its cursor; the user's own
-  messages and named peers come from participant ids; a sent message becomes the product's stored message and moves to
-  read through the feed, and the answer arrives as a new message under the id the bubble first had; `Seen` reaches it; a
-  rejected message stays failed with its reason; an edit and a delete reach the open room; a `Notice` is a system row; a
-  room without calls has its call button disabled; a failed message is retried by the product; and an outgoing and an
-  incoming call connect through the product's own signaling, with the host's engine answering the other side's offer and
-  making the offer when the user accepts; it makes no request outside this host; **Restart** gives a fresh product,
-  **Stop** removes its worker frame and rooms, and signing out stops it and signing back in leaves it off;
-- the Nova chat worker, with a synthetic wallet whose host chat holds one made-up contact, every socket closed and every
-  request outside this host refused: the host's engine runs by default; switching to the worker with a history copy
-  removes the host's conversation, runs the worker through the dev server's archive, the loader and the core, asks once
-  for `StatementSubmit`, and shows the copied history in its room, named by the host while the worker declares the
-  person by account only; **New chat** offers the worker's people, Cancel changes nothing and choosing Ada opens her
-  room; a send reaches the core's statement store through `statement_store.submit` and fails there for want of peers;
-  the synthetic demo's worker asks for the identity and is refused; switching back stops the worker and shows the host's
-  conversation with its record unchanged;
 - a product worker, built from `fixtures/products/chat-worker.ts` and served from a stood-in Asset Hub and gateway, runs
   from its manifest, creates a room, posts text and a custom card, draws an image from its archive in the card, redraws
   the card when its button is pressed, posts rich text with an inline image, a file link and buttons that all pass the
@@ -1437,13 +1355,12 @@ second frame; Minimize keeps it in the shelf; Close in More ends only it; and si
 gateway and every socket closed: an image a product looks up by its preimage key, as Browse looks up an app's icon, is
 read once from the gateway's `/ipfs/<cid>` path and drawn.
 
-`browser/workers-menu.spec.ts` checks Product → Workers and More → Chat demo, with a synthetic phrase, every socket
-closed and every request outside this host refused: signed out, nothing can be added or started; the Chat screen has no
-Workers page or demo panel; a typed name survives hiding the developer tools, and an empty one is refused until edited;
-Start runs the demo as a worker the host added, with no Remove, and its rooms in Chat; opening and closing the developer
-tools restart no worker; Restart gives one new frame and Stop takes it and its rooms away; on a phone the sheet holds
-the section, keeps a typed name across Escape, and nothing scrolls sideways; and a demo user tab runs none of the
-wallet's workers, only Contact Chat, added by the host.
+`browser/workers-menu.spec.ts` checks Product → Workers, with a synthetic phrase, every socket closed and every request
+outside this host refused: signed out, nothing can be added or started; the Chat screen has no Workers page; a typed
+name survives hiding the developer tools, and an empty one is refused until edited; on a phone the sheet holds the
+section, keeps a typed name across Escape, and nothing scrolls sideways; and a demo user tab runs none of the wallet's
+workers, only Contact Chat, added by the host, with Inspect and no Remove, which opening and closing the developer tools
+does not restart.
 
 `browser/invitations.spec.ts` checks demo users in tabs of the normal host, with no wallet, Playwright's clock, every
 socket closed and every request outside this host refused: a demo user tab is marked and signed in to the core as that
@@ -1464,8 +1381,9 @@ are as they were; and that on a phone nothing scrolls sideways and the banner's 
 `browser/contact-chat.spec.ts` checks Contact Chat between two demo users in tabs of the normal host, with every socket
 closed and every request outside this host refused: the dev server's archive of the worker runs through the ordinary
 loader in each tab; Alice starts a chat from Chat's **+** and the host's **Send invitation** prompt names Bob; Bob's
-Inbox names Alice and Accept goes to his running worker; Alice's worker connects only after the reply; text goes both
-ways; a reload keeps the conversation and the names; neither worker heard or kept a demo user's name or account; each
+Inbox names Alice and Accept goes to his running worker; Alice's worker connects only after the reply; a message is then
+refused with the reason that Contact Chat has no text transport; a reload keeps the conversation and the names; both
+workers keep the setup's topics and agreed secret; neither worker heard or kept a demo user's name or account; each
 tab's core reports the identity account the other user's contacts name the demo user by, and each host proved and
 checked with the keys of its user's phrase; and the handle each worker holds is the one `contacts.pick` gives Example
 Chat, in the same tab, for the same person. Set `CHAT_SCREENSHOTS` to a directory to keep screenshots.
@@ -1553,23 +1471,19 @@ nothing else of it.
   the core runs in. `activity.ts`: what the host reports to the inspector's Activity view.
 - `src/chat/`: Chat. `provider.ts` is the interface between the Chat screen and its chats, `inbox.ts` the session's
   providers, `screen.ts`, `tabs.ts`, `conversation-view.ts` and `call-view.ts` draw it.
-  - `nova/`: the Nova protocol, the one engine both the page and the Nova chat worker run. `gate.ts` refuses the public
-    development phrase, `keys.ts` derives the keys, `identity.ts` gives the engine their operations and never the keys,
-    `protocol.ts`, `multi-device.ts` and `statement.ts` are the wire, `statement-store.ts` the store's JSON-RPC,
-    `directory.ts` the chain reads, `store.ts` the saved conversations, `hop.ts` file transfer, `call-wire.ts` and
-    `call.ts` calls, `turn.ts` relay credentials, and `engine.ts` ties them together. `events.ts` is what the engine
-    reports to an observer.
+  - `nova/`: the Nova protocol, the page's one engine; the invitations' Statement Store delivery reuses its keys,
+    statements, store and directory. `gate.ts` refuses the public development phrase, `keys.ts` derives the keys,
+    `identity.ts` gives the engine their operations and never the keys, `protocol.ts`, `multi-device.ts` and
+    `statement.ts` are the wire, `statement-store.ts` the store's JSON-RPC, `directory.ts` the chain reads, `store.ts`
+    the saved conversations, `hop.ts` file transfer, `call-wire.ts` and `call.ts` calls, `turn.ts` relay credentials,
+    and `engine.ts` ties them together. `events.ts` is what the engine reports to an observer.
   - `nova-session.ts` builds the page's engine for a session, `nova-provider.ts` translates it for the Chat screen, and
     `account-proofs.ts` asks the core for the proof that buys relay credentials.
-  - `worker/`: the Nova chat worker, a product that runs the same engine in a product worker. `worker.ts` is its entry,
-    `truapi-ports.ts` gives the engine its Statement Store, chain and storage over TrUAPI, and `nova-conversations.ts`
-    puts the engine behind the draft bridge's conversation seam. Only the dev server builds and offers it.
+  - `worker/`: `product-storage.ts`, a `Storage` a chat product worker keeps in its own TrUAPI storage.
   - `product-chat.ts`, `product-room-provider.ts`: the host side of TrUAPI Chat, the official product rooms.
-  - `draft/`: the Chat Extension v2 draft bridge and the Nova identity bridge, which are not TrUAPI. `contract.ts` holds
-    the bridge's types and messages, `host.ts` the host end, `provider.ts` and `calls.ts` the chat provider over it,
-    `product.ts` a product's end, `conversations.ts` the engine-independent seam, `identity-bridge.ts` the host's lent
-    chat identity, and `topic-relay.ts` a stand-in for the Statement Store topics a chat product posts on, for a session
-    that reaches no chain.
+  - `draft/`: the Chat Extension v2 draft bridge, which is not TrUAPI. `contract.ts` holds the bridge's types and
+    messages, `host.ts` the host end, `provider.ts` and `calls.ts` the chat provider over it, `product.ts` a product's
+    end, and `conversations.ts` the engine-independent seam.
 - `src/contacts/`: the contact picker and handle lookup (`contacts.ts`), the host's names for people (`host-names.ts`),
   finding people by username (`username-directory.ts`, `username-search.ts`) and the Docklet's people
   (`search-people.ts`).
@@ -1591,13 +1505,12 @@ nothing else of it.
   inspector's Workers view and the workers' console lines it keeps. `inspector/` collects and shows: `frame-tap.ts`
   feeds TrUAPI frames to the debugger, and `diagnostics.ts`, `capture.ts`, `inspect.ts`, `chat-diagnostics-view.ts` and
   `chat-transport-view.ts` keep, decode and draw what the Nova engine reports. The developer tools ship in every build.
-  `demos/` holds the dev server's controls, which a build leaves out: the Developer section, the local chat demo and its
-  routes, and the switch between the host's engine and the Nova chat worker.
+  `demos/` holds the dev server's controls, which a build leaves out: the Developer section, the local chat products'
+  routes, and Contact Chat's host side.
 - `fixtures/`: synthetic data that only tests and the dev server use. `products/`: product and worker entries, the
-  synthetic chat product, its call media, Example Chat and Contact Chat (`contact-chat/`: `worker.ts` the entry,
-  `engine.ts` its conversations, `messages.ts` its fixture text layer, `requests.ts` its end of the request service).
-  `invitations/`, `notifications/`: demo users, local delivery and topics, and sample notifications. `nova/`: in-memory
-  statement store and HOP node. `archive/`: archive builders.
+  synthetic chat product, Example Chat and Contact Chat (`contact-chat/`: `worker.ts` the entry, `engine.ts` its
+  conversations, `requests.ts` its end of the request service). `invitations/`, `notifications/`: demo users, local
+  delivery, and sample notifications. `nova/`: in-memory statement store and HOP node. `archive/`: archive builders.
 - `tests/unit/`: unit tests, in folders that follow the code they cover; `tests/support/`: their shared helpers.
 - `browser/`: the browser tests, with their Playwright setup and page harnesses under `browser/support/`.
 - `chat-product-demo-plugin.ts`, `username-search-plugin.ts`: the dev server's local chat workers and username route.

@@ -22,8 +22,7 @@ import { NovaChatProvider } from "./nova-provider.js";
  * against the core, and the engine built over this page's transports (the
  * People chain's Statement Store, HOP, TURN and the browser's media). The
  * provider (`nova-provider.ts`) only translates that engine for the Chat
- * screen. The Nova chat worker builds the same engine over TrUAPI instead
- * (`src/chat/worker/worker.ts`).
+ * screen.
  */
 
 /** What chat needs from the signed-in session. All of it is public except the entropy. */

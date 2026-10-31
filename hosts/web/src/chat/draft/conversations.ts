@@ -20,10 +20,10 @@ import type { ChatV2Product } from "./product.js";
  * conversation, pages of history on request, and the user's sends, retries
  * and reads back to the engine.
  *
- * The Nova engine is one implementation (`../worker/nova-conversations.ts`). An
- * engine over libsignal or OpenMLS would be another, with its own identity
- * and its own idea of who is in a conversation; nothing here assumes Nova's
- * keys, handshake or pairwise sessions.
+ * Contact Chat's engine (`fixtures/products/contact-chat/engine.ts`) is one
+ * implementation. An engine over libsignal or OpenMLS would be another, with
+ * its own identity and its own idea of who is in a conversation; nothing here
+ * assumes Nova's keys, handshake or pairwise sessions.
  */
 
 /** Who wrote a message. */

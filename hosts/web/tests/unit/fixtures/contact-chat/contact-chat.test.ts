@@ -9,7 +9,6 @@ import {
   UNKNOWN_CONTACT,
   type HandleContacts,
 } from "../../../../src/chat/draft/provider.js";
-import { topicRelayOver } from "../../../../src/chat/draft/topic-relay.js";
 import type { ChatMessage } from "../../../../src/chat/provider.js";
 import type {
   CallResult,
@@ -20,16 +19,11 @@ import {
   type ProductPort,
   type SendPrompt,
 } from "../../../../src/invitations/invitation-service.js";
-import {
-  cryptoRandom,
-  fromHex,
-  toHex,
-  utf8,
-} from "../../../../src/invitations/sealing.js";
+import { cryptoRandom, toHex } from "../../../../src/invitations/sealing.js";
 import { NotificationStore } from "../../../../src/notifications/notifications.js";
 import { MemoryStorage } from "../../../support/test-support.js";
 import { KeptStorage } from "../../../support/product-storage.js";
-import type { ProductStorage } from "../../../../src/chat/worker/truapi-ports.js";
+import type { ProductStorage } from "../../../../src/chat/worker/product-storage.js";
 import { SUFFIX, hostContactsOf } from "../../../support/host-handles.js";
 import { WalletIdentityAuth } from "../../../../src/invitations/wallet-auth.js";
 import { FixtureContacts } from "../../../../fixtures/invitations/fixture-contacts.js";
@@ -37,7 +31,6 @@ import {
   LocalDelivery,
   inboxOf,
 } from "../../../../fixtures/invitations/local-delivery.js";
-import { LocalTopics } from "../../../../fixtures/invitations/local-topics.js";
 import { MemoryWorld } from "../../../../fixtures/invitations/shared-store.js";
 import {
   TEST_USERS,
@@ -47,20 +40,19 @@ import {
   testUserKeys,
   type TestUser,
 } from "../../../../fixtures/invitations/test-users.js";
-import { ContactChat } from "../../../../fixtures/products/contact-chat/engine.js";
 import {
-  openFrame,
-  sealFrame,
-  sessionKeys,
-} from "../../../../fixtures/products/contact-chat/messages.js";
+  CONNECTED_SUBTITLE,
+  ContactChat,
+  NO_TEXT_TRANSPORT,
+} from "../../../../fixtures/products/contact-chat/engine.js";
 import type { HostRequests } from "../../../../fixtures/products/contact-chat/requests.js";
 
 /**
  * Contact Chat between two test users, each with their own host: the real
  * request service with the fixture identity, contacts and local delivery,
- * the local topics, the v2 draft bridge and the host's chat provider, and
- * Contact Chat's engine as its worker runs it. Everything a product hears
- * from its host is kept, to show what it never hears.
+ * the v2 draft bridge and the host's chat provider, and Contact Chat's
+ * engine as its worker runs it. Everything a product hears from its host is
+ * kept, to show what it never hears.
  */
 
 const START = Date.UTC(2026, 9, 29, 12, 0, 0);
@@ -212,23 +204,8 @@ class User {
       },
     };
 
-    const relay = new MessageChannel();
-    new LocalTopics({
-      network: NETWORK,
-      store: this.world.store(),
-      now: this.clock.now,
-    }).serve(relay.port2);
-    const topics = topicRelayOver(relay.port1);
     this.engine = new ContactChat({
       requests,
-      topics: {
-        post: (topic, data) => topics.post(topic, data),
-        watch: (topic, onData) =>
-          topics.watch(topic, (frames) => {
-            this.heard.push(JSON.stringify({ topic, frames }));
-            onData(frames);
-          }),
-      },
       storage: this.productStorage,
       recordKey: "record",
       random: cryptoRandom,
@@ -272,7 +249,7 @@ class User {
         blocked: () => null,
       },
     });
-    await this.engine.run();
+    this.engine.run();
     await served.ready;
     await settle();
   }
@@ -361,7 +338,7 @@ function identifying(user: TestUser): string[] {
 }
 
 describe("Contact Chat between two hosts, by contact handle", () => {
-  test("connects through the hosts, names each person in the host, and carries text both ways", async () => {
+  test("connects through the hosts, names each person in the host, and agrees its connection; sending is refused", async () => {
     const { alice, bob } = world();
     await alice.start();
     await bob.start();
@@ -392,24 +369,54 @@ describe("Contact Chat between two hosts, by contact handle", () => {
       "completed",
     ]);
 
+    // Both products keep the same two topics and agreed secret, which only the setup made.
+    const [aliceSide] = alice.engine.stored();
+    const [bobSide] = bob.engine.stored();
+    expect([aliceSide!.status, bobSide!.status]).toEqual([
+      "connected",
+      "connected",
+    ]);
+    const connection = aliceSide!.connection!;
+    expect(bobSide!.connection).toEqual(connection);
+    expect(connection.topics.tAB).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(connection.topics.tBA).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(connection.topics.tAB).not.toBe(connection.topics.tBA);
+    // The secret is the products' session state: no host record, delivery or room carries it.
+    const hostHeld = [alice, bob]
+      .flatMap((side) => [
+        ...Array.from({ length: side.hostStorage.length }, (_, index) =>
+          side.hostStorage.getItem(side.hostStorage.key(index)!),
+        ),
+        JSON.stringify(side.notifications.list()),
+        JSON.stringify(side.provider.conversations()),
+      ])
+      .concat([...alice.world.items.values()])
+      .join("\n")
+      .toLowerCase();
+    expect(hostHeld).not.toContain(connection.secret.slice(2));
+
+    // Contact Chat ends at the connection: its rooms say so, the host's
+    // composer stays enabled, and a message fails with why and reaches no one.
+    expect([
+      alice.room(roomId).subtitle,
+      bob.room(bobRoom.id).subtitle,
+    ]).toEqual([CONNECTED_SUBTITLE, CONNECTED_SUBTITLE]);
     await alice.provider.send(roomId, "Hello there");
     await settle();
-    await bob.provider.send(bobRoom.id, "Hi, good to see you");
-    await settle();
+    const [failed] = (await alice.timeline(roomId)).filter(
+      (message) => message.status === "failed",
+    );
+    expect(failed?.problem).toContain(NO_TEXT_TRANSPORT);
     expect(
       texts(await bob.timeline(bobRoom.id)).filter((m) => m.text !== null),
-    ).toEqual([
-      { from: PRODUCT.id, text: "You accepted the chat request" },
-      { from: "Alice", text: "Hello there" },
-      { from: "You", text: "Hi, good to see you" },
-    ]);
+    ).toEqual([{ from: PRODUCT.id, text: "You accepted the chat request" }]);
     expect(
-      texts(await alice.timeline(roomId)).filter((m) => m.text !== null),
+      texts(await alice.timeline(roomId)).filter(
+        (m) => m.text !== null && m.from === PRODUCT.id,
+      ),
     ).toEqual([
       { from: PRODUCT.id, text: "You sent a chat request: Shall we talk?" },
       { from: PRODUCT.id, text: "They accepted your chat request" },
-      { from: "You", text: "Hello there" },
-      { from: "Bob", text: "Hi, good to see you" },
     ]);
   });
 
@@ -586,106 +593,23 @@ describe("Contact Chat between two hosts, by contact handle", () => {
     ).toEqual(["Your chat request was not sent"]);
   });
 
-  test("a frame posted again, changed, or meant for the other direction is dropped", async () => {
+  test("a restart keeps the conversation, its names and its connection", async () => {
     const { alice, bob } = world();
     await alice.start();
     await bob.start();
-    const roomId = await alice.startWith(BOB, "");
+    await alice.startWith(BOB, "");
     await bob.acceptNewest();
     await settle();
-    await alice.provider.send(roomId, "Once only");
-    await settle();
-    const session = alice.engine.stored()[0]!.session!;
-    const frame = alice.engine.stored()[0]!.messages.at(-1)!.frame!;
-    const relay = new MessageChannel();
-    new LocalTopics({
-      network: NETWORK,
-      store: alice.world.store(),
-      now: alice.clock.now,
-    }).serve(relay.port2);
-    const outside = topicRelayOver(relay.port1);
-    const changed = `${frame.slice(0, -2)}${frame.endsWith("00") ? "01" : "00"}`;
-    const backwards = sealFrame(
-      session.send,
-      session.in,
-      99,
-      utf8(JSON.stringify({ id: "x", at: 1, text: "Backwards" })),
-    );
-    for (const data of [frame, changed]) await outside.post(session.out, data);
-    await outside.post(session.in, backwards);
-    await settle();
-    const bobRoom = bob.only();
-    expect(
-      texts(await bob.timeline(bobRoom.id)).filter(
-        (message) => message.from !== PRODUCT.id,
-      ),
-    ).toEqual([{ from: "Alice", text: "Once only" }]);
-  });
-
-  test("a restart keeps the conversation, its names and its keys, and reads what came meanwhile", async () => {
-    const { alice, bob } = world();
-    await alice.start();
-    await bob.start();
-    const roomId = await alice.startWith(BOB, "");
-    await bob.acceptNewest();
-    await settle();
+    const before = bob.engine.stored()[0]!;
     bob.stop();
-    await alice.provider.send(roomId, "While you were away");
-    await settle();
     await bob.start();
     const room = bob.only();
     expect(room.title).toBe("Alice");
-    expect(
-      texts(await bob.timeline(room.id)).filter(
-        (message) => message.from === "Alice",
-      ),
-    ).toEqual([{ from: "Alice", text: "While you were away" }]);
-    await bob.provider.send(room.id, "Back now");
-    await settle();
-    expect(
-      texts(await alice.timeline(roomId)).filter(
-        (message) => message.from === "Bob",
-      ),
-    ).toEqual([{ from: "Bob", text: "Back now" }]);
-  });
-});
-
-describe("Contact Chat's fixture text layer", () => {
-  const topics = {
-    tAB: toHex(cryptoRandom(32)),
-    tBA: toHex(cryptoRandom(32)),
-  };
-  const shared = cryptoRandom(32);
-  const sender = sessionKeys("sender", shared, "0x01", "0x02", topics);
-  const recipient = sessionKeys("recipient", shared, "0x01", "0x02", topics);
-
-  test("each side writes where the other reads, under the key the other opens with", () => {
-    expect(sender.out).toBe(recipient.in);
-    expect(sender.send).toBe(recipient.receive);
-    expect(recipient.out).toBe(sender.in);
-    expect(recipient.send).toBe(sender.receive);
-    expect(sender.send).not.toBe(sender.receive);
-  });
-
-  test("a frame opens only with its key, on its topic", () => {
-    const frame = sealFrame(sender.send, sender.out, 7, utf8("text"));
-    expect(openFrame(recipient.receive, recipient.in, frame)).toEqual({
-      counter: 7,
-      plaintext: utf8("text"),
-    });
-    expect(openFrame(recipient.send, recipient.in, frame)).toBeNull();
-    expect(openFrame(recipient.receive, recipient.out, frame)).toBeNull();
-    expect(openFrame(recipient.receive, recipient.in, "0x01")).toBeNull();
-    expect(() => sealFrame(sender.send, sender.out, 0, utf8("text"))).toThrow();
-    // Another setup's keys open nothing.
-    const other = sessionKeys(
-      "recipient",
-      cryptoRandom(32),
-      "0x01",
-      "0x02",
-      topics,
-    );
-    expect(openFrame(other.receive, other.in, frame)).toBeNull();
-    expect(fromHex(frame)[0]).toBe(1);
+    const after = bob.engine.stored()[0]!;
+    expect([after.status, after.connection]).toEqual([
+      "connected",
+      before.connection,
+    ]);
+    expect(after.connection).toEqual(alice.engine.stored()[0]!.connection!);
   });
 });

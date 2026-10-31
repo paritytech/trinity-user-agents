@@ -1,10 +1,10 @@
 /**
- * Headless-browser test of the menu's Workers section and the Developer
- * menu's Chat demo control, which replace the Workers page the Chat screen
- * had. It signs in with a synthetic phrase, closes every socket and refuses
- * every request outside this host, so no chain, backend or peer is reached.
- * The worker it runs is the dev server's synthetic chat product. It needs a
- * Chromium: playwright-core finds the one it installs, or set CHROMIUM_PATH.
+ * Headless-browser test of the menu's Workers section, which replaces the
+ * Workers page the Chat screen had. It signs in with a synthetic phrase,
+ * closes every socket and refuses every request outside this host, so no
+ * chain, backend or peer is reached. The worker the host adds is the
+ * invitation demo's Contact Chat. It needs a Chromium: playwright-core finds
+ * the one it installs, or set CHROMIUM_PATH.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
@@ -104,7 +104,7 @@ async function screenshot(page: Page, name: string): Promise<void> {
 
 describe("workers in the menu", () => {
   test(
-    "the menu runs workers and the chat demo; the Chat screen keeps only chats",
+    "the menu runs workers; the Chat screen keeps only chats",
     async () => {
       const { context, page, outside } = await open({
         width: 1280,
@@ -117,15 +117,6 @@ describe("workers in the menu", () => {
           "Sign in with a wallet to run workers.",
         );
         expect(await page.locator("#worker-name").isDisabled()).toBe(true);
-        expect(
-          await page
-            .locator('#chat-demo [data-action="demo-start"]')
-            .isDisabled(),
-        ).toBe(true);
-        // What the demo is lives in a folded note, not on the screen.
-        expect(
-          await page.locator("#chat-demo details").getAttribute("open"),
-        ).toBeNull();
 
         await signIn(page);
         await setMenu(page, true, "product");
@@ -133,14 +124,12 @@ describe("workers in the menu", () => {
           .locator("#worker-status", { hasText: "No workers." })
           .waitFor();
 
-        // The Chat screen has no Workers page and no demo panel.
+        // The Chat screen has no Workers page.
         await setMenu(page, false);
         await page.click('#dock [data-destination="chat"]');
         expect(
           await page
-            .locator(
-              '#chat-screen [data-action="manage-workers"], #chat-screen [data-action^="demo-"]',
-            )
+            .locator('#chat-screen [data-action="manage-workers"]')
             .count(),
         ).toBe(0);
 
@@ -159,71 +148,7 @@ describe("workers in the menu", () => {
           .waitFor();
         expect(await page.locator("#worker-frames iframe").count()).toBe(0);
 
-        // More → Chat demo → Start runs it as a worker the host added, listed
-        // under Product → Workers.
-        await setMenu(page, true, "more");
-        await page.click('#chat-demo [data-action="demo-start"]');
-        await setMenu(page, true, "product");
-        const PRODUCT = `localhost:${new URL(host.origin).port}`;
-        const row = page.locator(`#worker-list [data-worker="${PRODUCT}"]`);
-        await page
-          .locator(
-            `#worker-list [data-worker="${PRODUCT}"][data-state="running"]`,
-          )
-          .waitFor();
-        expect(await row.innerText()).toContain("added by this host");
-        // The host's own worker can be inspected, but not removed.
-        expect(
-          await row
-            .locator("button")
-            .evaluateAll((buttons) =>
-              buttons.map((button) => button.textContent),
-            ),
-        ).toEqual(["Inspect"]);
-        await setMenu(page, true, "more");
-        await page.locator('#chat-demo[data-demo="running"]').waitFor();
-        expect(
-          await page
-            .locator('#chat-demo [data-action="demo-start"]')
-            .isHidden(),
-        ).toBe(true);
         await screenshot(page, "menu-workers-desktop");
-
-        // Its rooms are in Chat; opening and closing the menu restarts nothing.
-        await setMenu(page, false);
-        await page
-          .locator(`[data-conversation^="chat-v2:${PRODUCT}/"]`)
-          .first()
-          .waitFor();
-        expect(await markWorkerFrame(page)).toBe(1);
-        for (let round = 0; round < 3; round += 1) {
-          await setMenu(page, true, "product");
-          await setMenu(page, false);
-        }
-        expect(await markedWorkerFrames(page)).toBe(1);
-
-        // Restart gives a new frame, and only one; Stop takes it and its rooms away.
-        await setMenu(page, true, "more");
-        await page.click('#chat-demo [data-action="demo-restart"]');
-        await setMenu(page, true, "product");
-        await page
-          .locator(
-            `#worker-list [data-worker="${PRODUCT}"][data-state="running"]`,
-          )
-          .waitFor();
-        expect(await markedWorkerFrames(page)).toBe(0);
-        expect(await page.locator("#worker-frames iframe").count()).toBe(1);
-        await setMenu(page, true, "more");
-        await page.click('#chat-demo [data-action="demo-stop"]');
-        await row.waitFor({ state: "detached" });
-        expect(await page.locator("#worker-list").isHidden()).toBe(true);
-        await page
-          .locator(`[data-conversation^="chat-v2:${PRODUCT}/"]`)
-          .first()
-          .waitFor({
-            state: "detached",
-          });
-        expect(await page.locator("#worker-frames iframe").count()).toBe(0);
         // The refusal stays until the name is edited.
         expect(await status(page)).toBe("Enter a product name.");
         await setMenu(page, true, "product");
@@ -267,11 +192,30 @@ describe("workers in the menu", () => {
         const row = page.locator(
           '#worker-list [data-worker="contact-chat.paseo"]',
         );
-        await row.waitFor();
+        await page
+          .locator(
+            '#worker-list [data-worker="contact-chat.paseo"][data-state="running"]',
+          )
+          .waitFor();
         expect(await row.innerText()).toContain("added by this host");
+        // The host's own worker can be inspected, but not removed.
+        expect(
+          await row
+            .locator("button")
+            .evaluateAll((buttons) =>
+              buttons.map((button) => button.textContent),
+            ),
+        ).toEqual(["Inspect"]);
         expect(await page.locator("#worker-list [data-worker]").count()).toBe(
           1,
         );
+        // Opening and closing the menu restarts nothing.
+        expect(await markWorkerFrame(page)).toBe(1);
+        for (let round = 0; round < 3; round += 1) {
+          await setMenu(page, false);
+          await setMenu(page, true, "product");
+        }
+        expect(await markedWorkerFrames(page)).toBe(1);
         expect(await page.locator("#worker-list").innerText()).not.toContain(
           "myapp.paseo",
         );

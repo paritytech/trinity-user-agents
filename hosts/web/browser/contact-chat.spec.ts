@@ -14,8 +14,8 @@
  * and checked with the keys each test user's own phrase derives after the
  * host checked them against the core's session. The chat keys a host reads
  * for its contacts come from a fixture directory, not the chain; the delivery
- * and the topics are the local simulated ones; the setup and text layer are
- * fixtures.
+ * is the local simulated one; the setup is a fixture. Contact Chat ends at the
+ * connection: it has no text transport, so a message is refused.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { Browser, Frame, Page } from "playwright-core";
@@ -166,7 +166,7 @@ const row = (page: Page, title: string) =>
 
 describe("Contact Chat between test users", () => {
   test(
-    "invite by contact handle, accept in the host, and chat both ways; the host names everyone",
+    "invite by contact handle, accept in the host, and connect; the host names everyone",
     async () => {
       const context = await browser.newContext({
         viewport: { width: 1280, height: 860 },
@@ -234,21 +234,24 @@ describe("Contact Chat between test users", () => {
           .locator(".chat-system", { hasText: "You accepted the chat request" })
           .waitFor();
 
-        // Alice's host authenticated the reply, her worker checked it: she can write.
+        // Alice's host authenticated the reply, her worker checked it: they
+        // are connected. Contact Chat has no text transport, so it refuses
+        // a message and says why.
         await alice
           .locator(".chat-system", {
             hasText: "They accepted your chat request",
           })
           .waitFor();
+        await alice
+          .locator(".chat-row-preview", {
+            hasText: "Connected · sending is not supported yet",
+          })
+          .first()
+          .waitFor();
         await alice.fill(".chat-composer-input", "Hello there");
         await alice.press(".chat-composer-input", "Enter");
-        await bob
-          .locator(".chat-message-in", { hasText: "Hello there" })
-          .waitFor();
-        await bob.fill(".chat-composer-input", "Good to see you");
-        await bob.press(".chat-composer-input", "Enter");
         await alice
-          .locator(".chat-message-in", { hasText: "Good to see you" })
+          .locator(".chat-failed", { hasText: "no text transport" })
           .waitFor();
         await screenshot(alice, "contact-chat-conversation");
 
@@ -259,7 +262,7 @@ describe("Contact Chat between test users", () => {
         await chat(bob);
         await row(bob, "Alice").click();
         await bob
-          .locator(".chat-message-in", { hasText: "Hello there" })
+          .locator(".chat-system", { hasText: "You accepted the chat request" })
           .waitFor();
         await chat(alice);
         await alice.click('[aria-label="Back to chats"]').catch(() => {});
@@ -274,7 +277,9 @@ describe("Contact Chat between test users", () => {
               value,
               found: false,
             });
-          expect(visible).toContain("hello there");
+          // Each kept the topics and secret the setup agreed.
+          expect(visible).toContain('"connection":{"topics":{"tab":"0x');
+          expect(visible).toMatch(/"secret":"0x[0-9a-f]{64}"/);
         }
         expect(
           await aliceWorker.evaluate(

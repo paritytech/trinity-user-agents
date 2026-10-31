@@ -456,7 +456,7 @@ export interface HostChatSetRoomContactRequest {
  *
  * - `contact`: an opaque, single-use reference the host made for this one
  *   start; it names the person only to a service of the host that may
- *   resolve it (the Nova chat worker's identity bridge).
+ *   resolve it. No host service here resolves one.
  * - `handle`: the contact handle the host knows the person by for this
  *   product, the same one a pick of them would give. The product reaches
  *   them only through its host's services, by that handle.

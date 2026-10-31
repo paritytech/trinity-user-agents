@@ -10,10 +10,8 @@
  *   v2 draft bridge (`src/chat/draft/conversations.ts`), and names and draws
  *   each person from the handle;
  * - setup goes through the proposed host request service
- *   (`src/invitations/contract.ts`);
- * - text goes on the conversation topics through the draft topic relay
- *   (`src/chat/draft/topic-relay.ts`), the stand-in for the Statement Store
- *   a test user cannot reach;
+ *   (`src/invitations/contract.ts`) and ends at the connection: it sends no
+ *   text;
  * - its record is kept in its own TrUAPI storage.
  *
  * What it received from the host, and what it keeps, are on
@@ -25,8 +23,7 @@ import {
   serveConversations,
   type ReadMarks,
 } from "../../../src/chat/draft/conversations.js";
-import { connectTopicRelay } from "../../../src/chat/draft/topic-relay.js";
-import { ProductStorage } from "../../../src/chat/worker/truapi-ports.js";
+import { ProductStorage } from "../../../src/chat/worker/product-storage.js";
 import { cryptoRandom } from "../../../src/invitations/sealing.js";
 import { ContactChat } from "./engine.js";
 import { connectHostRequests, type HostRequests } from "./requests.js";
@@ -91,17 +88,8 @@ async function run(): Promise<void> {
     (reason) => report(`storage: ${reason}`),
   );
   state.record = () => storage.getItem(RECORD_KEY);
-  const relay = connectTopicRelay();
   const engine = new ContactChat({
     requests: observed(connectHostRequests()),
-    topics: {
-      post: (topic, data) => relay.post(topic, data),
-      watch: (topic, onData) =>
-        relay.watch(topic, (frames) => {
-          heard({ topic, frames });
-          onData(frames);
-        }),
-    },
     storage,
     recordKey: RECORD_KEY,
     random: cryptoRandom,
@@ -131,8 +119,8 @@ async function run(): Promise<void> {
     {
       conversations: () => engine.conversations(),
       messages: (id) => engine.messages(id),
-      send: (id, text) => engine.send(id, text),
-      retry: (id, messageId) => engine.retry(id, messageId),
+      send: (id) => engine.send(id),
+      retry: () => engine.retry(),
       start: (target, welcome) => {
         state.starts = [...state.starts, JSON.stringify(target)];
         return engine.start(target, welcome);
@@ -141,7 +129,7 @@ async function run(): Promise<void> {
     },
     { reads, onError: (what, reason) => report(`${what}: ${reason}`) },
   );
-  await engine.run();
+  engine.run();
   await served.ready;
   state.stage = "running";
 }

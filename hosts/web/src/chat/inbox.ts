@@ -52,9 +52,8 @@ export interface ChatInboxDeps {
   /** What the host lends `productId`'s v2 provider: names for its contact rooms, and starting chats. */
   chatV2Options?(productId: string): ChatV2ProviderOptions;
   /**
-   * Whether the host's own Nova chat may run now. False while chat runs in
-   * the Nova chat worker instead (`tools/demos/worker-mode.ts`): the two
-   * never run at once for one identity. Absent means always.
+   * Whether the host's own Nova chat may run for a session, read when the
+   * session starts. Absent means always.
    */
   hostChat?(): boolean;
 }
@@ -164,25 +163,6 @@ export class ChatInbox implements ChatInboxView {
     const nova = startNovaChat(session, this.deps);
     if (typeof nova === "string") this.refusal = nova;
     else this.nova = this.add(nova);
-  }
-
-  /**
-   * Follow a change of engine: stop the host's Nova chat at once when it may
-   * no longer run, or start it for the session when it may again.
-   */
-  syncHostChat(): void {
-    const session = this.session;
-    const wanted =
-      session !== null &&
-      hasWallet(session) &&
-      this.deps.hostChat?.() !== false;
-    const running = this.nova !== null || this.refusal !== null;
-    if (wanted === running) return;
-    if (this.nova !== null) this.remove(this.nova);
-    this.nova = null;
-    this.refusal = null;
-    if (wanted) this.startHostChat(session!);
-    this.emit({ type: "providers" });
   }
 
   private add<T extends ChatProvider>(provider: T): T {
