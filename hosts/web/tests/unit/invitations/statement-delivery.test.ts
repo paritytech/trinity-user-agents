@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { bytesToHex } from "@parity/truapi/scale";
 import type { NotificationClaim } from "@parity/truapi-host/web";
-import { equalBytes } from "../../../src/chat/nova/codec.js";
-import type { StatementStoreLike } from "../../../src/chat/nova/engine.js";
-import { decodeStatement } from "../../../src/chat/nova/statement.js";
+import { equalBytes } from "../../../src/platform/codec.js";
+import type { StatementStoreLike } from "../../../src/platform/statement-store.js";
+import { decodeStatement } from "../../../src/platform/statement.js";
 import {
   type CallResult,
   type HostMessage,
@@ -33,7 +33,7 @@ import {
   testUserKeys,
   type TestUser,
 } from "../../../fixtures/invitations/test-users.js";
-import { MemoryStatementStore } from "../../support/nova-memory.js";
+import { MemoryStatementStore } from "../../support/statement-memory.js";
 import { SUFFIX, hostContactsOf, indexed } from "../../support/host-handles.js";
 import { MemoryStorage, settle } from "../../support/test-support.js";
 

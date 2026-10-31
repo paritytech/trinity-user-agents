@@ -18,6 +18,18 @@ export interface SubmitResult {
   reason?: string;
 }
 
+/** A statement store a client subscribes to and submits to: {@link StatementStore}, or a stand-in. */
+export interface StatementStoreLike {
+  subscribe(
+    filter: TopicFilter,
+    onStatements: (statements: Uint8Array[]) => void,
+  ): Promise<() => void>;
+  submit(statement: Uint8Array): Promise<SubmitResult>;
+  close(): void;
+  /** Settles when the connection ends for any reason, including {@link close}. */
+  readonly closed: Promise<void>;
+}
+
 export const isStored = (result: SubmitResult): boolean =>
   result.status === "new" ||
   result.status === "known" ||

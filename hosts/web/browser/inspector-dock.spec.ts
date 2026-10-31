@@ -212,16 +212,15 @@ describe("the developer tools", () => {
         expect(frame.top).toBeGreaterThanOrEqual(stage.top);
         expect(frame.bottom).toBeLessThanOrEqual(stage.bottom);
 
-        // The inspector's four views, in order, fill the same tools, and the
+        // The inspector's three views, in order, fill the same tools, and the
         // arrow keys move between them.
         expect(
           await page
             .locator("[data-inspector-view]")
             .evaluateAll((tabs) => tabs.map((tab) => tab.textContent?.trim())),
-        ).toEqual(["Activity", "TrUAPI", "Chat", "Workers"]);
+        ).toEqual(["Activity", "TrUAPI", "Workers"]);
         for (const [view, panel] of [
           ["activity", "#activity-inspector"],
-          ["chat", "#chat-diagnostics"],
           ["workers", "#workers-inspector"],
           ["wire", "#inspector-mount"],
         ] as const) {

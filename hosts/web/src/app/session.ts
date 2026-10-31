@@ -3,11 +3,14 @@ import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { ProductNavigation } from "./navigation.js";
 import type { ChatV2Host } from "../chat/draft/host.js";
 import type { ChatInbox } from "../chat/inbox.js";
-import type { ChatSession } from "../chat/nova-session.js";
 import { productChatKey, type ProductChat } from "../chat/product-chat.js";
 import type { HostNames } from "../contacts/host-names.js";
-import { chainDirectory } from "../chat/nova/directory.js";
-import { chatRecordKey } from "../chat/nova/store.js";
+import { chainDirectory } from "../platform/chain-directory.js";
+import { sessionChatKeys } from "../invitations/chat-keys.js";
+import {
+  walletRecordKey,
+  type WalletContacts,
+} from "../contacts/wallet-contacts.js";
 import {
   notificationsKey,
   type NotificationStore,
@@ -121,9 +124,11 @@ export interface SessionMembers {
   /** The scope the Inbox reads while signed out: a test user's, or none. */
   signedOutNotifications: string | null;
   hostNames: HostNames;
+  walletContacts: WalletContacts;
+  /** Whether the wallet's saved contacts stay out of the picker for this page. */
+  hidesWalletContacts(): boolean;
   chatV2: ChatV2Host;
   chatInbox: ChatInbox;
-  proofs: NonNullable<ChatSession["proofs"]>;
 }
 
 /**
@@ -144,6 +149,7 @@ export class SessionMembership {
       productChat,
       notifications,
       hostNames,
+      walletContacts,
       chatV2,
       chatInbox,
     } = this.members;
@@ -153,18 +159,33 @@ export class SessionMembership {
       productChat.setScope(null);
       notifications?.setScope(this.members.signedOutNotifications);
       hostNames.setSession(null);
+      walletContacts.setSession(null);
       if (this.chatV2Scope !== null) chatV2.reset();
       this.chatV2Scope = null;
       chatInbox.setSession(null);
       return;
     }
     const { wallet, access } = session;
-    const { identityAccountId, chatPublicKey, fullUsername, liteUsername } =
-      session.account;
+    const { identityAccountId, chatPublicKey } = session.account;
+    const recordKey = walletRecordKey(network.id, wallet.id);
     hostNames.setSession({
       scope: `${network.id}:${wallet.id}`,
-      record: () => localStorage.getItem(chatRecordKey(network.id, wallet.id)),
+      record: () => localStorage.getItem(recordKey),
       directory: () => chainDirectory(access.chain, access.genesis),
+    });
+    // Contacts are offered only for keys the core confirms, as for any of
+    // the wallet's requests: never for the public development phrase.
+    walletContacts.setSession({
+      key: recordKey,
+      scope: `${recordKey}:${identityAccountId ?? ""}:${chatPublicKey ?? ""}`,
+      offered: () =>
+        !this.members.hidesWalletContacts() &&
+        typeof sessionChatKeys({
+          entropy: wallet.entropy,
+          networkSuffix: access.networkSuffix,
+          identityAccountId: identityAccountId ?? undefined,
+          chatPublicKey: chatPublicKey ?? undefined,
+        }) !== "string",
     });
     const scope = productChatKey(network.id, wallet.id);
     if (scope !== this.chatV2Scope) chatV2.reset();
@@ -179,24 +200,16 @@ export class SessionMembership {
     });
     chatInbox.setSession({
       walletId: wallet.id,
-      entropy: wallet.entropy,
       network: network.id,
-      networkSuffix: access.networkSuffix,
-      identityAccountId: identityAccountId ?? undefined,
-      chatPublicKey: chatPublicKey ?? undefined,
-      username: fullUsername ?? liteUsername ?? undefined,
-      chain: access.chain,
-      genesis: access.genesis,
-      identityBackend: network.identityBackend,
-      proofs: this.members.proofs,
+      identity: `${identityAccountId ?? ""}:${chatPublicKey ?? ""}`,
     });
   }
 
   /**
    * Hand a session with no wallet keys, such as a test user of the
    * invitation demo, to what belongs to it: its product workers and their
-   * chat providers. The Nova chat, Pocket and TrUAPI product rooms stay off,
-   * and the Inbox reads the scope it reads while signed out. Null ends it,
+   * chat providers. Pocket, the wallet's saved contacts and TrUAPI product
+   * rooms stay off, and the Inbox reads the scope it reads while signed out. Null ends it,
    * as {@link sync} with none does.
    */
   syncProductsOnly(walletId: string | null): void {
@@ -208,6 +221,7 @@ export class SessionMembership {
       productChat,
       notifications,
       hostNames,
+      walletContacts,
       chatV2,
       chatInbox,
     } = this.members;
@@ -215,10 +229,15 @@ export class SessionMembership {
     productChat.setScope(null);
     notifications?.setScope(this.members.signedOutNotifications);
     hostNames.setSession(null);
+    walletContacts.setSession(null);
     const scope = `${network.id}:${walletId}:products-only`;
     if (scope !== this.chatV2Scope) chatV2.reset();
     this.chatV2Scope = scope;
     productWorkers.setSession({ walletId, network });
-    chatInbox.setSession({ walletId, network: network.id });
+    chatInbox.setSession({
+      walletId,
+      network: network.id,
+      identity: "products-only",
+    });
   }
 }

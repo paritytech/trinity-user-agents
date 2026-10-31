@@ -7,7 +7,7 @@ import {
   decodeConsumer,
   mapKey,
   readStorageValues,
-} from "../../platform/people-chain.js";
+} from "./people-chain.js";
 import {
   Reader,
   bytes,

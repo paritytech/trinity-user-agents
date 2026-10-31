@@ -2,15 +2,15 @@ import { hexToBytes } from "@parity/truapi/scale";
 import {
   lookupChatIdentity,
   type ChainDirectory,
-} from "../chat/nova/directory.js";
-import { loadChatRecord } from "../chat/nova/store.js";
+} from "../platform/chain-directory.js";
+import { namesOf, readWalletRecord } from "./wallet-contacts.js";
 
 /**
  * The host's own names for people, by account, for rooms a chat product
  * keeps: the product says only whom a room is with, and the host names them.
  *
  * Names come, in order, from what the user chose in the host's picker this
- * session, from the host's own chat record, and from the username the chain
+ * session, from the wallet's saved chat record, and from the username the chain
  * holds for the account, read once per session unless the read fails. None of them comes from a
  * product, and none is given to one.
  */
@@ -18,7 +18,7 @@ import { loadChatRecord } from "../chat/nova/store.js";
 export interface HostNamesSession {
   /** Names one wallet on one network; the same scope again keeps every name. */
   scope: string;
-  /** The host's own chat record, as JSON, or null. */
+  /** The wallet's saved chat record (`./wallet-contacts.ts`), as JSON, or null. */
   record(): string | null;
   /** Chain reads for usernames; null when the chain is not connected. */
   directory(): ChainDirectory | null;
@@ -43,19 +43,8 @@ export class HostNames {
     this.recorded.clear();
     this.onChain.clear();
     if (session === null) return;
-    const raw = session.record();
-    if (raw === null) return;
-    const readOnly: Pick<Storage, "getItem" | "setItem"> = {
-      getItem: () => raw,
-      setItem: () => {},
-    };
-    const record = loadChatRecord(readOnly as Storage, "");
-    for (const entry of [...record.contacts, ...record.left])
-      if (entry.name !== null)
-        this.recorded.set(key(entry.account), entry.name);
-    for (const request of record.requests)
-      if (request.name !== null)
-        this.recorded.set(key(request.peer), request.name);
+    for (const [account, name] of namesOf(readWalletRecord(session.record())))
+      this.recorded.set(account, name);
   }
 
   /** Name `account` as the user saw them in the picker, for this session. */

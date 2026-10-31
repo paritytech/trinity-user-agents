@@ -1,8 +1,8 @@
 import {
   lookupChatIdentity,
   type ChainDirectory,
-} from "../chat/nova/directory.js";
-import { equalBytes } from "../chat/nova/codec.js";
+} from "../platform/chain-directory.js";
+import { equalBytes } from "../platform/codec.js";
 import type { WalletKeys } from "./wallet-auth.js";
 
 /**

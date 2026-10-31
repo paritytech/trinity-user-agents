@@ -1,29 +1,27 @@
 import { pbkdf2 } from "@noble/hashes/pbkdf2.js";
 import { sha512 } from "@noble/hashes/sha2.js";
 import * as sr25519 from "@scure/sr25519";
-import { concat, text, u64, utf8 } from "./codec.js";
+import { bytesToHex, type HexString } from "@parity/truapi/scale";
+import { concat, text, u64, utf8 } from "../platform/codec.js";
 import {
   blake2b256,
   keyedBlake2b256,
   x25519Agree,
   x25519PublicKey,
-} from "./crypto.js";
+} from "../platform/crypto.js";
+import { chatRefusal } from "./gate.js";
 
 /**
  * The two keys a wallet chats with, derived from its BIP-39 entropy the way
- * the core and the Polkadot app derive them:
+ * the core and the Polkadot app derive them. The host proves its requests
+ * with them (`./wallet-auth.ts`):
  *
  * - the identity account, sr25519 at `//product//uid.<suffix>/index(0)` from
  *   the Substrate mini-secret of the entropy. Requests are addressed to it, it
  *   names this side of every session topic, and it signs every statement;
  * - the chat key, X25519 from `blake2b(key: "//chat" chain code,
  *   blake2b(key: "ecdh", entropy))`. Peers find it on chain and agree every
- *   shared secret with it;
- * - the device encryption key, X25519 from the same root under the
- *   `chat-device` chain code. The apps keep a random key per device; this
- *   host derives its one so that a restore reproduces it. It is announced
- *   with the identity account as this device's statement account, and wraps
- *   the one-time keys of device-route envelopes.
+ *   shared secret with it.
  *
  * The secrets stay in this object. Callers get public keys, signatures and
  * agreed secrets.
@@ -31,29 +29,20 @@ import {
 export class ChatKeys {
   readonly identity: Uint8Array;
   readonly chatPublic: Uint8Array;
-  readonly devicePublic: Uint8Array;
   readonly #identitySecret: Uint8Array;
   readonly #chatSecret: Uint8Array;
-  readonly #deviceSecret: Uint8Array;
 
-  private constructor(
-    identitySecret: Uint8Array,
-    chatSecret: Uint8Array,
-    deviceSecret: Uint8Array,
-  ) {
+  private constructor(identitySecret: Uint8Array, chatSecret: Uint8Array) {
     this.#identitySecret = identitySecret;
     this.#chatSecret = chatSecret;
-    this.#deviceSecret = deviceSecret;
     this.identity = sr25519.getPublicKey(identitySecret);
     this.chatPublic = x25519PublicKey(chatSecret);
-    this.devicePublic = x25519PublicKey(deviceSecret);
   }
 
   static fromEntropy(entropy: Uint8Array, networkSuffix: string): ChatKeys {
     return new ChatKeys(
       deriveIdentitySecret(entropy, networkSuffix),
       deriveChatSecret(entropy),
-      deriveDeviceSecret(entropy),
     );
   }
 
@@ -64,11 +53,6 @@ export class ChatKeys {
   /** The raw X25519 secret shared with a peer's chat key. */
   agree(peerChatKey: Uint8Array): Uint8Array {
     return x25519Agree(this.#chatSecret, peerChatKey);
-  }
-
-  /** The raw X25519 secret of this device's encryption key with a peer's key. */
-  agreeDevice(peerKey: Uint8Array): Uint8Array {
-    return x25519Agree(this.#deviceSecret, peerKey);
   }
 }
 
@@ -93,12 +77,6 @@ export function junctionCode(junction: string): Uint8Array {
 export function deriveChatSecret(entropy: Uint8Array): Uint8Array {
   const root = keyedBlake2b256(utf8("ecdh"), entropy);
   return keyedBlake2b256(chainCode(text("chat")), root);
-}
-
-/** The X25519 device encryption secret: the `chat-device` domain under the entropy's `ecdh` root. */
-export function deriveDeviceSecret(entropy: Uint8Array): Uint8Array {
-  const root = keyedBlake2b256(utf8("ecdh"), entropy);
-  return keyedBlake2b256(chainCode(text("chat-device")), root);
 }
 
 /** `index_bytes(0)`: a zero u32 and the first 28 bytes of `blake2b256("product-account-index")`. */
@@ -137,18 +115,40 @@ export function deriveIdentitySecret(
   );
 }
 
+const errorText = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
 /**
- * The account that submits chat files to HOP, `//allowance//bulletin//chat`,
- * as the Android app derives it. A node takes its submissions only while it
- * holds a Bulletin storage authorization. The secret stays in the closure.
+ * Derive the session's chat keys and check them against what the core
+ * reports. Returns why chat stays off instead, when it does.
  */
-export function hopSender(entropy: Uint8Array): {
-  publicKey: Uint8Array;
-  sign(payload: Uint8Array): Uint8Array;
-} {
-  const secret = deriveHardSecret(entropy, ["allowance", "bulletin", "chat"]);
-  return {
-    publicKey: sr25519.getPublicKey(secret),
-    sign: (payload) => sr25519.sign(secret, payload),
-  };
+export function sessionChatKeys(session: {
+  entropy: Uint8Array;
+  networkSuffix: string;
+  /** What the core reports for the session. */
+  identityAccountId: HexString | undefined;
+  chatPublicKey: HexString | undefined;
+}): ChatKeys | string {
+  const refusal = chatRefusal(session.entropy);
+  if (refusal !== null) return refusal;
+  let keys: ChatKeys;
+  try {
+    keys = ChatKeys.fromEntropy(session.entropy, session.networkSuffix);
+  } catch (error) {
+    return `Chat keys could not be derived: ${errorText(error)}`;
+  }
+  if (
+    session.identityAccountId === undefined ||
+    session.chatPublicKey === undefined
+  )
+    return "The core did not report this session's identity account and chat key, so chat cannot check its keys.";
+  const mismatch = [
+    session.identityAccountId !== bytesToHex(keys.identity)
+      ? "identity account"
+      : null,
+    session.chatPublicKey !== bytesToHex(keys.chatPublic) ? "chat key" : null,
+  ].filter((part) => part !== null);
+  if (mismatch.length > 0)
+    return `The host derived a different ${mismatch.join(" and ")} than the core. Chat stays off.`;
+  return keys;
 }

@@ -476,11 +476,11 @@ describe("invitations between test users", () => {
             ? null
             : await title.first().innerText();
         };
+        /** Chat runs for the session: it no longer asks to sign in. */
         const chatRuns = () =>
-          page.waitForFunction(
-            () =>
-              document.querySelector<HTMLElement>("#chat-screen")?.dataset
-                .chatEngine !== "off",
+          eventually(
+            async () => (await chatNote()) !== "Sign in to chat",
+            true,
           );
         const rootKey = async () =>
           (await sessionLine.innerText()).split(" · ")[1];
@@ -548,15 +548,12 @@ describe("invitations between test users", () => {
         await eventually(() => badge(page), 4);
 
         // The invitation demo is chosen in More and is not an account: its
-        // made-up Bob gets no Nova chat and none of the wallet's workers or
-        // Inbox. Chat shows only the demo's own chat worker, Contact Chat.
+        // made-up Bob gets none of the wallet's workers or Inbox. Chat shows
+        // only the demo's own chat worker, Contact Chat.
         await actAs(page, "bob");
         await signedIn("Signed in as Bob (invitation demo)");
         expect(await marker.innerText()).toBe("Invitation demo · Bob");
         expect(await chatNote()).not.toBe("Sign in to chat");
-        expect(await page.locator('[data-conversation^="nova/"]').count()).toBe(
-          0,
-        );
         const demoWorkers = await workerStatus();
         expect(demoWorkers).not.toContain("Sign in with a wallet");
         expect(await page.locator("#worker-list").innerText()).toContain(

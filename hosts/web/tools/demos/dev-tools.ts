@@ -24,13 +24,13 @@ import {
 } from "../../src/contacts/username-directory.js";
 import type { HandleNames } from "../../src/contacts/contacts.js";
 import { FixtureContacts } from "../../fixtures/invitations/fixture-contacts.js";
-import type { ChainDirectory } from "../../src/chat/nova/directory.js";
-import type { StatementStoreLike } from "../../src/chat/nova/engine.js";
+import type { ChainDirectory } from "../../src/platform/chain-directory.js";
+import type { StatementStoreLike } from "../../src/platform/statement-store.js";
 import type { Network } from "../../src/platform/network.js";
 import { noSubmitNetwork, type NoSubmitRecord } from "./no-submit.js";
 import { StatementStoreDelivery } from "../../src/invitations/statement-delivery.js";
 import { DirectoryContacts } from "../../src/invitations/directory-contacts.js";
-import { sessionChatKeys } from "../../src/chat/nova-session.js";
+import { sessionChatKeys } from "../../src/invitations/chat-keys.js";
 import { WalletIdentityAuth } from "../../src/invitations/wallet-auth.js";
 import {
   ownIdentityProblem,
@@ -73,8 +73,8 @@ import {
  * from `contacts.pick` and real prompts. The host names those handles through
  * the handles the core mints for the people it knows; the other users'
  * identity credentials stay fixtures. None of the wallet
- * session's services start: no Nova chat, Pocket or wallet workers, so
- * fixture contacts never reach a wallet's chat or a transaction it signs.
+ * session's services start: no saved contacts, Pocket or wallet workers, so
+ * fixture contacts never reach a wallet's contacts or a transaction it signs.
  *
  * The demo's product is Contact Chat (`fixtures/products/contact-chat/`), a
  * chat worker with its own request service. It runs for the test user as an
@@ -172,12 +172,11 @@ export interface DevSession {
    */
   setWallet(session: WalletRequestsSession | null): void;
   /**
-   * Whether this tab holds the wallet's Nova chat off: true while the
-   * wallet's Contact Chat requests use the network delivery, so New chat
-   * starts Contact Chat, and Nova neither starts nor answers anything. Fixed
-   * for the page: changing the delivery reloads it.
+   * Whether the wallet's saved contacts stay out of the picker, and so out
+   * of payments: true while the wallet's Contact Chat requests use the
+   * network delivery. Fixed for the page: changing the delivery reloads it.
    */
-  holdsNova(): boolean;
+  hidesWalletContacts(): boolean;
   /**
    * `network`, with every submission refused while the wallet's Contact Chat
    * only validates claims: no extrinsic and no statement leaves this tab.
@@ -348,7 +347,7 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
             testUserAccount(user, deps.network.networkSuffix),
           )
         : ((wallet?.chat.people() ?? []) as HexString[]),
-    holdsNova: () => networkMode() !== "local",
+    hidesWalletContacts: () => networkMode() !== "local",
     guardNetwork: (network) => {
       if (networkMode() !== "validate") return network;
       deps.log(

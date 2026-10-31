@@ -240,7 +240,6 @@
           </div>
           <nav id="dock" class="dock" aria-label="Host navigation">
             <button type="button" data-destination="chat">
-              <span class="dock-badge" data-badge hidden></span>
               <svg
                 viewBox="0 0 28 28"
                 width="28"
@@ -846,16 +845,6 @@
             <button
               type="button"
               role="tab"
-              data-inspector-view="chat"
-              aria-selected="false"
-              aria-controls="chat-diagnostics"
-              tabindex="-1"
-            >
-              Chat
-            </button>
-            <button
-              type="button"
-              role="tab"
               data-inspector-view="workers"
               aria-selected="false"
               aria-controls="workers-inspector"
@@ -878,13 +867,6 @@
           <ol id="log"></ol>
         </div>
         <div id="inspector-mount" class="inspector-mount"></div>
-        <div
-          id="chat-diagnostics"
-          class="chat-diagnostics"
-          role="tabpanel"
-          aria-label="Chat diagnostics"
-          hidden
-        ></div>
         <div
           id="workers-inspector"
           class="workers-inspector"

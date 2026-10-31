@@ -1,5 +1,5 @@
 import { hexToBytes } from "@parity/truapi/scale";
-import type { ChainDirectory } from "../chat/nova/directory.js";
+import type { ChainDirectory } from "../platform/chain-directory.js";
 import type { HandleNames } from "../contacts/contacts.js";
 import type { ContactHandle } from "./contract.js";
 import type { ContactService, Person } from "./ports.js";

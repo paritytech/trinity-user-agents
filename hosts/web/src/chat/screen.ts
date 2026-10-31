@@ -1,25 +1,23 @@
 import type { ChatInboxView, InboxChange } from "./inbox.js";
 import type {
+  ChatContact,
   ChatProvider,
-  ChatRequest,
   ConversationSummary,
 } from "./provider.js";
 import { CallOverlay } from "./call-view.js";
 import type { PickedPerson } from "../contacts/contacts.js";
 import { ConversationView, avatar, time } from "./conversation-view.js";
-import { NOVA_PROVIDER_ID } from "./nova-provider.js";
 
 /**
  * The host's own Chat screen, laid out like the Polkadot app's: a large
- * "Chats" title, message requests, one list of conversations, and a
- * conversation with bubbles and a composer. It is drawn by the host, not by
+ * "Chats" title, one list of conversations, and a conversation with bubbles
+ * and a composer. It is drawn by the host, not by
  * a product, and is not offered through TrUAPI.
  *
  * The screen knows chats only as chat providers (`src/chat/provider.ts`):
  * every provider's conversations share one list, ordered by their last
- * activity, and open in the same conversation view. What is particular to a
- * provider (requests, starting a chat, its own account) shows only for the
- * providers that offer it. Chat keeps running while the screen is hidden.
+ * activity, and open in the same conversation view. Starting a chat shows
+ * only when a provider offers it. Chat keeps running while the screen is hidden.
  */
 
 type View =
@@ -27,6 +25,18 @@ type View =
   | { kind: "request"; providerId: string; person: PickedPerson }
   | { kind: "conversation"; providerId: string; conversationId: string }
   | { kind: "blocked" };
+
+/** The people the user blocked, as the host keeps them, and blocking or unblocking one. */
+export interface BlockedPeople {
+  list(): readonly ChatContact[];
+  /** The host's contacts the user may block now. */
+  blockable(): readonly ChatContact[];
+  /** The host's contact picker over the contacts the user may block, or null when closed. */
+  choose(): Promise<PickedPerson | null>;
+  block(account: string): void;
+  unblock(account: string): void;
+  onChange(listener: () => void): () => void;
+}
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -53,12 +63,6 @@ function button(
 const errorText = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-const STATUS_LINE: Record<string, string> = {
-  ready: "Listening",
-  starting: "Connecting…",
-  offline: "Stopped",
-};
-
 export class ChatScreen {
   private view: View = { kind: "list" };
   private conversation: ConversationView | null = null;
@@ -77,7 +81,6 @@ export class ChatScreen {
   constructor(
     private readonly root: HTMLElement,
     private readonly inbox: ChatInboxView,
-    private readonly onActivity: (pendingRequests: number) => void,
     /**
      * The host's contact picker, which New chat opens. Absent, New chat is
      * not offered.
@@ -85,10 +88,12 @@ export class ChatScreen {
     private readonly choosePerson?: () => Promise<PickedPerson | null>,
     /** Drawn under the title of the list, such as the tabs to the Inbox. */
     private readonly listHeader?: HTMLElement,
+    /** The people the user blocked. Absent, no Blocked list or Block is offered. */
+    private readonly blocked?: BlockedPeople,
   ) {
-    root.dataset.chatEngine = "off";
     document.body.append(this.call.root);
     inbox.onChange((change) => this.follow(change));
+    blocked?.onChange(() => this.queueRender());
   }
 
   private follow(change: InboxChange): void {
@@ -107,15 +112,6 @@ export class ChatScreen {
     this.call.follow(
       providers.flatMap((provider) =>
         provider.calls === undefined ? [] : [provider.calls],
-      ),
-    );
-    this.root.dataset.chatEngine =
-      providers.find((provider) => provider.id === NOVA_PROVIDER_ID)?.status()
-        .state ?? "off";
-    this.onActivity(
-      providers.reduce(
-        (sum, provider) => sum + (provider.requests?.list().length ?? 0),
-        0,
       ),
     );
     this.queueRender();
@@ -235,8 +231,25 @@ export class ChatScreen {
       return false;
     }
     if (this.conversation === null) {
-      this.conversation = new ConversationView(provider, conversationId, () =>
-        this.toList(),
+      const blocked = this.blocked;
+      this.conversation = new ConversationView(
+        provider,
+        conversationId,
+        () => this.toList(),
+        blocked === undefined
+          ? undefined
+          : {
+              // The host's contact whose conversation this is, as the provider finds it by account.
+              person: () =>
+                blocked
+                  .blockable()
+                  .find(
+                    (contact) =>
+                      provider.start?.conversationWith?.(contact.account) ===
+                      conversationId,
+                  ) ?? null,
+              block: (account) => blocked.block(account),
+            },
       );
       if (!this.conversation.exists()) {
         this.leaveConversation();
@@ -313,26 +326,6 @@ export class ChatScreen {
     const starter =
       this.choosePerson === undefined ? undefined : this.starter();
     const body = el("div", "chat-body chat-inbox");
-    const problem = this.inbox.problem();
-    if (problem !== null)
-      body.append(this.empty("Chat is unavailable", problem));
-    for (const provider of providers)
-      if (provider.account !== undefined) body.append(this.account(provider));
-
-    const requests = providers.flatMap((provider) =>
-      (provider.requests?.list() ?? []).map((request) => ({
-        provider,
-        request,
-      })),
-    );
-    if (requests.length > 0) {
-      const section = el("section", "chat-section");
-      section.append(el("h3", "chat-section-title", "Message requests"));
-      for (const { provider, request } of requests)
-        section.append(this.drawRequest(provider, request));
-      body.append(section);
-    }
-
     const rows = providers
       .flatMap((provider) =>
         provider.conversations().map((summary) => ({ provider, summary })),
@@ -343,7 +336,7 @@ export class ChatScreen {
       for (const { provider, summary } of rows)
         list.append(this.drawRow(provider, summary));
       body.append(list);
-    } else if (requests.length === 0 && problem === null)
+    } else
       body.append(
         this.empty(
           "Add your first contact",
@@ -352,34 +345,22 @@ export class ChatScreen {
             : "Tap + to choose someone to chat with.",
         ),
       );
-
-    const links = el("p", "chat-inbox-links");
-    const blocked = providers.reduce(
-      (sum, provider) => sum + (provider.blocked?.().length ?? 0),
-      0,
-    );
-    if (blocked > 0) {
-      const open = button("chat-link", `Blocked (${blocked})`, () => {
+    const blocked = this.blocked?.list().length ?? 0;
+    // Reachable while there is someone to unblock or to block.
+    if (blocked > 0 || (this.blocked?.blockable().length ?? 0) > 0) {
+      const links = el("p", "chat-inbox-links");
+      const label = blocked > 0 ? `Blocked (${blocked})` : "Blocked";
+      const open = button("chat-link", label, () => {
         this.view = { kind: "blocked" };
         this.formError = null;
         this.render();
       });
       open.dataset.action = "blocked";
       links.append(open);
+      body.append(links);
     }
-    if (links.childElementCount > 0) body.append(links);
     if (this.formError !== null)
       body.append(el("p", "chat-error", this.formError));
-    for (const provider of providers) {
-      const setAside = provider.account?.().setAside ?? [];
-      if (setAside.length === 0) continue;
-      const details = el("details", "chat-skipped");
-      details.append(
-        el("summary", "", `${setAside.length} statements set aside`),
-      );
-      for (const reason of setAside) details.append(el("p", "", reason));
-      body.append(details);
-    }
 
     let add: HTMLButtonElement | undefined;
     if (starter !== undefined) {
@@ -392,66 +373,6 @@ export class ChatScreen {
 
   private header(): HTMLElement[] {
     return this.listHeader === undefined ? [] : [this.listHeader];
-  }
-
-  /** A provider's own account: who the user is to it, its state, and what to know. */
-  private account(provider: ChatProvider): HTMLElement {
-    const account = provider.account!();
-    const status = provider.status();
-    const strip = el("div", "chat-identity");
-    strip.dataset.status = status.state;
-    strip.dataset.provider = provider.id;
-    const line = el("p", "chat-identity-line");
-    line.append(
-      el("span", "chat-dot"),
-      el(
-        "span",
-        "",
-        `${provider.label} · ${STATUS_LINE[status.state] ?? `Not connected: ${status.reason ?? ""}`}`,
-      ),
-    );
-    const who = el("p", "chat-identity-who", account.name);
-    who.title = account.title;
-    strip.append(line, who);
-    for (const note of account.notes) strip.append(el("p", "chat-note", note));
-    return strip;
-  }
-
-  private drawRequest(
-    provider: ChatProvider,
-    request: ChatRequest,
-  ): HTMLElement {
-    const card = el("article", "chat-request");
-    card.dataset.request = request.id;
-    const head = el("div", "chat-row");
-    const text = el("div", "chat-row-text");
-    text.append(
-      el("span", "chat-row-title", request.title),
-      el("span", "chat-row-preview", request.preview),
-    );
-    head.append(
-      avatar({ icon: null, seed: request.seed, title: request.title }),
-      text,
-      el("span", "chat-row-time", time(request.at)),
-    );
-    card.append(head);
-    if (request.problem !== null)
-      card.append(el("p", "chat-note", request.problem));
-    const actions = el("div", "chat-request-actions");
-    const accept = button("chat-pill chat-pill-primary", "Accept", () =>
-      this.act(async () => {
-        const conversationId = await provider.requests!.accept(request.id);
-        this.open(provider.id, conversationId);
-      }),
-    );
-    accept.disabled = this.busy || request.problem !== null;
-    const decline = button("chat-pill", "Decline", () =>
-      provider.requests!.decline(request.id),
-    );
-    decline.disabled = this.busy;
-    actions.append(decline, accept);
-    card.append(actions);
-    return card;
   }
 
   private drawRow(
@@ -524,11 +445,9 @@ export class ChatScreen {
 
   /** Why a person chosen elsewhere cannot be shown here, or null when they can. */
   startProblem(): string | null {
-    if (this.canStart()) return null;
-    const problem = this.inbox.problem();
-    return problem === null
-      ? "Chat cannot start a conversation in this session."
-      : `Chat cannot start a conversation: ${problem}`;
+    return this.canStart()
+      ? null
+      : "Chat cannot start a conversation in this session.";
   }
 
   /**
@@ -622,43 +541,54 @@ export class ChatScreen {
     return [bar, body];
   }
 
-  /** The people the user blocked, from every provider that blocks, each with Unblock. */
+  /** Choose one of the host's contacts in its picker, and block them. */
+  private async blockContact(): Promise<void> {
+    if (this.choosing || this.blocked === undefined) return;
+    this.choosing = true;
+    const person = await this.blocked
+      .choose()
+      .finally(() => (this.choosing = false));
+    if (person !== null) this.blocked.block(person.account);
+  }
+
+  /** The people the user blocked, each with Unblock, and Block a contact. */
   private drawBlocked(): HTMLElement[] {
     const bar = el("header", "chat-bar chat-bar-small");
     bar.append(this.back(), el("h2", "chat-title chat-title-small", "Blocked"));
     const body = el("div", "chat-body");
+    const add = button(
+      "chat-pill",
+      "Block a contact",
+      () => void this.blockContact(),
+    );
+    add.dataset.action = "block-contact";
+    add.disabled = (this.blocked?.blockable().length ?? 0) === 0;
+    body.append(add);
     const list = el("ul", "chat-list chat-blocked");
-    for (const provider of this.inbox.providers())
-      for (const summary of provider.blocked?.() ?? []) {
-        const item = el("li", "chat-row");
-        item.dataset.conversation = `${provider.id}/${summary.id}`;
-        const text = el("span", "chat-row-text");
-        text.append(
-          el("span", "chat-row-title", summary.title),
-          el("span", "chat-row-preview", summary.subtitle),
-        );
-        const unblock = button("chat-pill", "Unblock", () =>
-          this.act(() => provider.unblock!(summary.id)),
-        );
-        unblock.disabled = this.busy || provider.unblock === undefined;
-        unblock.dataset.action = "unblock";
-        item.append(avatar(summary), text, unblock);
-        list.append(item);
-      }
+    for (const person of this.blocked?.list() ?? []) {
+      const item = el("li", "chat-row");
+      item.dataset.account = person.account;
+      const text = el("span", "chat-row-text");
+      text.append(el("span", "chat-row-title", person.name));
+      const unblock = button("chat-pill", "Unblock", () =>
+        this.blocked!.unblock(person.account),
+      );
+      unblock.dataset.action = "unblock";
+      item.append(
+        avatar({ icon: null, seed: person.account, title: person.name }),
+        text,
+        unblock,
+      );
+      list.append(item);
+    }
     if (list.childElementCount === 0)
       body.append(
         this.empty("No one is blocked", "People you block show here."),
       );
     else body.append(list);
     body.append(
-      el(
-        "p",
-        "chat-identity-line",
-        "Blocking is kept on this device only. Unblocking reads what they sent that the network still holds.",
-      ),
+      el("p", "chat-identity-line", "Blocking is kept on this device only."),
     );
-    if (this.formError !== null)
-      body.append(el("p", "chat-error", this.formError));
     return [bar, body];
   }
 }

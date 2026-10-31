@@ -84,19 +84,18 @@ import {
   type PickedPerson,
 } from "./contacts/contacts.js";
 import { HostNames } from "./contacts/host-names.js";
-import { blockedAccounts, chatRecordKey } from "./chat/nova/store.js";
+import { WalletContacts } from "./contacts/wallet-contacts.js";
 import {
   exactUsernameDirectory,
+  fixtureDirectory,
   routeDirectory,
 } from "./contacts/username-directory.js";
-import { chainDirectory, lookupOwner } from "./chat/nova/directory.js";
-import { StatementStore } from "./chat/nova/statement-store.js";
+import { chainDirectory, lookupOwner } from "./platform/chain-directory.js";
+import { StatementStore } from "./platform/statement-store.js";
 import { bytesToHex, hexToBytes, type HexString } from "@parity/truapi/scale";
-import { accountProofs } from "./chat/account-proofs.js";
 import { ProductChat } from "./chat/product-chat.js";
 import { ProductWorkers } from "./products/product-workers.js";
 import { resolveWorker } from "./products/worker-manifest.js";
-import { ChatDiagnostics } from "../tools/inspector/diagnostics.js";
 import { productDetailsText, productStatusText } from "./products/status.js";
 import { hostBase } from "./products/loader/mount.js";
 import { HostStorage, localStorageChanges } from "./platform/storage.js";
@@ -217,10 +216,6 @@ const browseScreen = element("browse-screen");
 const pocketStatus = document.createElement("p");
 pocketStatus.className = "pocket-status";
 pocketStatus.setAttribute("role", "status");
-const chatBadge = document.querySelector<HTMLElement>(
-  '#dock [data-destination="chat"] [data-badge]',
-);
-const chatDiagnostics = new ChatDiagnostics();
 /** What the product workers write to their consoles, for the inspector's Workers view. */
 const workerConsole = new WorkerConsoleLog();
 /** Rooms that product workers keep, and the workers that keep them. */
@@ -236,6 +231,8 @@ const chatV2 = new ChatV2Host({
 });
 /** The host's own names for the people of a chat product's contact rooms. */
 const hostNames = new HostNames();
+/** The signed-in wallet's saved contacts and blocked people. */
+const walletContacts = new WalletContacts(localStorage);
 const workerFrames = document.createElement("div");
 workerFrames.id = "worker-frames";
 workerFrames.hidden = true;
@@ -276,10 +273,8 @@ const pocketFaces = new PocketFaces({
   storage: localStorage,
   log: linesFor("workers"),
 });
-/** The chat providers of the signed-in session: Nova, product rooms, and chat products over the v2 draft bridge. */
+/** The chat providers of the signed-in session: product rooms, and chat products over the v2 draft bridge. */
 const chatInbox = new ChatInbox({
-  storage: localStorage,
-  diagnostics: chatDiagnostics,
   rooms: {
     chat: productChat,
     channel: (productId) => productWorkers.provider(productId),
@@ -293,7 +288,6 @@ const chatInbox = new ChatInbox({
   workerNames: () => productWorkers.names(),
   log: linesFor("host"),
   chatV2,
-  hostChat: () => devSession?.holdsNova() !== true,
   chatV2Options: (productId) => devSession?.chatOptions(productId) ?? {},
 });
 /** Which of Chat's tabs shows: the conversations or the Inbox. */
@@ -326,11 +320,6 @@ const notifications =
 const chatScreen = new ChatScreen(
   element("chat-screen"),
   chatInbox,
-  (pendingRequests) => {
-    if (chatBadge === null) return;
-    chatBadge.hidden = pendingRequests === 0;
-    chatBadge.textContent = String(pendingRequests);
-  },
   async () => {
     const person = await hostContacts.choose({ title: "New chat" }, () =>
       chatInbox.roomPeople(),
@@ -339,6 +328,20 @@ const chatScreen = new ChatScreen(
     return person;
   },
   chatTabs?.root,
+  {
+    list: () => walletContacts.blockedPeople(),
+    blockable: () => walletContacts.blockable(),
+    // The host asks for itself, over its own contacts only: no one is looked up by username.
+    choose: () =>
+      chooseContact(
+        { title: "Block a contact" },
+        walletContacts.blockable(),
+        fixtureDirectory("your contacts", []),
+      ),
+    block: (account) => walletContacts.block(account),
+    unblock: (account) => walletContacts.unblock(account),
+    onChange: (listener) => walletContacts.onChange(listener),
+  },
 );
 bindWorkersMenu({
   form: element<HTMLFormElement>("worker-form"),
@@ -395,11 +398,11 @@ const devSession =
 notifications?.screen.setActions(devSession?.notificationActions ?? null);
 /** The invitation demo's made-up user this tab acts as instead of a wallet, if any. */
 const testUser = devSession?.testUser ?? null;
-// The demo's session has no Nova chat: Chat shows its chat worker once it signs in.
+// Chat shows the demo's chat worker once the test user signs in.
 if (testUser !== null)
   chatScreen.setNoChat({
     title: "Chat starts with the invitation demo",
-    body: "Contact Chat runs once the test user is signed in. Nova chat needs a wallet.",
+    body: "Contact Chat runs once the test user is signed in.",
   });
 /** The wallets built into the host from public test phrases. */
 const testAccounts = DEV_ACCOUNTS.map(devAccountWallet);
@@ -423,15 +426,9 @@ function leaveDemoFor(wallet: Wallet): void {
   sessionStorage.setItem(tabWalletKey(activeNetwork.id), wallet.id);
   devSession?.useDemo(null);
 }
-/**
- * The people the signed-in wallet blocked in Chat, as the host's chat record
- * keeps them. A test user blocks no one.
- */
+/** The people the signed-in wallet blocked, as its saved record keeps them. A test user blocks no one. */
 function blockedPeople(): HexString[] {
-  const wallet = walletSession.active;
-  return testUser !== null || wallet === null
-    ? []
-    : blockedAccounts(localStorage, chatRecordKey(activeNetwork.id, wallet.id));
+  return testUser !== null ? [] : walletContacts.blocked();
 }
 /** The account `username` names on this network's chains, or null. */
 async function usernameOwner(username: string): Promise<HexString | null> {
@@ -460,12 +457,12 @@ const usernameDirectory =
       })
     : exactUsernameDirectory(usernameOwner));
 /**
- * The contact picker, over the session's chat contacts or the test user's:
+ * The contact picker, over the wallet's saved contacts or the test user's:
  * the one products open with `contacts.pick` and Chat's New chat opens.
  */
 const hostContacts = new HostContacts({
-  list: () => devSession?.contacts ?? chatInbox.contacts(),
-  onChange: (listener) => chatInbox.onChange(listener),
+  list: () => devSession?.contacts ?? walletContacts.contacts(),
+  onChange: (listener) => walletContacts.onChange(listener),
   choose: (asker, contacts, blocked) =>
     chooseContact(asker, contacts, usernameDirectory, blocked),
   blocked: blockedPeople,
@@ -490,12 +487,10 @@ const sessionMembers = new SessionMembership({
   notifications: notifications?.store ?? null,
   signedOutNotifications: devSession?.notificationsScope ?? null,
   hostNames,
+  walletContacts,
+  hidesWalletContacts: () => devSession?.hidesWalletContacts() === true,
   chatV2,
   chatInbox,
-  proofs: async (productId) => {
-    if (runtime === null) throw new Error("The core is not running.");
-    return accountProofs(runtime, productId);
-  },
 });
 const dockButtons = DESTINATIONS.map((destination) => ({
   destination,
@@ -563,7 +558,6 @@ const tools = mountTools({
   element,
   productFrame,
   activity,
-  diagnostics: chatDiagnostics,
   workers: productWorkers,
   workerConsole,
 });
@@ -1780,7 +1774,7 @@ const searchPeople = new SearchPeople({
   available: () => testUser === null && chatInbox.signedIn(),
   startProblem: () => chatScreen.startProblem(),
   contacts: () => {
-    const contacts = chatInbox.contacts();
+    const contacts = walletContacts.contacts();
     const listed = new Set(
       contacts.map((contact) => contact.account.toLowerCase()),
     );

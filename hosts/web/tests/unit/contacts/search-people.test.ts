@@ -180,7 +180,7 @@ describe("the Docklet's people", () => {
   // nothing on chain for a conversation that cannot start.
   test("people are found while Chat cannot start a conversation, and picking one says why", async () => {
     const { people, chosen, labels, setStartProblem, confirmed } = setup();
-    setStartProblem("The Nova chat worker is not running.");
+    setStartProblem("The chat product's worker is not running.");
     people.type("k");
     await settle();
     expect(labels()).toEqual([["kim.01", null]]);
@@ -196,7 +196,7 @@ describe("the Docklet's people", () => {
     }).toEqual({
       chosen: [],
       confirmed: 0,
-      status: "The Nova chat worker is not running.",
+      status: "The chat product's worker is not running.",
     });
 
     setStartProblem(null);

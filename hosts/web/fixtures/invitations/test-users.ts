@@ -1,8 +1,8 @@
 import { bytesToHex } from "@parity/truapi/scale";
 import type { HexString } from "@parity/truapi/scale";
 import type { ChatContact } from "../../src/chat/provider.js";
-import type { ChainDirectory } from "../../src/chat/nova/directory.js";
-import { ChatKeys } from "../../src/chat/nova/keys.js";
+import type { ChainDirectory } from "../../src/platform/chain-directory.js";
+import { ChatKeys } from "../../src/invitations/chat-keys.js";
 import type { Person } from "../../src/invitations/ports.js";
 import {
   DEV_ACCOUNTS,

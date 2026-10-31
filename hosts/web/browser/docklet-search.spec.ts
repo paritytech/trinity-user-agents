@@ -1,7 +1,7 @@
 /**
  * Headless-browser test of the Docklet's search field, which finds a person
  * or an app. A synthetic wallet signs in with a saved chat record that holds
- * one contact; every socket is closed, the username index is a synthetic
+ * one contact, and Contact Chat for this wallet on, so Chat can start a chat; every socket is closed, the username index is a synthetic
  * answer on the dev server's own route, and every other request outside this
  * host and a loopback product is refused, so no chain, backend or peer is
  * reached and nothing is sent. It needs a Chromium: playwright-core finds the
@@ -111,6 +111,10 @@ async function open(
         `truapi-web-signing-host:network:paseo:chat:${id}:v1`,
         JSON.stringify(record),
       );
+      sessionStorage.setItem(
+        "truapi-web-signing-host:dev:wallet-contact-chat",
+        "on",
+      );
     },
     { id: WALLET_ID, mnemonic: phrase, record: RECORD },
   );
@@ -156,7 +160,7 @@ async function screenshot(page: Page, name: string): Promise<void> {
 
 describe("the Docklet's search", () => {
   test(
-    "lists apps and people apart, picks no one while typing, and a contact opens their chat",
+    "lists apps and people apart, picks no one while typing, and a contact opens a request to them",
     async () => {
       const { context, page, searched } = await open();
       try {
@@ -206,7 +210,8 @@ describe("the Docklet's search", () => {
         expect(await page.locator("#chat-screen").isHidden()).toBe(true);
         expect(await page.locator("#search-card").isVisible()).toBe(true);
 
-        // A contact, by name: chosen with the keyboard, their chat opens.
+        // A contact, by name: chosen with the keyboard, Chat opens a request to
+        // them, sent only when asked.
         await type(page, "kim");
         await page
           .locator("#address-recents li", { hasText: "kim.01" })
@@ -221,13 +226,16 @@ describe("the Docklet's search", () => {
         ).toBe("kim.01");
         await page.keyboard.press("Enter");
         await page.locator("#search-card").waitFor({ state: "hidden" });
-        await page.locator('#chat-screen [data-focus="composer"]').waitFor();
+        await page.locator('#chat-screen [data-focus="welcome"]').waitFor();
         expect(await page.locator("#chat-screen").isVisible()).toBe(true);
+        expect(
+          await page.locator('[data-action="start-chat"]').innerText(),
+        ).toBe("Send request to kim.01");
         expect(
           await page.evaluate(
             () => (document.activeElement as HTMLElement | null)?.dataset.focus,
           ),
-        ).toBe("composer");
+        ).toBe("welcome");
         expect(await page.getAttribute("body", "data-product")).toBe("closed");
         await screenshot(page, "kim-chat");
 
@@ -246,9 +254,9 @@ describe("the Docklet's search", () => {
     TEST_MS,
   );
 
-  // Who exists does not depend on whether Chat runs: with the public
-  // development phrase, whose chat stays off, people are still found, and
-  // picking one says why Chat cannot show them instead of opening anything.
+  // Who exists does not depend on whether Chat can start a chat: with the
+  // public development phrase, for which Contact Chat stays off, people are
+  // still found, and picking one says why instead of opening anything.
   test(
     "while Chat cannot start a conversation, people are found and picking one says why",
     async () => {
@@ -276,8 +284,7 @@ describe("the Docklet's search", () => {
           .click();
         await page
           .locator("#address-recents .recent-status", {
-            hasText:
-              "Chat cannot start a conversation: Not available for the public development phrase.",
+            hasText: "Chat cannot start a conversation in this session.",
           })
           .waitFor();
         expect(await page.locator("#search-card").isVisible()).toBe(true);

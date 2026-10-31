@@ -1,6 +1,6 @@
 import { mnemonicToEntropy } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
-import { equalBytes } from "./codec.js";
+import { equalBytes } from "../platform/codec.js";
 
 /**
  * Phrases published for anyone to use. An identity derived from one is

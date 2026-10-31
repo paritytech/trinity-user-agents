@@ -9,7 +9,7 @@ import {
   identityIndex,
   junctionCode,
   miniSecret,
-} from "../../../../src/chat/nova/keys.js";
+} from "../../../src/invitations/chat-keys.js";
 
 /** The public Substrate development phrase. It holds nothing. */
 const DEV_PHRASE =

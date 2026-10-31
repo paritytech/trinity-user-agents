@@ -1,5 +1,5 @@
 import type { HandleNames } from "../../src/contacts/contacts.js";
-import type { ChainDirectory } from "../../src/chat/nova/directory.js";
+import type { ChainDirectory } from "../../src/platform/chain-directory.js";
 import { DirectoryContacts } from "../../src/invitations/directory-contacts.js";
 import { TEST_USERS, testUserAccount, type TestUser } from "./test-users.js";
 
