@@ -325,7 +325,7 @@ pub trait NativeChatCallbacks: Send + Sync {
 
 	/// Return the configuration the product last declared for a room, or the
 	/// default configuration when it declared none. The core reads it before
-	/// each feed update, preview and posted message of the room.
+	/// each feed update, preview, posted message and query of the room.
 	async fn room_config(
 		&self,
 		room_id: String,

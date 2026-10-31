@@ -1539,7 +1539,8 @@ export interface ChatPlatform {
   /**
    * The configuration the product last declared for a room, or the default
    * configuration when it declared none. The core reads it to decide
-   * whether a room keeps its messages in the host.
+   * whether a room keeps its messages in the host and which queries the
+   * product answers.
    */
   readChatRoomConfig?(
     product: ProductContext,
