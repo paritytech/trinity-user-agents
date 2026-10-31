@@ -243,6 +243,8 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         let bridge = ProductPocketHostBridge(productId: productId, collection: collection)
 
         do {
+            logger.debug("Starting worker for \(productId)...")
+            
             let runtime = try await builder.makeRuntime(
                 productId: productId,
                 context: context(of: productId),
@@ -269,6 +271,8 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             bridge.start { [weak self] cards in
                 self?.publishCards(cards, of: productId)
             }
+            
+            logger.debug("Started worker for \(productId)...")
         } catch {
             // Only a failure of the boot still holding the product: a stop may
             // already have cleared this one and a restart taken its place, and

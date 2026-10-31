@@ -17,20 +17,26 @@ protocol ProductWorkerReloading {
 protocol ProductPresenceRegistering: AnyObject {
     func register(
         productId: ProductId,
-        contentId: ProductId,
+        contentId: ProductExecutable.Identifier,
         displayName: String,
         reloader: SPAProductReloading
     ) -> UUID
     func unregister(_ presenceId: UUID)
     func requestRefresh(of productId: ProductId)
-    func applyPendingUpdate(of contentId: ProductId) -> Bool
+    func applyPendingUpdate(of contentId: ProductExecutable.Identifier) -> Bool
 }
 
 @MainActor
 final class ProductUpdateCoordinator {
+    /// When products are refreshed, and which ones besides those on screen.
+    struct RefreshSources {
+        let applicationStateStreams: ApplicationStateStreamFactory
+        let hostPlacedProducts: HostPlacedProductsProviding
+    }
+
     private struct Presence {
         let productId: ProductId
-        let contentId: ProductId
+        let contentId: ProductExecutable.Identifier
         let displayName: String
         weak var reloader: SPAProductReloading?
     }
@@ -38,13 +44,13 @@ final class ProductUpdateCoordinator {
     private let contentLoader: ProductContentLoading
     private let workerReloader: ProductWorkerReloading
     private let noticePresenter: ProductUpdateNoticePresenting
-    private let applicationStateStreams: ApplicationStateStreamFactory
+    private let refreshSources: RefreshSources
     private let logger: LoggerProtocol
 
     private var presences: [UUID: Presence] = [:]
-    private var pendingUpdates: [ProductId: ExecutableRelease] = [:]
-    private var dismissedContentIds: Set<ProductId> = []
-    private var noticeContentId: ProductId?
+    private var pendingUpdates: [ProductExecutable.Identifier: ExecutableRelease] = [:]
+    private var dismissedContentIds: Set<ProductExecutable.Identifier> = []
+    private var noticeContentId: ProductExecutable.Identifier?
     private var updatesTask: Task<Void, Never>?
     private var foregroundTask: Task<Void, Never>?
 
@@ -52,13 +58,13 @@ final class ProductUpdateCoordinator {
         contentLoader: ProductContentLoading,
         workerReloader: ProductWorkerReloading,
         noticePresenter: ProductUpdateNoticePresenting,
-        applicationStateStreams: ApplicationStateStreamFactory,
+        refreshSources: RefreshSources,
         logger: LoggerProtocol
     ) {
         self.contentLoader = contentLoader
         self.workerReloader = workerReloader
         self.noticePresenter = noticePresenter
-        self.applicationStateStreams = applicationStateStreams
+        self.refreshSources = refreshSources
         self.logger = logger
     }
 
@@ -83,10 +89,10 @@ final class ProductUpdateCoordinator {
             }
         }
 
-        let foregroundEvents = applicationStateStreams.stream(for: .willEnterForeground)
+        let foregroundEvents = refreshSources.applicationStateStreams.stream(for: .willEnterForeground)
         foregroundTask = Task { [weak self] in
             for await _ in foregroundEvents {
-                self?.refreshPresentedProducts()
+                await self?.refreshProducts()
             }
         }
     }
@@ -95,7 +101,7 @@ final class ProductUpdateCoordinator {
 extension ProductUpdateCoordinator: ProductPresenceRegistering {
     func register(
         productId: ProductId,
-        contentId: ProductId,
+        contentId: ProductExecutable.Identifier,
         displayName: String,
         reloader: SPAProductReloading
     ) -> UUID {
@@ -127,7 +133,7 @@ extension ProductUpdateCoordinator: ProductPresenceRegistering {
         }
     }
 
-    func applyPendingUpdate(of contentId: ProductId) -> Bool {
+    func applyPendingUpdate(of contentId: ProductExecutable.Identifier) -> Bool {
         guard let update = pendingUpdates.removeValue(forKey: contentId) else {
             return false
         }
@@ -175,18 +181,18 @@ private extension ProductUpdateCoordinator {
     }
 
     /// A legacy product runs its worker from its base name, so a base-name release reloads it too.
-    static func productIdOfWorker(servedFrom contentId: ProductId) -> ProductId? {
+    static func productIdOfWorker(servedFrom contentId: ProductExecutable.Identifier) -> ProductId? {
         let productId = ProductManifestRecords.baseName(of: contentId)
         let workerContentId = ProductManifestRecords.subname(base: productId, kind: .worker)
 
         return contentId == workerContentId || contentId == productId ? productId : nil
     }
 
-    func isPresented(_ contentId: ProductId) -> Bool {
+    func isPresented(_ contentId: ProductExecutable.Identifier) -> Bool {
         !reloaders(of: contentId).isEmpty
     }
 
-    func reloaders(of contentId: ProductId) -> [SPAProductReloading] {
+    func reloaders(of contentId: ProductExecutable.Identifier) -> [SPAProductReloading] {
         presences.values.filter { $0.contentId == contentId }.compactMap(\.reloader)
     }
 
@@ -207,14 +213,14 @@ private extension ProductUpdateCoordinator {
         )
     }
 
-    func dismissNotice(of contentId: ProductId) {
+    func dismissNotice(of contentId: ProductExecutable.Identifier) {
         logger.debug("Product update dismissed for \(contentId)")
         dismissedContentIds.insert(contentId)
         hideNotice(of: contentId)
         showNextNotice()
     }
 
-    func hideNotice(of contentId: ProductId) {
+    func hideNotice(of contentId: ProductExecutable.Identifier) {
         guard noticeContentId == contentId else { return }
 
         noticeContentId = nil
@@ -228,7 +234,10 @@ private extension ProductUpdateCoordinator {
         await contentLoader.removeSupersededContent(keeping: Set(servedHashes + pendingHashes))
     }
 
-    func refreshPresentedProducts() {
-        Set(presences.values.map(\.productId)).forEach(requestRefresh(of:))
+    func refreshProducts() async {
+        let presented = Set(presences.values.map(\.productId))
+        let hostPlaced = await refreshSources.hostPlacedProducts.placedProductIds()
+
+        presented.union(hostPlaced).forEach(requestRefresh(of:))
     }
 }

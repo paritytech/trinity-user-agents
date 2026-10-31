@@ -8,13 +8,13 @@ public enum ProductManifestRecords {
 
     /// Prepends the kind label to a whole base name, whatever TLD it carries:
     /// `subname(base: "coinflip.<tld>", kind: .app) == "app.coinflip.<tld>"`
-    public static func subname(base: ProductId, kind: ExecutableKind) -> ProductId {
+    public static func subname(base: ProductId, kind: ExecutableKind) -> ProductExecutable.Identifier {
         "\(kind.rawValue).\(base)"
     }
 
     /// Inverse of ``subname(base:kind:)``. The prefix comes off only when the remainder still holds
     /// a dot, otherwise `app.<tld>` — a product named after a kind — would collapse to the bare TLD.
-    public static func baseName(of host: ProductId) -> ProductId {
+    public static func baseName(of host: ProductExecutable.Identifier) -> ProductId {
         for kind in ExecutableKind.allCases {
             let prefix = "\(kind.rawValue)."
 

@@ -4,7 +4,7 @@ import SDKLogger
 public protocol ProductContentCaching: Sendable {
     func manifest(_ productId: ProductId) async throws -> ProductManifest
     /// Nil also when the applied archive is no longer on disk.
-    func appliedArchive(of contentId: ProductId) async -> DotNsResolvedContent?
+    func appliedArchive(of contentId: ProductExecutable.Identifier) async -> DotNsResolvedContent?
     /// An applied executable keeps its record until a release of it is applied.
     func adopt(_ manifest: ProductManifest) async
     func apply(_ release: ExecutableRelease) async
@@ -65,7 +65,7 @@ extension ProductContentCache: ProductContentCaching {
         }
     }
 
-    public func appliedArchive(of contentId: ProductId) -> DotNsResolvedContent? {
+    public func appliedArchive(of contentId: ProductExecutable.Identifier) -> DotNsResolvedContent? {
         guard
             let contentHash = storage.contentHashes.getContentHash(name: contentId),
             let localURL = storage.content.getContentDirectory(contentHash: contentHash)
@@ -104,6 +104,10 @@ extension ProductContentCache: ProductContentCaching {
         let superseded = storage.content.storedContents().filter { content in
             !keptHashes.contains(content.contentHash) && content.modifiedAt < cutoff
         }
+        
+        guard !superseded.isEmpty else {
+            return
+        }
 
         for content in superseded {
             do {
@@ -112,5 +116,7 @@ extension ProductContentCache: ProductContentCaching {
                 logger.error("Failed to remove superseded product content: \(error)")
             }
         }
+        
+        logger.debug("Processed \(superseded.count) superseded product archives")
     }
 }

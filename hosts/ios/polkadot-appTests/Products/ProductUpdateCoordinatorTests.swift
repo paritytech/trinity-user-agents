@@ -11,10 +11,12 @@ struct ProductUpdateCoordinatorTests {
     private static let appId = "app.shop.dot"
     private static let workerId = "worker.shop.dot"
     private static let otherAppId = "app.other.dot"
+    private static let hostPlacedId = "dim2.dot"
 
     private let loader = StubProductContentLoader()
     private let workerReloader = StubProductWorkerReloader()
     private let notice = StubProductUpdateNoticePresenter()
+    private let hostPlaced = StubHostPlacedProducts()
     private let coordinator: ProductUpdateCoordinator
     private let first = StubSPAProductReloader()
     private let second = StubSPAProductReloader()
@@ -24,7 +26,10 @@ struct ProductUpdateCoordinatorTests {
             contentLoader: loader,
             workerReloader: workerReloader,
             noticePresenter: notice,
-            applicationStateStreams: ApplicationStateStreamFactory(),
+            refreshSources: ProductUpdateCoordinator.RefreshSources(
+                applicationStateStreams: ApplicationStateStreamFactory(),
+                hostPlacedProducts: hostPlaced
+            ),
             logger: Logger.shared
         )
     }
@@ -163,6 +168,16 @@ struct ProductUpdateCoordinatorTests {
 
         #expect(loader.refreshedIds == [Self.productId])
     }
+
+    @Test func returningToTheForegroundRefreshesHostPlacedProductsWithNothingOpen() async {
+        hostPlaced.productIds = [Self.hostPlacedId]
+        coordinator.start()
+
+        NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
+        await loader.waitForRefreshes(1)
+
+        #expect(loader.refreshedIds == [Self.hostPlacedId])
+    }
 }
 
 private extension ProductUpdateCoordinatorTests {
@@ -185,5 +200,13 @@ private extension ProductUpdateCoordinatorTests {
             contentId: contentId,
             archive: DotNsResolvedContent(contentHash: "02", localURL: URL(fileURLWithPath: "/content/02"))
         )
+    }
+}
+
+private final class StubHostPlacedProducts: HostPlacedProductsProviding, @unchecked Sendable {
+    var productIds: [ProductId] = []
+
+    func placedProductIds() async -> [ProductId] {
+        productIds
     }
 }

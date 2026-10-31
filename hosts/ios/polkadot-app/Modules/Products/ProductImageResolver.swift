@@ -13,12 +13,12 @@ import PolkadotUI
 struct ProductImageResolver: Sendable {
     /// Resolved per call: the archive a face is drawn from is the product's
     /// worker, and naming it may cost a manifest read.
-    private let contentId: @Sendable () async -> ProductId?
+    private let contentId: @Sendable () async -> ProductExecutable.Identifier?
     private let archive: ProductWorkerArchive
     private let ipfsUrl: @Sendable (String) -> URL?
 
     init(
-        contentId: @escaping @Sendable () async -> ProductId?,
+        contentId: @escaping @Sendable () async -> ProductExecutable.Identifier?,
         archive: ProductWorkerArchive,
         ipfsUrl: @escaping @Sendable (String) -> URL?
     ) {
@@ -50,7 +50,7 @@ struct ProductImageSources {
     let dotNsResolver: any DotNsResolverProtocol
     let ipfsGatewayBaseUrl: URL
 
-    func resolver(contentId: @escaping @Sendable () async -> ProductId?) -> ProductImageResolver {
+    func resolver(contentId: @escaping @Sendable () async -> ProductExecutable.Identifier?) -> ProductImageResolver {
         let converter = HexToCIDConverter(ipfsBaseURL: ipfsGatewayBaseUrl)
         return ProductImageResolver(
             contentId: contentId,

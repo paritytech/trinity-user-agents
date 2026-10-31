@@ -309,7 +309,7 @@ extension SPANativeRuntimeInteractor: SPAProductReloading {
 }
 
 private extension SPANativeRuntimeInteractor {
-    var servedContentId: ProductId? {
+    var servedContentId: ProductExecutable.Identifier? {
         resolvedProduct?.contentId(for: configuration.executable)
     }
 

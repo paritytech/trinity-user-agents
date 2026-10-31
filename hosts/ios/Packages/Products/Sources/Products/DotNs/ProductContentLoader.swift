@@ -152,11 +152,11 @@ extension ProductContentLoader: ProductContentLoading {
 
 private struct FetchedContent: Sendable {
     let manifest: ProductManifest
-    let archives: [ProductId: DotNsResolvedContent]
+    let archives: [ProductExecutable.Identifier: DotNsResolvedContent]
 }
 
 private extension ProductManifest {
-    func release(of contentId: ProductId, archive: DotNsResolvedContent?) -> ExecutableRelease {
+    func release(of contentId: ProductExecutable.Identifier, archive: DotNsResolvedContent?) -> ExecutableRelease {
         ExecutableRelease(
             contentId: contentId,
             archive: archive,
@@ -214,8 +214,8 @@ private extension ProductContentLoader {
         }
     }
 
-    func servedContentIds(of resolved: ResolvedProduct) async -> [ExecutableKind: ProductId] {
-        var served: [ExecutableKind: ProductId] = [:]
+    func servedContentIds(of resolved: ResolvedProduct) async -> [ExecutableKind: ProductExecutable.Identifier] {
+        var served: [ExecutableKind: ProductExecutable.Identifier] = [:]
 
         for kind in ExecutableKind.allCases {
             let contentId = resolved.contentId(for: kind)
@@ -236,7 +236,7 @@ private extension ProductContentLoader {
         let manifest = try await fetcher.fetchManifest(productId)
         let contentIds = Set(kinds.map(manifest.product.contentId(for:)))
 
-        var archives: [ProductId: DotNsResolvedContent] = [:]
+        var archives: [ProductExecutable.Identifier: DotNsResolvedContent] = [:]
 
         for contentId in contentIds {
             do {
@@ -249,7 +249,7 @@ private extension ProductContentLoader {
         return FetchedContent(manifest: manifest, archives: archives)
     }
 
-    func commit(_ latest: FetchedContent, served: Set<ProductId>) async -> [ExecutableRelease] {
+    func commit(_ latest: FetchedContent, served: Set<ProductExecutable.Identifier>) async -> [ExecutableRelease] {
         await cache.adopt(latest.manifest)
 
         var updates: [ExecutableRelease] = []

@@ -252,7 +252,7 @@ extension SPARustRuntimeInteractor: SPAProductReloading {
 }
 
 private extension SPARustRuntimeInteractor {
-    var servedContentId: ProductId? {
+    var servedContentId: ProductExecutable.Identifier? {
         resolvedProduct?.contentId(for: configuration.executable)
     }
 

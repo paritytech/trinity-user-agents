@@ -1,5 +1,6 @@
 import Foundation
 import FoundationExt
+import Keystore_iOS
 import Products
 
 extension ServiceCoordinator {
@@ -18,7 +19,13 @@ extension ServiceCoordinator {
                 contentLoader: contentLoader,
                 workerReloader: workerReloader,
                 noticePresenter: ProductUpdateNoticePresenter(application: .shared, iconFactory: iconFactory),
-                applicationStateStreams: ApplicationStateStreamFactory(),
+                refreshSources: ProductUpdateCoordinator.RefreshSources(
+                    applicationStateStreams: ApplicationStateStreamFactory(),
+                    hostPlacedProducts: HostPlacedProductsProvider(
+                        settingsManager: SettingsManager.shared,
+                        tldProvider: DotNsTldProviderFacade.shared
+                    )
+                ),
                 logger: logger
             )
 
