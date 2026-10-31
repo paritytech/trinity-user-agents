@@ -1,29 +1,15 @@
 import Foundation
 import Products
 
+/// Chat handlers and Pocket cards read the current execution per call, so a worker restart is the whole reload.
 final class ProductWorkerReloader: ProductWorkerReloading {
-    private let workerManager: ProductWorkerManaging
     private let truapiWorkers: @Sendable () -> (any TrUAPIWorkerManaging)?
-    private let chatExtensions: ChatExtensionsRegistering
 
-    init(
-        workerManager: ProductWorkerManaging,
-        truapiWorkers: @escaping @Sendable () -> (any TrUAPIWorkerManaging)?,
-        chatExtensions: ChatExtensionsRegistering
-    ) {
-        self.workerManager = workerManager
+    init(truapiWorkers: @escaping @Sendable () -> (any TrUAPIWorkerManaging)?) {
         self.truapiWorkers = truapiWorkers
-        self.chatExtensions = chatExtensions
     }
 
     func reloadWorker(of productId: ProductId) async {
-        await workerManager.reload(productId: productId)
         await truapiWorkers()?.reload(productId: productId)
-
-        let extensionId = Product(id: productId, name: productId).extensionId
-
-        guard let bot = chatExtensions.getChatExtensionBot(for: extensionId) as? ProductBot else { return }
-
-        await bot.reload()
     }
 }

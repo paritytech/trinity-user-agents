@@ -327,6 +327,7 @@ extension ServiceCoordinator {
 
         let (chatExtensionsRegistry, productWorkerFacade) = createChatExtensionsRegistry(
             accountManager: accountManager,
+            truapiRuntimeProvider: truapiRuntimeProvider,
             spaFlowState: spaFlowState,
             productFileProvider: productFileProvider,
             pocket: pocket
@@ -336,11 +337,7 @@ extension ServiceCoordinator {
         RootDependencyLocator.setDependency(productWorkerFacade)
         registerProductUpdates(
             contentLoader: spaFlowState.contentLoader,
-            workerReloader: ProductWorkerReloader(
-                workerManager: productWorkerFacade.manager,
-                truapiWorkers: { [pocket] in pocket?.workers },
-                chatExtensions: chatExtensionsRegistry
-            ),
+            workerReloader: ProductWorkerReloader(truapiWorkers: { [pocket] in pocket?.workers }),
             iconFactory: spaFlowState.iconViewModelFactory,
             logger: logger
         )

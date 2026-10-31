@@ -2,6 +2,8 @@ import Foundation
 import PolkadotUI
 import Products
 import Testing
+import TrUAPIHost
+import UIKitExt
 @testable import polkadot_app
 
 /// A chat card names its images the way a Pocket card does, so the bot the
@@ -41,14 +43,35 @@ struct ChatCardImagesTests {
         gateway: URL
     ) throws -> WidgetImageResolver {
         let factory = ProductBotFactory(
-            contentLoader: StubProductContentLoader(),
-            runtimeFactory: StubChatRuntimeFactory(runtimes: [IdleChatRuntime()]),
+            productFileProvider: NoScripts(),
+            runtimeProvider: NoRuntime(),
+            workers: { nil },
+            workerManager: NoWorkers(),
             productImages: ProductImageSources(dotNsResolver: dotNsResolver, ipfsGatewayBaseUrl: gateway)
         )
         let bot = try #require(factory.create(resolved: gameProduct()))
         let decoder = try #require(bot.customDecoders.first as? ProductMessageDecoder)
 
         return decoder.resolveImage
+    }
+}
+
+private struct Unavailable: Error {}
+
+private struct NoScripts: ChatProductFileProviding {
+    func load(for _: ProductId, relativePath _: String) -> Data? { nil }
+    func manualScriptEntryPath(productId _: ProductId) -> String? { nil }
+}
+
+private final class NoRuntime: TrUAPIHostRuntimeProviding {
+    func sharedRuntime() throws -> TrUAPIHostRuntime { throw Unavailable() }
+    @MainActor func setPresentationView(_: ControllerBackedProtocol) {}
+    func attach(workerManager _: any TrUAPIWorkerManaging) {}
+}
+
+private struct NoWorkers: ProductWorkerManaging {
+    func acquire(productId _: ProductId) async -> ProductWorkerLease {
+        ProductWorkerLease(token: ProductWorkerToken {}, result: .failure(Unavailable()))
     }
 }
 
