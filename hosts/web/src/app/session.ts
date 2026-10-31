@@ -3,7 +3,7 @@ import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { ProductNavigation } from "./navigation.js";
 import type { ChatV2Host } from "../chat/draft/host.js";
 import type { ChatInbox } from "../chat/inbox.js";
-import { sessionChatKeys, type ChatSession } from "../chat/nova-session.js";
+import type { ChatSession } from "../chat/nova-session.js";
 import { productChatKey, type ProductChat } from "../chat/product-chat.js";
 import type { HostNames } from "../contacts/host-names.js";
 import { chainDirectory } from "../chat/nova/directory.js";
@@ -22,10 +22,6 @@ import { tabWalletKey } from "../platform/network-choice.js";
 import type { HostStorage } from "../platform/storage.js";
 import type { Wallet } from "../platform/wallets.js";
 import type { WalletPublicInfoStore } from "./wallet-label.js";
-import {
-  NOVA_WORKER_PRODUCT,
-  type NovaWorkerMode,
-} from "../../tools/demos/worker-mode.js";
 
 type Runtime = WorkerPairingHostRuntime;
 
@@ -124,23 +120,15 @@ export interface SessionMembers {
   notifications: NotificationStore | null;
   /** The scope the Inbox reads while signed out: a test user's, or none. */
   signedOutNotifications: string | null;
-  /** The dev server's local chat product demo, when it is offered. */
-  localChatDemo: { stop(): void } | null;
-  /** Where the dev server runs the wallet's Nova chat, when it offers the choice. */
-  novaWorkerMode: Pick<NovaWorkerMode, "setSession"> | null;
   hostNames: HostNames;
   chatV2: ChatV2Host;
   chatInbox: ChatInbox;
-  /** The Developer menu's engine switch, once it is drawn. */
-  engineSwitch(): { render(): void } | null;
   proofs: NonNullable<ChatSession["proofs"]>;
 }
 
 /**
- * Hand a session, or none, to everything that belongs to it, in an order
- * that matters: the Nova engine's place is chosen before the workers and the
- * inbox start, and a new scope ends the draft bridge's rooms and the local
- * demo of the one before.
+ * Hand a session, or none, to everything that belongs to it. A new scope
+ * ends the draft bridge's rooms of the one before.
  */
 export class SessionMembership {
   /** The wallet and network the v2 declarations belong to. */
@@ -155,8 +143,6 @@ export class SessionMembership {
       productWorkers,
       productChat,
       notifications,
-      localChatDemo,
-      novaWorkerMode,
       hostNames,
       chatV2,
       chatInbox,
@@ -166,13 +152,10 @@ export class SessionMembership {
       productWorkers.setSession(null);
       productChat.setScope(null);
       notifications?.setScope(this.members.signedOutNotifications);
-      localChatDemo?.stop();
-      novaWorkerMode?.setSession(null);
       hostNames.setSession(null);
       if (this.chatV2Scope !== null) chatV2.reset();
       this.chatV2Scope = null;
       chatInbox.setSession(null);
-      this.members.engineSwitch()?.render();
       return;
     }
     const { wallet, access } = session;
@@ -183,25 +166,8 @@ export class SessionMembership {
       record: () => localStorage.getItem(chatRecordKey(network.id, wallet.id)),
       directory: () => chainDirectory(access.chain, access.genesis),
     });
-    // First, so the workers and the inbox below see this session's engine choice.
-    const restartNova = novaWorkerMode?.setSession({
-      network: network.id,
-      walletId: wallet.id,
-      identity: `${identityAccountId ?? ""}:${chatPublicKey ?? ""}`,
-      keys: () =>
-        sessionChatKeys({
-          entropy: wallet.entropy,
-          networkSuffix: access.networkSuffix,
-          identityAccountId: identityAccountId ?? undefined,
-          chatPublicKey: chatPublicKey ?? undefined,
-        }),
-    });
     const scope = productChatKey(network.id, wallet.id);
-    if (scope !== this.chatV2Scope) {
-      // The demo belongs to the session it was started in.
-      localChatDemo?.stop();
-      chatV2.reset();
-    }
+    if (scope !== this.chatV2Scope) chatV2.reset();
     this.chatV2Scope = scope;
     productChat.setScope(scope);
     notifications?.setScope(notificationsKey(network.id, wallet.id));
@@ -224,12 +190,6 @@ export class SessionMembership {
       identityBackend: network.identityBackend,
       proofs: this.members.proofs,
     });
-    if (restartNova === true) {
-      // Its frame holds the link of the identity that ended; a new frame asks again.
-      chatV2.forget(NOVA_WORKER_PRODUCT);
-      void productWorkers.restart(NOVA_WORKER_PRODUCT);
-    }
-    this.members.engineSwitch()?.render();
   }
 
   /**
@@ -247,8 +207,6 @@ export class SessionMembership {
       productWorkers,
       productChat,
       notifications,
-      localChatDemo,
-      novaWorkerMode,
       hostNames,
       chatV2,
       chatInbox,
@@ -256,14 +214,11 @@ export class SessionMembership {
     pocketFaces.setSession(null);
     productChat.setScope(null);
     notifications?.setScope(this.members.signedOutNotifications);
-    localChatDemo?.stop();
-    novaWorkerMode?.setSession(null);
     hostNames.setSession(null);
     const scope = `${network.id}:${walletId}:products-only`;
     if (scope !== this.chatV2Scope) chatV2.reset();
     this.chatV2Scope = scope;
     productWorkers.setSession({ walletId, network });
     chatInbox.setSession({ walletId, network: network.id });
-    this.members.engineSwitch()?.render();
   }
 }

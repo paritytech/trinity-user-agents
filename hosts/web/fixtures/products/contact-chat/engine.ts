@@ -7,9 +7,7 @@ import type {
 } from "../../../src/invitations/contract.js";
 import {
   fromHex,
-  fromUtf8,
   toHex,
-  utf8,
   x25519Agree,
   type RandomBytes,
 } from "../../../src/invitations/sealing.js";
@@ -27,18 +25,15 @@ import {
   readInvitation,
   respond,
   type SenderSecrets,
+  type Topics,
 } from "../example-chat/setup.js";
-import {
-  openFrame,
-  sealFrame,
-  sessionKeys,
-  type SessionKeys,
-} from "./messages.js";
 import type { HostRequests } from "./requests.js";
 
 /**
- * DEV ONLY. Contact Chat's engine: one-to-one text conversations with people
- * it knows only by the contact handles its host gives it.
+ * DEV ONLY. Contact Chat's engine: one-to-one conversations with people it
+ * knows only by the contact handles its host gives it. It ends at the
+ * connection: it has no text transport, so a connected conversation keeps
+ * what the setup agreed and refuses to send.
  *
  * Who does what:
  *
@@ -50,8 +45,7 @@ import type { HostRequests } from "./requests.js";
  *   and hands back only an authenticated reply.
  * - This engine owns the protocol: the setup (`../example-chat/setup.ts`,
  *   a toy), its keys, its check of the reply before it calls `complete`, the
- *   text layer (`./messages.ts`, a fixture), the history, and the two
- *   conversation topics, which the recipient makes.
+ *   history, and the two conversation topics, which the recipient makes.
  * - It never learns a name, account, username, avatar or identity key: a
  *   room's contact and its one participant are the handle, and the host
  *   names them.
@@ -70,8 +64,12 @@ import type { HostRequests } from "./requests.js";
 /** What the recipient's host shows beside an invitation with no first message. */
 export const DEFAULT_PURPOSE = "Wants to chat with you in Contact Chat.";
 
-/** Frames remembered per conversation, to drop a repeat. */
-const SEEN_MAX = 4096;
+/** What a connected conversation's room says under its name: the setup's scope. */
+export const CONNECTED_SUBTITLE = "Connected · sending is not supported yet";
+
+/** Why a connected conversation cannot send. */
+export const NO_TEXT_TRANSPORT =
+  "Connected. Contact Chat has no text transport yet, so it cannot send.";
 
 /** The id the one other person of a conversation has, in its rooms. */
 export const PEER = "peer";
@@ -105,8 +103,6 @@ interface StoredMessage {
   text: string;
   at: number;
   state: MessageState;
-  /** For the user's own text: the frame, to post again on retry. */
-  frame?: string;
 }
 
 interface StoredConversation {
@@ -120,12 +116,18 @@ interface StoredConversation {
   request?: string;
   /** The sender's setup secrets, until the reply checks. */
   invitation?: SenderSecrets;
-  session?: SessionKeys;
-  /** The last counter this side sealed. */
-  sent: number;
-  /** Counters of the frames read, newest last. */
-  seen: number[];
+  /**
+   * What the setup agreed, kept from before the reply leaves or completes.
+   * Product-owned session state; not exposed in chat or request messages.
+   */
+  connection?: Connection;
   messages: StoredMessage[];
+}
+
+/** What both sides of a setup hold alike: the two topics and the X25519 secret of their protocol keys, `0x` hex. */
+export interface Connection {
+  topics: Topics;
+  secret: string;
 }
 
 interface StoredRecord {
@@ -141,15 +143,8 @@ export type RecordStorage = Pick<Storage, "getItem" | "setItem"> & {
   flush(): Promise<void>;
 };
 
-/** Where the conversation topics are: the Statement Store, or a stand-in for it. */
-export interface ConversationTopics {
-  post(topic: string, data: string): Promise<void>;
-  watch(topic: string, onData: (data: string[]) => void): Promise<() => void>;
-}
-
 export interface ContactChatDeps {
   requests: HostRequests;
-  topics: ConversationTopics;
   storage: RecordStorage;
   recordKey: string;
   random: RandomBytes;
@@ -173,7 +168,7 @@ const SUBTITLE: Record<Status, string> = {
   waiting: "Request sent",
   paused: "Request paused",
   accepting: "Accepting the request",
-  connected: "Contact Chat",
+  connected: CONNECTED_SUBTITLE,
   "not-sent": "Request not sent",
   cancelled: "Request cancelled",
 };
@@ -191,7 +186,6 @@ const OUTSTANDING: readonly Status[] = ["sending", "waiting", "paused"];
 export class ContactChat implements ConversationEngine {
   private record: StoredRecord;
   private readonly listeners = new Set<() => void>();
-  private readonly watching = new Map<string, () => void>();
   /** Replies being checked, so two copies of one are checked once. */
   private readonly checking = new Set<string>();
   /** Conversations whose invitation this run handed the host and has no answer for yet. */
@@ -201,14 +195,9 @@ export class ContactChat implements ConversationEngine {
     this.record = this.load();
   }
 
-  /** Follow the host's messages and the topics of every connected conversation. */
-  async run(): Promise<void> {
+  /** Follow the host's messages. */
+  run(): void {
     this.deps.requests.onMessage((message) => void this.hostMessage(message));
-    await Promise.all(
-      this.record.conversations
-        .filter((conversation) => conversation.status === "connected")
-        .map((conversation) => this.watch(conversation)),
-    );
   }
 
   /** Every conversation as stored, for a test to read. */
@@ -232,17 +221,17 @@ export class ContactChat implements ConversationEngine {
         subtitle: SUBTITLE[conversation.status],
         participants: [{ id: PEER, name: "Contact", handle }],
         contact: { handle, state: CONTACT_STATE[conversation.status] },
-        composer:
-          conversation.status === "connected"
-            ? { allowed: true }
-            : {
-                allowed: false,
-                reason: OUTSTANDING.includes(conversation.status)
-                  ? "Waiting for them to accept"
-                  : conversation.status === "accepting"
-                    ? "Accepting their request"
-                    : "Start a new chat to ask again",
-              },
+        composer: {
+          allowed: false,
+          reason:
+            conversation.status === "connected"
+              ? NO_TEXT_TRANSPORT
+              : OUTSTANDING.includes(conversation.status)
+                ? "Waiting for them to accept"
+                : conversation.status === "accepting"
+                  ? "Accepting their request"
+                  : "Start a new chat to ask again",
+        },
       };
     });
   }
@@ -286,15 +275,13 @@ export class ContactChat implements ConversationEngine {
       role: "sender",
       status: "sending",
       createdAt: this.deps.now(),
-      sent: 0,
-      seen: [],
       messages: [],
     };
     if (known === undefined) this.record.conversations.push(conversation);
     conversation.role = "sender";
     conversation.status = "sending";
     delete conversation.request;
-    delete conversation.session;
+    delete conversation.connection;
     const { payload, secrets } = createInvitation(this.deps.random);
     conversation.invitation = secrets;
     this.save();
@@ -352,62 +339,22 @@ export class ContactChat implements ConversationEngine {
     this.save();
   }
 
-  async send(conversationId: string, text: string): Promise<string> {
+  /** Refused: the engine ends at the connection and has nothing to send text on. */
+  async send(conversationId: string): Promise<string> {
     const conversation = this.find(conversationId);
     if (conversation === undefined) throw new Error("There is no such chat.");
-    const session = conversation.session;
-    if (conversation.status !== "connected" || session === undefined)
-      throw new Error(
-        OUTSTANDING.includes(conversation.status)
+    throw new Error(
+      conversation.status === "connected"
+        ? NO_TEXT_TRANSPORT
+        : OUTSTANDING.includes(conversation.status)
           ? "They have not accepted yet."
           : "Start a new chat to ask again.",
-      );
-    conversation.sent += 1;
-    const message: StoredMessage = {
-      id: toHex(this.deps.random(16)),
-      author: "self",
-      text,
-      at: this.deps.now(),
-      state: "sending",
-    };
-    message.frame = sealFrame(
-      session.send,
-      session.out,
-      conversation.sent,
-      utf8(JSON.stringify({ id: message.id, at: message.at, text })),
     );
-    conversation.messages.push(message);
-    this.save();
-    void this.post(conversation, message);
-    return message.id;
   }
 
-  async retry(conversationId: string, messageId: string): Promise<void> {
-    const conversation = this.find(conversationId);
-    const message = conversation?.messages.find(
-      (entry) => entry.id === messageId && entry.author === "self",
-    );
-    if (conversation === undefined || message === undefined)
-      throw new Error("There is no such message.");
-    message.state = "sending";
-    this.save();
-    await this.post(conversation, message);
-  }
-
-  private async post(
-    conversation: StoredConversation,
-    message: StoredMessage,
-  ): Promise<void> {
-    const session = conversation.session;
-    if (session === undefined || message.frame === undefined) return;
-    try {
-      await this.deps.topics.post(session.out, message.frame);
-      message.state = "sent";
-    } catch (error) {
-      message.state = "failed";
-      this.deps.report?.(`post: ${errorText(error)}`);
-    }
-    this.save();
+  /** Refused: this engine never sends a message, so none can fail. */
+  async retry(): Promise<void> {
+    throw new Error("There is no such message.");
   }
 
   private async hostMessage(message: HostMessage): Promise<void> {
@@ -492,7 +439,6 @@ export class ContactChat implements ConversationEngine {
     conversation.status = "connected";
     this.system(conversation, "You accepted the chat request");
     this.save();
-    await this.watch(conversation);
   }
 
   /**
@@ -521,21 +467,19 @@ export class ContactChat implements ConversationEngine {
     }
     this.checking.add(payload);
     try {
-      conversation.session = sessionKeys(
-        "sender",
-        x25519Agree(
-          fromHex(secrets.protocolSecret),
-          fromHex(checked.protocolKey),
+      conversation.connection = {
+        topics: checked.topics,
+        secret: toHex(
+          x25519Agree(
+            fromHex(secrets.protocolSecret),
+            fromHex(checked.protocolKey),
+          ),
         ),
-        secrets.payload,
-        payload,
-        checked.topics,
-      );
+      };
       conversation.status = "connected";
       delete conversation.invitation;
       this.system(conversation, "They accepted your chat request");
       this.save();
-      await this.watch(conversation);
       await this.complete(handle);
     } finally {
       this.checking.delete(payload);
@@ -569,16 +513,6 @@ export class ContactChat implements ConversationEngine {
       });
       return;
     }
-    const session = sessionKeys(
-      "recipient",
-      x25519Agree(
-        fromHex(made.protocolSecret),
-        fromHex(invitation.protocolKey),
-      ),
-      request.payload,
-      made.response,
-      made.topics,
-    );
     const contact = request.sender.bytes.toLowerCase();
     const known = this.record.conversations.find(
       (conversation) => conversation.contact === contact,
@@ -589,20 +523,23 @@ export class ContactChat implements ConversationEngine {
       role: "recipient",
       status: "accepting",
       createdAt: this.deps.now(),
-      sent: 0,
-      seen: [],
       messages: [],
     };
     if (known === undefined) this.record.conversations.push(conversation);
-    this.unwatch(conversation);
     conversation.role = "recipient";
     conversation.status = "accepting";
     conversation.request = request.handle;
-    conversation.session = session;
-    conversation.sent = 0;
-    conversation.seen = [];
+    conversation.connection = {
+      topics: made.topics,
+      secret: toHex(
+        x25519Agree(
+          fromHex(made.protocolSecret),
+          fromHex(invitation.protocolKey),
+        ),
+      ),
+    };
     delete conversation.invitation;
-    // Kept before the reply leaves, so a restart in between still has the keys.
+    // Kept before the reply leaves, so a restart in between still has it.
     this.save();
     if (!(await this.persist())) {
       await this.deps.requests.call({
@@ -625,69 +562,6 @@ export class ContactChat implements ConversationEngine {
     if (conversation.status !== "accepting") return;
     conversation.status = "connected";
     this.system(conversation, "You accepted the chat request");
-    this.save();
-    await this.watch(conversation);
-  }
-
-  private async watch(conversation: StoredConversation): Promise<void> {
-    const session = conversation.session;
-    if (session === undefined || this.watching.has(conversation.id)) return;
-    const topic = session.in;
-    this.watching.set(conversation.id, () => {});
-    try {
-      const stop = await this.deps.topics.watch(topic, (frames) =>
-        this.arrived(conversation.id, topic, frames),
-      );
-      if (this.watching.has(conversation.id))
-        this.watching.set(conversation.id, stop);
-      else stop();
-    } catch (error) {
-      this.watching.delete(conversation.id);
-      this.deps.report?.(`watch: ${errorText(error)}`);
-    }
-  }
-
-  private unwatch(conversation: StoredConversation): void {
-    this.watching.get(conversation.id)?.();
-    this.watching.delete(conversation.id);
-  }
-
-  /** Frames read on a conversation's incoming topic. What does not open is dropped. */
-  private arrived(
-    conversationId: string,
-    topic: string,
-    frames: string[],
-  ): void {
-    const conversation = this.find(conversationId);
-    const session = conversation?.session;
-    if (conversation === undefined || session?.in !== topic) return;
-    let changed = false;
-    for (const frame of frames) {
-      const opened = openFrame(session.receive, topic, frame);
-      if (opened === null) {
-        this.deps.report?.("dropped a frame that does not open");
-        continue;
-      }
-      if (conversation.seen.includes(opened.counter)) continue;
-      const body = readBody(opened.plaintext);
-      if (body === null) {
-        this.deps.report?.("dropped a frame that is not text");
-        continue;
-      }
-      conversation.seen.push(opened.counter);
-      if (conversation.seen.length > SEEN_MAX)
-        conversation.seen.splice(0, conversation.seen.length - SEEN_MAX);
-      conversation.messages.push({
-        id: body.id,
-        author: "peer",
-        text: body.text,
-        at: body.at,
-        state: "received",
-      });
-      changed = true;
-    }
-    if (!changed) return;
-    conversation.messages.sort((left, right) => left.at - right.at);
     this.save();
   }
 
@@ -740,25 +614,6 @@ export class ContactChat implements ConversationEngine {
       this.deps.report?.(`save: ${errorText(error)}`);
       return false;
     }
-  }
-}
-
-function readBody(
-  plaintext: Uint8Array,
-): { id: string; at: number; text: string } | null {
-  try {
-    const body = JSON.parse(fromUtf8(plaintext)) as {
-      id?: unknown;
-      at?: unknown;
-      text?: unknown;
-    } | null;
-    return typeof body?.id === "string" &&
-      typeof body.at === "number" &&
-      typeof body.text === "string"
-      ? { id: body.id, at: body.at, text: body.text }
-      : null;
-  } catch {
-    return null;
   }
 }
 

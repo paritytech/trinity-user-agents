@@ -28,12 +28,7 @@ import { bindChrome } from "./app/chrome.js";
 import { copyInPage } from "./app/copy.js";
 import { messagePortBridge } from "./chat/draft/contract.js";
 import { ChatV2Host } from "./chat/draft/host.js";
-import { LocalChatDemo, demoAllowed } from "../tools/demos/local-demo.js";
-import { identityPortOver } from "./chat/draft/identity-bridge.js";
-import {
-  NOVA_WORKER_PRODUCT,
-  NovaWorkerMode,
-} from "../tools/demos/worker-mode.js";
+import { demoAllowed } from "../tools/demos/local-demo-route.js";
 import { createHostCallbacks } from "./app/callbacks.js";
 import { gatewayPreimages } from "./products/preimage.js";
 import { connectNetwork, type Network } from "./platform/network.js";
@@ -231,65 +226,12 @@ const workerConsole = new WorkerConsoleLog();
 /** Rooms that product workers keep, and the workers that keep them. */
 const productChat = new ProductChat(localStorage);
 /**
- * The local chat product demo, offered only by a dev server on this machine:
- * the synthetic chat product, run as one of the host's workers. A build
- * reads `import.meta.env.DEV` as false and leaves the demo's code out.
- */
-const localChatDemo =
-  import.meta.env.DEV && demoAllowed(true, window.location.hostname)
-    ? new LocalChatDemo({
-        base: BASE,
-        origin: window.location.origin,
-        port: window.location.port,
-        changed: () => {
-          if (!localChatDemo!.running())
-            chatV2.forget(localChatDemo!.productId);
-          productWorkers.defaultsChanged();
-        },
-      })
-    : null;
-/**
- * Where the wallet's Nova chat runs, offered only by a dev server on this
- * machine: the host (the default) or the Nova chat worker, a product worker
- * this dev server builds. The two never run at once. A build reads
- * `import.meta.env.DEV` as false and never creates it.
- */
-const novaWorkerMode =
-  import.meta.env.DEV && demoAllowed(true, window.location.hostname)
-    ? new NovaWorkerMode({
-        storage: localStorage,
-        base: BASE,
-        origin: window.location.origin,
-        // The host's engine stops before the worker starts, and the worker
-        // stops before the host's engine starts again.
-        changed: () => {
-          if (novaWorkerMode!.mode() === "host") {
-            chatV2.forget(NOVA_WORKER_PRODUCT);
-            productWorkers.defaultsChanged();
-            chatInbox.syncHostChat();
-          } else {
-            chatInbox.syncHostChat();
-            productWorkers.defaultsChanged();
-          }
-          engineSwitch?.render();
-        },
-        linkChanged: () => engineSwitch?.render(),
-        blocked: (account) =>
-          blockedPeople().some(
-            (blocked) => blocked.toLowerCase() === account.toLowerCase(),
-          ),
-        log: linesFor("workers"),
-      })
-    : null;
-/**
- * The host end of the Chat Extension v2 draft bridge. It runs call media only
- * for the local demo, with the synthetic engine, which opens no device.
+ * The host end of the Chat Extension v2 draft bridge. It runs no call media:
+ * no product here has a call engine.
  */
 const chatV2 = new ChatV2Host({
-  media: (productId) => localChatDemo?.media(productId) ?? null,
-  contactRooms: (productId) =>
-    (novaWorkerMode?.isChatProduct(productId) ?? false) ||
-    (devSession?.isContactChat(productId) ?? false),
+  media: () => null,
+  contactRooms: (productId) => devSession?.isContactChat(productId) ?? false,
   log: linesFor("workers"),
 });
 /** The host's own names for the people of a chat product's contact rooms. */
@@ -301,20 +243,10 @@ document.body.append(workerFrames);
 const productWorkers = new ProductWorkers({
   runtime: () => runtime,
   resolve: (name, network) =>
-    localChatDemo?.resolves(name)
-      ? localChatDemo.resolve()
-      : devSession?.holdsNova() !== true && novaWorkerMode?.resolves(name)
-        ? novaWorkerMode.resolve()
-        : devSession?.resolvesWorker(name)
-          ? devSession.resolveWorker()
-          : resolveWorker(name, network),
-  defaults: () => [
-    ...(localChatDemo?.workerNames() ?? []),
-    ...(devSession?.holdsNova() === true
-      ? []
-      : (novaWorkerMode?.workerNames() ?? [])),
-    ...(devSession?.workerNames() ?? []),
-  ],
+    devSession?.resolvesWorker(name)
+      ? devSession.resolveWorker()
+      : resolveWorker(name, network),
+  defaults: () => devSession?.workerNames() ?? [],
   container: workerFrames,
   base: BASE,
   storage: localStorage,
@@ -329,16 +261,6 @@ const productWorkers = new ProductWorkers({
       chatV2.connect(productId, messagePortBridge(port)),
     disconnect: (productId) => chatV2.disconnect(productId),
   },
-  ...(novaWorkerMode === null
-    ? {}
-    : {
-        novaIdentity: {
-          connect: (productId: string, port: MessagePort) =>
-            novaWorkerMode.connect(productId, identityPortOver(port)),
-          disconnect: (productId: string) =>
-            novaWorkerMode.disconnect(productId),
-        },
-      }),
   // Only the invitation demo serves these, to its Contact Chat worker.
   invitations: {
     connect: (productId, port) =>
@@ -346,13 +268,6 @@ const productWorkers = new ProductWorkers({
         ? port.close()
         : devSession.requests.connect(productId, port),
     disconnect: (productId) => devSession?.requests.disconnect(productId),
-  },
-  topicRelay: {
-    connect: (productId, port) =>
-      devSession === null
-        ? port.close()
-        : devSession.topics.connect(productId, port),
-    disconnect: (productId) => devSession?.topics.disconnect(productId),
   },
 });
 /** The faces of Pocket's cards, drawn by the workers of the products behind them. */
@@ -378,28 +293,8 @@ const chatInbox = new ChatInbox({
   workerNames: () => productWorkers.names(),
   log: linesFor("host"),
   chatV2,
-  hostChat: () =>
-    devSession?.holdsNova() !== true && (novaWorkerMode?.hostRuns() ?? true),
-  // The Nova chat worker's rooms are named by the host, and it starts chats
-  // with whom the user chose, through a reference only its identity bridge
-  // resolves.
-  chatV2Options: (productId) =>
-    devSession?.chatOptions(productId) ??
-    (novaWorkerMode === null || productId !== NOVA_WORKER_PRODUCT
-      ? {}
-      : {
-          names: (account) => hostNames.name(account),
-          onNamesChange: (listener) => hostNames.onChange(listener),
-          start: {
-            target: (account) => ({
-              contact: novaWorkerMode.startReference(account),
-            }),
-            blocked: () =>
-              novaWorkerMode.isChatProduct(productId)
-                ? null
-                : "The Nova chat worker is not connected yet.",
-          },
-        }),
+  hostChat: () => devSession?.holdsNova() !== true,
+  chatV2Options: (productId) => devSession?.chatOptions(productId) ?? {},
 });
 /** Which of Chat's tabs shows: the conversations or the Inbox. */
 let chatTab: ChatTab = "chats";
@@ -535,9 +430,8 @@ function leaveDemoFor(wallet: Wallet): void {
   devSession?.useDemo(null);
 }
 /**
- * The people the signed-in wallet blocked in Chat. The host's chat record
- * keeps them whichever engine runs, so the contact picker and the Nova chat
- * worker's start references read one list. A test user blocks no one.
+ * The people the signed-in wallet blocked in Chat, as the host's chat record
+ * keeps them. A test user blocks no one.
  */
 function blockedPeople(): HexString[] {
   const wallet = walletSession.active;
@@ -593,45 +487,6 @@ const hostContacts = new HostContacts({
   named: (): readonly HexString[] => devSession?.people() ?? [],
   log: linesFor("host"),
 });
-/** The Developer menu's chat engine switch, with the Nova chat worker's state. */
-const engineSwitch =
-  novaWorkerMode === null || devSession === null
-    ? null
-    : (await import("../tools/demos/engine-switch.js")).drawEngineSwitch({
-        section: element("developer"),
-        signedIn: () => chatInbox.signedIn(),
-        mode: () => novaWorkerMode.mode(),
-        setMode: (mode, options) => novaWorkerMode.setMode(mode, options),
-        link: () => novaWorkerMode.link(),
-        worker: () => productWorkers.state(NOVA_WORKER_PRODUCT),
-        productId: NOVA_WORKER_PRODUCT,
-      });
-/** The Developer menu's chat demo control, beside the chat engine switch. */
-const chatDemo =
-  localChatDemo === null || devSession === null
-    ? null
-    : (await import("../tools/demos/chat-demo.js")).drawChatDemo({
-        section: element("developer"),
-        signedIn: () => chatInbox.signedIn(),
-        demo: {
-          productId: localChatDemo.productId,
-          source: localChatDemo.source,
-          running: () => localChatDemo.running(),
-          start: () => localChatDemo.start(),
-          stop: () => localChatDemo.stop(),
-          restart: () => {
-            localChatDemo.stop();
-            localChatDemo.start();
-          },
-        },
-      });
-productWorkers.onChange(() => {
-  engineSwitch?.render();
-  chatDemo?.render();
-});
-chatInbox.onChange((change) => {
-  if (change.type === "session") chatDemo?.render();
-});
 /** Everything that belongs to the signed-in session, handed each change in order. */
 const sessionMembers = new SessionMembership({
   network: activeNetwork,
@@ -640,12 +495,9 @@ const sessionMembers = new SessionMembership({
   productChat,
   notifications: notifications?.store ?? null,
   signedOutNotifications: devSession?.notificationsScope ?? null,
-  localChatDemo,
-  novaWorkerMode,
   hostNames,
   chatV2,
   chatInbox,
-  engineSwitch: () => engineSwitch,
   proofs: async (productId) => {
     if (runtime === null) throw new Error("The core is not running.");
     return accountProofs(runtime, productId);

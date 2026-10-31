@@ -1,14 +1,8 @@
 /**
- * Where the dev server answers for the local chat product demo
+ * Where the dev server answers for the local chat products
  * (`chat-product-demo-plugin.ts`). Shared by the plugin and the page, and
  * free of other imports so the Vite config can load it.
  */
-
-/** The demo worker's description, under the host's base. */
-export const DEMO_WORKER_PATH = "__chat-product-demo/worker.json";
-
-/** The Nova chat worker's description (`src/chat/worker/worker.ts`), under the host's base. */
-export const NOVA_WORKER_PATH = "__chat-product-demo/nova-worker.json";
 
 /** Example Chat's app archive (`fixtures/products/example-chat/product.ts`), under the host's base. */
 export const EXAMPLE_CHAT_PATH = "__chat-product-demo/example-chat.json";
@@ -16,7 +10,7 @@ export const EXAMPLE_CHAT_PATH = "__chat-product-demo/example-chat.json";
 /** Contact Chat's worker (`fixtures/products/contact-chat/worker.ts`), under the host's base. */
 export const CONTACT_CHAT_PATH = "__chat-product-demo/contact-chat-worker.json";
 
-/** What the dev server answers at {@link DEMO_WORKER_PATH}. */
+/** What the dev server answers at each product's path. */
 export interface DemoWorkerAnswer {
   /** Where the content came from, for the screen. */
   record: string;
@@ -29,3 +23,8 @@ export interface DemoWorkerAnswer {
 
 /** Host names the demo answers on: this machine only. */
 export const LOOPBACK_HOSTNAMES = ["localhost", "127.0.0.1", "[::1]", "::1"];
+
+/** Whether this page may offer the demos: a dev server on this machine. */
+export function demoAllowed(dev: boolean, hostname: string): boolean {
+  return dev && LOOPBACK_HOSTNAMES.includes(hostname);
+}

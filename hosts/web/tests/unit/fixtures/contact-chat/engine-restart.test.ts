@@ -50,7 +50,6 @@ async function engine(
 ) {
   return new ContactChat({
     requests: requests.requests,
-    topics: { post: async () => {}, watch: async () => () => {} },
     storage: await storage.open(["record"]),
     report: (reason) => reports.push(reason),
     recordKey: "record",
@@ -64,7 +63,7 @@ describe("Contact Chat across a restart", () => {
     const storage = new KeptStorage();
     const silent = host(() => null);
     const first = await engine(storage, silent);
-    await first.run();
+    first.run();
     await first.start({ handle: { bytes: CONTACT } }, "");
     await settle();
     expect([first.stored()[0]!.status, silent.calls.length]).toEqual([
@@ -75,7 +74,7 @@ describe("Contact Chat across a restart", () => {
     // The engine ended before the host's answer; the host replays the request.
     const replayed = host(() => ({ ok: true }));
     const second = await engine(storage, replayed);
-    await second.run();
+    second.run();
     replayed.tell({
       kind: "outgoing",
       request: {
@@ -92,7 +91,7 @@ describe("Contact Chat across a restart", () => {
     ]);
   });
 
-  test("an Accept keeps its keys before the reply leaves, and connects once the host says it took the reply", async () => {
+  test("an Accept keeps its connection before the reply leaves, and connects once the host says it took the reply", async () => {
     const storage = new KeptStorage();
     /** What the host kept of the product's storage when the reply reached it. */
     let keptAtReply = "";
@@ -104,7 +103,7 @@ describe("Contact Chat across a restart", () => {
       return null;
     });
     const bob = await engine(storage, first);
-    await bob.run();
+    bob.run();
     first.tell({
       kind: "acceptIntent",
       request: {
@@ -116,9 +115,9 @@ describe("Contact Chat across a restart", () => {
     await settle();
     expect(first.calls.map((call) => call.call)).toEqual(["reply"]);
     expect(keptAtReply).toContain('"status":"accepting"');
-    expect(keptAtReply).toContain('"session":');
+    expect(keptAtReply).toContain('"connection":');
     const kept = bob.stored()[0]!;
-    expect([kept.status, kept.session === undefined]).toEqual([
+    expect([kept.status, kept.connection === undefined]).toEqual([
       "accepting",
       false,
     ]);
@@ -126,7 +125,7 @@ describe("Contact Chat across a restart", () => {
     // The engine ended before the host answered; the host replays that it replied.
     const replayed = host(() => ({ ok: true }));
     const again = await engine(storage, replayed);
-    await again.run();
+    again.run();
     replayed.tell({
       kind: "replied",
       request: { handle: HANDLE, sender: { bytes: CONTACT }, repliedAt: 1 },
@@ -134,6 +133,90 @@ describe("Contact Chat across a restart", () => {
     await settle();
     expect(again.stored()[0]!.status).toBe("connected");
   });
+  /**
+   * The setup's result is the product's: each side keeps the topics and the
+   * agreed secret before its host acts (Bob's reply, Alice's complete), and
+   * both sides hold the same, so a later transport can start from either
+   * after a restart.
+   */
+  test("both sides keep the same topics and agreed secret before the host replies or completes, and a restart reads them", async () => {
+    const aliceStorage = new KeptStorage();
+    const bobStorage = new KeptStorage();
+    const keptRecord = (storage: KeptStorage) =>
+      JSON.parse(
+        new TextDecoder().decode(hexToBytes(storage.kept.get("record")!)),
+      ) as { conversations: { connection?: unknown }[] };
+    let invitation = "";
+    let response = "";
+    let keptAtReply: unknown;
+    let keptAtComplete: unknown;
+    const aliceHost = host((call) => {
+      if (call.call === "complete") {
+        keptAtComplete = keptRecord(aliceStorage).conversations[0]!.connection;
+        return { ok: true };
+      }
+      if (call.call !== "request") return { ok: true };
+      invitation = (call.request as { payload: string }).payload;
+      return {
+        ok: true,
+        request: {
+          handle: HANDLE,
+          contact: { bytes: CONTACT },
+          purpose: "Hi",
+          createdAt: 1,
+          status: "waiting",
+        },
+      };
+    });
+    const bobHost = host((call) => {
+      if (call.call !== "reply") return { ok: true };
+      keptAtReply = keptRecord(bobStorage).conversations[0]!.connection;
+      response = call.payload;
+      return { ok: true };
+    });
+    const alice = await engine(aliceStorage, aliceHost);
+    const bob = await engine(bobStorage, bobHost);
+    alice.run();
+    bob.run();
+    await alice.start({ handle: { bytes: CONTACT } }, "");
+    await settle();
+    bobHost.tell({
+      kind: "acceptIntent",
+      request: {
+        handle: HANDLE,
+        sender: { bytes: CONTACT },
+        payload: invitation,
+      },
+    });
+    await settle();
+    aliceHost.tell({ kind: "response", handle: HANDLE, payload: response });
+    await settle();
+
+    const aliceSide = alice.stored()[0]!.connection!;
+    expect([alice.stored()[0]!.status, bob.stored()[0]!.status]).toEqual([
+      "connected",
+      "connected",
+    ]);
+    expect(bob.stored()[0]!.connection).toEqual(aliceSide);
+    expect([keptAtReply, keptAtComplete]).toEqual([aliceSide, aliceSide]);
+    expect(aliceSide.secret).toMatch(/^0x[0-9a-f]{64}$/);
+
+    const [aliceAgain, bobAgain] = await Promise.all([
+      engine(
+        aliceStorage,
+        host(() => null),
+      ),
+      engine(
+        bobStorage,
+        host(() => null),
+      ),
+    ]);
+    expect([
+      aliceAgain.stored()[0]!.connection,
+      bobAgain.stored()[0]!.connection,
+    ]).toEqual([aliceSide, aliceSide]);
+  });
+
   /**
    * A call the host acts on must follow a save the host kept, or a restart
    * finds the host acting on a conversation the engine lost: a reply without
@@ -145,7 +228,7 @@ describe("Contact Chat across a restart", () => {
     const calls = host(() => ({ ok: true }));
     const reports: string[] = [];
     const bob = await engine(storage, calls, reports);
-    await bob.run();
+    bob.run();
     await bob.start({ handle: { bytes: CONTACT } }, "");
     calls.tell({
       kind: "acceptIntent",
@@ -177,7 +260,7 @@ describe("Contact Chat across a restart", () => {
     storage.failing = "the disk is full";
     const calls = host(() => null);
     const alice = await engine(storage, calls);
-    await alice.run();
+    alice.run();
     await alice.start({ handle: { bytes: CONTACT } }, "");
     await settle();
     storage.failing = null;
@@ -207,7 +290,7 @@ describe("Contact Chat across a restart", () => {
       };
     });
     const alice = await engine(storage, calls);
-    await alice.run();
+    alice.run();
     await alice.start({ handle: { bytes: CONTACT } }, "");
     await settle();
     storage.failing = "the disk is full";

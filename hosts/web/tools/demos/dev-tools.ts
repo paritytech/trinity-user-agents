@@ -96,8 +96,7 @@ import {
  *   for the test user as an ordinary product worker. The host's Chat shows
  *   its conversations and names each person from the contact handle the
  *   product holds, through the host's handle index; the product never gets a
- *   name. Its text goes on conversation topics through the local simulated
- *   topics (`fixtures/invitations/local-topics.ts`).
+ *   name. A chat ends at the connection: Contact Chat sends no text.
  */
 
 export interface DevToolsDeps {
@@ -230,8 +229,6 @@ export interface DevSession {
   chatOptions(productId: string): ChatV2ProviderOptions | null;
   /** The request service, for Contact Chat's worker frame only. */
   requests: WorkerPortService;
-  /** The local simulated topics, for Contact Chat's worker frame only. */
-  topics: WorkerPortService;
 }
 
 /** Example Chat's product id and name on a network. */
@@ -478,13 +475,6 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
         isChat(productId) ? chat()!.attachChat(port) : port.close(),
       disconnect: (productId) => {
         if (isChat(productId)) chat()!.detachChat();
-      },
-    },
-    topics: {
-      connect: (productId, port) =>
-        isChat(productId) ? chat()!.serveTopics(port) : port.close(),
-      disconnect: (productId) => {
-        if (isChat(productId)) chat()!.stopTopics();
       },
     },
   };

@@ -109,29 +109,11 @@ export interface ProductWorkersDeps {
     disconnect(productId: string): void;
   };
   /**
-   * Where a chat worker's frame asks for the wallet's Nova chat identity
-   * (`tools/demos/worker-mode.ts`), which decides whether to answer. The
-   * link ends when the worker stops.
-   */
-  novaIdentity?: {
-    connect(productId: string, port: MessagePort): void;
-    disconnect(productId: string): void;
-  };
-  /**
    * Where a worker's frame hands its port for the proposed host request
    * service (`src/invitations/contract.ts`), which decides whether to serve
    * it. The link ends when the worker stops.
    */
   invitations?: {
-    connect(productId: string, port: MessagePort): void;
-    disconnect(productId: string): void;
-  };
-  /**
-   * Where a worker's frame hands its port for the draft topic relay
-   * (`src/chat/draft/topic-relay.ts`), which decides whether to serve it.
-   * The link ends when the worker stops.
-   */
-  topicRelay?: {
     connect(productId: string, port: MessagePort): void;
     disconnect(productId: string): void;
   };
@@ -311,12 +293,6 @@ export class ProductWorkers {
     return this.settle(name);
   }
 
-  /** Start or stop workers after the host's defaults changed. */
-  defaultsChanged(): void {
-    for (const name of new Set([...this.workers.keys(), ...this.names()]))
-      void this.settle(name);
-  }
-
   /** Stop `name`'s worker for Pocket; it keeps running if Chat lists it. */
   releaseForPocket(name: string): void {
     if (!this.pocketCards.delete(name)) return;
@@ -461,28 +437,11 @@ export class ProductWorkers {
                 },
               }
             : {}),
-          ...(this.deps.novaIdentity !== undefined &&
-          worker.manifest.includes.chat
-            ? {
-                onNovaIdentityPort: (port: MessagePort) => {
-                  if (current()) this.deps.novaIdentity?.connect(name, port);
-                  else port.close();
-                },
-              }
-            : {}),
           ...(this.deps.invitations === undefined
             ? {}
             : {
                 onInvitationsPort: (port: MessagePort) => {
                   if (current()) this.deps.invitations?.connect(name, port);
-                  else port.close();
-                },
-              }),
-          ...(this.deps.topicRelay === undefined
-            ? {}
-            : {
-                onTopicRelayPort: (port: MessagePort) => {
-                  if (current()) this.deps.topicRelay?.connect(name, port);
                   else port.close();
                 },
               }),
@@ -595,9 +554,7 @@ export class ProductWorkers {
     const running = this.workers.get(name);
     if (running === undefined) return;
     this.deps.chatV2?.disconnect(name);
-    this.deps.novaIdentity?.disconnect(name);
     this.deps.invitations?.disconnect(name);
-    this.deps.topicRelay?.disconnect(name);
     if (running.handle !== null) {
       this.deps.runtime()?.releaseWorker(name);
       running.handle.dispose();

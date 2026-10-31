@@ -2,13 +2,8 @@ import { createIframeHost } from "@parity/truapi-host/web";
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { TrUApiProductProvider } from "@parity/truapi-host";
 import { CHAT_V2_CONNECT, CHAT_V2_DRAFT } from "../chat/draft/contract.js";
-import {
-  NOVA_IDENTITY_CONNECT,
-  NOVA_IDENTITY_DRAFT,
-} from "../chat/draft/identity-bridge.js";
 import type { FrameTap } from "./tap.js";
 import { isProductHello as isInvitationsHello } from "../invitations/contract.js";
-import { isTopicRelayHello } from "../chat/draft/topic-relay.js";
 import {
   readConsoleMessage,
   type WorkerConsoleEntry,
@@ -110,23 +105,11 @@ export interface OpenProductOptions {
    */
   onChatV2Port?(port: MessagePort): void;
   /**
-   * Called with the port the frame hands over to ask for the wallet's Nova
-   * chat identity (`src/chat/draft/identity-bridge.ts`). Heard as
-   * {@link onChatV2Port} is; without this the port is closed unanswered.
-   */
-  onNovaIdentityPort?(port: MessagePort): void;
-  /**
    * Called with the port the frame hands over for invitations
    * (`src/invitations/contract.ts`). Heard as {@link onChatV2Port} is;
    * without this the port is closed unanswered.
    */
   onInvitationsPort?(port: MessagePort): void;
-  /**
-   * Called with the port the frame hands over for the draft topic relay
-   * (`src/chat/draft/topic-relay.ts`). Heard as {@link onChatV2Port} is;
-   * without this the port is closed unanswered.
-   */
-  onTopicRelayPort?(port: MessagePort): void;
   /**
    * Called with each console line the frame's worker shell forwards
    * (`worker-console.ts`). Heard as {@link onChatV2Port} is, so a line is
@@ -163,9 +146,7 @@ export async function openProduct(
     mounted = false,
     executionKind = "App",
     onChatV2Port,
-    onNovaIdentityPort,
     onInvitationsPort,
-    onTopicRelayPort,
     onConsole,
   } = options;
   if (url.origin === window.location.origin && !mounted) {
@@ -220,15 +201,6 @@ export async function openProduct(
       onChatV2Port?.(event.ports[0]);
       return;
     }
-    if (
-      data?.type === NOVA_IDENTITY_CONNECT &&
-      data.protocol === NOVA_IDENTITY_DRAFT &&
-      event.ports.length === 1
-    ) {
-      if (onNovaIdentityPort === undefined) event.ports[0].close();
-      else onNovaIdentityPort(event.ports[0]);
-      return;
-    }
     if (onConsole !== undefined) {
       const line = readConsoleMessage(data, Date.now());
       if (line !== null) {
@@ -241,24 +213,12 @@ export async function openProduct(
       else onInvitationsPort(event.ports[0]);
       return;
     }
-    if (isTopicRelayHello(data, event.ports)) {
-      if (onTopicRelayPort === undefined) event.ports[0].close();
-      else onTopicRelayPort(event.ports[0]);
-      return;
-    }
     if (data?.type !== "truapi-sandbox" || typeof data.detail !== "string")
       return;
     if (data.state === "loading" || data.state === "error")
       onSandboxStatus?.(data.state, data.detail);
   };
-  if (
-    onSandboxStatus ||
-    onChatV2Port ||
-    onNovaIdentityPort ||
-    onInvitationsPort ||
-    onTopicRelayPort ||
-    onConsole
-  )
+  if (onSandboxStatus || onChatV2Port || onInvitationsPort || onConsole)
     window.addEventListener("message", onWindowMessage);
   return {
     url,

@@ -5,10 +5,8 @@
  * plays the network with timers, and nothing leaves it. It is not a chat
  * engine and speaks no peer protocol.
  *
- * Two places run it:
- * - `fixtures/products/chat-v2-product-worker.ts`, the product's worker run by the
- *   host's ordinary worker loader, as a `Worker` execution;
- * - `browser/support/chat-screen-harness.ts`, in the page, over a `MessageChannel`.
+ * `browser/support/chat-screen-harness.ts` runs it in the page, over a
+ * `MessageChannel`.
  *
  * It owns three rooms: a direct chat with Ada (120 messages, call buttons), a
  * group with Ada and Grace, and a direct chat with Lin with three unread

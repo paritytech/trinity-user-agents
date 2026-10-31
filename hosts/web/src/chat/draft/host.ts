@@ -352,18 +352,6 @@ export class ChatV2Host {
     this.emit({ type: "call", productId });
   }
 
-  /** End `productId`'s link and forget what it declared, as when its demo stops. */
-  forget(productId: string): void {
-    this.disconnect(productId);
-    this.queues.delete(productId);
-    for (const key of [...this.pressed.keys()])
-      if (key.startsWith(`${productId}\n`)) this.pressed.delete(key);
-    for (const key of [...this.heldSignals.keys()])
-      if (key.startsWith(`${productId}\n`)) this.heldSignals.delete(key);
-    if (this.declared.delete(productId))
-      this.emit({ type: "rooms", productId });
-  }
-
   /** Forget every link and declaration, as when the session ends. */
   reset(): void {
     for (const productId of [...this.links.keys()]) this.disconnect(productId);

@@ -21,15 +21,13 @@ import type { IdentityProblem } from "../../src/invitations/published-keys.js";
 import type { HostNotification } from "../../src/notifications/notifications.js";
 import type { SentRequest } from "../../src/notifications/screen.js";
 import { LocalDelivery } from "../../fixtures/invitations/local-delivery.js";
-import { LocalTopics } from "../../fixtures/invitations/local-topics.js";
 import { pageStore } from "../../fixtures/invitations/shared-store.js";
 
 /**
  * DEV ONLY. Contact Chat's host side for one signed-in user: its request
  * service, over the user's wallet keys and the people a
- * {@link DirectoryContacts} knows, and the local simulated topics its text
- * goes on. Both the invitation demo's test users and a wallet signed in from
- * the Account picker run it.
+ * {@link DirectoryContacts} knows. Both the invitation demo's test users and
+ * a wallet signed in from the Account picker run it.
  *
  * The request service starts only once `verify` found the wallet keys fit to
  * prove the user; until then Contact Chat's port is held, and closed if they
@@ -71,9 +69,6 @@ export interface ContactChatHost {
   /** Serve Contact Chat's request service port, in place of any before it. */
   attachChat(port: MessagePort): void;
   detachChat(): void;
-  /** Serve Contact Chat's topic relay port, in place of any before it. */
-  serveTopics(port: MessagePort): void;
-  stopTopics(): void;
   /** Whether `id` is a request this user received for Contact Chat. */
   owns(id: string): boolean;
   accept(item: HostNotification): Promise<void>;
@@ -137,12 +132,6 @@ export function startContactChatHost(
     showProduct: () => options.showChat(),
     log: options.log,
   });
-  const topics = new LocalTopics({
-    network: options.network,
-    store: pageStore(),
-    now,
-  });
-  let stopTopics = () => {};
   /** Contact Chat's request port, held until the keys are checked. */
   let pending: MessagePort | null = null;
   let state: "checking" | "running" | "off" | "stopped" = "checking";
@@ -218,7 +207,6 @@ export function startContactChatHost(
     stopNotes();
     stopSent();
     service.stop();
-    stopTopics();
     pending?.close();
     pending = null;
   };
@@ -298,14 +286,6 @@ export function startContactChatHost(
     detachChat: () => {
       pending = null;
       service.detachProduct();
-    },
-    serveTopics: (port) => {
-      stopTopics();
-      stopTopics = topics.serve(port);
-    },
-    stopTopics: () => {
-      stopTopics();
-      stopTopics = () => {};
     },
     owns: (id) => service.owns(id),
     accept: (item) => service.requestAccept(item.id),
