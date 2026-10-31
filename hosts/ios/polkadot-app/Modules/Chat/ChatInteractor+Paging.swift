@@ -1,13 +1,40 @@
 import Foundation
 
-/// The room lifecycle parts of the room screen.
+/// The paging, jump and room lifecycle parts of the room screen.
 extension ChatInteractor {
+    func loadOlderMessages() {
+        Task { [engine, state] in
+            guard await state.paging.older.canAsk else {
+                return
+            }
+
+            _ = await engine.loadOlder()
+        }
+    }
+
+    func loadNewerMessages() {
+        Task { [engine, state] in
+            guard await state.paging.newer.canAsk else {
+                return
+            }
+
+            _ = await engine.loadNewer()
+        }
+    }
+
     func openRoom() {
         enqueueRoomWork { await $0.openRoom() }
     }
 
     func closeRoom() {
         enqueueRoomWork { await $0.closeRoom() }
+    }
+
+    func jump(to messageId: Chat.MessageId) {
+        Task { [weak self, engine] in
+            let found = await engine.jump(to: messageId)
+            await self?.presenter?.didJump(to: messageId, found: found)
+        }
     }
 }
 
@@ -19,5 +46,12 @@ private extension ChatInteractor {
             await previous?.value
             await work(engine)
         }
+    }
+}
+
+private extension ChatPagingState.Edge {
+    /// True when a page for this end can come: more messages exist, or the last page failed.
+    var canAsk: Bool {
+        self == .more || self == .failed
     }
 }
