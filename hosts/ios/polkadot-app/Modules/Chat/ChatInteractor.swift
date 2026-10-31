@@ -16,6 +16,8 @@ final class ChatInteractor {
     private var messagesTask: Task<Void, Never>?
     private var metadataTask: Task<Void, Never>?
     private var footerTask: Task<Void, Never>?
+    /// The last open or close of the room. Each one waits for the one before it.
+    var roomTask: Task<Void, Never>?
     private let state = ChatInteractorState()
 
     private let notificationsCleaner: any PushNotificationsCleaning
@@ -59,10 +61,15 @@ private extension ChatInteractor {
 
             do {
                 let metadataStream = engine.chatMetadataStream()
+                var hasShownChat = false
                 for try await chatMetadata in metadataStream {
                     if let chatMetadata {
+                        hasShownChat = true
                         let metadata = MessageListMetadata(chatMetadata: chatMetadata, myUsername: currentUsername)
                         await self?.presenter?.didReceive(metadata: metadata)
+                    } else if hasShownChat, self?.isProductRoom == true {
+                        await self?.presenter?.didRemoveChat()
+                        hasShownChat = false
                     }
                 }
             } catch {
@@ -349,6 +356,13 @@ extension ChatInteractor: ChatInteractorInputProtocol {
         Task {
             await engine.processAction(action)
         }
+    }
+}
+
+private extension ChatInteractor {
+    /// A leave or a block of a person chat dismisses the screen on its own path.
+    var isProductRoom: Bool {
+        chatId.roomId != nil
     }
 }
 

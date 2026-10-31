@@ -56,6 +56,10 @@ protocol ChatInteractorInputProtocol: AnyObject {
     func declineChatRequest()
     func processAction(_ action: Chat.Action)
     func isMicrophoneDenied() -> Bool
+    /// The room screen shows the room: a product room holds its product.
+    func openRoom()
+    /// The room screen does not show the room anymore: a product room releases its product.
+    func closeRoom()
 }
 
 @MainActor
@@ -71,6 +75,9 @@ protocol ChatInteractorOutputProtocol: AnyObject {
     func didBlockUser()
 
     func didDeclineChatRequest()
+
+    /// The chat of the screen went away, for example because its product deleted the room.
+    func didRemoveChat()
 }
 
 @MainActor
