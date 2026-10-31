@@ -136,9 +136,24 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         logger.debug("SPA(rust): runtime disposed for \(configuration.page.host.name)")
     }
-}
 
-extension SPARustRuntime {
+    func useLatestBuild() async throws {
+        try checkNotDisposed()
+
+        guard case .dotNs = configuration.contentSource, let servedContent else { return }
+
+        let served = try await contentLoader.open(
+            configuration.productDomain,
+            kind: configuration.executable,
+            policy: .untilCancelled
+        ).archive
+        try checkNotDisposed()
+
+        guard served != servedContent else { return }
+
+        _ = try await serve(served)
+    }
+
     func servedBuild() -> DotNsResolvedContent? {
         servedContent
     }
@@ -146,13 +161,12 @@ extension SPARustRuntime {
 
 private extension SPARustRuntime {
     func prepareDotNsContent() async throws -> URL {
-        let domain = configuration.page.host.toDotDomain()
+        let domain = configuration.productDomain
 
         // Bytes come from the executable's own subname; the origin stays the base domain, which
         // is what permission grants and web storage are keyed by.
-        let content = try await contentLoader.open(domain, policy: .untilCancelled)
-
-        let served = try content.served(for: configuration.executable)
+        let served = try await contentLoader.open(domain, kind: configuration.executable, policy: .untilCancelled)
+            .archive
 
         logger.debug("SPA(rust): '\(domain)' content resolved to \(served.localURL.path)")
 
@@ -161,7 +175,7 @@ private extension SPARustRuntime {
     }
 
     func serve(_ content: DotNsResolvedContent) async throws -> URL {
-        let domain = configuration.page.host.toDotDomain()
+        let domain = configuration.productDomain
         let schemeHandler = ProductScriptSchemeHandler(
             productId: domain,
             entryRelativePath: ProductBundle.indexHTML,

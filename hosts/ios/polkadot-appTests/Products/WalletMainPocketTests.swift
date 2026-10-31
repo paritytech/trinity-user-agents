@@ -254,6 +254,14 @@ private final class LateTld: DotNsTldProviding {
 
     func refresh() {}
     func reset() {}
+
+    func currentTldElseResolve() async throws -> String {
+        if let tld = currentTld() {
+            return tld
+        }
+
+        return try await resolveTld()
+    }
 }
 
 private final class StubNetworkStatusObserver: NetworkStatusObserving {
