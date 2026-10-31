@@ -721,6 +721,13 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
     case "contactHandles":
       handleContactHandles(msg.requestId, msg.accounts);
       break;
+    case "claimNotificationAccount":
+      void handleClaimNotificationAccount(
+        msg.requestId,
+        msg.target,
+        msg.submit,
+      );
+      break;
     case "getDeviceStatementKey":
       handleGetDeviceStatementKey(msg.requestId);
       break;
@@ -1133,6 +1140,33 @@ function handleContactHandles(requestId: number, accounts: Uint8Array): void {
       requestId,
       ok: true,
       handles: runtime.contactHandles(accounts),
+    });
+  } catch (err) {
+    fail(errorMessage(err));
+  }
+}
+
+async function handleClaimNotificationAccount(
+  requestId: number,
+  target: Uint8Array,
+  submit: boolean,
+): Promise<void> {
+  const fail = (error: string) =>
+    postToMain({
+      kind: "claimNotificationAccountResponse",
+      requestId,
+      ok: false,
+      error,
+    });
+  if (!host)
+    return fail("claimNotificationAccount received before runtime is ready");
+  try {
+    const signing = signingRuntime(host, "claimNotificationAccount");
+    postToMain({
+      kind: "claimNotificationAccountResponse",
+      requestId,
+      ok: true,
+      claim: await signing.claimNotificationAccount(target, submit),
     });
   } catch (err) {
     fail(errorMessage(err));

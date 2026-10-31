@@ -328,3 +328,80 @@ async fn dynamic_resources_values_resolve_on_the_live_chain() {
          long_term_storage_claims_per_period={long_term_storage_claims}"
 	);
 }
+
+/// A notification claim the core builds must pass the live runtime's own
+/// validation: the slot context, the call, the `AsResources` variant and the
+/// ring proof are all checked there. Validation only, so nothing is
+/// submitted and no slot is taken.
+///
+/// Proves as the web host's public Alice test account, which must be a
+/// personhood ring member on the chain; the target is a throwaway account
+/// that holds no registration.
+#[tokio::test]
+#[ignore = "needs network access to a live People chain"]
+async fn a_notification_claim_validates_on_the_live_chain() {
+	use truapi::host_logic::product_account::{
+		derive_full_person_ring_vrf_entropy, derive_lite_person_ring_vrf_entropy,
+	};
+
+	const ALICE: &str =
+		"jelly better achieve collect unaware mountain thought cargo oxygen act hood bridge";
+	let entropy = bip39::Mnemonic::parse(ALICE).expect("a valid test phrase").to_entropy();
+	let rpc = connect().await;
+	let cache = ChainContextCache::default();
+	let chain = cache
+		.get(&stale_scoped_client().await)
+		.await
+		.expect("read the live chain context");
+	let network_suffix = alloc::slot::read_network_suffix(&rpc)
+		.await
+		.expect("read the live network suffix");
+	let suffix = String::from_utf8(network_suffix.clone()).expect("network suffix is UTF-8");
+	let candidates = [
+		alloc::CollectionCandidate {
+			collection: PersonhoodCollection::People,
+			entropy: derive_full_person_ring_vrf_entropy(&entropy, &suffix),
+		},
+		alloc::CollectionCandidate {
+			collection: PersonhoodCollection::LitePeople,
+			entropy: derive_lite_person_ring_vrf_entropy(&entropy, &suffix),
+		},
+	];
+	let signer = alloc::FixedPersonhoodSigner::new(&candidates).await.expect("load the prover");
+	let collections = candidates.map(|candidate| candidate.collection);
+	let memberships =
+		alloc::find_including_rings(&rpc, &chain.metadata, &signer, &collections, u32::MAX)
+			.await
+			.expect("look up Alice's rings");
+	assert!(!memberships.is_empty(), "the Alice test account is in no personhood ring");
+	let target = [0x5a; 32];
+	let period = current_period();
+	assert_eq!(
+		alloc::notification_registration_in(&rpc, &target, period).await.ok(),
+		Some(None),
+		"the throwaway target already holds a registration"
+	);
+
+	let outcome = alloc::claim_notification_account(alloc::NotificationAccountClaim {
+		rpc: &rpc,
+		metadata: &chain.metadata,
+		chain_state: &chain.state,
+		signer: &signer,
+		network_suffix: &network_suffix,
+		target: &target,
+		period,
+		memberships: &memberships,
+		submission: alloc::ClaimSubmission::ValidateOnly,
+	})
+	.await
+	.expect("the live runtime accepts the claim");
+
+	println!(
+		"validated a notification claim in period {period}: {outcome:?}, memberships {:?}",
+		memberships
+			.iter()
+			.map(|ring| (ring.collection, ring.ring_index))
+			.collect::<Vec<_>>()
+	);
+	assert!(matches!(outcome, alloc::NotificationAccountOutcome::Validated { .. }));
+}

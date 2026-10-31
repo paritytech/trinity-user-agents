@@ -19,6 +19,7 @@ use super::{
 pub const STATEMENT_STORE_PERIOD_SECONDS: u64 = 86_400;
 const PRODUCT_CONTEXT_PREFIX: &[u8] = b"product/peopl.";
 const SYSTEM_CONTEXT_PREFIX: &[u8] = b"sys/";
+const NOTIFICATION_CONTEXT_FAMILY: u32 = 1;
 const STATEMENT_STORE_CONTEXT_FAMILY: u32 = 2;
 const LONG_TERM_STORAGE_CONTEXT_FAMILY: u32 = 3;
 const PGAS_CONTEXT_FAMILY: u32 = 4;
@@ -41,6 +42,12 @@ pub enum SlotError {
 	/// Long-term-storage claim count does not fit the `u8` counter.
 	#[error("Resources long-term-storage claim count {value} exceeds u8")]
 	LongTermStorageClaimsOverflow {
+		/// Value returned by the runtime.
+		value: u32,
+	},
+	/// The highest notification seq does not fit the `u8` sequence.
+	#[error("Resources notification slot count {value} exceeds u8")]
+	NotificationSlotsOverflow {
 		/// Value returned by the runtime.
 		value: u32,
 	},
@@ -112,6 +119,46 @@ pub enum SlotError {
 	InvalidNetworkSuffixLength {
 		/// Actual suffix length.
 		len: usize,
+	},
+	/// Every notification slot of the period is registered in every collection
+	/// the person can prove.
+	#[error("no free notification slot in period {period} (max {max})")]
+	NoFreeNotificationSlot {
+		/// Period scanned.
+		period: u32,
+		/// Slots the scanned collections have together.
+		max: u32,
+	},
+	/// The account already holds a notification registration from another
+	/// period. The runtime registers an account once, so a new period needs a
+	/// new account.
+	#[error("account already holds a notification registration from period {registered}")]
+	NotificationAccountUsed {
+		/// Period the account is registered in.
+		registered: u32,
+	},
+	/// A claim for this slot may be in the pool or on its way: the pool held an
+	/// equivalent one, and neither the slot nor the target is registered yet.
+	/// Another slot is not claimed meanwhile, so one claim is the most this
+	/// spends.
+	#[error(
+		"a notification claim for slot {seq} of period {period} may still land; not claiming another"
+	)]
+	NotificationClaimUncertain {
+		/// Claim period.
+		period: u32,
+		/// Slot the pending claim names.
+		seq: u8,
+	},
+	/// The runtime refused a notification claim when validating it.
+	#[error("notification claim (period {period}, seq {seq}) does not validate: {validity}")]
+	NotificationClaimInvalid {
+		/// Claim period.
+		period: u32,
+		/// Claim sequence.
+		seq: u8,
+		/// The runtime's transaction-validity answer.
+		validity: String,
 	},
 	/// Registration reached a block but the slot was not held by the target.
 	#[error(
@@ -200,6 +247,24 @@ pub fn derive_long_term_storage_context(
 		period,
 		u32::from(counter),
 	)
+}
+
+/// Derive the network-scoped 32-byte notification slot context, the one the
+/// runtime's `notification_context_for(period, seq)` answers.
+pub fn derive_notification_context(network_suffix: &[u8], period: u32, seq: u8) -> [u8; 32] {
+	derive_product_context(network_suffix, NOTIFICATION_CONTEXT_FAMILY, period, u32::from(seq))
+}
+
+/// The notification slot alias for the selected collection at `(period, seq)`.
+pub fn notification_alias(
+	signer: &dyn PersonhoodSigner,
+	collection: PersonhoodCollection,
+	network_suffix: &[u8],
+	period: u32,
+	seq: u8,
+) -> Result<[u8; 32], StatementAllowanceError> {
+	let context = derive_notification_context(network_suffix, period, seq);
+	alias_in_context(signer, collection, &context, "notification slot")
 }
 
 /// The slot alias for the selected collection at `(period, seq)`.
@@ -613,6 +678,116 @@ pub async fn scan_long_term_storage_counter_excluding(
 		}
 	}
 	Err(SlotError::NoFreeLongTermStorageSlot { period, max }.into())
+}
+
+/// `Resources.NotificationRegistrationByAlias[alias]` storage key.
+fn notification_registration_key(alias: &[u8; 32]) -> Vec<u8> {
+	[
+		twox_128(b"Resources").as_slice(),
+		twox_128(b"NotificationRegistrationByAlias").as_slice(),
+		&blake2_128_concat(alias),
+	]
+	.concat()
+}
+
+/// `Resources.NotificationAliasByAccount[account]` storage key.
+fn notification_alias_by_account_key(account: &[u8; 32]) -> Vec<u8> {
+	[
+		twox_128(b"Resources").as_slice(),
+		twox_128(b"NotificationAliasByAccount").as_slice(),
+		&blake2_128_concat(account),
+	]
+	.concat()
+}
+
+/// A notification registration: the account it allows and its slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+pub struct NotificationRegistration {
+	/// Statement account the registration allows.
+	pub account_id: [u8; 32],
+	/// Period of the slot.
+	pub period: u32,
+	/// Sequence of the slot within its period.
+	pub seq: u8,
+}
+
+/// The highest notification `seq` `collection` may claim in a period; seqs
+/// `0..=value` are valid.
+pub async fn notification_max_seq(
+	rpc: &RpcClient,
+	metadata: &Metadata,
+	collection: PersonhoodCollection,
+) -> Result<u8, StatementAllowanceError> {
+	let value =
+		view::read_resource_u32(rpc, metadata, collection.notification_slots_view()).await?;
+	u8::try_from(value).map_err(|_| SlotError::NotificationSlotsOverflow { value }.into())
+}
+
+/// The notification registration `account` holds, if any.
+pub async fn read_notification_registration_of(
+	rpc: &RpcClient,
+	account: &[u8; 32],
+) -> Result<Option<NotificationRegistration>, StatementAllowanceError> {
+	let Some(alias) = rpc.get_storage(&notification_alias_by_account_key(account)).await? else {
+		return Ok(None);
+	};
+	let Ok(alias) = <[u8; 32]>::decode(&mut &alias[..]) else {
+		return Ok(None);
+	};
+	Ok(rpc
+		.get_storage(&notification_registration_key(&alias))
+		.await?
+		.and_then(|bytes| NotificationRegistration::decode(&mut &bytes[..]).ok()))
+}
+
+/// The account registered for our notification alias at the best block.
+pub async fn read_notification_account(
+	rpc: &RpcClient,
+	alias: &[u8; 32],
+) -> Result<Option<[u8; 32]>, StatementAllowanceError> {
+	Ok(rpc
+		.get_storage(&notification_registration_key(alias))
+		.await?
+		.and_then(|bytes| NotificationRegistration::decode(&mut &bytes[..]).ok())
+		.map(|registration| registration.account_id))
+}
+
+/// The account registered for our notification alias, read pinned to `block_hash`.
+pub async fn read_notification_account_at(
+	rpc: &RpcClient,
+	alias: &[u8; 32],
+	block_hash: &str,
+) -> Result<Option<[u8; 32]>, StatementAllowanceError> {
+	Ok(rpc
+		.get_storage_at(&notification_registration_key(alias), block_hash)
+		.await?
+		.and_then(|bytes| NotificationRegistration::decode(&mut &bytes[..]).ok())
+		.map(|registration| registration.account_id))
+}
+
+/// Scan notification slots `0..=max` of `period` in one round trip, returning
+/// the first unregistered seq not in `excluded`, or `None` when there is none.
+pub async fn scan_notification_slot_excluding(
+	rpc: &RpcClient,
+	metadata: &Metadata,
+	signer: &dyn PersonhoodSigner,
+	collection: PersonhoodCollection,
+	network_suffix: &[u8],
+	period: u32,
+	excluded: &[u8],
+) -> Result<Option<u8>, StatementAllowanceError> {
+	let max = notification_max_seq(rpc, metadata, collection).await?;
+	let seqs: Vec<u8> = (0..=max).filter(|seq| !excluded.contains(seq)).collect();
+	let mut keys = Vec::with_capacity(seqs.len());
+	for &seq in &seqs {
+		let alias = notification_alias(signer, collection, network_suffix, period, seq)?;
+		keys.push(notification_registration_key(&alias));
+	}
+	let entries = rpc.get_storage_many(&keys).await?;
+	Ok(seqs
+		.into_iter()
+		.zip(entries)
+		.find_map(|(seq, entry)| entry.is_none().then_some(seq)))
 }
 
 #[cfg(test)]
@@ -1059,6 +1234,22 @@ mod tests {
 				vector("deee1c90cf0d31093d318ac6629b4c4ab08650d4a4164511cc2496205f20f067"),
 			),
 		);
+	}
+
+	/// The runtime's `notification_context(reference)` hashes
+	/// `"sys/" ‖ u32_le(1) ‖ u32_le(period) ‖ seq ‖ zero padding` under the
+	/// network's product prefix. A wrong family or width would prove a slot the
+	/// runtime never checks.
+	#[test]
+	fn notification_context_follows_the_runtime_layout() {
+		let mut suffix = [0u8; 32];
+		suffix[..4].copy_from_slice(b"sys/");
+		suffix[4..8].copy_from_slice(&1u32.to_le_bytes());
+		suffix[8..12].copy_from_slice(&20_756u32.to_le_bytes());
+		suffix[12] = 7;
+		let expected = blake2_256(&[b"product/peopl.paseo/".as_slice(), &suffix].concat());
+
+		assert_eq!(derive_notification_context(b"paseo", 20_756, 7), expected);
 	}
 
 	#[test]

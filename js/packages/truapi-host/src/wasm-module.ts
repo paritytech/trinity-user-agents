@@ -4,6 +4,7 @@
 // these interfaces so the worker can name it in a statically analysable import.
 
 import type { PermissionAuthorizationRuntime } from "./worker-permission-authorization.js";
+import type { NotificationClaim } from "./worker-protocol.js";
 
 /** Cancellable handle on one live render stream inside the core. */
 export interface WorkerRendererSubscription {
@@ -115,6 +116,16 @@ export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
     secret: Uint8Array,
     liteUsername?: string | null,
   ): Promise<void>;
+  /**
+   * Register the 32-byte `target` as a notification statement account for
+   * the current UTC day, proving the session's personhood; with `submit`
+   * false, only ask the runtime whether it would accept the claim. Host
+   * only.
+   */
+  claimNotificationAccount(
+    target: Uint8Array,
+    submit: boolean,
+  ): Promise<NotificationClaim>;
 }
 
 /** Module surface the wasm-pack glue exports. */

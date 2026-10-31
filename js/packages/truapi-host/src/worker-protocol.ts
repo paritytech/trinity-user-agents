@@ -58,6 +58,21 @@ export type CallbackArgs = readonly unknown[];
 /** Which host role a worker runtime plays. */
 export type HostRole = "pairing" | "signing";
 
+/**
+ * A notification-account claim, as the signing host's core answers it: the
+ * UTC day it is for, and whether the account was registered now, already
+ * held this day's registration, or would be accepted (validation only).
+ */
+export interface NotificationClaim {
+  period: number;
+  outcome: "registered" | "alreadyRegistered" | "validated";
+  seq: number;
+  /** `"People"` or `"LitePeople"`; absent when the account was already registered. */
+  collection?: string;
+  /** The block the claim landed in, once registered now. */
+  blockHash?: string;
+}
+
 export type MainToWorker =
   | {
       kind: "init";
@@ -149,6 +164,13 @@ export type MainToWorker =
   | { kind: "getSessionChatIdentityKey"; requestId: number }
   /** Mint contact handles for 32-byte `accounts` packed back to back. */
   | { kind: "contactHandles"; requestId: number; accounts: Uint8Array }
+  /** Claim, or with `submit` false only validate, a notification account. Signing hosts only. */
+  | {
+      kind: "claimNotificationAccount";
+      requestId: number;
+      target: Uint8Array;
+      submit: boolean;
+    }
   | { kind: "getDeviceStatementKey"; requestId: number }
   | { kind: "getDeviceEncryptionKey"; requestId: number }
   | {
@@ -285,6 +307,18 @@ export type WorkerToMain =
     }
   | {
       kind: "contactHandlesResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
+  | {
+      kind: "claimNotificationAccountResponse";
+      requestId: number;
+      ok: true;
+      claim: NotificationClaim;
+    }
+  | {
+      kind: "claimNotificationAccountResponse";
       requestId: number;
       ok: false;
       error: string;

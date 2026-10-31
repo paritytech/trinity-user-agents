@@ -16,6 +16,7 @@ use truapi::latest::{
 	HostAccountRingVrfSignRequest, ProductAccountId, RingLocation, RingLocationJunction,
 };
 
+pub use allowance::NotificationClaim;
 pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::TrackedStatementRenewalTarget;
@@ -177,6 +178,9 @@ pub struct SigningHost {
 	/// Paired-host requests the pairing host can still withdraw.
 	sso_withdrawals: SsoWithdrawals,
 	renewal: allowance_renewal::RenewalState,
+	/// Held through each notification-account claim, from the target's lookup
+	/// to its confirmation.
+	notification_claims: futures::lock::Mutex<()>,
 }
 
 impl SigningHost {
@@ -200,6 +204,7 @@ impl SigningHost {
 			ring_vrf_registry: RingVrfRegistryStore::new(platform),
 			sso_withdrawals: Default::default(),
 			renewal: allowance_renewal::RenewalState::default(),
+			notification_claims: Default::default(),
 		})
 	}
 
@@ -280,6 +285,7 @@ impl SigningHost {
 			ring_vrf_registry: RingVrfRegistryStore::new(platform),
 			sso_withdrawals: Default::default(),
 			renewal: allowance_renewal::RenewalState::default(),
+			notification_claims: Default::default(),
 		})
 	}
 
@@ -365,6 +371,18 @@ impl SigningHost {
 				key.clone(),
 			)?;
 		Ok(key)
+	}
+
+	/// Register `target` as a notification statement account for the current
+	/// period under the active local session, or only validate the claim.
+	pub async fn claim_notification_account(
+		&self,
+		target: [u8; 32],
+		submission: statement_allowance::ClaimSubmission,
+	) -> Result<NotificationClaim, allowance::AllowanceAllocationError> {
+		let session = self.current_local_session().ok_or(AuthorityError::Disconnected)?;
+		allowance::claim_notification_account(&self.services, self, &session, target, submission)
+			.await
 	}
 
 	fn has_auto_signing_grant(

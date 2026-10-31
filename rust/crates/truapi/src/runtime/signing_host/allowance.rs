@@ -422,6 +422,94 @@ pub async fn allocate_smart_contract_allowance(
 	Ok(())
 }
 
+/// A notification claim's period and how it ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationClaim {
+	/// Notification period: the UTC day the claim is for.
+	pub period: u32,
+	/// What the claim did.
+	pub outcome: crate::runtime::statement_allowance::NotificationAccountOutcome,
+}
+
+/// Register `target` as a notification statement account for the current
+/// period, proving the wallet's personhood, or only validate the claim.
+///
+/// Host only: the host derives and holds `target` and signs its one
+/// statement, so no secret crosses here. Asking again for an account that
+/// already holds this period's registration claims nothing.
+pub async fn claim_notification_account(
+	services: &RuntimeServices,
+	signing_host: &SigningHost,
+	session: &AuthoritySession,
+	target: [u8; 32],
+	submission: crate::runtime::statement_allowance::ClaimSubmission,
+) -> Result<NotificationClaim, AllowanceAllocationError> {
+	use crate::runtime::statement_allowance::{
+		self, CheckedPersonhoodSigner, NotificationAccountOutcome, StatementAllowanceError,
+		find_including_rings,
+	};
+
+	// One claim at a time, from the target's lookup to its confirmation, so
+	// two never take a slot each for what one would have served.
+	let _claiming = signing_host.notification_claims.lock().await;
+	signing_host.require_current_session(session)?;
+	let ended = |err: StatementAllowanceError| match err {
+		StatementAllowanceError::SessionEnded => {
+			AllowanceAllocationError::Authority(AuthorityError::Disconnected)
+		},
+		other => other.into(),
+	};
+	let client = services.statement_store.chain_client("notification account").await?;
+	let rpc = client.rpc();
+	let period = statement_allowance::slot::current_period(current_unix_secs()?);
+	if let Some(seq) =
+		statement_allowance::notification_registration_in(rpc, &target, period).await?
+	{
+		signing_host.require_current_session(session)?;
+		return Ok(NotificationClaim {
+			period,
+			outcome: NotificationAccountOutcome::AlreadyRegistered { seq },
+		});
+	}
+	let chain = services.chain_context.get(&client).await?;
+	let network_suffix = statement_allowance::slot::read_network_suffix(rpc).await?;
+	let candidates = signing_host.reserved_person_collection_candidates(session)?;
+	let keys = statement_allowance::FixedPersonhoodSigner::new(&candidates).await?;
+	// The keys are this session's: every use checks it is still current.
+	let current = || signing_host.require_current_session(session).is_ok();
+	let signer = CheckedPersonhoodSigner::new(&keys, &current);
+	let collections: Vec<_> = candidates.iter().map(|candidate| candidate.collection).collect();
+	let memberships = find_including_rings(rpc, &chain.metadata, &signer, &collections, u32::MAX)
+		.await
+		.map_err(ended)?;
+	if memberships.is_empty() {
+		signing_host.require_current_session(session)?;
+		return Err(AllowanceAllocationError::MissingPersonhoodMembership {
+			resource: "notification",
+		});
+	}
+	let outcome = statement_allowance::claim_notification_account(
+		statement_allowance::NotificationAccountClaim {
+			rpc,
+			metadata: &chain.metadata,
+			chain_state: &chain.state,
+			signer: &signer,
+			network_suffix: &network_suffix,
+			target: &target,
+			period,
+			memberships: &memberships,
+			submission,
+		},
+	)
+	.await
+	.map_err(ended)?;
+	debug!(period, ?outcome, "notification account claim");
+	// A claim submitted before the session ended stays on chain; only its
+	// answer is withheld from a session that is gone.
+	signing_host.require_current_session(session)?;
+	Ok(NotificationClaim { period, outcome })
+}
+
 /// Allowance period clock, using web-time on browsers to avoid SystemTime panics.
 pub fn current_unix_secs() -> Result<u64, AllowanceAllocationError> {
 	#[cfg(not(target_arch = "wasm32"))]

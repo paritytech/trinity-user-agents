@@ -41,9 +41,10 @@ use crate::{
 	host_logic::worker::WorkerLedger,
 	runtime::{
 		ActionChannel, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver,
-		HostSession, LocalActivation, PairedSsoPeer, PairingHostRole, ProductAuthority,
-		ProductConnection, ProductRuntimeHost, ResponderExit, RuntimeServices, SigningHostRole,
-		SigningHostSsoService, SsoResponderService, sso_service::Dispatch,
+		HostSession, LocalActivation, NotificationClaim, PairedSsoPeer, PairingHostRole,
+		ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit, RuntimeServices,
+		SigningHostRole, SigningHostSsoService, SsoResponderService, sso_service::Dispatch,
+		statement_allowance::ClaimSubmission,
 	},
 	subscription::{HostInitiatedSubscriptionManager, Spawner},
 	transport::Transport,
@@ -924,6 +925,25 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.contact_handles"))]
 	pub fn contact_handles(&self, accounts: &[[u8; 32]]) -> Option<Vec<[u8; 32]>> {
 		mint_contact_handles(self.signing_host.as_ref(), accounts)
+	}
+
+	/// Register `target` as a notification statement account for the current
+	/// UTC day, proving the session's personhood, or with
+	/// [`ClaimSubmission::ValidateOnly`] only ask the runtime whether it would
+	/// accept the claim.
+	///
+	/// Host only, for the host's own notifications: the host derives `target`
+	/// and signs its statement, and products have no call that reaches this.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.claim_notification_account"))]
+	pub async fn claim_notification_account(
+		&self,
+		target: [u8; 32],
+		submission: ClaimSubmission,
+	) -> Result<NotificationClaim, truapi::latest::GenericError> {
+		self.signing_host
+			.claim_notification_account(target, submission)
+			.await
+			.map_err(|err| truapi::latest::GenericError { reason: err.to_string() })
 	}
 
 	/// Install the host's [`DevicePairingObserver`], told whenever a device

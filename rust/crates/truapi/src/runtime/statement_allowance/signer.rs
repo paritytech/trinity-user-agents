@@ -29,6 +29,58 @@ pub trait PersonhoodSigner: Send + Sync {
 	) -> Result<Vec<u8>, StatementAllowanceError>;
 }
 
+/// A signer whose keys may be used only while `current` says so: every
+/// member, alias and proof is refused once it answers false, as after the
+/// wallet session that lent the keys ended. The check is synchronous with
+/// each use, so a proof is never made after it.
+pub struct CheckedPersonhoodSigner<'a> {
+	inner: &'a dyn PersonhoodSigner,
+	current: &'a (dyn Fn() -> bool + Send + Sync),
+}
+
+impl<'a> CheckedPersonhoodSigner<'a> {
+	/// `inner`'s keys, while `current` answers true.
+	pub fn new(
+		inner: &'a dyn PersonhoodSigner,
+		current: &'a (dyn Fn() -> bool + Send + Sync),
+	) -> Self {
+		Self { inner, current }
+	}
+
+	fn still_current(&self) -> Result<(), StatementAllowanceError> {
+		if (self.current)() { Ok(()) } else { Err(StatementAllowanceError::SessionEnded) }
+	}
+}
+
+impl PersonhoodSigner for CheckedPersonhoodSigner<'_> {
+	fn member(
+		&self,
+		collection: PersonhoodCollection,
+	) -> Result<[u8; 32], StatementAllowanceError> {
+		self.still_current()?;
+		self.inner.member(collection)
+	}
+
+	fn alias(
+		&self,
+		collection: PersonhoodCollection,
+		context: &[u8],
+	) -> Result<[u8; 32], StatementAllowanceError> {
+		self.still_current()?;
+		self.inner.alias(collection, context)
+	}
+
+	fn prove(
+		&self,
+		ring: &RingParams,
+		context: &[u8],
+		message: &[u8],
+	) -> Result<Vec<u8>, StatementAllowanceError> {
+		self.still_current()?;
+		self.inner.prove(ring, context, message)
+	}
+}
+
 /// Personhood keys the caller holds directly, with no wallet session to check.
 pub struct FixedPersonhoodSigner<'a> {
 	candidates: &'a [CollectionCandidate],

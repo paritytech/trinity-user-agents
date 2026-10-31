@@ -37,6 +37,21 @@ struct ClaimPgasCallArgs {
 	target: [u8; 32],
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+struct SetNotificationAccountCallArgs {
+	period: u32,
+	seq: u8,
+	account_id: [u8; 32],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+struct RegisterNotificationForCollectionInfo {
+	proof: Vec<u8>,
+	ring_index: u32,
+	revision: u32,
+	collection: u8,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 struct RegisterStatementStoreAllowanceInfo {
 	proof: Vec<u8>,
@@ -131,6 +146,48 @@ pub fn build_long_term_storage_extra(
 	extra.push(info_index);
 	ClaimLongTermStorageInfo { proof: proof.to_vec(), ring_index, revision, personhood }
 		.encode_to(&mut extra);
+	Ok(extra)
+}
+
+/// Encode `Resources.set_notification_statement_account_for_sequence(reference,
+/// account_id)`: `pallet ‖ call ‖ period_u32LE ‖ seq_u8 ‖ account_id[32]`, with
+/// the dispatch indices resolved from `metadata`.
+pub fn build_set_notification_account_call(
+	metadata: &Metadata,
+	period: u32,
+	seq: u8,
+	account_id: &[u8; 32],
+) -> Result<Vec<u8>, StatementAllowanceError> {
+	let indices =
+		metadata.call_indices("Resources", "set_notification_statement_account_for_sequence")?;
+	let mut call = Vec::with_capacity(2 + 4 + 1 + 32);
+	call.extend_from_slice(&indices);
+	SetNotificationAccountCallArgs { period, seq, account_id: *account_id }.encode_to(&mut call);
+	Ok(call)
+}
+
+/// Encode the `AsResources` extension `extra` for a notification claim:
+/// `Some(RegisterNotificationForCollection { proof, ring_index, revision,
+/// collection })`, with the variant indices resolved from `metadata`.
+pub fn build_notification_extra(
+	metadata: &Metadata,
+	proof: &[u8],
+	ring_index: u32,
+	revision: u32,
+	collection: PersonhoodCollection,
+) -> Result<Vec<u8>, StatementAllowanceError> {
+	let (info_index, collection) =
+		metadata.as_resources_variant_indices("RegisterNotificationForCollection", collection)?;
+	let mut extra = Vec::with_capacity(2 + 2 + proof.len() + 4 + 4 + 1);
+	extra.push(OPTION_SOME);
+	extra.push(info_index);
+	RegisterNotificationForCollectionInfo {
+		proof: proof.to_vec(),
+		ring_index,
+		revision,
+		collection,
+	}
+	.encode_to(&mut extra);
 	Ok(extra)
 }
 
@@ -267,6 +324,39 @@ mod tests {
 		assert_eq!(
 			SetStatementStoreAccountCallArgs::decode(&mut &call[2..]).unwrap(),
 			SetStatementStoreAccountCallArgs { period: 7, seq: 0, target: [0; 32] }
+		);
+	}
+
+	/// Only the V16 People capture declares the notification call, and the
+	/// runtime decodes `seq` as one byte: a wider field would shift the account.
+	#[test]
+	fn notification_claim_encodes_period_seq_account_and_its_collection() {
+		let metadata = test_fixtures::people();
+		let call = build_set_notification_account_call(metadata, 7, 3, &[0x22; 32]).unwrap();
+		let proof = vec![0xEE; 4];
+		let extra =
+			build_notification_extra(metadata, &proof, 5, 9, PersonhoodCollection::LitePeople)
+				.unwrap();
+		let (info_index, lite) = metadata
+			.as_resources_variant_indices(
+				"RegisterNotificationForCollection",
+				PersonhoodCollection::LitePeople,
+			)
+			.unwrap();
+
+		assert_eq!(
+			(call[2..].to_vec(), extra),
+			(
+				[7u32.to_le_bytes().to_vec(), vec![3], vec![0x22; 32]].concat(),
+				[
+					vec![0x01, info_index, 0x10],
+					proof,
+					5u32.to_le_bytes().to_vec(),
+					9u32.to_le_bytes().to_vec(),
+					vec![lite],
+				]
+				.concat(),
+			),
 		);
 	}
 
