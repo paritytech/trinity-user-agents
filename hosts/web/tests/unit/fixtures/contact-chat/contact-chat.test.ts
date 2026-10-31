@@ -580,6 +580,37 @@ describe("Contact Chat between two hosts, by contact handle", () => {
     expect(alice.engine.stored()[0]!.status).toBe("waiting");
   });
 
+  test("the product cancels its own request through its host; the other person is not told, and a reply after it is ignored", async () => {
+    const { alice, bob } = world();
+    await alice.start();
+    await bob.start();
+    const roomId = await alice.startWith(BOB, "");
+    const sent = alice.engine.stored()[0]!.request!;
+    await alice.engine.cancel(roomId);
+    await settle();
+    expect([
+      alice.engine.stored()[0]!.status,
+      alice.service.outbox.get(sent)?.state.tag,
+      alice.provider.composer(roomId),
+    ]).toEqual([
+      "cancelled",
+      "cancelled",
+      {
+        kind: "blocked",
+        reason: "Start a new chat with them to send a request",
+      },
+    ]);
+    // Bob's request still waits for him; accepting it reaches no one.
+    expect(bob.notifications.list()[0]!.state.tag).toBe("pending");
+    await bob.acceptNewest();
+    await settle();
+    expect(alice.engine.stored()[0]!.status).toBe("cancelled");
+    expect(alice.engine.stored()[0]!.connection).toBeUndefined();
+    await expect(alice.engine.cancel(roomId)).rejects.toThrow(
+      "There is no request to cancel.",
+    );
+  });
+
   test("a request the user does not confirm is not sent, and says so", async () => {
     const { alice, bob } = world();
     await alice.start();

@@ -679,10 +679,9 @@ sample data or from the [invitation demo](#invitation-demo-prototype).
   - **Accept** is the user's intent, handed to the product that owns the request. The row shows **Accepting…** until the
     product answers: it accepts, and the row shows Accepted, or it refuses, does not answer within 30 seconds, or is
     closed, and the reason shows under the row with the request still waiting. The host shows the product only when the
-    product asks; tapping an accepted row asks the product again. For a demo user's invitation the product is Example
-    Chat, which checks the invitation, replies through the host and asks to be shown, at its **Accepted by you** list.
-    Accepted on the row means the recipient's product replied; it is not the sender's connection. Example Chat has no
-    chat conversation, so no Chat request or conversation is opened.
+    product asks; tapping an accepted row asks the product again. For a demo user's invitation the product is Contact
+    Chat, which checks the invitation, replies through the host and keeps the conversation in Chat. Accepted on the row
+    means the recipient's product replied; it is not the sender's connection.
 - **Storage.** Per network and wallet, under `truapi-web-signing-host:network:<id>:notifications:<wallet>:v1`, or per
   network and demo user. Written only once used and removed when empty. Waiting requests and history survive a reload.
   `src/notifications/notifications.ts` holds the list, which does not know where a request came from, and
@@ -718,27 +717,22 @@ agreed API.
 
 - **Try it.** In one tab: Developer tools → **More** → **Invitation demo** → **Alice**. The tab reloads with
   **Invitation demo · Alice** over the app and "Signed in as Alice (invitation demo)" in Account, and opens nothing:
-  open any product with the search button to try it as Alice, or **More** → **Open Example Chat**, the demo's product,
-  which then shows in Browse. In a second tab choose **Bob**.
-  - **Pick a contact** in Example Chat calls `contacts.pick` and lists the core's handle, never a name.
-  - **New chat** → **Choose contact** calls `contacts.pick` too, and the invitation goes to that handle. **Invite**
-    opens the host's **Send invitation** prompt, which names the person. Example Chat shows **Waiting**.
+  open any product with the search button to try it as Alice. In a second tab choose **Bob**.
+  - Chat's **+** → Bob → **Send request to Bob** starts a chat in Contact Chat, the demo's product (below). The host's
+    **Send invitation** prompt names the person before anything leaves.
   - Bob's **Inbox** badge, on Chat's Inbox tab and in the Apps shelf, shows 1 until the row shows in his list.
-    **Accept** opens Bob's Example Chat if it is not open, hands it the invitation payload, and it checks it, makes both
-    conversation topics and its response, and replies through its host. Bob's host seals the reply for Alice and posts
-    it on the request's return route. Alice's host authenticates it and hands the payload to Alice's Example Chat, which
-    checks it and only then completes: **Connected**. **Dismiss** takes the row off Bob's list and sends nothing. Alice
-    can **Cancel** a waiting invitation in Example Chat or under **Sent** in her Inbox; otherwise it waits. Inspector →
-    Activity shows each step.
+    **Accept** hands Bob's Contact Chat the invitation payload; it checks it, makes both conversation topics and its
+    response, and replies through its host. Bob's host seals the reply for Alice and posts it on the request's return
+    route. Alice's host authenticates it and hands the payload to Alice's Contact Chat, which checks it and only then
+    completes: **Connected**. **Dismiss** takes the row off Bob's list and sends nothing. Alice can **Cancel** a waiting
+    request under **Sent** in her Inbox, and Contact Chat can cancel its own; otherwise it waits. Inspector → Activity
+    shows each step.
 - **Leaving it.** **Sign out** in Account, or **Off** in More, leaves the tab signed out. Signing in to an account in
   the picker, or importing one, reloads the tab signed in to it. The choice is kept for the tab, so a reload keeps it.
   Starting the demo ends the tab's wallet session and leaves saved wallets and their data alone.
-- **Example Chat.** **More** → **Open Example Chat** opens it, and once it is open **Restart Example Chat** opens it
-  again, which gets its state back from the host and its own storage. The **Close** circle over it ends its frame; an
-  Accept that waits for it then fails at once. An accepted row in the Inbox opens it again, as Accept does.
 - **Clear invitations.** **More** → **Clear Alice's invitations** asks first, then removes that demo user's sent and
   received invitations and their Inbox items on this network, in this browser. It is not a sign-out: wallets, the other
-  demo users and Example Chat's own records stay.
+  demo users and Contact Chat's own records stay.
 - **Contact Chat.** The demo's chat worker (`fixtures/products/contact-chat/`), a product that knows people only by the
   contact handles its host gives it. It runs for the demo user through the ordinary worker loader, as a worker the host
   adds, and Chat shows its conversations over the v2 draft bridge. **+** in Chat → Bob → **Send request to Bob**: the
@@ -751,12 +745,13 @@ agreed API.
   handle, request, reply, chat bridge message or host record carries it. It sits in the worker's own TrUAPI storage,
   which this host keeps, so a trusted host can still read it. The conversation and names survive a reload. Each host
   names and draws the other person from the handle; neither worker gets a name, username, account, identity key, request
-  id or route.
+  id or route. Contact Chat can also ask `contacts.pick` itself and send its request to the handle it gets, and cancel
+  its own request through its host; only the browser test drives these, as the v2 draft has no action for them.
   - **It ends at the connection.** Contact Chat has no text transport. A connected room says "Connected · sending is not
     supported yet" under its name. The host's composer stays enabled, because the v2 draft has no way for a product to
     disable it after creating the room, but a message is refused and the failed bubble says why. No text goes on `T_AB`
     or `T_BA`.
-  - **What is a fixture.** The setup is Example Chat's toy (`fixtures/products/example-chat/setup.ts`).
+  - **What is a fixture.** The setup is a toy (`fixtures/products/contact-chat/setup.ts`).
   - **Gaps it shows.** The host asks twice when a chat starts from its own **+**: once in the request form and once in
     **Send invitation**. A declined request waits silently until the sender cancels it under **Sent** in the Inbox. The
     per-conversation chat accounts the design asks for, and their allowance, have no API: through TrUAPI a product's
@@ -776,16 +771,15 @@ agreed API.
   **What is real here**). None of a wallet session's services start: no Nova chat, wallet worker or Pocket runs, so
   fixture contacts never reach a wallet's chat or a transaction it signs. The session runs only the products' side: the
   workers the host adds for the demo (Contact Chat) and their chat providers (`ProductsOnlySession` in
-  `src/chat/inbox.ts`). The host's invitation inbox starts with the session, so requests from other tabs arrive; Example
-  Chat does not. **Account status** reads the People chain for the account the phrase derives only when its fold opens.
-  The core looks up the account's DotNS name on Asset Hub once, as it does at every sign-in. Contacts
+  `src/chat/inbox.ts`). The host's invitation inbox starts with the session, so requests from other tabs arrive.
+  **Account status** reads the People chain for the account the phrase derives only when its fold opens. The core looks
+  up the account's DotNS name on Asset Hub once, as it does at every sign-in. Contacts
   (`fixtures/invitations/test-users.ts`): Alice has Bob and Carol, Bob and Carol have Alice. Lists are kept per network
-  and demo user, under `truapi-web-signing-host:network:<id>:test-user:<user>:notifications:v2`, `...:outbox:v3` (sent)
-  and `...:received:v3` (received, and the sealed reply), and Contact Chat's under `...:contact-chat-outbox:v2` and
-  `...:contact-chat-received:v2`. Earlier lists held requests between fixture identities; they are left in place and no
-  longer read, and **Clear invitations** removes them too. Contact Chat conversations kept before the change hold
-  handles of root accounts, so the host draws their person as **Contact**. Example Chat keeps its protocol secrets and
-  topics in its own TrUAPI local storage.
+  and demo user, under `truapi-web-signing-host:network:<id>:test-user:<user>:notifications:v2`, and Contact Chat's sent
+  and received requests, with the sealed reply, under `...:contact-chat-outbox:v2` and `...:contact-chat-received:v2`.
+  Earlier lists, `...:outbox` and `...:received` among them, are left in place and no longer read, and **Clear
+  invitations** removes them too. Contact Chat conversations kept before the change hold handles of root accounts, so
+  the host draws their person as **Contact**.
 - **The proposed API** (`host-requests/1`, `src/invitations/contract.ts`), over a `MessagePort` the product hands over.
   It names a contact by the `ContactHandle` TrUAPI's `contacts.pick` gives; it has no picker of its own. Each call has
   an `id` and one `result`.
@@ -818,8 +812,8 @@ agreed API.
   the purpose, the request id, the times, the return route, the public reply key and the exact payload. A reply's covers
   the version, both identities, the product, the request id, the digest of the exact request and the exact payload. Kind
   and identity order keep one direction's evidence from checking as the other's. The sender's host checks a reply
-  against the contact it chose, not a key the reply names. A refused reply does not use up the request. Example Chat's
-  own check is a toy protocol (`fixtures/products/example-chat/setup.ts`).
+  against the contact it chose, not a key the reply names. A refused reply does not use up the request. Contact Chat's
+  own check is a toy protocol (`fixtures/products/contact-chat/setup.ts`).
 - **What is simulated, and not the design's answer.**
   - The contact handle is the core's, but whom it names to the host comes from the fixture directory: the host mints
     handles (`contactHandles`) for every other demo user's session account and names a handle by that index. A name is
@@ -872,10 +866,9 @@ agreed API.
   - "Network: claim and post" claims and posts for real. Choosing it asks first. How many posts a person makes a day is
     the chain's limit: each post takes one of the person's daily notification slots, and a claim with none left fails,
     pausing the request until a later try finds one.
-  - While the network delivery is chosen, the tab holds the wallet's Nova chat off, in the host and as the Nova chat
-    worker: it neither starts nor answers anything, and Chat's New chat starts Contact Chat. Someone chosen there by
-    username gets their contact handle minted for the request; the host names them, and as with a sender, naming them
-    does not make them payable.
+  - While the network delivery is chosen, the tab holds the wallet's Nova chat off: it neither starts nor answers
+    anything, and Chat's New chat starts Contact Chat. Someone chosen there by username gets their contact handle minted
+    for the request; the host names them, and as with a sender, naming them does not make them payable.
   - When the recipient resends its reply is open in the design. Here a reply has no deadline: the recipient's host posts
     it when it replies, and posts the same sealed reply again whenever the request arrives again, as it does while the
     sender's host still waits and reposts it, after a restart too. The delivery keeps trying to post each reply for an
@@ -886,8 +879,6 @@ agreed API.
     definite answer (no key, another key type, a conflict) is kept until the keys are read again.
   - Contact Chat saves its conversation, and waits until the host's storage confirms it kept the write, before it sends
     a request, replies or completes; a save that fails sends nothing and says so.
-  - Example Chat would watch its conversation topics through TrUAPI's `statementStore`; a demo user reaches no chain, so
-    it only keeps them.
 - **Code.** `src/invitations/` is the feature and holds no fixture: `contract.ts` what a product and its host say,
   `ports.ts` what the host needs (contacts, an identity credential, delivery), `binding.ts` the envelopes and the
   transcripts their evidence covers, `sealing.ts` the sealing, `wallet-auth.ts` the host proof with wallet keys,
@@ -895,9 +886,9 @@ agreed API.
   `statement-delivery.ts` the network delivery, `invitation-service.ts` one user's host side, and `outbox.ts` and
   `received.ts` what it keeps. What only tests and the dev server use lives outside it: `fixtures/invitations/` holds
   the fixture contacts and chat-key directory, the local delivery and the demo users, `fixtures/notifications/` the
-  sample notifications, `fixtures/products/example-chat/` Example Chat, `fixtures/products/contact-chat/` Contact Chat,
-  `tools/demos/contact-chat-host.ts` its host side for a demo user or a wallet, and `tools/demos/dev-tools.ts` the
-  Developer section. `tests/unit/invitations/invitation-flow.test.ts` runs two and three users end to end,
+  sample notifications, `fixtures/products/contact-chat/` Contact Chat, `tools/demos/contact-chat-host.ts` its host side
+  for a demo user or a wallet, and `tools/demos/dev-tools.ts` the Developer section.
+  `tests/unit/invitations/invitation-flow.test.ts` runs two and three users end to end,
   `tests/unit/invitations/statement-delivery.test.ts` the network delivery over an in-memory store and chain, and
   `tests/unit/fixtures/contact-chat/contact-chat.test.ts` Contact Chat between two hosts. Only a dev server on this
   machine loads the Developer section, so a build has none of it; the host's contact picker reads the demo user's
@@ -973,8 +964,8 @@ it are five tabs:
   state, Close, Reset its data, What it may use, Details), and Workers.
 - **Preview:** the app's size and its frame, described below.
 - **Inspector:** the Activity view, the TrUAPI traces, the Chat diagnostics and the Workers view.
-- **More:** Versions, and the dev server's own controls (the invitation demo, Example Chat, Contact Chat for this wallet
-  and sample Inbox items).
+- **More:** Versions, and the dev server's own controls (the invitation demo, Contact Chat for this wallet and sample
+  Inbox items).
 
 **Search field.** The Docklet's middle button, the Pill, opens a card with one field, **Find a person or app**
 (`src/app/search-card.ts`, `src/app/address-recents.ts`). Typing only edits the text and lists suggestions; it opens
@@ -1363,20 +1354,19 @@ workers, only Contact Chat, added by the host, with Inspect and no Remove, which
 does not restart.
 
 `browser/invitations.spec.ts` checks demo users in tabs of the normal host, with no wallet, Playwright's clock, every
-socket closed and every request outside this host refused: a demo user tab is marked and signed in to the core as that
-user, with its choice in More and nothing opened until More opens Example Chat in Browse; the host's Send invitation
-prompt offers the user's contacts and Cancel sends nothing; an invitation shows a badge of 1 in the chosen recipient's
-tab only, and showing in the list is seen, not answered; Accept opens the recipient's Example Chat, reaches the sender's
-product, hands the recipient's product the same setup data and then shows it, and the accepted row opens it again;
-Dismiss sends no answer and the sender's invitation waits; a sender cancels a request under Sent in the host's Inbox,
-and the recipient is not told; replays and late or contrary answers change nothing; restarting Example Chat restores it,
-Close ends its frame until it is opened again, and an accepted row opens it; a reload keeps the demo user and the lists;
-another network shows none of it. It also checks that a test account signs in from the picker as a wallet does, with
-Chat and workers running, Sign out and no Forget, and survives a reload; that the same phrase imported is the same
-account on the same path; that the invitation demo is chosen in More, is not listed in the picker, runs no Nova chat and
-no wallet worker, only Contact Chat, and shows none of the wallet's Inbox; that Clear invitations asks first and removes
-only that demo user's lists; that Sign out leaves the demo signed out; and that the saved wallet and its notifications
-are as they were; and that on a phone nothing scrolls sideways and the banner's buttons fit.
+socket closed and every request outside this host refused, with requests sent from Chat's **+** through Contact Chat: a
+demo user tab is marked and signed in to the core as that user, with its choice in More and nothing opened; Cancel on
+the host's Send invitation prompt sends nothing and the product says so; a request shows a badge of 1 in the chosen
+recipient's tab only, and showing in the list is seen, not answered; Accept reaches the recipient's product, whose reply
+the sender's host authenticates and the sender's product checks before the request completes; Dismiss sends no answer
+and the sender's request waits until the sender cancels it under Sent in the host's Inbox; an accepted row hands the
+recipient's product an open intent, which it answers; a reload keeps the demo user and the lists; and another network
+shows none of it, Contact Chat there included. It also checks that a test account signs in from the picker as a wallet
+does, with Chat and workers running, Sign out and no Forget, and survives a reload; that the same phrase imported is the
+same account on the same path; that the invitation demo is chosen in More, is not listed in the picker, runs no Nova
+chat and no wallet worker, only Contact Chat, and shows none of the wallet's Inbox; that Clear invitations asks first
+and removes only that demo user's lists; that Sign out leaves the demo signed out; and that the saved wallet and its
+notifications are as they were; and that on a phone nothing scrolls sideways and the banner's buttons fit.
 
 `browser/contact-chat.spec.ts` checks Contact Chat between two demo users in tabs of the normal host, with every socket
 closed and every request outside this host refused: the dev server's archive of the worker runs through the ordinary
@@ -1385,8 +1375,12 @@ Inbox names Alice and Accept goes to his running worker; Alice's worker connects
 refused with the reason that Contact Chat has no text transport; a reload keeps the conversation and the names; both
 workers keep the setup's topics and agreed secret; neither worker heard or kept a demo user's name or account; each
 tab's core reports the identity account the other user's contacts name the demo user by, and each host proved and
-checked with the keys of its user's phrase; and the handle each worker holds is the one `contacts.pick` gives Example
-Chat, in the same tab, for the same person. Set `CHAT_SCREENSHOTS` to a directory to keep screenshots.
+checked with the keys of its user's phrase; and the handle each worker holds is the one `contacts.pick` gives another
+product, `fixtures/products/contacts-product.ts` opened by URL, in the same tab, for the same person. It also checks
+that Contact Chat can ask `contacts.pick` itself, with the host's picker naming it, and send its request to the handle
+it gets: the host names the person in Send invitation, the recipient's Inbox names the sender, and the handle is the one
+the other product gets; and that its own `cancel` stops the request, which leaves the sender's Sent list while the
+recipient's row still waits. Set `CHAT_SCREENSHOTS` to a directory to keep screenshots.
 
 `browser/wallet-delivery-live.spec.ts` runs only with `TRUAPI_LIVE=1`, against Paseo Next v2: Alice's public test
 account, signed in as a wallet, turns on Contact Chat for this wallet and the network delivery that validates claims
@@ -1397,13 +1391,14 @@ started, and that the tab's no-submit guard refused nothing and passed no submis
 A failed live run keeps the tab's guard record, Activity lines and a screenshot under `TRUAPI_LIVE_EVIDENCE`, or the
 temporary directory. No browser test claims or posts.
 
-`browser/contacts-pick.spec.ts` checks `contacts.pick` for demo users: the host's picker names the product and lists the
-user's two contacts; a pick gives the core's handle, the same for the same person and another for another; Cancel and
-Escape give Dismissed; the product shows no name or account; a second product, opened by URL, gets the same handle for
-the same person; another demo user gets another handle for the same contact; the username search finds a demo user who
-is not a contact and shows them apart, lists a contact once, does not look up text that cannot be a username, gives the
-product a handle for the person found, the same each time and without making them a contact, and never asks the username
-index; and with no session the core refuses the pick with NotConnected and no picker is drawn.
+`browser/contacts-pick.spec.ts` checks `contacts.pick` for demo users, from `fixtures/products/contacts-product.ts`
+opened by URL: the host's picker names the product and lists the user's two contacts; a pick gives the core's handle,
+the same for the same person and another for another; Cancel and Escape give Dismissed; the product gets no name or
+account; a second product, the same module on another port, gets the same handle for the same person; another demo user
+gets another handle for the same contact; the username search finds a demo user who is not a contact and shows them
+apart, lists a contact once, does not look up text that cannot be a username, gives the product a handle for the person
+found, the same each time and without making them a contact, and never asks the username index; and with no session the
+core refuses the pick with NotConnected and no picker is drawn.
 
 Three narrower browser tests use no wallet. `browser/inspector-dock.spec.ts` loads the host page with every request
 outside loopback refused, and checks that on a wide window the developer tools open on the right by default and move to
@@ -1508,12 +1503,13 @@ nothing else of it.
   `demos/` holds the dev server's controls, which a build leaves out: the Developer section, the local chat products'
   routes, and Contact Chat's host side.
 - `fixtures/`: synthetic data that only tests and the dev server use. `products/`: product and worker entries, the
-  synthetic chat product, Example Chat and Contact Chat (`contact-chat/`: `worker.ts` the entry, `engine.ts` its
-  conversations, `requests.ts` its end of the request service). `invitations/`, `notifications/`: demo users, local
-  delivery, and sample notifications. `nova/`: in-memory statement store and HOP node. `archive/`: archive builders.
+  synthetic chat product and Contact Chat (`contact-chat/`: `worker.ts` the entry, `engine.ts` its conversations,
+  `setup.ts` its setup protocol, `requests.ts` its end of the request service). `invitations/`, `notifications/`: demo
+  users, local delivery, and sample notifications. `nova/`: in-memory statement store and HOP node. `archive/`: archive
+  builders.
 - `tests/unit/`: unit tests, in folders that follow the code they cover; `tests/support/`: their shared helpers.
 - `browser/`: the browser tests, with their Playwright setup and page harnesses under `browser/support/`.
-- `chat-product-demo-plugin.ts`, `username-search-plugin.ts`: the dev server's local chat workers and username route.
+- `chat-product-demo-plugin.ts`, `username-search-plugin.ts`: the dev server's local chat worker and username route.
 
 ## Not supported
 

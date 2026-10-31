@@ -15,7 +15,10 @@
  * - its record is kept in its own TrUAPI storage.
  *
  * What it received from the host, and what it keeps, are on
- * `window.__contactChatWorker`, for a test to read.
+ * `window.__contactChatWorker`, for a test to read. A test also drives there
+ * what a product does on its own, outside the Chat screen: pick a contact
+ * through TrUAPI's `contacts.pick` and send a request to the handle it gets,
+ * or cancel its own request.
  */
 import { getClientSync } from "@parity/truapi/sandbox";
 import { connectChatV2 } from "../../../src/chat/draft/product.js";
@@ -38,7 +41,16 @@ interface WorkerState {
   starts: string[];
   /** The product's whole stored record, as JSON. */
   record(): string | null;
+  /** Pick a contact with `contacts.pick` and start a chat with the handle: the room, or the pick's outcome when none was picked. */
+  pickAndStart(
+    welcome: string,
+  ): Promise<{ roomId: string } | { outcome: string }>;
+  /** Cancel the request of `roomId` through the host. */
+  cancel(roomId: string): Promise<void>;
 }
+
+const notRunning = () =>
+  Promise.reject(new Error("Contact Chat is not running."));
 
 const RECORD_KEY = "contact-chat:record:v1";
 const READS_KEY = "contact-chat:read:v1";
@@ -50,6 +62,8 @@ const state: WorkerState = {
   received: [],
   starts: [],
   record: () => null,
+  pickAndStart: notRunning,
+  cancel: notRunning,
 };
 (
   window as unknown as { __contactChatWorker: WorkerState }
@@ -129,6 +143,16 @@ async function run(): Promise<void> {
     },
     { reads, onError: (what, reason) => report(`${what}: ${reason}`) },
   );
+  state.pickAndStart = async (welcome) => {
+    const picked = await client.contacts.pick({});
+    if (picked.isErr()) throw new Error(JSON.stringify(picked.error));
+    const outcome = picked.value.outcome;
+    if (outcome.tag !== "Picked") return { outcome: outcome.tag };
+    return {
+      roomId: await engine.start({ handle: outcome.value.handle }, welcome),
+    };
+  };
+  state.cancel = (roomId) => engine.cancel(roomId);
   engine.run();
   await served.ready;
   state.stage = "running";

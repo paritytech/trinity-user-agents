@@ -10,7 +10,7 @@ import { KeptStorage } from "../../../support/product-storage.js";
 import {
   createInvitation,
   respond,
-} from "../../../../fixtures/products/example-chat/setup.js";
+} from "../../../../fixtures/products/contact-chat/setup.js";
 import { ContactChat } from "../../../../fixtures/products/contact-chat/engine.js";
 import type { RequestCall } from "../../../../fixtures/products/contact-chat/requests.js";
 

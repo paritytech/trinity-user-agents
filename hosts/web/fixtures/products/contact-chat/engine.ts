@@ -26,7 +26,7 @@ import {
   respond,
   type SenderSecrets,
   type Topics,
-} from "../example-chat/setup.js";
+} from "./setup.js";
 import type { HostRequests } from "./requests.js";
 
 /**
@@ -43,7 +43,7 @@ import type { HostRequests } from "./requests.js";
  *   request service (`src/invitations/`) to send its invitation to that
  *   handle. The host asks the user, seals, authenticates and delivers it,
  *   and hands back only an authenticated reply.
- * - This engine owns the protocol: the setup (`../example-chat/setup.ts`,
+ * - This engine owns the protocol: the setup (`./setup.ts`,
  *   a toy), its keys, its check of the reply before it calls `complete`, the
  *   history, and the two conversation topics, which the recipient makes.
  * - It never learns a name, account, username, avatar or identity key: a
@@ -355,6 +355,24 @@ export class ContactChat implements ConversationEngine {
   /** Refused: this engine never sends a message, so none can fail. */
   async retry(): Promise<void> {
     throw new Error("There is no such message.");
+  }
+
+  /**
+   * Withdraw this side's request through the host's `cancel`, as a product
+   * may without its user going to the host. The other person is not told.
+   */
+  async cancel(conversationId: string): Promise<void> {
+    const conversation = this.find(conversationId);
+    const handle = conversation?.request;
+    if (
+      conversation?.role !== "sender" ||
+      handle === undefined ||
+      !OUTSTANDING.includes(conversation.status)
+    )
+      throw new Error("There is no request to cancel.");
+    const result = await this.deps.requests.call({ call: "cancel", handle });
+    if (!result.ok) throw new Error(result.detail);
+    if (result.request !== undefined) this.outgoing(result.request);
   }
 
   private async hostMessage(message: HostMessage): Promise<void> {

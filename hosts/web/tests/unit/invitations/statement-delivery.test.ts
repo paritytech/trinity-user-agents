@@ -24,7 +24,7 @@ import { cryptoRandom, toHex } from "../../../src/invitations/sealing.js";
 import { WalletIdentityAuth } from "../../../src/invitations/wallet-auth.js";
 import { NotificationStore } from "../../../src/notifications/notifications.js";
 import { FixtureContacts } from "../../../fixtures/invitations/fixture-contacts.js";
-import * as setup from "../../../fixtures/products/example-chat/setup.js";
+import * as setup from "../../../fixtures/products/contact-chat/setup.js";
 import {
   TEST_USERS,
   personOf as personOn,
