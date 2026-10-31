@@ -57,6 +57,8 @@ public protocol ProductContentLoading: Sendable {
     /// Covers only applied executables; the rest are downloaded when first opened.
     func refresh(_ productId: ProductId) async -> [ExecutableRelease]
     func apply(_ release: ExecutableRelease) async
+    /// Applied archives are always kept; `pinnedHashes` adds pending and served ones.
+    func removeSupersededContent(keeping pinnedHashes: Set<String>) async
     func updates() -> AnyAsyncSequence<ExecutableRelease>
 }
 

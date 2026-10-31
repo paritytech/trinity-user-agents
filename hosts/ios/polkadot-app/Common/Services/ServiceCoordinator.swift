@@ -335,7 +335,12 @@ extension ServiceCoordinator {
         // Registered so the SPA screen, opened outside this assembly, resolves the
         // same facade.
         RootDependencyLocator.setDependency(productWorkerFacade)
-        registerProductUpdates(contentLoader: spaFlowState.contentLoader, logger: logger)
+        registerProductUpdates(
+            contentLoader: spaFlowState.contentLoader,
+            workerReloader: ProductWorkerReloader(truapiWorkers: { [pocket] in pocket?.workers }),
+            iconFactory: spaFlowState.iconViewModelFactory,
+            logger: logger
+        )
 
         let callCoordinator = RealCallCoordinator(
             presentationManager: ChatChatCallPresentationManager(logger: logger),

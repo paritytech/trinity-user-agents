@@ -8,6 +8,8 @@ public protocol ProductContentCaching: Sendable {
     /// An applied executable keeps its record until a release of it is applied.
     func adopt(_ manifest: ProductManifest) async
     func apply(_ release: ExecutableRelease) async
+    /// Applied archives are always kept.
+    func removeSupersededContent(keeping pinnedHashes: Set<String>, modifiedBefore cutoff: Date) async
 }
 
 public actor ProductContentCache {
@@ -93,6 +95,22 @@ extension ProductContentCache: ProductContentCaching {
             storage.contentHashes.putContentHash(name: release.contentId, hash: archive.contentHash)
         } else {
             storage.contentHashes.removeContentHash(name: release.contentId)
+        }
+    }
+
+    public func removeSupersededContent(keeping pinnedHashes: Set<String>, modifiedBefore cutoff: Date) {
+        let keptHashes = pinnedHashes.union(storage.contentHashes.allContentHashes())
+
+        let superseded = storage.content.storedContents().filter { content in
+            !keptHashes.contains(content.contentHash) && content.modifiedAt < cutoff
+        }
+
+        for content in superseded {
+            do {
+                try storage.content.deleteContent(contentHash: content.contentHash)
+            } catch {
+                logger.error("Failed to remove superseded product content: \(error)")
+            }
         }
     }
 }

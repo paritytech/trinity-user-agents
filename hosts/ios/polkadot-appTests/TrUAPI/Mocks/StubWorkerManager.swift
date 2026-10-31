@@ -108,6 +108,8 @@ final class StubWorkerManager: TrUAPIWorkerManaging, @unchecked Sendable {
     }
 
     func shutdown() async {}
+
+    func reload(productId _: ProductId) async {}
 }
 
 /// The requests a handler makes, recorded rather than counted by the core.

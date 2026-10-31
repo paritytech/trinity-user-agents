@@ -41,6 +41,8 @@ protocol TrUAPIWorkerManaging: AnyObject, Sendable {
     /// Stops every worker this manager is running. Called when the session
     /// it was built for ends.
     func shutdown() async
+
+    func reload(productId: ProductId) async
 }
 
 /// Builds the pieces one product's worker needs: its archive, its execution and
@@ -84,12 +86,14 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     /// that finishes last must not clear what the others left.
     private final class Boot: Sendable {}
 
-    /// What the transition queue applies: the ledger's transitions, and the
-    /// reboot of a worker whose engine died. A reboot shares the queue so that
-    /// it never overtakes a stop the ledger sent before it.
+    /// What the transition queue applies: the ledger's transitions, the
+    /// reboot of a worker whose engine died, and the reload of one whose
+    /// archive changed. Reboots and reloads share the queue so that neither
+    /// overtakes a stop the ledger sent before it.
     private enum Command: Sendable {
         case transition(WorkerTransition)
         case reboot(Boot)
+        case reload
     }
 
     private let builder: any TrUAPIWorkerBuilding
@@ -167,6 +171,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             switch command {
             case let .transition(transition): await apply(transition, to: productId)
             case let .reboot(boot): await reboot(productId, after: boot)
+            case .reload: await restart(productId)
             }
         }
     }
@@ -185,6 +190,10 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         for productId in Array(held.keys) {
             await stop(productId)
         }
+    }
+
+    nonisolated func reload(productId: ProductId) async {
+        transitions.continuation.yield((productId, .reload))
     }
 
     nonisolated func demandChanged(productId: ProductId, transition: WorkerTransition) {
@@ -272,6 +281,13 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             // so never sends another stop to clear it.
             await stop(productId)
         }
+    }
+
+    private func restart(_ productId: ProductId) async {
+        guard held[productId] != nil else { return }
+
+        await stop(productId)
+        start(productId)
     }
 
     private func reboot(_ productId: ProductId, after boot: Boot) async {

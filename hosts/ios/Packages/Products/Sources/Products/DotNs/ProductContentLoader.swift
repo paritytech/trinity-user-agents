@@ -1,6 +1,7 @@
 import AsyncExtensions
 import BackgroundExecution
 import Foundation
+import FoundationExt
 import SDKLogger
 import StructuredConcurrency
 
@@ -8,11 +9,24 @@ public actor ProductContentLoader {
     public struct Environment: Sendable {
         let pathProvider: NetworkPathProviding
         let backgroundExecutor: BackgroundExecuting
+        let diagnostics: ProductLoadDiagnostics
+        let dateProvider: DateProviding
 
-        public init(pathProvider: NetworkPathProviding, backgroundExecutor: BackgroundExecuting) {
+        public init(
+            pathProvider: NetworkPathProviding,
+            backgroundExecutor: BackgroundExecuting,
+            diagnostics: ProductLoadDiagnostics = ProductLoadDiagnostics(),
+            dateProvider: DateProviding = NowDateProvider()
+        ) {
             self.pathProvider = pathProvider
             self.backgroundExecutor = backgroundExecutor
+            self.diagnostics = diagnostics
+            self.dateProvider = dateProvider
         }
+    }
+
+    private enum Constants {
+        static let minimumAgeBeforeRemoval: TimeInterval = 10 * 60
     }
 
     public struct Timing: Sendable {
@@ -72,7 +86,12 @@ extension ProductContentLoader: ProductContentLoading {
 
         try Task.checkCancellation()
 
-        let (manifest, content) = try await retrying(productId, policy: policy, onPhase: onPhase) { [fetcher] in
+        let (manifest, content) = try await retrying(
+            productId,
+            policy: policy,
+            trigger: .open,
+            onPhase: onPhase
+        ) { [fetcher] in
             onPhase(.resolving)
 
             let manifest = try await fetcher.fetchManifest(productId)
@@ -119,6 +138,11 @@ extension ProductContentLoader: ProductContentLoading {
 
     public func apply(_ release: ExecutableRelease) async {
         await cache.apply(release)
+    }
+
+    public func removeSupersededContent(keeping pinnedHashes: Set<String>) async {
+        let cutoff = await environment.dateProvider.read().addingTimeInterval(-Constants.minimumAgeBeforeRemoval)
+        await cache.removeSupersededContent(keeping: pinnedHashes, modifiedBefore: cutoff)
     }
 
     public nonisolated func updates() -> AnyAsyncSequence<ExecutableRelease> {
@@ -179,7 +203,7 @@ private extension ProductContentLoader {
         let served = await servedContentIds(of: applied.product)
 
         do {
-            let latest = try await retrying(productId, policy: timing.refreshPolicy) { [fetcher] in
+            let latest = try await retrying(productId, policy: timing.refreshPolicy, trigger: .refresh) { [fetcher] in
                 try await Self.fetchLatest(productId, kinds: Array(served.keys), using: fetcher)
             }
 
@@ -256,9 +280,12 @@ private extension ProductContentLoader {
     func retrying<T: Sendable>(
         _ productId: ProductId,
         policy: ProductLoadPolicy,
+        trigger: ProductLoadTrigger,
         onPhase: @escaping ProductLoadPhaseHandler = { _ in },
         _ operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
+        let diagnosis = await environment.diagnostics.diagnosis(of: productId, trigger: trigger)
+
         let strategy = NetworkFetchRetryStrategy(
             classifier: ProductLoadErrorClassifier(),
             maxAttempts: policy.maxAttempts,
@@ -269,13 +296,15 @@ private extension ProductContentLoader {
                 switch event {
                 case .waitingForNetwork:
                     onPhase(.waitingForNetwork)
+                case .networkRestored:
+                    await diagnosis?.restart()
                 case let .attemptFailed(attempt, error):
                     logger.warning("Product load attempt \(attempt) failed for \(productId): \(error)")
+                    await diagnosis?.recordFailure(error)
                 case let .willRetry(attempt):
                     onPhase(.retrying(attempt: attempt))
-                case .networkRestored,
-                     .notRetryable:
-                    break
+                case let .notRetryable(error):
+                    diagnosis?.reportUnavailable(error)
                 }
             }
         )

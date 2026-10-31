@@ -282,6 +282,10 @@ private extension SPANativeRuntimeInteractor {
 }
 
 extension SPANativeRuntimeInteractor: SPAProductReloading {
+    var servedContentHash: String? {
+        servedContent?.contentHash
+    }
+
     func serveAppliedBuild() {
         let domain = configuration.productDomain
         let kind = configuration.executable
@@ -321,6 +325,7 @@ private extension SPANativeRuntimeInteractor {
         presenceId = presenceRegistry?.register(
             productId: configuration.productDomain,
             contentId: servedContentId,
+            displayName: resolvedProduct?.displayName ?? configuration.page.host.name,
             reloader: self
         )
     }

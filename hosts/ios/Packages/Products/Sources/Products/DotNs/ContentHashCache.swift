@@ -5,6 +5,7 @@ public protocol ContentHashCacheProtocol: Sendable {
     func putContentHash(name: String, hash: String)
     func removeContentHash(name: String)
     func clearAll()
+    func allContentHashes() -> Set<String>
 }
 
 public final class ContentHashCache: ContentHashCacheProtocol, @unchecked Sendable {
@@ -31,6 +32,11 @@ public final class ContentHashCache: ContentHashCacheProtocol, @unchecked Sendab
 
     public func removeContentHash(name: String) {
         defaults.removeObject(forKey: name)
+    }
+
+    public func allContentHashes() -> Set<String> {
+        let entries = defaults.persistentDomain(forName: Self.suiteName) ?? [:]
+        return Set(entries.values.compactMap { $0 as? String })
     }
 
     public func clearAll() {

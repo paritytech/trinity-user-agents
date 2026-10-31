@@ -4,6 +4,7 @@ import Foundation
 @MainActor
 final class StubSPAProductReloader: SPAProductReloading {
     private(set) var serveCount = 0
+    var servedContentHash: String?
     private var serveWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
     func serveAppliedBuild() {
