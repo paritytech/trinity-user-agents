@@ -15,6 +15,7 @@
 
 /// Whether a marker may leave the device, and at what severity if it may.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum MarkerClass {
 	/// Stays on the device. Its detail may name what the person is doing.
 	Local,
@@ -28,6 +29,7 @@ pub enum MarkerClass {
 /// rather than read from the event, and it is what lets a core error be
 /// alerted on separately from a core warning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum Severity {
 	/// Routine progress. Useful as context around a failure, not on its own.
 	Info,
@@ -308,6 +310,28 @@ mod tests {
 				marker.target
 			);
 		}
+	}
+
+	#[test]
+	fn the_exported_map_holds_every_entry_and_nothing_else() {
+		let exported = crate::native::core_markers();
+		assert_eq!(exported.len(), MARKERS.len(), "the exported map lost or gained an entry");
+		for marker in MARKERS {
+			assert_eq!(
+				exported.get(marker.target),
+				Some(&marker.class),
+				"{} did not survive the crossing",
+				marker.target
+			);
+		}
+	}
+
+	#[test]
+	fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
+		let exported = crate::native::core_markers();
+		assert_eq!(exported.get(TRACING_ERROR.target), Some(&MarkerClass::Export(Severity::Error)));
+		assert_eq!(exported.get(TRACING_WARN.target), Some(&MarkerClass::Export(Severity::Warn)));
+		assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
 	}
 
 	#[test]
