@@ -31,11 +31,12 @@ use crate::platform::{
 	Features as PlatformFeatures, HopProvider, HostInfo, JsonRpcConnection, LocaleHost,
 	MainPurseChatPaymentReview, NativeChatFileExportRequest, NativeChatFilePickRequest,
 	NativeChatFilesHost, NativeChatPickedFile, Navigation as PlatformNavigation,
-	Notifications as PlatformNotifications, PairingHostConfig, Permissions as PlatformPermissions,
-	PlatformInfo, PreimageHost, ProductContext, ProductOperations as PlatformProductOperations,
-	ProductStorage as PlatformProductStorage, ProductSubtreeReview, ProfileDisclosureReview,
-	ProviderError, ResourceAllocationReview, SignPayloadReview, SignRawReview, SignVrfReview,
-	StatementStoreProductSignReview, ThemeHost, UserConfirmation, UserConfirmationReview,
+	NftPurseDrainReview, Notifications as PlatformNotifications, PairingHostConfig,
+	Permissions as PlatformPermissions, PlatformInfo, PreimageHost, ProductContext, ProductId,
+	ProductOperations as PlatformProductOperations, ProductStorage as PlatformProductStorage,
+	ProductSubtreeReview, ProfileDisclosureReview, ProviderError, ResourceAllocationReview,
+	SignPayloadReview, SignRawReview, SignVrfReview, StatementStoreProductSignReview, ThemeHost,
+	UserConfirmation, UserConfirmationReview,
 };
 use futures::{
 	Stream,
@@ -130,7 +131,7 @@ impl crate::platform::ProfilePlatform for RecordingAvatarHost {
 		self.placed
 			.lock()
 			.expect("placed mutex poisoned")
-			.push((product.product_id.clone(), placed));
+			.push((product.product_id.to_string(), placed));
 		self.answer.clone().map_or(Ok(()), Err)
 	}
 }
@@ -170,6 +171,8 @@ pub struct StubPlatform {
 	pub account_access_confirmed: bool,
 	pub account_access_error: Option<&'static str>,
 	pub account_access_reviews: Arc<Mutex<Vec<AccountAccessReview>>>,
+	/// Holds the account-access prompt open until the sender fires.
+	pub account_access_confirmation_gate: Mutex<Option<futures::channel::oneshot::Receiver<()>>>,
 	/// Permission answers retain their lifetime separately from action confirmations.
 	pub permission_confirmation_decisions:
 		Mutex<std::collections::VecDeque<crate::platform::PermissionDecision>>,
@@ -185,6 +188,8 @@ pub struct StubPlatform {
 	pub profile_disclosure_reviews: Arc<Mutex<Vec<ProfileDisclosureReview>>>,
 	pub product_subtree_denied: bool,
 	pub product_subtree_reviews: Arc<Mutex<Vec<ProductSubtreeReview>>>,
+	pub nft_purse_drain_confirmed: bool,
+	pub nft_purse_drain_reviews: Arc<Mutex<Vec<NftPurseDrainReview>>>,
 	pub identity_disclosure_confirmed: bool,
 	pub identity_disclosure_error: Option<&'static str>,
 	pub identity_disclosure_calls: Arc<AtomicUsize>,
@@ -447,7 +452,7 @@ pub fn runtime_config(product_id: &str) -> (PairingHostConfig, ProductContext) {
 			"polkadotapp".to_string(),
 		)
 		.expect("test host runtime config is valid"),
-		ProductContext::new(product_id.to_string()).expect("test product context is valid"),
+		ProductContext::new(product_id.parse::<ProductId>().expect("test product ID is valid")),
 	)
 }
 
@@ -744,24 +749,33 @@ fn statement_submit_ack_frame(request_id: &str) -> String {
 	.to_string()
 }
 
-/// JSON-RPC `newStatements` notification carrying SCALE statements.
+/// JSON-RPC `newStatements` notification carrying SCALE statements, the last
+/// page of the backlog.
 pub fn new_statements_frame(subscription_id: &str, statements: Vec<Vec<u8>>) -> String {
+	statement_page_frame(subscription_id, statements, Some(0))
+}
+
+/// JSON-RPC `newStatements` notification carrying SCALE statements, with
+/// `remaining` left out when `None`, as on a page of new statements.
+pub fn statement_page_frame(
+	subscription_id: &str,
+	statements: Vec<Vec<u8>>,
+	remaining: Option<u64>,
+) -> String {
 	let statements = statements
 		.into_iter()
 		.map(|statement| format!("0x{}", hex::encode(statement)))
 		.collect::<Vec<_>>();
+	let mut data = serde_json::json!({ "statements": statements });
+	if let Some(remaining) = remaining {
+		data["remaining"] = remaining.into();
+	}
 	serde_json::json!({
 		"jsonrpc": "2.0",
 		"method": "statement_subscribeStatement",
 		"params": {
 			"subscription": subscription_id,
-			"result": {
-				"event": "newStatements",
-				"data": {
-					"statements": statements,
-					"remaining": 0,
-				},
-			},
+			"result": { "event": "newStatements", "data": data },
 		},
 	})
 	.to_string()
@@ -772,7 +786,7 @@ fn sso_statement(
 	data: pairing::SsoStatementData,
 	nonce_seed: u8,
 ) -> Vec<u8> {
-	let mut nonce = [0; pairing::AEAD_NONCE_LEN];
+	let mut nonce = [0; crate::host_logic::x25519_seal::AEAD_NONCE_LEN];
 	nonce[0] = nonce_seed;
 	let encrypted = pairing::encrypt_session_statement_data_with_nonce(
 		session.sso.as_ref().unwrap(),
@@ -830,7 +844,7 @@ pub fn failed_wallet_handshake_statement(deeplink: &str, reason: &str) -> Vec<u8
 /// tests catch a session that keys device-scoped material off the SSO channel
 /// key by mistake.
 pub fn wallet_device_encryption_public_key() -> [u8; 32] {
-	pairing::x25519_public_key([9; 32])
+	crate::host_logic::x25519_seal::X25519PrivateKey::from([9; 32]).public_key().0
 }
 
 fn wallet_handshake_success() -> pairing::v2::Success {
@@ -1101,7 +1115,7 @@ impl PlatformProductOperations for StubPlatform {
 		// call and hands back its position as the id.
 		let id = {
 			let mut begun = self.begun_operations.lock().expect("begun operations mutex poisoned");
-			begun.push((product.product_id.clone(), label));
+			begun.push((product.product_id.to_string(), label));
 			begun.len() as u32
 		};
 		// The operation exists host-side from here on, so a test holding the
@@ -1125,7 +1139,7 @@ impl PlatformProductOperations for StubPlatform {
 		self.ended_operations
 			.lock()
 			.expect("ended operations mutex poisoned")
-			.push((product.product_id.clone(), id));
+			.push((product.product_id.to_string(), id));
 		match self.end_operation_error {
 			Some(reason) => {
 				Err(v01::HostWorkerOperationError::Unknown { reason: reason.to_string() })
@@ -1333,6 +1347,16 @@ pub fn core_storage_test_key(key: CoreStorageKey) -> String {
 	format!("core:{}", hex::encode(key.encode()))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[crate::platform::async_trait]
+impl crate::installation::InstallationIdProvider for StubPlatform {
+	async fn current_installation(
+		&self,
+	) -> Result<crate::installation::InstallationId, v01::GenericError> {
+		Ok(crate::nft::TEST_INSTALLATION)
+	}
+}
+
 #[crate::platform::async_trait]
 impl PlatformNavigation for StubPlatform {
 	async fn navigate_to(&self, url: String) -> Result<(), v01::HostNavigateToError> {
@@ -1444,6 +1468,8 @@ impl PlatformPermissions for StubPlatform {
 		})
 	}
 }
+
+impl crate::platform::ExtrinsicVersionHost for StubPlatform {}
 
 #[crate::platform::async_trait]
 impl PlatformFeatures for StubPlatform {
@@ -2199,6 +2225,14 @@ impl UserConfirmation for StubPlatform {
 					.lock()
 					.expect("account access review list mutex poisoned")
 					.push(review);
+				let gate = self
+					.account_access_confirmation_gate
+					.lock()
+					.expect("account access gate mutex poisoned")
+					.take();
+				if let Some(gate) = gate {
+					gate.await.expect("account access gate was released");
+				}
 				(self.account_access_error, self.account_access_confirmed)
 			},
 			UserConfirmationReview::IdentityDisclosure(_) => {
@@ -2265,6 +2299,13 @@ impl UserConfirmation for StubPlatform {
 					.push(review);
 				(self.profile_disclosure_error, self.profile_disclosure_confirmed)
 			},
+			UserConfirmationReview::NftPurseDrain(review) => {
+				self.nft_purse_drain_reviews
+					.lock()
+					.expect("NFT purse drain review list mutex poisoned")
+					.push(review);
+				(None, self.nft_purse_drain_confirmed)
+			},
 		};
 		if let Some(reason) = error {
 			return Err(v01::GenericError { reason: reason.to_string() });
@@ -2308,7 +2349,7 @@ impl LocaleHost for StubPlatform {
 impl PreimageHost for StubPlatform {
 	fn lookup_preimage(
 		&self,
-		_key: Vec<u8>,
+		_key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, v01::GenericError>> {
 		let value = self.preimage_lookup_value.clone();
 		Box::pin(stream::once(async move { Ok(value) }))

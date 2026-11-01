@@ -160,15 +160,7 @@ fn binary_emission_is_idempotent() {
 
 	let first = run_once();
 	let second = run_once();
-	assert!(!first.is_empty(), "codegen emitted nothing");
-	assert_eq!(
-		first.keys().collect::<Vec<_>>(),
-		second.keys().collect::<Vec<_>>(),
-		"the two runs emitted different files"
-	);
-	for (path, contents) in &first {
-		assert_eq!(contents, &second[path], "{} differs between runs", path.display());
-	}
+	assert_eq!(first, second, "the same API must emit the same protocol and host callbacks");
 }
 
 /// Every file under `root`, keyed by its path relative to `root`.

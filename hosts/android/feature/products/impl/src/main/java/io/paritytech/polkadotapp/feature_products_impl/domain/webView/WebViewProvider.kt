@@ -37,6 +37,8 @@ abstract class WebViewProvider(
      */
     abstract suspend fun loadInitialContent()
 
+    open fun onInitialThemeDelivered() = Unit
+
     suspend fun getWebView(): WebView {
         return mutex.withLock {
             check(!permissionRevoked) { "Product permissions changed; reopen the product to continue" }

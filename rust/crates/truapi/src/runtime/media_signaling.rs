@@ -141,6 +141,7 @@ impl MediaSignaling {
 	pub(super) async fn start(
 		services: Arc<RuntimeServices>,
 		authority: Arc<dyn ProductAuthority>,
+		session_state: Arc<crate::host_logic::session::SessionState>,
 		session: AuthoritySession,
 		identity: MediaIdentity,
 		cx: &CallContext,
@@ -154,7 +155,7 @@ impl MediaSignaling {
 		let inner = Inner::new(services, authority, session, identity, secrets);
 		// This owner closes even if startup's future is dropped at any await.
 		let owner = Arc::new(Self { inner: inner.clone() });
-		let changes = inner.authority.session_state().subscribe();
+		let changes = session_state.subscribe();
 		inner.ensure_current()?;
 		let watcher = inner.clone();
 		(inner.services.spawner)(Box::pin(async move {
@@ -1054,7 +1055,9 @@ mod tests {
 			test_spawner(),
 		);
 		let authority = PairingHost::new(services.clone(), config);
-		futures::executor::block_on(authority.set_connected_session_for_tests(sso_session_info()));
+		futures::executor::block_on(
+			authority.session().set_connected_session_for_tests(sso_session_info()),
+		);
 		let session = authority.current_session().unwrap();
 		let now = current_unix_secs();
 		let (local_secrets, local) = endpoint(1, now);
@@ -1125,7 +1128,9 @@ mod tests {
 			test_spawner(),
 		);
 		let signer = PairingHost::new(signer_services, config.clone());
-		futures::executor::block_on(signer.set_connected_session_for_tests(sso_session_info()));
+		futures::executor::block_on(
+			signer.session().set_connected_session_for_tests(sso_session_info()),
+		);
 		let statement = signer
 			.sign_media_statement(
 				&signer.current_session().unwrap(),
@@ -1156,7 +1161,9 @@ mod tests {
 			test_spawner(),
 		);
 		let authority = PairingHost::new(services.clone(), config);
-		futures::executor::block_on(authority.set_connected_session_for_tests(sso_session_info()));
+		futures::executor::block_on(
+			authority.session().set_connected_session_for_tests(sso_session_info()),
+		);
 		let session = authority.current_session().unwrap();
 		let identity = MediaIdentity {
 			network: NETWORK,

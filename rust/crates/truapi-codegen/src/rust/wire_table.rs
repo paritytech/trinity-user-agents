@@ -117,7 +117,7 @@ pub(super) fn method_wire_id(trait_def: &TraitDef, method: &MethodDef) -> Result
 fn method_entry(trait_def: &TraitDef, trait_id: u8, method: &MethodDef) -> Result<MethodEntry> {
 	let method_id = method_wire_id(trait_def, method)?;
 	let ids = MethodIds { trait_id, method_id };
-	match method.kind {
+	match method.wire_kind() {
 		MethodKind::Request => Ok(MethodEntry::Request(ids)),
 		MethodKind::Subscription => Ok(MethodEntry::Subscription(ids)),
 	}

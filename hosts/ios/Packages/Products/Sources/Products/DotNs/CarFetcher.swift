@@ -25,6 +25,18 @@ public final class CarFetcher: CarFetcherProtocol {
         static let progressReportStepBytes: Int64 = 256 * 1_024
         // Buffer this many leading bytes before running `validatePrefix`; ample for a CAR header.
         static let prefixProbeBytes = 64 * 1_024
+        static let requestIdleTimeout: TimeInterval = 20
+        static let resourceTimeout: TimeInterval = 30 * 60
+    }
+
+    public static func makeGatewaySessionConfiguration() -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.default
+        configuration.waitsForConnectivity = true
+        configuration.timeoutIntervalForRequest = Constants.requestIdleTimeout
+        configuration.timeoutIntervalForResource = Constants.resourceTimeout
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return configuration
     }
 
     private let gatewayBaseUrl: URL
@@ -34,7 +46,7 @@ public final class CarFetcher: CarFetcherProtocol {
 
     public init(
         gatewayBaseUrl: URL,
-        session: URLSession = .shared,
+        session: URLSession = URLSession(configuration: CarFetcher.makeGatewaySessionConfiguration()),
         fileManager: FileManager = .default,
         temporaryDirectory: URL? = nil
     ) {

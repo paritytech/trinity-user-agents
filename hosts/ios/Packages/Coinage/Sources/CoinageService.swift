@@ -109,6 +109,12 @@ public protocol CoinageServicing: Actor {
     /// - Throws: `CoinageError.notConfigured` if recovery service is unavailable
     func recoverCoinsAndVouchers() async throws -> (coins: ScanResult<Coin>, vouchers: ScanResult<Voucher>)
 
+    /// Whether an allocation is waiting for that registration to complete.
+    nonisolated func subscribeAwaitingInstallationBackup() -> AnyAsyncSequence<Bool>
+
+    /// The current installation once its on-chain registration has completed, as allocations get it.
+    nonisolated var backedUpInstallationProvider: any CoinageBackedUpInstallationProviding { get }
+
     /// See `TransferClaimServicing.transferCoinsFromSecretKeys`.
     func transferCoinsFromSecretKeys(
         secretKeys: [Data],
@@ -143,6 +149,7 @@ public actor CoinageService {
     private let voucherLocationService: VoucherLocationService
     private let recoveryService: any CoinageBackupRecoveryServicing
     private let installationRegistrar: any CoinageInstallationRegistering
+    private let backedUpInstallation: any CoinageBackedUpInstallationProviding
     public nonisolated let recyclingService: any CoinageRecyclingServicing
 
     // Recycling strategy evaluation — the evaluator is built lazily once the context resolves.
@@ -205,6 +212,7 @@ public actor CoinageService {
         databaseFactory: any DatabaseDependencyFactoring,
         recoveryService: any CoinageBackupRecoveryServicing,
         installationRegistrar: any CoinageInstallationRegistering,
+        backedUpInstallation: any CoinageBackedUpInstallationProviding,
         incomingPaymentService: any IncomingPaymentServicing,
         logger: SDKLoggerProtocol? = nil,
         lifecycle: CoinageLifecycle? = nil
@@ -227,6 +235,7 @@ public actor CoinageService {
         self.databaseFactory = databaseFactory
         self.recoveryService = recoveryService
         self.installationRegistrar = installationRegistrar
+        self.backedUpInstallation = backedUpInstallation
         self.txService = txService
         self.claimCoinsService = claimCoinsService
         self.transferStatusService = transferStatusService
@@ -492,6 +501,14 @@ extension CoinageService: CoinageServicing {
             async let vouchers = recoveryService.extendScanVouchers(from: voucherHorizon)
             return try await (coins, vouchers)
         }
+    }
+
+    public nonisolated func subscribeAwaitingInstallationBackup() -> AnyAsyncSequence<Bool> {
+        backedUpInstallation.subscribeAwaitingBackup()
+    }
+
+    public nonisolated var backedUpInstallationProvider: any CoinageBackedUpInstallationProviding {
+        backedUpInstallation
     }
 
     public func recoverSpentCoinsOnChain() async throws -> BigUInt {

@@ -29,6 +29,7 @@ struct RustRuntimeEnvironment {
         let chainConnections: TrUAPIChainConnecting
         let osPermissionAsker: OSPermissionAsking
         let bridge: RustProductExecutionBridge
+        var media: NativeMediaBackend { bridge.media }
 
         @MainActor
         func close() {
@@ -56,30 +57,27 @@ struct RustRuntimeEnvironment {
     /// execution retains the bridge (callback retainer) and the bridge retains
     /// the pool, so holding `ExecutionModel` pins the whole chain.
     @MainActor
-    func makeSPAExecution(productId: ProductId, routers: ProductRoutersFacadeProtocol) throws -> ExecutionModel {
-        try makeExecution(productId: productId, routers: routers, kind: .app)
-    }
-
-    /// Open a background-only worker without installing Chat-specific APIs.
-    func makeWorkerExecution(productId: ProductId, routers: ProductRoutersFacadeProtocol) throws -> ExecutionModel {
-        try makeExecution(productId: productId, routers: routers, kind: .worker)
-    }
-
-    /// Open a chat execution for `productId`. Mirrors ``makeSPAExecution``.
-    @MainActor
-    func makeChatExecution(
+    func makeSPAExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
-        cardFace: (any ExpandedCardFaceShowing)?
+        cardFace: (any ExpandedCardFaceShowing)? = nil
     ) throws -> ExecutionModel {
         try makeExecution(productId: productId, routers: routers, purpose: .page(cardFace: cardFace))
     }
+
+    /// Open a background-only worker without installing Chat-specific APIs.
+    @MainActor
+    func makeWorkerExecution(productId: ProductId, routers: ProductRoutersFacadeProtocol) throws -> ExecutionModel {
+        try makeExecution(productId: productId, routers: routers, purpose: .backgroundWorker)
+    }
+
 
     /// Open `productId`'s one Worker execution. The core keeps a single Worker
     /// execution per product and closes the previous one when another opens, so
     /// every modality is served from this one: both bridges are handed over
     /// here rather than attached afterwards, because the worker may list its
     /// cards or post a chat message as soon as it connects.
+    @MainActor
     func makeWorkerExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
@@ -100,6 +98,7 @@ enum ExecutionPurpose {
     case page(cardFace: (any ExpandedCardFaceShowing)?)
     /// The product's one worker, serving its chat bot and its Pocket cards.
     case worker(chatMessaging: any ProductChatMessaging, pocket: any PocketHostBridge)
+    case backgroundWorker
 }
 
 private extension RustRuntimeEnvironment {
@@ -125,10 +124,12 @@ private extension RustRuntimeEnvironment {
         let bridges = purpose.makeBridges(dependencies: dependencies)
 
         let execution = try runtime.openProductExecution(
-            bridge: bridge,
-            configuration: ProductExecutionConfig(productId: productId, executionKind: kind),
-            chat: chatBridge,
-            media: bridge.media
+            bridge: bridges.host,
+            configuration: ProductExecutionConfig(productId: productId, executionKind: purpose.executionKind),
+            chat: bridges.chat,
+            pocket: purpose.pocket,
+            game: bridges.host,
+            media: bridges.host.media
         )
 
         bridges.host.attach(execution)
@@ -137,7 +138,7 @@ private extension RustRuntimeEnvironment {
             execution: execution,
             chainConnections: chainConnections,
             osPermissionAsker: osPermissionAsker,
-            bridge: bridge
+            bridge: bridges.host
         )
     }
 
@@ -184,7 +185,7 @@ extension ExecutionPurpose {
     var executionKind: ProductExecutionKind {
         switch self {
         case let .page(cardFace): cardFace == nil ? .app : .widget
-        case .worker: .worker
+        case .worker, .backgroundWorker: .worker
         }
     }
 }
@@ -197,12 +198,15 @@ private extension ExecutionPurpose {
     }
 
     /// A worker's bridge also answers its chat callbacks, so it is handed back twice.
+    @MainActor
     func makeBridges(
         dependencies: RustProductExecutionBridge.Dependencies
     ) -> (host: RustProductExecutionBridge, chat: RustChatExecutionBridge?) {
         switch self {
         case let .page(cardFace):
             return (RustProductExecutionBridge(dependencies: dependencies, cardFace: cardFace), nil)
+        case .backgroundWorker:
+            return (RustProductExecutionBridge(dependencies: dependencies), nil)
         case let .worker(chatMessaging, _):
             let chat = RustChatExecutionBridge(dependencies: dependencies, chatMessaging: chatMessaging)
             return (chat, chat)

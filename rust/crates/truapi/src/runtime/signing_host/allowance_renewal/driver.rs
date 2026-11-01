@@ -23,9 +23,9 @@ use crate::{
 	runtime::{
 		RuntimeServices,
 		authority::ProductAuthority,
-		signing_host::sso_responder::current_unix_secs,
+		signing_host::allowance::current_unix_secs,
 		statement_allowance::{
-			self, fetch_chain_state, fetch_metadata, find_including_rings,
+			self, fetch_metadata, find_including_rings,
 			renewal::{
 				RenewalChainContext, ResolvedRenewalTarget, StatementRenewalReport,
 				next_tick_delay, renew_targets,
@@ -318,24 +318,27 @@ pub async fn renew_now(
 	// key reaches renewal too — and it revalidates the session first.
 	let session = signing_host.current_session().ok_or(StatementRenewalError::NoActiveSession)?;
 	let candidates = signing_host.reserved_person_collection_candidates(&session)?;
-	let rpc = statement_allowance::rpc::RpcClient::new(
-		services.statement_store.client("statement-allowance renewal").await?,
-	);
-	let metadata = fetch_metadata(&rpc).await?;
-	let chain_state = fetch_chain_state(&rpc).await?;
-	let network_suffix = statement_allowance::slot::read_network_suffix(&rpc).await?;
+	// The pooled client, so the extrinsic's birth block and its submission
+	// reach the same node.
+	let client = services.statement_store.chain_client("statement-allowance renewal").await?;
+	let rpc = client.rpc();
+	let metadata = fetch_metadata(rpc).await?;
+	let network_suffix = statement_allowance::slot::read_network_suffix(rpc).await?;
 	// Every ring back to index 0, because a membership that stopped being
 	// re-included still proves against the ring that holds it.
-	let memberships = find_including_rings(&rpc, &metadata, &candidates, u32::MAX).await?;
+	let signer = statement_allowance::FixedPersonhoodSigner::new(&candidates).await?;
+	let collections: Vec<_> = candidates.iter().map(|candidate| candidate.collection).collect();
+	let memberships = find_including_rings(rpc, &metadata, &signer, &collections, u32::MAX).await?;
 	if memberships.is_empty() {
 		return Err(StatementRenewalError::MissingPersonhoodMembership);
 	}
 	let context = RenewalChainContext {
-		rpc: &rpc,
+		rpc,
 		metadata: &metadata,
-		chain_state: &chain_state,
+		target_chain: client.extrinsic_target(&services.extrinsics),
 		network_suffix: &network_suffix,
-		candidates: &candidates,
+		signer: &signer,
+		collections: &collections,
 		memberships: &memberships,
 	};
 	let mut report =
@@ -735,13 +738,17 @@ mod tests {
 
 	#[test]
 	fn an_unresolvable_target_is_skipped_not_fatal() {
-		// An all-digit product id past `u64::MAX` fails junction derivation with
-		// `NumericJunctionOutOfRange`.
-		let unresolvable = product(&"9".repeat(25));
-		let entropy = [7u8; 32];
+		// A malformed seed cannot resolve a derived account, but an already
+		// resolved account must remain eligible for renewal.
+		let unresolvable = product("a.dot");
+		let entropy = [7u8; 31];
 
 		assert!(resolve_target(&entropy, "paseo", &unresolvable).is_err());
-		let targets = [unresolvable, product("a.dot")];
+		let account_id = [9; 32];
+		let targets = [
+			unresolvable,
+			StatementRenewalTarget::Account { account_id, label: "device".to_string() },
+		];
 
 		// Resolving strictly loses the healthy target with the broken one.
 		assert!(
@@ -754,7 +761,8 @@ mod tests {
 
 		let resolved = resolve_targets(&entropy, "paseo", &targets);
 		assert_eq!(resolved.len(), 1);
-		assert_eq!(resolved[0].label, "product:a.dot");
+		assert_eq!(resolved[0].label, "device");
+		assert_eq!(resolved[0].account_id, account_id);
 	}
 
 	/// A fresh ledger lock; each test drives one ledger in isolation.
@@ -776,7 +784,9 @@ mod tests {
 	}
 
 	fn product(product_id: &str) -> StatementRenewalTarget {
-		StatementRenewalTarget::ProductStatementAllowance { product_id: product_id.to_string() }
+		StatementRenewalTarget::ProductStatementAllowance {
+			product_id: crate::platform::ProductId::for_test(product_id),
+		}
 	}
 
 	#[test]

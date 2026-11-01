@@ -69,7 +69,7 @@ impl ProfilePlatform for CliProfileHost {
 		tracing::info!(product = %product.product_id, %digest, "profile presented");
 		self.record(serde_json::json!({
 			"event": "present",
-			"product": product.product_id,
+			"product": product.product_id.as_str(),
 			"kind": reference_kind(&request.reference),
 			"sha256": digest,
 		}));

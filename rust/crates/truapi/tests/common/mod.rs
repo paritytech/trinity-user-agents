@@ -30,8 +30,7 @@ pub fn test_runtime_config() -> (PairingHostConfig, ProductContext) {
 			"polkadotapp".to_string(),
 		)
 		.expect("test host runtime config is valid"),
-		ProductContext::new("dotli.dot".parse().expect("valid product id"))
-			.expect("valid product context"),
+		ProductContext::new("dotli.dot".parse().expect("valid product id")),
 	)
 }
 
@@ -122,6 +121,8 @@ impl Permissions for WireShapePlatform {
 		Ok(truapi::platform::PermissionDecision::AllowAlways)
 	}
 }
+
+impl truapi::platform::ExtrinsicVersionHost for WireShapePlatform {}
 
 #[truapi::platform::async_trait]
 impl Features for WireShapePlatform {
@@ -239,7 +240,7 @@ impl LocaleHost for WireShapePlatform {
 impl PreimageHost for WireShapePlatform {
 	fn lookup_preimage(
 		&self,
-		_key: Vec<u8>,
+		_key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, v01::GenericError>> {
 		Box::pin(stream::empty())
 	}

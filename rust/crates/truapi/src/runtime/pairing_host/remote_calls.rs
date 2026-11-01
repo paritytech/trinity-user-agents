@@ -4,7 +4,9 @@ use super::{
 	super::{
 		authority::{
 			AuthorityError, BulletinAllowanceKey, CreateTransactionAuthorityRequest,
-			SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
+			PaymentTopUpAuthorityError, ProductDeviceChatAuthorityError,
+			ProductDeviceChatAuthorityRequest, SignPayloadAuthorityRequest,
+			SignRawAuthorityRequest, StatementStoreAllowanceKey,
 		},
 		sso_remote::{SsoRemoteResponseError, SsoSessionKey},
 	},
@@ -13,19 +15,55 @@ use super::{
 use crate::{
 	host_internal::sso_messages::{
 		CreateTransactionLegacyPayload, CreateTransactionPayload, CreateTransactionRequest,
-		CreateTransactionWithLegacyAccountRequest, OnExistingAllowancePolicy, ProductRequest,
-		ProductSubtreeRequest, ResourceAllocationRequest, RingVrfError,
+		CreateTransactionWithLegacyAccountRequest, OnExistingAllowancePolicy, PaymentTopUpRequest,
+		ProductRequest, ProductSubtreeRequest, ResourceAllocationRequest, RingVrfError,
 		SignRawWithLegacyAccountRequest, SignRequest, SsoAllocatedResource, SsoAllocationOutcome,
-		SsoProductTxPayload,
+		SsoProductDeviceChatOperation, SsoProductTxPayload,
 	},
 	host_logic::session::SessionInfo,
-	platform::ProductId,
 };
 
 use tracing::instrument;
-use truapi::{CallContext, latest};
+use truapi::{CallContext, latest, latest::ProductId};
 
 impl PairingHost {
+	/// Forward incoming funding without requiring outgoing Chat authority.
+	pub(super) async fn remote_payment_top_up(
+		&self,
+		cx: &CallContext,
+		session: &SessionInfo,
+		request: PaymentTopUpRequest,
+	) -> Result<(), PaymentTopUpAuthorityError> {
+		self.session
+			.call(cx, session, request)
+			.await
+			.map_err(AuthorityError::from)?
+			.map_err(|error| PaymentTopUpAuthorityError::Domain(error.0))
+	}
+
+	/// Forward a narrow Chat operation without exposing outgoing wallet keys.
+	pub(super) async fn remote_product_device_chat(
+		&self,
+		cx: &CallContext,
+		session: &SessionInfo,
+		request: ProductDeviceChatAuthorityRequest,
+	) -> Result<latest::HostProductDeviceChatResponse, ProductDeviceChatAuthorityError> {
+		let response = self
+			.session
+			.call(
+				cx,
+				session,
+				ProductRequest {
+					calling_product_id: request.calling_product_id,
+					payload: SsoProductDeviceChatOperation::V3(request.operation),
+				},
+			)
+			.await
+			.map_err(AuthorityError::from)?
+			.map_err(ProductDeviceChatAuthorityError::Domain)?;
+		Ok(response)
+	}
+
 	/// Resolve a product's hard-subtree public key, asking the Account Holder
 	/// only when neither the memory cache nor storage already holds it.
 	pub async fn remote_product_subtree_public_key(
@@ -469,6 +507,7 @@ impl PairingHost {
 						.await?;
 					},
 					SsoAllocatedResource::SmartContractAllowance => {},
+					SsoAllocatedResource::ProductStatementStoreAllowance => {},
 					SsoAllocatedResource::AutoSigning {
 						product_root_private_key,
 						ring_vrf_domain_entropy,

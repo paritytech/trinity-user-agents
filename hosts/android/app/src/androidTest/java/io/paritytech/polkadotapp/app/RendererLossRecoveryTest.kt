@@ -61,7 +61,7 @@ class RendererLossRecoveryTest : BaseIntegrationTest() {
                     val first = runBlocking {
                         provider.addWebViewSetup { it.addJavascriptInterface(reports, "report") }
                         provider.addWebViewSetup(
-                            TrUAPIBootstrapInstaller(context).installerFor(setOf(ORIGIN))(
+                            TrUAPIBootstrapInstaller(context).installerFor(setOf(ORIGIN), "renderer-loss-test")(
                                 LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token),
                             ),
                         )

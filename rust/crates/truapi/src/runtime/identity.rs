@@ -6,8 +6,8 @@
 //! path. On the cold path they come from its pending claim on the controller,
 //! covering gateway-minted names before the user settles their store.
 //!
-//! All reads run over one `chainHead_v1` follow via `ReviveApi_call` dry-runs.
-//! No chain metadata is needed.
+//! Identity reads run over one `chainHead_v1` follow via `ReviveApi_call` dry-runs.
+//! Registration also reads signing domains from each chain's runtime metadata.
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
@@ -23,7 +23,7 @@ use crate::{
 		},
 		session::SessionInfo,
 	},
-	runtime::dotns_lookup::DotnsLookup,
+	runtime::dotns_lookup::{DotnsLookup, DotnsLookupKind},
 	session_usernames::SessionUsernames,
 };
 
@@ -160,7 +160,7 @@ async fn lookup_and_apply(
 			},
 			Err(IdentityLookupError::Failed(reason)) => {
 				warn!(
-					account = %hex::encode(account),
+					account = %crate::logging::account_handle(&account),
 					attempt,
 					reason = %reason,
 					"dotNS {label} lookup failed"
@@ -190,7 +190,7 @@ async fn lookup_dotns_identity(
 		let mut lookup = DotnsLookup::pinned_to_best_block(
 			chain,
 			asset_hub_chain_genesis_hash,
-			&format!("identity:{}", hex::encode(account_id)),
+			DotnsLookupKind::Identity,
 		)
 		.await?;
 		let Some(controller) = discover_pop_controller(&mut lookup).await? else {
@@ -218,12 +218,8 @@ pub(super) async fn lookup_local_identity(
 	account: [u8; 32],
 ) -> Result<DotnsIdentity, String> {
 	let operation = async {
-		let mut lookup = DotnsLookup::pinned_to_best_block(
-			chain,
-			genesis,
-			&format!("local-identity:{}", hex::encode(account)),
-		)
-		.await?;
+		let mut lookup =
+			DotnsLookup::pinned_to_best_block(chain, genesis, DotnsLookupKind::Identity).await?;
 		let controller = discover_pop_controller(&mut lookup)
 			.await?
 			.ok_or("dotNS gateway is not deployed on the configured Asset Hub")?;
@@ -260,20 +256,44 @@ pub(super) async fn lookup_local_identity(
 pub(super) async fn registration_timestamp(
 	chain: &ChainRuntime,
 	genesis: [u8; 32],
-	account: [u8; 32],
 ) -> Result<u64, String> {
-	let mut lookup = DotnsLookup::pinned_to_best_block(
-		chain,
-		genesis,
-		&format!("registration:{}", hex::encode(account)),
-	)
-	.await?;
+	let mut lookup =
+		DotnsLookup::pinned_to_best_block(chain, genesis, DotnsLookupKind::Identity).await?;
 	let value = lookup
 		.storage(crate::host_logic::dotns_gateway::timestamp_now_key())
 		.await?
 		.ok_or("Timestamp.Now is unset")?;
 	let millis: [u8; 8] = value.as_slice().try_into().map_err(|_| "Timestamp.Now is not a u64")?;
 	Ok(u64::from_le_bytes(millis) / 1000)
+}
+
+/// Read a registration pallet's signing domain through the configured chain.
+/// An unavailable runtime or pallet must not be mistaken for a legacy domain.
+pub async fn registration_signing_context(
+	chain: &ChainRuntime,
+	genesis: [u8; 32],
+	pallet_name: &str,
+) -> Result<Option<[u8; 32]>, String> {
+	let operation = async {
+		let client = chain.online_client(&genesis).await.map_err(|error| error.to_string())?;
+		let block = client.at_current_block().await.map_err(|error| error.to_string())?;
+		let pallet = block
+			.metadata_ref()
+			.pallet_by_name(pallet_name)
+			.ok_or_else(|| format!("registration pallet {pallet_name} is absent from metadata"))?;
+		Ok(crate::host_logic::attestation::signing_context_from_constant(
+			pallet
+				.constant_by_name(crate::host_logic::attestation::SIGNING_CONTEXT_CONSTANT)
+				.map(|constant| constant.value()),
+		))
+	}
+	.fuse();
+	let timeout = futures_timer::Delay::new(LOOKUP_BUDGET).fuse();
+	pin_mut!(operation, timeout);
+	futures::select! {
+		result = operation => result,
+		() = timeout => Err("registration signing-context lookup timed out".to_string()),
+	}
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

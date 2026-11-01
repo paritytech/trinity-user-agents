@@ -2,8 +2,7 @@
 
 use std::collections::HashSet;
 
-use crate::platform::normalize_product_identifier;
-use truapi::latest::{ChainIdentifier, GenericError};
+use truapi::latest::{ChainIdentifier, GenericError, ProductId};
 
 use super::{SigningHost, allowance_renewal};
 use crate::{
@@ -29,15 +28,14 @@ fn error(reason: impl ToString) -> GenericError {
 	GenericError { reason: reason.to_string() }
 }
 
-fn validate_products(product_ids: &[String]) -> Result<(), GenericError> {
+fn validate_products(product_ids: &[ProductId]) -> Result<(), GenericError> {
 	if product_ids.len() > MAX_PRODUCT_IDS {
 		return Err(error("wallet allowance inspection accepts at most 32 product IDs"));
 	}
 	let mut seen = HashSet::with_capacity(product_ids.len());
 	for product in product_ids {
-		let normalized = normalize_product_identifier(product).map_err(error)?;
-		if normalized != *product || !seen.insert(product) {
-			return Err(error("wallet allowance product IDs must be unique and canonical"));
+		if !seen.insert(product) {
+			return Err(error("wallet allowance product IDs must be unique"));
 		}
 	}
 	Ok(())
@@ -49,7 +47,7 @@ impl SigningHost {
 	pub async fn get_wallet_allowance_snapshot(
 		&self,
 		activation_id: &str,
-		product_ids: Vec<String>,
+		product_ids: Vec<ProductId>,
 	) -> Result<WalletAllowanceSnapshot, GenericError> {
 		self.check_identity_activation(activation_id)?;
 		validate_products(&product_ids)?;
@@ -73,18 +71,22 @@ impl SigningHost {
 				.public
 				.to_bytes();
 			let bulletin =
-				derive_sr25519_hard_path(&entropy, &["allowance", "bulletin", product_id])
+				derive_sr25519_hard_path(&entropy, &["allowance", "bulletin", product_id.as_str()])
 					.map_err(error)?
 					.public
 					.to_bytes();
-			let statement =
-				derive_sr25519_hard_path(&entropy, &["allowance", "statement-store", product_id])
-					.map_err(error)?
-					.public
-					.to_bytes();
-			known_labels
-				.insert(statement, (Some(product_id.clone()), format!("Product: {product_id}")));
-			products.push(ProductAccounts { product_id: product_id.clone(), pgas, bulletin });
+			let statement = derive_sr25519_hard_path(
+				&entropy,
+				&["allowance", "statement-store", product_id.as_str()],
+			)
+			.map_err(error)?
+			.public
+			.to_bytes();
+			known_labels.insert(
+				statement,
+				(Some(product_id.to_string()), format!("Product: {product_id}")),
+			);
+			products.push(ProductAccounts { product_id: product_id.to_string(), pgas, bulletin });
 		}
 		drop(root);
 		self.check_identity_activation(activation_id)?;
@@ -164,7 +166,7 @@ impl SigningHost {
 			schema_version: 1,
 			identity_account_id: context.identity_account_id,
 			network_suffix: self.network_suffix.clone(),
-			product_ids,
+			product_ids: product_ids.into_iter().map(|product| product.to_string()).collect(),
 			statement_store,
 			pgas_claims,
 			pgas_balances,
@@ -228,12 +230,14 @@ mod tests {
 	use super::*;
 
 	#[test]
-	fn trusted_hints_reject_duplicates_noncanonical_and_unbounded_input() {
-		assert!(validate_products(&["app.dot".to_string(), "app.dot".to_string()]).is_err());
-		assert!(validate_products(&[" App.DOT ".to_string()]).is_err());
-		assert!(validate_products(&["".to_string()]).is_err());
-		let too_many =
-			(0..=MAX_PRODUCT_IDS).map(|index| format!("app{index}.dot")).collect::<Vec<_>>();
+	fn trusted_hints_reject_duplicates_and_unbounded_input() {
+		assert!(
+			validate_products(&[ProductId::for_test("app.dot"), ProductId::for_test("app.dot"),])
+				.is_err()
+		);
+		let too_many = (0..=MAX_PRODUCT_IDS)
+			.map(|index| ProductId::for_test(&format!("app{index}.dot")))
+			.collect::<Vec<_>>();
 		assert!(validate_products(&too_many).is_err());
 	}
 }

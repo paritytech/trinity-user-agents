@@ -91,8 +91,6 @@ sealed interface TrUAPIConfirmation {
         val account: String,
     ) : TrUAPIConfirmation.Prompt
 
-    class ChatAuthority(override val requesterProductId: String) : TrUAPIConfirmation.Prompt
-
     class MainPurseChatPayment(
         override val requesterProductId: String,
         val recipient: String,
@@ -102,4 +100,28 @@ sealed interface TrUAPIConfirmation {
         val assetInstance: String,
         val operationId: String,
     ) : TrUAPIConfirmation.Prompt
+    /** Move NFT items out of a purse the requesting product does not own. */
+    data class NftPurseDrain(
+        override val requesterProductId: String,
+        val fromPurse: UInt,
+        /** The product that owns the purse, or null when the user's own account does. */
+        val ownerProductId: String?,
+        val itemCount: UInt,
+        val destination: Destination,
+    ) : TrUAPIConfirmation.Prompt {
+        /** Where the items go. */
+        sealed interface Destination {
+            /** Fresh keys of another purse. */
+            data class Purse(val purse: UInt) : Destination
+
+            /** A key outside every purse, as hex. */
+            data class ExternalKey(val keyHex: String) : Destination
+
+            /** A cheque the product hands to another user. */
+            data object Cheque : Destination
+
+            /** The keys of a deposited cheque, back to its sender. */
+            data object Refund : Destination
+        }
+    }
 }

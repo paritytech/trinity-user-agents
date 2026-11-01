@@ -136,6 +136,7 @@ impl SessionStoreSync {
 
 /// Canonical paired session selection, cleanup and request transport.
 pub struct SsoRequestService {
+	services: Arc<RuntimeServices>,
 	platform: Arc<dyn Platform>,
 	host_config: PairingHostConfig,
 	chain: ChainRuntime,
@@ -193,6 +194,7 @@ impl SsoRequestService {
 			session_store_change_ticks: AtomicUsize::new(0),
 			weak_self: weak_self.clone(),
 			spawner: services.spawner.clone(),
+			services: services.clone(),
 		})
 	}
 
@@ -295,14 +297,17 @@ impl SsoRequestService {
 
 	async fn install_external_session(&self, blob: &[u8]) -> Result<(), String> {
 		let _activation = self.session_store_activation.lock().await;
-		let session = crate::host_logic::session::decode_persisted_session(blob)?;
+		let mut resolved = crate::host_logic::session::decode_persisted_session(blob)?;
 		let activation_epoch = self.advance_session_lifecycle();
-		let resolved = resolve_session_identity_with_chain(
+		if let Err(reason) = resolve_session_identity_with_chain(
 			&self.chain,
 			self.host_config.asset_hub_chain_genesis_hash,
-			session,
+			&mut resolved,
 		)
-		.await;
+		.await
+		{
+			warn!(%reason, "external session identity lookup unavailable");
+		}
 		#[cfg(test)]
 		self.wait_at_external_session_activation_pause().await;
 		self.set_connected_session_if_current(resolved, activation_epoch, true).await;
@@ -354,12 +359,16 @@ impl SsoRequestService {
 				return Err(StoredSessionActivationError::Invalid(error));
 			},
 		};
-		let resolved = resolve_session_identity_with_chain(
+		let mut resolved = session;
+		if let Err(reason) = resolve_session_identity_with_chain(
 			&self.chain,
 			self.host_config.asset_hub_chain_genesis_hash,
-			session,
+			&mut resolved,
 		)
-		.await;
+		.await
+		{
+			warn!(%reason, "stored session identity lookup unavailable");
+		}
 
 		// Identity resolution can await chain I/O. Re-read the slot before
 		// installation so an older activation cannot overwrite or expose a
@@ -504,6 +513,7 @@ impl SsoRequestService {
 			self.session_state.clear_session();
 			previous
 		};
+		self.services.contacts_session_changed();
 		self.stop_session_channel(previous.as_ref());
 		if clear_auth_session {
 			let _ = self.platform.clear_core_storage(CoreStorageKey::AuthSession).await;
@@ -543,6 +553,7 @@ impl SsoRequestService {
 			lifecycle.external_session_active = external_session;
 			previous
 		};
+		self.services.contacts_session_changed();
 		if previous.as_ref() != Some(&session) {
 			self.stop_session_channel(previous.as_ref());
 		}
@@ -603,25 +614,33 @@ impl SsoRequestService {
 		key.matches(&self.session_state)
 	}
 
-	async fn refresh_current_session_identity(&self) -> Option<AuthoritySession> {
-		let current = self.session_state.current()?;
+	/// Resolve missing identity metadata for the selected session without prompting.
+	/// Lookup failure remains an error rather than an apparently signed-out session.
+	pub async fn refresh_current_session_identity(
+		&self,
+	) -> Result<Option<AuthoritySession>, String> {
+		let Some(current) = self.session_state.current() else {
+			return Ok(None);
+		};
 		if current.has_username() || self.host_config.asset_hub_chain_genesis_hash == [0; 32] {
-			return Some(authority_session(&current));
+			return Ok(Some(authority_session(&current)));
 		}
 
-		let resolved = resolve_session_identity_with_chain(
+		let mut resolved = current.clone();
+		resolve_session_identity_with_chain(
 			&self.chain,
 			self.host_config.asset_hub_chain_genesis_hash,
-			current.clone(),
+			&mut resolved,
 		)
-		.await;
+		.await?;
 		if resolved == current {
-			return self.current_session();
+			return Ok(self.current_session());
 		}
 
 		if !self.session_state.replace_session_if_current(&current, resolved.clone()) {
-			return self.current_session();
+			return Ok(self.current_session());
 		}
+		self.services.contacts_session_changed();
 		self.auth_state.connected(&connected_session_ui_info(&resolved));
 
 		if let Err(err) = self
@@ -632,7 +651,7 @@ impl SsoRequestService {
 			warn!(reason = %err.reason, "refreshed session identity persist failed");
 		}
 
-		match self.session_state.current() {
+		Ok(match self.session_state.current() {
 			Some(live) if live != resolved => {
 				if let Err(err) = self
 					.platform
@@ -655,7 +674,7 @@ impl SsoRequestService {
 				None
 			},
 			_ => Some(authority_session(&resolved)),
-		}
+		})
 	}
 }
 
@@ -743,13 +762,6 @@ impl HostSession for SsoRequestService {
 				}
 			}));
 		}
-	}
-
-	async fn primary_username(&self) -> Option<String> {
-		self.refresh_current_session_identity()
-			.await?
-			.primary_username()
-			.map(str::to_string)
 	}
 }
 

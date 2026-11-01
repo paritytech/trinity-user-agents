@@ -38,11 +38,13 @@ protocol MainTabBarInteractorOutputProtocol: AnyObject {
     func didReceiveChainStatus(_ rows: [ChainConnectionStatusViewModel])
     func didReceiveTabBarLabelsEnabled(_ isEnabled: Bool)
     func didReceiveProductGamePill(_ pill: ProductGamePill?)
+    func didReceivePaymentsSetupWaiting(_ isWaiting: Bool)
 }
 
 @MainActor
 protocol MainTabBarWireframeProtocol: AnyObject {
     func showPolkadotSignIn(with url: URL, view: MainTabBarViewProtocol?)
+    func showPaymentsSetupNotice(isVisible: Bool)
     func openProduct(productId: ProductId)
     func openChat(_ model: ChatOpenModel)
     func showConnectionStatus(_ viewModel: ConnectionStatusSheetViewModel, from view: MainTabBarViewProtocol?)

@@ -4,8 +4,8 @@ _Kotlin wrapper around the TrUAPI Rust core (UniFFI). Wire decoding, request rou
 the Rust core; products connect through the localhost WebSocket bridge._
 
 Distribution: a Maven AAR published to GitHub Packages by the `release-android` workflow. Each release bundles, built
-from the same source tree: `libtruapi_server.so` for arm64-v8a, armeabi-v7a and x86_64 (built with the `ws-bridge`
-feature), the UniFFI Kotlin bindings (`uniffi.truapi_server.*`), and the Kotlin host adapter (`io.parity.truapi.*`).
+from the same source tree: `libtruapi.so` for arm64-v8a, armeabi-v7a and x86_64 (built with the `ws-bridge`
+feature), the UniFFI Kotlin bindings (`uniffi.truapi.*`), and the Kotlin host adapter (`io.parity.truapi.*`).
 Consumers need no Rust toolchain or NDK.
 
 ## Consume
@@ -63,7 +63,7 @@ embedding app's package upgrade.
 - **Kotlin**: built with 1.9.24. Newer Kotlin compilers (2.x) read 1.9 metadata fine.
 - **Transitive dependencies**: `net.java.dev.jna:jna:5.14.0` (UniFFI's runtime, ~1.5MB for consumers that don't already
   use it), `org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0` and `org.jetbrains.kotlin:kotlin-stdlib:1.9.24`.
-- **Size**: the AAR is ~20MB, one `libtruapi_server.so` per ABI. An app bundle ships only the ABI the device needs, so
+- **Size**: the AAR is ~20MB, one `libtruapi.so` per ABI. An app bundle ships only the ABI the device needs, so
   the installed cost is ~9MB on arm64.
 
 ## Public surface
@@ -103,7 +103,7 @@ together when updating it.
 ## Chat
 
 A host serving the Chat modality implements `ChatHostBridge` (`createRoom`, `registerBot`, `postMessage`, `listRooms`)
-and opens the execution with `ProductExecutionKind.CHAT`:
+and opens a `ProductExecutionKind.WORKER` execution with that adapter. Runtime configuration and protocol records come directly from `uniffi.truapi`:
 
 ```kotlin
 import io.parity.truapi.*
@@ -114,19 +114,22 @@ import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
+import uniffi.truapi.HostRuntimeConfig
+import uniffi.truapi.ProductExecutionConfig
+import uniffi.truapi.ProductExecutionKind
 
 // Called from a shared dispatch pool, so the backing store must be
 // thread-safe, and a slow call here stalls other product executions.
 class MyChatBridge(private val store: ChatStore) : ChatHostBridge {
-    override fun createRoom(roomId: String, name: String, icon: String) =
+    override suspend fun createRoom(roomId: String, name: String, icon: String) =
         if (store.putRoom(roomId, name, icon)) ChatRoomRegistrationStatus.NEW
         else ChatRoomRegistrationStatus.EXISTS
 
-    override fun registerBot(botId: String, name: String, icon: String) =
+    override suspend fun registerBot(botId: String, name: String, icon: String) =
         if (store.putBot(botId, name, icon)) ChatBotRegistrationStatus.NEW
         else ChatBotRegistrationStatus.EXISTS
 
-    override fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String {
+    override suspend fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String {
         if (content is ChatMessageContent.File) {
             // Declining a variant is how a host opts out of rendering one.
             throw HostRejection.Rejected("this host cannot render file cards")
@@ -134,9 +137,9 @@ class MyChatBridge(private val store: ChatStore) : ChatHostBridge {
         return store.append(roomId, content, alt)
     }
 
-    override fun setRoomFooter(roomId: String, footer: ChatRoomFooter) = store.setFooter(roomId, footer)
+    override suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter) = store.setFooter(roomId, footer)
 
-    override fun listRooms(): List<ChatRoom> = store.rooms()
+    override suspend fun listRooms(): List<ChatRoom> = store.rooms()
 }
 
 val runtime = TrUAPIHostRuntime(
@@ -147,6 +150,7 @@ val runtime = TrUAPIHostRuntime(
         bulletinChainGenesisHash = bulletinChainGenesisHash,
         assetHubChainGenesisHash = assetHubChainGenesisHash,
         networkSuffix = "dot",
+        databaseDirectory = context.noBackupFilesDir.resolve("truapi").apply { mkdirs() }.absolutePath,
     ),
 )
 // Chat needs an active session; without one every Chat call answers `Denied`.
@@ -154,7 +158,7 @@ runtime.activateLocalSession(secret)
 
 val execution = runtime.openProductExecution(
     bridge = bridge,
-    configuration = ProductExecutionConfig("chat.dot", ProductExecutionKind.CHAT),
+    configuration = ProductExecutionConfig("chat.dot", ProductExecutionKind.WORKER),
     chat = MyChatBridge(store),
 )
 val endpoint = execution.startWsBridge()
@@ -173,13 +177,25 @@ job.
 returns is the correlation key `ActionTrigger.messageId` carries back, so it must name that message for as long as the
 host stores it.
 
-On the execution: `publishChatAction` delivers a user's action back to the product (buffered until it subscribes),
-`notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render
-context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the
-session's X25519 chat identity key. An open render stream is one worker reference the core holds on the product's
-behalf; the transition it causes arrives on the runtime bridge's `workerDemandChanged`, never on the execution's. Two
-rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest
-`includes`, and publish a renderer action only from the current tree of an open render stream.
+`postMessage` receives any `ChatMessageContent` variant; throw from it for one this host cannot render. The id it returns is the correlation key `ActionTrigger.messageId` carries back, so it must name that message for as long as the host stores it. `alt` is the product's one-line description of the message, already trimmed and screened, for places that list the message rather than draw it, such as a chat list preview of a custom card. Only a custom message carries one, since every other kind previews from its own content.
+
+The runtime answers other devices pairing with it: `notifyPairingAllowanceAllocation` and `notifyPairingFailed` are the two notices a peer gets before the answer, `establishPairing` is the answer, `resumePairing` serves the session for its whole life and belongs in its own coroutine, and `disconnectPairedHost` ends it. Only `ResponderExit.PEER_DISCONNECTED` from `resumePairing` authorises dropping the stored pairing. The host persists the peer between answering and serving, which is why those are separate calls.
+
+Two steps around them are the host's. `establishPairing` signs its answer with this host's own SSO statement identity, so `WalletSso` has to be allocated before it runs, and the peer's device statement account has to be tracked alongside it for the peer to author into the session: `parsePairingDeeplink` reads that account out of the deeplink before any notice goes out, and a pairing that then fails untracks it again unless the device was already paired. `disconnectPairedHost` submits the notice and nothing more, so ending a pairing also means cancelling that peer's `resumePairing` coroutine and untracking its renewal account; dropping the stored pairing alone leaves both running. Which undo a failure owes is the thrown case, not the message: `Rejected` means the peer may already have been reached and its target tracked, while `UndecodableDeeplink` is refused before either happens and leaves nothing to undo.
+
+The core prompts for nothing along the way, so asking the user is the host's too. `parsePairingDeeplink` returns the peer's `metadata` alongside it for that prompt: the host name, version, icon and platform the peer put in its QR, trimmed and stripped of the control characters and bidirectional overrides that would otherwise rewrite the prompt's own text around them, capped at 512 characters, and null where nothing renderable was sent. Safe to render is not verified: nothing signs that metadata, so a prompt built from it says what the peer calls itself, never who it is.
+
+The `NativeAnnouncedPairing` that `notifyPairingAllowanceAllocation` returns holds the responder statement secret its notice was signed with, and nothing consumes it, so `destroy()` it once the pairing settles, on the succeeding path as well as the failing one; wrapping the whole pairing in `use { }` covers both.
+
+`devicePaired` on the runtime bridge reports a device that finished pairing with this signing host, carrying the `PairedSsoPeer` the pairing produced. The core has no chat of its own, so announcing the new device to the user's existing contacts is the host's to do. It fires at least once per pairing, so a device that pairs again reports again; a resumed pairing reports nothing, so the host keeps its own record of which devices it has already seen. It arrives on the thread answering the handshake, so marshal the work off rather than announcing it inline. Defaults to a no-op for a host that answers no pairing.
+
+`currentInstallation` on the runtime bridge returns the 32-byte id of the current app installation, the one the host registers for recovery. NFT purse item keys are derived under it. Defaults to a rejection, which fails `createItems`.
+
+`encryptedStorageRead`, `encryptedStorageWrite` and `encryptedStorageDelete` on the runtime bridge keep values encrypted at rest and out of backups, such as in encrypted preferences. The core stores secrets there that its database must not hold. A missing key reads as null; throw when the store cannot be read or a value no longer decrypts. Deleting a missing key succeeds. Defaults to a rejection, which turns off the features that need it.
+
+`durableWorkChanged` on the runtime bridge reports whether the core has durable transactions still awaiting a verdict, starting with the state it finds at launch. While it is `true`, enqueue unique background work requiring a network connection that awaits `runDurableRecovery()`, which returns once nothing is live and throws `RecoveryException` when recovery stopped early, so the work is retried. Defaults to a no-op for a host that runs no durable work.
+
+On the execution: `publishChatAction` delivers a user's action back to the product (buffered until it subscribes), `notifyChatRoomsChanged` republishes the room list, `render` returns a `Flow` of `RendererNode` trees for one render context, `publishRendererAction` delivers a renderer action back to the product, and `sessionChatIdentityKey` reads the session's X25519 chat identity key. An open render stream is one worker reference the core holds on the product's behalf; the transition it causes arrives on the runtime bridge's `requestWorkerTransition`, never on the execution's. Two rules the core cannot check are the host's to keep: send a render context only for a surface the product's manifest `includes`, and publish a renderer action only from the current tree of an open render stream.
 
 ## Architecture
 
@@ -195,12 +211,13 @@ TrUAPIProductExecution.startWsBridge()
   → Rust dispatcher
 ```
 
-The product running in the `WebView` opens a `WebSocket` to the localhost port + token returned by `startWsBridge`. From
-there the Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks
-(`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `remotePermission`, `authStateChanged`,
-core storage, chain JSON-RPC, `confirmUserAction`, preimage lookup, theme, `featureSupported`, `storage`) reach the
-embedder through `HostBridge`. Bulletin preimage build/sign/submit now happens inside the core, so the host only serves
-`lookupPreimage`.
+The container consumes the bootstrap endpoint before product scripts run and creates one SDK connection for public calls and private permission checks. The updated SDK adopts the injected `window.__HOST_API_CLIENT__` client and keeps it across socket replacement. Calls and subscriptions the host may have started fail without replay. Calls not yet sent go out on the replacement socket. Older SDKs use a small `window.__HOST_API_PORT__` adapter and require a page reload after a disconnect.
+
+Android intercepts HTTP requests natively, including scripts and images, and calls `execution.authorizeRemotePermission` on the same Rust permission service used by the SDK. This shares grants and consumes “Allow once” only once. Approval covers the initial URL and any redirects it follows; redirect destinations are intentionally not checked separately. The container uses `nativeHttp: true` to avoid checking fetch and XHR again in JavaScript. Both product pages and hidden worker WebViews use this path.
+
+The main frame retains `window.__HOST_WEBVIEW_MARK__` for deployed products that use it to select native navigation or storage. New products should use the SDK's container detection.
+
+The Rust core handles the wire protocol directly. Outbound responses and host-side capability callbacks (`navigateTo`, `pushNotification`, `cancelNotification`, `devicePermission`, `setExpandedCardFaceShown`, `remotePermission`, `authStateChanged`, core storage, chain JSON-RPC, `confirmUserAction`, `confirmPermission`, preimage lookup, theme, `featureSupported`, `storage`) reach the embedder through `HostBridge`. Bulletin preimage build/sign/submit now happens inside the core, so the host only serves `lookupPreimage`.
 
 ## Permissions split
 
@@ -225,6 +242,8 @@ Identity and account access reviews use `confirmPermission(review)`, which also 
 ### Native permission settings and legacy migration
 
 Implement `HostCoreStorage.keys()` by enumerating the existing core namespace in the real persistent backend, not a separate grant index. The default throws unsupported. Implement `HostBridge.permissionAuthorizationsChanged(productId)` on the process bridge and notify settings observers; every core write, including decisions from native prompts, reaches this callback. After invalidation, check `execution.isClosed()` and dispose that execution's WebView/media resources without automatic renderer recovery. A socket disconnect alone does not stop capture.
+
+Deferred policy changes refresh every process runtime sharing the physical store, even when no product execution remains open. The process bridge receives the settings invalidation callback even if rereading storage fails; the queued refresh barrier reports that failure instead of treating the change as applied.
 
 The Android application's permission repository imports Room rows through `importPermissionAuthorizations` before opening an execution or reading settings. Import only fills absent canonical decisions; a stored deny or reset tombstone cannot be resurrected by an old Room grant. Supported legacy reads and both settings toggle directions use canonical records. Legacy-only balance access stays in Room. Historical multi-domain records retain their bundle identity rather than turning a bundle denial into per-domain denials. Malformed or unmappable supported records fail visibly instead of disappearing from settings.
 
@@ -473,6 +492,7 @@ val runtimeConfig = HostRuntimeConfig(
     // `trustedProducts` grant.
     assetHubChainGenesisHash = ByteArray(32) { 1.toByte() },
     networkSuffix = "dot",
+    databaseDirectory = webView.context.noBackupFilesDir.resolve("truapi").apply { mkdirs() }.absolutePath,
     // Optional: activate a local signing session from host-held BIP-39 entropy
     // (no SSO pairing). Omit for the QR pairing flow.
     localSessionSecret = null,
@@ -516,7 +536,7 @@ runtime.disconnect()
 
 ## The cdylib
 
-The released AAR bundles `libtruapi_server.so` for all three ABIs under its `jni/` directory; JNA loads it from there
+The released AAR bundles `libtruapi.so` for all three ABIs under its `jni/` directory; JNA loads it from there
 without any consumer setup.
 
 When iterating on the core from a source checkout instead of the published artifact, cross-compile into this module's
@@ -567,5 +587,4 @@ required because uniffi-bindgen scans the cdylib's exported metadata symbols, wh
 plain `--release` build produces a stripped library and no bindings. (`make uniffi` regenerates the Swift bindings; use
 `make uniffi-kotlin` for Android.)
 
-No CI job compiles this package. After changing `TrUAPIHost.kt` or the UniFFI surface it wraps, run `make android-check`
-locally — it regenerates the Kotlin bindings and compiles the module against them.
+The `android-bindings` CI job compiles this package against freshly generated bindings. After changing `TrUAPIHost.kt` or the UniFFI surface it wraps, run `make android-check` locally to regenerate the Kotlin bindings and compile the module against them.

@@ -58,10 +58,9 @@ fn contacts_restore_authenticated_rosters_and_isolate_wallet_network_and_grants(
 		);
 
 		let product = ProductContext::new_with_execution(
-			PRODUCT.into(),
+			truapi::latest::ProductId::for_test(PRODUCT),
 			crate::platform::ProductExecutionKind::Worker,
-		)
-		.unwrap();
+		);
 		crate::host_internal::permissions::PermissionsService::new(
 			fixture.platform.as_ref(),
 			fixture.platform.as_ref(),

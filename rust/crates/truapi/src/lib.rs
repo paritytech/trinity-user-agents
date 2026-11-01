@@ -109,7 +109,10 @@ uniffi::custom_type!(u128, String, {
 pub mod latest {
 	use crate::versioned::{self, Versioned};
 
-	pub use crate::product_id::{PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
+	pub use crate::{
+		product_id::{PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError},
+		v01::MAIN_PURSE,
+	};
 
 	pub use crate::{
 		v01::{
@@ -150,7 +153,10 @@ pub mod latest {
 			MediaPictureSource, MediaPlacement, MediaRect, MediaRemoteState, MediaResource,
 			MediaRuntimeLimits, MediaSessionId, MediaSessionSnapshot, MediaSessionState,
 			MediaSurface, MediaTrackState, MediaViewport, Modifier, NFT_PURSE_MAX_NAME_BYTES,
-			NftPurseId, NftPurseOwner, NftPursePurse, NotificationActivation,
+			NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId, NftPurseChequeRecipient,
+			NftPurseClearedItem, NftPurseClearingReference, NftPurseId, NftPurseIdempotencyKey,
+			NftPurseInfoPage, NftPurseItemKey, NftPurseOwner, NftPursePaymentTransmissionChannel,
+			NftPursePurse, NftPurseReceiveKey, NftPurseStatus, NotificationActivation,
 			NotificationActivationAcknowledgeRequest, NotificationActivations,
 			OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccount,
 			ProductAccountId, ProductProofContext, RawPayload, ReceivingEvent, ReceivingEventKind,
@@ -161,9 +167,10 @@ pub mod latest {
 			RemoteStatementStoreSubscribeRequest, RenderContext, RendererNode,
 			ResourceAllocationError, RingLocation, RingLocationJunction, RingVrfKeyDisclosure,
 			RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement,
-			Size, Statement, StatementProof, StorageQueryItem, StorageQueryType, StorageResultItem,
-			TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
-			TypographyStyle, VerticalAlignment, VrfSignature,
+			Size, Statement, StatementProof, StatementTopic, StorageQueryItem, StorageQueryType,
+			StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
+			TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature,
+			VrfTranscriptItem, X25519PublicKey,
 		},
 		v02::{
 			HostNativeChatAcknowledgment, HostNativeChatAttachment, HostNativeChatAttachmentKind,
@@ -534,6 +541,105 @@ pub mod latest {
 	/// NFT purse listing failure.
 	pub type HostNftPurseListPursesError =
 		LatestOf<versioned::nft_purse::HostNftPurseListPursesError>;
+	/// NFT purse item key creation request.
+	pub type HostNftPurseCreateItemsRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateItemsRequest>;
+	/// Created NFT purse item keys.
+	pub type HostNftPurseCreateItemsResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateItemsResponse>;
+	/// NFT purse item key creation failure.
+	pub type HostNftPurseCreateItemsError =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateItemsError>;
+	/// NFT purse page request.
+	pub type HostNftPurseQueryPurseRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseQueryPurseRequest>;
+	/// One page of an NFT purse.
+	pub type HostNftPurseQueryPurseResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseQueryPurseResponse>;
+	/// NFT purse page failure.
+	pub type HostNftPurseQueryPurseError =
+		LatestOf<versioned::nft_purse::HostNftPurseQueryPurseError>;
+	/// NFT purse rebalance request.
+	pub type HostNftPurseRebalancePurseRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseRebalancePurseRequest>;
+	/// NFT purse rebalance failure.
+	pub type HostNftPurseRebalancePurseError =
+		LatestOf<versioned::nft_purse::HostNftPurseRebalancePurseError>;
+	/// NFT receive key creation request.
+	pub type HostNftPurseCreateReceiveKeyRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateReceiveKeyRequest>;
+	/// A created NFT receive key.
+	pub type HostNftPurseCreateReceiveKeyResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateReceiveKeyResponse>;
+	/// NFT receive key creation failure.
+	pub type HostNftPurseCreateReceiveKeyError =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateReceiveKeyError>;
+	/// NFT cheque creation request.
+	pub type HostNftPurseCreateChequeRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateChequeRequest>;
+	/// A created NFT cheque.
+	pub type HostNftPurseCreateChequeResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateChequeResponse>;
+	/// NFT cheque creation failure.
+	pub type HostNftPurseCreateChequeError =
+		LatestOf<versioned::nft_purse::HostNftPurseCreateChequeError>;
+	/// NFT cheque deposit request.
+	pub type HostNftPurseDepositRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseDepositRequest>;
+	/// NFT cheque deposit failure.
+	pub type HostNftPurseDepositError = LatestOf<versioned::nft_purse::HostNftPurseDepositError>;
+	/// NFT cheque revoke request.
+	pub type HostNftPurseRevokeChequeRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseRevokeChequeRequest>;
+	/// NFT cheque revoke failure.
+	pub type HostNftPurseRevokeChequeError =
+		LatestOf<versioned::nft_purse::HostNftPurseRevokeChequeError>;
+	/// NFT cheque refund request.
+	pub type HostNftPurseRefundRequest = LatestOf<versioned::nft_purse::HostNftPurseRefundRequest>;
+	/// NFT cheque refund response.
+	pub type HostNftPurseRefundResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseRefundResponse>;
+	/// NFT cheque refund failure.
+	pub type HostNftPurseRefundError = LatestOf<versioned::nft_purse::HostNftPurseRefundError>;
+	/// NFT item transfer request.
+	pub type HostNftPurseTransferItemRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseTransferItemRequest>;
+	/// NFT item transfer failure.
+	pub type HostNftPurseTransferItemError =
+		LatestOf<versioned::nft_purse::HostNftPurseTransferItemError>;
+	/// NFT operation status request.
+	pub type HostNftPurseObserveOperationStatusRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseObserveOperationStatusRequest>;
+	/// NFT operation status failure.
+	pub type HostNftPurseObserveOperationStatusError =
+		LatestOf<versioned::nft_purse::HostNftPurseObserveOperationStatusError>;
+	/// NFT one-time payment listen request.
+	pub type HostNftPurseListenOneTimePaymentRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseListenOneTimePaymentRequest>;
+	/// NFT one-time payment listen item.
+	pub type HostNftPurseListenOneTimePaymentItem =
+		LatestOf<versioned::nft_purse::HostNftPurseListenOneTimePaymentItem>;
+	/// NFT one-time payment listen failure.
+	pub type HostNftPurseListenOneTimePaymentError =
+		LatestOf<versioned::nft_purse::HostNftPurseListenOneTimePaymentError>;
+	/// NFT payment inbox listen request.
+	pub type HostNftPurseListenPaymentInboxRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseListenPaymentInboxRequest>;
+	/// NFT payment inbox listen item.
+	pub type HostNftPurseListenPaymentInboxItem =
+		LatestOf<versioned::nft_purse::HostNftPurseListenPaymentInboxItem>;
+	/// NFT payment inbox listen failure.
+	pub type HostNftPurseListenPaymentInboxError =
+		LatestOf<versioned::nft_purse::HostNftPurseListenPaymentInboxError>;
+	/// NFT static receive key request.
+	pub type HostNftPurseStaticReceiveKeyRequest =
+		LatestOf<versioned::nft_purse::HostNftPurseStaticReceiveKeyRequest>;
+	/// The host's NFT static receive key.
+	pub type HostNftPurseStaticReceiveKeyResponse =
+		LatestOf<versioned::nft_purse::HostNftPurseStaticReceiveKeyResponse>;
+	/// NFT static receive key failure.
+	pub type HostNftPurseStaticReceiveKeyError =
+		LatestOf<versioned::nft_purse::HostNftPurseStaticReceiveKeyError>;
 	/// The calling product's Pocket cards.
 	pub type HostPocketListSubscribeItem = LatestOf<versioned::pocket::HostPocketListSubscribeItem>;
 	/// Pocket card removal request.
@@ -614,6 +720,41 @@ pub mod latest {
 	pub type PreimageSubmitError = LatestOf<versioned::preimage::RemotePreimageSubmitError>;
 	/// Transaction creation payload for a product account.
 	pub type ProductAccountTxPayload = LatestOf<versioned::signing::HostCreateTransactionRequest>;
+	/// Chain-head block body request.
+	pub type RemoteChainHeadBodyRequest = LatestOf<versioned::chain::RemoteChainHeadBodyRequest>;
+	/// Chain-head block body result.
+	pub type RemoteChainHeadBodyResponse = LatestOf<versioned::chain::RemoteChainHeadBodyResponse>;
+	/// Chain-head runtime-API call result.
+	pub type RemoteChainHeadCallResponse = LatestOf<versioned::chain::RemoteChainHeadCallResponse>;
+	/// Request to continue a chain-head operation.
+	pub type RemoteChainHeadContinueRequest =
+		LatestOf<versioned::chain::RemoteChainHeadContinueRequest>;
+	/// Chain-head block header request.
+	pub type RemoteChainHeadHeaderRequest =
+		LatestOf<versioned::chain::RemoteChainHeadHeaderRequest>;
+	/// Chain-head block header result.
+	pub type RemoteChainHeadHeaderResponse =
+		LatestOf<versioned::chain::RemoteChainHeadHeaderResponse>;
+	/// Request to stop a chain-head operation.
+	pub type RemoteChainHeadStopOperationRequest =
+		LatestOf<versioned::chain::RemoteChainHeadStopOperationRequest>;
+	/// Request to unpin chain-head blocks.
+	pub type RemoteChainHeadUnpinRequest = LatestOf<versioned::chain::RemoteChainHeadUnpinRequest>;
+	/// Chain-specification name result.
+	pub type RemoteChainSpecChainNameResponse =
+		LatestOf<versioned::chain::RemoteChainSpecChainNameResponse>;
+	/// Chain-specification genesis hash result.
+	pub type RemoteChainSpecGenesisHashResponse =
+		LatestOf<versioned::chain::RemoteChainSpecGenesisHashResponse>;
+	/// Chain-specification properties result.
+	pub type RemoteChainSpecPropertiesResponse =
+		LatestOf<versioned::chain::RemoteChainSpecPropertiesResponse>;
+	/// Transaction broadcast request.
+	pub type RemoteChainTransactionBroadcastRequest =
+		LatestOf<versioned::chain::RemoteChainTransactionBroadcastRequest>;
+	/// Transaction broadcast result.
+	pub type RemoteChainTransactionBroadcastResponse =
+		LatestOf<versioned::chain::RemoteChainTransactionBroadcastResponse>;
 	/// Chain-head runtime-API call request.
 	pub type RemoteChainHeadCallRequest = LatestOf<versioned::chain::RemoteChainHeadCallRequest>;
 	/// Chain-head subscription item.
@@ -931,6 +1072,8 @@ impl<Item, Interrupt> Subscription<Item, Interrupt> {
 }
 
 #[cfg(feature = "runtime")]
+pub mod background_task;
+#[cfg(feature = "runtime")]
 pub mod bootstrap;
 #[cfg(feature = "runtime")]
 pub mod chain;
@@ -965,7 +1108,11 @@ mod runtime;
 #[cfg(feature = "runtime")]
 mod session_usernames;
 #[cfg(feature = "runtime")]
+mod stream_extensions;
+#[cfg(feature = "runtime")]
 pub mod subscription;
+#[cfg(feature = "runtime")]
+pub mod time;
 #[cfg(feature = "runtime")]
 pub mod transport;
 #[cfg(feature = "runtime")]
@@ -1002,7 +1149,16 @@ pub mod store;
 
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
+#[macro_use]
 pub mod durable;
+
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod encrypted_storage;
+
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub mod installation;
 
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
@@ -1017,11 +1173,15 @@ pub use truapi_core::TrUApiCore;
 
 #[cfg(feature = "runtime")]
 pub use host_core::{
-	ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, PairingHostRuntime,
-	ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
+	ChannelId, ConnectionAdapters, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin,
+	PairingHostRuntime, ProductResourceStatus, ProductRuntime, ProductRuntimeControl,
+	ProductRuntimeError, SigningHostRuntime,
 };
 #[cfg(feature = "runtime")]
-pub use host_internal::bulletin::{preimage_cid, preimage_key};
+pub use host_internal::{
+	bulletin::{preimage_cid, preimage_key},
+	extrinsic::Sr25519Signer,
+};
 #[cfg(feature = "runtime")]
 pub use host_logic::session::{
 	ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,
@@ -1049,9 +1209,11 @@ pub use runtime::contacts::contact_handle;
 #[cfg(feature = "runtime")]
 pub use runtime::login_failure::reports_exhausted_period;
 #[cfg(feature = "runtime")]
-pub use runtime::product_manifest::{encode_cached_root_manifest, manifest_cache_key};
+pub use runtime::product_manifest::encode_cached_root_manifest;
 #[cfg(feature = "runtime")]
 pub use runtime::statement_allowance;
+#[cfg(feature = "runtime")]
+pub use runtime::statement_allowance::inspection::WalletAllowanceSnapshot;
 #[cfg(feature = "runtime")]
 pub use runtime::{
 	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
@@ -1060,7 +1222,6 @@ pub use runtime::{
 #[cfg(feature = "runtime")]
 pub use runtime::{
 	LocalIdentity, LocalIdentityContext, NativeChatContact, NativeChatContactsSnapshot,
-	WalletAllowanceSnapshot,
 };
 #[cfg(feature = "runtime")]
 pub use unix_time::current_unix_millis;

@@ -99,10 +99,9 @@ impl NativeChatFilesHost for Files {
 async fn authorize_upload(platform: &StubPlatform) {
 	set_product_grants(platform, PRODUCT, PermissionAuthorizationStatus::Authorized).await;
 	let product = crate::platform::ProductContext::new_with_execution(
-		PRODUCT.to_owned(),
+		truapi::latest::ProductId::for_test(PRODUCT),
 		crate::platform::ProductExecutionKind::Worker,
-	)
-	.expect("product id is valid");
+	);
 	crate::host_internal::permissions::PermissionsService::new(platform, platform, &product)
 		.set_authorization_status(
 			&PermissionAuthorizationRequest::Remote(RemotePermissionRequest {

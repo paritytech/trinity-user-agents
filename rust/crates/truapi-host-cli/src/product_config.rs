@@ -120,9 +120,13 @@ pub async fn apply(
 ) -> Result<AppliedGrants> {
 	let mut lines = Vec::with_capacity(configs.len());
 	for config in configs {
+		let product: truapi::platform::ProductId = config
+			.product_name
+			.parse()
+			.with_context(|| format!("invalid product identity {}", config.product_name))?;
 		platform
 			.write_core_storage(
-				truapi::manifest_cache_key(&config.product_name),
+				truapi::platform::CoreStorageKey::product_manifest(&product),
 				encode_cached_root_manifest(Some(&config.root_manifest_json()), now_secs),
 			)
 			.await

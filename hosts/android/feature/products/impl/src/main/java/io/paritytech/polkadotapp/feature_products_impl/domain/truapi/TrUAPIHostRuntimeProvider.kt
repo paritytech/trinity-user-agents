@@ -15,7 +15,9 @@ import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.Encry
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
+import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
@@ -39,6 +41,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
+import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -72,8 +75,12 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     @param:TrUAPIChainHttpClient private val chainHttpClient: OkHttpClient,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
+    private val networkStateService: NetworkStateService,
     private val contactsBridge: AppContactsHostBridge,
     private val permissionChanges: PermissionAuthorizationChanges,
+    private val scannerBridge: TrUAPIProductScans,
+    private val installations: CurrentInstallationProvider,
+    private val extensionVersions: TrUAPIExtensionVersions,
     // Lazy: the supervisor boots workers on this runtime, and reports back through this bridge.
     private val workerSupervisor: Lazy<TrUAPIWorkerSupervisor>,
     dispatchers: CoroutineDispatchers,
@@ -105,7 +112,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val chainProvider = WebSocketChainProvider(
         resolver = { genesisHash -> cachedChains.get().endpoints[genesisHash.hexKey()].orEmpty() },
         client = chainHttpClient,
-        onLog = { Timber.tag("truapi.chain").d("%s", it) },
+        onLog = { Timber.tag("truapi.chain").i("%s", it) },
     )
 
     /**
@@ -134,10 +141,8 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     }
 
     private fun wire(runtime: TrUAPIHostRuntime) {
-        // Before any product execution opens, so a product never sees the
-        // window where the host lists no contacts or answers payments Unsupported.
+        // Install process-wide callbacks before opening any product execution.
         runtime.setContacts(contactsBridge)
-        paymentPlatforms.install(runtime)
         runtime.setScanner(scannerBridge)
         observeContactRemovals(runtime)
         chainProvider.attach(
@@ -145,6 +150,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             onClosed = runtime::notifyChainClosed,
         )
         observeAppLifecycle()
+        scope.closeChainSocketsOnNetworkSwitch(networkStateService, chainProvider)
         observeWalletAccount(runtime)
     }
 
@@ -200,12 +206,21 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             accountRepository.walletAccountFlow()
                 .map { it.id }
                 .distinctUntilChanged()
-                .drop(1)
-                .collect {
-                    authState.value = AuthState.Disconnected
-                    localSessionSource.resolve()
-                        .mapCatching { session -> runtime.activateLocalSession(session.secret, session.liteUsername) }
-                        .logFailure("TrUAPI local session could not follow the wallet switch")
+                .collect { owner ->
+                    withSessionMutation {
+                        if (sessionOwner == owner) return@withSessionMutation
+                        sessionOwner = null
+                        revision.value += 1
+                        authState.value = AuthState.Disconnected
+                        runtime.disconnect()
+                        localSessionSource.resolve()
+                            .mapCatching { session ->
+                                check(accountRepository.getWalletAccount().id == owner) { "Wallet changed while resolving session" }
+                                runtime.activateLocalSession(session.secret, session.liteUsername)
+                                sessionOwner = owner
+                            }
+                            .logFailure("TrUAPI local session could not follow the wallet switch")
+                    }
                 }
         }
     }
@@ -234,13 +249,14 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         override fun permissionAuthorizationsChanged(productId: String) {
             permissionChanges.changed(productId)
         }
+        private val encryptedStorage = EncryptedHostValues(encryptedPreferences)
 
         override fun onCoreLog(marker: String, detail: String) {
-            Timber.tag("truapi.core").d("%s: %s", marker, detail)
+            logCoreLine(marker, detail)
         }
 
         // Runtime-wide demand from the core's worker ledger; the supervisor marshals it off this thread.
-        override fun workerDemandChanged(productId: String, transition: WorkerTransition) {
+        override fun requestWorkerTransition(productId: String, transition: WorkerTransition) {
             val demand = when (transition) {
                 WorkerTransition.START -> WorkerDemand.START
                 WorkerTransition.STOP -> WorkerDemand.STOP
@@ -252,6 +268,17 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         override fun durableWorkChanged(pending: Boolean) {
             if (pending) CoreDurableRecoveryWorker.enqueue(context)
         }
+
+        // Item keys derived under an installation that is not registered yet could not be recovered from the seed.
+        override suspend fun currentInstallation(): ByteArray =
+            installations.awaitBackedUp().getOrThrow().value.value
+
+        override suspend fun encryptedStorageRead(key: ByteArray): ByteArray? = encryptedStorage.read(key)
+
+        override suspend fun encryptedStorageWrite(key: ByteArray, value: ByteArray) =
+            encryptedStorage.write(key, value)
+
+        override suspend fun encryptedStorageDelete(key: ByteArray) = encryptedStorage.delete(key)
 
         override suspend fun navigateTo(url: String) {
             throw HostNavigateToException.Unknown("navigation unavailable at host level")
@@ -275,15 +302,15 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         override suspend fun confirmPermission(review: UserConfirmationReview): PermissionDecision =
             confirmationLauncher.decide(review, requesterFallback = HOST_REQUESTER)
 
-        override suspend fun confirmPermission(review: UserConfirmationReview): PermissionDecision =
-            confirmationLauncher.decidePermission(review, requesterFallback = HOST_REQUESTER)
-
         override suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean =
             when (request) {
                 is HostFeatureSupportedRequest.Chain -> cachedChains.get().canDial(request.genesisHash)
             }
 
         override fun supportedChains(): HostChainSet = cachedChains.get().advertised
+
+        override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
+            extensionVersions.resolve().getOrElse { throw it }
 
         override fun chainConnect(genesisHash: ByteArray): UInt? = chainProvider.connect(genesisHash)
 
@@ -295,7 +322,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         /** Settings observe these account transitions; no app-supplied scope is used. */
         override fun authStateChanged(state: AuthState) {
             authState.value = state
-            Timber.tag("truapi.auth").d("%s", state.marker())
+            Timber.tag("truapi.auth").i("%s", state.marker())
         }
     }
 

@@ -24,10 +24,9 @@ use futures::{
 use truapi::{
 	latest::{
 		GenericError, HostPocketListSubscribeItem, HostPocketRemoveCardError,
-		HostPocketRemoveCardRequest,
+		HostPocketRemoveCardRequest, PocketCard, ProductId,
 	},
 	platform::{PocketPlatform, ProductContext, async_trait},
-	v01,
 };
 
 /// Cards and list subscribers for one product.
@@ -46,7 +45,7 @@ struct ProductCards {
 /// and remove the other's cards after a `/product` switch.
 pub struct CliPocketHost {
 	seed: BTreeMap<String, bool>,
-	products: Mutex<BTreeMap<String, ProductCards>>,
+	products: Mutex<BTreeMap<ProductId, ProductCards>>,
 	transcript: Option<PathBuf>,
 }
 
@@ -85,7 +84,7 @@ impl CliPocketHost {
 		Arc::new(Self { seed: cards, products: Mutex::new(BTreeMap::new()), transcript })
 	}
 
-	fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<String, ProductCards>> {
+	fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<ProductId, ProductCards>> {
 		self.products.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 	}
 
@@ -93,7 +92,7 @@ impl CliPocketHost {
 	/// from the same spec and diverges from there.
 	fn entry<'a>(
 		&self,
-		products: &'a mut BTreeMap<String, ProductCards>,
+		products: &'a mut BTreeMap<ProductId, ProductCards>,
 		product: &ProductContext,
 	) -> &'a mut ProductCards {
 		products
@@ -108,7 +107,7 @@ impl CliPocketHost {
 			cards: state
 				.cards
 				.iter()
-				.map(|(card_id, privileged)| v01::PocketCard {
+				.map(|(card_id, privileged)| PocketCard {
 					card_id: card_id.clone(),
 					privileged: *privileged,
 				})
@@ -205,11 +204,11 @@ mod tests {
 	use std::fs::read_to_string;
 
 	fn product() -> ProductContext {
-		ProductContext::new("pocket.dot".to_string()).expect("valid product id")
+		ProductContext::new("pocket.dot".parse().expect("valid product id"))
 	}
 
 	fn other_product() -> ProductContext {
-		ProductContext::new("other.dot".to_string()).expect("valid product id")
+		ProductContext::new("other.dot".parse().expect("valid product id"))
 	}
 
 	/// A card id is product-local, so one product must not see or remove
@@ -233,7 +232,7 @@ mod tests {
 			.expect("no stream error");
 		assert_eq!(
 			seen.cards,
-			vec![v01::PocketCard { card_id: "loyalty".to_string(), privileged: false }],
+			vec![PocketCard { card_id: "loyalty".to_string(), privileged: false }],
 			"the other product still holds its own copy"
 		);
 	}

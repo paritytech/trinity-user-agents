@@ -81,9 +81,10 @@ fn allowance_key(signing_host: &SigningHostRole) -> StatementStoreAllowanceKey {
 	futures::executor::block_on(async {
 		let session = signing_host.current_session().expect("a session is active");
 		let cx = CallContext::default();
+		let product_id = ProductId::for_test(PRODUCT_ID);
 		futures::select! {
 			result = signing_host
-				.statement_store_allowance_key(&cx, &session, PRODUCT_ID.to_string())
+				.statement_store_allowance_key(&cx, &session, &product_id)
 				.fuse() => result,
 			_ = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
 				panic!("the proof blocked on a chain read")
@@ -124,7 +125,7 @@ fn remember(signing_host: &SigningHostRole, product_id: &str, period: u32) {
 		.lock()
 		.expect("local AutoSigning grant mutex poisoned")
 		.statement_allowance_keys
-		.insert(product_id.to_string(), (period, secret_key()));
+		.insert(ProductId::for_test(product_id), (period, secret_key()));
 }
 
 fn current_generation(signing_host: &SigningHostRole) -> u64 {
@@ -141,7 +142,7 @@ fn remembered(signing_host: &SigningHostRole, product_id: &str, period: u32) -> 
 		.lock()
 		.expect("local AutoSigning grant mutex poisoned");
 	state
-		.statement_allowance_key(state.generation, product_id, period)
+		.statement_allowance_key(state.generation, &ProductId::for_test(product_id), period)
 		.expect("the generation is current")
 		.map(|key| key.secret)
 }
@@ -222,7 +223,7 @@ fn clearing_a_product_forgets_only_its_key() {
 	remember(&signing_host, PRODUCT_ID, PERIOD);
 	remember(&signing_host, "other.dot", PERIOD);
 
-	futures::executor::block_on(signing_host.clear_product_state(PRODUCT_ID))
+	futures::executor::block_on(signing_host.clear_product_state(&ProductId::for_test(PRODUCT_ID)))
 		.expect("the product id is valid");
 
 	assert_eq!(
@@ -242,17 +243,23 @@ fn clearing_another_product_preserves_in_flight_allowance_authority() {
 		let signing_host = active_signing_host(platform.clone());
 		futures::executor::block_on(async {
 			if previously_bound {
-				signing_host.clear_product_state("other.dot").await.unwrap();
+				signing_host
+					.clear_product_state(&ProductId::for_test("other.dot"))
+					.await
+					.unwrap();
 			}
 			let (release, gate) = futures::channel::oneshot::channel();
 			*platform.rpc_method_responses_gate.lock().unwrap() = Some(gate);
 			let session = signing_host.current_session().unwrap();
 			let cx = CallContext::default();
-			let allocation =
-				signing_host.statement_store_allowance_key(&cx, &session, PRODUCT_ID.to_string());
+			let product_id = ProductId::for_test(PRODUCT_ID);
+			let allocation = signing_host.statement_store_allowance_key(&cx, &session, &product_id);
 			futures::pin_mut!(allocation);
 			assert!(allocation.as_mut().now_or_never().is_none());
-			signing_host.clear_product_state("other.dot").await.unwrap();
+			signing_host
+				.clear_product_state(&ProductId::for_test("other.dot"))
+				.await
+				.unwrap();
 			release.send(()).unwrap();
 			let key = futures::select! {
 				result = allocation.fuse() => result,
@@ -281,8 +288,8 @@ fn product_and_account_revocation_fence_in_flight_allowance_keys() {
 			*platform.rpc_method_responses_gate.lock().unwrap() = Some(gate);
 			let session = signing_host.current_session().unwrap();
 			let cx = CallContext::default();
-			let allocation =
-				signing_host.statement_store_allowance_key(&cx, &session, PRODUCT_ID.to_string());
+			let product_id = ProductId::for_test(PRODUCT_ID);
+			let allocation = signing_host.statement_store_allowance_key(&cx, &session, &product_id);
 			futures::pin_mut!(allocation);
 			assert!(allocation.as_mut().now_or_never().is_none());
 			change.apply(&signing_host).await;
@@ -308,7 +315,7 @@ fn product_and_account_revocation_fence_in_flight_allowance_keys() {
 
 #[test]
 fn raw_product_allowance_revalidates_only_its_product_and_account() {
-	use super::super::sso_responder::allocate_product_statement_store_allowance;
+	use super::super::allowance::allocate_product_statement_store_allowance;
 	use crate::host_internal::sso_messages::OnExistingAllowancePolicy;
 
 	for change in AuthorityChange::ALL {
@@ -317,8 +324,10 @@ fn raw_product_allowance_revalidates_only_its_product_and_account() {
 			derivation_index: v01::DerivationIndex::Raw([0x44; 32]),
 		};
 		let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-		let target =
-			derive_product_keypair(&root, PRODUCT_ID, [0x44; 32]).unwrap().public.to_bytes();
+		let target = derive_product_keypair(&root, &ProductId::for_test(PRODUCT_ID), [0x44; 32])
+			.unwrap()
+			.public
+			.to_bytes();
 		let platform = chain_with_allocated_target(target);
 		let (services, signing_host) = signing_runtime_with_platform(platform.clone());
 		futures::executor::block_on(async {
@@ -326,11 +335,12 @@ fn raw_product_allowance_revalidates_only_its_product_and_account() {
 			let (release, gate) = futures::channel::oneshot::channel();
 			*platform.rpc_method_responses_gate.lock().unwrap() = Some(gate);
 			let session = signing_host.current_session().unwrap();
+			let product_id = ProductId::for_test(PRODUCT_ID);
 			let allocation = allocate_product_statement_store_allowance(
 				&services,
 				&signing_host,
 				&session,
-				PRODUCT_ID,
+				&product_id,
 				&account.derivation_index,
 				OnExistingAllowancePolicy::Ignore,
 			);
@@ -344,7 +354,7 @@ fn raw_product_allowance_revalidates_only_its_product_and_account() {
 					panic!("the raw allocation blocked after releasing the chain response")
 				}
 			}
-			.map_err(|error| error.into_authority_error());
+			.map_err(AuthorityError::from);
 			let expected = if matches!(change, AuthorityChange::ClearOtherProduct) {
 				Ok(())
 			} else {
@@ -359,10 +369,11 @@ fn raw_product_allowance_revalidates_only_its_product_and_account() {
 fn product_revocation_fences_allowance_cache_commits() {
 	let signing_host = active_signing_host(Arc::new(StubPlatform::default()));
 	let stale_generation = current_generation(&signing_host);
-	futures::executor::block_on(signing_host.clear_product_state(PRODUCT_ID)).unwrap();
+	futures::executor::block_on(signing_host.clear_product_state(&ProductId::for_test(PRODUCT_ID)))
+		.unwrap();
 	let result = signing_host.local_grants.lock().unwrap().remember_statement_allowance_key(
 		stale_generation,
-		PRODUCT_ID.to_string(),
+		ProductId::for_test(PRODUCT_ID),
 		PERIOD,
 		secret_key(),
 	);
@@ -372,10 +383,13 @@ fn product_revocation_fences_allowance_cache_commits() {
 	);
 
 	let fresh_generation = current_generation(&signing_host);
-	futures::executor::block_on(signing_host.clear_product_state("unrelated.dot")).unwrap();
+	futures::executor::block_on(
+		signing_host.clear_product_state(&ProductId::for_test("unrelated.dot")),
+	)
+	.unwrap();
 	let result = signing_host.local_grants.lock().unwrap().remember_statement_allowance_key(
 		fresh_generation,
-		PRODUCT_ID.to_string(),
+		ProductId::for_test(PRODUCT_ID),
 		PERIOD,
 		secret_key(),
 	);
@@ -396,7 +410,11 @@ fn a_replaced_session_is_not_served_the_new_sessions_key() {
 				.local_grants
 				.lock()
 				.expect("local AutoSigning grant mutex poisoned")
-				.statement_allowance_key(stale_generation, PRODUCT_ID, PERIOD),
+				.statement_allowance_key(
+					stale_generation,
+					&ProductId::for_test(PRODUCT_ID),
+					PERIOD
+				),
 			Err(AuthorityError::Disconnected)
 		),
 		"a request validated under the replaced session was served a key"
@@ -416,7 +434,7 @@ fn a_key_allocated_under_a_replaced_session_is_not_remembered() {
 		.expect("local AutoSigning grant mutex poisoned")
 		.remember_statement_allowance_key(
 			stale_generation,
-			PRODUCT_ID.to_string(),
+			ProductId::for_test(PRODUCT_ID),
 			PERIOD,
 			secret_key(),
 		);

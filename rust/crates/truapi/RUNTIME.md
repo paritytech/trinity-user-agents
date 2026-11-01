@@ -98,6 +98,48 @@ and connection state go through the role's `HostSession`.
 are grouped by surface under `runtime/capabilities/`; cross-capability fixtures
 and tests live in `runtime/tests.rs` and `runtime/tests/`.
 
+### Feature-line 0.27 integration boundary
+
+This integration combines feature baseline `574d85a4cee44a3c0d8cd9877fb5a361a4de4d43`
+with canonical core `c1a894d26be98bd5be5f8f48f6658a8ebfda4298`. Chat v2, native
+Chat/media, profile disclosure/presentation, JAM transport and Rust-owned Coinage
+remain present alongside canonical `ProductConnection`, `ProductAccounts` and
+`HostSession`. Native bindings and generated dispatch must come from this same
+source revision; the published 0.26 iOS binary is not interchangeable.
+
+The storage upgrade baseline is the feature line, not a standalone canonical
+0.27 wallet. Existing feature permission tags and scoped wallet keys are retained.
+Funding uses unit-key indices 23–25, leaving feature scoped keys intact. Importing
+standalone canonical 0.27 Funding data from indices 13, 17 and 18 requires an
+explicit migration; use disposable native profiles until that migration is
+provided. Durable-transaction migration preserves IDs, payloads, status and
+AUTOINCREMENT history, and rolls back unsupported records atomically.
+
+Incoming payment top-ups and Chat bearer custody remain implemented. The
+feature baseline has no account-payment engine: payment request, balance and
+payment/top-up status APIs return `CallError::Unsupported`. Do not advertise
+them as supported or interpret an unavailable status as settlement. Funding
+presentation is a separate draft surface without a production settlement producer.
+
+`SigningHostRuntime::{product_resource_status,recover_product_resources}` are
+host-only inspection/recovery operations. All allocation routes share a lock,
+inspect existing Bulletin/PGAS state and revalidate account/product authority
+around asynchronous work and inside personhood proof creation. After an uncertain
+outcome, the embedder must retain its pending marker and use
+`allocate_missing = false`; retrying with replacement allocation enabled is not
+safe recovery. No RPC budget or trust fallback is added.
+
+`PairingHostConfig::consent_policy` and `SigningHostConfig::consent_policy` default
+to `ProductConsentPolicy::TrustedProducts`. Desktop embedders select
+`ExplicitApproval`: trusted-label account/review exemptions and cached
+cross-product signature approval do not bypass review. Own-product statement
+proofs remain distinct, and explicit AutoSigning is still a separate grant.
+This policy controls `ProductConsent`, not the remote-permission trusted-label
+rules described below. Cancelled signing permission prerequisites withdraw
+their review; automatic Bulletin uploads retain their account-bound consent
+checks before submission and retry.
+
+
 ### Permission flow
 
 Permission grants are scoped by product id and typed request, so a grant for
@@ -210,6 +252,20 @@ touching the session or other products, and `notify_contacts_changed` to drop
 the contact handles the core cached once a contact is removed or blocked. Calling the wrong operation is
 a compile error, not a runtime `Unavailable`.
 
+Internal dispatcher construction supplies `ProductAuthority` and `HostSession`
+separately. A pairing host owns its session through `PairingHost::session()`;
+that session owns storage synchronization and session-state access. Connection
+adapters and executable kind belong to `ProductRuntimeHost::connection()`, not
+to account authority.
+
+Native settings use a process-owned product administration handle, without
+opening a product execution. Its connection permission service shares the host's
+mutation authority and canonical storage, retaining conditional commits and
+deferred notifications. Account-sensitive permission reads, including batch
+reads, go through `ProductRuntimeHost` so automatic-upload decisions retain
+their account/network fences; device reads retain the live OS overlay.
+These ownership changes do not change the native permission binding signatures.
+
 A local session's usernames come from the dotNS contracts on Asset Hub, read
 after activation. A name the host passes is shown until a record answers.
 
@@ -290,9 +346,21 @@ own SQLite database (`store` module, bundled SQLite through `rusqlite` and
 missing or unwritable directory stops it from starting. Keep the directory out
 of device backups: it holds durable-transaction state that must not be restored
 onto another device. The required `HostRuntimeConfig.database_directory` sets
-it on iOS and Android, `SigningHostRuntime::set_core_db` on any other embedder,
-and `core_database_status()` reports the SQLite version, schema version and
-path. Web hosts do not compile the store.
+it on iOS and Android, and `SigningHostRuntime::set_core_db` on any other
+embedder. Such an embedder also sets the `InstallationIdProvider` whose id NFT
+purse item keys are derived under with `set_installation_provider`, and the
+`EncryptedStorage` that keeps NFT receive key and deposited item secrets with
+`set_encrypted_storage`, then calls `start_core_services` once, which starts the durable engine and NFT purses over
+the database. `core_database_status()` reports the SQLite version, schema
+version and path. Web hosts do not compile the store.
+
+Secrets the database must not hold go to the host's `EncryptedStorage`: the
+Keychain on iOS, encrypted preferences on Android, a plaintext file in the CLI.
+It reads, writes and deletes values by key and cannot list them, so a feature
+keeps its public rows in the database and stores each secret under a key
+derived from its row. Native hosts install it from their callbacks; any other
+embedder calls `SigningHostRuntime::set_encrypted_storage`. Web hosts do not
+compile it.
 
 ### Durable transactions
 
@@ -317,7 +385,7 @@ presigned submission may carry a plan as well. When a verdict proves a
 transaction with a policy failed, the verdict writer asks the policy's
 `can_retry`, and a yes sends the row back to be built instead of failing it.
 It is built again after a cooldown that grows with the attempts the row
-records, so the wait survives a restart. The executor starts with the engine in `set_core_db` and again in every
+records, so the wait survives a restart. The executor starts with the engine in `start_core_services` and again in every
 recovery run.
 
 The engine reports whether work is pending, including rows waiting to be
@@ -354,6 +422,7 @@ that can't mean it:
   builds report them as unavailable) and do need metadata, which they take from
   the `RuntimeServices`-owned per-chain cache rather than re-reading it per
   call.
+- `ProductConsent`: one per runtime. It holds account-access decisions and review rules, and runs account-access prompts one at a time for local product calls and paired requests alike. A paired caller never skips a review. Under `TrustedProducts`, a signature with another product's account is confirmed once per kind and owning product for the product execution; `ExplicitApproval` requires a fresh review instead of reusing that decision.
 
 `host_logic` stays pure: the orchestrators above call into it for codecs,
 session/SSO crypto, key derivation, and permission policy, while all I/O
@@ -362,8 +431,8 @@ session/SSO crypto, key derivation, and permission policy, while all I/O
 `host_logic::worker::WorkerLedger` holds the reference count per product
 worker from the Worker Lifecycle RFC, one per host in `RuntimeServices`. Both
 bindings expose it as `acquire_worker` and `release_worker`. Every `Start` or
-`Stop` the counts produce is reported on one channel, the host's
-`worker_demand_changed` callback, in the order the ledger produced it and one
+`Stop` the counts produce is requested through the host's
+`request_worker_transition` callback, in the order the ledger produced it and one
 at a time, whether the host asked for the transition or the core took the
 reference itself for an open render. The host runs the executable and the core
 keeps the count; on the web `@parity/truapi-host` pushes the wanted level to
@@ -402,9 +471,9 @@ legacy relay. Reopen the receiving host and check that withdrawal persists.
 ### Inter-host SSO
 
 `SsoRequestService::call(request)` sends typed requests to
-[`SigningHostSsoService`](src/runtime/signing_host/sso_service.rs). Handlers own
-consent and business logic; [`SsoResponderService`](src/runtime/sso_responder_service.rs)
-owns the transport loop: it answers pairing, serves the session and drops
+[`SigningHost`](src/runtime/signing_host.rs). Handlers own consent and business
+logic; [`SsoResponderService`](src/runtime/sso_responder_service.rs) owns the
+transport loop: it answers pairing, serves the session and drops
 duplicate requests. Resource consent is bound to the request's signing session:
 account changes, disconnects, and reactivation invalidate pending approval before
 allocation or key return. Allocation failure details stay in local transcripts.

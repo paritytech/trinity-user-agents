@@ -1,13 +1,13 @@
 import Foundation
 
-public protocol ContentHashCacheProtocol {
+public protocol ContentHashCacheProtocol: Sendable {
     func getContentHash(name: String) -> String?
     func putContentHash(name: String, hash: String)
     func removeContentHash(name: String)
     func clearAll()
 }
 
-public final class ContentHashCache: ContentHashCacheProtocol {
+public final class ContentHashCache: ContentHashCacheProtocol, @unchecked Sendable {
     public static let shared = ContentHashCache()
 
     public static let suiteName = "io.products.dotns.cache"

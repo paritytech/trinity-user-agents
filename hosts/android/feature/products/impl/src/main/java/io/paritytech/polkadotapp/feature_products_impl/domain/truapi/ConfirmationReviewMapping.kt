@@ -17,6 +17,8 @@ import uniffi.truapi.AllocatableResource
 import uniffi.truapi.CreateTransactionReview
 import uniffi.truapi.DerivationIndex
 import uniffi.truapi.HostSignPayloadData
+import uniffi.truapi.NftPurseDrainDestination
+import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.RawPayload
 import uniffi.truapi.RingLocation
 import uniffi.truapi.SignPayloadReview
@@ -70,6 +72,21 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
     is UserConfirmationReview.ChatAuthority ->
         TrUAPIConfirmation.ChatAuthority(requesterProductId = v1.productId)
 
+    is UserConfirmationReview.Calling ->
+        TrUAPIConfirmation.Calling(v1.productId, v1.network.hex(), v1.account.hex())
+
+    is UserConfirmationReview.MainPurseChatPayment ->
+        TrUAPIConfirmation.MainPurseChatPayment(
+            requesterProductId = v1.callingProductId,
+            recipient = v1.recipientUsername?.let { "$it (${v1.recipientIdentity.hex()})" }
+                ?: v1.recipientIdentity.hex(),
+            amountCents = v1.amountCents,
+            maxDebitCents = v1.maxDebitCents,
+            chain = v1.genesisHash.hex(),
+            assetInstance = v1.coinageInstanceId?.toString() ?: "Legacy Coinage",
+            operationId = v1.operationId.hex(),
+        )
+
     is UserConfirmationReview.ResourceAllocation ->
         TrUAPIConfirmation.ResourceAllocation(
             requesterProductId = v1.callingProductId,
@@ -93,6 +110,22 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
 
     is UserConfirmationReview.ProfileDisclosure ->
         TrUAPIConfirmation.ProfileDisclosure(requesterProductId = v1.productId)
+    is UserConfirmationReview.NftPurseDrain ->
+        TrUAPIConfirmation.NftPurseDrain(
+            requesterProductId = v1.callingProductId,
+            fromPurse = v1.fromPurse,
+            ownerProductId = (v1.owner as? NftPurseOwner.Product)?.v1,
+            itemCount = v1.itemCount,
+            destination = v1.destination.toDomain(),
+        )
+}
+
+@OptIn(ExperimentalStdlibApi::class)
+private fun NftPurseDrainDestination.toDomain(): TrUAPIConfirmation.NftPurseDrain.Destination = when (this) {
+    is NftPurseDrainDestination.Purse -> TrUAPIConfirmation.NftPurseDrain.Destination.Purse(purse)
+    is NftPurseDrainDestination.ExternalKey -> TrUAPIConfirmation.NftPurseDrain.Destination.ExternalKey(key.toHexString())
+    NftPurseDrainDestination.Cheque -> TrUAPIConfirmation.NftPurseDrain.Destination.Cheque
+    NftPurseDrainDestination.Refund -> TrUAPIConfirmation.NftPurseDrain.Destination.Refund
 }
 
 @OptIn(ExperimentalStdlibApi::class)
@@ -113,7 +146,6 @@ private fun AllocatableResource.describe(): String = when (this) {
     is AllocatableResource.BulletinAllowance -> "bulletin allowance"
     is AllocatableResource.SmartContractAllowance -> "smart-contract allowance"
     is AllocatableResource.AutoSigning -> "auto-signing"
-    is AllocatableResource.ProductStatementStoreAllowance -> "product statement-store allowance"
 }
 
 private fun NativeProductAccountId.toDomain(): ProductAccountId = ProductAccountId(

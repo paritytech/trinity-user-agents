@@ -20,7 +20,7 @@ fn once_is_not_durable_and_revocation_fences_an_approved_upload() {
 			PermissionDecision::AllowOnce,
 		]);
 		let host = upload_host(platform.clone(), "peopl.paseo");
-		let session = host.authority.current_session().unwrap();
+		let session = host.accounts.current_session().unwrap();
 		host.approve_preimage_upload(&session, 1024).await.unwrap();
 		assert_eq!(
 			host.permission_authorization_status(permission(&session)).await.unwrap(),
@@ -49,8 +49,15 @@ fn once_is_not_durable_and_revocation_fences_an_approved_upload() {
 fn automatic_quota_is_shared_by_connections_and_survives_restart_and_regrant() {
 	futures::executor::block_on(async {
 		let platform = Arc::new(StubPlatform::default());
-		let host = upload_host(platform.clone(), "upload.dot");
-		let session = host.authority.current_session().unwrap();
+		let (host_config, product) = runtime_config("upload.dot");
+		let (host, pairing_host) = ProductRuntimeHost::new_pairing_for_tests(
+			platform.clone(),
+			host_config,
+			product.clone(),
+			test_spawner(),
+		);
+		install_pairing_session(&host, session_info());
+		let session = host.accounts.current_session().unwrap();
 		host.set_permission_authorization_status(
 			permission(&session),
 			PermissionAuthorizationStatus::Authorized,
@@ -58,10 +65,11 @@ fn automatic_quota_is_shared_by_connections_and_survives_restart_and_regrant() {
 		.await
 		.unwrap();
 		let other = ProductRuntimeHost::from_services(
-			host.services.clone(),
-			crate::host_core::ConnectionAdapters::from_services(&host.services),
-			host.authority.clone(),
-			host.product.clone(),
+			host.connection.services.clone(),
+			crate::host_core::ConnectionAdapters::from_services(&host.connection.services),
+			pairing_host.clone(),
+			pairing_host.session().clone(),
+			product,
 		);
 		let calls = (0..8).map(|i| {
 			let target = if i % 2 == 0 { &host } else { &other };
@@ -74,6 +82,7 @@ fn automatic_quota_is_shared_by_connections_and_survives_restart_and_regrant() {
 		assert_eq!(platform.preimage_reviews.lock().len(), 4);
 		drop(other);
 		drop(host);
+		drop(pairing_host);
 		let restored = upload_host(platform.clone(), "upload.dot");
 		restored
 			.set_permission_authorization_status(
@@ -94,7 +103,7 @@ fn automatic_quota_is_shared_by_connections_and_survives_restart_and_regrant() {
 			.lock()
 			.unwrap()
 			.push_back(PermissionDecision::Deny);
-		let session = restored.authority.current_session().unwrap();
+		let session = restored.accounts.current_session().unwrap();
 		assert!(restored.approve_preimage_upload(&session, 1024).await.is_err());
 		assert_eq!(platform.preimage_reviews.lock().len(), 5);
 	});
@@ -106,8 +115,8 @@ fn independent_runtimes_cannot_overspend_a_stale_quota_snapshot() {
 		let platform = Arc::new(StubPlatform::default());
 		let host = upload_host(platform.clone(), "upload.dot");
 		let other = upload_host(platform.clone(), "upload.dot");
-		let session = host.authority.current_session().unwrap();
-		let other_session = other.authority.current_session().unwrap();
+		let session = host.accounts.current_session().unwrap();
+		let other_session = other.accounts.current_session().unwrap();
 		host.set_permission_authorization_status(
 			permission(&session),
 			PermissionAuthorizationStatus::Authorized,
@@ -145,8 +154,8 @@ fn independent_runtime_revocation_rejects_a_stale_prompt_commit() {
 		*platform.preimage_confirmation_gate.lock() = Some(confirmation_gate);
 		let host = upload_host(platform.clone(), "upload.dot");
 		let other = upload_host(platform.clone(), "upload.dot");
-		let session = host.authority.current_session().unwrap();
-		let other_session = other.authority.current_session().unwrap();
+		let session = host.accounts.current_session().unwrap();
+		let other_session = other.accounts.current_session().unwrap();
 		let pending = host.approve_preimage_upload(&session, 1);
 		futures::pin_mut!(pending);
 		assert!(futures::poll!(pending.as_mut()).is_pending());
@@ -175,7 +184,7 @@ fn oversized_upload_requires_review_without_spending_the_small_upload_quota() {
 	futures::executor::block_on(async {
 		let platform = Arc::new(StubPlatform::default());
 		let host = upload_host(platform.clone(), "upload.dot");
-		let session = host.authority.current_session().unwrap();
+		let session = host.accounts.current_session().unwrap();
 		host.set_permission_authorization_status(
 			permission(&session),
 			PermissionAuthorizationStatus::Authorized,
@@ -197,7 +206,7 @@ fn upload_consent_isolated_by_product_root_and_bulletin_network() {
 	futures::executor::block_on(async {
 		let platform = Arc::new(StubPlatform::default());
 		let host = upload_host(platform.clone(), "upload.dot");
-		let session = host.authority.current_session().unwrap();
+		let session = host.accounts.current_session().unwrap();
 		host.set_permission_authorization_status(
 			permission(&session),
 			PermissionAuthorizationStatus::Authorized,
@@ -234,7 +243,7 @@ fn upload_consent_isolated_by_product_root_and_bulletin_network() {
 			.await
 			.is_err()
 		);
-		let new_session = host.authority.current_session().unwrap();
+		let new_session = host.accounts.current_session().unwrap();
 		assert_eq!(
 			host.permission_authorization_status(permission(&new_session)).await.unwrap(),
 			PermissionAuthorizationStatus::NotDetermined
@@ -259,7 +268,7 @@ fn revoking_while_the_consent_sheet_is_open_cannot_restore_the_grant() {
 			.unwrap()
 			.push_back(PermissionDecision::AllowAlways);
 		let host = upload_host(platform, "upload.dot");
-		let session = host.authority.current_session().unwrap();
+		let session = host.accounts.current_session().unwrap();
 		let approval = host.approve_preimage_upload(&session, 1);
 		futures::pin_mut!(approval);
 		assert!(futures::poll!(approval.as_mut()).is_pending());
@@ -290,7 +299,7 @@ fn switching_accounts_while_the_consent_sheet_is_open_cannot_grant_either_accoun
 			.unwrap()
 			.push_back(PermissionDecision::AllowAlways);
 		let host = upload_host(platform, "upload.dot");
-		let session = host.authority.current_session().unwrap();
+		let session = host.accounts.current_session().unwrap();
 		let approval = host.approve_preimage_upload(&session, 1);
 		futures::pin_mut!(approval);
 		assert!(futures::poll!(approval.as_mut()).is_pending());
@@ -299,7 +308,7 @@ fn switching_accounts_while_the_consent_sheet_is_open_cannot_grant_either_accoun
 		install_pairing_session(&host, other);
 		release.send(()).unwrap();
 		assert!(approval.await.is_err());
-		let current = host.authority.current_session().unwrap();
+		let current = host.accounts.current_session().unwrap();
 		assert_eq!(
 			host.permission_authorization_status(permission(&current)).await.unwrap(),
 			PermissionAuthorizationStatus::NotDetermined
@@ -324,7 +333,7 @@ fn cancelling_the_product_upload_dismisses_consent_without_a_grant_or_backend_ca
 			.unwrap()
 			.push_back(PermissionDecision::AllowAlways);
 		let host = upload_host(platform.clone(), "upload.dot");
-		let session = host.authority.current_session().unwrap();
+		let session = host.accounts.current_session().unwrap();
 		let cancel = truapi::CancellationToken::default();
 		let cx = CallContext::with_parts("cancel-upload".into(), cancel.clone());
 		let upload = Preimage::submit(&host, &cx, RemotePreimageSubmitRequest::V1(vec![1]));
@@ -346,7 +355,7 @@ fn automatic_consent_never_bypasses_remote_upload_permission() {
 		let platform =
 			Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() });
 		let host = upload_host(platform.clone(), "upload.dot");
-		let session = host.authority.current_session().unwrap();
+		let session = host.accounts.current_session().unwrap();
 		host.set_permission_authorization_status(
 			permission(&session),
 			PermissionAuthorizationStatus::Authorized,
@@ -376,11 +385,11 @@ fn unreadable_consent_and_failed_quota_writes_never_authorize_an_upload() {
 	futures::executor::block_on(async {
 		let platform = Arc::new(StubPlatform::default());
 		let host = upload_host(platform.clone(), "upload.dot");
-		let session = host.authority.current_session().unwrap();
+		let session = host.accounts.current_session().unwrap();
 		let key = CoreStorageKey::AutomaticPreimageUploads {
-			product_id: host.product_id(),
+			product_id: host.connection.product_id().to_string(),
 			root_public_key: session.public_key,
-			genesis_hash: host.services.bulletin.genesis_hash(),
+			genesis_hash: host.connection.services.bulletin.genesis_hash(),
 		};
 		host.set_permission_authorization_status(
 			permission(&session),

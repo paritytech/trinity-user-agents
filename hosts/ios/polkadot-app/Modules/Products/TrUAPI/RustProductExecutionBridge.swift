@@ -50,12 +50,13 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     private var themeObservation: Task<Void, Never>?
 
     @MainActor
-    init(dependencies: Dependencies) {
+    init(dependencies: Dependencies, cardFace: (any ExpandedCardFaceShowing)? = nil) {
         self.dependencies = dependencies
+        self.cardFace = cardFace
         media = NativeMediaBackend(productId: dependencies.productId)
         storage = ProductStorageBackend(storage: dependencies.productStorage)
         coreStorage = CoreStorageBackend(storage: dependencies.coreStorage)
-        theme = Self.makeTheme(dependencies.themeManager.theme)
+        cachedTheme.withLock { $0 = dependencies.themeManager.theme.hostThemeSubscribeItem }
 
         // Register before opening the execution: its synchronous currentTheme
         // callback already has the selected theme, and no transition is lost
@@ -63,8 +64,10 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         let themes = dependencies.themeManager.observeTheme()
         themeObservation = Task { @MainActor [weak self] in
             for await theme in themes {
-                guard !Task.isCancelled else { break }
-                self?.themeDidChange(theme)
+                guard let self, !Task.isCancelled else { break }
+                let item = theme.hostThemeSubscribeItem
+                cachedTheme.withLock { $0 = item }
+                execution?.notifyThemeChanged(theme: item)
             }
         }
     }
@@ -78,15 +81,24 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     func attach(_ execution: TrUAPIProductExecutionProtocol) {
         self.execution = execution
         dependencies.chainConnections.eventHandler = self
-        observeTheme()
     }
 
-    deinit {
+    @MainActor
+    func detach() {
         themeObservation?.cancel()
+        themeObservation = nil
+        dependencies.chainConnections.eventHandler = nil
+        execution = nil
+        media.detach()
     }
+
 
     func onCoreLog(marker: String, detail: String) {
-        dependencies.logger.debug("[truapi:\(marker)] \(detail)")
+        dependencies.logger.logCoreLine(marker: marker, detail: detail)
+    }
+
+    func setExpandedCardFaceShown(shown: Bool) async throws -> ExpandedCardFaceOutcome {
+        await MainActor.run { cardFace?.setFaceShown(shown) ?? .notPresented }
     }
 
     func navigateTo(url: String) async throws {
@@ -248,42 +260,15 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         TrUAPISupportedChains.make(chainRegistry: dependencies.chainRegistry)
     }
 
+    func transactionExtensionVersions() async throws -> ExtensionVersionMap {
+        try TrUAPIExtensionVersions.make(chainRegistry: dependencies.chainRegistry)
+    }
+
     func authStateChanged(state: AuthState) {
+        dependencies.logger.info("[truapi.auth] \(dependencies.productId): \(state.logMarker)")
         switch state {
         case .disconnected, .loginFailed: media.authorityLost()
         default: break
-        }
-        let details =
-            switch state {
-            case .disconnected:
-                "disconnected"
-            case .pairing:
-                "pairing"
-            case .connected:
-                "connected"
-            case .loginFailed:
-                "loging failed"
-            case .authenticating:
-                "authenticating"
-            }
-
-        dependencies.logger.debug("[truapi] auth state: \(details)")
-    }
-}
-
-// MARK: - Theme
-
-private extension RustProductExecutionBridge {
-    func observeTheme() {
-        themeObservation?.cancel()
-        let themeManager = dependencies.themeManager
-        themeObservation = Task { @MainActor [weak self] in
-            for await theme in themeManager.observeTheme() {
-                guard let self else { return }
-                let item = theme.hostThemeSubscribeItem
-                cachedTheme.withLock { $0 = item }
-                execution?.notifyThemeChanged(theme: item)
-            }
         }
     }
 }
@@ -365,6 +350,7 @@ extension RemotePermission {
         case .chainSubmit: Products.RemotePermissionRequest.chainSubmit.toDomainPermissions()
         case .preimageSubmit: Products.RemotePermissionRequest.preimageSubmit.toDomainPermissions()
         case .statementSubmit: Products.RemotePermissionRequest.statementSubmit.toDomainPermissions()
+        case let .jamPeers(genesis): [.jamPeersAccess(genesis: genesis.toHex(includePrefix: true))]
         case .calling: []
         case .balanceAccess: [.balanceAccess]
         case let .nftPurseRead(owner): [.nftPurseRead(ownerProductId: owner.productId)]

@@ -4,10 +4,12 @@
 use super::*;
 use crate::{
 	host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1},
+	platform::ProductConsentPolicy,
 	runtime::{signing_host::SigningHostSsoService, sso_service::Dispatch},
 };
 use truapi::versioned::{
-	account::HostAccountSignVrfRequest, signing::HostSignRawWithLegacyAccountRequest,
+	account::HostAccountSignVrfRequest,
+	signing::{HostSignRawWithLegacyAccountError, HostSignRawWithLegacyAccountRequest},
 };
 
 /// Allocate an AutoSigning grant for the runtime's own product.
@@ -69,7 +71,8 @@ fn a_granted_product_signs_raw_without_a_prompt() {
 		"the grant waives the prompt",
 	);
 	let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-	let keypair = derive_product_keypair(&root, "myapp.dot", index_bytes(0)).unwrap();
+	let keypair =
+		derive_product_keypair(&root, &ProductId::for_test("myapp.dot"), index_bytes(0)).unwrap();
 	let signature =
 		schnorrkel::Signature::from_bytes(&response.signature).expect("64-byte signature");
 	assert!(
@@ -186,7 +189,10 @@ fn a_blessed_vrf_signature_skips_the_prompt_only_locally_for_its_own_account() {
 	let Dispatch::Response(answer) = futures::executor::block_on(
 		SigningHostSsoService::new(activation).answer(RemoteMessage::request(
 			"relayed-vrf".to_string(),
-			ProductRequest { calling_product_id: "dim2.paseo".to_string(), payload: request },
+			ProductRequest {
+				calling_product_id: ProductId::for_test("dim2.paseo"),
+				payload: request,
+			},
 		)),
 	) else {
 		panic!("expected a VRF response")
@@ -207,25 +213,52 @@ fn a_blessed_vrf_signature_skips_the_prompt_only_locally_for_its_own_account() {
 	);
 }
 
-/// Legacy accounts sign with the user's own keys, not a product's.
+/// Trusted products may skip watermarked legacy signing only under the default
+/// policy; desktop explicit approval and unwatermarked signing still prompt.
 #[test]
-fn a_blessed_product_still_confirms_legacy_account_signing() {
-	let platform = granting_platform();
-	let (services, activation) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-		.expect("activation succeeds");
-	let runtime = product_runtime_for(services, activation, "dim2.paseo");
-	let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
-	let request =
-		HostSignRawWithLegacyAccountRequest::V1(v01::HostSignRawWithLegacyAccountRequest {
-			signer: subxt::utils::AccountId32(identity.public.to_bytes()).to_string(),
-			payload: v01::RawPayload::Bytes { bytes: b"hello world".to_vec() },
-		});
-
-	let signed = futures::executor::block_on(
-		runtime.sign_raw_with_legacy_account(&CallContext::default(), request),
-	)
-	.is_ok();
-
-	assert_eq!((signed, platform.sign_raw_reviews.lock().unwrap().len()), (false, 1),);
+fn trusted_legacy_raw_signing_obeys_the_policy_and_watermark() {
+	for policy in [ProductConsentPolicy::TrustedProducts, ProductConsentPolicy::ExplicitApproval] {
+		for watermarked in [true, false] {
+			let platform = granting_platform();
+			let (services, activation) =
+				signing_runtime_with_policy(platform.clone(), [0; 32], policy);
+			futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+				.expect("activation succeeds");
+			let runtime = product_runtime_for(services, activation, "dim2.paseo");
+			let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
+			let request =
+				HostSignRawWithLegacyAccountRequest::V1(v01::HostSignRawWithLegacyAccountRequest {
+					signer: subxt::utils::AccountId32(identity.public.to_bytes()).to_string(),
+					payload: v01::RawPayload::Bytes { bytes: b"hello world".to_vec() },
+				});
+			let result = futures::executor::block_on(async {
+				if watermarked {
+					runtime.sign_raw_with_legacy_account(&CallContext::default(), request).await
+				} else {
+					runtime
+						.sign_raw_unwatermarked_deprecated_with_legacy_account(
+							&CallContext::default(),
+							request,
+						)
+						.await
+				}
+			});
+			let skips_review = policy == ProductConsentPolicy::TrustedProducts && watermarked;
+			if skips_review {
+				assert!(result.is_ok(), "{result:?}");
+			} else {
+				assert!(matches!(
+					result,
+					Err(CallError::Domain(HostSignRawWithLegacyAccountError::V1(
+						v01::HostSignPayloadError::Rejected
+					)))
+				));
+			}
+			assert_eq!(
+				platform.sign_raw_reviews.lock().unwrap().len(),
+				usize::from(!skips_review),
+				"{policy:?}, watermarked={watermarked}",
+			);
+		}
+	}
 }

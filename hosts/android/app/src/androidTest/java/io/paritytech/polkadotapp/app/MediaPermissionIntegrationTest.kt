@@ -80,13 +80,16 @@ class MediaPermissionIntegrationTest : BaseIntegrationTest() {
                 }
             }
             runtime.openProductExecution(bridge, ProductExecutionConfig("media.paseo", ProductExecutionKind.APP)).use { execution ->
-                for (capability in listOf(HostDevicePermissionRequest.CAMERA, HostDevicePermissionRequest.MICROPHONE)) {
-                    execution.setPermissionAuthorizationStatus(PermissionAuthorizationRequest.Device(capability), PermissionAuthorizationStatus.AUTHORIZED)
+                runBlocking {
+                    for (capability in listOf(HostDevicePermissionRequest.CAMERA, HostDevicePermissionRequest.MICROPHONE)) {
+                        runtime.setPermissionAuthorizationStatus("media.paseo",
+                            PermissionAuthorizationRequest.Device(capability), PermissionAuthorizationStatus.AUTHORIZED)
+                    }
+                    runtime.setPermissionAuthorizationStatus("media.paseo",
+                        PermissionAuthorizationRequest.Remote(RemotePermissionRequest(RemotePermission.WebRtc)),
+                        PermissionAuthorizationStatus.AUTHORIZED,
+                    )
                 }
-                execution.setPermissionAuthorizationStatus(
-                    PermissionAuthorizationRequest.Remote(RemotePermissionRequest(RemotePermission.WebRtc)),
-                    PermissionAuthorizationStatus.AUTHORIZED,
-                )
                 val endpoint = execution.startWsBridge()
                 lateinit var webView: WebView
                 instrumentation.runOnMainSync {
@@ -108,7 +111,10 @@ class MediaPermissionIntegrationTest : BaseIntegrationTest() {
                         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest) =
                             WebResourceResponse("text/html", "UTF-8", PAGE.byteInputStream())
                     }
-                    TrUAPIBootstrapInstaller(context).installerFor(setOf("http://localhost"))(
+                    TrUAPIBootstrapInstaller(context).installerFor(
+                        setOf("http://localhost"),
+                        "media-permission-test",
+                    )(
                         LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token),
                     )(webView)
                     webView.loadUrl("http://localhost/")

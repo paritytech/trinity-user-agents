@@ -63,6 +63,11 @@ class RealPreferences @Inject constructor(
         sharedPreferences.edit().putString(field, value).apply()
     }
 
+    override fun putStringNow(
+        field: String,
+        value: String?,
+    ): Boolean = sharedPreferences.edit().putString(field, value).commit()
+
     override fun getString(
         field: String,
         defaultValue: String,

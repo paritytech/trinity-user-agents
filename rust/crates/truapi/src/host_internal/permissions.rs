@@ -45,16 +45,13 @@ use std::{
 use parity_scale_codec::{Decode, Encode};
 use rand_core::{OsRng, RngCore};
 
-use crate::{
-	host_internal::product_manifest::bare_product_label,
-	platform::{
-		BLESSED_REMOTE_DOMAINS, CallingReview, ChatAuthorityReview, CoreStorage, CoreStorageKey,
-		CrossProductSignatureKind, DevicePermissionStatus, IdentityDisclosureReview,
-		PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-		PermissionStatusHost, Permissions, ProductContext, ProfileDisclosureReview,
-		UserConfirmation, UserConfirmationReview, has_trusted_remote_permissions,
-		is_valid_remote_domain_pattern, normalize_remote_domain, remote_domain_candidates,
-	},
+use crate::platform::{
+	BLESSED_REMOTE_DOMAINS, CallingReview, ChatAuthorityReview, CoreStorage, CoreStorageKey,
+	CrossProductSignatureKind, DevicePermissionStatus, IdentityDisclosureReview,
+	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
+	PermissionStatusHost, Permissions, ProductContext, ProductId, ProfileDisclosureReview,
+	UserConfirmation, UserConfirmationReview, is_valid_remote_domain_pattern,
+	normalize_remote_domain, remote_domain_candidates,
 };
 use truapi::latest::{
 	GenericError, HostDevicePermissionRequest, RemotePermission, RemotePermissionRequest,
@@ -179,12 +176,12 @@ pub enum ChatAuthorityConsent {
 /// serializing its check/write with every decision that might otherwise win late.
 #[derive(Default)]
 pub struct PermissionAuthority {
-	scopes: parking_lot::Mutex<HashMap<String, Arc<PermissionScope>>>,
+	scopes: parking_lot::Mutex<HashMap<ProductId, Arc<PermissionScope>>>,
 	mutation: Arc<futures::lock::Mutex<()>>,
 }
 
 impl PermissionAuthority {
-	pub(crate) fn scope(&self, product: &str) -> Arc<PermissionScope> {
+	pub(crate) fn scope(&self, product: &ProductId) -> Arc<PermissionScope> {
 		self.scopes
 			.lock()
 			.entry(product.to_owned())
@@ -197,14 +194,11 @@ impl PermissionAuthority {
 			.clone()
 	}
 
-	fn invalidate(&self, product: &str, request: &PermissionAuthorizationRequest) {
-		use crate::host_internal::product_manifest::bare_product_label;
+	fn invalidate(&self, product: &ProductId, request: &PermissionAuthorizationRequest) {
 		let account_access =
 			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
 		for (owner, scope) in self.scopes.lock().iter() {
-			if owner == product ||
-				(account_access && bare_product_label(owner) == bare_product_label(product))
-			{
+			if owner == product || (account_access && owner.bare_label() == product.bare_label()) {
 				scope.invalidate();
 			}
 		}
@@ -287,14 +281,14 @@ impl PermissionScope {
 /// are reduced to their bare label, as the manifest grant files them, so one
 /// approval covers every account of the owning product.
 pub fn cross_product_signature_key(
-	product_id: &str,
-	target_product_id: &str,
+	product_id: &ProductId,
+	target_product_id: &ProductId,
 	kind: CrossProductSignatureKind,
 ) -> CoreStorageKey {
 	CoreStorageKey::PermissionAuthorization {
-		product_id: bare_product_label(product_id).to_string(),
+		product_id: product_id.bare_label().to_string(),
 		request: PermissionAuthorizationRequest::CrossProductSignature {
-			target_product_id: bare_product_label(target_product_id).to_string(),
+			target_product_id: target_product_id.bare_label().to_string(),
 			kind,
 		},
 	}
@@ -395,11 +389,20 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 	/// a grant the OS has since withdrawn stops reading as usable.
 	pub fn new(storage: &'a S, prompt: &'a P, product: &'a ProductContext) -> Self {
 		Self {
+			trusted_product: product.product_id.has_trusted_remote_permissions(),
+			..Self::new_remote(storage, prompt, product)
+		}
+	}
+
+	/// Construct consent for a product reported by a paired host. Its identity
+	/// scopes saved grants but never confers this host's trusted-product defaults.
+	pub fn new_remote(storage: &'a S, prompt: &'a P, product: &'a ProductContext) -> Self {
+		Self {
 			storage,
 			prompt,
 			product,
 			status: None,
-			trusted_product: has_trusted_remote_permissions(&product.product_id),
+			trusted_product: false,
 			temporary_permissions: Arc::default(),
 			authority: Arc::default(),
 		}
@@ -423,7 +426,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		self.authority.scope(self.product_id())
 	}
 
-	fn product_id(&self) -> &str {
+	fn product_id(&self) -> &ProductId {
 		&self.product.product_id
 	}
 
@@ -690,16 +693,17 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 				reason: "Upload consent requires an active account scope".into(),
 			}),
 			PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
-				Ok(
-					if self.temporary_permissions.authorize(
-						&cross_product_signature_key(self.product_id(), target_product_id, *kind),
+				let approved = target_product_id.parse::<ProductId>().is_ok_and(|target| {
+					self.temporary_permissions.authorize(
+						&cross_product_signature_key(self.product_id(), &target, *kind),
 						false,
-					) {
-						PermissionAuthorizationStatus::Authorized
-					} else {
-						PermissionAuthorizationStatus::NotDetermined
-					},
-				)
+					)
+				});
+				Ok(if approved {
+					PermissionAuthorizationStatus::Authorized
+				} else {
+					PermissionAuthorizationStatus::NotDetermined
+				})
 			},
 		}
 	}
@@ -956,7 +960,10 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 			},
 			// Signature approvals are execution-local, never persisted.
 			PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
-				let key = cross_product_signature_key(self.product_id(), target_product_id, *kind);
+				let target = target_product_id
+					.parse::<ProductId>()
+					.map_err(|err| GenericError { reason: err.to_string() })?;
+				let key = cross_product_signature_key(self.product_id(), &target, *kind);
 				if status == PermissionAuthorizationStatus::Authorized {
 					self.temporary_permissions.grant(key);
 				} else {
@@ -1008,7 +1015,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 			.prompt(
 				revision,
 				self.prompt.confirm_permission(UserConfirmationReview::IdentityDisclosure(
-					IdentityDisclosureReview { product_id: self.product_id().to_string() },
+					IdentityDisclosureReview { product_id: self.product.product_id.clone() },
 				)),
 			)
 			.await
@@ -1055,7 +1062,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 			.prompt(
 				revision,
 				self.prompt.confirm_permission(UserConfirmationReview::ChatAuthority(
-					ChatAuthorityReview { product_id: self.product_id().to_string() },
+					ChatAuthorityReview { product_id: self.product.product_id.clone() },
 				)),
 			)
 			.await
@@ -1103,7 +1110,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 			.prompt(
 				revision,
 				self.prompt.confirm_permission(UserConfirmationReview::ProfileDisclosure(
-					ProfileDisclosureReview { product_id: self.product_id().to_string() },
+					ProfileDisclosureReview { product_id: self.product.product_id.clone() },
 				)),
 			)
 			.await
@@ -1152,7 +1159,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 			.prompt(
 				snapshot.revision,
 				self.prompt.confirm_user_action(UserConfirmationReview::Calling(CallingReview {
-					product_id: self.product_id().to_string(),
+					product_id: self.product.product_id.clone(),
 					network,
 					account,
 				})),
@@ -1489,10 +1496,9 @@ pub async fn set_account_access_status<S: CoreStorage + ?Sized>(
 
 /// Canonical key for host administration, matching the product-call paths.
 pub(crate) fn authorization_key(
-	product: &str,
+	product: &ProductId,
 	request: &PermissionAuthorizationRequest,
 ) -> Result<CoreStorageKey, GenericError> {
-	use crate::host_internal::product_manifest::bare_product_label;
 	Ok(match request {
 		PermissionAuthorizationRequest::Device(permission) => {
 			CoreStorageKey::device_permission_authorization(product, permission)
@@ -1504,9 +1510,10 @@ pub(crate) fn authorization_key(
 			CoreStorageKey::identity_disclosure_authorization(product)
 		},
 		PermissionAuthorizationRequest::AccountAccess { target_product_id } => {
+			let target = target_product_id.parse::<ProductId>().ok();
 			CoreStorageKey::account_access_authorization(
-				bare_product_label(product),
-				bare_product_label(target_product_id),
+				product.bare_label(),
+				target.as_ref().map_or(target_product_id.as_str(), ProductId::bare_label),
 			)
 		},
 		PermissionAuthorizationRequest::ChatAuthority => {
@@ -1525,7 +1532,10 @@ pub(crate) fn authorization_key(
 			CoreStorageKey::calling_authorization(product, *network, *account)
 		},
 		PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
-			cross_product_signature_key(product, target_product_id, *kind)
+			let target = target_product_id
+				.parse::<ProductId>()
+				.map_err(|err| GenericError { reason: err.to_string() })?;
+			cross_product_signature_key(product, &target, *kind)
 		},
 		PermissionAuthorizationRequest::AutomaticPreimageSubmit { .. } => {
 			return Err(GenericError {
@@ -1628,21 +1638,17 @@ mod tests {
 	};
 	use truapi::{latest::RemotePermission, v01, v01::GenericError};
 
-	static PRODUCT: LazyLock<ProductContext> = LazyLock::new(|| {
-		ProductContext::new("product.dot".to_string()).expect("product id is valid")
-	});
+	static PRODUCT: LazyLock<ProductContext> =
+		LazyLock::new(|| ProductContext::new(ProductId::for_test("product.dot")));
 
-	static OTHER_PRODUCT: LazyLock<ProductContext> = LazyLock::new(|| {
-		ProductContext::new("other.dot".to_string()).expect("product id is valid")
-	});
+	static OTHER_PRODUCT: LazyLock<ProductContext> =
+		LazyLock::new(|| ProductContext::new(ProductId::for_test("other.dot")));
 
-	static PEOPL_APP: LazyLock<ProductContext> = LazyLock::new(|| {
-		ProductContext::new("app.peopl.dot".to_string()).expect("product id is valid")
-	});
+	static PEOPL_APP: LazyLock<ProductContext> =
+		LazyLock::new(|| ProductContext::new(ProductId::for_test("app.peopl.dot")));
 
-	static PEOPL: LazyLock<ProductContext> = LazyLock::new(|| {
-		ProductContext::new("peopl.dot".to_string()).expect("product id is valid")
-	});
+	static PEOPL: LazyLock<ProductContext> =
+		LazyLock::new(|| ProductContext::new(ProductId::for_test("peopl.dot")));
 
 	#[derive(Default)]
 	struct MemStorage {
@@ -2915,7 +2921,7 @@ mod tests {
 		let prompt = ScriptedPrompt::new(vec![], vec![]);
 
 		for product_id in ["peopl.dot", "peopl.paseo", "peopl.testnet", "dim2.dot", "stash.dot"] {
-			let product = ProductContext::new(product_id.to_string()).expect("product id is valid");
+			let product = ProductContext::new(ProductId::for_test(product_id));
 			let service = PermissionsService::new(&storage, &prompt, &product);
 			assert_eq!(
 				futures::executor::block_on(
@@ -2952,7 +2958,7 @@ mod tests {
 		let prompt = ScriptedPrompt::new(vec![], vec![true, true]);
 
 		for product_id in ["localhost", "localhost:3000"] {
-			let product = ProductContext::new(product_id.to_string()).expect("product id is valid");
+			let product = ProductContext::new(ProductId::for_test(product_id));
 			let service = PermissionsService::new(&storage, &prompt, &product);
 			let request = remote(RemotePermission::ChainSubmit);
 			assert_eq!(
@@ -3271,10 +3277,9 @@ mod tests {
 	fn chat_authority_uses_its_own_cached_permission() {
 		let platform = StubPlatform { chat_authority_confirmed: true, ..Default::default() };
 		let chat_product = ProductContext::new_with_execution(
-			"chat.paseo".to_owned(),
+			ProductId::for_test("chat.paseo"),
 			crate::platform::ProductExecutionKind::Worker,
-		)
-		.expect("test product id is valid");
+		);
 		let service = PermissionsService::new(&platform, &platform, &chat_product);
 
 		assert_eq!(
@@ -3287,7 +3292,7 @@ mod tests {
 		);
 		assert_eq!(
 			platform.chat_authority_reviews.lock().as_slice(),
-			&[ChatAuthorityReview { product_id: "chat.paseo".to_string() }]
+			&[ChatAuthorityReview { product_id: ProductId::for_test("chat.paseo") }]
 		);
 		assert_eq!(platform.identity_disclosure_calls.load(Ordering::SeqCst), 0);
 		assert_eq!(
@@ -3356,8 +3361,7 @@ mod tests {
 				("peopl.dot", [3; 32], account),
 				("peopl.dot", network, [4; 32]),
 			] {
-				let product =
-					ProductContext::new(product_id.to_string()).expect("valid product id");
+				let product = ProductContext::new(ProductId::for_test(product_id));
 				let isolated = PermissionsService::new(&storage, &prompt, &product);
 				assert_eq!(
 					isolated
@@ -3395,9 +3399,13 @@ mod tests {
 			assert_eq!(
 				*prompt.calling_reviews.lock().await,
 				vec![
-					CallingReview { product_id: "peopl.dot".to_string(), network, account },
 					CallingReview {
-						product_id: "peopl.dot".to_string(),
+						product_id: ProductId::for_test("peopl.dot"),
+						network,
+						account
+					},
+					CallingReview {
+						product_id: ProductId::for_test("peopl.dot"),
 						network,
 						account: [4; 32],
 					},
@@ -3430,8 +3438,7 @@ mod tests {
 			let storage = MemStorage::default();
 			let prompt = ScriptedPrompt::new(vec![], vec![]);
 			for product_id in ["product.dot", "peopl.dot"] {
-				let product =
-					ProductContext::new(product_id.to_string()).expect("valid product id");
+				let product = ProductContext::new(ProductId::for_test(product_id));
 				let service = PermissionsService::new(&storage, &prompt, &product);
 				let remote_request = remote(RemotePermission::Calling);
 				let request = PermissionAuthorizationRequest::Remote(remote_request.clone());
@@ -3530,10 +3537,9 @@ mod tests {
 			.expect("permission confirmation mutex poisoned")
 			.push_back(PermissionDecision::AllowOnce);
 		let chat_product = ProductContext::new_with_execution(
-			"chat.paseo".to_owned(),
+			ProductId::for_test("chat.paseo"),
 			crate::platform::ProductExecutionKind::Worker,
-		)
-		.expect("test product id is valid");
+		);
 		let grants = Arc::new(TemporaryPermissions::default());
 		let service = PermissionsService::new(&platform, &platform, &chat_product)
 			.with_temporary_permissions(Arc::clone(&grants));
@@ -4190,8 +4196,8 @@ mod tests {
 			kind: CrossProductSignatureKind::Payload,
 		};
 		let checked_by_runtime = cross_product_signature_key(
-			"product.dot",
-			"dim2.dot",
+			&ProductId::for_test("product.dot"),
+			&ProductId::for_test("dim2.dot"),
 			CrossProductSignatureKind::Payload,
 		);
 
@@ -4724,7 +4730,9 @@ mod tests {
 					.await
 					.unwrap();
 				let raw = storage
-					.read_core_storage(authorization_key("product.dot", &request).unwrap())
+					.read_core_storage(
+						authorization_key(&ProductId::for_test("product.dot"), &request).unwrap(),
+					)
 					.await
 					.unwrap()
 					.unwrap();

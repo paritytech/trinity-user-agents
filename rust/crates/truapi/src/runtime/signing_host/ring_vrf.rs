@@ -15,7 +15,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use subxt::{dynamic, ext::scale_decode::DecodeAsType};
-use truapi::v01::{ProductProofContext, RingLocation, RingLocationJunction};
+use truapi::latest::{ProductProofContext, RingLocation, RingLocationJunction};
 
 const MEMBERS_PALLET: &str = "Members";
 
@@ -210,27 +210,6 @@ impl RingResolver for ChainRingResolver {
 		})
 	}
 }
-
-// TODO(development_createAccountProof): dev-only escape hatch, yet to be
-// removed before a production release. Delete this module and point its
-// wallet and host-account callers back at `context_bytes`.
-mod development {
-	use truapi::v01::{DerivationIndex, ProductProofContext};
-
-	const RAW_CONTEXT_PRODUCT_ID: &str = "raw:";
-
-	/// [`super::context_bytes`], except that the `raw:` product id (which
-	/// dotNS cannot issue) makes the `Raw` suffix the context, verbatim.
-	pub fn development_context_bytes(context: &ProductProofContext) -> [u8; 32] {
-		if context.product_id == RAW_CONTEXT_PRODUCT_ID &&
-			let DerivationIndex::Raw(bytes) = context.suffix
-		{
-			return bytes;
-		}
-		super::context_bytes(context)
-	}
-}
-pub use development::development_context_bytes;
 
 pub fn context_bytes(context: &ProductProofContext) -> [u8; 32] {
 	let suffix = derivation_index_bytes(&context.suffix);

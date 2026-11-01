@@ -32,12 +32,12 @@ use truapi::{
 		AuthState, ChainProvider, CoreStorage, CoreStorageKey, CreateTransactionReview,
 		DevicePermissionStatus, Features, HopProvider, JsonRpcConnection, LocaleHost,
 		NativeChatFileExportRequest, NativeChatFilePickRequest, NativeChatFilesHost,
-		NativeChatPickedFile, Navigation, Notifications, PermissionDecision, PermissionStatusHost,
-		Permissions, PreimageHost, ProductContext, ProductOperations, ProductStorage,
-		ProductStorageKey, ProviderError, SessionUiInfo, SignPayloadReview, SignRawReview,
-		ThemeHost, UserConfirmation, UserConfirmationReview,
+		NativeChatPickedFile, Navigation, NftPurseDrainDestination, Notifications,
+		PermissionDecision, PermissionStatusHost, Permissions, PreimageHost, ProductContext,
+		ProductId, ProductOperations, ProductStorage, ProductStorageKey, ProviderError,
+		SessionUiInfo, SignPayloadReview, SignRawReview, ThemeHost, UserConfirmation,
+		UserConfirmationReview,
 	},
-	v01,
 };
 
 use crate::{
@@ -133,7 +133,7 @@ impl std::error::Error for StorageError {
 	}
 }
 
-impl From<StorageError> for v01::HostLocalStorageReadError {
+impl From<StorageError> for truapi::v01::HostLocalStorageReadError {
 	fn from(error: StorageError) -> Self {
 		Self::Unknown { reason: format!("{:#}", anyhow::Error::new(error)) }
 	}
@@ -194,7 +194,8 @@ pub struct CliPlatform {
 	chain: CliChainProvider,
 	/// Chain roles this host serves, answered by `Features::supported_chains`.
 	chains: truapi::platform::HostChainSet,
-	product_storage: Mutex<HashMap<String, HashMap<String, Vec<u8>>>>,
+	extension_versions: truapi::platform::ExtensionVersionMap,
+	product_storage: Mutex<HashMap<ProductId, HashMap<String, Vec<u8>>>>,
 	core_storage: Mutex<HashMap<Vec<u8>, Vec<u8>>>,
 	core_storage_gate: Mutex<()>,
 	/// Device-scoped core slots, kept outside the per-user namespaces that
@@ -280,6 +281,7 @@ impl CliPlatform {
 		Arc::new(Self {
 			chain: CliChainProvider::new(network),
 			chains: network.host_chain_set(),
+			extension_versions: network.extension_versions(),
 			product_storage: Mutex::new(product_storage),
 			core_storage: Mutex::new(HashMap::new()),
 			core_storage_gate: Mutex::new(()),
@@ -318,7 +320,7 @@ impl CliPlatform {
 
 	fn persist_product_storage(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		values: &HashMap<String, Vec<u8>>,
 	) -> Result<(), StorageError> {
 		let Some(directory) = self
@@ -729,7 +731,10 @@ async fn prompt_decision(action: &str, detail: &str, kind: ApprovalKind) -> Perm
 
 #[async_trait]
 impl ProductStorage for CliPlatform {
-	async fn read(&self, key: String) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
+	async fn read(
+		&self,
+		key: String,
+	) -> Result<Option<Vec<u8>>, truapi::v01::HostLocalStorageReadError> {
 		let scoped = ProductStorageKey::decode(&key)?;
 		Ok(self
 			.product_storage
@@ -744,19 +749,19 @@ impl ProductStorage for CliPlatform {
 		&self,
 		key: String,
 		value: Vec<u8>,
-	) -> Result<(), v01::HostLocalStorageReadError> {
+	) -> Result<(), truapi::v01::HostLocalStorageReadError> {
 		let scoped = ProductStorageKey::decode(&key)?;
 		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
-		let values = storage.entry(scoped.product_id().to_string()).or_default();
+		let values = storage.entry(scoped.product_id().clone()).or_default();
 		values.insert(scoped.key().to_string(), value);
 		self.persist_product_storage(scoped.product_id(), values)?;
 		Ok(())
 	}
 
-	async fn clear(&self, key: String) -> Result<(), v01::HostLocalStorageReadError> {
+	async fn clear(&self, key: String) -> Result<(), truapi::v01::HostLocalStorageReadError> {
 		let scoped = ProductStorageKey::decode(&key)?;
 		let mut storage = self.product_storage.lock().expect("product storage mutex poisoned");
-		let values = storage.entry(scoped.product_id().to_string()).or_default();
+		let values = storage.entry(scoped.product_id().clone()).or_default();
 		values.remove(scoped.key());
 		self.persist_product_storage(scoped.product_id(), values)?;
 		Ok(())
@@ -1056,6 +1061,15 @@ impl Permissions for CliPlatform {
 }
 
 #[async_trait]
+impl truapi::platform::ExtrinsicVersionHost for CliPlatform {
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<truapi::platform::ExtensionVersionMap, api::GenericError> {
+		Ok(self.extension_versions.clone())
+	}
+}
+
+#[async_trait]
 impl Features for CliPlatform {
 	async fn feature_supported(
 		&self,
@@ -1158,7 +1172,7 @@ impl UserConfirmation for CliPlatform {
 
 /// Names the product that asked, for the reviews that carry one. A relayed
 /// request carries no caller, and saying so is more use than naming nobody.
-fn asking(calling_product_id: Option<&str>) -> String {
+fn asking(calling_product_id: Option<&ProductId>) -> String {
 	match calling_product_id {
 		Some(product_id) => format!("Product {product_id}"),
 		None => "A paired host".to_string(),
@@ -1174,7 +1188,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "sign payload",
             format!(
                 "{} requested a SCALE payload signature for the {} account.",
-                asking(calling_product_id.as_deref()),
+                asking(calling_product_id.as_ref()),
                 request.account.dot_ns_identifier,
             ),
         ),
@@ -1190,7 +1204,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "sign raw data",
             format!(
                 "{} requested a raw-data signature for the {} account. The payload is hidden here.",
-                asking(calling_product_id.as_deref()),
+                asking(calling_product_id.as_ref()),
                 request.account.dot_ns_identifier,
             ),
         ),
@@ -1218,7 +1232,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "sign statement proof",
             format!(
                 "{} requested a Statement Store proof signature for the {} account over a {}-byte payload.",
-                asking(review.calling_product_id.as_deref()),
+                asking(review.calling_product_id.as_ref()),
                 review.account.dot_ns_identifier,
                 review.payload.len()
             ),
@@ -1230,7 +1244,7 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "create transaction",
             format!(
                 "{} requested a transaction from the {} account.",
-                asking(calling_product_id.as_deref()),
+                asking(calling_product_id.as_ref()),
                 payload.signer.dot_ns_identifier,
             ),
         ),
@@ -1323,12 +1337,32 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
             "allow calling",
             format!(
                 "Product {} requested calling permission for account 0x{} on network 0x{}. Microphone and camera access are separate permissions.",
-                review.product_id.chars().take(255).flat_map(char::escape_default).collect::<String>(),
+                review.product_id.as_str().chars().take(255).flat_map(char::escape_default).collect::<String>(),
                 hex::encode(review.account),
                 hex::encode(review.network),
             ),
         ),
+        UserConfirmationReview::NftPurseDrain(review) => (
+            "move NFT purse items",
+            format!(
+                "Product {} requested to move {} item(s) out of purse {}, owned by {}, to {}.",
+                review.calling_product_id,
+                review.item_count,
+                review.from_purse,
+                review.owner,
+                drain_destination(&review.destination),
+            ),
+        ),
     }
+}
+
+fn drain_destination(destination: &NftPurseDrainDestination) -> String {
+	match destination {
+		NftPurseDrainDestination::Purse { purse } => format!("purse {purse}"),
+		NftPurseDrainDestination::ExternalKey { key } => format!("key 0x{}", hex::encode(key)),
+		NftPurseDrainDestination::Cheque => "a cheque".to_owned(),
+		NftPurseDrainDestination::Refund => "the sender of a deposited cheque".to_owned(),
+	}
 }
 
 impl ThemeHost for CliPlatform {
@@ -1357,7 +1391,7 @@ impl LocaleHost for CliPlatform {
 impl PreimageHost for CliPlatform {
 	fn lookup_preimage(
 		&self,
-		key: Vec<u8>,
+		key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, api::GenericError>> {
 		self.bulletin.subscribe(key)
 	}
@@ -1376,8 +1410,8 @@ struct ProductStorageDocument {
 	values: HashMap<String, String>,
 }
 
-fn load_product_storage(directory: &Path) -> HashMap<String, HashMap<String, Vec<u8>>> {
-	let mut products = HashMap::<String, HashMap<String, Vec<u8>>>::new();
+fn load_product_storage(directory: &Path) -> HashMap<ProductId, HashMap<String, Vec<u8>>> {
+	let mut products = HashMap::<ProductId, HashMap<String, Vec<u8>>>::new();
 
 	let entries = match fs::read_dir(directory) {
 		Ok(entries) => Some(entries),
@@ -1416,7 +1450,7 @@ fn load_product_storage(directory: &Path) -> HashMap<String, HashMap<String, Vec
 	products
 }
 
-fn load_product_storage_file(path: &Path) -> Option<(String, HashMap<String, Vec<u8>>)> {
+fn load_product_storage_file(path: &Path) -> Option<(ProductId, HashMap<String, Vec<u8>>)> {
 	let text = match fs::read_to_string(path) {
 		Ok(text) => text,
 		Err(error) => {
@@ -1439,8 +1473,8 @@ fn load_product_storage_file(path: &Path) -> Option<(String, HashMap<String, Vec
 			return None;
 		},
 	};
-	let normalized = match ProductStorageKey::new(&document.product_id, "") {
-		Ok(scoped) => scoped.product_id().to_string(),
+	let normalized = match document.product_id.parse::<ProductId>() {
+		Ok(product_id) => product_id,
 		Err(error) => {
 			tracing::warn!(
 				path = %path.display(),
@@ -1471,7 +1505,7 @@ fn load_product_storage_file(path: &Path) -> Option<(String, HashMap<String, Vec
 
 fn save_product_storage(
 	directory: &Path,
-	product_id: &str,
+	product_id: &ProductId,
 	values: &HashMap<String, Vec<u8>>,
 ) -> Result<(), StorageError> {
 	fs::create_dir_all(directory).map_err(|source| StorageError::CreateProductDirectory {
@@ -1487,8 +1521,9 @@ fn save_product_storage(
 	atomic_write(&product_storage_path(directory, product_id), text.as_bytes())
 }
 
-fn product_storage_path(directory: &Path, product_id: &str) -> PathBuf {
+fn product_storage_path(directory: &Path, product_id: &ProductId) -> PathBuf {
 	let mut slug = product_id
+		.as_str()
 		.chars()
 		.map(|character| {
 			if character.is_ascii_alphanumeric() || matches!(character, '.' | '-') {
@@ -1503,7 +1538,7 @@ fn product_storage_path(directory: &Path, product_id: &str) -> PathBuf {
 	if slug.is_empty() {
 		slug.push_str("product");
 	}
-	let digest = Sha256::digest(product_id.as_bytes());
+	let digest = Sha256::digest(product_id.as_str().as_bytes());
 	directory.join(format!("{slug}--{}.json", hex::encode(digest)))
 }
 
@@ -1917,7 +1952,7 @@ mod tests {
 		// the comment there promises stays with its own user, so that is what
 		// isolation is asserted on.
 		let alice_key =
-			ProductStorageKey::new("demo-product.dot", "secret").expect("product storage key");
+			ProductStorageKey::new("demo-product.dot".parse().expect("valid product ID"), "secret");
 		platform
 			.write(alice_key.encode(), b"alice-only".to_vec())
 			.await
@@ -2086,7 +2121,7 @@ mod tests {
 			None,
 		);
 		let product_key =
-			ProductStorageKey::new("product.dot", "theme").expect("product storage key");
+			ProductStorageKey::new("product.dot".parse().expect("valid product ID"), "theme");
 
 		platform.switch_pairing_user_storage("alice.dot").expect("select alice");
 		futures::executor::block_on(platform.write(product_key.encode(), b"dark".to_vec()))
@@ -2182,10 +2217,10 @@ mod tests {
 		let temporary = tempdir().expect("create pairing storage root");
 		let network_dir = temporary.path().join("testnet");
 		let product_key =
-			ProductStorageKey::new("product.dot", "theme").expect("product storage key");
+			ProductStorageKey::new("product.dot".parse().expect("valid product ID"), "theme");
 		save_product_storage(
 			&network_dir.join("pairing-host/storage"),
-			"product.dot",
+			product_key.product_id(),
 			&HashMap::from([("theme".to_string(), b"dark".to_vec())]),
 		)
 		.expect("write bootstrap pairing product storage");
@@ -2209,7 +2244,7 @@ mod tests {
 		assert_eq!(
 			load_product_storage(&network_dir.join("alice.dot_pairing_host/storage")),
 			HashMap::from([(
-				"product.dot".to_string(),
+				product_key.product_id().clone(),
 				HashMap::from([("theme".to_string(), b"dark".to_vec())]),
 			)])
 		);
@@ -2221,7 +2256,7 @@ mod tests {
 	fn statement_proof_approval_names_both_products_without_dumping_payload() {
 		let review = UserConfirmationReview::StatementStoreProductSign(
 			truapi::platform::StatementStoreProductSignReview {
-				calling_product_id: Some("dim2next.paseo".to_string()),
+				calling_product_id: Some("dim2next.paseo".parse().expect("valid product ID")),
 				account: api::ProductAccountId {
 					dot_ns_identifier: "dim2.paseo".parse().expect("valid product ID"),
 					derivation_index: api::DerivationIndex::Index(0),
@@ -2244,14 +2279,14 @@ mod tests {
 	#[test]
 	fn vrf_approval_names_both_products_without_dumping_transcript_values() {
 		let review = UserConfirmationReview::SignVrf(truapi::platform::SignVrfReview {
-			calling_product_id: "caller.dot".to_string(),
-			request: truapi::v01::HostAccountSignVrfRequest {
-				account: truapi::v01::ProductAccountId {
+			calling_product_id: "caller.dot".parse().expect("valid product ID"),
+			request: api::HostAccountSignVrfRequest {
+				account: api::ProductAccountId {
 					dot_ns_identifier: "target.dot".parse().expect("valid product ID"),
-					derivation_index: truapi::v01::DerivationIndex::Raw([7; 32]),
+					derivation_index: api::DerivationIndex::Raw([7; 32]),
 				},
 				transcript_label: b"lottery".to_vec(),
-				items: vec![truapi::v01::VrfTranscriptItem {
+				items: vec![api::VrfTranscriptItem {
 					label: b"round".to_vec(),
 					value: vec![0x42; 128],
 				}],
@@ -2299,9 +2334,9 @@ mod tests {
 	#[test]
 	fn product_storage_uses_safe_per_product_files() {
 		let temporary = tempdir().expect("create product storage root");
-		let first = ProductStorageKey::new("first.dot", "theme").expect("first product key");
+		let first = ProductStorageKey::new("first.dot".parse().expect("valid product ID"), "theme");
 		let localhost =
-			ProductStorageKey::new("localhost:3000", "theme").expect("localhost product key");
+			ProductStorageKey::new("localhost:3000".parse().expect("valid product ID"), "theme");
 		let platform = CliPlatform::new(
 			test_network(),
 			Some(test_storage_paths(temporary.path(), "test")),
@@ -2355,7 +2390,7 @@ mod tests {
 	#[test]
 	fn product_storage_is_isolated_by_session_then_product() {
 		let temporary = tempdir().expect("create session storage root");
-		let key = ProductStorageKey::new("same.dot", "value").expect("product key");
+		let key = ProductStorageKey::new("same.dot".parse().expect("valid product ID"), "value");
 		let first = CliPlatform::new(
 			test_network(),
 			Some(test_storage_paths(temporary.path(), "first")),
@@ -2375,9 +2410,11 @@ mod tests {
 		});
 
 		let first_path =
-			product_storage_path(&temporary.path().join("storage").join("first"), "same.dot");
-		let second_path =
-			product_storage_path(&temporary.path().join("storage").join("second"), "same.dot");
+			product_storage_path(&temporary.path().join("storage").join("first"), key.product_id());
+		let second_path = product_storage_path(
+			&temporary.path().join("storage").join("second"),
+			key.product_id(),
+		);
 		assert!(first_path.is_file());
 		assert!(second_path.is_file());
 		assert_ne!(

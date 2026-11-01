@@ -460,10 +460,9 @@ async fn set_product_grants(
 		platform::{PermissionAuthorizationRequest, PermissionAuthorizationStatus},
 	};
 	let product = crate::platform::ProductContext::new_with_execution(
-		product.to_owned(),
+		truapi::latest::ProductId::for_test(product),
 		crate::platform::ProductExecutionKind::Worker,
-	)
-	.expect("test product id is valid");
+	);
 	let permissions = PermissionsService::new(platform, platform, &product);
 	permissions
 		.set_authorization_status(
@@ -712,7 +711,11 @@ fn ordinary_polling_and_opening_do_not_activate_an_absent_or_guarded_purse() {
 				HostProductDeviceChatRequest::ReconcilePayments,
 			] {
 				let response = registry
-					.execute(fixture.context.clone(), PRODUCT.into(), operation)
+					.execute(
+						fixture.context.clone(),
+						truapi::latest::ProductId::for_test(PRODUCT),
+						operation,
+					)
 					.await
 					.unwrap();
 				assert!(response.payments.is_empty());
@@ -724,7 +727,7 @@ fn ordinary_polling_and_opening_do_not_activate_an_absent_or_guarded_purse() {
 			let response = registry
 				.execute(
 					fixture.context.clone(),
-					PRODUCT.into(),
+					truapi::latest::ProductId::for_test(PRODUCT),
 					HostProductDeviceChatRequest::Open {
 						statement: request(
 							&actor,
@@ -1955,7 +1958,7 @@ fn contact_avatars_over_the_product_follow_what_the_contact_shares() {
 			ContactAvatarPlacement::new(
 				host.clone(),
 				fixture.platform.clone(),
-				crate::platform::ProductContext::new(PRODUCT.to_string()).unwrap(),
+				crate::platform::ProductContext::new(truapi::latest::ProductId::for_test(PRODUCT)),
 				Arc::downgrade(&fixture.context.services),
 			)
 		});
@@ -2536,7 +2539,7 @@ fn a_peer_that_becomes_ready_is_sent_the_disclosure_in_that_request() {
 		let initialized = registry
 			.execute(
 				fixture.context.clone(),
-				PRODUCT.into(),
+				truapi::latest::ProductId::for_test(PRODUCT),
 				HostProductDeviceChatRequest::Initialize,
 			)
 			.await
@@ -2546,7 +2549,7 @@ fn a_peer_that_becomes_ready_is_sent_the_disclosure_in_that_request() {
 		let opened = registry
 			.execute(
 				fixture.context.clone(),
-				PRODUCT.into(),
+				truapi::latest::ProductId::for_test(PRODUCT),
 				HostProductDeviceChatRequest::Open {
 					statement: acknowledgment(&actor, &identity, &peer, "retire-legacy", false),
 				},
@@ -2869,7 +2872,9 @@ fn personal_references_render_across_apps_with_independent_withdrawals_and_globa
 			ContactAvatarPlacement::new(
 				host.clone(),
 				fixture.platform.clone(),
-				crate::platform::ProductContext::new("not-chat.dot".into()).unwrap(),
+				crate::platform::ProductContext::new(truapi::latest::ProductId::for_test(
+					"not-chat.dot",
+				)),
 				Arc::downgrade(&fixture.context.services),
 			)
 		});

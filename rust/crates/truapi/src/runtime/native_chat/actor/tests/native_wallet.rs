@@ -272,7 +272,7 @@ fn locked_native_wallet_never_falls_back_and_ordinary_chat_stays_available() {
 		registry
 			.execute(
 				fixture.context.clone(),
-				PRODUCT.into(),
+				truapi::latest::ProductId::for_test(PRODUCT),
 				HostProductDeviceChatRequest::Initialize,
 			)
 			.await
@@ -287,7 +287,7 @@ fn locked_native_wallet_never_falls_back_and_ordinary_chat_stays_available() {
 		let response = registry
 			.execute(
 				fixture.context.clone(),
-				PRODUCT.into(),
+				truapi::latest::ProductId::for_test(PRODUCT),
 				HostProductDeviceChatRequest::Open {
 					statement: request(
 						&actor,

@@ -12,6 +12,10 @@
 //! encoded inside any of these payloads.
 
 /// A versioned message envelope.
+///
+/// The first encoded byte is `version() - 1`. Retained versions are contiguous
+/// through [`LATEST`](Self::LATEST), but an older prefix may be retired. The
+/// dispatcher uses the latest version to refuse a request in a newer version.
 pub trait Versioned: Sized {
 	/// The newest version's payload. Handlers operate exclusively on this.
 	type Latest;

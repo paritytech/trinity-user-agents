@@ -19,6 +19,11 @@ interface Preferences {
         defaultValue: String,
     ): String
 
+    fun putStringNow(
+        field: String,
+        value: String?,
+    ): Boolean
+
     fun getString(field: String): String?
 
     fun putBoolean(

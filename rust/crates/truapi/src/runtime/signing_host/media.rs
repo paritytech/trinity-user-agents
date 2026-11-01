@@ -2,10 +2,9 @@
 
 use std::sync::MutexGuard;
 
-use crate::platform::normalize_product_identifier;
 use parity_scale_codec::Encode;
 use schnorrkel::Keypair;
-use truapi::v01;
+use truapi::latest::{DerivationIndex, ProductAccountId, ProductId};
 
 use super::{LocalGrantState, SigningHost, local_session_generation};
 use crate::{
@@ -27,7 +26,7 @@ impl SigningHost {
 	fn media_session_guard(
 		&self,
 		session: &AuthoritySession,
-		product_id: Option<&str>,
+		product_id: Option<&ProductId>,
 	) -> Result<MutexGuard<'_, LocalGrantState>, AuthorityError> {
 		let state = self.local_grants.lock().expect("local AutoSigning grant mutex poisoned");
 		let current = self.session_state.current().ok_or(AuthorityError::Disconnected)?;
@@ -41,19 +40,11 @@ impl SigningHost {
 
 	fn media_account_keypair(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 	) -> Result<(MediaIdentity, Keypair), AuthorityError> {
-		if product_id.is_empty() || product_id.len() > MAX_PRODUCT_ID_BYTES {
-			return Err(AuthorityError::Rejected);
-		}
-		let canonical =
-			normalize_product_identifier(product_id).map_err(|_| AuthorityError::Rejected)?;
-		if canonical != product_id {
-			return Err(AuthorityError::Rejected);
-		}
-		let account = v01::ProductAccountId {
-			dot_ns_identifier: canonical.parse().expect("normalized product id"),
-			derivation_index: v01::DerivationIndex::Index(0),
+		let account = ProductAccountId {
+			dot_ns_identifier: product_id.clone(),
+			derivation_index: DerivationIndex::Index(0),
 		};
 		let keypair = self.product_keypair(&account)?;
 		let identity = MediaIdentity {
@@ -69,8 +60,9 @@ impl SigningHost {
 		session: &AuthoritySession,
 		unsigned: UnsignedAdvertisement,
 	) -> Result<[u8; 64], AuthorityError> {
-		let _guard = self.media_session_guard(session, Some(&unsigned.product_id))?;
-		let (expected, keypair) = self.media_account_keypair(&unsigned.product_id)?;
+		let product_id = canonical_media_product(&unsigned.product_id)?;
+		let _guard = self.media_session_guard(session, Some(&product_id))?;
+		let (expected, keypair) = self.media_account_keypair(&product_id)?;
 		validate_unsigned_advertisement(&unsigned, &expected, current_unix_secs())
 			.map_err(|_| AuthorityError::Rejected)?;
 		Ok(sign_advertisement(&keypair, &unsigned))
@@ -81,7 +73,7 @@ impl SigningHost {
 	pub(super) fn certify_encoded_media_endpoint(
 		&self,
 		session: &AuthoritySession,
-		product_id: &str,
+		product_id: &ProductId,
 		payload: &[u8],
 	) -> Result<[u8; 64], AuthorityError> {
 		let _guard = self.media_session_guard(session, Some(product_id))?;
@@ -110,6 +102,17 @@ impl SigningHost {
 				reason: "Media statement signing unavailable".to_string(),
 			})
 	}
+}
+
+fn canonical_media_product(value: &str) -> Result<ProductId, AuthorityError> {
+	if value.is_empty() || value.len() > MAX_PRODUCT_ID_BYTES {
+		return Err(AuthorityError::Rejected);
+	}
+	let product: ProductId = value.parse().map_err(|_| AuthorityError::Rejected)?;
+	if product.as_str() != value {
+		return Err(AuthorityError::Rejected);
+	}
+	Ok(product)
 }
 
 fn sign_advertisement(keypair: &Keypair, unsigned: &UnsignedAdvertisement) -> [u8; 64] {

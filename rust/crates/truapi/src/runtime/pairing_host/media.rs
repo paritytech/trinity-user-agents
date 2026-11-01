@@ -1,11 +1,10 @@
 //! Media uses the authenticated SSO channel only for account certification.
 //! Transport proofs use the already-owned session statement key, never a new allowance.
 
-use crate::platform::normalize_product_identifier;
 use parity_scale_codec::Encode;
-use truapi::CallContext;
+use truapi::{CallContext, latest::ProductId};
 
-use super::{PairingHost, sso_channel::remote_authority_error};
+use super::PairingHost;
 use crate::{
 	host_internal::sso_messages::{
 		MediaEndpointCertificationError, MediaEndpointCertificationRequest,
@@ -29,25 +28,20 @@ impl PairingHost {
 		session: &AuthoritySession,
 		unsigned: UnsignedAdvertisement,
 	) -> Result<[u8; 64], AuthorityError> {
-		let (current, epoch) = {
-			let lifecycle =
-				self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
-			(self.current_private_session(session)?, lifecycle.epoch)
-		};
+		let epoch = self.session.current_session_lifecycle_epoch();
+		let current = self.current_private_session(session)?;
+		let product_id: ProductId =
+			unsigned.product_id.parse().map_err(|_| AuthorityError::Rejected)?;
 		if unsigned.product_id.is_empty() ||
 			unsigned.product_id.len() > MAX_PRODUCT_ID_BYTES ||
-			unsigned.network != self.statement_store.genesis_hash() ||
-			normalize_product_identifier(&unsigned.product_id)
-				.map_err(|_| AuthorityError::Rejected)? !=
-				unsigned.product_id
+			unsigned.network != self.services.statement_store.genesis_hash() ||
+			product_id.as_str() != unsigned.product_id
 		{
 			return Err(AuthorityError::Rejected);
 		}
-		let subtree = self
-			.remote_product_subtree_public_key(cx, &current, unsigned.product_id.clone())
-			.await?;
+		let subtree = self.remote_product_subtree_public_key(cx, &current, &product_id).await?;
 		let expected = MediaIdentity {
-			network: self.statement_store.genesis_hash(),
+			network: self.services.statement_store.genesis_hash(),
 			product_id: unsigned.product_id.clone(),
 			account: derive_product_public_key(subtree, index_bytes(0))
 				.map_err(|_| AuthorityError::Rejected)?,
@@ -55,20 +49,21 @@ impl PairingHost {
 		validate_unsigned_advertisement(&unsigned, &expected, current_unix_secs())
 			.map_err(|_| AuthorityError::Rejected)?;
 		self.current_private_session(session)?;
-		if !self.is_session_lifecycle_current(epoch) {
+		if !self.session.is_session_lifecycle_current(epoch) {
 			return Err(AuthorityError::Disconnected);
 		}
 		let signature = self
+			.session
 			.call(
 				cx,
 				&current,
 				MediaEndpointCertificationRequest {
-					product_id: expected.product_id,
+					product_id,
 					unsigned_advertisement: unsigned.encode(),
 				},
 			)
 			.await
-			.map_err(remote_authority_error)?
+			.map_err(AuthorityError::from)?
 			.map_err(|error| match error {
 				MediaEndpointCertificationError::Disconnected => AuthorityError::Disconnected,
 				MediaEndpointCertificationError::Rejected => AuthorityError::Rejected,
@@ -78,14 +73,14 @@ impl PairingHost {
 			})?;
 		// Authenticate the answer and fence delayed replies against logout or
 		// replacement, including reactivation with the same persisted SSO ids.
-		let lifecycle = self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
-		if lifecycle.epoch != epoch {
-			return Err(AuthorityError::Disconnected);
-		}
-		self.current_private_session(session)?;
-		unsigned
-			.authenticate(signature, current_unix_secs())
-			.map_err(|_| AuthorityError::Rejected)?;
+		self.session
+			.while_session_current(&current, epoch, || {
+				self.current_private_session(session)?;
+				unsigned
+					.authenticate(signature, current_unix_secs())
+					.map_err(|_| AuthorityError::Rejected)
+			})
+			.ok_or(AuthorityError::Disconnected)??;
 		Ok(signature)
 	}
 
@@ -97,14 +92,18 @@ impl PairingHost {
 		expires_at: u64,
 	) -> Result<Vec<u8>, AuthorityError> {
 		let fields = media_statement_fields(payload, topics, expires_at)?;
-		let _lifecycle = self.session_lifecycle.lock().expect("session lifecycle mutex poisoned");
+		let epoch = self.session.current_session_lifecycle_epoch();
 		let current = self.current_private_session(session)?;
-		let sso = current.sso.as_ref().ok_or(AuthorityError::Disconnected)?;
-		sign_statement_fields(sso.ss_secret, sso.ss_public_key, fields)
-			.map(|fields| fields.encode())
-			.map_err(|_| AuthorityError::Unavailable {
-				reason: "Media statement signing unavailable".to_string(),
+		self.session
+			.while_session_current(&current, epoch, || {
+				let sso = current.sso.as_ref().ok_or(AuthorityError::Disconnected)?;
+				sign_statement_fields(sso.ss_secret, sso.ss_public_key, fields)
+					.map(|fields| fields.encode())
+					.map_err(|_| AuthorityError::Unavailable {
+						reason: "Media statement signing unavailable".to_string(),
+					})
 			})
+			.ok_or(AuthorityError::Disconnected)?
 	}
 }
 
@@ -132,7 +131,9 @@ mod tests {
 		let authority = PairingHost::new(services, config);
 		let private_session = sso_session_info();
 		let expected_signer = private_session.sso.as_ref().unwrap().ss_public_key;
-		futures::executor::block_on(authority.set_connected_session_for_tests(private_session));
+		futures::executor::block_on(
+			authority.session().set_connected_session_for_tests(private_session),
+		);
 		let session = authority.current_session().unwrap();
 		let expires_at = current_unix_secs() + 60;
 		let bytes = authority
@@ -141,7 +142,9 @@ mod tests {
 		let verified = decode_verified_statement_data(&bytes, Some(expected_signer)).unwrap();
 		assert_eq!(verified.data, vec![3, 2, 1]);
 		assert_eq!(verified.expiry, Some(expires_at << 32));
-		futures::executor::block_on(authority.disconnect());
+		futures::executor::block_on(crate::runtime::HostSession::disconnect(
+			authority.session().as_ref(),
+		));
 		assert_eq!(
 			authority.sign_media_statement(&session, vec![1], vec![[9; 32]], expires_at),
 			Err(AuthorityError::Disconnected),

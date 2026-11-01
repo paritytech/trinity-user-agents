@@ -82,6 +82,11 @@ private extension AppPermissionsViewModelFactory {
                 String(localized: .Products.appPermissionStatementSubmitTitle),
                 String(localized: .Products.permissionBodyStatementSubmit)
             )
+        case let .jamPeersAccess(genesis):
+            (
+                String(localized: .Products.appPermissionJamPeersTitle),
+                ProductPermission.jamPeersDescription(genesis: genesis)
+            )
         case .userIdentityAccess:
             (
                 String(localized: .Products.appPermissionUserIdentityTitle),
@@ -142,6 +147,11 @@ private extension AppPermissionsViewModelFactory {
 }
 
 extension ProductPermission {
+    static func jamPeersDescription(genesis: String) -> String {
+        String(localized: .Products.permissionLabelJamPeers(genesis: genesis))
+            + "\n" + String(localized: .Products.permissionBodyJamPeers)
+    }
+
     static func statementStoreAllowanceDescription(derivationIndex: ProductAccountSelector?) -> String {
         switch derivationIndex {
         case nil:

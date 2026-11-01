@@ -18,10 +18,12 @@ mod bulletin_lookup;
 mod chain;
 mod chat;
 mod chat_files;
+mod cleartext_storage;
 mod contacts;
 mod dotns_read;
 mod frame_server;
 mod game;
+mod installation;
 mod local_network;
 mod network;
 mod platform;
@@ -42,8 +44,9 @@ mod update;
 use std::{
 	collections::HashMap,
 	fmt,
-	future::Future,
+	future::{Future, ready},
 	net::{Ipv4Addr, SocketAddr},
+	ops::ControlFlow,
 	path::{Path, PathBuf},
 	process::ExitStatus,
 	str::FromStr,
@@ -57,21 +60,25 @@ use clap::{
 	parser::ValueSource,
 };
 use futures::future::BoxFuture;
+use subxt::utils::H256;
 use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 use truapi::{
 	AnnouncedPairing, DebugSink, PairedSsoPeer, PairingHostConfig, PairingHostRuntime,
 	PairingProposal, ResponderExit, SigningHostConfig, SigningHostRuntime, StatementRenewalTarget,
 	WsDebugSink,
+	chain::ExtrinsicService,
 	host_logic::dotns_gateway::{
 		MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,
 	},
-	latest::GenericError,
+	latest::{GenericError, ProductId},
 	platform::{
 		ChatPlatform, CoreStorageKey, HostInfo, PermissionAuthorizationRequest,
 		PermissionStatusHost, PlatformInfo, ProductExecutionKind,
 	},
 	statement_allowance as alloc,
+	statement_allowance::{ExtrinsicTarget, PersonhoodSigner},
 	subscription::Spawner,
+	time::{Backoff, retry},
 };
 
 use crate::{
@@ -726,8 +733,6 @@ async fn run_pgas_check(
 	lookback: u32,
 	submit: bool,
 ) -> Result<()> {
-	use std::sync::Arc;
-
 	use truapi::statement_allowance::pgas;
 
 	let entropy = bip39::Mnemonic::parse(mnemonic.trim())
@@ -757,44 +762,47 @@ async fn run_pgas_check(
 		.map_err(anyhow::Error::msg)?;
 	let asset_hub_metadata =
 		alloc::fetch_metadata(&asset_hub_rpc).await.map_err(anyhow::Error::msg)?;
-	let asset_hub_state =
-		alloc::fetch_chain_state(&asset_hub_rpc).await.map_err(anyhow::Error::msg)?;
+	let (spec_version, transaction_version) =
+		alloc::fetch_runtime_version(&asset_hub_rpc).await.map_err(anyhow::Error::msg)?;
+	let genesis_hash =
+		alloc::fetch_genesis_hash(&asset_hub_rpc).await.map_err(anyhow::Error::msg)?;
 	let network_suffix = alloc::slot::read_network_suffix(&asset_hub_rpc)
 		.await
 		.map_err(anyhow::Error::msg)?;
 	println!(
-		"asset hub: metadata V{} specVersion={} txVersion={} genesis=0x{}",
+		"asset hub: metadata V{} specVersion={spec_version} txVersion={transaction_version} \
+		 genesis=0x{}",
 		asset_hub_metadata.metadata_version(),
-		asset_hub_state.spec_version,
-		asset_hub_state.transaction_version,
-		hex::encode(asset_hub_state.genesis_hash),
+		hex::encode(genesis_hash),
 	);
 
+	let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
+	let collections = candidates.iter().map(|candidate| candidate.collection).collect::<Vec<_>>();
 	for candidate in &candidates {
 		println!(
 			"{} member=0x{}",
 			candidate.collection,
-			hex::encode(alloc::proof::member_key(candidate.entropy).await?)
+			hex::encode(signer.member(candidate.collection)?)
 		);
 	}
 	let memberships =
-		alloc::find_including_rings(&people_rpc, &people_metadata, &candidates, lookback)
+		alloc::find_including_rings(&people_rpc, &people_metadata, &signer, &collections, lookback)
 			.await
 			.map_err(anyhow::Error::msg)?;
 	for membership in &memberships {
 		println!(
 			"member INCLUDED in {} ring_index={} exponent={} members={}",
-			membership.collection(),
-			membership.ring.ring_index,
-			membership.ring.exponent,
-			membership.ring.members.len()
+			membership.collection,
+			membership.ring_index,
+			membership.exponent,
+			membership.members.len()
 		);
 	}
 	// The widest membership the signer actually holds; a claim needs exactly one.
 	let Some(membership) = memberships.first() else {
 		bail!("member is not in the last {lookback} rings of any collection (onboarding pending)");
 	};
-	let ring = &membership.ring;
+	let ring = membership;
 
 	let revision = alloc::ring::read_ring_revision(
 		&people_rpc,
@@ -831,7 +839,7 @@ async fn run_pgas_check(
 		&asset_hub_rpc,
 		&asset_hub_metadata,
 		ring.collection,
-		membership.entropy,
+		&signer,
 		&network_suffix,
 		day,
 		&[],
@@ -846,17 +854,19 @@ async fn run_pgas_check(
 		return Ok(());
 	}
 
-	let asset_hub =
-		alloc::ChainContext { metadata: Arc::new(asset_hub_metadata), state: asset_hub_state };
+	let extrinsics = extrinsic_service(&network);
+	let asset_hub_target =
+		ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256(network.asset_hub_genesis) };
 	let outcome = pgas::claim_pgas(pgas::PgasClaim {
 		asset_hub_rpc: &asset_hub_rpc,
-		asset_hub: &asset_hub,
+		asset_hub_metadata: &asset_hub_metadata,
+		asset_hub_target,
 		people_rpc: &people_rpc,
 		people_metadata: &people_metadata,
-		entropy: membership.entropy,
+		signer: &signer,
 		network_suffix: &network_suffix,
 		target: &target,
-		ring: &membership.ring,
+		ring,
 	})
 	.await
 	.map_err(|err| anyhow::anyhow!("claim failed: {err}"))?;
@@ -907,27 +917,29 @@ async fn run_alloc_check(
 		.await
 		.map_err(anyhow::Error::msg)?;
 	let metadata = alloc::fetch_metadata(&rpc).await.map_err(anyhow::Error::msg)?;
-	let chain_state = alloc::fetch_chain_state(&rpc).await.map_err(anyhow::Error::msg)?;
+	let (spec_version, transaction_version) =
+		alloc::fetch_runtime_version(&rpc).await.map_err(anyhow::Error::msg)?;
+	let genesis_hash = alloc::fetch_genesis_hash(&rpc).await.map_err(anyhow::Error::msg)?;
 	let network_suffix =
 		alloc::slot::read_network_suffix(&rpc).await.map_err(anyhow::Error::msg)?;
 	println!(
-		"chain: specVersion={} txVersion={} genesis=0x{}",
-		chain_state.spec_version,
-		chain_state.transaction_version,
-		hex::encode(chain_state.genesis_hash),
+		"chain: specVersion={spec_version} txVersion={transaction_version} genesis=0x{}",
+		hex::encode(genesis_hash),
 	);
 
+	let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
+	let collections = candidates.iter().map(|candidate| candidate.collection).collect::<Vec<_>>();
 	for candidate in &candidates {
 		println!(
 			"{} member=0x{} current_ring_index={}",
 			candidate.collection,
-			hex::encode(alloc::proof::member_key(candidate.entropy).await?),
+			hex::encode(signer.member(candidate.collection)?),
 			alloc::ring::read_current_ring_index(&rpc, candidate.collection)
 				.await
 				.map_err(anyhow::Error::msg)?,
 		);
 	}
-	let memberships = alloc::find_including_rings(&rpc, &metadata, &candidates, lookback)
+	let memberships = alloc::find_including_rings(&rpc, &metadata, &signer, &collections, lookback)
 		.await
 		.map_err(anyhow::Error::msg)?;
 	if memberships.is_empty() {
@@ -936,10 +948,10 @@ async fn run_alloc_check(
 	for membership in &memberships {
 		println!(
 			"member INCLUDED in {} ring_index={} exponent={} included_members={}",
-			membership.collection(),
-			membership.ring.ring_index,
-			membership.ring.exponent,
-			membership.ring.members.len(),
+			membership.collection,
+			membership.ring_index,
+			membership.exponent,
+			membership.members.len(),
 		);
 	}
 
@@ -956,8 +968,21 @@ async fn run_alloc_check(
 			continue;
 		}
 		print!("{}: ", candidate.collection);
-		report_slot_scan(&rpc, &metadata, *candidate, &network_suffix, period, &target, now)
-			.await?;
+		report_slot_scan(
+			&rpc,
+			&metadata,
+			alloc::slot::SlotScan {
+				collection: candidate.collection,
+				signer: &signer,
+				network_suffix: &network_suffix,
+				period,
+				target: &target,
+				excluded: &[],
+				reuse_existing: true,
+			},
+			now,
+		)
+		.await?;
 	}
 
 	if submit {
@@ -967,18 +992,25 @@ async fn run_alloc_check(
 		let scans = alloc::scan_collections(
 			&rpc,
 			&metadata,
-			&candidates,
-			&network_suffix,
-			period,
-			&target,
-			true,
+			&signer,
+			&collections,
+			alloc::CollectionScanParams {
+				network_suffix: &network_suffix,
+				period,
+				target: &target,
+				reuse_existing: true,
+			},
 		)
 		.await
 		.map_err(anyhow::Error::msg)?;
+		let extrinsics = extrinsic_service(&network);
+		let target_chain =
+			ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256(network.people_genesis) };
 		match alloc::register_statement_account_pooled(
 			&rpc,
 			&metadata,
-			&chain_state,
+			target_chain,
+			&signer,
 			&scans,
 			&memberships,
 			alloc::PooledRegistrationParams {
@@ -1019,27 +1051,11 @@ async fn run_alloc_check(
 async fn report_slot_scan(
 	rpc: &alloc::rpc::RpcClient,
 	metadata: &alloc::extension::Metadata,
-	candidate: alloc::CollectionCandidate,
-	network_suffix: &[u8],
-	period: u32,
-	target: &[u8; 32],
+	scan: alloc::slot::SlotScan<'_>,
 	now: u64,
 ) -> Result<()> {
-	match alloc::slot::scan_slot_excluding(
-		rpc,
-		metadata,
-		alloc::slot::SlotScan {
-			collection: candidate.collection,
-			entropy: candidate.entropy,
-			network_suffix,
-			period,
-			target,
-			excluded: &[],
-			reuse_existing: true,
-		},
-	)
-	.await
-	{
+	let target = scan.target;
+	match alloc::slot::scan_slot_excluding(rpc, metadata, scan).await {
 		Ok(alloc::slot::SlotSelection::Free(seq)) => println!("slot scan: free seq={seq}"),
 		Ok(alloc::slot::SlotSelection::FreeSlotsExcluded) => {
 			println!("slot scan: free slots exist but are awaiting earlier submissions");
@@ -1093,6 +1109,15 @@ fn approval_policy(auto_accept: bool, network: NetworkConfig) -> Result<Approval
 		network.id
 	);
 	Ok(ApprovalPolicy::AutoAccept)
+}
+
+/// Builds the CLI's own extrinsics over `network`'s chains, with the
+/// network's V5 pipelines as the default extrinsic versions.
+fn extrinsic_service(network: &NetworkConfig) -> ExtrinsicService {
+	let provider =
+		Arc::new(chain::WsChainProvider::new(network.people_ws, network.live_chain_endpoints));
+	let versions = Arc::new(chain::PresetExtensionVersions(network.extension_versions()));
+	ExtrinsicService::from_provider(provider, tokio_spawner(), versions)
 }
 
 /// Spawner that runs runtime futures on the tokio runtime, so their WebSocket
@@ -1305,7 +1330,7 @@ async fn run_pairing_host(
 		&storage_platform,
 		&pairing_runtime,
 		|runtime, product_id, request| async move {
-			runtime.refresh_permission_authorization(&product_id, request).await
+			runtime.refresh_permission_authorization_namespace(&product_id, request).await
 		},
 	);
 	if let Some(product_id) = args.revoke_automatic_uploads {
@@ -1317,9 +1342,9 @@ async fn run_pairing_host(
 			.current_session_public_key()
 			.context("No saved paired account; no upload permission changed")?;
 		let product = truapi::platform::ProductContext::new_with_execution(
-			product_id,
+			product_id.parse()?,
 			ProductExecutionKind::App,
-		)?;
+		);
 		revoke_automatic_uploads(pairing_runtime.product_admin(product), root_public_key).await?;
 		return Ok(());
 	}
@@ -1449,9 +1474,9 @@ async fn run_signing_host(
 			.current_session_public_key()
 			.context("No active saved account; no upload permission changed")?;
 		let product = truapi::platform::ProductContext::new_with_execution(
-			product_id,
+			product_id.parse()?,
 			ProductExecutionKind::App,
-		)?;
+		);
 		revoke_automatic_uploads(session.runtime.product_admin(product), root_public_key).await?;
 		return Ok(());
 	}
@@ -1861,7 +1886,7 @@ fn observe_permission_changes<R, F, Fut>(platform: &Arc<CliPlatform>, runtime: &
 where
 	R: Send + Sync + 'static,
 	F: Fn(Arc<R>, String, PermissionAuthorizationRequest) -> Fut + Send + 'static,
-	Fut: Future<Output = Result<(), truapi::v01::GenericError>> + Send + 'static,
+	Fut: Future<Output = Result<(), GenericError>> + Send + 'static,
 {
 	let mut changes = platform.subscribe_core_storage_changes();
 	let platform = Arc::downgrade(platform);
@@ -1905,6 +1930,11 @@ fn build_signing_runtime(
 		truapi::store::core_db_config(&storage_path),
 	))
 	.with_context(|| format!("opening the core database in {}", storage_path.display()))?;
+	let installation_path = storage_path.join("installation");
+	let installation = Arc::new(installation::CliInstallation::new(installation_path));
+	let cleartext_storage_path = storage_path.join("cleartext-storage.json");
+	let cleartext_storage =
+		Arc::new(cleartext_storage::CliCleartextStorage::new(cleartext_storage_path));
 	let platform = CliPlatform::new(
 		network,
 		Some(CliStoragePaths::new(storage_path, product_storage_dir)),
@@ -1941,8 +1971,11 @@ fn build_signing_runtime(
 	runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
 	runtime.set_core_db(core_db);
 	observe_permission_changes(&platform, &runtime, |runtime, product_id, request| async move {
-		runtime.refresh_permission_authorization(&product_id, request).await
+		runtime.refresh_permission_authorization_namespace(&product_id, request).await
 	});
+	runtime.set_installation_provider(installation);
+	runtime.set_encrypted_storage(cleartext_storage);
+	runtime.start_core_services();
 	runtime.start_statement_allowance_renewal();
 	Ok((runtime, platform))
 }
@@ -2065,6 +2098,11 @@ fn persist_paired_host(session: &SigningHostSession, host: &PairedHost) -> Resul
 	Ok(())
 }
 
+/// Pauses between restarts of a paired responder, also used when removing a
+/// host that disconnected.
+const RESPONDER_RETRY_PAUSES: Backoff =
+	Backoff::new(Duration::from_secs(1), Duration::from_secs(30));
+
 fn spawn_supervised_responder(
 	runtime: Arc<SigningHostRuntime>,
 	host: PairedHost,
@@ -2072,59 +2110,66 @@ fn spawn_supervised_responder(
 ) -> tokio::task::JoinHandle<()> {
 	tokio::spawn(async move {
 		let peer = paired_sso_peer(&host);
-		let mut retry_delay = std::time::Duration::from_secs(1);
-		loop {
-			let result = runtime.resume_pairing(peer).await;
-			match result {
-				Ok(ResponderExit::PeerDisconnected) => {
-					if let Some((catalog, profile)) = &persisted {
-						loop {
-							match catalog.remove_paired_host(profile, &peer.statement_account_id) {
-								Ok(_) => break,
-								Err(error) => {
-									terminal_ui::output_event(SystemEvent::SigningHostError {
-										reason: format!(
-											"failed to remove disconnected paired device: {error}"
-										),
-									});
-									tokio::time::sleep(retry_delay).await;
-									retry_delay =
-										(retry_delay * 2).min(std::time::Duration::from_secs(30));
-								},
-							}
-						}
-						if let Err(error) = runtime
-							.untrack_statement_renewal_account(&peer.statement_account_id)
-							.await
-						{
-							terminal_ui::output_event(SystemEvent::SigningHostError {
-								reason: format!(
-									"failed to stop renewing disconnected paired device: {}",
-									error.reason
-								),
-							});
-						}
-					}
-					terminal_ui::output_event(SystemEvent::SigningHostExit {
-						outcome: format!("{:?}", ResponderExit::PeerDisconnected),
-					});
-					return;
-				},
-				Ok(ResponderExit::SubscriptionEnded) => {
-					terminal_ui::output_event(SystemEvent::SigningHostExit {
-						outcome: format!("{:?}", ResponderExit::SubscriptionEnded),
-					});
-				},
-				Err(error) => {
-					terminal_ui::output_event(SystemEvent::SigningHostError {
+		let mut pauses = RESPONDER_RETRY_PAUSES;
+		retry(
+			|| async {
+				match runtime.resume_pairing(peer).await {
+					Ok(ResponderExit::PeerDisconnected) => ControlFlow::Break(()),
+					Ok(exit @ ResponderExit::SubscriptionEnded) => {
+						ControlFlow::Continue(SystemEvent::SigningHostExit {
+							outcome: format!("{exit:?}"),
+						})
+					},
+					Err(error) => ControlFlow::Continue(SystemEvent::SigningHostError {
 						reason: error.reason,
-					});
-				},
-			}
-			tokio::time::sleep(retry_delay).await;
-			retry_delay = (retry_delay * 2).min(std::time::Duration::from_secs(30));
+					}),
+				}
+			},
+			|event| {
+				terminal_ui::output_event(event);
+				pauses.next_pause()
+			},
+		)
+		.await;
+		if let Some((catalog, profile)) = &persisted {
+			forget_disconnected_peer(&runtime, peer, catalog, profile, &mut pauses).await;
 		}
+		terminal_ui::output_event(SystemEvent::SigningHostExit {
+			outcome: format!("{:?}", ResponderExit::PeerDisconnected),
+		});
 	})
+}
+
+/// Remove a disconnected pairing host from the session and stop renewing its
+/// statement allowance.
+async fn forget_disconnected_peer(
+	runtime: &SigningHostRuntime,
+	peer: PairedSsoPeer,
+	catalog: &SessionCatalog,
+	profile: &SessionProfile,
+	pauses: &mut Backoff,
+) {
+	retry(
+		|| {
+			ready(match catalog.remove_paired_host(profile, &peer.statement_account_id) {
+				Ok(_) => ControlFlow::Break(()),
+				Err(error) => ControlFlow::Continue(error),
+			})
+		},
+		|error| {
+			terminal_ui::output_event(SystemEvent::SigningHostError {
+				reason: format!("failed to remove disconnected paired device: {error}"),
+			});
+			pauses.next_pause()
+		},
+	)
+	.await;
+	if let Err(error) = runtime.untrack_statement_renewal_account(&peer.statement_account_id).await
+	{
+		terminal_ui::output_event(SystemEvent::SigningHostError {
+			reason: format!("failed to stop renewing disconnected paired device: {}", error.reason),
+		});
+	}
 }
 
 fn start_paired_host_responder(session: &mut SigningHostSession, host: PairedHost) {
@@ -3476,12 +3521,13 @@ async fn run_pairing_login(
 	ui: &mut ActiveTerminalUi,
 ) -> Result<()> {
 	let checkpoint = ui.activity_checkpoint();
-	match ui.drive_pairing_login(label, runtime.login(product_id)).await? {
-		DriveResult::Complete(Ok(truapi::v01::HostRequestLoginResponse::Success)) => {},
-		DriveResult::Complete(Ok(truapi::v01::HostRequestLoginResponse::AlreadyConnected)) => {
+	let product_id = product_id.parse::<ProductId>()?;
+	match ui.drive_pairing_login(label, runtime.login(&product_id)).await? {
+		DriveResult::Complete(Ok(truapi::latest::HostRequestLoginResponse::Success)) => {},
+		DriveResult::Complete(Ok(truapi::latest::HostRequestLoginResponse::AlreadyConnected)) => {
 			ui.success("Already logged in", None);
 		},
-		DriveResult::Complete(Ok(truapi::v01::HostRequestLoginResponse::Rejected)) => {
+		DriveResult::Complete(Ok(truapi::latest::HostRequestLoginResponse::Rejected)) => {
 			ui.finish_activities_since(checkpoint, ActivityState::Cancelled, "Login was rejected");
 			ui.error("login rejected");
 		},

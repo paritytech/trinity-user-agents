@@ -402,17 +402,13 @@ export interface TestHost {
 /**
  * Why the payment controls cannot be served.
  *
- * The core serves payments through `TopUpPlatform`, `PaymentPlatform` and
- * `BalancePlatform`, which only a native or Rust host can install: the browser
- * host-callback bridge cannot carry them yet. This host therefore answers
- * every payment call `Unsupported`, and has no payment engine to record or
- * drive.
+ * Payments use Rust-owned Coinage custody (or an explicitly installed native
+ * wallet), not replaceable shell payment engines. This fixture has no payment
+ * simulation seam and cannot manufacture balances or settlement outcomes.
  */
 const NO_PAYMENT_SEAM =
-  "is not available in the TrUAPI test host: payments are served only by " +
-  "native and Rust hosts, since the browser host-callback bridge cannot carry " +
-  "the payment platforms yet, so this host answers every payment call " +
-  "Unsupported. See the payment platforms in rust/crates/truapi/RUNTIME.md.";
+  "is not available in the TrUAPI test host: payments use Coinage custody, " +
+  "and this fixture cannot inject balances or payment settlement outcomes.";
 
 /** Why login behaviour is fixed once the host page has booted. */
 const LOGIN_BEHAVIOR_IS_CONSTRUCTION_TIME =

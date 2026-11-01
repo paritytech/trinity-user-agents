@@ -23,6 +23,72 @@
         }
       }
     },
+    "action.nftPurseDrain.owner.you": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "your account"
+          }
+        }
+      }
+    },
+    "action.nftPurseDrain.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Move NFT Items"
+          }
+        }
+      }
+    },
+    "action.nftPurseDrain.toCheque.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ wants to hand %2$(itemCount)@ item(s) of purse %3$(fromPurse)@, owned by %4$(owner)@, to another user in a cheque."
+          }
+        }
+      }
+    },
+    "action.nftPurseDrain.toKey.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ wants to move %2$(itemCount)@ item(s) out of purse %3$(fromPurse)@, owned by %4$(owner)@, to the key %5$(key)@."
+          }
+        }
+      }
+    },
+    "action.nftPurseDrain.toPurse.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ wants to move %2$(itemCount)@ item(s) out of purse %3$(fromPurse)@, owned by %4$(owner)@, into purse %5$(toPurse)@."
+          }
+        }
+      }
+    },
+    "action.nftPurseDrain.toRefund.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ wants to return %2$(itemCount)@ item(s) of purse %3$(fromPurse)@, owned by %4$(owner)@, to the sender of a cheque it deposited."
+          }
+        }
+      }
+    },
     "action.productSubtree.body": {
       "extractionState": "manual",
       "localizations": {
@@ -493,6 +559,54 @@
           "stringUnit": {
             "state": "translated",
             "value": "Withdrawal Unavailable"
+          }
+        }
+      }
+    },
+    "load.status.downloading": {
+      "comment": "Status under the loader while a product's content downloads; the argument is the downloaded size",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloading %1$(size)@"
+          }
+        }
+      }
+    },
+    "load.status.downloadingOf": {
+      "comment": "Status under the loader while a product's content downloads and its size is known; the arguments are the downloaded amount without a unit and the total size with its unit, e.g. 1.2 of 5.0 MB",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloading %1$(downloaded)@ of %2$(total)@"
+          }
+        }
+      }
+    },
+    "load.status.retrying": {
+      "comment": "Status under the loader after a product's load failed and is being retried",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connection is slow. Still trying…"
+          }
+        }
+      }
+    },
+    "load.status.waitingForNetwork": {
+      "comment": "Status under the loader while a product waits for the network to come back",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for network"
           }
         }
       }
@@ -1330,6 +1444,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Not available"
+          }
+        }
+      }
+    },
+    "scan.notForThisProduct": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This code isn't for %1$(productId)@"
+          }
+        }
+      }
+    },
+    "scan.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan for %1$(productId)@"
           }
         }
       }

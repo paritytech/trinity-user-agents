@@ -19,7 +19,9 @@
 use sp_crypto_hashing::blake2_256;
 use subxt::utils::H256;
 
+mod account_nonces;
 mod block_backend;
+mod extrinsic;
 mod heads;
 mod mortality;
 mod storage_watch;
@@ -27,18 +29,30 @@ mod subxt_chain;
 mod tx_submitter;
 mod tx_validator;
 
+pub use account_nonces::AccountNonces;
 pub use block_backend::{BlockBackend, DispatchOutcome};
+pub use extrinsic::{
+	ChainValues, DEFAULT_MORTALITY_PERIOD, ExtensionError, ExtensionValueTypes,
+	ExtrinsicBuildError, ExtrinsicBuilder, ExtrinsicService, ExtrinsicServiceDeps,
+	ExtrinsicVersion, InheritedImplication, SubstrateSigner, TransactionExtension,
+	default_value_for_type, well_known_extension,
+};
 pub use heads::{ChainHeads, HeadEvent, Heads};
 pub use mortality::{MortalExtrinsic, Mortality, MortalityError};
 pub use storage_watch::{
-	DecodableAtBlock, DecodedEntryChanges, RawStorageChanges, StorageEntryName, StorageWatchError,
-	WatchedHead, WatchedStorage,
+	DecodableAtBlock, DecodedEntryChanges, RawStorageChanges, StorageEntryName, StorageSnapshot,
+	StorageWatchError, WatchedHead, WatchedStorage,
 };
 pub use tx_submitter::{TxSubmitter, WatchEvent};
 pub use tx_validator::TxValidator;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub use tests::{
+	FixedExtensionVersions, Node, V4OnlyHost, extrinsic_service_serving, live_asset_hub,
+	live_asset_hub_genesis, method_count, serve, tokio_spawner,
+};
 
 /// An encoded extrinsic, ready to submit.
 #[derive(Clone, Debug, PartialEq, Eq)]

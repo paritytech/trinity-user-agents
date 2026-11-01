@@ -347,6 +347,19 @@ impl SessionState {
 			.map(|session| session.public_key)
 	}
 
+	/// Match a paired session without cloning its secret-bearing state.
+	pub fn matches_sso_session_ids(&self, own: &[u8; 32], peer: &[u8; 32]) -> bool {
+		self.inner
+			.lock()
+			.expect("session-state mutex poisoned")
+			.current
+			.as_ref()
+			.and_then(|session| session.sso.as_ref())
+			.is_some_and(|session| {
+				&session.session_id_own == own && &session.session_id_peer == peer
+			})
+	}
+
 	/// Stream of connection-status events. The first item emitted is the
 	/// current state (so subscribers don't have to read it separately);
 	/// subsequent items reflect every `set_session` / `clear_session`

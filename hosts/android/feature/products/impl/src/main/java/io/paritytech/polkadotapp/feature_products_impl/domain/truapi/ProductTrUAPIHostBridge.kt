@@ -19,6 +19,7 @@ import io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeM
 import io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaBackendFactory
 import io.paritytech.polkadotapp.tools_media_connection_impl.nativeMedia.NativeMediaConsent
 import uniffi.truapi.DevicePermissionStatus
+import android.util.Log
 import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
@@ -27,6 +28,8 @@ import dagger.Lazy
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
+import io.parity.truapi.ChatHostBridge
+import io.parity.truapi.GameHostBridge
 import io.parity.truapi.LocalhostBridgeBootstrap
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
@@ -35,6 +38,7 @@ import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
@@ -62,6 +66,7 @@ import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
 import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -99,12 +104,16 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val encryptedPreferences: EncryptedPreferences,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
+    private val networkStateService: NetworkStateService,
     private val dotNsTldProvider: DotNsTldProvider,
     private val pocketCardStore: PocketCardStore,
     @param:ApplicationContext private val context: Context,
     private val appLanguageProvider: AppLanguageProvider,
     private val permissionRepository: Lazy<ProductPermissionRepository>,
     private val permissionChanges: PermissionAuthorizationChanges,
+    private val productGameReminder: ProductGameReminder,
+    private val extensionVersions: TrUAPIExtensionVersions,
+    private val mediaFactory: NativeMediaBackendFactory,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -128,7 +137,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         // would stall unrelated TrUAPI traffic.
         resolver = { genesisHash -> cachedChains.get().endpoints[genesisHash.hexKey()].orEmpty() },
         client = chainHttpClient,
-        onLog = { Timber.tag("truapi.chain").d("%s", it) },
+        onLog = { Timber.tag("truapi.chain").i("%s", it) },
     )
 
     private var execution: TrUAPIProductExecution? = null
@@ -170,7 +179,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             this@ProductTrUAPIHostBridge.currentLocale()
 
         override fun onCoreLog(marker: String, detail: String) {
-            Timber.tag("truapi.core").d("%s: %s", marker, detail)
+            logCoreLine(marker, detail)
         }
 
         /**
@@ -223,7 +232,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
          * ([TrUAPIHostRuntimeProvider.sessionState]); an execution only logs it.
          */
         override fun authStateChanged(state: AuthState) {
-            Timber.tag("truapi.auth").d("%s: %s", callingProductId.value, state.marker())
+            Timber.tag("truapi.auth").i("%s: %s", callingProductId.value, state.marker())
         }
 
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
@@ -231,9 +240,6 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
         override suspend fun confirmPermission(review: UserConfirmationReview): TrUAPIPermissionDecision =
             confirmationLauncher.decide(review, requesterFallback = callingProductId.value)
-
-        override suspend fun confirmPermission(review: UserConfirmationReview): TrUAPIPermissionDecision =
-            confirmationLauncher.decidePermission(review, requesterFallback = callingProductId.value)
 
         override suspend fun devicePermission(
             product: ProductExecutionConfig,
@@ -251,6 +257,19 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
                     .toNative()
             }
 
+        override suspend fun devicePermissionStatus(request: HostDevicePermissionRequest): DevicePermissionStatus {
+            val permission = when (request) {
+                HostDevicePermissionRequest.CAMERA -> Manifest.permission.CAMERA
+                HostDevicePermissionRequest.MICROPHONE -> Manifest.permission.RECORD_AUDIO
+                else -> return DevicePermissionStatus.NOT_APPLICABLE
+            }
+            return if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
+                DevicePermissionStatus.GRANTED
+            } else {
+                DevicePermissionStatus.NOT_DETERMINED
+            }
+        }
+
         override suspend fun remotePermission(
             product: ProductExecutionConfig,
             request: RemotePermission,
@@ -264,7 +283,6 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
                     hostApiInteractor.requestNftPurseReadDecision(callingProductId, request.owner.productId)
                 else -> hostApiInteractor.requestRemotePermissionDecision(callingProductId, request.toRemoteAccessRequest())
             }
-        }
                 .getOrElse { throw it }
                 .toNative()
         }
@@ -284,6 +302,9 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
         override fun supportedChains(): HostChainSet = cachedChains.get().advertised
 
+        override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
+            extensionVersions.resolve().getOrElse { throw it }
+
         override fun chainConnect(genesisHash: ByteArray): UInt? = chainProvider.connect(genesisHash)
 
         override fun chainSend(connectionId: UInt, request: String) =
@@ -300,7 +321,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             productGameReminder.schedule(callingProductId, startsAt.toLong())
                 .getOrElse { throw HostRejection.Rejected(it.message.orEmpty()) }
 
-        override suspend fun cancelReminder() = productGameReminder.cancel(callingProductId)
+        override suspend fun cancelReminder() = productGameReminder.cancelByProduct(callingProductId)
     }
 
     /**
@@ -318,6 +339,8 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         chains: TrUAPIChains,
         navigationPolicy: NavigationPolicy,
         kind: ProductExecutionKind,
+        chat: ChatHostBridge? = null,
+        card: ExpandedCardFace? = null,
         onPermissionRevoked: suspend () -> Unit,
         onReadyToInject: suspend (bootstrap: String) -> Unit,
     ): Result<TrUAPIProductExecution> {
@@ -339,6 +362,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
                 configuration = ProductExecutionConfig(productId.value, kind),
                 chat = chat,
                 pocket = pocket,
+                game = gameBridge(productId),
                 media = media,
             )
             execution = opened
@@ -362,6 +386,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
                     }
                 }
             }
+            scope.closeChainSocketsOnNetworkSwitch(networkStateService, chainProvider)
             onReadyToInject(LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token))
             opened
         }.onFailure { stop() }
@@ -430,7 +455,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     /** Settings use the same callbacks/storage and process runtime, without a second backend. */
     fun openPermissionExecution(runtime: TrUAPIHostRuntime, productId: ProductId): TrUAPIProductExecution =
         runtime.openProductExecution(
-            buildBridge(productId, NavigationPolicy.DeeplinkNavigation { error("Navigation unavailable in permission settings") }),
+            buildBridge(productId, NavigationPolicy.DeeplinkNavigation { error("Navigation unavailable in permission settings") }, null),
             ProductExecutionConfig(productId.value, ProductExecutionKind.APP),
         )
 
@@ -472,27 +497,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 internal suspend fun TrUAPIConfirmationLauncher.decide(
     review: UserConfirmationReview,
     requesterFallback: String,
-): TrUAPIPermissionDecision {
-    val confirmation = runCatching { review.toConfirmation(requesterFallback) }
-        .getOrElse {
-            Timber.w(it, "truapi.confirm: could not describe review, rejecting")
-            return TrUAPIPermissionDecision.DENY
-        }
-
-    return awaitDecision(confirmation)
-}
-
-/** Only an explicit user answer becomes authority; mapping and prompt failures propagate. */
-internal suspend fun TrUAPIConfirmationLauncher.decidePermission(
-    review: UserConfirmationReview,
-    requesterFallback: String,
-): TrUAPIPermissionDecision {
-    return if (awaitDecision(review.toConfirmation(requesterFallback))) {
-        TrUAPIPermissionDecision.ALLOW_ALWAYS
-    } else {
-        TrUAPIPermissionDecision.DENY
-    }
-}
+): TrUAPIPermissionDecision = awaitDecision(review.toConfirmation(requesterFallback))
 
 // Reports the theme name the native host's `themeSubscribe` already sends, so a
 // product reads the same theme on either runtime.
@@ -522,12 +527,14 @@ private fun HostDevicePermissionRequest.toCapability(): DeviceCapabilityType = w
  * and NFT purse reads have their own prompts (`ProductPermission.BalanceAccess`,
  * `ProductPermission.NftPurseRead`) and never reach here.
  */
+@OptIn(ExperimentalStdlibApi::class)
 private fun RemotePermission.toRemoteAccessRequest(): RemotePermissionRequest = when (this) {
     is RemotePermission.Remote -> RemotePermissionRequest.Remote(domains)
     RemotePermission.WebRtc -> RemotePermissionRequest.WebRtc
     RemotePermission.ChainSubmit -> RemotePermissionRequest.ChainSubmit
     RemotePermission.PreimageSubmit -> RemotePermissionRequest.PreimageSubmit
     RemotePermission.StatementSubmit -> RemotePermissionRequest.StatementSubmit
+    is RemotePermission.JamPeers -> RemotePermissionRequest.JamPeers("0x" + genesis.toHexString())
     RemotePermission.Calling -> error("Calling requires a scoped core review")
     RemotePermission.BalanceAccess -> error("balance access has its own prompt")
     is RemotePermission.NftPurseRead -> error("NFT purse reads have their own prompt")
@@ -545,6 +552,23 @@ private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this
     PermissionDecision.AllowAlways -> TrUAPIPermissionDecision.ALLOW_ALWAYS
     PermissionDecision.Deny -> TrUAPIPermissionDecision.DENY
 }
+
+// Info lines leave the device; everything else stays on it.
+internal fun logCoreLine(marker: String, detail: String) {
+    val exported = EXPORTED_CORE_MARKER_PREFIXES.any { prefix -> marker.startsWith(prefix) }
+    val priority = if (exported) Log.INFO else Log.DEBUG
+    Timber.tag("truapi.core").log(priority, "%s: %s", marker, detail)
+}
+
+// An allowlist rather than the inverse: a marker the core adds later stays local until someone says
+// what it carries. `truapi.native.*` is what stays behind, because those lines carry notification
+// bodies, URLs and permission requests. The iOS host keeps the same list in `logCoreLine`.
+private val EXPORTED_CORE_MARKER_PREFIXES = listOf(
+    "truapi.tracing.",
+    "truapi.chain.",
+    "truapi.core.",
+    "truapi.ws_bridge.",
+)
 
 internal fun AuthState.marker(): String = when (this) {
     is AuthState.Disconnected -> "disconnected"

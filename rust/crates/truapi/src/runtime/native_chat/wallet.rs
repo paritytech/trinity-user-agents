@@ -11,12 +11,10 @@ use crate::platform::{
 };
 use futures::{channel::oneshot, lock::Mutex};
 use parity_scale_codec::Encode;
-use truapi::{
-	latest::{
-		HostNativeChatPayment as Payment, HostNativeChatPaymentDirection as Direction,
-		HostNativeChatPaymentState as State, HostProductDeviceChatError as Error,
-	},
-	v01::{HostPaymentTopUpError as TopUpError, HostPaymentTopUpRequest, PaymentTopUpSource},
+use truapi::latest::{
+	HostNativeChatPayment as Payment, HostNativeChatPaymentDirection as Direction,
+	HostNativeChatPaymentState as State, HostPaymentTopUpError as TopUpError,
+	HostPaymentTopUpRequest, HostProductDeviceChatError as Error, PaymentTopUpSource,
 };
 use truapi_coinage::{MemoEntry, TransferMemo};
 use zeroize::{Zeroize, Zeroizing};
@@ -428,7 +426,7 @@ impl SelectedWallet {
 			},
 			PaymentTopUpSource::ProductAccount { .. } => return Err(TopUpError::InvalidSource),
 		};
-		if request.into.is_some_and(|purse| purse != truapi::v01::MAIN_PURSE) ||
+		if request.into.is_some_and(|purse| purse != truapi::latest::MAIN_PURSE) ||
 			validate_product(product).is_err() ||
 			keys.is_empty() ||
 			keys.len() > MAX_SOURCES

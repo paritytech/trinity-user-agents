@@ -20,24 +20,24 @@
 //! <https://github.com/paritytech/triangle-js-sdks/blob/afb26e2c78bf1134886c1248c1bf2b6b4dc1fce9/packages/host-papp/src/sso/sessionManager/scale/resourceAllocation.ts>
 //! <https://github.com/paritytech/triangle-js-sdks/blob/afb26e2c78bf1134886c1248c1bf2b6b4dc1fce9/packages/host-papp/src/sso/sessionManager/scale/createTransaction.ts>
 
+use crate::platform::ProductId;
 use core::fmt;
 use zeroize::Zeroizing;
 
 use parity_scale_codec::{Compact, Decode, Encode, Input};
-use truapi::{
-	latest::{
-		AllocatableResource, HostAccountCreateProofResponse, HostAccountGetAliasResponse,
-		HostAccountSignVrfError, HostSignPayloadRequest, HostSignPayloadResponse,
-		HostSignRawRequest, LegacyAccountTxPayload, ProductAccountId, ProductAccountTxPayload,
-		RawPayload, RegisteredRingVrfKey, TxPayloadExtension, VrfSignature,
-	},
-	v01,
+use truapi::latest::{
+	AllocatableResource, HostAccountCreateProofResponse, HostAccountGetAliasResponse,
+	HostAccountSignVrfError, HostSignPayloadRequest, HostSignPayloadResponse, HostSignRawRequest,
+	LegacyAccountTxPayload, ProductAccountId, ProductAccountTxPayload, RawPayload,
+	RegisteredRingVrfKey, TxPayloadExtension, VrfSignature,
 };
 
 use crate::host_logic::media_protocol::{MAX_PRODUCT_ID_BYTES, MAX_UNSIGNED_ADVERTISEMENT_BYTES};
 
 #[cfg(test)]
-use crate::host_logic::sso::pairing::{AEAD_NONCE_LEN, encrypt_session_statement_data_with_nonce};
+use crate::host_logic::{
+	sso::pairing::encrypt_session_statement_data_with_nonce, x25519_seal::AEAD_NONCE_LEN,
+};
 use crate::{
 	host_logic::{
 		session::SsoSessionInfo,
@@ -136,7 +136,7 @@ pub struct ProductRequest<P> {
 	///
 	/// The signing host cannot observe the paired host's products, so it keys
 	/// permissions and product-derived keys on this attested identity.
-	pub calling_product_id: String,
+	pub calling_product_id: ProductId,
 	/// Canonical payload sent to the signing host.
 	pub payload: P,
 }
@@ -231,7 +231,7 @@ pub type CreateAccountProofResponse = Result<HostAccountCreateProofResponse, Rin
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct ResourceAllocationRequest {
 	/// Product id the allocation is requested for.
-	pub calling_product_id: String,
+	pub calling_product_id: ProductId,
 	/// Resources to allocate; outcomes come back in the same order.
 	pub resources: Vec<AllocatableResource>,
 	/// Policy applied when an allocation already exists for this product.
@@ -317,7 +317,7 @@ pub struct Withdrawal {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct ProductSubtreeRequest {
 	/// DotNS product identifier whose hard subtree is requested.
-	pub product_id: String,
+	pub product_id: ProductId,
 }
 
 /// Account Holder response carrying a product subtree public key.
@@ -329,9 +329,9 @@ pub type ProductSubtreeResponse = Result<[u8; 32], String>;
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct StatementStoreProductSignRequest {
 	/// Product making the request.
-	pub calling_product_id: String,
+	pub calling_product_id: ProductId,
 	/// Product account that signs the statement payload.
-	pub account: v01::ProductAccountId,
+	pub account: ProductAccountId,
 	/// Exact unsigned statement fields, without their SCALE vector prefix.
 	pub payload: Vec<u8>,
 }
@@ -345,7 +345,7 @@ pub type StatementStoreProductSignResponse = Result<[u8; 64], String>;
 #[derive(Clone, PartialEq, Eq, Encode, derive_more::Debug)]
 #[debug("MediaEndpointCertificationRequest(<redacted>)")]
 pub struct MediaEndpointCertificationRequest {
-	pub product_id: String,
+	pub product_id: ProductId,
 	pub unsigned_advertisement: Vec<u8>,
 }
 
@@ -368,7 +368,9 @@ impl Decode for MediaEndpointCertificationRequest {
 			Ok(bytes)
 		}
 		let product_id = String::from_utf8(bounded_bytes(input, MAX_PRODUCT_ID_BYTES)?)
-			.map_err(|_| parity_scale_codec::Error::from("Invalid Media product encoding"))?;
+			.map_err(|_| parity_scale_codec::Error::from("Invalid Media product encoding"))?
+			.parse()
+			.map_err(|_| parity_scale_codec::Error::from("Invalid Media product identifier"))?;
 		let unsigned_advertisement = bounded_bytes(input, MAX_UNSIGNED_ADVERTISEMENT_BYTES)?;
 		Ok(Self { product_id, unsigned_advertisement })
 	}
@@ -475,8 +477,8 @@ pub enum SsoProductDeviceChatOperation {
 
 /// Public Chat views and typed failures returned by the signing authority.
 pub type ProductDeviceChatResponse = Result<
-	truapi::versioned::account::HostProductDeviceChatResponse,
-	truapi::versioned::account::HostProductDeviceChatError,
+	truapi::latest::HostProductDeviceChatResponse,
+	truapi::latest::HostProductDeviceChatError,
 >;
 
 /// Incoming payment funding; source secrets stay inside the encrypted SSO channel.
@@ -485,24 +487,25 @@ pub type ProductDeviceChatResponse = Result<
 #[derive(Clone, PartialEq, Eq, Encode, Decode)]
 pub struct PaymentTopUpRequest {
 	/// Caller authenticated by the product connection or paired host.
-	pub calling_product_id: String,
-	/// Existing versioned payment request, including caller-supplied funding keys.
-	pub payload: truapi::versioned::payment::HostPaymentTopUpRequest,
+	pub calling_product_id: ProductId,
+	/// Canonical payment request, including caller-supplied funding keys.
+	pub payload: truapi::latest::HostPaymentTopUpRequest,
 }
 
 impl PaymentTopUpRequest {
-	pub(crate) fn into_parts(mut self) -> (String, truapi::v01::HostPaymentTopUpRequest) {
-		let truapi::versioned::payment::HostPaymentTopUpRequest::V1(payload) = &mut self.payload;
+	pub(crate) fn into_parts(mut self) -> (ProductId, truapi::latest::HostPaymentTopUpRequest) {
 		let payload = core::mem::replace(
-			payload,
-			truapi::v01::HostPaymentTopUpRequest {
+			&mut self.payload,
+			truapi::latest::HostPaymentTopUpRequest {
 				into: None,
 				amount: 0,
-				source: truapi::v01::PaymentTopUpSource::Coins { sr25519_secret_keys: Vec::new() },
+				source: truapi::latest::PaymentTopUpSource::Coins {
+					sr25519_secret_keys: Vec::new(),
+				},
 				id: [0; 32],
 			},
 		);
-		(core::mem::take(&mut self.calling_product_id), payload)
+		(self.calling_product_id.clone(), payload)
 	}
 }
 
@@ -518,31 +521,30 @@ impl fmt::Debug for PaymentTopUpRequest {
 impl Drop for PaymentTopUpRequest {
 	fn drop(&mut self) {
 		use zeroize::Zeroize;
-		let truapi::versioned::payment::HostPaymentTopUpRequest::V1(payload) = &mut self.payload;
-		match &mut payload.source {
-			truapi::v01::PaymentTopUpSource::PrivateKey { sr25519_secret_key } => {
+		match &mut self.payload.source {
+			truapi::latest::PaymentTopUpSource::PrivateKey { sr25519_secret_key } => {
 				sr25519_secret_key.zeroize();
 			},
-			truapi::v01::PaymentTopUpSource::Coins { sr25519_secret_keys } => {
+			truapi::latest::PaymentTopUpSource::Coins { sr25519_secret_keys } => {
 				sr25519_secret_keys.zeroize();
 			},
-			truapi::v01::PaymentTopUpSource::ProductAccount { .. } => {},
+			truapi::latest::PaymentTopUpSource::ProductAccount { .. } => {},
 		}
 	}
 }
 
 /// Payment failure with a secret-safe transcript representation.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub struct PaymentTopUpError(pub truapi::v01::HostPaymentTopUpError);
+pub struct PaymentTopUpError(pub truapi::latest::HostPaymentTopUpError);
 
 impl fmt::Display for PaymentTopUpError {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		f.write_str(match &self.0 {
-			truapi::v01::HostPaymentTopUpError::InvalidSource => "Invalid payment source",
-			truapi::v01::HostPaymentTopUpError::SourceBusy => "Payment source busy",
-			truapi::v01::HostPaymentTopUpError::InvalidAmount => "Invalid payment amount",
-			truapi::v01::HostPaymentTopUpError::Unknown { .. } => "Payment top-up unavailable",
-			truapi::v01::HostPaymentTopUpError::AlreadyExists => "Payment top-up already exists",
+			truapi::latest::HostPaymentTopUpError::InvalidSource => "Invalid payment source",
+			truapi::latest::HostPaymentTopUpError::SourceBusy => "Payment source busy",
+			truapi::latest::HostPaymentTopUpError::InvalidAmount => "Invalid payment amount",
+			truapi::latest::HostPaymentTopUpError::Unknown { .. } => "Payment top-up unavailable",
+			truapi::latest::HostPaymentTopUpError::AlreadyExists => "Payment top-up already exists",
 		})
 	}
 }
@@ -865,27 +867,20 @@ mod tests {
 		test_support::sso_host_and_responder_sessions,
 	};
 	use schnorrkel::{ExpansionMode, MiniSecretKey};
-	use truapi::{
-		latest::{
-			DerivationIndex, HostAccountSignVrfRequest, HostSignPayloadData, ProductAccountId,
-			RingLocation,
-		},
-		v01::RingLocationJunction,
+	use truapi::latest::{
+		DerivationIndex, HostAccountSignVrfRequest, HostSignPayloadData, ProductAccountId,
+		RingLocation, RingLocationJunction,
 	};
 	use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey};
 
 	#[test]
 	fn media_certification_codec_rejects_oversized_fields_before_dispatch() {
-		let oversized_product = MediaEndpointCertificationRequest {
-			product_id: "a".repeat(MAX_PRODUCT_ID_BYTES + 1),
-			unsigned_advertisement: vec![1],
-		}
-		.encode();
+		let oversized_product = ("a".repeat(MAX_PRODUCT_ID_BYTES + 1), vec![1u8]).encode();
 		assert!(
 			MediaEndpointCertificationRequest::decode(&mut oversized_product.as_slice()).is_err()
 		);
 		let oversized_payload = MediaEndpointCertificationRequest {
-			product_id: "myapp.dot".to_string(),
+			product_id: "myapp.dot".parse().unwrap(),
 			unsigned_advertisement: vec![1; MAX_UNSIGNED_ADVERTISEMENT_BYTES + 1],
 		}
 		.encode();
@@ -987,7 +982,7 @@ mod tests {
 		let register = RemoteMessage::request(
 			String::new(),
 			ProductRequest {
-				calling_product_id: "caller.dot".to_string(),
+				calling_product_id: "caller.dot".parse().unwrap(),
 				payload: truapi::latest::HostAccountRegisterRingVrfKeyRequest {
 					index: DerivationIndex::Index(0),
 					ring: ring_location.clone(),
@@ -1006,10 +1001,10 @@ mod tests {
 		let list = RemoteMessage::request(
 			String::new(),
 			ProductRequest {
-				calling_product_id: "caller.dot".to_string(),
+				calling_product_id: "caller.dot".parse().unwrap(),
 				payload: truapi::latest::HostAccountListRingVrfKeysRequest {
-					owner: "peopl.dot".to_string(),
-					disclosure: truapi::v01::RingVrfKeyDisclosure::Anonymized,
+					owner: "peopl.dot".parse().unwrap(),
+					disclosure: truapi::latest::RingVrfKeyDisclosure::Anonymized,
 				},
 			},
 		)
@@ -1025,7 +1020,7 @@ mod tests {
 		let sign = RemoteMessage::request(
 			String::new(),
 			ProductRequest {
-				calling_product_id: "caller.dot".to_string(),
+				calling_product_id: "caller.dot".parse().unwrap(),
 				payload: truapi::latest::HostAccountRingVrfSignRequest {
 					key_handle,
 					message: vec![],
@@ -1074,21 +1069,21 @@ mod tests {
 		};
 		let messages = [
 			v1::RemoteMessage::RegisterRingVrfKeyRequest(ProductRequest {
-				calling_product_id: "game.dot".to_string(),
+				calling_product_id: "game.dot".parse().unwrap(),
 				payload: truapi::latest::HostAccountRegisterRingVrfKeyRequest {
 					index: DerivationIndex::Index(4),
 					ring: ring.clone(),
 				},
 			}),
 			v1::RemoteMessage::ListRingVrfKeysRequest(ProductRequest {
-				calling_product_id: "game.dot".to_string(),
+				calling_product_id: "game.dot".parse().unwrap(),
 				payload: truapi::latest::HostAccountListRingVrfKeysRequest {
-					owner: "peopl.dot".to_string(),
-					disclosure: truapi::v01::RingVrfKeyDisclosure::PublicKey,
+					owner: "peopl.dot".parse().unwrap(),
+					disclosure: truapi::latest::RingVrfKeyDisclosure::PublicKey,
 				},
 			}),
 			v1::RemoteMessage::RingVrfSignRequest(ProductRequest {
-				calling_product_id: "game.dot".to_string(),
+				calling_product_id: "game.dot".parse().unwrap(),
 				payload: truapi::latest::HostAccountRingVrfSignRequest {
 					key_handle: handle,
 					message: (0..16).collect(),
@@ -1112,7 +1107,7 @@ mod tests {
 	#[test]
 	fn ring_vrf_messages_wire_shape_pin() {
 		let context = truapi::latest::ProductProofContext {
-			product_id: "voting.dot".to_string(),
+			product_id: "voting.dot".parse().unwrap(),
 			suffix: DerivationIndex::Index(0),
 		};
 		let ring_location = RingLocation {
@@ -1130,7 +1125,7 @@ mod tests {
 		let alias = RemoteMessage::request(
 			"m-alias".to_string(),
 			ProductRequest {
-				calling_product_id: "caller.dot".to_string(),
+				calling_product_id: "caller.dot".parse().unwrap(),
 				payload: truapi::latest::HostAccountGetAliasRequest {
 					key_handle: key_handle.clone(),
 					context: context.clone(),
@@ -1141,7 +1136,7 @@ mod tests {
 		let proof = RemoteMessage::request(
 			"m-proof".to_string(),
 			ProductRequest {
-				calling_product_id: "caller.dot".to_string(),
+				calling_product_id: "caller.dot".parse().unwrap(),
 				payload: truapi::latest::HostAccountCreateProofRequest {
 					key_handle,
 					context,
@@ -1216,7 +1211,7 @@ mod tests {
 		let message = RemoteMessage::request(
 			"m-resource".to_string(),
 			ResourceAllocationRequest {
-				calling_product_id: "truapi-playground.dot".to_string(),
+				calling_product_id: "truapi-playground.dot".parse().unwrap(),
 				resources: vec![
 					AllocatableResource::StatementStoreAllowance,
 					AllocatableResource::BulletinAllowance,
@@ -1342,7 +1337,7 @@ mod tests {
 	fn product_subtree_messages_match_mobile_wire_contract() {
 		let request = RemoteMessage::request(
 			"request".to_string(),
-			ProductSubtreeRequest { product_id: "browse.dot".to_string() },
+			ProductSubtreeRequest { product_id: "browse.dot".parse().unwrap() },
 		);
 		assert_eq!(hex::encode(request.encode()), "1c7265717565737400102862726f7773652e646f74");
 
@@ -1367,7 +1362,7 @@ mod tests {
 	#[test]
 	fn product_device_chat_messages_preserve_typed_operations_and_failures() {
 		let chat_request = ProductRequest {
-			calling_product_id: "egui-chat.paseo".to_string(),
+			calling_product_id: "egui-chat.paseo".parse().unwrap(),
 			payload: SsoProductDeviceChatOperation::V3(
 				truapi::latest::HostProductDeviceChatRequest::SendPayment {
 					peer_identity: [0x55; 32],
@@ -1382,9 +1377,7 @@ mod tests {
 		assert_eq!(RemoteMessage::decode(&mut encoded_request.as_slice()).unwrap(), request);
 
 		let product_response: ProductDeviceChatResponse =
-			Err(truapi::versioned::account::HostProductDeviceChatError::V1(
-				truapi::latest::HostProductDeviceChatError::OperationConflict,
-			));
+			Err(truapi::latest::HostProductDeviceChatError::OperationConflict);
 		let response_envelope =
 			Response { responding_to: "request".to_string(), payload: product_response };
 		let response = RemoteMessage {
@@ -1433,7 +1426,7 @@ mod tests {
 		])
 		.unwrap();
 		let request_payload = StatementStoreProductSignRequest {
-			calling_product_id: "egui-chat.paseo".to_string(),
+			calling_product_id: "egui-chat.paseo".parse().unwrap(),
 			account: ProductAccountId {
 				dot_ns_identifier: "egui-chat.paseo".parse().unwrap(),
 				derivation_index: DerivationIndex::Index(0),
@@ -1467,17 +1460,15 @@ mod tests {
 		let request = RemoteMessage::request(
 			String::new(),
 			PaymentTopUpRequest {
-				calling_product_id: "myapp.dot".to_string(),
-				payload: truapi::versioned::payment::HostPaymentTopUpRequest::V1(
-					truapi::v01::HostPaymentTopUpRequest {
-						into: None,
-						amount: 1,
-						source: truapi::v01::PaymentTopUpSource::Coins {
-							sr25519_secret_keys: vec![[0xab; 64]],
-						},
-						id: [7; 32],
+				calling_product_id: "myapp.dot".parse().unwrap(),
+				payload: truapi::latest::HostPaymentTopUpRequest {
+					into: None,
+					amount: 1,
+					source: truapi::latest::PaymentTopUpSource::Coins {
+						sr25519_secret_keys: vec![[0xab; 64]],
 					},
-				),
+					id: [7; 32],
+				},
 			},
 		);
 		let encoded = Zeroizing::new(request.encode());
@@ -1485,7 +1476,7 @@ mod tests {
 		assert_eq!(decode_remote_message(&encoded).unwrap(), request);
 		let response = Response {
 			responding_to: "top-up".to_string(),
-			payload: Err(PaymentTopUpError(truapi::v01::HostPaymentTopUpError::Unknown {
+			payload: Err(PaymentTopUpError(truapi::latest::HostPaymentTopUpError::Unknown {
 				reason: "top-up only partially credited 7".into(),
 			})),
 		};
@@ -1494,7 +1485,7 @@ mod tests {
 		assert!(ProductSubtreeRequest::response_from_message(response.clone()).is_none());
 		assert_eq!(
 			PaymentTopUpRequest::response_from_message(response).unwrap().payload,
-			Err(PaymentTopUpError(truapi::v01::HostPaymentTopUpError::Unknown {
+			Err(PaymentTopUpError(truapi::latest::HostPaymentTopUpError::Unknown {
 				reason: "top-up only partially credited 7".into(),
 			})),
 		);
@@ -1517,14 +1508,14 @@ mod tests {
 				derivation_index: DerivationIndex::Index(7),
 			},
 			transcript_label: b"ctx".to_vec(),
-			items: vec![truapi::v01::VrfTranscriptItem {
+			items: vec![truapi::latest::VrfTranscriptItem {
 				label: b"domain".to_vec(),
 				value: vec![1, 2],
 			}],
 		};
 		let request = RemoteMessage::request(
 			"req".to_string(),
-			ProductRequest { calling_product_id: "browse.dot".to_string(), payload },
+			ProductRequest { calling_product_id: "browse.dot".parse().unwrap(), payload },
 		);
 		assert_eq!(
 			hex::encode(request.encode()),

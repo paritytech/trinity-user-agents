@@ -146,11 +146,22 @@ impl HostCoinageChain {
 		rpc: &RpcClient,
 		at: [u8; 32],
 	) -> Result<transaction::Snapshot, String> {
+		self.ensure_session()?;
+		let versions =
+			self.inner.platform.transaction_extension_versions().await.map_err(|error| {
+				format!("Coinage extension configuration unavailable: {}", error.reason)
+			})?;
+		let extension_version = versions
+			.chains
+			.iter()
+			.find(|chain| chain.genesis_hash == self.inner.genesis_hash)
+			.map(|chain| chain.extension_version);
 		Self::snapshot_configured(
 			rpc,
 			at,
 			self.inner.genesis_hash,
 			self.inner.coinage_instance_id,
+			extension_version,
 			&*self.inner.session_valid,
 			Some(&mut *self.inner.runtime.lock().await),
 		)
@@ -162,6 +173,7 @@ impl HostCoinageChain {
 		at: [u8; 32],
 		genesis_hash: [u8; 32],
 		coinage_instance_id: Option<u32>,
+		extension_version: Option<u8>,
 		session_valid: &(dyn Fn() -> bool + Send + Sync),
 		cached: Option<&mut Option<transaction::Snapshot>>,
 	) -> Result<transaction::Snapshot, String> {
@@ -177,7 +189,10 @@ impl HostCoinageChain {
 			.map_err(|_| "invalid runtime transaction version")?;
 		let mut snapshot = if let Some(snapshot) =
 			cached.as_deref().and_then(Option::as_ref).filter(|snapshot| {
-				snapshot.state.spec_version == spec && snapshot.state.transaction_version == tx
+				snapshot.spec_version == spec &&
+					snapshot.transaction_version == tx &&
+					snapshot.genesis_hash == genesis_hash &&
+					snapshot.extension_version == extension_version
 			}) {
 			let mut snapshot = snapshot.clone();
 			snapshot.at = at;
@@ -194,6 +209,7 @@ impl HostCoinageChain {
 				spec,
 				tx,
 				coinage_instance_id,
+				extension_version,
 			)?;
 			if let Some(cached) = cached {
 				*cached = Some(snapshot.clone());
@@ -264,6 +280,7 @@ impl HostCoinageChain {
 			at,
 			genesis_hash,
 			coinage_instance_id,
+			None,
 			session_valid,
 			None,
 		)

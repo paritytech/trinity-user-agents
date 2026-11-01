@@ -2,6 +2,7 @@ import Foundation
 import Operation_iOS
 import Products
 import TrUAPIHost
+import SubstrateSdk
 
 protocol ProductPermissionAuthority: Sendable {
     func permissionAuthorizationProducts() async throws -> [String]
@@ -365,6 +366,8 @@ extension ProductPermission {
             return .networkAccessBundle(domains: try Array(Set(domains.map { try Self.canonicalDomain($0) })).sorted())
         case let .accountAccess(target):
             return .accountAccess(targetProductId: Self.bareProductLabel(target))
+        case let .jamPeersAccess(genesis):
+            return .jamPeersAccess(genesis: try Self.jamGenesis(genesis).toHex(includePrefix: true))
         default:
             return self
         }
@@ -386,7 +389,11 @@ extension ProductPermission {
         case let .statementStoreAllowance(derivationIndex):
             return .statementStoreAllowance(derivationIndex: try derivationIndex.map(Self.authorizationSelector))
         case .balanceAccess:
-            return nil
+            return .remote(.init(permission: .balanceAccess))
+        case let .nftPurseRead(owner):
+            return .remote(.init(permission: .nftPurseRead(owner: owner.map { .product(productId: $0) } ?? .root)))
+        case let .jamPeersAccess(genesis):
+            return .remote(.init(permission: .jamPeers(genesis: try Self.jamGenesis(genesis))))
         case .networkAccess, .networkAccessBundle, .webRtcAccess,
              .chainSubmitAccess, .preimageSubmitAccess, .statementSubmitAccess:
             return permission.remoteAuthorizationRequest()
@@ -432,7 +439,7 @@ extension ProductPermission {
             if case let .remote(domains) = remote.permission, domains.count != 1 {
                 return [try ProductPermission.networkAccessBundle(domains: domains).canonicalPermission()]
             }
-            return try remote.permission.toDomainRequest().toDomainPermissions().map { try $0.canonicalPermission() }
+            return try remote.permission.toDomainPermissions().map { try $0.canonicalPermission() }
         case .identityDisclosure:
             return [.userIdentityAccess]
         case .chatAuthority:
@@ -443,7 +450,7 @@ extension ProductPermission {
             return [try .statementStoreAllowance(derivationIndex: derivationIndex?.toSelector())]
         case let .accountAccess(targetProductId):
             return [.accountAccess(targetProductId: bareProductLabel(targetProductId))]
-        case .crossProductSignature:
+        case .crossProductSignature, .calling, .automaticPreimageSubmit:
             return []
         }
     }
@@ -451,6 +458,14 @@ extension ProductPermission {
     static func bareProductLabel(_ value: String) -> String {
         let parts = ProductStorageKey.normalize(value).split(separator: ".", omittingEmptySubsequences: false)
         return String(parts.count > 1 ? parts[parts.count - 2] : parts[0])
+    }
+
+    private static func jamGenesis(_ value: String) throws -> Data {
+        let bytes = try Data(hexString: value)
+        guard bytes.count == 32 else {
+            throw ProductPermissionMappingError.unsupported(type: ProductPermission.jamPeersAccessTypeName, key: value)
+        }
+        return bytes
     }
 
     private static func canonicalDomain(_ value: String) throws -> String {
@@ -480,6 +495,7 @@ private extension DeviceCapabilityType {
         case .clipboard: .clipboard
         case .openUrl: .openUrl
         case .biometrics: .biometrics
+        case .motion: .motion
         }
     }
 }

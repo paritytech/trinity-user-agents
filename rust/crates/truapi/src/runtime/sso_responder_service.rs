@@ -48,9 +48,10 @@ use crate::{
 			PairingDeeplinkDecodeError, ResponderIdentity, VersionedHandshakeProposal,
 			bootstrap_topic, decode_pairing_deeplink, derive_identity_chat_private_key,
 			derive_x25519_keypair_from_entropy, encrypt_v2_handshake_response,
-			establish_responder_session_info, v2, x25519_public_key,
+			establish_responder_session_info, v2,
 		},
 		statement_store::{build_signed_statement, parse_new_statements_result},
+		x25519_seal::X25519PrivateKey,
 	},
 	runtime::{
 		services::RuntimeServices,
@@ -295,7 +296,9 @@ impl SsoResponderService {
 		let (identity, identity_chat_private_key) =
 			derive_responder_identity(&entropy, self.signing_host.network_suffix())
 				.map_err(|err| format!("responder identity derivation failed: {err}"))?;
-		let device_enc_pub_key = x25519_public_key(self.services.device_encryption_secret().await?);
+		let device_enc_secret =
+			X25519PrivateKey::from(self.services.device_encryption_secret().await?);
+		let device_enc_pub_key = device_enc_secret.public_key().0;
 		let session = responder_session_from_identity(&identity, peer)?;
 
 		let success = v2::EncryptedResponse::Success(Box::new(v2::Success {
@@ -469,7 +472,11 @@ async fn submit_handshake_answer(
 		handshake.encode(),
 		fresh_statement_expiry(),
 	)?;
-	services.statement_store.submit(statement, context).await
+	services
+		.statement_store
+		.submit(statement, context)
+		.await
+		.map_err(|error| error.to_string())
 }
 
 /// Keep the responder identity and peer for both pairing notices.
@@ -869,8 +876,224 @@ mod tests {
 			derive_product_subtree_keypair, derive_ring_vrf_domain_entropy,
 			derive_root_keypair_from_entropy,
 		},
-		platform::ProductId,
+		latest::ProductId,
 	};
+	#[test]
+	fn encrypted_chat_accepts_narrow_initialize_and_rejects_retired_operations() {
+		use crate::{
+			host_internal::{
+				sso_messages::{
+					ProductRequest, SsoProductDeviceChatOperation, SsoSessionStatement,
+					decode_sso_session_statement,
+				},
+				sso_wire::SsoRequest,
+			},
+			test_support::sso_host_and_responder_sessions,
+		};
+
+		let platform = Arc::new(StubPlatform {
+			chat_authority_confirmed: true,
+			remote_permission_denied: true,
+			..Default::default()
+		});
+		let (_, signing_host) = signing_fixture(platform.clone());
+		futures::executor::block_on(async {
+			let service = SigningHostSsoService::new(signing_host);
+			let (pairing, responder) = sso_host_and_responder_sessions();
+			for (message_id, operation, retired) in [
+				(
+					"retired-chat",
+					SsoProductDeviceChatOperation::V2(
+						truapi::v02::HostProductDeviceChatRequest::Initialize,
+					),
+					true,
+				),
+				(
+					"narrow-chat",
+					SsoProductDeviceChatOperation::V3(
+						api::HostProductDeviceChatRequest::Initialize,
+					),
+					false,
+				),
+			] {
+				let request = ProductRequest {
+					calling_product_id: ProductId::for_test("myapp.dot"),
+					payload: operation,
+				};
+				let message = RemoteMessage::request(message_id.to_string(), request);
+				let statement = sso_messages::build_outgoing_request_statement(
+					&pairing,
+					message_id.to_string(),
+					vec![message],
+					(statement_current_unix_secs() + 60) << 32,
+				)
+				.unwrap();
+				let incoming = sso_messages::decode_incoming_sso_request(&responder, &statement)
+					.unwrap()
+					.unwrap();
+				let Dispatch::Response(answer) =
+					service.answer(incoming.messages.into_iter().next().unwrap()).await
+				else {
+					panic!("expected Chat response");
+				};
+				let response_statement = sso_messages::build_outgoing_request_statement(
+					&responder,
+					format!("{message_id}-response"),
+					vec![answer.message],
+					(statement_current_unix_secs() + 60) << 32,
+				)
+				.unwrap();
+				let Some(SsoSessionStatement::RemoteMessages(mut responses)) =
+					decode_sso_session_statement(
+						&pairing,
+						&response_statement,
+						message_id,
+						Some(message_id),
+					)
+					.unwrap()
+				else {
+					panic!("expected encrypted Chat answer");
+				};
+				let response =
+					ProductRequest::<SsoProductDeviceChatOperation>::response_from_message(
+						responses.remove(0).unwrap(),
+					)
+					.unwrap();
+				assert_eq!(response.responding_to, message_id);
+				if retired {
+					assert_eq!(
+						response.payload,
+						Err(api::HostProductDeviceChatError::InvalidRequest)
+					);
+					assert!(platform.chat_authority_reviews.lock().is_empty());
+				} else {
+					let Ok(state) = response.payload else {
+						panic!("expected narrow Chat initialization");
+					};
+					assert_eq!(
+						state.device.product_account.dot_ns_identifier,
+						ProductId::for_test("myapp.dot")
+					);
+					assert_eq!(platform.chat_authority_reviews.lock().len(), 1);
+				}
+			}
+			assert!(platform.remote_permission_requests.lock().unwrap().is_empty());
+			assert!(platform.main_purse_chat_payment_reviews.lock().unwrap().is_empty());
+		});
+	}
+
+	#[test]
+	fn encrypted_payment_top_up_reaches_wallet_validation_without_chat_grants() {
+		use crate::{
+			host_internal::{
+				sso_messages::{
+					PaymentTopUpRequest, SsoSessionStatement, decode_sso_session_statement,
+				},
+				sso_wire::SsoRequest,
+			},
+			test_support::sso_host_and_responder_sessions,
+		};
+		use truapi::latest::HostPaymentTopUpRequest;
+
+		let platform =
+			Arc::new(StubPlatform { chain_connect_error: Some("offline"), ..Default::default() });
+		let (_, signing_host) = signing_fixture(platform.clone());
+		futures::executor::block_on(async {
+			let service = SigningHostSsoService::new(signing_host.clone());
+			let (pairing, responder) = sso_host_and_responder_sessions();
+			let request = PaymentTopUpRequest {
+				calling_product_id: ProductId::for_test("myapp.dot"),
+				payload: HostPaymentTopUpRequest {
+					into: None,
+					amount: 1,
+					source: truapi::v01::PaymentTopUpSource::PrivateKey {
+						sr25519_secret_key: [0xab; 64],
+					},
+					id: [1; 32],
+				},
+			};
+			let message = RemoteMessage::request("top-up-1".to_string(), request);
+			assert!(!format!("{message:?}").contains(&format!("{:?}", [0xab_u8; 64])));
+			let statement = sso_messages::build_outgoing_request_statement(
+				&pairing,
+				"top-up-1".to_string(),
+				vec![message],
+				(statement_current_unix_secs() + 60) << 32,
+			)
+			.unwrap();
+			assert!(!statement.windows(64).any(|bytes| bytes == [0xab; 64]));
+			let incoming = sso_messages::decode_incoming_sso_request(&responder, &statement)
+				.unwrap()
+				.unwrap();
+			let Dispatch::Response(answer) =
+				service.answer(incoming.messages.into_iter().next().unwrap()).await
+			else {
+				panic!("expected top-up response");
+			};
+			let response_statement = sso_messages::build_outgoing_request_statement(
+				&responder,
+				"top-up-response".to_string(),
+				vec![answer.message],
+				(statement_current_unix_secs() + 60) << 32,
+			)
+			.unwrap();
+			let Some(SsoSessionStatement::RemoteMessages(mut responses)) =
+				decode_sso_session_statement(
+					&pairing,
+					&response_statement,
+					"top-up-1",
+					Some("top-up-1"),
+				)
+				.unwrap()
+			else {
+				panic!("expected encrypted top-up answer");
+			};
+			let response =
+				PaymentTopUpRequest::response_from_message(responses.remove(0).unwrap()).unwrap();
+			assert_eq!(response.responding_to, "top-up-1");
+			assert_eq!(
+				response.payload,
+				Err(sso_messages::PaymentTopUpError(
+					truapi::v01::HostPaymentTopUpError::InvalidSource
+				))
+			);
+			assert!(platform.chat_authority_reviews.lock().is_empty());
+			assert!(platform.main_purse_chat_payment_reviews.lock().unwrap().is_empty());
+			assert!(platform.sign_raw_reviews.lock().unwrap().is_empty());
+			assert!(platform.sign_payload_reviews.lock().unwrap().is_empty());
+			assert_eq!(
+				platform.identity_disclosure_calls.load(std::sync::atomic::Ordering::SeqCst),
+				0
+			);
+
+			signing_host.disconnect().await;
+			let request = RemoteMessage::request(
+				"top-up-disconnected".to_string(),
+				PaymentTopUpRequest {
+					calling_product_id: ProductId::for_test("myapp.dot"),
+					payload: HostPaymentTopUpRequest {
+						into: None,
+						amount: 1,
+						source: truapi::v01::PaymentTopUpSource::Coins {
+							sr25519_secret_keys: vec![[0xab; 64]],
+						},
+						id: [2; 32],
+					},
+				},
+			);
+			let Dispatch::Response(answer) = service.answer(request).await else {
+				panic!("expected disconnected top-up response");
+			};
+			let RemoteMessageData::V1(data) = answer.message.data;
+			let response = PaymentTopUpRequest::response_from_message(data).unwrap();
+			assert!(matches!(
+				response.payload,
+				Err(sso_messages::PaymentTopUpError(
+					truapi::v01::HostPaymentTopUpError::Unknown { .. }
+				))
+			));
+		});
+	}
 
 	/// The key a host advertises on chain must be the one it serves over
 	/// pairing. These derive independently, so a test that asks only one of
@@ -889,12 +1112,14 @@ mod tests {
 			"headless",
 			None,
 			0,
+			None,
+			None,
 		)
 		.expect("registration builds");
 
 		assert_eq!(
 			&registration.identifier_key[1..33],
-			&crate::host_logic::sso::pairing::x25519_public_key(served),
+			&crate::host_logic::x25519_seal::X25519PrivateKey::from(served).public_key().0,
 			"the advertised chat key is not the one served over pairing"
 		);
 	}
@@ -937,7 +1162,12 @@ mod tests {
 			config.asset_hub_chain_genesis_hash,
 			test_spawner(),
 		);
-		let signing_host = SigningHost::new(services.clone(), config.network_suffix);
+		let signing_host = SigningHost::new(
+			services.clone(),
+			config.network_suffix,
+			config.coinage_instance_id,
+			config.consent_policy,
+		);
 		futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
 			.expect("activation succeeds");
 		(services, signing_host)
@@ -980,9 +1210,8 @@ mod tests {
 	fn advertised_device_key_is_independent_of_the_identity() {
 		let (services, _signing_host) = signing_fixture(Arc::new(StubPlatform::default()));
 
-		let advertised = x25519_public_key(
-			futures::executor::block_on(services.device_encryption_secret()).unwrap(),
-		);
+		let secret = futures::executor::block_on(services.device_encryption_secret()).unwrap();
+		let advertised = X25519PrivateKey::from(secret).public_key().0;
 
 		// The regression this guards: advertising the SSO channel key as the
 		// device key makes every device sharing an identity indistinguishable.
@@ -1072,7 +1301,7 @@ mod tests {
 	fn a_paired_device_is_reported_to_the_host() {
 		let peer = PairedSsoPeer {
 			statement_account_id: [0x31; 32],
-			encryption_public_key: x25519_public_key([0x42; 32]),
+			encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
 		};
 		let (services, signing_host) = pairing_fixture("new");
 		let observer = Arc::new(RecordingPairingObserver::default());
@@ -1093,7 +1322,7 @@ mod tests {
 	fn a_handshake_that_never_landed_reports_no_device() {
 		let peer = PairedSsoPeer {
 			statement_account_id: [0x31; 32],
-			encryption_public_key: x25519_public_key([0x42; 32]),
+			encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
 		};
 		// Neither "new" nor "known", so the submit is rejected.
 		let (services, signing_host) = pairing_fixture("ignored");
@@ -1119,7 +1348,7 @@ mod tests {
 	fn pairing_without_an_observer_still_answers_the_handshake() {
 		let peer = PairedSsoPeer {
 			statement_account_id: [0x31; 32],
-			encryption_public_key: x25519_public_key([0x42; 32]),
+			encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
 		};
 		let (services, signing_host) = pairing_fixture("new");
 
@@ -1193,7 +1422,7 @@ mod tests {
 	fn persisted_peer_rebuilds_the_original_responder_session() {
 		let peer = PairedSsoPeer {
 			statement_account_id: [0x53; 32],
-			encryption_public_key: x25519_public_key([0x64; 32]),
+			encryption_public_key: X25519PrivateKey::from([0x64; 32]).public_key().0,
 		};
 		let (identity, _) = derive_responder_identity(&ENTROPY, NETWORK_SUFFIX).unwrap();
 		let mut expected = establish_responder_session_info(

@@ -168,7 +168,7 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 
 impl From<&ProductContext> for ProductExecutionConfig {
 	fn from(product: &ProductContext) -> Self {
-		Self { product_id: product.product_id.clone(), execution_kind: product.execution_kind }
+		Self { product_id: product.product_id.to_string(), execution_kind: product.execution_kind }
 	}
 }
 
@@ -176,7 +176,10 @@ impl TryFrom<ProductExecutionConfig> for ProductContext {
 	type Error = NativeRuntimeConfigError;
 
 	fn try_from(config: ProductExecutionConfig) -> Result<Self, Self::Error> {
-		ProductContext::new_with_execution(config.product_id, config.execution_kind)
-			.map_err(NativeRuntimeConfigError::from)
+		let product_id =
+			config.product_id.parse().map_err(|error: crate::platform::ProductIdError| {
+				NativeRuntimeConfigError::Invalid { reason: error.to_string() }
+			})?;
+		Ok(ProductContext::new_with_execution(product_id, config.execution_kind))
 	}
 }

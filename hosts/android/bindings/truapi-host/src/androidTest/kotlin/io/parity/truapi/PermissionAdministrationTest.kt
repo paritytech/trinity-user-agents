@@ -18,6 +18,7 @@ import uniffi.truapi.PermissionDecision
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.ProductExecutionKind
 import uniffi.truapi.RemotePermission
+import uniffi.truapi.nativeDescribeCoreStorageKey
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.io.path.createTempDirectory
@@ -74,6 +75,35 @@ class PermissionAdministrationTest {
         }
     }
 
+    @Test
+    fun deferredPolicyChangesNotifySettingsWithoutAnOpenExecutionEvenWhenReadingFails() = runBlocking {
+        val bridge = Bridge()
+        val directory = createTempDirectory("truapi-permission-refresh").toFile()
+        val origin = Any()
+        try {
+            TrUAPIHostRuntime(bridge, instrumentedRuntimeConfig(directory.absolutePath)).use { runtime ->
+                val request = PermissionAuthorizationRequest.Device(HostDevicePermissionRequest.CAMERA)
+                runtime.setPermissionAuthorizationStatus("game.paseo", request, PermissionAuthorizationStatus.AUTHORIZED)
+                CoreStorageAccess.awaitChanges(origin)
+                val key = bridge.store.keys().single { nativeDescribeCoreStorageKey(it).permissionRequest == request }
+                bridge.changed.clear()
+
+                CoreStorageAccess.changed(bridge.store, origin, key) {}
+                CoreStorageAccess.awaitChanges(origin)
+                assertEquals(listOf("game.paseo"), bridge.changed.toList())
+
+                bridge.changed.clear()
+                bridge.store.failReads = true
+                CoreStorageAccess.changed(bridge.store, origin, key) {}
+                val failure = runCatching { CoreStorageAccess.awaitChanges(origin) }.exceptionOrNull()
+                assertTrue(failure is HostRejection)
+                assertEquals(listOf("game.paseo"), bridge.changed.toList())
+            }
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
     private class Bridge : HostBridge {
         val changed = CopyOnWriteArrayList<String>()
         val store = Storage()
@@ -87,11 +117,16 @@ class PermissionAdministrationTest {
     }
 
     private class Storage : HostCoreStorage, HostStorage {
+        override val storageIdentifier = "permission-administration-${java.util.UUID.randomUUID()}"
         private val core = ConcurrentHashMap<List<Byte>, ByteArray>()
         private val product = ConcurrentHashMap<String, ByteArray>()
         @Volatile var failWrites = false
+        @Volatile var failReads = false
         override suspend fun keys(): List<ByteArray> = core.keys.map { it.toByteArray() }
-        override suspend fun read(key: ByteArray): ByteArray? = core[key.toList()]
+        override suspend fun read(key: ByteArray): ByteArray? {
+            if (failReads) throw HostRejection.Rejected("storage unavailable")
+            return core[key.toList()]
+        }
         override suspend fun write(key: ByteArray, value: ByteArray) {
             if (failWrites) throw HostRejection.Rejected("disk full")
             core[key.toList()] = value

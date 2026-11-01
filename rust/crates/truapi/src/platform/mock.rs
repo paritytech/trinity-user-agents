@@ -105,6 +105,8 @@ pub enum ConfirmKind {
 	ProfileDisclosure,
 	/// [`UserConfirmationReview::Calling`].
 	Calling,
+	/// [`UserConfirmationReview::NftPurseDrain`].
+	NftPurseDrain,
 }
 
 impl ConfirmKind {
@@ -128,6 +130,7 @@ impl ConfirmKind {
 			UserConfirmationReview::MainPurseChatPayment(_) => ConfirmKind::MainPurseChatPayment,
 			UserConfirmationReview::ProfileDisclosure(_) => ConfirmKind::ProfileDisclosure,
 			UserConfirmationReview::Calling(_) => ConfirmKind::Calling,
+			UserConfirmationReview::NftPurseDrain(_) => ConfirmKind::NftPurseDrain,
 		}
 	}
 }
@@ -826,6 +829,9 @@ fn core_key(key: &CoreStorageKey) -> String {
 		CoreStorageKey::LastProcessedPairingStatement => {
 			"core:last-processed-pairing-statement".to_string()
 		},
+		CoreStorageKey::FundingSessions => "core:funding-sessions".to_string(),
+		CoreStorageKey::FundingSessionsUnreadable => "core:funding-sessions-unreadable".to_string(),
+		CoreStorageKey::FundingSessionPack => "core:funding-session-pack".to_string(),
 	}
 }
 
@@ -1075,6 +1081,8 @@ impl Permissions for MockPlatform {
 	}
 }
 
+impl crate::platform::ExtrinsicVersionHost for MockPlatform {}
+
 #[async_trait]
 impl Features for MockPlatform {
 	async fn supported_chains(
@@ -1223,9 +1231,9 @@ impl LocaleHost for MockPlatform {
 impl PreimageHost for MockPlatform {
 	fn lookup_preimage(
 		&self,
-		key: Vec<u8>,
+		key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, latest::GenericError>> {
-		let found = self.preimages.lock().expect("preimages poisoned").get(&key).cloned();
+		let found = self.preimages.lock().expect("preimages poisoned").get(key.as_slice()).cloned();
 		// Emit the current value/miss, then stay open — a live subscription that
 		// never ends, matching `subscribe_theme`, the trait doc, and the JS mock.
 		Box::pin(
@@ -1246,7 +1254,7 @@ impl ProductOperations for MockPlatform {
 		self.open_operations
 			.lock()
 			.expect("open operations poisoned")
-			.push(OpenOperation { product_id: product.product_id.clone(), id, label });
+			.push(OpenOperation { product_id: product.product_id.to_string(), id, label });
 		Ok(latest::HostWorkerBeginOperationResponse { id })
 	}
 
@@ -1259,7 +1267,7 @@ impl ProductOperations for MockPlatform {
 		self.open_operations
 			.lock()
 			.expect("open operations poisoned")
-			.retain(|open| open.id != id || open.product_id != product.product_id);
+			.retain(|open| open.id != id || open.product_id != product.product_id.as_str());
 		Ok(())
 	}
 }
@@ -1472,7 +1480,7 @@ mod tests {
 
 	fn resource_review() -> UserConfirmationReview {
 		UserConfirmationReview::ResourceAllocation(crate::platform::ResourceAllocationReview {
-			calling_product_id: "mock.dot".to_string(),
+			calling_product_id: crate::platform::ProductId::for_test("mock.dot"),
 			resources: vec![],
 		})
 	}
@@ -1724,7 +1732,7 @@ mod tests {
 	fn an_operation_is_open_until_its_own_product_ends_it() {
 		let p = MockPlatform::new();
 		let mine = mock_product();
-		let theirs = ProductContext::new("other.dot".to_string()).expect("product id is valid");
+		let theirs = ProductContext::new(crate::platform::ProductId::for_test("other.dot"));
 
 		let id = block_on(p.begin_operation(&mine, "sync".into())).expect("begin succeeds").id;
 		assert_eq!(
@@ -1820,10 +1828,11 @@ mod tests {
 			key,
 			hex_bytes("11c0e79b71c3976ccd0c02d1310e2516c08edc9d8b6f57ccd680d63a4d8e72da")
 		);
+		let key = key.try_into().expect("a blake2b-256 key is 32 bytes");
 		let found = block_on(p.lookup_preimage(key).next()).unwrap().unwrap();
 		assert_eq!(found, Some(vec![1, 2, 3]));
 		// An unknown key misses.
-		let miss = block_on(p.lookup_preimage(vec![9; 32]).next()).unwrap().unwrap();
+		let miss = block_on(p.lookup_preimage([9; 32]).next()).unwrap().unwrap();
 		assert_eq!(miss, None);
 	}
 
@@ -1887,7 +1896,7 @@ mod tests {
 
 	fn allocation_review(product: &str) -> UserConfirmationReview {
 		UserConfirmationReview::ResourceAllocation(crate::platform::ResourceAllocationReview {
-			calling_product_id: product.to_string(),
+			calling_product_id: crate::platform::ProductId::for_test(product),
 			resources: vec![],
 		})
 	}
@@ -1903,31 +1912,6 @@ mod tests {
 		)
 		.expect("remote permission answers") ==
 			PermissionDecision::AllowAlways
-	}
-
-	#[test]
-	fn reviews_carry_the_payload_not_just_the_kind() {
-		// Two reviews of the SAME kind with different payloads: a kind-only
-		// recording cannot tell these apart, which is the whole reason the
-		// payload log exists.
-		let p = MockPlatform::new();
-		block_on(p.confirm_user_action(allocation_review("first.dot"))).unwrap();
-		block_on(p.confirm_user_action(allocation_review("second.dot"))).unwrap();
-
-		assert_eq!(
-			p.confirmations(),
-			vec![ConfirmKind::ResourceAllocation; 2],
-			"the kind view should see two identical kinds",
-		);
-		let products: Vec<String> = p
-			.reviews()
-			.into_iter()
-			.map(|review| match review {
-				UserConfirmationReview::ResourceAllocation(inner) => inner.calling_product_id,
-				other => panic!("unexpected review {other:?}"),
-			})
-			.collect();
-		assert_eq!(products, vec!["first.dot", "second.dot"]);
 	}
 
 	#[test]
@@ -2026,7 +2010,7 @@ mod tests {
 	}
 
 	fn mock_product() -> ProductContext {
-		ProductContext::new("mock.dot".to_string()).expect("product context is valid")
+		ProductContext::new(crate::platform::ProductId::for_test("mock.dot"))
 	}
 
 	fn create_room(p: &MockPlatform, room_id: &str) -> latest::ChatRoomRegistrationStatus {

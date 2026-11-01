@@ -55,6 +55,9 @@ export function makeHostCallbacks(
       featureSupported: async () => ({ supported: false }),
       supportedChains: async () => ({ network: "paseo", chains: [] }),
     },
+    extrinsicVersion: {
+      transactionExtensionVersions: async () => ({ chains: [] }),
+    },
     productStorage: {
       read: async () => undefined,
       write: async () => {},
@@ -133,6 +136,10 @@ export function makeHostCallbacks(
       ...overrides.permissions,
     },
     features: { ...defaults.features, ...overrides.features },
+    extrinsicVersion: {
+      ...defaults.extrinsicVersion,
+      ...overrides.extrinsicVersion,
+    },
     productStorage: {
       ...defaults.productStorage,
       ...overrides.productStorage,

@@ -20,9 +20,12 @@ struct TrUAPIAllowanceRequest: Equatable {
 /// and the statement-sign prompt.
 protocol TrUAPIReviewPromptMapping: Sendable {
     func makePermissionRequest(from review: IdentityDisclosureReview) -> TrUAPIPermissionRequest
+    func makePermissionRequest(from review: ChatAuthorityReview) -> TrUAPIPermissionRequest
+    func makePermissionRequest(from review: ProfileDisclosureReview) -> TrUAPIPermissionRequest
     func makeActionRequest(from review: PreimageSubmitReview, requester: ProductId) -> TrUAPIActionConfirmationRequest
     func makePermissionRequest(from review: AccountAccessReview) -> TrUAPIPermissionRequest
     func makeActionRequest(from review: ProductSubtreeReview) -> TrUAPIActionConfirmationRequest
+    func makeActionRequest(from review: NftPurseDrainReview) -> TrUAPIActionConfirmationRequest
     func makePermissionRequest(from review: AccountAliasReview) -> TrUAPIPermissionRequest
     func makeCreateProofRequest(from review: CreateProofReview) throws -> CreateProofConfirmationRequest
     func makeAllowanceRequest(from review: ResourceAllocationReview) throws -> TrUAPIAllowanceRequest
@@ -33,6 +36,14 @@ protocol TrUAPIReviewPromptMapping: Sendable {
 }
 
 struct TrUAPIReviewPromptMapper: TrUAPIReviewPromptMapping {
+    func makePermissionRequest(from review: ChatAuthorityReview) -> TrUAPIPermissionRequest {
+        TrUAPIPermissionRequest(productId: review.productId, permissions: [.chatAuthority])
+    }
+
+    func makePermissionRequest(from review: ProfileDisclosureReview) -> TrUAPIPermissionRequest {
+        TrUAPIPermissionRequest(productId: review.productId, permissions: [.profileDisclosure])
+    }
+
     func makePermissionRequest(from review: IdentityDisclosureReview) -> TrUAPIPermissionRequest {
         TrUAPIPermissionRequest(
             productId: review.productId,
@@ -56,6 +67,26 @@ struct TrUAPIReviewPromptMapper: TrUAPIReviewPromptMapping {
 
     func makeActionRequest(from review: ProductSubtreeReview) -> TrUAPIActionConfirmationRequest {
         .productSubtree(productId: review.productId)
+    }
+
+    func makeActionRequest(from review: NftPurseDrainReview) -> TrUAPIActionConfirmationRequest {
+        let ownerProductId: ProductId? = switch review.owner {
+        case .root: nil
+        case let .product(productId): productId
+        }
+        let destination: NftPurseDrainTarget = switch review.destination {
+        case let .purse(purse): .purse(purse)
+        case let .externalKey(key): .key(hex: key.map { String(format: "%02x", $0) }.joined())
+        case .cheque: .cheque
+        case .refund: .refund
+        }
+        return .nftPurseDrain(
+            productId: review.callingProductId,
+            fromPurse: review.fromPurse,
+            ownerProductId: ownerProductId,
+            itemCount: review.itemCount,
+            destination: destination
+        )
     }
 
     /// An alias is derived within the context product's ring, so it is presented

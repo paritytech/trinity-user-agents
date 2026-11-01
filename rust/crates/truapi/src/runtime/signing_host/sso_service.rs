@@ -4,17 +4,15 @@ use std::sync::Arc;
 
 use crate::platform::{
 	CreateTransactionReview, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
-	ProductContext, ProductExecutionKind, ResourceAllocationReview, SignPayloadReview,
+	ProductContext, ProductExecutionKind, ProductId, ResourceAllocationReview, SignPayloadReview,
 	SignRawReview, StatementStoreProductSignReview, UserConfirmationReview,
-	normalize_product_identifier,
 };
-use futures::{FutureExt, pin_mut};
 use tracing::warn;
 use truapi::latest as api;
 
 use super::{
 	SigningHost,
-	sso_responder::{
+	allowance::{
 		AllowanceAllocationError, allocate_bulletin_allowance,
 		allocate_product_statement_store_allowance, allocate_smart_contract_allowance,
 		allocate_statement_store_allowance,
@@ -46,8 +44,8 @@ use crate::{
 	},
 	runtime::{
 		authority::{
-			AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest, ProductAuthority,
-			ProductDeviceChatAuthorityRequest, SignPayloadAuthorityRequest,
+			AccountCaller, AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
+			ProductAuthority, ProductDeviceChatAuthorityRequest, SignPayloadAuthorityRequest,
 			SignRawAuthorityRequest, chat_requires_preimage_submit,
 		},
 		sso_service::{Dispatch, SsoReply, SsoRequestContext},
@@ -96,20 +94,23 @@ impl SigningHostSsoService {
 		}
 	}
 
-	/// The person's answer to `review`, or `None` once the pairing host has
-	/// withdrawn the request, which leaves nothing authorized.
-	async fn prompt(
+	/// Confirm a paired host's request, which is always reviewed, until the
+	/// pairing host withdraws it.
+	async fn review(
 		&self,
 		cx: &SsoRequestContext,
+		product_id: Option<&ProductId>,
 		review: UserConfirmationReview,
-	) -> Option<Result<bool, api::GenericError>> {
-		let answer = self.signing_host.platform.confirm_user_action(review).fuse();
-		let withdrawn = cx.call.cancel().cancelled().fuse();
-		pin_mut!(answer, withdrawn);
-		futures::select_biased! {
-			_ = withdrawn => None,
-			answer = answer => Some(answer),
-		}
+	) -> Result<(), AuthorityError> {
+		self.signing_host
+			.consent
+			.review(
+				&cx.call,
+				AccountCaller::Remote { product_id },
+				self.signing_host.platform.as_ref(),
+				review,
+			)
+			.await
 	}
 
 	/// Run the platform confirmation seam; rejection and failure both refuse
@@ -119,12 +120,7 @@ impl SigningHostSsoService {
 		cx: &SsoRequestContext,
 		review: UserConfirmationReview,
 	) -> Result<(), String> {
-		match self.prompt(cx, review).await {
-			Some(Ok(true)) => Ok(()),
-			Some(Ok(false)) => Err("Rejected".to_string()),
-			Some(Err(err)) => Err(format!("confirmation failed: {}", err.reason)),
-			None => Err(WITHDRAWN.to_string()),
-		}
+		self.review(cx, None, review).await.map_err(|error| error.to_string())
 	}
 
 	async fn serve_sign(
@@ -243,7 +239,7 @@ impl SigningHostSsoService {
 	async fn allocate(
 		&self,
 		session: &AuthoritySession,
-		calling_product_id: &str,
+		calling_product_id: &ProductId,
 		resource: api::AllocatableResource,
 		on_existing: OnExistingAllowancePolicy,
 	) -> Result<SsoAllocationOutcome, AllowanceAllocationError> {
@@ -293,12 +289,16 @@ impl SigningHostSsoService {
 				})
 			},
 			api::AllocatableResource::AutoSigning => {
+				signing_host.require_current_product_session(session, calling_product_id)?;
+				let _allocation = signing_host.resource_allocation.lock().await;
+				signing_host.require_current_product_session(session, calling_product_id)?;
 				let product_root_private_key =
 					signing_host.product_subtree_secret(calling_product_id)?;
 				let root_entropy = signing_host.root_entropy()?;
 				let ring_vrf_domain_entropy =
 					derive_ring_vrf_domain_entropy(&root_entropy, calling_product_id)
 						.map_err(AuthorityError::from)?;
+				signing_host.require_current_product_session(session, calling_product_id)?;
 				Ok(SsoAllocationOutcome::Allocated(SsoAllocatedResource::AutoSigning {
 					product_root_private_key,
 					ring_vrf_domain_entropy,
@@ -395,7 +395,7 @@ fn resource_allocation_outcome(
 
 #[truapi_macros::sso_service]
 impl SigningHostSsoService {
-	/// Incoming funding uses only supplied secrets, not any outgoing-spend grant.
+	/// Credit supplied incoming funding without an outgoing-spend grant.
 	async fn payment_top_up(
 		&self,
 		cx: &SsoRequestContext,
@@ -407,7 +407,7 @@ impl SigningHostSsoService {
 			.map_err(|error| PaymentTopUpError(error.into()))
 	}
 
-	/// Consent-free private certification; no generic raw-signing or Chat path.
+	/// Certify the private Media endpoint for the attested product.
 	async fn media_endpoint_certification(
 		&self,
 		cx: &SsoRequestContext,
@@ -452,17 +452,19 @@ impl SigningHostSsoService {
 	) -> ResourceAllocationResponse {
 		let mut failures = Vec::new();
 		let payload = async {
+			self.signing_host
+				.require_current_product_session(&cx.session, &request.calling_product_id)
+				.map_err(|err| err.to_string())?;
 			let review = UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
 				calling_product_id: request.calling_product_id.clone(),
 				resources: request.resources.clone(),
 			});
-			match self.prompt(cx, review).await {
-				Some(Ok(true)) => {},
-				Some(Ok(false)) => {
+			match self.review(cx, Some(&request.calling_product_id), review).await {
+				Ok(()) => {},
+				Err(AuthorityError::Rejected) => {
 					return Ok(vec![SsoAllocationOutcome::Rejected; request.resources.len()]);
 				},
-				Some(Err(err)) => return Err(format!("confirmation failed: {}", err.reason)),
-				None => return Err(WITHDRAWN.to_string()),
+				Err(error) => return Err(error.to_string()),
 			}
 
 			self.signing_host
@@ -564,9 +566,8 @@ impl SigningHostSsoService {
 			.sign_vrf_request(
 				&cx.call,
 				&cx.session,
-				request.calling_product_id,
+				AccountCaller::Remote { product_id: Some(&request.calling_product_id) },
 				request.payload,
-				false,
 			)
 			.await
 			.map_err(api::HostAccountSignVrfError::from)
@@ -579,7 +580,7 @@ impl SigningHostSsoService {
 		request: ProductSubtreeRequest,
 	) -> ProductSubtreeResponse {
 		self.signing_host
-			.product_subtree_public_key(&cx.call, &cx.session, request.product_id)
+			.product_subtree_public_key(&cx.call, &cx.session, &request.product_id)
 			.await
 			.map_err(|err| err.to_string())
 	}
@@ -610,22 +611,17 @@ impl SigningHostSsoService {
 	) -> RingVrfSignResponse {
 		self.signing_host.ring_vrf_sign(&cx.call, &cx.session, request).await
 	}
-	/// Sign a canonical unsigned Statement Store payload with a product account.
+	/// Sign a validated Statement Store payload under the attested product.
 	async fn statement_store_product_sign(
 		&self,
 		cx: &SsoRequestContext,
 		request: StatementStoreProductSignRequest,
 	) -> StatementStoreProductSignResponse {
-		let calling_product_id = normalize_product_identifier(&request.calling_product_id)
-			.map_err(|_| "invalid calling product identifier".to_string())?;
-		let mut account = request.account;
-		let account_product_id = normalize_product_identifier(&account.dot_ns_identifier)
-			.map_err(|_| "invalid product account identifier".to_string())?;
-		if account_product_id != calling_product_id {
+		let calling_product_id = request.calling_product_id;
+		let account = request.account;
+		if account.dot_ns_identifier != calling_product_id {
 			return Err("product account does not belong to the calling product".to_string());
 		}
-		account.dot_ns_identifier =
-			calling_product_id.parse().expect("normalized calling product id");
 		validate_unsigned_statement_signing_payload(&request.payload)
 			.map_err(|error| error.to_string())?;
 		self.confirm(
@@ -641,7 +637,7 @@ impl SigningHostSsoService {
 			.sign_statement_store_product_payload(
 				&cx.call,
 				&cx.session,
-				Some(calling_product_id.as_str()),
+				Some(&calling_product_id),
 				account,
 				request.payload,
 			)
@@ -649,25 +645,20 @@ impl SigningHostSsoService {
 			.map_err(|error| error.to_string())
 	}
 
-	/// Execute the same narrow Chat authority operations as local products.
+	/// Execute a Chat operation after its distinct authority and upload consent.
 	async fn product_device_chat(
 		&self,
 		cx: &SsoRequestContext,
 		request: ProductRequest<SsoProductDeviceChatOperation>,
 	) -> ProductDeviceChatResponse {
-		use truapi::versioned::account::{
-			HostProductDeviceChatError as WireError, HostProductDeviceChatResponse as WireResponse,
-		};
-
 		self.signing_host
 			.require_current_product_session(&cx.session, &request.calling_product_id)
-			.map_err(|_| WireError::V1(api::HostProductDeviceChatError::NotConnected))?;
-		let calling_product_id = normalize_product_identifier(&request.calling_product_id)
-			.map_err(|_| WireError::V1(api::HostProductDeviceChatError::InvalidRequest))?;
+			.map_err(|_| api::HostProductDeviceChatError::NotConnected)?;
+		let calling_product_id = request.calling_product_id;
 		let operation = match request.payload {
 			SsoProductDeviceChatOperation::V3(operation) => operation,
 			SsoProductDeviceChatOperation::V2(_) => {
-				return Err(WireError::V1(api::HostProductDeviceChatError::InvalidRequest));
+				return Err(api::HostProductDeviceChatError::InvalidRequest);
 			},
 		};
 		// Upstream `PermissionsService` takes the validated product context; the
@@ -676,15 +667,14 @@ impl SigningHostSsoService {
 		let calling_product = ProductContext::new_with_execution(
 			calling_product_id.clone(),
 			ProductExecutionKind::Worker,
-		)
-		.map_err(|_| WireError::V1(api::HostProductDeviceChatError::InvalidRequest))?;
-		let permissions = PermissionsService::new(
+		);
+		let permissions = PermissionsService::new_remote(
 			self.signing_host.platform.as_ref(),
 			self.signing_host.platform.as_ref(),
 			&calling_product,
-		);
-		let storage_unavailable =
-			|_| WireError::V1(api::HostProductDeviceChatError::StorageUnavailable);
+		)
+		.with_authority(self.signing_host.services.permissions.clone());
+		let storage_unavailable = |_| api::HostProductDeviceChatError::StorageUnavailable;
 		// A session-only grant lives with the signing session, since each SSO
 		// request builds its own permissions service.
 		let consent = if permissions
@@ -702,7 +692,7 @@ impl SigningHostSsoService {
 				.map_err(storage_unavailable)?
 		};
 		if consent == ChatAuthorityConsent::Refused {
-			return Err(WireError::V1(api::HostProductDeviceChatError::AccessNotGranted));
+			return Err(api::HostProductDeviceChatError::AccessNotGranted);
 		}
 		if chat_requires_preimage_submit(&operation) &&
 			permissions
@@ -710,11 +700,10 @@ impl SigningHostSsoService {
 					permission: api::RemotePermission::PreimageSubmit,
 				})
 				.await
-				.map_err(|_| {
-					WireError::V1(api::HostProductDeviceChatError::StorageUnavailable)
-				})? != PermissionAuthorizationStatus::Authorized
+				.map_err(|_| api::HostProductDeviceChatError::StorageUnavailable)? !=
+				PermissionAuthorizationStatus::Authorized
 		{
-			return Err(WireError::V1(api::HostProductDeviceChatError::AccessNotGranted));
+			return Err(api::HostProductDeviceChatError::AccessNotGranted);
 		}
 		self.signing_host
 			.product_device_chat(
@@ -727,8 +716,7 @@ impl SigningHostSsoService {
 				},
 			)
 			.await
-			.map(WireResponse::V2)
-			.map_err(|error| WireError::V1(error.into()))
+			.map_err(Into::into)
 	}
 }
 

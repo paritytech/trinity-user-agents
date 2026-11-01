@@ -23,27 +23,27 @@ use truapi::versioned::{FromLatest, IntoLatest, Versioned};
 
 use crate::runtime::{
 	ProductRuntimeHost, RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-	remote_authority_call, remote_authority_context_with_default, until_cancelled,
+	authority::AuthorityError, remote_authority_call, remote_authority_context_with_default,
 };
 
 impl ProductRuntimeHost {
 	/// Resolve a durable allowance grant in the product connection's storage,
 	/// never the signing host's (potentially differently scoped) storage.
-	pub(in crate::runtime) async fn require_statement_store_allowance(
+	pub async fn require_statement_store_allowance(
 		&self,
 		session: &crate::runtime::authority::AuthoritySession,
 		derivation_index: Option<latest::DerivationIndex>,
 	) -> Result<(), String> {
-		let product_id = self.product_id();
+		let product_id = self.connection.product_id();
 		let require_session = || {
-			if self.authority.session_is_current(session, Some(&product_id)) {
+			if self.accounts.session_is_current(session) {
 				Ok(())
 			} else {
 				Err("Statement allowance session changed".to_string())
 			}
 		};
 		require_session()?;
-		let service = self.permissions_service();
+		let service = self.connection.permissions_service();
 		let request = PermissionAuthorizationRequest::StatementStoreAllowance {
 			derivation_index: derivation_index.clone(),
 		};
@@ -56,18 +56,22 @@ impl ProductRuntimeHost {
 				Some(index) => latest::AllocatableResource::ProductStatementStoreAllowance(index),
 				None => latest::AllocatableResource::StatementStoreAllowance,
 			};
-			let confirmed = self
-				.platform
-				.confirm_user_action(UserConfirmationReview::ResourceAllocation(
-					ResourceAllocationReview {
+			let confirmed = match self
+				.confirm(
+					&CallContext::default(),
+					UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
 						calling_product_id: product_id.clone(),
 						resources: vec![resource],
-					},
-				))
+					}),
+				)
 				.await
-				.map_err(|err| {
-					format!("statement allowance confirmation failed: {}", err.reason)
-				})?;
+			{
+				Ok(()) => true,
+				Err(AuthorityError::Rejected) => false,
+				Err(error) => {
+					return Err(format!("statement allowance confirmation failed: {error}"));
+				},
+			};
 			require_session()?;
 			// An administrative decision made while the prompt was open wins.
 			status = service.authorization_status(&request).await.map_err(|err| {
@@ -98,7 +102,8 @@ impl ProductRuntimeHost {
 		Ok(())
 	}
 
-	pub(in crate::runtime) async fn check_statement_store_allowance(
+	/// Verify that the current session still holds its durable allowance grant.
+	pub async fn check_statement_store_allowance(
 		&self,
 		session: &crate::runtime::authority::AuthoritySession,
 		derivation_index: Option<latest::DerivationIndex>,
@@ -111,7 +116,7 @@ impl ProductRuntimeHost {
 			.map_err(|err| {
 				format!("statement allowance authorization read failed: {}", err.reason)
 			})?;
-		if !self.authority.session_is_current(session, Some(&self.product_id())) {
+		if !self.accounts.session_is_current(session) {
 			return Err("Statement allowance session changed".to_string());
 		}
 		if status != PermissionAuthorizationStatus::Authorized {
@@ -133,15 +138,15 @@ impl ResourceAllocation for ProductRuntimeHost {
 		let version = request.version();
 		let inner = request.into_latest();
 		let result = async {
-			let Some(session) = self.authority.current_session() else {
+			let Some(session) = self.accounts.current_session() else {
 				return Err(CallError::Domain(latest::ResourceAllocationError::Unknown {
 					reason: "No active session".to_string(),
 				}));
 			};
 
-			let product_id = self.product_id();
+			let product_id = self.connection.product_id();
 			let require_session = || {
-				if self.authority.session_is_current(&session, Some(&product_id)) {
+				if self.accounts.session_is_current(&session) {
 					Ok(())
 				} else {
 					Err(CallError::HostFailure {
@@ -149,7 +154,7 @@ impl ResourceAllocation for ProductRuntimeHost {
 					})
 				}
 			};
-			let service = self.permissions_service();
+			let service = self.connection.permissions_service();
 			let mut grants = Vec::new();
 			for resource in &inner.resources {
 				let derivation_index = match resource {
@@ -179,24 +184,29 @@ impl ResourceAllocation for ProductRuntimeHost {
 			// confirm it, even when implicit provisioning has a durable grant. The
 			// same review establishes any missing grants without a second prompt.
 			// A withdrawn call stops waiting on the review and authorizes nothing.
-			let confirmed = until_cancelled(
-				cx,
-				self.platform.confirm_user_action(UserConfirmationReview::ResourceAllocation(
-					ResourceAllocationReview {
+			let confirmed = match self
+				.confirm(
+					cx,
+					UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
 						calling_product_id: product_id.clone(),
 						resources: inner.resources.clone(),
-					},
-				)),
-			)
-			.await
-			.map_err(|err| {
-				CallError::Domain(latest::ResourceAllocationError::Unknown {
-					reason: err.to_string(),
-				})
-			})?
-			.map_err(|err| CallError::HostFailure {
-				reason: format!("resource allocation confirmation failed: {err:?}"),
-			})?;
+					}),
+				)
+				.await
+			{
+				Ok(()) => true,
+				Err(AuthorityError::Rejected) => false,
+				Err(AuthorityError::ConfirmationFailed(error)) => {
+					return Err(CallError::HostFailure {
+						reason: format!("resource allocation confirmation failed: {error:?}"),
+					});
+				},
+				Err(error) => {
+					return Err(CallError::Domain(latest::ResourceAllocationError::Unknown {
+						reason: error.to_string(),
+					}));
+				},
+			};
 			require_session()?;
 			for (request, before) in &grants {
 				let current = service
@@ -226,9 +236,9 @@ impl ResourceAllocation for ProductRuntimeHost {
 			}
 			if !confirmed {
 				// Declining an increase does not revoke an existing durable grant.
-				return Err(CallError::Domain(latest::ResourceAllocationError::Unknown {
-					reason: "User rejected resource allocation".to_string(),
-				}));
+				return Ok(latest::HostRequestResourceAllocationResponse {
+					outcomes: vec![latest::AllocationOutcome::Rejected; inner.resources.len()],
+				});
 			}
 			for (request, _) in &grants {
 				let status = service
@@ -244,16 +254,13 @@ impl ResourceAllocation for ProductRuntimeHost {
 				cx,
 				RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
 			);
-			remote_authority_call(
-				&cx,
-				self.authority.allocate_resources(&cx, &session, product_id, inner),
-			)
-			.await
-			.map_err(|err| {
-				CallError::Domain(latest::ResourceAllocationError::Unknown {
-					reason: err.to_string(),
+			remote_authority_call(&cx, self.accounts.allocate_resources(&cx, &session, inner))
+				.await
+				.map_err(|err| {
+					CallError::Domain(latest::ResourceAllocationError::Unknown {
+						reason: err.to_string(),
+					})
 				})
-			})
 		}
 		.await;
 		result
@@ -275,19 +282,16 @@ impl Entropy for ProductRuntimeHost {
 		let version = request.version();
 		let latest::HostDeriveEntropyRequest { context } = request.into_latest();
 		let result = async {
-			let Some(session) = self.authority.current_session() else {
+			let Some(session) = self.accounts.current_session() else {
 				return Err(CallError::Domain(latest::HostDeriveEntropyError::Unknown {
 					reason: "Not connected".to_string(),
 				}));
 			};
-			let entropy = self
-				.authority
-				.derive_entropy(&session, &self.product_id(), &context)
-				.map_err(|err| {
-					CallError::Domain(latest::HostDeriveEntropyError::Unknown {
-						reason: err.to_string(),
-					})
-				})?;
+			let entropy = self.accounts.derive_entropy(&session, &context).map_err(|err| {
+				CallError::Domain(latest::HostDeriveEntropyError::Unknown {
+					reason: err.to_string(),
+				})
+			})?;
 
 			Ok(latest::HostDeriveEntropyResponse { entropy })
 		}

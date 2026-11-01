@@ -74,6 +74,29 @@ class RealDefaultExtrinsicVersionProviderTest {
         assertEquals(ExtrinsicVersion.V4, provider.getDefaultExtrinsicVersion("polkadot", isSigned = true).getOrThrow())
     }
 
+    @Test
+    fun `only people and asset hub are general transaction chains, at their configured versions`() = runTest {
+        coEvery { remoteConfig.getSyncedJsonObject(any(), Map::class.java) } returns
+            Result.success(mapOf(PEOPLE to 2.0, ASSET_HUB to 1.0, "polkadot" to 3.0))
+
+        assertEquals(mapOf(PEOPLE to 2.toByte(), ASSET_HUB to 1.toByte()), provider.forGeneralTransactionChains().getOrThrow())
+    }
+
+    @Test
+    fun `a general transaction chain missing from remote config takes extension version 0`() = runTest {
+        coEvery { remoteConfig.getSyncedJsonObject(any(), Map::class.java) } returns Result.success(mapOf(PEOPLE to 1.0))
+
+        assertEquals(mapOf(PEOPLE to 1.toByte(), ASSET_HUB to 0.toByte()), provider.forGeneralTransactionChains().getOrThrow())
+    }
+
+    @Test
+    fun `a failed remote config read fails the general transaction chains instead of reporting none`() = runTest {
+        val failure = IllegalStateException("remote config unavailable")
+        coEvery { remoteConfig.getSyncedJsonObject(any(), Map::class.java) } returns Result.failure(failure)
+
+        assertEquals(failure, provider.forGeneralTransactionChains().exceptionOrNull())
+    }
+
     private fun runtimeOf(chainId: ChainId, extensionVersion: Int, vararg extensionIds: String) {
         val extensions = extensionIds.map { extensionId -> mockk<TransactionExtensionMetadata> { every { id } returns extensionId } }
         val runtime = mockk<RuntimeSnapshot> {

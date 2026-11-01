@@ -74,14 +74,14 @@ pub(super) struct UploadApproval {
 impl ProductRuntimeHost {
 	fn upload_key(&self, session: &AuthoritySession) -> CoreStorageKey {
 		CoreStorageKey::AutomaticPreimageUploads {
-			product_id: self.product.product_id.clone(),
+			product_id: self.connection.product.product_id.to_string(),
 			root_public_key: session.public_key,
-			genesis_hash: self.services.bulletin.genesis_hash(),
+			genesis_hash: self.connection.services.bulletin.genesis_hash(),
 		}
 	}
 
 	fn require_upload_session(&self, session: &AuthoritySession) -> Result<(), GenericError> {
-		if self.authority.session_is_current(session, Some(&self.product.product_id)) {
+		if self.accounts.session_is_current(session) {
 			Ok(())
 		} else {
 			Err(failure("Upload account changed or disconnected"))
@@ -92,7 +92,7 @@ impl ProductRuntimeHost {
 		&self,
 		root_public_key: [u8; 32],
 	) -> Result<AuthoritySession, GenericError> {
-		self.authority
+		self.accounts
 			.current_session()
 			.filter(|session| session.public_key == root_public_key)
 			.ok_or_else(|| failure("Upload account changed or disconnected"))
@@ -102,7 +102,7 @@ impl ProductRuntimeHost {
 		&self,
 		session: &AuthoritySession,
 	) -> Result<(Consent, Option<Vec<u8>>), GenericError> {
-		let bytes = self.platform.read_core_storage(self.upload_key(session)).await?;
+		let bytes = self.connection.platform.read_core_storage(self.upload_key(session)).await?;
 		self.require_upload_session(session)?;
 		let Some(raw) = bytes.as_ref() else {
 			return Ok((Consent::default(), None));
@@ -124,6 +124,7 @@ impl ProductRuntimeHost {
 	) -> Result<bool, GenericError> {
 		self.require_upload_session(session)?;
 		let changed = self
+			.connection
 			.platform
 			.compare_exchange_core_storage(
 				self.upload_key(session),
@@ -141,7 +142,7 @@ impl ProductRuntimeHost {
 		root_public_key: [u8; 32],
 	) -> Result<PermissionAuthorizationStatus, GenericError> {
 		let session = self.upload_admin_session(root_public_key)?;
-		let _gate = self.services.automatic_preimage_gate.lock().await;
+		let _gate = self.connection.services.automatic_preimage_gate.lock().await;
 		Ok(self.read_upload_consent(&session).await?.0.status)
 	}
 
@@ -151,7 +152,7 @@ impl ProductRuntimeHost {
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), GenericError> {
 		let session = self.upload_admin_session(root_public_key)?;
-		let _gate = self.services.automatic_preimage_gate.lock().await;
+		let _gate = self.connection.services.automatic_preimage_gate.lock().await;
 		for _ in 0..CONSENT_CAS_ATTEMPTS {
 			let (mut consent, expected) = self.read_upload_consent(&session).await?;
 			consent.set_status(status)?;
@@ -169,7 +170,7 @@ impl ProductRuntimeHost {
 	) -> Result<UploadApproval, GenericError> {
 		self.require_upload_session(session)?;
 		let revision = {
-			let _gate = self.services.automatic_preimage_gate.lock().await;
+			let _gate = self.connection.services.automatic_preimage_gate.lock().await;
 			let mut revision = None;
 			for _ in 0..CONSENT_CAS_ATTEMPTS {
 				let (mut consent, expected) = self.read_upload_consent(session).await?;
@@ -188,19 +189,20 @@ impl ProductRuntimeHost {
 		// Never hold the storage gate across UI: revocation must remain usable
 		// while this prompt is open. No trusted-product or AutoSigning shortcut.
 		let decision = self
+			.connection
 			.platform
 			.confirm_permission(UserConfirmationReview::PreimageSubmit(PreimageSubmitReview {
 				size,
-				product_id: self.product.product_id.clone(),
+				product_id: self.connection.product.product_id.to_string(),
 				root_public_key: session.public_key,
-				genesis_hash: self.services.bulletin.genesis_hash(),
+				genesis_hash: self.connection.services.bulletin.genesis_hash(),
 				automatic_max_bytes: MAX_BYTES,
 				automatic_max_uploads: MAX_UPLOADS as u32,
 				automatic_window_seconds: WINDOW_SECONDS as u32,
 			}))
 			.await?;
 		self.require_upload_session(session)?;
-		let _gate = self.services.automatic_preimage_gate.lock().await;
+		let _gate = self.connection.services.automatic_preimage_gate.lock().await;
 		for _ in 0..CONSENT_CAS_ATTEMPTS {
 			let (mut consent, expected) = self.read_upload_consent(session).await?;
 			if consent.revision != revision {
@@ -241,7 +243,7 @@ impl ProductRuntimeHost {
 		approval: &UploadApproval,
 	) -> Result<(), GenericError> {
 		self.require_upload_session(session)?;
-		let _gate = self.services.automatic_preimage_gate.lock().await;
+		let _gate = self.connection.services.automatic_preimage_gate.lock().await;
 		if self.read_upload_consent(session).await?.0.revision != approval.revision {
 			return Err(failure("Upload permission was revoked or changed"));
 		}

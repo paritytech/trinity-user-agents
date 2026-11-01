@@ -19,10 +19,10 @@ use std::{
 };
 
 use crate::platform::{
-	ChatPlatform, CoinageWalletHost, ContactsPlatform, CoreAdmin, ExpandedCardHost, GamePlatform,
-	MediaPlatform, PairingHostAdmin, PairingHostConfig, PermissionAuthorizationRequest,
-	PermissionAuthorizationStatus, PermissionStatusHost, Platform, PocketPlatform, ProductContext,
-	ProfilePlatform, ScannerPlatform, SigningHostConfig, normalize_product_identifier,
+	ChatPlatform, CoinageWalletHost, ContactsPlatform, CoreAdmin, ExpandedCardHost,
+	FundingPlatform, GamePlatform, MediaPlatform, PairingHostAdmin, PairingHostConfig,
+	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionStatusHost, Platform,
+	PocketPlatform, ProductContext, ProfilePlatform, ScannerPlatform, SigningHostConfig,
 };
 use futures::{
 	FutureExt, StreamExt,
@@ -40,10 +40,9 @@ use crate::{
 	host_logic::worker::WorkerLedger,
 	runtime::{
 		ActionChannel, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver,
-		LocalActivation, PairedSsoPeer, PairingHostRole, ProductAuthority, ProductRuntimeHost,
-		ResponderExit, RuntimeServices, SigningHostRole, SigningHostSsoService,
-		disconnect_paired_host, establish_pairing, notify_pairing_allowance_allocation,
-		notify_pairing_failed, respond_to_pairing, resume_pairing, sso_service::Dispatch,
+		HostSession, LocalActivation, PairedSsoPeer, PairingHostRole, ProductAuthority,
+		ProductConnection, ProductRuntimeHost, ResponderExit, RuntimeServices, SigningHostRole,
+		SigningHostSsoService, SsoResponderService, sso_service::Dispatch,
 	},
 	subscription::{HostInitiatedSubscriptionManager, Spawner},
 	transport::Transport,
@@ -174,9 +173,8 @@ pub enum ProductRuntimeError {
 	BufferFull,
 }
 
-fn product_context(product_id: &str) -> Result<ProductContext, v01::GenericError> {
-	ProductContext::new(product_id.to_string())
-		.map_err(|err| v01::GenericError { reason: err.to_string() })
+fn product_context(product_id: &ProductId) -> ProductContext {
+	ProductContext::new(product_id.clone())
 }
 
 /// A seedless pairing host: the user's keys live in an external wallet reached
@@ -257,7 +255,7 @@ impl PairingHostRuntime {
 			services.install_contacts_platform(contacts_platform);
 		}
 		let pairing_host = PairingHostRole::new(services.clone(), config);
-		pairing_host.clone().start_session_store_sync(spawner);
+		pairing_host.session().clone().start_session_store_sync(spawner);
 		Self { services, pairing_host }
 	}
 
@@ -280,6 +278,30 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_pocket_platform"))]
 	pub fn set_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
 		self.services.install_pocket_platform(platform)
+	}
+
+	/// Install the optional funding overlay once, before serving products.
+	pub fn set_funding_platform(&self, platform: Arc<dyn FundingPlatform>) -> bool {
+		self.services.install_funding_platform(platform)
+	}
+
+	/// Open a host-owned funding session; dismissal returns `None`.
+	pub async fn open_funding(
+		&self,
+		direction: v01::FundingDirection,
+		amount: Option<u128>,
+	) -> Result<Option<String>, v01::GenericError> {
+		self.services.open_host_funding(direction, amount).await
+	}
+
+	/// Simulate settlement only for explicitly enabled test hosts.
+	#[cfg(feature = "test-host")]
+	pub async fn settle_funding_for_test(
+		&self,
+		intent: &str,
+		stage: crate::host_logic::funding::FundingStage,
+	) -> Result<bool, v01::GenericError> {
+		Ok(self.services.settle_funding_for_test(intent, stage).await?)
 	}
 
 	/// Install the host's [`ProfilePlatform`], which renders product-referenced
@@ -335,6 +357,11 @@ impl PairingHostRuntime {
 		self.services.install_media_platform(platform)
 	}
 
+	/// Create execution-local adapters without constructing a temporary runtime.
+	pub fn connection_adapters(&self) -> ConnectionAdapters {
+		ConnectionAdapters::from_services(&self.services)
+	}
+
 	/// Build a product-facing runtime from this pairing host.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_runtime"))]
 	pub fn product_runtime(
@@ -345,6 +372,7 @@ impl PairingHostRuntime {
 		ProductRuntime::new(
 			self.services.clone(),
 			self.pairing_host.clone(),
+			self.pairing_host.session().clone(),
 			product,
 			ConnectionAdapters::from_services(&self.services),
 			sink,
@@ -361,6 +389,7 @@ impl PairingHostRuntime {
 		ProductRuntime::new(
 			self.services.clone(),
 			self.pairing_host.clone(),
+			self.pairing_host.session().clone(),
 			product,
 			adapters,
 			sink,
@@ -373,6 +402,7 @@ impl PairingHostRuntime {
 		HostAdmin::new(
 			self.services.clone(),
 			self.pairing_host.clone(),
+			self.pairing_host.session().clone(),
 			product,
 			ConnectionAdapters::from_services(&self.services),
 		)
@@ -380,13 +410,13 @@ impl PairingHostRuntime {
 
 	/// Root account used to fence account-scoped host administration.
 	pub fn current_session_public_key(&self) -> Option<[u8; 32]> {
-		self.pairing_host.session_state().current_public_key()
+		self.pairing_host.session().session_state().current_public_key()
 	}
 
 	/// Disconnect the active account-authority session.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.disconnect_session"))]
 	pub async fn disconnect_session(&self) {
-		self.pairing_host.disconnect().await;
+		self.pairing_host.session().disconnect().await;
 	}
 
 	/// Log out and discard the old pairing keypair.
@@ -463,14 +493,14 @@ impl PairingHostRuntime {
 	/// running their own P2P chat channel for the paired identity.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.session_chat_identity_key"))]
 	pub fn session_chat_identity_key(&self) -> Option<[u8; 32]> {
-		self.pairing_host.session_state().current()?.identity_chat_private_key
+		self.pairing_host.session().session_state().current()?.identity_chat_private_key
 	}
 
 	/// Read the active session's sr25519 statement-store secret, for hosts
 	/// running their own statement-store traffic against the advertised account.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.device_statement_key"))]
 	pub fn device_statement_key(&self) -> Option<[u8; 64]> {
-		Some(self.pairing_host.session_state().current()?.sso?.ss_secret)
+		Some(self.pairing_host.session().session_state().current()?.sso?.ss_secret)
 	}
 
 	/// Read this device's X25519 encryption secret, for hosts running device
@@ -485,7 +515,7 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_subtree_public_key"))]
 	pub async fn product_subtree_public_key(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
 		product_subtree_public_key(self.pairing_host.as_ref(), product_id, timeout_ms).await
@@ -495,18 +525,18 @@ impl PairingHostRuntime {
 	/// without sending a peer-disconnect notice.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.reset_session_state"))]
 	pub async fn reset_session_state(&self) {
-		self.pairing_host.reset_session_state().await;
+		self.pairing_host.session().reset_session_state().await;
 	}
 
 	/// Start or join the pairing-host login flow for one product.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.login", %product_id))]
 	pub async fn login(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 	) -> Result<v01::HostRequestLoginResponse, v01::GenericError> {
-		let product = product_context(product_id)?;
-		match self.pairing_host.request_login(&product).await {
-			Ok(truapi::versioned::account::HostRequestLoginResponse::V1(response)) => Ok(response),
+		let product = product_context(product_id);
+		match self.pairing_host.session().request_login(&product).await {
+			Ok(response) => Ok(response),
 			Err(error) => Err(v01::GenericError { reason: pairing_login_error_reason(error) }),
 		}
 	}
@@ -515,7 +545,7 @@ impl PairingHostRuntime {
 	/// active.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.cancel_pairing"))]
 	pub fn cancel_pairing(&self) {
-		self.pairing_host.cancel_login();
+		self.pairing_host.session().cancel_login();
 	}
 
 	/// Activate a canonical session blob supplied by an external encrypted
@@ -525,7 +555,11 @@ impl PairingHostRuntime {
 	/// connected-session installation have completed.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_external_session"))]
 	pub async fn activate_external_session(&self, blob: &[u8]) -> Result<(), v01::GenericError> {
-		self.pairing_host.activate_external_session(blob).await.map_err(Into::into)
+		self.pairing_host
+			.session()
+			.activate_external_session(blob)
+			.await
+			.map_err(Into::into)
 	}
 
 	/// Await restoration of the persisted auth-session blob.
@@ -535,22 +569,22 @@ impl PairingHostRuntime {
 	/// immediately use the restored authority session.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.activate_stored_session"))]
 	pub async fn activate_stored_session(&self) -> Result<(), v01::GenericError> {
-		self.pairing_host.activate_stored_session().await.map_err(Into::into)
+		self.pairing_host.session().activate_stored_session().await.map_err(Into::into)
 	}
 
 	/// Notify the pairing runtime that the persisted auth-session blob may
 	/// have changed and should be re-read.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.notify_session_store_changed"))]
 	pub fn notify_session_store_changed(&self) {
-		self.pairing_host.notify_session_store_changed();
+		self.pairing_host.session().notify_session_store_changed();
 	}
 
 	/// Resolve the current immutable Calling slot for trusted host settings.
 	pub async fn calling_permission_authorization_request(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 	) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
+		self.product_admin(product_context(product_id))
 			.calling_permission_authorization_request()
 			.await
 	}
@@ -563,10 +597,10 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.permission_authorization_status", product_id = %product_id))]
 	pub async fn permission_authorization_status(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		request: PermissionAuthorizationRequest,
 	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
+		self.product_admin(product_context(product_id))
 			.permission_authorization_status(request)
 			.await
 	}
@@ -579,10 +613,10 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.permission_authorization_statuses", product_id = %product_id))]
 	pub async fn permission_authorization_statuses(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		requests: Vec<PermissionAuthorizationRequest>,
 	) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
+		self.product_admin(product_context(product_id))
 			.permission_authorization_statuses(requests)
 			.await
 	}
@@ -591,40 +625,71 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.set_permission_authorization_status", product_id = %product_id))]
 	pub async fn set_permission_authorization_status(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
+		let account_access =
+			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
+		self.product_admin(product_context(product_id))
 			.set_permission_authorization_status(request, status)
-			.await
+			.await?;
+		if account_access {
+			self.pairing_host.consent().forget_allowed_once_for(product_id);
+		}
+		Ok(())
 	}
 
 	/// Re-read a product's stored authorization after another core changes it.
 	pub async fn refresh_permission_authorization(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		request: PermissionAuthorizationRequest,
 	) -> Result<(), v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
+		self.product_admin(product_context(product_id))
 			.refresh_permission_authorization(request)
+			.await
+	}
+
+	/// Apply a persisted bare-label permission notification to live product connections.
+	/// Storage namespaces have no network suffix and must not be parsed as product IDs.
+	pub async fn refresh_permission_authorization_namespace(
+		&self,
+		namespace: &str,
+		request: PermissionAuthorizationRequest,
+	) -> Result<(), v01::GenericError> {
+		self.services
+			.refresh_permission_authorization_namespace(namespace, request)
 			.await
 	}
 }
 
 fn pairing_login_error_reason(
-	error: truapi::CallError<truapi::versioned::account::HostRequestLoginError>,
+	error: truapi::CallError<truapi::latest::HostRequestLoginError>,
 ) -> String {
 	match error {
-		truapi::CallError::Domain(truapi::versioned::account::HostRequestLoginError::V1(
-			v01::HostRequestLoginError::Unknown { reason },
-		)) |
+		truapi::CallError::Domain(v01::HostRequestLoginError::Unknown { reason }) |
 		truapi::CallError::HostFailure { reason } |
 		truapi::CallError::MalformedFrame { reason } => reason,
 		truapi::CallError::Denied => "login denied".to_string(),
 		truapi::CallError::Unsupported => "login unsupported".to_string(),
 		truapi::CallError::Cancelled => "login cancelled".to_string(),
 	}
+}
+
+/// Chain-backed resource readiness for trusted host settings, without secret keys.
+#[derive(Clone, Debug)]
+pub struct ProductResourceStatus {
+	/// Public key of the product's Bulletin allowance account.
+	pub bulletin_account: [u8; 32],
+	/// Whether the current Bulletin authorization has usable capacity.
+	pub bulletin_available: bool,
+	/// Public key of the product's index-zero smart-contract account.
+	pub contract_account: [u8; 32],
+	/// Whether that account has any remaining PGAS, including a partly spent claim.
+	pub contract_funded: bool,
+	/// Whether the active local session permits automatic signing for this product.
+	pub auto_signing: bool,
 }
 
 impl PairingHostAdmin for PairingHostRuntime {
@@ -648,6 +713,7 @@ impl PairingHostAdmin for PairingHostRuntime {
 pub struct SigningHostRuntime {
 	services: Arc<RuntimeServices>,
 	signing_host: Arc<SigningHostRole>,
+	sso_responder: Arc<SsoResponderService>,
 }
 
 impl SigningHostRuntime {
@@ -749,8 +815,10 @@ impl SigningHostRuntime {
 			services.clone(),
 			config.network_suffix,
 			config.coinage_instance_id,
+			config.consent_policy,
 		);
-		Self { services, signing_host }
+		let sso_responder = SsoResponderService::new(services.clone(), signing_host.clone());
+		Self { services, signing_host, sso_responder }
 	}
 
 	/// Install the host's [`PermissionStatusHost`], which carries the reasoning
@@ -781,6 +849,52 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_pocket_platform"))]
 	pub fn set_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
 		self.services.install_pocket_platform(platform)
+	}
+
+	/// Install the optional funding overlay once, before serving products.
+	pub fn set_funding_platform(&self, platform: Arc<dyn FundingPlatform>) -> bool {
+		self.services.install_funding_platform(platform)
+	}
+
+	/// Every retained session, in flight first and newest first within each stage.
+	pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
+		self.services.funding().sessions()
+	}
+
+	/// Recorded and compacted terminal sessions, newest first.
+	pub fn funding_history(&self) -> Vec<crate::host_logic::funding::FundingSessionSummary> {
+		self.services.funding().history()
+	}
+
+	/// Acknowledge a terminal session only after persisting it in host history.
+	/// Unacknowledged outcomes are announced again whenever funding resumes.
+	pub async fn acknowledge_funding_session(
+		&self,
+		intent: &str,
+	) -> Result<bool, v01::GenericError> {
+		Ok(self.services.acknowledge_funding_session(intent).await?)
+	}
+
+	/// Cancel an open session, returning whether it was still open.
+	pub async fn cancel_funding(&self, intent: &str) -> Result<bool, v01::GenericError> {
+		Ok(self.services.cancel_funding(intent).await?)
+	}
+
+	/// Read one session for host status and history views.
+	pub fn funding_session(
+		&self,
+		intent: &str,
+	) -> Option<crate::host_logic::funding::FundingSession> {
+		self.services.funding().get(intent)
+	}
+
+	/// Open a host-owned funding session; dismissal returns `None`.
+	pub async fn open_funding(
+		&self,
+		direction: v01::FundingDirection,
+		amount: Option<u128>,
+	) -> Result<Option<String>, v01::GenericError> {
+		self.services.open_host_funding(direction, amount).await
 	}
 
 	/// Install the host's [`ProfilePlatform`], which renders product-referenced
@@ -844,21 +958,97 @@ impl SigningHostRuntime {
 	/// Install the core-owned database that durable consumers share.
 	///
 	/// Set-once, so durable state cannot move to another file under a running
-	/// consumer. Returns whether this call installed it.
-	///
-	/// Also starts the durable transaction engine over it, which reports
-	/// pending work to the observer installed with
-	/// [`Self::set_durable_work_observer`]; install that first.
+	/// consumer. Returns whether this call installed it. Nothing runs over it
+	/// until [`Self::start_core_services`].
 	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_core_db"))]
 	pub fn set_core_db(&self, db: crate::store::Db) -> bool {
-		if !self.services.install_core_db(db.clone()) {
-			return false;
-		}
-		let engine = durable_engine(&self.services, db);
-		self.services.install_durable_engine(engine.clone());
-		forward_durable_work(&self.services, &engine);
-		true
+		self.services.install_core_db(db)
+	}
+
+	/// Install the provider of the installation id NFT purse item keys are
+	/// derived under. Set-once; returns whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn set_installation_provider(
+		&self,
+		provider: Arc<dyn crate::installation::InstallationIdProvider>,
+	) -> bool {
+		self.services.install_installation_provider(provider)
+	}
+
+	/// Install the host storage encrypted at rest, which keeps the secrets the
+	/// core database must not hold. Set-once; returns whether this call
+	/// installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn set_encrypted_storage(
+		&self,
+		storage: Arc<dyn crate::encrypted_storage::EncryptedStorage>,
+	) -> bool {
+		self.services.install_encrypted_storage(storage)
+	}
+
+	/// Starts what runs over the core database: the durable transaction
+	/// engine, then NFT purses with the tracker of their holdings. Call it
+	/// once the setters it reads have run: [`Self::set_core_db`],
+	/// [`Self::set_installation_provider`], [`Self::set_encrypted_storage`]
+	/// and [`Self::set_durable_work_observer`]. NFT transfers and purses need
+	/// the encrypted storage. A part whose inputs are missing
+	/// is skipped and logged. A second call does nothing.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.start_core_services"))]
+	pub fn start_core_services(&self) {
+		let Ok(db) = self.services.core_db() else {
+			tracing::warn!("no core database set, durable transactions and NFT purses are off");
+			return;
+		};
+		let signer = Arc::new(Arc::downgrade(&self.signing_host));
+		let Some(engine) = start_durable_engine(&self.services, db.clone(), signer) else {
+			return;
+		};
+		self.start_nft_purses(db, engine);
+	}
+
+	/// Installs the NFT ledger over `db` and `durable`, with the static receive
+	/// secret NFT purses open cheques with, and starts tracking its holdings,
+	/// when an installation provider and encrypted storage are set.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn start_nft_purses(
+		&self,
+		db: crate::store::Db,
+		durable: Arc<crate::durable::DurableTxEngine>,
+	) {
+		let Some(ledger) = self.nft_ledger(db, durable) else {
+			return;
+		};
+		let static_secret = Arc::new(Arc::downgrade(&self.signing_host));
+		self.services.install_static_receive_secret(static_secret);
+		self.services.install_nft_ledger(ledger.clone());
+		start_holding_tracker(&self.services, ledger);
+	}
+
+	/// The NFT ledger over `db` and `durable`, deriving item keys from the
+	/// signing host, or `None`, logged, without an installation provider or
+	/// encrypted storage.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn nft_ledger(
+		&self,
+		db: crate::store::Db,
+		durable: Arc<crate::durable::DurableTxEngine>,
+	) -> Option<crate::nft::NftLedger> {
+		let Some(installation) = self.services.installation_provider() else {
+			tracing::warn!("no installation provider set, NFT purses are off");
+			return None;
+		};
+		let Some(encrypted) = self.services.encrypted_storage() else {
+			tracing::warn!("no encrypted storage set, NFT purses are off");
+			return None;
+		};
+		let signing_host = Arc::downgrade(&self.signing_host);
+		let keys = Arc::new(signing_host.clone());
+		let secrets = Arc::new(signing_host);
+		let imported = crate::nft::ImportedSecretStore::new(encrypted);
+		let deps = crate::nft::NftLedgerDeps { db, installation, keys, durable, secrets, imported };
+		Some(crate::nft::NftLedger::new(deps))
 	}
 
 	/// Install the host observer told whether durable transactions are
@@ -895,6 +1085,11 @@ impl SigningHostRuntime {
 		self.services.install_media_platform(platform)
 	}
 
+	/// Create execution-local adapters without constructing a temporary runtime.
+	pub fn connection_adapters(&self) -> ConnectionAdapters {
+		ConnectionAdapters::from_services(&self.services)
+	}
+
 	/// Build a product-facing runtime from this signing host.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.product_runtime"))]
 	pub fn product_runtime(
@@ -904,6 +1099,7 @@ impl SigningHostRuntime {
 	) -> ProductRuntime {
 		ProductRuntime::new(
 			self.services.clone(),
+			self.signing_host.clone(),
 			self.signing_host.clone(),
 			product,
 			ConnectionAdapters::from_services(&self.services),
@@ -922,6 +1118,7 @@ impl SigningHostRuntime {
 		ProductRuntime::new(
 			self.services.clone(),
 			self.signing_host.clone(),
+			self.signing_host.clone(),
 			product,
 			adapters,
 			sink,
@@ -933,6 +1130,7 @@ impl SigningHostRuntime {
 	pub fn product_admin(&self, product: ProductContext) -> HostAdmin {
 		HostAdmin::new(
 			self.services.clone(),
+			self.signing_host.clone(),
 			self.signing_host.clone(),
 			product,
 			ConnectionAdapters::from_services(&self.services),
@@ -947,7 +1145,13 @@ impl SigningHostRuntime {
 		product: ProductContext,
 		adapters: ConnectionAdapters,
 	) -> HostAdmin {
-		HostAdmin::new(self.services.clone(), self.signing_host.clone(), product, adapters)
+		HostAdmin::new(
+			self.services.clone(),
+			self.signing_host.clone(),
+			self.signing_host.clone(),
+			product,
+			adapters,
+		)
 	}
 
 	/// Reference counts per product worker, shared by every connection of
@@ -975,11 +1179,65 @@ impl SigningHostRuntime {
 	/// Revoke one product's grants from the current local activation while
 	/// preserving unrelated products.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.clear_product_state", %product_id))]
-	pub async fn clear_product_state(&self, product_id: &str) -> Result<(), v01::GenericError> {
+	pub async fn clear_product_state(
+		&self,
+		product_id: &ProductId,
+	) -> Result<(), v01::GenericError> {
 		self.signing_host
 			.clear_product_state(product_id)
 			.await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+
+	/// Read a stored permission authorization status for a product without prompting.
+	///
+	/// A device capability also resolves the host application's OS gate, so an
+	/// OS refusal reads as `Denied` whatever is stored. Remote,
+	/// identity-disclosure and account-access decisions have no OS gate.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_status", product_id = %product_id))]
+	pub async fn permission_authorization_status(
+		&self,
+		product_id: &ProductId,
+		request: PermissionAuthorizationRequest,
+	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
+		self.product_admin(product_context(product_id))
+			.permission_authorization_status(request)
+			.await
+	}
+
+	/// Read stored permission authorization statuses for a product without prompting.
+	///
+	/// A device capability also resolves the host application's OS gate, so an
+	/// OS refusal reads as `Denied` whatever is stored. Remote,
+	/// identity-disclosure and account-access decisions have no OS gate.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_statuses", product_id = %product_id))]
+	pub async fn permission_authorization_statuses(
+		&self,
+		product_id: &ProductId,
+		requests: Vec<PermissionAuthorizationRequest>,
+	) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
+		self.product_admin(product_context(product_id))
+			.permission_authorization_statuses(requests)
+			.await
+	}
+
+	/// Update a stored permission authorization status for a product.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_permission_authorization_status", product_id = %product_id))]
+	pub async fn set_permission_authorization_status(
+		&self,
+		product_id: &ProductId,
+		request: PermissionAuthorizationRequest,
+		status: PermissionAuthorizationStatus,
+	) -> Result<(), v01::GenericError> {
+		let account_access =
+			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
+		self.product_admin(product_context(product_id))
+			.set_permission_authorization_status(request, status)
+			.await?;
+		if account_access {
+			self.signing_host.consent().forget_allowed_once_for(product_id);
+		}
+		Ok(())
 	}
 
 	/// Registered providers available for an internal well-known-ring feature.
@@ -1034,68 +1292,74 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.product_subtree_public_key"))]
 	pub async fn product_subtree_public_key(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
 		product_subtree_public_key(self.signing_host.as_ref(), product_id, timeout_ms).await
 	}
 
+	/// Inspect both resource chains without allocating, prompting, or granting.
+	/// Unavailable or malformed chain reads fail closed.
+	pub async fn product_resource_status(
+		&self,
+		product: ProductContext,
+	) -> Result<ProductResourceStatus, v01::GenericError> {
+		self.signing_host
+			.product_resource_status(&product.product_id)
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+
+	/// Recover Bulletin and index-zero PGAS capacity after host-owned user review.
+	///
+	/// The embedding must persist its pending-allocation marker before calling
+	/// with `allocate_missing = true`. After an uncertain result, pass `false`:
+	/// existing capacity may be recovered, but missing capacity is never claimed
+	/// again. Automatic signing is granted only after both chains confirm capacity.
+	/// This trusted-host operation is not exposed through the product protocol.
+	pub async fn recover_product_resources(
+		&self,
+		product: ProductContext,
+		allocate_missing: bool,
+	) -> Result<ProductResourceStatus, v01::GenericError> {
+		self.signing_host
+			.recover_product_resources(&product.product_id, allocate_missing)
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+
 	/// Resolve the current immutable Calling slot for trusted host settings.
 	pub async fn calling_permission_authorization_request(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 	) -> Result<PermissionAuthorizationRequest, v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
+		self.product_admin(product_context(product_id))
 			.calling_permission_authorization_request()
 			.await
 	}
-	/// Read a stored permission authorization status without prompting.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_status", product_id = %product_id))]
-	pub async fn permission_authorization_status(
-		&self,
-		product_id: &str,
-		request: PermissionAuthorizationRequest,
-	) -> Result<PermissionAuthorizationStatus, v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
-			.permission_authorization_status(request)
-			.await
-	}
-
-	/// Read stored permission authorization statuses without prompting.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.permission_authorization_statuses", product_id = %product_id))]
-	pub async fn permission_authorization_statuses(
-		&self,
-		product_id: &str,
-		requests: Vec<PermissionAuthorizationRequest>,
-	) -> Result<Vec<PermissionAuthorizationStatus>, v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
-			.permission_authorization_statuses(requests)
-			.await
-	}
-
-	/// Update one stored permission authorization status.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_permission_authorization_status", product_id = %product_id))]
-	pub async fn set_permission_authorization_status(
-		&self,
-		product_id: &str,
-		request: PermissionAuthorizationRequest,
-		status: PermissionAuthorizationStatus,
-	) -> Result<(), v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
-			.set_permission_authorization_status(request, status)
-			.await
-	}
-
 	/// Re-read a product's stored authorization after another core changes it.
 	pub async fn refresh_permission_authorization(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		request: PermissionAuthorizationRequest,
 	) -> Result<(), v01::GenericError> {
-		self.product_admin(product_context(product_id)?)
+		self.product_admin(product_context(product_id))
 			.refresh_permission_authorization(request)
 			.await
 	}
+
+	/// Apply a persisted bare-label permission notification to live product connections.
+	/// Storage namespaces have no network suffix and must not be parsed as product IDs.
+	pub async fn refresh_permission_authorization_namespace(
+		&self,
+		namespace: &str,
+		request: PermissionAuthorizationRequest,
+	) -> Result<(), v01::GenericError> {
+		self.services
+			.refresh_permission_authorization_namespace(namespace, request)
+			.await
+	}
+
 	/// Activate a wallet-local session from host-held secret material (raw
 	/// BIP-39 entropy).
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.activate_local_session"))]
@@ -1168,8 +1432,11 @@ impl SigningHostRuntime {
 	pub async fn get_wallet_allowance_snapshot(
 		&self,
 		activation_id: &str,
-		product_ids: Vec<String>,
-	) -> Result<crate::runtime::WalletAllowanceSnapshot, v01::GenericError> {
+		product_ids: Vec<ProductId>,
+	) -> Result<
+		crate::runtime::statement_allowance::inspection::WalletAllowanceSnapshot,
+		v01::GenericError,
+	> {
 		self.signing_host
 			.get_wallet_allowance_snapshot(activation_id, product_ids)
 			.await
@@ -1189,9 +1456,7 @@ impl SigningHostRuntime {
 		&self,
 		deeplink: &str,
 	) -> Result<ResponderExit, v01::GenericError> {
-		respond_to_pairing(self.services.clone(), self.signing_host.clone(), deeplink)
-			.await
-			.map_err(Into::into)
+		self.sso_responder.respond_to_pairing(deeplink).await.map_err(Into::into)
 	}
 
 	/// Tell a pairing host that allowance allocation is under way, so it leaves
@@ -1204,13 +1469,10 @@ impl SigningHostRuntime {
 		&self,
 		deeplink: &str,
 	) -> Result<crate::runtime::AnnouncedPairing, v01::GenericError> {
-		notify_pairing_allowance_allocation(
-			self.services.clone(),
-			self.signing_host.clone(),
-			deeplink,
-		)
-		.await
-		.map_err(Into::into)
+		self.sso_responder
+			.notify_pairing_allowance_allocation(deeplink)
+			.await
+			.map_err(Into::into)
 	}
 
 	/// Tell a pairing host that pairing failed, so it reports `reason` and
@@ -1227,7 +1489,8 @@ impl SigningHostRuntime {
 		announced: &crate::runtime::AnnouncedPairing,
 		reason: String,
 	) -> Result<(), v01::GenericError> {
-		notify_pairing_failed(self.services.clone(), announced, reason)
+		self.sso_responder
+			.notify_pairing_failed(announced, reason)
 			.await
 			.map_err(Into::into)
 	}
@@ -1235,9 +1498,7 @@ impl SigningHostRuntime {
 	/// Answer a pairing host's handshake without entering its long-lived serve loop.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.establish_pairing"))]
 	pub async fn establish_pairing(&self, deeplink: &str) -> Result<(), v01::GenericError> {
-		establish_pairing(self.services.clone(), self.signing_host.clone(), deeplink)
-			.await
-			.map_err(Into::into)
+		self.sso_responder.establish_pairing(deeplink).await.map_err(Into::into)
 	}
 
 	/// Resume a previously paired host from its persisted public peer keys.
@@ -1249,9 +1510,7 @@ impl SigningHostRuntime {
 		&self,
 		peer: PairedSsoPeer,
 	) -> Result<ResponderExit, v01::GenericError> {
-		resume_pairing(self.services.clone(), self.signing_host.clone(), peer)
-			.await
-			.map_err(Into::into)
+		self.sso_responder.resume_pairing(peer).await.map_err(Into::into)
 	}
 
 	/// Notify a paired host that this signing host is ending their SSO session.
@@ -1260,9 +1519,7 @@ impl SigningHostRuntime {
 		&self,
 		peer: PairedSsoPeer,
 	) -> Result<(), v01::GenericError> {
-		disconnect_paired_host(self.services.clone(), self.signing_host.clone(), peer)
-			.await
-			.map_err(Into::into)
+		self.sso_responder.disconnect_paired_host(peer).await.map_err(Into::into)
 	}
 
 	/// Answer one SSO request using this signing host.
@@ -1281,19 +1538,43 @@ impl SigningHostRuntime {
 	}
 }
 
+/// Installs the durable transaction engine over `db`, reports its pending
+/// work and starts its submissions. `None` when an engine is already
+/// installed.
+#[cfg(not(target_arch = "wasm32"))]
+fn start_durable_engine(
+	services: &Arc<RuntimeServices>,
+	db: crate::store::Db,
+	signer: Arc<dyn crate::nft::ItemSigner>,
+) -> Option<Arc<crate::durable::DurableTxEngine>> {
+	let engine = durable_engine(services, db, signer);
+	if !services.install_durable_engine(engine.clone()) {
+		return None;
+	}
+	forward_durable_work(services, &engine);
+	engine.ensure_submissions_started();
+	Some(engine)
+}
+
 /// The durable transaction engine over `db`, reading and submitting through
-/// the runtime's chain connections.
+/// the runtime's chain connections. It serves NFT transfers when an Asset Hub
+/// genesis is configured.
 #[cfg(not(target_arch = "wasm32"))]
 fn durable_engine(
 	services: &RuntimeServices,
 	db: crate::store::Db,
+	signer: Arc<dyn crate::nft::ItemSigner>,
 ) -> Arc<crate::durable::DurableTxEngine> {
-	use crate::durable::{DurableDeps, DurableRegistry, DurableTxEngine, RealTimer};
+	use crate::{
+		durable::{DurableDeps, DurableTxEngine},
+		time::RealTimer,
+	};
 
 	let chain = Arc::new(services.chain.clone());
+	let registry = durable_registry(services, signer);
 	DurableTxEngine::new(DurableDeps {
 		db,
-		registry: DurableRegistry::new(),
+		registry,
 		heads: chain.clone(),
 		blocks: chain.clone(),
 		validator: chain.clone(),
@@ -1301,6 +1582,56 @@ fn durable_engine(
 		timer: Arc::new(RealTimer),
 		spawner: services.spawner.clone(),
 	})
+}
+
+/// The domains and policies the durable engine serves: NFT transfers, on the
+/// Asset Hub that runs the Scarcity pallet. They need encrypted storage, which
+/// keeps the secrets of imported item keys.
+#[cfg(not(target_arch = "wasm32"))]
+fn durable_registry(
+	services: &RuntimeServices,
+	signer: Arc<dyn crate::nft::ItemSigner>,
+) -> crate::durable::DurableRegistry {
+	use crate::nft::{ImportedSecretStore, ScarcityTransfersDeps, with_scarcity_transfers};
+
+	let registry = crate::durable::DurableRegistry::new();
+	let Some(genesis) = services.asset_hub_chain_genesis_hash() else {
+		tracing::warn!("no Asset Hub genesis configured, NFT transfers are off");
+		return registry;
+	};
+	let Some(encrypted) = services.encrypted_storage() else {
+		tracing::warn!("no encrypted storage set, NFT transfers are off");
+		return registry;
+	};
+	let chain = Arc::new(services.chain.clone());
+	let deps = ScarcityTransfersDeps {
+		storage: chain.clone(),
+		heads: chain,
+		genesis: genesis.into(),
+		signer,
+		imported: ImportedSecretStore::new(encrypted),
+		extrinsics: services.extrinsics.clone(),
+	};
+	with_scarcity_transfers(registry, deps)
+}
+
+/// Starts tracking what NFT item keys hold on Asset Hub, which runs the
+/// Scarcity pallet. Without an Asset Hub genesis there is nothing to track.
+#[cfg(not(target_arch = "wasm32"))]
+fn start_holding_tracker(services: &RuntimeServices, ledger: crate::nft::NftLedger) {
+	use crate::nft::{HoldingTracker, HoldingTrackerDeps};
+
+	let Some(genesis) = services.asset_hub_chain_genesis_hash() else {
+		tracing::warn!("no Asset Hub genesis configured, NFT holdings are not tracked");
+		return;
+	};
+	let tracker = HoldingTracker::start(HoldingTrackerDeps {
+		ledger,
+		storage: Arc::new(services.chain.clone()),
+		genesis: genesis.into(),
+		spawner: services.spawner.clone(),
+	});
+	services.install_holding_tracker(tracker);
 }
 
 /// Reports every change of the engine's pending work to the host observer,
@@ -1413,7 +1744,9 @@ impl SigningHostRuntime {
 /// for the product's game reminder.
 #[derive(Clone)]
 pub struct ConnectionAdapters {
+	/// Execution-scoped storage, permission prompts and system callbacks.
 	pub platform: Arc<dyn Platform>,
+	/// Optional host Chat surface serving this connection.
 	pub chat_platform: Option<Arc<dyn ChatPlatform>>,
 	/// Connection-owned picker UI; absence inherits the host's contacts adapter.
 	pub contacts_platform: Option<Arc<dyn ContactsPlatform>>,
@@ -1424,12 +1757,19 @@ pub struct ConnectionAdapters {
 	pub permission_status: Option<Arc<dyn PermissionStatusHost>>,
 	/// SDK and internal network connections must share an execution's one-use grants.
 	pub(crate) permission_grants: Arc<crate::host_internal::permissions::TemporaryPermissions>,
+	/// Host-fed Chat actions owned by this connection.
 	pub chat: Arc<ActionChannel<truapi::versioned::chat::HostChatActionSubscribeItem>>,
+	/// Host-fed renderer actions owned by this connection.
 	pub renderer: Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
+	/// Optional card collection surface.
 	pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
+	/// Optional host-rendered profile surface.
 	pub profile_platform: Option<Arc<dyn ProfilePlatform>>,
+	/// Optional native media backend.
 	pub media_platform: Option<Arc<dyn MediaPlatform>>,
+	/// Optional product game reminders.
 	pub game_platform: Option<Arc<dyn GamePlatform>>,
+	/// Optional native scanner surface.
 	pub scanner_platform: Option<Arc<dyn ScannerPlatform>>,
 	/// Control of the card face above this connection's Widget, when the host draws one.
 	pub expanded_card: Option<Arc<dyn ExpandedCardHost>>,
@@ -1473,6 +1813,7 @@ fn ring_vrf_admin_error(
 /// without owning a product frame endpoint.
 pub struct HostAdmin {
 	authority: Arc<dyn ProductAuthority>,
+	host_session: Arc<dyn HostSession>,
 	product_runtime: Arc<ProductRuntimeHost>,
 }
 
@@ -1488,6 +1829,7 @@ impl HostAdmin {
 	pub fn new(
 		services: Arc<RuntimeServices>,
 		authority: Arc<dyn ProductAuthority>,
+		host_session: Arc<dyn HostSession>,
 		product: ProductContext,
 		adapters: ConnectionAdapters,
 	) -> Self {
@@ -1495,15 +1837,16 @@ impl HostAdmin {
 			services,
 			adapters,
 			authority.clone(),
+			host_session.clone(),
 			product,
 		));
-		Self { authority, product_runtime }
+		Self { authority, host_session, product_runtime }
 	}
 
 	/// Core-owned logout/disconnect.
 	#[instrument(skip_all, fields(runtime.method = "host_admin.disconnect_session"))]
 	pub async fn disconnect_session(&self) {
-		self.authority.disconnect().await;
+		self.host_session.disconnect().await;
 	}
 
 	/// Resolve Calling's authority-derived scope without prompting or opening Media.
@@ -1554,7 +1897,10 @@ impl HostAdmin {
 		&self,
 		request: PermissionAuthorizationRequest,
 	) -> Result<(), v01::GenericError> {
-		self.product_runtime.refresh_permission_authorization(request).await
+		self.product_runtime
+			.connection()
+			.refresh_permission_authorization(request)
+			.await
 	}
 }
 
@@ -1596,7 +1942,7 @@ impl CoreAdmin for HostAdmin {
 
 	async fn get_session_chat_identity_key(&self) -> Result<Option<[u8; 32]>, v01::GenericError> {
 		Ok(self
-			.authority
+			.host_session
 			.session_state()
 			.current()
 			.and_then(|session| session.identity_chat_private_key))
@@ -1604,7 +1950,7 @@ impl CoreAdmin for HostAdmin {
 
 	async fn get_device_statement_key(&self) -> Result<Option<Vec<u8>>, v01::GenericError> {
 		Ok(self
-			.authority
+			.host_session
 			.session_state()
 			.current()
 			.and_then(|session| session.sso)
@@ -1613,6 +1959,7 @@ impl CoreAdmin for HostAdmin {
 
 	async fn get_device_encryption_key(&self) -> Result<[u8; 32], v01::GenericError> {
 		self.product_runtime
+			.connection()
 			.services()
 			.device_encryption_secret()
 			.await
@@ -1621,7 +1968,7 @@ impl CoreAdmin for HostAdmin {
 
 	async fn get_product_subtree_public_key(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
 		product_subtree_public_key(self.authority.as_ref(), &product_id, timeout_ms).await
@@ -1632,9 +1979,7 @@ impl CoreAdmin for HostAdmin {
 /// `CoreAdmin` method native hosts call and the pairing-host runtime method the
 /// wasm bridge wraps.
 ///
-/// The identifier is normalized because the product path normalizes before it
-/// populates the cache, so an unnormalized lookup would miss a key the core is
-/// already holding.
+/// The typed identifier shares the normalized namespace used by product calls.
 ///
 /// The deadline is enforced by dropping the call rather than awaiting it after
 /// cancelling. Only the SSO response wait observes the cancellation token; the
@@ -1642,11 +1987,9 @@ impl CoreAdmin for HostAdmin {
 /// cancel and would outlive any deadline that waited for it to finish.
 async fn product_subtree_public_key(
 	authority: &(impl ProductAuthority + ?Sized),
-	product_id: &str,
+	product_id: &ProductId,
 	timeout_ms: Option<u32>,
 ) -> Result<Option<[u8; 32]>, v01::GenericError> {
-	let product_id = normalize_product_identifier(product_id)
-		.map_err(|reason| v01::GenericError { reason: reason.to_string() })?;
 	let Some(session) = authority.current_session() else {
 		return Ok(None);
 	};
@@ -1726,7 +2069,7 @@ impl ProductRuntimeControl {
 		let runtime = self
 			.runtime()
 			.map_err(|_| v01::GenericError { reason: "Product runtime is closed".into() })?;
-		runtime.refresh_permission_authorization(request).await
+		runtime.connection().refresh_permission_authorization(request).await
 	}
 
 	/// Publish one host-authored Chat action into this connection's action
@@ -1736,6 +2079,7 @@ impl ProductRuntimeControl {
 		action: v01::HostChatActionSubscribeItem,
 	) -> Result<(), ProductRuntimeError> {
 		self.runtime()?
+			.connection()
 			.publish_chat_action(truapi::versioned::chat::HostChatActionSubscribeItem::V1(action))
 	}
 
@@ -1746,7 +2090,7 @@ impl ProductRuntimeControl {
 		&self,
 		item: v01::HostRendererActionSubscribeItem,
 	) -> Result<(), ProductRuntimeError> {
-		self.runtime()?.publish_renderer_action(
+		self.runtime()?.connection().publish_renderer_action(
 			truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(item),
 		)
 	}
@@ -1756,8 +2100,8 @@ impl ProductRuntimeControl {
 	///
 	/// An open render stream is one reference on the product's worker, held by
 	/// the core for exactly as long as the returned subscription lives. A
-	/// transition it causes reaches the host through the observer installed on
-	/// [`WorkerLedger::install_demand_observer`].
+	/// transition it causes reaches the host through the controller installed with
+	/// [`WorkerLedger::install_worker_controller`].
 	pub fn render(
 		&self,
 		request: v01::ProductRendererRenderRequest,
@@ -1765,8 +2109,8 @@ impl ProductRuntimeControl {
 		truapi::Subscription<v01::RendererNode, truapi::CallError<v01::GenericError>>,
 		ProductRuntimeError,
 	> {
-		self.runtime()?.renderer_access()?;
-		let reference = WorkerReference::acquire(self.runtime.clone());
+		self.runtime()?.connection().renderer_access()?;
+		let reference = WorkerReference::acquire(self.runtime.connection().clone());
 		let request = truapi::versioned::renderer::ProductRendererRenderRequest::V1(request);
 		let transport: Arc<dyn Transport> = self.transport.clone();
 		let stream = crate::generated::dispatcher::renderer_render(
@@ -1798,20 +2142,20 @@ impl ProductRuntimeControl {
 
 /// One reference the core holds on a product's worker, released on drop.
 struct WorkerReference {
-	runtime: Arc<ProductRuntimeHost>,
+	connection: Arc<ProductConnection>,
 }
 
 impl WorkerReference {
 	/// Hold a worker reference for this product runtime.
-	fn acquire(runtime: Arc<ProductRuntimeHost>) -> Self {
-		runtime.acquire_worker_reference();
-		Self { runtime }
+	fn acquire(connection: Arc<ProductConnection>) -> Self {
+		connection.acquire_worker_reference();
+		Self { connection }
 	}
 }
 
 impl Drop for WorkerReference {
 	fn drop(&mut self) {
-		self.runtime.release_worker_reference();
+		self.connection.release_worker_reference();
 	}
 }
 
@@ -1819,7 +2163,7 @@ impl ProductRuntime {
 	/// Invalidate contact handles and refresh avatars for this host's runtimes.
 	/// Embedders holding the host runtime may notify it instead.
 	pub fn notify_contacts_changed(&self) {
-		let services = self.admin.product_runtime.services();
+		let services = self.admin.product_runtime.connection().services();
 		services.invalidate_contacts();
 		services.contact_avatars.contacts_changed(&services.spawner);
 	}
@@ -1901,11 +2245,13 @@ impl ProductRuntime {
 	pub fn new(
 		services: Arc<RuntimeServices>,
 		authority: Arc<dyn ProductAuthority>,
+		host_session: Arc<dyn HostSession>,
 		product: ProductContext,
 		adapters: ConnectionAdapters,
 		sink: Arc<dyn FrameSink>,
 	) -> Self {
-		let admin = HostAdmin::new(services.clone(), authority.clone(), product, adapters);
+		let admin =
+			HostAdmin::new(services.clone(), authority, host_session.clone(), product, adapters);
 		let disposed = Arc::new(AtomicBool::new(false));
 		let transport = Arc::new(SinkTransport {
 			sink,
@@ -1918,7 +2264,7 @@ impl ProductRuntime {
 			core: TrUApiCore::from_product_runtime(
 				admin.product_runtime.clone(),
 				services.spawner.clone(),
-				authority.session_state(),
+				host_session.session_state(),
 			),
 			admin,
 			transport,
@@ -1931,7 +2277,7 @@ impl ProductRuntime {
 
 	/// Trusted connection identity for binding host-only adapters.
 	pub fn runtime_id(&self) -> u64 {
-		self.admin.product_runtime.runtime_id()
+		self.admin.product_runtime.connection().runtime_id()
 	}
 
 	/// Push one SCALE-encoded protocol frame into the dispatcher.
@@ -2086,7 +2432,7 @@ impl ProductRuntime {
 			return;
 		}
 		// Fence Media before transport disposal or in-flight dispatch abortion.
-		self.admin.product_runtime.close_media();
+		self.admin.product_runtime.connection().close_media();
 		if self.disposed.load(Ordering::Acquire) {
 			return;
 		}
@@ -2100,13 +2446,14 @@ impl ProductRuntime {
 				handle.abort();
 			}
 		}
-		self.admin.product_runtime.detach_chat();
-		self.admin.product_runtime.detach_renderer();
-		self.admin.product_runtime.release_open_operations();
-		self.admin.product_runtime.release_contact_avatars();
+		let connection = self.admin.product_runtime.connection();
+		connection.detach_chat();
+		connection.detach_renderer();
+		connection.release_open_operations();
+		connection.release_contact_avatars();
 		#[cfg(not(target_arch = "wasm32"))]
-		self.admin.product_runtime.close_jam_peer_transport();
-		self.admin.product_runtime.release_contact_labels();
+		connection.close_jam_peer_transport();
+		connection.release_contact_labels();
 		self.host_subscriptions.close();
 		self.core.cancel_subscriptions();
 	}
@@ -2223,9 +2570,9 @@ mod tests {
 			product_account::derive_identity_keypair,
 			sso::pairing::{
 				PairingBootstrap, derive_x25519_keypair_from_entropy, establish_sso_session_info,
-				x25519_public_key,
 			},
 			worker::WorkerTransition,
+			x25519_seal::X25519PrivateKey,
 		},
 		test_support::{StubPlatform, runtime_config, test_spawner, wait_until},
 	};
@@ -2272,6 +2619,49 @@ mod tests {
 		runtime
 	}
 
+	/// An answer changed in settings applies at once: a product that was allowed
+	/// once is asked again after the user resets its account access.
+	#[test]
+	fn a_settings_change_to_account_access_ends_allow_once() {
+		use crate::{
+			platform::{PermissionAuthorizationRequest, PermissionDecision},
+			runtime::ProductAuthority,
+		};
+
+		let platform = Arc::new(StubPlatform {
+			permission_confirmation_decisions: std::sync::Mutex::new(
+				[PermissionDecision::AllowOnce, PermissionDecision::Deny].into(),
+			),
+			..StubPlatform::default()
+		});
+		let runtime = activated_signing_runtime(platform.clone());
+		let (requester, target) =
+			(ProductId::for_test("myapp.dot"), ProductId::for_test("peopl.dot"));
+		let access = || {
+			futures::executor::block_on(runtime.signing_host.consent().account_access(
+				&requester,
+				&target,
+				platform.as_ref(),
+			))
+			.expect("the stub answers every prompt")
+		};
+
+		let allowed_once = access();
+		futures::executor::block_on(runtime.set_permission_authorization_status(
+			&requester,
+			PermissionAuthorizationRequest::AccountAccess {
+				target_product_id: "peopl.dot".to_string(),
+			},
+			PermissionAuthorizationStatus::NotDetermined,
+		))
+		.expect("the reset is stored");
+
+		assert_eq!(
+			(allowed_once, access(), platform.account_access_reviews.lock().unwrap().len()),
+			(PermissionAuthorizationStatus::Authorized, PermissionAuthorizationStatus::Denied, 2)
+		);
+	}
+
 	/// Install `session` once the boot reconcile has reported the empty
 	/// session store, so its clear cannot land on top of the session.
 	fn install_session_after_boot(
@@ -2283,7 +2673,7 @@ mod tests {
 			|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
 			"the boot reconcile did not report the empty session store",
 		);
-		runtime.pairing_host.session_state().set_session(session);
+		runtime.pairing_host.session().session_state().set_session(session);
 	}
 
 	fn assert_send<T: Send>(_: T) {}
@@ -2304,7 +2694,7 @@ mod tests {
 			let platform = Arc::new(StubPlatform::default());
 			let (config, _) = runtime_config("fetch.dot");
 			let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
-			let admin = runtime.product_admin(product_context("fetch.dot").unwrap());
+			let admin = runtime.product_admin(product_context(&ProductId::for_test("fetch.dot")));
 			let cx = CallContext::default();
 			let request = network_permission(&["api.example.com"]);
 			let granted = admin
@@ -2425,7 +2815,7 @@ mod tests {
 				Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() });
 			let (config, _) = runtime_config("fetch.dot");
 			let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
-			let admin = runtime.product_admin(product_context("fetch.dot").unwrap());
+			let admin = runtime.product_admin(product_context(&ProductId::for_test("fetch.dot")));
 			let cx = CallContext::default();
 			admin
 				.set_permission_authorization_status(
@@ -2468,7 +2858,7 @@ mod tests {
 						.unwrap(),
 				);
 			}
-			let other = runtime.product_admin(product_context("other.dot").unwrap());
+			let other = runtime.product_admin(product_context(&ProductId::for_test("other.dot")));
 			for _ in 0..2 {
 				decisions.push(
 					other
@@ -2508,7 +2898,7 @@ mod tests {
 			let platform = Arc::new(StubPlatform::default());
 			let (config, _) = runtime_config("peopl.dot");
 			let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
-			let admin = runtime.product_admin(product_context("peopl.dot").unwrap());
+			let admin = runtime.product_admin(product_context(&ProductId::for_test("peopl.dot")));
 			let cx = CallContext::default();
 			let request = network_permission(&["api.example.com"]);
 			let allowed = admin
@@ -2557,13 +2947,16 @@ mod tests {
 		let runtime = PairingHostRuntime::new(platform.clone(), host_config, test_spawner());
 		let session = crate::test_support::sso_session_info();
 		install_session_after_boot(&runtime, &platform, session.clone());
-		runtime
-			.pairing_host
-			.cache_product_subtree_for_test(&session, "myapp.dot", [9; 32]);
+		runtime.pairing_host.cache_product_subtree_for_test(
+			&session,
+			&ProductId::for_test("myapp.dot"),
+			[9; 32],
+		);
 
-		let key =
-			futures::executor::block_on(runtime.product_subtree_public_key("myapp.dot", Some(1)))
-				.expect("a cached subtree resolves");
+		let key = futures::executor::block_on(
+			runtime.product_subtree_public_key(&ProductId::for_test("myapp.dot"), Some(1)),
+		)
+		.expect("a cached subtree resolves");
 		assert_eq!(key, Some([9; 32]));
 
 		// The cache comes before the wallet. A one-millisecond deadline means
@@ -2583,9 +2976,10 @@ mod tests {
 		// only on a peer answer, a disconnect, or the caller's token. Without
 		// the timeout cancelling that token the call never returns, so this
 		// test would hang rather than fail.
-		let error =
-			futures::executor::block_on(runtime.product_subtree_public_key("myapp.dot", Some(1)))
-				.expect_err("an unanswered wallet request ends at its deadline");
+		let error = futures::executor::block_on(
+			runtime.product_subtree_public_key(&ProductId::for_test("myapp.dot"), Some(1)),
+		)
+		.expect_err("an unanswered wallet request ends at its deadline");
 		assert!(error.reason.contains("timed out"), "expected a timeout, got {}", error.reason);
 	}
 
@@ -3028,10 +3422,9 @@ mod tests {
 		// still reaches the product.
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
-			"worker.dot".to_string(),
+			ProductId::for_test("worker.dot"),
 			crate::platform::ProductExecutionKind::Worker,
-		)
-		.expect("worker product context is valid");
+		);
 		let runtime = ProductRuntime::from_platform_with_config(
 			Arc::new(StubPlatform::default()),
 			host_config,
@@ -3089,8 +3482,12 @@ mod tests {
 		struct RecordingDemand {
 			transitions: Mutex<Vec<(String, WorkerTransition)>>,
 		}
-		impl crate::host_logic::worker::WorkerDemandObserver for RecordingDemand {
-			fn worker_demand_changed(&self, product_id: &str, transition: WorkerTransition) {
+		impl crate::host_logic::worker::WorkerController for RecordingDemand {
+			fn request_worker_transition(
+				&self,
+				product_id: &ProductId,
+				transition: WorkerTransition,
+			) {
 				self.transitions
 					.lock()
 					.expect("transition mutex poisoned")
@@ -3100,10 +3497,9 @@ mod tests {
 
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
-			"worker.dot".to_string(),
+			ProductId::for_test("worker.dot"),
 			crate::platform::ProductExecutionKind::Worker,
-		)
-		.expect("worker product context is valid");
+		);
 		let runtime = ProductRuntime::from_platform_with_config(
 			Arc::new(StubPlatform::default()),
 			host_config,
@@ -3111,13 +3507,13 @@ mod tests {
 			test_spawner(),
 			Arc::new(RecordingSink::default()),
 		);
-		let services = runtime.admin.product_runtime().services().clone();
+		let services = runtime.admin.product_runtime().connection().services().clone();
 		let demand = Arc::new(RecordingDemand::default());
 		assert!(
-			services.worker_ledger.install_demand_observer(demand.clone()),
-			"the observer installs once"
+			services.worker_ledger.install_worker_controller(demand.clone()),
+			"the controller installs once"
 		);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 
 		let render = runtime
 			.control()
@@ -3126,10 +3522,10 @@ mod tests {
 				payload: vec![],
 			})
 			.expect("a Worker connection may render");
-		assert_eq!(services.worker_ledger.count("worker.dot"), 1);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
 
 		drop(render);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 		assert_eq!(
 			demand.transitions.lock().expect("transition mutex poisoned").as_slice(),
 			[
@@ -3144,10 +3540,9 @@ mod tests {
 	fn render_runtime() -> (ProductRuntime, Arc<RecordingSink>) {
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
-			"worker.dot".to_string(),
+			ProductId::for_test("worker.dot"),
 			crate::platform::ProductExecutionKind::Worker,
-		)
-		.expect("worker product context is valid");
+		);
 		let sink = Arc::new(RecordingSink::default());
 		let runtime = ProductRuntime::from_platform_with_config(
 			Arc::new(StubPlatform::default()),
@@ -3157,6 +3552,59 @@ mod tests {
 			sink.clone(),
 		);
 		(runtime, sink)
+	}
+
+	#[test]
+	fn host_request_uses_subscription_routing() {
+		let (runtime, sink) = render_runtime();
+		let ids = crate::generated::wire_table::MethodIds { trait_id: 195, method_id: 14 };
+		let mut request = Box::pin(runtime.host_subscriptions.request::<u32, String>(
+			ids,
+			vec![9],
+			runtime.transport.clone(),
+		));
+		assert_eq!(request.as_mut().now_or_never(), None);
+		let sent = sink.frames.lock().unwrap()[0].clone();
+		let mut response = ProtocolMessage::decode(&mut &sent[..]).unwrap();
+		response.payload.message_type = crate::frame::MESSAGE_TYPE_RECEIVE;
+		response.payload.value = 7_u32.encode();
+		futures::executor::block_on(runtime.receive_frame(response.encode())).unwrap();
+		assert_eq!(request.as_mut().now_or_never(), Some(Ok(7)));
+	}
+
+	#[test]
+	fn disposing_the_runtime_finishes_its_host_requests() {
+		let (runtime, sink) = render_runtime();
+		let ids = crate::generated::wire_table::MethodIds { trait_id: 195, method_id: 14 };
+		let mut request = Box::pin(runtime.host_subscriptions.request::<u32, String>(
+			ids,
+			vec![9],
+			runtime.transport.clone(),
+		));
+		assert_eq!(request.as_mut().now_or_never(), None);
+		runtime.dispose();
+		let closed = Err(truapi::CallError::HostFailure {
+			reason: "the product connection closed while the stream was open".into(),
+		});
+		let next = runtime.host_subscriptions.request::<u32, String>(
+			ids,
+			vec![10],
+			runtime.transport.clone(),
+		);
+		assert_eq!(
+			(
+				request.as_mut().now_or_never(),
+				next.now_or_never(),
+				sink.frames.lock().unwrap().len()
+			),
+			(
+				Some(closed),
+				Some(Err(truapi::CallError::HostFailure {
+					reason: "host-initiated subscriptions are closed".into(),
+				})),
+				1,
+			),
+		);
 	}
 
 	/// Open one render for a Pocket card.
@@ -3216,9 +3664,9 @@ mod tests {
 	#[test]
 	fn a_render_the_product_ends_releases_its_worker_reference() {
 		let (runtime, sink) = render_runtime();
-		let services = runtime.admin.product_runtime().services().clone();
+		let services = runtime.admin.product_runtime().connection().services().clone();
 		let mut render = start_render(&runtime, "loyalty");
-		assert_eq!(services.worker_ledger.count("worker.dot"), 1);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
 
 		let request_id = render_request_id(&sink, 0);
 		deliver_render_frame(
@@ -3230,18 +3678,18 @@ mod tests {
 		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(None)));
 
 		assert_eq!(
-			services.worker_ledger.count("worker.dot"),
+			services.worker_ledger.count(&ProductId::for_test("worker.dot")),
 			0,
 			"an ended stream holds no reference, whether or not the handle lives on"
 		);
 		drop(render);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 	}
 
 	#[test]
 	fn a_render_the_product_interrupts_releases_its_worker_reference() {
 		let (runtime, sink) = render_runtime();
-		let services = runtime.admin.product_runtime().services().clone();
+		let services = runtime.admin.product_runtime().connection().services().clone();
 		let mut render = start_render(&runtime, "loyalty");
 
 		let request_id = render_request_id(&sink, 0);
@@ -3262,18 +3710,18 @@ mod tests {
 		));
 
 		assert_eq!(
-			services.worker_ledger.count("worker.dot"),
+			services.worker_ledger.count(&ProductId::for_test("worker.dot")),
 			0,
 			"an interrupt ends the stream, so the reference goes with it"
 		);
 		drop(render);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 	}
 
 	#[test]
 	fn a_render_refused_for_a_malformed_tree_releases_its_worker_reference() {
 		let (runtime, sink) = render_runtime();
-		let services = runtime.admin.product_runtime().services().clone();
+		let services = runtime.admin.product_runtime().connection().services().clone();
 		let mut render = start_render(&runtime, "loyalty");
 
 		let request_id = render_request_id(&sink, 0);
@@ -3283,33 +3731,35 @@ mod tests {
 			core::task::Poll::Ready(Some(Err(truapi::CallError::MalformedFrame { .. })))
 		));
 
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 		drop(render);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 	}
 
 	#[test]
 	fn disposing_the_core_releases_an_open_renders_worker_reference() {
 		let (runtime, _sink) = render_runtime();
-		let services = runtime.admin.product_runtime().services().clone();
+		let services = runtime.admin.product_runtime().connection().services().clone();
 		let mut render = start_render(&runtime, "loyalty");
-		assert_eq!(services.worker_ledger.count("worker.dot"), 1);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
 
+		// The render fails rather than finishing, so the host opens it again on
+		// the next connection; the failure is where its reference is released.
 		runtime.dispose();
-		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(None)));
+		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(Some(Err(_)))));
 
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 		drop(render);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 	}
 
 	#[test]
 	fn one_render_ending_leaves_the_other_renders_worker_reference() {
 		let (runtime, sink) = render_runtime();
-		let services = runtime.admin.product_runtime().services().clone();
+		let services = runtime.admin.product_runtime().connection().services().clone();
 		let mut first = start_render(&runtime, "loyalty");
 		let second = start_render(&runtime, "rewards");
-		assert_eq!(services.worker_ledger.count("worker.dot"), 2);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 2);
 
 		let request_id = render_request_id(&sink, 0);
 		deliver_render_frame(
@@ -3319,17 +3769,17 @@ mod tests {
 			crate::frame::encode_clean_interrupt(),
 		);
 		assert!(matches!(poll_render(&mut first), core::task::Poll::Ready(None)));
-		assert_eq!(services.worker_ledger.count("worker.dot"), 1);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
 
 		drop(first);
 		assert_eq!(
-			services.worker_ledger.count("worker.dot"),
+			services.worker_ledger.count(&ProductId::for_test("worker.dot")),
 			1,
 			"dropping a stream that already released must not release again"
 		);
 
 		drop(second);
-		assert_eq!(services.worker_ledger.count("worker.dot"), 0);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 	}
 
 	#[test]
@@ -3597,12 +4047,21 @@ mod tests {
 			),
 		))
 		.expect("begin operation");
-		assert_eq!(host.services().worker_ledger.count("myapp.dot"), 1);
+		assert_eq!(
+			host.connection()
+				.services()
+				.worker_ledger
+				.count(&ProductId::for_test("myapp.dot")),
+			1
+		);
 
 		runtime.dispose();
 
 		assert_eq!(
-			host.services().worker_ledger.count("myapp.dot"),
+			host.connection()
+				.services()
+				.worker_ledger
+				.count(&ProductId::for_test("myapp.dot")),
 			0,
 			"disposing a connection drops the demand its open operations held"
 		);
@@ -3726,51 +4185,140 @@ mod tests {
 		assert!(!runtime.set_device_pairing_observer(Arc::new(Inert)));
 	}
 
-	/// Every durable consumer shares one core database: a second installer
-	/// must not swap it, and a host that configured none gets a clear error
-	/// rather than a silently missing store.
+	/// A signing host runtime over a stub platform, with no core database.
 	#[cfg(not(target_arch = "wasm32"))]
-	#[test]
-	fn the_core_database_is_installed_once_and_reports_when_missing() {
-		use crate::{
-			platform::{HostInfo, PlatformInfo, SigningHostConfig},
-			store::{Db, DbConfig, DbError, DbLocation},
-		};
-		use futures::executor::block_on;
+	fn test_signing_runtime() -> (SigningHostRuntime, Arc<StubPlatform>) {
+		use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
 
+		let host = HostInfo {
+			name: "Polkadot Mobile".to_string(),
+			icon: None,
+			version: None,
+			platform: truapi::latest::HostPlatform::Unknown,
+		};
+		let genesis = ([0; 32], [0xbb; 32], [0xcc; 32]);
 		let config = SigningHostConfig::new(
-			HostInfo {
-				name: "Polkadot Mobile".to_string(),
-				icon: None,
-				version: None,
-				platform: truapi::latest::HostPlatform::Unknown,
-			},
+			host,
 			PlatformInfo::default(),
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
+			genesis.0,
+			genesis.1,
+			genesis.2,
 			"paseo".to_string(),
 		)
 		.expect("signing host config is valid");
-		let runtime =
-			SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, test_spawner());
-		let db_config = DbConfig {
+		let platform = Arc::new(StubPlatform::default());
+		(SigningHostRuntime::new(platform.clone(), config, test_spawner()), platform)
+	}
+
+	/// An empty database in memory.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn memory_db() -> crate::store::Db {
+		use crate::store::{Db, DbConfig, DbLocation};
+
+		let config = DbConfig {
 			location: DbLocation::Memory,
-			migrations: || rusqlite_migration::Migrations::new(Vec::new()),
+			migrations: crate::store::core_migrations,
 			readers: 1,
 		};
+		futures::executor::block_on(Db::open(config)).expect("database opens")
+	}
 
-		assert!(matches!(runtime.services.core_db(), Err(DbError::NotConfigured)));
-		let installed = block_on(Db::open(db_config.clone())).expect("database opens");
-		let other = block_on(Db::open(db_config)).expect("database opens");
-		assert!(runtime.set_core_db(installed));
-		assert!(!runtime.set_core_db(other));
+	/// Every durable consumer shares one core database: a second installer
+	/// must not swap it.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn the_core_database_is_installed_once() {
+		let (runtime, _platform) = test_signing_runtime();
+		runtime.set_core_db(memory_db());
 
-		let db = runtime.services.core_db().expect("installed database is served");
-		let answer: i64 =
-			block_on(db.write(|tx| Ok(tx.query_row("SELECT 42", [], |row| row.get(0))?)))
-				.expect("installed database serves writes");
-		assert_eq!(answer, 42);
+		assert!(!runtime.set_core_db(memory_db()));
+	}
+
+	/// A host that configured no database gets a clear error rather than a
+	/// silently missing store.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn a_missing_core_database_is_reported() {
+		let (runtime, _platform) = test_signing_runtime();
+
+		assert!(matches!(runtime.services.core_db(), Err(crate::store::DbError::NotConfigured)));
+	}
+
+	/// NFT item keys are derived under the installation, so without a
+	/// provider there must be no purses rather than keys under a guessed one.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn nft_purses_stay_off_without_an_installation_provider() {
+		let (runtime, _platform) = test_signing_runtime();
+		runtime.set_core_db(memory_db());
+
+		runtime.start_core_services();
+
+		assert!(runtime.services.nft_purses().is_none());
+	}
+
+	/// A receive key whose secret the host does not keep could never open a
+	/// cheque, so without encrypted storage there are no purses at all.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn nft_purses_stay_off_without_encrypted_storage() {
+		let (runtime, platform) = test_signing_runtime();
+		runtime.set_core_db(memory_db());
+		runtime.set_installation_provider(platform);
+
+		runtime.start_core_services();
+
+		assert!(runtime.services.nft_purses().is_none());
+	}
+
+	/// The setters only store their inputs, so purses are served once the
+	/// services start and not before.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn nft_purses_are_served_once_core_services_start() {
+		let (runtime, platform) = test_signing_runtime();
+		runtime.set_core_db(memory_db());
+		runtime.set_installation_provider(platform);
+		runtime.set_encrypted_storage(Arc::new(
+			crate::encrypted_storage::MemoryEncryptedStorage::default(),
+		));
+
+		runtime.start_core_services();
+
+		assert!(runtime.services.nft_purses().is_some());
+	}
+
+	/// Hosts drop the runtime on every session switch, so the services NFT
+	/// purses run on must go with it rather than keep the signer, database
+	/// and tracker alive.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn dropping_the_runtime_releases_nft_purse_services() {
+		let (runtime, platform) = test_signing_runtime();
+		runtime.set_core_db(memory_db());
+		runtime.set_installation_provider(platform);
+		runtime.set_encrypted_storage(Arc::new(
+			crate::encrypted_storage::MemoryEncryptedStorage::default(),
+		));
+		runtime.start_core_services();
+		let services = Arc::downgrade(&runtime.services);
+
+		drop(runtime);
+
+		assert!(services.upgrade().is_none(), "the runtime services outlived the runtime");
+	}
+
+	/// Durable transactions do not depend on NFT purses, so the engine runs
+	/// even when purses are off.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn the_durable_engine_starts_without_an_installation_provider() {
+		let (runtime, _platform) = test_signing_runtime();
+		runtime.set_core_db(memory_db());
+
+		runtime.start_core_services();
+
+		assert!(runtime.services.durable_engine().is_some());
 	}
 
 	#[test]
@@ -3851,7 +4399,7 @@ mod tests {
 		let request = RemoteMessage {
 			message_id: "m3".to_string(),
 			data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeRequest(
-				ProductSubtreeRequest { product_id: "browse.dot".to_string() },
+				ProductSubtreeRequest { product_id: ProductId::for_test("browse.dot") },
 			)),
 		};
 		let outcome = futures::executor::block_on(runtime.answer_sso_request(request));
@@ -3882,7 +4430,7 @@ mod tests {
 		let peer_encryption_secret = [0x42; 32];
 		let peer = PairedSsoPeer {
 			statement_account_id: [0x31; 32],
-			encryption_public_key: x25519_public_key(peer_encryption_secret),
+			encryption_public_key: X25519PrivateKey::from(peer_encryption_secret).public_key().0,
 		};
 		let identity =
 			derive_identity_keypair(&[0xab; 32], "testnet").expect("identity derivation succeeds");
@@ -3945,7 +4493,7 @@ mod tests {
 		let runtime = activated_signing_runtime(platform);
 		let peer = PairedSsoPeer {
 			statement_account_id: [0x31; 32],
-			encryption_public_key: x25519_public_key([0x42; 32]),
+			encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
 		};
 
 		let error = futures::executor::block_on(runtime.disconnect_paired_host(peer))
@@ -4091,7 +4639,8 @@ mod tests {
 			runtime.services.clone(),
 			ConnectionAdapters::from_services(&runtime.services),
 			runtime.signing_host.clone(),
-			ProductContext::new("unknown.dot".to_string()).expect("valid product id"),
+			runtime.signing_host.clone(),
+			ProductContext::new(ProductId::for_test("unknown.dot")),
 		);
 		// Nothing is cached for `wallet.dot`, so resolution reaches dotNS,
 		// the path the missing hash short-circuited.

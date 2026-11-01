@@ -52,7 +52,7 @@ public enum ProductPermission: Equatable, Sendable {
     public var isRemoteAccess: Bool {
         switch self {
         case .networkAccess, .networkAccessBundle, .webRtcAccess, .chainSubmitAccess, .preimageSubmitAccess,
-             .statementSubmitAccess:
+             .statementSubmitAccess, .jamPeersAccess:
             true
         case .deviceCapability,
              .accountAccess,
@@ -117,6 +117,8 @@ public enum ProductPermission: Equatable, Sendable {
             domains.joined(separator: "\n")
         case let .accountAccess(targetProductId):
             targetProductId
+        case let .jamPeersAccess(genesis):
+            genesis
         case let .statementStoreAllowance(derivationIndex):
             switch derivationIndex {
             case nil:

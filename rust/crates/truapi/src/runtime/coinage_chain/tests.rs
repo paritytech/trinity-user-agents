@@ -3,7 +3,7 @@
 // Copyright the Brevity contributors. See truapi-coinage/NOTICE and LICENSE.
 
 use super::{
-	transaction::{AS_COINAGE, Snapshot, constant, mortal_era, replace},
+	transaction::{AS_COINAGE, Snapshot, constant, replace},
 	*,
 };
 use parity_scale_codec::{Compact, Decode, Encode};
@@ -17,7 +17,8 @@ use subxt::ext::{
 const METADATA: &[u8] = include_bytes!("../../../tests/fixtures/paseo-next-v2-metadata-v16.scale");
 
 fn snapshot() -> Snapshot {
-	Snapshot::new(METADATA.to_vec(), [3; 32], 1_025, [4; 32], 3_000_000, 1, Some(0)).unwrap()
+	Snapshot::new(METADATA.to_vec(), [3; 32], 1_025, [4; 32], 3_000_000, 1, Some(0), Some(0))
+		.unwrap()
 }
 fn source() -> schnorrkel::Keypair {
 	schnorrkel::MiniSecretKey::from_bytes(&[17; 32])
@@ -111,7 +112,8 @@ fn free_unload_allowance_rejects_an_ambiguous_same_width_runtime_type() {
 	// interpreted as two origin-specific spending allowances.
 	function.output = u64_type.into();
 	let snapshot =
-		Snapshot::new(metadata.encode(), [3; 32], 1_025, [4; 32], 3_000_000, 1, Some(0)).unwrap();
+		Snapshot::new(metadata.encode(), [3; 32], 1_025, [4; 32], 3_000_000, 1, Some(0), Some(0))
+			.unwrap();
 	let rpc = subxt_rpcs::RpcClient::new(ScriptedRpc::default());
 	assert!(futures::executor::block_on(rpc::free_unload_token_limits(&rpc, &snapshot)).is_err());
 }
@@ -137,9 +139,17 @@ fn coin_queries_follow_the_queried_blocks_storage_hashers() {
 		let entry = storage.entries.iter_mut().find(|entry| entry.name == "CoinsByOwner").unwrap();
 		let StorageEntryType::Map { hashers, .. } = &mut entry.ty else { panic!("coin map") };
 		hashers[0] = hasher.clone();
-		let snapshot =
-			Snapshot::new(metadata.encode(), [3; 32], 1_025, [4; 32], 3_000_000, 1, Some(0))
-				.unwrap();
+		let snapshot = Snapshot::new(
+			metadata.encode(),
+			[3; 32],
+			1_025,
+			[4; 32],
+			3_000_000,
+			1,
+			Some(0),
+			Some(0),
+		)
+		.unwrap();
 		let requested = snapshot
 			.storage
 			.coinage_key(&truapi_coinage::CoinageStorageKey::Coin(owner))
@@ -196,13 +206,17 @@ fn coin_queries_reject_incompatible_metadata_key_types() {
 	};
 	key.id = integer;
 	assert!(
-		Snapshot::new(metadata.encode(), [3; 32], 1_025, [4; 32], 3_000_000, 1, Some(0)).is_err()
+		Snapshot::new(metadata.encode(), [3; 32], 1_025, [4; 32], 3_000_000, 1, Some(0), Some(0))
+			.is_err()
 	);
 }
 
 #[test]
 fn instance_runtime_never_guesses_an_asset_and_rejects_other_assets() {
-	assert!(Snapshot::new(METADATA.to_vec(), [3; 32], 1_025, [4; 32], 3_000_000, 1, None).is_err());
+	assert!(
+		Snapshot::new(METADATA.to_vec(), [3; 32], 1_025, [4; 32], 3_000_000, 1, None, Some(0))
+			.is_err()
+	);
 	let snapshot = snapshot();
 	assert!(
 		snapshot.denomination_context().is_err(),
@@ -358,7 +372,10 @@ fn presence_only_recycler_runtime_is_rejected_before_queries_or_spending() {
 	// This older snapshot predates RecyclerAliasStates entirely. Treating its
 	// missing lock-state map as empty would make unsafe recovery decisions.
 	let metadata = include_bytes!("../../../tests/fixtures/paseo-next-v2-metadata.scale");
-	assert!(Snapshot::new(metadata.to_vec(), [3; 32], 1_025, [4; 32], 1_000_032, 1, None).is_err());
+	assert!(
+		Snapshot::new(metadata.to_vec(), [3; 32], 1_025, [4; 32], 1_000_032, 1, None, Some(0))
+			.is_err()
+	);
 }
 
 #[test]
@@ -382,7 +399,7 @@ fn coin_signature_binds_runtime_coin_origin_nonce_checkpoint_and_call() {
 		.map(|extension| extension.extra.len())
 		.sum::<usize>();
 	let signature = schnorrkel::Signature::from_bytes(&body[offset + 2..offset + 66]).unwrap();
-	let mut implication = vec![snapshot.metadata.extension_version()];
+	let mut implication = vec![snapshot.extension_version.unwrap()];
 	implication.extend_from_slice(&call);
 	for extension in &extensions[verify + 1..] {
 		implication.extend_from_slice(&extension.extra);
@@ -407,14 +424,173 @@ fn coin_signature_binds_runtime_coin_origin_nonce_checkpoint_and_call() {
 #[test]
 fn mortal_era_expires_before_the_wal_releases_its_inputs() {
 	let snapshot = snapshot();
-	let era = u16::from_le_bytes(mortal_era(snapshot.period, snapshot.number).unwrap());
+	let extensions = snapshot.extensions(0).unwrap();
+	let mortality = extensions.iter().find(|extension| extension.id == "CheckMortality").unwrap();
+	let era = u16::from_le_bytes(mortality.extra.as_slice().try_into().unwrap());
 	let period = 2u64 << (era & 15);
 	let phase = u64::from(era >> 4);
 	assert_eq!(period, snapshot.period);
 	assert_eq!(phase, snapshot.number % period);
 	assert!(snapshot.valid_until() <= snapshot.number + truapi_coinage::WAL_MORTALITY_BLOCKS);
-	assert!(mortal_era(512, 1_025).is_err());
-	assert!(mortal_era(3, 1_025).is_err());
+	assert_eq!(mortality.additional_signed, snapshot.at);
+}
+
+#[test]
+fn configured_pipeline_binds_the_coin_origin_even_when_a_newer_pipeline_omits_it() {
+	let mut metadata = frame_metadata::RuntimeMetadataPrefixed::decode(&mut &METADATA[..]).unwrap();
+	let frame_metadata::RuntimeMetadata::V16(runtime) = &mut metadata.1 else {
+		panic!("V16 fixture")
+	};
+	let coinage = runtime
+		.extrinsic
+		.transaction_extensions
+		.iter()
+		.position(|extension| extension.identifier == AS_COINAGE)
+		.unwrap() as u32;
+	let mut newer = runtime.extrinsic.transaction_extensions_by_version[&0].clone();
+	newer.retain(|index| index.0 != coinage);
+	runtime.extrinsic.transaction_extensions_by_version.insert(7, newer);
+	let mut snapshot =
+		Snapshot::new(metadata.encode(), [3; 32], 1_025, [4; 32], 3_000_000, 1, Some(0), Some(0))
+			.unwrap();
+	let [pallet, index] = snapshot.metadata.call_indices("Coinage", "transfer").unwrap();
+	let call = truapi_coinage::pallet::transfer_call(pallet, index, &[9; 32]);
+	let signed = snapshot.signed(&source(), &call, 7).unwrap();
+	let mut body = signed.as_slice();
+	Compact::<u32>::decode(&mut body).unwrap();
+	assert_eq!(&body[..2], &[0x45, 0]);
+	snapshot.extension_version = Some(7);
+	assert!(snapshot.signed(&source(), &call, 7).is_err());
+	snapshot.extension_version = None;
+	assert!(snapshot.signed(&source(), &call, 7).is_err());
+}
+
+#[test]
+fn unknown_required_extensions_are_rejected_even_when_their_default_would_be_zero() {
+	for name in ["CheckNonce", "RestrictOrigins", "ChargeAssetTxPayment"] {
+		let mut metadata =
+			frame_metadata::RuntimeMetadataPrefixed::decode(&mut &METADATA[..]).unwrap();
+		let frame_metadata::RuntimeMetadata::V16(runtime) = &mut metadata.1 else {
+			panic!("V16 fixture")
+		};
+		runtime
+			.extrinsic
+			.transaction_extensions
+			.iter_mut()
+			.find(|extension| extension.identifier == name)
+			.unwrap()
+			.identifier = "UnknownFinancialExtension".into();
+		let snapshot = Snapshot::new(
+			metadata.encode(),
+			[3; 32],
+			1_025,
+			[4; 32],
+			3_000_000,
+			1,
+			Some(0),
+			Some(0),
+		)
+		.unwrap();
+		assert_eq!(
+			snapshot.extensions(0).unwrap_err(),
+			"Coinage runtime requires an unrecognized extension",
+		);
+	}
+}
+
+#[test]
+fn unknown_optional_authority_can_be_absent_but_cannot_hide_an_implicit_requirement() {
+	let mut metadata = frame_metadata::RuntimeMetadataPrefixed::decode(&mut &METADATA[..]).unwrap();
+	let frame_metadata::RuntimeMetadata::V16(runtime) = &mut metadata.1 else {
+		panic!("V16 fixture")
+	};
+	runtime
+		.extrinsic
+		.transaction_extensions
+		.iter_mut()
+		.find(|extension| extension.identifier == "AsPerson")
+		.unwrap()
+		.identifier = "NewOptionalAuthority".into();
+	let snapshot =
+		Snapshot::new(metadata.encode(), [3; 32], 1_025, [4; 32], 3_000_000, 1, Some(0), Some(0))
+			.unwrap();
+	let extensions = snapshot.extensions(0).unwrap();
+	let authority = extensions
+		.iter()
+		.find(|extension| extension.id == "NewOptionalAuthority")
+		.unwrap();
+	assert_eq!(authority.extra, Option::<()>::None.encode());
+	assert!(authority.additional_signed.is_empty());
+
+	let frame_metadata::RuntimeMetadata::V16(runtime) = &mut metadata.1 else { unreachable!() };
+	let required = runtime
+		.extrinsic
+		.transaction_extensions
+		.iter()
+		.find(|extension| extension.identifier == "CheckSpecVersion")
+		.unwrap()
+		.implicit
+		.clone();
+	runtime
+		.extrinsic
+		.transaction_extensions
+		.iter_mut()
+		.find(|extension| extension.identifier == "NewOptionalAuthority")
+		.unwrap()
+		.implicit = required;
+	let snapshot =
+		Snapshot::new(metadata.encode(), [3; 32], 1_025, [4; 32], 3_000_000, 1, Some(0), Some(0))
+			.unwrap();
+	assert_eq!(
+		snapshot.extensions(0).unwrap_err(),
+		"Coinage runtime requires an unrecognized extension implicit",
+	);
+}
+
+#[test]
+fn runtime_retention_bounds_the_actual_encoded_mortality() {
+	for (retention, expected) in [(3u32, None), (4, Some(4)), (63, Some(32)), (1_000, Some(256))] {
+		let mut metadata =
+			frame_metadata::RuntimeMetadataPrefixed::decode(&mut &METADATA[..]).unwrap();
+		let frame_metadata::RuntimeMetadata::V16(runtime) = &mut metadata.1 else {
+			panic!("V16 fixture")
+		};
+		runtime
+			.pallets
+			.iter_mut()
+			.find(|pallet| pallet.name == "System")
+			.unwrap()
+			.constants
+			.iter_mut()
+			.find(|constant| constant.name == "BlockHashCount")
+			.unwrap()
+			.value = retention.encode();
+		let result = Snapshot::new(
+			metadata.encode(),
+			[3; 32],
+			1_025,
+			[4; 32],
+			3_000_000,
+			1,
+			Some(0),
+			Some(0),
+		);
+		match expected {
+			None => assert!(result.is_err()),
+			Some(period) => {
+				let snapshot = result.unwrap();
+				assert_eq!(snapshot.valid_until(), 1_025 + period);
+				let extensions = snapshot.extensions(63).unwrap();
+				let mortality =
+					extensions.iter().find(|extension| extension.id == "CheckMortality").unwrap();
+				assert_eq!(mortality.extra, subxt::utils::Era::mortal(period, 1_025).encode());
+				assert_eq!(mortality.additional_signed, [3; 32]);
+				let nonce =
+					extensions.iter().find(|extension| extension.id == "CheckNonce").unwrap();
+				assert_eq!(nonce.extra, Compact(63u32).encode());
+			},
+		}
+	}
 }
 
 #[test]

@@ -453,14 +453,15 @@ impl NativeChatActor {
 		product: &str,
 		initial: fn() -> Result<State, Error>,
 	) -> Result<Arc<Self>, Error> {
+		let product_id = product.parse().map_err(|_| Error::InvalidRequest)?;
 		let store = ChatStateStore::open(context, product, initial).await?;
 		let (index, secret) =
 			store.read(|state| (state.index, Zeroizing::new(state.secret.0))).await?;
 		let root = derive_root_keypair_from_entropy(&context.entropy)
 			.map_err(|_| Error::InvalidRequest)?;
 		let signer =
-			derive_product_keypair(&root, product, index).map_err(|_| Error::InvalidRequest)?;
-		let legacy_account = derive_product_keypair(&root, product, index_bytes(0))
+			derive_product_keypair(&root, &product_id, index).map_err(|_| Error::InvalidRequest)?;
+		let legacy_account = derive_product_keypair(&root, &product_id, index_bytes(0))
 			.map_err(|_| Error::InvalidRequest)?
 			.public
 			.to_bytes();
@@ -475,7 +476,7 @@ impl NativeChatActor {
 			identity_account_id,
 			identity_chat_public_key: wire::x25519_public_key(&root_secret),
 			product_account: ProductAccountId {
-				dot_ns_identifier: product.parse().expect("validated native chat product id"),
+				dot_ns_identifier: product_id,
 				derivation_index: DerivationIndex::Raw(index),
 			},
 			account_id: signer.public.to_bytes(),

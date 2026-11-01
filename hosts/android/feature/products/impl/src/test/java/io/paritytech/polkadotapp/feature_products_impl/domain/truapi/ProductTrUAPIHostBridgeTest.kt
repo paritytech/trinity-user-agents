@@ -5,11 +5,22 @@ import dagger.Lazy
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.test.resetMain
+import org.junit.Before
+import org.junit.After
+import io.mockk.every
+import io.parity.truapi.HostBridge
+import uniffi.truapi.UserConfirmationReview
+import uniffi.truapi.ProfileDisclosureReview
+import uniffi.truapi.AccountAccessReview
+import uniffi.truapi.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.PermissionAuthorizationChanges
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
 import io.paritytech.polkadotapp.feature_settings_api.domain.language.AppLanguageProvider
 import kotlinx.coroutines.flow.flowOf
-import uniffi.truapi.ProductExecutionKind
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
@@ -24,6 +35,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -36,33 +48,48 @@ import org.junit.Assert.fail
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
-import org.mockito.Mockito.verify
+import io.mockk.verify
 import org.mockito.stubbing.Answer
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.HostRejection
 import uniffi.truapi.ProductExecutionKind
 import uniffi.truapi.WsBridgeEndpoint
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class ProductTrUAPIHostBridgeTest {
+    private val main = StandardTestDispatcher()
+
+    @Before
+    fun setUp() = Dispatchers.setMain(main)
+
+    @After
+    fun tearDown() = Dispatchers.resetMain()
+
     private val refusingCore = Answer<Any> { throw IllegalStateException("loopback port unavailable") }
+    private val gameReminder = mockk<ProductGameReminder>(relaxUnitFun = true)
+    private val game = ProductId.fromStoredValue("game.dot")
 
     private fun TestScope.bridge(
         launcher: TrUAPIConfirmationLauncher = mock(TrUAPIConfirmationLauncher::class.java),
+        scope: CoroutineScope = CoroutineScope(StandardTestDispatcher(testScheduler)),
+        hostApiInteractor: HostApiInteractor = mock(HostApiInteractor::class.java),
     ) = ProductTrUAPIHostBridge(
-        hostApiInteractor = mock(HostApiInteractor::class.java),
+        hostApiInteractor = hostApiInteractor,
         chainHttpClient = OkHttpClient(),
         encryptedPreferences = mock(EncryptedPreferences::class.java),
         confirmationLauncher = launcher,
-        appLifecycleObserver = mock(AppLifecycleObserver::class.java),
+        appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
+        networkStateService = mockk { every { defaultNetwork } returns MutableStateFlow(null) },
         dotNsTldProvider = mock(DotNsTldProvider::class.java),
-        pocketCardStore = mock(PocketCardStore::class.java),
-        context = mock(Context::class.java),
-        appLanguageProvider = object : AppLanguageProvider {
-            override val languageTag = flowOf("en-US")
-        },
-        permissionRepository = Lazy { mock(ProductPermissionRepository::class.java) },
+        pocketCardStore = mockk { every { observeCards() } returns emptyFlow() },
+        context = mockk(relaxed = true),
+        appLanguageProvider = mockk { every { languageTag } returns flowOf("en-US") },
+        permissionRepository = Lazy { mockk { coEvery { getAllByProduct(any()) } returns emptyList() } },
         permissionChanges = PermissionAuthorizationChanges(),
-        scope = CoroutineScope(StandardTestDispatcher(testScheduler)),
+        productGameReminder = gameReminder,
+        extensionVersions = mockk(),
+        mediaFactory = mockk { every { create(any()) } returns mockk(relaxed = true) },
+        scope = scope,
     )
 
     @Test
@@ -92,6 +119,7 @@ class ProductTrUAPIHostBridgeTest {
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
             kind = ProductExecutionKind.APP,
+            onPermissionRevoked = {},
             onReadyToInject = {},
         )
         assertTrue(outcome.isFailure)
@@ -105,7 +133,7 @@ class ProductTrUAPIHostBridgeTest {
             for (approved in listOf(true, false)) {
                 val launcher = mockk<TrUAPIConfirmationLauncher>()
                 val prompted = CompletableDeferred<TrUAPIConfirmation>()
-                val answer = CompletableDeferred<Boolean>()
+                val answer = CompletableDeferred<PermissionDecision>()
                 coEvery { launcher.awaitDecision(any()) } coAnswers {
                     prompted.complete(firstArg())
                     answer.await()
@@ -118,7 +146,7 @@ class ProductTrUAPIHostBridgeTest {
                 val confirmation = prompted.await() as TrUAPIConfirmation.ProfileDisclosure
                 assertEquals("seity.paseo", confirmation.requesterProductId)
                 assertFalse(pending.isCompleted)
-                answer.complete(approved)
+                answer.complete(if (approved) PermissionDecision.ALLOW_ALWAYS else PermissionDecision.DENY)
                 val expected: Any = if (permissionCallback) {
                     if (approved) PermissionDecision.ALLOW_ALWAYS else PermissionDecision.DENY
                 } else {
@@ -152,7 +180,8 @@ class ProductTrUAPIHostBridgeTest {
         for (approved in listOf(true, false)) {
             val prompts = mutableListOf<TrUAPIConfirmation>()
             val launcher = mockk<TrUAPIConfirmationLauncher>()
-            coEvery { launcher.awaitDecision(capture(prompts)) } returns approved
+            coEvery { launcher.awaitDecision(capture(prompts)) } returns
+                if (approved) PermissionDecision.ALLOW_ALWAYS else PermissionDecision.DENY
             val callbacks = callbacks(launcher)
 
             assertEquals(
@@ -163,5 +192,33 @@ class ProductTrUAPIHostBridgeTest {
             assertEquals("game.dot", prompt.requesterProductId)
             assertEquals("target.dot", prompt.targetProductId)
         }
+    }
+
+    @Test
+    fun `cancelling the owning scope closes the execution`() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val execution = mockk<TrUAPIProductExecution>(relaxUnitFun = true) {
+            every { startWsBridge(any()) } returns WsBridgeEndpoint(port = 1u, token = "token")
+        }
+        val runtime = mockk<TrUAPIHostRuntime> {
+            every { openProductExecution(any(), any(), any(), any(), any(), any()) } returns execution
+        }
+        val bridge = bridge(scope = scope, hostApiInteractor = mockk { every { subscribeTheme() } returns emptyFlow() })
+        bridge.attach(
+            runtime, game, EMPTY_CHAINS, NavigationPolicy.DeeplinkNavigation {},
+            ProductExecutionKind.WORKER, onPermissionRevoked = {}, onReadyToInject = {},
+        ).getOrThrow()
+        scope.cancel()
+        advanceUntilIdle()
+        verify { execution.stopWsBridge() }
+        verify { execution.close() }
+    }
+
+    @Test
+    fun `the game bridge rejects a schedule the reminder fails`() = runTest {
+        coEvery { gameReminder.schedule(game, 1_000) } returns
+            Result.failure(IllegalStateException("notifications are not allowed"))
+        val outcome = runCatching { bridge().gameBridge(game).scheduleReminder(1_000u) }
+        assertEquals("notifications are not allowed", (outcome.exceptionOrNull() as? HostRejection.Rejected)?.reason)
     }
 }

@@ -26,14 +26,14 @@ use futures::{
 use parity_scale_codec::Encode;
 use truapi::{
 	latest::{
-		ChatBotRegistrationStatus, ChatMessageContent, ChatRoomRegistrationStatus, GenericError,
-		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
-		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
-		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-		HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
+		ChatBotRegistrationStatus, ChatMessageContent, ChatRoom, ChatRoomParticipation,
+		ChatRoomRegistrationStatus, GenericError, HostChatCreateRoomError,
+		HostChatCreateRoomRequest, HostChatCreateRoomResponse, HostChatListSubscribeItem,
+		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
+		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+		HostChatSetRoomFooterRequest,
 	},
 	platform::{ChatPlatform, ProductContext, async_trait},
-	v01::{ChatRoom, ChatRoomParticipation},
 };
 
 /// Rooms, bots and posted messages for one process.
@@ -241,7 +241,7 @@ mod tests {
 	use std::fs::read_to_string;
 
 	fn product() -> ProductContext {
-		ProductContext::new("chat.dot".to_string()).expect("valid product id")
+		ProductContext::new("chat.dot".parse().expect("valid product id"))
 	}
 
 	fn text(text: &str) -> ChatMessageContent {

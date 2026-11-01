@@ -7,12 +7,10 @@ use super::notification_envelope::verify_frames;
 use crate::{
 	latest::{
 		HostNotificationReceiptResult, HostNotificationReceiverStatus,
-		HostNotificationReceivingError as Error, ReceivingEvent, ReceivingEventKind,
+		HostNotificationReceivingError as Error, ProductId, ReceivingEvent, ReceivingEventKind,
 		ReceivingReceiptKind, ReceivingWatch,
 	},
-	platform::{
-		CoreStorageKey, Platform, ProductContext, ReceivingAuthority, ReceivingRegistration,
-	},
+	platform::{CoreStorageKey, Platform, ReceivingAuthority, ReceivingRegistration},
 	subscription::Spawner,
 };
 use futures::lock::Mutex;
@@ -180,7 +178,7 @@ impl ReceivingService {
 	}
 
 	async fn authority(&self, product: &str) -> Result<ReceivingAuthority, Error> {
-		ProductContext::new(product.to_owned()).map_err(|_| invalid("invalid product"))?;
+		product.parse::<ProductId>().map_err(|_| invalid("invalid product"))?;
 		let authority = self
 			.platform
 			.receiver_authority(product)

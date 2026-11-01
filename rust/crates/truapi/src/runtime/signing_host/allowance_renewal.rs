@@ -24,7 +24,7 @@ use crate::{
 	host_logic::product_account::{
 		ProductAccountError, derive_identity_keypair, derive_sr25519_hard_path,
 	},
-	platform::CoreStorageKey,
+	platform::{CoreStorageKey, ProductId},
 	runtime::{
 		authority::AuthorityError,
 		statement_allowance::{StatementAllowanceError, renewal::ResolvedRenewalTarget},
@@ -34,7 +34,7 @@ use crate::{
 use futures::lock::Mutex;
 use parity_scale_codec::{Decode, Encode};
 
-use super::{SigningHost, sso_responder::AllowanceAllocationError};
+use super::{SigningHost, allowance::AllowanceAllocationError};
 use truapi::latest::GenericError;
 
 /// Failure reading renewal targets or preparing a statement-store renewal pass.
@@ -95,7 +95,7 @@ pub enum StatementRenewalTarget {
 	/// `//allowance//statement-store//{product_id}` from the active root entropy.
 	ProductStatementAllowance {
 		/// Product the allowance account belongs to.
-		product_id: String,
+		product_id: ProductId,
 	},
 	/// `//wallet//sso` from the active root entropy.
 	WalletSso,
@@ -216,7 +216,9 @@ pub async fn inspection_labels(
 		}
 		let resolved = resolve_target(entropy, &signing_host.network_suffix, &entry.target)?;
 		let product = match entry.target {
-			StatementRenewalTarget::ProductStatementAllowance { product_id } => Some(product_id),
+			StatementRenewalTarget::ProductStatementAllowance { product_id } => {
+				Some(product_id.to_string())
+			},
 			_ => None,
 		};
 		labels.insert(resolved.account_id, (product, resolved.label));

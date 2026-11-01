@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "4d759be92c9a692a";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "fc9b1e969437f2cb";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -1888,18 +1888,18 @@ impl NftPurseRebalancePurse {
 		method: "rebalance_purse",
 		wire_name: "nft_purse_rebalance_purse",
 		request_type: "truapi::versioned::nft_purse::HostNftPurseRebalancePurseRequest",
-		response_type: "truapi::versioned::nft_purse::HostNftPurseRebalancePurseItem",
+		response_type: "truapi::versioned::nft_purse::HostNftPurseRebalancePurseResponse",
 		error_type: Some("truapi::versioned::nft_purse::HostNftPurseRebalancePurseError"),
-		kind: MethodKind::Subscription,
+		kind: MethodKind::Request,
 		direction: Direction::ProductToHost,
 		required_execution: None,
-		wire: MethodWire::Subscription(MethodIds { trait_id: 26, method_id: 4 }),
+		wire: MethodWire::Request(MethodIds { trait_id: 26, method_id: 4 }),
 	};
 }
-impl SubscriptionMethod for NftPurseRebalancePurse {
+impl RequestMethod for NftPurseRebalancePurse {
 	type Request = truapi::versioned::nft_purse::HostNftPurseRebalancePurseRequest;
+	type Response = truapi::versioned::nft_purse::HostNftPurseRebalancePurseResponse;
 	type Error = truapi::versioned::nft_purse::HostNftPurseRebalancePurseError;
-	type Item = truapi::versioned::nft_purse::HostNftPurseRebalancePurseItem;
 	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
@@ -1927,27 +1927,27 @@ impl RequestMethod for NftPurseCreateReceiveKey {
 	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
-/// `nft_purse_listen_for_payment` method marker.
-pub struct NftPurseListenForPayment;
-impl NftPurseListenForPayment {
+/// `nft_purse_listen_one_time_payment` method marker.
+pub struct NftPurseListenOneTimePayment;
+impl NftPurseListenOneTimePayment {
 	/// Canonical metadata and frame ids for this method.
 	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
 		service: "NftPurse",
-		method: "listen_for_payment",
-		wire_name: "nft_purse_listen_for_payment",
-		request_type: "truapi::versioned::nft_purse::HostNftPurseListenForPaymentRequest",
-		response_type: "truapi::versioned::nft_purse::HostNftPurseListenForPaymentItem",
-		error_type: Some("truapi::versioned::nft_purse::HostNftPurseListenForPaymentError"),
+		method: "listen_one_time_payment",
+		wire_name: "nft_purse_listen_one_time_payment",
+		request_type: "truapi::versioned::nft_purse::HostNftPurseListenOneTimePaymentRequest",
+		response_type: "truapi::versioned::nft_purse::HostNftPurseListenOneTimePaymentItem",
+		error_type: Some("truapi::versioned::nft_purse::HostNftPurseListenOneTimePaymentError"),
 		kind: MethodKind::Subscription,
 		direction: Direction::ProductToHost,
 		required_execution: None,
 		wire: MethodWire::Subscription(MethodIds { trait_id: 26, method_id: 6 }),
 	};
 }
-impl SubscriptionMethod for NftPurseListenForPayment {
-	type Request = truapi::versioned::nft_purse::HostNftPurseListenForPaymentRequest;
-	type Error = truapi::versioned::nft_purse::HostNftPurseListenForPaymentError;
-	type Item = truapi::versioned::nft_purse::HostNftPurseListenForPaymentItem;
+impl SubscriptionMethod for NftPurseListenOneTimePayment {
+	type Request = truapi::versioned::nft_purse::HostNftPurseListenOneTimePaymentRequest;
+	type Error = truapi::versioned::nft_purse::HostNftPurseListenOneTimePaymentError;
+	type Item = truapi::versioned::nft_purse::HostNftPurseListenOneTimePaymentItem;
 	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
@@ -2008,18 +2008,18 @@ impl NftPurseDeposit {
 		method: "deposit",
 		wire_name: "nft_purse_deposit",
 		request_type: "truapi::versioned::nft_purse::HostNftPurseDepositRequest",
-		response_type: "truapi::versioned::nft_purse::HostNftPurseDepositItem",
+		response_type: "truapi::versioned::nft_purse::HostNftPurseDepositResponse",
 		error_type: Some("truapi::versioned::nft_purse::HostNftPurseDepositError"),
-		kind: MethodKind::Subscription,
+		kind: MethodKind::Request,
 		direction: Direction::ProductToHost,
 		required_execution: None,
-		wire: MethodWire::Subscription(MethodIds { trait_id: 26, method_id: 9 }),
+		wire: MethodWire::Request(MethodIds { trait_id: 26, method_id: 9 }),
 	};
 }
-impl SubscriptionMethod for NftPurseDeposit {
+impl RequestMethod for NftPurseDeposit {
 	type Request = truapi::versioned::nft_purse::HostNftPurseDepositRequest;
+	type Response = truapi::versioned::nft_purse::HostNftPurseDepositResponse;
 	type Error = truapi::versioned::nft_purse::HostNftPurseDepositError;
-	type Item = truapi::versioned::nft_purse::HostNftPurseDepositItem;
 	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
@@ -2032,18 +2032,18 @@ impl NftPurseRefund {
 		method: "refund",
 		wire_name: "nft_purse_refund",
 		request_type: "truapi::versioned::nft_purse::HostNftPurseRefundRequest",
-		response_type: "truapi::versioned::nft_purse::HostNftPurseRefundItem",
+		response_type: "truapi::versioned::nft_purse::HostNftPurseRefundResponse",
 		error_type: Some("truapi::versioned::nft_purse::HostNftPurseRefundError"),
-		kind: MethodKind::Subscription,
+		kind: MethodKind::Request,
 		direction: Direction::ProductToHost,
 		required_execution: None,
-		wire: MethodWire::Subscription(MethodIds { trait_id: 26, method_id: 10 }),
+		wire: MethodWire::Request(MethodIds { trait_id: 26, method_id: 10 }),
 	};
 }
-impl SubscriptionMethod for NftPurseRefund {
+impl RequestMethod for NftPurseRefund {
 	type Request = truapi::versioned::nft_purse::HostNftPurseRefundRequest;
+	type Response = truapi::versioned::nft_purse::HostNftPurseRefundResponse;
 	type Error = truapi::versioned::nft_purse::HostNftPurseRefundError;
-	type Item = truapi::versioned::nft_purse::HostNftPurseRefundItem;
 	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
@@ -2056,18 +2056,90 @@ impl NftPurseTransferItem {
 		method: "transfer_item",
 		wire_name: "nft_purse_transfer_item",
 		request_type: "truapi::versioned::nft_purse::HostNftPurseTransferItemRequest",
-		response_type: "truapi::versioned::nft_purse::HostNftPurseTransferItemItem",
+		response_type: "truapi::versioned::nft_purse::HostNftPurseTransferItemResponse",
 		error_type: Some("truapi::versioned::nft_purse::HostNftPurseTransferItemError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 26, method_id: 11 }),
+	};
+}
+impl RequestMethod for NftPurseTransferItem {
+	type Request = truapi::versioned::nft_purse::HostNftPurseTransferItemRequest;
+	type Response = truapi::versioned::nft_purse::HostNftPurseTransferItemResponse;
+	type Error = truapi::versioned::nft_purse::HostNftPurseTransferItemError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `nft_purse_observe_operation_status` method marker.
+pub struct NftPurseObserveOperationStatus;
+impl NftPurseObserveOperationStatus {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "NftPurse",
+		method: "observe_operation_status",
+		wire_name: "nft_purse_observe_operation_status",
+		request_type: "truapi::versioned::nft_purse::HostNftPurseObserveOperationStatusRequest",
+		response_type: "truapi::versioned::nft_purse::HostNftPurseObserveOperationStatusItem",
+		error_type: Some("truapi::versioned::nft_purse::HostNftPurseObserveOperationStatusError"),
 		kind: MethodKind::Subscription,
 		direction: Direction::ProductToHost,
 		required_execution: None,
-		wire: MethodWire::Subscription(MethodIds { trait_id: 26, method_id: 11 }),
+		wire: MethodWire::Subscription(MethodIds { trait_id: 26, method_id: 12 }),
 	};
 }
-impl SubscriptionMethod for NftPurseTransferItem {
-	type Request = truapi::versioned::nft_purse::HostNftPurseTransferItemRequest;
-	type Error = truapi::versioned::nft_purse::HostNftPurseTransferItemError;
-	type Item = truapi::versioned::nft_purse::HostNftPurseTransferItemItem;
+impl SubscriptionMethod for NftPurseObserveOperationStatus {
+	type Request = truapi::versioned::nft_purse::HostNftPurseObserveOperationStatusRequest;
+	type Error = truapi::versioned::nft_purse::HostNftPurseObserveOperationStatusError;
+	type Item = truapi::versioned::nft_purse::HostNftPurseObserveOperationStatusItem;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `nft_purse_static_receive_key` method marker.
+pub struct NftPurseStaticReceiveKey;
+impl NftPurseStaticReceiveKey {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "NftPurse",
+		method: "static_receive_key",
+		wire_name: "nft_purse_static_receive_key",
+		request_type: "truapi::versioned::nft_purse::HostNftPurseStaticReceiveKeyRequest",
+		response_type: "truapi::versioned::nft_purse::HostNftPurseStaticReceiveKeyResponse",
+		error_type: Some("truapi::versioned::nft_purse::HostNftPurseStaticReceiveKeyError"),
+		kind: MethodKind::Request,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Request(MethodIds { trait_id: 26, method_id: 13 }),
+	};
+}
+impl RequestMethod for NftPurseStaticReceiveKey {
+	type Request = truapi::versioned::nft_purse::HostNftPurseStaticReceiveKeyRequest;
+	type Response = truapi::versioned::nft_purse::HostNftPurseStaticReceiveKeyResponse;
+	type Error = truapi::versioned::nft_purse::HostNftPurseStaticReceiveKeyError;
+	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `nft_purse_listen_payment_inbox` method marker.
+pub struct NftPurseListenPaymentInbox;
+impl NftPurseListenPaymentInbox {
+	/// Canonical metadata and frame ids for this method.
+	pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+		service: "NftPurse",
+		method: "listen_payment_inbox",
+		wire_name: "nft_purse_listen_payment_inbox",
+		request_type: "truapi::versioned::nft_purse::HostNftPurseListenPaymentInboxRequest",
+		response_type: "truapi::versioned::nft_purse::HostNftPurseListenPaymentInboxItem",
+		error_type: Some("truapi::versioned::nft_purse::HostNftPurseListenPaymentInboxError"),
+		kind: MethodKind::Subscription,
+		direction: Direction::ProductToHost,
+		required_execution: None,
+		wire: MethodWire::Subscription(MethodIds { trait_id: 26, method_id: 14 }),
+	};
+}
+impl SubscriptionMethod for NftPurseListenPaymentInbox {
+	type Request = truapi::versioned::nft_purse::HostNftPurseListenPaymentInboxRequest;
+	type Error = truapi::versioned::nft_purse::HostNftPurseListenPaymentInboxError;
+	type Item = truapi::versioned::nft_purse::HostNftPurseListenPaymentInboxItem;
 	const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
@@ -3454,12 +3526,15 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
 	NftPurseListPurses::DESCRIPTOR,
 	NftPurseRebalancePurse::DESCRIPTOR,
 	NftPurseCreateReceiveKey::DESCRIPTOR,
-	NftPurseListenForPayment::DESCRIPTOR,
+	NftPurseListenOneTimePayment::DESCRIPTOR,
 	NftPurseCreateCheque::DESCRIPTOR,
 	NftPurseRevokeCheque::DESCRIPTOR,
 	NftPurseDeposit::DESCRIPTOR,
 	NftPurseRefund::DESCRIPTOR,
 	NftPurseTransferItem::DESCRIPTOR,
+	NftPurseObserveOperationStatus::DESCRIPTOR,
+	NftPurseStaticReceiveKey::DESCRIPTOR,
+	NftPurseListenPaymentInbox::DESCRIPTOR,
 	NotificationsSendPushNotification::DESCRIPTOR,
 	NotificationsCancelPushNotification::DESCRIPTOR,
 	NotificationsReceiverStatus::DESCRIPTOR,
@@ -3586,12 +3661,15 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
 	NftPurseListPurses::DESCRIPTOR,
 	NftPurseRebalancePurse::DESCRIPTOR,
 	NftPurseCreateReceiveKey::DESCRIPTOR,
-	NftPurseListenForPayment::DESCRIPTOR,
+	NftPurseListenOneTimePayment::DESCRIPTOR,
 	NftPurseCreateCheque::DESCRIPTOR,
 	NftPurseRevokeCheque::DESCRIPTOR,
 	NftPurseDeposit::DESCRIPTOR,
 	NftPurseRefund::DESCRIPTOR,
 	NftPurseTransferItem::DESCRIPTOR,
+	NftPurseObserveOperationStatus::DESCRIPTOR,
+	NftPurseStaticReceiveKey::DESCRIPTOR,
+	NftPurseListenPaymentInbox::DESCRIPTOR,
 	NotificationsSendPushNotification::DESCRIPTOR,
 	NotificationsCancelPushNotification::DESCRIPTOR,
 	NotificationsReceiverStatus::DESCRIPTOR,
@@ -3723,12 +3801,15 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
 	NftPurseListPurses::DESCRIPTOR,
 	NftPurseRebalancePurse::DESCRIPTOR,
 	NftPurseCreateReceiveKey::DESCRIPTOR,
-	NftPurseListenForPayment::DESCRIPTOR,
+	NftPurseListenOneTimePayment::DESCRIPTOR,
 	NftPurseCreateCheque::DESCRIPTOR,
 	NftPurseRevokeCheque::DESCRIPTOR,
 	NftPurseDeposit::DESCRIPTOR,
 	NftPurseRefund::DESCRIPTOR,
 	NftPurseTransferItem::DESCRIPTOR,
+	NftPurseObserveOperationStatus::DESCRIPTOR,
+	NftPurseStaticReceiveKey::DESCRIPTOR,
+	NftPurseListenPaymentInbox::DESCRIPTOR,
 	NotificationsSendPushNotification::DESCRIPTOR,
 	NotificationsCancelPushNotification::DESCRIPTOR,
 	NotificationsReceiverStatus::DESCRIPTOR,

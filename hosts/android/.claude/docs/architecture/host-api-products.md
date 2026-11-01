@@ -323,7 +323,8 @@ Worker Lifecycle (#632). The host owns the collection and is its only writer; a 
 the wire (`Pocket::list_subscribe`) and may remove one (`Pocket::remove_card`). There is no add call: a card enters
 when the user follows a `polkadotapp://pocket/add?product=<product>.<tld>&card=<id>` deeplink and approves the sheet.
 `polkadotapp://pocket/open?product=<product>.<tld>&card=<id>` lands on the Pocket tab with that card expanded when the
-user holds it, and `polkadotapp://pocket` alone on the tab. A product's `navigateTo` uses the same links, which
+user holds it, and `polkadotapp://pocket` alone on the tab. The open link's other query parameters are appended to
+the card's page URL for that open only. A product's `navigateTo` uses the same links, which
 `PocketDeepLinkHandler` reads like any other app link. A product's own paths are App routes.
 
 Seams, all in `feature/products/api/.../domain/pocket/`:
@@ -352,7 +353,7 @@ Seams, all in `feature/products/api/.../domain/pocket/`:
 Core side (`feature/products/impl/.../domain/truapi/`):
 - Pocket is core-only, whatever `ProductRuntimeSettings` says: the native runtime has no Pocket surface.
 - `TrUAPIWorkerSupervisor` starts a product's worker on the core's `Start` transition (runtime bridge
-  `workerDemandChanged`): hidden `ChatWebViewProvider` WebView, `openProductExecution(WORKER, pocket = ...)` through
+  `requestWorkerTransition`): hidden `ChatWebViewProvider` WebView, `openProductExecution(WORKER, pocket = ...)` through
   `ProductTrUAPIHostBridge.attach(kind = WORKER)`, bootstrap at document start, entry module by URL. `Stop` tears it
   down. Chat is not served on this path; chat products keep the native worker, so a product with both runs two.
 - `TrUAPIPocketFaceStreams` takes one `acquireWorker` reference per collected face, opens `render` on

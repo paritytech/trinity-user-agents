@@ -1,7 +1,7 @@
 use crate::platform::{
 	AuthState, DevicePermissionStatus, NativeChatFileExportRequest, NativeChatFilePickRequest,
 	NativeChatPickedFile, NativeCoinageRequest, NativeCoinageResponse, PermissionDecision,
-	UserConfirmationReview,
+	ProductId, UserConfirmationReview,
 };
 use truapi::v01;
 
@@ -275,7 +275,8 @@ pub trait HostCallbacks: Send + Sync {
 	) -> Result<PermissionDecision, HostRejection>;
 
 	/// Look up one preimage value by key. The native shim emits this as the
-	/// current item in its subscription stream.
+	/// current item in its subscription stream and calls again after a miss.
+	/// Return `None` if the fetch fails. An error ends the lookup.
 	async fn lookup_preimage(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection>;
 
 	/// Exact-name AccountId32 candidates from the host's configured,
@@ -312,8 +313,14 @@ pub trait HostCallbacks: Send + Sync {
 	/// promptly.
 	fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection>;
 
-	/// Observe demand on a product's worker crossing zero. `Start` means the
-	/// host runs the worker now, `Stop` that nothing wants it any more. Every
+	/// The chains the host builds as V5 general transactions, each with its
+	/// transaction extension pipeline. A chain not listed is built as V4.
+	async fn transaction_extension_versions(
+		&self,
+	) -> Result<crate::platform::ExtensionVersionMap, HostRejection>;
+
+	/// Request a product worker transition. `Start` means the host runs the
+	/// worker now; `Stop` means it is no longer needed and may stop. Every
 	/// transition arrives here, in ledger order: the ones the host asks for
 	/// through [`NativeTrUApiHostRuntime::acquire_worker`] and
 	/// [`NativeTrUApiHostRuntime::release_worker`], and the ones the core
@@ -327,7 +334,7 @@ pub trait HostCallbacks: Send + Sync {
 	/// [`NativeTrUApiHostRuntime::release_worker`], often the caller's own
 	/// thread and re-entrantly: hand the transition off rather than blocking
 	/// on another thread from inside it.
-	fn worker_demand_changed(&self, product_id: String, transition: WorkerTransition);
+	fn request_worker_transition(&self, product_id: ProductId, transition: WorkerTransition);
 
 	/// A device finished pairing with this signing host.
 	///
@@ -351,6 +358,40 @@ pub trait HostCallbacks: Send + Sync {
 	/// Runtime-wide, so invoked only on the callbacks the runtime was built
 	/// with. Arrives on a core thread: hand it off rather than blocking.
 	fn durable_work_changed(&self, pending: bool);
+
+	/// The 32-byte id of the current app installation, created on first use.
+	/// Item keys of NFT purses are derived under it, so it must be the one
+	/// the host registers for recovery.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with.
+	async fn current_installation(&self) -> Result<Vec<u8>, HostRejection>;
+
+	/// Read a value the host keeps encrypted at rest: the Keychain on iOS,
+	/// encrypted preferences on Android. Return `None` when nothing is stored
+	/// under `key`, and an error when the store cannot be read or the value
+	/// no longer decrypts.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with.
+	async fn encrypted_storage_read(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection>;
+
+	/// Store `value` under `key`, encrypted at rest and excluded from backups,
+	/// replacing any earlier value.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with.
+	async fn encrypted_storage_write(
+		&self,
+		key: Vec<u8>,
+		value: Vec<u8>,
+	) -> Result<(), HostRejection>;
+
+	/// Delete the value stored under `key`. Deleting nothing succeeds.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with.
+	async fn encrypted_storage_delete(&self, key: Vec<u8>) -> Result<(), HostRejection>;
 
 	/// Read a value from the host's scoped key-value store.
 	async fn local_storage_read(
@@ -541,4 +582,23 @@ pub trait NativeScannerCallbacks: Send + Sync {
 		execution_kind: crate::platform::ProductExecutionKind,
 		request: truapi::latest::HostScannerScanRequest,
 	) -> Result<crate::platform::HostScan, HostRejection>;
+}
+
+/// Optional native funding overlay. Install only when funding is configured;
+/// otherwise funding requests answer `Unsupported`.
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeFundingCallbacks: Send + Sync {
+	/// Present a core-owned session. `None` identifies a host-owned session.
+	/// Starting means presentation completed, not that funds have settled.
+	async fn present_funding(
+		&self,
+		product_id: Option<ProductId>,
+		intent: String,
+		direction: v01::FundingDirection,
+		amount: Option<u128>,
+	) -> Result<crate::platform::FundingPresentOutcome, HostRejection>;
+
+	/// Observe committed status for the host's status and history views.
+	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem);
 }

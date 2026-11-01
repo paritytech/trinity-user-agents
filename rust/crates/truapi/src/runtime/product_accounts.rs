@@ -22,10 +22,13 @@ use crate::{
 	platform::{ProductContext, ProductId},
 };
 
-use super::authority::{
-	AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
-	CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
-	SignRawAuthorityRequest, StatementStoreAllowanceKey,
+use super::{
+	authority::{
+		AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
+		CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
+		SignRawAuthorityRequest, StatementStoreAllowanceKey,
+	},
+	product_consent::ProductConsent,
 };
 
 /// The host's account authority as one product connection sees it: every call
@@ -44,6 +47,87 @@ impl ProductAccounts {
 	/// Current account-authority session, if connected.
 	pub fn current_session(&self) -> Option<AuthoritySession> {
 		self.authority.current_session()
+	}
+
+	/// Whether this product's authority snapshot still authorizes work.
+	pub fn session_is_current(&self, session: &AuthoritySession) -> bool {
+		self.authority.session_is_current(session, Some(&self.product.product_id))
+	}
+
+	/// Resolve missing display identity without hiding an unavailable username lookup.
+	pub async fn resolve_session_identity(&self) -> Result<Option<AuthoritySession>, String> {
+		if let Some(session) = self.current_session() {
+			if session.primary_username().is_some() {
+				return Ok(Some(session));
+			}
+		}
+		self.authority.refresh_session_identity().await
+	}
+
+	/// Authority retained by the host-owned media transport, never exposed to products.
+	pub fn media_authority(&self) -> &Arc<dyn ProductAuthority> {
+		&self.authority
+	}
+
+	/// Weak authority used to fence host-owned profile overlays after disconnect.
+	pub fn profile_authority(&self) -> std::sync::Weak<dyn ProductAuthority> {
+		Arc::downgrade(&self.authority)
+	}
+
+	/// Whether Chat authority was granted for this wallet session.
+	pub fn chat_session_granted(&self, session: &AuthoritySession) -> bool {
+		self.authority.chat_session_granted(session, &self.product.product_id)
+	}
+
+	/// Execute native Chat under this connection's authenticated product identity.
+	pub async fn product_device_chat(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		operation: truapi::latest::HostProductDeviceChatRequest,
+		session_consent: bool,
+	) -> Result<
+		truapi::latest::HostProductDeviceChatResponse,
+		super::authority::ProductDeviceChatAuthorityError,
+	> {
+		self.authority
+			.product_device_chat(
+				cx,
+				session,
+				super::authority::ProductDeviceChatAuthorityRequest {
+					calling_product_id: self.product.product_id.clone(),
+					operation,
+					session_consent,
+				},
+			)
+			.await
+	}
+
+	/// Import incoming payment secrets without granting authority over outgoing funds.
+	pub async fn payment_top_up(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		mut request: crate::host_internal::sso_messages::PaymentTopUpRequest,
+	) -> Result<(), super::authority::PaymentTopUpAuthorityError> {
+		request.calling_product_id = self.product.product_id.clone();
+		self.authority.payment_top_up(cx, session, request).await
+	}
+
+	/// Resolve a verified contact username under this product's Chat authority.
+	pub async fn contact_username(
+		&self,
+		session: &AuthoritySession,
+		identity: [u8; 32],
+	) -> Option<String> {
+		self.authority
+			.contact_username(session, &self.product.product_id, identity)
+			.await
+	}
+
+	/// Notify authenticated Chat publishers after a profile disclosure changes.
+	pub fn profile_disclosure_changed(&self, session: &AuthoritySession) {
+		self.authority.profile_disclosure_changed(session);
 	}
 
 	/// Seed a product subtree for authority tests.
@@ -65,6 +149,11 @@ impl ProductAccounts {
 		product_id: &ProductId,
 	) -> Result<[u8; 32], AuthorityError> {
 		self.authority.product_subtree_public_key(cx, session, product_id).await
+	}
+
+	/// The host's account-access decisions and review prompts.
+	pub fn consent(&self) -> &ProductConsent {
+		self.authority.consent()
 	}
 
 	/// Whether resolving `product_id`'s subtree needs SSO and host consent.

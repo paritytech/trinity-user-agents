@@ -49,6 +49,9 @@ pub enum RpcError {
 	/// `state_getStorage` returned invalid hex.
 	#[error("decode hex storage value: {0}")]
 	StorageHex(#[source] hex::FromHexError),
+	/// `state_getStorage` returned neither a prefixed hex string nor JSON null.
+	#[error("state_getStorage returned neither hex nor null")]
+	InvalidStorageValue,
 	/// `chain_getFinalizedHead` did not return a hash string.
 	#[error("chain_getFinalizedHead returned non-string")]
 	FinalizedHeadNotString,
@@ -155,8 +158,11 @@ impl RpcClient {
 		match self.inner.request::<Value>("state_getStorage", params).await.map_err(|err| {
 			RpcError::Request { method: "state_getStorage".to_string(), source: err }
 		})? {
-			Value::String(hex_value) => Ok(Some(decode_hex(&hex_value)?)),
-			_ => Ok(None),
+			Value::Null => Ok(None),
+			Value::String(hex_value) if hex_value.starts_with("0x") => {
+				Ok(Some(decode_hex(&hex_value)?))
+			},
+			_ => Err(RpcError::InvalidStorageValue.into()),
 		}
 	}
 
@@ -503,6 +509,26 @@ mod tests {
 			json!([{ "block": "0xat", "changes": [["0x01", null], ["0x02", null], ["0x03", null]] }]),
 		] {
 			assert!(decode_storage_batch_at(&keys, "0xat", response).is_err());
+		}
+	}
+
+	#[test]
+	fn malformed_storage_is_not_an_absent_allowance() {
+		for response in ["{}", "[]", "false", "42", r#""0102""#, r#""""#] {
+			for at in [None, Some("0xat")] {
+				let rpc = RpcClient::new(HostRpcClient::new(ScriptedRpc::new([response])));
+				assert!(matches!(
+					futures::executor::block_on(rpc.get_storage_maybe_at(b"key", at)),
+					Err(super::StatementAllowanceError::Rpc(super::RpcError::InvalidStorageValue))
+				));
+			}
+		}
+		for response in [r#""0xzz""#, r#""0x1""#] {
+			let rpc = RpcClient::new(HostRpcClient::new(ScriptedRpc::new([response])));
+			assert!(matches!(
+				futures::executor::block_on(rpc.get_storage(b"key")),
+				Err(super::StatementAllowanceError::Rpc(super::RpcError::StorageHex(_)))
+			));
 		}
 	}
 

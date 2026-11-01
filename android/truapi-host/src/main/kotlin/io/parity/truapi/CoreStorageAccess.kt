@@ -16,8 +16,7 @@ import uniffi.truapi.nativeDescribeCoreStorageKey
 internal object CoreStorageAccess {
     // Collisions only serialize unrelated slots. The bounded table never forgets a held slot lock.
     private val locks = Array(256) { Mutex() }
-    private data class Owner(val storageIdentifier: String, val group: Any, val productId: String)
-    private val executions = WeakHashMap<TrUAPIProductExecution, Owner>()
+    private val runtimes = WeakHashMap<TrUAPIHostRuntime, String>()
     private val failures = WeakHashMap<Any, Boolean>()
     private sealed interface Notice {
         class Changed(
@@ -61,12 +60,12 @@ internal object CoreStorageAccess {
         return locks[hash and (locks.size - 1)].withLock { operation() }
     }
 
-    fun register(execution: TrUAPIProductExecution, storageIdentifier: String, group: Any, productId: String) {
-        synchronized(executions) { executions[execution] = Owner(storageIdentifier, group, productId) }
+    fun register(runtime: TrUAPIHostRuntime, storageIdentifier: String) {
+        synchronized(runtimes) { runtimes[runtime] = storageIdentifier }
     }
 
-    fun unregister(execution: TrUAPIProductExecution) {
-        synchronized(executions) { executions.remove(execution) }
+    fun unregister(runtime: TrUAPIHostRuntime) {
+        synchronized(runtimes) { runtimes.remove(runtime) }
     }
 
     fun changed(storage: HostCoreStorage, origin: Any, key: ByteArray, reportFailure: () -> Unit) {
@@ -86,30 +85,19 @@ internal object CoreStorageAccess {
         val description = nativeDescribeCoreStorageKey(notice.key)
         val request = description.permissionRequest ?: return false
         val productId = description.productId ?: return false
-        val targets = synchronized(executions) {
-            executions.entries.filter { (execution, owner) ->
-                !execution.isClosed && owner.storageIdentifier == notice.storage.storageIdentifier &&
-                    owner.productId == productId
-            }.map { it.key to it.value.group }.groupBy({ it.second }, { it.first })
+        val targets = synchronized(runtimes) {
+            runtimes.entries.filter { (runtime, storageIdentifier) ->
+                !runtime.isClosed && storageIdentifier == notice.storage.storageIdentifier
+            }.map { it.key }
         }
         var failed = false
-        for (group in targets.values) {
-            for (execution in group) {
-                if (execution.isClosed) continue
-                try {
-                    // A shared root refresh fences every matching execution in that root.
-                    // It re-reads storage; a delayed notice never replays an old decision.
-                    // Include the writer: its CAS can outlive the requesting Rust future.
-                    // A latest stored grant is a core no-op, not a new revision.
-                    execution.refreshPermissionAuthorization(request)
-                    break
-                } catch (_: Throwable) {
-                    if (execution.isClosed) continue
-                    // Rust already fail-closes only the exact affected permission scope.
-                    // Closing the whole execution here could kill another account's call.
-                    failed = true
-                    break
-                }
+        for (runtime in targets) {
+            if (runtime.isClosed) continue
+            try {
+                // Re-read the latest stored decision, including after its requesting execution closed.
+                runtime.refreshPermissionAuthorization(productId, request)
+            } catch (_: Throwable) {
+                if (!runtime.isClosed) failed = true
             }
         }
         return failed

@@ -20,7 +20,7 @@ The `TrUAPIHost` SPM package an iOS host app imports directly. It carries:
   view.
 - the Rust core as a binary target — a GitHub release asset by default (`publishedBinaryURL` in the root
   `Package.swift`), or the locally built `Binaries/truapi_server.xcframework` when `useLocalBinary` is flipped to true.
-- `Sources/TrUAPIHost/truapi_server.swift` and `Sources/truapi_serverFFI/include/` — the generated UniFFI bindings.
+- `Sources/TrUAPIHost/truapi.swift` and `Sources/truapiFFI/include/` contain the generated UniFFI bindings.
 - [`js/container/`](../../js/container) — the TS lockdown container; built into
   `Sources/TrUAPIHost/Resources/truapi-container.js` and exposed via `ContainerScriptBundle.load()`.
 - `Tests/` — WS-bridge round-trip tests that boot the real Rust core.
@@ -70,15 +70,16 @@ binding for every UniFFI-exposed type. It runs on Linux, so it never compiles
 Swift.
 
 The hand-written conformers in `TrUAPIHost.swift` and `Tests/` are covered by
-the `iOS package (Swift + WebKit)` job instead, which builds a simulator-only
-debug XCFramework from the pull request source, compiles the package tests,
-and runs the network permission suite in WKWebView. It is path-filtered to pull requests touching `ios/`, `Package.swift`, the
-`Makefile`, `js/container/`, or any of the crates the bindings are generated
-from (`truapi`, `truapi-provider`); the
-filter has to name them explicitly, since a protocol change no longer shows up
-as an `ios/` diff.
+the `TrUAPIHost package (Swift + WebKit)` job instead, which compiles the
+package tests against the iOS core the app jobs share, built from the pull
+request source or reused from main when its inputs match, and runs the network
+permission suite in WKWebView. It runs on pull requests touching any input the
+`swift` package in `.github/hosts.json` names, among them `ios/`,
+`Package.swift`, `js/container/` and every crate the bindings are generated
+from, which the list has to name explicitly, since a protocol change no longer
+shows up as an `ios/` diff.
 The Android host job compiles `TrUAPIHost.kt` against generated bindings;
-the separate iOS CI workflow builds and tests the embedding app.
+CI's `iOS app` job, `ios-app.yml`, builds and tests the embedding app.
 
 Run `rebuild.sh` after changing anything host-visible — the `NativeTrUApiHostRuntime` or `NativeProductExecution`
 methods, `HostCallbacks`, the native mirror types in `rust/crates/truapi/src/native*`, or `js/container/src` — to
@@ -276,14 +277,18 @@ execution.notifyPocketCardsChanged(cards: pocketStore.cards())
 A card's face does not cross this bridge. The host keeps each card's newest face itself: that is what the card shows
 while the worker is down, and at cold start before the worker answers.
 
-On the execution: `publishChatAction` delivers a user's action back to the product, buffering up to 64 before it
-subscribes; `notifyChatRoomsChanged` republishes the room list; `render` returns a stream of `RendererNode` trees for
-one render context; `publishRendererAction` delivers a renderer action back to the product; and `sessionChatIdentityKey`
-reads the session's X25519 chat identity private key, which must not be logged or persisted. An open render stream is
-one worker reference the core holds on the product's behalf; the transition it causes arrives on the runtime bridge's
-`workerDemandChanged`, never on the execution's. Two rules the core cannot check are the host's to keep: send a render
-context only for a surface the product's manifest `includes`, and publish a renderer action only from the current tree
-of an open render stream.
+On the execution: `publishChatAction` delivers a user's action back to the
+product, buffering up to 64 before it subscribes; `notifyChatRoomsChanged`
+republishes the room list; `render` returns a stream of `RendererNode` trees
+for one render context; `publishRendererAction` delivers a renderer action
+back to the product; and `sessionChatIdentityKey` reads the session's X25519
+chat identity private key, which must not be logged or persisted. An open
+render stream is one worker reference the core holds on the product's behalf;
+the transition it causes arrives on the runtime bridge's
+`requestWorkerTransition`, never on the execution's. Two rules the core
+cannot check are the host's to keep: send a render context only for a surface
+the product's manifest `includes`, and publish a renderer action only from the
+current tree of an open render stream.
 
 The runtime answers other devices pairing with it:
 `notifyPairingAllowanceAllocation(deeplink:)` and
@@ -332,6 +337,19 @@ a device that pairs again reports again; a resumed pairing reports nothing, so
 the host keeps its own record of which devices it has already seen. It arrives
 on the thread answering the handshake, so hand the device off rather than
 announcing it inline. Defaults to a no-op for a host that answers no pairing.
+
+`currentInstallation()` on the runtime bridge returns the 32-byte id of the
+current app installation, the one the host registers for recovery. NFT purse
+item keys are derived under it. Defaults to a rejection, which fails
+`createItems`.
+
+`encryptedStorageRead(key:)`, `encryptedStorageWrite(key:value:)` and
+`encryptedStorageDelete(key:)` on the runtime bridge keep values encrypted at
+rest and out of backups, such as Keychain items with a `ThisDeviceOnly`
+accessibility. The core stores secrets there that its database must not hold. A
+missing key reads as `nil`; throw when the store cannot be read or a value no
+longer decrypts. Deleting a missing key succeeds. Defaults to a rejection,
+which turns off the features that need it.
 
 `durableWorkChanged(pending:)` on the runtime bridge reports whether the core
 has durable transactions still awaiting a verdict, starting with the state it
@@ -783,10 +801,7 @@ execution.close()
 runtime.disconnect()
 ```
 
-The updated `@parity/truapi` SDK keeps the same client across connection loss. The SDK replaces the socket; interrupted
-operations fail with `ConnectionResetError` and are never replayed. Recreate read/watch subscriptions in the provider
-that owns them. SDKs 0.16.0 and 0.18.0 can still start through the minimal `__HOST_API_PORT__` adapter, but require a
-page reload after a disconnect. Remove that adapter once deployed products adopt the injected client.
+The updated `@parity/truapi` SDK keeps the same client across connection loss. The SDK replaces the socket. Operations the host may have started fail with `ConnectionResetError`. A call not yet sent goes out on the replacement once its handshake completes, or fails the same way when the SDK stops redialing. Recreate read/watch subscriptions in the provider that owns them. SDKs 0.16.0 and 0.18.0 can still start through the minimal `__HOST_API_PORT__` adapter, but require a page reload after a disconnect. Remove that adapter once deployed products adopt the injected client.
 
 The shared container uses the same WebSocket as SDK calls and asks Rust to authorize each fetch or XHR before sending
 it, and each remote WebSocket before connecting. It parses the URL with captured browser primitives and sends its
@@ -839,16 +854,14 @@ Apple-only tests cannot run on Linux.
 ## Build outputs in detail
 
 `./scripts/rebuild.sh` orchestrates everything; the underlying pieces, should you need one in isolation:
+The package consumes the canonical `truapi` configuration records directly. Rebuild
+the XCFramework and generated Swift together after a core update; do not pair new
+bindings with the published 0.26 binary. `TRUAPI_USE_LOCAL_BINARY=1` selects the local
+artifact. Native Coinage custody remains registered while locked, so temporary
+unavailability cannot silently select the Rust wallet. The core database directory
+is excluded from backup, and encrypted secrets remain in the host Keychain.
 
-- **xcframework** — `make xcframework` (repo root) builds `truapi` for `aarch64-apple-ios` and
-  `aarch64-apple-ios-sim` and bundles `target/truapi_server.xcframework`; the script copies it into `Binaries/` and
-  strips the per-slice `module.modulemap` (module resolution comes from the `systemLibrary` target; the slice copy
-  collides with other xcframeworks in Xcode's flat include dir).
-- **bindings** — `make uniffi` (run automatically by `make xcframework`) emits the Swift bindings into
-  `target/uniffi-swift-out/` via the workspace `uniffi-bindgen-cli`; `scripts/sync-bindings.sh` copies them into
-  `Sources/TrUAPIHost/truapi.swift` and `Sources/truapiFFI/include/`, renaming the emitted
-  `truapiFFI.modulemap` to `module.modulemap` so the SwiftPM `systemLibrary` target picks it up. `rebuild.sh`
-  calls it, and so does the `iOS package (swift compile)` job, which is what puts Swift sources into the package before
-  `xcodebuild` runs.
-- **container** — `npm run build` in `js/container/` (repo root) bundles `src/index.ts` into
-  `Sources/TrUAPIHost/Resources/truapi-container.js`.
+
+- **xcframework** — `make xcframework` (repo root) builds `truapi` for `aarch64-apple-ios` and `aarch64-apple-ios-sim` and bundles `target/truapi_server.xcframework`; the script copies it into `Binaries/` and strips the per-slice `module.modulemap` (module resolution comes from the `systemLibrary` target; the slice copy collides with other xcframeworks in Xcode's flat include dir).
+- **bindings** — `make uniffi` (run automatically by `make xcframework`) emits the Swift bindings into `target/uniffi-swift-out/` via the workspace `uniffi-bindgen-cli`; `scripts/sync-bindings.sh` copies them into `Sources/TrUAPIHost/truapi.swift` and `Sources/truapiFFI/include/`, renaming the emitted `truapiFFI.modulemap` to `module.modulemap` so the SwiftPM `systemLibrary` target picks it up. `rebuild.sh` calls it, which is what puts Swift sources into the package before `xcodebuild` runs.
+- **container** — `npm run build` in `js/container/` (repo root) bundles `src/index.ts` into `Sources/TrUAPIHost/Resources/truapi-container.js`.

@@ -56,6 +56,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let settingsManager: SettingsManagerProtocol
     private let coreStorage: TrUAPILocalStoring
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
+    private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
     private let logger: LoggerProtocol
     private let coinageAdapter: TrUAPINativeCoinage
@@ -72,9 +73,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     /// first use, which is long after, so the manager is in place by then.
     private var workerManager: (any TrUAPIWorkerManaging)?
 
-    /// Set once at startup, after the payment engines are assembled. Installed on the runtime when
-    /// it is built, or right away if it already is.
-    private var paymentsBridge: RustPaymentsBridge?
 
     init(
         chainRegistry: ChainRegistryProtocol,
@@ -114,6 +112,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             },
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade)
         )
+        backedUpInstallation.attach(coinageService.backedUpInstallationProvider)
     }
 
     deinit {
@@ -144,6 +143,10 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         }
     }
 
+    func attach(workerManager: any TrUAPIWorkerManaging) {
+        lock.withLock { self.workerManager = workerManager }
+    }
+
     func sharedRuntime() throws -> TrUAPIHostRuntime {
         lock.lock()
         defer { lock.unlock() }
@@ -159,6 +162,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             secret: secret,
             liteUsername: settingsManager.string(for: .username),
             networkSuffix: networkSuffix,
+            databaseDirectory: try Self.coreDatabaseDirectory(),
             coinageInstanceId: AppConfig.Coinage.instanceId
         )
 
@@ -173,6 +177,9 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             chainConnections: chainConnections,
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
             chatFiles: TrUAPINativeChatFiles.shared,
+            workerManager: workerManager,
+            backedUpInstallation: backedUpInstallation,
+            encryptedStorage: TrUAPIEncryptedStorage(keychain: Keychain()),
             logger: logger
         )
 
@@ -188,7 +195,10 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             routerFacade: confirmationRouterFacade
         )
         runtime.setContacts(contactsBridge)
-        paymentsBridge?.install(on: runtime)
+        runtime.setScanner(AppScannerHostBridge(
+            routerFacade: confirmationRouterFacade,
+            visibility: ProductVisibility(application: UIApplication.shared)
+        ))
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
             logger: logger,
@@ -266,6 +276,7 @@ extension TrUAPIHostRuntimeProvider {
         secret: Data,
         liteUsername: String?,
         networkSuffix: String,
+        databaseDirectory: String,
         coinageInstanceId: UInt32
     ) throws -> HostRuntimeConfig {
         let peopleChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.peopleChain)

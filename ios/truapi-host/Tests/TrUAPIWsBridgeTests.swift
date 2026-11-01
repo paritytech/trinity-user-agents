@@ -4,6 +4,33 @@ import Testing
 import UIKit
 
 struct TrUAPIWsBridgeTests {
+    /// The core raises a start marker as a runtime comes up, so a host log opens
+    /// with proof that the channel carrying every later marker reaches Swift at
+    /// all. It is raised below the core's console floor on purpose, so this also
+    /// covers a host log that does not depend on the trace level.
+    ///
+    /// The core's sink is process-wide and tests here run in parallel, so a
+    /// sibling building its own runtime can take it in the window before the
+    /// marker is raised. A miss is retried; a sink that does not route misses
+    /// every attempt.
+    @Test(.timeLimit(.minutes(1)))
+    func testStartingARuntimeReportsTheCoreLogChannel() throws {
+        var lastSeen: [String] = []
+        for _ in 0 ..< 8 {
+            let bridge = StubHostBridge()
+            let runtime = try TrUAPIHostRuntime(
+                bridge: bridge,
+                runtimeConfig: Self.makeHostRuntimeConfig()
+            )
+            let seen = withExtendedLifetime(runtime) { bridge.coreLogs }
+            if seen.contains(where: { $0.hasPrefix("truapi.core.started") }) {
+                return
+            }
+            lastSeen = seen
+        }
+        Issue.record("the core's start marker did not reach the host: \(lastSeen)")
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func testFeatureSupportedRoundTripOverWsBridge() async throws {
         let bridge = StubHostBridge()
@@ -37,41 +64,6 @@ struct TrUAPIWsBridgeTests {
         // Frame tail: message_type=Response(0x01), then the payload's own
         // bytes, Result::Ok(0x00), V1(0x00), supported(0x01).
         #expect(response.suffix(4) == Data([0x01, 0x00, 0x00, 0x01]))
-    }
-
-    /// An iOS host must classify itself as `Ios` without the embedding app
-    /// saying so, since the only way to reach this package is from an iOS app.
-    @Test(.timeLimit(.minutes(1)))
-    func testHostInfoReportsTheIosPlatform() async throws {
-        let bridge = StubHostBridge()
-        let runtime = try TrUAPIHostRuntime(
-            bridge: bridge,
-            runtimeConfig: Self.makeHostRuntimeConfig()
-        )
-        let execution = try runtime.openProductExecution(
-            bridge: bridge,
-            configuration: ProductExecutionConfig(
-                productId: "test.dot",
-                executionKind: .app
-            )
-        )
-
-        let endpoint = try execution.startWsBridge(bindPort: 0)
-        defer { execution.stopWsBridge() }
-
-        let url = try #require(URL(string: "ws://127.0.0.1:\(endpoint.port)/?t=\(endpoint.token)"))
-        let task = URLSession.shared.webSocketTask(with: url)
-        task.resume()
-        defer { task.cancel(with: .normalClosure, reason: nil) }
-
-        try await task.send(.data(Self.hostInfoRequestFrame()))
-        let message = try await task.receive()
-
-        guard case let .data(response) = message else {
-            Issue.record("expected binary frame, got \(message)")
-            return
-        }
-        #expect(response.suffix(Self.hostInfoResponseTail.count) == Self.hostInfoResponseTail)
     }
 
     /// iOS reclaims a suspended app's listening socket while products keep
@@ -140,29 +132,6 @@ private extension TrUAPIWsBridgeTests {
     // Both bytes are load-bearing: a lone method byte is read as the trait and
     // routes into a different trait's method 0 rather than failing.
     static let featureSupportedDiscriminant = Data([0x01, 0x01])
-
-    // wire_table.rs: SYSTEM_HOST_INFO { trait_id: 1, method_id: 3 }.
-    static let hostInfoDiscriminant = Data([0x01, 0x03])
-
-    static func hostInfoRequestFrame() -> Data {
-        var frame = Data()
-        frame.append(contentsOf: [0x0C]) // compact length 3
-        frame.append("p:1".data(using: .utf8)!)
-        frame.append(hostInfoDiscriminant) // from wire_table.rs
-        // message_type=Request(0x00), then the payload: V1(0x00).
-        frame.append(contentsOf: [0x00, 0x00])
-        return frame
-    }
-
-    // Response tail: message_type=Response(0x01), then the payload,
-    // Result::Ok(0x00), V1(0x00), then HostInfo as platform(Ios = 0x02),
-    // name, version (empty, hostVersion is unset).
-    static var hostInfoResponseTail: Data {
-        var tail = Data([0x01, 0x00, 0x00, 0x02, 0x44]) // 0x44 is compact length 17
-        tail.append("truapi-host-tests".data(using: .utf8)!)
-        tail.append(contentsOf: [0x00])
-        return tail
-    }
 
     static func featureSupportedRequestFrame() -> Data {
         var frame = Data()

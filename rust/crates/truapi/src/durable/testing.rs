@@ -1,6 +1,14 @@
 //! Fixtures shared by the durable engine's tests.
 
-use core::time::Duration;
+mod harness;
+mod policy;
+
+pub use harness::{ScheduledTxHarness, other_domain, test_domain};
+pub use policy::{
+	PrepareAnswer, PrepareScript, RetryQuestion, ScriptedPolicy, answer_all_with,
+	extrinsic_for_index, first_builds, insert_retryable, test_plan, test_policy_id, without_plan,
+};
+
 use std::{
 	collections::{HashMap, HashSet, VecDeque},
 	sync::{
@@ -10,8 +18,7 @@ use std::{
 };
 
 use futures::{
-	channel::{mpsc, oneshot},
-	future::BoxFuture,
+	channel::mpsc,
 	stream::{BoxStream, StreamExt},
 };
 use parking_lot::{Mutex, MutexGuard};
@@ -24,9 +31,11 @@ use tempfile::TempDir;
 use super::{
 	engine::{DurableDeps, DurableTxEngine},
 	ladder::{PinnedView, SearchResult},
-	model::{DomainId, DurableTxEntry, DurableTxId, DurableTxStatus, HeadKind},
+	model::{
+		DomainId, DurableTxEntry, DurableTxId, DurableTxState, DurableTxStatus, HeadKind,
+		SubmissionPlan,
+	},
 	oracle::{DurableRegistry, PassScope, Unobservable},
-	time::Timer,
 };
 use crate::{
 	chain::{
@@ -35,6 +44,7 @@ use crate::{
 	},
 	chain_runtime::RuntimeFailure,
 	store::{Db, open_temporary_core_db},
+	time::ManualTimer,
 };
 
 /// Genesis hash of the chain every fixture lives on.
@@ -66,6 +76,13 @@ pub fn extrinsic(tag: u8, birth: u64, period: u64) -> MortalExtrinsic {
 	}
 }
 
+/// How a group lists the presigned row of `extrinsic(tag, ..)` while it is
+/// pending: with its hash and no plan.
+pub fn pending_presigned(id: DurableTxId, tag: u8) -> DurableTxState {
+	let tx_hash = Some(extrinsic(tag, 100, 64).extrinsic.hash());
+	DurableTxState { id, status: DurableTxStatus::Pending, tx_hash, plan: None }
+}
+
 /// A pending entry of the `test` domain, born at `birth` with `period`.
 pub fn entry(id: DurableTxId, birth: u64, period: u64) -> DurableTxEntry {
 	DurableTxEntry {
@@ -76,6 +93,7 @@ pub fn entry(id: DurableTxId, birth: u64, period: u64) -> DurableTxEntry {
 		mortality: Mortality::new(block(birth), period).unwrap(),
 		status: DurableTxStatus::Pending,
 		scanned_to: None,
+		plan: None,
 	}
 }
 
@@ -361,54 +379,6 @@ impl TxSubmitter for FakeChain {
 	}
 }
 
-/// A clock that moves only when a test advances it.
-#[derive(Default)]
-pub struct ManualTimer {
-	state: Mutex<ManualTimerState>,
-	sleeps: AtomicUsize,
-}
-
-#[derive(Default)]
-struct ManualTimerState {
-	now: Duration,
-	sleepers: Vec<(Duration, oneshot::Sender<()>)>,
-}
-
-impl ManualTimer {
-	/// Moves the clock forward, waking every sleeper whose deadline passed.
-	pub fn advance(&self, by: Duration) {
-		let mut state = self.state.lock();
-		state.now += by;
-		let now = state.now;
-		let (due, waiting) = core::mem::take(&mut state.sleepers)
-			.into_iter()
-			.partition(|(deadline, _)| *deadline <= now);
-		state.sleepers = waiting;
-		drop(state);
-		for (_, wake) in due {
-			let _ = wake.send(());
-		}
-	}
-
-	/// How many sleeps were started.
-	pub fn sleeps(&self) -> usize {
-		self.sleeps.load(Ordering::SeqCst)
-	}
-}
-
-impl Timer for ManualTimer {
-	fn sleep(&self, duration: Duration) -> BoxFuture<'static, ()> {
-		let (wake, woken) = oneshot::channel();
-		let mut state = self.state.lock();
-		let deadline = state.now + duration;
-		state.sleepers.push((deadline, wake));
-		self.sleeps.fetch_add(1, Ordering::SeqCst);
-		Box::pin(async move {
-			let _ = woken.await;
-		})
-	}
-}
-
 /// An engine over `chain` serving the `test` domain, decided by the search
 /// alone, with time under the test's control.
 pub fn test_engine(chain: &Arc<FakeChain>) -> (TempDir, Arc<DurableTxEngine>, Arc<ManualTimer>) {
@@ -450,11 +420,21 @@ pub fn engine_with_spawner(
 /// Records `extrinsic` as a pending row of `domain` without watching it, as a
 /// previous process would have left it.
 pub fn insert(db: &Db, domain: &DomainId, extrinsic: MortalExtrinsic) -> DurableTxId {
+	insert_with_plan(db, domain, extrinsic, None)
+}
+
+/// [`insert`], for a row rebuilt through `plan` after a failure its policy
+/// retries.
+pub fn insert_with_plan(
+	db: &Db,
+	domain: &DomainId,
+	extrinsic: MortalExtrinsic,
+	plan: Option<SubmissionPlan>,
+) -> DurableTxId {
 	let domain = domain.clone();
-	futures::executor::block_on(
-		db.write(move |tx| super::dao::insert(tx, &domain, None, &extrinsic)),
-	)
-	.unwrap()
+	let write =
+		db.write(move |tx| super::dao::insert(tx, &domain, None, &extrinsic, plan.as_ref()));
+	futures::executor::block_on(write).unwrap()
 }
 
 /// A spawner running each task on its own thread, counting the tasks that
@@ -470,4 +450,20 @@ pub fn counting_spawner() -> (crate::subscription::Spawner, Arc<AtomicUsize>) {
 		});
 	});
 	(spawner, finished)
+}
+
+/// An engine over `db` serving the domains of `registry`, on a chain that
+/// never moves and with time that only the test moves.
+pub fn engine_on(db: Db, registry: DurableRegistry) -> Arc<DurableTxEngine> {
+	let chain = FakeChain::new(130, 140);
+	DurableTxEngine::new(DurableDeps {
+		db,
+		registry,
+		heads: chain.clone(),
+		blocks: chain.clone(),
+		validator: chain.clone(),
+		submitter: chain,
+		timer: Arc::new(ManualTimer::default()),
+		spawner: crate::test_support::test_spawner(),
+	})
 }

@@ -70,18 +70,55 @@ public extension CoinageService {
         let trackedVoucherRepository = databaseFactory.makeTrackedVoucherRepository()
         let voucherRepository = databaseFactory.makeVoucherRepository()
 
-        let voucherIndexstore = VoucherIndexstore(storage: keystore)
-        let coinsIndexstore = CoinIndexstore(storage: keystore)
+        let installationRepository = databaseFactory.makeInstallationRepository()
+        let currentInstallationStore = installation.currentInstallationStore
         let coinKeypairFactory = CoinKeypairFactory(entropyManager: lifecycle)
         let voucherKeypairFactory = VoucherKeypairFactory(entropyManager: lifecycle)
-        // One allocator per Coinage instance: actor isolation serialises the index counter only
-        // within a single instance.
+        let dataStoreRepository = AccountDataStoreRepository(
+            accountKeys: DataStoreAccountKeys(entropyManager: lifecycle),
+            reviveApi: installation.reviveApi,
+            logger: logger
+        )
+        durable.oracles.register(
+            CoinageInstallationRegistrationOracle.make(
+                chainId: installation.chainId,
+                dataStoreRepository: dataStoreRepository,
+                logger: logger
+            ),
+            for: .coinageInstallation
+        )
+        let installationRegistrar = CoinageInstallationRegistrar(
+            currentInstallationStore: currentInstallationStore,
+            configProvider: installation.configProvider,
+            engine: durable.txService,
+            submitter: InstallationRegistrationSubmitter(
+                dataStoreRepository: dataStoreRepository,
+                reviveApi: installation.reviveApi,
+                pgasProvisioner: installation.pgasProvisioner,
+                feeEstimator: installation.feeEstimator,
+                callArguments: RuntimeReviveCallArguments(runtimeService: installation.runtimeService),
+                chainId: installation.chainId,
+                originFactory: originFactory,
+                engine: durable.txService,
+                logger: logger
+            ),
+            backgroundExecutor: backgroundExecutor,
+            logger: logger
+        )
+
+        let backedUpInstallation = CoinageBackedUpInstallationProvider(
+            installationStore: currentInstallationStore,
+            backupObserver: installationRegistrar
+        )
+        // One allocator per Coinage instance: each serialises its own reserve-then-save.
         let coinAllocator = CoinAllocator(
+            installationProvider: backedUpInstallation,
             installationStore: currentInstallationStore,
             coinRepository: coinRepository,
             keyFactory: coinKeypairFactory
         )
         let voucherAllocator = VoucherAllocator(
+            installationProvider: backedUpInstallation,
             installationStore: currentInstallationStore,
             delayProvider: VoucherDelayProvider(),
             voucherRepository: voucherRepository,
@@ -144,7 +181,7 @@ public extension CoinageService {
         )
 
         let txService = CoinageTxService(
-            engine: durableEngine, ledger: assetLedger, logger: logger, lifecycle: lifecycle
+            engine: durable.txService, ledger: assetLedger, logger: logger, lifecycle: lifecycle
         )
 
         let voucherLoaderFactory = VoucherLoaderFactory(
@@ -424,6 +461,7 @@ public extension CoinageService {
             databaseFactory: databaseFactory,
             recoveryService: recoveryService,
             installationRegistrar: installationRegistrar,
+            backedUpInstallation: backedUpInstallation,
             incomingPaymentService: incomingPaymentService,
             logger: logger,
             lifecycle: lifecycle

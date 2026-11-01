@@ -92,7 +92,7 @@ impl Product {
 		let (host_config, _) = test_runtime_config();
 		let host = PairingHostRuntime::new(platform, host_config, test_spawner());
 		let responses = Arc::new(Responses::default());
-		let product = ProductContext::new("jam.paseo".to_string()).unwrap();
+		let product = ProductContext::new("jam.paseo".parse().expect("valid product ID"));
 		Self {
 			runtime: host.product_runtime(product, responses.clone()),
 			responses,

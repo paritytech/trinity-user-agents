@@ -4,8 +4,12 @@
 // contributors. See truapi-coinage/NOTICE and LICENSE.
 
 use crate::{
+	chain::{
+		ChainValues, ExtensionValueTypes, ExtrinsicVersion, HashAndNumber, InheritedImplication,
+		Mortality, default_value_for_type, well_known_extension,
+	},
 	host_internal::extrinsic::{Sr25519Signer, build_signed_extrinsic_v5},
-	runtime::statement_allowance::extension::{ChainState, Metadata},
+	runtime::statement_allowance::extension::Metadata,
 };
 use parity_scale_codec::{Compact, Decode, Encode};
 use subxt::ext::frame_decode::extrinsics::ExtrinsicTypeInfo;
@@ -19,7 +23,10 @@ pub(super) struct Snapshot {
 	pub storage: std::sync::Arc<StorageLayouts>,
 	pub metadata: std::sync::Arc<Metadata>,
 	pub subxt: subxt::metadata::ArcMetadata,
-	pub state: ChainState,
+	pub spec_version: u32,
+	pub transaction_version: u32,
+	pub genesis_hash: [u8; 32],
+	pub extension_version: Option<u8>,
 	pub at: [u8; 32],
 	pub number: u64,
 	pub period: u64,
@@ -35,6 +42,7 @@ impl Snapshot {
 		spec_version: u32,
 		transaction_version: u32,
 		configured_instance: Option<u32>,
+		extension_version: Option<u8>,
 	) -> Result<Self, String> {
 		let metadata = Metadata::decode(&raw).map_err(|_| "invalid Coinage runtime metadata")?;
 		let subxt = subxt::Metadata::decode_from(&raw[..])
@@ -56,13 +64,10 @@ impl Snapshot {
 			storage: std::sync::Arc::new(storage),
 			metadata: std::sync::Arc::new(metadata),
 			subxt,
-			state: ChainState {
-				spec_version,
-				transaction_version,
-				genesis_hash,
-				nonce: 0,
-				restrict_origins: false,
-			},
+			spec_version,
+			transaction_version,
+			genesis_hash,
+			extension_version,
 			at,
 			number,
 			period,
@@ -119,75 +124,140 @@ impl Snapshot {
 	}
 
 	pub fn extensions(&self, nonce: u32) -> Result<Vec<TxPayloadExtension>, String> {
-		let mut state = self.state;
-		state.nonce = nonce;
+		if !self.subxt.extrinsic().supported_versions().contains(&5) {
+			return Err("Coinage requires V5 extrinsic support".into());
+		}
+		let version = self.configured_extension_version()?;
 		let info = self
 			.subxt
-			.extrinsic_extension_info(Some(self.metadata.extension_version()))
+			.extrinsic_extension_info(Some(version))
 			.map_err(|_| "invalid extension pipeline")?;
-		let encoded = self.metadata.encode_signed_extensions(&state);
-		if encoded.len() != info.extension_ids.len() {
-			return Err("extension pipeline mismatch".into());
-		}
-		let mut extensions: Vec<_> = info
-			.extension_ids
-			.iter()
-			.zip(encoded)
-			.map(|(definition, bytes)| TxPayloadExtension {
-				id: definition.name.to_string(),
-				extra: bytes.extra,
-				additional_signed: bytes.additional_signed,
-			})
-			.collect();
-		let era = mortal_era(self.period, self.number)?;
-		replace(&mut extensions, "CheckMortality", era.to_vec(), self.at.to_vec())?;
-		if !extensions.iter().any(|e| e.id == AS_COINAGE) ||
-			!extensions.iter().any(|e| e.id == "VerifyMultiSignature")
-		{
-			return Err("Coinage authorization extensions missing".into());
-		}
-		// Unknown non-empty extensions must not silently authorize or charge anything.
-		for extension in &extensions {
-			let known =
-				matches!(
-					extension.id.as_str(),
-					"CheckNonce" |
-						"CheckSpecVersion" | "CheckTxVersion" |
-						"CheckGenesis" | "CheckMortality" |
-						"VerifyMultiSignature" |
-						"ChargeAssetTxPayment" |
-						"ChargeTransactionPayment" |
-						"RestrictOrigins" | "CheckMetadataHash" |
-						"AsCoinage"
-				);
-			if !known &&
-				extension
-					.extra
-					.iter()
-					.chain(&extension.additional_signed)
-					.any(|byte| *byte != 0)
+		let chain = ChainValues {
+			genesis: self.genesis_hash.into(),
+			spec_version: self.spec_version,
+			transaction_version: self.transaction_version,
+			mortality: Mortality::new(
+				HashAndNumber { hash: self.at.into(), number: self.number },
+				self.period,
+			)
+			.map_err(|error| error.to_string())?,
+			nonce: u64::from(nonce),
+		};
+		// Only resting values are prepared here. The actual signature and
+		// Coinage proof are supplied after their inherited implication is known.
+		let implication = InheritedImplication::new(
+			Vec::new(),
+			ExtrinsicVersion::V5 { extension_version: version },
+		);
+		let mut extensions = Vec::with_capacity(info.extension_ids.len());
+		for definition in &info.extension_ids {
+			let (extra, additional_signed) = if let Some(extension) =
+				well_known_extension(&definition.name, &chain)
 			{
-				return Err("Coinage runtime requires an unrecognized extension".into());
+				let values = extension
+					.encode(
+						&implication,
+						ExtensionValueTypes {
+							explicit: definition.id,
+							implicit: definition.implicit_id,
+						},
+						self.subxt.types(),
+					)
+					.map_err(|error| error.to_string())?;
+				(values.explicit, values.implicit)
+			} else {
+				let implicit = default_value_for_type(definition.implicit_id, self.subxt.types())
+					.filter(Vec::is_empty)
+					.ok_or("Coinage runtime requires an unrecognized extension implicit")?;
+				// Canonical defaults only admit empty types and genuine
+				// Option::None (including newtype wrappers): absent authority,
+				// never a guessed zero for an unknown bool, enum or integer.
+				let explicit = default_value_for_type(definition.id, self.subxt.types())
+					.ok_or("Coinage runtime requires an unrecognized extension")?;
+				(explicit, implicit)
+			};
+			extensions.push(TxPayloadExtension {
+				id: definition.name.to_string(),
+				extra,
+				additional_signed,
+			});
+		}
+		for required in [AS_COINAGE, "VerifyMultiSignature", "CheckMortality", "CheckNonce"] {
+			if extensions.iter().filter(|extension| extension.id == required).count() != 1 {
+				return Err("Coinage authorization extensions missing or repeated".into());
 			}
 		}
+		self.validate_extensions(&extensions)?;
 		Ok(extensions)
 	}
 
+	fn configured_extension_version(&self) -> Result<u8, String> {
+		self.extension_version
+			.ok_or_else(|| "Coinage requires a configured V5 pipeline".into())
+	}
+
 	pub fn as_coin(&self) -> Result<Vec<u8>, String> {
-		if self
-			.metadata
-			.extension_info_field_count(AS_COINAGE, "AsCoin")
-			.map_err(|_| "invalid AsCoinage.AsCoin shape")? !=
-			0
-		{
+		let variant = self.coinage_origin("AsCoin")?;
+		if !variant.fields.is_empty() {
 			return Err("invalid AsCoinage.AsCoin fields".into());
 		}
-		Ok(vec![
-			1,
-			self.metadata
-				.extension_info_variant_index(AS_COINAGE, "AsCoin")
-				.map_err(|_| "missing AsCoinage.AsCoin")?,
-		])
+		Ok(vec![1, variant.index])
+	}
+
+	/// Resolve the proof variant in the configured pipeline, not whichever
+	/// pipeline happens to have the largest version number.
+	fn coinage_origin(
+		&self,
+		name: &str,
+	) -> Result<&scale_info::Variant<scale_info::form::PortableForm>, String> {
+		use scale_info::TypeDef;
+		let info = self
+			.subxt
+			.extrinsic_extension_info(Some(self.configured_extension_version()?))
+			.map_err(|_| "invalid extension pipeline")?;
+		let mut id = info
+			.extension_ids
+			.iter()
+			.find(|extension| extension.name == AS_COINAGE)
+			.ok_or("missing AsCoinage extension")?
+			.id;
+		let types = self.subxt.types();
+		for _ in 0..types.types.len() {
+			let ty = types.resolve(id).ok_or("invalid AsCoinage type")?;
+			match &ty.type_def {
+				TypeDef::Composite(composite) if composite.fields.len() == 1 => {
+					id = composite.fields[0].ty.id;
+				},
+				TypeDef::Variant(option)
+					if ty.path.segments.last().is_some_and(|s| s == "Option") =>
+				{
+					if !option
+						.variants
+						.iter()
+						.any(|v| v.name == "None" && v.index == 0 && v.fields.is_empty())
+					{
+						return Err("invalid AsCoinage option".into());
+					}
+					let some = option
+						.variants
+						.iter()
+						.find(|v| v.name == "Some" && v.index == 1 && v.fields.len() == 1)
+						.ok_or("invalid AsCoinage option")?;
+					let inner =
+						types.resolve(some.fields[0].ty.id).ok_or("invalid AsCoinage origin")?;
+					let TypeDef::Variant(origins) = &inner.type_def else {
+						return Err("invalid AsCoinage origin".into());
+					};
+					return origins
+						.variants
+						.iter()
+						.find(|variant| variant.name == name)
+						.ok_or_else(|| "missing AsCoinage origin variant".into());
+				},
+				_ => return Err("invalid AsCoinage authorization shape".into()),
+			}
+		}
+		Err("recursive AsCoinage authorization shape".into())
 	}
 
 	pub fn signed(
@@ -203,10 +273,10 @@ impl Snapshot {
 		extensions.retain(|extension| extension.id != "VerifyMultiSignature");
 		build_signed_extrinsic_v5(
 			&Sr25519Signer::from_keypair(keypair),
-			self.state.genesis_hash,
+			self.genesis_hash,
 			call,
 			&extensions,
-			self.metadata.extension_version(),
+			self.configured_extension_version()?,
 			self.subxt.clone(),
 		)
 		.map_err(|_| "Coinage transaction cannot be signed against runtime metadata".into())
@@ -223,7 +293,7 @@ impl Snapshot {
 			.iter()
 			.position(|extension| extension.id == AS_COINAGE)
 			.ok_or("missing Coinage extension")?;
-		let mut result = vec![self.metadata.extension_version()];
+		let mut result = vec![self.configured_extension_version()?];
 		result.extend_from_slice(call);
 		for extension in &extensions[index + 1..] {
 			result.extend_from_slice(&extension.extra);
@@ -245,10 +315,7 @@ impl Snapshot {
 			truapi_coinage::PersonOriginKind::Full => "AsUnloadTokenPeople",
 			truapi_coinage::PersonOriginKind::Lite => "AsUnloadTokenLitePeople",
 		};
-		let variant = self
-			.metadata
-			.extension_info_variant_index(AS_COINAGE, name)
-			.map_err(|_| "missing Coinage unload origin")?;
+		let variant = self.coinage_origin(name)?.index;
 		if extra.len() < 2 {
 			return Err("invalid Coinage unload proof encoding".into());
 		}
@@ -256,7 +323,7 @@ impl Snapshot {
 		replace(&mut extensions, AS_COINAGE, extra, Vec::new())?;
 		self.validate_call(call)?;
 		self.validate_extensions(&extensions)?;
-		let mut body = vec![0x45, self.metadata.extension_version()];
+		let mut body = vec![0x45, self.configured_extension_version()?];
 		for extension in &extensions {
 			body.extend_from_slice(&extension.extra);
 		}
@@ -272,7 +339,7 @@ impl Snapshot {
 		use subxt::ext::scale_decode::visitor::{IgnoreVisitor, decode_with_visitor};
 		let info = self
 			.subxt
-			.extrinsic_extension_info(Some(self.metadata.extension_version()))
+			.extrinsic_extension_info(Some(self.configured_extension_version()?))
 			.map_err(|_| "invalid extension pipeline")?;
 		if info.extension_ids.len() != extensions.len() {
 			return Err("extension pipeline mismatch".into());
@@ -344,14 +411,6 @@ pub(super) fn replace(
 	extension.extra = extra;
 	extension.additional_signed = additional_signed;
 	Ok(())
-}
-
-pub(super) fn mortal_era(period: u64, height: u64) -> Result<[u8; 2], String> {
-	if !(4..=256).contains(&period) || !period.is_power_of_two() {
-		return Err("invalid Coinage mortality period".into());
-	}
-	let phase = height % period;
-	Ok(((period.trailing_zeros() - 1) as u16 | ((phase as u16) << 4)).to_le_bytes())
 }
 
 pub(super) fn denomination_value(

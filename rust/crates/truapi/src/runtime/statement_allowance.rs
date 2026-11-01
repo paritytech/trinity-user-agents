@@ -1,15 +1,11 @@
 //! On-chain statement-store allowance registration (`set_statement_store_account`).
 //!
-//! Mirrors how iOS and browser account holders obtain statement-store
-//! allowance from the real People chain: build the
-//! `Resources.set_statement_store_account` call, prove personhood ring
-//! membership with the caller's registry-selected ring-VRF key, and submit the
-//! resulting unsigned General (v5) extrinsic.
-//!
-//! These helpers accept host-backed RPC clients on native and browser targets;
-//! the host supplies the chain connections and controls which claims it offers.
-//! Opening a direct RPC URL is only available on native targets.
+//! Build the `Resources.set_statement_store_account` call, prove personhood ring
+//! membership with the caller's registry-selected signer, and submit the resulting
+//! unsigned General (v5) extrinsic. Host-backed RPC connections work on native and
+//! browser targets; opening a direct RPC URL is only available on native targets.
 
+mod authorizers;
 pub mod collection;
 pub mod extension;
 pub mod extrinsic;
@@ -20,12 +16,21 @@ pub mod proof;
 pub mod renewal;
 pub mod ring;
 pub mod rpc;
+mod signer;
 pub mod slot;
 #[cfg(test)]
 mod test_fixtures;
+/// Captured chain metadata for wallet allowance tests.
+#[cfg(test)]
+pub use test_fixtures::{
+	ASSET_HUB_METADATA as ASSET_HUB_TEST_METADATA_BYTES, asset_hub as asset_hub_test_metadata,
+	people as people_test_metadata,
+};
 mod view;
 pub(crate) mod view_cache;
 
+pub use authorizers::{AsPgasExtension, AsResourcesExtension, ExtrinsicTarget, RingProof};
+pub use signer::{FixedPersonhoodSigner, PersonhoodSigner};
 pub use view::ViewFunctionError;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -35,6 +40,8 @@ use std::{
 	sync::{Arc, Mutex},
 	time::Duration,
 };
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 use futures::FutureExt;
 use parity_scale_codec::{Decode, Encode};
@@ -42,14 +49,18 @@ use serde_json::{Value, json};
 use sp_crypto_hashing::twox_128;
 use thiserror::Error;
 use tracing::{debug, warn};
-#[cfg(target_arch = "wasm32")]
-use web_time::Instant;
 
 use collection::PersonhoodCollection;
-use extension::{ChainState, Metadata, MetadataError};
+use subxt::utils::H256;
+
+use crate::chain::ExtrinsicService;
+use extension::{Metadata, MetadataError};
 use ring::RingParams;
 use rpc::RpcClient;
 use slot::{SlotError, SlotSelection};
+
+/// The pallet that grants statement-store and long-term-storage allowances.
+const RESOURCES_PALLET: &str = "Resources";
 
 /// Error while reading chain state, building allowance extrinsics, or waiting
 /// for allowance authorization.
@@ -80,12 +91,23 @@ pub enum StatementAllowanceError {
 	/// Runtime view-function dispatch or response decoding failed.
 	#[error(transparent)]
 	ViewFunction(#[from] view::ViewFunctionError),
+	/// The allowance extrinsic could not be built.
+	#[error(transparent)]
+	Extrinsic(crate::chain::ExtrinsicBuildError),
 	/// Bulletin allowance polling timed out.
 	#[error("timed out waiting for Bulletin authorization")]
 	BulletinAuthorizationTimeout,
-	/// The authority session changed while a long-term-storage claim was pending.
+	/// The authority session changed while an allowance claim was pending.
 	#[error("allowance claim session is no longer active")]
 	SessionInvalidated,
+	/// The extended Bulletin authorization still cannot hold the payload.
+	#[error("Bulletin authorization holds {remained_size} bytes after extension, {size} needed")]
+	BulletinAuthorizationTooSmall {
+		/// Payload size in bytes.
+		size: u64,
+		/// Bytes the extended authorization holds.
+		remained_size: u64,
+	},
 }
 
 /// Error while decoding generic chain state used by allowance registration.
@@ -214,19 +236,6 @@ pub async fn fetch_genesis_hash(rpc: &RpcClient) -> Result<[u8; 32], StatementAl
 		.map_err(|_| ChainStateError::GenesisHashLength { len }.into())
 }
 
-/// Fetch the chain state needed to fill the signed extensions.
-pub async fn fetch_chain_state(rpc: &RpcClient) -> Result<ChainState, StatementAllowanceError> {
-	let genesis_hash = fetch_genesis_hash(rpc).await?;
-	let (spec_version, transaction_version) = fetch_runtime_version(rpc).await?;
-	Ok(ChainState {
-		spec_version,
-		transaction_version,
-		genesis_hash,
-		nonce: 0,
-		restrict_origins: false,
-	})
-}
-
 /// An RPC client together with the genesis hash the host routes it by.
 ///
 /// Bundled because the two have to agree and nothing at a call site shows when
@@ -248,20 +257,28 @@ impl ChainClient {
 	pub fn rpc(&self) -> &RpcClient {
 		&self.rpc
 	}
+
+	/// Where to build extrinsics for this chain: `extrinsics`, over the
+	/// genesis the host configured.
+	pub fn extrinsic_target<'a>(&self, extrinsics: &'a ExtrinsicService) -> ExtrinsicTarget<'a> {
+		ExtrinsicTarget { extrinsics, genesis: H256(self.configured_genesis_hash) }
+	}
 }
 
-/// Runtime metadata and signed-extension chain state for one chain.
+/// Runtime metadata for one chain, with the runtime it was read from.
 #[derive(Clone)]
 pub struct ChainContext {
 	/// Decoded runtime metadata.
 	pub metadata: Arc<Metadata>,
-	/// Chain state filling the standard signed extensions.
-	pub state: ChainState,
+	/// Spec version the metadata belongs to.
+	spec_version: u32,
+	/// Genesis hash the chain reported when the metadata was read.
+	reported_genesis_hash: [u8; 32],
 }
 
-/// Runtime metadata and chain state cached per chain.
+/// Runtime metadata cached per chain.
 ///
-/// Both are fixed for a given runtime, and a full `state_getMetadata` response
+/// Metadata is fixed for a given runtime, and a full `state_getMetadata` response
 /// is large, so entries are keyed by genesis hash and revalidated with a
 /// concurrent `state_getRuntimeVersion` + `chain_getBlockHash(0)` — two small
 /// requests in place of a metadata download on every allowance call.
@@ -279,28 +296,20 @@ pub struct ChainContextCache {
 }
 
 impl ChainContextCache {
-	/// Metadata and chain state for the chain reached over `rpc`, read from the
-	/// chain only when no entry describes the chain as it is now.
+	/// Metadata for the chain reached over `rpc`, read from the chain only
+	/// when no entry describes the chain as it is now.
 	///
-	/// The client carries the caller's identity for the chain — the hash it
-	/// routes connections by — and that keys the cache. The genesis hash
-	/// placed in [`ChainState`], and therefore signed into every allowance
-	/// extrinsic, is always the one the chain itself reports: a host whose
-	/// configured constant has gone stale (a wiped testnet) still produces
-	/// valid extrinsics. A divergence is logged, since it means the host's
-	/// chain configuration needs refreshing — see RFC-0026, which lets hosts
-	/// discover these hashes instead of hard-coding them.
-	///
-	/// An entry is reused only when both the spec version **and** the reported
-	/// genesis hash still match. Spec version alone cannot see a chain that was
-	/// wiped and redeployed from the same runtime, which keeps its spec version
-	/// and gets a new genesis; an entry held across that would sign
-	/// `CheckGenesis` for a chain that no longer exists. Both reads are issued
-	/// together, so validating on the pair costs no extra round trip.
+	/// The client carries the caller's identity for the chain, the hash it
+	/// routes connections by, and that keys the cache. An entry is reused only
+	/// when both the spec version **and** the reported genesis hash still
+	/// match, so a chain wiped and redeployed from the same runtime is read
+	/// again. Extrinsics are always signed with the configured genesis, never
+	/// the reported one; a divergence is logged, since such extrinsics will be
+	/// rejected until the host's chain configuration is refreshed.
 	pub async fn get(&self, client: &ChainClient) -> Result<ChainContext, StatementAllowanceError> {
 		let rpc = client.rpc();
 		let configured_genesis_hash = client.configured_genesis_hash;
-		let ((spec_version, transaction_version), genesis_hash) =
+		let ((spec_version, _transaction_version), genesis_hash) =
 			futures::try_join!(fetch_runtime_version(rpc), fetch_genesis_hash(rpc))?;
 		if let Some(cached) = self.cached(configured_genesis_hash, spec_version, genesis_hash) {
 			return Ok(cached);
@@ -315,18 +324,14 @@ impl ChainContextCache {
 			warn!(
 				configured = %hex::encode(configured_genesis_hash),
 				reported = %hex::encode(genesis_hash),
-				"chain reports a different genesis than the host configured; using the chain's"
+				"chain reports a different genesis than the host configured; extrinsics signed \
+				 for the configured one will be rejected"
 			);
 		}
 		let context = ChainContext {
 			metadata: Arc::new(fetch_metadata(rpc).await?),
-			state: ChainState {
-				spec_version,
-				transaction_version,
-				genesis_hash,
-				nonce: 0,
-				restrict_origins: false,
-			},
+			spec_version,
+			reported_genesis_hash: genesis_hash,
 		};
 		self.entries
 			.lock()
@@ -346,8 +351,7 @@ impl ChainContextCache {
 			.expect("chain context cache mutex poisoned")
 			.get(&configured_genesis_hash)
 			.filter(|cached| {
-				cached.state.spec_version == spec_version &&
-					cached.state.genesis_hash == genesis_hash
+				cached.spec_version == spec_version && cached.reported_genesis_hash == genesis_hash
 			})
 			.cloned()
 	}
@@ -410,15 +414,15 @@ pub enum RegistrationOutcome {
 
 /// Target and slot-selection inputs for one statement-store registration.
 pub struct RegistrationParams<'a> {
-	/// Account that should receive the statement-store registration.
+	/// Account receiving the registration.
 	pub target: &'a [u8; 32],
-	/// Statement-store period for which the registration is requested.
+	/// Statement-store period.
 	pub period: u32,
-	/// Runtime-wide suffix used for product-scoped aliases and proofs.
+	/// Network suffix for aliases and proofs.
 	pub network_suffix: &'a [u8],
-	/// Ring parameters used to build the membership proof.
+	/// Ring used for the membership proof.
 	pub ring: &'a RingParams,
-	/// Whether an existing registration for this period may be reused.
+	/// Whether an existing registration can be reused.
 	pub reuse_existing: bool,
 	/// Reuse the caller's first scan; duplicate submissions still need a fresh scan.
 	pub preselected: Option<Preselected>,
@@ -446,10 +450,10 @@ pub struct LongTermStorageClaim<'a> {
 	pub rpc: &'a RpcClient,
 	/// People runtime metadata.
 	pub metadata: &'a Metadata,
-	/// People signed-extension state.
-	pub chain_state: &'a ChainState,
-	/// Our ring-VRF entropy for the collection `ring` names.
-	pub entropy: [u8; 32],
+	/// Where the claim extrinsic is built.
+	pub target_chain: ExtrinsicTarget<'a>,
+	/// Authorizes synchronous personhood operations for the selected wallet.
+	pub signer: &'a dyn PersonhoodSigner,
 	/// People suffix used for the product-scoped alias and proof.
 	pub network_suffix: &'a [u8],
 	/// Account whose Bulletin allowance is authorized.
@@ -461,7 +465,7 @@ pub struct LongTermStorageClaim<'a> {
 }
 
 /// Bulletin authorization state for one account.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BulletinAllowanceInfo {
 	/// Number of preimage bytes that remain available.
 	pub remained_size: u64,
@@ -481,14 +485,18 @@ enum BulletinAuthorizationScope {
 impl BulletinAllowanceInfo {
 	/// Returns whether the snapshot still permits at least one submission.
 	pub fn available(self) -> bool {
-		self.remained_size > 0 &&
+		self.can_store(1)
+	}
+
+	/// Require enough bytes and a live transaction allowance for this payload.
+	pub fn can_store(self, size: u64) -> bool {
+		self.remained_size >= size &&
 			self.remained_transactions > 0 &&
 			self.fetched_at < self.expires_in
 	}
 }
 
-/// A collection this device can derive aliases for, with the entropy backing
-/// them. Each collection has its own entropy, so the pair travels together.
+/// A fixed collection key supplied by standalone CLI operations.
 #[derive(Debug, Clone, Copy)]
 pub struct CollectionCandidate {
 	/// Collection to look for membership in.
@@ -497,35 +505,15 @@ pub struct CollectionCandidate {
 	pub entropy: [u8; 32],
 }
 
-/// Our provable ring membership in one collection.
-#[derive(Debug)]
-pub struct CollectionMembership {
-	/// Entropy whose member key is included in `ring`.
-	pub entropy: [u8; 32],
-	/// Ring snapshot the membership proof is built against.
-	pub ring: RingParams,
-}
-
-impl CollectionMembership {
-	/// The collection this membership proves.
-	pub fn collection(&self) -> PersonhoodCollection {
-		self.ring.collection
-	}
-}
-
-/// Find the newest ring in `collection` (scanning up to `lookback` back from the
-/// current index) that includes our member key. Reads the ring exponent once and
-/// stops at the first match. Every read is pinned to one finalized block so the
-/// snapshot is internally consistent; the pinned hash is recorded on the
-/// returned [`RingParams`].
+/// Find the newest including ring, pinning all reads to one finalized block.
 pub async fn find_including_ring(
 	rpc: &RpcClient,
 	metadata: &Metadata,
 	collection: PersonhoodCollection,
-	entropy: [u8; 32],
+	signer: &dyn PersonhoodSigner,
 	lookback: u32,
 ) -> Result<Option<RingParams>, StatementAllowanceError> {
-	let member = proof::member_key(entropy).await?;
+	let member = signer.member(collection)?;
 	let at = rpc.finalized_head().await?;
 	let exponent = ring::read_ring_exponent(rpc, metadata, collection, &at).await?;
 	let current = ring::read_current_ring_index_at(rpc, collection, &at).await?;
@@ -555,14 +543,14 @@ pub async fn find_including_ring(
 pub async fn find_including_rings(
 	rpc: &RpcClient,
 	metadata: &Metadata,
-	candidates: &[CollectionCandidate],
+	signer: &dyn PersonhoodSigner,
+	collections: &[PersonhoodCollection],
 	lookback: u32,
-) -> Result<Vec<CollectionMembership>, StatementAllowanceError> {
+) -> Result<Vec<RingParams>, StatementAllowanceError> {
 	let mut memberships = Vec::new();
 	let mut first_error = None;
-	for candidate in candidates {
-		let collection = candidate.collection;
-		match find_including_ring(rpc, metadata, collection, candidate.entropy, lookback).await {
+	for &collection in collections {
+		match find_including_ring(rpc, metadata, collection, signer, lookback).await {
 			Ok(Some(ring)) => {
 				// A ring whose exponent has no proof domain cannot be proved
 				// against, so it must not enter the set: selecting it would fail
@@ -571,7 +559,7 @@ pub async fn find_including_rings(
 					warn!(%collection, %err, "unusable ring exponent; skipping collection");
 					continue;
 				}
-				memberships.push(CollectionMembership { entropy: candidate.entropy, ring });
+				memberships.push(ring);
 			},
 			Ok(None) => debug!(%collection, "no ring includes our member key"),
 			// One collection's failure must not take down the others. A device
@@ -593,15 +581,37 @@ pub async fn find_including_rings(
 	}
 }
 
-/// Register statement-store allowance for `target`, proving membership in the
-/// already-located `ring`, at UTC-day `period`.
+/// Register the target in a slot, proving membership with the selected signer.
 pub async fn register_statement_account(
 	rpc: &RpcClient,
 	metadata: &Metadata,
-	chain_state: &ChainState,
-	entropy: [u8; 32],
+	target_chain: ExtrinsicTarget<'_>,
+	signer: &dyn PersonhoodSigner,
 	params: RegistrationParams<'_>,
 ) -> Result<RegistrationOutcome, StatementAllowanceError> {
+	register_statement_account_with_session_guard(
+		rpc,
+		metadata,
+		target_chain,
+		signer,
+		params,
+		|| true,
+	)
+	.await
+}
+
+async fn register_statement_account_with_session_guard(
+	rpc: &RpcClient,
+	metadata: &Metadata,
+	target_chain: ExtrinsicTarget<'_>,
+	signer: &dyn PersonhoodSigner,
+	params: RegistrationParams<'_>,
+	session_is_current: impl Fn() -> bool,
+) -> Result<RegistrationOutcome, StatementAllowanceError> {
+	let require_current_session = || {
+		if session_is_current() { Ok(()) } else { Err(StatementAllowanceError::SessionInvalidated) }
+	};
+	require_current_session()?;
 	let collection = params.ring.collection;
 	let revision = ring::read_ring_revision(
 		rpc,
@@ -622,106 +632,97 @@ pub async fn register_statement_account(
 	// revocation, so a retry must not spend another.
 	let mut took_over_a_slot = matches!(preselected, Some(Preselected::Takeover(_)));
 	loop {
+		require_current_session()?;
 		let seq = match preselected.take() {
 			Some(preselected) => preselected.seq(),
-			None => {
-				match slot::scan_slot_excluding(
-					rpc,
-					metadata,
-					slot::SlotScan {
-						collection,
-						entropy,
-						network_suffix: params.network_suffix,
-						period: params.period,
-						target: params.target,
-						excluded: &skipped_duplicate_slots,
-						reuse_existing: params.reuse_existing,
-					},
-				)
-				.await?
-				{
-					SlotSelection::AlreadyAllocated(seq) => {
-						return Ok(RegistrationOutcome::AlreadyAllocated { seq, collection });
-					},
-					SlotSelection::Free(seq) => seq,
-					SlotSelection::FreeSlotsExcluded => {
-						// A free slot exists; it is only held back by one of this
-						// call's own in-flight submissions. Evicting a live slot
-						// instead would revoke an allowance for no reason.
-						return Err(SlotError::FreeSlotsAwaitingSubmission {
+			None => match slot::scan_slot_excluding(
+				rpc,
+				metadata,
+				slot::SlotScan {
+					collection,
+					signer,
+					network_suffix: params.network_suffix,
+					period: params.period,
+					target: params.target,
+					excluded: &skipped_duplicate_slots,
+					reuse_existing: params.reuse_existing,
+				},
+			)
+			.await?
+			{
+				SlotSelection::AlreadyAllocated(seq) => {
+					require_current_session()?;
+					return Ok(RegistrationOutcome::AlreadyAllocated { seq, collection });
+				},
+				SlotSelection::Free(seq) => seq,
+				SlotSelection::FreeSlotsExcluded => {
+					// A free slot exists; it is only held back by one of this
+					// call's own in-flight submissions. Evicting a live slot
+					// instead would revoke an allowance for no reason.
+					return Err(
+						SlotError::FreeSlotsAwaitingSubmission { period: params.period }.into()
+					);
+				},
+				SlotSelection::Full { max, occupied } => {
+					if took_over_a_slot {
+						return Err(SlotError::NoFreeStatementStoreSlot {
 							period: params.period,
+							max,
 						}
 						.into());
-					},
-					SlotSelection::Full { max, occupied } => {
-						if took_over_a_slot {
+					}
+					// Nothing free: replace the oldest slot the runtime will
+					// let us take, and only then give up.
+					let cooldown = slot::replacement_cooldown(rpc, metadata).await?;
+					require_current_session()?;
+					let chain_now = slot::read_chain_now_seconds(rpc).await?;
+					require_current_session()?;
+					match slot::replaceable_slot(
+						&occupied,
+						params.target,
+						chain_now,
+						cooldown,
+						params.protected,
+					) {
+						Some(seq) => {
+							took_over_a_slot = true;
+							seq
+						},
+						None => {
 							return Err(SlotError::NoFreeStatementStoreSlot {
 								period: params.period,
 								max,
 							}
 							.into());
-						}
-						// Nothing free: replace the oldest slot the runtime will
-						// let us take, and only then give up.
-						let cooldown = slot::replacement_cooldown(rpc, metadata).await?;
-						let chain_now = slot::read_chain_now_seconds(rpc).await?;
-						match slot::replaceable_slot(
-							&occupied,
-							params.target,
-							chain_now,
-							cooldown,
-							params.protected,
-						) {
-							Some(seq) => {
-								took_over_a_slot = true;
-								seq
-							},
-							None => {
-								return Err(SlotError::NoFreeStatementStoreSlot {
-									period: params.period,
-									max,
-								}
-								.into());
-							},
-						}
-					},
-				}
+						},
+					}
+				},
 			},
 		};
+		require_current_session()?;
 
 		let context = slot::derive_slot_context(params.network_suffix, params.period, seq);
-		let call = extrinsic::build_set_statement_store_account_call(
-			metadata,
-			params.period,
+		let alias =
+			slot::slot_alias(signer, collection, params.network_suffix, params.period, seq)?;
+		let proof = RingProof { signer, ring: params.ring, context, revision };
+		let call = extrinsic::SetStatementStoreAccountCallArgs {
+			period: params.period,
 			seq,
-			params.target,
-		)?;
-		let message = extension::build_proof_message(metadata, &call, chain_state)?;
-		let domain = proof::domain_for_ring_exponent(params.ring.exponent)?;
-		let ring_proof =
-			proof::ring_vrf_proof(domain, entropy, &params.ring.members, &context, &message)
-				.await?;
-		let as_resources_extra = extrinsic::build_as_resources_extra(
-			metadata,
-			&ring_proof,
-			params.ring.ring_index,
-			revision,
-			collection,
-		)?;
-		let extrinsic =
-			extrinsic::build_unsigned_extrinsic(metadata, chain_state, &call, &as_resources_extra)?;
+			target_account: *params.target,
+		};
+		let extrinsic = target_chain
+			.extrinsics
+			.build_mortal_extrinsic(target_chain.genesis)
+			.with_call_args(RESOURCES_PALLET, "set_statement_store_account", call)
+			.with_extension(AsResourcesExtension::statement_store_allowance(proof))
+			.build()
+			.await?;
 
-		match rpc.submit_and_watch(&extrinsic).await {
+		require_current_session()?;
+		match rpc.submit_and_watch(extrinsic.extrinsic.bytes()).await {
 			Ok(block_hash) => {
-				if slot::read_slot_account_at(
-					rpc,
-					entropy,
-					params.network_suffix,
-					params.period,
-					seq,
-					&block_hash,
-				)
-				.await? != Some(*params.target)
+				if slot::read_slot_account_at(rpc, &alias, params.period, &block_hash).await? !=
+					Some(*params.target)
 				{
 					return Err(SlotError::RegistrationVerificationMismatch {
 						block_hash,
@@ -730,6 +731,7 @@ pub async fn register_statement_account(
 					}
 					.into());
 				}
+				require_current_session()?;
 				return Ok(RegistrationOutcome::Registered {
 					block_hash,
 					seq,
@@ -756,10 +758,20 @@ pub async fn register_statement_account(
 pub struct CollectionScan {
 	/// Collection scanned.
 	pub collection: PersonhoodCollection,
-	/// Entropy whose aliases were read.
-	pub entropy: [u8; 32],
 	/// What the scan found.
 	pub selection: SlotSelection,
+}
+
+/// Public target and period shared by a collection scan.
+pub struct CollectionScanParams<'a> {
+	/// Runtime suffix used for product-scoped aliases.
+	pub network_suffix: &'a [u8],
+	/// Statement-store period to scan.
+	pub period: u32,
+	/// Account whose existing slot may be reused.
+	pub target: &'a [u8; 32],
+	/// Whether to accept a slot already held by the target.
+	pub reuse_existing: bool,
 }
 
 /// Scan the period's slot table in every supported candidate collection.
@@ -777,53 +789,42 @@ pub struct CollectionScan {
 pub async fn scan_collections(
 	rpc: &RpcClient,
 	metadata: &Metadata,
-	candidates: &[CollectionCandidate],
-	network_suffix: &[u8],
-	period: u32,
-	target: &[u8; 32],
-	reuse_existing: bool,
+	signer: &dyn PersonhoodSigner,
+	collections: &[PersonhoodCollection],
+	params: CollectionScanParams<'_>,
 ) -> Result<Vec<CollectionScan>, StatementAllowanceError> {
-	let supported = candidates.iter().filter(|candidate| {
-		let collection = candidate.collection;
+	let supported = collections.iter().copied().filter(|collection| {
 		let supported = collection.is_supported(metadata);
 		if !supported {
 			debug!(%collection, "chain declares no slot budget for this collection");
 		}
 		supported
 	});
-	// Read concurrently, then settled in candidate order, so a lite member does
-	// not wait on the empty People row before its own is read.
-	let selections = futures::future::join_all(supported.map(|candidate| async move {
+	let selections = futures::future::join_all(supported.map(|collection| async move {
 		let selection = slot::scan_slot_excluding(
 			rpc,
 			metadata,
 			slot::SlotScan {
-				collection: candidate.collection,
-				entropy: candidate.entropy,
-				network_suffix,
-				period,
-				target,
+				collection,
+				signer,
+				network_suffix: params.network_suffix,
+				period: params.period,
+				target: params.target,
 				excluded: &[],
-				reuse_existing,
+				reuse_existing: params.reuse_existing,
 			},
 		)
 		.await;
-		(candidate, selection)
+		(collection, selection)
 	}))
 	.await;
 	let mut scans = Vec::new();
-	for (candidate, selection) in selections {
-		let collection = candidate.collection;
+	for (collection, selection) in selections {
+		if allocated_in(&scans).is_some() {
+			continue;
+		}
 		match selection {
-			Ok(selection) => {
-				// An allowance already held settles the question, so the
-				// remaining collections' scans are dropped.
-				let settled = matches!(selection, SlotSelection::AlreadyAllocated(_));
-				scans.push(CollectionScan { collection, entropy: candidate.entropy, selection });
-				if settled {
-					break;
-				}
-			},
+			Ok(selection) => scans.push(CollectionScan { collection, selection }),
 			Err(err) => warn!(%collection, %err, "could not scan this collection's slots"),
 		}
 	}
@@ -884,11 +885,41 @@ pub struct PooledRegistrationParams<'a> {
 pub async fn register_statement_account_pooled(
 	rpc: &RpcClient,
 	metadata: &Metadata,
-	chain_state: &ChainState,
+	target_chain: ExtrinsicTarget<'_>,
+	signer: &dyn PersonhoodSigner,
 	scans: &[CollectionScan],
-	memberships: &[CollectionMembership],
+	memberships: &[RingParams],
 	params: PooledRegistrationParams<'_>,
 ) -> Result<RegistrationOutcome, StatementAllowanceError> {
+	register_statement_account_pooled_with_session_guard(
+		rpc,
+		metadata,
+		target_chain,
+		signer,
+		scans,
+		memberships,
+		params,
+		|| true,
+	)
+	.await
+}
+
+/// Signing-host registration with authority checks across asynchronous boundaries.
+/// The signer must also validate authority synchronously during proof construction.
+pub(crate) async fn register_statement_account_pooled_with_session_guard(
+	rpc: &RpcClient,
+	metadata: &Metadata,
+	target_chain: ExtrinsicTarget<'_>,
+	signer: &dyn PersonhoodSigner,
+	scans: &[CollectionScan],
+	memberships: &[RingParams],
+	params: PooledRegistrationParams<'_>,
+	session_is_current: impl Fn() -> bool,
+) -> Result<RegistrationOutcome, StatementAllowanceError> {
+	let require_current_session = || {
+		if session_is_current() { Ok(()) } else { Err(StatementAllowanceError::SessionInvalidated) }
+	};
+	require_current_session()?;
 	// Answered across every scanned collection before anything is submitted.
 	if let Some((collection, seq)) = allocated_in(scans) {
 		return Ok(RegistrationOutcome::AlreadyAllocated { seq, collection });
@@ -909,7 +940,7 @@ pub async fn register_statement_account_pooled(
 	let mut budget: u32 = 0;
 	let mut usable = 0;
 	for (index, membership) in memberships.iter().enumerate() {
-		let collection = membership.collection();
+		let collection = membership.collection;
 		let Some(scan) = scans.iter().find(|scan| scan.collection == collection) else {
 			continue;
 		};
@@ -917,6 +948,7 @@ pub async fn register_statement_account_pooled(
 		// Summed from the collections in play rather than from the full ones, so
 		// the figure is the device's budget whichever branch reports it.
 		budget = budget.saturating_add(collection.slots_per_period(rpc, metadata).await?);
+		require_current_session()?;
 		match &scan.selection {
 			SlotSelection::Free(seq) => {
 				if free.is_none() {
@@ -947,10 +979,12 @@ pub async fn register_statement_account_pooled(
 		None if !params.allow_eviction => return Err(exhausted().into()),
 		None => {
 			let cooldown = slot::replacement_cooldown(rpc, metadata).await?;
+			require_current_session()?;
 			let chain_now = slot::read_chain_now_seconds(rpc).await?;
+			require_current_session()?;
 			let mut oldest: Option<(usize, u32, u64)> = None;
 			for (index, occupied) in &full {
-				let protected = protected_in(memberships[*index].collection());
+				let protected = protected_in(memberships[*index].collection);
 				let Some(seq) = slot::replaceable_slot(
 					occupied,
 					params.target,
@@ -981,17 +1015,17 @@ pub async fn register_statement_account_pooled(
 	};
 
 	let membership = &memberships[index];
-	let protected = protected_in(membership.collection());
-	register_statement_account(
+	let protected = protected_in(membership.collection);
+	register_statement_account_with_session_guard(
 		rpc,
 		metadata,
-		chain_state,
-		membership.entropy,
+		target_chain,
+		signer,
 		RegistrationParams {
 			target: params.target,
 			period: params.period,
 			network_suffix: params.network_suffix,
-			ring: &membership.ring,
+			ring: membership,
 			reuse_existing: params.reuse_existing,
 			preselected: Some(choice),
 			// A duplicate-submit retry rescans within this collection only. It
@@ -999,26 +1033,25 @@ pub async fn register_statement_account_pooled(
 			// the retry from quietly moving collections mid-call.
 			protected: &protected,
 		},
+		session_is_current,
 	)
 	.await
-	.map_err(|err| {
-		match err {
-			// The retry rescans one collection, so its own exhaustion names that
-			// collection's share. Restate it as the device's pooled budget so the
-			// same error never means two different things to a caller.
-			StatementAllowanceError::Slot(SlotError::NoFreeStatementStoreSlot { .. }) => {
-				exhausted().into()
-			},
-			other => other,
-		}
+	.map_err(|err| match err {
+		// The retry rescans one collection, so its own exhaustion names that
+		// collection's share. Restate it as the device's pooled budget so the
+		// same error never means two different things to a caller.
+		StatementAllowanceError::Slot(SlotError::NoFreeStatementStoreSlot { .. }) => {
+			exhausted().into()
+		},
+		other => other,
 	})
 }
 
 /// Claim long-term Bulletin storage authorization for `target`, proving
 /// membership in the already-located `ring`, at People-chain `period`.
 ///
-/// Recheck the authority session after chain reads and immediately before proof
-/// construction and submission, including every duplicate-counter retry.
+/// Recheck the authority session before proof construction and submission,
+/// including each duplicate-counter retry.
 pub async fn claim_long_term_storage(
 	params: LongTermStorageClaim<'_>,
 	session_is_current: impl Fn() -> bool,
@@ -1026,8 +1059,8 @@ pub async fn claim_long_term_storage(
 	let LongTermStorageClaim {
 		rpc,
 		metadata,
-		chain_state,
-		entropy,
+		target_chain,
+		signer,
 		network_suffix,
 		target,
 		period,
@@ -1046,7 +1079,8 @@ pub async fn claim_long_term_storage(
 		let counter = slot::scan_long_term_storage_counter_excluding(
 			rpc,
 			metadata,
-			entropy,
+			signer,
+			ring.collection,
 			network_suffix,
 			period,
 			&skipped_duplicate_counters,
@@ -1054,22 +1088,16 @@ pub async fn claim_long_term_storage(
 		.await?;
 
 		let context = slot::derive_long_term_storage_context(network_suffix, period, counter);
-		let call =
-			extrinsic::build_claim_long_term_storage_call(metadata, period, counter, target)?;
-		let message = extension::build_proof_message(metadata, &call, chain_state)?;
-		let domain = proof::domain_for_ring_exponent(ring.exponent)?;
 		require_current_session()?;
-		let ring_proof =
-			proof::ring_vrf_proof(domain, entropy, &ring.members, &context, &message).await?;
-		let as_resources_extra = extrinsic::build_long_term_storage_extra(
-			metadata,
-			&ring_proof,
-			ring.ring_index,
-			revision,
-			ring.collection,
-		)?;
-		let extrinsic =
-			extrinsic::build_unsigned_extrinsic(metadata, chain_state, &call, &as_resources_extra)?;
+		let proof = RingProof { signer, ring, context, revision };
+		let call = extrinsic::ClaimLongTermStorageCallArgs { period, counter, account_id: *target };
+		let extrinsic = target_chain
+			.extrinsics
+			.build_mortal_extrinsic(target_chain.genesis)
+			.with_call_args(RESOURCES_PALLET, "claim_long_term_storage", call)
+			.with_extension(AsResourcesExtension::long_term_storage(proof))
+			.build()
+			.await?;
 		debug!(
 			period,
 			counter,
@@ -1079,7 +1107,7 @@ pub async fn claim_long_term_storage(
 		);
 
 		require_current_session()?;
-		match rpc.submit_and_watch(&extrinsic).await {
+		match rpc.submit_and_watch(extrinsic.extrinsic.bytes()).await {
 			Ok(block_hash) => {
 				return Ok(LongTermStorageOutcome::Claimed {
 					block_hash,
@@ -1117,11 +1145,13 @@ pub async fn fetch_bulletin_allowance(
 	decode_bulletin_allowance(&bytes, fetched_at).map(Some)
 }
 
-/// Wait until Bulletin authorization is available and fresher than `current`.
+/// Wait until Bulletin authorization is available and fresher than `current`,
+/// then require it to hold `size` bytes.
 pub async fn wait_bulletin_authorization(
 	rpc: &RpcClient,
 	target: &[u8; 32],
 	current: Option<BulletinAllowanceInfo>,
+	size: u64,
 	timeout: Duration,
 ) -> Result<BulletinAllowanceInfo, StatementAllowanceError> {
 	let started = Instant::now();
@@ -1132,6 +1162,12 @@ pub async fn wait_bulletin_authorization(
 			continue;
 		};
 		if authorization_refreshed(info, baseline) {
+			if !info.can_store(size) {
+				return Err(StatementAllowanceError::BulletinAuthorizationTooSmall {
+					size,
+					remained_size: info.remained_size,
+				});
+			}
 			return Ok(info);
 		}
 		wait_before_next_bulletin_authorization_poll(started, timeout).await?;
@@ -1238,7 +1274,7 @@ fn duplicate_submit_error(message: &str) -> bool {
 mod tests {
 	use subxt_rpcs::RpcClient as HostRpcClient;
 
-	use super::{rpc::testing::ScriptedRpc, *};
+	use super::{rpc::testing::ScriptedRpc, slot::testing::lite_people, *};
 
 	/// Fixture metadata captured from paseo-next-v2 (raw `RuntimeMetadataPrefixed`).
 	const FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/paseo-next-v2-metadata.scale");
@@ -1249,6 +1285,18 @@ mod tests {
 		expires_in: u32,
 	) -> BulletinAllowanceInfo {
 		BulletinAllowanceInfo { remained_size, remained_transactions, expires_in, fetched_at: 10 }
+	}
+
+	#[test]
+	fn bulletin_authorization_covers_the_whole_submission() {
+		let results = [
+			allowance(128, 1, 11),
+			allowance(127, 1, 11),
+			allowance(128, 0, 11),
+			allowance(128, 1, 10),
+		]
+		.map(|info| info.can_store(128));
+		assert_eq!(results, [true, false, false, false]);
 	}
 
 	#[test]
@@ -1276,6 +1324,56 @@ mod tests {
 		let baseline = allowance(128, 4, 100);
 
 		assert!(!authorization_refreshed(baseline, Some(baseline)));
+	}
+
+	/// Wait for an extension of a 16-byte authorization that the chain shows
+	/// holding `remaining` bytes. The script answers exactly one read.
+	fn wait_for_extension(
+		remaining: u64,
+		size: u64,
+	) -> Result<BulletinAllowanceInfo, StatementAllowanceError> {
+		let entry = (0u32, 1u32, 0u64, 0u64, remaining, 100u32).encode();
+		let storage = format!(r#""0x{}""#, hex::encode(entry));
+		let scripted = ScriptedRpc::new([storage.as_str(), r#"{"number":"0x1"}"#]);
+		let rpc = RpcClient::new(HostRpcClient::new(scripted));
+		futures::executor::block_on(wait_bulletin_authorization(
+			&rpc,
+			&[0x22; 32],
+			Some(allowance(16, 1, 100)),
+			size,
+			Duration::from_secs(60),
+		))
+	}
+
+	#[test]
+	fn an_extension_that_holds_the_payload_is_returned() {
+		assert_eq!(
+			wait_for_extension(256, 128).ok(),
+			Some(BulletinAllowanceInfo {
+				remained_size: 256,
+				remained_transactions: 1,
+				expires_in: 100,
+				fetched_at: 1,
+			}),
+		);
+	}
+
+	/// One claim may add fewer bytes than a large payload needs. Polling for
+	/// more would only run out the submit deadline.
+	#[test]
+	fn an_extension_too_small_for_the_payload_fails_at_once() {
+		let result = wait_for_extension(64, 128);
+
+		assert!(
+			matches!(
+				result,
+				Err(StatementAllowanceError::BulletinAuthorizationTooSmall {
+					size: 128,
+					remained_size: 64,
+				})
+			),
+			"{result:?}"
+		);
 	}
 
 	#[test]
@@ -1476,24 +1574,6 @@ mod tests {
 	}
 
 	#[test]
-	fn a_wipe_is_reflected_in_the_signed_genesis_hash() {
-		let responses =
-			[call_script(1_000_000, [0xaa; 32], true), call_script(1_000_000, [0xcc; 32], true)]
-				.concat();
-		let scripted = ScriptedRpc::new(responses.iter().map(String::as_str));
-		let client = ChainClient::new(RpcClient::new(HostRpcClient::new(scripted)), [0xaa; 32]);
-		let cache = ChainContextCache::default();
-
-		futures::executor::block_on(async {
-			let before = cache.get(&client).await.expect("first read");
-			assert_eq!(before.state.genesis_hash, [0xaa; 32]);
-
-			let after = cache.get(&client).await.expect("read after a wipe");
-			assert_eq!(after.state.genesis_hash, [0xcc; 32]);
-		});
-	}
-
-	#[test]
 	fn a_spec_version_bump_refreshes_the_entry() {
 		let seen = scripted_cache_run(
 			&[call_script(1_000_000, [0xaa; 32], true), call_script(1_000_001, [0xaa; 32], true)]
@@ -1513,21 +1593,6 @@ mod tests {
 		);
 
 		assert_eq!(seen, [MISS, MISS].concat());
-	}
-
-	#[test]
-	fn a_stale_configured_genesis_still_yields_the_chains_own_hash() {
-		let responses = call_script(1_000_000, [0xbb; 32], true);
-		let scripted = ScriptedRpc::new(responses.iter().map(String::as_str));
-		let client = ChainClient::new(RpcClient::new(HostRpcClient::new(scripted)), [0xaa; 32]);
-		let cache = ChainContextCache::default();
-
-		let context = futures::executor::block_on(cache.get(&client))
-			.expect("a stale configured genesis is not fatal");
-
-		// `CheckGenesis` is signed over this, so it must be the chain's value,
-		// not the caller's possibly-stale constant.
-		assert_eq!(context.state.genesis_hash, [0xbb; 32]);
 	}
 
 	#[test]
@@ -1579,14 +1644,11 @@ mod tests {
 		free_slots: usize,
 	) -> (Result<RegistrationOutcome, StatementAllowanceError>, ScriptedRpc) {
 		let metadata = test_fixtures::people();
-		let chain_state = ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
-		};
+		let extrinsics = test_fixtures::people_extrinsics();
+		let target_chain = test_fixtures::people_target(&extrinsics);
 		let entropy = [0x11; 32];
+		let candidates = lite_people(entropy);
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
 		let ring = RingParams {
 			collection: PersonhoodCollection::LitePeople,
 			members: vec![proof::member_key_now(entropy)],
@@ -1606,8 +1668,8 @@ mod tests {
 		let outcome = futures::executor::block_on(register_statement_account(
 			&rpc,
 			metadata,
-			&chain_state,
-			entropy,
+			target_chain,
+			&signer,
 			RegistrationParams {
 				target: &[0x22; 32],
 				period: 7,
@@ -1622,21 +1684,18 @@ mod tests {
 	}
 
 	/// Both collections, People first, with a distinct entropy each.
-	fn pooled_memberships() -> [CollectionMembership; 2] {
+	fn pooled_memberships() -> [RingParams; 2] {
 		PersonhoodCollection::ALL.map(|collection| {
 			let entropy = match collection {
 				PersonhoodCollection::People => [0x31; 32],
 				PersonhoodCollection::LitePeople => [0x11; 32],
 			};
-			CollectionMembership {
-				entropy,
-				ring: RingParams {
-					collection,
-					members: vec![proof::member_key_now(entropy)],
-					exponent: 9,
-					ring_index: 0,
-					block_hash: "0xfinal".to_string(),
-				},
+			RingParams {
+				collection,
+				members: vec![proof::member_key_now(entropy)],
+				exponent: 9,
+				ring_index: 0,
+				block_hash: "0xfinal".to_string(),
 			}
 		})
 	}
@@ -1648,9 +1707,12 @@ mod tests {
 
 	/// Candidates matching [`pooled_memberships`], for the scan pass.
 	fn pooled_candidates() -> [CollectionCandidate; 2] {
-		pooled_memberships().map(|membership| CollectionCandidate {
-			collection: membership.collection(),
-			entropy: membership.entropy,
+		PersonhoodCollection::ALL.map(|collection| CollectionCandidate {
+			collection,
+			entropy: match collection {
+				PersonhoodCollection::People => [0x31; 32],
+				PersonhoodCollection::LitePeople => [0x11; 32],
+			},
 		})
 	}
 
@@ -1662,26 +1724,34 @@ mod tests {
 		allow_eviction: bool,
 	) -> (Result<RegistrationOutcome, StatementAllowanceError>, ScriptedRpc) {
 		let metadata = test_fixtures::people();
-		let chain_state = ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
-		};
+		let extrinsics = test_fixtures::people_extrinsics();
+		let target_chain = test_fixtures::people_target(&extrinsics);
 		let memberships = pooled_memberships();
 		let candidates = pooled_candidates();
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
 		let scripted = ScriptedRpc::new(responses.iter().map(String::as_str).collect::<Vec<_>>());
 		scripted.script_subscription([r#"{"inBlock":"0xb10c"}"#]);
 		let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
 
 		let outcome = futures::executor::block_on(async {
-			let scans =
-				scan_collections(&rpc, metadata, &candidates, b"paseo", 7, &target, true).await?;
+			let scans = scan_collections(
+				&rpc,
+				metadata,
+				&signer,
+				&PersonhoodCollection::ALL,
+				CollectionScanParams {
+					network_suffix: b"paseo",
+					period: 7,
+					target: &target,
+					reuse_existing: true,
+				},
+			)
+			.await?;
 			register_statement_account_pooled(
 				&rpc,
 				metadata,
-				&chain_state,
+				target_chain,
+				&signer,
 				&scans,
 				&memberships,
 				PooledRegistrationParams {
@@ -1705,26 +1775,34 @@ mod tests {
 		submit_error: &str,
 	) -> Result<RegistrationOutcome, StatementAllowanceError> {
 		let metadata = test_fixtures::people();
-		let chain_state = ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
-		};
+		let extrinsics = test_fixtures::people_extrinsics();
+		let target_chain = test_fixtures::people_target(&extrinsics);
 		let memberships = pooled_memberships();
 		let candidates = pooled_candidates();
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
 		let scripted = ScriptedRpc::new(responses.iter().map(String::as_str).collect::<Vec<_>>());
 		scripted.script_subscription_errors(submit_error, 1);
 		let rpc = RpcClient::new(HostRpcClient::new(scripted));
 
 		futures::executor::block_on(async {
-			let scans =
-				scan_collections(&rpc, metadata, &candidates, b"paseo", 7, &target, true).await?;
+			let scans = scan_collections(
+				&rpc,
+				metadata,
+				&signer,
+				&PersonhoodCollection::ALL,
+				CollectionScanParams {
+					network_suffix: b"paseo",
+					period: 7,
+					target: &target,
+					reuse_existing: true,
+				},
+			)
+			.await?;
 			register_statement_account_pooled(
 				&rpc,
 				metadata,
-				&chain_state,
+				target_chain,
+				&signer,
 				&scans,
 				&memberships,
 				PooledRegistrationParams {
@@ -1980,10 +2058,8 @@ mod tests {
 	#[test]
 	fn a_broken_people_collection_does_not_discard_a_lite_people_membership() {
 		let metadata = test_fixtures::people();
-		let candidates = pooled_memberships().map(|membership| CollectionCandidate {
-			collection: membership.collection(),
-			entropy: membership.entropy,
-		});
+		let candidates = pooled_candidates();
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
 		let lite_entropy = candidates[1].entropy;
 		let page = format!(r#""0x04{}""#, hex::encode(proof::member_key_now(lite_entropy)));
 
@@ -2005,14 +2081,15 @@ mod tests {
 		let memberships = futures::executor::block_on(find_including_rings(
 			&rpc,
 			metadata,
-			&candidates,
+			&signer,
+			&PersonhoodCollection::ALL,
 			u32::MAX,
 		))
 		.expect("a broken People collection must not fail the whole resolution");
 
 		assert_eq!(memberships.len(), 1, "LitePeople should still resolve");
-		assert_eq!(memberships[0].collection(), PersonhoodCollection::LitePeople);
-		assert_eq!(memberships[0].entropy, lite_entropy);
+		assert_eq!(memberships[0].collection, PersonhoodCollection::LitePeople);
+		assert_eq!(memberships[0].members, vec![proof::member_key_now(lite_entropy)]);
 	}
 
 	/// Every candidate failing is an outage, not an answer. Reporting it as "no
@@ -2020,10 +2097,8 @@ mod tests {
 	#[test]
 	fn every_collection_failing_is_reported_as_an_error() {
 		let metadata = test_fixtures::people();
-		let candidates = pooled_memberships().map(|membership| CollectionCandidate {
-			collection: membership.collection(),
-			entropy: membership.entropy,
-		});
+		let candidates = pooled_candidates();
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
 
 		let responses = [
 			r#""0xfinal""#.to_string(),
@@ -2037,7 +2112,8 @@ mod tests {
 		let err = futures::executor::block_on(find_including_rings(
 			&rpc,
 			metadata,
-			&candidates,
+			&signer,
+			&PersonhoodCollection::ALL,
 			u32::MAX,
 		))
 		.expect_err("no collection resolved, so this is a failure not an empty answer");
@@ -2114,6 +2190,7 @@ mod tests {
 	fn a_failed_people_scan_still_finds_the_lite_people_allocation() {
 		let metadata = test_fixtures::people();
 		let candidates = pooled_candidates();
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
 		let target = [0x22; 32];
 
 		let null = || "null".to_string();
@@ -2129,11 +2206,14 @@ mod tests {
 		let scans = futures::executor::block_on(scan_collections(
 			&rpc,
 			metadata,
-			&candidates,
-			b"paseo",
-			7,
-			&target,
-			true,
+			&signer,
+			&PersonhoodCollection::ALL,
+			CollectionScanParams {
+				network_suffix: b"paseo",
+				period: 7,
+				target: &target,
+				reuse_existing: true,
+			},
 		))
 		.expect("a broken People scan must not fail the pass");
 
@@ -2161,14 +2241,11 @@ mod tests {
 	#[test]
 	fn a_full_table_replaces_the_oldest_replaceable_slot() {
 		let metadata = test_fixtures::people();
-		let chain_state = ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
-		};
+		let extrinsics = test_fixtures::people_extrinsics();
+		let target_chain = test_fixtures::people_target(&extrinsics);
 		let entropy = [0x11; 32];
+		let candidates = lite_people(entropy);
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
 		let ring = RingParams {
 			collection: PersonhoodCollection::LitePeople,
 			members: vec![proof::member_key_now(entropy)],
@@ -2194,8 +2271,8 @@ mod tests {
 		let outcome = futures::executor::block_on(register_statement_account(
 			&rpc,
 			metadata,
-			&chain_state,
-			entropy,
+			target_chain,
+			&signer,
 			RegistrationParams {
 				target: &[0x22; 32],
 				period: 7,
@@ -2218,14 +2295,11 @@ mod tests {
 	#[test]
 	fn a_duplicate_submit_retry_does_not_take_over_a_second_slot() {
 		let metadata = test_fixtures::people();
-		let chain_state = ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
-		};
+		let extrinsics = test_fixtures::people_extrinsics();
+		let target_chain = test_fixtures::people_target(&extrinsics);
 		let entropy = [0x11; 32];
+		let candidates = lite_people(entropy);
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
 		let ring = RingParams {
 			collection: PersonhoodCollection::LitePeople,
 			members: vec![proof::member_key_now(entropy)],
@@ -2251,8 +2325,8 @@ mod tests {
 		let err = futures::executor::block_on(register_statement_account(
 			&rpc,
 			metadata,
-			&chain_state,
-			entropy,
+			target_chain,
+			&signer,
 			RegistrationParams {
 				target: &[0x22; 32],
 				period: 7,
@@ -2276,14 +2350,11 @@ mod tests {
 	#[test]
 	fn a_refused_takeover_is_named() {
 		let metadata = test_fixtures::people();
-		let chain_state = ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
-		};
+		let extrinsics = test_fixtures::people_extrinsics();
+		let target_chain = test_fixtures::people_target(&extrinsics);
 		let entropy = [0x11; 32];
+		let candidates = lite_people(entropy);
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
 		let ring = RingParams {
 			collection: PersonhoodCollection::LitePeople,
 			members: vec![proof::member_key_now(entropy)],
@@ -2303,8 +2374,8 @@ mod tests {
 		let err = futures::executor::block_on(register_statement_account(
 			&rpc,
 			metadata,
-			&chain_state,
-			entropy,
+			target_chain,
+			&signer,
 			RegistrationParams {
 				target: &[0x22; 32],
 				period: 7,
@@ -2324,14 +2395,11 @@ mod tests {
 	#[test]
 	fn a_full_table_within_the_cooldown_still_fails() {
 		let metadata = test_fixtures::people();
-		let chain_state = ChainState {
-			spec_version: 1_000_000,
-			transaction_version: 1,
-			genesis_hash: [0xab; 32],
-			nonce: 0,
-			restrict_origins: false,
-		};
+		let extrinsics = test_fixtures::people_extrinsics();
+		let target_chain = test_fixtures::people_target(&extrinsics);
 		let entropy = [0x11; 32];
+		let candidates = lite_people(entropy);
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
 		let ring = RingParams {
 			collection: PersonhoodCollection::LitePeople,
 			members: vec![proof::member_key_now(entropy)],
@@ -2350,8 +2418,8 @@ mod tests {
 		let err = futures::executor::block_on(register_statement_account(
 			&rpc,
 			metadata,
-			&chain_state,
-			entropy,
+			target_chain,
+			&signer,
 			RegistrationParams {
 				target: &[0x22; 32],
 				period: 7,

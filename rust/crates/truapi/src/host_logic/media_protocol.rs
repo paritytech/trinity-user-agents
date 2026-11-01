@@ -9,7 +9,7 @@
 
 use std::{collections::BTreeMap, time::Duration};
 
-use crate::platform::normalize_product_identifier;
+use crate::platform::ProductId;
 use hpke::{
 	Deserializable, Kem, OpModeR, OpModeS, Serializable, aead::ChaCha20Poly1305, kdf::HkdfSha256,
 	kem::X25519HkdfSha256,
@@ -584,7 +584,7 @@ fn validate_product(product: &str) -> Result<()> {
 		return Err(MediaProtocolError::InvalidProduct);
 	}
 	let normalized =
-		normalize_product_identifier(product).map_err(|_| MediaProtocolError::InvalidProduct)?;
+		product.parse::<ProductId>().map_err(|_| MediaProtocolError::InvalidProduct)?;
 	if normalized != product {
 		return Err(MediaProtocolError::InvalidProduct);
 	}

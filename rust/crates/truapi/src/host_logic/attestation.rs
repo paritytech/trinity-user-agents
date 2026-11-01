@@ -6,6 +6,13 @@
 //! consumer-registration signature. The backend submits the on-chain
 //! `register_lite_person` extrinsic; the host never signs a chain extrinsic.
 //!
+//! An individuality runtime that publishes a `SigningContext` constant on the
+//! verifying pallet (`PeopleLite` on People, `DotnsGateway` on Asset Hub)
+//! checks the account signatures over that context followed by the message.
+//! A runtime without the constant checks the message alone.
+//! [`signing_context_from_constant`] reads the constant's value. The ring-VRF
+//! proof always signs the message alone.
+//!
 //! Byte layout mirrors signing-bot `src/core/attestation.ts` for backend
 //! parity. The registered account is the account whose secret signs here; the
 //! paired host resolves the username from the dotNS contracts on Asset Hub
@@ -28,7 +35,8 @@ use crate::host_logic::{
 		ProductAccountError, SR25519_SIGNING_CONTEXT, derive_identity_keypair,
 		product_public_key_to_address,
 	},
-	sso::pairing::{derive_identity_chat_private_key, x25519_public_key},
+	sso::pairing::derive_identity_chat_private_key,
+	x25519_seal::X25519PrivateKey,
 };
 
 /// sr25519 proof-of-ownership message prefix (exact bytes; one space).
@@ -40,6 +48,24 @@ use crate::host_logic::{
 const REGISTER_PREFIX: &[u8] = b"pop:people-lite:register using";
 /// CHAT-RFC-0004 keypair type byte for an X25519 identifier key.
 const IDENTIFIER_KEY_TAG_X25519: u8 = 0x00;
+/// The pallet constant an individuality pallet publishes its signing context in.
+pub const SIGNING_CONTEXT_CONSTANT: &str = "SigningContext";
+
+/// The signing context a `SigningContext` constant value denotes: its 32
+/// bytes. `None`, for an absent constant or one of another width, means the
+/// runtime checks the message alone.
+pub fn signing_context_from_constant(value: Option<&[u8]>) -> Option<[u8; 32]> {
+	value.and_then(|bytes| bytes.try_into().ok())
+}
+
+/// The bytes an account signs for `message`: `context` followed by `message`,
+/// or `message` alone.
+fn signed_bytes(context: Option<[u8; 32]>, message: &[u8]) -> Vec<u8> {
+	match context {
+		Some(context) => [context.as_slice(), message].concat(),
+		None => message.to_vec(),
+	}
+}
 
 /// SCALE payload signed for a lite consumer registration.
 ///
@@ -60,7 +86,8 @@ pub struct LiteRegistration {
 	pub candidate_account_id: String,
 	/// Raw 32-byte candidate public key (the account the username is recorded for).
 	pub candidate_public_key: [u8; 32],
-	/// sr25519 signature over `prefix ‖ candidate_pub ‖ ring_vrf_key`.
+	/// sr25519 signature over `prefix ‖ candidate_pub ‖ ring_vrf_key`, after
+	/// the People signing context if any.
 	pub candidate_signature: [u8; 64],
 	/// Bandersnatch ring-VRF member key.
 	pub ring_vrf_key: [u8; 32],
@@ -69,10 +96,12 @@ pub struct LiteRegistration {
 	/// 65-byte CHAT-RFC-0004 identifier key: the `0x00` X25519 type byte, the
 	/// 32-byte public key, then 32 zero bytes. It doubles as the dotNS chat key.
 	pub identifier_key: [u8; 65],
-	/// sr25519 signature over the SCALE consumer-registration tuple.
+	/// sr25519 signature over the SCALE consumer-registration tuple, after the
+	/// People signing context if any.
 	pub consumer_registration_signature: [u8; 64],
-	/// sr25519 signature over the dotNS gateway reservation message. It
-	/// authorizes `pallet_dotns_gateway::reserve_name` on Asset Hub.
+	/// sr25519 signature over the dotNS gateway reservation message, after the
+	/// Asset Hub signing context if any. It authorizes
+	/// `pallet_dotns_gateway::reserve_name` on Asset Hub.
 	pub dotns_signature: [u8; 64],
 }
 
@@ -148,7 +177,10 @@ pub enum LiteRegistrationError {
 /// claim on dotNS. `dotns_signed_at_secs` must be Asset Hub chain time, meaning
 /// `Timestamp.Now` in seconds. The local wall clock will not do: the gateway
 /// rejects signatures more than 30 seconds in the chain's future.
+/// `people_signing_context` and `asset_hub_signing_context` come from
+/// [`signing_context_from_constant`] on each chain's metadata.
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
 pub fn build_lite_registration(
 	entropy: &[u8],
 	network_suffix: &str,
@@ -156,6 +188,8 @@ pub fn build_lite_registration(
 	username_base: &str,
 	reserved_username: Option<&str>,
 	dotns_signed_at_secs: u64,
+	people_signing_context: Option<[u8; 32]>,
+	asset_hub_signing_context: Option<[u8; 32]>,
 ) -> Result<LiteRegistration, LiteRegistrationError> {
 	let vrf_secret = BandersnatchVrfVerifiable::new_secret(derive_lite_person_ring_vrf_entropy(
 		entropy,
@@ -168,6 +202,8 @@ pub fn build_lite_registration(
 		username_base,
 		reserved_username,
 		dotns_signed_at_secs,
+		people_signing_context,
+		asset_hub_signing_context,
 		BandersnatchVrfVerifiable::member_from_secret(&vrf_secret),
 		|message| {
 			BandersnatchVrfVerifiable::sign(&vrf_secret, message).map_err(|err| format!("{err:?}"))
@@ -188,6 +224,8 @@ pub fn build_lite_registration_with(
 	username_base: &str,
 	reserved_username: Option<&str>,
 	dotns_signed_at_secs: u64,
+	people_signing_context: Option<[u8; 32]>,
+	asset_hub_signing_context: Option<[u8; 32]>,
 	ring_vrf_key: [u8; 32],
 	sign_proof_of_ownership: impl FnOnce(&[u8]) -> Result<[u8; 64], String>,
 ) -> Result<LiteRegistration, LiteRegistrationError> {
@@ -203,7 +241,11 @@ pub fn build_lite_registration_with(
 
 	let candidate_signature = candidate
 		.secret
-		.sign_simple(SR25519_SIGNING_CONTEXT, &proof_message, &candidate.public)
+		.sign_simple(
+			SR25519_SIGNING_CONTEXT,
+			&signed_bytes(people_signing_context, &proof_message),
+			&candidate.public,
+		)
 		.to_bytes();
 	let proof_of_ownership =
 		sign_proof_of_ownership(&proof_message).map_err(LiteRegistrationError::ProofOfOwnership)?;
@@ -220,7 +262,11 @@ pub fn build_lite_registration_with(
 	.encode();
 	let consumer_registration_signature = candidate
 		.secret
-		.sign_simple(SR25519_SIGNING_CONTEXT, &consumer_message, &candidate.public)
+		.sign_simple(
+			SR25519_SIGNING_CONTEXT,
+			&signed_bytes(people_signing_context, &consumer_message),
+			&candidate.public,
+		)
 		.to_bytes();
 
 	let reservation_message = build_reservation_message(
@@ -233,7 +279,11 @@ pub fn build_lite_registration_with(
 	);
 	let dotns_signature = candidate
 		.secret
-		.sign_simple(SR25519_SIGNING_CONTEXT, &reservation_message, &candidate.public)
+		.sign_simple(
+			SR25519_SIGNING_CONTEXT,
+			&signed_bytes(asset_hub_signing_context, &reservation_message),
+			&candidate.public,
+		)
 		.to_bytes();
 
 	Ok(LiteRegistration {
@@ -255,7 +305,8 @@ pub fn build_lite_registration_with(
 /// to a paired chat client. The 65-byte width predates X25519 and stayed when
 /// the curve changed; readers ignore the padding rather than validate it.
 fn derive_identifier_key(entropy: &[u8]) -> [u8; 65] {
-	let public_key = x25519_public_key(derive_identity_chat_private_key(entropy));
+	let chat_key = X25519PrivateKey::from(derive_identity_chat_private_key(entropy));
+	let public_key = chat_key.public_key().0;
 	let mut identifier_key = [0u8; 65];
 	identifier_key[0] = IDENTIFIER_KEY_TAG_X25519;
 	identifier_key[1..33].copy_from_slice(&public_key);
@@ -280,6 +331,8 @@ mod tests {
 			"headlesstester",
 			None,
 			1_749_573_123,
+			None,
+			None,
 		)
 		.unwrap();
 		assert_eq!(
@@ -307,7 +360,9 @@ mod tests {
 		assert_eq!(reg.identifier_key[0], 0x00, "X25519 keypair type byte");
 		assert_eq!(
 			&reg.identifier_key[1..33],
-			&x25519_public_key(derive_identity_chat_private_key(&ENTROPY)),
+			&X25519PrivateKey::from(derive_identity_chat_private_key(&ENTROPY))
+				.public_key()
+				.0,
 			"the advertised key must match the chat identity private key this host serves"
 		);
 		assert_eq!(
@@ -384,6 +439,8 @@ mod tests {
 			"headlesstester",
 			Some("reservedbase"),
 			77,
+			None,
+			None,
 		)
 		.unwrap();
 		let public = PublicKey::from_bytes(&reg.candidate_public_key).unwrap();
@@ -448,14 +505,107 @@ mod tests {
 	#[test]
 	fn registration_is_deterministic_per_entropy_and_username() {
 		let verifier = [0x22u8; 32];
-		let first =
-			build_lite_registration(&ENTROPY, NETWORK_SUFFIX, verifier, "aliceheadless", None, 1)
-				.unwrap();
-		let again =
-			build_lite_registration(&ENTROPY, NETWORK_SUFFIX, verifier, "aliceheadless", None, 1)
-				.unwrap();
+		let first = build_lite_registration(
+			&ENTROPY,
+			NETWORK_SUFFIX,
+			verifier,
+			"aliceheadless",
+			None,
+			1,
+			None,
+			None,
+		)
+		.unwrap();
+		let again = build_lite_registration(
+			&ENTROPY,
+			NETWORK_SUFFIX,
+			verifier,
+			"aliceheadless",
+			None,
+			1,
+			None,
+			None,
+		)
+		.unwrap();
 		assert_eq!(first.candidate_public_key, again.candidate_public_key);
 		assert_eq!(first.ring_vrf_key, again.ring_vrf_key);
 		assert_eq!(first.candidate_account_id, again.candidate_account_id);
+	}
+
+	#[test]
+	fn signatures_in_context_verify_only_with_the_context() {
+		// A runtime that publishes its signing context rejects the plain message,
+		// so each account signature must cover the context of the chain that
+		// checks it.
+		let verifier = [0x44u8; 32];
+		let people = [0x01u8; 32];
+		let asset_hub = [0x02u8; 32];
+		let reg = build_lite_registration(
+			&ENTROPY,
+			NETWORK_SUFFIX,
+			verifier,
+			"headlesstester",
+			None,
+			9,
+			Some(people),
+			Some(asset_hub),
+		)
+		.unwrap();
+		let public = PublicKey::from_bytes(&reg.candidate_public_key).unwrap();
+		let verifies = |signature: &[u8; 64], message: &[u8]| {
+			public
+				.verify_simple(
+					SR25519_SIGNING_CONTEXT,
+					message,
+					&Signature::from_bytes(signature).unwrap(),
+				)
+				.is_ok()
+		};
+		let in_context = |context: [u8; 32], message: &[u8]| [context.as_slice(), message].concat();
+
+		let mut proof_message = Vec::new();
+		proof_message.extend_from_slice(REGISTER_PREFIX);
+		proof_message.extend_from_slice(&reg.candidate_public_key);
+		proof_message.extend_from_slice(&reg.ring_vrf_key);
+		let consumer_message = (
+			reg.candidate_public_key,
+			verifier,
+			reg.identifier_key,
+			b"headlesstester".as_slice(),
+			None::<Vec<u8>>,
+		)
+			.encode();
+		let reservation_message = build_reservation_message(
+			&reg.candidate_public_key,
+			&verifier,
+			b"headlesstester",
+			&reg.identifier_key,
+			None,
+			9,
+		);
+
+		assert!(verifies(&reg.candidate_signature, &in_context(people, &proof_message)));
+		assert!(!verifies(&reg.candidate_signature, &proof_message));
+		assert!(verifies(
+			&reg.consumer_registration_signature,
+			&in_context(people, &consumer_message)
+		));
+		assert!(!verifies(&reg.consumer_registration_signature, &consumer_message));
+		assert!(verifies(&reg.dotns_signature, &in_context(asset_hub, &reservation_message)));
+		assert!(!verifies(&reg.dotns_signature, &in_context(people, &reservation_message)));
+		// The ring-VRF proof keeps signing the message alone.
+		assert!(BandersnatchVrfVerifiable::verify_signature(
+			&reg.proof_of_ownership,
+			&proof_message,
+			&reg.ring_vrf_key
+		));
+	}
+
+	#[test]
+	fn signing_context_follows_the_published_constant() {
+		assert_eq!(signing_context_from_constant(Some(&[7u8; 32])), Some([7u8; 32]));
+		assert_eq!(signing_context_from_constant(None), None);
+		// A value of another width is not a context the runtime applies.
+		assert_eq!(signing_context_from_constant(Some(&[7u8; 31])), None);
 	}
 }

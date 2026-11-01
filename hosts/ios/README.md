@@ -93,7 +93,7 @@ the placeholder plists point at nothing. [docs/PUBLISHING.md](./docs/PUBLISHING.
 lists every Remote Config parameter and build-time variable and the brand
 identity keys in `Configs/brand.xcconfig`; the identity backend is open source
 as [device-uniqueness-backend-community](https://github.com/paritytech/device-uniqueness-backend-community). Optional
-integrations (fiat on-ramp, crash reporting) are enabled by filling in
+integrations (crash reporting) are enabled by filling in
 `polkadot-app/env-vars.sh`.
 
 The app talks to Polkadot system chains (People Chain, Asset Hub, Bulletin Chain); the chain set is
@@ -142,13 +142,17 @@ Consent prompts and app settings share permission descriptions and icon metadata
 - There is no custodian, and nobody (including the developers) can freeze, recover, or move your account. If you lose your device and have no backup, the account is gone.
 - It does **not** route your chats and calls through any 1st or 3rd party messaging servers — messages travel through the public chain, voice and video calls go peer-to-peer.
 - It is **not** a production-hardened product — treat it as a reference implementation (see the warning at the top).
-- Seity profile-disclosure consent has no native prompt yet. Its permission callback returns an error, leaving an unanswered authorization `NotDetermined` rather than recording a user denial. Single-action confirmation still fails closed.
+- Chat authority and profile disclosure use separate native permission prompts. Neither implies signing or account access, and prompt presentation failure leaves authorization unanswered.
 
 ### Under the hood
 
 Built with **UIKit** and programmatic layout (no Storyboards), using **VIPER** for every feature module: code is split between the main app target and 28 local Swift packages under [`Packages/`](./Packages) with `AppDependencies` as the root package, chain access goes through [substrate-sdk-ios](https://github.com/novasamatech/substrate-sdk-ios) (JSON-RPC, storage subscriptions, extrinsics), and local data lives in CoreData.
 
 Permission prompts and revocation settings share the `ProductPermission` presentation metadata so capability descriptions stay consistent. JAM peer consent displays the full network genesis and remains scoped to that network and product; it does not grant accounts or signing.
+
+Non-release TrUAPI SPA runtimes publish an immutable `globalThis.__trinityHostTelemetry` schema-v1 object before
+the product container starts. It contains the WebView's `hostSessionId` plus the native app version, build, variant,
+platform, OS version and TrUAPI host version used to correlate product diagnostics with `host.webview.created`.
 
 This repository ships a **GitHub Actions + Fastlane CI/CD setup** — PR build and
 tests, plus maintainer-gated TestFlight and Firebase App Distribution. Build-time

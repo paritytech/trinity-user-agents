@@ -11,6 +11,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.HostLocalStorageReadException
+import uniffi.truapi.HostRejection
 
 class EncryptedTrUAPIStorageTest {
     private val prefs = FakeEncryptedPreferences()
@@ -120,10 +121,59 @@ class EncryptedTrUAPIStorageTest {
         prefs.putEncryptedString("truapi/core/not-hex", "v1:09")
         assertTrue(runCatching { EncryptedHostCoreStorage(prefs).keys() }.isFailure)
     }
+
+    /** Secrets must not collide with, or be cleared as, a core storage slot of the same key. */
+    @Test
+    fun `encrypted values stay apart from core storage`() = runTest {
+        val core = EncryptedHostCoreStorage(prefs)
+        val encrypted = EncryptedHostValues(prefs)
+
+        core.write(byteArrayOf(1), byteArrayOf(10))
+        encrypted.write(byteArrayOf(1), byteArrayOf(20))
+        core.clear(byteArrayOf(1))
+
+        assertArrayEquals(byteArrayOf(20), encrypted.read(byteArrayOf(1)))
+    }
+
+    /** An absent secret and an unreadable one must not look alike to the core. */
+    @Test
+    fun `an encrypted value that never was stored is a miss, an undecryptable one an error`() = runTest {
+        val encrypted = EncryptedHostValues(prefs)
+        encrypted.write(byteArrayOf(1), byteArrayOf(20))
+        prefs.corrupt()
+
+        assertNull(encrypted.read(byteArrayOf(2)))
+        val failure = runCatching { encrypted.read(byteArrayOf(1)) }.exceptionOrNull()
+        assertTrue(failure is HostRejection)
+    }
+
+    /** The core records what a secret belongs to right after the write, so a secret still in memory could be lost with it. */
+    @Test
+    fun `an encrypted value not written to disk is reported`() = runTest {
+        val encrypted = EncryptedHostValues(prefs.failingCommits())
+
+        val failure = runCatching { encrypted.write(byteArrayOf(1), byteArrayOf(20)) }.exceptionOrNull()
+
+        assertTrue("expected HostRejection, got $failure", failure is HostRejection)
+    }
+
+    @Test
+    fun `a deleted encrypted value is a miss, and deleting none succeeds`() = runTest {
+        val encrypted = EncryptedHostValues(prefs)
+        encrypted.write(byteArrayOf(1), byteArrayOf(20))
+        encrypted.write(byteArrayOf(2), byteArrayOf(30))
+
+        encrypted.delete(byteArrayOf(1))
+        encrypted.delete(byteArrayOf(3))
+
+        assertNull(encrypted.read(byteArrayOf(1)))
+        assertArrayEquals(byteArrayOf(30), encrypted.read(byteArrayOf(2)))
+    }
 }
 
 private class FakeEncryptedPreferences(
     private val dropWrites: Boolean = false,
+    private val failCommits: Boolean = false,
 ) : EncryptedPreferences {
     private val values = mutableMapOf<String, String>()
     override fun keys(): Set<String> = values.keys
@@ -131,10 +181,18 @@ private class FakeEncryptedPreferences(
     /** Mirrors EncryptionUtil storing "" when it cannot encrypt. */
     fun swallowingWrites() = FakeEncryptedPreferences(dropWrites = true)
 
+    /** Keeps values in memory, as `apply()` does, but never reaches the disk. */
+    fun failingCommits() = FakeEncryptedPreferences(failCommits = true)
+
     fun corrupt() = values.keys.forEach { values[it] = "" }
 
     override fun putEncryptedString(field: String, value: String) {
         values[field] = if (dropWrites) "" else value
+    }
+
+    override fun putEncryptedStringNow(field: String, value: String): Boolean {
+        putEncryptedString(field, value)
+        return !failCommits
     }
 
     override fun getDecryptedString(field: String): String? = values[field]

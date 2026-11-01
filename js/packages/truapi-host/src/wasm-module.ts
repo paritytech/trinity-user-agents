@@ -73,7 +73,7 @@ export interface WorkerHostRuntime
   setSubmitPreimagesLocally?(local: boolean): void;
   /**
    * Take one reference on the product's worker. The first one reports
-   * `"Start"` through the runtime's `workerDemandChanged` callback.
+   * `"Start"` through the runtime's `requestWorkerTransition` callback.
    */
   acquireWorker(productId: string): void;
   /**

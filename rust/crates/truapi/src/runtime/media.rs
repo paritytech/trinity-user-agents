@@ -77,6 +77,7 @@ pub(crate) struct MediaService {
 	platform: Arc<dyn Platform>,
 	permission_status: Option<Arc<dyn PermissionStatusHost>>,
 	authority: Arc<dyn ProductAuthority>,
+	session_state: Arc<crate::host_logic::session::SessionState>,
 	product: ProductContext,
 	backend: Arc<dyn MediaPlatform>,
 	runtime_id: u64,
@@ -120,13 +121,14 @@ impl MediaService {
 		backoff: Backoff,
 	) -> Arc<Self> {
 		let service = Arc::new_cyclic(|weak| Self {
-			services: host.services.clone(),
-			platform: host.platform.clone(),
-			permission_status: host.permission_status.clone(),
-			authority: host.authority.clone(),
-			product: host.product.clone(),
+			services: host.connection.services.clone(),
+			platform: host.connection.platform.clone(),
+			permission_status: host.connection.permission_status.clone(),
+			authority: host.accounts.media_authority().clone(),
+			session_state: host.host_session.session_state(),
+			product: host.connection.product.clone(),
 			backend,
-			runtime_id: host.core_instance,
+			runtime_id: host.connection.core_instance,
 			state: Mutex::new(State::new()),
 			init: futures::lock::Mutex::new(()),
 			closed: CancellationToken::default(),
@@ -650,6 +652,7 @@ impl Drop for MediaService {
 fn connect_signaling(service: &MediaService) -> BoxFuture<'static, Result<SignalingLink>> {
 	let (services, authority, product) =
 		(service.services.clone(), service.authority.clone(), service.product.clone());
+	let session_state = service.session_state.clone();
 	async move {
 		let mut cx = CallContext::default();
 		cx.set_timeout(OPERATION_TIMEOUT);
@@ -657,10 +660,16 @@ fn connect_signaling(service: &MediaService) -> BoxFuture<'static, Result<Signal
 			media_identity::resolve_identity(services.as_ref(), authority.as_ref(), &product, &cx)
 				.await
 				.map_err(|_| domain(v::HostMediaError::NotConnected))?;
-		let (signaling, events) =
-			MediaSignaling::start(services, authority, session.clone(), identity.clone(), &cx)
-				.await
-				.map_err(signaling_error)?;
+		let (signaling, events) = MediaSignaling::start(
+			services,
+			authority,
+			session_state,
+			session.clone(),
+			identity.clone(),
+			&cx,
+		)
+		.await
+		.map_err(signaling_error)?;
 		Ok(SignalingLink { session, identity, signaling, events })
 	}
 	.boxed()
@@ -684,23 +693,27 @@ fn map_error<E>(error: Error, domain: impl FnOnce(v::HostMediaError) -> E) -> Ca
 }
 impl ProductRuntimeHost {
 	fn media_service(&self) -> Result<&Arc<MediaService>> {
-		if self.media_closed.load(std::sync::atomic::Ordering::Acquire) {
+		if self.connection.media_closed.load(std::sync::atomic::Ordering::Acquire) {
 			return Err(host_failure());
 		}
 		if !matches!(
-			self.product.execution_kind,
+			self.connection.product.execution_kind,
 			ProductExecutionKind::App | ProductExecutionKind::Worker
 		) {
 			return Err(CallError::Unsupported);
 		}
-		let backend = self.media_platform.as_ref().ok_or(CallError::Unsupported)?;
-		let service = self.media.get_or_init(|| MediaService::new(self, backend.clone()));
-		if self.media_closed.load(std::sync::atomic::Ordering::Acquire) {
+		let backend = self.connection.media_platform.as_ref().ok_or(CallError::Unsupported)?;
+		let service =
+			self.connection.media.get_or_init(|| MediaService::new(self, backend.clone()));
+		if self.connection.media_closed.load(std::sync::atomic::Ordering::Acquire) {
 			service.close();
 			return Err(host_failure());
 		}
 		Ok(service)
 	}
+}
+
+impl super::ProductConnection {
 	pub(crate) fn close_media(&self) {
 		self.media_closed.store(true, std::sync::atomic::Ordering::Release);
 		if let Some(service) = self.media.get() {
@@ -1012,17 +1025,27 @@ mod tests {
 	}
 
 	fn host(connect: Connect, backoff: Backoff) -> ProductRuntimeHost {
-		let (mut host, _) = ProductRuntimeHost::new_pairing_for_tests(
+		let (host, pairing_host) = ProductRuntimeHost::new_pairing_for_tests(
 			stub_platform(),
 			ProductRuntimeHost::compat_host_config(),
-			ProductContext::new(PRODUCT.into()).unwrap(),
+			ProductContext::new(PRODUCT.parse().expect("valid product ID")),
 			test_spawner(),
 		);
 		host.test_session_state().set_session(session_info());
 		let backend: Arc<dyn MediaPlatform> = Arc::new(Backend);
-		host.media_platform = Some(backend.clone());
+		let mut adapters =
+			crate::host_core::ConnectionAdapters::from_services(&host.connection.services);
+		adapters.media_platform = Some(backend.clone());
+		let host = ProductRuntimeHost::from_services(
+			host.connection.services.clone(),
+			adapters,
+			pairing_host.clone(),
+			pairing_host.session().clone(),
+			host.connection.product.clone(),
+		);
 		assert!(
-			host.media
+			host.connection
+				.media
 				.set(MediaService::with_signaling(&host, backend, connect, backoff))
 				.is_ok()
 		);
@@ -1153,10 +1176,10 @@ mod tests {
 		assert!(matches!(event(next_within(&mut subscription, Duration::from_secs(1))),
             v::MediaEvent::Snapshot { sessions, incoming, .. } if sessions.is_empty() && incoming.is_empty()));
 		assert!(started.elapsed() < Duration::from_secs(1));
-		assert!(host.media.get().unwrap().lock().signaling.is_none());
+		assert!(host.connection.media.get().unwrap().lock().signaling.is_none());
 		// Pending signaling neither terminates nor fills the stream.
 		assert!(next_within(&mut subscription, Duration::from_millis(300)).is_none());
-		host.close_media();
+		host.connection.close_media();
 		assert!(matches!(next_within(&mut subscription, Duration::from_secs(1)), Some(None)));
 	}
 
@@ -1178,10 +1201,10 @@ mod tests {
 			v::MediaEvent::Snapshot { .. }
 		));
 		wait_until(|| attempts.load(Ordering::SeqCst) >= 3, "signaling start is retried");
-		assert!(host.media.get().unwrap().lock().signaling.is_none());
+		assert!(host.connection.media.get().unwrap().lock().signaling.is_none());
 		release.store(true, Ordering::SeqCst);
 		wait_until(
-			|| host.media.get().unwrap().lock().signaling.is_some(),
+			|| host.connection.media.get().unwrap().lock().signaling.is_some(),
 			"signaling binds after recovery",
 		);
 
@@ -1219,7 +1242,7 @@ mod tests {
 			offer.peer.account,
 			v::MediaAccount::Sr25519(remote.advertisement().fields.account)
 		);
-		host.close_media();
+		host.connection.close_media();
 	}
 
 	#[test]
@@ -1249,7 +1272,7 @@ mod tests {
 		// The stream stays open while signaling is retried.
 		assert!(next_within(&mut subscription, Duration::from_millis(50)).is_none());
 
-		host.close_media();
+		host.connection.close_media();
 		std::thread::sleep(backoff.max * 2);
 		let after_close = attempts.lock().unwrap().len();
 		std::thread::sleep(backoff.max * 3);
@@ -1294,7 +1317,7 @@ mod tests {
 		let result = create.join().unwrap();
 		assert!(started.elapsed() < OPERATION_TIMEOUT, "creation proceeds once signaling binds");
 		assert!(matches!(result, Ok(wire::HostMediaCreateSessionResponse::V1(_))), "{result:?}");
-		host.close_media();
+		host.connection.close_media();
 	}
 
 	#[test]
@@ -1359,7 +1382,7 @@ mod tests {
 			failed_at.elapsed()
 		);
 		assert_eq!(attempts.load(Ordering::SeqCst), 2);
-		host.close_media();
+		host.connection.close_media();
 	}
 
 	#[test]
@@ -1388,7 +1411,7 @@ mod tests {
 		assert!(created.is_ok(), "{created:?}");
 		let admitted = [12; 32];
 		let session_id = {
-			let mut state = host.media.get().unwrap().lock();
+			let mut state = host.connection.media.get().unwrap().lock();
 			state.viewport = Some(v::MediaViewport {
 				revision: 1,
 				width: 800,
@@ -1461,6 +1484,6 @@ mod tests {
 			),
 			"{unknown:?}"
 		);
-		host.close_media();
+		host.connection.close_media();
 	}
 }

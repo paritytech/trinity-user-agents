@@ -2,7 +2,7 @@
 
 use core::time::Duration;
 
-use crate::platform::{ProductContext, normalize_product_identifier};
+use crate::platform::ProductContext;
 use futures::{FutureExt, pin_mut};
 use truapi::{CallContext, CancellationReason};
 
@@ -31,10 +31,7 @@ pub(super) async fn resolve_identity(
 	}
 	let session = authority.current_session().ok_or(AuthorityError::Disconnected)?;
 	let product_id = product.product_id.as_str();
-	if product_id.len() > MAX_PRODUCT_ID_BYTES ||
-		normalize_product_identifier(product_id).map_err(|_| AuthorityError::Rejected)? !=
-			product_id
-	{
+	if product_id.len() > MAX_PRODUCT_ID_BYTES {
 		return Err(AuthorityError::Rejected);
 	}
 	let network = services.statement_store.genesis_hash();
@@ -49,7 +46,7 @@ pub(super) async fn resolve_identity(
 	bounded.set_timeout(timeout);
 	let subtree = {
 		let subtree = authority
-			.product_subtree_public_key(&bounded, &session, product_id.to_owned())
+			.product_subtree_public_key(&bounded, &session, &product.product_id)
 			.fuse();
 		let cancelled = bounded.cancel().cancelled().fuse();
 		let deadline = futures_timer::Delay::new(timeout).fuse();
@@ -66,7 +63,7 @@ pub(super) async fn resolve_identity(
 			result = subtree => result?,
 		}
 	};
-	if authority.current_session().as_ref() != Some(&session) {
+	if !authority.session_is_current(&session, Some(&product.product_id)) {
 		return Err(AuthorityError::Disconnected);
 	}
 	if let Some(reason) = cx.cancel().reason() {

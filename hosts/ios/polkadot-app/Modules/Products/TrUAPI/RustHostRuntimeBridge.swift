@@ -22,6 +22,9 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     private let chainConnections: TrUAPIChainConnecting
     private let confirmationPresenter: TrUAPIConfirmationPresenting
     private let chatFiles: NativeChatFilesHost
+    private let workerManager: (any TrUAPIWorkerManaging)?
+    private let backedUpInstallation: TrUAPIBackedUpInstallation
+    private let encryptedStorage: TrUAPIEncryptedStorage
     private let logger: LoggerProtocol
     private weak var runtime: TrUAPIHostRuntime?
 
@@ -31,12 +34,18 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         chainConnections: TrUAPIChainConnecting,
         confirmationPresenter: TrUAPIConfirmationPresenting,
         chatFiles: NativeChatFilesHost,
+        workerManager: (any TrUAPIWorkerManaging)? = nil,
+        backedUpInstallation: TrUAPIBackedUpInstallation,
+        encryptedStorage: TrUAPIEncryptedStorage,
         logger: LoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
         self.chainConnections = chainConnections
         self.confirmationPresenter = confirmationPresenter
         self.chatFiles = chatFiles
+        self.workerManager = workerManager
+        self.backedUpInstallation = backedUpInstallation
+        self.encryptedStorage = encryptedStorage
         self.logger = logger
         self.coreStorage = CoreStorageBackend(storage: coreStorage)
         storage = EmptyHostStorageBackend()
@@ -56,13 +65,13 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     }
 
     func onCoreLog(marker: String, detail: String) {
-        logger.debug("[truapi:host:\(marker)] \(detail)")
+        logger.logCoreLine(marker: marker, detail: detail)
     }
 
     /// Demand is runtime-wide, so it arrives here rather than on a product's
     /// own bridge, and can arrive re-entrantly from inside `acquireWorker`,
     /// the manager hands the transition off rather than acting on it here.
-    func workerDemandChanged(productId: String, transition: WorkerTransition) {
+    func requestWorkerTransition(productId: String, transition: WorkerTransition) {
         workerManager?.demandChanged(productId: productId, transition: transition)
     }
 
@@ -221,21 +230,32 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         }
     }
 
+    func currentInstallation() async throws -> Data {
+        try await backedUpInstallation.installationId()
+    }
+
+    func encryptedStorageRead(key: Data) async throws -> Data? {
+        try encryptedStorage.read(key: key)
+    }
+
+    func encryptedStorageWrite(key: Data, value: Data) async throws {
+        try encryptedStorage.write(key: key, value: value)
+    }
+
+    func encryptedStorageDelete(key: Data) async throws {
+        try encryptedStorage.delete(key: key)
+    }
+
     func supportedChains() throws -> HostChainSet {
         TrUAPISupportedChains.make(chainRegistry: chainRegistry)
     }
 
-    func authStateChanged(state: AuthState) {
-        let detail =
-            switch state {
-            case .disconnected: "disconnected"
-            case .pairing: "pairing"
-            case .connected: "connected"
-            case .loginFailed: "login failed"
-            case .authenticating: "authenticating"
-            }
+    func transactionExtensionVersions() async throws -> ExtensionVersionMap {
+        try TrUAPIExtensionVersions.make(chainRegistry: chainRegistry)
+    }
 
-        logger.debug("[truapi:host] auth state: \(detail)")
+    func authStateChanged(state: AuthState) {
+        logger.info("[truapi.auth] \(state.logMarker)")
     }
 }
 

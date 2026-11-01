@@ -58,7 +58,7 @@ final class TrUAPIConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecke
     ) async throws -> TrUAPIPermissionDecision {
         switch review {
         case let .preimageSubmit(preimageReview):
-            await presentPreimagePermission(preimageReview)
+            try await presentPreimagePermission(preimageReview)
         case let .identityDisclosure(identityReview):
             try await presentPermission(
                 promptMapper.makePermissionRequest(from: identityReview)
@@ -106,10 +106,10 @@ private extension TrUAPIConfirmationPresenter {
             )
         case let .productSubtree(subtreeReview):
             await confirmAction(promptMapper.makeActionRequest(from: subtreeReview))
-        // Unsupported permission reviews throw; `confirm` still fails closed for single actions.
+        case let .nftPurseDrain(drainReview):
+            await confirmAction(promptMapper.makeActionRequest(from: drainReview))
         case .identityDisclosure,
              .chatAuthority,
-             .preimageSubmit,
              .accountAccess,
              .accountAlias,
              .profileDisclosure:
@@ -157,7 +157,7 @@ private extension TrUAPIConfirmationPresenter {
     }
 
     func presentSigning(input: ProductsSignConfirmInput, requester: ProductId) async -> Bool {
-        await awaitDecision(cancelled: false) { [routerFacade] in
+        await awaitDecision(cancelled: false) { [routerFacade] _ in
             await withCheckedContinuation { continuation in
                 let context = ProductsSignConfirmContext(
                     requester: PolkadotSigningRequester(name: requester, iconUrl: nil),
@@ -170,7 +170,7 @@ private extension TrUAPIConfirmationPresenter {
     }
 
     func confirmStatementSign(_ request: StatementSignConfirmationRequest) async -> Bool {
-        await awaitDecision(cancelled: false) { [routerFacade] in
+        await awaitDecision(cancelled: false) { [routerFacade] _ in
             let decision: StatementSignDecision = await withCheckedContinuation { continuation in
                 let context = StatementSignConfirmationContext(request: request)
                 context.setContinuation(continuation)
@@ -183,7 +183,7 @@ private extension TrUAPIConfirmationPresenter {
         _ review: MainPurseChatPaymentReview,
         requiresPrivacyConfirmation: Bool = false
     ) async -> Bool {
-        await awaitDecision { [routerFacade] in
+        await awaitDecision(cancelled: false) { [routerFacade] _ in
             await withCheckedContinuation { continuation in
                 let context = MainPursePaymentConfirmationContext(
                     review: review,
@@ -201,7 +201,7 @@ private extension TrUAPIConfirmationPresenter {
     func presentPermission(_ request: TrUAPIPermissionRequest) async throws -> TrUAPIPermissionDecision {
         let result: Result<TrUAPIPermissionDecision, HostRejection> = await awaitDecision(
             cancelled: .failure(.Rejected(reason: "permission prompt cancelled"))
-        ) { [routerFacade] in
+        ) { [routerFacade] _ in
             var presented = false
             let decision: Products.PermissionDecision = await withCheckedContinuation { continuation in
                 let context = ProductPermissionContext(
@@ -224,8 +224,28 @@ private extension TrUAPIConfirmationPresenter {
         return try result.get()
     }
 
+    func presentPreimagePermission(_ review: PreimageSubmitReview) async throws -> TrUAPIPermissionDecision {
+        let result: Result<TrUAPIPermissionDecision, HostRejection> = await awaitDecision(
+            cancelled: .failure(.Rejected(reason: "permission prompt cancelled"))
+        ) { [routerFacade] _ in
+            var presented = false
+            let decision: TrUAPIPermissionDecision = await withCheckedContinuation { continuation in
+                let context = TrUAPIPreimageConfirmationContext(review: review)
+                context.setContinuation(continuation)
+                let prompt = TrUAPIActionPromptViewFactory.createPreimageView(context: context)
+                presented = routerFacade.productsRouter.present(view: prompt)
+                if !presented { context.deliver(.deny) }
+            }
+            guard presented else {
+                return .failure(.Rejected(reason: "permission prompt presentation unavailable"))
+            }
+            return .success(decision)
+        }
+        return try result.get()
+    }
+
     func confirmAction(_ request: TrUAPIActionConfirmationRequest) async -> Bool {
-        await awaitDecision(cancelled: false) { [routerFacade] in
+        await awaitDecision(cancelled: false) { [routerFacade] _ in
             await withCheckedContinuation { continuation in
                 let context = TrUAPIActionConfirmationContext(request: request)
                 context.setContinuation(continuation)
@@ -235,7 +255,7 @@ private extension TrUAPIConfirmationPresenter {
     }
 
     func confirmCreateProof(_ request: CreateProofConfirmationRequest) async -> Bool {
-        await awaitDecision(cancelled: false) { [routerFacade] in
+        await awaitDecision(cancelled: false) { [routerFacade] _ in
             let decision: CreateProofDecision = await withCheckedContinuation { continuation in
                 let context = CreateProofConfirmationContext(request: request)
                 context.setContinuation(continuation)
@@ -246,7 +266,7 @@ private extension TrUAPIConfirmationPresenter {
     }
 
     func confirmAllowance(_ request: TrUAPIAllowanceRequest) async -> Bool {
-        await awaitDecision(cancelled: false) { [routerFacade] in
+        await awaitDecision(cancelled: false) { [routerFacade] _ in
             let decision: AllowancePromptDecision = await withCheckedContinuation { continuation in
                 let context = AllowancePromptContext(
                     productId: request.productId,
@@ -260,7 +280,7 @@ private extension TrUAPIConfirmationPresenter {
     }
 
     func confirmSignVrf(_ request: SignVrfConfirmationRequest) async -> Bool {
-        await awaitDecision(cancelled: false) { [routerFacade] in
+        await awaitDecision(cancelled: false) { [routerFacade] _ in
             let decision: SignVrfDecision = await withCheckedContinuation { continuation in
                 let context = SignVrfConfirmationContext(request: request)
                 context.setContinuation(continuation)
@@ -270,60 +290,4 @@ private extension TrUAPIConfirmationPresenter {
         }
     }
 
-    /// Bridges a prompt decision to the rust-core future, resolving exactly
-    /// once. Rust-side cancellation denies without waiting for the
-    /// prompt; a decision arriving afterwards is discarded.
-    func awaitDecision<Decision: Sendable>(
-        cancelled: Decision,
-        present: @escaping @MainActor () async -> Decision
-    ) async -> Decision {
-        let pending = PendingDecision(cancelled: cancelled)
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                Task { @MainActor in
-                    guard pending.begin(continuation) else {
-                        return
-                    }
-                    let verdict = await present()
-                    pending.finish(verdict)
-                }
-            }
-        } onCancel: {
-            Task { @MainActor in pending.finish(cancelled) }
-        }
-    }
-}
-
-/// Resume-once state for one confirmation. All mutable state is
-/// MainActor-confined; a cancellation racing ahead of `begin` resolves the
-/// incoming continuation with its cancellation result instead of leaking it.
-@MainActor
-private final class PendingDecision<Decision: Sendable> {
-    private var isFinished = false
-    private var continuation: CheckedContinuation<Decision, Never>?
-    private let cancelled: Decision
-
-    nonisolated init(cancelled: Decision) {
-        self.cancelled = cancelled
-    }
-
-    /// Returns false when the confirmation already finished (e.g. cancelled
-    /// before the prompt task ran); the continuation is resolved either way.
-    func begin(_ continuation: CheckedContinuation<Decision, Never>) -> Bool {
-        guard !isFinished else {
-            continuation.resume(returning: cancelled)
-            return false
-        }
-        self.continuation = continuation
-        return true
-    }
-
-    func finish(_ verdict: Decision) {
-        guard !isFinished else {
-            return
-        }
-        isFinished = true
-        continuation?.resume(returning: verdict)
-        continuation = nil
-    }
 }

@@ -15,22 +15,21 @@
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 use parity_scale_codec::{Decode, DecodeAll};
 use scale_decode::DecodeAsType;
 use sp_crypto_hashing::twox_128;
 use thiserror::Error;
-#[cfg(target_arch = "wasm32")]
-use web_time::Instant;
 
 use super::{
-	ChainContext, StatementAllowanceError,
+	StatementAllowanceError,
 	collection::PersonhoodCollection,
-	duplicate_submit_error, extension,
-	extension::{AS_PGAS, Metadata, MetadataError},
+	duplicate_submit_error,
+	extension::{Metadata, MetadataError},
 	extrinsic,
 	key_hash::{blake2_128_concat, twox_64_concat},
-	proof,
 	ring::{self, RingParams},
 	rpc::RpcClient,
 	slot,
@@ -144,14 +143,16 @@ fn ring_roots_key(generation: u32, collection: PersonhoodCollection, ring_index:
 pub struct PgasClaim<'a> {
 	/// Asset Hub connection the claim is submitted on.
 	pub asset_hub_rpc: &'a RpcClient,
-	/// Asset Hub metadata and signed-extension state, from the per-chain cache.
-	pub asset_hub: &'a ChainContext,
+	/// Asset Hub metadata.
+	pub asset_hub_metadata: &'a Metadata,
+	/// Where the claim extrinsic is built on Asset Hub.
+	pub asset_hub_target: super::ExtrinsicTarget<'a>,
 	/// People-chain connection the ring revision is read from.
 	pub people_rpc: &'a RpcClient,
 	/// People-chain metadata.
 	pub people_metadata: &'a Metadata,
-	/// Our ring-VRF entropy for the collection `ring` names.
-	pub entropy: [u8; 32],
+	/// Authorizes personhood operations for the selected collection.
+	pub signer: &'a dyn super::PersonhoodSigner,
 	/// Asset Hub suffix used for the product-scoped alias and proof.
 	pub network_suffix: &'a [u8],
 	/// Account the claim credits.
@@ -184,13 +185,22 @@ pub async fn holds_a_full_claim(
 	metadata: &Metadata,
 	target: &[u8; 32],
 ) -> Result<bool, StatementAllowanceError> {
-	let asset_id = metadata.constant_u32("Pgas", "PgasAssetId")?;
 	let claim_amount = metadata.constant_u128("Pgas", "PgasClaimAmount")?;
+	Ok(balance(rpc, metadata, target).await? >= claim_amount)
+}
+
+/// Read PGAS without the full-claim threshold used by ordinary allocation.
+/// Recovery preserves partially spent funding instead of spending another slot.
+pub(crate) async fn balance(
+	rpc: &RpcClient,
+	metadata: &Metadata,
+	target: &[u8; 32],
+) -> Result<u128, StatementAllowanceError> {
+	let asset_id = metadata.constant_u32("Pgas", "PgasAssetId")?;
 	let Some(bytes) = rpc.get_storage(&pgas_balance_key(asset_id, target)).await? else {
-		return Ok(false);
+		return Ok(0);
 	};
-	let balance = u128::decode(&mut &bytes[..]).map_err(PgasError::BalanceDecode)?;
-	Ok(balance >= claim_amount)
+	u128::decode(&mut &bytes[..]).map_err(|error| PgasError::BalanceDecode(error).into())
 }
 
 /// Claim one PGAS allowance for `target`, proving membership in the
@@ -202,18 +212,32 @@ pub async fn holds_a_full_claim(
 pub async fn claim_pgas(
 	params: PgasClaim<'_>,
 ) -> Result<PgasClaimOutcome, StatementAllowanceError> {
+	claim_pgas_with_session_guard(params, || true).await
+}
+
+/// Recheck signing-host authority before proving, submitting, and retrying.
+///
+/// The supplied signer also validates authority synchronously when proving:
+/// the canonical extrinsic builder may await chain state before invoking it.
+pub(crate) async fn claim_pgas_with_session_guard(
+	params: PgasClaim<'_>,
+	session_is_current: impl Fn() -> bool,
+) -> Result<PgasClaimOutcome, StatementAllowanceError> {
+	let require_current_session = || {
+		if session_is_current() { Ok(()) } else { Err(StatementAllowanceError::SessionInvalidated) }
+	};
+	require_current_session()?;
 	let PgasClaim {
 		asset_hub_rpc,
-		asset_hub,
+		asset_hub_metadata,
+		asset_hub_target,
 		people_rpc,
 		people_metadata,
-		entropy,
+		signer,
 		network_suffix,
 		target,
 		ring,
 	} = params;
-	let asset_hub_metadata = asset_hub.metadata.as_ref();
-	let asset_hub_state = &asset_hub.state;
 	// The day is Asset Hub's, because its runtime checks the claim against its
 	// own clock. Periods are a UTC day here as they are for statement store.
 	let day = slot::current_period(slot::read_chain_now_seconds(asset_hub_rpc).await?);
@@ -236,59 +260,38 @@ pub async fn claim_pgas(
 
 	let mut skipped_duplicate_slots = Vec::new();
 	loop {
+		require_current_session()?;
 		let slot_index = slot::scan_pgas_slot_excluding(
 			asset_hub_rpc,
 			asset_hub_metadata,
 			ring.collection,
-			entropy,
+			signer,
 			network_suffix,
 			day,
 			&skipped_duplicate_slots,
 		)
 		.await?;
+		require_current_session()?;
 		let context = slot::derive_pgas_context(network_suffix, day, slot_index);
-		let call = extrinsic::build_claim_pgas_call(asset_hub_metadata, slot_index, target)?;
-		let message = extension::build_proof_message_after_extension(
-			asset_hub_metadata,
-			&call,
-			asset_hub_state,
-			AS_PGAS,
-		)?;
-		let domain = proof::domain_for_ring_exponent(ring.exponent)?;
-		let ring_proof =
-			proof::ring_vrf_proof(domain, entropy, &ring.members, &context, &message).await?;
-		let extra = extrinsic::build_as_pgas_extra(
-			asset_hub_metadata,
-			&ring_proof,
-			ring.ring_index,
-			revision,
-			day,
-			ring.collection,
-		)?;
-		let claim = extrinsic::build_unsigned_extrinsic_with_extra(
-			asset_hub_metadata,
-			asset_hub_state,
-			&call,
-			AS_PGAS,
-			&extra,
-		)?;
+		let alias = slot::pgas_alias(signer, ring.collection, network_suffix, day, slot_index)?;
+		let proof = super::RingProof { signer, ring, context, revision };
+		let call = extrinsic::ClaimPgasCallArgs { slot_index, target: *target };
+		let claim = asset_hub_target
+			.extrinsics
+			.build_mortal_extrinsic(asset_hub_target.genesis)
+			.with_call_args("Pgas", "claim_pgas", call)
+			.with_extension(super::AsPgasExtension::new(proof, day))
+			.build()
+			.await?;
 
-		match asset_hub_rpc.submit_and_watch(&claim).await {
+		require_current_session()?;
+		match asset_hub_rpc.submit_and_watch(claim.extrinsic.bytes()).await {
 			Ok(block_hash) => {
 				// Inclusion is not success. `Pgas.claim_pgas` can dispatch-error —
 				// `AlreadyClaimed`, `PgasMintFailed` — and the extrinsic still lands,
 				// so reporting an allowance now would promise PGAS that was never
 				// minted. The pallet marks the alias spent on success; check that.
-				if !slot::pgas_slot_is_claimed_at(
-					asset_hub_rpc,
-					entropy,
-					network_suffix,
-					day,
-					slot_index,
-					&block_hash,
-				)
-				.await?
-				{
+				if !slot::pgas_slot_is_claimed_at(asset_hub_rpc, &alias, day, &block_hash).await? {
 					return Err(PgasError::ClaimNotRecorded { block_hash, day, slot_index }.into());
 				}
 				return Ok(PgasClaimOutcome {
@@ -649,15 +652,27 @@ mod tests {
 		);
 	}
 
-	/// `holds_a_full_claim` reads both of these from the runtime, and compares a
-	/// balance against the claim amount. A missing constant would make the warm
-	/// check answer the same way for every account.
 	#[test]
-	fn the_asset_hub_fixture_declares_the_pgas_asset_and_claim_amount() {
+	fn partial_funding_is_preserved_without_satisfying_full_claim_policy() {
 		let metadata = test_fixtures::asset_hub();
-
-		assert_eq!(metadata.constant_u32("Pgas", "PgasAssetId").unwrap(), 2_000_000_000);
-		assert_eq!(metadata.constant_u128("Pgas", "PgasClaimAmount").unwrap(), 50_000_000_000,);
+		let claim_amount = metadata.constant_u128("Pgas", "PgasClaimAmount").unwrap();
+		let partial = claim_amount / 2;
+		let response = format!(r#""0x{}""#, hex::encode(partial.to_le_bytes()));
+		let rpc = RpcClient::new(HostRpcClient::new(ScriptedRpc::new([
+			response.as_str(),
+			response.as_str(),
+			"null",
+			r#""0x01""#,
+		])));
+		futures::executor::block_on(async {
+			assert_eq!(balance(&rpc, metadata, &[0x42; 32]).await.unwrap(), partial);
+			assert!(!holds_a_full_claim(&rpc, metadata, &[0x42; 32]).await.unwrap());
+			assert_eq!(balance(&rpc, metadata, &[0x42; 32]).await.unwrap(), 0);
+			assert!(matches!(
+				balance(&rpc, metadata, &[0x42; 32]).await,
+				Err(StatementAllowanceError::Pgas(PgasError::BalanceDecode(_)))
+			));
+		});
 	}
 
 	/// The window holds it, so the proof can be verified.

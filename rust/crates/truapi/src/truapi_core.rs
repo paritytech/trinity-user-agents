@@ -15,7 +15,9 @@ use crate::{
 	frame::ProtocolMessage,
 	generated::dispatcher,
 	host_logic::session::SessionState,
-	runtime::{PairingHostRole, ProductAuthority, ProductRuntimeHost, RuntimeServices},
+	runtime::{
+		HostSession, PairingHostRole, ProductAuthority, ProductRuntimeHost, RuntimeServices,
+	},
 	subscription::Spawner,
 	transport::Transport,
 };
@@ -63,24 +65,27 @@ impl TrUApiCore {
 			spawner.clone(),
 		);
 		let pairing_host = PairingHostRole::new(services.clone(), host_config);
-		pairing_host.clone().start_session_store_sync(spawner);
-		Self::from_runtime_parts(services, pairing_host, product)
+		let host_session = pairing_host.session().clone();
+		host_session.clone().start_session_store_sync(spawner);
+		Self::from_runtime_parts(services, pairing_host, host_session, product)
 	}
 
-	/// Build a product-facing core from shared services and authority.
+	/// Build a product-facing core from shared services, authority and host session.
 	#[instrument(skip_all, fields(runtime.method = "core.from_runtime_parts"))]
 	fn from_runtime_parts(
 		services: Arc<RuntimeServices>,
 		authority: Arc<dyn ProductAuthority>,
+		host_session: Arc<dyn HostSession>,
 		product: ProductContext,
 	) -> Self {
 		let runtime = Arc::new(ProductRuntimeHost::from_services(
 			services.clone(),
 			crate::host_core::ConnectionAdapters::from_services(&services),
-			authority.clone(),
+			authority,
+			host_session.clone(),
 			product,
 		));
-		Self::from_product_runtime(runtime, services.spawner.clone(), authority.session_state())
+		Self::from_product_runtime(runtime, services.spawner.clone(), host_session.session_state())
 	}
 
 	/// Build a dispatcher core around an already-created product runtime.
@@ -90,7 +95,7 @@ impl TrUApiCore {
 		spawner: Spawner,
 		session_state: Arc<SessionState>,
 	) -> Self {
-		let execution_kind = runtime.execution_kind();
+		let execution_kind = runtime.connection().execution_kind();
 		let mut dispatcher = Dispatcher::for_execution(spawner, execution_kind);
 		dispatcher::register(&mut dispatcher, runtime);
 		Self { dispatcher, session_state }

@@ -92,6 +92,10 @@ private extension ProductPermissionPromptViewFactory {
              .statementSubmitAccess,
              .userIdentityAccess:
             title = String(localized: .Products.permissionTitleRemote(productId: productId))
+        case let .jamPeersAccess(genesis):
+            title = String(localized: .Products.permissionTitleJamPeers(
+                productId: productId, shortGenesis: genesis
+            ))
         case .chatAuthority:
             title = String(localized: .Products.permissionTitleChatAuthority(productId: productId))
         case .profileDisclosure:
@@ -145,6 +149,8 @@ private extension ProductPermissionPromptViewFactory {
             String(localized: .Products.permissionBodyPreimageSubmit)
         case .statementSubmitAccess:
             String(localized: .Products.permissionBodyStatementSubmit)
+        case let .jamPeersAccess(genesis):
+            ProductPermission.jamPeersDescription(genesis: genesis)
         case let .deviceCapability(capability):
             capabilityDescription(capability)
         case let .accountAccess(targetProductId):
@@ -172,6 +178,7 @@ private extension ProductPermissionPromptViewFactory {
         case .chainSubmitAccess: "link"
         case .preimageSubmitAccess: "doc.text"
         case .statementSubmitAccess: "text.bubble"
+        case .jamPeersAccess: "network"
         case .userIdentityAccess: "person.text.rectangle"
         case .chatAuthority: "message.badge.shield"
         case .profileDisclosure: "person.crop.circle.badge.checkmark"

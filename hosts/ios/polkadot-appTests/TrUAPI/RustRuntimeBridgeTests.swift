@@ -137,7 +137,10 @@ private func makeBridge(
     preimageCache: TrUAPIPreimageCache = TrUAPIPreimageCache { _ in nil },
     productStorageFails: Bool = false,
     hostProvider: ProductHostProviding = StubHostProvider(),
-    themeManager: MockThemeManager = MockThemeManager()
+    themeManager: MockThemeManager = MockThemeManager(),
+    router: MockNavigationRouter? = nil,
+    chainConnections: (any TrUAPIChainConnecting)? = nil,
+    cardFace: (any ExpandedCardFaceShowing)? = nil
 ) -> RustProductExecutionBridge {
     let router = router ?? MockNavigationRouter()
     let pool = makeRegistryPool(chainRegistry: chainRegistry)

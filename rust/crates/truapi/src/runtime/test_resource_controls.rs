@@ -34,6 +34,9 @@ impl TestResourceControls {
 			truapi::latest::AllocatableResource::StatementStoreAllowance => {
 				"StatementStoreAllowance"
 			},
+			truapi::latest::AllocatableResource::ProductStatementStoreAllowance(_) => {
+				"ProductStatementStoreAllowance"
+			},
 			truapi::latest::AllocatableResource::BulletinAllowance => "BulletinAllowance",
 			truapi::latest::AllocatableResource::SmartContractAllowance(_) => {
 				"SmartContractAllowance"

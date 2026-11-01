@@ -6,7 +6,7 @@ use truapi::{
 	latest::{HostRequestLoginError, HostRequestLoginResponse},
 };
 
-/// Host login, connection state and identity presentation.
+/// Host login and connection state.
 #[crate::platform::async_trait]
 pub trait HostSession: Send + Sync {
 	/// Canonical state shared by connection-status consumers.
@@ -20,7 +20,4 @@ pub trait HostSession: Send + Sync {
 
 	/// Disconnect the active host session and revoke its local grants.
 	async fn disconnect(&self);
-
-	/// Resolve the current session's primary username without prompting.
-	async fn primary_username(&self) -> Option<String>;
 }

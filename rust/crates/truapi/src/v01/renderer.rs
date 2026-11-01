@@ -176,7 +176,7 @@ pub enum Arrangement {
 	Center,
 	/// Distribute with space between children.
 	SpaceBetween,
-	/// Distribute with space around each child.
+	/// Distribute with space around each child: half a gap at each end.
 	SpaceAround,
 	/// Distribute with equal space between and around children.
 	SpaceEvenly,
@@ -196,7 +196,7 @@ pub enum Shape {
 	Square,
 }
 
-/// Border styling.
+/// Border styling. Drawn inside the node, so it never covers a neighbour.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
@@ -210,7 +210,7 @@ pub struct BorderStyle {
 	pub shape: Option<Shape>,
 }
 
-/// Background styling.
+/// Background styling. A shaped background also clips the node's content to its shape.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
@@ -270,7 +270,7 @@ pub enum BlendingMode {
 pub enum Modifier {
 	/// Outer spacing.
 	Margin(Dimensions),
-	/// Inner spacing.
+	/// Inner spacing, around the content: a fixed or minimum size is the content's.
 	Padding(Dimensions),
 	/// Background fill.
 	Background(Background),
@@ -286,7 +286,8 @@ pub enum Modifier {
 	MinHeight(Size),
 	/// Fill the available width.
 	FillWidth(bool),
-	/// Fill the available height.
+	/// Fill the available height. In a `Row` with no height of its own, that is its tallest
+	/// child's.
 	FillHeight(bool),
 	/// 0 is transparent, 255 is opaque.
 	Opacity(u8),
@@ -300,7 +301,7 @@ pub enum Modifier {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct BoxProps {
-	/// Placement of content within the box.
+	/// Placement of content within the box. Top start when absent.
 	pub content_alignment: Option<ContentAlignment>,
 }
 
@@ -312,7 +313,8 @@ pub struct BoxProps {
 pub struct ColumnProps {
 	/// Cross-axis alignment of children.
 	pub horizontal_alignment: Option<HorizontalAlignment>,
-	/// Main-axis distribution of children.
+	/// Main-axis distribution of the height the column was given. Children
+	/// have no gap between them, and a column with no height of its own hugs them.
 	pub vertical_arrangement: Option<Arrangement>,
 }
 
@@ -324,7 +326,8 @@ pub struct ColumnProps {
 pub struct RowProps {
 	/// Cross-axis alignment of children.
 	pub vertical_alignment: Option<VerticalAlignment>,
-	/// Main-axis distribution of children.
+	/// Main-axis distribution of the width the row was given. Children have no
+	/// gap between them, and a row with no width of its own hugs them.
 	pub horizontal_arrangement: Option<Arrangement>,
 }
 
@@ -374,6 +377,7 @@ pub struct ButtonProps {
 }
 
 /// Where image bytes come from. The host fetches them; the tree carries no URL.
+/// The bytes are PNG, JPEG, WebP or SVG.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(tag = "tag", content = "value"))]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -391,7 +395,7 @@ pub enum ImageSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ImageFit {
-	/// The image is not resized.
+	/// The image is not resized: one image pixel to a point.
 	None,
 	/// Resized to fill the container without preserving the aspect ratio.
 	Fill,
@@ -502,7 +506,8 @@ pub enum RendererNode {
 		/// Child nodes.
 		children: Vec<RendererNode>,
 	},
-	/// Flexible space.
+	/// Flexible space: shares out what its stack has left, unless sized along
+	/// the stack's axis.
 	Spacer {
 		/// Layout and styling.
 		modifiers: Vec<Modifier>,
@@ -516,7 +521,7 @@ pub enum RendererNode {
 		/// Child nodes.
 		children: Vec<RendererNode>,
 	},
-	/// Interactive button.
+	/// Interactive button, as wide as the space it is given unless sized.
 	Button {
 		/// Layout and styling.
 		modifiers: Vec<Modifier>,
@@ -532,14 +537,16 @@ pub enum RendererNode {
 		/// Text-field properties.
 		props: TextFieldProps,
 	},
-	/// Image, sized by modifiers.
+	/// Image, sized by modifiers. Without any it takes its natural size, one
+	/// image pixel to a point.
 	Image {
 		/// Layout and styling.
 		modifiers: Vec<Modifier>,
 		/// Image properties.
 		props: ImageProps,
 	},
-	/// Applies its effect to its children.
+	/// Applies its effect to its children. As large as its children, which it
+	/// places at the top start like a `Box`.
 	Effect {
 		/// Effect properties.
 		props: EffectProps,

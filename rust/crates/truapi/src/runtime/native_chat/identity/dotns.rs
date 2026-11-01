@@ -11,10 +11,11 @@ use crate::host_logic::dotns_gateway as gateway;
 #[cfg(test)]
 use crate::host_logic::dotns_gateway::namehash_under;
 use crate::{
+	dotns_name::is_dns_label,
 	dotns_views::{LabelOwner, label_owner, network_tld, protocol_component, tld_node},
 	host_logic::dotns_gateway::{
 		DotnsTransport, account_to_h160, call_no_args, decode_address, discover_pop_controller,
-		is_dns_label, is_pop_issued, resolve_labels,
+		is_pop_issued, resolve_labels,
 	},
 };
 

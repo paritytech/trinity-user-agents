@@ -102,14 +102,17 @@ impl SigningHost {
 		self.check_identity_activation(activation_id)?;
 		let genesis = self.identity_asset_hub().await?;
 		self.check_identity_activation(activation_id)?;
-		let account = self
-			.session_state
-			.current()
-			.and_then(|session| session.identity_account_id)
-			.ok_or_else(|| error("no active local identity"))?;
-		let signed_at = identity::registration_timestamp(&self.services.chain, genesis, account)
+		let signed_at = identity::registration_timestamp(&self.services.chain, genesis)
 			.await
 			.map_err(error)?;
+		let chains = features::supported_chains(self.platform.as_ref()).await?;
+		let people = features::genesis_for(&chains, ChainIdentifier::People)
+			.ok_or_else(|| error("People chain is not configured"))?;
+		let (people_signing_context, asset_hub_signing_context) = futures::try_join!(
+			identity::registration_signing_context(&self.services.chain, people, "PeopleLite"),
+			identity::registration_signing_context(&self.services.chain, genesis, "DotnsGateway"),
+		)
+		.map_err(error)?;
 		// Loaded before the activation lock: the browser fetches `verifiable`
 		// on first use, and its operations below are then synchronous.
 		let vrf = crate::runtime::vrf::load().await.map_err(error)?;
@@ -126,6 +129,8 @@ impl SigningHost {
 			username_base,
 			None,
 			signed_at,
+			people_signing_context,
+			asset_hub_signing_context,
 			vrf.member(&vrf_entropy).map_err(error)?,
 			|message| {
 				let signature = vrf.sign(&vrf_entropy, message).map_err(|err| err.to_string())?;

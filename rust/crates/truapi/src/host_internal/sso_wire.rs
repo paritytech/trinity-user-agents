@@ -6,7 +6,7 @@
 
 use core::fmt::Display;
 
-use truapi::{latest::HostAccountSignVrfError, versioned::account::HostProductDeviceChatError};
+use truapi::latest::{HostAccountSignVrfError, HostProductDeviceChatError};
 
 use super::sso_messages::{
 	PaymentTopUpError, RemoteMessage, RemoteMessageData, Response, RingVrfError, v1,
@@ -52,13 +52,13 @@ impl SsoError for HostAccountSignVrfError {
 
 impl SsoError for HostProductDeviceChatError {
 	fn not_connected() -> Self {
-		Self::V1(truapi::latest::HostProductDeviceChatError::NotConnected)
+		Self::NotConnected
 	}
 }
 
 impl SsoError for PaymentTopUpError {
 	fn not_connected() -> Self {
-		Self(truapi::v01::HostPaymentTopUpError::Unknown {
+		Self(truapi::latest::HostPaymentTopUpError::Unknown {
 			reason: "Wallet session is not active".to_string(),
 		})
 	}

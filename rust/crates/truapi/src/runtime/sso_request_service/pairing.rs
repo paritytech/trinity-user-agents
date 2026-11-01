@@ -247,7 +247,7 @@ impl<'a> SsoPairingFlow<'a> {
 			response.peer_statement_account_id,
 			response.success.sso_enc_pub_key,
 		)?;
-		let session = SessionInfo {
+		let mut session = SessionInfo {
 			public_key: response.success.root_account_id,
 			sso: Some(sso),
 			root_entropy_source: Some(response.success.root_entropy_source),
@@ -257,17 +257,23 @@ impl<'a> SsoPairingFlow<'a> {
 			lite_username: None,
 			full_username: None,
 		};
-		let resolve_session = resolve_session_identity_with_chain(
-			&self.host.chain,
-			self.host.host_config.asset_hub_chain_genesis_hash,
-			session,
-		)
-		.fuse();
-		pin_mut!(resolve_session);
-		let session = futures::select! {
-			_ = cancel => return Ok(SsoPairingOutcome::Cancelled),
-			session = resolve_session => session,
-		};
+		{
+			let resolve_session = resolve_session_identity_with_chain(
+				&self.host.chain,
+				self.host.host_config.asset_hub_chain_genesis_hash,
+				&mut session,
+			)
+			.fuse();
+			pin_mut!(resolve_session);
+			futures::select! {
+				_ = cancel => return Ok(SsoPairingOutcome::Cancelled),
+				result = resolve_session => {
+					if let Err(reason) = result {
+						tracing::warn!(%reason, "paired session identity lookup unavailable");
+					}
+				},
+			}
+		}
 		let persist_session = self
 			.host
 			.platform
@@ -344,11 +350,18 @@ async fn write_last_processed_pairing_statement(
 	statement: &[u8],
 ) {
 	if let Err(err) = storage
-		.write_core_storage(CoreStorageKey::LastProcessedPairingStatement, statement.to_vec())
+		.write_core_storage(
+			CoreStorageKey::LastProcessedPairingStatement,
+			pairing_statement_fingerprint(statement),
+		)
 		.await
 	{
 		debug!("last processed pairing statement write failed: {err:?}");
 	}
+}
+
+fn pairing_statement_fingerprint(statement: &[u8]) -> Vec<u8> {
+	blake2b_simd::Params::new().hash_length(32).hash(statement).as_bytes().to_vec()
 }
 
 #[instrument(skip_all, fields(runtime.method = "sso.auth_session.clear"))]
@@ -532,7 +545,9 @@ fn handle_v2_pairing_result(
 		parse_new_statements_result("pairing".to_string(), value).map_err(|err| err.to_string())?;
 	let mut pending = false;
 	for statement in page.statements {
-		if last_processed_statement == Some(statement.as_slice()) {
+		if last_processed_statement
+			.is_some_and(|fingerprint| fingerprint == pairing_statement_fingerprint(&statement))
+		{
 			continue;
 		}
 		match PairingProgress::from_v2_statement(&statement, core_encryption_secret_key)? {
@@ -1095,10 +1110,11 @@ mod tests {
 			},
 		});
 
+		let fingerprint = pairing_statement_fingerprint(&statement);
 		let ignored = handle_v2_pairing_result(
 			&page,
 			bootstrap.encryption_secret_key,
-			Some(statement.as_slice()),
+			Some(fingerprint.as_slice()),
 		)
 		.unwrap();
 		assert!(ignored.is_none());

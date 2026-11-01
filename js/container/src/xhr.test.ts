@@ -440,9 +440,9 @@ describe('XHR permission gating', () => {
   it('rejects synchronous XHR and defers immediate send failures', () => {
     const { win } = gated();
     const xhr = new win.XMLHttpRequest();
-    for (const async of [false, undefined, null, 0]) {
+    for (const asynchronous of [false, undefined, null, 0]) {
       expect(() =>
-        xhr.open('GET', 'https://api.example/data', async as any),
+        xhr.open('GET', 'https://api.example/data', asynchronous as any),
       ).toThrow('synchronous');
     }
     for (const failure of [

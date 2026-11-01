@@ -11,7 +11,7 @@ func makeExecutionModel(
     return RustRuntimeEnvironment.ExecutionModel(
         execution: execution,
         chainConnections: chainConnections,
-        osPermissionAsker: osPermissionAsker,
+        osPermissionAsker: OSPermissionAsker(),
         bridge: bridge
     )
 }

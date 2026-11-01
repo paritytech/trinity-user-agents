@@ -64,6 +64,11 @@ impl SsoSessionKey {
 	pub fn from_session(session: &SsoSessionInfo) -> Self {
 		Self { own: session.session_id_own, peer: session.session_id_peer }
 	}
+
+	/// Whether this key still identifies the selected paired session.
+	pub fn matches(&self, state: &crate::host_logic::session::SessionState) -> bool {
+		state.matches_sso_session_ids(&self.own, &self.peer)
+	}
 }
 
 /// Unregisters a disconnect waiter when the waiting call finishes.

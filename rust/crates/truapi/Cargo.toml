@@ -1,6 +1,6 @@
 [package]
 name = "truapi"
-version = "0.26.0"
+version = "0.27.0"
 edition.workspace = true
 license = "MIT AND AGPL-3.0-only"
 description = "TrUAPI trait and type definitions, and the runtime hosts embed"
@@ -100,6 +100,8 @@ runtime = [
     "dep:async-sqlite",
     "dep:rusqlite_migration",
     "dep:itertools",
+    "dep:binary-merkle-tree",
+    "dep:hash-db",
 ]
 wasm-signing-host = ["runtime"]
 # Test-host-only shortcuts a shipping host must not carry, such as answering
@@ -125,7 +127,7 @@ scale-decode = { workspace = true, features = ["derive"], optional = true }
 # Metadata decoding backs allowance registration, which both the native and the
 # wasm host perform, so these are not target-gated.
 frame-metadata = { workspace = true, features = ["std", "current", "decode"], optional = true }
-scale-info = { workspace = true, features = ["decode"], optional = true }
+scale-info = { workspace = true, features = ["decode", "derive"], optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
@@ -171,10 +173,13 @@ rcgen = { version = "0.14", default-features = false, features = ["crypto", "rin
 ring = { version = "0.17", optional = true }
 rustls = { version = "0.23", default-features = false, features = ["std", "ring"], optional = true }
 x509-parser = { version = "0.17", optional = true }
-rusqlite = { workspace = true, features = ["bundled", "fallible_uint", "hooks"], optional = true }
+rusqlite = { workspace = true, features = ["array", "bundled", "fallible_uint", "hooks"], optional = true }
 async-sqlite = { workspace = true, features = ["bundled"], optional = true }
 rusqlite_migration = { workspace = true, optional = true }
 itertools = { workspace = true, optional = true }
+# The clearing root of an NFT operation.
+binary-merkle-tree = { workspace = true, optional = true }
+hash-db = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 futures-timer = { workspace = true, features = ["wasm-bindgen"], optional = true }
@@ -189,6 +194,7 @@ web-time = { workspace = true, optional = true }
 web-sys = { workspace = true, features = ["console"], optional = true }
 
 [dev-dependencies]
+bip39 = { workspace = true }
 scale-info = { workspace = true, features = ["std"] }
 strum = { workspace = true }
 

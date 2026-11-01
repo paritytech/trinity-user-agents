@@ -13,23 +13,27 @@ use std::{
 #[cfg(not(target_arch = "wasm32"))]
 use crate::durable::{DurableTxEngine, DurableWorkObserver};
 #[cfg(not(target_arch = "wasm32"))]
-use crate::nft_purse::NftPurses;
-#[cfg(not(target_arch = "wasm32"))]
 use crate::store::{Db, DbError};
 use crate::{
-	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
+	chain::ExtrinsicService,
+	chain_runtime::{ChainRuntime, HostChainProvider},
 	host_logic::worker::WorkerLedger,
 	platform::{
-		CoinageWalletHost, HostInfo, JsonRpcConnection, PermissionAuthorizationRequest,
-		PermissionStatusHost, Platform,
+		CoinageWalletHost, HostInfo, PermissionAuthorizationRequest, PermissionStatusHost, Platform,
 	},
 	runtime::{
-		bulletin_rpc::BulletinRpc, media::MediaService, signing_host::DevicePairingObserver,
-		statement_store_rpc::StatementStoreRpc,
+		bulletin_rpc::BulletinRpc, media::MediaService,
+		sso_responder_service::DevicePairingObserver, statement_store_rpc::StatementStoreRpc,
 	},
 	subscription::Spawner,
 };
-use async_trait::async_trait;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::{
+	encrypted_storage::EncryptedStorage,
+	installation::InstallationIdProvider,
+	nft::{HoldingTracker, NftLedger},
+	nft_purse::{NftPurses, NftPursesDeps, StaticReceiveSecret},
+};
 use truapi::latest;
 
 /// Upper bound on the in-core preimage cache. The cache is a bridge until
@@ -73,6 +77,8 @@ pub struct RuntimeServices {
 	/// Host Pocket adapter, installed once at startup by a host with a Pocket
 	/// surface. Unset leaves every product Pocket call `Unsupported`.
 	pocket_platform: OnceLock<Arc<dyn crate::platform::PocketPlatform>>,
+	/// Funding sessions shared by every product runtime of this host.
+	funding: Arc<crate::runtime::funding::FundingRegistry>,
 	/// Host contacts adapter, installed once at startup by a host with a
 	/// contact picker. Unset leaves every product contacts call `Unsupported`.
 	contacts_platform: OnceLock<Arc<dyn crate::platform::ContactsPlatform>>,
@@ -108,9 +114,28 @@ pub struct RuntimeServices {
 	media_permission_revision: AtomicU64,
 	/// Live product Media services, without retaining product runtimes.
 	media: Mutex<Vec<Weak<MediaService>>>,
+	/// Live connections whose stored permission namespaces may change externally.
+	connections: Mutex<Vec<Weak<super::ProductConnection>>>,
 	/// Durable transaction engine over the core database, installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	durable_engine: OnceLock<Arc<DurableTxEngine>>,
+	/// The NFT ledger (purse records and item keys) over the core database,
+	/// installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	nft_ledger: OnceLock<NftLedger>,
+	/// The secret that opens `Static` NFT cheques, installed with the ledger.
+	#[cfg(not(target_arch = "wasm32"))]
+	static_receive_secret: OnceLock<Arc<dyn StaticReceiveSecret>>,
+	/// Keeps the ledger's holdings in step with the chain, installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	holding_tracker: OnceLock<HoldingTracker>,
+	/// Provider of the installation id NFT purse item keys are derived under.
+	#[cfg(not(target_arch = "wasm32"))]
+	installation_provider: OnceLock<Arc<dyn InstallationIdProvider>>,
+	/// Host storage encrypted at rest, for secrets the core database must not
+	/// hold.
+	#[cfg(not(target_arch = "wasm32"))]
+	encrypted_storage: OnceLock<Arc<dyn EncryptedStorage>>,
 	/// Host observer told whether durable work is pending. Unset leaves
 	/// recovery to whoever calls it.
 	#[cfg(not(target_arch = "wasm32"))]
@@ -124,6 +149,8 @@ pub struct RuntimeServices {
 	pub chain: ChainRuntime,
 	/// Configured People chain for native Chat identity and main-purse Coinage.
 	pub(crate) people_chain_genesis_hash: [u8; 32],
+	/// Builds the core's own extrinsics over `chain`.
+	pub extrinsics: Arc<ExtrinsicService>,
 	/// People-chain statement store RPC client.
 	pub statement_store: StatementStoreRpc,
 	/// In-core Bulletin submission over the configured Bulletin chain.
@@ -193,11 +220,17 @@ impl RuntimeServices {
 		chat_platform: Option<Arc<dyn crate::platform::ChatPlatform>>,
 		native_wallet: Option<Arc<dyn CoinageWalletHost>>,
 	) -> Arc<Self> {
-		let chain_provider = Arc::new(HostChainProvider { platform: platform.clone() });
+		let chain_provider = Arc::new(HostChainProvider::new(platform.clone()));
 		let chain = ChainRuntime::new(chain_provider, spawner.clone());
-		let statement_store =
-			StatementStoreRpc::new(platform.clone(), people_chain_genesis_hash, spawner.clone());
-		let bulletin = BulletinRpc::new(chain.clone(), bulletin_chain_genesis_hash);
+		let statement_store = StatementStoreRpc::new(
+			platform.clone(),
+			chain.clone(),
+			people_chain_genesis_hash,
+			spawner.clone(),
+		);
+		let extrinsics = Arc::new(ExtrinsicService::over_chain(chain.clone(), platform.clone()));
+		let bulletin =
+			BulletinRpc::new(chain.clone(), extrinsics.clone(), bulletin_chain_genesis_hash);
 		Arc::new(Self {
 			receiving: Arc::new(crate::runtime::receiving::ReceivingService::new(
 				platform.clone(),
@@ -210,6 +243,8 @@ impl RuntimeServices {
 			native_wallet,
 			permission_status: OnceLock::new(),
 			pocket_platform: OnceLock::new(),
+			funding: Arc::new(crate::runtime::funding::FundingRegistry::default()),
+
 			profile_platform: OnceLock::new(),
 			contact_avatars: Default::default(),
 			profile_state_gate: Default::default(),
@@ -227,14 +262,26 @@ impl RuntimeServices {
 			media_permission_gate: futures::lock::Mutex::new(()),
 			media_permission_revision: AtomicU64::new(0),
 			media: Mutex::new(Vec::new()),
+			connections: Mutex::new(Vec::new()),
 			#[cfg(not(target_arch = "wasm32"))]
 			durable_engine: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			nft_ledger: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			static_receive_secret: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			holding_tracker: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			installation_provider: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			encrypted_storage: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			durable_work_observer: OnceLock::new(),
 			asset_hub_chain_genesis_hash,
 			worker_ledger: WorkerLedger::default(),
 			chain,
 			people_chain_genesis_hash,
+			extrinsics,
 			statement_store,
 			bulletin,
 			automatic_preimage_gate: futures::lock::Mutex::new(()),
@@ -490,10 +537,63 @@ impl RuntimeServices {
 		self.durable_engine.get().cloned()
 	}
 
-	/// NFT purses over the core database, once it is installed.
+	/// Install the NFT ledger. Set-once, like the database it runs on.
+	/// Returns whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_nft_ledger(&self, ledger: NftLedger) -> bool {
+		self.nft_ledger.set(ledger).is_ok()
+	}
+
+	/// Install the secret that opens `Static` NFT cheques. Set-once; returns
+	/// whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_static_receive_secret(&self, secret: Arc<dyn StaticReceiveSecret>) -> bool {
+		self.static_receive_secret.set(secret).is_ok()
+	}
+
+	/// Install the tracker of NFT holdings, which runs for as long as the
+	/// services live. Set-once; returns whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_holding_tracker(&self, tracker: HoldingTracker) -> bool {
+		self.holding_tracker.set(tracker).is_ok()
+	}
+
+	/// Install the provider of the installation id. Set-once; returns
+	/// whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_installation_provider(&self, provider: Arc<dyn InstallationIdProvider>) -> bool {
+		self.installation_provider.set(provider).is_ok()
+	}
+
+	/// The provider of the installation id, once installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn installation_provider(&self) -> Option<Arc<dyn InstallationIdProvider>> {
+		self.installation_provider.get().cloned()
+	}
+
+	/// Install the host storage encrypted at rest. Set-once; returns whether
+	/// this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_encrypted_storage(&self, storage: Arc<dyn EncryptedStorage>) -> bool {
+		self.encrypted_storage.set(storage).is_ok()
+	}
+
+	/// The host storage encrypted at rest, once installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn encrypted_storage(&self) -> Option<Arc<dyn EncryptedStorage>> {
+		self.encrypted_storage.get().cloned()
+	}
+
+	/// NFT purses, once their ledger, the encrypted storage and the static
+	/// receive secret are installed.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn nft_purses(&self) -> Option<NftPurses> {
-		self.core_db.get().cloned().map(NftPurses::new)
+		let ledger = self.nft_ledger.get().cloned()?;
+		let db = self.core_db.get().cloned()?;
+		let encrypted = self.encrypted_storage.get().cloned()?;
+		let static_secret = self.static_receive_secret.get().cloned()?;
+		let statements = Arc::new(self.statement_store.clone());
+		Some(NftPurses::new(NftPursesDeps { ledger, db, encrypted, static_secret, statements }))
 	}
 
 	/// Install the host's durable work observer. Returns whether this call
@@ -664,35 +764,49 @@ impl StatementCache {
 	}
 }
 
-/// Adapter from `crate::platform::ChainProvider` into the
-/// [`RuntimeChainProvider`] surface the chain runtime expects.
-struct HostChainProvider {
-	platform: Arc<dyn Platform>,
-}
-
-#[async_trait]
-impl RuntimeChainProvider for HostChainProvider {
-	async fn connect(
-		&self,
-		genesis_hash: Vec<u8>,
-	) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
-		let genesis_hash: [u8; 32] = genesis_hash.try_into().map_err(|genesis_hash: Vec<u8>| {
-			RuntimeFailure::host_failure(
-				"remote_chain_connect",
-				format!("genesis_hash must be 32 bytes, got {}", genesis_hash.len()),
-			)
-		})?;
-		self.platform.connect(genesis_hash).await.map(Arc::from).map_err(|err| {
-			RuntimeFailure::unavailable_with_reason("remote_chain_connect", format!("{err:?}"))
-		})
-	}
-}
-
 /// The open scan. Frees the slot when dropped.
 pub struct ScanClaim<'a>(&'a AtomicBool);
 
 impl Drop for ScanClaim<'_> {
 	fn drop(&mut self) {
 		self.0.store(false, Ordering::Release);
+	}
+}
+
+impl RuntimeServices {
+	/// Register a connection without extending its execution lifetime.
+	pub fn register_connection(&self, connection: &Arc<super::ProductConnection>) {
+		let mut connections = self.connections.lock().expect("connection registry mutex poisoned");
+		connections.retain(|entry| entry.strong_count() != 0);
+		connections.push(Arc::downgrade(connection));
+	}
+
+	/// Apply an external stored-policy notification to every live product in its namespace.
+	pub async fn refresh_permission_authorization_namespace(
+		&self,
+		namespace: &str,
+		request: PermissionAuthorizationRequest,
+	) -> Result<(), latest::GenericError> {
+		let connections = {
+			let mut registry = self.connections.lock().expect("connection registry mutex poisoned");
+			registry.retain(|entry| entry.strong_count() != 0);
+			registry
+				.iter()
+				.filter_map(Weak::upgrade)
+				.filter(|connection| connection.product_id().bare_label() == namespace)
+				.collect::<Vec<_>>()
+		};
+		let mut failure = None;
+		for connection in connections {
+			if let Err(error) = connection.refresh_permission_authorization(request.clone()).await {
+				failure = Some(error);
+			}
+		}
+		failure.map_or(Ok(()), Err)
+	}
+
+	/// Funding sessions shared by every product runtime of this host.
+	pub fn funding(&self) -> &Arc<crate::runtime::funding::FundingRegistry> {
+		&self.funding
 	}
 }

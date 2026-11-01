@@ -21,6 +21,22 @@ product, as payment ids are, so a product that reloads while the overlay is up s
 that goes away does not leave it open; a session the user dismisses ends its watchers as `Failed { Cancelled }`. The Worker
 manifest's `includes.funding` is defined in the [product manifest RFC](product-manifest.md#funding-configuration).
 
+### Integration boundary
+
+The host overlay is optional and separate from Rust-owned Coinage custody. Rust hosts install `FundingPlatform`;
+native hosts install `NativeFundingCallbacks` with `set_funding_callbacks`. An unconfigured host leaves the adapter
+absent and receives `Unsupported`. The status callback reports committed core state; returning `Started` from the
+overlay does not prove settlement. The production provider/settlement flow below remains a proposal, not an available
+shell settlement callback. Only explicit `test-host` builds expose simulated settlement.
+
+The integrated feature-line storage layout preserves existing Coinage and Chat keys and assigns `FundingSessions`,
+`FundingSessionsUnreadable`, and `FundingSessionPack` SCALE indexes 23, 24, and 25. Standalone canonical 0.27 used
+13, 17, and 18 for these unit keys; those indexes already identify wallet-scoped feature-line records. No automatic
+cross-layout migration is performed. A standalone canonical funding store requires an explicit migration before use:
+full encoded keys distinguish the layouts, but classifying only the first byte does not. Do not install against an
+existing wallet profile to test this integration; use disposable profiles until migration and native validation are approved.
+
+
 ## Motivation
 
 Onramps differ in every step that matters: the rails they take, their KYC, how they convert and pay out, and the

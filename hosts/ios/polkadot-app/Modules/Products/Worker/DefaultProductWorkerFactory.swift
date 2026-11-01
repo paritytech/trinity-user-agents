@@ -89,13 +89,17 @@ final class DefaultProductWorkerFactory: ProductWorkerFactory, @unchecked Sendab
                 runtime: try runtimeProvider.sharedRuntime(),
                 chainRegistry: chainRegistry,
                 notificationScheduler: ProductNotificationScheduler.shared,
+                gameReminders: nil,
                 ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
                 hostProvider: hostProvider,
+                themeManager: ThemeManager.shared,
                 logger: logger
             )
-            let execution = try environment.makeWorkerExecution(
-                productId: productId, routers: ProductRoutersFacade.worker()
-            )
+            let execution = try await MainActor.run {
+                try environment.makeWorkerExecution(
+                    productId: productId, routers: ProductRoutersFacade.worker()
+                )
+            }
             let worker = RustProductWorker(
                 productUrl: engineContext.productUrl,
                 execution: execution,

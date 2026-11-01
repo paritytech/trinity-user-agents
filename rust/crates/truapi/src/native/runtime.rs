@@ -8,7 +8,7 @@ use std::{
 
 use crate::platform::{
 	CoinageWalletHost, CoreAdmin, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
-	ProductContext, ProductExecutionKind,
+	ProductContext, ProductExecutionKind, ProductId,
 };
 use parity_scale_codec::{Decode, Encode};
 use truapi::{Bytes32, v01};
@@ -37,7 +37,7 @@ use super::parse_pairing_deeplink;
 use super::{
 	callbacks::{
 		HostCallbacks, NativeChatCallbacks, NativeCoinageCallbacks, NativeContactsCallbacks,
-		NativeGameCallbacks, NativePocketCallbacks, NativeScannerCallbacks,
+		NativeFundingCallbacks, NativeGameCallbacks, NativePocketCallbacks, NativeScannerCallbacks,
 	},
 	config::{
 		HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
@@ -48,8 +48,9 @@ use super::{
 	executor::shared_native_executor,
 	media::{MediaCallbackPlatform, NativeMediaCallbacks},
 	platform::{
-		CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, GameCallbackPlatform,
-		NativeCoinageCallbackPlatform, PocketCallbackPlatform, ScannerCallbackPlatform,
+		CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, FundingCallbackPlatform,
+		GameCallbackPlatform, NativeCoinageCallbackPlatform, PocketCallbackPlatform,
+		ScannerCallbackPlatform,
 	},
 };
 #[cfg(doc)]
@@ -72,9 +73,11 @@ pub struct NativeTrUApiHostRuntime {
 	spawner: Spawner,
 	ws_bridge: Arc<SharedWsBridge>,
 	/// The one Worker execution per product; opening another replaces it.
-	worker_executions: Mutex<HashMap<String, Weak<NativeProductExecution>>>,
+	worker_executions: Mutex<HashMap<ProductId, Weak<NativeProductExecution>>>,
 	callbacks: Arc<dyn HostCallbacks>,
 	executions: parking_lot::Mutex<Vec<Weak<NativeProductExecution>>>,
+	/// Forwards core warnings to the host of this runtime until the runtime drops.
+	_host_sink: crate::logging::HostSinkRegistration,
 }
 
 impl NativeTrUApiHostRuntime {
@@ -86,6 +89,31 @@ impl NativeTrUApiHostRuntime {
 		log_detail: &str,
 	) -> Result<Arc<Self>, NativeRuntimeConfigError> {
 		crate::logging::init();
+		// Installed before the rest of startup, so the warnings raised on the way
+		// up reach this host rather than falling in a gap. A runtime that does
+		// not finish starting puts back the sink it displaced as its
+		// registration drops, so a failed start cannot silence a host that is
+		// already running.
+		//
+		// Events the core addresses to a host, and its warnings, reach this log
+		// regardless of the trace level, which defaults to ERROR and so drops
+		// everything the core would otherwise say about itself. The callbacks are
+		// held weakly so a line in flight cannot resurrect a host being torn down.
+		let log_callbacks = Arc::downgrade(&callbacks);
+		let host_sink = crate::logging::set_host_sink(Arc::new(move |marker, detail| {
+			if let Some(callbacks) = log_callbacks.upgrade() {
+				callbacks.on_core_log(marker.to_string(), detail.to_string());
+			}
+		}));
+		// Raised through tracing rather than called directly, so a host log
+		// carries proof that the layer forwarding to this sink is alive. A host
+		// that reaches a later condition and sees nothing can tell a quiet core
+		// from a channel that was never wired.
+		tracing::info!(
+			target: "truapi.core.started",
+			"truapi {} is logging to this host",
+			env!("CARGO_PKG_VERSION"),
+		);
 		callbacks.on_core_log(log_marker.to_string(), log_detail.to_string());
 		let executor = shared_native_executor().map_err(|err| {
 			NativeRuntimeConfigError::RuntimeUnavailable { reason: err.to_string() }
@@ -118,21 +146,30 @@ impl NativeTrUApiHostRuntime {
 		runtime.set_identity_backend_host(platform.clone());
 		runtime.set_permission_status_host(platform.clone());
 		assert!(
-			runtime.worker_ledger().install_demand_observer(platform.clone()),
-			"a freshly built runtime installs its worker demand observer once"
+			runtime.worker_ledger().install_worker_controller(platform.clone()),
+			"a freshly built runtime installs its worker controller once"
 		);
 		assert!(
 			runtime.set_durable_work_observer(platform.clone()),
 			"a freshly built runtime installs its durable work observer once"
 		);
 		assert!(
-			runtime.set_device_pairing_observer(platform),
+			runtime.set_device_pairing_observer(platform.clone()),
 			"a freshly built runtime installs its device pairing observer once"
 		);
 		assert!(
 			runtime.set_core_db(core_db),
 			"a freshly built runtime installs its core database once"
 		);
+		assert!(
+			runtime.set_installation_provider(platform.clone()),
+			"a freshly built runtime installs its installation provider once"
+		);
+		assert!(
+			runtime.set_encrypted_storage(platform),
+			"a freshly built runtime installs its encrypted storage once"
+		);
+		runtime.start_core_services();
 		if let Some(secret) = runtime_config.local_session_secret {
 			futures::executor::block_on(runtime.activate_local_session_with_identity(
 				secret,
@@ -152,6 +189,7 @@ impl NativeTrUApiHostRuntime {
 				callbacks.on_core_log(marker.to_string(), detail.to_string());
 			}))),
 			worker_executions: Mutex::new(HashMap::new()),
+			_host_sink: host_sink,
 		}))
 	}
 
@@ -235,10 +273,9 @@ impl NativeTrUApiHostRuntime {
 
 	fn close_permission_executions(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 		request: &PermissionAuthorizationRequest,
 	) {
-		use crate::host_internal::product_manifest::bare_product_label;
 		let account_access =
 			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
 		let executions: Vec<_> = self
@@ -247,10 +284,9 @@ impl NativeTrUApiHostRuntime {
 			.iter()
 			.filter_map(Weak::upgrade)
 			.filter(|execution| {
-				execution.product.product_id == product_id ||
+				&execution.product.product_id == product_id ||
 					(account_access &&
-						bare_product_label(&execution.product.product_id) ==
-							bare_product_label(product_id))
+						execution.product.product_id.bare_label() == product_id.bare_label())
 			})
 			.collect();
 		for execution in executions {
@@ -258,7 +294,7 @@ impl NativeTrUApiHostRuntime {
 		}
 		// Storage notifications precede shutdown; this final notification lets
 		// shells dispose WebViews/media owned by now-closed executions.
-		self.callbacks.permission_authorizations_changed(product_id.to_owned());
+		self.callbacks.permission_authorizations_changed(product_id.to_string());
 	}
 
 	async fn permission_storage_keys(
@@ -285,8 +321,12 @@ impl NativeTrUApiHostRuntime {
 }
 
 fn permission_product(product_id: String) -> Result<ProductContext, HostRejection> {
-	ProductContext::new(product_id)
-		.map_err(|error| HostRejection::Rejected { reason: error.to_string() })
+	product_id
+		.parse()
+		.map(ProductContext::new)
+		.map_err(|error: crate::platform::ProductIdError| HostRejection::Rejected {
+			reason: error.to_string(),
+		})
 }
 
 /// A refused pairing call on the signing host's responder side.
@@ -341,6 +381,49 @@ pub struct NativeAnnouncedPairing {
 
 #[uniffi::export]
 impl NativeTrUApiHostRuntime {
+	/// Install a configured funding overlay once, before opening product executions.
+	pub fn set_funding_callbacks(&self, callbacks: Arc<dyn NativeFundingCallbacks>) -> bool {
+		self.runtime
+			.set_funding_platform(Arc::new(FundingCallbackPlatform { funding: callbacks }))
+	}
+
+	/// Open a host-owned session; returns `None` when dismissed before starting.
+	pub async fn open_funding(
+		&self,
+		direction: v01::FundingDirection,
+		amount: Option<u128>,
+	) -> Result<Option<String>, HostRejection> {
+		Ok(self.runtime.open_funding(direction, amount).await?)
+	}
+
+	/// Read a session for the host's status and history views.
+	pub fn funding_session(
+		&self,
+		intent: String,
+	) -> Option<crate::host_logic::funding::FundingSession> {
+		self.runtime.funding_session(&intent)
+	}
+
+	/// Retained sessions, in flight first and newest first within each stage.
+	pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
+		self.runtime.funding_sessions()
+	}
+
+	/// Recorded and compacted terminal sessions, newest first.
+	pub fn funding_history(&self) -> Vec<crate::host_logic::funding::FundingSessionSummary> {
+		self.runtime.funding_history()
+	}
+
+	/// Acknowledge an outcome only after saving it to host history.
+	pub async fn acknowledge_funding_session(&self, intent: String) -> Result<bool, HostRejection> {
+		Ok(self.runtime.acknowledge_funding_session(&intent).await?)
+	}
+
+	/// Cancel an open session, returning whether it was still open.
+	pub async fn cancel_funding(&self, intent: String) -> Result<bool, HostRejection> {
+		Ok(self.runtime.cancel_funding(&intent).await?)
+	}
+
 	/// Construct one host-level runtime and optionally activate its local session.
 	/// Pass native custody once here; omitting it selects the built-in Rust wallet.
 	#[uniffi::constructor]
@@ -518,13 +601,10 @@ impl NativeTrUApiHostRuntime {
 		&self,
 		product_id: String,
 	) -> Result<Vec<PermissionAuthorizationEntry>, HostRejection> {
-		use crate::host_internal::{
-			permissions::{authorization_key, stored_authorization_status},
-			product_manifest::bare_product_label,
-		};
+		use crate::host_internal::permissions::{authorization_key, stored_authorization_status};
 		let product = permission_product(product_id)?;
 		let admin = self.runtime.product_admin(product.clone());
-		let scope = admin.product_runtime().permissions_service().scope();
+		let scope = admin.product_runtime().connection().permissions_service().scope();
 		let _mutation = scope.mutation.lock().await;
 		let mut entries =
 			std::collections::BTreeMap::<Vec<u8>, PermissionAuthorizationEntry>::new();
@@ -536,9 +616,9 @@ impl NativeTrUApiHostRuntime {
 			else {
 				continue;
 			};
-			if owner != &product.product_id &&
+			if owner != product.product_id.as_str() &&
 				!(matches!(request, PermissionAuthorizationRequest::AccountAccess { .. }) &&
-					owner == bare_product_label(&product.product_id))
+					owner == product.product_id.bare_label())
 			{
 				continue;
 			}
@@ -547,7 +627,7 @@ impl NativeTrUApiHostRuntime {
 			// Historical full-owner/target account aliases are not authority.
 			// Read the normalized slot so aliases never display phantom grants.
 			let status = stored_authorization_status(
-				admin.product_runtime().services().platform.as_ref(),
+				admin.product_runtime().connection().services().platform.as_ref(),
 				canonical.clone(),
 			)
 			.await?
@@ -585,6 +665,7 @@ impl NativeTrUApiHostRuntime {
 			.runtime
 			.product_admin(product)
 			.product_runtime()
+			.connection()
 			.permissions_service()
 			.scope()
 			.revision())
@@ -625,6 +706,7 @@ impl NativeTrUApiHostRuntime {
 		let admin = self.runtime.product_admin(product.clone());
 		let result = admin
 			.product_runtime()
+			.connection()
 			.permissions_service()
 			.commit_if_current(&request, status, revision)
 			.await;
@@ -646,11 +728,12 @@ impl NativeTrUApiHostRuntime {
 		for entry in entries {
 			admin
 				.product_runtime()
+				.connection()
 				.permissions_service()
 				.import_authorization_status(&entry.request, entry.status)
 				.await?;
 		}
-		self.permission_authorizations(product.product_id).await
+		self.permission_authorizations(product.product_id.into()).await
 	}
 
 	/// Install the host's contacts adapter, which owns the contact list and
@@ -722,8 +805,7 @@ impl NativeTrUApiHostRuntime {
 		product_id: String,
 		request: PermissionAuthorizationRequest,
 	) -> Result<PermissionAuthorizationStatus, HostRejection> {
-		let product = ProductContext::new_with_execution(product_id, ProductExecutionKind::App)
-			.map_err(|error| HostRejection::Rejected { reason: error.to_string() })?;
+		let product = permission_product(product_id)?;
 		Ok(self
 			.runtime
 			.product_admin(product)
@@ -733,17 +815,28 @@ impl NativeTrUApiHostRuntime {
 
 	/// Take one reference on the product's worker for a modality holder. The
 	/// first one reports [`WorkerTransition::Start`] to the runtime's
-	/// [`HostCallbacks::worker_demand_changed`]; pair every call with one
-	/// [`Self::release_worker`].
+	/// [`HostCallbacks::request_worker_transition`]; pair every call with one
+	/// [`Self::release_worker`]. An id that is not a product id is logged and
+	/// dropped.
 	pub fn acquire_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().acquire(&product_id);
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
+			Err(error) => {
+				tracing::warn!(%error, "worker reference for an id that is not a product id")
+			},
+		}
 	}
 
 	/// Release one reference. The last one reports
 	/// [`WorkerTransition::Stop`], after which the host may stop the worker;
 	/// releasing with none held is a no-op.
 	pub fn release_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().release(&product_id);
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
+			Err(error) => {
+				tracing::warn!(%error, "worker reference for an id that is not a product id")
+			},
+		}
 	}
 
 	/// Tell the pairing host behind `deeplink` that allowance allocation is
@@ -856,6 +949,7 @@ impl NativeTrUApiHostRuntime {
 		product_id: String,
 		request: PermissionAuthorizationRequest,
 	) -> Result<(), HostRejection> {
+		let product_id = permission_product(product_id)?.product_id;
 		self.runtime.refresh_permission_authorization(&product_id, request).await?;
 		Ok(())
 	}
@@ -1147,10 +1241,34 @@ impl NativeProductExecution {
 		let response = self
 			.admin()
 			.product_runtime()
-			.authorize_remote_permission(
-				&truapi::CallContext::default(),
-				truapi::versioned::permissions::RemotePermissionRequest::V1(request),
-			)
+			.authorize_remote_permission(&truapi::CallContext::default(), request.into())
+			.await
+			.map_err(|error| HostRejection::Rejected { reason: format!("{error:?}") })?;
+		if self.closed.load(Ordering::Acquire) {
+			return Err(HostRejection::Rejected {
+				reason: "product execution is closed".to_string(),
+			});
+		}
+		Ok(response.into_latest().granted)
+	}
+
+	/// Authorize a device capability gated by the host's web view, using this
+	/// execution's saved and one-use permissions.
+	pub async fn authorize_device_permission(
+		&self,
+		request: truapi::latest::HostDevicePermissionRequest,
+	) -> Result<bool, HostRejection> {
+		use truapi::{api::Permissions, versioned::IntoLatest};
+
+		if self.closed.load(Ordering::Acquire) {
+			return Err(HostRejection::Rejected {
+				reason: "product execution is closed".to_string(),
+			});
+		}
+		let response = self
+			.admin()
+			.product_runtime()
+			.authorize_device_permission(&truapi::CallContext::default(), request.into())
 			.await
 			.map_err(|error| HostRejection::Rejected { reason: format!("{error:?}") })?;
 		if self.closed.load(Ordering::Acquire) {
@@ -1225,6 +1343,7 @@ impl NativeProductExecution {
 		product_id: String,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<Bytes32>, HostRejection> {
+		let product_id = permission_product(product_id)?.product_id;
 		Ok(futures::executor::block_on(
 			self.admin().get_product_subtree_public_key(product_id, timeout_ms),
 		)?)
@@ -1523,6 +1642,29 @@ mod tests {
 		});
 	}
 
+	/// The runtime owns its log sink, so core warnings reach the callbacks it was built with.
+	#[test]
+	fn the_runtime_forwards_core_warnings_to_its_callbacks() {
+		let callbacks = Arc::new(EventCallbacks::new());
+		let mut config = native_host_runtime_config();
+		config.local_session_secret = None;
+		config.local_session_lite_username = None;
+		let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config, None)
+			.expect("host runtime config should be valid");
+
+		crate::logging::testing::forward(
+			&host._host_sink,
+			"truapi.tracing.warn",
+			"chain call failed",
+		);
+
+		let logs = callbacks.logs.lock().unwrap();
+		assert!(
+			logs.contains(&("truapi.tracing.warn".to_string(), "chain call failed".to_string())),
+			"{logs:?}"
+		);
+	}
+
 	#[test]
 	fn a_worker_write_reaches_a_storage_subscription_in_the_products_other_execution() {
 		let callbacks = Arc::new(EventCallbacks::new());
@@ -1734,7 +1876,7 @@ mod tests {
 		};
 		assert_eq!(delivered, published);
 		// The scanner checks taps on a connection, while hosts publish them here.
-		assert!(admin.product_runtime().recently_tapped());
+		assert!(admin.product_runtime().connection().recently_tapped());
 	}
 
 	#[test]

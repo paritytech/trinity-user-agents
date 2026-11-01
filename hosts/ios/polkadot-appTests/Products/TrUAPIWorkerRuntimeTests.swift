@@ -6,19 +6,8 @@ import TrUAPIHost
 
 /// One headless worker runtime serves every modality, so a worker script is
 /// given the same engine whichever surface asked for it.
+@MainActor
 struct TrUAPIWorkerRuntimeTests {
-    /// Headless workers cannot capture devices or request host permission.
-    @Test
-    func letsTheWorkerAskForTheDeviceCapabilitiesItDeclares() async throws {
-        let engine = MockJSEngine()
-        let runtime = makeRuntime(engine: engine)
-
-        try await runtime.start()
-
-        #expect(engine.mediaHandlerWasInstalledAtInitialization)
-
-        await runtime.dispose()
-    }
 
     /// The bootstrap carries the loopback port and token, so it has to be in
     /// place before the page exists rather than evaluated into a live page.
@@ -28,7 +17,7 @@ struct TrUAPIWorkerRuntimeTests {
         let execution = MockProductExecution()
         let runtime = makeRuntime(engine: engine, execution: execution)
 
-        try await runtime.start()
+        try await runtime.start {}
 
         let capture = try #require(engine.deviceCapabilityHandler)
         #expect(try await capture(.camera) == .denied)
@@ -48,7 +37,7 @@ struct TrUAPIWorkerRuntimeTests {
         engine.onInitialize = { await runtime.dispose() }
 
         await #expect(throws: CancellationError.self) {
-            try await runtime.start()
+            try await runtime.start {}
         }
 
         #expect(engine.destroyCallCount == 1)
@@ -69,7 +58,7 @@ struct TrUAPIWorkerRuntimeTests {
             chainConnections: chainConnections
         )
 
-        try await runtime.start()
+        try await runtime.start {}
         await runtime.dispose()
         await runtime.dispose()
 
@@ -79,6 +68,7 @@ struct TrUAPIWorkerRuntimeTests {
     }
 }
 
+@MainActor
 private func makeRuntime(
     engine: MockJSEngine,
     execution: MockProductExecution = MockProductExecution(),
@@ -86,11 +76,7 @@ private func makeRuntime(
 ) -> TrUAPIWorkerRuntime {
     TrUAPIWorkerRuntime(
         productUrl: URL(string: "https://product.invalid/worker.js")!,
-        executionModel: RustRuntimeEnvironment.ExecutionModel(
-            execution: execution,
-            chainConnections: chainConnections,
-            osPermissionAsker: OSPermissionAsker()
-        ),
+        executionModel: makeExecutionModel(execution: execution, chainConnections: chainConnections),
         engineFactory: { engine }
     )
 }

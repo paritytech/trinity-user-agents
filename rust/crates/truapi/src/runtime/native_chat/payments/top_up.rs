@@ -6,7 +6,7 @@ mod tests;
 
 use super::*;
 use std::collections::BTreeSet;
-use truapi::v01::{
+use truapi::latest::{
 	HostPaymentTopUpError as TopUpError, HostPaymentTopUpRequest, PaymentTopUpSource,
 };
 
@@ -52,7 +52,7 @@ impl WalletCoinage {
 			},
 			PaymentTopUpSource::ProductAccount { .. } => return Err(TopUpError::InvalidSource),
 		};
-		if request.into.is_some_and(|purse| purse != truapi::v01::MAIN_PURSE) {
+		if request.into.is_some_and(|purse| purse != truapi::latest::MAIN_PURSE) {
 			return Err(TopUpError::Unknown { reason: "unsupported top-up purse".into() });
 		}
 		if product_id.is_empty() ||

@@ -31,7 +31,7 @@ fn signing_cancelled_during_permission_review_cannot_persist_a_late_grant() {
 	));
 	assert!(release.send(()).is_err(), "the permission review must be withdrawn");
 	assert_eq!(
-		futures::executor::block_on(host.permission_authorization_status(
+		futures::executor::block_on(host.connection.permission_authorization_status(
 			PermissionAuthorizationRequest::Remote(v01::RemotePermissionRequest {
 				permission: v01::RemotePermission::ChainSubmit,
 			}),
@@ -158,7 +158,7 @@ fn sign_vrf_forwards_cross_product_mobile_sso_request_and_response() {
 			.lock()
 			.expect("VRF signing review list mutex poisoned"),
 		vec![crate::platform::SignVrfReview {
-			calling_product_id: "myapp.dot".to_string(),
+			calling_product_id: ProductId::for_test("myapp.dot"),
 			request: request.clone(),
 		}]
 	);
@@ -217,7 +217,7 @@ fn sign_vrf_rejects_declined_pairing_host_confirmation_before_mobile_sso() {
 			.lock()
 			.expect("VRF signing review list mutex poisoned"),
 		vec![crate::platform::SignVrfReview {
-			calling_product_id: "myapp.dot".to_string(),
+			calling_product_id: ProductId::for_test("myapp.dot"),
 			request,
 		}]
 	);

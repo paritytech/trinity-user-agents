@@ -24,6 +24,7 @@ actor TrUAPIWorkerRuntime {
     private var engine: JSEngineProtocol?
     private var engineMonitor: JSEngineMonitor?
     private var moduleBridge: JSESModuleBridge?
+    private var revocationObserver: ProductExecutionRevocationObserver?
     private var disposed = false
 
     init(
@@ -40,12 +41,18 @@ actor TrUAPIWorkerRuntime {
 
     nonisolated var execution: TrUAPIProductExecutionProtocol { executionModel.execution }
 
-    func start() async throws {
+    /// `onEngineLost` runs if the engine dies once it is up. For example,
+    /// iOS might kill engine once the app goes background.
+    func start(onEngineLost: @escaping @Sendable () -> Void) async throws {
         try checkNotDisposed()
+        revocationObserver = ProductExecutionRevocationObserver(execution: executionModel.execution) { [weak self] in
+            await self?.dispose()
+            onEngineLost()
+        }
 
         let bootstrap = try executionModel.startBridge()
         let scripts = try RustRuntimeScriptsFactory(bootstrapScript: bootstrap).makeScripts()
-        let jsEngine = try await bootEngine(scripts: scripts)
+        let jsEngine = try await bootEngine(scripts: scripts, onEngineLost: onEngineLost)
         try checkNotDisposed()
 
         let bridge = JSESModuleBridge(engine: jsEngine)
@@ -61,6 +68,8 @@ actor TrUAPIWorkerRuntime {
     func dispose() async {
         guard !disposed else { return }
         disposed = true
+        revocationObserver = nil
+        await executionModel.media.close()
 
         engineMonitor?.stop()
         engineMonitor = nil
@@ -73,16 +82,17 @@ actor TrUAPIWorkerRuntime {
         self.engine = nil
         await engine?.destroy()
 
-        executionModel.execution.stopWsBridge()
-        executionModel.execution.close()
-        executionModel.chainConnections.closeAll()
+        await executionModel.close()
 
         logger.debug("[truapi] worker stopped: \(productUrl)")
     }
 
-    /// The capability handler is installed before the page exists, so a script
-    /// that asks for a camera on its first line is prompted rather than denied.
-    private func bootEngine(scripts: [JSEngineScript]) async throws -> JSEngineProtocol {
+    /// Capture stays inside the native Media runtime; motion uses the core's
+    /// user-gesture-bound authorization path.
+    private func bootEngine(
+        scripts: [JSEngineScript],
+        onEngineLost: @escaping @Sendable () -> Void
+    ) async throws -> JSEngineProtocol {
         let jsEngine = engineFactory()
         do {
             await jsEngine.registerJSDeviceCapabilityHandler(
@@ -90,10 +100,17 @@ actor TrUAPIWorkerRuntime {
                     execution: executionModel.execution
                 )
             )
+            await jsEngine.onTermination(onEngineLost)
             try checkNotDisposed()
             try await jsEngine.initialize(with: scripts)
             guard await jsEngine.getState() == .ready else { throw ScriptExecutorError.engineInitFailed }
             try checkNotDisposed()
+            await executionModel.media.watchEngine {
+                switch await jsEngine.getState() {
+                case .destroyed, .error: return false
+                default: return true
+                }
+            }
         } catch {
             await jsEngine.destroy()
             throw error

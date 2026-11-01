@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 use sp_crypto_hashing::twox_128;
 
 use super::{
-	CollectionCandidate, collection::PersonhoodCollection, extension::Metadata, pgas, proof, ring,
-	rpc::RpcClient, slot, view,
+	CollectionCandidate, FixedPersonhoodSigner, PersonhoodSigner, collection::PersonhoodCollection,
+	extension::Metadata, pgas, proof, ring, rpc::RpcClient, slot, view,
 };
 
 const STORAGE_BATCH: usize = 32;
@@ -490,6 +490,7 @@ impl<'a> ReadOnlyChain<'a> {
 		self.storage_type("Members", "CurrentRingIndex")?;
 		self.storage_type("Members", "RingKeysStatus")?;
 		self.storage_type("Members", "RingKeys")?;
+		let signer = FixedPersonhoodSigner::new(candidates).await.map_err(reason)?;
 		let mut result = Vec::with_capacity(candidates.len());
 		for candidate in candidates {
 			let values = self
@@ -510,7 +511,7 @@ impl<'a> ReadOnlyChain<'a> {
 				.map(|bytes| self.decode_storage("Members", "CurrentRingIndex", bytes))
 				.transpose()?
 				.unwrap_or(0);
-			let member = proof::member_key(candidate.entropy).await.map_err(reason)?;
+			let member = signer.member(candidate.collection).map_err(reason)?;
 			result.push(
 				self.has_including_ring(candidate.collection, &member, exponent, current)
 					.await?,
@@ -616,6 +617,7 @@ impl<'a> ReadOnlyChain<'a> {
 		let replacement_cooldown_seconds =
 			self.policy("get_stmt_store_replacement_cooldown").await?;
 		let mut pools = Vec::with_capacity(candidates.len());
+		let signer = FixedPersonhoodSigner::new(candidates).await.map_err(reason)?;
 		for (candidate, &member) in candidates.iter().zip(memberships) {
 			let limit =
 				bounded_limit(self.policy(candidate.collection.slots_per_period_view()).await?)?;
@@ -625,9 +627,9 @@ impl<'a> ReadOnlyChain<'a> {
 				let end = (start + STORAGE_BATCH as u32).min(limit);
 				let mut keys = Vec::with_capacity((end - start) as usize);
 				for index in start..end {
-					let alias = slot::slot_alias(candidate.entropy, suffix, period, index)
-						.await
-						.map_err(reason)?;
+					let alias =
+						slot::slot_alias(&signer, candidate.collection, suffix, period, index)
+							.map_err(reason)?;
 					keys.push(slot::statement_store_allowance_key(period, &alias));
 				}
 				for (index, bytes) in (start..end).zip(self.storage_many(&keys).await?) {
@@ -674,6 +676,9 @@ impl<'a> ReadOnlyChain<'a> {
 			("Pgas", "ClaimedGasAliases")
 		};
 		self.storage_type(pallet, entry)?;
+		let signer = FixedPersonhoodSigner::new(core::slice::from_ref(candidate))
+			.await
+			.map_err(reason)?;
 		let mut slots = Vec::new();
 		for start in (0..limit).step_by(STORAGE_BATCH) {
 			(self.guard)()?;
@@ -682,15 +687,19 @@ impl<'a> ReadOnlyChain<'a> {
 			for index in start..end {
 				keys.push(if bulletin {
 					let counter = u8::try_from(index).map_err(reason)?;
-					let alias =
-						slot::long_term_storage_alias(candidate.entropy, suffix, period, counter)
-							.await
-							.map_err(reason)?;
+					let alias = slot::long_term_storage_alias(
+						&signer,
+						candidate.collection,
+						suffix,
+						period,
+						counter,
+					)
+					.map_err(reason)?;
 					slot::spent_long_term_storage_alias_key(period, &alias)
 				} else {
-					let alias = slot::pgas_alias(candidate.entropy, suffix, period, index)
-						.await
-						.map_err(reason)?;
+					let alias =
+						slot::pgas_alias(&signer, candidate.collection, suffix, period, index)
+							.map_err(reason)?;
 					slot::claimed_gas_alias_key(period, &alias)
 				});
 			}
@@ -1123,7 +1132,7 @@ mod tests {
 			Ok(())
 		}
 		let collection = PersonhoodCollection::LitePeople;
-		let member = futures::executor::block_on(proof::member_key([7; 32])).unwrap();
+		let member = proof::member_key_now([7; 32]);
 		let entries = [
 			(ring::ring_keys_status_key(collection, 1), (1u32, 0u32, None::<u64>).encode()),
 			(ring::ring_keys_key(collection, 1, 0), vec![member].encode()),

@@ -861,8 +861,7 @@ fn product_context_from_js(value: &JsValue) -> Result<ProductContext, JsValue> {
 				)));
 			},
 		};
-	ProductContext::new_with_execution(product_id, execution_kind)
-		.map_err(runtime_config_validation_to_js)
+	Ok(ProductContext::new_with_execution(product_id_from_js(&product_id)?, execution_kind))
 }
 
 fn runtime_config_field_to_js(field: &str) -> &str {
@@ -893,21 +892,11 @@ fn runtime_config_validation_to_js(err: RuntimeConfigValidationError) -> JsValue
 		RuntimeConfigValidationError::InvalidDeeplinkScheme { scheme } => JsValue::from_str(
 			&format!("runtimeConfig.pairing.deeplinkScheme must not include ://, got {scheme:?}"),
 		),
-		RuntimeConfigValidationError::InvalidProductId { product_id } => {
-			JsValue::from_str(&format!(
-				"runtimeConfig.productId must be a dotNS or localhost product identifier, got {product_id:?}"
-			))
-		},
 		RuntimeConfigValidationError::InvalidNetworkSuffix { network_suffix } => {
 			JsValue::from_str(&format!(
 				"runtimeConfig.networkSuffix must be a supported dotNS TLD, got {network_suffix:?}"
 			))
 		},
-		// By length, never by value: an id that trips this is unbounded in
-		// size, and this string reaches the product's console.
-		RuntimeConfigValidationError::ProductIdTooLong { limit, actual } => JsValue::from_str(
-			&format!("runtimeConfig.productId must be at most {limit} bytes, got {actual}"),
-		),
 	}
 }
 
@@ -1164,19 +1153,19 @@ fn connection_adapters_from_js(
 	}))
 }
 
-/// Reports every worker demand transition to the host's
-/// `workerDemandChanged(productId, transition)` callback.
-struct WasmWorkerDemand {
-	changed: SendWrapper<Function>,
+/// Forwards every worker transition request to the host's
+/// `requestWorkerTransition(productId, transition)` callback.
+struct WasmWorkerController {
+	request: SendWrapper<Function>,
 }
 
-impl crate::host_logic::worker::WorkerDemandObserver for WasmWorkerDemand {
-	fn worker_demand_changed(&self, product_id: &str, transition: WorkerTransition) {
+impl crate::host_logic::worker::WorkerController for WasmWorkerController {
+	fn request_worker_transition(&self, product_id: &ProductId, transition: WorkerTransition) {
 		let name = match transition {
 			WorkerTransition::Start => "Start",
 			WorkerTransition::Stop => "Stop",
 		};
-		let _ = self.changed.call2(
+		let _ = self.request.call2(
 			&JsValue::NULL,
 			&JsValue::from_str(product_id),
 			&JsValue::from_str(name),
@@ -1184,18 +1173,18 @@ impl crate::host_logic::worker::WorkerDemandObserver for WasmWorkerDemand {
 	}
 }
 
-/// Install the host's `workerDemandChanged` callback as `ledger`'s observer.
+/// Install the host's `requestWorkerTransition` callback as `ledger`'s controller.
 /// Required: a host that omits it would never learn that a worker is wanted.
-fn install_worker_demand_observer(
+fn install_worker_controller(
 	ledger: &crate::host_logic::worker::WorkerLedger,
 	callbacks: &JsValue,
 ) -> Result<(), JsValue> {
-	let changed = get_function(callbacks, "workerDemandChanged")?;
+	let request = get_function(callbacks, "requestWorkerTransition")?;
 	assert!(
-		ledger.install_demand_observer(Arc::new(WasmWorkerDemand {
-			changed: SendWrapper::new(changed),
+		ledger.install_worker_controller(Arc::new(WasmWorkerController {
+			request: SendWrapper::new(request),
 		})),
-		"a freshly built runtime installs its worker demand observer once"
+		"a freshly built runtime installs its worker controller once"
 	);
 	Ok(())
 }
@@ -1452,7 +1441,7 @@ impl WasmPairingHostRuntime {
 		if let Some(scanner_platform) = scanner_platform {
 			runtime.set_scanner_platform(scanner_platform);
 		}
-		install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
+		install_worker_controller(runtime.worker_ledger(), &callbacks)?;
 		Ok(Self { runtime: Rc::new(runtime) })
 	}
 
@@ -1468,7 +1457,7 @@ impl WasmPairingHostRuntime {
 		let product = product_context_from_js(&product)?;
 		let channel = CoreChannel::from_js(&core_callbacks)?;
 		let debug_emit = get_optional_function(&core_callbacks, "debugEmit")?;
-		let channel_id = product.product_id.clone();
+		let channel_id = product.product_id.to_string();
 		let sink = Arc::new(WasmFrameSink { emit_frame: SendWrapper::new(channel.emit_frame) });
 		let runtime = match connection_adapters_from_js(platform_callbacks.as_ref())? {
 			Some(adapters) => self.runtime.product_runtime_with(product, adapters, sink),
@@ -1574,7 +1563,7 @@ impl WasmPairingHostRuntime {
 		product_id: String,
 	) -> Result<Vec<u8>, JsValue> {
 		self.runtime
-			.calling_permission_authorization_request(&product_id)
+			.calling_permission_authorization_request(&product_id_from_js(&product_id)?)
 			.await
 			.map(|request| request.encode())
 			.map_err(generic_error_to_js)
@@ -1666,18 +1655,29 @@ impl WasmPairingHostRuntime {
 	}
 
 	/// Take one reference on the product's worker for a modality holder. The
-	/// first one reports `"Start"` to the host's `workerDemandChanged`
-	/// callback. Pair every call with one `releaseWorker`.
+	/// first one reports `"Start"` to the host's `requestWorkerTransition`
+	/// callback. Pair every call with one `releaseWorker`. An id that is not a
+	/// product id is logged and dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
 	pub fn acquire_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().acquire(&product_id);
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
+			Err(error) => {
+				tracing::warn!(%error, "worker reference for an id that is not a product id")
+			},
+		}
 	}
 
 	/// Release one reference. The last one reports `"Stop"`, after which the
 	/// host may stop the worker; releasing with none held is a no-op.
 	#[wasm_bindgen(js_name = releaseWorker)]
 	pub fn release_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().release(&product_id);
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
+			Err(error) => {
+				tracing::warn!(%error, "worker reference for an id that is not a product id")
+			},
+		}
 	}
 }
 
@@ -1691,7 +1691,7 @@ impl WasmPairingHostRuntime {
 /// normalize, so an unknown spelling is never read as trusted.
 #[wasm_bindgen(js_name = hasTrustedRemotePermissions)]
 pub fn has_trusted_remote_permissions_for_wasm(product_id: String) -> bool {
-	crate::platform::normalizes_to_trusted_remote_permissions(&product_id)
+	ProductId::normalizes_to_trusted_remote_permissions(&product_id)
 }
 
 /// Strictly decode a SCALE-encoded core-storage key for host storage policy.
@@ -1993,7 +1993,7 @@ impl WasmSigningHostRuntime {
 		if let Some(scanner_platform) = scanner_platform {
 			runtime.set_scanner_platform(scanner_platform);
 		}
-		install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
+		install_worker_controller(runtime.worker_ledger(), &callbacks)?;
 		Ok(Self { runtime: Rc::new(runtime) })
 	}
 
@@ -2069,7 +2069,7 @@ impl WasmSigningHostRuntime {
 		product_id: String,
 	) -> Result<Vec<u8>, JsValue> {
 		self.runtime
-			.calling_permission_authorization_request(&product_id)
+			.calling_permission_authorization_request(&product_id_from_js(&product_id)?)
 			.await
 			.map(|request| request.encode())
 			.map_err(generic_error_to_js)
@@ -2084,7 +2084,7 @@ impl WasmSigningHostRuntime {
 	) -> Result<(), JsValue> {
 		let request = decode_permission_authorization_request(&payload)?;
 		self.runtime
-			.refresh_permission_authorization(&product_id, request)
+			.refresh_permission_authorization(&product_id_from_js(&product_id)?, request)
 			.await
 			.map_err(generic_error_to_js)
 	}
@@ -2166,6 +2166,10 @@ impl WasmSigningHostRuntime {
 		activation_id: String,
 		product_ids: Vec<String>,
 	) -> Result<JsValue, JsValue> {
+		let product_ids = product_ids
+			.iter()
+			.map(|product_id| product_id_from_js(product_id))
+			.collect::<Result<Vec<_>, _>>()?;
 		let snapshot = self
 			.runtime
 			.get_wallet_allowance_snapshot(&activation_id, product_ids)
@@ -2189,7 +2193,10 @@ impl WasmSigningHostRuntime {
 	/// Revoke one product's grants from the current local activation.
 	#[wasm_bindgen(js_name = clearProductState)]
 	pub async fn clear_product_state(&self, product_id: String) -> Result<(), JsValue> {
-		self.runtime.clear_product_state(&product_id).await.map_err(generic_error_to_js)
+		self.runtime
+			.clear_product_state(&product_id_from_js(&product_id)?)
+			.await
+			.map_err(generic_error_to_js)
 	}
 
 	/// Read a permission authorization status for a product.
@@ -2245,24 +2252,35 @@ impl WasmSigningHostRuntime {
 		let request = decode_permission_authorization_request(&payload)?;
 		let status = permission_authorization_status_from_js(&status)?;
 		self.runtime
-			.set_permission_authorization_status(&product_id, request, status)
+			.set_permission_authorization_status(&product_id_from_js(&product_id)?, request, status)
 			.await
 			.map_err(Into::into)
 	}
 
 	/// Take one reference on the product's worker for a modality holder. The
-	/// first one reports `"Start"` to the host's `workerDemandChanged`
-	/// callback. Pair every call with one `releaseWorker`.
+	/// first one reports `"Start"` to the host's `requestWorkerTransition`
+	/// callback. Pair every call with one `releaseWorker`. An id that is not a
+	/// product id is logged and dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
 	pub fn acquire_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().acquire(&product_id);
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
+			Err(error) => {
+				tracing::warn!(%error, "worker reference for an id that is not a product id")
+			},
+		}
 	}
 
 	/// Release one reference. The last one reports `"Stop"`, after which the
 	/// host may stop the worker; releasing with none held is a no-op.
 	#[wasm_bindgen(js_name = releaseWorker)]
 	pub fn release_worker(&self, product_id: String) {
-		self.runtime.worker_ledger().release(&product_id);
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
+			Err(error) => {
+				tracing::warn!(%error, "worker reference for an id that is not a product id")
+			},
+		}
 	}
 }
 
@@ -2278,8 +2296,7 @@ pub fn derive_product_subtree_public_key(
 ) -> Result<Vec<u8>, JsValue> {
 	let root = crate::host_logic::product_account::derive_root_keypair_from_entropy(&root_entropy)
 		.map_err(|err| JsValue::from_str(&err.to_string()))?;
-	let product_id = crate::platform::normalize_product_identifier(&product_id)
-		.map_err(|err| JsValue::from_str(&err.to_string()))?;
+	let product_id = product_id_from_js(&product_id)?;
 	crate::host_logic::product_account::derive_product_subtree_keypair(&root, &product_id)
 		.map(|keypair| keypair.public.to_bytes().to_vec())
 		.map_err(|err| JsValue::from_str(&err.to_string()))
@@ -2419,7 +2436,7 @@ impl WasmProductRuntime {
 		if let Some(media_platform) = media_platform {
 			pairing.set_media_platform(media_platform);
 		}
-		install_worker_demand_observer(pairing.worker_ledger(), &callbacks)?;
+		install_worker_controller(pairing.worker_ledger(), &callbacks)?;
 		let core = pairing.product_runtime(product, frame_sink);
 		Ok(Self::from_parts(core, channel.dispose))
 	}

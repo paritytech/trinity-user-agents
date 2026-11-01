@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import ChainRegistry
 import Products
+import Keystore_iOS
 import SubstrateSdk
 import TrUAPIHost
 @testable import polkadot_app
@@ -30,6 +31,8 @@ private func makeHostBridge(
         chainConnections: chainConnections,
         confirmationPresenter: confirmationPresenter,
         chatFiles: UnavailableNativeChatFiles(),
+        backedUpInstallation: TrUAPIBackedUpInstallation(),
+        encryptedStorage: TrUAPIEncryptedStorage(keychain: InMemoryKeychain()),
         logger: Logger.shared
     )
 }
@@ -156,6 +159,7 @@ struct TrUAPIHostRuntimeProviderConfigTests {
                 secret: Data([0x01]),
                 liteUsername: nil,
                 networkSuffix: "paseo",
+                databaseDirectory: FileManager.default.temporaryDirectory.path,
                 coinageInstanceId: 7
             )
         }

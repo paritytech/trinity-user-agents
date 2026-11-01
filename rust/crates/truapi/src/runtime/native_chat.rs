@@ -19,12 +19,12 @@ use std::{
 	sync::Arc,
 };
 
-use crate::platform::{CoreStorageKey, normalize_product_identifier};
+use crate::platform::CoreStorageKey;
 use futures::{channel::oneshot, lock::Mutex};
 use parity_scale_codec::{DecodeAll, Encode};
 use truapi::latest::{
 	HostProductDeviceChatError as ChatError, HostProductDeviceChatRequest as Request,
-	HostProductDeviceChatResponse as Response,
+	HostProductDeviceChatResponse as Response, ProductId,
 };
 use zeroize::Zeroizing;
 
@@ -66,7 +66,7 @@ pub(crate) struct NativeChatContext {
 	pub(crate) entropy: Zeroizing<Vec<u8>>,
 	pub(crate) session_valid: Arc<dyn Fn() -> bool + Send + Sync>,
 	/// Whether the user allowed Chat for a product for this session only.
-	pub(crate) chat_session_granted: Arc<dyn Fn(&str) -> bool + Send + Sync>,
+	pub(crate) chat_session_granted: Arc<dyn Fn(&ProductId) -> bool + Send + Sync>,
 	pub(crate) network_suffix: String,
 	pub(crate) genesis_hash: [u8; 32],
 	pub(crate) coinage_instance_id: Option<u32>,
@@ -193,10 +193,9 @@ impl NativeChatRegistry {
 		if version != 1 ||
 			products.len() > 256 ||
 			products.windows(2).any(|pair| pair[0] >= pair[1]) ||
-			products
-				.iter()
-				.any(|product| normalize_product_identifier(product).as_ref() != Ok(product))
-		{
+			products.iter().any(|product| {
+				!product.parse::<ProductId>().is_ok_and(|parsed| parsed.as_str() == product)
+			}) {
 			return Err(ChatError::StorageUnavailable);
 		}
 		Ok(products)
@@ -347,24 +346,24 @@ impl NativeChatRegistry {
 	pub(crate) fn top_up(
 		&self,
 		context: NativeChatContext,
-		product: String,
-		request: truapi::v01::HostPaymentTopUpRequest,
-	) -> impl Future<Output = Result<(), truapi::v01::HostPaymentTopUpError>> + Send + '_ {
+		product: ProductId,
+		request: truapi::latest::HostPaymentTopUpRequest,
+	) -> impl Future<Output = Result<(), truapi::latest::HostPaymentTopUpError>> + Send + '_ {
 		// Construct the guard before returning the future, including when the
 		// caller cancels it without ever polling wallet initialization.
 		let request = crate::host_internal::sso_messages::PaymentTopUpRequest {
 			calling_product_id: product,
-			payload: truapi::versioned::payment::HostPaymentTopUpRequest::V1(request),
+			payload: request,
 		};
 		async move {
-			let truapi::versioned::payment::HostPaymentTopUpRequest::V1(payload) = &request.payload;
-			if payload.into.is_some_and(|purse| purse != truapi::v01::MAIN_PURSE) ||
-				!matches!(&payload.source, truapi::v01::PaymentTopUpSource::Coins { .. })
+			let payload = &request.payload;
+			if payload.into.is_some_and(|purse| purse != truapi::latest::MAIN_PURSE) ||
+				!matches!(&payload.source, truapi::latest::PaymentTopUpSource::Coins { .. })
 			{
-				return Err(truapi::v01::HostPaymentTopUpError::InvalidSource);
+				return Err(truapi::latest::HostPaymentTopUpError::InvalidSource);
 			}
 			let wallet = self.wallet(&context).await.map_err(|_| {
-				truapi::v01::HostPaymentTopUpError::Unknown {
+				truapi::latest::HostPaymentTopUpError::Unknown {
 					reason: "Wallet custody is unavailable".into(),
 				}
 			})?;
@@ -379,7 +378,7 @@ impl NativeChatRegistry {
 	pub(crate) async fn execute(
 		&self,
 		context: NativeChatContext,
-		calling_product_id: String,
+		calling_product_id: ProductId,
 		request: Request,
 	) -> Result<Response, ChatError> {
 		context.require_current()?;
@@ -387,7 +386,7 @@ impl NativeChatRegistry {
 		let spawner = context.services.spawner.clone();
 		let (send, receive) = oneshot::channel();
 		spawner(Box::pin(async move {
-			let result = owned.execute_owned(context, calling_product_id, request).await;
+			let result = owned.execute_owned(context, calling_product_id.into(), request).await;
 			let _ = send.send(result);
 		}));
 		receive.await.unwrap_or(Err(ChatError::StorageUnavailable))
