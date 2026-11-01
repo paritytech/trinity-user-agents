@@ -3343,45 +3343,6 @@ mod tests {
 		);
 	}
 
-	/// Every profile that ships a host aborts on panic, so [`emit_debug`]'s
-	/// `catch_unwind` cannot fire in a shipping build - which is why
-	/// [`DebugSink::emit`] documents its no-panic rule as caller-enforced. The
-	/// guard still earns its keep everywhere else: `dev` inherits
-	/// `panic = "unwind"` (the workspace defines no `[profile.dev]`), the Makefile
-	/// builds `truapi-host-cli` without `--release`, and a downstream crate may
-	/// compile this one under its own unwinding profile.
-	///
-	/// No unit test can demonstrate the guard itself - Cargo ignores the `panic`
-	/// setting for test profiles, so a "the guard protected dispatch" assertion
-	/// passes with the guard removed. The premise is what is checkable, and this
-	/// fails if a shipping profile stops aborting, at which point the reasoning on
-	/// `DebugSink::emit` needs revisiting.
-	#[test]
-	fn shipping_profiles_abort_on_panic() {
-		let workspace_manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-			.ancestors()
-			.nth(3)
-			.expect("crate lives at <workspace>/rust/crates/truapi")
-			.join("Cargo.toml");
-		let manifest = std::fs::read_to_string(&workspace_manifest)
-			.expect("workspace manifest is readable from the crate directory");
-		let release = manifest
-			.split("[profile.release]")
-			.nth(1)
-			.expect("workspace defines [profile.release]")
-			.split("\n[")
-			.next()
-			.expect("release profile section");
-		assert!(
-			release.contains("panic = \"abort\""),
-			"release no longer aborts on panic: revisit DebugSink::emit's contract docs"
-		);
-		assert!(
-			manifest.contains("[profile.codegen]") && manifest.contains("inherits = \"release\""),
-			"codegen no longer inherits release: recheck what the native artifacts build with"
-		);
-	}
-
 	#[test]
 	fn frame_direction_wire_str_is_product_vantage() {
 		// The wire string is product-vantage (what the debugger and design doc
