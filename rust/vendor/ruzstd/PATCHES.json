@@ -4,6 +4,7 @@
   "advisory": "https://rustsec.org/advisories/RUSTSEC-2026-0344.html",
   "fix_revision": "d3907c960ca4a1aa44cc38340137c5679dd98f5a",
   "upstream_patch": "https://github.com/KillingSpark/zstd-rs/commit/d3907c960ca4a1aa44cc38340137c5679dd98f5a.patch",
+  "additional_fix": "Bound regenerated literals before expansion and count trailing literals against the complete block output limit.",
   "files": {
     "Cargo.toml": {
       "upstream_sha256": "86cbde9c531429007fa520d80328e500c94f5e3efb0c0e76da5e6de90929861c",
@@ -12,8 +13,8 @@
     },
     "src/decoding/block_decoder.rs": {
       "upstream_sha256": "11bee5bf275b5cb4bb760ead7aa398e62236441c03b8d3c7077401ea38debd76",
-      "patched_sha256": "fc0d8dad45487cbce686520e0eedb60cab80e3ad8c16fd201dc312fbe60d382f",
-      "reason": "Exact upstream d3907c960ca4a1aa44cc38340137c5679dd98f5a security patch (applied with zero fuzz)."
+      "patched_sha256": "5ccfb2adccf2d10d58e9876c121e6f2a0a2c660c5858ddb86a3dbb59ba8a5e18",
+      "reason": "Upstream d3907c960ca4a1aa44cc38340137c5679dd98f5a plus a local pre-expansion bound on regenerated literals, including zero-sequence blocks."
     },
     "src/decoding/errors.rs": {
       "upstream_sha256": "6677222e6cae5dd87113e444e05d6b38aec3cf72122cdae9ae89899ecf602169",
@@ -22,8 +23,8 @@
     },
     "src/decoding/sequence_execution.rs": {
       "upstream_sha256": "a40d629b470fc66242c73c76f8d146fb5e38ca8aa3c029c00cd26963fe604378",
-      "patched_sha256": "b74ed1fb55f5914368bb1c220fab968d29c0231db04970617da52e57fc8cbf27",
-      "reason": "Exact upstream d3907c960ca4a1aa44cc38340137c5679dd98f5a security patch (applied with zero fuzz)."
+      "patched_sha256": "c9e1aae0bb70abab9674d27bf7ad4ec40c12546a249e07db53ef1b23f38af04f",
+      "reason": "Upstream d3907c960ca4a1aa44cc38340137c5679dd98f5a plus a local complete-block bound before appending trailing literals."
     },
     "src/tests/mod.rs": {
       "upstream_sha256": "41c3386a8485573ad2e10bcc31d4161a5978e851c91f5c80a1bde31c5b6dd10f",
@@ -690,6 +691,6 @@
     "fuzz/artifacts/decode/crash-f02fdd84d0bc12c221de04a60c81993a6bb56467": "226ab35f10ea5e29106f022714166c010f98f943e50565fc6e47eb6a44c5c741",
     "fuzz/artifacts/decode/crash-f2c779cdf7827b4827e33eb5510e9e2d3d83371f": "2f1c3823d392a1aad8ebb224ef261633849f6a03adf37ec93f6a21c9ba7fc2fa",
     "fuzz/artifacts/decode/crash-fb4314c59f9013d610ac2b8d698c97e518fa095e": "34f855d1dae15cf1915a61503c192f5f515430fb5c5216f83bb5be26764a3c2e",
-    "src/tests/bounded_decompression.rs": "8e300f2b5866a0c37ed98e6962506132f09cb92ffd2e26848f68c5b03157bd70"
+    "src/tests/bounded_decompression.rs": "08b4ff4e55f5f0889d85c85807e54c2e723ae0319dcc4a4985d213f4fd7d18bf"
   }
 }

@@ -235,12 +235,49 @@ fn trusted_legacy_raw_signing_obeys_the_policy_and_watermark() {
 				if watermarked {
 					runtime.sign_raw_with_legacy_account(&CallContext::default(), request).await
 				} else {
-					runtime
-						.sign_raw_unwatermarked_deprecated_with_legacy_account(
-							&CallContext::default(),
-							request,
+					// Exercise the retained wire operation rather than introduce a
+					// new Rust caller of the deprecated signing API.
+					#[derive(Default)]
+					struct Reply(std::sync::Mutex<Option<crate::frame::ProtocolMessage>>);
+					impl crate::transport::Transport for Reply {
+						fn send(&self, message: crate::frame::ProtocolMessage) {
+							*self.0.lock().unwrap() = Some(message);
+						}
+						fn on_message(
+							&self,
+							_handler: Box<dyn Fn(crate::frame::ProtocolMessage) + Send + Sync>,
+						) -> Box<dyn FnOnce()> {
+							Box::new(|| {})
+						}
+					}
+					#[cfg(not(target_arch = "wasm32"))]
+					let spawner = crate::subscription::thread_per_subscription_spawner();
+					#[cfg(target_arch = "wasm32")]
+					let spawner: crate::subscription::Spawner = Arc::new(futures::executor::block_on);
+					let mut dispatcher = crate::dispatcher::Dispatcher::new(spawner);
+					crate::generated::dispatcher::register(&mut dispatcher, Arc::new(runtime));
+					let ids = crate::generated::wire_table::
+						SIGNING_SIGN_RAW_UNWATERMARKED_DEPRECATED_WITH_LEGACY_ACCOUNT;
+					let reply = Arc::new(Reply::default());
+					dispatcher
+						.dispatch(
+							crate::frame::ProtocolMessage {
+								request_id: "legacy-signing-policy".into(),
+								payload: crate::frame::Payload {
+									trait_id: ids.trait_id,
+									method_id: ids.method_id,
+									message_type: crate::frame::MESSAGE_TYPE_REQUEST,
+									value: parity_scale_codec::Encode::encode(&request),
+								},
+							},
+							reply.clone(),
 						)
-						.await
+						.await;
+					let response = reply.0.lock().unwrap().take().expect("signing response");
+					parity_scale_codec::DecodeAll::decode_all(
+						&mut response.payload.value.as_slice(),
+					)
+					.expect("typed signing result")
 				}
 			});
 			let skips_review = policy == ProductConsentPolicy::TrustedProducts && watermarked;

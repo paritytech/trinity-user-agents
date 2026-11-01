@@ -122,6 +122,7 @@ impl BlockDecoder {
 
         let mut section = LiteralsSection::new();
         let bytes_in_literals_header = section.parse_from_header(raw)?;
+        Self::check_decompressed_size(section.regenerated_size as usize, max_block_decoded_len)?;
         let raw = &raw[bytes_in_literals_header as usize..];
         vprintln!(
             "Found {} literalssection with regenerated size: {}, and compressed size: {:?}",

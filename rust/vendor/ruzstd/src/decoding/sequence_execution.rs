@@ -49,6 +49,13 @@ pub fn execute_sequences(
     }
     if literals_copy_counter < scratch.literals_buffer.len() {
         let rest_literals = &scratch.literals_buffer[literals_copy_counter..];
+        let decoded = seq_sum as usize + rest_literals.len();
+        if decoded > max_block_decoded_len {
+            return Err(ExecuteSequencesError::TooManyBytesGenerated {
+                max: max_block_decoded_len,
+                decoded,
+            });
+        }
         scratch.buffer.push(rest_literals);
         seq_sum += rest_literals.len() as u32;
     }

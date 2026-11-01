@@ -62,3 +62,51 @@ fn bounded_decompression_raw_and_rle_respect_window() {
         }
     }
 }
+
+#[test]
+fn bounded_decompression_checks_literals_before_expansion() {
+    for size in [1024u32, 1_048_575] {
+        let mut decoder = block_decoder::new();
+        let mut scratch = DecoderScratch::new(1024);
+        let encoded = ((5u32 << 3) | (2 << 1) | 1).to_le_bytes();
+        let (header, _) = decoder.read_block_header(&encoded[..3]).unwrap();
+        let literals = ((size << 4) | (3 << 2) | 1).to_le_bytes();
+        let body = [literals[0], literals[1], literals[2], b'x', 0];
+        let result = decoder.decode_block_content(&header, &mut scratch, body.as_slice());
+        if size == 1024 {
+            assert_eq!(result.unwrap(), body.len() as u64);
+            assert_eq!(scratch.literals_buffer, alloc::vec![b'x'; 1024]);
+            assert_eq!(scratch.buffer.len(), 1024);
+        } else {
+            assert!(matches!(result,
+                Err(DecodeBlockContentError::DecompressBlockError(
+                    DecompressBlockError::DecompressedSizeTooLarge {
+                        max: 1024, at_least: 1_048_575
+                    }
+                ))
+            ));
+            assert!(scratch.literals_buffer.is_empty());
+            assert_eq!(scratch.buffer.len(), 0);
+        }
+    }
+}
+
+#[test]
+fn bounded_decompression_counts_trailing_literals() {
+    for match_length in [1022, 1023] {
+        let mut scratch = DecoderScratch::new(1024);
+        scratch.literals_buffer.extend_from_slice(b"xy");
+        scratch.sequences.push(Sequence { ll: 1, ml: match_length, of: 4 });
+        let result = execute_sequences(&mut scratch, 1024);
+        if match_length == 1022 {
+            result.unwrap();
+        } else {
+            assert!(matches!(result,
+                Err(ExecuteSequencesError::TooManyBytesGenerated {
+                    max: 1024, decoded: 1025
+                })
+            ));
+        }
+        assert_eq!(scratch.buffer.len(), 1024);
+    }
+}

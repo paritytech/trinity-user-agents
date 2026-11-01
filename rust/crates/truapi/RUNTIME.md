@@ -139,6 +139,17 @@ rules described below. Cancelled signing permission prerequisites withdraw
 their review; automatic Bulletin uploads retain their account-bound consent
 checks before submission and retry.
 
+The workspace patches smoldot 4's `ruzstd` 0.8.3 dependency from
+`rust/vendor/ruzstd`: upstream's sequence-output fix plus bounds on regenerated
+literals before expansion and on trailing literals before append. Its provenance
+records retain original hashes, the exact upstream patch artifact and the
+additional fixes separately. Cargo root patches do not propagate to downstream
+Git dependants: hosts must explicitly select this patched crate at the same
+immutable core revision as their provider. Registry `ruzstd` 0.8.3 is not fixed.
+The canonical lock also includes the TLS/root-certificate and Tokio security
+updates recorded in the integration changeset. These repairs do not authorize
+distribution, qualify physical signing devices or replace source/advisory review.
+
 
 ### Permission flow
 
