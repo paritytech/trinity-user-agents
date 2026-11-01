@@ -8,6 +8,10 @@ exclude = [
     "hosts/android/bindings/sr25519-vrf/rust",
 ]
 
+[patch.crates-io]
+# RUSTSEC-2026-0344: exact upstream bounded-decompression fix, retaining smoldot 4.
+ruzstd = { path = "rust/vendor/ruzstd" }
+
 [workspace.package]
 edition = "2024"
 license = "MIT"
