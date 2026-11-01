@@ -19,6 +19,8 @@ export interface ReceivedRequest {
   digest: string;
   /** The sealed reply this host posts, once the product replied. */
   replied: { sealed: string; at: number } | null;
+  /** The raw index of the product's account for the conversation this request set up, once it named one. */
+  chatIndex?: string;
 }
 
 function isReceived(value: unknown): value is ReceivedRequest {
@@ -79,6 +81,14 @@ export class ReceivedRequests {
 
   add(item: ReceivedRequest): void {
     this.items.push(structuredClone(item));
+    this.save();
+  }
+
+  /** Keep the conversation account index the product named for `handle`. */
+  setChatIndex(handle: RequestHandle, index: string): void {
+    const item = this.get(handle);
+    if (item === undefined || item.chatIndex === index) return;
+    item.chatIndex = index;
     this.save();
   }
 

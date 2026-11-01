@@ -8,9 +8,11 @@ import type { DirectoryContacts } from "../../src/invitations/directory-contacts
 import {
   InvitationService,
   productPort,
+  type AcceptPrompt,
   type SendPrompt,
 } from "../../src/invitations/invitation-service.js";
 import type {
+  ConversationAllowance,
   HostDelivery,
   IdentityAuth,
   Product,
@@ -46,6 +48,11 @@ export interface ContactChatHostOptions {
   auth: IdentityAuth;
   /** How requests and replies travel. Absent: the local simulated delivery. */
   delivery?: HostDelivery;
+  /**
+   * How Contact Chat's conversation accounts get their Statement Store
+   * allowance. Absent: they get none, and Contact Chat cannot post text.
+   */
+  accounts?: ConversationAllowance;
   contacts: DirectoryContacts;
   handles: HandleNames;
   /** Calls back whenever a name the host draws may have changed, besides the handles. */
@@ -54,6 +61,8 @@ export interface ContactChatHostOptions {
   /** Why the keys may not prove this user, or null when they may. */
   verify(): Promise<IdentityProblem | null>;
   confirmSend(prompt: SendPrompt): Promise<boolean>;
+  /** Ask before an Accept reaches Contact Chat, with what it costs. Absent: the Accept is the answer. */
+  confirmAccept?(prompt: AcceptPrompt): Promise<boolean>;
   showChat(): void;
   /** Run `task` after `delayMs`; answers a cancel. Defaults to `setTimeout`. */
   schedule?(task: () => void, delayMs: number): () => void;
@@ -129,7 +138,11 @@ export function startContactChatHost(
     schedule,
     random: cryptoRandom,
     confirmSend: options.confirmSend,
+    ...(options.confirmAccept === undefined
+      ? {}
+      : { confirmAccept: options.confirmAccept }),
     showProduct: () => options.showChat(),
+    ...(options.accounts === undefined ? {} : { accounts: options.accounts }),
     log: options.log,
   });
   /** Contact Chat's request port, held until the keys are checked. */

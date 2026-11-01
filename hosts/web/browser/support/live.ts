@@ -5,7 +5,7 @@ import type { Frame, Page } from "playwright-core";
 import { closeTools, openTools } from "./fixtures.js";
 
 /**
- * Steps the live wallet-delivery run shares: a wallet tab set up through the
+ * Steps the live wallet runs share: a wallet tab set up through the
  * Developer section to validate claims only, New chat through the real
  * picker, and what the tab's no-submit guard saw. It reads Paseo Next v2;
  * nothing here sets up a tab that submits.
@@ -72,14 +72,17 @@ export async function contactChatRunning(page: Page): Promise<Frame> {
 }
 
 /**
- * Developer section: Contact Chat for this wallet, with the network delivery
- * that validates claims only; then sign in as the test account `account`,
- * and wait for Contact Chat.
+ * Developer section: Contact Chat for this wallet, with a delivery that
+ * submits nothing (`validate`, the network delivery that validates claims
+ * only, by default; or `local-validate`, requests between tabs of this
+ * browser and chat-account claims validated); then sign in as the test
+ * account `account`, and wait for Contact Chat.
  */
 export async function validatingWalletTab(
   page: Page,
   origin: string,
   account: "alice" | "bob",
+  delivery: "validate" | "local-validate" = "validate",
 ): Promise<void> {
   await page.goto(origin);
   await ready(page);
@@ -91,7 +94,7 @@ export async function validatingWalletTab(
   await ready(page);
   await openTools(page, "more");
   const reload = page.waitForEvent("load");
-  await page.selectOption("#wallet-delivery", "validate");
+  await page.selectOption("#wallet-delivery", delivery);
   await reload;
   await ready(page);
   await openTools(page, "account");

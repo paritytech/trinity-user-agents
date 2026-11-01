@@ -24,6 +24,7 @@ import {
 import { Outbox, isPending, type OutgoingRequest } from "./outbox.js";
 import type {
   ContactService,
+  ConversationAllowance,
   HostDelivery,
   IdentityAuth,
   Person,
@@ -89,6 +90,13 @@ export interface SendPrompt {
   purpose: string;
 }
 
+/** What the host asks its user before an Accept reaches the product. */
+export interface AcceptPrompt {
+  product: Product;
+  from: { name: string; handle: string };
+  purpose: string;
+}
+
 /** The product's end of its port, as the host holds it. */
 export interface ProductPort {
   post(message: HostMessage): void;
@@ -113,8 +121,18 @@ export interface InvitationServiceDeps {
   random: RandomBytes;
   /** Ask the user whether to send. */
   confirmSend(prompt: SendPrompt): Promise<boolean>;
+  /**
+   * Ask the user whether to accept, with what accepting costs them. Absent:
+   * the Accept they chose in Notifications is the answer.
+   */
+  confirmAccept?(prompt: AcceptPrompt): Promise<boolean>;
   /** Bring this user's product to the front, at its own request. */
   showProduct(): void;
+  /**
+   * How the host gets a conversation account its allowance. Absent: this
+   * host gives none, and `chatAccount` says so.
+   */
+  accounts?: ConversationAllowance;
   log(line: string): void;
 }
 
@@ -164,6 +182,11 @@ export class InvitationService {
   private readonly toldReplied = new Set<string>();
   private stopContacts: () => void = () => {};
   private readonly outgoingListeners = new Set<() => void>();
+  /** The allowance each request's conversation account got, by handle, until its period ends. */
+  private readonly allowances = new Map<
+    string,
+    { account: string; until: number }
+  >();
   /** Requests whose recipient was not found, by handle: the retry that is due. */
   private readonly reachRetries = new Map<string, () => void>();
 
@@ -306,25 +329,41 @@ export class InvitationService {
       reject,
       cancelTimeout: () => {},
     };
-    pending.cancelTimeout = this.deps.schedule(() => {
-      if (this.accepting.get(handle) !== pending) return;
-      this.accepting.delete(handle);
-      pending.reject(
-        new Error(`${this.deps.product.name} did not answer. Try again.`),
-      );
-    }, INTENT_TIMEOUT_MS);
     this.accepting.set(handle, pending);
-    this.deps.log(
-      `Request ${short(handle)}: the user chose Accept; ${this.deps.product.name} decides.`,
-    );
-    product.post({
-      kind: "acceptIntent",
-      request: {
-        handle,
-        sender: senderHandle,
-        payload: received.payload,
-      },
-    });
+    const settled = () => this.accepting.get(handle) !== pending;
+    void (async () => {
+      const confirmed =
+        this.deps.confirmAccept === undefined ||
+        (await this.deps.confirmAccept({
+          product: this.deps.product,
+          from: { name: sender.name, handle: sender.handle },
+          purpose: received.context.purpose,
+        }));
+      if (settled()) return;
+      if (!confirmed) {
+        this.accepting.delete(handle);
+        pending.reject(new Error("You did not accept it."));
+        return;
+      }
+      pending.cancelTimeout = this.deps.schedule(() => {
+        if (settled()) return;
+        this.accepting.delete(handle);
+        pending.reject(
+          new Error(`${this.deps.product.name} did not answer. Try again.`),
+        );
+      }, INTENT_TIMEOUT_MS);
+      this.deps.log(
+        `Request ${short(handle)}: the user chose Accept; ${this.deps.product.name} decides.`,
+      );
+      product.post({
+        kind: "acceptIntent",
+        request: {
+          handle,
+          sender: senderHandle,
+          payload: received.payload,
+        },
+      });
+    })();
     return done;
   }
 
@@ -488,6 +527,8 @@ export class InvitationService {
         return this.refuse(call.handle, call.reason);
       case "open":
         return this.open(call.handle);
+      case "chatAccount":
+        return this.chatAccount(call.handle, call.index);
     }
   }
 
@@ -689,6 +730,68 @@ export class InvitationService {
     }
     this.deps.showProduct();
     return { ok: true };
+  }
+
+  /**
+   * Allow this product's own account at `Raw(index)`, for the conversation
+   * `handle` set up, to post in the current period.
+   *
+   * Consent: the user's Send of that request, once an authenticated reply
+   * arrived and while it is not cancelled, or their Accept of it. The first
+   * index the product names is bound to the request and kept; another is
+   * refused, so one Send or Accept funds one account. Rollover: the account
+   * gets at most one slot per allowance period; the product asks again in a
+   * later period it posts in, and an answer is reused until its period ends.
+   * The product id is this service's, never the caller's word.
+   */
+  private async chatAccount(
+    handle: RequestHandle,
+    index: string,
+  ): Promise<CallResult> {
+    const sent = this.outbox.get(handle);
+    const received = this.received.get(handle);
+    if (sent === undefined && received === undefined)
+      return failure("Unknown", "No request has this handle.");
+    if (sent !== undefined) {
+      if (sent.state.tag === "cancelled")
+        return failure("Refused", "This request was cancelled.");
+      if (sent.replies.length === 0)
+        return failure("Refused", "No authenticated reply has arrived.");
+    } else if (received!.replied === null && !this.accepting.has(handle))
+      return failure("Refused", "The user did not accept this request.");
+    const bound = sent?.chatIndex ?? received?.chatIndex;
+    if (bound !== undefined && bound !== index)
+      return failure(
+        "Refused",
+        "This conversation already has another account.",
+      );
+    const kept = this.allowances.get(handle);
+    if (kept !== undefined && kept.until > this.deps.now())
+      return { ok: true, allowance: kept };
+    if (this.deps.accounts === undefined)
+      return failure(
+        "Refused",
+        "This host gives conversation accounts no Statement Store allowance.",
+      );
+    if (sent !== undefined) this.outbox.setChatIndex(handle, index);
+    else this.received.setChatIndex(handle, index);
+    try {
+      const allowance = await this.deps.accounts.allow(
+        this.deps.product.id,
+        fromHex(index),
+      );
+      this.allowances.set(handle, allowance);
+      this.deps.log(
+        `${this.deps.product.name}'s account ${short(allowance.account)} for request ${short(handle)} may post until ${new Date(allowance.until).toISOString()}.`,
+      );
+      return { ok: true, allowance };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.deps.log(
+        `${this.deps.product.name}'s account for request ${short(handle)} got no allowance: ${reason}`,
+      );
+      return failure("Refused", reason);
+    }
   }
 
   /** A sealed request arrived. Kept only when it is new and authentic. */

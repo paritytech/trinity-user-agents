@@ -443,9 +443,9 @@ describe("invitations between test users", () => {
           "truapi-web-signing-host:network:paseo:test-user:carol:notifications:v2",
           // Contact Chat's own record and read marks, in its TrUAPI local storage.
           "truapi-web-signing-host:product:test-user:alice:truapi:product-storage:v1:18:contact-chat.paseo:contact-chat:read:v1",
-          "truapi-web-signing-host:product:test-user:alice:truapi:product-storage:v1:18:contact-chat.paseo:contact-chat:record:v1",
+          "truapi-web-signing-host:product:test-user:alice:truapi:product-storage:v1:18:contact-chat.paseo:contact-chat:record:v3",
           "truapi-web-signing-host:product:test-user:bob:truapi:product-storage:v1:18:contact-chat.paseo:contact-chat:read:v1",
-          "truapi-web-signing-host:product:test-user:bob:truapi:product-storage:v1:18:contact-chat.paseo:contact-chat:record:v1",
+          "truapi-web-signing-host:product:test-user:bob:truapi:product-storage:v1:18:contact-chat.paseo:contact-chat:record:v3",
         ]);
         expect(outside).toEqual([]);
         expect(errors).toEqual([]);

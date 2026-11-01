@@ -5,12 +5,7 @@ import type {
   OutgoingView,
   RepliedView,
 } from "../../../src/invitations/contract.js";
-import {
-  fromHex,
-  toHex,
-  x25519Agree,
-  type RandomBytes,
-} from "../../../src/invitations/sealing.js";
+import { toHex, type RandomBytes } from "../../../src/invitations/sealing.js";
 import type {
   Conversation,
   ConversationEngine,
@@ -19,21 +14,13 @@ import type {
   MessageState,
   StartTarget,
 } from "../../../src/chat/draft/conversations.js";
-import {
-  checkResponse,
-  createInvitation,
-  readInvitation,
-  respond,
-  type SenderSecrets,
-  type Topics,
-} from "./setup.js";
+import type { ChatProtocol, ChatText, Heard } from "./protocol.js";
 import type { HostRequests } from "./requests.js";
+import { messageExpiry, type Statements } from "./transport.js";
 
 /**
  * DEV ONLY. Contact Chat's engine: one-to-one conversations with people it
- * knows only by the contact handles its host gives it. It ends at the
- * connection: it has no text transport, so a connected conversation keeps
- * what the setup agreed and refuses to send.
+ * knows only by the contact handles its host gives it.
  *
  * Who does what:
  *
@@ -43,12 +30,23 @@ import type { HostRequests } from "./requests.js";
  *   request service (`src/invitations/`) to send its invitation to that
  *   handle. The host asks the user, seals, authenticates and delivers it,
  *   and hands back only an authenticated reply.
- * - This engine owns the protocol: the setup (`./setup.ts`,
- *   a toy), its keys, its check of the reply before it calls `complete`, the
- *   history, and the two conversation topics, which the recipient makes.
- * - It never learns a name, account, username, avatar or identity key: a
- *   room's contact and its one participant are the handle, and the host
- *   names them.
+ * - The chat protocol (`./protocol.ts`) owns what travels: the setup
+ *   payloads, the topics each side reads and posts on, and a message's
+ *   bytes. The engine stores what it keeps and never reads it.
+ * - This engine owns the conversation: the product's own account at a
+ *   random raw derivation index, made for this conversation only and signed
+ *   for by the core (`./transport.ts`), the history, and when to ask the host
+ *   to allow that account to post (`chatAccount`). It reads and posts through
+ *   the product's TrUAPI Statement Store. Each post replaces this side's last
+ *   one: the network keeps a short window, and this engine the history.
+ * - It never learns a name, account, username, avatar or identity key of a
+ *   person: a room's contact and its one participant are the handle, and
+ *   the host names them.
+ *
+ * The recipient reads from the moment it accepts, before its reply leaves,
+ * and may write at once. The sender reads once it checked the reply, and a
+ * subscription first answers what the store still holds, so what the
+ * recipient wrote meanwhile is read then.
  *
  * Decline is silent: a request nobody answers stays pending until the
  * user cancels it in the host.
@@ -58,18 +56,16 @@ import type { HostRequests } from "./requests.js";
  * that fails makes no call. So a restart between the two finds it. A sent request the host knows but this
  * engine did not keep the handle of is matched again from the host's replay
  * by its contact; an accepted request whose reply the host took becomes
- * connected from the host's replay of it.
+ * connected from the host's replay of it. A message still sending when the
+ * engine stopped is failed, for the user to send again; a message read again
+ * after a restart is kept once.
  */
 
 /** What the recipient's host shows beside an invitation with no first message. */
 export const DEFAULT_PURPOSE = "Wants to chat with you in Contact Chat.";
 
-/** What a connected conversation's room says under its name: the setup's scope. */
-export const CONNECTED_SUBTITLE = "Connected · sending is not supported yet";
-
-/** Why a connected conversation cannot send. */
-export const NO_TEXT_TRANSPORT =
-  "Connected. Contact Chat has no text transport yet, so it cannot send.";
+/** What a connected conversation's room says under its name. */
+export const CONNECTED_SUBTITLE = "Connected · messages are not encrypted";
 
 /** The id the one other person of a conversation has, in its rooms. */
 export const PEER = "peer";
@@ -114,24 +110,26 @@ interface StoredConversation {
   createdAt: number;
   /** The host's handle for the request, sent or received. */
   request?: string;
-  /** The sender's setup secrets, until the reply checks. */
-  invitation?: SenderSecrets;
+  /** The raw derivation index of this side's product account for this conversation, `0x` hex. */
+  index?: string;
+  /** That account's public key, `0x` hex, as the core reported it. */
+  account?: string;
+  /** The expiry of this side's last post, as a decimal string: the next one must be higher. */
+  lastExpiry?: string;
+  /** What the protocol keeps of the sender's invitation, until the reply checks. */
+  pending?: unknown;
   /**
-   * What the setup agreed, kept from before the reply leaves or completes.
-   * Product-owned session state; not exposed in chat or request messages.
+   * The protocol's session, kept from before the reply leaves or completes.
+   * Product-owned; not exposed in chat or request messages.
    */
-  connection?: Connection;
+  session?: unknown;
+  /** Until when the host said the account may post. */
+  allowedUntil?: number;
   messages: StoredMessage[];
 }
 
-/** What both sides of a setup hold alike: the two topics and the X25519 secret of their protocol keys, `0x` hex. */
-export interface Connection {
-  topics: Topics;
-  secret: string;
-}
-
 interface StoredRecord {
-  version: 1;
+  version: 3;
   conversations: StoredConversation[];
 }
 
@@ -145,6 +143,8 @@ export type RecordStorage = Pick<Storage, "getItem" | "setItem"> & {
 
 export interface ContactChatDeps {
   requests: HostRequests;
+  protocol: ChatProtocol;
+  statements: Statements;
   storage: RecordStorage;
   recordKey: string;
   random: RandomBytes;
@@ -190,14 +190,32 @@ export class ContactChat implements ConversationEngine {
   private readonly checking = new Set<string>();
   /** Conversations whose invitation this run handed the host and has no answer for yet. */
   private readonly inviting = new Set<string>();
+  /** The topics followed, by conversation: how to stop. */
+  private readonly following = new Map<string, () => void>();
+  /** An allowance being asked for, by conversation, so concurrent sends ask once. */
+  private readonly allowing = new Map<string, Promise<string | null>>();
+  /** The post in flight, by conversation: the next one waits for it, so expiries rise in order. */
+  private readonly posting = new Map<string, Promise<void>>();
 
   constructor(private readonly deps: ContactChatDeps) {
     this.record = this.load();
   }
 
-  /** Follow the host's messages. */
+  /** Follow the host's messages, and read every conversation that has a session. */
   run(): void {
     this.deps.requests.onMessage((message) => void this.hostMessage(message));
+    for (const conversation of this.record.conversations)
+      if (
+        conversation.status === "accepting" ||
+        conversation.status === "connected"
+      )
+        this.follow(conversation);
+  }
+
+  /** Stop reading. The conversations stay as kept. */
+  stop(): void {
+    for (const stop of this.following.values()) stop();
+    this.following.clear();
   }
 
   /** Every conversation as stored, for a test to read. */
@@ -221,17 +239,17 @@ export class ContactChat implements ConversationEngine {
         subtitle: SUBTITLE[conversation.status],
         participants: [{ id: PEER, name: "Contact", handle }],
         contact: { handle, state: CONTACT_STATE[conversation.status] },
-        composer: {
-          allowed: false,
-          reason:
-            conversation.status === "connected"
-              ? NO_TEXT_TRANSPORT
-              : OUTSTANDING.includes(conversation.status)
-                ? "Waiting for them to accept"
-                : conversation.status === "accepting"
-                  ? "Accepting their request"
-                  : "Start a new chat to ask again",
-        },
+        composer:
+          conversation.status === "connected"
+            ? { allowed: true }
+            : {
+                allowed: false,
+                reason: OUTSTANDING.includes(conversation.status)
+                  ? "Waiting for them to accept"
+                  : conversation.status === "accepting"
+                    ? "Accepting their request"
+                    : "Start a new chat to ask again",
+              },
       };
     });
   }
@@ -278,35 +296,54 @@ export class ContactChat implements ConversationEngine {
       messages: [],
     };
     if (known === undefined) this.record.conversations.push(conversation);
+    this.unfollow(conversation);
     conversation.role = "sender";
     conversation.status = "sending";
     delete conversation.request;
-    delete conversation.connection;
-    const { payload, secrets } = createInvitation(this.deps.random);
-    conversation.invitation = secrets;
+    delete conversation.session;
+    delete conversation.allowedUntil;
+    delete conversation.lastExpiry;
+    delete conversation.account;
+    // A new invitation is a new conversation: it gets an account of its own.
+    conversation.index = toHex(this.deps.random(32));
+    delete conversation.pending;
     this.save();
-    void this.invite(conversation, payload, welcome.trim());
+    void this.invite(conversation, welcome.trim());
     return conversation.id;
   }
 
   private async invite(
     conversation: StoredConversation,
-    payload: string,
     welcome: string,
   ): Promise<void> {
     this.inviting.add(conversation.id);
-    if (!(await this.persist())) {
+    const notSent = (why: string) => {
       this.inviting.delete(conversation.id);
       if (conversation.status !== "sending") return;
       conversation.status = "not-sent";
-      delete conversation.invitation;
-      this.system(
-        conversation,
-        "Your chat request was not sent: Contact Chat could not save it",
-      );
+      delete conversation.pending;
+      this.system(conversation, `Your chat request was not sent: ${why}`);
       this.save();
+    };
+    let account: string;
+    try {
+      account = await this.deps.statements.account(conversation.index!);
+    } catch (error) {
+      this.deps.report?.(`account: ${errorText(error)}`);
+      return notSent("Contact Chat could not get its account for this chat");
+    }
+    if (conversation.status !== "sending") {
+      this.inviting.delete(conversation.id);
       return;
     }
+    conversation.account = account;
+    const { payload, pending } = this.deps.protocol.invite(
+      account,
+      this.deps.random,
+    );
+    conversation.pending = pending;
+    if (!(await this.persist()))
+      return notSent("Contact Chat could not save it");
     const result = await this.deps.requests.call({
       call: "request",
       request: {
@@ -328,7 +365,7 @@ export class ContactChat implements ConversationEngine {
       );
     } else {
       conversation.status = "not-sent";
-      delete conversation.invitation;
+      delete conversation.pending;
       this.system(
         conversation,
         !result.ok && result.reason === "Dismissed"
@@ -339,22 +376,198 @@ export class ContactChat implements ConversationEngine {
     this.save();
   }
 
-  /** Refused: the engine ends at the connection and has nothing to send text on. */
-  async send(conversationId: string): Promise<string> {
+  /**
+   * Send text in a connected conversation. Resolves with the message's id
+   * once it is kept; it is then posted, and marked sent or failed.
+   */
+  async send(conversationId: string, text: string): Promise<string> {
     const conversation = this.find(conversationId);
     if (conversation === undefined) throw new Error("There is no such chat.");
-    throw new Error(
-      conversation.status === "connected"
-        ? NO_TEXT_TRANSPORT
-        : OUTSTANDING.includes(conversation.status)
+    if (conversation.status !== "connected")
+      throw new Error(
+        OUTSTANDING.includes(conversation.status)
           ? "They have not accepted yet."
-          : "Start a new chat to ask again.",
+          : conversation.status === "accepting"
+            ? "The chat is not connected yet."
+            : "Start a new chat to ask again.",
+      );
+    const body = text.trim();
+    if (body === "") throw new Error("The message is empty.");
+    const message: ChatText = {
+      id: toHex(this.deps.random(16)),
+      text: body,
+      at: this.deps.now(),
+    };
+    // The protocol refuses what it cannot carry before anything is kept.
+    this.deps.protocol.post(conversation.session, [message]);
+    conversation.messages.push({
+      ...message,
+      author: "self",
+      state: "sending",
+    });
+    this.save();
+    void this.deliver(conversation);
+    return message.id;
+  }
+
+  /** Send a failed message of this side's again. */
+  async retry(conversationId: string, messageId: string): Promise<void> {
+    const conversation = this.find(conversationId);
+    const message = conversation?.messages.find(
+      (entry) => entry.id === messageId && entry.author === "self",
+    );
+    if (conversation === undefined || message === undefined)
+      throw new Error("There is no such message.");
+    if (message.state !== "failed")
+      throw new Error("Only a message that failed is sent again.");
+    if (conversation.status !== "connected")
+      throw new Error("The chat is not connected.");
+    message.state = "sending";
+    this.save();
+    void this.deliver(conversation);
+  }
+
+  /**
+   * Post this side's latest messages, as its conversation account, once the
+   * host allowed it, after any post still in flight. Each post replaces the
+   * last one: the messages it carries are sent; those still sending that it
+   * could not post are failed.
+   */
+  private deliver(conversation: StoredConversation): Promise<void> {
+    const previous = this.posting.get(conversation.id) ?? Promise.resolve();
+    const next = previous.then(() => this.postWindow(conversation));
+    this.posting.set(conversation.id, next);
+    void next.finally(() => {
+      if (this.posting.get(conversation.id) === next)
+        this.posting.delete(conversation.id);
+    });
+    return next;
+  }
+
+  private async postWindow(conversation: StoredConversation): Promise<void> {
+    const own = conversation.messages.filter(
+      (message) => message.author === "self",
+    );
+    if (!own.some((message) => message.state === "sending")) return;
+    const fail = (problem: string) => {
+      this.deps.report?.(`send: ${problem}`);
+      for (const message of own)
+        if (message.state === "sending") message.state = "failed";
+      this.save();
+    };
+    if (conversation.index === undefined)
+      return fail("This chat has no account to post with.");
+    const refused = await this.allow(conversation);
+    if (refused !== null) {
+      this.system(
+        conversation,
+        `Your message was not sent: your host did not let this chat post. ${refused}`,
+      );
+      return fail(refused);
+    }
+    const { post, carried } = this.deps.protocol.post(
+      conversation.session,
+      own.map(({ id, text, at }) => ({ id, text, at })),
+    );
+    const expiry = messageExpiry(
+      conversation.lastExpiry === undefined
+        ? null
+        : BigInt(conversation.lastExpiry),
+      this.deps.now(),
+    );
+    try {
+      await this.deps.statements.post(conversation.index, post, expiry);
+    } catch (error) {
+      // The allowance may have lapsed: the next send asks the host again.
+      delete conversation.allowedUntil;
+      return fail(errorText(error));
+    }
+    conversation.lastExpiry = expiry.toString();
+    for (const message of own)
+      if (carried.includes(message.id)) message.state = "sent";
+      else if (message.state === "sending") message.state = "failed";
+    this.save();
+  }
+
+  /** Null once the host allowed the conversation's account to post now, or why it did not. */
+  private allow(conversation: StoredConversation): Promise<string | null> {
+    if ((conversation.allowedUntil ?? 0) > this.deps.now())
+      return Promise.resolve(null);
+    const asking = this.allowing.get(conversation.id);
+    if (asking !== undefined) return asking;
+    const ask = (async (): Promise<string | null> => {
+      if (
+        conversation.request === undefined ||
+        conversation.index === undefined
+      )
+        return "This chat has no request to post under.";
+      const result = await this.deps.requests.call({
+        call: "chatAccount",
+        handle: conversation.request,
+        index: conversation.index,
+      });
+      if (!result.ok) return result.detail;
+      if (result.allowance === undefined) return "The host gave no allowance.";
+      conversation.allowedUntil = result.allowance.until;
+      this.save();
+      return null;
+    })().finally(() => this.allowing.delete(conversation.id));
+    this.allowing.set(conversation.id, ask);
+    return ask;
+  }
+
+  /** Read what the other side posts in `conversation`, from what the store holds now. */
+  private follow(conversation: StoredConversation): void {
+    if (
+      this.following.has(conversation.id) ||
+      conversation.session === undefined
+    )
+      return;
+    const topics = this.deps.protocol.listen(conversation.session);
+    this.following.set(
+      conversation.id,
+      this.deps.statements.follow(
+        topics,
+        (heard) => this.heard(conversation.id, heard),
+        (reason) => this.deps.report?.(`read: ${reason}`),
+      ),
     );
   }
 
-  /** Refused: this engine never sends a message, so none can fail. */
-  async retry(): Promise<void> {
-    throw new Error("There is no such message.");
+  private unfollow(conversation: StoredConversation): void {
+    this.following.get(conversation.id)?.();
+    this.following.delete(conversation.id);
+  }
+
+  /** Statements on a conversation's topics: keep each new message of the other side's once. */
+  private heard(conversationId: string, heard: Heard[]): void {
+    const conversation = this.find(conversationId);
+    if (conversation?.session === undefined) return;
+    const known = new Set(
+      conversation.messages
+        .filter((message) => message.author === "peer")
+        .map((message) => message.id),
+    );
+    const fresh: ChatText[] = [];
+    for (const statement of heard)
+      for (const message of this.deps.protocol.read(
+        conversation.session,
+        statement,
+      )) {
+        if (known.has(message.id)) continue;
+        known.add(message.id);
+        fresh.push(message);
+      }
+    if (fresh.length === 0) return;
+    for (const message of fresh.sort((left, right) => left.at - right.at))
+      conversation.messages.push({
+        id: message.id,
+        author: "peer",
+        text: message.text,
+        at: message.at,
+        state: "received",
+      });
+    this.save();
   }
 
   /**
@@ -414,7 +627,7 @@ export class ContactChat implements ConversationEngine {
       return;
     if (view.status === "cancelled") {
       conversation.status = "cancelled";
-      delete conversation.invitation;
+      delete conversation.pending;
       this.system(conversation, "You cancelled your chat request");
       this.save();
       return;
@@ -434,7 +647,7 @@ export class ContactChat implements ConversationEngine {
         entry.role === "sender" &&
         entry.contact === contact &&
         entry.request === undefined &&
-        entry.invitation !== undefined &&
+        entry.pending !== undefined &&
         (entry.status === "sending" || entry.status === "not-sent"),
     );
     if (conversation === undefined) return;
@@ -454,9 +667,16 @@ export class ContactChat implements ConversationEngine {
         entry.status === "accepting",
     );
     if (conversation === undefined) return;
+    this.connected(conversation, "You accepted the chat request");
+  }
+
+  /** `conversation` is connected: say so, and that its messages are not encrypted. */
+  private connected(conversation: StoredConversation, line: string): void {
     conversation.status = "connected";
-    this.system(conversation, "You accepted the chat request");
+    this.system(conversation, line);
+    this.system(conversation, this.deps.protocol.notice);
     this.save();
+    this.follow(conversation);
   }
 
   /**
@@ -471,33 +691,22 @@ export class ContactChat implements ConversationEngine {
       await this.complete(handle);
       return;
     }
-    const secrets = conversation.invitation;
     if (
       (conversation.status !== "waiting" && conversation.status !== "paused") ||
-      secrets === undefined
+      conversation.pending === undefined
     )
       return;
     if (this.checking.has(payload)) return;
-    const checked = checkResponse(secrets, payload);
-    if (!checked.ok) {
-      this.deps.report?.(`a reply did not check: ${checked.reason}`);
+    const opened = this.deps.protocol.open(conversation.pending, payload);
+    if (!opened.ok) {
+      this.deps.report?.(`a reply did not check: ${opened.reason}`);
       return;
     }
     this.checking.add(payload);
     try {
-      conversation.connection = {
-        topics: checked.topics,
-        secret: toHex(
-          x25519Agree(
-            fromHex(secrets.protocolSecret),
-            fromHex(checked.protocolKey),
-          ),
-        ),
-      };
-      conversation.status = "connected";
-      delete conversation.invitation;
-      this.system(conversation, "They accepted your chat request");
-      this.save();
+      conversation.session = opened.value;
+      delete conversation.pending;
+      this.connected(conversation, "They accepted your chat request");
       await this.complete(handle);
     } finally {
       this.checking.delete(payload);
@@ -513,17 +722,32 @@ export class ContactChat implements ConversationEngine {
   }
 
   /**
-   * The user chose Accept in the host. The engine checks the invitation,
-   * makes both topics and its response, keeps the conversation as
-   * accepting, and replies through the host. It is connected once the host
+   * The user chose Accept in the host. The protocol answers the invitation
+   * with the product's account at a new index for this conversation; the engine keeps the
+   * conversation as accepting, starts reading, and replies through the host. It is connected once the host
    * took the reply; a reply the host refuses leaves it accepting, and Accept
    * can be chosen again.
    */
   private async accept(request: IncomingRequest): Promise<void> {
-    const invitation = readInvitation(request.payload);
-    const made =
-      invitation === null ? null : respond(request.payload, this.deps.random);
-    if (invitation === null || made === null) {
+    const index = toHex(this.deps.random(32));
+    let account: string;
+    try {
+      account = await this.deps.statements.account(index);
+    } catch (error) {
+      this.deps.report?.(`account: ${errorText(error)}`);
+      await this.deps.requests.call({
+        call: "refuse",
+        handle: request.handle,
+        reason: "Contact Chat could not get its account for this chat.",
+      });
+      return;
+    }
+    const made = this.deps.protocol.respond(
+      request.payload,
+      account,
+      this.deps.random,
+    );
+    if (made === null) {
       await this.deps.requests.call({
         call: "refuse",
         handle: request.handle,
@@ -544,19 +768,16 @@ export class ContactChat implements ConversationEngine {
       messages: [],
     };
     if (known === undefined) this.record.conversations.push(conversation);
+    this.unfollow(conversation);
     conversation.role = "recipient";
     conversation.status = "accepting";
     conversation.request = request.handle;
-    conversation.connection = {
-      topics: made.topics,
-      secret: toHex(
-        x25519Agree(
-          fromHex(made.protocolSecret),
-          fromHex(invitation.protocolKey),
-        ),
-      ),
-    };
-    delete conversation.invitation;
+    conversation.index = index;
+    conversation.account = account;
+    conversation.session = made.session;
+    delete conversation.pending;
+    delete conversation.allowedUntil;
+    delete conversation.lastExpiry;
     // Kept before the reply leaves, so a restart in between still has it.
     this.save();
     if (!(await this.persist())) {
@@ -567,6 +788,8 @@ export class ContactChat implements ConversationEngine {
       });
       return;
     }
+    // Reading starts before the reply leaves, so nothing posted after it is missed.
+    this.follow(conversation);
     const result = await this.deps.requests.call({
       call: "reply",
       handle: request.handle,
@@ -578,9 +801,7 @@ export class ContactChat implements ConversationEngine {
       return;
     }
     if (conversation.status !== "accepting") return;
-    conversation.status = "connected";
-    this.system(conversation, "You accepted the chat request");
-    this.save();
+    this.connected(conversation, "You accepted the chat request");
   }
 
   private system(conversation: StoredConversation, text: string): void {
@@ -604,17 +825,21 @@ export class ContactChat implements ConversationEngine {
       const saved = JSON.parse(
         this.deps.storage.getItem(this.deps.recordKey) ?? "null",
       ) as StoredRecord | null;
-      if (saved?.version === 1 && Array.isArray(saved.conversations)) {
-        // A status this version does not know, such as an earlier expiry, is a request no longer sent.
-        for (const conversation of saved.conversations)
+      if (saved?.version === 3 && Array.isArray(saved.conversations)) {
+        for (const conversation of saved.conversations) {
+          // A status this version does not know is a request no longer sent.
           if (!STATUSES.includes(conversation.status))
             conversation.status = "not-sent";
+          // A message still sending when the engine stopped did not reach the store as far as it knows.
+          for (const message of conversation.messages)
+            if (message.state === "sending") message.state = "failed";
+        }
         return saved;
       }
     } catch {
       this.deps.report?.("the stored record does not read; starting empty");
     }
-    return { version: 1, conversations: [] };
+    return { version: 3, conversations: [] };
   }
 
   private save(): void {

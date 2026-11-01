@@ -42,6 +42,8 @@ export interface OutgoingRequest {
   state: OutgoingState;
   /** Why the delivery cannot keep it posted now, or null. Host only. */
   paused: string | null;
+  /** The raw index of the product's account for the conversation this request set up, once it named one. */
+  chatIndex?: string;
 }
 
 export function outgoingStatus(item: OutgoingRequest): OutgoingStatus {
@@ -157,6 +159,14 @@ export class Outbox {
     item.replies.push({ payload, at: this.now() });
     this.save();
     return true;
+  }
+
+  /** Keep the conversation account index the product named for `handle`. */
+  setChatIndex(handle: RequestHandle, index: string): void {
+    const item = this.get(handle);
+    if (item === undefined || item.chatIndex === index) return;
+    item.chatIndex = index;
+    this.save();
   }
 
   /** Close a pending request. False when it is no longer pending. */

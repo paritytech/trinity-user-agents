@@ -31,13 +31,15 @@ import {
   sealTo,
   toHex,
   utf8,
-  x25519Pair,
 } from "../../../src/invitations/sealing.js";
 import { NotificationStore } from "../../../src/notifications/notifications.js";
 import { MemoryStorage, settle } from "../../support/test-support.js";
 import { SUFFIX, hostContactsOf, indexed } from "../../support/host-handles.js";
 import { WalletIdentityAuth } from "../../../src/invitations/wallet-auth.js";
-import * as setup from "../../../fixtures/products/contact-chat/setup.js";
+import {
+  simpleText,
+  type Pending,
+} from "../../../fixtures/products/contact-chat/simple-text.js";
 import { FixtureContacts } from "../../../fixtures/invitations/fixture-contacts.js";
 import {
   LocalDelivery,
@@ -105,7 +107,8 @@ class Clock {
 /** What a sender's product keeps of an invitation. */
 interface Sent {
   handle: string;
-  secrets: setup.SenderSecrets;
+  payload: string;
+  pending: Pending;
 }
 
 /** One user: a host with its request service, and the product's side of the port. */
@@ -289,7 +292,10 @@ async function invite(
   options: { payload?: string } = {},
 ): Promise<Sent> {
   const contact = await picked(alice, to);
-  const { payload, secrets } = setup.createInvitation(cryptoRandom);
+  const { payload, pending } = simpleText.invite(
+    toHex(cryptoRandom(32)),
+    cryptoRandom,
+  );
   const sent = ok(
     await alice.call({
       call: "request",
@@ -300,7 +306,7 @@ async function invite(
       },
     }),
   );
-  return { handle: sent.request!.handle, secrets };
+  return { handle: sent.request!.handle, payload, pending };
 }
 
 /** The handle Bob's host gave the newest request it keeps. */
@@ -311,10 +317,11 @@ async function accept(bob: Actor, handle = newest(bob)) {
   const user = bob.service.requestAccept(handle);
   user.catch(() => {});
   const intent = bob.intents().at(-1)!;
-  const made = setup.respond(intent.payload, cryptoRandom);
+  const account = toHex(cryptoRandom(32));
+  const made = simpleText.respond(intent.payload, account, cryptoRandom);
   if (made === null) {
     await bob.call({ call: "refuse", handle, reason: "Unusable." });
-    return { user, made, result: null };
+    return { user, made, result: null, account };
   }
   const result = await bob.call({
     call: "reply",
@@ -322,7 +329,7 @@ async function accept(bob: Actor, handle = newest(bob)) {
     payload: made.response,
     open: false,
   });
-  return { user, made, result };
+  return { user, made, result, account };
 }
 
 const deliveryWrites = (actor: Actor) =>
@@ -397,12 +404,12 @@ for (const kind of ["inbox", "topic"] as const)
       expect(bob.messages).toEqual([]);
 
       // Accept is Bob's intent: his product gets the payload and opaque handles only.
-      const { user, made, result } = await accept(bob);
+      const { user, made, result, account } = await accept(bob);
       expect(bob.intents()).toEqual([
         {
           handle,
           sender: expect.objectContaining({ bytes: expect.any(String) }),
-          payload: sent.secrets.payload,
+          payload: sent.payload,
         },
       ]);
       expect(Object.keys(bob.intents()[0]!).sort()).toEqual([
@@ -426,11 +433,15 @@ for (const kind of ["inbox", "topic"] as const)
       expect(deliveryWrites(alice).length).toBe(posted + 1);
 
       // Bob's product made both conversation topics; Alice's product checks, then completes.
-      const checked = setup.checkResponse(sent.secrets, made!.response);
+      const checked = simpleText.open(sent.pending, made!.response);
       expect(checked).toEqual({
         ok: true,
-        topics: made!.topics,
-        protocolKey: toHex(x25519Pair(fromHex(made!.protocolSecret)).public),
+        value: {
+          listen: made!.session.send,
+          send: made!.session.listen,
+          channel: expect.stringMatching(/^0x[0-9a-f]{64}$/),
+          peer: account,
+        },
       });
       const done = ok(
         await alice.call({ call: "complete", handle: sent.handle }),
@@ -487,7 +498,11 @@ for (const kind of ["inbox", "topic"] as const)
         alice.log.filter((line) => line.startsWith("Ignored a reply"));
       const { context } = item;
       const until = START + HOUR;
-      const made = setup.respond(sent.secrets.payload, cryptoRandom)!;
+      const made = simpleText.respond(
+        sent.payload,
+        toHex(cryptoRandom(32)),
+        cryptoRandom,
+      )!;
       const replyContext: ReplyContext = {
         version: context.version,
         from: personOf(BOB).identity.signingPublic,
@@ -623,9 +638,13 @@ for (const kind of ["inbox", "topic"] as const)
       const sent = await invite(alice, BOB);
       const handle = newest(bob);
       const user = bob.service.requestAccept(handle);
-      const other = setup.createInvitation(cryptoRandom);
+      const other = simpleText.invite(toHex(cryptoRandom(32)), cryptoRandom);
       // A response made for another invitation: authentic to the host, wrong for the product.
-      const wrong = setup.respond(other.payload, cryptoRandom)!;
+      const wrong = simpleText.respond(
+        other.payload,
+        toHex(cryptoRandom(32)),
+        cryptoRandom,
+      )!;
       ok(
         await bob.call({
           call: "reply",
@@ -636,9 +655,9 @@ for (const kind of ["inbox", "topic"] as const)
       );
       await user;
       const [payload] = alice.responses(sent.handle);
-      expect(setup.checkResponse(sent.secrets, payload!)).toEqual({
+      expect(simpleText.open(sent.pending, payload!)).toEqual({
         ok: false,
-        reason: "the confirmation does not check",
+        reason: "the response answers another invitation",
       });
       expect(alice.status(sent.handle)).toBe("waiting");
     });
@@ -955,7 +974,11 @@ for (const kind of ["inbox", "topic"] as const)
       const first = bob.service.requestAccept(handle);
       expect(bob.service.requestAccept(handle)).toBe(first);
       expect(bob.intents()).toHaveLength(1);
-      const made = setup.respond(bob.intents()[0]!.payload, cryptoRandom)!;
+      const made = simpleText.respond(
+        bob.intents()[0]!.payload,
+        toHex(cryptoRandom(32)),
+        cryptoRandom,
+      )!;
       ok(
         await bob.call({
           call: "reply",

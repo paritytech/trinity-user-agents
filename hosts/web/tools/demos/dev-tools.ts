@@ -1,5 +1,6 @@
 import type {
   NotificationClaim,
+  StatementAccountClaim,
   WorkerPairingHostRuntime,
 } from "@parity/truapi-host/web";
 import { bytesToHex, type HexString } from "@parity/truapi/scale";
@@ -13,8 +14,14 @@ import {
   parseWorkerManifest,
   type ResolvedWorker,
 } from "../../src/products/worker-manifest.js";
-import type { SendPrompt } from "../../src/invitations/invitation-service.js";
-import type { Product } from "../../src/invitations/ports.js";
+import type {
+  AcceptPrompt,
+  SendPrompt,
+} from "../../src/invitations/invitation-service.js";
+import type {
+  ConversationAllowance,
+  Product,
+} from "../../src/invitations/ports.js";
 import type { NotificationStore } from "../../src/notifications/notifications.js";
 import type { NotificationActions } from "../../src/notifications/screen.js";
 import { ask } from "../../src/app/prompt.js";
@@ -135,6 +142,12 @@ export interface WalletRequestsSession {
     target: Uint8Array,
     submit: boolean,
   ): Promise<NotificationClaim>;
+  /** Give a product's own account at `Raw(index)` a Statement Store slot for today, or with `submit` false only validate the claim. */
+  claimProductStatementAccount(
+    productId: string,
+    index: Uint8Array,
+    submit: boolean,
+  ): Promise<StatementAccountClaim>;
 }
 
 /** What the host lends a worker frame of one product over one port. */
@@ -229,8 +242,47 @@ function button(label: string, action: string, onClick: () => void) {
   return node;
 }
 
+/** What a wallet's Contact Chat spends of the person's allowance, in each delivery, for the host's prompts. */
+interface ChatCosts {
+  /** What sending or accepting a request spends. */
+  request: string;
+  /** What the chat that follows spends. */
+  chat: string;
+}
+
+/** The chat's account and its allowance, the same in every delivery that gives one. */
+const CHAT_ACCOUNT_COST =
+  "On the first day it posts, and each later day it posts, the host claims one of your daily Statement Store slots for this chat's own account, with your personhood. The account is not your identity.";
+
+function chatCosts(mode: WalletDelivery): ChatCosts | null {
+  switch (mode) {
+    case "local":
+      return null;
+    case "local-validate":
+      return {
+        request: "Nothing: the request stays in this browser.",
+        chat: `${CHAT_ACCOUNT_COST} This tab only validates that claim: nothing is submitted, and no message is sent.`,
+      };
+    case "validate":
+      return {
+        request:
+          "One of your daily notification slots, validated only: nothing is submitted.",
+        chat: `${CHAT_ACCOUNT_COST} This tab only validates that claim: nothing is submitted.`,
+      };
+    case "network":
+      return {
+        request:
+          "One of your daily notification slots, claimed with your personhood, and one sealed statement on the network.",
+        chat: CHAT_ACCOUNT_COST,
+      };
+  }
+}
+
 /** The host's question before a product's invitation leaves. */
-function confirmSend(prompt: SendPrompt): Promise<boolean> {
+function confirmSend(
+  prompt: SendPrompt,
+  costs: ChatCosts | null = null,
+): Promise<boolean> {
   return ask<boolean>({
     title: "Send invitation",
     from: prompt.product.id,
@@ -241,6 +293,12 @@ function confirmSend(prompt: SendPrompt): Promise<boolean> {
         label: "Waits",
         value: "Until they accept, or you cancel it in your Inbox",
       },
+      ...(costs === null
+        ? []
+        : [
+            { label: "Sending uses", value: costs.request },
+            { label: "Chatting uses", value: costs.chat },
+          ]),
     ],
     choices: [
       { label: "Cancel", value: false, tone: "cancel" },
@@ -257,6 +315,28 @@ declare global {
   }
 }
 
+/** The host's question before an Accept reaches the product, with what it costs. */
+function confirmAccept(
+  prompt: AcceptPrompt,
+  costs: ChatCosts,
+): Promise<boolean> {
+  return ask<boolean>({
+    title: "Accept chat request",
+    from: prompt.product.id,
+    fields: [
+      { label: "From", value: prompt.from.name },
+      { label: "Message", value: prompt.purpose },
+      { label: "Replying uses", value: costs.request },
+      { label: "Chatting uses", value: costs.chat },
+    ],
+    choices: [
+      { label: "Cancel", value: false, tone: "cancel" },
+      { label: "Accept", value: true, tone: "primary" },
+    ],
+    dismissed: false,
+  });
+}
+
 /** The host's question before the wallet's requests go on the network. */
 function confirmNetworkDelivery(network: string): Promise<boolean> {
   return ask<boolean>({
@@ -268,6 +348,11 @@ function confirmNetworkDelivery(network: string): Promise<boolean> {
         label: "Each post",
         value:
           "Claims one of your daily notification slots with your personhood, then posts one signed statement to the shared day inbox",
+      },
+      {
+        label: "Each chat",
+        value:
+          "Claims one of your daily Statement Store slots for the chat's own account on each day it posts. Its messages are not encrypted: anyone who reads the Statement Store reads them",
       },
       {
         label: "Runs",
@@ -292,12 +377,20 @@ const WALLET_CHAT_KEY = "truapi-web-signing-host:dev:wallet-contact-chat";
  * every claim only validated, `network` to claim and post for real.
  */
 const WALLET_DELIVERY_KEY = "truapi-web-signing-host:dev:wallet-delivery";
-type WalletDelivery = "local" | "validate" | "network";
+type WalletDelivery = "local" | "local-validate" | "validate" | "network";
 
 function walletDelivery(): WalletDelivery {
   const value = sessionStorage.getItem(WALLET_DELIVERY_KEY);
-  return value === "validate" || value === "network" ? value : "local";
+  return value === "local-validate" ||
+    value === "validate" ||
+    value === "network"
+    ? value
+    : "local";
 }
+
+/** Whether `mode` keeps the tab from submitting anything. */
+const submitsNothing = (mode: WalletDelivery) =>
+  mode === "validate" || mode === "local-validate";
 
 export function startDevTools(deps: DevToolsDeps): DevSession {
   const testUser = tabTestUser(sessionStorage);
@@ -349,7 +442,7 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
         : ((wallet?.chat.people() ?? []) as HexString[]),
     hidesWalletContacts: () => networkMode() !== "local",
     guardNetwork: (network) => {
-      if (networkMode() !== "validate") return network;
+      if (!submitsNothing(networkMode())) return network;
       deps.log(
         "This tab submits nothing: every extrinsic and statement submission is refused before it reaches the network.",
       );
@@ -487,14 +580,18 @@ function startWalletChat(
   const mode = walletDelivery();
   // The network delivery keeps its own lists: its requests name the day
   // inbox as their return route, which the local delivery cannot reach.
+  const local = mode === "local" || mode === "local-validate";
   const lists = (part: "sent" | "received") =>
-    mode === "local" ? list(part) : `${list(part)}:day-inbox`;
+    local ? list(part) : `${list(part)}:day-inbox`;
   if (mode !== "local")
     deps.log(
       mode === "network"
         ? "Contact Chat's requests go on the network's day inbox: each post claims a notification slot."
-        : "Contact Chat's requests use the network delivery with claims only validated: nothing is submitted.",
+        : mode === "validate"
+          ? "Contact Chat's requests use the network delivery with claims only validated: nothing is submitted."
+          : "Contact Chat's requests stay in this browser, and its chat accounts' claims are only validated: nothing is submitted.",
     );
+  const costs = chatCosts(mode);
   return startContactChatHost({
     product: contactChat(session.networkSuffix),
     keys: { sent: lists("sent"), received: lists("received") },
@@ -502,6 +599,9 @@ function startWalletChat(
     self: bytesToHex(keys.chatPublic),
     auth: new WalletIdentityAuth(keys),
     ...(mode === "local"
+      ? {}
+      : { accounts: conversationAllowance(session, mode === "network") }),
+    ...(local
       ? {}
       : {
           delivery: new StatementStoreDelivery({
@@ -524,11 +624,46 @@ function startWalletChat(
     onNamesChange: (listener) => deps.names.onChange(listener),
     notifications: deps.notifications,
     verify: () => ownIdentityProblem(session.directory, keys),
-    confirmSend,
+    confirmSend: (prompt) => confirmSend(prompt, costs),
+    ...(costs === null
+      ? {}
+      : {
+          confirmAccept: (prompt: AcceptPrompt) => confirmAccept(prompt, costs),
+        }),
     showChat: deps.showChat,
     onSenders: deps.namedChanged,
     log: deps.log,
   });
+}
+
+/**
+ * How a wallet's Contact Chat gets its conversation accounts an allowance:
+ * a general Statement Store slot of the wallet's personhood for the UTC day,
+ * which the core claims for Contact Chat's own account at the index it names.
+ * A tab that only validates claims asks the runtime whether it would accept
+ * the claim and submits nothing, so a message there fails and says so.
+ */
+function conversationAllowance(
+  session: WalletRequestsSession,
+  submit: boolean,
+): ConversationAllowance {
+  return {
+    async allow(product, index) {
+      const claim = await session.claimProductStatementAccount(
+        product,
+        index,
+        submit,
+      );
+      if (claim.outcome === "validated")
+        throw new Error(
+          `This tab only validates claims: the runtime would give this chat's account ${claim.account} slot ${claim.seq} of ${claim.collection}, and nothing was claimed.`,
+        );
+      return {
+        account: claim.account,
+        until: (claim.period + 1) * 86_400_000,
+      };
+    },
+  };
 }
 
 interface TestUserSession {
@@ -714,13 +849,14 @@ function drawSection(
   deliverySelect.id = "wallet-delivery";
   deliverySelect.append(
     new Option("This browser only", "local"),
+    new Option("This browser, validate chat claims only", "local-validate"),
     new Option("Network, validate claims only", "validate"),
     new Option("Network: claim and post", "network"),
   );
   deliverySelect.value = walletDelivery();
   deliverySelect.disabled = testUser !== null;
   deliverySelect.title =
-    "How the wallet's Contact Chat requests travel. The network delivery posts to the network's shared day inbox, each post signed by a notification account the core claims with your personhood. Validate only asks the runtime whether each claim would pass and submits nothing. Switching reloads the tab.";
+    "How the wallet's Contact Chat requests travel. The network delivery posts to the network's shared day inbox, each post signed by a notification account the core claims with your personhood. Validate only asks the runtime whether each claim would pass and submits nothing; in this browser with chat claims validated, requests stay between tabs and each chat account's claim is validated. Switching reloads the tab.";
   deliverySelect.addEventListener("change", () => {
     const next = deliverySelect.value as WalletDelivery;
     const apply = () => {

@@ -159,3 +159,24 @@ export interface HostDelivery {
   withdraw(id: string): void;
   close(): void;
 }
+
+/**
+ * How the host gets a product's conversation account its Statement Store
+ * allowance: a slot of the user's personhood, for the current allowance
+ * period, for the product's own account at a raw derivation index. The core
+ * derives the account and signs for the product; the host never posts with
+ * it.
+ */
+export interface ConversationAllowance {
+  /**
+   * Allow `product`'s own account at `Raw(index)` to post for the current
+   * period. Resolves with the account and when the period ends, in
+   * milliseconds since the Unix epoch; rejects with why the host could not,
+   * such as no free slot, a chain it cannot reach, or a tab that submits
+   * nothing.
+   */
+  allow(
+    product: string,
+    index: Uint8Array,
+  ): Promise<{ account: string; until: number }>;
+}

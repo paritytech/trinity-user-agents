@@ -10,8 +10,10 @@
  *   v2 draft bridge (`src/chat/draft/conversations.ts`), and names and draws
  *   each person from the handle;
  * - setup goes through the proposed host request service
- *   (`src/invitations/contract.ts`) and ends at the connection: it sends no
- *   text;
+ *   (`src/invitations/contract.ts`), with `simple-text/1` as its protocol;
+ * - text goes through its own TrUAPI Statement Store, each conversation
+ *   posting as the product's own account at a random raw index, signed with
+ *   `createProof`, which the host allows through `chatAccount`;
  * - its record is kept in its own TrUAPI storage.
  *
  * What it received from the host, and what it keeps, are on
@@ -30,6 +32,8 @@ import { ProductStorage } from "../../../src/chat/worker/product-storage.js";
 import { cryptoRandom } from "../../../src/invitations/sealing.js";
 import { ContactChat } from "./engine.js";
 import { connectHostRequests, type HostRequests } from "./requests.js";
+import { simpleText } from "./simple-text.js";
+import { truapiStatements } from "./transport.js";
 
 interface WorkerState {
   stage: "starting" | "running" | "failed";
@@ -52,7 +56,7 @@ interface WorkerState {
 const notRunning = () =>
   Promise.reject(new Error("Contact Chat is not running."));
 
-const RECORD_KEY = "contact-chat:record:v1";
+const RECORD_KEY = "contact-chat:record:v3";
 const READS_KEY = "contact-chat:read:v1";
 const RECEIVED_MAX = 200;
 
@@ -102,8 +106,17 @@ async function run(): Promise<void> {
     (reason) => report(`storage: ${reason}`),
   );
   state.record = () => storage.getItem(RECORD_KEY);
+  const context = await client.system.getProductContext();
+  if (context.isErr())
+    throw new Error(`No product context: ${JSON.stringify(context.error)}`);
+  const productId = context.value.productId;
   const engine = new ContactChat({
     requests: observed(connectHostRequests()),
+    protocol: simpleText,
+    statements: truapiStatements(client, productId, (task, delayMs) => {
+      const timer = setTimeout(task, delayMs);
+      return () => clearTimeout(timer);
+    }),
     storage,
     recordKey: RECORD_KEY,
     random: cryptoRandom,
@@ -133,8 +146,8 @@ async function run(): Promise<void> {
     {
       conversations: () => engine.conversations(),
       messages: (id) => engine.messages(id),
-      send: (id) => engine.send(id),
-      retry: () => engine.retry(),
+      send: (id, text) => engine.send(id, text),
+      retry: (id, messageId) => engine.retry(id, messageId),
       start: (target, welcome) => {
         state.starts = [...state.starts, JSON.stringify(target)];
         return engine.start(target, welcome);

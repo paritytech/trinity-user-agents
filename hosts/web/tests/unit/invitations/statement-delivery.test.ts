@@ -24,7 +24,7 @@ import { cryptoRandom, toHex } from "../../../src/invitations/sealing.js";
 import { WalletIdentityAuth } from "../../../src/invitations/wallet-auth.js";
 import { NotificationStore } from "../../../src/notifications/notifications.js";
 import { FixtureContacts } from "../../../fixtures/invitations/fixture-contacts.js";
-import * as setup from "../../../fixtures/products/contact-chat/setup.js";
+import { simpleText } from "../../../fixtures/products/contact-chat/simple-text.js";
 import {
   TEST_USERS,
   personOf as personOn,
@@ -234,7 +234,7 @@ function ok(result: CallResult): Extract<CallResult, { ok: true }> {
 async function invite(
   from: Actor,
   to: TestUser,
-  payload = setup.createInvitation(cryptoRandom).payload,
+  payload = simpleText.invite(toHex(cryptoRandom(32)), cryptoRandom).payload,
 ): Promise<string> {
   await indexed();
   const contact = from.contacts.handleFor(personOf(to))!;
@@ -256,7 +256,11 @@ async function accept(bob: Actor): Promise<void> {
     (message) => message.kind === "acceptIntent",
   );
   if (intent?.kind !== "acceptIntent") throw new Error("no intent");
-  const made = setup.respond(intent.request.payload, cryptoRandom)!;
+  const made = simpleText.respond(
+    intent.request.payload,
+    toHex(cryptoRandom(32)),
+    cryptoRandom,
+  )!;
   ok(
     await bob.call({
       call: "reply",

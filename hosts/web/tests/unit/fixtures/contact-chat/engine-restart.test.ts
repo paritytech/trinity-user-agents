@@ -4,15 +4,16 @@ import type {
   CallResult,
   HostMessage,
 } from "../../../../src/invitations/contract.js";
-import { cryptoRandom } from "../../../../src/invitations/sealing.js";
+import { cryptoRandom, toHex } from "../../../../src/invitations/sealing.js";
 import { settle } from "../../../support/test-support.js";
 import { KeptStorage } from "../../../support/product-storage.js";
-import {
-  createInvitation,
-  respond,
-} from "../../../../fixtures/products/contact-chat/setup.js";
 import { ContactChat } from "../../../../fixtures/products/contact-chat/engine.js";
 import type { RequestCall } from "../../../../fixtures/products/contact-chat/requests.js";
+import {
+  simpleText,
+  type Session,
+} from "../../../../fixtures/products/contact-chat/simple-text.js";
+import { MemoryChatStatements } from "../../../support/chat-statements.js";
 
 /**
  * Contact Chat's engine across a restart that falls between the engine and
@@ -21,6 +22,10 @@ import type { RequestCall } from "../../../../fixtures/products/contact-chat/req
 
 const CONTACT = `0x${"aa".repeat(32)}` as const;
 const HANDLE = `0x${"bb".repeat(16)}`;
+
+/** An invitation from some other product's account. */
+const invitation = () =>
+  simpleText.invite(toHex(cryptoRandom(32)), cryptoRandom).payload;
 
 /** A host that answers each call with `answer`, or never when it is null, and tells the engine what a test hands it. */
 function host(answer: (call: RequestCall) => CallResult | null) {
@@ -50,6 +55,8 @@ async function engine(
 ) {
   return new ContactChat({
     requests: requests.requests,
+    protocol: simpleText,
+    statements: new MemoryChatStatements().statements("contact-chat.test"),
     storage: await storage.open(["record"]),
     report: (reason) => reports.push(reason),
     recordKey: "record",
@@ -109,15 +116,15 @@ describe("Contact Chat across a restart", () => {
       request: {
         handle: HANDLE,
         sender: { bytes: CONTACT },
-        payload: createInvitation(cryptoRandom).payload,
+        payload: invitation(),
       },
     });
     await settle();
     expect(first.calls.map((call) => call.call)).toEqual(["reply"]);
     expect(keptAtReply).toContain('"status":"accepting"');
-    expect(keptAtReply).toContain('"connection":');
+    expect(keptAtReply).toContain('"session":');
     const kept = bob.stored()[0]!;
-    expect([kept.status, kept.connection === undefined]).toEqual([
+    expect([kept.status, kept.session === undefined]).toEqual([
       "accepting",
       false,
     ]);
@@ -134,25 +141,24 @@ describe("Contact Chat across a restart", () => {
     expect(again.stored()[0]!.status).toBe("connected");
   });
   /**
-   * The setup's result is the product's: each side keeps the topics and the
-   * agreed secret before its host acts (Bob's reply, Alice's complete), and
-   * both sides hold the same, so a later transport can start from either
-   * after a restart.
+   * The setup's result is the product's: each side keeps its session before
+   * its host acts (Bob's reply, Alice's complete), and the two sessions
+   * match, so either side reads and writes after a restart.
    */
-  test("both sides keep the same topics and agreed secret before the host replies or completes, and a restart reads them", async () => {
+  test("both sides keep matching sessions before the host replies or completes, and a restart reads them", async () => {
     const aliceStorage = new KeptStorage();
     const bobStorage = new KeptStorage();
     const keptRecord = (storage: KeptStorage) =>
       JSON.parse(
         new TextDecoder().decode(hexToBytes(storage.kept.get("record")!)),
-      ) as { conversations: { connection?: unknown }[] };
+      ) as { conversations: { session?: unknown }[] };
     let invitation = "";
     let response = "";
     let keptAtReply: unknown;
     let keptAtComplete: unknown;
     const aliceHost = host((call) => {
       if (call.call === "complete") {
-        keptAtComplete = keptRecord(aliceStorage).conversations[0]!.connection;
+        keptAtComplete = keptRecord(aliceStorage).conversations[0]!.session;
         return { ok: true };
       }
       if (call.call !== "request") return { ok: true };
@@ -170,7 +176,7 @@ describe("Contact Chat across a restart", () => {
     });
     const bobHost = host((call) => {
       if (call.call !== "reply") return { ok: true };
-      keptAtReply = keptRecord(bobStorage).conversations[0]!.connection;
+      keptAtReply = keptRecord(bobStorage).conversations[0]!.session;
       response = call.payload;
       return { ok: true };
     });
@@ -192,14 +198,17 @@ describe("Contact Chat across a restart", () => {
     aliceHost.tell({ kind: "response", handle: HANDLE, payload: response });
     await settle();
 
-    const aliceSide = alice.stored()[0]!.connection!;
+    const aliceSide = alice.stored()[0]!.session as Session;
+    const bobSide = bob.stored()[0]!.session as Session;
     expect([alice.stored()[0]!.status, bob.stored()[0]!.status]).toEqual([
       "connected",
       "connected",
     ]);
-    expect(bob.stored()[0]!.connection).toEqual(aliceSide);
-    expect([keptAtReply, keptAtComplete]).toEqual([aliceSide, aliceSide]);
-    expect(aliceSide.secret).toMatch(/^0x[0-9a-f]{64}$/);
+    expect([bobSide.listen, bobSide.send]).toEqual([
+      aliceSide.send,
+      aliceSide.listen,
+    ]);
+    expect([keptAtReply, keptAtComplete]).toEqual([bobSide, aliceSide]);
 
     const [aliceAgain, bobAgain] = await Promise.all([
       engine(
@@ -212,9 +221,9 @@ describe("Contact Chat across a restart", () => {
       ),
     ]);
     expect([
-      aliceAgain.stored()[0]!.connection,
-      bobAgain.stored()[0]!.connection,
-    ]).toEqual([aliceSide, aliceSide]);
+      aliceAgain.stored()[0]!.session,
+      bobAgain.stored()[0]!.session,
+    ]).toEqual([aliceSide, bobSide]);
   });
 
   /**
@@ -235,7 +244,7 @@ describe("Contact Chat across a restart", () => {
       request: {
         handle: HANDLE,
         sender: { bytes: `0x${"cc".repeat(32)}` },
-        payload: createInvitation(cryptoRandom).payload,
+        payload: invitation(),
       },
     });
     await settle();
@@ -297,7 +306,11 @@ describe("Contact Chat across a restart", () => {
     calls.tell({
       kind: "response",
       handle: HANDLE,
-      payload: respond(invitation, cryptoRandom)!.response,
+      payload: simpleText.respond(
+        invitation,
+        toHex(cryptoRandom(32)),
+        cryptoRandom,
+      )!.response,
     });
     await settle();
 
@@ -305,5 +318,51 @@ describe("Contact Chat across a restart", () => {
       calls.calls.map((call) => call.call),
       alice.stored()[0]!.status,
     ]).toEqual([["request"], "connected"]);
+  });
+
+  test("a message still sending when the engine stopped is failed after a restart, for the user to send again", async () => {
+    const storage = new KeptStorage();
+    let invited = "";
+    let response = "";
+    const sender = host((call) => {
+      if (call.call === "chatAccount") return null;
+      if (call.call !== "request") return { ok: true };
+      invited = (call.request as { payload: string }).payload;
+      return {
+        ok: true,
+        request: {
+          handle: HANDLE,
+          contact: { bytes: CONTACT },
+          purpose: "Hi",
+          createdAt: 1,
+          status: "waiting",
+        },
+      };
+    });
+    const alice = await engine(storage, sender);
+    alice.run();
+    const roomId = await alice.start({ handle: { bytes: CONTACT } }, "");
+    await settle();
+    response = simpleText.respond(
+      invited,
+      toHex(cryptoRandom(32)),
+      cryptoRandom,
+    )!.response;
+    sender.tell({ kind: "response", handle: HANDLE, payload: response });
+    await settle();
+    const id = await alice.send(roomId, "Hello");
+    await settle();
+    // The host never answered the allowance: the message is still sending when the engine stops.
+    expect(alice.messages(roomId).find((m) => m.id === id)!.state).toBe(
+      "sending",
+    );
+    alice.stop();
+    const again = await engine(
+      storage,
+      host(() => null),
+    );
+    expect(again.messages(roomId).find((m) => m.id === id)!.state).toBe(
+      "failed",
+    );
   });
 });
