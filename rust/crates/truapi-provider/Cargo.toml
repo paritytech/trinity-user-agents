@@ -33,6 +33,9 @@ ws = [
     "dep:jsonrpsee-client-transport",
     "dep:jsonrpsee-core",
     "dep:tokio",
+    # `wss` on native targets, with the same roots the light client's tunnel uses; see `tls`.
+    "dep:tokio-rustls",
+    "dep:webpki-roots",
     "dep:js-sys",
     "dep:send_wrapper",
     "dep:wasm-bindgen",
@@ -82,7 +85,7 @@ url = { workspace = true }
 # copy of that global, so the sink lives here (see logging_native). Only that
 # module uses it, and only off wasm, so it arrives with the light client.
 log = { workspace = true, features = ["std"], optional = true }
-jsonrpsee-client-transport = { workspace = true, features = ["ws", "tls-rustls-platform-verifier"], optional = true }
+jsonrpsee-client-transport = { workspace = true, features = ["ws", "tls"], optional = true }
 jsonrpsee-core = { workspace = true, features = ["client"], optional = true }
 tokio = { workspace = true, features = ["io-util", "net", "rt", "sync", "time"], optional = true }
 # Portable timer: `snapshot` deadlines the same way on native and on wasm.
