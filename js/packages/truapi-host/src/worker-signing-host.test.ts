@@ -223,4 +223,38 @@ suite("worker serving a signing host", () => {
       error: "a notification account is 32 bytes",
     });
   });
+
+  it("refuses a product account index that is not 32 bytes in the core itself", async () => {
+    const { worker } = await signingHost();
+    const answer = new Promise<unknown>((resolve) =>
+      worker.addEventListener("message", (event) => {
+        const data = (event as MessageEvent).data as {
+          kind: string;
+          requestId?: number;
+        };
+        if (
+          data.kind === "claimProductStatementAccountResponse" &&
+          data.requestId === -3
+        )
+          resolve(data);
+      }),
+    );
+    globalThis.dispatchEvent(
+      new MessageEvent("message", {
+        data: {
+          kind: "claimProductStatementAccount",
+          requestId: -3,
+          productId: "contact-chat.paseo",
+          index: new Uint8Array(33),
+          submit: false,
+        },
+      }),
+    );
+    expect(await answer).toEqual({
+      kind: "claimProductStatementAccountResponse",
+      requestId: -3,
+      ok: false,
+      error: "a product account index is 32 bytes",
+    });
+  });
 });

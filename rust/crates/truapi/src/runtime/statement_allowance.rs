@@ -1264,6 +1264,200 @@ pub async fn claim_notification_account(
 	Err(SlotError::NoFreeNotificationSlot { period, max: budget }.into())
 }
 
+/// Result of a statement-account claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StatementAccountOutcome {
+	/// The claim reached a block and the slot was verified to allow the target.
+	Registered {
+		/// Block hash the claim landed in.
+		block_hash: String,
+		/// Claimed slot sequence.
+		seq: u32,
+		/// Collection whose alias space holds the slot.
+		collection: PersonhoodCollection,
+	},
+	/// The target already holds a slot in this period; nothing built.
+	AlreadyAllocated {
+		/// Its slot sequence.
+		seq: u32,
+		/// Collection whose alias space holds the slot.
+		collection: PersonhoodCollection,
+	},
+	/// The runtime would accept the claim; nothing was submitted.
+	Validated {
+		/// Slot sequence the claim names.
+		seq: u32,
+		/// Collection whose alias space holds the slot.
+		collection: PersonhoodCollection,
+	},
+}
+
+/// Everything one statement-account claim needs.
+pub struct StatementAccountClaim<'a> {
+	/// People connection the claim is read and submitted on.
+	pub rpc: &'a RpcClient,
+	/// People runtime metadata.
+	pub metadata: &'a Metadata,
+	/// People signed-extension state.
+	pub chain_state: &'a ChainState,
+	/// Authorizes synchronous personhood operations for the selected wallet.
+	pub signer: &'a dyn PersonhoodSigner,
+	/// People suffix used for the slot context and alias.
+	pub network_suffix: &'a [u8],
+	/// Account that should get the general Statement Store allowance.
+	pub target: &'a [u8; 32],
+	/// Statement Store period: the current UTC day.
+	pub period: u32,
+	/// Every collection the person may hold a slot in, read again to settle
+	/// a submission that failed.
+	pub collections: &'a [PersonhoodCollection],
+	/// The scan of `collections` for `target`, made under the caller's
+	/// registration lock before any ring was looked up.
+	pub scans: &'a [CollectionScan],
+	/// Rings the person is a member of, in the order to try them.
+	pub memberships: &'a [RingParams],
+	/// Whether to submit the claim or only validate it.
+	pub submission: ClaimSubmission,
+}
+
+/// The slot `target` holds in `period` in any of `collections`, read now.
+async fn held_statement_slot(
+	rpc: &RpcClient,
+	metadata: &Metadata,
+	signer: &dyn PersonhoodSigner,
+	collections: &[PersonhoodCollection],
+	network_suffix: &[u8],
+	period: u32,
+	target: &[u8; 32],
+) -> Result<Option<(PersonhoodCollection, u32)>, StatementAllowanceError> {
+	let scans = scan_collections(
+		rpc,
+		metadata,
+		signer,
+		collections,
+		CollectionScanParams { network_suffix, period, target, reuse_existing: true },
+	)
+	.await?;
+	Ok(allocated_in(&scans))
+}
+
+/// Register `target` for the general Statement Store allowance in `period`,
+/// in the first free slot of the first collection in `memberships` that has
+/// one, or report the slot `scans` show it already holds in any collection,
+/// which needs no ring.
+///
+/// It submits at most once. It never replaces a live slot, whoever holds it:
+/// a period with no free slot is [`SlotError::NoFreeStatementStoreSlot`]. A
+/// submission that fails is settled by reading every collection again: a
+/// target the chain now registers is reported allocated. Otherwise, since a
+/// general slot can change hands, another occupant of the slot does not
+/// show this claim cannot still land, so no other slot is claimed: the claim
+/// is [`SlotError::StatementClaimUncertain`], unless the runtime refused it
+/// as invalid, which is final.
+///
+/// `signer` refuses once its owner's session ends: its last use is the proof,
+/// made with no wait before the submission.
+pub async fn claim_statement_account(
+	params: StatementAccountClaim<'_>,
+) -> Result<StatementAccountOutcome, StatementAllowanceError> {
+	let StatementAccountClaim {
+		rpc,
+		metadata,
+		chain_state,
+		signer,
+		network_suffix,
+		target,
+		period,
+		collections,
+		scans,
+		memberships,
+		submission,
+	} = params;
+	if let Some((collection, seq)) = allocated_in(scans) {
+		return Ok(StatementAccountOutcome::AlreadyAllocated { seq, collection });
+	}
+	if memberships.is_empty() {
+		return Err(SlotError::NoCollectionMembership.into());
+	}
+	let free = memberships.iter().find_map(|ring| {
+		scans.iter().find(|scan| scan.collection == ring.collection).and_then(|scan| {
+			match scan.selection {
+				SlotSelection::Free(seq) => Some((ring, seq)),
+				_ => None,
+			}
+		})
+	});
+	let Some((ring, seq)) = free else {
+		let max = scans
+			.iter()
+			.map(|scan| match &scan.selection {
+				SlotSelection::Full { max, .. } => *max,
+				_ => 0,
+			})
+			.sum();
+		return Err(SlotError::NoFreeStatementStoreSlot { period, max }.into());
+	};
+	let collection = ring.collection;
+	let revision =
+		ring::read_ring_revision(rpc, metadata, collection, ring.ring_index, &ring.block_hash)
+			.await?;
+	let context = slot::derive_slot_context(network_suffix, period, seq);
+	let call = extrinsic::build_set_statement_store_account_call(metadata, period, seq, target)?;
+	let message = extension::build_proof_message(metadata, &call, chain_state)?;
+	let alias = slot::slot_alias(signer, collection, network_suffix, period, seq)?;
+	let ring_proof = signer.prove(ring, &context, &message)?;
+	let extra = extrinsic::build_as_resources_extra(
+		metadata,
+		&ring_proof,
+		ring.ring_index,
+		revision,
+		collection,
+	)?;
+	let extrinsic = extrinsic::build_unsigned_extrinsic(metadata, chain_state, &call, &extra)?;
+	debug!(period, seq, %collection, ring_index = ring.ring_index, ?submission, "statement-account claim built");
+
+	if submission == ClaimSubmission::ValidateOnly {
+		return match validate_transaction(rpc, &extrinsic).await? {
+			Ok(()) => Ok(StatementAccountOutcome::Validated { seq, collection }),
+			Err(validity) => Err(SlotError::StatementClaimInvalid { period, seq, validity }.into()),
+		};
+	}
+	match rpc.submit_and_watch(&extrinsic).await {
+		Ok(block_hash) => {
+			if slot::read_slot_account_at(rpc, &alias, period, &block_hash).await? != Some(*target)
+			{
+				return Err(SlotError::RegistrationVerificationMismatch {
+					block_hash,
+					period,
+					seq,
+				}
+				.into());
+			}
+			Ok(StatementAccountOutcome::Registered { block_hash, seq, collection })
+		},
+		Err(err) => {
+			if let Some((collection, seq)) = held_statement_slot(
+				rpc,
+				metadata,
+				signer,
+				collections,
+				network_suffix,
+				period,
+				target,
+			)
+			.await?
+			{
+				return Ok(StatementAccountOutcome::AlreadyAllocated { seq, collection });
+			}
+			if invalid_transaction_error(&err.to_string()) {
+				return Err(err);
+			}
+			warn!(period, seq, %collection, %err, "statement-account claim unsettled");
+			Err(SlotError::StatementClaimUncertain { period, seq }.into())
+		},
+	}
+}
+
 /// Ask the runtime, at the finalized head, whether it would accept
 /// `extrinsic` from outside the node: `Ok` when valid, or its validity answer.
 async fn validate_transaction(
@@ -3086,6 +3280,450 @@ mod tests {
 					NOTIFICATION_PERIOD - 1
 				)),
 			],
+		);
+	}
+
+	/// Scan `collections` for [`NOTIFICATION_TARGET`], then claim its general
+	/// Statement Store slot from that scan, as the signing host does.
+	fn run_statement_claim(
+		rpc: RpcClient,
+		signer: &dyn PersonhoodSigner,
+		collections: &[PersonhoodCollection],
+		memberships: &[RingParams],
+		submission: ClaimSubmission,
+	) -> Result<StatementAccountOutcome, StatementAllowanceError> {
+		let chain_state = ChainState {
+			spec_version: 1_000_000,
+			transaction_version: 1,
+			genesis_hash: [0xab; 32],
+			nonce: 0,
+			restrict_origins: false,
+		};
+		let metadata = test_fixtures::people();
+		futures::executor::block_on(async {
+			let scans = scan_collections(
+				&rpc,
+				metadata,
+				signer,
+				collections,
+				CollectionScanParams {
+					network_suffix: b"paseo",
+					period: NOTIFICATION_PERIOD,
+					target: &NOTIFICATION_TARGET,
+					reuse_existing: true,
+				},
+			)
+			.await?;
+			claim_statement_account(StatementAccountClaim {
+				rpc: &rpc,
+				metadata,
+				chain_state: &chain_state,
+				signer,
+				network_suffix: b"paseo",
+				target: &NOTIFICATION_TARGET,
+				period: NOTIFICATION_PERIOD,
+				collections,
+				scans: &scans,
+				memberships,
+				submission,
+			})
+			.await
+		})
+	}
+
+	/// A chain answering `answers` in order, whose first `submit_errors`
+	/// submissions fail with `submit_error` before one reaches block `0xb10c`.
+	fn statement_claim_chain(
+		answers: &[&str],
+		submit_error: &str,
+		submit_errors: usize,
+	) -> ScriptedRpc {
+		let scripted = ScriptedRpc::new(answers.to_vec());
+		if submit_errors > 0 {
+			scripted.script_subscription_errors(submit_error, submit_errors);
+		}
+		scripted.script_subscription([r#"{"inBlock":"0xb10c"}"#]);
+		scripted
+	}
+
+	/// The pool's answer to a copy of a claim it already holds.
+	const DUPLICATE: &str = "Priority is too low: (0 vs 0)";
+
+	/// Claim as a lite person only, over `answers`.
+	fn scripted_statement_claim(
+		submission: ClaimSubmission,
+		answers: &[&str],
+		submit_errors: usize,
+	) -> (Result<StatementAccountOutcome, StatementAllowanceError>, ScriptedRpc) {
+		scripted_statement_claim_failing(submission, answers, DUPLICATE, submit_errors)
+	}
+
+	fn scripted_statement_claim_failing(
+		submission: ClaimSubmission,
+		answers: &[&str],
+		submit_error: &str,
+		submit_errors: usize,
+	) -> (Result<StatementAccountOutcome, StatementAllowanceError>, ScriptedRpc) {
+		let candidates = lite_people(lite_entropy());
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
+		let scripted = statement_claim_chain(answers, submit_error, submit_errors);
+		let outcome = run_statement_claim(
+			RpcClient::new(HostRpcClient::new(scripted.clone())),
+			&signer,
+			&[PersonhoodCollection::LitePeople],
+			core::slice::from_ref(&lite_ring()),
+			submission,
+		);
+		(outcome, scripted)
+	}
+
+	/// Claim as a person in both collections, People first, over `answers`.
+	fn scripted_pooled_statement_claim(
+		answers: &[&str],
+		memberships: &[RingParams],
+		submit_errors: usize,
+	) -> (Result<StatementAccountOutcome, StatementAllowanceError>, ScriptedRpc) {
+		let candidates = pooled_candidates();
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
+		let scripted = statement_claim_chain(answers, DUPLICATE, submit_errors);
+		let outcome = run_statement_claim(
+			RpcClient::new(HostRpcClient::new(scripted.clone())),
+			&signer,
+			&PersonhoodCollection::ALL,
+			memberships,
+			ClaimSubmission::Submit,
+		);
+		(outcome, scripted)
+	}
+
+	/// The answers to one scan of the fixture's ten lite slots.
+	fn slots(entries: [&str; 10]) -> Vec<&str> {
+		entries.to_vec()
+	}
+
+	/// Whether anything past the slot scans was read: a ring revision, a proof
+	/// or a submission.
+	fn read_past_the_scan(scripted: &ScriptedRpc) -> bool {
+		scripted.calls().iter().any(|(method, _)| method != "state_queryStorageAt")
+	}
+
+	/// The answer a scan of one table gives, `held` in slot `at` and the rest free.
+	fn one_held(held: &str, at: usize, len: usize) -> Vec<String> {
+		(0..len)
+			.map(|seq| if seq == at { held.to_string() } else { "null".to_string() })
+			.collect()
+	}
+
+	#[test]
+	fn a_statement_account_takes_the_first_free_slot_verified_at_its_block() {
+		let mine = slot_entry(NOTIFICATION_TARGET);
+		let other = slot_entry([0x44; 32]);
+		let mut answers =
+			slots([&other, "null", "null", "null", "null", "null", "null", "null", "null", "null"]);
+		answers.extend(["null", &mine]);
+		let (outcome, scripted) = scripted_statement_claim(ClaimSubmission::Submit, &answers, 0);
+
+		assert_eq!(
+			(outcome.unwrap(), submissions(&scripted)),
+			(
+				StatementAccountOutcome::Registered {
+					block_hash: "0xb10c".to_string(),
+					seq: 1,
+					collection: PersonhoodCollection::LitePeople,
+				},
+				1,
+			),
+		);
+	}
+
+	/// The submitted claim names the target and the free slot, so the
+	/// allowance lands on the account the host derived and on no other.
+	#[test]
+	fn a_statement_claim_submits_the_call_for_its_target_and_slot() {
+		let mine = slot_entry(NOTIFICATION_TARGET);
+		let mut answers = slots(["null"; 10]);
+		answers.extend(["null", &mine]);
+		let (outcome, scripted) = scripted_statement_claim(ClaimSubmission::Submit, &answers, 0);
+		assert!(outcome.is_ok());
+		let call = extrinsic::build_set_statement_store_account_call(
+			test_fixtures::people(),
+			NOTIFICATION_PERIOD,
+			0,
+			&NOTIFICATION_TARGET,
+		)
+		.unwrap();
+		let submitted = scripted
+			.calls()
+			.into_iter()
+			.find(|(method, _)| method == "author_submitAndWatchExtrinsic")
+			.map(|(_, params)| params)
+			.unwrap();
+		assert!(
+			submitted.ends_with(&format!("{}\"]", hex::encode(&call))),
+			"the extrinsic does not end in the claim call: {submitted}"
+		);
+	}
+
+	/// An account this period already funds claims nothing more, and needs no
+	/// ring to be reused.
+	#[test]
+	fn a_statement_account_that_holds_a_slot_is_reused_with_no_ring_read() {
+		let mine = slot_entry(NOTIFICATION_TARGET);
+		let answers =
+			slots(["null", &mine, "null", "null", "null", "null", "null", "null", "null", "null"]);
+		let (outcome, scripted) = scripted_statement_claim(ClaimSubmission::Submit, &answers, 0);
+
+		assert_eq!(
+			(outcome.unwrap(), read_past_the_scan(&scripted)),
+			(
+				StatementAccountOutcome::AlreadyAllocated {
+					seq: 1,
+					collection: PersonhoodCollection::LitePeople,
+				},
+				false,
+			),
+		);
+	}
+
+	/// A grant held from before is reused even when no ring can be proved now.
+	#[test]
+	fn a_held_slot_is_reused_without_any_membership() {
+		let candidates = lite_people(lite_entropy());
+		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
+		let mine = slot_entry(NOTIFICATION_TARGET);
+		let scripted = statement_claim_chain(
+			&slots(["null", "null", &mine, "null", "null", "null", "null", "null", "null", "null"]),
+			DUPLICATE,
+			0,
+		);
+		let outcome = run_statement_claim(
+			RpcClient::new(HostRpcClient::new(scripted.clone())),
+			&signer,
+			&[PersonhoodCollection::LitePeople],
+			&[],
+			ClaimSubmission::Submit,
+		);
+
+		assert_eq!(
+			(outcome.unwrap(), read_past_the_scan(&scripted)),
+			(
+				StatementAccountOutcome::AlreadyAllocated {
+					seq: 2,
+					collection: PersonhoodCollection::LitePeople,
+				},
+				false,
+			),
+		);
+	}
+
+	/// A slot held in one collection is found before another collection's free
+	/// slot is claimed: one account never gets two.
+	#[test]
+	fn a_slot_held_in_lite_people_is_reused_while_people_has_a_free_one() {
+		let mine = slot_entry(NOTIFICATION_TARGET);
+		let mut answers = vec!["null".to_string(); 20];
+		answers.extend(one_held(&mine, 4, 10));
+		let answers: Vec<&str> = answers.iter().map(String::as_str).collect();
+		let (outcome, scripted) =
+			scripted_pooled_statement_claim(&answers, &pooled_memberships(), 0);
+
+		assert_eq!(
+			(outcome.unwrap(), read_past_the_scan(&scripted)),
+			(
+				StatementAccountOutcome::AlreadyAllocated {
+					seq: 4,
+					collection: PersonhoodCollection::LitePeople,
+				},
+				false,
+			),
+		);
+	}
+
+	/// Unlike an allocation for the product-wide account, a conversation's
+	/// account never revokes another live allowance to get one.
+	#[test]
+	fn a_full_period_is_refused_without_replacing_any_slot() {
+		let other = slot_entry_since([0x44; 32], 0);
+		let answers = slots([&other; 10]);
+		let (outcome, scripted) = scripted_statement_claim(ClaimSubmission::Submit, &answers, 0);
+
+		assert_eq!(
+			(outcome.unwrap_err().to_string(), read_past_the_scan(&scripted)),
+			(
+				format!("no free StatementStore slot in period {NOTIFICATION_PERIOD} (max 10)"),
+				false
+			),
+		);
+	}
+
+	fn uncertain() -> String {
+		format!(
+			"a statement-account claim for slot 0 of period {NOTIFICATION_PERIOD} may still land; not claiming another"
+		)
+	}
+
+	/// The pool refused a copy and the target holds nothing: the claim in the
+	/// pool may still land, so no other slot is claimed.
+	#[test]
+	fn a_duplicate_statement_claim_with_nothing_registered_is_uncertain() {
+		let mut answers = slots(["null"; 10]);
+		answers.push("null");
+		answers.extend(slots(["null"; 10]));
+		let (outcome, scripted) = scripted_statement_claim(ClaimSubmission::Submit, &answers, 1);
+
+		assert_eq!((outcome.unwrap_err().to_string(), submissions(&scripted)), (uncertain(), 1),);
+	}
+
+	/// A general slot can change hands, so another account in it does not
+	/// show this claim cannot land: still uncertain, and no next slot.
+	#[test]
+	fn a_duplicate_statement_claim_whose_slot_went_elsewhere_is_uncertain() {
+		let other = slot_entry([0x44; 32]);
+		let mut answers = slots(["null"; 10]);
+		answers.push("null");
+		answers.extend(slots([
+			&other, "null", "null", "null", "null", "null", "null", "null", "null", "null",
+		]));
+		let (outcome, scripted) = scripted_statement_claim(ClaimSubmission::Submit, &answers, 1);
+
+		assert_eq!((outcome.unwrap_err().to_string(), submissions(&scripted)), (uncertain(), 1),);
+	}
+
+	/// The pool's refusal is settled by the chain: a target registered
+	/// meanwhile is the claim's success.
+	#[test]
+	fn a_duplicate_statement_claim_whose_target_is_registered_reports_it() {
+		let mine = slot_entry(NOTIFICATION_TARGET);
+		let mut answers = slots(["null"; 10]);
+		answers.push("null");
+		answers.extend(slots([
+			&mine, "null", "null", "null", "null", "null", "null", "null", "null", "null",
+		]));
+		let (outcome, scripted) = scripted_statement_claim(ClaimSubmission::Submit, &answers, 1);
+
+		assert_eq!(
+			(outcome.unwrap(), submissions(&scripted)),
+			(
+				StatementAccountOutcome::AlreadyAllocated {
+					seq: 0,
+					collection: PersonhoodCollection::LitePeople,
+				},
+				1,
+			),
+		);
+	}
+
+	/// Settling reads every collection: a claim in People that failed, with the
+	/// target meanwhile registered in LitePeople, is that registration.
+	#[test]
+	fn settling_a_failed_claim_finds_the_target_in_another_collection() {
+		let mine = slot_entry(NOTIFICATION_TARGET);
+		let mut answers = vec!["null".to_string(); 30];
+		answers.push("null".to_string());
+		answers.extend(vec!["null".to_string(); 20]);
+		answers.extend(one_held(&mine, 3, 10));
+		let answers: Vec<&str> = answers.iter().map(String::as_str).collect();
+		let (outcome, scripted) =
+			scripted_pooled_statement_claim(&answers, &pooled_memberships(), 1);
+
+		assert_eq!(
+			(outcome.unwrap(), submissions(&scripted)),
+			(
+				StatementAccountOutcome::AlreadyAllocated {
+					seq: 3,
+					collection: PersonhoodCollection::LitePeople,
+				},
+				1,
+			),
+		);
+	}
+
+	/// The runtime's refusal of the claim is final: reported as it is, with
+	/// no other slot claimed.
+	#[test]
+	fn an_invalid_statement_claim_is_reported_and_not_retried() {
+		let mut answers = slots(["null"; 10]);
+		answers.push("null");
+		answers.extend(slots(["null"; 10]));
+		let (outcome, scripted) = scripted_statement_claim_failing(
+			ClaimSubmission::Submit,
+			&answers,
+			"Invalid Transaction: Transaction has a bad signature",
+			1,
+		);
+
+		let error = outcome.unwrap_err().to_string();
+		assert!(error.contains("Invalid Transaction"), "unexpected error: {error}");
+		assert_eq!(submissions(&scripted), 1);
+	}
+
+	/// The keys are the session's: a logout during the scan stops the claim
+	/// before its proof, so nothing is submitted.
+	#[test]
+	fn a_session_that_ends_during_a_statement_claim_submits_nothing() {
+		let candidates = lite_people(lite_entropy());
+		let keys = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
+		let ended = Arc::new(std::sync::atomic::AtomicBool::new(false));
+		let current = {
+			let ended = ended.clone();
+			move || !ended.load(std::sync::atomic::Ordering::SeqCst)
+		};
+		let signer = CheckedPersonhoodSigner::new(&keys, &current);
+		let mut answers = slots(["null"; 10]);
+		answers.push("null");
+		let scripted = statement_claim_chain(&answers, DUPLICATE, 0);
+		let outcome = run_statement_claim(
+			RpcClient::new(HostRpcClient::new(EndsSessionOnScan {
+				inner: scripted.clone(),
+				ended,
+			})),
+			&signer,
+			&[PersonhoodCollection::LitePeople],
+			core::slice::from_ref(&lite_ring()),
+			ClaimSubmission::Submit,
+		);
+
+		assert_eq!(
+			(outcome.unwrap_err().to_string(), submissions(&scripted)),
+			("the wallet session ended".to_string(), 0),
+		);
+	}
+
+	#[test]
+	fn a_validate_only_statement_claim_submits_nothing() {
+		let head = format!(r#""0x{}""#, hex::encode([0xf1; 32]));
+		let mut answers = slots(["null"; 10]);
+		answers.extend(["null", head.as_str(), r#""0x00""#]);
+		let (valid, scripted) =
+			scripted_statement_claim(ClaimSubmission::ValidateOnly, &answers, 0);
+		let mut answers = slots(["null"; 10]);
+		answers.extend(["null", head.as_str(), r#""0x010007e1""#]);
+		let (refused, refused_chain) =
+			scripted_statement_claim(ClaimSubmission::ValidateOnly, &answers, 0);
+
+		let validation = scripted
+			.calls()
+			.into_iter()
+			.find(|(method, _)| method == "state_call")
+			.map(|(_, params)| serde_json::from_str::<Value>(&params).unwrap())
+			.unwrap();
+		assert_eq!(validation[0], json!("TaggedTransactionQueue_validate_transaction"));
+		assert_eq!(
+			(
+				valid.unwrap(),
+				submissions(&scripted) + submissions(&refused_chain),
+				refused.unwrap_err().to_string()
+			),
+			(
+				StatementAccountOutcome::Validated {
+					seq: 0,
+					collection: PersonhoodCollection::LitePeople,
+				},
+				0,
+				format!(
+					"statement-account claim (period {NOTIFICATION_PERIOD}, seq 0) does not validate: Invalid::Custom(225)"
+				),
+			),
 		);
 	}
 }

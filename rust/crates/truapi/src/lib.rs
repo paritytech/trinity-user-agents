@@ -814,7 +814,7 @@ pub use runtime::{
 	PairingProposal, PairingProposalMetadata, ResponderExit,
 };
 #[cfg(feature = "runtime")]
-pub use runtime::{NotificationClaim, StatementRenewalTarget};
+pub use runtime::{NotificationClaim, StatementAccountClaim, StatementRenewalTarget};
 #[cfg(feature = "runtime")]
 pub use unix_time::current_unix_millis;
 

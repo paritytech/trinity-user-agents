@@ -510,6 +510,122 @@ pub async fn claim_notification_account(
 	Ok(NotificationClaim { period, outcome })
 }
 
+/// A product-account claim: the account, the period and how it ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatementAccountClaim {
+	/// The product account the claim is for.
+	pub account: [u8; 32],
+	/// Statement Store allowance period: the UTC day the claim is for.
+	pub period: u32,
+	/// What the claim did.
+	pub outcome: crate::runtime::statement_allowance::StatementAccountOutcome,
+}
+
+/// Give `product_id`'s own account at `Raw(index)` a general Statement Store
+/// slot of the wallet's personhood for the current period, or with
+/// [`ClaimSubmission::ValidateOnly`] only ask the runtime whether it would
+/// accept the claim.
+///
+/// The host derives the account itself, from the session's root and the
+/// product id it names, so a caller can fund only that product's accounts and
+/// never an arbitrary one. The product signs with it through
+/// `statementStore.createProof`; no secret crosses here. A live slot is never
+/// replaced, and the account is not added to the renewal ledger: the host
+/// asks again in each period it posts in.
+///
+/// [`ClaimSubmission::ValidateOnly`]: crate::runtime::statement_allowance::ClaimSubmission::ValidateOnly
+pub async fn claim_product_statement_account(
+	services: &RuntimeServices,
+	signing_host: &SigningHost,
+	session: &AuthoritySession,
+	product_id: &ProductId,
+	index: [u8; 32],
+	submission: crate::runtime::statement_allowance::ClaimSubmission,
+) -> Result<StatementAccountClaim, AllowanceAllocationError> {
+	use crate::runtime::statement_allowance::{
+		self, CheckedPersonhoodSigner, CollectionScanParams, StatementAccountOutcome,
+		StatementAllowanceError, allocated_in, find_including_rings, scan_collections,
+	};
+
+	signing_host.require_current_session(session)?;
+	let account = signing_host.product_statement_account(product_id, index)?;
+	let ended = |err: StatementAllowanceError| match err {
+		StatementAllowanceError::SessionEnded => {
+			AllowanceAllocationError::Authority(AuthorityError::Disconnected)
+		},
+		other => other.into(),
+	};
+	// Held from the scan to the confirmation, so neither another claim nor an
+	// on-demand allocation selects the same slot.
+	let _registration = signing_host.renewal.registration_lock().lock().await;
+	signing_host.require_current_session(session)?;
+	let client = services.statement_store.chain_client("product statement account").await?;
+	let rpc = client.rpc();
+	let chain = services.chain_context.get(&client).await?;
+	let network_suffix = statement_allowance::slot::read_network_suffix(rpc).await?;
+	let period = statement_allowance::slot::current_period(current_unix_secs()?);
+	let candidates = signing_host.reserved_person_collection_candidates(session)?;
+	let keys = statement_allowance::FixedPersonhoodSigner::new(&candidates).await?;
+	// The keys are this session's: every use checks it is still current.
+	let current = || signing_host.require_current_session(session).is_ok();
+	let signer = CheckedPersonhoodSigner::new(&keys, &current);
+	let collections: Vec<_> = candidates.iter().map(|candidate| candidate.collection).collect();
+	// Every collection first: a slot the account holds in any of them is
+	// reused, with no ring looked up and nothing proved.
+	let scans = scan_collections(
+		rpc,
+		&chain.metadata,
+		&signer,
+		&collections,
+		CollectionScanParams {
+			network_suffix: &network_suffix,
+			period,
+			target: &account,
+			reuse_existing: true,
+		},
+	)
+	.await
+	.map_err(ended)?;
+	if let Some((collection, seq)) = allocated_in(&scans) {
+		signing_host.require_current_session(session)?;
+		return Ok(StatementAccountClaim {
+			account,
+			period,
+			outcome: StatementAccountOutcome::AlreadyAllocated { seq, collection },
+		});
+	}
+	let memberships = find_including_rings(rpc, &chain.metadata, &signer, &collections, u32::MAX)
+		.await
+		.map_err(ended)?;
+	if memberships.is_empty() {
+		signing_host.require_current_session(session)?;
+		return Err(AllowanceAllocationError::MissingPersonhoodMembership {
+			resource: "product statement account",
+		});
+	}
+	let outcome =
+		statement_allowance::claim_statement_account(statement_allowance::StatementAccountClaim {
+			rpc,
+			metadata: &chain.metadata,
+			chain_state: &chain.state,
+			signer: &signer,
+			network_suffix: &network_suffix,
+			target: &account,
+			period,
+			collections: &collections,
+			scans: &scans,
+			memberships: &memberships,
+			submission,
+		})
+		.await
+		.map_err(ended)?;
+	debug!(%product_id, period, ?outcome, "product statement account claim");
+	// A claim submitted before the session ended stays on chain; only its
+	// answer is withheld from a session that is gone.
+	signing_host.require_current_session(session)?;
+	Ok(StatementAccountClaim { account, period, outcome })
+}
+
 /// Allowance period clock, using web-time on browsers to avoid SystemTime panics.
 pub fn current_unix_secs() -> Result<u64, AllowanceAllocationError> {
 	#[cfg(not(target_arch = "wasm32"))]

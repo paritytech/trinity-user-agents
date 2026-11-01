@@ -213,8 +213,11 @@ host knows, without caching them (served to the web host through WASM; the
 native host runtime does not expose it yet). The signing handle also has
 `claim_notification_account`, which registers an account the host derives as
 today's notification statement account with the session's personhood proof,
-or only validates that claim against the runtime (served to the web host
-through WASM; not exposed natively). Calling the wrong operation is a compile
+or only validates that claim against the runtime, and
+`claim_product_statement_account`, which gives a product's own account at a
+raw derivation index a general Statement Store slot of the session's
+personhood for the day, never replacing a live slot, or only validates that
+claim (both served to the web host through WASM; not exposed natively). Calling the wrong operation is a compile
 error, not a runtime `Unavailable`.
 
 A local session's usernames come from the dotNS contracts on Asset Hub, read

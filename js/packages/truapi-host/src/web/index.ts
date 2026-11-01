@@ -7,4 +7,7 @@ export type {
   WorkerPairingHostRuntime,
 } from "./create-worker-host-runtime.js";
 export { createWebWorkerPairingHostRuntime } from "./create-worker-host-runtime.js";
-export type { NotificationClaim } from "../worker-protocol.js";
+export type {
+  NotificationClaim,
+  StatementAccountClaim,
+} from "../worker-protocol.js";

@@ -16,7 +16,7 @@ use truapi::latest::{
 	HostAccountRingVrfSignRequest, ProductAccountId, RingLocation, RingLocationJunction,
 };
 
-pub use allowance::NotificationClaim;
+pub use allowance::{NotificationClaim, StatementAccountClaim};
 pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::TrackedStatementRenewalTarget;
@@ -385,6 +385,27 @@ impl SigningHost {
 			.await
 	}
 
+	/// Give `product_id`'s own account at `Raw(index)` a Statement Store
+	/// allowance slot for the current period under the active local session,
+	/// or only validate the claim.
+	pub async fn claim_product_statement_account(
+		&self,
+		product_id: &ProductId,
+		index: [u8; 32],
+		submission: statement_allowance::ClaimSubmission,
+	) -> Result<StatementAccountClaim, allowance::AllowanceAllocationError> {
+		let session = self.current_local_session().ok_or(AuthorityError::Disconnected)?;
+		allowance::claim_product_statement_account(
+			&self.services,
+			self,
+			&session,
+			product_id,
+			index,
+			submission,
+		)
+		.await
+	}
+
 	fn has_auto_signing_grant(
 		&self,
 		activation_generation: u64,
@@ -451,6 +472,21 @@ impl SigningHost {
 		account: &v01::ProductAccountId,
 	) -> Result<schnorrkel::Keypair, AuthorityError> {
 		self.product_keypair_with_owner(account).map(|(_, keypair)| keypair)
+	}
+
+	/// The public key of `product_id`'s own account at `Raw(index)`: the
+	/// account `statementStore.createProof` signs with for that product and
+	/// index.
+	fn product_statement_account(
+		&self,
+		product_id: &ProductId,
+		index: [u8; 32],
+	) -> Result<[u8; 32], AuthorityError> {
+		self.product_keypair(&latest::ProductAccountId {
+			dot_ns_identifier: product_id.clone(),
+			derivation_index: latest::DerivationIndex::Raw(index),
+		})
+		.map(|keypair| keypair.public.to_bytes())
 	}
 
 	fn identity_keypair(&self) -> Result<schnorrkel::Keypair, AuthorityError> {
@@ -1456,6 +1492,7 @@ mod tests {
 	#[cfg(feature = "test-host")]
 	mod local_preimages;
 	mod raw_signing;
+	mod statement_account;
 	#[cfg(feature = "test-host")]
 	mod withheld_resources;
 

@@ -405,3 +405,106 @@ async fn a_notification_claim_validates_on_the_live_chain() {
 	);
 	assert!(matches!(outcome, alloc::NotificationAccountOutcome::Validated { .. }));
 }
+
+/// A claim for a product's own account at a raw index, as a conversation's
+/// account, must pass the live runtime's own validation: the general slot
+/// context, the call, the `AsResources` extra and the ring proof. Validation
+/// only, so nothing is submitted and no slot is taken.
+///
+/// Proves as each of the web host's public Alice and Bob test accounts, which
+/// must be personhood ring members on the chain; each target is that
+/// account's `contact-chat.paseo` account at a fixed throwaway index.
+#[tokio::test]
+#[ignore = "needs network access to a live People chain"]
+async fn a_product_statement_account_claim_validates_on_the_live_chain() {
+	use truapi::host_logic::product_account::{
+		derive_full_person_ring_vrf_entropy, derive_lite_person_ring_vrf_entropy,
+		derive_product_keypair, derive_root_keypair_from_entropy,
+	};
+
+	const TEST_ACCOUNTS: [(&str, &str); 2] = [
+		(
+			"alice",
+			"jelly better achieve collect unaware mountain thought cargo oxygen act hood bridge",
+		),
+		("bob", "cat swing flag economy stadium alone churn speed unique patch report train"),
+	];
+	let product: truapi::platform::ProductId =
+		"contact-chat.paseo".parse().expect("a valid product id");
+	let rpc = connect().await;
+	let cache = ChainContextCache::default();
+	let chain = cache
+		.get(&stale_scoped_client().await)
+		.await
+		.expect("read the live chain context");
+	let network_suffix = alloc::slot::read_network_suffix(&rpc)
+		.await
+		.expect("read the live network suffix");
+	let suffix = String::from_utf8(network_suffix.clone()).expect("network suffix is UTF-8");
+	let period = current_period();
+	for (name, phrase) in TEST_ACCOUNTS {
+		let entropy = bip39::Mnemonic::parse(phrase).expect("a valid test phrase").to_entropy();
+		let root = derive_root_keypair_from_entropy(&entropy).expect("derive the root");
+		let target = derive_product_keypair(&root, &product, [0x5b; 32])
+			.expect("derive the product account")
+			.public
+			.to_bytes();
+		let candidates = [
+			alloc::CollectionCandidate {
+				collection: PersonhoodCollection::People,
+				entropy: derive_full_person_ring_vrf_entropy(&entropy, &suffix),
+			},
+			alloc::CollectionCandidate {
+				collection: PersonhoodCollection::LitePeople,
+				entropy: derive_lite_person_ring_vrf_entropy(&entropy, &suffix),
+			},
+		];
+		let signer = alloc::FixedPersonhoodSigner::new(&candidates).await.expect("load the prover");
+		let collections = candidates.map(|candidate| candidate.collection);
+		let memberships =
+			alloc::find_including_rings(&rpc, &chain.metadata, &signer, &collections, u32::MAX)
+				.await
+				.expect("look up the rings");
+		assert!(!memberships.is_empty(), "the {name} test account is in no personhood ring");
+
+		let scans = alloc::scan_collections(
+			&rpc,
+			&chain.metadata,
+			&signer,
+			&collections,
+			alloc::CollectionScanParams {
+				network_suffix: &network_suffix,
+				period,
+				target: &target,
+				reuse_existing: true,
+			},
+		)
+		.await
+		.expect("scan the live slot tables");
+		let outcome = alloc::claim_statement_account(alloc::StatementAccountClaim {
+			rpc: &rpc,
+			metadata: &chain.metadata,
+			chain_state: &chain.state,
+			signer: &signer,
+			network_suffix: &network_suffix,
+			target: &target,
+			period,
+			collections: &collections,
+			scans: &scans,
+			memberships: &memberships,
+			submission: alloc::ClaimSubmission::ValidateOnly,
+		})
+		.await
+		.expect("the live runtime accepts the claim");
+
+		println!(
+			"{name}: validated a product statement-account claim for 0x{} in period {period}: {outcome:?}, memberships {:?}",
+			hex::encode(target),
+			memberships
+				.iter()
+				.map(|ring| (ring.collection, ring.ring_index))
+				.collect::<Vec<_>>()
+		);
+		assert!(matches!(outcome, alloc::StatementAccountOutcome::Validated { .. }));
+	}
+}

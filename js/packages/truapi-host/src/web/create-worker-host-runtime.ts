@@ -35,6 +35,7 @@ import type {
   HostRole,
   MainToWorker,
   NotificationClaim,
+  StatementAccountClaim,
   SubscriptionName,
   WorkerToMain,
 } from "../worker-protocol.js";
@@ -99,6 +100,24 @@ export interface WorkerPairingHostRuntime {
     target: Uint8Array,
     submit: boolean,
   ): Promise<NotificationClaim>;
+  /**
+   * Give `productId`'s own account at derivation index `Raw(index)` (32
+   * bytes) a Statement Store allowance slot of the session's personhood for
+   * the current UTC day; with `submit` false, only ask the runtime whether
+   * it would accept the claim, and submit nothing.
+   *
+   * Signing hosts only. The core derives the account from the product id,
+   * so only that product's accounts can be funded; the product signs with
+   * it through `statementStore.createProof`. The host decides when a product
+   * may have one. A live slot is never replaced. Rejects without a session,
+   * on a pairing host, when no free slot or no personhood membership is
+   * found, or when the runtime is disposed before the core answers.
+   */
+  claimProductStatementAccount(
+    productId: string,
+    index: Uint8Array,
+    submit: boolean,
+  ): Promise<StatementAccountClaim>;
   /**
    * Restore the session persisted in the core's `AuthSession` slot. Resolves
    * once product frames may use it, so a host can await this at boot before
@@ -296,6 +315,13 @@ interface RuntimeState {
       reject: (error: Error) => void;
     }
   >;
+  pendingStatementAccountClaims: Map<
+    number,
+    {
+      resolve: (claim: StatementAccountClaim) => void;
+      reject: (error: Error) => void;
+    }
+  >;
   pendingDeviceStatementKeys: Map<
     number,
     {
@@ -341,6 +367,7 @@ let nextSessionChatIdentityKeyRequestId = 0;
 let nextDeviceStatementKeyRequestId = 0;
 let nextContactHandlesRequestId = 0;
 let nextNotificationClaimRequestId = 0;
+let nextStatementAccountClaimRequestId = 0;
 let nextDeviceEncryptionKeyRequestId = 0;
 let nextProductSubtreePublicKeyRequestId = 0;
 let nextSessionActivationRequestId = 0;
@@ -914,6 +941,19 @@ function handleClaimNotificationAccountResponse(
   );
 }
 
+function handleClaimStatementAccountResponse(
+  state: RuntimeState,
+  msg:
+    | { requestId: number; ok: true; claim: StatementAccountClaim }
+    | { requestId: number; ok: false; error: string },
+): void {
+  settlePending(
+    state.pendingStatementAccountClaims,
+    msg.requestId,
+    msg.ok ? { ok: true, value: msg.claim } : { ok: false, error: msg.error },
+  );
+}
+
 function handleDeviceStatementKeyResponse(
   state: RuntimeState,
   msg:
@@ -962,6 +1002,7 @@ function rejectPendingRuntimeRequests(state: RuntimeState, error: Error): void {
   rejectAll(state.pendingSessionChatIdentityKeys, error);
   rejectAll(state.pendingContactHandles, error);
   rejectAll(state.pendingNotificationClaims, error);
+  rejectAll(state.pendingStatementAccountClaims, error);
   rejectAll(state.pendingDeviceStatementKeys, error);
   rejectAll(state.pendingDeviceEncryptionKeys, error);
   rejectAll(state.pendingProductSubtreePublicKeys, error);
@@ -1142,6 +1183,7 @@ export function createWebWorkerPairingHostRuntime(
       pendingSessionChatIdentityKeys: new Map(),
       pendingContactHandles: new Map(),
       pendingNotificationClaims: new Map(),
+      pendingStatementAccountClaims: new Map(),
       pendingProductSubtreePublicKeys: new Map(),
       pendingDeviceStatementKeys: new Map(),
       pendingDeviceEncryptionKeys: new Map(),
@@ -1216,6 +1258,9 @@ export function createWebWorkerPairingHostRuntime(
           break;
         case "claimNotificationAccountResponse":
           handleClaimNotificationAccountResponse(state, msg);
+          break;
+        case "claimProductStatementAccountResponse":
+          handleClaimStatementAccountResponse(state, msg);
           break;
         case "deviceStatementKeyResponse":
           handleDeviceStatementKeyResponse(state, msg);
@@ -1596,6 +1641,36 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
           kind: "claimNotificationAccount",
           requestId,
           target,
+          submit,
+        }),
+      );
+    },
+    async claimProductStatementAccount(
+      productId: string,
+      index: Uint8Array,
+      submit: boolean,
+    ): Promise<StatementAccountClaim> {
+      if (index.length !== 32)
+        throw new Error("a product account index is 32 bytes");
+      // A claim has no safe empty value. The check is synchronous with the
+      // send, so the fallback is unreachable.
+      if (state.disposed) throw new Error("worker host runtime is disposed");
+      return sendWorkerRequest<StatementAccountClaim>(
+        state,
+        state.pendingStatementAccountClaims,
+        () => ++nextStatementAccountClaimRequestId,
+        {
+          account: "",
+          period: 0,
+          outcome: "alreadyAllocated",
+          seq: 0,
+          collection: "",
+        },
+        (requestId) => ({
+          kind: "claimProductStatementAccount",
+          requestId,
+          productId,
+          index,
           submit,
         }),
       );

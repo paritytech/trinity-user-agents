@@ -43,8 +43,8 @@ use crate::{
 		ActionChannel, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver,
 		HostSession, LocalActivation, NotificationClaim, PairedSsoPeer, PairingHostRole,
 		ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit, RuntimeServices,
-		SigningHostRole, SigningHostSsoService, SsoResponderService, sso_service::Dispatch,
-		statement_allowance::ClaimSubmission,
+		SigningHostRole, SigningHostSsoService, SsoResponderService, StatementAccountClaim,
+		sso_service::Dispatch, statement_allowance::ClaimSubmission,
 	},
 	subscription::{HostInitiatedSubscriptionManager, Spawner},
 	transport::Transport,
@@ -942,6 +942,28 @@ impl SigningHostRuntime {
 	) -> Result<NotificationClaim, truapi::latest::GenericError> {
 		self.signing_host
 			.claim_notification_account(target, submission)
+			.await
+			.map_err(|err| truapi::latest::GenericError { reason: err.to_string() })
+	}
+
+	/// Give `product_id`'s own account at derivation index `Raw(index)` a
+	/// Statement Store allowance slot of the session's personhood for the
+	/// current UTC day, or with [`ClaimSubmission::ValidateOnly`] only ask the
+	/// runtime whether it would accept the claim.
+	///
+	/// The core derives the account from the product id the host names, so
+	/// only that product's accounts can be funded. The product signs with it
+	/// through `statementStore.createProof`. The host decides when a product
+	/// may have one; products have no call that reaches this.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.claim_product_statement_account"))]
+	pub async fn claim_product_statement_account(
+		&self,
+		product_id: &crate::platform::ProductId,
+		index: [u8; 32],
+		submission: ClaimSubmission,
+	) -> Result<StatementAccountClaim, truapi::latest::GenericError> {
+		self.signing_host
+			.claim_product_statement_account(product_id, index, submission)
 			.await
 			.map_err(|err| truapi::latest::GenericError { reason: err.to_string() })
 	}

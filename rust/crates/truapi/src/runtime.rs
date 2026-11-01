@@ -94,7 +94,7 @@ use crate::platform::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use signing_host::TrackedStatementRenewalTarget;
-pub use signing_host::{NotificationClaim, StatementRenewalTarget};
+pub use signing_host::{NotificationClaim, StatementAccountClaim, StatementRenewalTarget};
 use tracing::{instrument, warn};
 use truapi::{
 	CallContext, CallError, CancellationReason, Subscription,
