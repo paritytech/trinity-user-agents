@@ -113,6 +113,18 @@ export interface RepliedView {
  * - `reply`: answer with the product's payload. The host sends it.
  * - `refuse`: the product cannot accept it; the user sees `reason`.
  * - `open`: bring the product to the front, answering an `openIntent`.
+ *
+ * Either side, once the user sent or accepted the request:
+ * - `chatAccount`: let the product's own account at raw derivation index
+ *   `index` (32 bytes), for the conversation this request set up, post to
+ *   the Statement Store in the current allowance period. The host names the
+ *   product from the caller, never from the call, so a product funds only
+ *   its own accounts; the core derives the account and gets it a slot of
+ *   the user's personhood, never the user's identity, a notification slot or
+ *   the product-wide allowance account. The user's Send, once an
+ *   authenticated reply arrived, or Accept is the consent, for one index per
+ *   request; asking again in a later period renews it. Answers
+ *   {@link ChatAccountAllowance}.
  */
 export type ProductCall =
   | { id: number; call: "request"; request: unknown }
@@ -126,7 +138,13 @@ export type ProductCall =
       open: boolean;
     }
   | { id: number; call: "refuse"; handle: RequestHandle; reason: string }
-  | { id: number; call: "open"; handle: RequestHandle };
+  | { id: number; call: "open"; handle: RequestHandle }
+  | {
+      id: number;
+      call: "chatAccount";
+      handle: RequestHandle;
+      index: string;
+    };
 
 export type FailureReason =
   /** The user closed the host's prompt. */
@@ -140,7 +158,17 @@ export type FailureReason =
 
 export type Failure = { ok: false; reason: FailureReason; detail: string };
 
-export type CallResult = { ok: true; request?: OutgoingView } | Failure;
+/** A conversation account's allowance, as the host got it. */
+export interface ChatAccountAllowance {
+  /** The account the core derived, `0x` hex. */
+  account: string;
+  /** When the allowance period ends, in milliseconds since the Unix epoch: ask again after it. */
+  until: number;
+}
+
+export type CallResult =
+  | { ok: true; request?: OutgoingView; allowance?: ChatAccountAllowance }
+  | Failure;
 
 /**
  * Host to product.
@@ -252,6 +280,12 @@ export function readProductCall(value: unknown): ProductCall | null {
             handle,
             reason: reason.slice(0, PURPOSE_MAX_CHARS),
           }
+        : null;
+    }
+    case "chatAccount": {
+      const index = text("index");
+      return handle !== null && isHexOf(index, 32)
+        ? { id, call: "chatAccount", handle, index: index as string }
         : null;
     }
     default:

@@ -1199,6 +1199,10 @@ function syncChatSession(): void {
             runtime === null
               ? Promise.reject(new Error("The core is not running."))
               : runtime.claimNotificationAccount(target, submit),
+          claimProductStatementAccount: (productId, index, submit) =>
+            runtime === null
+              ? Promise.reject(new Error("The core is not running."))
+              : runtime.claimProductStatementAccount(productId, index, submit),
         },
   );
   sessionMembers.sync(

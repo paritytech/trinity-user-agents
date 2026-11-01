@@ -14,8 +14,10 @@
  * and checked with the keys each test user's own phrase derives after the
  * host checked them against the core's session. The chat keys a host reads
  * for its contacts come from a fixture directory, not the chain; the delivery
- * is the local simulated one; the setup is a fixture. Contact Chat ends at the
- * connection: it has no text transport, so a message is refused. A second
+ * is the local simulated one. Contact Chat posts text through its TrUAPI
+ * Statement Store as its own account at each conversation's index, and the
+ * local delivery gives such an account no allowance, so a message here fails
+ * and says why; no statement leaves the tab. A second
  * product, `fixtures/products/contacts-product.ts` served by URL on a loopback
  * port, asks `contacts.pick` for the same people.
  */
@@ -301,8 +303,9 @@ describe("Contact Chat between test users", () => {
           .waitFor();
 
         // Alice's host authenticated the reply, her worker checked it: they
-        // are connected. Contact Chat has no text transport, so it refuses
-        // a message and says why.
+        // are connected, and told the text is not encrypted. The local
+        // delivery gives the conversation's account no allowance, so a
+        // message fails and says why.
         await alice
           .locator(".chat-system", {
             hasText: "They accepted your chat request",
@@ -310,14 +313,17 @@ describe("Contact Chat between test users", () => {
           .waitFor();
         await alice
           .locator(".chat-row-preview", {
-            hasText: "Connected · sending is not supported yet",
+            hasText: "Connected · messages are not encrypted",
           })
           .first()
           .waitFor();
         await alice.fill(".chat-composer-input", "Hello there");
         await alice.press(".chat-composer-input", "Enter");
+        await alice.locator(".chat-failed").waitFor();
         await alice
-          .locator(".chat-failed", { hasText: "no text transport" })
+          .locator(".chat-system", {
+            hasText: "gives conversation accounts no Statement Store allowance",
+          })
           .waitFor();
         await screenshot(alice, "contact-chat-conversation");
 
@@ -343,16 +349,22 @@ describe("Contact Chat between test users", () => {
               value,
               found: false,
             });
-          // Each kept the topics and secret the setup agreed.
-          expect(visible).toContain('"connection":{"topics":{"tab":"0x');
-          expect(visible).toMatch(/"secret":"0x[0-9a-f]{64}"/);
+          // Each kept its session, and the index and public key of its own
+          // product account for the conversation, which the core reported.
+          expect(visible).toContain('"session":{"listen":"0x');
+          expect(visible).toMatch(/"index":"0x[0-9a-f]{64}"/);
+          expect(visible).toMatch(/"account":"0x[0-9a-f]{64}"/);
         }
+        // What the worker could not do: the refused send, and reading a
+        // Statement Store this offline tab cannot reach.
+        const workerErrors = await aliceWorker.evaluate(
+          () => (window as unknown as WorkerWindow).__contactChatWorker!.errors,
+        );
         expect(
-          await aliceWorker.evaluate(
-            () =>
-              (window as unknown as WorkerWindow).__contactChatWorker!.errors,
-          ),
-        ).toEqual([]);
+          workerErrors.filter((error) => !error.startsWith("read: ")),
+        ).toEqual([
+          "send: This host gives conversation accounts no Statement Store allowance.",
+        ]);
 
         // The handle each worker holds is the core's: the one `contacts.pick`
         // gives another product of the same user for the same person.

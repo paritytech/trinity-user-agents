@@ -630,24 +630,66 @@ agreed API.
   adds, and Chat shows its conversations over the v2 draft bridge. **+** in Chat → Bob → **Send request to Bob**: the
   host hands the worker Bob's handle (`startConversation { handle }`), the worker makes its invitation payload and asks
   its own request service to send it, and the host's **Send invitation** prompt asks first. Bob's **Accept** in the
-  Inbox goes straight to his running worker, which checks the payload, makes both topics and replies; Alice's host
-  authenticates the reply, her worker checks it and only then calls `complete`: **Connected**. Both workers keep what
-  the setup agreed, in their own storage and before their host replies or completes: the two conversation topics, `T_AB`
-  and `T_BA`, and the X25519 secret of the two protocol keys. That secret is the product's session state: no contact
-  handle, request, reply, chat bridge message or host record carries it. It sits in the worker's own TrUAPI storage,
-  which this host keeps, so a trusted host can still read it. The conversation and names survive a reload. Each host
-  names and draws the other person from the handle; neither worker gets a name, username, account, identity key, request
-  id or route. Contact Chat can also ask `contacts.pick` itself and send its request to the handle it gets, and cancel
-  its own request through its host; only the browser test drives these, as the v2 draft has no action for them.
-  - **It ends at the connection.** Contact Chat has no text transport. A connected room says "Connected · sending is not
-    supported yet" under its name. The host's composer stays enabled, because the v2 draft has no way for a product to
-    disable it after creating the room, but a message is refused and the failed bubble says why. No text goes on `T_AB`
-    or `T_BA`.
-  - **What is a fixture.** The setup is a toy (`fixtures/products/contact-chat/setup.ts`).
+  Inbox goes straight to his running worker, which answers the invitation, makes both topics, starts reading `T_AB` and
+  replies; Alice's host authenticates the reply, her worker checks it, starts reading `T_BA` and only then calls
+  `complete`: **Connected**. Both workers keep their session in their own storage before their host replies or
+  completes. The conversation and names survive a reload. Each host names and draws the other person from the handle;
+  neither worker gets a name, username, account, identity key, request id or route. Contact Chat can also ask
+  `contacts.pick` itself and send its request to the handle it gets, and cancel its own request through its host; only
+  the browser test drives these, as the v2 draft has no action for them.
+  - **Text.** Once connected, both sides write and read plain text (`simple-text/1`), through the product's own TrUAPI
+    `statementStore`. Each side keeps one statement up, on its own topic and channel (Alice on `T_AB`, Bob on `T_BA`,
+    with channels Bob's response names), signed by its conversation account. Each post holds that side's last 20
+    messages, fewer past 16 KiB, and replaces its last post: the store replaces a statement on the same channel of the
+    same account only with a strictly higher expiry, so each expiry is two days ahead in its high 32 bits and above the
+    last. The node refuses only a statement already expired and sets no upper bound (polkadot-sdk `06ccd162f`,
+    `substrate/client/statement-store/src/lib.rs` and `substrate/primitives/statement-store/src/lib.rs`, read
+    2026-10-31). A general allowance keeps two statements and 512,000 bytes per account (People chain, read 2026-10-30),
+    so the network keeps a short window, not a history; each worker keeps its whole history in its own storage. Each
+    side reads only posts its peer's account signed on its own topic, and keeps each message once by its id. A
+    subscription first answers what the store holds, so what Bob writes right after he accepts is read when Alice's
+    worker connects later, while his post is still held; a peer away for more than 20 messages, or past the expiry,
+    loses the older ones. A message still sending when the worker stopped shows failed after a reload, with Retry.
+  - **Not encrypted.** `simple-text/1` has no encryption of its own: anyone who reads the Statement Store reads the
+    text, the topics, channels, both conversation accounts, sizes and times, and can link the posts of one account. A
+    connected room says "Connected · messages are not encrypted", and its first lines say so and say what the network
+    keeps. Only the setup is sealed and authenticated, by the hosts.
+  - **Conversation accounts and their allowance** (draft). A conversation account is Contact Chat's own product account
+    at a random raw derivation index (`Raw`, 32 bytes) that the worker makes when it invites or accepts and keeps in its
+    storage. The worker asks the core for its public key (`account.getAccount`) and signs each post with
+    `statementStore.createProof`; the core holds the key and asks nothing for a product's own account. Before a side
+    posts, its worker asks its host to allow that index with the request service's `chatAccount` call (request handle,
+    index).
+    - Consent: the user's Send of that request, once an authenticated reply arrived and while it is not cancelled, or
+      their Accept of it. The first index named is bound to the request; another is refused, so one Send or Accept funds
+      one account. The host names the product from its own context, so a product funds only its own accounts.
+    - Allowance: a wallet on the network delivery has the core derive the account and give it a general Statement Store
+      slot of the wallet's personhood for the UTC day (`claimProductStatementAccount`), never the identity account, a
+      notification slot or the product-wide allowance account. It reads every collection first and reuses a slot the
+      account holds in any of them, with no ring looked up. It never replaces a live slot and submits at most once: a
+      failed submission is settled by reading every collection again, and a target still absent is reported uncertain,
+      since a general slot can change hands, so another occupant does not show the claim cannot land.
+    - Rollover: one slot per account per UTC day. The host keeps the answer until the day ends; the worker asks again on
+      a later day it posts. Each conversation that posts takes one of the person's daily slots (50 for a full person, 10
+      for a lite one, read 2026-10-30).
+    - Prompts: with any delivery that gives an allowance, Send invitation and the host's Accept chat request prompt
+      (asked when the user chooses Accept, before Contact Chat hears of it) say what sending or replying uses of the
+      person's daily notification slots, and that chatting claims one daily Statement Store slot for the chat's account
+      on each day it posts. Cancel in the Accept prompt hands Contact Chat nothing and leaves the request pending.
+    - "Validate claims only" asks the runtime whether it would accept the claim and submits nothing, so a message there
+      fails and says which slot it would take. "This browser, validate chat claims only" keeps requests between tabs of
+      this browser, like the local delivery, but validates each chat account's claim in the same way; its tab, too,
+      refuses every submission. The local delivery and the demo users give no allowance: a message fails and says the
+      host gives none.
+  - **The protocol boundary.** `fixtures/products/contact-chat/protocol.ts` is the seam between the engine and the chat
+    protocol: the protocol owns the setup payloads, the topics and channel each side reads and posts on, and a post's
+    bytes and window; the engine owns the conversation, its account index, history and storage and never reads them. The
+    hosts carry the payloads unread. `simple-text/1` (`simple-text.ts`) is the only protocol; MLS or another library
+    would replace it there, with no change to the hosts.
   - **Gaps it shows.** The host asks twice when a chat starts from its own **+**: once in the request form and once in
-    **Send invitation**. A declined request waits silently until the sender cancels it under **Sent** in the Inbox. The
-    per-conversation chat accounts the design asks for, and their allowance, have no API: through TrUAPI a product's
-    statements are signed by its one allowance account.
+    **Send invitation**. A declined request waits silently until the sender cancels it under **Sent** in the Inbox. No
+    receipts: a sent message shows sent, never delivered or read. Whether the store keeps a post once its account's
+    allowance lapses is the node's. Text over the network has not been tried between two hosts yet.
   - **With a wallet.** Developer tools → **More** → **Contact Chat for this wallet** runs Contact Chat for the wallet
     signed in from the Account picker, in this tab, instead of a demo user (`tools/demos/contact-chat-host.ts`). Its
     requests are proved with the wallet's own identity account and chat key, once they match the core's session and the
@@ -680,6 +722,9 @@ agreed API.
     (status) and `response` (an authenticated reply's payload).
   - Recipient, only after the user chose Accept: the host pushes `acceptIntent` (request handle, sender handle,
     payload), and the product calls `reply` (request handle, payload), `refuse` or `open`.
+  - Either side, once the user sent the request and a reply was authenticated, or accepted it: `chatAccount` (request
+    handle, a 32-byte raw derivation index) asks the host to allow the product's own account at that index to post to
+    the Statement Store for the current period, and answers the account and when the period ends. One index per request.
   - Statuses are `waiting`, `paused`, `completed` and `cancelled`. A request has no deadline: it is pending (`waiting`,
     or `paused` while the host cannot keep it posted) until completed or cancelled. There is no delivered, declined,
     accepted or expired status for the sender.
@@ -705,7 +750,7 @@ agreed API.
   the version, both identities, the product, the request id, the digest of the exact request and the exact payload. Kind
   and identity order keep one direction's evidence from checking as the other's. The sender's host checks a reply
   against the contact it chose, not a key the reply names. A refused reply does not use up the request. Contact Chat's
-  own check is a toy protocol (`fixtures/products/contact-chat/setup.ts`).
+  own check is `simple-text/1`'s: the response repeats the invitation's random challenge.
 - **What is simulated, and not the design's answer.**
   - The contact handle is the core's, but whom it names to the host comes from the fixture directory: the host mints
     handles (`contactHandles`) for every other demo user's session account and names a handle by that index. A name is
@@ -1230,15 +1275,16 @@ its notifications are as they were; and that on a phone nothing scrolls sideways
 closed and every request outside this host refused: the dev server's archive of the worker runs through the ordinary
 loader in each tab; Alice starts a chat from Chat's **+** and the host's **Send invitation** prompt names Bob; Bob's
 Inbox names Alice and Accept goes to his running worker; Alice's worker connects only after the reply; a message is then
-refused with the reason that Contact Chat has no text transport; a reload keeps the conversation and the names; both
-workers keep the setup's topics and agreed secret; neither worker heard or kept a demo user's name or account; each
-tab's core reports the identity account the other user's contacts name the demo user by, and each host proved and
-checked with the keys of its user's phrase; and the handle each worker holds is the one `contacts.pick` gives another
-product, `fixtures/products/contacts-product.ts` opened by URL, in the same tab, for the same person. It also checks
-that Contact Chat can ask `contacts.pick` itself, with the host's picker naming it, and send its request to the handle
-it gets: the host names the person in Send invitation, the recipient's Inbox names the sender, and the handle is the one
-the other product gets; and that its own `cancel` stops the request, which leaves the sender's Sent list while the
-recipient's row still waits. Set `CHAT_SCREENSHOTS` to a directory to keep screenshots.
+sent and fails, because the local delivery gives the conversation's account no allowance, and the room says why; a
+reload keeps the conversation and the names; both workers keep their session and conversation account index; neither
+worker heard or kept a demo user's name or account; each tab's core reports the identity account the other user's
+contacts name the demo user by, and each host proved and checked with the keys of its user's phrase; and the handle each
+worker holds is the one `contacts.pick` gives another product, `fixtures/products/contacts-product.ts` opened by URL, in
+the same tab, for the same person. It also checks that Contact Chat can ask `contacts.pick` itself, with the host's
+picker naming it, and send its request to the handle it gets: the host names the person in Send invitation, the
+recipient's Inbox names the sender, and the handle is the one the other product gets; and that its own `cancel` stops
+the request, which leaves the sender's Sent list while the recipient's row still waits. Set `CHAT_SCREENSHOTS` to a
+directory to keep screenshots.
 
 `browser/wallet-delivery-live.spec.ts` runs only with `TRUAPI_LIVE=1`, against Paseo Next v2: Alice's public test
 account, signed in as a wallet, turns on Contact Chat for this wallet and the network delivery that validates claims
@@ -1246,7 +1292,13 @@ only, then starts a chat with `testbob.10` from Chat's New chat through the pick
 prompt. It checks that the request shows paused with the claim the live runtime would accept, and that the tab's
 no-submit guard refused nothing and passed no submission or broadcast method.
 
-A failed live run keeps the tab's guard record, Activity lines and a screenshot under `TRUAPI_LIVE_EVIDENCE`, or the
+`browser/chat-claims-live.spec.ts` runs only with `TRUAPI_LIVE=1`, against Paseo Next v2: Alice's and Bob's public test
+accounts, each signed in as a wallet in a tab of one browser, with "This browser, validate chat claims only". Alice
+starts a chat with `testbob.10`; Bob's Accept prompt says what chatting uses, and he accepts; each writes one message.
+It checks that each message fails with the slot the live runtime would give that side's chat account, that the two
+accounts differ, and that neither tab's no-submit guard refused anything or passed a submission or broadcast method.
+
+A failed live run keeps each tab's guard record, Activity lines and a screenshot under `TRUAPI_LIVE_EVIDENCE`, or the
 temporary directory. No browser test claims or posts.
 
 `browser/contacts-pick.spec.ts` checks `contacts.pick` for demo users, from `fixtures/products/contacts-product.ts`
@@ -1355,10 +1407,12 @@ nothing else of it.
   the Developer section, the local chat products' routes, and Contact Chat's host side.
 - `fixtures/`: synthetic data that only tests and the dev server use. `products/`: product and worker entries, the
   synthetic chat product and Contact Chat (`contact-chat/`: `worker.ts` the entry, `engine.ts` its conversations,
-  `setup.ts` its setup protocol, `requests.ts` its end of the request service). `invitations/`, `notifications/`: demo
-  users, local delivery, and sample notifications. `archive/`: archive builders.
+  `protocol.ts` the seam to its chat protocol and `simple-text.ts` the one it runs, `transport.ts` its Statement Store
+  posts through TrUAPI, `requests.ts` its end of the request service). `invitations/`, `notifications/`: demo users,
+  local delivery, and sample notifications. `archive/`: archive builders.
 - `tests/unit/`: unit tests, in folders that follow the code they cover; `tests/support/`: their shared helpers, among
-  them statement stores in memory (`statement-memory.ts`, `statement-rpc-memory.ts`).
+  them statement stores in memory (`statement-memory.ts`, `statement-rpc-memory.ts`, and `chat-statements.ts` as Contact
+  Chat reaches one through TrUAPI).
 - `browser/`: the browser tests, with their Playwright setup and page harnesses under `browser/support/`.
 - `chat-product-demo-plugin.ts`, `username-search-plugin.ts`: the dev server's local chat worker and username route.
 
