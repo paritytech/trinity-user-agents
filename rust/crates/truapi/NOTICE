@@ -1,0 +1,18 @@
+Original Host code retains its MIT license; see LICENSE.
+This combined signing runtime includes AGPL-3.0-only code and is not an
+MIT-only distribution. See LICENSE-AGPL-3.0.
+
+Coinage is a modified extraction from paritytech/brevity-dozer, revision
+d504259b60b88ca42f70a8378186a714887ef19f, copyright its contributors.
+Detailed provenance accompanies the truapi-coinage crate in its NOTICE.
+Native HOP protocol/crypto is adapted from brevity-chat/src/hop.rs in that
+same Brevity revision, under AGPL-3.0-only, with Host-private durable custody.
+Native Chat wire/crypto is included in rust/crates/truapi-chat-v2, derived from
+paritytech/polkavm-app-kit useragent-chat-v2 at revision
+57b236fe9e740c83d0ead3d22cc7ca5a85e4ad17, under AGPL-3.0-only, with native
+attachment codec and secret-zeroization modifications included in this source.
+
+Corresponding Source must include the exact Host source revision, all local
+modifications, dependency provenance/license notices and build instructions.
+Source repository: https://github.com/paritytech/host-rust-core
+A repository URL alone does not provide unpublished local modifications.
