@@ -27,18 +27,22 @@ public struct ProductContent: Equatable, Sendable {
         self.archive = archive
     }
 
-    public var contentId: ProductId {
+    public var contentId: ProductExecutable.Identifier {
         resolved.contentId(for: kind)
     }
 }
 
 /// A nil `archive` removes the applied one; `record` is nil for a legacy product.
 public struct ExecutableRelease: Equatable, Sendable {
-    public let contentId: ProductId
+    public let contentId: ProductExecutable.Identifier
     public let archive: DotNsResolvedContent?
     public let record: ProductManifest.Record?
 
-    public init(contentId: ProductId, archive: DotNsResolvedContent?, record: ProductManifest.Record? = nil) {
+    public init(
+        contentId: ProductExecutable.Identifier,
+        archive: DotNsResolvedContent?,
+        record: ProductManifest.Record? = nil
+    ) {
         self.contentId = contentId
         self.archive = archive
         self.record = record
@@ -53,10 +57,13 @@ public protocol ProductContentLoading: Sendable {
         onPhase: @escaping ProductLoadPhaseHandler
     ) async throws -> ProductContent
     /// A failed worker download keeps the declared worker instead of falling back to legacy.
-    func openWorker(_ productId: ProductId) async throws -> ResolvedProduct
+    func openWorker(_ productId: ProductId, policy: ProductLoadPolicy) async throws -> ResolvedProduct
     /// Covers only applied executables; the rest are downloaded when first opened.
+    @discardableResult
     func refresh(_ productId: ProductId) async -> [ExecutableRelease]
     func apply(_ release: ExecutableRelease) async
+    /// Applied archives are always kept; `pinnedHashes` adds pending and served ones.
+    func removeSupersededContent(keeping pinnedHashes: Set<String>) async
     func updates() -> AnyAsyncSequence<ExecutableRelease>
 }
 

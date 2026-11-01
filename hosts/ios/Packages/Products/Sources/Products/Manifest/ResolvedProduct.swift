@@ -53,7 +53,7 @@ public struct ResolvedProduct: Hashable, Sendable {
     }
 
     /// Name the app's content archive resolves under; the base name for legacy products.
-    public var appContentId: ProductId {
+    public var appContentId: ProductExecutable.Identifier {
         executables.app?.identifier ?? id
     }
 
@@ -63,7 +63,7 @@ public struct ResolvedProduct: Hashable, Sendable {
     /// base name, which is where a legacy product and a script installed by
     /// hand through debug settings both live. Everything that asks which
     /// archive backs a surface asks here, so no two callers can disagree.
-    public func contentId(for kind: ExecutableKind) -> ProductId {
+    public func contentId(for kind: ExecutableKind) -> ProductExecutable.Identifier {
         switch kind {
         case .app: appContentId
         case .widget: executables.widget?.identifier ?? id

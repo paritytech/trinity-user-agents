@@ -12,6 +12,8 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
         var contentHash = "00"
         var refreshWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
         var applyWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
+        var keptHashesOnRemoval: [Set<String>] = []
+        var removalWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
     }
 
     let contentURL = URL(fileURLWithPath: "/tmp/spa-test-content")
@@ -28,6 +30,7 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
     var openedIds: [ProductId] { state.withLock { $0.openedIds } }
     var refreshedIds: [ProductId] { state.withLock { $0.refreshedIds } }
     var appliedUpdates: [ExecutableRelease] { state.withLock { $0.appliedUpdates } }
+    var keptHashesOnRemoval: [Set<String>] { state.withLock { $0.keptHashesOnRemoval } }
 
     func simulate(appliedContentHash: String) {
         state.withLock { $0.contentHash = appliedContentHash }
@@ -71,10 +74,11 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
         return ProductContent(resolved: resolved, kind: kind, archive: archive)
     }
 
-    func openWorker(_ productId: ProductId) async throws -> ResolvedProduct {
+    func openWorker(_ productId: ProductId, policy _: ProductLoadPolicy) async throws -> ResolvedProduct {
         product ?? .legacy(id: productId)
     }
 
+    @discardableResult
     func refresh(_ productId: ProductId) async -> [ExecutableRelease] {
         let ready = state.withLock { state in
             state.refreshedIds.append(productId)
@@ -105,6 +109,32 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
             let isReached = state.withLock { state in
                 guard state.appliedUpdates.count < count else { return true }
                 state.applyWaiters.append((count, continuation))
+                return false
+            }
+
+            if isReached {
+                continuation.resume()
+            }
+        }
+    }
+
+    func removeSupersededContent(keeping pinnedHashes: Set<String>) async {
+        let ready = state.withLock { state in
+            state.keptHashesOnRemoval.append(pinnedHashes)
+            let count = state.keptHashesOnRemoval.count
+            let ready = state.removalWaiters.filter { $0.count <= count }
+            state.removalWaiters.removeAll { $0.count <= count }
+            return ready
+        }
+
+        ready.forEach { $0.continuation.resume() }
+    }
+
+    func waitForRemovals(_ count: Int) async {
+        await withCheckedContinuation { continuation in
+            let isReached = state.withLock { state in
+                guard state.keptHashesOnRemoval.count < count else { return true }
+                state.removalWaiters.append((count, continuation))
                 return false
             }
 

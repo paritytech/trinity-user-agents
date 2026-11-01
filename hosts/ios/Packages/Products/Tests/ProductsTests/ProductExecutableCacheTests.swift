@@ -122,7 +122,7 @@ final class ProductExecutableCacheTests {
     @Test func republishedWorkerUpdatesOnlyTheWorker() async throws {
         publishManifestProduct()
         _ = try await makeLoader().open(baseName, kind: .app, policy: .attempts(1))
-        _ = try await makeLoader().openWorker(baseName)
+        _ = try await makeLoader().openWorker(baseName, policy: .attempts(1))
 
         contracts.set(contentHash: Self.updatedWorkerHash, name: workerName)
 
@@ -155,7 +155,7 @@ final class ProductExecutableCacheTests {
     @Test func workerOpenStagesTheWorkerArchiveWithoutTheAppArchive() async throws {
         publishManifestProduct()
 
-        let resolved = try await makeLoader().openWorker(baseName)
+        let resolved = try await makeLoader().openWorker(baseName, policy: .attempts(1))
 
         #expect(resolved.executables.worker?.identifier == workerName)
         #expect(storage.contentExists(contentHash: Self.workerHash.toHex()))
@@ -167,7 +167,7 @@ final class ProductExecutableCacheTests {
         publishManifestProduct()
 
         let resolved = try await makeLoader(carFetcher: StubCarFetcher(failures: [URLError(.timedOut)]))
-            .openWorker(baseName)
+            .openWorker(baseName, policy: .attempts(1))
 
         #expect(resolved.executables.worker?.identifier == workerName)
         #expect(contentHashCache.getContentHash(name: workerName) == nil)
@@ -177,16 +177,17 @@ final class ProductExecutableCacheTests {
         publishManifestProduct()
         contracts.failAllReads(with: Unreachable())
 
-        await #expect(throws: (any Error).self) { try await self.makeLoader().openWorker(self.baseName)
+        await #expect(throws: (any Error).self) {
+            try await self.makeLoader().openWorker(self.baseName, policy: .attempts(1))
         }
     }
 
     @Test func openedWorkerOpensAgainWithoutTheNetwork() async throws {
         publishManifestProduct()
-        _ = try await makeLoader().openWorker(baseName)
+        _ = try await makeLoader().openWorker(baseName, policy: .attempts(1))
         contracts.failAllReads(with: Unreachable())
 
-        let resolved = try await makeLoader().openWorker(baseName)
+        let resolved = try await makeLoader().openWorker(baseName, policy: .attempts(1))
 
         #expect(resolved.executables.worker?.identifier == workerName)
         #expect(fetcher.fetchCount == 1)
@@ -194,12 +195,12 @@ final class ProductExecutableCacheTests {
 
     @Test func workerOpenRefreshesTheWorkerInTheBackground() async throws {
         publishManifestProduct()
-        _ = try await makeLoader().openWorker(baseName)
+        _ = try await makeLoader().openWorker(baseName, policy: .attempts(1))
         let loader = makeLoader()
         var updates = loader.updates().makeAsyncIterator()
 
         contracts.set(contentHash: Self.updatedWorkerHash, name: workerName)
-        _ = try await loader.openWorker(baseName)
+        _ = try await loader.openWorker(baseName, policy: .attempts(1))
 
         let update = try await updates.next()
         let latestRecord = try await makeFetcher().fetchManifest(baseName).records[workerRecordKey]
@@ -217,14 +218,14 @@ final class ProductExecutableCacheTests {
         publishManifestProduct()
         publishWorker(entrypoint: "worker.js", servesChat: false)
 
-        _ = try await makeLoader().openWorker(baseName)
+        _ = try await makeLoader().openWorker(baseName, policy: .attempts(1))
 
         #expect(contentHashCache.getContentHash(name: workerName) == Self.workerHash.toHex())
     }
 
     @Test func releaseWhoseRecordCannotBeStoredLeavesTheAppliedArchive() async throws {
         publishManifestProduct()
-        _ = try await makeLoader().openWorker(baseName)
+        _ = try await makeLoader().openWorker(baseName, policy: .attempts(1))
         let unwritable = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try Data().write(to: unwritable)
         defer { try? FileManager.default.removeItem(at: unwritable) }
@@ -241,7 +242,7 @@ final class ProductExecutableCacheTests {
     @Test func servedExecutableRecordChangesOnlyWithItsArchive() async throws {
         publishManifestProduct()
         let loader = makeLoader()
-        _ = try await loader.openWorker(baseName)
+        _ = try await loader.openWorker(baseName, policy: .attempts(1))
 
         publishWorker(entrypoint: "worker-v2.js")
         contracts.set(contentHash: Self.updatedWorkerHash, name: workerName)
@@ -257,7 +258,7 @@ final class ProductExecutableCacheTests {
     @Test func runningWorkerKeepsReadingTheAppliedArchiveUntilTheUpdateIsApplied() async throws {
         publishManifestProduct()
         let loader = makeLoader()
-        _ = try await loader.openWorker(baseName)
+        _ = try await loader.openWorker(baseName, policy: .attempts(1))
         let workerFiles = CompositeProductFileProvider(
             dotNsContentStorage: storage,
             chatScriptStorage: FileChatScriptStorage(),

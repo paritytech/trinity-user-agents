@@ -7,11 +7,14 @@ public enum ProductUpdateFetchError: Error, Equatable {
 
 public protocol ProductUpdateFetching: Sendable {
     func fetchManifest(_ productId: ProductId) async throws -> ProductManifest
-    func stage(_ contentId: ProductId, onPhase: @escaping ProductLoadPhaseHandler) async throws -> DotNsResolvedContent
+    func stage(
+        _ contentId: ProductExecutable.Identifier,
+        onPhase: @escaping ProductLoadPhaseHandler
+    ) async throws -> DotNsResolvedContent
 }
 
 public extension ProductUpdateFetching {
-    func stage(_ contentId: ProductId) async throws -> DotNsResolvedContent {
+    func stage(_ contentId: ProductExecutable.Identifier) async throws -> DotNsResolvedContent {
         try await stage(contentId, onPhase: { _ in })
     }
 }
@@ -53,7 +56,7 @@ extension ProductUpdateFetcher: ProductUpdateFetching {
     }
 
     public func stage(
-        _ contentId: ProductId,
+        _ contentId: ProductExecutable.Identifier,
         onPhase: @escaping ProductLoadPhaseHandler
     ) async throws -> DotNsResolvedContent {
         try await DotNsResolver(

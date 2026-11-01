@@ -226,6 +226,10 @@ private extension SPARustRuntimeInteractor {
 }
 
 extension SPARustRuntimeInteractor: SPAProductReloading {
+    var servedContentHash: String? {
+        servedContent?.contentHash
+    }
+
     func serveAppliedBuild() {
         reloadTask?.cancel()
         reloadTask = Task { [weak self, runtime] in
@@ -248,7 +252,7 @@ extension SPARustRuntimeInteractor: SPAProductReloading {
 }
 
 private extension SPARustRuntimeInteractor {
-    var servedContentId: ProductId? {
+    var servedContentId: ProductExecutable.Identifier? {
         resolvedProduct?.contentId(for: configuration.executable)
     }
 
@@ -267,6 +271,7 @@ private extension SPARustRuntimeInteractor {
         presenceId = presenceRegistry?.register(
             productId: configuration.productDomain,
             contentId: servedContentId,
+            displayName: resolvedProduct?.displayName ?? configuration.page.host.name,
             reloader: self
         )
     }

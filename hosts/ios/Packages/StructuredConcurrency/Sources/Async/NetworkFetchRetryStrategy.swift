@@ -28,7 +28,7 @@ public struct NetworkFetchRetryStrategy: RetryStrategy {
         }
     }
 
-    public typealias EventHandler = @Sendable (Event) -> Void
+    public typealias EventHandler = @Sendable (Event) async -> Void
 
     private let classifier: any RetryErrorClassifying
     private let maxAttempts: Int?
@@ -57,25 +57,25 @@ public struct NetworkFetchRetryStrategy: RetryStrategy {
 
     public mutating func decideOnFailure(_ error: Error) async throws {
         guard classifier.isRetryable(error) else {
-            onEvent(.notRetryable(error))
+            await onEvent(.notRetryable(error))
             throw error
         }
 
         guard try await isPathSatisfied() else {
-            onEvent(.waitingForNetwork)
+            await onEvent(.waitingForNetwork)
             try await waitForSatisfiedPath()
-            onEvent(.networkRestored)
+            await onEvent(.networkRestored)
             return
         }
 
         failedAttempts += 1
-        onEvent(.attemptFailed(attempt: failedAttempts, error: error))
+        await onEvent(.attemptFailed(attempt: failedAttempts, error: error))
 
         guard maxAttempts.map({ failedAttempts < $0 }) ?? true else {
             throw error
         }
 
-        onEvent(.willRetry(attempt: failedAttempts))
+        await onEvent(.willRetry(attempt: failedAttempts))
         try await clock.sleep(for: backoff.delay(afterFailedAttempts: failedAttempts))
     }
 }
