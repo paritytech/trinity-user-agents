@@ -5,6 +5,10 @@ import type { ActivityLog } from "./activity/log.js";
 import { mountActivityLog } from "./activity/view.js";
 import { bindDockResize } from "./dock-resize.js";
 import { createFrameTap } from "./inspector/frame-tap.js";
+import type { PeopleAccess } from "./statements/actions.js";
+import type { StatementLedger } from "./statements/ledger.js";
+import { mountStatementsView } from "./statements/view.js";
+import { mountChatView } from "./chat/view.js";
 import { bindViewport } from "./viewport.js";
 import type { WorkerConsoleLog } from "./workers/console-log.js";
 import { mountWorkersView, type WorkerSource } from "./workers/view.js";
@@ -19,6 +23,12 @@ export interface ToolsPage {
   /** The product workers and their console lines, for the inspector's Workers view. */
   workers: WorkerSource;
   workerConsole: WorkerConsoleLog;
+  /** What the Statements view draws. */
+  statements: StatementLedger;
+  /** The People chain, for the Statements view's reads on demand, or null before the network is up. */
+  people(): PeopleAccess | null;
+  /** The network's id, for the Statements view's evidence. */
+  network(): string;
 }
 
 /** The developer tools mounted in the page. */
@@ -27,6 +37,8 @@ export interface Tools {
   tap(productId: string, coreWireSchemaHash: string | undefined): FrameTap;
   /** Show `name`'s worker in the inspector's Workers view. */
   inspectWorker(name: string): void;
+  /** The signed-in session is `key` now: the Statements view starts again for a new one. */
+  statementsSession(key: string, label: string): void;
 }
 
 const INSPECTOR_NOTES = {
@@ -35,13 +47,17 @@ const INSPECTOR_NOTES = {
   wire: "Frames stay in this tab and may carry sensitive payloads.",
   workers:
     "Product workers' state, and their console lines: the workers' own text, kept in memory and cleared when the session changes.",
+  statements:
+    "Statement Store traffic, claims and grants, in memory for this session.",
+  chat: "Conversations product workers report about themselves.",
 } as const;
 
 type InspectorView = keyof typeof INSPECTOR_NOTES;
 
 /**
- * Mount the developer tools' inspector, with its Activity, TrUAPI and Workers
- * views, the dock's resize handle and the Preview tab's sizes.
+ * Mount the developer tools' inspector, with its Activity, TrUAPI, Workers,
+ * Statements and Chat views, the dock's resize handle and the Preview tab's
+ * sizes.
  */
 export function mountTools(page: ToolsPage): Tools {
   const { element } = page;
@@ -57,28 +73,52 @@ export function mountTools(page: ToolsPage): Tools {
   const inspectorViewButtons = [
     ...document.querySelectorAll<HTMLButtonElement>("[data-inspector-view]"),
   ];
+  /** Show the TrUAPI view narrowed to `name`'s worker, or say why it cannot be. */
+  function showWorkerTraces(name: string): void {
+    showInspectorView("wire");
+    const channel = workerChannel(name);
+    const channels = new Set(
+      inspector.session.traceEngine.traces().map((trace) => trace.channelId),
+    );
+    if (!channels.has(channel)) {
+      inspectorNote.textContent = `No TrUAPI frames from ${name}'s worker yet. They show here once it calls the core.`;
+      return;
+    }
+    // The TrUAPI view lists one channel per product and worker, and narrows
+    // to one through its own chips, drawn once a second channel is seen.
+    if (channels.size === 1) return;
+    const chip = inspectorMount.querySelector<HTMLButtonElement>(
+      `.ins-chan[data-channel="${CSS.escape(channel)}"]`,
+    );
+    if (chip === null)
+      inspectorNote.textContent = `Choose ${channel} in the channel list to see only its frames.`;
+    else chip.click();
+  }
   const workersView = mountWorkersView(element("workers-inspector"), {
     workers: page.workers,
     log: page.workerConsole,
-    showTraces(name) {
-      showInspectorView("wire");
-      const channel = workerChannel(name);
-      const channels = new Set(
-        inspector.session.traceEngine.traces().map((trace) => trace.channelId),
-      );
-      if (!channels.has(channel)) {
-        inspectorNote.textContent = `No TrUAPI frames from ${name}'s worker yet. They show here once it calls the core.`;
-        return;
-      }
-      // The TrUAPI view lists one channel per product and worker, and narrows
-      // to one through its own chips, drawn once a second channel is seen.
-      if (channels.size === 1) return;
-      const chip = inspectorMount.querySelector<HTMLButtonElement>(
-        `.ins-chan[data-channel="${CSS.escape(channel)}"]`,
-      );
-      if (chip === null)
-        inspectorNote.textContent = `Choose ${channel} in the channel list to see only its frames.`;
-      else chip.click();
+    showTraces: showWorkerTraces,
+  });
+  const statementsView = mountStatementsView(element("statements-inspector"), {
+    ledger: page.statements,
+    people: page.people,
+    network: page.network,
+    showTraces: showWorkerTraces,
+    inspectWorker(name) {
+      showInspectorView("workers");
+      workersView.select(name);
+    },
+  });
+  const chatView = mountChatView(element("chat-inspector"), {
+    ledger: page.statements,
+    showStatements(target) {
+      showInspectorView("statements");
+      statementsView.reveal(target);
+    },
+    showTraces: showWorkerTraces,
+    inspectWorker(name) {
+      showInspectorView("workers");
+      workersView.select(name);
     },
   });
   /** Show one of the inspector's views. */
@@ -91,6 +131,8 @@ export function mountTools(page: ToolsPage): Tools {
     activityView.show(view === "activity");
     inspectorMount.hidden = view !== "wire";
     workersView.show(view === "workers");
+    statementsView.show(view === "statements");
+    chatView.show(view === "chat");
     inspectorNote.textContent = INSPECTOR_NOTES[view];
   }
   function viewOf(button: HTMLButtonElement): InspectorView {
@@ -156,6 +198,10 @@ export function mountTools(page: ToolsPage): Tools {
     inspectWorker(name) {
       showInspectorView("workers");
       workersView.select(name);
+    },
+    statementsSession(key, label) {
+      if (page.statements.startSession(key, label))
+        statementsView.sessionChanged();
     },
   };
 }

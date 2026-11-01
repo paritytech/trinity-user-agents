@@ -12,7 +12,11 @@ export type TopicFilter =
   | { matchAll: Uint8Array[] }
   | { matchAny: Uint8Array[] };
 
-/** How the store answered a submission. `new` and `known` mean it holds the statement. */
+/**
+ * How the store answered a submission. From a full node, `new` and `known`
+ * mean it holds the statement; from this host's light client, `new` means at
+ * least one peer took the broadcast, which may still refuse it.
+ */
 export interface SubmitResult {
   status: string;
   reason?: string;
@@ -30,6 +34,7 @@ export interface StatementStoreLike {
   readonly closed: Promise<void>;
 }
 
+/** Whether the answer counts as posted here: `new`, `known` or `knownExpired`. Over the light client, not proof a peer stored it. */
 export const isStored = (result: SubmitResult): boolean =>
   result.status === "new" ||
   result.status === "known" ||
@@ -139,7 +144,11 @@ export class StatementStore {
     return answer;
   }
 
-  /** Deliver every stored and every new statement that passes `filter`. Returns the way to stop. */
+  /**
+   * Deliver the statements that pass `filter` as the connection sends them:
+   * a full node replays what it holds first, the light client sends only
+   * what peers send it. Returns the way to stop.
+   */
   async subscribe(
     filter: TopicFilter,
     onStatements: (statements: Uint8Array[]) => void,

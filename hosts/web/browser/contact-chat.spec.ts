@@ -29,6 +29,7 @@ import {
   buildFixture,
   closeTools,
   freePort,
+  openTools,
   showAddress,
   startHost,
   testBrowser,
@@ -326,6 +327,28 @@ describe("Contact Chat between test users", () => {
           })
           .waitFor();
         await screenshot(alice, "contact-chat-conversation");
+
+        // The inspector's Chat view joins what Contact Chat reported of the
+        // conversation with what Alice's host holds of its request: the
+        // allowance was refused, so nothing was submitted.
+        await openTools(alice, "inspector");
+        await alice.click('[data-inspector-view="chat"]');
+        const card = alice.locator("#chat-inspector .si-card", {
+          hasText: "contact-chat/simple-text/1",
+        });
+        await card.locator(".si-badge", { hasText: "connected" }).waitFor();
+        // The worker reports at most twice a second: wait for the failed send.
+        await card.locator(".si-facts dd", { hasText: "1 failed" }).waitFor();
+        const facts = await card.locator(".si-facts").innerText();
+        expect(facts).toContain("sender · completed");
+        expect(facts).toContain(
+          "refused: This host gives conversation accounts no Statement Store allowance.",
+        );
+        // No claim or allowance ties the account to Contact Chat here: it is reported only.
+        expect(facts).toContain("reported only");
+        expect(facts).toMatch(/0 sent · 0 received · 0 duplicates · 1 failed/);
+        await screenshot(alice, "contact-chat-statements");
+        await closeTools(alice);
 
         // A reload keeps both conversations, named by each host.
         await bob.reload();

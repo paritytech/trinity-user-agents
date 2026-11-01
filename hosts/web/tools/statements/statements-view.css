@@ -1,0 +1,472 @@
+/*
+ * The inspector's Statements view, in the Workers view's look: a dark
+ * monospace box, pill chips with the active one filled green, and a small
+ * tag before each fact that says where it came from.
+ */
+.statements-inspector {
+  --si-line: rgb(255 255 255 / 0.07);
+  --si-meta: #8b8f99;
+  --si-on: #4ade80;
+  --si-warn: #fbbf24;
+  --si-failed: #f87171;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto auto auto auto minmax(0, 1fr);
+  overflow-wrap: anywhere;
+  container-type: inline-size;
+  overflow: hidden;
+  border: 1px solid #1d1f24;
+  border-radius: 0 0 12px 12px;
+  background: #0a0a0a;
+  color: #e0e0e0;
+  font:
+    12px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  color-scheme: dark;
+}
+
+.statements-inspector[hidden],
+.statements-inspector [hidden] {
+  display: none !important;
+}
+
+.statements-inspector button {
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  transition: none;
+  cursor: pointer;
+}
+
+.statements-inspector button:active:not(:disabled) {
+  transform: none;
+}
+
+.statements-inspector button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.statements-inspector input {
+  width: auto;
+  min-height: 0;
+  font: inherit;
+}
+
+.statements-inspector :focus-visible {
+  outline: 1px solid var(--si-on);
+  outline-offset: 1px;
+}
+
+.si-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--si-line);
+}
+
+.si-title {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.si-title .accent {
+  color: var(--si-on);
+}
+
+.si-summary {
+  flex: 1 1 260px;
+  color: var(--si-meta);
+  font-size: 11px;
+}
+
+.si-actions,
+.si-card-actions,
+.si-row-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+
+.statements-inspector .si-chip,
+.statements-inspector .si-tab {
+  padding: 1px 9px;
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: 10px;
+  color: #94a3b8;
+  white-space: nowrap;
+}
+
+.statements-inspector .si-chip:hover:not(:disabled),
+.statements-inspector .si-tab:hover {
+  color: #f4f4f5;
+}
+
+.statements-inspector .si-chip[aria-pressed="true"],
+.statements-inspector .si-tab[aria-selected="true"] {
+  border-color: var(--si-on);
+  background: var(--si-on);
+  color: #0a0a0a;
+}
+
+.statements-inspector .si-errors[aria-pressed="true"] {
+  border-color: var(--si-failed);
+  background: var(--si-failed);
+}
+
+.si-warning {
+  margin: 0;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--si-line);
+  color: var(--si-meta);
+  font-size: 11px;
+}
+
+.si-warning[data-capturing="true"] {
+  background: rgb(251 191 36 / 0.08);
+  color: var(--si-warn);
+}
+
+.si-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 12px 0;
+}
+
+.si-status {
+  margin: 0;
+  padding: 2px 12px;
+  min-height: 1em;
+  color: var(--si-warn);
+  font-size: 11px;
+}
+
+.si-status:empty {
+  padding: 0;
+  min-height: 0;
+}
+
+.si-body {
+  min-height: 0;
+  padding: 6px 12px 12px;
+  overflow: auto;
+}
+
+.si-empty,
+.si-note {
+  color: var(--si-meta);
+}
+
+.si-empty {
+  margin: 8px 0;
+}
+
+.si-note {
+  font-size: 11px;
+}
+
+.si-dropped {
+  margin: 0 0 6px;
+  color: var(--si-warn);
+}
+
+.si-src {
+  display: inline-block;
+  min-width: 7ch;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: rgb(255 255 255 / 0.06);
+  color: var(--si-meta);
+  font-size: 10px;
+  text-align: center;
+  vertical-align: 1px;
+}
+
+.si-src[data-source="node"] {
+  color: #7dd3fc;
+}
+
+.si-src[data-source="core"] {
+  color: #c4b5fd;
+}
+
+.si-src[data-source="chain"] {
+  color: #86efac;
+}
+
+.si-src[data-source="product"] {
+  color: var(--si-warn);
+}
+
+.si-src[data-source="derived"] {
+  color: #f9a8d4;
+}
+
+.si-card,
+.si-detail {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--si-line);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.02);
+}
+
+.si-card[data-stale="true"] {
+  opacity: 0.6;
+}
+
+.si-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.si-card-title {
+  margin: 0;
+  font: inherit;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.si-badge {
+  padding: 0 7px;
+  border-radius: 9px;
+  background: rgb(255 255 255 / 0.08);
+  color: var(--si-meta);
+  font-size: 11px;
+}
+
+.si-card-actions {
+  margin-left: auto;
+}
+
+.si-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 3px 12px;
+  margin: 8px 0 0;
+}
+
+.si-facts dt {
+  color: var(--si-meta);
+}
+
+.si-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.si-facts dd .si-note {
+  display: block;
+}
+
+.si-sub {
+  margin: 12px 0 4px;
+  font: inherit;
+  font-weight: 600;
+}
+
+.si-plain {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.si-plain > li {
+  padding: 3px 0;
+  border-bottom: 1px solid rgb(255 255 255 / 0.03);
+  overflow-wrap: anywhere;
+}
+
+.si-sub-row,
+.si-topic-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+}
+
+.si-sub-row[data-state="ended"],
+.si-sub-row[data-state="refused"] {
+  color: var(--si-meta);
+}
+
+.si-sub-row[data-state="refused"] .si-cell {
+  color: var(--si-failed);
+}
+
+.si-mono {
+  white-space: nowrap;
+}
+
+.si-cell {
+  flex: 1 1 200px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.si-list {
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+}
+
+.statements-inspector .si-list-row {
+  display: grid;
+  grid-template-columns: 14ch minmax(0, 1fr);
+  gap: 2px 10px;
+  width: 100%;
+  padding: 5px 6px;
+  border-bottom: 1px solid rgb(255 255 255 / 0.04);
+}
+
+.statements-inspector .si-list-row .si-cell:not(:nth-child(2)) {
+  grid-column: 2;
+  color: var(--si-meta);
+}
+
+.statements-inspector .si-list-row:hover {
+  background: rgb(255 255 255 / 0.04);
+}
+
+.statements-inspector .si-list-row[aria-pressed="true"] {
+  background: rgb(74 222 128 / 0.13);
+  box-shadow: inset 2px 0 0 var(--si-on);
+}
+
+@container (min-width: 760px) {
+  .statements-inspector .si-list-row {
+    grid-template-columns: 14ch repeat(4, minmax(0, 1fr));
+  }
+
+  .statements-inspector .si-list-row .si-cell:not(:nth-child(2)) {
+    grid-column: auto;
+  }
+}
+
+.si-statement {
+  margin: 4px 0;
+}
+
+.si-statement summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.statements-inspector .si-search {
+  padding: 1px 8px;
+  border: 1px solid rgb(255 255 255 / 0.14);
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+}
+
+.si-events {
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.si-event {
+  border-bottom: 1px solid rgb(255 255 255 / 0.03);
+}
+
+.statements-inspector .si-event-head {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 0 8px;
+  width: 100%;
+  padding: 2px 0;
+}
+
+.si-time {
+  color: var(--si-meta);
+}
+
+.si-event-text {
+  overflow-wrap: anywhere;
+}
+
+.si-event[data-failed="true"] .si-event-text {
+  color: var(--si-failed);
+}
+
+.si-event-details {
+  margin: 2px 0 6px 10ch;
+}
+
+@container (max-width: 420px) {
+  .si-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .si-facts dt {
+    margin-top: 4px;
+  }
+
+  .si-event-details {
+    margin-left: 0;
+  }
+}
+
+.si-caveats {
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--si-line);
+  color: var(--si-warn);
+  font-size: 11px;
+}
+
+.si-caveats > summary {
+  cursor: pointer;
+}
+
+.si-caveats .si-note {
+  margin: 4px 0 0;
+}
+
+.si-caveat {
+  white-space: nowrap;
+}
+
+.si-why {
+  display: inline;
+  margin-left: 6px;
+}
+
+.si-why > summary {
+  display: inline;
+  color: var(--si-meta);
+  font-size: 10px;
+  text-decoration: underline dotted;
+  cursor: pointer;
+  list-style: none;
+}
+
+.si-why > summary::-webkit-details-marker {
+  display: none;
+}
+
+.si-why[open] > .si-note {
+  display: block;
+  margin: 2px 0 2px;
+}
+
+.si-warning[hidden] {
+  display: none;
+}

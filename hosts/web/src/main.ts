@@ -122,11 +122,28 @@ import {
 import { SessionMembership, WalletSession } from "./app/session.js";
 import { mountTools } from "../tools/mount.js";
 import { ActivityLog } from "../tools/activity/log.js";
+import { StatementLedger } from "../tools/statements/ledger.js";
+import type { PeopleAccess } from "../tools/statements/actions.js";
+import {
+  observeStatements,
+  type TrafficSource,
+} from "./platform/statement-observer.js";
 import { WorkerConsoleLog } from "../tools/workers/console-log.js";
 import type { ActivityCategory } from "./platform/activity.js";
 
 /** The host's activity, which every part of the host reports to and the inspector shows. */
 const activity = new ActivityLog();
+/**
+ * What the inspector's Statements view knows: Statement Store traffic, claims
+ * and reports. The dev tools' no-submit guard says which errors it made.
+ */
+const statements = new StatementLedger(
+  {},
+  Date.now,
+  (error): boolean => devSession?.refusedHere(error) ?? false,
+);
+/** The People chain the Statements view reads on demand, once the network is up. */
+let peopleAccess: PeopleAccess | null = null;
 /** This host's directory on its origin, from the build's base. Mounted products live under it. */
 const BASE = hostBase(import.meta.env.BASE_URL, window.location.href);
 
@@ -253,6 +270,7 @@ const productWorkers = new ProductWorkers({
       : tools.tap(channel, runtime.coreWireSchemaHash),
   activity: activity.record,
   observer: workerConsole,
+  diagnostics: statements.diagnostics,
   chatV2: {
     connect: (productId, port) =>
       chatV2.connect(productId, messagePortBridge(port)),
@@ -394,6 +412,7 @@ const devSession =
         names: hostNames,
         namedChanged: () => hostContacts.namesChanged(),
         log: linesFor("host"),
+        observe: statements.invitations,
       });
 notifications?.screen.setActions(devSession?.notificationActions ?? null);
 /** The invitation demo's made-up user this tab acts as instead of a wallet, if any. */
@@ -560,6 +579,9 @@ const tools = mountTools({
   activity,
   workers: productWorkers,
   workerConsole,
+  statements,
+  people: () => peopleAccess,
+  network: () => activeNetwork.id,
 });
 
 const versionsList = element("versions");
@@ -1170,6 +1192,13 @@ document.addEventListener(
 
 /** Give the Chat screen and everything else of the session the signed-in wallet's session, or none. */
 function syncChatSession(): void {
+  const signedIn = lastAuthState.tag === "Connected";
+  // The label goes into copied evidence: it names no wallet.
+  const who = testUser !== null ? `test user ${testUser.name}` : "a wallet";
+  tools.statementsSession(
+    `${activeNetwork.id}:${signedIn ? "in" : "out"}:${testUser?.id ?? walletSession.active?.id ?? ""}`,
+    signedIn ? `${who}, signed in` : "signed out",
+  );
   // A test user's session has its workers and their chat, and nothing of a wallet's.
   if (testUser !== null) {
     sessionMembers.syncProductsOnly(
@@ -1195,14 +1224,34 @@ function syncChatSession(): void {
             new StatementStore(
               await access.chain.connect(hexToBytes(access.genesis.people)),
             ),
-          claimNotificationAccount: (target, submit) =>
-            runtime === null
+          claimNotificationAccount: (target, submit) => {
+            const current = runtime;
+            return current === null
               ? Promise.reject(new Error("The core is not running."))
-              : runtime.claimNotificationAccount(target, submit),
-          claimProductStatementAccount: (productId, index, submit) =>
-            runtime === null
+              : statements.claim(
+                  { kind: "notification", account: bytesToHex(target), submit },
+                  () => current.claimNotificationAccount(target, submit),
+                );
+          },
+          claimProductStatementAccount: (productId, index, submit) => {
+            const current = runtime;
+            return current === null
               ? Promise.reject(new Error("The core is not running."))
-              : runtime.claimProductStatementAccount(productId, index, submit),
+              : statements.claim(
+                  {
+                    kind: "product",
+                    product: productId,
+                    index: bytesToHex(index),
+                    submit,
+                  },
+                  () =>
+                    current.claimProductStatementAccount(
+                      productId,
+                      index,
+                      submit,
+                    ),
+                );
+          },
         },
   );
   sessionMembers.sync(
@@ -1979,8 +2028,20 @@ closeButton.addEventListener("click", closeFront);
 
 async function boot(): Promise<void> {
   const network = await connectNetwork(activeNetwork);
-  const connection = devSession?.guardNetwork(network) ?? network;
-  chainAccess = connection;
+  const guarded = devSession?.guardNetwork(network) ?? network;
+  // The core's and the host's People traffic are observed apart, labelled by who opened it.
+  const observed = (source: TrafficSource): Network => ({
+    ...guarded,
+    chain: observeStatements(
+      guarded.chain,
+      guarded.genesis.people,
+      source,
+      statements.traffic,
+    ),
+  });
+  const connection = observed("core");
+  chainAccess = observed("host");
+  peopleAccess = { chain: guarded.chain, genesis: guarded.genesis.people };
   activity.record({
     category: "network",
     action: "Light client started",

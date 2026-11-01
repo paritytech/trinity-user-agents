@@ -50,9 +50,21 @@ export interface Heard {
 
 export type Checked<T> = { ok: true; value: T } | { ok: false; reason: string };
 
+/** What a protocol tells the developer tools about a session: its public routing, nothing secret. */
+export interface SessionRoutes {
+  /** The accounts whose statements this side reads, `0x` hex. */
+  peers: string[];
+  /** Where this side posts. */
+  post: { topics: string[]; channel: string };
+}
+
 export interface ChatProtocol<Pending = unknown, Session = unknown> {
+  /** The protocol's name and version, as the developer tools show it. */
+  readonly name: string;
   /** What a connected conversation tells its user about this protocol: what others can read and what the network keeps. */
   readonly notice: string;
+  /** The most a post carries, when the protocol keeps a window of messages on the network. */
+  readonly window?: { messages: number; bytes: number };
   /** The sender's invitation payload, `0x` hex, and what it keeps until the response. */
   invite(
     account: string,
@@ -82,4 +94,6 @@ export interface ChatProtocol<Pending = unknown, Session = unknown> {
   post(session: Session, own: ChatText[]): { post: Post; carried: string[] };
   /** The other side's messages in `heard`; none when it is not theirs. */
   read(session: Session, heard: Heard): ChatText[];
+  /** The session's public routing, for the developer tools. */
+  routes(session: Session): SessionRoutes;
 }

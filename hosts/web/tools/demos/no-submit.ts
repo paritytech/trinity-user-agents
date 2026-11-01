@@ -14,6 +14,12 @@ import type { Network } from "../../src/platform/network.js";
 
 /** Methods that would put something on the network. */
 const SUBMITS = /submit|broadcast/i;
+/** How each refusal's message ends, after the method. */
+const REFUSAL = " refused: this tab submits nothing";
+
+/** Whether an RPC error is one of this guard's refusals, by its message. */
+export const isNoSubmitRefusal = (error: { message?: string }): boolean =>
+  error.message?.endsWith(REFUSAL) === true;
 
 export interface NoSubmitRecord {
   /** Methods let through, by name, with how often. */
@@ -88,7 +94,7 @@ function guarded(
           id: parsed.id ?? null,
           error: {
             code: -32000,
-            message: `${method} refused: this tab submits nothing`,
+            message: `${method}${REFUSAL}`,
           },
         }),
       );

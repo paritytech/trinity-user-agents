@@ -109,6 +109,8 @@ const encodeWindow = (messages: ChatText[]) =>
   });
 
 export const simpleText: ChatProtocol<Pending, Session> = {
+  name: VERSION,
+  window: { messages: WINDOW_MESSAGES, bytes: WINDOW_MAX_BYTES },
   notice: `Messages here are not encrypted: anyone who reads the Statement Store can read them. The network keeps only each side's last ${WINDOW_MESSAGES} messages, for a short time; this app keeps your history.`,
 
   invite(account, random) {
@@ -179,6 +181,11 @@ export const simpleText: ChatProtocol<Pending, Session> = {
   },
 
   listen: (session) => [session.listen],
+
+  routes: (session) => ({
+    peers: [session.peer],
+    post: { topics: [session.send], channel: session.channel },
+  }),
 
   post(session, own) {
     const tooLong = own.find((message) => message.text.length > TEXT_MAX_CHARS);

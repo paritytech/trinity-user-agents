@@ -14,9 +14,17 @@ import type {
   MessageState,
   StartTarget,
 } from "../../../src/chat/draft/conversations.js";
+import type {
+  ConversationDiagnostics,
+  LogicalCounts,
+} from "../../../src/products/diagnostics.js";
 import type { ChatProtocol, ChatText, Heard } from "./protocol.js";
 import type { HostRequests } from "./requests.js";
-import { messageExpiry, type Statements } from "./transport.js";
+import {
+  RETENTION_SECONDS,
+  messageExpiry,
+  type Statements,
+} from "./transport.js";
 
 /**
  * DEV ONLY. Contact Chat's engine: one-to-one conversations with people it
@@ -44,9 +52,9 @@ import { messageExpiry, type Statements } from "./transport.js";
  *   the host names them.
  *
  * The recipient reads from the moment it accepts, before its reply leaves,
- * and may write at once. The sender reads once it checked the reply, and a
- * subscription first answers what the store still holds, so what the
- * recipient wrote meanwhile is read then.
+ * and may write at once. The sender reads once it checked the reply; what the
+ * recipient wrote meanwhile is read then if the subscription delivers it, as
+ * a full node's replay does, or a peer sends it to the host's light client.
  *
  * Decline is silent: a request nobody answers stays pending until the
  * user cancels it in the host.
@@ -196,6 +204,14 @@ export class ContactChat implements ConversationEngine {
   private readonly allowing = new Map<string, Promise<string | null>>();
   /** The post in flight, by conversation: the next one waits for it, so expiries rise in order. */
   private readonly posting = new Map<string, Promise<void>>();
+  /** Counts since this engine started, by conversation, for the developer tools. */
+  private readonly counts = new Map<string, Required<LogicalCounts>>();
+  /** What this run's last post carried, by conversation. */
+  private readonly lastWindow = new Map<
+    string,
+    { messages: number; bytes: number }
+  >();
+  private readonly diagnosticsListeners = new Set<() => void>();
 
   constructor(private readonly deps: ContactChatDeps) {
     this.record = this.load();
@@ -226,6 +242,80 @@ export class ContactChat implements ConversationEngine {
   onChange(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /**
+   * What the developer tools may see of each conversation: the protocol, the
+   * host request, the accounts and topics it uses, and counts since this
+   * engine started. Nothing anyone wrote, and nothing secret.
+   */
+  diagnostics(): ConversationDiagnostics[] {
+    const { protocol } = this.deps;
+    return this.record.conversations.map((conversation) => {
+      const routes =
+        conversation.session === undefined
+          ? undefined
+          : protocol.routes(conversation.session);
+      const window = this.lastWindow.get(conversation.id);
+      return {
+        id: conversation.id,
+        protocol: protocol.name,
+        state: conversation.status,
+        ...(conversation.request === undefined
+          ? {}
+          : { request: conversation.request }),
+        ...(conversation.account === undefined
+          ? {}
+          : { account: conversation.account }),
+        ...(routes === undefined
+          ? {}
+          : {
+              peers: routes.peers,
+              listen: protocol.listen(conversation.session),
+              post: routes.post,
+            }),
+        logical: this.countsFor(conversation.id),
+        ...(window === undefined
+          ? {}
+          : {
+              window: {
+                ...window,
+                ...(protocol.window === undefined
+                  ? {}
+                  : {
+                      maxMessages: protocol.window.messages,
+                      maxBytes: protocol.window.bytes,
+                    }),
+                retentionSeconds: RETENTION_SECONDS,
+              },
+            }),
+      };
+    });
+  }
+
+  /** Calls back whenever {@link diagnostics} may answer differently. */
+  onDiagnostics(listener: () => void): () => void {
+    this.diagnosticsListeners.add(listener);
+    return () => this.diagnosticsListeners.delete(listener);
+  }
+
+  private countsFor(conversationId: string): Required<LogicalCounts> {
+    let counts = this.counts.get(conversationId);
+    if (counts === undefined) {
+      counts = { sent: 0, received: 0, duplicates: 0, failed: 0, posts: 0 };
+      this.counts.set(conversationId, counts);
+    }
+    return counts;
+  }
+
+  private count(
+    conversationId: string,
+    key: keyof LogicalCounts,
+    by: number,
+  ): void {
+    if (by === 0) return;
+    this.countsFor(conversationId)[key] += by;
+    for (const listener of [...this.diagnosticsListeners]) listener();
   }
 
   conversations(): Conversation[] {
@@ -451,8 +541,13 @@ export class ContactChat implements ConversationEngine {
     if (!own.some((message) => message.state === "sending")) return;
     const fail = (problem: string) => {
       this.deps.report?.(`send: ${problem}`);
+      let failed = 0;
       for (const message of own)
-        if (message.state === "sending") message.state = "failed";
+        if (message.state === "sending") {
+          message.state = "failed";
+          failed += 1;
+        }
+      this.count(conversation.id, "failed", failed);
       this.save();
     };
     if (conversation.index === undefined)
@@ -483,9 +578,23 @@ export class ContactChat implements ConversationEngine {
       return fail(errorText(error));
     }
     conversation.lastExpiry = expiry.toString();
+    let sent = 0;
+    let failed = 0;
     for (const message of own)
-      if (carried.includes(message.id)) message.state = "sent";
-      else if (message.state === "sending") message.state = "failed";
+      if (carried.includes(message.id)) {
+        if (message.state !== "sent") sent += 1;
+        message.state = "sent";
+      } else if (message.state === "sending") {
+        message.state = "failed";
+        failed += 1;
+      }
+    this.lastWindow.set(conversation.id, {
+      messages: carried.length,
+      bytes: (post.data.length - 2) / 2,
+    });
+    this.count(conversation.id, "posts", 1);
+    this.count(conversation.id, "sent", sent);
+    this.count(conversation.id, "failed", failed);
     this.save();
   }
 
@@ -516,7 +625,7 @@ export class ContactChat implements ConversationEngine {
     return ask;
   }
 
-  /** Read what the other side posts in `conversation`, from what the store holds now. */
+  /** Read what the other side posts in `conversation`, as the subscription delivers it. */
   private follow(conversation: StoredConversation): void {
     if (
       this.following.has(conversation.id) ||
@@ -549,15 +658,21 @@ export class ContactChat implements ConversationEngine {
         .map((message) => message.id),
     );
     const fresh: ChatText[] = [];
+    let duplicates = 0;
     for (const statement of heard)
       for (const message of this.deps.protocol.read(
         conversation.session,
         statement,
       )) {
-        if (known.has(message.id)) continue;
+        if (known.has(message.id)) {
+          duplicates += 1;
+          continue;
+        }
         known.add(message.id);
         fresh.push(message);
       }
+    this.count(conversationId, "duplicates", duplicates);
+    this.count(conversationId, "received", fresh.length);
     if (fresh.length === 0) return;
     for (const message of fresh.sort((left, right) => left.at - right.at))
       conversation.messages.push({
@@ -845,6 +960,7 @@ export class ContactChat implements ConversationEngine {
   private save(): void {
     this.deps.storage.setItem(this.deps.recordKey, JSON.stringify(this.record));
     for (const listener of [...this.listeners]) listener();
+    for (const listener of [...this.diagnosticsListeners]) listener();
   }
 
   /** Save, and wait until storage confirms it kept every write. False, reported, when it did not. */

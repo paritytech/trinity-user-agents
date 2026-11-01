@@ -9,6 +9,7 @@ import {
 } from "../platform/statement.js";
 import type { StatementStoreLike } from "../platform/statement-store.js";
 import { isStored } from "../platform/statement-store.js";
+import type { InvitationEvent, InvitationObserver } from "./observer.js";
 import type { DeliveryReceiver, HostDelivery, IdentityKeys } from "./ports.js";
 import { digest, fromHex, toHex } from "./sealing.js";
 
@@ -71,6 +72,8 @@ export interface StatementDeliveryOptions {
   /** Run `task` after `delayMs`. Returns a function that cancels it. */
   schedule(task: () => void, delayMs: number): () => void;
   log(line: string): void;
+  /** Told which notification account each post uses, and each problem keeping it up. */
+  observe?: InvitationObserver;
 }
 
 /** The UTC day of `nowMs`, as the runtime counts notification periods. */
@@ -297,6 +300,7 @@ export class StatementStoreDelivery implements HostDelivery {
     if (problem !== null) this.retryLater();
     if (post.problem === problem) return;
     post.problem = problem;
+    this.observe({ type: "delivery-problem", post: id, problem });
     if (problem !== null)
       this.options.log(`Post ${id.slice(2, 10)}: ${problem}`);
     this.receiver?.posting(id, problem);
@@ -321,6 +325,12 @@ export class StatementStoreDelivery implements HostDelivery {
         `it is ${data.length} bytes sealed; a notification holds ${NOTIFICATION_DATA_MAX_BYTES}.`,
       );
     const account = notificationAccount(this.options.entropy, id, period);
+    this.observe({
+      type: "delivery-account",
+      post: id,
+      account: toHex(account.public),
+      period,
+    });
     const { submit } = this.options;
     try {
       // One claim at a time, so two posts never race for one slot.
@@ -370,6 +380,15 @@ export class StatementStoreDelivery implements HostDelivery {
           post,
           error instanceof Error ? error.message : String(error),
         );
+    }
+  }
+
+  private observe(event: InvitationEvent): void {
+    if (this.closed) return;
+    try {
+      this.options.observe?.(event);
+    } catch {
+      // The developer tools only watch.
     }
   }
 

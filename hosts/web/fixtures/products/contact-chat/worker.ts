@@ -29,6 +29,7 @@ import {
   type ReadMarks,
 } from "../../../src/chat/draft/conversations.js";
 import { ProductStorage } from "../../../src/chat/worker/product-storage.js";
+import { postDiagnostics } from "../../../src/products/diagnostics.js";
 import { cryptoRandom } from "../../../src/invitations/sealing.js";
 import { ContactChat } from "./engine.js";
 import { connectHostRequests, type HostRequests } from "./requests.js";
@@ -166,7 +167,17 @@ async function run(): Promise<void> {
     };
   };
   state.cancel = (roomId) => engine.cancel(roomId);
+  // What the developer tools may see of each conversation, at most twice a second.
+  let diagnosticsTimer: ReturnType<typeof setTimeout> | undefined;
+  const postReport = () => {
+    diagnosticsTimer = undefined;
+    postDiagnostics({ conversations: engine.diagnostics() });
+  };
+  engine.onDiagnostics(() => {
+    diagnosticsTimer ??= setTimeout(postReport, 500);
+  });
   engine.run();
+  postReport();
   await served.ready;
   state.stage = "running";
 }

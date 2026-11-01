@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { JsonRpcConnection } from "@parity/truapi-host";
 import type { Network } from "../../../../src/platform/network.js";
-import { noSubmitNetwork } from "../../../../tools/demos/no-submit.js";
+import {
+  isNoSubmitRefusal,
+  noSubmitNetwork,
+} from "../../../../tools/demos/no-submit.js";
 
 /** A light client that answers each request with its method, as it is sent. */
 function echoNetwork(sent: string[]): Network {
@@ -85,5 +88,19 @@ describe("the no-submit network", () => {
       },
       results: ["state_call", "chainHead_v1_follow"],
     });
+    // The refusal the core gets is a plain error; the inspector tells it by its message.
+    const refusals = answers.filter((answer) => "error" in (answer as object));
+    expect((refusals[1] as { error: unknown }).error).toEqual({
+      code: -32000,
+      message: "statement_submit refused: this tab submits nothing",
+    });
+    expect(
+      refusals.every((answer) =>
+        isNoSubmitRefusal((answer as { error: { message: string } }).error),
+      ),
+    ).toBe(true);
+    expect(isNoSubmitRefusal({ message: "statement_submit refused" })).toBe(
+      false,
+    );
   });
 });
