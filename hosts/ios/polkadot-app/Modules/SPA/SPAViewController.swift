@@ -80,6 +80,14 @@ final class SPAViewController: UIViewController, ViewHolder {
         setupWebViewLayout()
     }
 
+    override func viewIsAppearing(_ animated: Bool) {
+        super.viewIsAppearing(animated)
+
+        guard isEnteringScreen else { return }
+
+        presenter.didBecomeVisible()
+    }
+
     override func updateContentUnavailableConfiguration(
         using _: UIContentUnavailableConfigurationState
     ) {
