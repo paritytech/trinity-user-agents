@@ -3,6 +3,10 @@ import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import type { TrUApiProductProvider } from "@parity/truapi-host";
 import { CHAT_V2_CONNECT, CHAT_V2_DRAFT } from "../chat/draft/contract.js";
 import type { FrameTap } from "./tap.js";
+import {
+  readDiagnosticsMessage,
+  type DiagnosticsReport,
+} from "./diagnostics.js";
 import { isProductHello as isInvitationsHello } from "../invitations/contract.js";
 import {
   readConsoleMessage,
@@ -116,6 +120,12 @@ export interface OpenProductOptions {
    * this frame's and no other's.
    */
   onConsole?(entry: WorkerConsoleEntry): void;
+  /**
+   * Called with each diagnostics report the frame posts (`diagnostics.ts`).
+   * Heard as {@link onChatV2Port} is, so a report is this frame's and no
+   * other's.
+   */
+  onDiagnostics?(report: DiagnosticsReport): void;
 }
 
 /**
@@ -148,6 +158,7 @@ export async function openProduct(
     onChatV2Port,
     onInvitationsPort,
     onConsole,
+    onDiagnostics,
   } = options;
   if (url.origin === window.location.origin && !mounted) {
     throw new Error(
@@ -208,6 +219,13 @@ export async function openProduct(
         return;
       }
     }
+    if (onDiagnostics !== undefined) {
+      const report = readDiagnosticsMessage(data);
+      if (report !== null) {
+        onDiagnostics(report);
+        return;
+      }
+    }
     if (isInvitationsHello(data, event.ports)) {
       if (onInvitationsPort === undefined) event.ports[0].close();
       else onInvitationsPort(event.ports[0]);
@@ -218,7 +236,13 @@ export async function openProduct(
     if (data.state === "loading" || data.state === "error")
       onSandboxStatus?.(data.state, data.detail);
   };
-  if (onSandboxStatus || onChatV2Port || onInvitationsPort || onConsole)
+  if (
+    onSandboxStatus ||
+    onChatV2Port ||
+    onInvitationsPort ||
+    onConsole ||
+    onDiagnostics
+  )
     window.addEventListener("message", onWindowMessage);
   return {
     url,

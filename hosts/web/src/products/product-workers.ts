@@ -9,6 +9,7 @@ import { loaderUrl, mountScope } from "./loader/mount.js";
 import { WORKER_SHELL, archivePath, contentTypeOf } from "./loader/serve.js";
 import type { ResolvedWorker, WorkerManifest } from "./worker-manifest.js";
 import type { WorkerConsoleEntry } from "./worker-console.js";
+import type { DiagnosticsReport } from "./diagnostics.js";
 
 /**
  * The product workers the user added, run while their wallet is signed in.
@@ -118,6 +119,14 @@ export interface ProductWorkersDeps {
     disconnect(productId: string): void;
   };
   observer?: WorkerObserver;
+  /**
+   * Told each diagnostics report a worker run posts (`diagnostics.ts`), and
+   * null when that worker stops, since its last report no longer holds.
+   */
+  diagnostics?(
+    worker: { name: string; run: number },
+    report: DiagnosticsReport | null,
+  ): void;
 }
 
 interface Running {
@@ -456,6 +465,13 @@ export class ProductWorkers {
                     );
                 },
               }),
+          ...(this.deps.diagnostics === undefined
+            ? {}
+            : {
+                onDiagnostics: (report: DiagnosticsReport) => {
+                  if (current()) this.diagnose(name, running.run, report);
+                },
+              }),
           onSandboxStatus: (state, detail) => {
             if (state === "error" && current()) {
               this.setState(running, { state: "failed", reason: detail });
@@ -555,6 +571,7 @@ export class ProductWorkers {
     if (running === undefined) return;
     this.deps.chatV2?.disconnect(name);
     this.deps.invitations?.disconnect(name);
+    this.diagnose(name, running.run, null);
     if (running.handle !== null) {
       this.deps.runtime()?.releaseWorker(name);
       running.handle.dispose();
@@ -567,6 +584,19 @@ export class ProductWorkers {
     }
     for (const url of running.images.values()) URL.revokeObjectURL(url);
     running.images.clear();
+  }
+
+  /** Tell the developer tools a worker's report. What they do never stops a worker. */
+  private diagnose(
+    name: string,
+    run: number,
+    report: DiagnosticsReport | null,
+  ): void {
+    try {
+      this.deps.diagnostics?.({ name, run }, report);
+    } catch {
+      // The developer tools only watch.
+    }
   }
 
   /** Stop every worker, as at sign-out. Nothing is removed from the saved list. */

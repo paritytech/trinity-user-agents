@@ -20,6 +20,7 @@ import {
   inboxTopic,
   periodOf,
 } from "../../../src/invitations/statement-delivery.js";
+import type { InvitationEvent } from "../../../src/invitations/observer.js";
 import { cryptoRandom, toHex } from "../../../src/invitations/sealing.js";
 import { WalletIdentityAuth } from "../../../src/invitations/wallet-auth.js";
 import { NotificationStore } from "../../../src/notifications/notifications.js";
@@ -141,6 +142,8 @@ class Actor {
   readonly notifications: NotificationStore;
   readonly messages: HostMessage[] = [];
   readonly log: string[] = [];
+  /** What the delivery told the developer tools. */
+  readonly observed: InvitationEvent[] = [];
   readonly auth: WalletIdentityAuth;
   readonly contacts: FixtureContacts;
   service!: InvitationService;
@@ -182,6 +185,7 @@ class Actor {
         now: this.clock.now,
         schedule: this.clock.schedule,
         log: (line) => this.log.push(line),
+        observe: (event) => void this.observed.push(event),
       }),
       now: this.clock.now,
       schedule: this.clock.schedule,
@@ -420,6 +424,20 @@ describe("the network delivery", () => {
       status: "waiting",
       posts: 1,
     });
+    // The developer tools heard which account each try used, and the problem and its end.
+    const [posted] = chain.posted();
+    expect(
+      alice.observed.map((event) =>
+        event.type === "delivery-account"
+          ? `${event.type} ${event.account === toHex(posted!.signer) ? "posted" : "other"}`
+          : `${event.type} ${event.type === "delivery-problem" ? event.problem : ""}`,
+      ),
+    ).toEqual([
+      "delivery-account posted",
+      "delivery-problem no free notification slot in period 20747 (max 9)",
+      "delivery-account posted",
+      "delivery-problem null",
+    ]);
   });
 
   test("posting again on the same day claims nothing new", async () => {

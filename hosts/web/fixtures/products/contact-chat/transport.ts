@@ -9,9 +9,10 @@ import type { Heard, Post } from "./protocol.js";
  * at a conversation's raw derivation index. The core holds that account's
  * key; the product holds only the index.
  *
- * A subscription answers first with the statements the store still holds on
- * its topics and then with new ones, so a post made before this side started
- * reading is read when it does, for as long as the store keeps it.
+ * Through the host's light client a subscription gets no stored replay: its
+ * first page is empty, and a post made before this side started reading is
+ * read only if a peer sends it later. A full node would replay what it
+ * holds first.
  */
 
 /** How long a post stays in the store after it was made: two days. */
@@ -35,10 +36,10 @@ export interface Statements {
   /** The product's own account at raw derivation index `index`, `0x` hex. */
   account(index: string): Promise<string>;
   /**
-   * Follow `topics`: the statements the store holds on any of them, then
-   * each new one, until the returned function is called. A subscription
-   * that ends starts again after {@link FOLLOW_RETRY_MS}, answering what it
-   * holds again; `problem` is told why it ended.
+   * Follow `topics`: each statement on any of them that the subscription
+   * delivers, until the returned function is called. A subscription that
+   * ends starts again after {@link FOLLOW_RETRY_MS}; `problem` is told why it
+   * ended.
    */
   follow(
     topics: string[],

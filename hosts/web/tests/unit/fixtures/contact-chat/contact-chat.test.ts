@@ -22,6 +22,7 @@ import {
 } from "../../../../src/invitations/invitation-service.js";
 import { cryptoRandom, toHex } from "../../../../src/invitations/sealing.js";
 import { NotificationStore } from "../../../../src/notifications/notifications.js";
+import type { InvitationEvent } from "../../../../src/invitations/observer.js";
 import { MemoryStorage } from "../../../support/test-support.js";
 import { KeptStorage } from "../../../support/product-storage.js";
 import type { ProductStorage } from "../../../../src/chat/worker/product-storage.js";
@@ -115,6 +116,8 @@ class User {
   readonly acceptPrompts: AcceptPrompt[] = [];
   /** Why this user's host gives no allowance now, or null when it does. */
   refuseAllowance: string | null = null;
+  /** What the request service told the developer tools. */
+  readonly observed: InvitationEvent[] = [];
   service!: InvitationService;
   requests!: HostRequests;
   engine!: ContactChat;
@@ -196,6 +199,7 @@ class User {
         () => this.refuseAllowance,
       ),
       log: () => {},
+      observe: (event) => void this.observed.push(event),
     });
     this.service.start();
 
@@ -507,6 +511,79 @@ describe("Contact Chat between two hosts, by contact handle", () => {
       { from: "Alice", text: "Hello Bob" },
       { from: "You", text: "Hello Alice" },
       { from: "Alice", text: "Still there?" },
+    ]);
+  });
+
+  test("each side reports its protocol, request, account, routes and counts, and the host observes the request's facts", async () => {
+    const { alice, bob, store } = world();
+    await alice.start();
+    await bob.start();
+    const roomId = await alice.startWith(BOB, "");
+    await bob.acceptNewest();
+    await settle();
+    await alice.provider.send(roomId, "One");
+    await alice.provider.send(roomId, "Two");
+    await settle();
+    await bob.provider.send(bob.only().id, "Hi");
+    await settle();
+
+    const [aliceSide] = alice.engine.stored();
+    const [bobSide] = bob.engine.stored();
+    const aliceSession = aliceSide!.session as Session;
+    const [report] = alice.engine.diagnostics();
+    expect(report).toEqual({
+      id: aliceSide!.id,
+      protocol: "contact-chat/simple-text/1",
+      state: "connected",
+      request: aliceSide!.request!,
+      account: aliceSide!.account!,
+      peers: [bobSide!.account!],
+      listen: [aliceSession.listen],
+      post: { topics: [aliceSession.send], channel: aliceSession.channel },
+      logical: {
+        sent: 2,
+        received: 1,
+        duplicates: report!.logical!.duplicates,
+        failed: 0,
+        posts: report!.logical!.posts,
+      },
+      window: {
+        messages: 2,
+        bytes: report!.window!.bytes,
+        maxMessages: WINDOW_MESSAGES,
+        maxBytes: 16_384,
+        retentionSeconds: 2 * 86_400,
+      },
+    });
+    // Each post the store took is one the product counts.
+    expect(report!.logical!.posts).toBe(
+      store.taken.filter((post) => post.signer === aliceSide!.account).length,
+    );
+    // The reported routes are the ones the store saw.
+    expect(store.taken[0]).toMatchObject({
+      signer: aliceSide!.account,
+      topics: [aliceSession.send],
+      channel: aliceSession.channel,
+    });
+    // Nothing anyone wrote is in a report.
+    expect(JSON.stringify(alice.engine.diagnostics())).not.toContain("One");
+
+    expect(alice.observed.map((event) => event.type)).toEqual([
+      "request-sent",
+      "reply-authenticated",
+      "request-closed",
+      "chat-account",
+    ]);
+    expect(alice.observed.at(-1)).toMatchObject({
+      type: "chat-account",
+      handle: aliceSide!.request,
+      index: aliceSide!.index,
+      outcome: "allowed",
+    });
+    expect(bob.observed.map((event) => event.type)).toEqual([
+      "request-received",
+      "replied",
+      "chat-account",
     ]);
   });
 

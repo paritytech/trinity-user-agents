@@ -34,8 +34,13 @@ import { FixtureContacts } from "../../fixtures/invitations/fixture-contacts.js"
 import type { ChainDirectory } from "../../src/platform/chain-directory.js";
 import type { StatementStoreLike } from "../../src/platform/statement-store.js";
 import type { Network } from "../../src/platform/network.js";
-import { noSubmitNetwork, type NoSubmitRecord } from "./no-submit.js";
+import {
+  isNoSubmitRefusal,
+  noSubmitNetwork,
+  type NoSubmitRecord,
+} from "./no-submit.js";
 import { StatementStoreDelivery } from "../../src/invitations/statement-delivery.js";
+import type { InvitationObserver } from "../../src/invitations/observer.js";
 import { DirectoryContacts } from "../../src/invitations/directory-contacts.js";
 import { sessionChatKeys } from "../../src/invitations/chat-keys.js";
 import { WalletIdentityAuth } from "../../src/invitations/wallet-auth.js";
@@ -123,6 +128,8 @@ export interface DevToolsDeps {
   /** Tell the host's handle index that the people it may name changed. */
   namedChanged(): void;
   log(line: string): void;
+  /** Told the request service's and the delivery's facts, for the inspector's Statements view. */
+  observe?: InvitationObserver;
 }
 
 /** A wallet session the core reports, as Contact Chat's requests need it. */
@@ -197,6 +204,8 @@ export interface DevSession {
    * `window.__truapiNoSubmit` for a test to read.
    */
   guardNetwork(network: Network): Network;
+  /** Whether an RPC error is a refusal {@link guardNetwork}'s guard made in this tab. */
+  refusedHere(error: { message?: string }): boolean;
   /** Where the test user's picker finds people by username: the other test users, or null. */
   usernames: UsernameDirectory | null;
   /** What the Notifications screen can do with the test user's invitations, or null. */
@@ -450,6 +459,8 @@ export function startDevTools(deps: DevToolsDeps): DevSession {
       window.__truapiNoSubmit = guarded.record;
       return guarded.network;
     },
+    refusedHere: (error) =>
+      submitsNothing(networkMode()) && isNoSubmitRefusal(error),
     setWallet: (next) => {
       if (testUser !== null || sessionStorage.getItem(WALLET_CHAT_KEY) !== "on")
         return;
@@ -617,6 +628,7 @@ function startWalletChat(
               return () => clearTimeout(timer);
             },
             log: deps.log,
+            ...(deps.observe === undefined ? {} : { observe: deps.observe }),
           }),
         }),
     contacts,
@@ -633,6 +645,7 @@ function startWalletChat(
     showChat: deps.showChat,
     onSenders: deps.namedChanged,
     log: deps.log,
+    ...(deps.observe === undefined ? {} : { observe: deps.observe }),
   });
 }
 
@@ -726,6 +739,7 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
     confirmSend,
     showChat: deps.showChat,
     log: deps.log,
+    ...(deps.observe === undefined ? {} : { observe: deps.observe }),
   });
 
   return {

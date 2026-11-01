@@ -17,6 +17,7 @@ import type {
   IdentityAuth,
   Product,
 } from "../../src/invitations/ports.js";
+import type { InvitationObserver } from "../../src/invitations/observer.js";
 import { cryptoRandom } from "../../src/invitations/sealing.js";
 import type { NotificationStore } from "../../src/notifications/notifications.js";
 import type { IdentityProblem } from "../../src/invitations/published-keys.js";
@@ -69,6 +70,8 @@ export interface ContactChatHostOptions {
   /** Calls back when the people of {@link ContactChatHost.people} changed. */
   onSenders?(): void;
   log(line: string): void;
+  /** Told the request service's facts, for the inspector's Statements view. */
+  observe?: InvitationObserver;
 }
 
 export interface ContactChatHost {
@@ -144,6 +147,7 @@ export function startContactChatHost(
     showProduct: () => options.showChat(),
     ...(options.accounts === undefined ? {} : { accounts: options.accounts }),
     log: options.log,
+    ...(options.observe === undefined ? {} : { observe: options.observe }),
   });
   /** Contact Chat's request port, held until the keys are checked. */
   let pending: MessagePort | null = null;

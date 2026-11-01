@@ -646,9 +646,14 @@ agreed API.
     `substrate/client/statement-store/src/lib.rs` and `substrate/primitives/statement-store/src/lib.rs`, read
     2026-10-31). A general allowance keeps two statements and 512,000 bytes per account (People chain, read 2026-10-30),
     so the network keeps a short window, not a history; each worker keeps its whole history in its own storage. Each
-    side reads only posts its peer's account signed on its own topic, and keeps each message once by its id. A
-    subscription first answers what the store holds, so what Bob writes right after he accepts is read when Alice's
-    worker connects later, while his post is still held; a peer away for more than 20 messages, or past the expiry,
+    side reads only posts its peer's account signed on its own topic, and keeps each message once by its id. Statements
+    reach the core through this host's embedded light client, which has no statement store: a subscription's first page
+    is always empty, and a post made earlier, such as what Bob writes right after he accepts, is read when Alice's
+    worker connects later only if a peer sends it to her light client then. Whether and when a peer does is not
+    guaranteed. A delayed read that worked shows that a peer sent the post at that moment, not that the network keeps or
+    replays it. A `new` answer to a post means at least one peer took the broadcast, not that a peer stored it: peers
+    check allowance and channel priority themselves and do not report a refusal. The unit tests' in-memory store replays
+    what it holds like a full node; the browser does not. A peer away for more than 20 messages, or past the expiry,
     loses the older ones. A message still sending when the worker stopped shows failed after a reload, with Retry.
   - **Not encrypted.** `simple-text/1` has no encryption of its own: anyone who reads the Statement Store reads the
     text, the topics, channels, both conversation accounts, sizes and times, and can link the posts of one account. A
@@ -681,6 +686,13 @@ agreed API.
       this browser, like the local delivery, but validates each chat account's claim in the same way; its tab, too,
       refuses every submission. The local delivery and the demo users give no allowance: a message fails and says the
       host gives none.
+  - **Diagnostics** (draft). Contact Chat reports each conversation to its host for the inspector's Chat view: its
+    protocol, state, request handle, conversation account, the peer accounts and topics it reads, where it posts, and
+    counts since the worker started (messages sent, received and dropped as copies, failures, posts) with its last
+    window. The protocol gives its public routing (`routes`) for this; no report carries what anyone wrote. A report is
+    a window message from the worker's frame (`product-diagnostics/draft-1`, `src/products/diagnostics.ts`), read field
+    by field within bounds and put down to the frame that sent it; each replaces the last of that run, and a stopped
+    worker's report is marked stale. The host shows it as reported and acts on none of it.
   - **The protocol boundary.** `fixtures/products/contact-chat/protocol.ts` is the seam between the engine and the chat
     protocol: the protocol owns the setup payloads, the topics and channel each side reads and posts on, and a post's
     bytes and window; the engine owns the conversation, its account index, history and storage and never reads them. The
@@ -899,7 +911,7 @@ it are five tabs:
 - **Product:** Open a product (a name or URL, recent products, and the product id folded under them), Open now (its
   state, Close, Reset its data, What it may use, Details), and Workers.
 - **Preview:** the app's size and its frame, described below.
-- **Inspector:** the Activity view, the TrUAPI traces and the Workers view.
+- **Inspector:** the Activity view, the TrUAPI traces, the Workers view, the Statements view and the Chat view.
 - **More:** Versions, and the dev server's own controls (the invitation demo, Contact Chat for this wallet and sample
   Inbox items).
 
@@ -994,18 +1006,111 @@ them when the worker is removed or the session changes. Console lines are the wo
 logs; the host does not promise to clean them. Lines filter by level, and **Copy** and **Clear** act on the selected
 worker's.
 
-**Activity.** The inspector's **Activity** tab, the first of Activity, TrUAPI and Workers, lists what the host did,
-oldest first, one short row each: the time, a category (Session, Products, Workers, Network or Host), what happened and
-to what, such as `Products Opened browse.paseo` or `Workers Started people.paseo`, and a reason in red when it failed. A
-row with more opens, by click or Enter, to its details: the product id, the execution kind, the record and content, or
-the loader URL. The chips show one category, **Errors** shows only failures and refusals, and the field searches every
-text, details included. **Pause** stops following new events but not logging them, and counts what arrives; **Follow**
-or the count shows them again. **Copy** copies the rows shown, with their details, and **Clear** forgets every event.
-Parts of the host report facts to the log (`src/platform/activity.ts`) instead of sentences; the log (`tools/activity/`)
-keeps the last 500 events in memory in this tab, and nothing is stored or sent. Events carry names, product ids,
-addresses and reasons, never keys, recovery phrases or what a product shows the user, and a URL loses any user name,
-password and secret-looking query parameter. Network events are the host's own: the light client starting and the
-answers to a product's network permissions, not the traffic itself, which the TrUAPI view shows.
+**Activity.** The inspector's **Activity** tab, the first of Activity, TrUAPI, Workers and Statements, lists what the
+host did, oldest first, one short row each: the time, a category (Session, Products, Workers, Network or Host), what
+happened and to what, such as `Products Opened browse.paseo` or `Workers Started people.paseo`, and a reason in red when
+it failed. A row with more opens, by click or Enter, to its details: the product id, the execution kind, the record and
+content, or the loader URL. The chips show one category, **Errors** shows only failures and refusals, and the field
+searches every text, details included. **Pause** stops following new events but not logging them, and counts what
+arrives; **Follow** or the count shows them again. **Copy** copies the rows shown, with their details, and **Clear**
+forgets every event. Parts of the host report facts to the log (`src/platform/activity.ts`) instead of sentences; the
+log (`tools/activity/`) keeps the last 500 events in memory in this tab, and nothing is stored or sent. Events carry
+names, product ids, addresses and reasons, never keys, recovery phrases or what a product shows the user, and a URL
+loses any user name, password and secret-looking query parameter. Network events are the host's own: the light client
+starting and the answers to a product's network permissions, not the traffic itself, which the TrUAPI view shows.
+
+**Statements.** The inspector's **Statements** tab shows what this tab saw of the People chain's Statement Store, to
+demonstrate and debug a chat protocol and the scarce resources it spends (`tools/statements/`). Every fact carries a tag
+for where it came from: **light client** (an answer, or a page of what peers sent, as it crossed the connection),
+**core** (a claim result), **host** (the request service's own records), **chain** (a read at a block), **reported**
+(what a product said about itself, unchecked), **derived** (worked out here) or **inspector**.
+
+**Layout.** Each fact is one short line: its label, a source tag and the numbers. A **why** after a line opens, by click
+or tap, to what the line does not say: block and time of a grant read, what "observed" leaves out, why peer refusals are
+not visible, the cost window, full hashes. The header shows the session's counters on one line, and one line of short
+caveats (light client, new = broadcast, peer refusals unseen, observed ≠ current, grant ≠ remaining, data is public)
+that opens to the full text and the source legend. Capture shows a line of its own only while it is on.
+
+**The transport.** This host reaches the People chain only through its embedded light client (smoldot-light 2.1.0),
+which has no statement store, and the view says so in a line of its own. What follows from it (smoldot-light
+`src/json_rpc_service/statement.rs` and `background.rs`):
+
+- `statement_submit` checks expiry, size and proof, then broadcasts. `new` means at least one peer took the broadcast,
+  not that a peer stored it; the view counts it as **broadcast**. A failed check answers `invalid` with its reason; a
+  statement it cannot decode, or that no peer took, answers an RPC error 7001, which the view names: could not decode,
+  no connected peer, or none of N peers took it. It never answers `known`.
+- Peers check allowance, account room and channel priority themselves, and their refusals never reach this tab. So the
+  view shows **Peer refusals: not visible** beside each account's posts: no refusal shown does not mean none happened,
+  and no available byte count or priority refusal will appear.
+- A subscription's first page is always empty with `remaining: 0`. What arrives later is what peers send, new or long
+  stored, and the view counts it as **later** (after the initial batch), never "live" or "new". A page that carries
+  `remaining` and statements, as a full node's replay would, counts as **initial**.
+- Every People connection of this tab shares one network service in the light client, and each connection's statement
+  subscriptions replace the one topic filter it sends to peers (`json_rpc_service/background.rs:922-929`,
+  `network_service.rs:2314-2334`). So the inspector opens no statement subscription of its own: one made to look would
+  take the chat's topics off the filter while it ran, and perhaps after. It says so on the Topics tab. For the same
+  reason an open subscription the view lists is one the core or the host made, and does not show that peers send to it:
+  the core's and the host's own connections replace each other's filter too. A grant read opens a connection that only
+  follows the chain and reads storage; a connection changes the filter only when it subscribes or unsubscribes
+  (`background.rs:3146`, `3178`), and closing it drops the filter only when it was the chain's last connection
+  (`lib.rs:1010-1020`), which the core's is not.
+
+- **Sources.** `src/platform/statement-observer.ts` wraps every People chain connection the core and the host open, and
+  reads only `statement_*` requests, their answers and the notifications of the subscriptions they opened. It hands on
+  every message unchanged and in order, never consumes or delays one, keeps reading only as the caller reads, and
+  ignores its own failures, so a connection behaves the same with it as without. The host's claim calls report what the
+  core answered; the request service and the network delivery report their facts (`src/invitations/observer.ts`); a
+  product worker may report its conversations (`src/products/diagnostics.ts`, below).
+- **Accounts, Topics, Timeline.** The Statements view's three tabs. It names no chat protocol: an account's roles say
+  only which product reported or claimed it, and product reports stay out of its timeline.
+- **Accounts.** Every account claimed for, reported or seen signing, with its roles, claims, grant and latest observed
+  statements, and opened: its channels and the statements seen from it, each with when this tab first and last saw it.
+  **Read grants** reads `:statement_allowance:` for them at the newest finalized People block: a grant, not what is
+  used.
+- **Topics.** Every subscription, who opened it (core or host), its filter, where its stream stands, pages, statements
+  and repeats among its last 200 statements. Every topic seen, with what a product reported it for and how many
+  statements were recorded on it. There is no probe: the inspector opens no statement subscription of its own (see **The
+  transport**).
+- **Timeline.** Every fact in order, filtered by kind, failures, search, or the conversation or account it came from.
+
+What it does not know is said where it matters. Peers evict and refuse without saying so, and send only some of what
+they hold. So **Observed** for an account is an observation, not occupancy: the latest statement seen per channel, plus
+statements without a channel, not known expired, this tab's own broadcasts included, with when this tab last saw them.
+It is neither a lower nor an upper bound of what the network holds now, and the view never sets it against the grant as
+room used or left. None observed does not mean none stored. `knownExpired`, a full node's answer, would show as given:
+the core counts it a failure and the network delivery counts it posted. A claim validated only allocated nothing. A
+refusal by this tab's no-submit guard shows as refused in this tab, apart from an RPC error. Remaining daily slots of a
+person are not shown: no read gives them to the host.
+
+The ledger keeps the last 800 events, 1,000 statements, 400 submissions and waiting requests, 200 subscriptions, 300
+accounts and topics, 600 channels, 64 conversations and 200 requests in memory, and says how many it dropped, a channel
+whose latest statement left the list included. Ended and refused subscriptions are dropped before open ones; a page of
+an open one that was dropped says its filter and earlier counts are gone. A long subscription id the node chose is kept
+as its hash. Request problems and refusal reasons are bounded and redacted like other text. A submission whose wait the
+ledger drops, or whose connection closes first, shows as unanswered, with why. The observer itself remembers at most 256
+unanswered requests and subscriptions per connection.
+
+It starts empty for each session and on **Clear**, and its counters count from then. A claim or grant read that ends
+after that is not recorded. The core's and the host's People connections can outlive a session, so their source and
+their open subscriptions stay, marked as opened before the session, with counts from its start.
+
+**Capture data** keeps statement data too, at most 16 KiB each and 512 KiB in all, those waiting for an answer included,
+shown as text when it reads as text; turning it off, or a session change, forgets it. **Copy evidence** copies the
+ledger as JSON, metadata only, with the transport note: never statement data. An answer, page, filter or error data in a
+shape the view does not read is kept as its shape (types, keys, lengths and plain words); light-client and core text has
+long hex replaced by its length and is cut to 200 characters. Nothing holds a key, seed or secret.
+
+**Chat.** The inspector's **Chat** tab shows the conversations product workers report about themselves (Contact Chat
+does), and the host requests with no report (`tools/chat/`). Each card is one line per fact: the **protocol** name and
+version the product reports; the host's **request** and `chatAccount` answer, joined only when the host holds that
+request for the same product; the **account** the product posts as (reported), then a **tie** line from the host: "tied
+by host" only when a claim or allowance of that product names it, else "reported only"; its peers, read and post topics,
+logical message counts (sent, received, duplicates dropped, failed, posts) and window; and **per message**, the
+broadcast statements and bytes over messages sent in one window, or why that is not known. The host reads no chat
+payload: all but the request, the tie and the per-message figure are product-reported and tagged so. Resources stay in
+Statements: the tied account, each topic and the request are links that open Statements on the account, or its timeline
+narrowed to the topic or to the host's request and delivery events, with any filter set by hand cleared. An open **why**
+stays open as the views draw again. A stopped worker's card is marked stale; with no report the tab says so.
 
 **Versions.** The menu shows client, host and core, provider and debugger versions, read from the linked packages and
 the loaded `testing` bundle. A warning appears only when the core's wire schema differs from the client's. **Technical
@@ -1310,38 +1415,47 @@ apart, lists a contact once, does not look up text that cannot be a username, gi
 found, the same each time and without making them a contact, and never asks the username index; and with no session the
 core refuses the pick with NotConnected and no picker is drawn.
 
-Three narrower browser tests use no wallet. `browser/inspector-dock.spec.ts` loads the host page with every request
-outside loopback refused, and checks that on a wide window the developer tools open on the right by default and move to
-the bottom across the window, the Phone-sized app keeping its size and its device frame; that the inspector's three
-views, Activity, TrUAPI and Workers, fill the tools one at a time and the arrow keys move between them, that their top
-edge sets their height at the bottom, that on the right their left edge sets their width by drag and keys within its
-bounds, apart from the height, kept after a reload and without reloading the product, and that the side is kept after a
-reload; that Focus gives the app the whole window and brings the tools back at the same view; that the side switch is a
-segmented control of two 36 × 26 px pills, each inside its track, and Hide a 28 px circle, icons centred, on either
-side, in either colour scheme and on hover and focus; that a narrow window keeps them a sheet over the app; and that the
-Pill opens the search card with focus in the field, shows why an address cannot open, and on `Escape` closes and gives
-focus back. `browser/workers-inspector.spec.ts` runs two synthetic workers through the loader, offline, and checks that
-the Workers view shows their state, the first line and the bounded, circular, binary, error, rejection and flood lines,
-that the worker's own console and code are unchanged, that a line is put down to the frame that sent it, the filters and
-Copy, that Traces narrows the TrUAPI view to the worker, that Restart keeps the earlier run's lines labelled, and that a
-removed worker, signing out and another wallet leave none of it. `browser/activity-log.spec.ts` mounts the Activity view
-alone on made-up events and checks the rows and their keyboard details, focus kept as events arrive, the filters, search
-and empty states, pause and the event limit, copy, clear, and that a URL's credentials do not show.
-`browser/chat-screen.spec.ts` mounts the Chat screen alone over the product room provider with a stand-in behind it, the
-chat product provider with the synthetic chat product on the other side of the bridge in the page, and a second chat
-product provider whose stand-in engine has one conversation, with a host contact, and records the chats it is asked to
-start. Synthetic data only, and every request outside this host refused. It checks one list across providers, paging on
-scroll, sender names and the user's own messages, status changes, a retried message staying one message, a product
-room's custom card, buttons, reaction and non-`https` file, the chat product answering while another room is open,
-unread cleared only for messages on screen, a product restart and a new session. It checks New chat through the host's
-contact picker over a test username index: Cancel changes nothing, a username that names another account on chain is not
-chosen, a contact opens their chat, anyone else opens a request that the provider is asked to send only on Send, once,
-and a choice made after the session changed is dropped. It also checks the user's reaction in a product room, which
-reaches the worker, and that the user's own messages take none; and, over a saved chat record through the real wallet
-contacts, that a host contact's conversation offers Block and a product room's person does not, that Cancel blocks no
-one, that Block takes them out of New chat's picker and tells the core, that Blocked lists them and Unblock offers them
-again, and that with no one blocked Blocked stays reachable and Block a contact offers the contacts only and blocks the
-one chosen. Set `CHAT_SCREENSHOTS` to a directory to keep screenshots.
+Four narrower browser tests use no wallet, or only a public test phrase offline. `browser/inspector-dock.spec.ts` loads
+the host page with every request outside loopback refused, and checks that on a wide window the developer tools open on
+the right by default and move to the bottom across the window, the Phone-sized app keeping its size and its device
+frame; that the inspector's five views, Activity, TrUAPI, Workers, Statements and Chat, fill the tools one at a time and
+the arrow keys move between them, that their top edge sets their height at the bottom, that on the right their left edge
+sets their width by drag and keys within its bounds, apart from the height, kept after a reload and without reloading
+the product, and that the side is kept after a reload; that Focus gives the app the whole window and brings the tools
+back at the same view; that the side switch is a segmented control of two 36 × 26 px pills, each inside its track, and
+Hide a 28 px circle, icons centred, on either side, in either colour scheme and on hover and focus; that a narrow window
+keeps them a sheet over the app; and that the Pill opens the search card with focus in the field, shows why an address
+cannot open, and on `Escape` closes and gives focus back. `browser/workers-inspector.spec.ts` runs two synthetic workers
+through the loader, offline, and checks that the Workers view shows their state, the first line and the bounded,
+circular, binary, error, rejection and flood lines, that the worker's own console and code are unchanged, that a line is
+put down to the frame that sent it, the filters and Copy, that Traces narrows the TrUAPI view to the worker, that
+Restart keeps the earlier run's lines labelled, and that a removed worker, signing out and another wallet leave none of
+it. `browser/activity-log.spec.ts` mounts the Activity view alone on made-up events and checks the rows and their
+keyboard details, focus kept as events arrive, the filters, search and empty states, pause and the event limit, copy,
+clear, and that a URL's credentials do not show. `browser/statements-inspector.spec.ts` mounts the Statements and Chat
+views over one ledger, fed through the real connection observer with a synthetic Alice and Bob chat: a claim, request
+facts, a light-client subscription, broadcast and refused submissions, and a product report. It checks the Chat card's
+reported, host and derived lines and that it shows no resource fact; that its account and topic links open Statements on
+the account, or its timeline narrowed to the topic; the account's claim, grant, observed, posts and peer-refusal lines;
+that Statements names no protocol and offers no probe, opening no People connection of its own; capture, errors and
+metadata-only evidence; and, apart, that a product naming another's request and account gets no host facts. In the host
+page, offline, it finds both views empty, then runs a worker built from `fixtures/products/diagnostics-worker.ts` whose
+report shows in Chat as reported, is replaced by the next and turns stale when the worker is removed. Set
+`STATEMENTS_SCREENSHOT` to a directory to keep screenshots. `browser/chat-screen.spec.ts` mounts the Chat screen alone
+over the product room provider with a stand-in behind it, the chat product provider with the synthetic chat product on
+the other side of the bridge in the page, and a second chat product provider whose stand-in engine has one conversation,
+with a host contact, and records the chats it is asked to start. Synthetic data only, and every request outside this
+host refused. It checks one list across providers, paging on scroll, sender names and the user's own messages, status
+changes, a retried message staying one message, a product room's custom card, buttons, reaction and non-`https` file,
+the chat product answering while another room is open, unread cleared only for messages on screen, a product restart and
+a new session. It checks New chat through the host's contact picker over a test username index: Cancel changes nothing,
+a username that names another account on chain is not chosen, a contact opens their chat, anyone else opens a request
+that the provider is asked to send only on Send, once, and a choice made after the session changed is dropped. It also
+checks the user's reaction in a product room, which reaches the worker, and that the user's own messages take none; and,
+over a saved chat record through the real wallet contacts, that a host contact's conversation offers Block and a product
+room's person does not, that Cancel blocks no one, that Block takes them out of New chat's picker and tells the core,
+that Blocked lists them and Unblock offers them again, and that with no one blocked Blocked stays reachable and Block a
+contact offers the contacts only and blocks the one chosen. Set `CHAT_SCREENSHOTS` to a directory to keep screenshots.
 
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
 `dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).
@@ -1372,10 +1486,11 @@ nothing else of it.
   `network-choice.ts` and `follow-spread.ts`: the light client, the networks, the per-tab choice and spreading the
   core's follows. `storage.ts`, `wallets.ts`, `allowance-ledger.ts`: per-wallet, per-network storage, saved wallets and
   the core's renewal ledger. `people-chain.ts`, `scale-reader.ts`, `subscription.ts`; `core-worker.ts`, the Web Worker
-  the core runs in. `activity.ts`: what the host reports to the inspector's Activity view. `codec.ts` and `crypto.ts`:
-  byte encoding, hashes, X25519 and sr25519 verification. `chain-directory.ts`: chat keys, usernames and owners read
-  from Asset Hub and the People chain. `statement.ts` and `statement-store.ts`: signed statements and the People chain's
-  Statement Store over JSON-RPC.
+  the core runs in. `activity.ts`: what the host reports to the inspector's Activity view. `statement-observer.ts`: the
+  passive observer of Statement Store traffic on People chain connections, for the Statements view. `codec.ts` and
+  `crypto.ts`: byte encoding, hashes, X25519 and sr25519 verification. `chain-directory.ts`: chat keys, usernames and
+  owners read from Asset Hub and the People chain. `statement.ts` and `statement-store.ts`: signed statements and the
+  People chain's Statement Store over JSON-RPC.
 - `src/chat/`: Chat. `provider.ts` is the interface between the Chat screen and its chats, `inbox.ts` the session's
   providers, `screen.ts`, `tabs.ts`, `conversation-view.ts` and `call-view.ts` draw it.
   - `worker/`: `product-storage.ts`, a `Storage` a chat product worker keeps in its own TrUAPI storage.
@@ -1387,9 +1502,9 @@ nothing else of it.
   (`wallet-contacts.ts`), the host's names for people (`host-names.ts`), finding people by username
   (`username-directory.ts`, `username-search.ts`) and the Docklet's people (`search-people.ts`).
 - `src/products/`: embedding a product and relaying its frames (`product.ts`, `tap.ts`), product workers
-  (`worker-manifest.ts`, `product-workers.ts`, `workers-menu.ts`), a worker's console lines (`worker-console.ts`), name
-  lookup (`dotns.ts`), preimage lookups (`preimage.ts`), the stage's loading and status lines (`loading.ts`,
-  `status.ts`) and the cards a worker draws (`render.ts`).
+  (`worker-manifest.ts`, `product-workers.ts`, `workers-menu.ts`), a worker's console lines (`worker-console.ts`) and
+  diagnostics reports (`diagnostics.ts`, draft), name lookup (`dotns.ts`), preimage lookups (`preimage.ts`), the stage's
+  loading and status lines (`loading.ts`, `status.ts`) and the cards a worker draws (`render.ts`).
   - `archive/`: CAR, UnixFS and CID verification and unpacking.
   - `loader/`, with `sandbox-plugin.ts`: the loader, the service worker, the mount paths, the archive cache, and a
     worker's console capture (`console.ts`, `describe.ts`). The plugin bundles them as static files, which the build
@@ -1398,18 +1513,22 @@ nothing else of it.
   faces (`faces.ts`, `card-view.ts`) and the Widget an opened card runs (`widget.ts`).
 - `src/notifications/`: the Inbox prototype's store and screen.
 - `src/invitations/`: invitations between users' hosts, the wallet keys that prove them (`chat-keys.ts`, with `gate.ts`,
-  which refuses the public development phrase), and the draft network delivery over the Statement Store
-  (`statement-delivery.ts`).
+  which refuses the public development phrase), the draft network delivery over the Statement Store
+  (`statement-delivery.ts`), and the facts both report to the Statements view (`observer.ts`).
 - `tools/`: the developer tools. `mount.ts` mounts the inspector and the Preview tab (`viewport.ts`, `dock-resize.ts`).
   `activity/` is the inspector's Activity view: the bounded event list, its filters and its view. `workers/` is the
-  inspector's Workers view and the workers' console lines it keeps. `inspector/frame-tap.ts` feeds TrUAPI frames to the
-  debugger. The developer tools ship in every build. `demos/` holds the dev server's controls, which a build leaves out:
-  the Developer section, the local chat products' routes, and Contact Chat's host side.
+  inspector's Workers view and the workers' console lines it keeps. `chat/` is the inspector's Chat view, over the same
+  ledger. `statements/` is the inspector's Statements view: the bounded ledger (`ledger.ts`), what it reads of
+  statements and answers (`decode.ts`), the grant read (`actions.ts`), the evidence it copies (`evidence.ts`), the
+  pieces both views draw with (`ui.ts`) and the view. `inspector/frame-tap.ts` feeds TrUAPI frames to the debugger. The
+  developer tools ship in every build. `demos/` holds the dev server's controls, which a build leaves out: the Developer
+  section, the local chat products' routes, and Contact Chat's host side.
 - `fixtures/`: synthetic data that only tests and the dev server use. `products/`: product and worker entries, the
-  synthetic chat product and Contact Chat (`contact-chat/`: `worker.ts` the entry, `engine.ts` its conversations,
-  `protocol.ts` the seam to its chat protocol and `simple-text.ts` the one it runs, `transport.ts` its Statement Store
-  posts through TrUAPI, `requests.ts` its end of the request service). `invitations/`, `notifications/`: demo users,
-  local delivery, and sample notifications. `archive/`: archive builders.
+  synthetic chat product, a worker that only reports diagnostics (`diagnostics-worker.ts`), and Contact Chat
+  (`contact-chat/`: `worker.ts` the entry, `engine.ts` its conversations, `protocol.ts` the seam to its chat protocol
+  and `simple-text.ts` the one it runs, `transport.ts` its Statement Store posts through TrUAPI, `requests.ts` its end
+  of the request service). `invitations/`, `notifications/`: demo users, local delivery, and sample notifications.
+  `archive/`: archive builders.
 - `tests/unit/`: unit tests, in folders that follow the code they cover; `tests/support/`: their shared helpers, among
   them statement stores in memory (`statement-memory.ts`, `statement-rpc-memory.ts`, and `chat-statements.ts` as Contact
   Chat reaches one through TrUAPI).

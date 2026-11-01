@@ -30,6 +30,7 @@ import type {
   Person,
   Product,
 } from "./ports.js";
+import type { InvitationEvent, InvitationObserver } from "./observer.js";
 import { ReceivedRequests, type ReceivedRequest } from "./received.js";
 import {
   digest,
@@ -134,6 +135,8 @@ export interface InvitationServiceDeps {
    */
   accounts?: ConversationAllowance;
   log(line: string): void;
+  /** Told each fact the developer tools show, as it happens. */
+  observe?: InvitationObserver;
 }
 
 const short = (id: string): string => id.replace(/^0x/, "").slice(0, 8);
@@ -193,6 +196,16 @@ export class InvitationService {
   constructor(private readonly deps: InvitationServiceDeps) {
     this.outbox = new Outbox(deps.storage, deps.keys.sent, deps.now);
     this.received = new ReceivedRequests(deps.storage, deps.keys.received);
+  }
+
+  /** Tell the observer `event`, unless the service stopped. What the observer does never changes the service. */
+  private observe(event: InvitationEvent): void {
+    if (this.stopped) return;
+    try {
+      this.deps.observe?.(event);
+    } catch {
+      // The developer tools only watch.
+    }
   }
 
   start(): void {
@@ -413,6 +426,12 @@ export class InvitationService {
   private posting(id: string, problem: string | null): void {
     if (this.stopped || !this.outbox.setPaused(id, problem)) return;
     const item = this.outbox.get(id)!;
+    this.observe({
+      type: "request-paused",
+      product: this.deps.product.id,
+      handle: id,
+      problem,
+    });
     this.deps.log(
       problem === null
         ? `Request ${short(id)} is posted again.`
@@ -588,6 +607,11 @@ export class InvitationService {
     };
     this.outbox.add(item);
     this.outgoingChanged();
+    this.observe({
+      type: "request-sent",
+      product: product.id,
+      handle: item.handle,
+    });
     this.deps.log(
       `Request ${short(item.handle)}: watching its return route, then posting it, sealed for ${person.name}.`,
     );
@@ -622,6 +646,12 @@ export class InvitationService {
     this.outbox.close(handle, { tag: "completed", at: this.deps.now() });
     this.outgoingChanged();
     this.stopPosting(item);
+    this.observe({
+      type: "request-closed",
+      product: this.deps.product.id,
+      handle,
+      how: "completed",
+    });
     this.deps.log(
       `Request ${short(handle)} completed by ${this.deps.product.name}; reposting stopped. Nothing is sent.`,
     );
@@ -634,6 +664,12 @@ export class InvitationService {
     this.outbox.close(handle, { tag: "cancelled", at: this.deps.now() });
     this.outgoingChanged();
     this.stopPosting(item);
+    this.observe({
+      type: "request-closed",
+      product: this.deps.product.id,
+      handle,
+      how: "cancelled",
+    });
     this.deps.log(
       `Request ${short(handle)} cancelled; reposting stopped. Nothing is sent.`,
     );
@@ -692,6 +728,7 @@ export class InvitationService {
     this.received.markReplied(handle, replied.sealed, replied.at);
     this.toldReplied.add(handle);
     this.postReply(received, replied);
+    this.observe({ type: "replied", product: this.deps.product.id, handle });
     this.deps.log(
       `${this.deps.product.name} replied to request ${short(handle)}; the host sealed it for ${sender.name} and posted it on the request's return route.`,
     );
@@ -748,6 +785,23 @@ export class InvitationService {
     handle: RequestHandle,
     index: string,
   ): Promise<CallResult> {
+    const result = await this.allowChatAccount(handle, index);
+    if (!result.ok)
+      this.observe({
+        type: "chat-account",
+        product: this.deps.product.id,
+        handle,
+        index,
+        outcome: "refused",
+        reason: result.detail,
+      });
+    return result;
+  }
+
+  private async allowChatAccount(
+    handle: RequestHandle,
+    index: string,
+  ): Promise<CallResult> {
     const sent = this.outbox.get(handle);
     const received = this.received.get(handle);
     if (sent === undefined && received === undefined)
@@ -766,8 +820,18 @@ export class InvitationService {
         "This conversation already has another account.",
       );
     const kept = this.allowances.get(handle);
-    if (kept !== undefined && kept.until > this.deps.now())
+    const product = this.deps.product.id;
+    if (kept !== undefined && kept.until > this.deps.now()) {
+      this.observe({
+        type: "chat-account",
+        product,
+        handle,
+        index,
+        outcome: "reused",
+        ...kept,
+      });
       return { ok: true, allowance: kept };
+    }
     if (this.deps.accounts === undefined)
       return failure(
         "Refused",
@@ -781,6 +845,15 @@ export class InvitationService {
         fromHex(index),
       );
       this.allowances.set(handle, allowance);
+      this.observe({
+        type: "chat-account",
+        product,
+        handle,
+        index,
+        outcome: "allowed",
+        account: allowance.account,
+        until: allowance.until,
+      });
       this.deps.log(
         `${this.deps.product.name}'s account ${short(allowance.account)} for request ${short(handle)} may post until ${new Date(allowance.until).toISOString()}.`,
       );
@@ -878,6 +951,11 @@ export class InvitationService {
       seenAt: null,
       state: { tag: "pending" },
     } satisfies HostNotification);
+    this.observe({
+      type: "request-received",
+      product: this.deps.product.id,
+      handle,
+    });
     this.deps.log(
       `Request ${label} from ${peer.name}: authenticated, kept. Nothing is sent back.`,
     );
@@ -928,6 +1006,11 @@ export class InvitationService {
         return;
       }
       if (!this.outbox.addReply(handle, opened.payload)) return;
+      this.observe({
+        type: "reply-authenticated",
+        product: this.deps.product.id,
+        handle,
+      });
       this.deps.log(
         `Request ${label}: authenticated a reply from ${peer.name}; ${this.deps.product.name} checks it.`,
       );

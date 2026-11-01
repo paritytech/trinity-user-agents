@@ -852,6 +852,26 @@
             >
               Workers
             </button>
+            <button
+              type="button"
+              role="tab"
+              data-inspector-view="statements"
+              aria-selected="false"
+              aria-controls="statements-inspector"
+              tabindex="-1"
+            >
+              Statements
+            </button>
+            <button
+              type="button"
+              role="tab"
+              data-inspector-view="chat"
+              aria-selected="false"
+              aria-controls="chat-inspector"
+              tabindex="-1"
+            >
+              Chat
+            </button>
           </div>
           <p id="inspector-note" class="note">
             Frames stay in this tab and may carry sensitive payloads.
@@ -872,6 +892,20 @@
           class="workers-inspector"
           role="tabpanel"
           aria-label="Workers"
+          hidden
+        ></div>
+        <div
+          id="statements-inspector"
+          class="statements-inspector"
+          role="tabpanel"
+          aria-label="Statements"
+          hidden
+        ></div>
+        <div
+          id="chat-inspector"
+          class="statements-inspector chat-inspector"
+          role="tabpanel"
+          aria-label="Chat"
           hidden
         ></div>
       </section>
