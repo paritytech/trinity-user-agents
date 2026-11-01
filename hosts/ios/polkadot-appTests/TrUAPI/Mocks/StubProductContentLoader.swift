@@ -74,10 +74,11 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
         return ProductContent(resolved: resolved, kind: kind, archive: archive)
     }
 
-    func openWorker(_ productId: ProductId) async throws -> ResolvedProduct {
+    func openWorker(_ productId: ProductId, policy _: ProductLoadPolicy) async throws -> ResolvedProduct {
         product ?? .legacy(id: productId)
     }
 
+    @discardableResult
     func refresh(_ productId: ProductId) async -> [ExecutableRelease] {
         let ready = state.withLock { state in
             state.refreshedIds.append(productId)

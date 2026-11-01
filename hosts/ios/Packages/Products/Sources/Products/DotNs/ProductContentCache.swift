@@ -104,7 +104,7 @@ extension ProductContentCache: ProductContentCaching {
         let superseded = storage.content.storedContents().filter { content in
             !keptHashes.contains(content.contentHash) && content.modifiedAt < cutoff
         }
-        
+
         guard !superseded.isEmpty else {
             return
         }
@@ -116,7 +116,7 @@ extension ProductContentCache: ProductContentCaching {
                 logger.error("Failed to remove superseded product content: \(error)")
             }
         }
-        
+
         logger.debug("Processed \(superseded.count) superseded product archives")
     }
 }

@@ -129,7 +129,7 @@ extension ProductUpdateCoordinator: ProductPresenceRegistering {
 
     func requestRefresh(of productId: ProductId) {
         Task { [contentLoader] in
-            _ = await contentLoader.refresh(productId)
+            await contentLoader.refresh(productId)
         }
     }
 

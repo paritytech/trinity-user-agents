@@ -57,8 +57,9 @@ public protocol ProductContentLoading: Sendable {
         onPhase: @escaping ProductLoadPhaseHandler
     ) async throws -> ProductContent
     /// A failed worker download keeps the declared worker instead of falling back to legacy.
-    func openWorker(_ productId: ProductId) async throws -> ResolvedProduct
+    func openWorker(_ productId: ProductId, policy: ProductLoadPolicy) async throws -> ResolvedProduct
     /// Covers only applied executables; the rest are downloaded when first opened.
+    @discardableResult
     func refresh(_ productId: ProductId) async -> [ExecutableRelease]
     func apply(_ release: ExecutableRelease) async
     /// Applied archives are always kept; `pinnedHashes` adds pending and served ones.

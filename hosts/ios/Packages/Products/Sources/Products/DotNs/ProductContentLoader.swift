@@ -107,20 +107,23 @@ extension ProductContentLoader: ProductContentLoading {
         return content
     }
 
-    public func openWorker(_ productId: ProductId) async throws -> ResolvedProduct {
+    public func openWorker(_ productId: ProductId, policy: ProductLoadPolicy) async throws -> ResolvedProduct {
         if let cached = try? await cache.manifest(productId) {
-            await stageWorkerIfMissing(of: cached)
+            await stageWorkerIfMissing(of: cached, policy: policy)
             scheduleRefresh(productId)
             return cached.product
         }
 
-        let manifest = try await fetcher.fetchManifest(productId)
+        let manifest = try await retrying(productId, policy: policy, trigger: .open) { [fetcher] in
+            try await fetcher.fetchManifest(productId)
+        }
         await cache.adopt(manifest)
-        await stageWorkerIfMissing(of: manifest)
+        await stageWorkerIfMissing(of: manifest, policy: policy)
 
         return manifest.product
     }
 
+    @discardableResult
     public func refresh(_ productId: ProductId) async -> [ExecutableRelease] {
         let key = productId.lowercased()
 
@@ -178,10 +181,10 @@ private extension ProductContentLoader {
     }
 
     func scheduleRefresh(_ productId: ProductId) {
-        Task { _ = await self.refresh(productId) }
+        Task { await self.refresh(productId) }
     }
 
-    func stageWorkerIfMissing(of manifest: ProductManifest) async {
+    func stageWorkerIfMissing(of manifest: ProductManifest, policy: ProductLoadPolicy) async {
         guard
             let worker = ProductWorkerSource.published(for: manifest.product),
             await cache.appliedArchive(of: worker.contentId) == nil
@@ -190,7 +193,10 @@ private extension ProductContentLoader {
         }
 
         do {
-            let archive = try await fetcher.stage(worker.contentId)
+            let productId = manifest.product.id
+            let archive = try await retrying(productId, policy: policy, trigger: .open) { [fetcher] in
+                try await fetcher.stage(worker.contentId)
+            }
             await cache.apply(manifest.release(of: worker.contentId, archive: archive))
         } catch {
             logger.error("Failed to stage the worker archive \(worker.contentId): \(error)")

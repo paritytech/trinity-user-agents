@@ -57,6 +57,54 @@ final class ProductContentLoaderTests {
         #expect(environment.fetcher.fetchCount == 2)
     }
 
+    @Test func workerOpenRetriesAnUnreachableChain() async throws {
+        contracts.failNextReads(with: [chainUnreachable])
+        let environment = try Environment(self)
+
+        let open = Task { try await environment.loader.openWorker(productId, policy: .attempts(3)) }
+        await clock.resumeSleep(for: .seconds(1))
+
+        #expect(try await open.value.id == productId)
+    }
+
+    @Test func workerOpenGivesUpOnceTheRefreshAttemptsAreSpent() async throws {
+        contracts.failAllReads(with: chainUnreachable)
+        let environment = try Environment(self)
+
+        let open = Task { try await environment.loader.openWorker(productId, policy: .attempts(2)) }
+        await clock.resumeSleep(for: .seconds(1))
+
+        await #expect(throws: DotNsContractError.self) { try await open.value }
+    }
+
+    @Test func workerOpenRetriesTheWorkerDownload() async throws {
+        let workerName = "worker.\(productId)"
+        let workerHash = try Data.randomOrError(of: 34)
+        defer { contentHashCache.removeContentHash(name: workerName) }
+        contracts.set(
+            text: #"{"$v":1,"displayName":"Shop","description":"","icon":{"cid":"bafyicon","format":"png"}}"#,
+            name: productId,
+            key: ProductManifestRecords.rootKey
+        )
+        contracts.set(
+            text: #"""
+            {"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"worker.js",
+             "includes":{"chat":true,"pocket":false}}
+            """#,
+            name: workerName,
+            key: ProductManifestRecords.executableKey
+        )
+        contracts.set(contentHash: workerHash, name: workerName)
+        let environment = try Environment(self, fetchFailures: [HTTPResponseError(statusCode: 504)])
+
+        let open = Task { try await environment.loader.openWorker(productId, policy: .attempts(3)) }
+        await clock.resumeSleep(for: .seconds(1))
+        _ = try await open.value
+
+        #expect(contentHashCache.getContentHash(name: workerName) == workerHash.toHex())
+        #expect(environment.fetcher.fetchCount == 2)
+    }
+
     @Test func failsWithoutRetryingWhenTheContractRefusesTheRead() async throws {
         contracts
             .failNextReads(with: [DotNsContractError
