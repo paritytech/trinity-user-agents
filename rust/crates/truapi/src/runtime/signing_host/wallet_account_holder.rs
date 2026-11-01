@@ -7,7 +7,7 @@ mod pairing;
 #[cfg(test)]
 mod tests;
 
-pub use allowance::{AllowanceAllocationError, NotificationClaim};
+pub use allowance::{AllowanceAllocationError, NotificationClaim, StatementAccountClaim};
 pub use allowance_renewal::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
 pub use allowance_renewal::{StatementRenewalError, TrackedStatementRenewalTarget};

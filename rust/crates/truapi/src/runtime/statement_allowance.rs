@@ -1274,6 +1274,199 @@ pub async fn claim_notification_account(
 	Err(SlotError::NoFreeNotificationSlot { period, max: budget }.into())
 }
 
+/// Result of a statement-account claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StatementAccountOutcome {
+	/// The claim reached a block and the slot was verified to allow the target.
+	Registered {
+		/// Block hash the claim landed in.
+		block_hash: String,
+		/// Claimed slot sequence.
+		seq: u32,
+		/// Collection whose alias space holds the slot.
+		collection: PersonhoodCollection,
+	},
+	/// The target already holds a slot in this period; nothing built.
+	AlreadyAllocated {
+		/// Its slot sequence.
+		seq: u32,
+		/// Collection whose alias space holds the slot.
+		collection: PersonhoodCollection,
+	},
+	/// The runtime would accept the claim; nothing was submitted.
+	Validated {
+		/// Slot sequence the claim names.
+		seq: u32,
+		/// Collection whose alias space holds the slot.
+		collection: PersonhoodCollection,
+	},
+}
+
+/// Everything one statement-account claim needs.
+pub struct StatementAccountClaim<'a> {
+	/// People connection the claim is read and submitted on.
+	pub rpc: &'a RpcClient,
+	/// People runtime metadata.
+	pub metadata: &'a Metadata,
+	/// Where the claim extrinsic is built.
+	pub target_chain: ExtrinsicTarget<'a>,
+	/// Authorizes synchronous personhood operations for the selected wallet.
+	pub signer: &'a dyn PersonhoodSigner,
+	/// People suffix used for the slot context and alias.
+	pub network_suffix: &'a [u8],
+	/// Account that should get the general Statement Store allowance.
+	pub target: &'a [u8; 32],
+	/// Statement Store period: the current UTC day.
+	pub period: u32,
+	/// Every collection the person may hold a slot in, read again to settle
+	/// a submission that failed.
+	pub collections: &'a [PersonhoodCollection],
+	/// The scan of `collections` for `target`, made under the caller's
+	/// registration lock before any ring was looked up.
+	pub scans: &'a [CollectionScan],
+	/// Rings the person is a member of, in the order to try them.
+	pub memberships: &'a [RingParams],
+	/// Whether to submit the claim or only validate it.
+	pub submission: ClaimSubmission,
+}
+
+/// The slot `target` holds in `period` in any of `collections`, read now.
+async fn held_statement_slot(
+	rpc: &RpcClient,
+	metadata: &Metadata,
+	signer: &dyn PersonhoodSigner,
+	collections: &[PersonhoodCollection],
+	network_suffix: &[u8],
+	period: u32,
+	target: &[u8; 32],
+) -> Result<Option<(PersonhoodCollection, u32)>, StatementAllowanceError> {
+	let scans = scan_collections(
+		rpc,
+		metadata,
+		signer,
+		collections,
+		CollectionScanParams { network_suffix, period, target, reuse_existing: true },
+	)
+	.await?;
+	Ok(allocated_in(&scans))
+}
+
+/// Register `target` for the general Statement Store allowance in `period`,
+/// in the first free slot of the first collection in `memberships` that has
+/// one, or report the slot `scans` show it already holds in any collection,
+/// which needs no ring.
+///
+/// It submits at most once. It never replaces a live slot, whoever holds it:
+/// a period with no free slot is [`SlotError::NoFreeStatementStoreSlot`]. A
+/// submission that fails is settled by reading every collection again: a
+/// target the chain now registers is reported allocated. Otherwise, since a
+/// general slot can change hands, another occupant of the slot does not
+/// show this claim cannot still land, so no other slot is claimed: the claim
+/// is [`SlotError::StatementClaimUncertain`], unless the runtime refused it
+/// as invalid, which is final.
+///
+/// `signer` refuses once its owner's session ends: its last use is the proof,
+/// made with no wait before the submission.
+pub async fn claim_statement_account(
+	params: StatementAccountClaim<'_>,
+) -> Result<StatementAccountOutcome, StatementAllowanceError> {
+	let StatementAccountClaim {
+		rpc,
+		metadata,
+		target_chain,
+		signer,
+		network_suffix,
+		target,
+		period,
+		collections,
+		scans,
+		memberships,
+		submission,
+	} = params;
+	if let Some((collection, seq)) = allocated_in(scans) {
+		return Ok(StatementAccountOutcome::AlreadyAllocated { seq, collection });
+	}
+	if memberships.is_empty() {
+		return Err(SlotError::NoCollectionMembership.into());
+	}
+	let free = memberships.iter().find_map(|ring| {
+		scans.iter().find(|scan| scan.collection == ring.collection).and_then(|scan| {
+			match scan.selection {
+				SlotSelection::Free(seq) => Some((ring, seq)),
+				_ => None,
+			}
+		})
+	});
+	let Some((ring, seq)) = free else {
+		let max = scans
+			.iter()
+			.map(|scan| match &scan.selection {
+				SlotSelection::Full { max, .. } => *max,
+				_ => 0,
+			})
+			.sum();
+		return Err(SlotError::NoFreeStatementStoreSlot { period, max }.into());
+	};
+	let collection = ring.collection;
+	let revision =
+		ring::read_ring_revision(rpc, metadata, collection, ring.ring_index, &ring.block_hash)
+			.await?;
+	let context = slot::derive_slot_context(network_suffix, period, seq);
+	let alias = slot::slot_alias(signer, collection, network_suffix, period, seq)?;
+	let proof = RingProof { signer, ring, context, revision };
+	let call = extrinsic::SetStatementStoreAccountCallArgs { period, seq, target_account: *target };
+	let built = target_chain
+		.extrinsics
+		.build_mortal_extrinsic(target_chain.genesis)
+		.with_call_args(RESOURCES_PALLET, "set_statement_store_account", call)
+		.with_extension(AsResourcesExtension::statement_store_allowance(proof))
+		.build()
+		.await?;
+	let extrinsic = built.extrinsic.bytes();
+	debug!(period, seq, %collection, ring_index = ring.ring_index, ?submission, "statement-account claim built");
+
+	if submission == ClaimSubmission::ValidateOnly {
+		return match validate_transaction(rpc, extrinsic).await? {
+			Ok(()) => Ok(StatementAccountOutcome::Validated { seq, collection }),
+			Err(validity) => Err(SlotError::StatementClaimInvalid { period, seq, validity }.into()),
+		};
+	}
+	match rpc.submit_and_watch(extrinsic).await {
+		Ok(block_hash) => {
+			if slot::read_slot_account_at(rpc, &alias, period, &block_hash).await? != Some(*target)
+			{
+				return Err(SlotError::RegistrationVerificationMismatch {
+					block_hash,
+					period,
+					seq,
+				}
+				.into());
+			}
+			Ok(StatementAccountOutcome::Registered { block_hash, seq, collection })
+		},
+		Err(err) => {
+			if let Some((collection, seq)) = held_statement_slot(
+				rpc,
+				metadata,
+				signer,
+				collections,
+				network_suffix,
+				period,
+				target,
+			)
+			.await?
+			{
+				return Ok(StatementAccountOutcome::AlreadyAllocated { seq, collection });
+			}
+			if invalid_transaction_error(&err.to_string()) {
+				return Err(err);
+			}
+			warn!(period, seq, %collection, %err, "statement-account claim unsettled");
+			Err(SlotError::StatementClaimUncertain { period, seq }.into())
+		},
+	}
+}
+
 /// Ask the runtime, at the finalized head, whether it would accept
 /// `extrinsic` from outside the node: `Ok` when valid, or its validity answer.
 async fn validate_transaction(

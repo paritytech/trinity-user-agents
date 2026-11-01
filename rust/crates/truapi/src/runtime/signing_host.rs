@@ -16,7 +16,8 @@ use wallet_account_holder::StatementRenewalError;
 #[cfg(not(target_arch = "wasm32"))]
 pub use wallet_account_holder::TrackedStatementRenewalTarget;
 pub use wallet_account_holder::{
-	AllowanceAllocationError, NotificationClaim, StatementRenewalTarget, WalletAccountHolder,
+	AllowanceAllocationError, NotificationClaim, StatementAccountClaim, StatementRenewalTarget,
+	WalletAccountHolder,
 };
 
 use super::{
@@ -229,6 +230,21 @@ impl SigningHost {
 	) -> Result<NotificationClaim, AllowanceAllocationError> {
 		let session = self.wallet.current_session().ok_or(AuthorityError::Disconnected)?;
 		self.wallet.claim_notification_account(&session, target, submission).await
+	}
+
+	/// Give `product_id`'s own account at `Raw(index)` a Statement Store
+	/// allowance slot for the current period under the active wallet session,
+	/// or only validate the claim.
+	pub async fn claim_product_statement_account(
+		&self,
+		product_id: &ProductId,
+		index: [u8; 32],
+		submission: statement_allowance::ClaimSubmission,
+	) -> Result<StatementAccountClaim, AllowanceAllocationError> {
+		let session = self.wallet.current_session().ok_or(AuthorityError::Disconnected)?;
+		self.wallet
+			.claim_product_statement_account(&session, product_id, index, submission)
+			.await
 	}
 
 	async fn keeps_auto_signing_key(

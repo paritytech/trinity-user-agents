@@ -91,6 +91,17 @@ pub struct NotificationClaim {
 	pub outcome: crate::runtime::statement_allowance::NotificationAccountOutcome,
 }
 
+/// A product-account claim: the account, the period and how it ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatementAccountClaim {
+	/// The product account the claim is for.
+	pub account: [u8; 32],
+	/// Statement Store allowance period: the UTC day the claim is for.
+	pub period: u32,
+	/// What the claim did.
+	pub outcome: crate::runtime::statement_allowance::StatementAccountOutcome,
+}
+
 impl WalletAccountHolder {
 	/// Issue a statement allowance with the period actually found or registered.
 	pub async fn allocate_statement_store_allowance(
@@ -416,6 +427,115 @@ impl WalletAccountHolder {
 		// answer is withheld from a session that is gone.
 		self.require_current_session(session)?;
 		Ok(NotificationClaim { period, outcome })
+	}
+
+	/// The public key of `product_id`'s own account at `Raw(index)`: the
+	/// account `statementStore.createProof` signs with for that product and
+	/// index.
+	pub fn product_statement_account(
+		&self,
+		session: &AuthoritySession,
+		product_id: &ProductId,
+		index: [u8; 32],
+	) -> Result<[u8; 32], AuthorityError> {
+		self.with_keys(session, |keys| {
+			keys.product_keypair(&api::ProductAccountId {
+				dot_ns_identifier: product_id.clone(),
+				derivation_index: api::DerivationIndex::Raw(index),
+			})
+			.map(|keypair| keypair.public.to_bytes())
+		})
+	}
+
+	/// Give `product_id`'s own account at `Raw(index)` a general Statement Store
+	/// slot of the wallet's personhood for the current period, or with
+	/// [`ClaimSubmission::ValidateOnly`] only ask the runtime whether it would
+	/// accept the claim.
+	///
+	/// The host derives the account itself, from the session's root and the
+	/// product id it names, so a caller can fund only that product's accounts and
+	/// never an arbitrary one. The product signs with it through
+	/// `statementStore.createProof`; no secret crosses here. A live slot is never
+	/// replaced, and the account is not added to the renewal ledger: the host
+	/// asks again in each period it posts in.
+	///
+	/// [`ClaimSubmission::ValidateOnly`]: crate::runtime::statement_allowance::ClaimSubmission::ValidateOnly
+	pub async fn claim_product_statement_account(
+		&self,
+		session: &AuthoritySession,
+		product_id: &ProductId,
+		index: [u8; 32],
+		submission: crate::runtime::statement_allowance::ClaimSubmission,
+	) -> Result<StatementAccountClaim, AllowanceAllocationError> {
+		use crate::runtime::statement_allowance::{
+			self, CollectionScanParams, StatementAccountOutcome, allocated_in,
+			collection::PersonhoodCollection, find_including_rings, scan_collections,
+		};
+
+		let account = self.product_statement_account(session, product_id, index)?;
+		// Held from the scan to the confirmation, so neither another claim nor an
+		// on-demand allocation selects the same slot.
+		let _registration = self.renewal.registration_lock().lock().await;
+		self.require_current_session(session)?;
+		let client =
+			self.services.statement_store.chain_client("product statement account").await?;
+		let rpc = client.rpc();
+		let chain = self.services.chain_context.get(&client).await?;
+		let network_suffix = statement_allowance::slot::read_network_suffix(rpc).await?;
+		let period = statement_allowance::slot::current_period(current_unix_secs()?);
+		let signer = self.personhood_signer(session).await?;
+		let collections = PersonhoodCollection::ALL;
+		// Every collection first: a slot the account holds in any of them is
+		// reused, with no ring looked up and nothing proved.
+		let scans = scan_collections(
+			rpc,
+			&chain.metadata,
+			&signer,
+			&collections,
+			CollectionScanParams {
+				network_suffix: &network_suffix,
+				period,
+				target: &account,
+				reuse_existing: true,
+			},
+		)
+		.await?;
+		if let Some((collection, seq)) = allocated_in(&scans) {
+			self.require_current_session(session)?;
+			return Ok(StatementAccountClaim {
+				account,
+				period,
+				outcome: StatementAccountOutcome::AlreadyAllocated { seq, collection },
+			});
+		}
+		let memberships =
+			find_including_rings(rpc, &chain.metadata, &signer, &collections, u32::MAX).await?;
+		if memberships.is_empty() {
+			self.require_current_session(session)?;
+			return Err(AllowanceAllocationError::MissingPersonhoodMembership {
+				resource: "product statement account",
+			});
+		}
+		let outcome =
+			statement_allowance::claim_statement_account(statement_allowance::StatementAccountClaim {
+				rpc,
+				metadata: &chain.metadata,
+				target_chain: client.extrinsic_target(&self.services.extrinsics),
+				signer: &signer,
+				network_suffix: &network_suffix,
+				target: &account,
+				period,
+				collections: &collections,
+				scans: &scans,
+				memberships: &memberships,
+				submission,
+			})
+			.await?;
+		debug!(%product_id, period, ?outcome, "product statement account claim");
+		// A claim submitted before the session ended stays on chain; only its
+		// answer is withheld from a session that is gone.
+		self.require_current_session(session)?;
+		Ok(StatementAccountClaim { account, period, outcome })
 	}
 
 	fn bulletin_secret(

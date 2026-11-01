@@ -150,6 +150,28 @@ pub enum SlotError {
 		/// Slot the pending claim names.
 		seq: u8,
 	},
+	/// A statement-account claim for this slot may be in the pool or on its
+	/// way: the pool held an equivalent one, and neither the slot nor the
+	/// target is registered yet. Another slot is not claimed meanwhile.
+	#[error(
+		"a statement-account claim for slot {seq} of period {period} may still land; not claiming another"
+	)]
+	StatementClaimUncertain {
+		/// Claim period.
+		period: u32,
+		/// Slot the pending claim names.
+		seq: u32,
+	},
+	/// The runtime refused a statement-account claim when validating it.
+	#[error("statement-account claim (period {period}, seq {seq}) does not validate: {validity}")]
+	StatementClaimInvalid {
+		/// Claim period.
+		period: u32,
+		/// Claim sequence.
+		seq: u32,
+		/// The runtime's transaction-validity answer.
+		validity: String,
+	},
 	/// The runtime refused a notification claim when validating it.
 	#[error("notification claim (period {period}, seq {seq}) does not validate: {validity}")]
 	NotificationClaimInvalid {
@@ -484,6 +506,20 @@ pub async fn read_slot_account_at(
 	let key = statement_store_allowance_key(period, alias);
 	Ok(rpc
 		.get_storage_at(&key, block_hash)
+		.await?
+		.and_then(|bytes| decode_entry(&bytes).map(|entry| entry.account_id)))
+}
+
+/// The account holding our alias slot `(period, seq)` at the best block
+/// (`None` when the slot entry is absent).
+pub async fn read_slot_account(
+	rpc: &RpcClient,
+	alias: &[u8; 32],
+	period: u32,
+) -> Result<Option<[u8; 32]>, StatementAllowanceError> {
+	let key = statement_store_allowance_key(period, alias);
+	Ok(rpc
+		.get_storage(&key)
 		.await?
 		.and_then(|bytes| decode_entry(&bytes).map(|entry| entry.account_id)))
 }

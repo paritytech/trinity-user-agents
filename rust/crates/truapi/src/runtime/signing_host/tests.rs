@@ -6,6 +6,7 @@ mod cross_product_account;
 mod local_preimages;
 mod raw_signing;
 mod remote_consent;
+mod statement_account;
 #[cfg(feature = "test-host")]
 mod withheld_resources;
 

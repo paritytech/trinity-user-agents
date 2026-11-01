@@ -732,6 +732,14 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
         msg.submit,
       );
       break;
+    case "claimProductStatementAccount":
+      void handleClaimProductStatementAccount(
+        msg.requestId,
+        msg.productId,
+        msg.index,
+        msg.submit,
+      );
+      break;
     case "getDeviceStatementKey":
       handleGetDeviceStatementKey(msg.requestId);
       break;
@@ -1189,6 +1197,40 @@ async function handleClaimNotificationAccount(
       requestId,
       ok: true,
       claim: await signing.claimNotificationAccount(target, submit),
+    });
+  } catch (err) {
+    fail(errorMessage(err));
+  }
+}
+
+async function handleClaimProductStatementAccount(
+  requestId: number,
+  productId: string,
+  index: Uint8Array,
+  submit: boolean,
+): Promise<void> {
+  const fail = (error: string) =>
+    postToMain({
+      kind: "claimProductStatementAccountResponse",
+      requestId,
+      ok: false,
+      error,
+    });
+  if (!host)
+    return fail(
+      "claimProductStatementAccount received before runtime is ready",
+    );
+  try {
+    const signing = signingRuntime(host, "claimProductStatementAccount");
+    postToMain({
+      kind: "claimProductStatementAccountResponse",
+      requestId,
+      ok: true,
+      claim: await signing.claimProductStatementAccount(
+        productId,
+        index,
+        submit,
+      ),
     });
   } catch (err) {
     fail(errorMessage(err));

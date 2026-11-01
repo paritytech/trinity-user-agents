@@ -5,7 +5,10 @@
 
 import type { ProductId } from "@parity/truapi";
 import type { PermissionAuthorizationRuntime } from "./worker-permission-authorization.js";
-import type { NotificationClaim } from "./worker-protocol.js";
+import type {
+  NotificationClaim,
+  StatementAccountClaim,
+} from "./worker-protocol.js";
 
 /** Cancellable handle on one live render stream inside the core. */
 export interface WorkerRendererSubscription {
@@ -127,6 +130,16 @@ export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
     target: Uint8Array,
     submit: boolean,
   ): Promise<NotificationClaim>;
+  /**
+   * Give `productId`'s own account at derivation index `Raw(index)` a
+   * Statement Store allowance slot of the session's personhood for the
+   * current UTC day; with `submit` false, only validate the claim. Host only.
+   */
+  claimProductStatementAccount(
+    productId: string,
+    index: Uint8Array,
+    submit: boolean,
+  ): Promise<StatementAccountClaim>;
 }
 
 /** Module surface the wasm-pack glue exports. */

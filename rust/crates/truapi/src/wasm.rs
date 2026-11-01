@@ -1467,6 +1467,58 @@ impl WasmSigningHostRuntime {
 		Ok(value.into())
 	}
 
+	/// Give `productId`'s own account at derivation index `Raw(index)` (32
+	/// bytes) a Statement Store allowance slot of the session's personhood for
+	/// the current UTC day; with `submit` false, only ask the runtime whether
+	/// it would accept the claim.
+	///
+	/// Answers `{ account, period, outcome, seq, collection, blockHash? }`,
+	/// where `account` is the derived account as `0x` hex and `outcome` is
+	/// `"registered"`, `"alreadyAllocated"` or `"validated"`. The host decides
+	/// when a product may have one.
+	#[wasm_bindgen(js_name = claimProductStatementAccount)]
+	pub async fn claim_product_statement_account(
+		&self,
+		product_id: String,
+		index: Vec<u8>,
+		submit: bool,
+	) -> Result<JsValue, JsValue> {
+		use crate::statement_allowance::{ClaimSubmission, StatementAccountOutcome};
+
+		let index = <[u8; 32]>::try_from(index.as_slice())
+			.map_err(|_| JsValue::from_str("a product account index is 32 bytes"))?;
+		let product_id = product_id_from_js(&product_id)?;
+		let submission =
+			if submit { ClaimSubmission::Submit } else { ClaimSubmission::ValidateOnly };
+		let claim = self
+			.runtime
+			.claim_product_statement_account(&product_id, index, submission)
+			.await
+			.map_err(JsValue::from)?;
+		let value = js_sys::Object::new();
+		let set = |key: &str, field: JsValue| Reflect::set(&value, &JsValue::from_str(key), &field);
+		set("account", JsValue::from_str(&format!("0x{}", hex::encode(claim.account))))?;
+		set("period", JsValue::from(claim.period))?;
+		let (outcome, seq, collection, block_hash) = match claim.outcome {
+			StatementAccountOutcome::Registered { block_hash, seq, collection } => {
+				("registered", seq, collection, Some(block_hash))
+			},
+			StatementAccountOutcome::AlreadyAllocated { seq, collection } => {
+				("alreadyAllocated", seq, collection, None)
+			},
+			StatementAccountOutcome::Validated { seq, collection } => {
+				("validated", seq, collection, None)
+			},
+		};
+		set("outcome", JsValue::from_str(outcome))?;
+		set("seq", JsValue::from(seq))?;
+		set("collection", JsValue::from_str(collection.metadata_variant()))?;
+		if let Some(block_hash) = block_hash {
+			set("blockHash", JsValue::from_str(&block_hash))?;
+		}
+		Ok(value.into())
+	}
+
 	/// Revoke one product's grants from the current local activation.
 	#[wasm_bindgen(js_name = clearProductState)]
 	pub async fn clear_product_state(&self, raw_product_id: String) -> Result<(), JsValue> {

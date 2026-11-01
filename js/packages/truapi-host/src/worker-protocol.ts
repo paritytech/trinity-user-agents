@@ -74,6 +74,24 @@ export interface NotificationClaim {
   blockHash?: string;
 }
 
+/**
+ * A product-account Statement Store claim, as the signing host's core
+ * answers it: the account it derived, the UTC day the claim is for, and
+ * whether the account got a slot now, already held one this day, or would be
+ * accepted (validation only, nothing submitted).
+ */
+export interface StatementAccountClaim {
+  /** The product account, `0x` hex. */
+  account: string;
+  period: number;
+  outcome: "registered" | "alreadyAllocated" | "validated";
+  seq: number;
+  /** `"People"` or `"LitePeople"`. */
+  collection: string;
+  /** The block the claim landed in, once registered now. */
+  blockHash?: string;
+}
+
 export type MainToWorker =
   | {
       kind: "init";
@@ -171,6 +189,14 @@ export type MainToWorker =
       kind: "claimNotificationAccount";
       requestId: number;
       target: Uint8Array;
+      submit: boolean;
+    }
+  /** Claim, or with `submit` false only validate, a product account's Statement Store slot. Signing hosts only. */
+  | {
+      kind: "claimProductStatementAccount";
+      requestId: number;
+      productId: string;
+      index: Uint8Array;
       submit: boolean;
     }
   | { kind: "getDeviceStatementKey"; requestId: number }
@@ -321,6 +347,18 @@ export type WorkerToMain =
     }
   | {
       kind: "claimNotificationAccountResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
+  | {
+      kind: "claimProductStatementAccountResponse";
+      requestId: number;
+      ok: true;
+      claim: StatementAccountClaim;
+    }
+  | {
+      kind: "claimProductStatementAccountResponse";
       requestId: number;
       ok: false;
       error: string;
