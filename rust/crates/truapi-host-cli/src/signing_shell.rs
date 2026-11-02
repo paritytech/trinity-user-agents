@@ -145,17 +145,6 @@ impl ScriptCommand {
 	}
 }
 
-/// What the user does to or asks about funding sessions.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FundingCommand {
-	/// Cancel the session with this intent.
-	Cancel(String),
-	/// List the sessions in flight and those ended the host has not recorded.
-	Sessions,
-	/// List every ended session, as history keeps it.
-	History,
-}
-
 /// A command accepted by the signing-host command bar or `exec` mode.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellCommand {
@@ -186,8 +175,6 @@ pub enum ShellCommand {
 	Session(SessionCommand),
 	/// Renew tracked statement-store allowances for the current period.
 	Renew,
-	/// Act on a funding session as the user.
-	Funding(FundingCommand),
 	/// Shut down the signing host.
 	Quit,
 }
@@ -354,18 +341,6 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, CommandParseError> {
 			Ok(ShellCommand::Session(SessionCommand::Switch(first.to_string())))
 		},
 		"/renew" => no_argument(name, argument, ShellCommand::Renew),
-		"/funding" => match argument.trim().split_once(char::is_whitespace) {
-			Some(("cancel", intent)) if !intent.trim().is_empty() => {
-				Ok(ShellCommand::Funding(FundingCommand::Cancel(intent.trim().to_string())))
-			},
-			None if argument.trim() == "sessions" => {
-				Ok(ShellCommand::Funding(FundingCommand::Sessions))
-			},
-			None if argument.trim() == "history" => {
-				Ok(ShellCommand::Funding(FundingCommand::History))
-			},
-			_ => Err("usage: /funding cancel <intent> | sessions | history".into()),
-		},
 		"/quit" => no_argument(name, argument, ShellCommand::Quit),
 		_ => Err(format!("unknown command `{name}`; use /help to list commands").into()),
 	}
@@ -411,7 +386,6 @@ const SIGNING_COMMANDS: &[(&str, &str)] = &[
 	("/product", "show or switch the active product"),
 	("/session", "show, switch, or clear sessions"),
 	("/renew", "renew statement-store allowances now"),
-	("/funding", "list funding sessions and history, or cancel one"),
 	("/help", "show commands and keyboard shortcuts"),
 	("/clear", "clear the visible transcript"),
 	("/copy", "copy the transcript to the clipboard"),
@@ -884,9 +858,6 @@ pub const HELP_TEXT: &str = "\
 /session --clear <name> permanently clear one session
 /session --clear-all    permanently clear all sessions for this network
 /renew                  renew statement-store allowances now
-/funding cancel <intent> cancel a funding session
-/funding sessions       list funding sessions in flight
-/funding history        list ended funding sessions
 /help                   show this help
 /clear                  clear the visible transcript
 /copy                   copy the transcript to the clipboard
@@ -983,20 +954,6 @@ mod tests {
 		);
 		assert_eq!(parse_command("/copy"), Ok(ShellCommand::Copy));
 		assert_eq!(parse_command("/renew"), Ok(ShellCommand::Renew));
-		assert_eq!(
-			parse_command("/funding cancel fs_abc"),
-			Ok(ShellCommand::Funding(FundingCommand::Cancel("fs_abc".to_string())))
-		);
-		assert_eq!(
-			parse_command("/funding sessions"),
-			Ok(ShellCommand::Funding(FundingCommand::Sessions))
-		);
-		assert_eq!(
-			parse_command("/funding history"),
-			Ok(ShellCommand::Funding(FundingCommand::History))
-		);
-		assert!(parse_command("/funding cancel").is_err());
-		assert!(parse_command("/funding").is_err());
 		assert_eq!(parse_command("/devices"), Ok(ShellCommand::Devices(DeviceCommand::List)));
 		assert_eq!(
 			parse_command(&format!("/devices --remove 0x{DEVICE_ID}")),
