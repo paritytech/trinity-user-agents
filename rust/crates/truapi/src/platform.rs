@@ -38,24 +38,25 @@ use truapi::{
 	latest::{
 		AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage,
 		ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta, ChatMessage,
-		ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatPreviewReaction, ChatReaction,
-		ChatReactionSummary, ChatReply, ChatReplyPreview, ChatResource, ChatRichText,
-		ChatRoomActivity, ChatRoomBadge, ChatRoomConfig, ChatRoomMetadata, ChatRoomPreview,
-		ChatRoomRegistrationStatus, CodeFormat, FundingDirection, GenericError,
-		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatDeleteRoomRequest,
-		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
-		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-		HostChatRegisterBotResponse, HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
-		HostChatSetRoomPreviewRequest, HostChatUpdateFeedError, HostChatUpdateFeedRequest,
-		HostDevicePermissionRequest, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
-		HostFundingStatusSubscribeItem, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
-		HostNavigateToError, HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem,
-		HostPaymentError, HostPaymentRequest, HostPaymentStatusSubscribeError,
-		HostPaymentStatusSubscribeItem, HostPaymentTopUpError, HostPaymentTopUpRequest,
-		HostPaymentTopUpStatusSubscribeError, HostPaymentTopUpStatusSubscribeItem, HostPlatform,
-		HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
-		HostPushNotificationRequest, HostPushNotificationResponse, HostScannerScanRequest,
-		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
+		ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatPreviewMessage,
+		ChatPreviewReaction, ChatReaction, ChatReactionSummary, ChatReply, ChatReplyPreview,
+		ChatResource, ChatRichText, ChatRoomActivity, ChatRoomBadge, ChatRoomConfig,
+		ChatRoomMetadata, ChatRoomPreview, ChatRoomRegistrationStatus, CodeFormat,
+		FundingDirection, GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest,
+		HostChatDeleteRoomRequest, HostChatListSubscribeItem, HostChatPostMessageError,
+		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
+		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
+		HostChatSetRoomMetadataRequest, HostChatSetRoomPreviewRequest, HostChatUpdateFeedError,
+		HostChatUpdateFeedRequest, HostDevicePermissionRequest, HostFeatureSupportedRequest,
+		HostFeatureSupportedResponse, HostFundingStatusSubscribeItem, HostLocalStorageChangeItem,
+		HostLocaleSubscribeItem, HostNavigateToError, HostPaymentBalanceSubscribeError,
+		HostPaymentBalanceSubscribeItem, HostPaymentError, HostPaymentRequest,
+		HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem, HostPaymentTopUpError,
+		HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
+		HostPaymentTopUpStatusSubscribeItem, HostPlatform, HostPocketListSubscribeItem,
+		HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPushNotificationRequest,
+		HostPushNotificationResponse, HostScannerScanRequest, HostSignPayloadRequest,
+		HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
 		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
 		NftPurseOwner, ProductAccountId, ProductAccountTxPayload, ProductProofContext,
@@ -687,14 +688,14 @@ pub fn validate_chat_room_preview(
 	preview: ChatRoomPreview,
 ) -> Result<ChatRoomPreview, ChatFieldError> {
 	Ok(ChatRoomPreview {
-		last_message: preview.last_message.map(validate_chat_message).transpose()?,
+		last_message: preview.last_message.map(validate_chat_preview_message).transpose()?,
 		last_reaction: preview
 			.last_reaction
 			.map(|reaction| {
 				Ok::<_, ChatFieldError>(ChatPreviewReaction {
 					emoji: validate_chat_emoji("emoji", &reaction.emoji)?,
 					by_user: reaction.by_user,
-					message: reaction.message.map(validate_chat_message).transpose()?,
+					message: reaction.message.map(validate_chat_preview_message).transpose()?,
 					removed: reaction.removed,
 				})
 			})
@@ -843,6 +844,24 @@ pub fn validate_chat_message(message: ChatMessage) -> Result<ChatMessage, ChatFi
 		edited_at: message.edited_at,
 		reactions,
 		request: message.request,
+	})
+}
+
+/// Validate a message as the chat list shows it in the preview line of a room.
+fn validate_chat_preview_message(
+	message: ChatPreviewMessage,
+) -> Result<ChatPreviewMessage, ChatFieldError> {
+	Ok(ChatPreviewMessage {
+		message_id: normalize_chat_identifier("messageId", &message.message_id)?,
+		origin: ChatMessageOrigin {
+			participant_id: normalize_chat_identifier(
+				"participantId",
+				&message.origin.participant_id,
+			)?,
+		},
+		body: validate_chat_message_body(message.body)?,
+		reply_to: message.reply_to.map(|id| normalize_chat_identifier("reply", &id)).transpose()?,
+		..message
 	})
 }
 
@@ -2989,7 +3008,17 @@ mod tests {
 		);
 
 		// The preview carries messages, screened as a page message is.
-		let preview = |message: ChatMessage| ChatRoomPreview {
+		let preview_message = |message_id: &str, reply_to: Option<&str>| ChatPreviewMessage {
+			message_id: message_id.to_string(),
+			origin: ChatMessageOrigin { participant_id: "product".to_string() },
+			timestamp: 1,
+			body: ChatMessageBody::Text { text: "hi".to_string() },
+			status: truapi::latest::ChatMessageStatus::Sent,
+			reply_to: reply_to.map(str::to_string),
+			edited_at: None,
+			request: false,
+		};
+		let preview = |message: ChatPreviewMessage| ChatRoomPreview {
 			timestamp: None,
 			badge: None,
 			last_message: None,
@@ -3003,10 +3032,14 @@ mod tests {
 			pinned: false,
 			activity: None,
 		};
-		assert!(validate_chat_room_preview(preview(text_message("m1"))).is_ok());
+		assert!(validate_chat_room_preview(preview(preview_message("m1", Some("m0")))).is_ok());
 		assert_eq!(
-			validate_chat_room_preview(preview(text_message("m\u{202e}1"))),
+			validate_chat_room_preview(preview(preview_message("m\u{202e}1", None))),
 			Err(ChatFieldError::UnsafeCharacter { field: "messageId" })
+		);
+		assert_eq!(
+			validate_chat_room_preview(preview(preview_message("m1", Some("m\u{202e}0")))),
+			Err(ChatFieldError::UnsafeCharacter { field: "reply" })
 		);
 	}
 
