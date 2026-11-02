@@ -6,9 +6,12 @@ use std::{
 	},
 };
 
-use crate::platform::{
-	CoreAdmin, ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
-	ProductContext, ProductId,
+use crate::{
+	markers,
+	platform::{
+		CoreAdmin, ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
+		ProductContext, ProductId,
+	},
 };
 use parity_scale_codec::Encode;
 use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
@@ -109,7 +112,7 @@ impl NativeTrUApiHostRuntime {
 		// that reaches a later condition and sees nothing can tell a quiet core
 		// from a channel that was never wired.
 		tracing::info!(
-			target: "truapi.core.started",
+			target: markers::CORE_STARTED.target,
 			"truapi {} is logging to this host",
 			env!("CARGO_PKG_VERSION"),
 		);
@@ -489,7 +492,7 @@ impl NativeTrUApiHostRuntime {
 		Self::from_resolved(
 			callbacks,
 			runtime_config,
-			"truapi.native.host_runtime.boot",
+			markers::NATIVE_HOST_RUNTIME_BOOT.target,
 			"host runtime ready",
 		)
 	}
@@ -1264,13 +1267,16 @@ mod tests {
 
 		crate::logging::testing::forward(
 			&host._host_sink,
-			"truapi.tracing.warn",
+			markers::TRACING_WARN.target,
 			"chain call failed",
 		);
 
 		let logs = callbacks.logs.lock().unwrap();
 		assert!(
-			logs.contains(&("truapi.tracing.warn".to_string(), "chain call failed".to_string())),
+			logs.contains(&(
+				markers::TRACING_WARN.target.to_string(),
+				"chain call failed".to_string()
+			)),
 			"{logs:?}"
 		);
 	}
