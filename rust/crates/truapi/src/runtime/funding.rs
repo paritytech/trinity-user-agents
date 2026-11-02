@@ -2001,6 +2001,7 @@ fn unknown_for_good(funds: &StartedFunds, now_ms: u64) -> bool {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::latest::FundingInboundUpdate;
 
 	use futures::executor::block_on;
 	use parity_scale_codec::Encode;
@@ -2209,7 +2210,10 @@ mod tests {
 				NOW,
 				&worker("ramp.dot"),
 				intent,
-				FundingUpdate::Crediting { top_up_id: [1; 32], amount: 100 },
+				FundingUpdate::In(FundingInboundUpdate::Crediting {
+					top_up_id: [1; 32],
+					amount: 100,
+				}),
 			))
 			.expect("stored")
 		};
@@ -2255,7 +2259,8 @@ mod tests {
 		let again = record(&registry, "ramp.dot", "fs_b", host_id, 100);
 		let unserved = record(&registry, "ramp.dot", "fs_c", host_id, 100);
 		block_on(registry.finish_start(NOW, "fs_a", host_id, true)).expect("stored");
-		let crediting = FundingUpdate::Crediting { top_up_id: [9; 32], amount: 100 };
+		let crediting =
+			FundingUpdate::In(FundingInboundUpdate::Crediting { top_up_id: [9; 32], amount: 100 });
 		let report = |provider: &str, intent: &str| {
 			block_on(registry.report(NOW, &worker(provider), intent, crediting.clone()))
 				.expect("stored")
