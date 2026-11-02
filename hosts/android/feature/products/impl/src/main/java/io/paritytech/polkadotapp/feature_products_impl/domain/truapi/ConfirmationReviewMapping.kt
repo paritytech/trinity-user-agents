@@ -14,15 +14,17 @@ import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningReque
 import io.paritytech.polkadotapp.feature_products_api.model.signing.createTransaction.TxPayload
 import io.paritytech.polkadotapp.feature_transactions.api.data.extensions.EncodedTransactionExtensionValue
 import uniffi.truapi.AllocatableResource
+import uniffi.truapi.CreateTransactionReview
 import uniffi.truapi.DerivationIndex
 import uniffi.truapi.HostSignPayloadData
+import uniffi.truapi.NftPurseDrainDestination
+import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.RawPayload
 import uniffi.truapi.RingLocation
-import uniffi.truapi.TxPayloadExtension
-import uniffi.truapi.CreateTransactionReview
 import uniffi.truapi.SignPayloadReview
 import uniffi.truapi.SignRawReview
 import uniffi.truapi.SignVrfReview
+import uniffi.truapi.TxPayloadExtension
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.ProductAccountId as NativeProductAccountId
 
@@ -81,6 +83,23 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
 
     is UserConfirmationReview.ProductSubtree ->
         TrUAPIConfirmation.ProductSubtree(requesterProductId = v1.productId)
+
+    is UserConfirmationReview.NftPurseDrain ->
+        TrUAPIConfirmation.NftPurseDrain(
+            requesterProductId = v1.callingProductId,
+            fromPurse = v1.fromPurse,
+            ownerProductId = (v1.owner as? NftPurseOwner.Product)?.v1,
+            itemCount = v1.itemCount,
+            destination = v1.destination.toDomain(),
+        )
+}
+
+@OptIn(ExperimentalStdlibApi::class)
+private fun NftPurseDrainDestination.toDomain(): TrUAPIConfirmation.NftPurseDrain.Destination = when (this) {
+    is NftPurseDrainDestination.Purse -> TrUAPIConfirmation.NftPurseDrain.Destination.Purse(purse)
+    is NftPurseDrainDestination.ExternalKey -> TrUAPIConfirmation.NftPurseDrain.Destination.ExternalKey(key.toHexString())
+    NftPurseDrainDestination.Cheque -> TrUAPIConfirmation.NftPurseDrain.Destination.Cheque
+    NftPurseDrainDestination.Refund -> TrUAPIConfirmation.NftPurseDrain.Destination.Refund
 }
 
 @OptIn(ExperimentalStdlibApi::class)
@@ -95,12 +114,15 @@ private fun AllocatableResource.describe(): String = when (this) {
 
 private fun NativeProductAccountId.toDomain(): ProductAccountId = ProductAccountId(
     productId = dotNsIdentifier,
-    index = when (val index = derivationIndex) {
-        is DerivationIndex.Index -> DerivationIndex32.fromUInt(index.v1)
-        is DerivationIndex.Raw -> DerivationIndex32.fromBytes(index.v1.toDataByteArray())
-            .getOrElse { throw UnsupportedReviewException("raw derivation index must be 32 bytes") }
-    },
+    index = derivationIndex.toDomain()
+        .getOrElse { throw UnsupportedReviewException("raw derivation index must be 32 bytes") },
 )
+
+/** The core's derivation index as the app's; only a raw one of the wrong length fails. */
+internal fun DerivationIndex.toDomain(): Result<DerivationIndex32> = when (this) {
+    is DerivationIndex.Index -> Result.success(DerivationIndex32.fromUInt(v1))
+    is DerivationIndex.Raw -> DerivationIndex32.fromBytes(v1.toDataByteArray())
+}
 
 private fun <Signer> HostSignPayloadData.toSignerPayloadJson(account: Signer) = SignerPayloadJson(
     account = account,

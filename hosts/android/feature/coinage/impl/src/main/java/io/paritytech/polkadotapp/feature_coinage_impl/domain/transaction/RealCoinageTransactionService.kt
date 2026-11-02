@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_coinage_impl.domain.transaction
 
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.CoinageTransactionService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageAssetState
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageAssetStates
@@ -107,7 +108,7 @@ class RealCoinageTransactionService @Inject constructor(
     }
 
     override suspend fun preCommitHandoff(assets: List<OwnAsset>): Result<CoinageHandoffCommit> {
-        val marks = runCatching { assets.map { LedgerAsset(it.kind(), it, it.publicKey()) } }
+        val marks = runCancellableCatching { handoffMarks(assets) }
             .getOrElse { return Result.failure(it) }
 
         val keys = marks.map { it.publicKey }
@@ -120,6 +121,9 @@ class RealCoinageTransactionService @Inject constructor(
             .onFailure { logRejected(it) }
             .map { LedgerHandoffCommit(assetLedger, keys, handoffGuard) }
     }
+
+    override suspend fun prepareHandoff(assets: List<OwnAsset>): Result<CoinageHandoffCommit> =
+        runCancellableCatching { handoffMarks(assets) }.map { marks -> AtomicHandoffCommit(assetLedger, marks) }
 
     override suspend fun releaseUncommittedHandoffs(): Result<Unit> = assetLedger.releaseUncommittedHandoffs()
 
@@ -147,6 +151,8 @@ class RealCoinageTransactionService @Inject constructor(
 
     override fun subscribeAssetStates(): Flow<CoinageAssetStates> =
         assetLedger.subscribeAssetStates()
+
+    private suspend fun handoffMarks(assets: List<OwnAsset>) = assets.map { LedgerAsset(it.kind(), it, it.publicKey()) }
 
     private suspend fun assetRegistration(
         inputs: List<CoinageInput>,
@@ -198,8 +204,7 @@ private class LedgerHandoffCommit(
     private val settled = AtomicBoolean(false)
 
     override suspend fun commit(): Result<Unit> = assetLedger.commitHandoffs(keys)
-        .onSuccess { coinageLogI("handoff-committed keys=${keys.map { it.shortKey() }}") }
-        .onFailure { error -> coinageLogW("handoff-commit-failed keys=${keys.map { it.shortKey() }} error=$error") }
+        .logHandoffCommit(keys)
         .also { settle() }
 
     override suspend fun release(): Result<Unit> = assetLedger.releaseUncommittedHandoffs(keys)
@@ -212,3 +217,19 @@ private class LedgerHandoffCommit(
         if (settled.compareAndSet(false, true)) handoffGuard.handoffSettled()
     }
 }
+
+private class AtomicHandoffCommit(
+    private val assetLedger: CoinageAssetLedger,
+    private val marks: List<LedgerAsset>,
+) : CoinageHandoffCommit {
+    private val keys = marks.map { it.publicKey }
+
+    override suspend fun commit(): Result<Unit> = assetLedger.markHandedOffCommitted(marks).logHandoffCommit(keys)
+
+    // Nothing is written before commit, so there is no reservation to drop and nothing for the guard to count.
+    override suspend fun release(): Result<Unit> = Result.success(Unit)
+}
+
+private fun Result<Unit>.logHandoffCommit(keys: List<AssetPublicKey>) = this
+    .onSuccess { coinageLogI("handoff-committed keys=${keys.map { it.shortKey() }}") }
+    .onFailure { error -> coinageLogW("handoff-commit-failed keys=${keys.map { it.shortKey() }} error=$error") }

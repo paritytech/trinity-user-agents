@@ -23,7 +23,6 @@ extension DeviceSyncExchangeTests {
         sleep: @escaping DeviceSyncSleep = liveDeviceSyncSleep,
         entityChunker: DeviceSyncEntityChunker = .init()
     ) -> DeviceSyncExchange {
-        let messageExchangeModeProvider = ChatMessageExchangeModeProvider(tld: "dot")
         let storageFacade = UnusedDeviceSyncStorageFacade()
 
         return DeviceSyncExchange(
@@ -39,7 +38,7 @@ extension DeviceSyncExchangeTests {
                 outgoingUpdateTimeRepositoryFactory: outgoingUpdateTimeRepositoryFactory,
                 contactDataProviderFactory: MockChatContactDataProviderFactory(),
                 messageDataProviderFactory: MockChatMessageDataProviderFactory(),
-                messageExchangeModeProvider: messageExchangeModeProvider,
+                ownSignKeyIds: [WalletDerivationPath.main(for: "dot")],
                 contactsStorageService: ContactsLocalStorageService(
                     storageFacade: storageFacade,
                     logger: MockLogger()

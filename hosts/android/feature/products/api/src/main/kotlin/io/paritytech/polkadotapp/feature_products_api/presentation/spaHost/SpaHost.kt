@@ -40,6 +40,9 @@ enum class FaceShownAnswer {
 
     /** The user is dragging the face, so it was left alone. */
     USER_MOVING,
+
+    /** The card left before the face could move. */
+    NOT_PRESENTED,
 }
 
 interface SpaHostSession {

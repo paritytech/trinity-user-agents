@@ -306,6 +306,12 @@ Compose:
   ViewModelInjection:
     active: false
 
+polkadotapp:
+  active: true
+  HardcodedComposeText:
+    active: true
+    excludes: ['**/test/**', '**/androidTest/**', '**/commonTest/**', '**/jvmTest/**', '**/androidUnitTest/**', '**/androidInstrumentedTest/**', '**/jsTest/**', '**/iosTest/**']
+
 exceptions:
   active: true
   ExceptionRaisedInUnexpectedLocation:

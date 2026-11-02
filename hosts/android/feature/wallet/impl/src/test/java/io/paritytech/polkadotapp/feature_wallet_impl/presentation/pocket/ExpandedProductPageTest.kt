@@ -46,6 +46,7 @@ class ExpandedProductPageTest {
         FakeSession().also { opened += Triple(url, scope, it) }
     }
 
+    // Named by its card's URL, so a screen drawn for another card leaves its one WebView alone.
     @Test
     fun `opening a card hosts its product and hands the session to the screen`() = runTest {
         val page = page(screenScope())
@@ -53,7 +54,8 @@ class ExpandedProductPageTest {
         page.open("https://game.dot?card=loyalty")
 
         assertEquals(listOf("https://game.dot?card=loyalty"), opened.map { it.first })
-        assertTrue(page.session.value is FakeSession)
+        assertEquals("https://game.dot?card=loyalty", page.shown.value?.url)
+        assertTrue(page.shown.value?.session is FakeSession)
     }
 
     // The product costs a WebView and a page load to build, and a user who looks at a card usually
@@ -65,7 +67,7 @@ class ExpandedProductPageTest {
 
         page.close()
 
-        assertNull(page.session.value)
+        assertNull(page.shown.value)
         assertTrue(opened.single().second.isActive)
         assertEquals(1, sessions.single().paused)
     }
@@ -79,7 +81,21 @@ class ExpandedProductPageTest {
         page.open("https://game.dot?card=loyalty")
 
         assertEquals(1, opened.size)
-        assertEquals(sessions.single(), page.session.value)
+        assertEquals(sessions.single(), page.shown.value?.session)
+        assertEquals(1, sessions.single().resumed)
+    }
+
+    // Showing a product that already exists costs the card's move nothing.
+    @Test
+    fun `a card opened again shows its held product at the tap`() = runTest {
+        val page = page(screenScope())
+        page.open("https://game.dot?card=loyalty")
+        page.close()
+
+        page.showIfHeld("https://game.dot?card=loyalty")
+
+        assertEquals(1, opened.size)
+        assertEquals(sessions.single(), page.shown.value?.session)
         assertEquals(1, sessions.single().resumed)
     }
 
@@ -130,7 +146,7 @@ class ExpandedProductPageTest {
         page.close()
 
         assertTrue(opened.isEmpty())
-        assertNull(page.session.value)
+        assertNull(page.shown.value)
     }
 
     @Test
@@ -168,7 +184,7 @@ class ExpandedProductPageTest {
         page.release()
 
         assertFalse(opened.single().second.isActive)
-        assertNull(page.session.value)
+        assertNull(page.shown.value)
     }
 
     @Test

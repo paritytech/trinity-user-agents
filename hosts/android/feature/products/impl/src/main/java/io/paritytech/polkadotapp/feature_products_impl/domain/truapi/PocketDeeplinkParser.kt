@@ -8,19 +8,18 @@ import uniffi.truapi.PocketDeeplinkAction as NativePocketDeeplinkAction
 enum class PocketDeeplinkAction { ADD, OPEN }
 
 /**
- * A `/-/pocket/<action>?card=<id>` ([Card]) or bare `/-/pocket` ([Collection]) deeplink as the core classifies it;
- * [productHost] is the lower-cased dotNS name.
+ * A `polkadotapp://pocket/<action>?product=<id>&card=<id>` ([Card]) or bare `polkadotapp://pocket` ([Collection])
+ * deeplink as the core classifies it; [Card.productHost] is the product's lower-cased dotNS name.
  */
 sealed interface PocketDeeplink {
-    val productHost: String
-
     data class Card(
-        override val productHost: String,
+        val productHost: String,
         val action: PocketDeeplinkAction,
         val cardId: String,
+        val pageQuery: String,
     ) : PocketDeeplink
 
-    data class Collection(override val productHost: String) : PocketDeeplink
+    data object Collection : PocketDeeplink
 }
 
 /**
@@ -36,9 +35,10 @@ class PocketDeeplinkParser @Inject constructor() {
                 NativePocketDeeplinkAction.OPEN -> PocketDeeplinkAction.OPEN
             },
             cardId = decision.cardId,
+            pageQuery = decision.pageQuery,
         )
 
-        is NavigateDecision.PocketCollection -> PocketDeeplink.Collection(productHost = decision.identifier)
+        is NavigateDecision.PocketCollection -> PocketDeeplink.Collection
 
         else -> null
     }

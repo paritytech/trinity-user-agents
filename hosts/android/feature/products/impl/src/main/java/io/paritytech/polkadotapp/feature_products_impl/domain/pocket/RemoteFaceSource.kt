@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.pocket
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.readNBytesCompat
 import kotlinx.coroutines.withContext
+import okhttp3.CacheControl
 import okhttp3.Call
 import okhttp3.Request
 import uniffi.truapi.RendererNode
@@ -25,7 +26,7 @@ internal fun InputStream.readFaceWithinBound(): String {
 
 /** A face tree served over HTTP, for faces that do not live in a product's worker archive. */
 interface RemoteFaceSource {
-    suspend fun fetch(url: String): Result<RendererNode>
+    suspend fun fetch(url: String, bypassCache: Boolean = false): Result<RendererNode>
 }
 
 /**
@@ -38,9 +39,12 @@ class OkHttpRemoteFaceSource @Inject constructor(
 ) : RemoteFaceSource {
     // `execute` blocks, and both callers collect on the main thread. Left there, Android answers with
     // a `NetworkOnMainThreadException`, which carries no message and so tells the screen nothing.
-    override suspend fun fetch(url: String): Result<RendererNode> = withContext(dispatchers.io) {
+    override suspend fun fetch(url: String, bypassCache: Boolean): Result<RendererNode> = withContext(dispatchers.io) {
         runCatching {
-            val request = Request.Builder().url(url).build()
+            val request = Request.Builder()
+                .url(url)
+                .apply { if (bypassCache) cacheControl(CacheControl.FORCE_NETWORK) }
+                .build()
 
             calls.newCall(request).execute().use { response ->
                 require(response.isSuccessful) { "face at $url answered ${response.code}" }

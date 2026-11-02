@@ -13,6 +13,7 @@ public enum ProductPermission: Equatable, Sendable {
     public static let balanceAccessTypeName = "balance_access"
     public static let statementSubmitAccessTypeName = "statement_submit"
     public static let userIdentityAccessTypeName = "user_identity_access"
+    public static let nftPurseReadTypeName = "nft_purse_read"
 
     case deviceCapability(DeviceCapabilityType)
     case networkAccess(domain: String)
@@ -23,6 +24,8 @@ public enum ProductPermission: Equatable, Sendable {
     case preimageSubmitAccess
     case statementSubmitAccess
     case userIdentityAccess
+    /// Reading the NFT purses of another owner: a product, or the user's own account when `nil`.
+    case nftPurseRead(ownerProductId: String?)
 
     /// Whether this is one of the core's `RemotePermission` cases: a product's
     /// own outbound access.
@@ -42,7 +45,8 @@ public enum ProductPermission: Equatable, Sendable {
         case .deviceCapability,
              .accountAccess,
              .balanceAccess,
-             .userIdentityAccess:
+             .userIdentityAccess,
+             .nftPurseRead:
             false
         }
     }
@@ -67,6 +71,8 @@ public enum ProductPermission: Equatable, Sendable {
             Self.statementSubmitAccessTypeName
         case .userIdentityAccess:
             Self.userIdentityAccessTypeName
+        case .nftPurseRead:
+            Self.nftPurseReadTypeName
         }
     }
 
@@ -78,6 +84,8 @@ public enum ProductPermission: Equatable, Sendable {
             domain
         case let .accountAccess(targetProductId):
             targetProductId
+        case let .nftPurseRead(ownerProductId):
+            ownerProductId ?? ""
         case .balanceAccess,
              .webRtcAccess,
              .chainSubmitAccess,
@@ -111,6 +119,8 @@ public enum ProductPermission: Equatable, Sendable {
             return .statementSubmitAccess
         case userIdentityAccessTypeName:
             return .userIdentityAccess
+        case nftPurseReadTypeName:
+            return .nftPurseRead(ownerProductId: key.isEmpty ? nil : key)
         default:
             return nil
         }

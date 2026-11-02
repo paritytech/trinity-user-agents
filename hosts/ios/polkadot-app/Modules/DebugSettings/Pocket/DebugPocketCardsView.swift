@@ -30,7 +30,7 @@ struct DebugPocketCardsView: View {
                                 .lineLimit(1)
                         }
                         if card.faceShown == false {
-                            Text("Opens with the face away")
+                            Text(verbatim: "Opens with the face away")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -67,7 +67,7 @@ struct DebugPocketCardsView: View {
 
             Section("Open") {
                 ForEach(viewModel.cards) { card in
-                    Text("polkadot://\(card.productId)/-/pocket/add?card=\(card.cardId)")
+                    Text(verbatim: "polkadotapp://pocket/add?product=\(card.productId)&card=\(card.cardId)")
                         .font(.caption)
                         .textSelection(.enabled)
                 }

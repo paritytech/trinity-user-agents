@@ -15,20 +15,26 @@ use crate::durable::{DurableTxEngine, DurableWorkObserver};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::store::{Db, DbError};
 use crate::{
-	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
+	chain::ExtrinsicService,
+	chain_runtime::{ChainRuntime, HostChainProvider},
 	host_logic::worker::WorkerLedger,
 	platform::{
-		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, JsonRpcConnection,
-		PaymentPlatform, PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform,
-		TopUpPlatform,
+		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, PaymentPlatform,
+		PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform, TopUpPlatform,
 	},
 	runtime::{
-		bulletin_rpc::BulletinRpc, signing_host::DevicePairingObserver,
+		bulletin_rpc::BulletinRpc, sso_responder_service::DevicePairingObserver,
 		statement_store_rpc::StatementStoreRpc,
 	},
 	subscription::Spawner,
 };
-use async_trait::async_trait;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::{
+	encrypted_storage::EncryptedStorage,
+	installation::InstallationIdProvider,
+	nft::{HoldingTracker, NftLedger},
+	nft_purse::{NftPurses, NftPursesDeps, StaticReceiveSecret},
+};
 use truapi::latest;
 
 /// Upper bound on the in-core preimage cache. The cache is a bridge until
@@ -62,6 +68,8 @@ pub struct RuntimeServices {
 	payment_platform: OnceLock<Arc<dyn PaymentPlatform>>,
 	/// The host's balance view, once installed.
 	balance_platform: OnceLock<Arc<dyn BalancePlatform>>,
+	/// Funding sessions shared by every product runtime of this host.
+	funding: Arc<crate::runtime::funding::FundingRegistry>,
 	/// Host contacts adapter, installed once at startup by a host with a
 	/// contact picker. Unset leaves every product contacts call `Unsupported`.
 	contacts_platform: OnceLock<Arc<dyn ContactsPlatform>>,
@@ -88,6 +96,23 @@ pub struct RuntimeServices {
 	/// Durable transaction engine over the core database, installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	durable_engine: OnceLock<Arc<DurableTxEngine>>,
+	/// The NFT ledger (purse records and item keys) over the core database,
+	/// installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	nft_ledger: OnceLock<NftLedger>,
+	/// The secret that opens `Static` NFT cheques, installed with the ledger.
+	#[cfg(not(target_arch = "wasm32"))]
+	static_receive_secret: OnceLock<Arc<dyn StaticReceiveSecret>>,
+	/// Keeps the ledger's holdings in step with the chain, installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	holding_tracker: OnceLock<HoldingTracker>,
+	/// Provider of the installation id NFT purse item keys are derived under.
+	#[cfg(not(target_arch = "wasm32"))]
+	installation_provider: OnceLock<Arc<dyn InstallationIdProvider>>,
+	/// Host storage encrypted at rest, for secrets the core database must not
+	/// hold.
+	#[cfg(not(target_arch = "wasm32"))]
+	encrypted_storage: OnceLock<Arc<dyn EncryptedStorage>>,
 	/// Host observer told whether durable work is pending. Unset leaves
 	/// recovery to whoever calls it.
 	#[cfg(not(target_arch = "wasm32"))]
@@ -99,6 +124,8 @@ pub struct RuntimeServices {
 	pub worker_ledger: WorkerLedger,
 	/// Shared chainHead-v1 runtime behind the Chain surface.
 	pub chain: ChainRuntime,
+	/// Builds the core's own extrinsics over `chain`.
+	pub extrinsics: Arc<ExtrinsicService>,
 	/// People-chain statement store RPC client.
 	pub statement_store: StatementStoreRpc,
 	/// In-core Bulletin submission over the configured Bulletin chain.
@@ -143,17 +170,24 @@ impl RuntimeServices {
 		asset_hub_chain_genesis_hash: [u8; 32],
 		spawner: Spawner,
 	) -> Arc<Self> {
-		let chain_provider = Arc::new(HostChainProvider { platform: platform.clone() });
+		let chain_provider = Arc::new(HostChainProvider::new(platform.clone()));
 		let chain = ChainRuntime::new(chain_provider, spawner.clone());
-		let statement_store =
-			StatementStoreRpc::new(platform.clone(), people_chain_genesis_hash, spawner.clone());
-		let bulletin = BulletinRpc::new(chain.clone(), bulletin_chain_genesis_hash);
+		let statement_store = StatementStoreRpc::new(
+			platform.clone(),
+			chain.clone(),
+			people_chain_genesis_hash,
+			spawner.clone(),
+		);
+		let extrinsics = Arc::new(ExtrinsicService::over_chain(chain.clone(), platform.clone()));
+		let bulletin =
+			BulletinRpc::new(chain.clone(), extrinsics.clone(), bulletin_chain_genesis_hash);
 		Arc::new(Self {
 			platform,
 			host_info,
 			chat_platform: None,
 			permission_status: OnceLock::new(),
 			pocket_platform: OnceLock::new(),
+			funding: Default::default(),
 			top_up_platform: OnceLock::new(),
 			payment_platform: OnceLock::new(),
 			balance_platform: OnceLock::new(),
@@ -168,10 +202,21 @@ impl RuntimeServices {
 			#[cfg(not(target_arch = "wasm32"))]
 			durable_engine: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
+			nft_ledger: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			static_receive_secret: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			holding_tracker: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			installation_provider: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			encrypted_storage: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
 			durable_work_observer: OnceLock::new(),
 			asset_hub_chain_genesis_hash,
 			worker_ledger: WorkerLedger::default(),
 			chain,
+			extrinsics,
 			statement_store,
 			bulletin,
 			chain_context: crate::runtime::statement_allowance::ChainContextCache::default(),
@@ -248,6 +293,11 @@ impl RuntimeServices {
 	/// installed it.
 	pub fn install_pocket_platform(&self, platform: Arc<dyn PocketPlatform>) -> bool {
 		self.pocket_platform.set(platform).is_ok()
+	}
+
+	/// Funding sessions shared by every product runtime of this host.
+	pub fn funding(&self) -> &Arc<crate::runtime::funding::FundingRegistry> {
+		&self.funding
 	}
 
 	/// Install the host's top-up engine. Set-once; returns whether this call
@@ -375,6 +425,65 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn durable_engine(&self) -> Option<Arc<DurableTxEngine>> {
 		self.durable_engine.get().cloned()
+	}
+
+	/// Install the NFT ledger. Set-once, like the database it runs on.
+	/// Returns whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_nft_ledger(&self, ledger: NftLedger) -> bool {
+		self.nft_ledger.set(ledger).is_ok()
+	}
+
+	/// Install the secret that opens `Static` NFT cheques. Set-once; returns
+	/// whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_static_receive_secret(&self, secret: Arc<dyn StaticReceiveSecret>) -> bool {
+		self.static_receive_secret.set(secret).is_ok()
+	}
+
+	/// Install the tracker of NFT holdings, which runs for as long as the
+	/// services live. Set-once; returns whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_holding_tracker(&self, tracker: HoldingTracker) -> bool {
+		self.holding_tracker.set(tracker).is_ok()
+	}
+
+	/// Install the provider of the installation id. Set-once; returns
+	/// whether this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_installation_provider(&self, provider: Arc<dyn InstallationIdProvider>) -> bool {
+		self.installation_provider.set(provider).is_ok()
+	}
+
+	/// The provider of the installation id, once installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn installation_provider(&self) -> Option<Arc<dyn InstallationIdProvider>> {
+		self.installation_provider.get().cloned()
+	}
+
+	/// Install the host storage encrypted at rest. Set-once; returns whether
+	/// this call installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_encrypted_storage(&self, storage: Arc<dyn EncryptedStorage>) -> bool {
+		self.encrypted_storage.set(storage).is_ok()
+	}
+
+	/// The host storage encrypted at rest, once installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn encrypted_storage(&self) -> Option<Arc<dyn EncryptedStorage>> {
+		self.encrypted_storage.get().cloned()
+	}
+
+	/// NFT purses, once their ledger, the encrypted storage and the static
+	/// receive secret are installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn nft_purses(&self) -> Option<NftPurses> {
+		let ledger = self.nft_ledger.get().cloned()?;
+		let db = self.core_db.get().cloned()?;
+		let encrypted = self.encrypted_storage.get().cloned()?;
+		let static_secret = self.static_receive_secret.get().cloned()?;
+		let statements = Arc::new(self.statement_store.clone());
+		Some(NftPurses::new(NftPursesDeps { ledger, db, encrypted, static_secret, statements }))
 	}
 
 	/// Install the host's durable work observer. Returns whether this call
@@ -542,30 +651,6 @@ impl StatementCache {
 	fn remove_all(&mut self, statements: &[latest::SignedStatement]) {
 		self.entries
 			.retain(|cached| !statements.iter().any(|visible| visible == cached));
-	}
-}
-
-/// Adapter from `crate::platform::ChainProvider` into the
-/// [`RuntimeChainProvider`] surface the chain runtime expects.
-struct HostChainProvider {
-	platform: Arc<dyn Platform>,
-}
-
-#[async_trait]
-impl RuntimeChainProvider for HostChainProvider {
-	async fn connect(
-		&self,
-		genesis_hash: Vec<u8>,
-	) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
-		let genesis_hash: [u8; 32] = genesis_hash.try_into().map_err(|genesis_hash: Vec<u8>| {
-			RuntimeFailure::host_failure(
-				"remote_chain_connect",
-				format!("genesis_hash must be 32 bytes, got {}", genesis_hash.len()),
-			)
-		})?;
-		self.platform.connect(genesis_hash).await.map(Arc::from).map_err(|err| {
-			RuntimeFailure::unavailable_with_reason("remote_chain_connect", format!("{err:?}"))
-		})
 	}
 }
 

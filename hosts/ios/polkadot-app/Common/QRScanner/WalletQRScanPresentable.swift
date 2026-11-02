@@ -15,19 +15,7 @@ extension WalletQRScanPresentable {
 
         let navigationController = AppNavigationController(rootViewController: scanView.controller)
 
-        navigationController.barSettings = .init(
-            style: NavigationBarStyle(
-                backgroundColor: nil,
-                shadow: nil,
-                shadowColor: nil,
-                tintColor: .white100,
-                backImage: nil,
-                backgroundEffect: nil,
-                titleAttributes: nil,
-                largeTitleAttributes: nil
-            ),
-            shouldSetCloseButton: true
-        )
+        navigationController.barSettings = .scannerSettings
 
         view?.controller.present(navigationController, animated: true)
     }

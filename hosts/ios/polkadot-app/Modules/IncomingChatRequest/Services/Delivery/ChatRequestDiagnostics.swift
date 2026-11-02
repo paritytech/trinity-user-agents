@@ -1,8 +1,22 @@
 import IssueMonitoring
+import StatementDelivery
 
 struct ChatRequestDiagnostics {
     let logger: LoggerProtocol
     let issues: ChatRequestIssueDiagnostics
+
+    var statementDiagnostics: OutgoingStatementDiagnostics {
+        OutgoingStatementDiagnostics(
+            logger: logger,
+            issues: OutgoingStatementIssueDiagnostics(
+                oversized: issues.oversizedRequest,
+                deliveryStalled: issues.deliveryStalled,
+                deliveryStateUnreadable: issues.deliveryStateUnreadable,
+                renewalPublishFailed: issues.renewalPublishFailed,
+                renewalFailing: issues.renewalFailing
+            )
+        )
+    }
 }
 
 struct ChatRequestIssueDiagnostics: Sendable {

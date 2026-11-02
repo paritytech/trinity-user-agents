@@ -207,6 +207,24 @@ struct ProductHostTests {
         #expect(host?.toDotDomain() == "sub.browse.paseo")
     }
 
+    // MARK: - toShareDomain()
+
+    @Test func toShareDomainKeepsTheHostsOwnRoot() {
+        let host = ProductHost.parse("dim2.paseo", tld: "paseo")
+        #expect(host?.toShareDomain() == "dim2.paseo.li")
+    }
+
+    @Test func toShareDomainForSubdomain() {
+        let host = ProductHost.parse("sub.browse.dot", tld: "dot")
+        #expect(host?.toShareDomain() == "sub.browse.dot.li")
+    }
+
+    @Test func shareDomainParsesBackToTheSameHostOnAnyNetwork() throws {
+        let shared = try #require(ProductHost.parse("dim2.paseo", tld: "paseo")?.toShareDomain())
+        #expect(ProductHost.parse(shared, tld: "dot")?.toDotDomain() == "dim2.paseo")
+        #expect(ProductHost.parse(shared, tld: "paseo")?.toDotDomain() == "dim2.paseo")
+    }
+
     // MARK: - fromUrl(_:)
 
     @Test func fromUrlWithDotDomain() {

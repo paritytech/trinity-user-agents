@@ -21,6 +21,34 @@ enum CoinageArrangement {
     /// making the nearer ones larger.
     static let gridLift: CGFloat = 40
 
+    /// One coin picked out of either arrangement by a tap.
+    ///
+    /// It is drawn large at the left of a band across the top, and the trace of where it came
+    /// from sits beside it. The rest of the field moves down under the band and fades back, so the
+    /// picked coin is the only bright thing and the others are still there to tap next.
+    struct Focus: Equatable {
+        let id: String
+        /// How tall the band is: never less than the coin, and taller when its trace has more to
+        /// say. The caller measures that, because only it knows what the trace holds.
+        let band: CGFloat
+        /// What part of the field is on screen when the coin is picked: how far down it starts
+        /// and how tall it is. The band goes at the bottom of that, over the faded coins, so it
+        /// is in reach wherever the page is scrolled; unless there is room below the coins, where
+        /// it goes instead so a short grid stays uncovered.
+        var window: CGFloat = 0
+        var viewport: CGFloat = .infinity
+    }
+
+    /// How large a picked coin is drawn: a face the figure can be read on, well past the sixty
+    /// points the strip allows and the fifty-two of the roomiest grid.
+    static let focusDiameter: CGFloat = 112
+    static let focusInset: CGFloat = 8
+    /// Clear of the grid, which it flies up out of and back into.
+    static let focusLift: CGFloat = gridLift + 60
+
+    /// The least a band can be: the picked coin with an inset above and below.
+    static var focusBandMinimum: CGFloat { focusDiameter + focusInset * 2 }
+
     struct Result {
         let targets: [(coin: CoinageScene.Coin, target: CoinageCoinField.Target)]
         /// What the view needs to be tall enough for.
@@ -29,19 +57,30 @@ enum CoinageArrangement {
         let blocks: [CoinageGridLayout.Block]
         /// How far each partition's run reaches across the strip, for the rule under it.
         let runs: [CoinageStripLayout.Span]
+        /// Where the band's top sits while a coin is picked, for the trace beside the coin.
+        var focusTop: CGFloat?
+        /// How tall the coins alone are, before any band below them.
+        var coinsHeight: CGFloat = 0
     }
 
     static func targets(
         for coins: [CoinageScene.Coin],
         arrangement: CoinageArrangement,
+        focus: Focus? = nil,
         area: CGSize,
         designs: [CoinageAssetStore.Design],
-        stripHeight: CGFloat
+        stripHeight: CGFloat,
+        set: CoinageScene.CoinSet = .shipped
     ) -> Result {
-        switch arrangement {
-        case .strip: strip(coins, width: area.width, designs: designs, height: stripHeight)
-        case .grid: grid(coins, area: area, designs: designs)
-        }
+        let laid =
+            switch arrangement {
+            case .strip: strip(coins, width: area.width, designs: designs, height: stripHeight, set: set)
+            case .grid: grid(coins, area: area, designs: designs)
+            }
+
+        guard let focus, coins.contains(where: { $0.id == focus.id }) else { return laid }
+
+        return picked(focus, outOf: laid)
     }
 
     static func design(
@@ -59,7 +98,8 @@ private extension CoinageArrangement {
         _ coins: [CoinageScene.Coin],
         width: CGFloat,
         designs: [CoinageAssetStore.Design],
-        height: CGFloat
+        height: CGFloat,
+        set: CoinageScene.CoinSet
     ) -> Result {
         var options = CoinageStripLayout.Options()
         options.height = height
@@ -68,7 +108,7 @@ private extension CoinageArrangement {
             coins.map { coin in
                 CoinageStripLayout.Coin(
                     size: CoinageCoinDesign.design(forExponent: coin.exponent).size,
-                    width: CoinageScene.geometry(forExponent: coin.exponent).faceWidth,
+                    width: CoinageScene.geometry(forExponent: coin.exponent, set: set).faceWidth,
                     thickness: CGFloat(design(for: coin, in: designs)?.thickness ?? 0.075),
                     partition: coin.partition
                 )
@@ -89,7 +129,11 @@ private extension CoinageArrangement {
                     wear: coin.wear,
                     // The strip skips the six-tap luster path; the grid does not.
                     luster: 0,
-                    calm: CoinageStripLayout.edgeCalm(turn: placement.turn)
+                    // Not calmed as the reference calms its edge-on coins. Calming swaps the
+                    // normal for a plain radial one and fades the reeding, so a turned coin reads
+                    // as a band of colour and every coin's rim catches the light alike; the shapes
+                    // and the milling are the point of the rim, and they stay.
+                    calm: 0
                 )
             )
         }
@@ -100,6 +144,68 @@ private extension CoinageArrangement {
             blocks: [],
             runs: layout.partitions
         )
+    }
+}
+
+// MARK: - Focus
+
+private extension CoinageArrangement {
+    /// The arrangement as laid out, with one coin lifted out of it into the band and everything
+    /// else faded back where it is.
+    ///
+    /// The band sits at the bottom of what is on screen, so the picked coin and its trace are in
+    /// reach however far down a tall grid the page is, and the other coins stay put to be tapped
+    /// next. A grid short enough to leave room below gets the band there instead, under the
+    /// coins, so none of them is covered.
+    static func picked(_ focus: Focus, outOf laid: Result) -> Result {
+        let band = max(focus.band, focusBandMinimum)
+        let top = bandTop(for: focus, coinsHeight: laid.height)
+        let targets = laid.targets.map { entry -> (coin: CoinageScene.Coin, target: CoinageCoinField.Target) in
+            var target = entry.target
+
+            if entry.coin.id == focus.id {
+                target.centre = pickedCentre(bandTop: top)
+                target.height = focusDiameter
+                target.turn = 0
+                target.tilt = 0
+                target.thickness = 1
+                target.luster = 1
+                target.calm = 0
+                target.lift = focusLift
+                target.recede = 0
+            } else {
+                target.recede = 1
+            }
+
+            return (entry.coin, target)
+        }
+
+        return Result(
+            targets: targets,
+            height: max(laid.height, top + band),
+            blocks: laid.blocks,
+            runs: laid.runs,
+            focusTop: top,
+            coinsHeight: laid.height
+        )
+    }
+}
+
+extension CoinageArrangement {
+    /// Where the band's top goes for what is on screen now: at the bottom of it, or below the
+    /// coins when they leave room there. Asked again as the page scrolls, so the band stays on
+    /// screen rather than where it was picked.
+    static func bandTop(for focus: Focus, coinsHeight: CGFloat) -> CGFloat {
+        let band = max(focus.band, focusBandMinimum)
+        let visibleBottom = focus.window + focus.viewport - focusInset
+        let roomBelow = coinsHeight + band <= visibleBottom
+
+        return roomBelow ? coinsHeight : max(visibleBottom - band, focus.window)
+    }
+
+    /// Where the picked coin sits in a band whose top is here.
+    static func pickedCentre(bandTop: CGFloat) -> CGPoint {
+        CGPoint(x: focusInset + focusDiameter / 2, y: bandTop + focusBandMinimum / 2)
     }
 }
 

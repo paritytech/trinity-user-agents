@@ -7,6 +7,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -41,6 +42,18 @@ class CardFaceRequestsTest {
         assertEquals(listOf(false, true), received)
         assertEquals(ExpandedCardFaceOutcome.APPLIED, first)
         assertEquals(ExpandedCardFaceOutcome.USER_MOVING, second)
+    }
+
+    // A card that leaves before it settles never moves its face, and the product should hear so without
+    // waiting out the timeout.
+    @Test
+    fun `a screen that left before applying the request leaves it not presented at once`() = runTest {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+            requests.requests.collect { it.reply.complete(FaceShownAnswer.NOT_PRESENTED) }
+        }
+
+        assertEquals(ExpandedCardFaceOutcome.NOT_PRESENTED, requests.setFaceShown(false))
+        assertEquals(0L, currentTime)
     }
 
     // The screen can leave between receiving a request and answering it; the product must not hang.

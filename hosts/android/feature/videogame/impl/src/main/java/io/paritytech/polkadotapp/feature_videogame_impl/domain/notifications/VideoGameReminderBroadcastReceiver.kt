@@ -4,11 +4,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import dagger.hilt.android.AndroidEntryPoint
-import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
-import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.canScheduleExactAlarms
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
-import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPublisher
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -19,30 +16,16 @@ class VideoGameReminderBroadcastReceiver : BroadcastReceiver() {
     }
 
     @Inject
-    lateinit var notificationPublisher: VideoGameNotificationPublisher
-
-    @Inject
-    lateinit var appLifecycleObserver: AppLifecycleObserver
-
-    @Inject
-    lateinit var productGameReminder: RealProductGameReminder
+    lateinit var alarmHandler: GameReminderAlarmHandler
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION_POST_NOTIFICATION) return
 
         when (val type = intent.getParcelableExtra<VideoGameNotificationType>(EXTRA_NOTIFICATION_TYPE)) {
             is VideoGameNotificationType.ProductGameStartsSoon ->
-                publishProductGameStartsSoon(context, ProductId.fromStoredValue(type.productId))
+                alarmHandler.onAlarm(ProductId.fromStoredValue(type.productId), ringAlarm = context.canScheduleExactAlarms())
 
             null -> Unit
         }
-    }
-
-    // In the foreground the pill and the auto-open take over. An inexact alarm may fire late; a game still
-    // scheduled wants its notification then.
-    private fun publishProductGameStartsSoon(context: Context, productId: ProductId) {
-        if (appLifecycleObserver.getCurrentState() == AppLifecycleState.FOREGROUND) return
-        val game = productGameReminder.scheduledFor(productId) ?: return
-        notificationPublisher.publishProductGameStartsSoonNotification(game.product(), ringAlarm = context.canScheduleExactAlarms())
     }
 }

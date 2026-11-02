@@ -13,13 +13,23 @@ enum SPAContentSource {
     #endif
 }
 
+/// Where an SPA screen lives, which decides its chrome.
+enum SPAPresentation {
+    /// Pushed onto a navigation stack.
+    case pushed
+    /// Mounted as a browser tab, with the browser chrome.
+    case browserTab
+    /// A one-shot sheet over the tabs, without browser chrome.
+    case sheet
+}
+
 struct SPAConfiguration {
     let title: String?
     let isRootScreen: Bool
     let showMoreButton: Bool
     let page: ProductPage
     let contentSource: SPAContentSource
-    let isBrowserTab: Bool
+    let presentation: SPAPresentation
     let browserTabId: UUID?
     /// How a Pocket card's page reaches the face above it; nil for a page
     /// shown anywhere else.
@@ -37,7 +47,7 @@ struct SPAConfiguration {
         showMoreButton: Bool,
         page: ProductPage,
         contentSource: SPAContentSource = .dotNs,
-        isBrowserTab: Bool = false,
+        presentation: SPAPresentation = .pushed,
         browserTabId: UUID? = nil,
         cardFace: (any ExpandedCardFaceShowing)? = nil
     ) {
@@ -46,7 +56,7 @@ struct SPAConfiguration {
         self.showMoreButton = showMoreButton
         self.page = page
         self.contentSource = contentSource
-        self.isBrowserTab = isBrowserTab
+        self.presentation = presentation
         self.browserTabId = browserTabId
         self.cardFace = cardFace
     }

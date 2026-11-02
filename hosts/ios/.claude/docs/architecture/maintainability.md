@@ -118,7 +118,7 @@ When touching legacy Operation-iOS code, prefer migrating to async/await:
 
 ### 10. Localize All User-Visible Strings
 
-All strings shown to users must go through localization. Hardcoded strings in views are flagged in reviews.
+All strings shown to users must go through localization. Hardcoded strings in views are flagged in reviews. `Runscripts/check_hardcoded_strings.py` finds a string literal passed to UI text; the pre-commit hook (`Runscripts/hooks/pre-commit`) and the `hardcoded-strings` job of the PR workflow check only added lines, and fail a commit or PR that adds one. For a string that must stay as written, use `Text(verbatim:)` in SwiftUI or end the line that holds the string with `// hardcoded-string:ignore` (in a wrapped call, the argument's own line).
 
 ### 11. Disable Features at the Factory/Registration Level
 

@@ -64,6 +64,7 @@ class TrUAPISpaHost @Inject constructor(
             fixedProductId = servedPage?.productId,
             firstPartyOrigin = servedPage?.origin,
             servedExecutable = if (underCard) ExecutableKind.WIDGET else ExecutableKind.APP,
+            waitForInitialTheme = true,
         )
 
         val hostApiNavigation = NavigationPolicy.HostApiNavigation(

@@ -23,5 +23,5 @@ final class StubSPAView: SPAViewProtocol {
     func showLoading() {}
     func hideLoading() {}
     func showLoadFailure(_: ErrorContent) {}
-    func updateLoadProgress(_: DotNsLoadProgress) {}
+    func updateLoadPhase(_: ProductLoadPhase) {}
 }

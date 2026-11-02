@@ -96,7 +96,7 @@ The id is session-scoped and never persisted. No host stores operations, so if t
 
 The host owns operations and the lifecycle. The core forwards each call to a host trait scoped to the calling product, and the operation existing is the keep-alive signal. Every host implements the trait; one with no worker lifecycle, such as the headless CLI, hands out ids and tracks nothing.
 
-An open operation is also demand on the worker: the core takes one reference on the product's worker ledger per open id, so an operation reaches the host through the same `workerDemandChanged` signal an on-screen surface produces, and a host reading that signal needs no second keep-alive rule. The reference is dropped when the operation ends, and a connection that goes away with operations still open drops the ones it held.
+An open operation is also demand on the worker: the core takes one reference on the product's worker ledger per open id, so an operation reaches the host through the same `requestWorkerTransition` signal an on-screen surface produces, and a host reading that signal needs no second keep-alive rule. The reference is dropped when the operation ends, and a connection that goes away with operations still open drops the ones it held.
 
 ```rust
 #[async_trait]

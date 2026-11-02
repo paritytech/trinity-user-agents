@@ -114,6 +114,7 @@ let package = Package(
                 .product(name: "DurableTransactionsTestSupport", package: "DurableTransactions"),
                 .product(name: "StructuredConcurrency", package: "StructuredConcurrency"),
                 .product(name: "StructuredConcurrencyTestSupport", package: "StructuredConcurrency"),
+                .product(name: "FoundationExtTestSupport", package: "FoundationExt"),
                 .product(name: "Clocks", package: "swift-clocks")
             ],
             path: "Tests"

@@ -122,9 +122,11 @@ class PocketViewModelTest {
 
     @Before
     fun setUp() {
+        // a product card's page is hosted at its launch URL, which android.net.Uri encodes
+        mockkStatic(Uri::class)
+        every { Uri.encode(any()) } answers { firstArg() }
         Dispatchers.setMain(testDispatcher)
         whenever(interactor.observeBackupProgress()).thenReturn(flowOf(BackupProgress.Unknown))
-        whenever(interactor.observeAccountBackupPending()).thenReturn(flowOf(false))
     }
 
     @After
@@ -208,7 +210,7 @@ class PocketViewModelTest {
         advanceUntilIdle()
 
         assertTrue("the card came back selected", viewModel.state.value is PocketScreenState.List)
-        assertNull(viewModel.expandedProductSession.value)
+        assertNull(viewModel.shownProduct.value)
     }
 
     /**
@@ -329,10 +331,6 @@ class PocketViewModelTest {
     // page could still fold the new card's face.
     @Test
     fun `a link to another card closes the open one's page first`() = runTest(testDispatcher) {
-        // the open card's page is hosted at its launch URL, which android.net.Uri encodes
-        mockkStatic(Uri::class)
-        every { Uri.encode(any()) } answers { firstArg() }
-
         val open = productCard("loyalty")
         val linked = productCard("stamps")
         whenever(interactor.observeProductCards()).thenReturn(MutableStateFlow(listOf(open, linked)))
@@ -342,14 +340,14 @@ class PocketViewModelTest {
         viewModel.selectCard(openCard)
         viewModel.hostExpandedProduct(openCard)
         advanceUntilIdle()
-        assertNotNull(viewModel.expandedProductSession.value)
+        assertNotNull(viewModel.shownProduct.value)
 
         cardOpenRequests.request(linked.key)
         advanceUntilIdle()
 
         val shown = viewModel.state.value as PocketScreenState.CardDetails
         assertEquals("product_card:game.dot:stamps", shown.selectedCard.id)
-        assertNull("the open card's page stayed under the linked one", viewModel.expandedProductSession.value)
+        assertNull("the open card's page stayed under the linked one", viewModel.shownProduct.value)
     }
 
     // Closing a card a link opened goes back to the list, not to whatever was up when the link came.
@@ -374,6 +372,33 @@ class PocketViewModelTest {
 
         val list = viewModel.state.value as PocketScreenState.List
         assertNull("the removal dialog came back", list.removalCandidate)
+    }
+
+    // A link can pick the screen a card's page opens on. A tap opens the card's page without the link's params.
+    @Test
+    fun `a link's page params reach only the page that link opened`() = runTest(testDispatcher) {
+        val card = productCard("loyalty")
+        val collection = MutableStateFlow(listOf(card))
+        whenever(interactor.observeProductCards()).thenReturn(collection)
+        cardOpenRequests.request(card.key, "open=scratch")
+
+        val viewModel = createViewModel()
+        val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+        viewModel.hostExpandedProduct(uiCard)
+        assertEquals("${card.key.launchUrl()}&open=scratch", viewModel.shownProduct.value?.url)
+
+        cardOpenRequests.request(card.key, "open=prizes")
+        advanceUntilIdle()
+        assertEquals("${card.key.launchUrl()}&open=prizes", viewModel.shownProduct.value?.url)
+
+        collection.value = listOf(card, productCard("stamps"))
+        advanceUntilIdle()
+        assertNotNull("the linked page was taken for another card's", viewModel.shownProduct.value)
+
+        viewModel.dismissCard()
+        viewModel.selectCard(uiCard)
+        viewModel.hostExpandedProduct(uiCard)
+        assertEquals(card.key.launchUrl(), viewModel.shownProduct.value?.url)
     }
 
     // The card is on screen while its lookup runs, so what the screen shows first has to be
@@ -436,6 +461,36 @@ class PocketViewModelTest {
 
         viewModel.hostExpandedProduct(leftCard)
 
-        assertNull(viewModel.expandedProductSession.value)
+        assertNull(viewModel.shownProduct.value)
+    }
+
+    // A card opened again rides up with its product rather than over an empty space.
+    @Test
+    fun `a card opened again gets its held product at the tap`() = runTest(testDispatcher) {
+        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(productCard("loyalty"))))
+        val viewModel = createViewModel()
+        val card = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+        viewModel.selectCard(card)
+        viewModel.hostExpandedProduct(card)
+        viewModel.dismissCard()
+
+        viewModel.selectCard(card)
+
+        assertNotNull(viewModel.shownProduct.value)
+    }
+
+    // Building a WebView while the card is still moving starves the animation.
+    @Test
+    fun `a card opened for the first time gets its product only once it settles`() = runTest(testDispatcher) {
+        whenever(interactor.observeProductCards()).thenReturn(flowOf(listOf(productCard("loyalty"))))
+        val viewModel = createViewModel()
+        val card = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+
+        viewModel.selectCard(card)
+        advanceUntilIdle()
+        assertNull(viewModel.shownProduct.value)
+
+        viewModel.hostExpandedProduct(card)
+        assertNotNull(viewModel.shownProduct.value)
     }
 }

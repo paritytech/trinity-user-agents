@@ -10,10 +10,14 @@ protocol BlockUserServicing {
 final class BlockUserService {
     private let blockStatusRepository: AnyDataProviderRepository<Chat.ContactBlockStatus>
     private let chatRepository: AnyDataProviderRepository<Chat.LocalModel>
+    private let allowanceCleanupService: AllowanceCleanupServicing
 
     init(
+        allowanceCleanupService: AllowanceCleanupServicing,
         storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared
     ) {
+        self.allowanceCleanupService = allowanceCleanupService
+
         blockStatusRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
                 mapper: AnyCoreDataMapper(BlockContactMapper())
@@ -38,6 +42,8 @@ extension BlockUserService: BlockUserServicing {
         // Re-save the chat to notify NSFetchedResultsController subscribers
         // that filter by contact properties (e.g. contacts list)
         try await resaveChat(for: accountId)
+
+        await allowanceCleanupService.cleanup()
     }
 
     func unblockUser(accountId: AccountId) async throws {

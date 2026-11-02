@@ -3,6 +3,7 @@ import Foundation
 import KeyDerivation
 import os
 import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import SubstrateSdk
 @testable import Coinage
 
@@ -200,7 +201,7 @@ final class StubGroupVerdictResolver: CoinageGroupVerdictResolving, @unchecked S
 
     /// Returns once the resolver has been asked about `groupId`, failing rather than hanging if it never is.
     func waitUntilAsked(about groupId: CoinageTxGroupId) async throws {
-        try await withTimeout(.seconds(5)) { [askedSubject] in
+        try await withTimeout(.hangGuard) { [askedSubject] in
             for await asked in askedSubject where asked.contains(groupId) {
                 return
             }

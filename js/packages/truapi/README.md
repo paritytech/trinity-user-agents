@@ -67,6 +67,37 @@ const sub: Subscription = truapi.chainInteraction
 sub.unsubscribe();
 ```
 
+## Host-initiated requests
+
+A Rust method marked `#[wire(host_initiated, id = N)]` and returning
+`Result<Response, CallError<Error>>` generates an `onMethod(handler)` registration.
+The handler receives the decoded request and a context containing an `AbortSignal`.
+It returns a `neverthrow` `Result`, a promise of that result, or a `ResultAsync`.
+Use `ok(value)` for success and `err(error)` for a declared failure. The generated
+handler type preserves the method's versioned domain error and framework errors.
+Unexpected throws and rejected promises produce a framework `HostFailure` error.
+Each generated handler accepts its selected request version; other versions are
+refused before the handler runs.
+
+Each call uses a one-item subscription. Success emits one item; the Rust caller
+awaits it and closes the subscription with `Stop`. Failure interrupts the stream
+with the declared error. A stream ending without an answer is an error.
+
+Dropping a pending call sends `Stop`, aborts the handler's signal and suppresses
+later output. Handlers must observe the signal to stop their work; cancellation
+does not undo side effects. The host caller owns deadlines and retries.
+
+Registrations buffer a bounded number of requests until a handler is installed and
+answer overflow with an unavailable error. The returned `unsubscribe()` removes
+that registration's handler for future requests; calls already running retain their
+handler. Connection reset aborts active signals, clears queued requests and prevents
+old promises from replying on the replacement connection.
+
+Generated handlers use `registerHostInitiatedSubscription` with the optional
+`singleResponse` settings. These select the request version, prevent duplicate
+live calls and remember stops that arrive before their starts. The wire rules are
+defined in the [protocol specification](../../../docs/design/truapi-protocol.md#host-initiated-calls-with-one-response).
+
 ## What's in the package
 
 - **Transport providers** for `MessagePort` pipes (used by both webview hosts and iframe hosts)
@@ -111,10 +142,13 @@ const unsubscribe = subscribeConnectionStatus((status) => {
 
 Native and CLI browser hosts inject a shared SDK client. Keep the client
 returned by `getClientSync()`:
-it remains usable when the host replaces a disconnected connection. Interrupted
-requests reject with `ConnectionResetError`; subscriptions end with that error
-as their cause. Nothing is replayed. Recreate read/watch subscriptions and discard
-old chain handles before resuming work. Registered host-initiated handlers remain
+it remains usable when the host replaces a disconnected connection. A request or
+subscription whose frame reached the host fails: the request rejects with
+`ConnectionResetError` and the subscription ends with that error as its cause. A
+call still waiting to be sent goes out on the next connection that completes its
+handshake, and rejects with `ConnectionResetError` only when the connection stops
+redialing. Recreate read/watch subscriptions and discard old chain handles before
+resuming work. Registered host-initiated handlers remain
 installed. Older SDKs use a small MessagePort adapter and require a page reload
 after disconnect.
 
@@ -122,6 +156,8 @@ The shared connection attempts one immediate reconnect. If a reconnect fails
 while the page is visible, it tries again after 250 ms, 1 s and 4 s. After that,
 the next API call or return to a visible page tries again. A product that stays
 visible and only waits for connection status will not trigger further retries.
+Calls made while it redials are sent on the attempt that completes its handshake
+and reject with `ConnectionResetError` when the schedule runs out.
 
 ### Hosts on a WebSocket
 
@@ -191,6 +227,8 @@ Cancelling stops the waiting, not necessarily the work. The call still settles w
 A host that predates the `Cancel` leg drops the frame with no reply, and the call then settles on the client's own deadline instead. There is no way to detect that first: `system.featureSupported` answers only about chains, so an abort a host never understood looks the same as one it honoured.
 
 The pair `(255, 255)` is reserved for method-independent protocol errors. When a peer rejects an unknown API message with that frame, requests resolve as `CallError.Unsupported` and subscriptions terminate with an `UnsupportedMessageError` cause carrying the unsupported `(trait, method)` pair.
+
+The host also uses this frame to reject a request in a version it doesn't know. The product sees the same errors as for an unknown method.
 
 ## Generated files
 

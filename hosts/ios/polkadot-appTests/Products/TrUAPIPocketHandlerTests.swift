@@ -1,5 +1,6 @@
 import Products
 import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import Testing
 import TrUAPIHost
 @testable import polkadot_app
@@ -29,21 +30,21 @@ struct TrUAPIPocketHandlerTests {
 
         // Subscribed before anything is published, so the count of deliveries
         // below starts from the empty map the handler opens with.
-        try await withTimeout(.seconds(5)) { await workers.awaitExecutionsDelivered() }
+        try await withTimeout(.hangGuard) { await workers.awaitExecutionsDelivered() }
         workers.publish(["game.paseo": execution])
-        try await withTimeout(.seconds(5)) { await execution.awaitRenderRequest() }
+        try await withTimeout(.hangGuard) { await execution.awaitRenderRequest() }
         workers.publish(["game.paseo": execution, "shop.paseo": MockProductExecution()])
         workers.publish(["game.paseo": execution])
         // The last republish arriving means the one before it has been handled.
         for _ in 0 ..< 3 {
-            try await withTimeout(.seconds(5)) { await workers.awaitExecutionsDelivered() }
+            try await withTimeout(.hangGuard) { await workers.awaitExecutionsDelivered() }
         }
 
         // A reopen cancels the drain of the first stream, so this face would never reach the card.
         let live = try #require(execution.renderContinuations.first)
         live.yield(.string(text: "still live"))
 
-        #expect(try await withTimeout(.seconds(5)) { try await drawing.value })
+        #expect(try await withTimeout(.hangGuard) { try await drawing.value })
         #expect(execution.renderRequests.count == 1)
     }
 
@@ -60,12 +61,12 @@ struct TrUAPIPocketHandlerTests {
         defer { drawing.cancel() }
 
         workers.publish(["game.paseo": first])
-        try await withTimeout(.seconds(5)) { await first.awaitRenderRequest() }
+        try await withTimeout(.hangGuard) { await first.awaitRenderRequest() }
 
         let replacement = MockProductExecution()
         replacement.keepsRenderStreamOpen = true
         workers.publish(["game.paseo": replacement])
-        try await withTimeout(.seconds(5)) { await replacement.awaitRenderRequest() }
+        try await withTimeout(.hangGuard) { await replacement.awaitRenderRequest() }
 
         #expect(first.renderRequests.count == 1)
     }

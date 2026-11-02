@@ -65,8 +65,9 @@ impl TrUApiCore {
 			spawner.clone(),
 		);
 		let pairing_host = PairingHostRole::new(services.clone(), host_config);
-		pairing_host.clone().start_session_store_sync(spawner);
-		Self::from_runtime_parts(services, pairing_host.clone(), pairing_host, product)
+		pairing_host.session().clone().start_session_store_sync(spawner);
+		let session = pairing_host.session().clone();
+		Self::from_runtime_parts(services, pairing_host, session, product)
 	}
 
 	/// Build a product-facing core from shared services and authority.

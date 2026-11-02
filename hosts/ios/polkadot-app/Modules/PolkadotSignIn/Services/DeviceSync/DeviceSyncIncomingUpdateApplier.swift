@@ -20,7 +20,6 @@ final class DeviceSyncIncomingUpdateApplier {
         messageRepositoryFactory: ChatMessageRepositoryMaking,
         removedChatRepositoryFactory: RemovedChatRepositoryMaking,
         flow: any DeviceSyncPeerConnectionFlowing,
-        messageExchangeModeProvider: any MessageExchangeModeProviding,
         contactsStorageService: ContactsLocalStorageServicing = ContactsLocalStorageService(),
         storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared,
         peerLogger: LoggerProtocol
@@ -34,7 +33,6 @@ final class DeviceSyncIncomingUpdateApplier {
         chatAcceptedApplier = DeviceSyncChatAcceptedApplier(
             storageFacade: storageFacade,
             contactsStorageService: contactsStorageService,
-            messageExchangeModeProvider: messageExchangeModeProvider,
             peerLogger: peerLogger
         )
         deviceChangesApplier = DeviceSyncDeviceChangesApplier(

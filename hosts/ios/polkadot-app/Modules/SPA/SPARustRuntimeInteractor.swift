@@ -11,6 +11,7 @@ final class SPARustRuntimeInteractor {
 
     private let runtimeFactory: SPARuntimeFactoryProtocol
     private let productResolver: ProductResolving
+    private let contentLoader: ProductContentLoading
     private let configuration: SPAConfiguration
     private let logger: LoggerProtocol
     private let productRepository: AnyDataProviderRepository<Product>
@@ -20,6 +21,7 @@ final class SPARustRuntimeInteractor {
     private var jsEngine: JSEngineProtocol?
     // Held so the synchronous `hasChatEntry` can answer from the manifest without re-resolving.
     private var resolvedProduct: ResolvedProduct?
+    private var isServing = false
 
     private var setupTask: Task<Void, Never>?
     private var openChatTask: Task<Void, Never>?
@@ -27,6 +29,7 @@ final class SPARustRuntimeInteractor {
     init(
         runtimeFactory: SPARuntimeFactoryProtocol,
         productResolver: ProductResolving,
+        contentLoader: ProductContentLoading,
         configuration: SPAConfiguration,
         logger: LoggerProtocol,
         productRepository: AnyDataProviderRepository<Product>,
@@ -34,6 +37,7 @@ final class SPARustRuntimeInteractor {
     ) {
         self.runtimeFactory = runtimeFactory
         self.productResolver = productResolver
+        self.contentLoader = contentLoader
         self.configuration = configuration
         self.logger = logger
         self.productRepository = productRepository
@@ -63,6 +67,16 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
         Task { await previousRuntime?.dispose() }
 
         startRuntime(engine: engine)
+    }
+
+    func reloadLatestBuild() {
+        guard isServing else {
+            presenter?.didRestartLoading()
+            retry()
+            return
+        }
+
+        presenter?.didRequestReload()
     }
 
     func hasChatEntry() -> Bool {
@@ -104,15 +118,12 @@ private extension SPARustRuntimeInteractor {
     /// its own content and the manifest only names it, so a label that holds no records — a local
     /// server opened from debug settings — still opens, unnamed. A development server page is not
     /// published content, so nothing is resolved for it.
-    static func resolveProduct(
-        with productResolver: ProductResolving,
-        for configuration: SPAConfiguration
-    ) async throws -> ResolvedProduct? {
+    func resolveProduct() async throws -> ResolvedProduct? {
         let domain = configuration.page.host.toDotDomain()
 
         switch configuration.contentSource {
         case .dotNs:
-            return try await productResolver.resolve(domain)
+            return try await contentLoader.open(domain, policy: .untilCancelled, onPhase: phaseHandler()).resolved
         case .directURL:
             return try? await productResolver.resolve(domain)
         #if DEBUG
@@ -124,20 +135,19 @@ private extension SPARustRuntimeInteractor {
 
     func startRuntime(engine: JSEngineProtocol) {
         setupTask?.cancel()
+        isServing = false
 
         do {
             let newRuntime = try runtimeFactory.createRuntime(for: configuration.productId)
             runtime = newRuntime
 
-            setupTask = Task { [weak self, productResolver, configuration] in
+            setupTask = Task { [weak self] in
                 do {
-                    self?.resolvedProduct = try await Self.resolveProduct(
-                        with: productResolver,
-                        for: configuration
-                    )
+                    self?.resolvedProduct = try await self?.resolveProduct()
 
                     let url = try await newRuntime.start(with: engine)
                     self?.presenter?.didRequestNavigation(to: url)
+                    self?.isServing = true
                 } catch is CancellationError {
                     // Superseded by retry/teardown — the replacement reports.
                 } catch {
@@ -179,5 +189,13 @@ private extension SPARustRuntimeInteractor {
         }
 
         return nil
+    }
+}
+
+private extension SPARustRuntimeInteractor {
+    func phaseHandler() -> ProductLoadPhaseHandler {
+        { [weak self] phase in
+            Task { @MainActor in self?.presenter?.didUpdateLoadPhase(phase) }
+        }
     }
 }

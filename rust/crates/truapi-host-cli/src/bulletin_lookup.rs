@@ -155,12 +155,8 @@ impl<S: BlobSource + 'static> BulletinLookup<S> {
 	/// then the value once it can be read, then the end.
 	pub fn subscribe(
 		self: &Arc<Self>,
-		key: Vec<u8>,
+		key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, api::GenericError>> {
-		let Ok(key) = <[u8; 32]>::try_from(key.as_slice()) else {
-			// Not a blake2b-256 digest, so nothing can ever hash to it.
-			return stream::once(future::ready(Ok(None))).boxed();
-		};
 		let lookup = Arc::clone(self);
 		async move {
 			let cid = preimage_cid(&key);
@@ -264,10 +260,10 @@ mod tests {
 	/// Every item of the subscription, errors by their reason.
 	async fn events(
 		lookup: &Arc<BulletinLookup<Scripted>>,
-		key: &[u8],
+		key: &[u8; 32],
 	) -> Vec<Result<Option<Vec<u8>>, String>> {
 		lookup
-			.subscribe(key.to_vec())
+			.subscribe(*key)
 			.map(|item| item.map_err(|error| error.reason))
 			.collect()
 			.await
@@ -328,12 +324,6 @@ mod tests {
 			vec![Ok(None), Err("invalid CID".to_string())]
 		);
 		assert_eq!(calls(&lookup), 2);
-	}
-
-	#[tokio::test]
-	async fn a_key_that_is_not_a_digest_is_a_miss_and_the_end() {
-		let lookup = scripted(vec![]);
-		assert_eq!(events(&lookup, &[9]).await, vec![Ok(None)]);
 	}
 
 	/// The bitswap spec makes only the code stable, and `Fail` covers data that is not held yet,

@@ -43,6 +43,7 @@ class CoinageCoinsView(context: Context) : FrameLayout(context), TextureView.Sur
     private var gridBudget = DEFAULT_GRID_BUDGET
     private var focus: CoinageArrangement.Focus? = null
     private var window = 0f
+    private var coinSet = CoinageScene.CoinSet.SHIPPED
 
     var onMetrics: ((CoinageCoinsMetrics) -> Unit)? = null
 
@@ -61,7 +62,8 @@ class CoinageCoinsView(context: Context) : FrameLayout(context), TextureView.Sur
         gridBudget: Float,
         surfaceHeight: Int,
         focus: CoinageArrangement.Focus?,
-        window: Float
+        window: Float,
+        coinSet: CoinageScene.CoinSet
     ) {
         this.coins = coins
         this.isExpanded = isExpanded
@@ -70,6 +72,7 @@ class CoinageCoinsView(context: Context) : FrameLayout(context), TextureView.Sur
         this.gridBudget = gridBudget
         this.focus = focus
         this.window = window
+        this.coinSet = coinSet
 
         if (texture.layoutParams.height != surfaceHeight) {
             texture.layoutParams = texture.layoutParams.apply { height = surfaceHeight }
@@ -84,7 +87,7 @@ class CoinageCoinsView(context: Context) : FrameLayout(context), TextureView.Sur
     }
 
     private fun push() {
-        thread?.update(coins, isExpanded, areaWidth, stripHeight, gridBudget, focus, window)
+        thread?.update(coins, isExpanded, areaWidth, stripHeight, gridBudget, focus, window, coinSet)
     }
 
     override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {

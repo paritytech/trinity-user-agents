@@ -64,8 +64,20 @@ extension ExtrinsicVersionProvider: ExtrinsicVersionProviding {
     }
 }
 
+extension ExtrinsicVersionProvider {
+    /// The remote-config extension version of each chain that takes V5 general transactions. It leaves
+    /// out the signed fallback to V4, which needs the runtime pipeline of the transaction being built.
+    func generalTransactionExtensionVersions() -> [ChainId: UInt8] {
+        Self.generalTransactionChains.reduce(into: [:]) { versions, chainId in
+            let version = extensionVersionProvider.getExtensionVersion(for: .V5, chainId: chainId)
+            guard case let .V5(extensionVersion) = version else { return }
+            versions[chainId] = extensionVersion
+        }
+    }
+}
+
 private extension ExtrinsicVersionProvider {
     static var generalTransactionChains: Set<ChainId> {
-        [AppConfig.Chains.usernameChain, AppConfig.Chains.assethubChain]
+        [AppConfig.Chains.peopleChain, AppConfig.Chains.assethubChain]
     }
 }

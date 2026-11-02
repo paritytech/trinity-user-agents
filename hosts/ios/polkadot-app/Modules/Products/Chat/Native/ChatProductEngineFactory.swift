@@ -40,6 +40,7 @@ enum ChatProductEngineFactory {
                 urlSchemeHandlers: [
                     ProductScriptSchemeHandler.scheme: schemeHandler
                 ],
+                settings: WKWebViewJSEngineSettings(applicationNameForUserAgent: ProductUserAgent.applicationName),
                 logger: logger
             )
         }

@@ -1,5 +1,6 @@
 import Foundation
 import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import SubstrateSdk
 import Testing
 @testable import Coinage
@@ -150,7 +151,7 @@ struct ExternalPaymentServiceTests {
             productId: payment.productId,
             paymentId: payment.paymentId
         )
-        let received = try await withTimeout(.seconds(5)) {
+        let received = try await withTimeout(.hangGuard) {
             var received: [ExternalPaymentStatus] = []
             for try await status in statuses {
                 received.append(status)

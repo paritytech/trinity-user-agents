@@ -1,6 +1,6 @@
 import BigInt
-import IssueMonitoring
 import Foundation
+import IssueMonitoring
 import StructuredConcurrency
 import StructuredConcurrencyTestSupport
 import SubstrateSdk
@@ -24,6 +24,7 @@ struct PGASAccountProvisionerTests {
         allowance.balances = balances
         provisioner = PGASAccountProvisioner(
             allowanceManager: allowance,
+            domain: .coinage,
             balanceProvider: balances,
             issueDiagnostics: .make(flow: "pgas-allowance", reporter: NoopIssueReporter()),
             claimTimeout: Self.claimTimeout,
@@ -96,7 +97,7 @@ struct PGASAccountProvisionerTests {
             try await provisioner.ensureCovers(account: Self.account, required: Self.required)
         }
         defer { attempt.cancel() }
-        try await withTimeout(.seconds(5)) { [clock] in await clock.resumeSleep(for: Self.claimTimeout) }
+        try await withTimeout(.hangGuard) { [clock] in await clock.resumeSleep(for: Self.claimTimeout) }
 
         await #expect(throws: PGASClaimTimeoutError.self) { try await attempt.value }
     }
@@ -131,7 +132,8 @@ private final class FakeAllowanceManager: AllowanceManaging, @unchecked Sendable
     func allocate(
         accountId: AccountId,
         policy: OnExistingAllowancePolicy,
-        priority _: AllowanceRecord.Priority
+        priority _: AllowanceRecord.Priority,
+        domain _: AllowanceRecord.Domain
     ) async throws {
         claims.append((accountId, policy))
         if let error { throw error }

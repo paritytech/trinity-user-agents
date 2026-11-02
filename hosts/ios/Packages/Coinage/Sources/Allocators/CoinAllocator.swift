@@ -12,15 +12,18 @@ protocol CoinAllocating: Actor {
 /// previous installation's coins never move this installation's counter. The store reserves each item
 /// atomically, so concurrent mints never collide.
 actor CoinAllocator: CoinAllocating {
+    private let installationProvider: any CoinageBackedUpInstallationProviding
     private let installationStore: any CoinageCurrentInstallationStoring
     private let coinRepository: AnyDataProviderRepository<Coin>
     private let keyFactory: any CoinKeyDeriving
 
     init(
+        installationProvider: any CoinageBackedUpInstallationProviding,
         installationStore: any CoinageCurrentInstallationStoring,
         coinRepository: AnyDataProviderRepository<Coin>,
         keyFactory: any CoinKeyDeriving
     ) {
+        self.installationProvider = installationProvider
         self.installationStore = installationStore
         self.coinRepository = coinRepository
         self.keyFactory = keyFactory
@@ -45,7 +48,7 @@ actor CoinAllocator: CoinAllocating {
 
 private extension CoinAllocator {
     func nextIndex() async throws -> CoinageKeyIndex {
-        let installation = try await installationStore.getOrCreateCurrent()
+        let installation = try await installationProvider.backedUpInstallation()
         return try await CoinageKeyIndex(installation: installation, item: installationStore.nextCoinItem())
     }
 }

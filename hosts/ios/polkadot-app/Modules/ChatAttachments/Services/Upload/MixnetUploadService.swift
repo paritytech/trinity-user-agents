@@ -109,10 +109,10 @@ private extension MixnetUploadService {
         let fileLoader = try loaderFactory.makeLoader(for: credentials.node)
         let recipients = try FileRecipients(ticket: credentials.ticket)
 
-        let proofWallet = try await senderProvider.getWallet(for: uploadData.chatId)
+        let proofWallet = try await senderProvider.getWallet()
 
         let accountId = try proofWallet.getRawPublicKey()
-        try await allowanceManager.ensureCanSubmit(accountId: accountId, priority: .normal)
+        try await allowanceManager.ensureCanSubmit(accountId: accountId, priority: .normal, domain: .chat)
 
         let sender = try proofWallet.getMultiSigner()
         let proofProvider = SenderProofProvider(sender: sender) { data in

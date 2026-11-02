@@ -1,5 +1,34 @@
-<resources>
-    <style name="Theme.PolkadotApp.App" parent="Theme.PolkadotApp.Dark" />
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.PolkadotApp.App" parent="Theme.PolkadotApp.Dark">
+        <item name="android:windowSplashScreenBackground" tools:targetApi="31">#FF0B0C0F</item>
+        <item name="android:windowSplashScreenAnimatedIcon" tools:targetApi="31">@drawable/splash_icon</item>
+        <item name="splash_mark">#FFF4F4F5</item>
+    </style>
+
+    <style name="Theme.PolkadotApp.Splash.Light" parent="Theme.PolkadotApp.App">
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <style name="Theme.PolkadotApp.Splash.BerlinDay" parent="Theme.PolkadotApp.Splash.Light">
+        <item name="android:windowSplashScreenBackground" tools:targetApi="31">#FFF7F7F8</item>
+        <item name="splash_mark">#FF0B0C0F</item>
+    </style>
+
+    <style name="Theme.PolkadotApp.Splash.Lisbon" parent="Theme.PolkadotApp.Splash.Light">
+        <item name="android:windowSplashScreenBackground" tools:targetApi="31">#FFFFEDD5</item>
+        <item name="splash_mark">#FF431407</item>
+    </style>
+
+    <style name="Theme.PolkadotApp.Splash.Malta" parent="Theme.PolkadotApp.Splash.Light">
+        <item name="android:windowSplashScreenBackground" tools:targetApi="31">#FFD1FAE5</item>
+        <item name="splash_mark">#FF022C22</item>
+    </style>
+
+    <style name="Theme.PolkadotApp.Splash.Tokyo" parent="Theme.PolkadotApp.Splash.Light">
+        <item name="android:windowSplashScreenBackground" tools:targetApi="31">#FFFFE4E6</item>
+        <item name="splash_mark">#FF4C0519</item>
+    </style>
 
     <style name="Theme.PolkadotApp" parent="Theme.MaterialComponents.NoActionBar">
         <item name="android:forceDarkAllowed" >false</item>
