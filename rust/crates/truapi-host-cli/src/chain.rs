@@ -226,9 +226,8 @@ impl LightClient {
 		self.provider.connect(genesis_hash).await
 	}
 
-	/// Waits until the light client follows `genesis_hash`, watching the relay
-	/// it syncs through as well; see [`until_ready`]. Connect to the chain first,
-	/// since only a running chain has a lifecycle.
+	/// Waits until the light client follows `genesis_hash`; see [`until_ready`].
+	/// Connect to the chain first, since only a running chain has a lifecycle.
 	async fn synced(&self, genesis_hash: [u8; 32]) -> Result<(), ProviderError> {
 		let tagged = |genesis| {
 			Ok::<_, ProviderError>(
