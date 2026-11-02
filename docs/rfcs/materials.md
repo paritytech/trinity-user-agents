@@ -35,14 +35,6 @@ have no shared definition, so the same material would look different in each ren
 
 ## Approach
 
-The design has five parts:
-
-- The material: a shared format, adopted by reference.
-- The `Materials` node in the render tree.
-- How a host draws a node: fetch, check, translate, fall back, limits and performance.
-- The inputs every host supplies.
-- The capability question.
-
 ### Material
 
 A material is one UTF-8 text file in version 1 of the material format. The format is the
@@ -153,10 +145,9 @@ material by ID, cache first, checks it against the ID and the format, and matche
 count, type and finite value. It then translates and compiles the material for its own platform. Image arguments load
 through the core image loader proposed in [#1800](https://github.com/paritytech/trinity-user-agents/pull/1800).
 
-A node that fails draws its children without its layers, so a product chooses its fallback look by what it puts there,
-such as an `Effect` with `Rainbow`. The rest of the tree draws as usual. While a node's materials or images load, the
-host draws the node's last output if it had one, and its children otherwise. The host logs one code on the device for a
-failure, and the product is not told.
+A node that fails draws its children without its layers, so a product chooses its fallback look. The rest of the tree
+draws as usual. While a node's materials or images load, the host draws the node's last output if it had one, and its
+children otherwise. The host logs one code on the device for a failure, and the product is not told.
 
 Failure codes, by cause:
 
@@ -266,14 +257,10 @@ has materials switched on.
 
 ## Compatibility
 
-- Every existing tree keeps its encoding, `Effect::Rainbow` included, because `Materials` comes after the existing
-  variants.
 - A host built before `Materials` cannot decode a tree that contains it, and fails the stream, so the body shows only
   the product's identity. A product therefore sends materials only to a host that answers yes to the capability
   question.
-- A host built before the `Materials` question cannot decode it and answers an error, which products read as no. Open
-  RFC [#420](https://github.com/paritytech/trinity-user-agents/pull/420) adds its question to `feature_supported` the
-  same way. Each new question takes the next free variant index when it lands, so neither changes the other's.
+- A host built before the `Materials` question cannot decode it and answers an error, which products read as no.
 - `Effect::Rainbow` stays. A product that draws it keeps sending it to hosts that answer no, and sends materials to
   hosts that answer yes.
 - Before version 1 is adopted, the format's reference parser and the host's validation both refuse unknown directives
