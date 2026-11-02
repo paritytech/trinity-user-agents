@@ -90,7 +90,15 @@ to repeat.
 ## 4. Run a session
 
 `assign` hands you a `FundingAssignment`: `intent`, `direction`, `amount`, the chosen `quote`, and `lastUpdate`, the
-last report the core stored, which is where you resume after a restart. Then:
+last report the core stored, which is where you resume after a restart.
+
+Each step is sent in its session's direction: an inbound step as `{ tag: "In", value: step }`, an outbound one as
+`{ tag: "Out", value: step }`. `Failed`, `Details` and `Progress` belong to every session and are sent as they are.
+
+```ts
+report({ tag: "In", value: { tag: "PaymentReceived", value: { finalized: true } } });
+report({ tag: "Out", value: { tag: "Collecting", value: { paymentId, amount } } });
+```
 
 **Inbound**
 
