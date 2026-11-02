@@ -1,6 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_api.domain
 
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 
 /**
  * Where the funding products the app launches from its own UI are served, unlike the

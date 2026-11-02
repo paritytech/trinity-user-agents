@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.database.model
 
 import androidx.room.Entity
+import uniffi.truapi.ProductId
 
 /**
  * The newest face tree drawn for a Pocket card, kept so the card wears it offline and at the next
@@ -14,7 +15,7 @@ import androidx.room.Entity
     primaryKeys = ["productId", "cardId"],
 )
 class PocketCardFaceLocal(
-    val productId: String,
+    val productId: ProductId,
     val cardId: String,
     val face: ByteArray,
 )

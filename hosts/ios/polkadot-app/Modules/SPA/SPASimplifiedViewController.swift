@@ -2,6 +2,7 @@ import DesignSystem
 import FoundationExt
 import PolkadotUI
 import Products
+import func TrUAPIHost.productContentScheme
 import UIKit
 import UIKitExt
 import WebKit
@@ -56,7 +57,7 @@ final class SPASimplifiedViewController: UIViewController, ViewHolder {
 
         webViewConfiguration.setURLSchemeHandler(
             schemeHandlerProxy,
-            forURLScheme: ProductScriptSchemeHandler.scheme
+            forURLScheme: productContentScheme()
         )
         view = SPASimplifiedViewLayout(webViewConfiguration: webViewConfiguration)
     }
@@ -73,6 +74,14 @@ final class SPASimplifiedViewController: UIViewController, ViewHolder {
         super.viewWillAppear(animated)
 
         setupWebViewLayout()
+    }
+
+    override func viewIsAppearing(_ animated: Bool) {
+        super.viewIsAppearing(animated)
+
+        guard isEnteringScreen else { return }
+
+        presenter.didBecomeVisible()
     }
 
     override func updateContentUnavailableConfiguration(

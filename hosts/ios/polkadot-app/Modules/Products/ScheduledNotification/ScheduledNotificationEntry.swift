@@ -1,8 +1,9 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Operation_iOS
 
 struct ScheduledNotificationEntry: Equatable {
-    let productId: String
+    let productId: ProductId
     let notificationId: UInt32
 
     var unIdentifier: String {
