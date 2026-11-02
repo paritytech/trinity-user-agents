@@ -87,6 +87,13 @@ enum TrUAPIActionPromptViewFactory {
                 fromPurse: String(fromPurse),
                 owner: owner
             ))
+        case .refund:
+            String(localized: .Products.actionNftPurseDrainToRefundBody(
+                productId: productId,
+                itemCount: String(itemCount),
+                fromPurse: String(fromPurse),
+                owner: owner
+            ))
         }
     }
 }

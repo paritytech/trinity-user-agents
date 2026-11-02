@@ -8,13 +8,12 @@ use truapi::latest::{
 use super::{
 	NftPurses,
 	cheque::{CorruptedCheque, cheque_id_for, open_cheque},
-	dao,
 	operation::operation_key,
 	receive_key::ReceiveSecretError,
 };
 use crate::{
 	host_logic::x25519_seal::X25519PrivateKey,
-	nft::{ImportRequest, PurseId, StartImportError},
+	nft::{ImportRequest, OperationKey, PurseId, StartImportError},
 	platform::ProductId,
 	runtime::AuthorityError,
 	store::DbError,
@@ -65,6 +64,12 @@ pub enum DepositRefusal {
 	Db(#[from] DbError),
 }
 
+/// The operation `depositor`'s deposit of cheque `id` is registered as: the
+/// cheque id is its idempotency key.
+pub fn deposit_operation(depositor: &ProductId, id: &NftPurseChequeId) -> OperationKey {
+	operation_key(depositor, NftPurseIdempotencyKey(id.0))
+}
+
 impl NftPurses {
 	/// Opens `cheque` and starts moving its items into `to`. Returns once the
 	/// moves are registered under the cheque id, scoped to `depositor`. An
@@ -79,7 +84,7 @@ impl NftPurses {
 		self.validate_deposit(depositor, cheque, to).await?;
 		let secret = self.recipient_secret(&cheque.recipient).await?;
 		let keys = open_cheque(&secret, cheque)?;
-		let operation = operation_key(depositor, NftPurseIdempotencyKey(cheque.id.0));
+		let operation = deposit_operation(depositor, &cheque.id);
 		self.ledger.start_imports(ImportRequest { operation, into: to, keys }).await?;
 		Ok(())
 	}
@@ -117,14 +122,12 @@ impl NftPurses {
 		if cheque.id != derived {
 			return Err(DepositRefusal::ChequeIdMismatch { id: cheque.id, derived });
 		}
-		let record = self
-			.db
-			.read(move |conn| dao::find_receive_key(conn, &key))
+		let receive_key_purse = self
+			.receive_key_purse(depositor, key)
 			.await?
-			.filter(|record| record.creator == depositor.as_str())
 			.ok_or(DepositRefusal::UnknownReceiveKey(key))?;
-		if record.purse != to {
-			return Err(DepositRefusal::PurseMismatch { receive_key_purse: record.purse, to });
+		if receive_key_purse != to {
+			return Err(DepositRefusal::PurseMismatch { receive_key_purse, to });
 		}
 		Ok(())
 	}

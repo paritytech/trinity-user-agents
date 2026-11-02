@@ -88,6 +88,9 @@ sealed interface TrUAPIConfirmation {
 
             /** A cheque the product hands to another user. */
             data object Cheque : Destination
+
+            /** The keys of a deposited cheque, back to its sender. */
+            data object Refund : Destination
         }
     }
 }

@@ -64,6 +64,18 @@ pub enum StartOperationError {
 	/// The item is handed off or spent by a live transaction.
 	#[error("item {} is in use", hex::encode(.0.0))]
 	ItemUnavailable(ItemKey),
+	/// No key was handed off under the tag.
+	#[error("no key was handed off under this tag")]
+	TagNotFound,
+	/// No operation is registered under the import's key.
+	#[error("no import is registered under this key")]
+	ImportNotFound,
+	/// A move of the import can still land or fail.
+	#[error("the import has moves that are not final yet")]
+	ImportUnsettled,
+	/// Every item the import landed is consumed already.
+	#[error("no item the import landed is idle")]
+	NothingIdle,
 	/// The destination keys could not be allocated.
 	#[error(transparent)]
 	Allocate(#[from] AllocateItemsError),
@@ -148,14 +160,12 @@ pub fn plan_transfers(
 	Ok(sources
 		.into_iter()
 		.zip(destinations)
-		.map(|(IdleItem { key: source, slot, instance }, destination)| {
-			let signed_state_nonce = None;
+		.map(|(IdleItem { key: source, slot }, destination)| {
 			TransferParams {
 				source,
 				signer: TransferSigner::Derived(slot),
-				instance: Some(instance),
 				destination,
-				signed_state_nonce,
+				submitted_attempt: None,
 				give_up_after,
 			}
 			.into()
@@ -214,10 +224,10 @@ pub fn allocate_destinations(
 /// position of `items`.
 pub fn record_inputs(
 	tx: &Transaction<'_>,
-	items: &BTreeSet<ItemKey>,
+	items: impl IntoIterator<Item = ItemKey>,
 	ids: &[DurableTxId],
 ) -> Result<(), StartOperationError> {
-	let inputs: Vec<_> = items.iter().copied().zip(ids.iter().copied()).collect();
+	let inputs: Vec<_> = items.into_iter().zip(ids.iter().copied()).collect();
 	Ok(dao::insert_inputs(tx, &inputs)?)
 }
 
@@ -263,6 +273,20 @@ impl From<DurableTxStatus> for TransferState {
 /// is an error: registration writes them with every transfer.
 pub fn progress_of(transfers: Vec<DurableTxState>) -> Result<Vec<TransferProgress>, DbError> {
 	transfers.into_iter().map(transfer_progress).collect()
+}
+
+/// The latest of `transfers` for each key they consume, in the order those
+/// latest moves were registered. A later move of a key replaces an earlier
+/// one, as when a repeated revoke retries a reclaim that failed.
+pub fn latest_per_source(transfers: Vec<TransferProgress>) -> Vec<TransferProgress> {
+	let mut seen = BTreeSet::new();
+	let mut latest: Vec<_> = transfers
+		.into_iter()
+		.rev()
+		.filter(|transfer| seen.insert(transfer.consumed))
+		.collect();
+	latest.reverse();
+	latest
 }
 
 fn transfer_progress(state: DurableTxState) -> Result<TransferProgress, DbError> {
@@ -504,6 +528,25 @@ mod tests {
 		let purses = purses_holding(1);
 
 		assert_eq!(transfers_of(&purses, &operation(9)), vec![]);
+	}
+
+	/// A retried move replaces the failure before it, so the operation's
+	/// status follows the retry while other keys keep their only move.
+	#[test]
+	fn only_the_latest_move_of_each_key_is_kept_in_registration_order() {
+		let progress = |consumed: u8, state: TransferState| TransferProgress {
+			consumed: ItemKey([consumed; 32]),
+			minted: ItemKey([0xa0 + consumed; 32]),
+			tx_hash: None,
+			state,
+		};
+		let first_failed = progress(1, TransferState::Failed);
+		let other = progress(2, TransferState::Waiting);
+		let retried = progress(1, TransferState::Landed { finalized: true });
+
+		let latest = latest_per_source(vec![first_failed, other, retried]);
+
+		assert_eq!(latest, vec![other, retried]);
 	}
 
 	#[test]
