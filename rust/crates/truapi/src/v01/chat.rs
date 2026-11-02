@@ -444,9 +444,33 @@ pub struct ChatPreviewReaction {
 	/// `true`: the user reacted. `false`: the contact of the room did.
 	pub by_user: bool,
 	/// The message the reaction is on, when the product still has it.
-	pub message: Option<ChatMessage>,
+	pub message: Option<ChatPreviewMessage>,
 	/// `true`: the newest event is the removal of this reaction.
 	pub removed: bool,
+}
+
+/// A message as the chat list shows it in the preview line of a room. It has
+/// no reactions: the preview shows them through `last_reaction` and
+/// `unseen_reactions`.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct ChatPreviewMessage {
+	/// Identifier the product chose, unique in the room.
+	pub message_id: String,
+	/// Who wrote the message.
+	pub origin: ChatMessageOrigin,
+	/// Milliseconds since the Unix epoch.
+	pub timestamp: u64,
+	/// What the message says.
+	pub body: ChatMessageBody,
+	/// Where the message is on its way.
+	pub status: ChatMessageStatus,
+	/// The id of the message this one replies to.
+	pub reply_to: Option<String>,
+	/// Milliseconds since the Unix epoch of the last edit.
+	pub edited_at: Option<u64>,
+	/// `true`: the message is the welcome message of a chat request.
+	pub request: bool,
 }
 
 /// How a room shows in the chat list. A field at `None` keeps the host
@@ -462,7 +486,7 @@ pub struct ChatRoomPreview {
 	/// The newest message the user sees in the room. The host makes the
 	/// preview line from it. `None` lets the host use the newest message it
 	/// holds.
-	pub last_message: Option<ChatMessage>,
+	pub last_message: Option<ChatPreviewMessage>,
 	/// The newest event of the room, when it is a reaction newer than
 	/// `last_message`.
 	pub last_reaction: Option<ChatPreviewReaction>,
