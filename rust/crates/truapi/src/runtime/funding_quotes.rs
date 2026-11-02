@@ -400,7 +400,21 @@ impl RuntimeServices {
 				let asked = {
 					let ask = ask.clone();
 					let provider_id = provider_id.to_string();
-					async move { funding.connected_link(&provider_id).await.quote(ask).await }
+					// A worker the host is stopping keeps its link until its
+					// connection closes, and the one started in its place
+					// connects soon after: a quote that fails on a link is
+					// asked again on the next, within the same deadline.
+					async move {
+						let mut failed = None;
+						loop {
+							let link =
+								funding.connected_link_besides(&provider_id, failed.as_ref()).await;
+							if let Some(answer) = link.quote(ask.clone()).await {
+								return Some(answer);
+							}
+							failed = Some(link);
+						}
+					}
 				};
 				let timeout = futures_timer::Delay::new(deadline);
 				let answer = match future::select(Box::pin(asked), timeout).await {
