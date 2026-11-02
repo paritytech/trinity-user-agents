@@ -8899,21 +8899,29 @@ fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: 
 
 /// A provider's worker connection, signed in.
 fn provider_worker(services: &Arc<RuntimeServices>, provider_id: &str) -> ProductRuntimeHost {
+	let host = signed_out_provider_worker(services, provider_id);
+	install_pairing_session(&host, session_info());
+	host
+}
+
+/// As [`provider_worker`], before the user signs in.
+fn signed_out_provider_worker(
+	services: &Arc<RuntimeServices>,
+	provider_id: &str,
+) -> ProductRuntimeHost {
 	let (host_config, _) = runtime_config(provider_id);
 	let product = ProductContext::new_with_execution(
 		ProductId::for_test(provider_id),
 		crate::platform::ExecutableKind::Worker,
 	);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
-	let host = ProductRuntimeHost::from_services(
+	ProductRuntimeHost::from_services(
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(services),
 		pairing_host.clone(),
 		pairing_host.session().clone(),
 		product,
-	);
-	install_pairing_session(&host, session_info());
-	host
+	)
 }
 
 /// A call a provider's worker received from the core.
@@ -11621,5 +11629,48 @@ fn two_chains_failing_alike_are_counted_apart() {
 		crate::runtime::count_failure(&mut reported, asset_hub, now, quiet),
 		1,
 		"one chain's failures were answered by another chain's count",
+	);
+}
+
+// A provider's own calls are refused while no user session is current, so
+// a worker that handshakes before sign-in is handed its sessions only once
+// one is.
+#[test]
+fn a_worker_handshake_waits_for_a_session_before_its_sessions_are_handed_over() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let provider_id = "ramp.dot";
+	let host = signed_out_provider_worker(&services, provider_id);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(&intent, provider_id))
+			.expect("selected")
+	);
+	let link = Arc::new(ScriptedProviderLink::default());
+	services.funding().link(provider_id, link.clone());
+
+	futures::executor::block_on(System::handshake(
+		&host,
+		&CallContext::default(),
+		truapi::versioned::system::HostHandshakeRequest::V1(v01::HostHandshakeRequest {
+			codec_version: truapi::WIRE_CODEC_VERSION,
+		}),
+	))
+	.expect("handshake");
+	assert_eq!(link.calls(1), Vec::new(), "handed its sessions without a session");
+
+	install_pairing_session(&host, session_info());
+	assert!(
+		matches!(link.calls(1).first(), Some(ProviderCallSeen::Assign(assignment)) if assignment.intent == intent),
+		"not handed its session once signed in"
 	);
 }
