@@ -24,6 +24,7 @@ import {
   toHex,
   x25519Agree,
   x25519Pair,
+  xwingPair,
 } from "../../../src/invitations/sealing.js";
 import {
   WalletIdentityAuth,
@@ -203,7 +204,7 @@ const nativeIdentityProof = (
 describe("a request and its reply under wallet keys", () => {
   const PRODUCT = { id: "chat.paseo", name: "Chat" };
   const PAYLOAD = "0x0102";
-  const replyKey = x25519Pair(digest("reply", "one"));
+  const replyKey = xwingPair(digest("reply", "one"));
   const request = (overrides: Partial<RequestContext> = {}) =>
     sealRequest(
       authOf(ALICE),
@@ -248,7 +249,8 @@ describe("a request and its reply under wallet keys", () => {
           productId: PRODUCT.id,
           requestId: sent.context.requestId,
           requestDigest: requestDigest(sent.context, PAYLOAD),
-          replyKey,
+          replyKey: toHex(replyKey.public),
+          replySecret: replyKey.secret,
         },
         reply,
       ),
@@ -304,7 +306,7 @@ describe("a request and its reply under wallet keys", () => {
       { requestId: toHex(digest("id", "two").slice(0, 16)) },
       { createdAt: 3 },
       { returnRoute: "route:2" },
-      { replyKey: toHex(x25519Pair(digest("reply", "two")).public) },
+      { replyKey: toHex(xwingPair(digest("reply", "two")).public) },
     ];
     for (const change of [...changes, { payload: "0x09" }]) {
       const changed =

@@ -742,29 +742,44 @@ agreed API.
   - Statuses are `waiting`, `paused`, `completed` and `cancelled`. A request has no deadline: it is pending (`waiting`,
     or `paused` while the host cannot keep it posted) until completed or cancelled. There is no delivered, declined,
     accepted or expired status for the sender.
-- **Who owns what.** The sender's host makes the request id and a per-request reply key pair and keeps the reply key's
-  secret. Its delivery (the `HostDelivery` port) chooses both routes: it reaches the recipient by their identity, and it
-  gives the sender a return route for each request, which the sender's host watches before it posts and binds into the
-  authenticated request. The recipient's host keeps a request only when its own delivery can reach the sender on that
-  route, and posts its reply there, never on a route from the payload. The sender's host tries a reply that arrives on a
-  route against each of its requests on that route, and keeps it for the one whose reply key opens it; a post that opens
-  for none is someone else's and is dropped without a log line. The request service does not read a route. Products
-  never see a request id, route, reply key, evidence or anyone's identity; the recipient's product does not get the
-  purpose.
-- **What is real here.** X25519 + ChaCha20-Poly1305 sealing, and the host proof of the Establish Connection design, v3's
-  `AuthEvidence` (`kind`, a 32-byte `identityMac`, a 64-byte sr25519 `messageSignature`), made with the user's wallet
-  keys (`src/invitations/wallet-auth.ts`). As the design asks, it adapts native chat's identity authentication: the MAC
-  is BLAKE2b-256 keyed with the X25519 secret of the two chat keys, and the identity account signs, as the native app's
-  UID account does. A request is sealed to the recipient's published chat key, the design's inbox key. Before it proves
-  anything, the host checks the keys its phrase derives against the identity account and chat key the core reports for
-  the session, and that the directory publishes that chat key for that account (in the demo, the fixture directory
-  below); otherwise the request service stays off and says why. The sender identity is checked against the chat key
-  published for it, never a key a request names. A request's evidence covers the version, both identities, the product,
-  the purpose, the request id, the times, the return route, the public reply key and the exact payload. A reply's covers
-  the version, both identities, the product, the request id, the digest of the exact request and the exact payload. Kind
-  and identity order keep one direction's evidence from checking as the other's. The sender's host checks a reply
-  against the contact it chose, not a key the reply names. A refused reply does not use up the request. Contact Chat's
-  own check is `simple-text/1`'s: the response repeats the invitation's random challenge.
+- **Who owns what.** The sender's host makes the request id and a per-request reply key pair, keeps the reply key's
+  secret in its storage before it first posts the request, and drops it when the request is completed or cancelled,
+  after which no reply opens. Dropping it from browser storage is not a secure erase. Each tab takes in the other tabs'
+  closes and new requests before it writes the list, but writes are not atomic across tabs, so a write that has not
+  reached a tab's storage yet can still be undone. Its delivery (the `HostDelivery` port) chooses both routes: it
+  reaches the recipient by their identity, and it gives the sender a return route for each request, which the sender's
+  host watches before it posts and binds into the authenticated request. The recipient's host keeps a request only when
+  its own delivery can reach the sender on that route, and posts its reply there, never on a route from the payload. The
+  sender's host tries a reply that arrives on a route against each of its requests on that route, and keeps it for the
+  one whose reply key opens it; a post that opens for none is someone else's and is dropped without a log line. The
+  request service does not read a route. Products never see a request id, route, reply key, evidence or anyone's
+  identity; the recipient's product does not get the purpose.
+- **What is real here.** Sealing with HKDF-SHA256 and ChaCha20-Poly1305 (`src/invitations/sealing.ts`). A request is
+  sealed with X25519, classical. A reply is sealed to the reply key the request carries, and the key's exact length says
+  how (`src/invitations/binding.ts`): 1,216 bytes, the X-Wing KEM (X25519 with ML-KEM-768, draft-11, from
+  `@noble/post-quantum`), hybrid post-quantum, which new requests use by default; 32 bytes, X25519, classical, which a
+  developer may choose for new requests under More → **Reply key for new requests**. A key of any other length is
+  refused. The recipient needs no published post-quantum key, and the request and the host proof stay classical with
+  either suite. The reply key is in the request's authenticated context and kept with it, so the recipient's host seals
+  the reply with that key's suite, the sender's host opens it only with that suite, and changing the choice changes no
+  request already sent. The KEM is checked against the draft's test vectors. Payloads travel as hex, so each payload
+  byte takes two. With the test fixture's context, a sealed request takes 3,153 bytes (X-Wing) or 785 (X25519) plus
+  twice the payload, and a reply 1,772 or 683, so within one 10,240-byte notification a request with a short purpose
+  carries at most 3,543 or 4,727 payload bytes, and a reply 4,234 or 4,778. There is also the host proof of the
+  Establish Connection design, v3's `AuthEvidence` (`kind`, a 32-byte `identityMac`, a 64-byte sr25519
+  `messageSignature`), made with the user's wallet keys (`src/invitations/wallet-auth.ts`). As the design asks, it
+  adapts native chat's identity authentication: the MAC is BLAKE2b-256 keyed with the X25519 secret of the two chat
+  keys, and the identity account signs, as the native app's UID account does. A request is sealed to the recipient's
+  published chat key, the design's inbox key. Before it proves anything, the host checks the keys its phrase derives
+  against the identity account and chat key the core reports for the session, and that the directory publishes that chat
+  key for that account (in the demo, the fixture directory below); otherwise the request service stays off and says why.
+  The sender identity is checked against the chat key published for it, never a key a request names. A request's
+  evidence covers the version, both identities, the product, the purpose, the request id, the times, the return route,
+  the public reply key and the exact payload. A reply's covers the version, both identities, the product, the request
+  id, the digest of the exact request and the exact payload. Kind and identity order keep one direction's evidence from
+  checking as the other's. The sender's host checks a reply against the contact it chose, not a key the reply names. A
+  refused reply does not use up the request. Contact Chat's own check is `simple-text/1`'s: the response repeats the
+  invitation's random challenge.
 - **What is simulated, and not the design's answer.**
   - The contact handle is the core's, but whom it names to the host comes from the fixture directory: the host mints
     handles (`contactHandles`) for every other demo user's session account and names a handle by that index. A name is
@@ -914,8 +929,8 @@ it are five tabs:
   state, Close, Reset its data, What it may use, Details), and Workers.
 - **Preview:** the app's size and its frame, described below.
 - **Inspector:** the Activity view, the TrUAPI traces, the Workers view, the Statements view and the Chat view.
-- **More:** Versions, and the dev server's own controls (the invitation demo, Contact Chat for this wallet and sample
-  Inbox items).
+- **More:** Versions, and the dev server's own controls (the invitation demo, Contact Chat for this wallet, Contact Chat
+  delivery, the reply key for new requests and sample Inbox items).
 
 **Search field.** The Docklet's middle button, the Pill, opens a card with one field, **Find a person or app**
 (`src/app/search-card.ts`, `src/app/address-recents.ts`). Typing only edits the text and lists suggestions; it opens

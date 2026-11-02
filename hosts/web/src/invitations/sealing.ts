@@ -3,13 +3,22 @@ import { x25519 } from "@noble/curves/ed25519.js";
 import { blake2b } from "@noble/hashes/blake2.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256 } from "@noble/hashes/sha2.js";
+import { ml_kem768_x25519 as xwing } from "@noble/post-quantum/hybrid.js";
 
 /**
- * PROTOTYPE, CLASSICAL. Sealing to a public key and hashing with domain
- * separation, from existing primitives: X25519, HKDF-SHA256 and
- * ChaCha20-Poly1305, and BLAKE2b-256. It lets the invitation prototype carry
- * real ciphertext and real bindings. It is not the design's suite: no
- * post-quantum key, no chosen envelope or padding.
+ * PROTOTYPE. Sealing to a public key and hashing with domain separation,
+ * from existing primitives: BLAKE2b-256, HKDF-SHA256 and ChaCha20-Poly1305,
+ * with one of two key exchanges:
+ *
+ * - {@link sealTo}, classical: X25519. Requests are sealed this way, to the
+ *   recipient's published chat key, and replies to an X25519 reply key.
+ * - {@link sealToXWing}, hybrid post-quantum: the X-Wing KEM (X25519 with
+ *   ML-KEM-768, draft-connolly-cfrg-xwing-kem-11) from
+ *   `@noble/post-quantum`. Replies to an X-Wing reply key are sealed this way.
+ *   A reply key is made for one request by the requester's host.
+ *
+ * Neither authenticates the sender; the evidence inside the envelope does.
+ * No padding is chosen yet.
  */
 
 /** Random bytes. Tests pass a fixed source so output is repeatable. */
@@ -147,6 +156,98 @@ export function openSealedWith(
   try {
     const key = sealKey(agree(ephemeral), ephemeral, recipientPublic, purpose);
     return chacha20poly1305(key, NONCE).decrypt(sealed.subarray(32));
+  } catch {
+    return null;
+  }
+}
+
+/** X-Wing sizes, from the draft's section 5.1. */
+export const XWING_PUBLIC_BYTES = 1216;
+const XWING_CIPHERTEXT_BYTES = 1120;
+
+/**
+ * First byte of an {@link sealToXWing} envelope: the suite, X-Wing with
+ * HKDF-SHA256 and ChaCha20-Poly1305. Also bound into the key and the AEAD.
+ */
+const XWING_SUITE = 1;
+const AEAD_TAG_BYTES = 16;
+
+/** What {@link sealToXWing} adds to the plaintext. */
+export const XWING_SEAL_OVERHEAD = 1 + XWING_CIPHERTEXT_BYTES + AEAD_TAG_BYTES;
+
+/** An X-Wing key pair. `secret` is the 32-byte decapsulation key seed. */
+export interface XWingPair {
+  secret: Uint8Array;
+  public: Uint8Array;
+}
+
+/** The X-Wing pair of a 32-byte secret seed. */
+export function xwingPair(secret: Uint8Array): XWingPair {
+  const { secretKey, publicKey } = xwing.keygen(secret);
+  return { secret: secretKey, public: publicKey };
+}
+
+/**
+ * Whether `key` is an X-Wing public key that encapsulation accepts: its
+ * length, and the ML-KEM encapsulation key check of FIPS 203 section 7.2.
+ */
+export function isXWingPublic(key: Uint8Array): boolean {
+  if (key.length !== XWING_PUBLIC_BYTES) return false;
+  try {
+    xwing.encapsulate(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const xwingKey = (shared: Uint8Array, header: Uint8Array, purpose: string) =>
+  hkdf(sha256, shared, undefined, concat(header, utf8(purpose)), 32);
+
+/**
+ * Seal `plaintext` so only the holder of the X-Wing `recipient`'s secret
+ * opens it: `suite (1) || X-Wing ciphertext (1,120) || ciphertext || tag
+ * (16)`. The X-Wing shared secret is never sent; a key derived from it and
+ * `purpose` encrypts. Each seal encapsulates afresh, so the nonce is fixed.
+ * Throws when `recipient` is not {@link isXWingPublic}.
+ */
+export function sealToXWing(
+  recipient: Uint8Array,
+  plaintext: Uint8Array,
+  purpose: string,
+  random: RandomBytes,
+): Uint8Array {
+  const header = Uint8Array.of(XWING_SUITE);
+  const { cipherText, sharedSecret } = xwing.encapsulate(recipient, random(64));
+  const key = xwingKey(sharedSecret, header, purpose);
+  return concat(
+    header,
+    cipherText,
+    chacha20poly1305(key, NONCE, header).encrypt(plaintext),
+  );
+}
+
+/**
+ * Open {@link sealToXWing}'s output with the recipient's 32-byte secret, or
+ * null when it does not open: another suite, another key or purpose, or any
+ * byte changed.
+ */
+export function openXWingSealed(
+  secret: Uint8Array,
+  sealed: Uint8Array,
+  purpose: string,
+): Uint8Array | null {
+  if (sealed.length < XWING_SEAL_OVERHEAD || sealed[0] !== XWING_SUITE)
+    return null;
+  const header = sealed.subarray(0, 1);
+  const body = 1 + XWING_CIPHERTEXT_BYTES;
+  try {
+    const shared = xwing.decapsulate(sealed.subarray(1, body), secret);
+    return chacha20poly1305(
+      xwingKey(shared, header, purpose),
+      NONCE,
+      header,
+    ).decrypt(sealed.subarray(body));
   } catch {
     return null;
   }

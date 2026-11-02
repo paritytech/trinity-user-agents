@@ -1,15 +1,18 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import * as sealingModule from "../../../src/invitations/sealing.js";
 import { ChatKeys } from "../../../src/invitations/chat-keys.js";
 import { WalletIdentityAuth } from "../../../src/invitations/wallet-auth.js";
 import { NotificationStore } from "../../../src/notifications/notifications.js";
-import { MemoryStorage } from "../../support/test-support.js";
+import { MemoryStorage, settle } from "../../support/test-support.js";
 import {
   Outbox,
   type OutgoingRequest,
 } from "../../../src/invitations/outbox.js";
 import {
-  REPLY_SEAL,
+  REPLY_SEALS,
   REQUEST_SEAL,
+  requestDigest,
+  sealReply,
   sealRequest,
   type RequestContext,
 } from "../../../src/invitations/binding.js";
@@ -38,8 +41,11 @@ import {
   digest,
   fromHex,
   sealTo,
+  sealToXWing,
   toHex,
   utf8,
+  x25519Pair,
+  xwingPair,
 } from "../../../src/invitations/sealing.js";
 
 /**
@@ -253,7 +259,7 @@ function fromAda(overrides: Partial<RequestContext> = {}) {
       requestId: toHex(cryptoRandom(16)),
       createdAt: START,
       returnRoute: `route:${toHex(cryptoRandom(8))}`,
-      replyKey: toHex(cryptoRandom(32)),
+      replyKey: toHex(xwingPair(cryptoRandom(32)).public),
       ...overrides,
     },
     PAYLOAD,
@@ -297,6 +303,39 @@ describe("the request service, receiving", () => {
     expect(lin.delivery.calls).toEqual([
       `postReply ${context.returnRoute} ${handle}`,
     ]);
+  });
+
+  // A request's key can be the right length and still not sealable to; the
+  // product's call must still get its answer.
+  test("a reply to a reply key that cannot be sealed to fails as Invalid, and nothing is accepted or sent", async () => {
+    const lin = host(LIN);
+    const { handle } = receive(lin, { replyKey: `0x${"00".repeat(32)}` });
+    const accepting = lin.service.requestAccept(handle);
+    accepting.catch(() => {});
+    const result = await lin.product.call({
+      call: "reply",
+      handle,
+      payload: REPLY,
+      open: false,
+    });
+    await expect(accepting).rejects.toThrow(
+      "The request's reply key cannot be sealed to",
+    );
+    expect({
+      result,
+      state: lin.notifications.get(handle)!.state.tag,
+      calls: lin.delivery.calls,
+    }).toEqual({
+      result: {
+        ok: false,
+        reason: "Invalid",
+        detail: expect.stringMatching(
+          /^The request's reply key cannot be sealed to: /,
+        ),
+      },
+      state: "pending",
+      calls: [],
+    });
   });
 
   test("the user's Accept fails, with a reason and nothing sent, when the product refuses, is silent, or is closed", async () => {
@@ -582,10 +621,10 @@ describe("the request service, across tabs and malformed input", () => {
         ada.delivery.receive!.reply(
           item!.context.returnRoute,
           toHex(
-            sealTo(
+            sealToXWing(
               fromHex(item!.context.replyKey),
               utf8(text),
-              REPLY_SEAL,
+              REPLY_SEALS.xwing,
               cryptoRandom,
             ),
           ),
@@ -712,6 +751,118 @@ describe("the request service, sending", () => {
     ]);
   });
 
+  /**
+   * A pending request from Ada to Lin on `route`, as Ada's host keeps it,
+   * with `replySecret` kept for its reply key; and Lin's reply to it.
+   */
+  function kept(
+    route: string,
+    replyKey: { public: Uint8Array; secret: Uint8Array },
+    replySecret = toHex(replyKey.secret),
+  ) {
+    const { context, sealed } = sealRequest(
+      new WalletIdentityAuth(keysOf("ada")),
+      LIN,
+      {
+        product: PRODUCT,
+        purpose: "Chat?",
+        requestId: toHex(cryptoRandom(16)),
+        createdAt: START,
+        returnRoute: route,
+        replyKey: toHex(replyKey.public),
+      },
+      PAYLOAD,
+      cryptoRandom,
+    );
+    const digest = requestDigest(context, PAYLOAD);
+    const item = {
+      handle: toHex(cryptoRandom(16)),
+      to: LIN.id,
+      contact: handleOf(LIN),
+      context,
+      payload: PAYLOAD,
+      digest,
+      sealed,
+      replySecret,
+      replies: [],
+      state: { tag: "waiting" },
+      paused: null,
+    };
+    const reply = sealReply(
+      new WalletIdentityAuth(keysOf("lin")),
+      ADA,
+      { context, digest },
+      REPLY,
+      cryptoRandom,
+    );
+    return { item, reply };
+  }
+
+  const responses = (ada: ReturnType<typeof host>) =>
+    ada.product.received.filter((message) => message.kind === "response");
+
+  // Requests the host kept before X-Wing replies have an X25519 reply key
+  // and nothing else new: the update must not strand them.
+  test("a request kept before the update, with an X25519 reply key, is posted again and its reply opens", async () => {
+    const storage = new MemoryStorage();
+    const { item, reply } = kept("route:9", x25519Pair(cryptoRandom(32)));
+    storage.setItem("ada:sent", JSON.stringify([item]));
+    const ada = host(ADA, { storage });
+    ada.delivery.receive!.reply("route:9", reply);
+    await settle();
+    expect({ calls: ada.delivery.calls, responses: responses(ada) }).toEqual({
+      calls: ["watch route:9", `postRequest ${item.handle}`],
+      responses: [{ kind: "response", handle: item.handle, payload: REPLY }],
+    });
+  });
+
+  // One bad record must not stop the others on its route from opening.
+  test("a kept reply secret that is not 32 bytes of hex opens nothing, and the next request on the route still opens", async () => {
+    const storage = new MemoryStorage();
+    const good = kept("route:9", xwingPair(cryptoRandom(32)));
+    const notHex = kept("route:9", xwingPair(cryptoRandom(32)), "0xzz");
+    const short = kept("route:9", x25519Pair(cryptoRandom(32)), "0x04");
+    storage.setItem(
+      "ada:sent",
+      JSON.stringify([good.item, notHex.item, short.item]),
+    );
+    const ada = host(ADA, { storage });
+    for (const { reply } of [short, notHex, good])
+      ada.delivery.receive!.reply("route:9", reply);
+    await settle();
+    expect(responses(ada)).toEqual([
+      { kind: "response", handle: good.item.handle, payload: REPLY },
+    ]);
+  });
+
+  // Every post on a shared route is tried against every pending request:
+  // a post that is not an X-Wing reply must not cost an encapsulation.
+  test("a post that is not an X-Wing reply runs no ML-KEM key check against a pending X-Wing request", async () => {
+    const ada = host(ADA);
+    await sendTo(ada);
+    const [item] = ada.service.outbox.list();
+    const checks = spyOn(sealingModule, "isXWingPublic");
+    try {
+      for (const post of [
+        toHex(cryptoRandom(2000)),
+        toHex(
+          sealTo(
+            x25519Pair(cryptoRandom(32)).public,
+            utf8("{}"),
+            REPLY_SEALS.x25519,
+            cryptoRandom,
+          ),
+        ),
+      ])
+        ada.delivery.receive!.reply(item!.context.returnRoute, post);
+      await settle();
+      expect(checks).not.toHaveBeenCalled();
+    } finally {
+      checks.mockRestore();
+    }
+    expect(responses(ada)).toEqual([]);
+  });
+
   test("after a restart it watches and posts what still waits, and tells a new product everything", async () => {
     const storage = new MemoryStorage();
     const clock = new Clock();
@@ -824,5 +975,71 @@ describe("the outbox", () => {
       outbox.addReply("0x0a", "0x10"),
       outbox.addReply("0x0b", "0x10"),
     ]).toEqual([true, false]);
+  });
+
+  // The design deletes the reply key after setup: once closed, no later reply opens.
+  test("drops the reply key's secret when a request is completed or cancelled, and keeps it while pending", () => {
+    const storage = new MemoryStorage();
+    const outbox = new Outbox(storage, "sent", () => 5);
+    for (const handle of ["0x0a", "0x0b", "0x0c"]) outbox.add(sent(handle));
+    outbox.addReply("0x0a", "0x10");
+    outbox.close("0x0a", { tag: "completed", at: 5 });
+    outbox.close("0x0b", { tag: "cancelled", at: 5 });
+
+    const secrets = (list: readonly OutgoingRequest[]) =>
+      list.map((item) => [item.handle, item.replySecret]);
+    const stored = JSON.parse(storage.getItem("sent")!) as OutgoingRequest[];
+    const expected = [
+      ["0x0a", null],
+      ["0x0b", null],
+      ["0x0c", "0x04"],
+    ];
+    expect([secrets(outbox.list()), secrets(stored)]).toEqual([
+      expected,
+      expected,
+    ]);
+  });
+
+  // A tab whose list is older than another tab's close must not write the
+  // request back as pending, with its secret, nor drop the other tab's requests.
+  test("a tab that has not read another tab's writes keeps its closes and its new requests", () => {
+    const storage = new MemoryStorage();
+    const first = new Outbox(storage, "sent", () => 5);
+    first.add(sent("0x0a"));
+    const second = new Outbox(storage, "sent", () => 5);
+    first.close("0x0a", { tag: "cancelled", at: 5 });
+    first.add(sent("0x0b"));
+
+    expect([
+      second.setPaused("0x0a", "offline"),
+      second.addReply("0x0a", "0x10"),
+    ]).toEqual([false, false]);
+    second.add(sent("0x0c"));
+    const stored = JSON.parse(storage.getItem("sent")!) as OutgoingRequest[];
+    expect(
+      stored.map((item) => [item.handle, item.state.tag, item.replySecret]),
+    ).toEqual([
+      ["0x0a", "cancelled", null],
+      ["0x0b", "waiting", "0x04"],
+      ["0x0c", "waiting", "0x04"],
+    ]);
+    expect(second.get("0x0a")!.state.tag).toBe("cancelled");
+  });
+
+  test("drops the secret of a closed request it reads back with one, in storage too", () => {
+    const storage = new MemoryStorage();
+    storage.setItem(
+      "sent",
+      JSON.stringify([
+        { ...sent("0x0a"), state: { tag: "completed", at: 4 } },
+        sent("0x0b"),
+      ]),
+    );
+    new Outbox(storage, "sent", () => 5);
+    const kept = JSON.parse(storage.getItem("sent")!) as OutgoingRequest[];
+    expect(kept.map((item) => [item.handle, item.replySecret])).toEqual([
+      ["0x0a", null],
+      ["0x0b", "0x04"],
+    ]);
   });
 });

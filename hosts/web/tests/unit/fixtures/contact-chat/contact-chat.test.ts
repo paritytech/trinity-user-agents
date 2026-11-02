@@ -857,9 +857,10 @@ describe("Contact Chat between two hosts, by contact handle", () => {
       sent.context.requestId.slice(2),
       sent.context.returnRoute,
       sent.context.replyKey.slice(2),
-      sent.replySecret.slice(2),
       received.context.requestId.slice(2),
     ];
+    // Setup completed, so Alice's host dropped the reply key's secret.
+    expect(sent.replySecret).toBeNull();
     for (const side of [alice, bob]) {
       const visible = side.visible().toLowerCase();
       for (const value of hostOnly)
