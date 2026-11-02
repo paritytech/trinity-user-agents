@@ -55,7 +55,7 @@ struct ChatExtensionRoomMetadataTests {
     func aRoomWithARemoteIconShowsTheManifestIcon() {
         let chat = room(icon: "https://example.com/icon.png")
 
-        #expect(chat.peerMetadata(using: StubRegistry(bot: bot)).icon == .product(domain: bot.identifier))
+        #expect(chat.peerMetadata(using: StubRegistry(bot: bot)).icon == bot.peerMetadata.icon)
     }
 }
 
