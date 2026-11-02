@@ -209,20 +209,40 @@ the quote's.
 ### `report`
 
 ```rust
+/// A step of the session, grouped by the direction it belongs to, so a step of the other direction cannot be sent.
 enum FundingUpdate {
-    AwaitingPayment,                                  // In
-    PaymentReceived { finalized: bool, mismatch: Option<FundingReceived> }, // In
-    Converting,                                       // In; Out: once, after release, before Payout
-    Crediting { top_up_id: [u8; 32], amount: u128 },  // In, up to 3
-    Delivered,                                        // In: no more top-ups
-    Collecting { payment_id: [u8; 32], amount: u128 },// Out
-    Failed { reason: FundingFailure },                // before funds move
-    Deposit { deposit: FundingDeposit },              // In, until funds move, outside the order
-    Details { transaction_id: Option<String>, reference: Option<String> }, // any time, outside the order
-    Payout { outcome: FundingPayout },                // Out: once, after release
-    Refunding { top_up_id: [u8; 32], amount: u128 }, // Out: once, after a failed payout or an accepted cancel
-    PayoutRetrying,                                   // Out: after release, before Payout, at each retry
-    Progress { detail: FundingDetail },               // while the provider works on it, outside the order, not kept
+    In(FundingInboundUpdate),
+    Out(FundingOutboundUpdate),
+    /// Ends the session before funds move.
+    Failed { reason: FundingFailure },
+    /// The provider's references, at any time and outside the order.
+    Details { transaction_id: Option<String>, reference: Option<String> },
+    /// What the provider is doing within the step, while it works on the session, outside the order, not kept.
+    Progress { detail: FundingDetail },
+}
+
+enum FundingInboundUpdate {
+    AwaitingPayment,
+    PaymentReceived { finalized: bool, mismatch: Option<FundingReceived> },
+    Converting,
+    /// Up to 3.
+    Crediting { top_up_id: [u8; 32], amount: u128 },
+    /// No more top-ups.
+    Delivered,
+    /// Where and what the user pays, until funds move and outside the order.
+    Deposit { deposit: FundingDeposit },
+}
+
+enum FundingOutboundUpdate {
+    Collecting { payment_id: [u8; 32], amount: u128 },
+    /// Once, after release, before `Payout`.
+    Converting,
+    /// Once, after release.
+    Payout { outcome: FundingPayout },
+    /// Once, after a failed payout or an accepted cancel.
+    Refunding { top_up_id: [u8; 32], amount: u128 },
+    /// After release, before `Payout`, at each retry.
+    PayoutRetrying,
 }
 
 struct FundingDetail { fact: FundingFact, at_ms: Option<u64> }  // at_ms: an age when past, a countdown when due

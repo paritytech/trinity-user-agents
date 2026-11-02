@@ -2166,6 +2166,7 @@ fn unknown_for_good(funds: &StartedFunds, now_ms: u64) -> bool {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::latest::{FundingInboundUpdate, FundingOutboundUpdate};
 
 	use futures::executor::block_on;
 	use parity_scale_codec::Encode;
@@ -2291,7 +2292,10 @@ mod tests {
 			FundingSession { direction: FundingDirection::Out, ..session("fs_out", NOW) };
 		assert!(released.assign("ramp.dot", None, NOW));
 		released.updates.push(crate::host_logic::funding::FundingUpdateRecord {
-			update: FundingUpdate::Collecting { payment_id: [4; 32], amount: 100 },
+			update: FundingUpdate::Out(FundingOutboundUpdate::Collecting {
+				payment_id: [4; 32],
+				amount: 100,
+			}),
 			at_ms: NOW,
 		});
 		assert!(released.settle(100, NOW));
@@ -2312,7 +2316,9 @@ mod tests {
 			NOW + 1,
 			&worker("ramp.dot"),
 			"fs_out",
-			FundingUpdate::Payout { outcome: truapi::latest::FundingPayout::PaidOut },
+			FundingUpdate::Out(FundingOutboundUpdate::Payout {
+				outcome: truapi::latest::FundingPayout::PaidOut,
+			}),
 		))
 		.expect("stored");
 		let after = first_served();
@@ -2384,7 +2390,10 @@ mod tests {
 				NOW,
 				&worker("ramp.dot"),
 				intent,
-				FundingUpdate::Crediting { top_up_id: [1; 32], amount: 100 },
+				FundingUpdate::In(FundingInboundUpdate::Crediting {
+					top_up_id: [1; 32],
+					amount: 100,
+				}),
 			))
 			.expect("stored")
 		};
@@ -2422,7 +2431,10 @@ mod tests {
 			withdrawal
 				.report(
 					"ramp.dot",
-					FundingUpdate::Collecting { payment_id: [4; 32], amount: 80 },
+					FundingUpdate::Out(FundingOutboundUpdate::Collecting {
+						payment_id: [4; 32],
+						amount: 80,
+					}),
 					|id| *id,
 					NOW,
 				)
@@ -2430,7 +2442,12 @@ mod tests {
 			assert!(withdrawal.settle(80, NOW));
 			if let Some(outcome) = payout {
 				withdrawal
-					.report("ramp.dot", FundingUpdate::Payout { outcome }, |id| *id, NOW)
+					.report(
+						"ramp.dot",
+						FundingUpdate::Out(FundingOutboundUpdate::Payout { outcome }),
+						|id| *id,
+						NOW,
+					)
 					.expect("payout");
 			}
 			withdrawal
@@ -2486,7 +2503,8 @@ mod tests {
 		let again = record(&registry, "ramp.dot", "fs_b", host_id, 100);
 		let unserved = record(&registry, "ramp.dot", "fs_c", host_id, 100);
 		block_on(registry.finish_start(NOW, "fs_a", host_id, true)).expect("stored");
-		let crediting = FundingUpdate::Crediting { top_up_id: [9; 32], amount: 100 };
+		let crediting =
+			FundingUpdate::In(FundingInboundUpdate::Crediting { top_up_id: [9; 32], amount: 100 });
 		let report = |provider: &str, intent: &str| {
 			block_on(registry.report(NOW, &worker(provider), intent, crediting.clone()))
 				.expect("stored")
@@ -2746,12 +2764,17 @@ mod tests {
 			network: None,
 		});
 		for update in [
-			FundingUpdate::Collecting { payment_id: [4; 32], amount: 100 },
+			FundingUpdate::Out(FundingOutboundUpdate::Collecting {
+				payment_id: [4; 32],
+				amount: 100,
+			}),
 			FundingUpdate::Details {
 				transaction_id: Some("tx-1".into()),
 				reference: Some("ref-1".into()),
 			},
-			FundingUpdate::Payout { outcome: truapi::latest::FundingPayout::PaidOut },
+			FundingUpdate::Out(FundingOutboundUpdate::Payout {
+				outcome: truapi::latest::FundingPayout::PaidOut,
+			}),
 		] {
 			sent.updates
 				.push(crate::host_logic::funding::FundingUpdateRecord { update, at_ms: NOW - 1 });

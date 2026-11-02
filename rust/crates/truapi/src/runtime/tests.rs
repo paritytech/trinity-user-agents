@@ -9406,8 +9406,12 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 	let worker = provider_worker(&before, "ramp.dot");
 	let assigned = connect_provider(&before, "ramp.dot").calls(1).into_iter().next();
 	let assigned_at = before.funding().get(&intent).expect("kept").assigned_at_ms;
-	let crediting = v01::FundingUpdate::Crediting { top_up_id: [7; 32], amount: 1_000 };
-	report_funding(&worker, &intent, v01::FundingUpdate::Converting).expect("converting");
+	let crediting = v01::FundingUpdate::In(v01::FundingInboundUpdate::Crediting {
+		top_up_id: [7; 32],
+		amount: 1_000,
+	});
+	report_funding(&worker, &intent, v01::FundingUpdate::In(v01::FundingInboundUpdate::Converting))
+		.expect("converting");
 	fund_top_up(&worker, &intent, 1_000).expect("top-up accepted");
 	report_funding(&worker, &intent, crediting.clone()).expect("crediting");
 	let details =
@@ -9418,7 +9422,12 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 	let restarted = provider_worker(&after, "ramp.dot");
 	let replayed = connect_provider(&after, "ramp.dot").calls(1).into_iter().next();
 	let restarted_in_progress = after.funding().in_progress();
-	report_funding(&restarted, &intent, v01::FundingUpdate::Delivered).expect("delivered");
+	report_funding(
+		&restarted,
+		&intent,
+		v01::FundingUpdate::In(v01::FundingInboundUpdate::Delivered),
+	)
+	.expect("delivered");
 
 	let assignment = |expires_at, last_update| {
 		Some(ProviderCallSeen::Assign(Box::new(v01::FundingAssignment {
@@ -9569,10 +9578,14 @@ fn a_session_settles_from_the_top_up_the_provider_started() {
 	report_funding(
 		&worker,
 		&intent,
-		v01::FundingUpdate::Crediting { top_up_id: [7; 32], amount: 1_000 },
+		v01::FundingUpdate::In(v01::FundingInboundUpdate::Crediting {
+			top_up_id: [7; 32],
+			amount: 1_000,
+		}),
 	)
 	.expect("crediting");
-	report_funding(&worker, &intent, v01::FundingUpdate::Delivered).expect("delivered");
+	report_funding(&worker, &intent, v01::FundingUpdate::In(v01::FundingInboundUpdate::Delivered))
+		.expect("delivered");
 
 	let stage = wait_for_stage(&services, &intent);
 	let started_id = engine.started.lock().expect("started mutex poisoned")[0].1.id;
@@ -9728,8 +9741,16 @@ fn only_the_assigned_provider_worker_reports() {
 
 	assert!(matches!(
 		(
-			report_funding(&app, &intent, v01::FundingUpdate::AwaitingPayment),
-			report_funding(&other, &intent, v01::FundingUpdate::AwaitingPayment),
+			report_funding(
+				&app,
+				&intent,
+				v01::FundingUpdate::In(v01::FundingInboundUpdate::AwaitingPayment)
+			),
+			report_funding(
+				&other,
+				&intent,
+				v01::FundingUpdate::In(v01::FundingInboundUpdate::AwaitingPayment)
+			),
 		),
 		(
 			Err(CallError::Denied),
@@ -10421,7 +10442,11 @@ fn crediting(
 	top_up_id: [u8; 32],
 	amount: u128,
 ) -> Result<(), CallError<truapi::versioned::funding_provider::HostFundingReportError>> {
-	report_funding(worker, intent, v01::FundingUpdate::Crediting { top_up_id, amount })
+	report_funding(
+		worker,
+		intent,
+		v01::FundingUpdate::In(v01::FundingInboundUpdate::Crediting { top_up_id, amount }),
+	)
 }
 
 fn not_started() -> CallError<truapi::versioned::funding_provider::HostFundingReportError> {
@@ -10445,7 +10470,8 @@ fn a_provider_credits_only_what_it_started_for_the_session() {
 	fund_top_up(&worker, &earlier, 600).expect("top-up accepted");
 	let inflated = crediting(&worker, &earlier, [7; 32], 1_000);
 	crediting(&worker, &earlier, [7; 32], 600).expect("crediting");
-	report_funding(&worker, &earlier, v01::FundingUpdate::Delivered).expect("delivered");
+	report_funding(&worker, &earlier, v01::FundingUpdate::In(v01::FundingInboundUpdate::Delivered))
+		.expect("delivered");
 	let earlier_stage = wait_for_stage(&services, &earlier);
 	let later = served_session(&services, 600);
 
@@ -10478,7 +10504,8 @@ fn a_transfer_that_arrives_after_a_cancel_is_still_delivered() {
 
 	fund_top_up(&worker, &intent, 500).expect("top-up accepted");
 	crediting(&worker, &intent, [7; 32], 500).expect("crediting");
-	report_funding(&worker, &intent, v01::FundingUpdate::Delivered).expect("delivered");
+	report_funding(&worker, &intent, v01::FundingUpdate::In(v01::FundingInboundUpdate::Delivered))
+		.expect("delivered");
 
 	assert_eq!(
 		(cancelled, wait_for_stage(&services, &intent)),
@@ -10506,7 +10533,8 @@ fn a_settled_top_up_started_again_settles_nothing() {
 	let worker = provider_worker(&services, "ramp.dot");
 	fund_top_up(&worker, &earlier, 1).expect("top-up accepted");
 	crediting(&worker, &earlier, [7; 32], 1).expect("crediting");
-	report_funding(&worker, &earlier, v01::FundingUpdate::Delivered).expect("delivered");
+	report_funding(&worker, &earlier, v01::FundingUpdate::In(v01::FundingInboundUpdate::Delivered))
+		.expect("delivered");
 	let earlier_stage = wait_for_stage(&services, &earlier);
 	let later = served_session(&services, 1_000);
 
@@ -10585,7 +10613,8 @@ fn a_top_up_unknown_at_first_still_settles_once_claimed() {
 	let worker = provider_worker(&services, "ramp.dot");
 	fund_top_up(&worker, &intent, 500).expect("top-up accepted");
 	crediting(&worker, &intent, [7; 32], 500).expect("crediting");
-	report_funding(&worker, &intent, v01::FundingUpdate::Delivered).expect("delivered");
+	report_funding(&worker, &intent, v01::FundingUpdate::In(v01::FundingInboundUpdate::Delivered))
+		.expect("delivered");
 
 	let mut stage = None;
 	for _ in 0..300 {
@@ -10667,7 +10696,10 @@ fn a_cancel_after_money_moved_is_negotiated_with_the_provider() {
 	let cancel = |intent: &str| {
 		futures::executor::block_on(services.cancel_funding(intent)).expect("cancel")
 	};
-	let received = v01::FundingUpdate::PaymentReceived { finalized: true, mismatch: None };
+	let received = v01::FundingUpdate::In(v01::FundingInboundUpdate::PaymentReceived {
+		finalized: true,
+		mismatch: None,
+	});
 	report_funding(&worker, &accepted, received.clone()).expect("received");
 	report_funding(&worker, &lapsing, received).expect("received");
 
@@ -11812,7 +11844,8 @@ fn a_settlement_whose_write_failed_is_written_again() {
 	let worker = provider_worker(&services, "ramp.dot");
 	fund_top_up(&worker, &intent, 500).expect("top-up accepted");
 	crediting(&worker, &intent, [7; 32], 500).expect("crediting");
-	report_funding(&worker, &intent, v01::FundingUpdate::Delivered).expect("delivered");
+	report_funding(&worker, &intent, v01::FundingUpdate::In(v01::FundingInboundUpdate::Delivered))
+		.expect("delivered");
 
 	futures::executor::block_on(super::funding::fail_writes(&db, true));
 	engine.open.store(true, Ordering::SeqCst);
@@ -11878,7 +11911,8 @@ fn a_session_resumed_before_its_engine_settles_once_the_engine_is_installed() {
 	let worker = provider_worker(&before, "ramp.dot");
 	fund_top_up(&worker, &intent, 500).expect("top-up accepted");
 	crediting(&worker, &intent, [7; 32], 500).expect("crediting");
-	report_funding(&worker, &intent, v01::FundingUpdate::Delivered).expect("delivered");
+	report_funding(&worker, &intent, v01::FundingUpdate::In(v01::FundingInboundUpdate::Delivered))
+		.expect("delivered");
 
 	let after = funding_services_on(&db, test_spawner());
 	assert!(after.install_funding_platform(RecordingFundingPlatform::answering(
@@ -12064,7 +12098,10 @@ fn a_cancel_offer_lapses_on_time_once_money_moved() {
 	report_funding(
 		&worker,
 		&intent,
-		v01::FundingUpdate::PaymentReceived { finalized: true, mismatch: None },
+		v01::FundingUpdate::In(v01::FundingInboundUpdate::PaymentReceived {
+			finalized: true,
+			mismatch: None,
+		}),
 	)
 	.expect("payment received");
 	let expires_at = crate::unix_time::current_unix_millis() + 200;
@@ -12230,7 +12267,10 @@ fn the_host_hears_when_a_session_starts_taking_longer() {
 	report_funding(
 		&worker,
 		&intent,
-		v01::FundingUpdate::PaymentReceived { finalized: false, mismatch: None },
+		v01::FundingUpdate::In(v01::FundingInboundUpdate::PaymentReceived {
+			finalized: false,
+			mismatch: None,
+		}),
 	)
 	.expect("reported");
 	let announced = || {

@@ -381,33 +381,42 @@ export async function runProviderStart(
   });
 
   await check("provider_reports_forward_only", async () => {
-    await report(client, inbound, { tag: "AwaitingPayment" });
     await report(client, inbound, {
-      tag: "Deposit",
+      tag: "In",
+      value: { tag: "AwaitingPayment" },
+    });
+    await report(client, inbound, {
+      tag: "In",
       value: {
-        deposit: {
-          tag: "Crypto",
-          value: {
-            address: "0x0000000000000000000000000000000000000001",
-            network: "polkadot",
-            asset: "USDT",
-            amount: 1_000n,
-            decimals: 6,
-            exact: true,
-            uri: undefined,
-            expiresAt: undefined,
+        tag: "Deposit",
+        value: {
+          deposit: {
+            tag: "Crypto",
+            value: {
+              address: "0x0000000000000000000000000000000000000001",
+              network: "polkadot",
+              asset: "USDT",
+              amount: 1_000n,
+              decimals: 6,
+              exact: true,
+              uri: undefined,
+              expiresAt: undefined,
+            },
           },
         },
       },
     });
     await report(client, inbound, {
-      tag: "PaymentReceived",
-      value: { finalized: true, mismatch: undefined },
+      tag: "In",
+      value: {
+        tag: "PaymentReceived",
+        value: { finalized: true, mismatch: undefined },
+      },
     });
-    await report(client, inbound, { tag: "Converting" });
+    await report(client, inbound, { tag: "In", value: { tag: "Converting" } });
     const backwards = await client.fundingProvider.report({
       intent: inbound,
-      update: { tag: "AwaitingPayment" },
+      update: { tag: "In", value: { tag: "AwaitingPayment" } },
     });
     const outOfOrder =
       backwards.isErr() && stringify(backwards.error).includes("OutOfOrder");
@@ -434,8 +443,11 @@ export async function runProviderStart(
     }
     await topUp(client, inbound, topUpId, IN_AMOUNT);
     await report(client, inbound, {
-      tag: "Crediting",
-      value: { topUpId, amount: IN_AMOUNT },
+      tag: "In",
+      value: {
+        tag: "Crediting",
+        value: { topUpId, amount: IN_AMOUNT },
+      },
     });
     state = {
       intent: inbound,
@@ -459,8 +471,11 @@ export async function runProviderStart(
       throw new Error(`payment.request failed: ${stringify(paid.error)}`);
     }
     await report(client, outbound, {
-      tag: "Collecting",
-      value: { paymentId, amount: OUT_AMOUNT },
+      tag: "Out",
+      value: {
+        tag: "Collecting",
+        value: { paymentId, amount: OUT_AMOUNT },
+      },
     });
     const last = await lastStatus(client, outbound);
     if (last?.tag !== "Released" || last.value.debited !== OUT_AMOUNT) {
@@ -471,16 +486,28 @@ export async function runProviderStart(
 
   await check("provider_payout_retrying", async () => {
     if (!outbound) throw new Error("no released withdrawal");
-    await report(client, outbound, { tag: "Converting" });
-    await report(client, outbound, { tag: "PayoutRetrying" });
-    await report(client, outbound, { tag: "PayoutRetrying" });
     await report(client, outbound, {
-      tag: "Payout",
-      value: { outcome: { tag: "PaidOut" } },
+      tag: "Out",
+      value: { tag: "Converting" },
+    });
+    await report(client, outbound, {
+      tag: "Out",
+      value: { tag: "PayoutRetrying" },
+    });
+    await report(client, outbound, {
+      tag: "Out",
+      value: { tag: "PayoutRetrying" },
+    });
+    await report(client, outbound, {
+      tag: "Out",
+      value: {
+        tag: "Payout",
+        value: { outcome: { tag: "PaidOut" } },
+      },
     });
     const late = await client.fundingProvider.report({
       intent: outbound,
-      update: { tag: "PayoutRetrying" },
+      update: { tag: "Out", value: { tag: "PayoutRetrying" } },
     });
     if (!late.isErr() || !stringify(late.error).includes("OutOfOrder")) {
       throw new Error(
@@ -521,14 +548,20 @@ export async function runProviderStart(
       const topUpId = randomId();
       await topUp(client, intent, topUpId, refund);
       await report(client, intent, {
-        tag: "Refunding",
-        value: { topUpId, amount: refund },
+        tag: "Out",
+        value: {
+          tag: "Refunding",
+          value: { topUpId, amount: refund },
+        },
       });
     });
     await cancelAsUser(fundingLogPath, intent, "Requested");
     await report(client, intent, {
-      tag: "Collecting",
-      value: { paymentId, amount: RELEASED_CANCEL_AMOUNT },
+      tag: "Out",
+      value: {
+        tag: "Collecting",
+        value: { paymentId, amount: RELEASED_CANCEL_AMOUNT },
+      },
     });
     const last = await lastStatus(client, intent);
     if (
@@ -569,8 +602,11 @@ export async function runProviderStart(
     const intent = await requestFunding(client, "In", OFFER_AMOUNT);
     await provider.assignment(intent);
     await report(client, intent, {
-      tag: "PaymentReceived",
-      value: { finalized: true },
+      tag: "In",
+      value: {
+        tag: "PaymentReceived",
+        value: { finalized: true },
+      },
     });
     provider.answerCancel(intent, {
       tag: "Offer",
@@ -606,10 +642,13 @@ export async function runProviderStart(
     await topUp(client, intent, topUpId, LATE_AMOUNT);
     await cancelAsUser(fundingLogPath, intent, "TooLate");
     await report(client, intent, {
-      tag: "Crediting",
-      value: { topUpId, amount: LATE_AMOUNT },
+      tag: "In",
+      value: {
+        tag: "Crediting",
+        value: { topUpId, amount: LATE_AMOUNT },
+      },
     });
-    await report(client, intent, { tag: "Delivered" });
+    await report(client, intent, { tag: "In", value: { tag: "Delivered" } });
     const last = await lastStatus(client, intent);
     if (last?.tag !== "Delivered" || last.value.credited !== LATE_AMOUNT) {
       throw new Error(`ended as ${stringify(last)}`);
@@ -645,8 +684,9 @@ export async function runProviderResume(
   await check("provider_resumes_after_restart", async () => {
     const { lastUpdate } = await provider.assignment(state.intent);
     if (
-      lastUpdate?.tag !== "Crediting" ||
-      lastUpdate.value.topUpId !== state.topUpId
+      lastUpdate?.tag !== "In" ||
+      lastUpdate.value.tag !== "Crediting" ||
+      lastUpdate.value.value.topUpId !== state.topUpId
     ) {
       throw new Error(`assigned again with ${stringify(lastUpdate)}`);
     }
@@ -660,7 +700,10 @@ export async function runProviderResume(
   });
 
   await check("provider_in_delivered", async () => {
-    await report(client, state.intent, { tag: "Delivered" });
+    await report(client, state.intent, {
+      tag: "In",
+      value: { tag: "Delivered" },
+    });
     const last = await lastStatus(client, state.intent);
     if (
       last?.tag !== "Delivered" ||
