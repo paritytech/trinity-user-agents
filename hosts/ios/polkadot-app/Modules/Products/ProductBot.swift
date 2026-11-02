@@ -84,11 +84,11 @@ final class ProductBot: ChatExtensionBot, @unchecked Sendable {
 // MARK: - Product rooms
 
 extension ProductBot: ProductChatQuerying {
-    func messagesPage(_ request: ProductChatMessagesQueryRequest) async throws -> ProductChatMessagesQueryItem {
+    func messagesPage(_ request: ProductChatMessagesQueryRequest) async throws -> ProductChatMessagesQueryResponse {
         try await productQuerying().messagesPage(request)
     }
 
-    func userAction(_ request: ProductChatUserActionRequest) async throws -> ProductChatUserActionItem {
+    func userAction(_ request: ProductChatUserActionRequest) async throws -> ProductChatUserActionResponse {
         try await productQuerying().userAction(request)
     }
 }
