@@ -112,6 +112,13 @@ private extension SPAFlowStateProvider {
                 hostProvider: hostProvider,
                 resolverFactory: resolverFactory
             ),
+            cache: ProductContentCache(
+                store: ProductManifestFileStore(),
+                storage: storage,
+                tldProvider: DotNsTldProviderFacade.shared,
+                resolverFactory: resolverFactory,
+                logger: Logger.shared
+            ),
             environment: ProductContentLoader.Environment(
                 pathProvider: ProductNetworkPath(),
                 backgroundExecutor: backgroundExecutor

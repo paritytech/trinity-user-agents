@@ -12,6 +12,7 @@ final class SPARustRuntimeInteractor {
     private let runtimeFactory: SPARuntimeFactoryProtocol
     private let productResolver: ProductResolving
     private let contentLoader: ProductContentLoading
+    private let presenceRegistry: ProductPresenceRegistering?
     private let configuration: SPAConfiguration
     private let logger: LoggerProtocol
     private let productRepository: AnyDataProviderRepository<Product>
@@ -21,15 +22,19 @@ final class SPARustRuntimeInteractor {
     private var jsEngine: JSEngineProtocol?
     // Held so the synchronous `hasChatEntry` can answer from the manifest without re-resolving.
     private var resolvedProduct: ResolvedProduct?
+    private var servedContent: DotNsResolvedContent?
     private var isServing = false
+    private var presenceId: UUID?
 
     private var setupTask: Task<Void, Never>?
     private var openChatTask: Task<Void, Never>?
+    private var reloadTask: Task<Void, Never>?
 
     init(
         runtimeFactory: SPARuntimeFactoryProtocol,
         productResolver: ProductResolving,
         contentLoader: ProductContentLoading,
+        presenceRegistry: ProductPresenceRegistering?,
         configuration: SPAConfiguration,
         logger: LoggerProtocol,
         productRepository: AnyDataProviderRepository<Product>,
@@ -38,6 +43,7 @@ final class SPARustRuntimeInteractor {
         self.runtimeFactory = runtimeFactory
         self.productResolver = productResolver
         self.contentLoader = contentLoader
+        self.presenceRegistry = presenceRegistry
         self.configuration = configuration
         self.logger = logger
         self.productRepository = productRepository
@@ -47,8 +53,13 @@ final class SPARustRuntimeInteractor {
     deinit {
         setupTask?.cancel()
         openChatTask?.cancel()
+        reloadTask?.cancel()
         // Runtime ownership contract: the holder disposes before release.
         Task { [runtime] in await runtime?.dispose() }
+
+        if let presenceId, let presenceRegistry {
+            Task { @MainActor in presenceRegistry.unregister(presenceId) }
+        }
     }
 }
 
@@ -62,6 +73,7 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
     func retry() {
         guard let engine = jsEngine else { return }
 
+        reloadTask?.cancel()
         let previousRuntime = runtime
         runtime = nil
         Task { await previousRuntime?.dispose() }
@@ -76,7 +88,22 @@ extension SPARustRuntimeInteractor: SPAInteractorInputProtocol {
             return
         }
 
-        presenter?.didRequestReload()
+        guard servedContent != nil else {
+            presenter?.didRequestReload()
+            return
+        }
+
+        if let servedContentId, presenceRegistry?.applyPendingUpdate(of: servedContentId) == true {
+            return
+        }
+
+        serveAppliedBuild()
+    }
+
+    func checkForNewBuild() {
+        guard servedContent != nil else { return }
+
+        presenceRegistry?.requestRefresh(of: configuration.productDomain)
     }
 
     func hasChatEntry() -> Bool {
@@ -119,11 +146,16 @@ private extension SPARustRuntimeInteractor {
     /// server opened from debug settings — still opens, unnamed. A development server page is not
     /// published content, so nothing is resolved for it.
     func resolveProduct() async throws -> ResolvedProduct? {
-        let domain = configuration.page.host.toDotDomain()
+        let domain = configuration.productDomain
 
         switch configuration.contentSource {
         case .dotNs:
-            return try await contentLoader.open(domain, policy: .untilCancelled, onPhase: phaseHandler()).resolved
+            return try await contentLoader.open(
+                domain,
+                kind: configuration.executable,
+                policy: .untilCancelled,
+                onPhase: phaseHandler()
+            ).resolved
         case .directURL:
             return try? await productResolver.resolve(domain)
         #if DEBUG
@@ -136,6 +168,7 @@ private extension SPARustRuntimeInteractor {
     func startRuntime(engine: JSEngineProtocol) {
         setupTask?.cancel()
         isServing = false
+        servedContent = nil
 
         do {
             let newRuntime = try runtimeFactory.createRuntime(for: configuration.productId)
@@ -147,7 +180,7 @@ private extension SPARustRuntimeInteractor {
 
                     let url = try await newRuntime.start(with: engine)
                     self?.presenter?.didRequestNavigation(to: url)
-                    self?.isServing = true
+                    await self?.didStartServing(runtime: newRuntime)
                 } catch is CancellationError {
                     // Superseded by retry/teardown — the replacement reports.
                 } catch {
@@ -163,7 +196,7 @@ private extension SPARustRuntimeInteractor {
 
     func enableProduct() async throws -> ChatExtension.Id {
         let product = Product(
-            id: configuration.page.host.toDotDomain(),
+            id: configuration.productDomain,
             name: resolvedProduct?.displayName ?? configuration.page.host.name
         )
         let extensionId = product.extensionId
@@ -192,10 +225,49 @@ private extension SPARustRuntimeInteractor {
     }
 }
 
+extension SPARustRuntimeInteractor: SPAProductReloading {
+    func serveAppliedBuild() {
+        reloadTask?.cancel()
+        reloadTask = Task { [weak self, runtime] in
+            do {
+                try await runtime?.useLatestBuild()
+                let served = await runtime?.servedBuild()
+
+                guard !Task.isCancelled else { return }
+
+                self?.servedContent = served
+                self?.presenter?.didRequestReload()
+            } catch {
+                guard !Task.isCancelled else { return }
+
+                self?.logger.error("SPA(rust): Failed to serve the applied build: \(error)")
+                self?.presenter?.didFail(error: error)
+            }
+        }
+    }
+}
+
 private extension SPARustRuntimeInteractor {
+    var servedContentId: ProductId? {
+        resolvedProduct?.contentId(for: configuration.executable)
+    }
+
     func phaseHandler() -> ProductLoadPhaseHandler {
         { [weak self] phase in
             Task { @MainActor in self?.presenter?.didUpdateLoadPhase(phase) }
         }
+    }
+
+    func didStartServing(runtime: SPARuntimeProtocol) async {
+        isServing = true
+        servedContent = await runtime.servedBuild()
+
+        guard servedContent != nil, presenceId == nil, let servedContentId else { return }
+
+        presenceId = presenceRegistry?.register(
+            productId: configuration.productDomain,
+            contentId: servedContentId,
+            reloader: self
+        )
     }
 }

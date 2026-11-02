@@ -23,7 +23,7 @@ final class StubProductResolver: ProductResolving, @unchecked Sendable {
         self.init { _ in throw error }
     }
 
-    func resolve(_ productId: ProductId) async throws -> ResolvedProduct {
-        try resolution(productId)
+    func resolveProductManifest(_ productId: ProductId) async throws -> ProductManifest {
+        try ProductManifest(product: resolution(productId), records: [:])
     }
 }

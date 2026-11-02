@@ -63,12 +63,16 @@ struct SPAConfiguration {
 }
 
 extension SPAConfiguration {
+    var productDomain: ProductId {
+        page.host.toDotDomain()
+    }
+
     /// Identifier the product runs under, which storage, permissions and account derivation key off.
     var productId: ProductId {
         switch contentSource {
         case .dotNs,
              .directURL:
-            page.host.toDotDomain()
+            productDomain
         #if DEBUG
             case let .devServer(_, productId):
                 productId

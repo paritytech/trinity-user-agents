@@ -16,20 +16,20 @@ enum TrUAPIWorkerError: Error, CustomStringConvertible {
 /// headless engine its entry module runs in.
 struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
     private let environment: @Sendable () throws -> RustRuntimeEnvironment
-    private let products: any ProductResolving
+    private let contentLoader: any ProductContentLoading
     private let dotNsResolver: any DotNsResolverProtocol
     private let productFileProvider: any ChatProductFileProviding
     private let logger: LoggerProtocol
 
     init(
         environment: @escaping @Sendable () throws -> RustRuntimeEnvironment,
-        products: any ProductResolving,
+        contentLoader: any ProductContentLoading,
         dotNsResolver: any DotNsResolverProtocol,
         productFileProvider: any ChatProductFileProviding,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.environment = environment
-        self.products = products
+        self.contentLoader = contentLoader
         self.dotNsResolver = dotNsResolver
         self.productFileProvider = productFileProvider
         self.logger = logger
@@ -40,7 +40,7 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
         context: ProductWorkerContext,
         pocket: ProductPocketHostBridge
     ) async throws -> TrUAPIWorkerRuntime {
-        let resolved = try? await products.resolve(productId)
+        let resolved = try? await contentLoader.openWorker(productId)
         let source = try await workerSource(for: resolved, productId: productId)
 
         let engine = try ChatProductEngineFactory.makeContext(

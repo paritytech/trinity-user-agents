@@ -27,6 +27,14 @@ private final class StubDotNsTldProvider: DotNsTldProviding {
     func refresh() {}
 
     func reset() {}
+
+    func currentTldElseResolve() async throws -> String {
+        if let tld = currentTld() {
+            return tld
+        }
+
+        return try await resolveTld()
+    }
 }
 
 private func makeFactory(tld: String?, resolveError: (any Error)? = nil) -> ProductHostFactory {
