@@ -99,7 +99,7 @@ struct TrUAPIChatHandlerRoomTests {
     @Test func aPageQueryHoldsTheWorkerOnlyWhileItRuns() async throws {
         let workers = runningWorkers()
         let handler = makeHandler(workers)
-        let page = ProductChatMessagesQueryItem(messages: [], next: nil)
+        let page = ProductChatMessagesQueryResponse(messages: [], next: nil)
         execution.messagesAnswer = .success(page)
 
         let answer = try await handler.messagesPage(ProductChatMessagesQueryRequest(

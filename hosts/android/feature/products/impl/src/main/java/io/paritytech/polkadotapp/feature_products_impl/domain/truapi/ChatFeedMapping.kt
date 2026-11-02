@@ -22,10 +22,10 @@ import uniffi.truapi.ChatMessageBody
 import uniffi.truapi.ChatMessageStatus
 import uniffi.truapi.ChatPageAnchor
 import uniffi.truapi.ChatUserAction
-import uniffi.truapi.ProductChatMessagesQueryItem
+import uniffi.truapi.ProductChatMessagesQueryResponse
 import uniffi.truapi.ProductChatQueryError
 import uniffi.truapi.ProductChatUserActionError
-import uniffi.truapi.ProductChatUserActionItem
+import uniffi.truapi.ProductChatUserActionResponse
 import uniffi.truapi.ChatMessage as CoreChatMessage
 
 // Maps the messages that cross the wire to the chat models of the app, and back.
@@ -116,12 +116,12 @@ fun ChatUserActionModel.toCore(): ChatUserAction? = when (this) {
     is ChatUserActionModel.DeleteMessage -> ChatUserAction.DeleteMessage(messageId)
 }
 
-fun ProductChatMessagesQueryItem.toModel(productId: ProductId) =
+fun ProductChatMessagesQueryResponse.toModel(productId: ProductId) =
     ProductMessagesPage(messages = messages.map { it.toModel(productId) }, next = next)
 
-fun ProductChatUserActionItem.toModel(productId: ProductId): ChatUserActionOutcome = when (this) {
-    is ProductChatUserActionItem.MessageCreated -> ChatUserActionOutcome.MessageCreated(v1.toModel(productId))
-    ProductChatUserActionItem.Acknowledged -> ChatUserActionOutcome.Acknowledged
+fun ProductChatUserActionResponse.toModel(productId: ProductId): ChatUserActionOutcome = when (this) {
+    is ProductChatUserActionResponse.MessageCreated -> ChatUserActionOutcome.MessageCreated(v1.toModel(productId))
+    ProductChatUserActionResponse.Acknowledged -> ChatUserActionOutcome.Acknowledged
 }
 
 /** The failure that a room screen shows for a query that has no answer. */

@@ -51,13 +51,13 @@ import uniffi.truapi.NativeChatQueryAnswer
 import uniffi.truapi.NativeChatQueryObserver
 import uniffi.truapi.NativeChatQueryRefusal
 import uniffi.truapi.ChatUserAction
-import uniffi.truapi.ProductChatMessagesQueryItem
+import uniffi.truapi.ProductChatMessagesQueryResponse
 import uniffi.truapi.ProductChatMessagesQueryRequest
 import uniffi.truapi.ProductChatQueryError
-import uniffi.truapi.ProductChatReactionsQueryItem
+import uniffi.truapi.ProductChatReactionsQueryResponse
 import uniffi.truapi.ProductChatReactionsQueryRequest
 import uniffi.truapi.ProductChatUserActionError
-import uniffi.truapi.ProductChatUserActionItem
+import uniffi.truapi.ProductChatUserActionResponse
 import uniffi.truapi.ProductChatUserActionRequest
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -1564,7 +1564,7 @@ class TrUAPIProductExecution internal constructor(
     suspend fun chatMessagesQuery(
         request: ProductChatMessagesQueryRequest,
         timeout: Duration = ChatQueryTimeout.MESSAGES,
-    ): ProductChatMessagesQueryItem =
+    ): ProductChatMessagesQueryResponse =
         chatQuery(timeout, { inner.chatMessagesQuery(request, it) }) {
             (it as? NativeChatQueryAnswer.Messages)?.page
         }
@@ -1574,7 +1574,7 @@ class TrUAPIProductExecution internal constructor(
     suspend fun chatUserAction(
         request: ProductChatUserActionRequest,
         timeout: Duration = ChatQueryTimeout.forUserAction(request.action),
-    ): ProductChatUserActionItem =
+    ): ProductChatUserActionResponse =
         chatQuery(timeout, { inner.chatUserAction(request, it) }) {
             (it as? NativeChatQueryAnswer.UserAction)?.answer
         }
@@ -1584,7 +1584,7 @@ class TrUAPIProductExecution internal constructor(
     suspend fun chatReactionsQuery(
         request: ProductChatReactionsQueryRequest,
         timeout: Duration = ChatQueryTimeout.LOOKUP,
-    ): ProductChatReactionsQueryItem =
+    ): ProductChatReactionsQueryResponse =
         chatQuery(timeout, { inner.chatReactionsQuery(request, it) }) {
             (it as? NativeChatQueryAnswer.Reactions)?.reactions
         }
