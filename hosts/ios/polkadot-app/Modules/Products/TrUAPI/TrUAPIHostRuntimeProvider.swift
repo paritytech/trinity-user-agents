@@ -156,6 +156,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             backedUpInstallation: backedUpInstallation,
             osPermissionAsker: osPermissionAsker,
             permissionChanges: permissionChanges,
+            encryptedStorage: TrUAPIEncryptedStorage(keychain: Keychain()),
             logger: logger
         )
 

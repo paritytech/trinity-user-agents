@@ -24,6 +24,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     private let backedUpInstallation: TrUAPIBackedUpInstallation
     private let osPermissionAsker: OSPermissionAsking
     private let permissionChanges: TrUAPIPermissionChangeNotifier
+    private let encryptedStorage: TrUAPIEncryptedStorage
     private let logger: LoggerProtocol
     private weak var runtime: TrUAPIHostRuntime?
 
@@ -36,6 +37,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         backedUpInstallation: TrUAPIBackedUpInstallation,
         osPermissionAsker: OSPermissionAsking,
         permissionChanges: TrUAPIPermissionChangeNotifier,
+        encryptedStorage: TrUAPIEncryptedStorage,
         logger: LoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
@@ -45,6 +47,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         self.backedUpInstallation = backedUpInstallation
         self.osPermissionAsker = osPermissionAsker
         self.permissionChanges = permissionChanges
+        self.encryptedStorage = encryptedStorage
         self.logger = logger
         self.coreStorage = CoreStorageBackend(storage: coreStorage)
         storage = EmptyHostStorageBackend()
@@ -141,6 +144,18 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
 
     func currentInstallation() async throws -> Data {
         try await backedUpInstallation.installationId()
+    }
+
+    func encryptedStorageRead(key: Data) async throws -> Data? {
+        try encryptedStorage.read(key: key)
+    }
+
+    func encryptedStorageWrite(key: Data, value: Data) async throws {
+        try encryptedStorage.write(key: key, value: value)
+    }
+
+    func encryptedStorageDelete(key: Data) async throws {
+        try encryptedStorage.delete(key: key)
     }
 
     func supportedChains() throws -> HostChainSet {

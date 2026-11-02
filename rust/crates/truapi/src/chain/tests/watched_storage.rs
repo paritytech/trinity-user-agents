@@ -371,3 +371,32 @@ fn a_finalized_watch_reads_over_a_new_connection_after_the_old_one_closes() {
 	assert_eq!(changes.at, at);
 	assert_eq!(changes.value, vec![(0, Some(b"two".to_vec()))]);
 }
+
+#[test]
+fn a_read_at_a_block_answers_every_key_at_that_block_in_one_call() {
+	let mut node = Node::new(3, 5);
+	store_values_at_block(&mut node, 4, &[(WATCHED, b"at four")]);
+	store_values_at_block(&mut node, 5, &[(WATCHED, b"at five")]);
+	let at = node.block(4);
+	let (_node, provider, chain) = serve(node);
+
+	let read =
+		block_on(chain.read_raw_keys_at(GENESIS, at.hash, vec![WATCHED.to_vec(), OTHER.to_vec()]))
+			.unwrap();
+
+	assert_eq!(read.at, at);
+	assert_eq!(read.value, vec![Some(b"at four".to_vec()), None]);
+	assert_eq!(method_count(&provider, "state_queryStorageAt"), 1);
+}
+
+#[test]
+fn a_read_at_a_block_fails_when_the_node_leaves_a_key_out() {
+	let mut node = Node::new(3, 5);
+	node.unanswered_keys.insert(OTHER.to_vec());
+	let at = node.block(4).hash;
+	let (_node, _provider, chain) = serve(node);
+
+	let read = block_on(chain.read_raw_keys_at(GENESIS, at, vec![OTHER.to_vec()]));
+
+	assert!(read.is_err());
+}

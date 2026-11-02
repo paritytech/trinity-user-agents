@@ -25,3 +25,4 @@ pub mod session_store;
 pub mod sso;
 pub mod statement_store;
 pub mod worker;
+pub mod x25519_seal;

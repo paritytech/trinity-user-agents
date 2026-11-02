@@ -159,6 +159,10 @@ impl NativeTrUApiHostRuntime {
 			runtime.set_permission_status_host(platform.clone()),
 			"a freshly built runtime installs its permission status host once"
 		);
+		assert!(
+			runtime.set_encrypted_storage(platform.clone()),
+			"a freshly built runtime installs its encrypted storage once"
+		);
 		runtime.start_core_services();
 		if let Some(secret) = runtime_config.local_session_secret {
 			futures::executor::block_on(runtime.activate_local_session_with_identity(
