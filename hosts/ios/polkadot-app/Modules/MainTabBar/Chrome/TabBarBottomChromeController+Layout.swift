@@ -31,10 +31,15 @@ extension TabBarBottomChromeController {
     /// Sits above the chrome surface, so a tucked bar's glow is not moved by the bar's transform. It takes no touches,
     /// and the grab zone on the passthrough root does the restoring.
     func installEdgeGlow() {
-        edgeGlowView.backgroundColor = .bgSurfaceContainerInverted
-        edgeGlowView.isUserInteractionEnabled = false
         edgeGlowView.alpha = 0
         view.addSubview(edgeGlowView)
+        let passthrough = view as? TabBarChromePassthroughView
+        passthrough?.onGrabZoneTouchBegan = { [weak self] in
+            self?.edgeGlowView.setHeld(true, animated: true)
+        }
+        passthrough?.onGrabZoneTouchEnded = { [weak self] in
+            self?.edgeGlowView.setHeld(false, animated: true)
+        }
     }
 
     func installOutsideTapRecognizer() {
@@ -48,6 +53,8 @@ extension TabBarBottomChromeController {
     func installGrabRecognizer() {
         let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handleFoldPan(_:)))
         recognizer.delegate = self
+        // Lets the grab touch reach the root, so the Edge glow stays held while the drag runs.
+        recognizer.cancelsTouchesInView = false
         view.addGestureRecognizer(recognizer)
     }
 

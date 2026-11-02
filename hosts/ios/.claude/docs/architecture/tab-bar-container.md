@@ -25,7 +25,7 @@ MainTabBarViewController            container, status strip, widget and inset la
         │   └── TabBarBarHostView   accepts touches in the bar row and the open panel's rise
         │       └── UIHostingController<TabBarBarView>
         │                           SwiftUI bar row, center control, shelf
-        └── Edge glow view          right-edge band of a tucked bar, outside the surface transform
+        └── Edge glow view          TabBarEdgeGlowView, right-edge glow of a tucked bar, outside the surface transform
 ```
 
 ## Where Things Live
@@ -43,11 +43,13 @@ MainTabBarViewController            container, status strip, widget and inset la
 | Bottom chrome: bar, panels, fold, clearance | `polkadot-app/Modules/MainTabBar/Chrome/TabBarBottomChromeController.swift` |
 | Chrome apply input | `polkadot-app/Modules/MainTabBar/Chrome/TabBarChromeContext.swift` |
 | Passthrough hit testing | `polkadot-app/Modules/MainTabBar/Chrome/TabBarChromePassthroughView.swift` |
+| Edge glow band, boost and shimmer | `polkadot-app/Modules/MainTabBar/Chrome/TabBarEdgeGlowView.swift` |
 | Fold transform target, bar width | `polkadot-app/Modules/MainTabBar/Chrome/TabBarChromeSurfaceView.swift` |
 | Fold state machine | `polkadot-app/Modules/MainTabBar/Chrome/TabBarFoldController.swift` |
 | Fold state resolution | `polkadot-app/Modules/MainTabBar/Chrome/TabBarVisibilityPolicy.swift` |
 | Hide progress, drag and release, settle spring | `polkadot-app/Modules/MainTabBar/Chrome/DockletMotion.swift` (pure value type) |
 | Bar frame, pivot, slide, Edge glow and Grab zone rects, plain pose | `polkadot-app/Modules/MainTabBar/Chrome/DockletGeometry.swift` (pure value type) |
+| Edge glow alpha profile, blur and feather stops | `polkadot-app/Modules/MainTabBar/Chrome/DockletGlowProfile.swift` (pure value type) |
 | Grab aim: progress and pose from a finger in the Grab zone | `polkadot-app/Modules/MainTabBar/Chrome/DockletAim.swift` (pure value type) |
 | Held pose, direction lock | `polkadot-app/Modules/MainTabBar/Chrome/DockletHeldPose.swift` (`DockletHold`, `DockletDirectionLock`, `DockletPose`) |
 | Panel state machine | `polkadot-app/Modules/MainTabBar/Chrome/TabBarPanelController.swift` |
@@ -203,11 +205,11 @@ The rise is the taller of two values:
 
 The rise is set when the panel state commits and is not animated. The live region is set as soon as the bar is installed. The SwiftUI springs animate what is drawn inside it.
 
-`TabBarChromePassthroughView` claims a touch in only two cases: the grab zone, and the dismiss area while a panel is open. The grab zone is 47 pt wide on the right edge and 200 pt tall from the top of the tucked bar. It is set only while the bar is tucked or settling toward tucked. A tap in it restores the bar through the chrome's outside-tap recognizer. Every other touch goes to the content behind the chrome. `TabBarChromeSurfaceView` returns nil for hits on its own empty area. `TabBarBarHostView` accepts touches in its live region.
+`TabBarChromePassthroughView` claims a touch in only two cases: the grab zone, and the dismiss area while a panel is open. The grab zone is 47 pt wide on the right edge and 200 pt tall from the top of the tucked bar. Its top stays at least 56 pt below the screen top, and its bottom at least 8 pt above the screen bottom. The height shortens only when the bottom clamp forces it. It is set only while the bar is tucked or settling toward tucked. A tap in it restores the bar through the chrome's outside-tap recognizer. The root reports when a touch that began in the grab zone starts, and releases the Edge glow's held look only when that touch ends or is cancelled. Other touches do not release it. Every other touch goes to the content behind the chrome. `TabBarChromeSurfaceView` returns nil for hits on its own empty area. `TabBarBarHostView` accepts touches in its live region.
 
 The fold pan recognizer starts on any part of the bar row, the center button and the center hole included, for a drag that `DockletDirectionLock` accepts as sideways. It does not start while the bar is `hidden` or a panel is open. It refuses touches in the Grab zone.
 
-A second pan sits on the chrome root view (`installGrabRecognizer`, `isGrabPan`). It receives only touches inside the Grab zone, in any direction, with no direction lock. The two pans never share a touch. A tap with no movement in the Grab zone still restores the bar through the outside-tap path.
+A second pan sits on the chrome root view (`installGrabRecognizer`, `isGrabPan`). It receives only touches inside the Grab zone, in any direction, with no direction lock. The two pans never share a touch. The grab pan does not cancel the root view's touches. A tap with no movement in the Grab zone still restores the bar through the outside-tap path.
 
 ## Fold
 
@@ -216,7 +218,7 @@ Design vocabulary and decisions for the Docklet work live in `.scratch/docklet-r
 The three states are `shown`, `tucked` and `hidden`. The bar's position between shown and tucked is one value, the hide progress: 0 when shown, 1 when tucked. `DockletMotion` (`polkadot-app/Modules/MainTabBar/Chrome/DockletMotion.swift`) owns that value. It is a pure value type with no UIKit and no clock, so the caller passes in time.
 
 - **Shown.** The bar sits at the bottom of the screen.
-- **Tucked.** The bar turns a quarter about a pivot 14 pt past its right end, at its vertical center, with the leading end up. It then slides out to the right by (gap to the screen edge + 60 pt) × progress³. An Edge glow, 24 pt wide and 200 pt tall from the top of the tucked bar, sits on the right edge. Its opacity follows the hide progress.
+- **Tucked.** The bar turns a quarter about a pivot 14 pt past its right end, at its vertical center, with the leading end up. It then slides out to the right by (gap to the screen edge + 60 pt) × progress³. An Edge glow, 24 pt wide and 200 pt tall from the top of the tucked bar, sits on the right edge, outside the bar's transform. Its top and height follow the grab zone's clamps. Its opacity follows the hide progress while a finger drags the bar or it settles toward tucked. A settle toward shown fades it out over 320 ms. While a finger holds the grab zone, a brighter copy and a shimmer light it up and it widens to 1.08 from the screen edge. Release fades that look out over 320 ms. Reduce Motion keeps the fades and skips the widening and the shimmer's movement.
 - **Hidden.** The bar slides fully off the leading edge. There is no Edge glow and no grab zone, so tab navigation is not available on that screen. The only conformer to `TabBarChromeVisibilityCustomizing` in the app is `ChatViewController`.
 
 `TabBarVisibilityPolicy` resolves the state in this order:

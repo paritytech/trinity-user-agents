@@ -22,6 +22,10 @@ struct DockletGeometry: Equatable {
     private static let edgeTravelMultiple: CGFloat = 1.2
     /// Shortest drag a drag that starts near the trailing edge may take to hide the bar.
     private static let minimumEdgeTravel: CGFloat = 60
+    /// Least distance the Edge glow and Grab zone keep below the top of the screen.
+    private static let zoneTopClearance: CGFloat = 56
+    /// Least distance the Edge glow and Grab zone keep above the bottom of the screen.
+    private static let zoneBottomClearance: CGFloat = 8
     /// Rotation of the bar about the pivot when fully tucked, with the leading end going up.
     static let quarterTurn: CGFloat = .pi / 2
     /// Exponent of the cubic ease that drives the slide out.
@@ -42,11 +46,11 @@ struct DockletGeometry: Equatable {
     }
 
     var edgeGlowRect: CGRect {
-        CGRect(x: bounds.width - Self.edgeGlowWidth, y: glowTop, width: Self.edgeGlowWidth, height: Self.edgeZoneLength)
+        CGRect(x: bounds.width - Self.edgeGlowWidth, y: glowTop, width: Self.edgeGlowWidth, height: zoneLength)
     }
 
     var grabZoneRect: CGRect {
-        CGRect(x: bounds.width - Self.grabZoneWidth, y: glowTop, width: Self.grabZoneWidth, height: Self.edgeZoneLength)
+        CGRect(x: bounds.width - Self.grabZoneWidth, y: glowTop, width: Self.grabZoneWidth, height: zoneLength)
     }
 
     /// The drag distance that takes the bar from shown to tucked, for a drag that starts at `touchX`. A drag that
@@ -104,7 +108,13 @@ struct DockletGeometry: Equatable {
         transform(plainPose(progress: progress), anchor: anchor)
     }
 
+    /// The tucked bar's top, kept at least `zoneTopClearance` below the screen top.
     var glowTop: CGFloat {
-        pivot.y - (pivot.x - dockFrame.minX)
+        max(Self.zoneTopClearance, pivot.y - (pivot.x - dockFrame.minX))
+    }
+
+    /// `edgeZoneLength`, shortened only when the glow would reach below `zoneBottomClearance` above the screen bottom.
+    private var zoneLength: CGFloat {
+        min(Self.edgeZoneLength, max(0, bounds.height - Self.zoneBottomClearance - glowTop))
     }
 }

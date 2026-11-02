@@ -9,7 +9,7 @@ final class TabBarBottomChromeController: UIViewController {
     private static let centerPanelTopGap: CGFloat = 12
 
     let chromeSurface = TabBarChromeSurfaceView()
-    let edgeGlowView = UIView()
+    let edgeGlowView = TabBarEdgeGlowView(frame: .zero)
     let centerButtonAnchorGuide = UILayoutGuide()
     let barModel = TabBarBarViewModel()
     lazy var barHost = UIHostingController(rootView: TabBarBarView(model: barModel))
@@ -37,7 +37,12 @@ final class TabBarBottomChromeController: UIViewController {
         bottomSafeAreaInset: { [unowned self] in view.safeAreaInsets.bottom },
         glowSink: { [weak self] rect, opacity in
             self?.edgeGlowView.frame = rect
-            self?.edgeGlowView.alpha = opacity
+            switch opacity {
+            case let .progress(progress):
+                self?.edgeGlowView.setOpacity(progress)
+            case .fadeOut:
+                self?.edgeGlowView.fadeOut()
+            }
         },
         grabZoneSink: { [weak self] zone in
             (self?.viewIfLoaded as? TabBarChromePassthroughView)?.foldGrabZone = zone

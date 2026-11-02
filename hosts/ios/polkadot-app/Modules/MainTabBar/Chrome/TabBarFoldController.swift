@@ -7,6 +7,12 @@ private struct ScreenOverride {
     var value: TabBarFoldOverride
 }
 
+/// How the Edge glow's opacity is set: from the hide progress, or faded out once a settle toward shown starts.
+enum TabBarEdgeGlowOpacity {
+    case progress(CGFloat)
+    case fadeOut
+}
+
 /// Owns the tab bar's visibility state machine and the transform that realises it. The chrome
 /// keeps view installation and layout; this decides which state applies and drives the offset.
 @MainActor
@@ -17,8 +23,8 @@ final class TabBarFoldController {
     private let chromeBounds: () -> CGRect
     /// The bottom safe area inset the resting bar's gap depends on.
     private let bottomSafeAreaInset: () -> CGFloat
-    /// Receives the Edge glow's rect and opacity. The glow is drawn outside the bar's transform.
-    private let glowSink: (CGRect, CGFloat) -> Void
+    /// Receives the Edge glow's rect and how its opacity is set. The glow is drawn outside the bar's transform.
+    private let glowSink: (CGRect, TabBarEdgeGlowOpacity) -> Void
     /// Receives the tucked bar's tap target, or `.zero` when it is not tucked.
     private let grabZoneSink: (CGRect) -> Void
     /// A state other than `.shown` must dismiss any open panel.
@@ -39,6 +45,8 @@ final class TabBarFoldController {
     private weak var navigationScreen: UIViewController?
     private var screenOverrides: [ScreenOverride] = []
     private var motion = DockletMotion()
+    /// A finger is on the bar, from the start of a drag to its release.
+    private var isDragging = false
     private var displayLink: CADisplayLink?
     private var foldAnimator: UIViewPropertyAnimator?
     private var foldOffsetWidth: CGFloat?
@@ -51,7 +59,7 @@ final class TabBarFoldController {
         foldSurface: UIView,
         chromeBounds: @escaping () -> CGRect,
         bottomSafeAreaInset: @escaping () -> CGFloat,
-        glowSink: @escaping (CGRect, CGFloat) -> Void,
+        glowSink: @escaping (CGRect, TabBarEdgeGlowOpacity) -> Void,
         grabZoneSink: @escaping (CGRect) -> Void,
         closePanel: @escaping () -> Void,
         stateSink: @escaping (TabBarVisibilityState) -> Void
@@ -137,6 +145,7 @@ final class TabBarFoldController {
     /// The release starts a settle that carries the finger's velocity. A change of state is recorded as the
     /// screen's override without restarting that settle.
     func foldPanEnded() {
+        isDragging = false
         motion.end(time: CACurrentMediaTime(), geometry: geometry)
         if motion.isSettling {
             startSettling()
@@ -256,6 +265,7 @@ private extension TabBarFoldController {
         selectionFeedback.prepare()
         cancelFoldAnimator()
         stopSettling()
+        isDragging = true
     }
 
     func cancelFoldAnimator() {
@@ -307,8 +317,14 @@ private extension TabBarFoldController {
     func writeTransform(_ transform: CGAffineTransform) {
         let geometry = geometry
         foldSurface.transform = transform
-        glowSink(geometry.edgeGlowRect, motion.progress)
+        glowSink(geometry.edgeGlowRect, glowOpacity)
         grabZoneSink(motion.destination == .tucked ? geometry.grabZoneRect : .zero)
+    }
+
+    /// The Edge glow follows the hide progress while a finger drags the bar or it settles toward tucked. A settle
+    /// toward shown fades it out instead.
+    var glowOpacity: TabBarEdgeGlowOpacity {
+        isDragging || motion.destination == .tucked ? .progress(motion.progress) : .fadeOut
     }
 
     /// The docklet pose about the centre of the full-bleed chrome, which is where the chrome's transform is anchored.
