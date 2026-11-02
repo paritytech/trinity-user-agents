@@ -76,9 +76,11 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
         return SPAViewFactory.createView(configuration: configuration, flowState: flowState)?.controller
     }
 
+    /// A provider's App comes from its bundle when the app ships one, and
+    /// from dotNS otherwise, as `providerPage` opens it.
     func providerHasApp(providerId: String) async -> Bool {
-        if let bundled = bundledProducts.product(providerId) {
-            return bundled.hasApp()
+        if bundledProducts.product(providerId)?.hasApp() == true {
+            return true
         }
         guard let product = try? await flowStateProvider.flowState().productResolver.resolve(providerId) else {
             return true
