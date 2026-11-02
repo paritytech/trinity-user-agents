@@ -1,7 +1,7 @@
-import type { RandomBytes } from "../../../src/invitations/sealing.js";
+import type { RandomBytes } from "../../invitations/sealing.js";
 
 /**
- * DEV ONLY. The seam between Contact Chat's engine and the chat protocol it
+ * PROTOTYPE. The seam between Contact Chat's engine and the chat protocol it
  * runs. The engine owns the conversation's life: the host request that sets
  * it up, its conversation account, its history and its storage. The
  * protocol owns everything that travels: the setup payloads the hosts carry

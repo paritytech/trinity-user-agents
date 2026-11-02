@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chatProductDemo } from "./chat-product-demo-plugin.js";
+import { contactChatWorker } from "./contact-chat-plugin.js";
 import { sandboxAssets } from "./sandbox-plugin.js";
 import { usernameSearch } from "./username-search-plugin.js";
 import type { BuildInfo } from "./src/app/versions.js";
@@ -136,7 +136,7 @@ export default defineConfig({
   },
   plugins: [
     sandboxAssets(),
-    chatProductDemo(),
+    contactChatWorker(),
     usernameSearch(),
     assetLicenses,
   ],

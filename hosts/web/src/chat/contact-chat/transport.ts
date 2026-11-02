@@ -3,7 +3,7 @@ import type { HexString } from "@parity/truapi/scale";
 import type { Heard, Post } from "./protocol.js";
 
 /**
- * DEV ONLY. How Contact Chat's posts travel: statements in the People
+ * PROTOTYPE. How Contact Chat's posts travel: statements in the People
  * chain's Statement Store, through the product's own TrUAPI
  * `statementStore`, signed with `createProof` as the product's own account
  * at a conversation's raw derivation index. The core holds that account's

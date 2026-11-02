@@ -407,6 +407,22 @@ export async function showAddress(page: Page): Promise<void> {
   await page.locator("#address").waitFor();
 }
 
+/**
+ * Keep Contact Chat, which runs for every signed-in wallet, out of
+ * `context`'s tabs: the dev tools' `off` delivery, for tests of other
+ * products and of the wallet's saved contacts.
+ */
+export async function withoutContactChat(
+  context: BrowserContext,
+): Promise<void> {
+  await context.addInitScript(() =>
+    sessionStorage.setItem(
+      "truapi-web-signing-host:dev:wallet-delivery",
+      "off",
+    ),
+  );
+}
+
 /** The developer tools' tabs. */
 export type DevTab = "account" | "product" | "preview" | "inspector" | "more";
 

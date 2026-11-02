@@ -229,7 +229,7 @@ A tab starts in Chat, unless it reopens the product it had in front before a rel
 host draws itself. Browse with nothing in front shows its landing, also drawn by the host: **Browse apps**, and
 **Recent**, the last five products this wallet opened on this network, from the same history as the search card's
 suggestions. Browse opens nothing until one of them is chosen; choosing Browse again changes nothing. The Docklet's
-search opens anything else. On a local dev server Chat also holds the [Inbox](#inbox-prototype) prototype.
+search opens anything else. Chat also holds the [Inbox](#inbox-prototype) prototype.
 
 - **The Docklet.** As the Polkadot app's R1 Docklet: a glass dock at most 440 px wide with a round cutout, the app's 28
   px tab icons only, Chat and Pocket left of the Pill, Browse and Apps right of it, and a lens under the current one.
@@ -547,12 +547,12 @@ Chat's engine is the one that runs here.
 not a passing toast, and separate from the operating system's notification permission. Chat's **Chats | Inbox** tabs
 open it in place of the conversation list, and the Apps shelf's **Inbox** opens the same view: Chat, at its Inbox tab.
 Both read one list, so an item seen, dismissed or accepted in one shows so in the other. It holds chat invitations and
-profile sharing requests, not every chat message. No sharing, invitation or contact API feeds it: its requests come from
-sample data or from the [invitation demo](#invitation-demo-prototype).
+profile sharing requests, not every chat message. Its requests come from [Contact Chat](#contact-chat), from sample data
+or from the [invitation demo](#invitation-demo-prototype).
 
-- **Where it shows.** Only on a dev server reached as `localhost`, `127.0.0.1` or `[::1]`, like the other dev-server
-  demos; a build leaves it out with both entries. Developer tools → **More** → **Add sample notifications** fills the
-  list of the signed-in wallet or demo user, and **Clear samples** removes them.
+- **Where it shows.** In every build. On a dev server reached as `localhost`, `127.0.0.1` or `[::1]`, Developer tools →
+  **More** → **Add sample notifications** fills the list of the signed-in wallet or demo user, and **Clear samples**
+  removes them.
 - **The look.** The native apps have no Inbox, so this one is built from native parts: one list whose rows follow the
   iOS Chat Requests list (avatar, name and time, the message on two lines, a dot while unseen, and the kind, the product
   it came through and expiry under it). There is no detail page, and an item is never drawn as a conversation.
@@ -580,19 +580,62 @@ sample data or from the [invitation demo](#invitation-demo-prototype).
   `src/notifications/screen.ts` the screen. The sample requests, from senders and products ending in `.example`, are in
   `fixtures/notifications/sample-notifications.ts`, which adds and removes them by id.
 
+### Contact Chat
+
+**Prototype, on the network, NOT ENCRYPTED.** Contact Chat (`src/chat/contact-chat/`) is the host's own chat product: a
+worker that knows people only by the contact handles its host gives it. It runs for every wallet signed in from the
+Account picker, imported or a test account, in every build; nothing turns it on. Two people who open the host, each
+signed in to a registered wallet, can find each other in Chat's **+** by typing the other's full username (a build reads
+the chain by exact username: no prefix search), send a request, accept it in the Inbox and write text. The host is a
+development tool: wallets are kept unencrypted in the browser, and the messages are plain text that anyone reading the
+network's Statement Store can read. The import form and both prompts say so.
+
+- **What runs at sign-in.** The host starts Contact Chat's worker and its request service
+  (`src/invitations/wallet-chat.ts`, `src/invitations/contact-chat-host.ts`). The service starts once the wallet's
+  identity account and chat key are the ones the core reports and the chain publishes; until then, or when they are not,
+  New chat says why when a person is chosen, and the log says why: with no chat key on chain, register a username for
+  the wallet in the Polkadot app, which publishes it, and sign in again. It then reads the network's day inbox and posts
+  again the wallet's own pending requests, which this browser keeps: another browser neither sees nor posts them.
+  Nothing new leaves the host without the user: a request goes only after **Send invitation**, a reply only after
+  **Accept chat request**.
+- **What it costs.** Both prompts say it. Sending or replying claims one of the person's daily notification slots with
+  their personhood and posts one sealed statement. A pending request is posted again on each later UTC day this host
+  runs, with another slot, until it is completed or cancelled under **Sent** in the Inbox; a reply is posted again on a
+  later day when its request arrives again. Each conversation claims one daily Statement Store slot for its own account
+  on each day it posts. A wallet with no personhood, or no slot left, cannot post: the request pauses and says why.
+- **Who can use it.** A wallet whose identity account has a chat key on chain (registered through the Polkadot app or
+  the built-in test accounts' registrations) and personhood for the slots. The Substrate development phrase is refused.
+  The test accounts' phrases are public, so anyone can act as them, read their requests and use their slots.
+- **Where its worker comes from.** The host builds the worker into an app archive and serves it itself: described at
+  `contact-chat/worker.json` under the host's base, with its blocks at `/ipfs/<cid>` on the origin, which the loader
+  checks against their CIDs as it checks any worker's (`contact-chat-plugin.ts`). A build served under another base path
+  finds no blocks. Nothing is published to DotNS or Bulletin for it.
+- **Saved contacts.** While requests reach people the network names, the wallet's saved contacts are not offered in the
+  picker, and so are not payable, and blocks cannot be edited, though existing ones still hold.
+- **On a dev server.** Developer tools → **More** → **Contact Chat delivery** chooses, for the tab, the network (the
+  default), the network with every claim only validated, requests kept between tabs of this browser, either with chat
+  claims validated, or no Contact Chat at all. **Reply key for new requests** chooses X-Wing (the default) or X25519. A
+  build has neither.
+
+The rest of Contact Chat, its protocol and its delivery are described under the invitation demo below, which runs the
+same product with fixture identities.
+
 ### Test accounts
 
-The Account picker lists three test accounts, **Alice**, **Bob** and **Carol (test account)**, under **Test accounts**,
-below saved wallets under **Your wallets**, in a build as well as on a dev server. Each is a wallet built into the host
-from a public BIP-39 test vector (`src/platform/dev-accounts.ts`), under a storage scope of its own
-(`test-account:<id>`). Visiting the host signs in to none of them: pick one and choose **Sign in**. It signs in, signs
-out and runs as an imported wallet does: Chat, product workers, Pocket, the username sync and **Account status** follow
-the same path and read what the core and the chain report for its account. It has no **Forget**, and the picker names it
-alone until it has signed in once. **About test accounts**, a closed fold, shows while the picker points at one.
+The Account picker lists three shared test accounts, **Alice**, **Bob** and **Carol (test account)**, under **Shared
+test accounts**, below saved wallets under **Your wallets**, in a build as well as on a dev server. Each is a wallet
+built into the host from a public BIP-39 test vector (`src/platform/dev-accounts.ts`), under a storage scope of its own
+(`test-account:<id>`). Visiting the host signs in to none of them and chooses none: until an account is chosen the
+picker reads **Choose an account** and Sign in is off. Pick one and choose **Sign in**. It signs in, signs out and runs
+as an imported wallet does: Chat, product workers, Pocket, the username sync and **Account status** follow the same path
+and read what the core and the chain report for its account. It has no **Forget**, and the picker names it alone until
+it has signed in once. **Shared test account: anyone can act as it**, a closed fold, shows while the picker points at
+one.
 
-The phrases are public, and so are in every build: anyone can sign as these accounts, so keep nothing of value on them.
-The host registers and funds nothing for them; an account is registered elsewhere, and once it is, the chain says so
-here as for any wallet. The host's checks of a wallet's keys still refuse the Substrate development phrase
+The phrases are public, and so are in every build: anyone can sign as these accounts, read the chat requests sent to
+them and use their daily slots, so keep nothing of value on them. They run Contact Chat as any wallet does. The host
+registers and funds nothing for them; an account is registered elsewhere, and once it is, the chain says so here as for
+any wallet. The host's checks of a wallet's keys still refuse the Substrate development phrase
 (`src/invitations/gate.ts`), which is not one of these.
 
 ### Invitation demo (prototype)
@@ -625,12 +668,12 @@ agreed API.
 - **Clear invitations.** **More** → **Clear Alice's invitations** asks first, then removes that demo user's sent and
   received invitations and their Inbox items on this network, in this browser. It is not a sign-out: wallets, the other
   demo users and Contact Chat's own records stay.
-- **Contact Chat.** The demo's chat worker (`fixtures/products/contact-chat/`), a product that knows people only by the
-  contact handles its host gives it. It runs for the demo user through the ordinary worker loader, as a worker the host
-  adds, and Chat shows its conversations over the v2 draft bridge. **+** in Chat → Bob → **Send request to Bob**: the
-  host hands the worker Bob's handle (`startConversation { handle }`), the worker makes its invitation payload and asks
-  its own request service to send it, and the host's **Send invitation** prompt asks first. Bob's **Accept** in the
-  Inbox goes straight to his running worker, which answers the invitation, makes both topics, starts reading `T_AB` and
+- **Contact Chat.** The demo's chat worker (`src/chat/contact-chat/`), a product that knows people only by the contact
+  handles its host gives it. It runs for the demo user through the ordinary worker loader, as a worker the host adds,
+  and Chat shows its conversations over the v2 draft bridge. **+** in Chat → Bob → **Send request to Bob**: the host
+  hands the worker Bob's handle (`startConversation { handle }`), the worker makes its invitation payload and asks its
+  own request service to send it, and the host's **Send invitation** prompt asks first. Bob's **Accept** in the Inbox
+  goes straight to his running worker, which answers the invitation, makes both topics, starts reading `T_AB` and
   replies; Alice's host authenticates the reply, her worker checks it, starts reading `T_BA` and only then calls
   `complete`: **Connected**. Both workers keep their session in their own storage before their host replies or
   completes. The conversation and names survive a reload. Each host names and draws the other person from the handle;
@@ -695,24 +738,22 @@ agreed API.
     a window message from the worker's frame (`product-diagnostics/draft-1`, `src/products/diagnostics.ts`), read field
     by field within bounds and put down to the frame that sent it; each replaces the last of that run, and a stopped
     worker's report is marked stale. The host shows it as reported and acts on none of it.
-  - **The protocol boundary.** `fixtures/products/contact-chat/protocol.ts` is the seam between the engine and the chat
-    protocol: the protocol owns the setup payloads, the topics and channel each side reads and posts on, and a post's
-    bytes and window; the engine owns the conversation, its account index, history and storage and never reads them. The
-    hosts carry the payloads unread. `simple-text/1` (`simple-text.ts`) is the only protocol; MLS or another library
-    would replace it there, with no change to the hosts.
+  - **The protocol boundary.** `src/chat/contact-chat/protocol.ts` is the seam between the engine and the chat protocol:
+    the protocol owns the setup payloads, the topics and channel each side reads and posts on, and a post's bytes and
+    window; the engine owns the conversation, its account index, history and storage and never reads them. The hosts
+    carry the payloads unread. `simple-text/1` (`simple-text.ts`) is the only protocol; MLS or another library would
+    replace it there, with no change to the hosts.
   - **Gaps it shows.** The host asks twice when a chat starts from its own **+**: once in the request form and once in
     **Send invitation**. A declined request waits silently until the sender cancels it under **Sent** in the Inbox. No
     receipts: a sent message shows sent, never delivered or read. Whether the store keeps a post once its account's
     allowance lapses is the node's. Text over the network has not been tried between two hosts yet.
-  - **With a wallet.** Developer tools → **More** → **Contact Chat for this wallet** runs Contact Chat for the wallet
-    signed in from the Account picker, in this tab, instead of a demo user (`tools/demos/contact-chat-host.ts`). Its
-    requests are proved with the wallet's own identity account and chat key, once they match the core's session and the
-    chain publishes that chat key for that account; otherwise they stay off and the log says why. A person is any
-    identity account with a chat key the chain publishes, but the blocked: whoever the user writes to, found by
-    username, and whoever writes to them, named by the host from its records and the chain username. Requests still
-    travel only between tabs of this browser (the local simulated delivery). The built-in test accounts are registered
-    on Paseo Next v2 with their chat keys (`testalice.10`, `testbob.10`, `testcarol.10`), so two tabs signed in to two
-    of them try it with real published keys.
+  - **With a wallet.** Contact Chat runs for every wallet signed in from the Account picker
+    ([Contact Chat](#contact-chat)). Its requests are proved with the wallet's own identity account and chat key, once
+    they match the core's session and the chain publishes that chat key for that account; otherwise they stay off and
+    the log says why. A person is any identity account with a chat key the chain publishes, but the blocked: whoever the
+    user writes to, found by username, and whoever writes to them, named by the host from its records and the chain
+    username. The built-in test accounts are registered on Paseo Next v2 with their chat keys (`testalice.10`,
+    `testbob.10`, `testcarol.10`).
 - **What the demo keeps apart.** Its contacts and handle (`alice.example`) are fixtures. The contacts name each demo
   user by the identity account their own phrase derives on the network, as chat names people, so the core mints the same
   handles for them as `contacts.pick` gives. Its host proofs are made with the wallet keys of the user's phrase (see
@@ -793,11 +834,11 @@ agreed API.
     who a person is.
   - The identity account's signature is only the inner proof, inside the sealed envelope. It never signs a post anyone
     else sees: on the network delivery below a notification account signs each post; the local delivery signs none.
-  - A wallet signed in from the Account picker runs Contact Chat's request service only when the Developer section's
-    Contact Chat for this wallet is on. Its contacts' chat keys are read from the chain (`chainDirectory`); nothing here
-    registers one. The request service starts once the chain shows the wallet's own chat key; until then New chat says
-    the check is running, and is drawn again when it ends. A check the chain could not answer is tried again every 30 s
-    and says why meanwhile; a published key that is not the wallet's keeps requests off, with the reason.
+  - A wallet signed in from the Account picker runs Contact Chat's request service. Its contacts' chat keys are read
+    from the chain (`chainDirectory`); nothing here registers one. The request service starts once the chain shows the
+    wallet's own chat key; until then New chat says the check is running, and is drawn again when it ends. A check the
+    chain could not answer is tried again every 30 s and says why meanwhile; a published key that is not the wallet's
+    keeps requests off, with the reason.
   - The chat keys a host reads for its contacts come from a fixture directory (`testUserDirectory`), which answers as
     the People chain would if each demo user had registered the key its phrase derives; the demo users have no chain
     records. A real host reads `chainDirectory`; the lookups and refusals (no record, another key type, Asset Hub and
@@ -811,12 +852,11 @@ agreed API.
     dev choices for network retention, not whether a request may be answered. A post the store will not take pauses the
     request, which the host shows, and is tried again. No notification account signs a post and no allowance is checked.
     Inbox labels are linkable, a reply's tag is in the clear, and any script of this origin can read or post.
-  - Network delivery (`src/invitations/statement-delivery.ts`), a DRAFT route, for a wallet only, chosen in the
-    Developer section's Contact Chat delivery (off by default; choosing to claim and post asks first). Every request and
-    reply of every host on a network goes to one Statement Store topic per UTC day, with no recipient or request named
-    in the clear; each host reads today's and yesterday's topic and tries to open everything. Each post is one statement
-    signed by a notification account: a fresh sr25519 account per post and day, hard-derived from the wallet's entropy,
-    which the core registers for the day with the user's personhood proof
+  - Network delivery (`src/invitations/statement-delivery.ts`), a DRAFT route, for a wallet only, and its default. Every
+    request and reply of every host on a network goes to one Statement Store topic per UTC day, with no recipient or
+    request named in the clear; each host reads today's and yesterday's topic and tries to open everything. Each post is
+    one statement signed by a notification account: a fresh sr25519 account per post and day, hard-derived from the
+    wallet's entropy, which the core registers for the day with the user's personhood proof
     (`Resources.set_notification_statement_account_for_sequence`, through `claimNotificationAccount`). The runtime
     grants such an account one statement of at most 10,240 bytes of data (`NotificationAllowance`, read 2026-10-30), and
     the node checks it. The sealed envelope, not only the payload, must fit: a sealed Contact Chat request measures
@@ -829,9 +869,9 @@ agreed API.
     then shows paused with the claim it would have made. In that mode the tab's network also refuses every JSON-RPC
     submission and broadcast before it reaches the light client (`tools/demos/no-submit.ts`). Its own lists keep its
     requests apart from the local delivery's. Not interop-tested with the apps, and not the design's Backhaul.
-  - "Network: claim and post" claims and posts for real. Choosing it asks first. How many posts a person makes a day is
-    the chain's limit: each post takes one of the person's daily notification slots, and a claim with none left fails,
-    pausing the request until a later try finds one.
+  - "Network: claim and post" claims and posts for real. How many posts a person makes a day is the chain's limit: each
+    post takes one of the person's daily notification slots, and a claim with none left fails, pausing the request until
+    a later try finds one.
   - While the network delivery is chosen, the wallet's saved contacts are not offered in the picker, and so are not
     payable, and Chat's New chat starts Contact Chat. Someone chosen there by username gets their contact handle minted
     for the request; the host names them, and as with a sender, naming them does not make them payable.
@@ -850,15 +890,15 @@ agreed API.
   transcripts their evidence covers, `sealing.ts` the sealing, `wallet-auth.ts` the host proof with wallet keys,
   `published-keys.ts` the chat keys read from chain records, `directory-contacts.ts` the people over them,
   `statement-delivery.ts` the network delivery, `invitation-service.ts` one user's host side, and `outbox.ts` and
-  `received.ts` what it keeps. What only tests and the dev server use lives outside it: `fixtures/invitations/` holds
-  the fixture contacts and chat-key directory, the local delivery and the demo users, `fixtures/notifications/` the
-  sample notifications, `fixtures/products/contact-chat/` Contact Chat, `tools/demos/contact-chat-host.ts` its host side
-  for a demo user or a wallet, and `tools/demos/dev-tools.ts` the Developer section.
+  `received.ts` what it keeps, `contact-chat-host.ts` Contact Chat's host side and `wallet-chat.ts` Contact Chat for the
+  signed-in wallet. `src/chat/contact-chat/` is Contact Chat itself. What only tests and the dev server use lives
+  outside: `fixtures/invitations/` holds the fixture contacts and chat-key directory, the local delivery and the demo
+  users, `fixtures/notifications/` the sample notifications, and `tools/demos/dev-tools.ts` the Developer section.
   `tests/unit/invitations/invitation-flow.test.ts` runs two and three users end to end,
   `tests/unit/invitations/statement-delivery.test.ts` the network delivery over an in-memory store and chain, and
-  `tests/unit/fixtures/contact-chat/contact-chat.test.ts` Contact Chat between two hosts. Only a dev server on this
-  machine loads the Developer section, so a build has none of it; the host's contact picker reads the demo user's
-  contacts in place of the chat contacts.
+  `tests/unit/chat/contact-chat/contact-chat.test.ts` Contact Chat between two hosts. Only a dev server on this machine
+  loads the Developer section, so a build has none of it; the host's contact picker reads the demo user's contacts in
+  place of the chat contacts.
 
 ### Contacts
 
@@ -929,8 +969,8 @@ it are five tabs:
   state, Close, Reset its data, What it may use, Details), and Workers.
 - **Preview:** the app's size and its frame, described below.
 - **Inspector:** the Activity view, the TrUAPI traces, the Workers view, the Statements view and the Chat view.
-- **More:** Versions, and the dev server's own controls (the invitation demo, Contact Chat for this wallet, Contact Chat
-  delivery, the reply key for new requests and sample Inbox items).
+- **More:** Versions, and the dev server's own controls (the invitation demo, Contact Chat delivery, the reply key for
+  new requests and sample Inbox items).
 
 **Search field.** The Docklet's middle button, the Pill, opens a card with one field, **Find a person or app**
 (`src/app/search-card.ts`, `src/app/address-recents.ts`). Typing only edits the text and lists suggestions; it opens
@@ -1044,9 +1084,10 @@ for where it came from: **light client** (an answer, or a page of what peers sen
 
 **Layout.** Each fact is one short line: its label, a source tag and the numbers. A **why** after a line opens, by click
 or tap, to what the line does not say: block and time of a grant read, what "observed" leaves out, why peer refusals are
-not visible, the cost window, full hashes. The header shows the session's counters on one line, and one line of short
-caveats (light client, new = broadcast, peer refusals unseen, observed ≠ current, grant ≠ remaining, data is public)
-that opens to the full text and the source legend. Capture shows a line of its own only while it is on.
+not visible, the cost window, full hashes. The header shows the session's counters on one line, and one closed line,
+"Observed traffic, not network state · About this data", that opens to six short lines: the light client source, new =
+broadcast with peer refusals unseen, observed ≠ current, grant ≠ remaining, statement bytes are public while sealed
+contents are not, and the source tags. Capture shows a line of its own only while it is on.
 
 **The transport.** This host reaches the People chain only through its embedded light client (smoldot-light 2.1.0),
 which has no statement store, and the view says so in a line of its own. What follows from it (smoldot-light
@@ -1281,10 +1322,10 @@ opens, so the light client reaches no chain. It checks that:
   worker when it starts and when signing out stops it;
 - the dock keeps Browse's product running while a host screen is in front, resumes it with its page state, and ends the
   held product when the wallet changes;
-- with Contact Chat for this wallet on, the public development phrase runs no wallet chat and stores nothing;
-- with it on, a wallet's Contact Chat worker starts at sign-in while another screen is in front, with no chain
-  connection, Chat offers New chat and has no on or off controls, and signing out ends the worker and writes no chat
-  record;
+- the public development phrase runs no wallet chat and stores nothing;
+- with nothing turned on, a wallet's Contact Chat worker starts at sign-in, on the network delivery, while another
+  screen is in front, with no chain connection, Chat offers New chat and has no on or off controls, and signing out ends
+  the worker and writes no chat record;
 - Pocket is drawn by the host as the native two cards, and gives the digital dollar no amount;
 - a product built from `fixtures/products/contacts-product.ts`, with a synthetic wallet whose saved chat record holds
   two accepted contacts and one waiting request, and every socket closed: `contacts.pick` opens the host's picker naming
@@ -1343,15 +1384,15 @@ frame and what the host keeps; More opens its menu from the keyboard, clear of t
 gives focus back; and Minimize keeps the same product running until the Apps shelf brings it back.
 
 `browser/docklet-search.spec.ts` checks the Docklet's search with a synthetic wallet whose saved chat record holds one
-contact and Contact Chat for this wallet on, every socket closed, a synthetic answer on the dev server's username route
-and every other request outside this host and a loopback product refused: the field reads **Find a person or app** with
-no scanning note; a name lists **Apps** (Open and the name) apart from **People** (found by username, marked as not a
-contact), and typing opens and picks nothing; the list stays inside the app above the field; a person found by username
-is checked first and, offline, is not chosen; a contact chosen with the keyboard opens a request to them, sent only when
-asked, with focus in it; `Escape` gives focus back to the Pill; a URL looks no one up and Enter opens it; with the
-public development phrase, for which Contact Chat stays off, people are still listed and choosing one says why; and
-signed out no people are offered. `browser/chat-screen.spec.ts` also checks that a person chosen outside Chat opens a
-contact's chat or a request to someone new, sent only when asked.
+contact and Contact Chat's delivery kept in this browser, so saved contacts are offered, every socket closed, a
+synthetic answer on the dev server's username route and every other request outside this host and a loopback product
+refused: the field reads **Find a person or app** with no scanning note; a name lists **Apps** (Open and the name) apart
+from **People** (found by username, marked as not a contact), and typing opens and picks nothing; the list stays inside
+the app above the field; a person found by username is checked first and, offline, is not chosen; a contact chosen with
+the keyboard opens a request to them, sent only when asked, with focus in it; `Escape` gives focus back to the Pill; a
+URL looks no one up and Enter opens it; with the public development phrase, for which Contact Chat stays off, people are
+still listed and choosing one says why; and signed out no people are offered. `browser/chat-screen.spec.ts` also checks
+that a person chosen outside Chat opens a contact's chat or a request to someone new, sent only when asked.
 
 `browser/keyboard.spec.ts` gives the page a visual viewport it controls, as iOS Safari reports one, and checks that with
 a keyboard covering part of it the Docklet, the search card, its field and its suggestions stay above the keyboard; that
@@ -1410,10 +1451,10 @@ the request, which leaves the sender's Sent list while the recipient's row still
 directory to keep screenshots.
 
 `browser/wallet-delivery-live.spec.ts` runs only with `TRUAPI_LIVE=1`, against Paseo Next v2: Alice's public test
-account, signed in as a wallet, turns on Contact Chat for this wallet and the network delivery that validates claims
-only, then starts a chat with `testbob.10` from Chat's New chat through the picker's username search and the Send
-prompt. It checks that the request shows paused with the claim the live runtime would accept, and that the tab's
-no-submit guard refused nothing and passed no submission or broadcast method.
+account, signed in as a wallet, chooses the network delivery that validates claims only, then starts a chat with
+`testbob.10` from Chat's New chat through the picker's username search and the Send prompt. It checks that the request
+shows paused with the claim the live runtime would accept, and that the tab's no-submit guard refused nothing and passed
+no submission or broadcast method.
 
 `browser/chat-claims-live.spec.ts` runs only with `TRUAPI_LIVE=1`, against Paseo Next v2: Alice's and Bob's public test
 accounts, each signed in as a wallet in a tab of one browser, with "This browser, validate chat claims only". Alice
@@ -1516,6 +1557,8 @@ nothing else of it.
   - `draft/`: the Chat Extension v2 draft bridge, which is not TrUAPI. `contract.ts` holds the bridge's types and
     messages, `host.ts` the host end, `provider.ts` and `calls.ts` the chat provider over it, `product.ts` a product's
     end, and `conversations.ts` the engine-independent seam.
+  - `contact-chat/`: Contact Chat, the host's own chat product worker (`worker.ts`, `engine.ts`, its protocol seam and
+    `simple-text/1`), and where the host serves it (`route.ts`).
 - `src/contacts/`: the contact picker and handle lookup (`contacts.ts`), the wallet's saved contacts and blocked people
   (`wallet-contacts.ts`), the host's names for people (`host-names.ts`), finding people by username
   (`username-directory.ts`, `username-search.ts`) and the Docklet's people (`search-people.ts`).
@@ -1529,10 +1572,11 @@ nothing else of it.
     emits and the dev server also answers.
 - `src/pocket/`: the Pocket cards and the Pocket the core's calls see (`pocket.ts`), the screen (`screen.ts`), a card's
   faces (`faces.ts`, `card-view.ts`) and the Widget an opened card runs (`widget.ts`).
-- `src/notifications/`: the Inbox prototype's store and screen.
+- `src/notifications/`: the Inbox's store and screen.
 - `src/invitations/`: invitations between users' hosts, the wallet keys that prove them (`chat-keys.ts`, with `gate.ts`,
   which refuses the public development phrase), the draft network delivery over the Statement Store
-  (`statement-delivery.ts`), and the facts both report to the Statements view (`observer.ts`).
+  (`statement-delivery.ts`), Contact Chat's host side (`contact-chat-host.ts`) and its run for the signed-in wallet
+  (`wallet-chat.ts`), and the facts both report to the Statements view (`observer.ts`).
 - `tools/`: the developer tools. `mount.ts` mounts the inspector and the Preview tab (`viewport.ts`, `dock-resize.ts`).
   `activity/` is the inspector's Activity view: the bounded event list, its filters and its view. `workers/` is the
   inspector's Workers view and the workers' console lines it keeps. `chat/` is the inspector's Chat view, over the same
@@ -1551,7 +1595,8 @@ nothing else of it.
   them statement stores in memory (`statement-memory.ts`, `statement-rpc-memory.ts`, and `chat-statements.ts` as Contact
   Chat reaches one through TrUAPI).
 - `browser/`: the browser tests, with their Playwright setup and page harnesses under `browser/support/`.
-- `chat-product-demo-plugin.ts`, `username-search-plugin.ts`: the dev server's local chat worker and username route.
+- `contact-chat-plugin.ts`: Contact Chat's worker archive, served by the dev server and written beside a build.
+- `username-search-plugin.ts`: the dev server's username route.
 
 ## Not supported
 

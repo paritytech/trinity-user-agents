@@ -526,11 +526,12 @@
             <button id="forget" type="button" disabled>Forget</button>
           </div>
           <details id="test-accounts-about" class="fold" hidden>
-            <summary>About test accounts</summary>
+            <summary>Shared test account: anyone can act as it</summary>
             <p class="note">
-              A test account signs in with a public recovery phrase and works as
-              any wallet does. Anyone can sign as it, so keep nothing of value
-              on it. Account status shows what the chain records for it.
+              Its recovery phrase is public. Anyone can sign as it, read chat
+              requests sent to it and use its daily slots, so keep nothing of
+              value on it. It works as any wallet does; Account status shows
+              what the chain records for it.
             </p>
           </details>
           <details id="import" class="fold">
@@ -559,6 +560,8 @@
               </button>
               <p class="note warning">
                 Saved unencrypted in this browser. Use a disposable wallet.
+                Contact Chat's messages are not encrypted: anyone who reads the
+                network's Statement Store can read them.
               </p>
             </form>
             <a

@@ -49,6 +49,7 @@ import {
   previewFill,
   type DevTab,
   openCatalog,
+  withoutContactChat,
 } from "./support/fixtures.js";
 import { PASEO_DOTNS } from "../src/products/dotns.js";
 
@@ -865,13 +866,7 @@ describe("the dock", () => {
           "Sign in to chat",
         );
 
-        // Contact Chat for this wallet is on, so only the phrase keeps it off.
-        await page.evaluate(() =>
-          sessionStorage.setItem(
-            "truapi-web-signing-host:dev:wallet-contact-chat",
-            "on",
-          ),
-        );
+        // Contact Chat runs for every wallet, so only the phrase keeps it off.
         await signIn(page);
         await logged(
           page,
@@ -899,7 +894,7 @@ describe("the dock", () => {
   );
 
   test(
-    "runs the wallet's Contact Chat at sign-in, with Chat hidden, and stops it at sign-out",
+    "runs the wallet's Contact Chat on the network at sign-in, with Chat hidden, and stops it at sign-out",
     async () => {
       const context = await newContext();
       // No chain traffic: the light client gets no peer, so nothing is read
@@ -907,14 +902,14 @@ describe("the dock", () => {
       await context.routeWebSocket(/.*/, (socket) => socket.close());
       try {
         const page = await openHost(context);
-        await page.evaluate(() =>
-          sessionStorage.setItem(
-            "truapi-web-signing-host:dev:wallet-contact-chat",
-            "on",
-          ),
-        );
+        // Nothing to turn on: a fresh wallet's Contact Chat uses the network.
         await page.click('#dock [data-destination="pocket"]');
         await signInWith(page, SYNTHETIC_MNEMONIC);
+        await logged(
+          page,
+          "host",
+          "Contact Chat's requests go on the network's day inbox: each post claims a notification slot.",
+        );
         // Its worker, the only one, runs for the session while Pocket is in front.
         await page
           .locator("#worker-frames iframe")
@@ -1022,6 +1017,8 @@ describe("product worker chat", () => {
           '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="8"/></svg>',
       });
       const context = await browser.newContext();
+      // Another product's test: no Contact Chat in its way.
+      await withoutContactChat(context);
       context.setDefaultTimeout(STEP_MS);
       await serveNames(context, [
         {
@@ -1312,6 +1309,8 @@ describe("contacts", () => {
         "index.js": await buildFixture("contacts-product.ts"),
       });
       const context = await browser.newContext();
+      // Another product's test: no Contact Chat in its way.
+      await withoutContactChat(context);
       context.setDefaultTimeout(STEP_MS);
       // No chain: chat starts from its saved record and reaches no one.
       await context.routeWebSocket(/.*/, (socket) => socket.close());
@@ -1465,6 +1464,8 @@ describe("chat as a product", () => {
         "index.js": await buildFixture("chat-product-worker.ts"),
       });
       const context = await browser.newContext();
+      // Another product's test: no Contact Chat in its way.
+      await withoutContactChat(context);
       context.setDefaultTimeout(STEP_MS);
       // No chain: the picker offers the wallet's saved contacts and nothing reaches anyone.
       await context.routeWebSocket(/.*/, (socket) => socket.close());

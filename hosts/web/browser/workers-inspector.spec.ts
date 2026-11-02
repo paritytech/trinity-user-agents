@@ -21,6 +21,7 @@ import {
   startHost,
   testBrowser,
   type RunningHost,
+  withoutContactChat,
 } from "./support/fixtures.js";
 
 const STEP_MS = 60_000;
@@ -55,6 +56,8 @@ async function offlineContext(): Promise<BrowserContext> {
     viewport: { width: 1280, height: 900 },
   });
   context.setDefaultTimeout(STEP_MS);
+  // The wallet's own Contact Chat worker would join the workers counted here.
+  await withoutContactChat(context);
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await context.routeWebSocket(/.*/, (socket) => socket.close());
   // Registered first, so the stood-in names below take precedence.

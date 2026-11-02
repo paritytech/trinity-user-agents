@@ -1,8 +1,9 @@
 /**
- * DEV ONLY. Contact Chat, a chat product worker that knows people only by
- * the contact handles its host gives it (`./engine.ts`). The dev server
- * builds it into an app archive (`chat-product-demo-plugin.ts`), and a test
- * user of the invitation demo runs it through the ordinary worker loader.
+ * PROTOTYPE. Contact Chat, the host's chat product: a worker that knows
+ * people only by the contact handles its host gives it (`./engine.ts`). The
+ * host builds it into an app archive it serves itself
+ * (`contact-chat-plugin.ts`), and runs it through the ordinary worker loader
+ * for a signed-in wallet, or for a test user of the invitation demo.
  *
  * In its frame:
  *
@@ -23,14 +24,11 @@
  * or cancel its own request.
  */
 import { getClientSync } from "@parity/truapi/sandbox";
-import { connectChatV2 } from "../../../src/chat/draft/product.js";
-import {
-  serveConversations,
-  type ReadMarks,
-} from "../../../src/chat/draft/conversations.js";
-import { ProductStorage } from "../../../src/chat/worker/product-storage.js";
-import { postDiagnostics } from "../../../src/products/diagnostics.js";
-import { cryptoRandom } from "../../../src/invitations/sealing.js";
+import { connectChatV2 } from "../draft/product.js";
+import { serveConversations, type ReadMarks } from "../draft/conversations.js";
+import { ProductStorage } from "../worker/product-storage.js";
+import { postDiagnostics } from "../../products/diagnostics.js";
+import { cryptoRandom } from "../../invitations/sealing.js";
 import { ContactChat } from "./engine.js";
 import { connectHostRequests, type HostRequests } from "./requests.js";
 import { simpleText } from "./simple-text.js";

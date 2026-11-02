@@ -43,7 +43,7 @@ import { WalletIdentityAuth } from "../../../src/invitations/wallet-auth.js";
 import {
   simpleText,
   type Pending,
-} from "../../../fixtures/products/contact-chat/simple-text.js";
+} from "../../../src/chat/contact-chat/simple-text.js";
 import { FixtureContacts } from "../../../fixtures/invitations/fixture-contacts.js";
 import {
   LocalDelivery,

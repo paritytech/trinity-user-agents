@@ -4,8 +4,8 @@ import type {
   IncomingRequest,
   OutgoingView,
   RepliedView,
-} from "../../../src/invitations/contract.js";
-import { toHex, type RandomBytes } from "../../../src/invitations/sealing.js";
+} from "../../invitations/contract.js";
+import { toHex, type RandomBytes } from "../../invitations/sealing.js";
 import type {
   Conversation,
   ConversationEngine,
@@ -13,11 +13,11 @@ import type {
   ContactState,
   MessageState,
   StartTarget,
-} from "../../../src/chat/draft/conversations.js";
+} from "../draft/conversations.js";
 import type {
   ConversationDiagnostics,
   LogicalCounts,
-} from "../../../src/products/diagnostics.js";
+} from "../../products/diagnostics.js";
 import type { ChatProtocol, ChatText, Heard } from "./protocol.js";
 import type { HostRequests } from "./requests.js";
 import {
@@ -27,7 +27,7 @@ import {
 } from "./transport.js";
 
 /**
- * DEV ONLY. Contact Chat's engine: one-to-one conversations with people it
+ * PROTOTYPE. Contact Chat's engine: one-to-one conversations with people it
  * knows only by the contact handles its host gives it.
  *
  * Who does what:

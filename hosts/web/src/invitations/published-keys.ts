@@ -44,6 +44,10 @@ export async function publishedChatKey(
   return { ok: true, chatKey: identity.chatKey, name: identity.name };
 }
 
+/** What a user does when the chain does not publish this wallet's own chat key. This host never publishes one. */
+const PUBLISH_STEP =
+  "To chat, register a username for this wallet in the Polkadot app, which publishes its chat key, then sign in again.";
+
 /**
  * Why this wallet cannot prove its user now. `again` when the chain could
  * not be read, so asking later may find no problem.
@@ -66,7 +70,9 @@ export async function ownIdentityProblem(
   const published = await publishedChatKey(directory, keys.identity);
   if (!published.ok)
     return {
-      reason: `Your identity account: ${published.reason}.`,
+      reason: published.unread
+        ? `Your identity account: ${published.reason}.`
+        : `Your identity account: ${published.reason}. ${PUBLISH_STEP}`,
       again: published.unread,
     };
   return equalBytes(published.chatKey, keys.chatPublic)

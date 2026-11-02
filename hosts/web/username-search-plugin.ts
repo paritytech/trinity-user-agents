@@ -1,9 +1,22 @@
+import type { IncomingMessage } from "node:http";
 import type { Plugin } from "vite";
-import { loopback } from "./chat-product-demo-plugin.js";
+import { LOOPBACK_HOSTNAMES } from "./tools/demos/local-demo-route.js";
 import {
   USERNAME_SEARCH_PATH,
   searchUsernames,
 } from "./src/contacts/username-search.js";
+
+/** Whether the request came from this machine, to this machine's name. */
+function loopback(request: IncomingMessage): boolean {
+  const host = (request.headers.host ?? "").replace(/:\d+$/, "");
+  const remote = request.socket.remoteAddress ?? "";
+  return (
+    LOOPBACK_HOSTNAMES.includes(host) &&
+    (remote === "127.0.0.1" ||
+      remote === "::1" ||
+      remote === "::ffff:127.0.0.1")
+  );
+}
 
 /**
  * The identity backend's username search on the dev server's own origin, at

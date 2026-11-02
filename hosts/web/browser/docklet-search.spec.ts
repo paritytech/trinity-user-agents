@@ -111,9 +111,11 @@ async function open(
         `truapi-web-signing-host:network:paseo:chat:${id}:v1`,
         JSON.stringify(record),
       );
+      // Saved contacts are offered only while requests stay in this
+      // browser: the network delivery, the default, keeps them out.
       sessionStorage.setItem(
-        "truapi-web-signing-host:dev:wallet-contact-chat",
-        "on",
+        "truapi-web-signing-host:dev:wallet-delivery",
+        "local",
       );
     },
     { id: WALLET_ID, mnemonic: phrase, record: RECORD },

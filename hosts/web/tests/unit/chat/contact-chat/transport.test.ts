@@ -5,7 +5,7 @@ import {
   RETENTION_SECONDS,
   messageExpiry,
   truapiStatements,
-} from "../../../../fixtures/products/contact-chat/transport.js";
+} from "../../../../src/chat/contact-chat/transport.js";
 
 /**
  * Contact Chat's transport over a product's TrUAPI: it signs as the
