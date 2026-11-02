@@ -241,12 +241,8 @@ impl LightClient {
 	}
 }
 
-/// Waits until `chain` reaches [`ChainPhase::Ready`] in `states`, the lifecycle
-/// updates of `chain` and of its relay, each tagged with its genesis.
-///
-/// A stall of either fails the wait. A parachain reports a stall only from its
-/// own peers, so it would otherwise wait forever behind a relay that stopped
-/// syncing.
+/// Waits for `chain` to be `Ready` in `states`, which also carries its relay's
+/// updates. A stall of either fails, since a parachain never reports its relay's.
 async fn until_ready(
 	chain: [u8; 32],
 	states: impl Stream<Item = ([u8; 32], ChainLifecycle)>,
