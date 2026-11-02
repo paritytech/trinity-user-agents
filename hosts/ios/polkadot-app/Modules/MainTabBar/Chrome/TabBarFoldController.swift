@@ -31,6 +31,10 @@ final class TabBarFoldController {
     /// Set together with the offset, so it can lead `state` during an interactive transition.
     private(set) var isTucked = false
 
+    var isSettling: Bool {
+        motion.isSettling
+    }
+
     private var foldDerived: TabBarFoldDerived = .none
     private weak var navigationScreen: UIViewController?
     private var screenOverrides: [ScreenOverride] = []
@@ -41,6 +45,7 @@ final class TabBarFoldController {
     private var isFoldInterpolating = false
     private let heavyImpact = UIImpactFeedbackGenerator(style: .heavy)
     private let mediumImpact = UIImpactFeedbackGenerator(style: .medium)
+    private let selectionFeedback = UISelectionFeedbackGenerator()
 
     init(
         foldSurface: UIView,
@@ -111,23 +116,26 @@ final class TabBarFoldController {
         apply(state: policyState, isUserDriven: true)
     }
 
-    func foldPanBegan(touchX: CGFloat) {
+    func foldPanBegan(location: CGPoint) {
         heavyImpact.prepare()
         mediumImpact.prepare()
+        selectionFeedback.prepare()
         cancelFoldAnimator()
         stopSettling()
-        motion.begin(touchX: touchX, geometry: geometry)
+        motion.begin(touch: location, time: CACurrentMediaTime(), geometry: geometry)
     }
 
-    func foldPanChanged(translationX: CGFloat) {
-        motion.move(translationX: translationX)
+    func foldPanChanged(location: CGPoint, translationX: CGFloat) {
+        if let haptic = motion.move(location: location, translationX: translationX, time: CACurrentMediaTime()) {
+            playHaptic(haptic)
+        }
         writeTransform(dockletTransform())
     }
 
     /// The release starts a settle that carries the finger's velocity. A change of state is recorded as the
     /// screen's override without restarting that settle.
-    func foldPanEnded(velocityX: CGFloat) {
-        motion.end(velocityX: velocityX, now: CACurrentMediaTime())
+    func foldPanEnded() {
+        motion.end(time: CACurrentMediaTime(), geometry: geometry)
         if motion.isSettling {
             startSettling()
         }
@@ -279,6 +287,8 @@ private extension TabBarFoldController {
             heavyImpact.impactOccurred()
         case .medium:
             mediumImpact.impactOccurred()
+        case .selection:
+            selectionFeedback.selectionChanged()
         }
     }
 
@@ -293,7 +303,7 @@ private extension TabBarFoldController {
     /// The docklet pose about the centre of the full-bleed chrome, which is where the chrome's transform is anchored.
     func dockletTransform() -> CGAffineTransform {
         let bounds = chromeBounds()
-        return geometry.transform(progress: motion.progress, anchor: CGPoint(x: bounds.midX, y: bounds.midY))
+        return geometry.transform(motion.pose(geometry: geometry), anchor: CGPoint(x: bounds.midX, y: bounds.midY))
     }
 
     func hiddenTransform() -> CGAffineTransform {

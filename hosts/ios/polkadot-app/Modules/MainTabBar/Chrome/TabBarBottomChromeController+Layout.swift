@@ -162,13 +162,15 @@ private extension TabBarBottomChromeController {
     @objc func handleFoldPan(_ recognizer: UIPanGestureRecognizer) {
         switch recognizer.state {
         case .began:
-            foldController.foldPanBegan(touchX: recognizer.location(in: view).x)
+            foldController.foldPanBegan(location: recognizer.location(in: view))
         case .changed:
-            foldController.foldPanChanged(translationX: recognizer.translation(in: view).x)
-        case .ended:
-            foldController.foldPanEnded(velocityX: recognizer.velocity(in: view).x)
-        case .cancelled:
-            foldController.foldPanEnded(velocityX: 0)
+            foldController.foldPanChanged(
+                location: recognizer.location(in: view),
+                translationX: recognizer.translation(in: view).x
+            )
+        case .ended,
+             .cancelled:
+            foldController.foldPanEnded()
         default:
             break
         }
@@ -202,7 +204,7 @@ extension TabBarBottomChromeController: UIGestureRecognizerDelegate {
         return canStartFoldDrag(at: touch)
     }
 
-    /// Only a drag that leads horizontally folds the bar, so a vertical scroll past it is left alone. A hidden bar
+    /// Only a drag that leads sideways folds the bar, so a vertical scroll past it is left alone. A hidden bar
     /// and an open panel take no drag.
     func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
         guard let pan = recognizer as? UIPanGestureRecognizer else {
@@ -212,6 +214,9 @@ extension TabBarBottomChromeController: UIGestureRecognizerDelegate {
             return false
         }
         let translation = pan.translation(in: view)
-        return abs(translation.x) > abs(translation.y)
+        return DockletDirectionLock.isSideways(
+            translation: CGVector(dx: translation.x, dy: translation.y),
+            isSettling: foldController.isSettling
+        )
     }
 }
