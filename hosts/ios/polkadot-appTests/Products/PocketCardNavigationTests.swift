@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Products
 import Testing
 import UIKit
