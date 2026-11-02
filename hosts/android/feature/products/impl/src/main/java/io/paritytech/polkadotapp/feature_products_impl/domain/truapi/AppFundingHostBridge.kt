@@ -48,6 +48,7 @@ class AppFundingHostBridge @Inject constructor(
     private val sessions = MutableStateFlow<Map<String, FundingSessionEntry>>(emptyMap())
     private val options = MutableStateFlow<Map<String, FundingOptions>>(emptyMap())
     private val inProgress = MutableStateFlow<Boolean?>(null)
+    private val endedSummaries = MutableStateFlow<Set<String>>(emptySet())
     private val changedSessions = MutableSharedFlow<String>(
         extraBufferCapacity = EVENT_BUFFER,
         onBufferOverflow = BufferOverflow.DROP_OLDEST,
@@ -66,6 +67,9 @@ class AppFundingHostBridge @Inject constructor(
 
     /** Every session the core pushed and still holds, with its latest progress, by intent. */
     fun sessions(): StateFlow<Map<String, FundingSessionEntry>> = sessions.asStateFlow()
+
+    /** Ended sessions the core handed over as their summary only, which the host still owes an acknowledgement. */
+    fun endedSummaries(): StateFlow<Set<String>> = endedSummaries.asStateFlow()
 
     /** What each open overlay offers, as the core last pushed it, by intent. */
     fun options(): StateFlow<Map<String, FundingOptions>> = options.asStateFlow()
@@ -140,6 +144,9 @@ class AppFundingHostBridge @Inject constructor(
     ) {
         sessions.update { held ->
             if (session == null) held - intent else held + (intent to FundingSessionEntry(session, progress))
+        }
+        endedSummaries.update { owed ->
+            if (session == null && status !is HostFundingStatusSubscribeItem.InProgress) owed + intent else owed - intent
         }
         changedSessions.tryEmit(intent)
     }

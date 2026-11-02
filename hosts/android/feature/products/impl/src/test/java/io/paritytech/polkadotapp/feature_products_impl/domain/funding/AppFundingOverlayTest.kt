@@ -43,6 +43,7 @@ class AppFundingOverlayTest {
     private val runtime = mockk<FundingRuntime> {
         every { sessionChanges() } returns MutableSharedFlow()
         every { sessions } returns this@AppFundingOverlayTest.sessions
+        every { endedSummaries } returns MutableStateFlow(emptySet())
     }
     private val router = mockk<ProductsRouter>(relaxed = true)
     private val overlay = AppFundingOverlay(contexts, frames, runtime, router)

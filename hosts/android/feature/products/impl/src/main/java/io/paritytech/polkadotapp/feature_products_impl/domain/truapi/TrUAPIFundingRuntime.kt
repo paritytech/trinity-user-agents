@@ -29,6 +29,8 @@ class TrUAPIFundingRuntime @Inject constructor(
 
     override val sessions: StateFlow<Map<String, FundingSessionEntry>> = bridge.sessions()
 
+    override val endedSummaries: StateFlow<Set<String>> = bridge.endedSummaries()
+
     override val inProgress: StateFlow<Boolean?> = bridge.inProgress()
 
     override suspend fun history(): Result<List<FundingSessionSummary>> =
