@@ -15,7 +15,7 @@
 
 import { readFileSync } from "node:fs";
 
-import type { Result, ResultAsync } from "neverthrow";
+import { err, ok, type Result, type ResultAsync } from "neverthrow";
 import { describe, expect, it } from "bun:test";
 
 import { createTransport } from "./client.js";
@@ -237,7 +237,7 @@ async function answering(start: string, install: (client: Client) => void): Prom
     const { sent, client, receive } = recordingClient();
     install(client);
     receive(pinned(start));
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
     return sent;
 }
 
@@ -550,15 +550,13 @@ describe("chat extension v2 frames", () => {
     it("answers the host's queries with the frames the Rust snapshot pins", async () => {
         expect(
             await answering("12.messages_query.start", (client) =>
-                client.chat.onMessagesQuery((_query, send) =>
-                    send({ messages: [message], next: "c0" }),
-                ),
+                client.chat.onMessagesQuery(() => ok({ messages: [message], next: "c0" })),
             ),
         ).toEqual([pinned("12.messages_query.receive")]);
         expect(
             await answering("12.messages_query.start", (client) =>
-                client.chat.onMessagesQuery((_query, _send, interrupt) =>
-                    interrupt({
+                client.chat.onMessagesQuery(() =>
+                    err({
                         tag: "Domain",
                         value: { tag: "V1", value: { tag: "NotAvailable" } },
                     }),
@@ -568,20 +566,18 @@ describe("chat extension v2 frames", () => {
 
         expect(
             await answering("13.user_action.start", (client) =>
-                client.chat.onUserAction((_action, send) =>
-                    send({ tag: "MessageCreated", value: message }),
-                ),
+                client.chat.onUserAction(() => ok({ tag: "MessageCreated", value: message })),
             ),
         ).toEqual([pinned("13.user_action.receive")]);
         expect(
             await answering("13.user_action.accept", (client) =>
-                client.chat.onUserAction((_action, send) => send({ tag: "Acknowledged" })),
+                client.chat.onUserAction(() => ok({ tag: "Acknowledged" })),
             ),
         ).toEqual([pinned("13.user_action.acknowledged")]);
         expect(
             await answering("13.user_action.pay", (client) =>
-                client.chat.onUserAction((_action, _send, interrupt) =>
-                    interrupt({
+                client.chat.onUserAction(() =>
+                    err({
                         tag: "Domain",
                         value: { tag: "V1", value: { tag: "Rejected", value: { reason: "no" } } },
                     }),
@@ -591,8 +587,8 @@ describe("chat extension v2 frames", () => {
 
         expect(
             await answering("14.reactions_query.start", (client) =>
-                client.chat.onReactionsQuery((_query, send) =>
-                    send({
+                client.chat.onReactionsQuery(() =>
+                    ok({
                         reactions: [
                             { participantId: "p1", emoji: "👍", timestamp: 1_700_000_000_000n },
                         ],
