@@ -488,8 +488,7 @@ pub struct ChatRoomActivity {
 }
 
 /// The parts of a room the product serves itself. A field at its default
-/// value keeps the host behaviour for that part, and a room the product
-/// declared no configuration for has the default.
+/// value keeps the host behaviour for that part.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct ChatRoomConfig {
@@ -502,15 +501,6 @@ pub struct ChatRoomConfig {
 	/// `true`: the host sends a `Seen` user action when the user sees the
 	/// newest message.
 	pub report_seen: bool,
-}
-
-/// Request to declare the parts of a room the product serves itself.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub struct HostChatSetRoomConfigRequest {
-	/// A room that this product created.
-	pub room_id: String,
-	/// The configuration. It replaces the previous one completely.
-	pub config: ChatRoomConfig,
 }
 
 /// Request to replace the name, description, icon and empty-room text of a
@@ -537,20 +527,6 @@ pub struct HostChatSetRoomPreviewRequest {
 pub struct HostChatDeleteRoomRequest {
 	/// A room that this product created.
 	pub room_id: String,
-}
-
-/// Failure to declare the configuration of a room.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-pub enum HostChatSetRoomConfigError {
-	/// This product created no room with this id.
-	UnknownRoom,
-	/// The product takes part in the room as a bot, not as its host.
-	NotRoomHost,
-	/// Catch-all.
-	Unknown {
-		/// Human-readable reason.
-		reason: String,
-	},
 }
 
 /// Failure to replace the metadata of a room.

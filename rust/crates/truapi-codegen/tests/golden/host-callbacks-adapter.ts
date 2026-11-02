@@ -15,7 +15,6 @@ import {
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
-  HostChatSetRoomConfigRequest,
   HostChatSetRoomFooterRequest,
   HostChatSetRoomMetadataRequest,
   HostChatSetRoomPreviewRequest,
@@ -83,7 +82,11 @@ export interface RawCallbacks {
   ): (() => void) | void;
   listChatRooms?(product: Uint8Array): Promise<Uint8Array>;
   readChatRoomConfig?(product: Uint8Array, roomId: string): Promise<Uint8Array>;
-  setChatRoomConfig?(product: Uint8Array, request: Uint8Array): Promise<void>;
+  setChatRoomConfig?(
+    product: Uint8Array,
+    roomId: string,
+    config: Uint8Array,
+  ): Promise<void>;
   setChatRoomMetadata?(product: Uint8Array, request: Uint8Array): Promise<void>;
   setChatRoomPreview?(product: Uint8Array, request: Uint8Array): Promise<void>;
   deleteChatRoom?(product: Uint8Array, request: Uint8Array): Promise<void>;
@@ -208,10 +211,11 @@ export function createWasmRawCallbacks(
                 roomId,
               ),
             ),
-          setChatRoomConfig: async (product, request) =>
+          setChatRoomConfig: async (product, roomId, config) =>
             await chat.setChatRoomConfig(
               ProductContext.dec(product),
-              HostChatSetRoomConfigRequest.dec(request),
+              roomId,
+              ChatRoomConfig.dec(config),
             ),
           setChatRoomMetadata: async (product, request) =>
             await chat.setChatRoomMetadata(

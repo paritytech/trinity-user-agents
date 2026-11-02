@@ -46,7 +46,7 @@ use truapi::{
 		HostChatCreateRoomRequest, HostChatDeleteRoomRequest, HostChatListSubscribeItem,
 		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
 		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
-		HostChatSetRoomConfigRequest, HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
+		HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
 		HostChatSetRoomPreviewRequest, HostChatUpdateFeedError, HostChatUpdateFeedRequest,
 		HostDevicePermissionRequest, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
 		HostFundingStatusSubscribeItem, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
@@ -3239,7 +3239,8 @@ mod tests {
 		let config = |config: ChatRoomConfig| {
 			futures::executor::block_on(host.set_chat_room_config(
 				&product,
-				HostChatSetRoomConfigRequest { room_id: "support".to_string(), config },
+				"support".to_string(),
+				config,
 			))
 		};
 		let refused = |method: &str| Err(chat_method_not_served(method));
@@ -3790,15 +3791,17 @@ pub trait ChatPlatform: Send + Sync {
 	}
 
 	/// Replace the configuration of a room whole and keep it across restarts.
-	/// The core checks that the product hosts the room before this call. If a
-	/// Rust host does not implement this method, it accepts only the default
-	/// configuration. That configuration changes nothing that the host shows.
+	/// The core calls it after each `create_chat_room`, for a new room and for
+	/// a room that exists. If a Rust host does not implement this method, it
+	/// accepts only the default configuration. That configuration changes
+	/// nothing that the host shows.
 	async fn set_chat_room_config(
 		&self,
 		_product: &ProductContext,
-		request: HostChatSetRoomConfigRequest,
+		_room_id: String,
+		config: ChatRoomConfig,
 	) -> Result<(), GenericError> {
-		if request.config != ChatRoomConfig::default() {
+		if config != ChatRoomConfig::default() {
 			return Err(chat_method_not_served("setChatRoomConfig"));
 		}
 		Ok(())
