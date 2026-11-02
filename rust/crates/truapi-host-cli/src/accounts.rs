@@ -709,6 +709,7 @@ async fn wait_for_ring_membership(network: NetworkConfig, entropy: &[u8]) -> Res
 				warn!(
 					attempt,
 					max_attempts = MAX_ATTEMPTS,
+					location = chains.location(network.people_genesis),
 					error = %err,
 					"could not connect while checking personhood ring membership"
 				);

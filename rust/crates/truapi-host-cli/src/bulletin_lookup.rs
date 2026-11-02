@@ -80,13 +80,16 @@ impl BitswapRpc {
 		if let Some(client) = slot.as_ref() {
 			return Ok(client.clone());
 		}
+		let location = self.chains.location(self.bulletin_genesis);
 		let client =
 			tokio::time::timeout(RPC_TIMEOUT, self.chains.rpc_client(self.bulletin_genesis))
 				.await
 				.map_err(|_| {
-					SourceError::Transient("connecting to Bulletin timed out".to_string())
+					SourceError::Transient(format!("connecting to Bulletin ({location}) timed out"))
 				})?
-				.map_err(|err| SourceError::Transient(format!("connecting to Bulletin: {err}")))?;
+				.map_err(|err| {
+					SourceError::Transient(format!("connecting to Bulletin ({location}): {err}"))
+				})?;
 		*slot = Some(client.clone());
 		Ok(client)
 	}

@@ -203,7 +203,7 @@ impl CliPlatform {
 	/// rather than assume it.
 	#[cfg(test)]
 	pub fn routed_url(&self, genesis_hash: &[u8; 32]) -> &str {
-		self.chain.routed_url(genesis_hash)
+		self.chain.location(*genesis_hash)
 	}
 
 	/// Build a platform whose chain provider connects to the network's People

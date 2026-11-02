@@ -554,10 +554,6 @@ fn script_project_directory(base_path: Option<PathBuf>) -> PathBuf {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-	// Install a rustls crypto provider so `wss://` chain connections work;
-	// rustls 0.23 panics without a process-level default provider.
-	let _ = rustls::crypto::ring::default_provider().install_default();
-
 	let matches = Cli::command().get_matches();
 	let mut cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
 	let debugger = cli
@@ -750,6 +746,12 @@ async fn run_pgas_check(
 ) -> Result<()> {
 	use truapi::statement_allowance::pgas;
 
+	if submit && network.chain_backend == chain::ChainBackend::LightClient {
+		bail!(
+			"--submit needs --chain-backend rpc: the light client drops a PGAS claim, because \
+			 the proof Asset Hub's nodes return for its validation is missing entries"
+		);
+	}
 	let entropy = bip39::Mnemonic::parse(mnemonic.trim())
 		.context("invalid BIP-39 mnemonic")?
 		.to_entropy();
@@ -770,15 +772,20 @@ async fn run_pgas_check(
 	};
 
 	let chains = chain::CliChainProvider::new(&network);
+	let people_location = chains.location(network.people_genesis);
 	let people_rpc = alloc::rpc::RpcClient::new(
-		chains.rpc_client(network.people_genesis).await.context("connect to People")?,
+		chains
+			.rpc_client(network.people_genesis)
+			.await
+			.with_context(|| format!("connect to People ({people_location})"))?,
 	);
 	let people_metadata = alloc::fetch_metadata(&people_rpc).await.map_err(anyhow::Error::msg)?;
+	let asset_hub_location = chains.location(network.asset_hub_genesis);
 	let asset_hub_rpc = alloc::rpc::RpcClient::new(
 		chains
 			.rpc_client(network.asset_hub_genesis)
 			.await
-			.context("connect to Asset Hub")?,
+			.with_context(|| format!("connect to Asset Hub ({asset_hub_location})"))?,
 	);
 	let asset_hub_metadata =
 		alloc::fetch_metadata(&asset_hub_rpc).await.map_err(anyhow::Error::msg)?;
@@ -936,11 +943,13 @@ async fn run_alloc_check(
 		None => [0u8; 32],
 	};
 
+	let chains = chain::CliChainProvider::new(&network);
+	let location = chains.location(network.people_genesis);
 	let rpc = alloc::rpc::RpcClient::new(
-		chain::CliChainProvider::new(&network)
+		chains
 			.rpc_client(network.people_genesis)
 			.await
-			.context("connect to People")?,
+			.with_context(|| format!("connect to People ({location})"))?,
 	);
 	let metadata = alloc::fetch_metadata(&rpc).await.map_err(anyhow::Error::msg)?;
 	let (spec_version, transaction_version) =
@@ -4442,6 +4451,26 @@ mod cli_tests {
 				second_abort.is_finished(),
 			),
 			([[1; 32], [2; 32]].into_iter().collect(), true, false,)
+		);
+	}
+
+	/// The light client drops a PGAS claim, so a submit there would only wait
+	/// out its timeout. It is refused before a key is derived or a chain dialed.
+	#[tokio::test]
+	async fn pgas_check_refuses_to_submit_on_the_light_client() {
+		let network = NetworkConfig {
+			chain_backend: chain::ChainBackend::LightClient,
+			..Network::default().config()
+		};
+
+		let error = run_pgas_check(String::new(), network, Some("00".repeat(32)), 8, true)
+			.await
+			.expect_err("a submit on the light client is refused");
+
+		assert_eq!(
+			error.to_string(),
+			"--submit needs --chain-backend rpc: the light client drops a PGAS claim, because \
+			 the proof Asset Hub's nodes return for its validation is missing entries"
 		);
 	}
 

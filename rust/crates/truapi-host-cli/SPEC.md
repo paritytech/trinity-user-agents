@@ -1760,9 +1760,6 @@ preset carries without serving them as a role, of which no preset has any.
 The all-zero SSO sentinel and every genesis hash not present in the active
 route map fall back to People, on either chain backend (§14.3).
 
-A rustls ring crypto provider is installed at process startup for `wss://`
-connections.
-
 ### 14.2 Product-frame WebSocket
 
 The listener uses plain `ws://`. Any `SocketAddr` accepted by the OS can be
@@ -1814,8 +1811,8 @@ Every chain connection the CLI makes goes through `CliChainProvider`
 provider, which would otherwise look the hash up in its bundled catalog and
 start the light client. The genesis check of a rerouted endpoint (§14.1) uses a
 provider for that endpoint alone, over RPC. A request from one of the CLI's own
-commands, or the setup of a subscription, fails after 60 seconds without an
-answer.
+commands, or the setup of a subscription, fails once its connection has
+delivered nothing for 30 seconds while it waits.
 
 With `rpc`, each routed chain is registered as its endpoint's RPC node, and every
 connect opens a fresh WebSocket. [`ws.rs`](../truapi-provider/src/ws.rs) sets
@@ -1832,9 +1829,10 @@ cannot be combined with the `HOST_CLI_*_WS` overrides or
 `HOST_CLI_LOCAL_NETWORK_CONFIG`. One light client per network serves the process
 and keeps one idle connection per chain, since smoldot stops a chain when its
 last connection closes. A chain's first request waits for it to sync. A PGAS
-claim on Asset Hub, such as `pgas-check --submit`, is dropped: smoldot validates a
-transaction before broadcasting it, and the proof Asset Hub's nodes return for
-that validation is missing entries the validation reads.
+claim on Asset Hub is dropped: smoldot validates a transaction before
+broadcasting it, and the proof Asset Hub's nodes return for that validation is
+missing entries the validation reads. `pgas-check --submit` refuses to run on
+the light client for that reason.
 
 `wss://` certificates are verified with the root certificates built into the
 binary, on both backends, not with certificate authorities added to the

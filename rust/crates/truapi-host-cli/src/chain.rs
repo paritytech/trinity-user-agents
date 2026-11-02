@@ -7,12 +7,11 @@
 use std::{
 	collections::{BTreeMap, HashMap, hash_map::Entry},
 	sync::{Arc, Mutex, PoisonError},
-	time::Duration,
 };
 
 use async_trait::async_trait;
 use clap::ValueEnum;
-use subxt_rpcs::client::{RawRpcFuture, RawRpcSubscription, RawValue, RpcClient, RpcClientT};
+use subxt_rpcs::client::RpcClient;
 use tracing::debug;
 use truapi::{
 	HostRpcClient,
@@ -21,11 +20,6 @@ use truapi::{
 use truapi_provider::{ChainSource, EmbeddedChainProvider};
 
 use crate::network::{ChainEndpoint, NetworkConfig};
-
-/// How long a client from [`CliChainProvider::rpc_client`] waits for an answer,
-/// as subxt's own WebSocket client does. Provider connections have no request
-/// timeout, and keepalive pings hold open a node that never answers.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The CLI's answer to which chains build as V5, for its own extrinsics.
 pub struct PresetExtensionVersions(pub truapi::platform::ExtensionVersionMap);
@@ -106,12 +100,12 @@ impl CliChainProvider {
 	}
 
 	/// A subxt RPC client over a new connection to the chain `genesis_hash`
-	/// routes to. Each request, and each subscription's setup, fails after
-	/// [`REQUEST_TIMEOUT`] without an answer.
+	/// routes to. A request fails once the connection has been silent for
+	/// [`HostRpcClient`]'s deadline while it waits.
 	pub async fn rpc_client(&self, genesis_hash: [u8; 32]) -> Result<RpcClient, ProviderError> {
 		let connection = self.connect(genesis_hash).await?;
 		let client = HostRpcClient::new(Arc::from(connection), crate::tokio_spawner());
-		Ok(RpcClient::new(Timed(client)))
+		Ok(RpcClient::new(client))
 	}
 
 	/// The routed endpoint that answers `genesis_hash`: its own, otherwise
@@ -139,12 +133,16 @@ impl CliChainProvider {
 			.is_some_and(|endpoint| endpoint.genesis == *genesis_hash)
 	}
 
-	/// The RPC URL a genesis routes to. Test-only, so a routing override can be
-	/// asserted rather than assumed: an override written to the wrong field
-	/// compiles, changes nothing, and is invisible in timings.
-	#[cfg(test)]
-	pub fn routed_url(&self, genesis_hash: &[u8; 32]) -> &'static str {
-		self.chain_for(*genesis_hash).expect("People is routed").ws
+	/// Where requests for `genesis_hash` go, for messages: the URL of the RPC
+	/// node it routes to, or the light client. A test asserts a routing override
+	/// through it, since an override written to the wrong field compiles,
+	/// changes nothing, and is invisible in timings.
+	pub fn location(&self, genesis_hash: [u8; 32]) -> &'static str {
+		match (&self.backend, self.chain_for(genesis_hash)) {
+			(_, None) => "unrouted",
+			(Backend::Rpc(_), Some(endpoint)) => endpoint.ws,
+			(Backend::LightClient, Some(_)) => "light client",
+		}
 	}
 }
 
@@ -178,40 +176,6 @@ impl ChainProvider for CliChainProvider {
 			Backend::LightClient => LightClient::shared(self.network.id)?.connect(chain).await,
 		}
 	}
-}
-
-/// `C` with [`REQUEST_TIMEOUT`] on every request and subscription setup.
-struct Timed<C>(C);
-
-impl<C: RpcClientT> RpcClientT for Timed<C> {
-	fn request_raw<'a>(
-		&'a self,
-		method: &'a str,
-		params: Option<Box<RawValue>>,
-	) -> RawRpcFuture<'a, Box<RawValue>> {
-		Box::pin(within_request_timeout(method, self.0.request_raw(method, params)))
-	}
-
-	fn subscribe_raw<'a>(
-		&'a self,
-		sub: &'a str,
-		params: Option<Box<RawValue>>,
-		unsub: &'a str,
-	) -> RawRpcFuture<'a, RawRpcSubscription> {
-		Box::pin(within_request_timeout(sub, self.0.subscribe_raw(sub, params, unsub)))
-	}
-}
-
-async fn within_request_timeout<T>(
-	method: &str,
-	call: RawRpcFuture<'_, T>,
-) -> Result<T, subxt_rpcs::Error> {
-	tokio::time::timeout(REQUEST_TIMEOUT, call).await.unwrap_or_else(|_| {
-		Err(subxt_rpcs::Error::Client(Box::new(std::io::Error::new(
-			std::io::ErrorKind::TimedOut,
-			format!("{method}: no answer within {}s", REQUEST_TIMEOUT.as_secs()),
-		))))
-	})
 }
 
 /// The process's light client for one network. Each `EmbeddedChainProvider`
@@ -260,62 +224,6 @@ mod tests {
 
 	use super::*;
 	use crate::network::Network;
-
-	/// A node that holds every request open, as one that lost the request does.
-	struct NeverAnswers;
-
-	impl RpcClientT for NeverAnswers {
-		fn request_raw<'a>(
-			&'a self,
-			_method: &'a str,
-			_params: Option<Box<RawValue>>,
-		) -> RawRpcFuture<'a, Box<RawValue>> {
-			Box::pin(futures::future::pending())
-		}
-
-		fn subscribe_raw<'a>(
-			&'a self,
-			_sub: &'a str,
-			_params: Option<Box<RawValue>>,
-			_unsub: &'a str,
-		) -> RawRpcFuture<'a, RawRpcSubscription> {
-			Box::pin(futures::future::pending())
-		}
-	}
-
-	/// Keepalive pings hold such a connection open, so without a request timeout
-	/// a command reading the chain, or waiting for its transaction to be
-	/// watched, would wait forever rather than fail.
-	#[tokio::test(start_paused = true)]
-	async fn requests_and_subscriptions_the_node_never_answers_fail() {
-		use subxt_rpcs::client::rpc_params;
-
-		let rpc = RpcClient::new(Timed(NeverAnswers));
-		let request = rpc.request::<serde_json::Value>("state_getStorage", rpc_params![]);
-		let Err(request) =
-			tokio::time::timeout(REQUEST_TIMEOUT * 2, request).await.expect("gives up")
-		else {
-			panic!("nothing answered");
-		};
-		let subscription = rpc.subscribe::<serde_json::Value>(
-			"author_submitAndWatchExtrinsic",
-			rpc_params![],
-			"author_unwatchExtrinsic",
-		);
-		let Err(subscription) =
-			tokio::time::timeout(REQUEST_TIMEOUT * 2, subscription).await.expect("gives up")
-		else {
-			panic!("nothing answered");
-		};
-
-		assert_eq!(
-			[request.to_string(), subscription.to_string()],
-			[
-				"RPC error: client error: state_getStorage: no answer within 60s",
-				"RPC error: client error: author_submitAndWatchExtrinsic: no answer within 60s",
-			]
-		);
-	}
 
 	/// A network whose only route is People at `people_ws`.
 	fn people_only(people_ws: String) -> NetworkConfig {
@@ -437,7 +345,7 @@ mod tests {
 					entry.identifier
 				);
 				assert_eq!(
-					provider.routed_url(&entry.genesis_hash),
+					provider.location(entry.genesis_hash),
 					expected,
 					"{} serves {:?} but routes it elsewhere",
 					config.id,
@@ -467,11 +375,11 @@ mod tests {
 		let widened = CliChainProvider::with_live_chain_routing(&network, true);
 
 		assert_eq!(
-			gated.routed_url(&optional.genesis),
+			gated.location(optional.genesis),
 			PEOPLE,
 			"an endpoint that is not a role is excluded without the switch"
 		);
-		assert_eq!(widened.routed_url(&optional.genesis), optional.ws, "and included with it");
+		assert_eq!(widened.location(optional.genesis), optional.ws, "and included with it");
 	}
 
 	/// The genesis check of a rerouted endpoint must ask that URL, whatever the
@@ -487,7 +395,7 @@ mod tests {
 
 		let alone = CliChainProvider::for_endpoint(&network, optional);
 
-		assert_eq!(alone.routed_url(&optional.genesis), optional.ws);
+		assert_eq!(alone.location(optional.genesis), optional.ws);
 		assert!(alone.chain_for(network.people_genesis).is_none(), "People is not this endpoint");
 	}
 
