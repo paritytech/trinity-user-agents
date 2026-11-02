@@ -1457,15 +1457,15 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     func chatMessagesQuery(
         _ request: ProductChatMessagesQueryRequest,
         timeout: Duration
-    ) async throws -> ProductChatMessagesQueryItem
+    ) async throws -> ProductChatMessagesQueryResponse
     func chatUserAction(
         _ request: ProductChatUserActionRequest,
         timeout: Duration
-    ) async throws -> ProductChatUserActionItem
+    ) async throws -> ProductChatUserActionResponse
     func chatReactionsQuery(
         _ request: ProductChatReactionsQueryRequest,
         timeout: Duration
-    ) async throws -> ProductChatReactionsQueryItem
+    ) async throws -> ProductChatReactionsQueryResponse
     func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error>
     func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws
     func permissionAuthorizationStatus(
@@ -1491,19 +1491,19 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
 public extension TrUAPIProductExecutionProtocol {
     func chatMessagesQuery(
         _ request: ProductChatMessagesQueryRequest
-    ) async throws -> ProductChatMessagesQueryItem {
+    ) async throws -> ProductChatMessagesQueryResponse {
         try await chatMessagesQuery(request, timeout: ChatQueryTimeout.messages)
     }
 
     func chatUserAction(
         _ request: ProductChatUserActionRequest
-    ) async throws -> ProductChatUserActionItem {
+    ) async throws -> ProductChatUserActionResponse {
         try await chatUserAction(request, timeout: ChatQueryTimeout.timeout(for: request.action))
     }
 
     func chatReactionsQuery(
         _ request: ProductChatReactionsQueryRequest
-    ) async throws -> ProductChatReactionsQueryItem {
+    ) async throws -> ProductChatReactionsQueryResponse {
         try await chatReactionsQuery(request, timeout: ChatQueryTimeout.lookup)
     }
 
@@ -1512,7 +1512,7 @@ public extension TrUAPIProductExecutionProtocol {
     func chatMessagesQuery(
         _: ProductChatMessagesQueryRequest,
         timeout _: Duration
-    ) async throws -> ProductChatMessagesQueryItem {
+    ) async throws -> ProductChatMessagesQueryResponse {
         throw ChatQueryError.refused(.notAvailable)
     }
 
@@ -1521,7 +1521,7 @@ public extension TrUAPIProductExecutionProtocol {
     func chatUserAction(
         _: ProductChatUserActionRequest,
         timeout _: Duration
-    ) async throws -> ProductChatUserActionItem {
+    ) async throws -> ProductChatUserActionResponse {
         throw ChatQueryError.refused(.notAvailable)
     }
 
@@ -1530,7 +1530,7 @@ public extension TrUAPIProductExecutionProtocol {
     func chatReactionsQuery(
         _: ProductChatReactionsQueryRequest,
         timeout _: Duration
-    ) async throws -> ProductChatReactionsQueryItem {
+    ) async throws -> ProductChatReactionsQueryResponse {
         throw ChatQueryError.refused(.notAvailable)
     }
 }
@@ -1628,7 +1628,7 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
     public func chatMessagesQuery(
         _ request: ProductChatMessagesQueryRequest,
         timeout: Duration
-    ) async throws -> ProductChatMessagesQueryItem {
+    ) async throws -> ProductChatMessagesQueryResponse {
         try await chatQuery(timeout: timeout) { observer in
             try inner.chatMessagesQuery(request: request, observer: observer)
         } answer: { answer in
@@ -1640,7 +1640,7 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
     public func chatUserAction(
         _ request: ProductChatUserActionRequest,
         timeout: Duration
-    ) async throws -> ProductChatUserActionItem {
+    ) async throws -> ProductChatUserActionResponse {
         try await chatQuery(timeout: timeout) { observer in
             try inner.chatUserAction(request: request, observer: observer)
         } answer: { answer in
@@ -1652,7 +1652,7 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
     public func chatReactionsQuery(
         _ request: ProductChatReactionsQueryRequest,
         timeout: Duration
-    ) async throws -> ProductChatReactionsQueryItem {
+    ) async throws -> ProductChatReactionsQueryResponse {
         try await chatQuery(timeout: timeout) { observer in
             try inner.chatReactionsQuery(request: request, observer: observer)
         } answer: { answer in

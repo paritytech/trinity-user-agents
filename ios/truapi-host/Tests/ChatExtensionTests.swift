@@ -42,7 +42,7 @@ struct ChatHostBridgeDefaultsTests {
 }
 
 struct ChatQueryTests {
-    private static let page = ProductChatMessagesQueryItem(messages: [], next: nil)
+    private static let page = ProductChatMessagesQueryResponse(messages: [], next: nil)
 
     @Test
     func answerReachesTheCallerAndEndsTheQuery() async throws {
@@ -91,7 +91,7 @@ struct ChatQueryTests {
             try await chatQuery(timeout: .seconds(5)) { observer in
                 observer.onAnswer(answer: .messages(page: Self.page))
                 return RecordingChatQuery()
-            } answer: { answer -> ProductChatReactionsQueryItem? in
+            } answer: { answer -> ProductChatReactionsQueryResponse? in
                 if case let .reactions(reactions) = answer { reactions } else { nil }
             }
         }
