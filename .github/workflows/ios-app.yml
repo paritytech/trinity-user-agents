@@ -2,13 +2,14 @@ name: iOS app
 
 # The iOS app's suite, called by ci.yml for a pull request that reaches the
 # app or the Swift packages, by ios-main.yml for a push to main that reaches the
-# app, and by on-label.yml for the simulator preview. Every job here runs on the
-# Parity machines, which are persistent and shared, so no caller starts it for a
-# pull request from a fork.
+# app, and by on-label.yml for the simulator preview and for the suite on a
+# draft or stacked pull request labelled ci:ios-tests. Every job here runs on
+# the Parity machines, which are persistent and shared, so no caller starts it
+# for a pull request from a fork.
 #
 # A suite run builds the core once, then the device archive, the unit tests and
 # the TrUAPIHost package check against it. A preview run builds the core and the
-# simulator preview only, so a label never runs the tests a second time.
+# simulator preview only, so the simulator label never runs the tests.
 on:
   workflow_call:
     inputs:
@@ -262,12 +263,14 @@ jobs:
           ls -lh "$RUNNER_TEMP/ios-core.tgz"
 
       # github.run_id is stable across attempts, so a rerun uploads the same
-      # name. Overwriting rather than adding the attempt to the name, because
+      # name. The mode is part of it because on-label.yml can call this
+      # workflow for a preview and for the suite in one run, and the preview's
+      # core has no device slice. Overwriting rather than adding the attempt to the name, because
       # "re-run failed jobs" does not rerun core, and the app jobs would then
       # look for a name that was never uploaded.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ios-core-${{ github.run_id }}
+          name: ios-core-${{ github.run_id }}-${{ inputs.preview && 'preview' || 'suite' }}
           path: ${{ runner.temp }}/ios-core.tgz
           retention-days: 1
           if-no-files-found: error
@@ -321,7 +324,7 @@ jobs:
       - name: Restore the in-tree core
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ios-core-${{ github.run_id }}
+          name: ios-core-${{ github.run_id }}-${{ inputs.preview && 'preview' || 'suite' }}
           path: ${{ runner.temp }}
 
       # The core carries the generated Swift, both xcframeworks and the
@@ -444,7 +447,7 @@ jobs:
       - name: Restore the in-tree core
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ios-core-${{ github.run_id }}
+          name: ios-core-${{ github.run_id }}-${{ inputs.preview && 'preview' || 'suite' }}
           path: ${{ runner.temp }}
 
       - name: Unpack the generated core
@@ -573,7 +576,7 @@ jobs:
       - name: Restore the in-tree core
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ios-core-${{ github.run_id }}
+          name: ios-core-${{ github.run_id }}-${{ inputs.preview && 'preview' || 'suite' }}
           path: ${{ runner.temp }}
 
       - name: Unpack the generated core
@@ -715,7 +718,7 @@ jobs:
       - name: Restore the in-tree core
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: ios-core-${{ github.run_id }}
+          name: ios-core-${{ github.run_id }}-${{ inputs.preview && 'preview' || 'suite' }}
           path: ${{ runner.temp }}
 
       - name: Unpack the generated core

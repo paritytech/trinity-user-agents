@@ -2711,6 +2711,8 @@ pub enum NftPurseDrainDestination {
 	},
 	/// A cheque the product delivers to its recipient.
 	Cheque,
+	/// The keys of a deposited cheque, back to its sender.
+	Refund,
 }
 
 /// Review shown before a user-confirmed core action continues.

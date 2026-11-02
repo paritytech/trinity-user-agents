@@ -1,7 +1,6 @@
 //! Product-facing NFT purse capability adapter. Purses live in the core
 //! database, which the browser core does not have, so there the served calls
 //! answer `Unsupported`, as on a native host that configured no database.
-//! Calls no host serves yet answer unavailable everywhere.
 
 #[cfg(not(target_arch = "wasm32"))]
 mod served;
@@ -20,14 +19,20 @@ mod browser {
 			HostNftPurseCreateReceiveKeyRequest, HostNftPurseCreateReceiveKeyResponse,
 			HostNftPurseDepositError, HostNftPurseDepositRequest, HostNftPurseDepositResponse,
 			HostNftPurseListPursesError, HostNftPurseListPursesRequest,
-			HostNftPurseListPursesResponse, HostNftPurseObserveOperationStatusError,
+			HostNftPurseListPursesResponse, HostNftPurseListenOneTimePaymentError,
+			HostNftPurseListenOneTimePaymentItem, HostNftPurseListenOneTimePaymentRequest,
+			HostNftPurseListenPaymentInboxError, HostNftPurseListenPaymentInboxItem,
+			HostNftPurseListenPaymentInboxRequest, HostNftPurseObserveOperationStatusError,
 			HostNftPurseObserveOperationStatusItem, HostNftPurseObserveOperationStatusRequest,
 			HostNftPurseQueryPurseError, HostNftPurseQueryPurseRequest,
 			HostNftPurseQueryPurseResponse, HostNftPurseRebalancePurseError,
 			HostNftPurseRebalancePurseRequest, HostNftPurseRebalancePurseResponse,
-			HostNftPurseStaticReceiveKeyError, HostNftPurseStaticReceiveKeyRequest,
-			HostNftPurseStaticReceiveKeyResponse, HostNftPurseTransferItemError,
-			HostNftPurseTransferItemRequest, HostNftPurseTransferItemResponse,
+			HostNftPurseRefundError, HostNftPurseRefundRequest, HostNftPurseRefundResponse,
+			HostNftPurseRevokeChequeError, HostNftPurseRevokeChequeRequest,
+			HostNftPurseRevokeChequeResponse, HostNftPurseStaticReceiveKeyError,
+			HostNftPurseStaticReceiveKeyRequest, HostNftPurseStaticReceiveKeyResponse,
+			HostNftPurseTransferItemError, HostNftPurseTransferItemRequest,
+			HostNftPurseTransferItemResponse,
 		},
 	};
 
@@ -95,6 +100,22 @@ mod browser {
 			Err(CallError::Unsupported)
 		}
 
+		async fn revoke_cheque(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseRevokeChequeRequest,
+		) -> Result<HostNftPurseRevokeChequeResponse, CallError<HostNftPurseRevokeChequeError>> {
+			Err(CallError::Unsupported)
+		}
+
+		async fn refund(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseRefundRequest,
+		) -> Result<HostNftPurseRefundResponse, CallError<HostNftPurseRefundError>> {
+			Err(CallError::Unsupported)
+		}
+
 		async fn deposit(
 			&self,
 			_cx: &CallContext,
@@ -120,6 +141,28 @@ mod browser {
 			_request: HostNftPurseTransferItemRequest,
 		) -> Result<HostNftPurseTransferItemResponse, CallError<HostNftPurseTransferItemError>> {
 			Err(CallError::Unsupported)
+		}
+
+		async fn listen_one_time_payment(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseListenOneTimePaymentRequest,
+		) -> Subscription<
+			HostNftPurseListenOneTimePaymentItem,
+			CallError<HostNftPurseListenOneTimePaymentError>,
+		> {
+			Subscription::interrupted(CallError::Unsupported)
+		}
+
+		async fn listen_payment_inbox(
+			&self,
+			_cx: &CallContext,
+			_request: HostNftPurseListenPaymentInboxRequest,
+		) -> Subscription<
+			HostNftPurseListenPaymentInboxItem,
+			CallError<HostNftPurseListenPaymentInboxError>,
+		> {
+			Subscription::interrupted(CallError::Unsupported)
 		}
 
 		async fn observe_operation_status(
