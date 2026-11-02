@@ -955,8 +955,8 @@ impl crate::platform::TopUpPlatform for TopUpCallbackPlatform {
 	async fn top_up(
 		&self,
 		product: &ProductContext,
-		request: v01::HostPaymentTopUpRequest,
-	) -> Result<(), v01::HostPaymentTopUpError> {
+		request: crate::latest::HostPaymentTopUpRequest,
+	) -> Result<(), crate::latest::HostPaymentTopUpError> {
 		self.top_up.top_up(product.product_id.clone(), request).await
 	}
 
@@ -1021,8 +1021,8 @@ impl crate::platform::PaymentPlatform for PaymentCallbackPlatform {
 	async fn request_payment(
 		&self,
 		product: &ProductContext,
-		request: v01::HostPaymentRequest,
-	) -> Result<(), v01::HostPaymentError> {
+		request: crate::latest::HostPaymentRequest,
+	) -> Result<(), crate::latest::HostPaymentError> {
 		self.payments.request_payment(product.product_id.clone(), request).await
 	}
 
@@ -1122,8 +1122,8 @@ mod status_relay_tests {
 		async fn top_up(
 			&self,
 			_product_id: ProductId,
-			_request: v01::HostPaymentTopUpRequest,
-		) -> Result<(), v01::HostPaymentTopUpError> {
+			_request: crate::latest::HostPaymentTopUpRequest,
+		) -> Result<(), crate::latest::HostPaymentTopUpError> {
 			Ok(())
 		}
 
@@ -1255,8 +1255,8 @@ mod status_relay_tests {
 		async fn request_payment(
 			&self,
 			_product_id: ProductId,
-			_request: v01::HostPaymentRequest,
-		) -> Result<(), v01::HostPaymentError> {
+			_request: crate::latest::HostPaymentRequest,
+		) -> Result<(), crate::latest::HostPaymentError> {
 			Ok(())
 		}
 

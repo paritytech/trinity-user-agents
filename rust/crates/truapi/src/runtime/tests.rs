@@ -9334,8 +9334,8 @@ fn a_settled_top_up_started_again_settles_nothing() {
 		),
 		(
 			Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 1 }),
-			Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V1(
-				v01::HostPaymentTopUpError::AlreadyExists
+			Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V2(
+				truapi::latest::HostPaymentTopUpError::AlreadyExists
 			))),
 			Err(not_started()),
 			Some(Vec::new()),
@@ -9721,7 +9721,7 @@ fn top_up(
 	futures::executor::block_on(truapi::api::Payment::top_up(
 		host,
 		&CallContext::default(),
-		truapi::versioned::payment::HostPaymentTopUpRequest::V1(v01::HostPaymentTopUpRequest {
+		truapi::versioned::payment::HostPaymentTopUpRequest::V2(truapi::latest::HostPaymentTopUpRequest {
 			into: None,
 			amount,
 			source,
@@ -9744,7 +9744,7 @@ fn fund_top_up(
 	futures::executor::block_on(truapi::api::Payment::top_up(
 		worker,
 		&CallContext::default(),
-		truapi::versioned::payment::HostPaymentTopUpRequest::V1(v01::HostPaymentTopUpRequest {
+		truapi::versioned::payment::HostPaymentTopUpRequest::V2(truapi::latest::HostPaymentTopUpRequest {
 			into: None,
 			amount,
 			source: product_account_source(),
@@ -9774,7 +9774,7 @@ fn a_top_up_reaches_the_host_engine_scoped_to_its_product() {
 		started.as_slice(),
 		[(
 			"wallet.dot".to_string(),
-			v01::HostPaymentTopUpRequest {
+			truapi::latest::HostPaymentTopUpRequest {
 				into: None,
 				amount: 1_000,
 				source: product_account_source(),
@@ -9803,8 +9803,8 @@ fn a_top_up_from_an_unusable_source_is_refused_before_the_host_sees_it() {
 	let refused = sources.map(|source| top_up(&host, 1_000, source));
 
 	let invalid = || {
-		Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V1(
-			v01::HostPaymentTopUpError::InvalidSource,
+		Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V2(
+			truapi::latest::HostPaymentTopUpError::InvalidSource,
 		)))
 	};
 	assert_eq!(
@@ -9902,8 +9902,8 @@ impl crate::platform::PaymentPlatform for RecordingPaymentPlatform {
 	}
 }
 
-fn payment_request() -> v01::HostPaymentRequest {
-	v01::HostPaymentRequest {
+fn payment_request() -> truapi::latest::HostPaymentRequest {
+	truapi::latest::HostPaymentRequest {
 		from: None,
 		amount: 1_000,
 		destination: [3; 32],
@@ -9921,7 +9921,7 @@ fn request_payment(
 	futures::executor::block_on(truapi::api::Payment::request(
 		host,
 		&CallContext::default(),
-		truapi::versioned::payment::HostPaymentRequest::V1(payment_request()),
+		truapi::versioned::payment::HostPaymentRequest::V2(payment_request()),
 	))
 }
 
@@ -9968,7 +9968,7 @@ fn a_payment_reaches_the_host_engine_and_its_status_is_relayed() {
 			followed,
 		),
 		(
-			Ok(truapi::versioned::payment::HostPaymentResponse::V1),
+			Ok(truapi::versioned::payment::HostPaymentResponse::V2),
 			vec![
 				Ok(truapi::versioned::payment::HostPaymentStatusSubscribeItem::V1(
 					v01::HostPaymentStatusSubscribeItem::Processing
@@ -9979,7 +9979,7 @@ fn a_payment_reaches_the_host_engine_and_its_status_is_relayed() {
 			],
 			vec![(
 				"wallet.dot".to_string(),
-				v01::HostPaymentRequest { id: host_id, ..payment_request() }
+				truapi::latest::HostPaymentRequest { id: host_id, ..payment_request() }
 			)],
 			vec![("wallet.dot".to_string(), host_id)],
 		)
@@ -10248,7 +10248,7 @@ impl crate::platform::PaymentPlatform for ShortPaymentPlatform {
 		_product: &ProductContext,
 		_request: truapi::latest::HostPaymentRequest,
 	) -> Result<(), truapi::latest::HostPaymentError> {
-		Err(v01::HostPaymentError::InsufficientBalance)
+		Err(truapi::latest::HostPaymentError::InsufficientBalance)
 	}
 
 	fn subscribe_payment_status(
@@ -10287,7 +10287,7 @@ fn a_short_balance_reads_as_a_refusal_unless_the_product_may_see_it() {
 	let with_access = request_payment(&host);
 
 	let refused =
-		|error| CallError::Domain(truapi::versioned::payment::HostPaymentError::V1(error));
+		|error| CallError::Domain(truapi::versioned::payment::HostPaymentError::V2(error));
 	assert_eq!(
 		(
 			without_access,
@@ -10299,8 +10299,8 @@ fn a_short_balance_reads_as_a_refusal_unless_the_product_may_see_it() {
 				.len(),
 		),
 		(
-			Err(refused(v01::HostPaymentError::Rejected)),
-			Err(refused(v01::HostPaymentError::InsufficientBalance)),
+			Err(refused(truapi::latest::HostPaymentError::Rejected)),
+			Err(refused(truapi::latest::HostPaymentError::InsufficientBalance)),
 			0,
 		)
 	);
@@ -10318,8 +10318,8 @@ fn a_top_up_of_nothing_is_refused_before_the_host_sees_it() {
 	assert_eq!(
 		(refused, engine.started.lock().expect("started mutex poisoned").len()),
 		(
-			Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V1(
-				v01::HostPaymentTopUpError::InvalidAmount,
+			Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V2(
+				truapi::latest::HostPaymentTopUpError::InvalidAmount,
 			))),
 			0,
 		)
@@ -10337,7 +10337,7 @@ fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
 	let refused = futures::executor::block_on(truapi::api::Payment::request(
 		&host,
 		&CallContext::default(),
-		truapi::versioned::payment::HostPaymentRequest::V1(v01::HostPaymentRequest {
+		truapi::versioned::payment::HostPaymentRequest::V2(truapi::latest::HostPaymentRequest {
 			amount: 0,
 			..payment_request()
 		}),
@@ -10346,8 +10346,8 @@ fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
 	assert_eq!(
 		(refused, engine.requested.lock().expect("requested mutex poisoned").len()),
 		(
-			Err(CallError::Domain(truapi::versioned::payment::HostPaymentError::V1(
-				v01::HostPaymentError::InvalidAmount,
+			Err(CallError::Domain(truapi::versioned::payment::HostPaymentError::V2(
+				truapi::latest::HostPaymentError::InvalidAmount,
 			))),
 			0,
 		)
@@ -10365,7 +10365,7 @@ impl crate::platform::TopUpPlatform for RefusingTopUpPlatform {
 		_product: &ProductContext,
 		_request: truapi::latest::HostPaymentTopUpRequest,
 	) -> Result<(), truapi::latest::HostPaymentTopUpError> {
-		Err(v01::HostPaymentTopUpError::SourceBusy)
+		Err(truapi::latest::HostPaymentTopUpError::SourceBusy)
 	}
 
 	fn subscribe_top_up_status(
@@ -10458,8 +10458,8 @@ fn served_with_engine(
 }
 
 fn top_up_already_exists() -> CallError<truapi::versioned::payment::HostPaymentTopUpError> {
-	CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V1(
-		v01::HostPaymentTopUpError::AlreadyExists,
+	CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V2(
+		truapi::latest::HostPaymentTopUpError::AlreadyExists,
 	))
 }
 

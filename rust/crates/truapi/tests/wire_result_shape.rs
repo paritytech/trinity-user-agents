@@ -337,7 +337,6 @@ fn payment_request_reports_unsupported_without_a_host_engine() {
 		amount: 1,
 		destination: [0u8; 32],
 		id: [7; 32],
-		funding: None,
 	};
 	let ids = request_ids("payment_request").expect("known request method");
 	let frame = ProtocolMessage {
@@ -700,7 +699,6 @@ fn top_up_reports_unsupported_without_a_host_engine() {
 			derivation_index: v01::DerivationIndex::Index(0),
 		},
 		id: [7; 32],
-		funding: None,
 	};
 	let ids = request_ids("payment_top_up").expect("known request method");
 	let frame = ProtocolMessage {
