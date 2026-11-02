@@ -13,6 +13,8 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
+alloy-primitives = { version = "1.7", default-features = false }
+alloy-sol-types = { version = "1.7", default-features = false }
 anyhow = "1"
 async-sqlite = { version = "0.6", default-features = false }
 arboard = { version = "3.6.1", default-features = false }

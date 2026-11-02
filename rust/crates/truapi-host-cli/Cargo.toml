@@ -67,4 +67,6 @@ unicode-width = { workspace = true }
 zeroize = { workspace = true, features = ["alloc", "derive"] }
 
 [dev-dependencies]
+alloy-primitives = { workspace = true }
+alloy-sol-types = { workspace = true }
 truapi = { path = "../truapi", features = ["mock"] }
