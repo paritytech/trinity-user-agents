@@ -184,7 +184,7 @@ impl NativeTrUApiHostRuntime {
 			events,
 			spawner,
 			ws_bridge: Arc::new(SharedWsBridge::new(Arc::new(move |marker, detail| {
-				callbacks.on_core_log(marker.to_string(), detail.to_string());
+				forward_bridge_line(callbacks.as_ref(), marker, detail);
 			}))),
 			worker_executions: Mutex::new(HashMap::new()),
 			top_up: OnceLock::new(),
@@ -1185,12 +1185,12 @@ impl NativeProductExecution {
 	}
 }
 
-#[uniffi::export]
 /// Hands one bridge line to `callbacks`, if the table lists its marker.
 ///
 /// The bridge raises its markers straight at the host rather than through the
 /// tracing layer, so the table check and the detail cap the layer applies are
-/// applied here instead. An unlisted marker is dropped, because nothing
+/// applied here instead. Both bridge loggers route through this, the listener's
+/// and each execution's. An unlisted marker is dropped, because nothing
 /// downstream knows what its detail carries.
 pub(crate) fn forward_bridge_line(callbacks: &dyn HostCallbacks, marker: &str, detail: &str) {
 	if markers::class_of(marker).is_none() {
@@ -1202,6 +1202,7 @@ pub(crate) fn forward_bridge_line(callbacks: &dyn HostCallbacks, marker: &str, d
 	);
 }
 
+#[uniffi::export]
 impl NativeProductExecution {
 	/// Register this execution with its own token on the host's shared listener.
 	/// `bind_port` applies only when the listener first starts.

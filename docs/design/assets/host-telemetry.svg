@@ -189,7 +189,7 @@
   <rect x="850" y="900" width="300" height="64" rx="6" fill="#ffffff" stroke="#5a6472" stroke-width="1.6"/>
   <text x="864" y="923" class="monob">uniffi-bindgen</text>
   <text x="864" y="942" class="sub">truapi.swift &#183; generated/*.kt &#183; no new emitter</text>
-  <text x="864" y="958" class="sub">web host reads it from the TS surface instead</text>
+  <text x="864" y="958" class="sub">web hosts need a core log channel first</text>
 
   <path class="flow"  d="M300,827 H326" stroke="#1f7a4d" marker-end="url(#aGreen)"/>
   <path class="flow"  d="M560,827 H846" stroke="#1f7a4d" marker-end="url(#aGreen)"/>
@@ -213,6 +213,6 @@
   <text x="1114" y="1020" class="numl">severity survives, a core error is alertable,</text>
   <text x="1114" y="1037" class="numl">and marker 49 stays local by construction</text>
 
-  <text x="40" y="1104" class="sub">Verified against origin/main @ 5dfdb50ca &#183; 29 Oct 2026</text>
+  <text x="40" y="1104" class="sub">Verified against the tree this lands on</text>
   <text x="1440" y="1104" text-anchor="end" class="sub">logging.rs &#183; ProductTrUAPIHostBridge.kt &#183; LoggerProtocol+CoreLog.swift &#183; SentryLogTree.kt &#183; HostLogSinkDestination.swift</text>
 </svg>

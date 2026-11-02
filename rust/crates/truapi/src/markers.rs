@@ -151,7 +151,9 @@ pub const NATIVE_PREIMAGE_RETRYING: Marker = local("truapi.native.preimage.retry
 // ------------------------------------------------------------ ws bridge
 //
 // The local WebSocket bridge a product's web view talks to. Details carry
-// ports, counts and socket errors, never product payloads.
+// ports, counts and socket errors, never product payloads. None of these is
+// an error: the bridge recovers from every one of them, by rebinding, by
+// retrying, or by dropping the one connection that failed.
 
 /// The bridge's listener came up. Detail carries the port and runtime id.
 pub const WS_BRIDGE_STARTED: Marker = export("truapi.ws_bridge.started", Severity::Info);
@@ -203,28 +205,28 @@ pub const WS_BRIDGE_CONNECTION_REVOKED_DURING_SETUP: Marker =
 	export("truapi.ws_bridge.connection_revoked_during_setup", Severity::Warn);
 
 /// The listener could not accept. Detail carries the socket error.
-pub const WS_BRIDGE_ACCEPT_ERROR: Marker = export("truapi.ws_bridge.accept_error", Severity::Error);
+pub const WS_BRIDGE_ACCEPT_ERROR: Marker = export("truapi.ws_bridge.accept_error", Severity::Warn);
 
 /// A frame could not be decoded. Detail carries the protocol error.
-pub const WS_BRIDGE_FRAME_ERROR: Marker = export("truapi.ws_bridge.frame_error", Severity::Error);
+pub const WS_BRIDGE_FRAME_ERROR: Marker = export("truapi.ws_bridge.frame_error", Severity::Warn);
 
 /// A handshake failed. Detail carries the reason.
 pub const WS_BRIDGE_HANDSHAKE_ERROR: Marker =
-	export("truapi.ws_bridge.handshake_error", Severity::Error);
+	export("truapi.ws_bridge.handshake_error", Severity::Warn);
 
 /// A read failed. Detail carries the socket error.
-pub const WS_BRIDGE_READ_ERROR: Marker = export("truapi.ws_bridge.read_error", Severity::Error);
+pub const WS_BRIDGE_READ_ERROR: Marker = export("truapi.ws_bridge.read_error", Severity::Warn);
 
 /// A send failed. Detail carries the socket error.
-pub const WS_BRIDGE_SEND_ERROR: Marker = export("truapi.ws_bridge.send_error", Severity::Error);
+pub const WS_BRIDGE_SEND_ERROR: Marker = export("truapi.ws_bridge.send_error", Severity::Warn);
 
 /// The listener was lost and the socket was dropped to free its port.
 pub const WS_BRIDGE_LISTENER_LOST: Marker =
-	export("truapi.ws_bridge.listener_lost", Severity::Error);
+	export("truapi.ws_bridge.listener_lost", Severity::Warn);
 
 /// The listener could not be rebound. Detail carries the reason.
 pub const WS_BRIDGE_RELISTEN_FAILED: Marker =
-	export("truapi.ws_bridge.relisten_failed", Severity::Error);
+	export("truapi.ws_bridge.relisten_failed", Severity::Warn);
 
 /// Every marker the core addresses to a host, ordered by target.
 ///
@@ -358,34 +360,6 @@ mod tests {
 	fn an_unlisted_target_has_no_class() {
 		assert_eq!(class_of("truapi.not.registered"), None);
 		assert_eq!(class_of(CORE_STARTED.target), Some(CORE_STARTED.class));
-	}
-
-	/// Host-addressed targets a `tracing` macro raises, which must be string
-	/// literals and so cannot use the constants above.
-	fn tracing_targets(source: &str) -> Vec<String> {
-		source
-			.match_indices("target: \"")
-			.filter_map(|(at, matched)| {
-				let rest = &source[at + matched.len()..];
-				rest.find('"').map(|end| rest[..end].to_string())
-			})
-			.filter(|target| target.starts_with(crate::logging::HOST_MARKER_PREFIX))
-			.collect()
-	}
-
-	#[test]
-	fn every_tracing_macro_target_is_registered() {
-		let sources = [("chain_runtime.rs", include_str!("chain_runtime.rs"))];
-		for (name, source) in sources {
-			let targets = tracing_targets(source);
-			assert!(!targets.is_empty(), "{name} raises no host-addressed target; drop it here");
-			for target in targets {
-				assert!(
-					class_of(&target).is_some(),
-					"{name} raises {target}, which is not registered"
-				);
-			}
-		}
 	}
 
 	#[test]

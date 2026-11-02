@@ -1742,7 +1742,7 @@ impl ChainConnection {
 				.collect::<Vec<_>>()
 				.join(", ");
 			warn!(
-				target: "truapi.chain.follow_budget_reached",
+				target: crate::markers::CHAIN_FOLLOW_BUDGET_REACHED.target,
 				"this connection to chain {genesis} holds {held} of {FOLLOWS_A_NODE_BUDGETS} follows; its next follow will be refused: {occupants}",
 			);
 		}

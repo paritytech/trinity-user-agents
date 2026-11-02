@@ -359,6 +359,10 @@ impl<S: Subscriber> Layer<S> for HostSinkLayer {
 	}
 }
 
+/// The first `max_chars` characters of `text`, as a slice.
+///
+/// Bounds what a detail may carry across the boundary, on the tracing path and
+/// on the bridge path alike.
 pub(crate) fn truncate_to_chars(text: &str, max_chars: usize) -> &str {
 	match text.char_indices().nth(max_chars) {
 		Some((end, _)) => &text[..end],
@@ -493,9 +497,6 @@ mod tests {
 	/// for the whole of its run or a sibling's teardown reads as its own.
 	static SINK_TESTS: Mutex<()> = Mutex::new(());
 
-	/// The floor must stay at `ERROR` so a host that never calls
-	/// `setLogLevel` still sees protocol violations, and a typo must not be
-	/// able to silence them.
 	/// A host-addressed target the table does not list never reaches a sink,
 	/// so a marker added without saying what it carries stays on the device.
 	#[test]
@@ -523,6 +524,9 @@ mod tests {
 		);
 	}
 
+	/// The floor must stay at `ERROR` so a host that never calls
+	/// `setLogLevel` still sees protocol violations, and a typo must not be
+	/// able to silence them.
 	/// A marked event reaches the host's sink even though the level filter is
 	/// at its default, which is what an ordinary `warn!` cannot do.
 	#[test]

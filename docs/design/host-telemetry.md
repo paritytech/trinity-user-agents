@@ -27,7 +27,7 @@ Three things follow from that shape.
 
 **Severity does not survive the crossing.** `ProductTrUAPIHostBridge.kt:441` and `LoggerProtocol+CoreLog.swift:20` both collapse every allowlisted marker to info, so `truapi.tracing.error` and `truapi.tracing.warn` arrive identically and a core error cannot be alerted on. Host-originated lines keep their severity, so two lines under one tag namespace mean different things depending on who raised them.
 
-The detail string is also built at the call site, so what a marker may carry is decided there rather than by its type. `account_handle` (`logging.rs:107-114`) exists for exactly this and shortens an account id before it is formatted. Making that the only shape a detail can take is step 2 of the delivery below.
+The detail string is also built at the call site, so what a marker may carry is decided there rather than by its type. `account_handle` (`logging.rs:116`) exists for exactly this and shortens an account id before it is formatted. Making that the only shape a detail can take is step 2 of the delivery below.
 
 ## Current state
 
@@ -55,7 +55,7 @@ Telemetry also leaves through eight capture senders, four per platform, with sev
 
 ## Approach
 
-The core owns a table of every marker it may address to a host, each entry carrying what its detail may hold and whether it may leave the device. It exposes that table through a `#[uniffi::export]` function, the way `parse_navigate` at `native.rs:65-68` is already exposed, so it rides `uniffi-bindgen-cli` with every other binding and needs no new emitter and no new CI job. Each host reads it once at startup and matches a target exactly, instead of keeping a list of exported prefixes of its own.
+The core owns a table of every marker it may address to a host, each saying whether it may leave the device and at what severity. What its detail may hold is the doc comment beside it, read by reviewers rather than by anything on a device. It exposes that table through a `#[uniffi::export]` function, the way `parse_navigate` at `native.rs:65-68` is already exposed, so it rides `uniffi-bindgen-cli` with every other binding and needs no new emitter and no new CI job. Each host reads it once at startup and matches a target exactly, instead of keeping a list of exported prefixes of its own.
 
 Exact matching is what makes a marker local by default. A target the table does not hold stays on the device, so a marker added later cannot ship off-device until someone says what it carries. `HostSinkLayer` applies the same rule on the way out, and refuses a host-addressed target the table does not list.
 
@@ -92,11 +92,11 @@ An unregistered target is caught three times over, in this order:
 
 | Where | What happens |
 |---|---|
-| compile time | call sites use registry constants, so an unregistered marker does not build |
-| `HostSinkLayer` | a target built at runtime, as `truapi.tracing.{warn,error}` is, is refused if absent |
+| compile time | every call site names a table constant, so a misspelled marker does not build |
+| `HostSinkLayer` | a target the table does not list is refused, a literal or a runtime-built one alike |
 | host | a target absent from the table it read is treated as `Local` |
 
-The first is the real guarantee. The other two are backstops for runtime-built targets and for a host whose bindings are older than the core.
+The layer is what actually enforces it. The constants make a typo a build failure rather than a silent drop, and the host check is the backstop for bindings older than the core.
 
 **What this changes.** Exact-match lookup replaces prefix matching, so a marker absent from the table is local. `MarkerClass::Export(Severity)` means a core error is no longer a core warning in Sentry. Both host allowlists are deleted.
 
@@ -118,4 +118,4 @@ The benefit is that the number of places the rule is written stays at one as hos
 
 ## Delivery
 
-Tracked on #1796, which carries a task per host alongside the Rust ones.
+The Rust table lands first. Until a host reads it, both hosts keep their own allowlists and still flatten core severity to info, so nothing about what reaches Sentry changes yet. Tracked on #1796, which carries a task per host alongside the Rust ones.
