@@ -1121,10 +1121,16 @@ which has no statement store, and the view says so in a line of its own. What fo
   product worker may report its conversations (`src/products/diagnostics.ts`, below).
 - **Accounts, Topics, Timeline.** The Statements view's three tabs. It names no chat protocol: an account's roles say
   only which product reported or claimed it, and product reports stay out of its timeline.
-- **Accounts.** Every account claimed for, reported or seen signing, with its roles, claims, grant and latest observed
-  statements, and opened: its channels and the statements seen from it, each with when this tab first and last saw it.
-  **Read grants** reads `:statement_allowance:` for them at the newest finalized People block: a grant, not what is
-  used.
+- **Accounts.** Every account claimed for, reported or seen signing, one row each under **Account | Role | Allocation |
+  Grant | Observed**, in a few words: a short role (Product account, Setup notification, Chat sender, Chat peer, Chat
+  allowance, or Observed signer), with a **reported** tag when a product said it, unchecked, and `+n` for more roles;
+  the latest slot claim (`Slot 4 · claimed`, `None seen`); the grant as statements · size (`No grant` when the chain
+  stores none, `Not read` before a read); and the latest observed statements · size · time (`Not observed`). On a narrow
+  dock each value is named under the account instead. **About these columns**, closed, says once that a grant is not
+  what is left and an observation is not what the network holds. A row opens to the full facts: each role, each claim
+  with its day and collection, the grant read's block, its channels and the statements seen from it, each with when this
+  tab first and last saw it. **Read grants** reads `:statement_allowance:` for them at the newest finalized People
+  block.
 - **Topics.** Every subscription, who opened it (core or host), its filter, where its stream stands, pages, statements
   and repeats among its last 200 statements. Every topic seen, with what a product reported it for and how many
   statements were recorded on it. There is no probe: the inspector opens no statement subscription of its own (see **The

@@ -350,13 +350,50 @@
   box-shadow: inset 2px 0 0 var(--si-on);
 }
 
+.si-columns-about {
+  color: var(--si-meta);
+  font-size: 11px;
+}
+
+.si-columns-about > summary {
+  cursor: pointer;
+}
+
+.si-list-head {
+  display: none;
+}
+
+/* Narrow: each value under the account names its column. */
+.si-accounts .si-list-row .si-cell:not(.si-role)::before {
+  content: attr(data-label) " ";
+  color: var(--si-meta);
+  opacity: 0.7;
+}
+
+.si-more {
+  color: var(--si-meta);
+}
+
 @container (min-width: 760px) {
-  .statements-inspector .si-list-row {
+  .statements-inspector .si-list-row,
+  .statements-inspector .si-list-head {
     grid-template-columns: 14ch repeat(4, minmax(0, 1fr));
+  }
+
+  .statements-inspector .si-list-head {
+    display: grid;
+    gap: 2px 10px;
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--si-line);
+    color: var(--si-meta);
   }
 
   .statements-inspector .si-list-row .si-cell:not(:nth-child(2)) {
     grid-column: auto;
+  }
+
+  .si-accounts .si-list-row .si-cell:not(.si-role)::before {
+    content: none;
   }
 }
 
@@ -439,6 +476,15 @@
 
 .si-caveats .si-note {
   margin: 4px 0 0;
+}
+
+.si-about {
+  color: var(--si-meta);
+}
+
+.si-about-list {
+  padding-left: 16px;
+  color: var(--si-meta);
 }
 
 .si-caveat {
