@@ -63,6 +63,8 @@ private fun TrUAPIConfirmation.NftPurseDrain.Destination.toDetail() = when (this
         detail(RCommon.string.truapi_confirm_label_nft_to_key, keyHex)
     TrUAPIConfirmation.NftPurseDrain.Destination.Cheque ->
         detailRes(RCommon.string.truapi_confirm_label_nft_to, RCommon.string.truapi_confirm_value_nft_cheque)
+    TrUAPIConfirmation.NftPurseDrain.Destination.Refund ->
+        detailRes(RCommon.string.truapi_confirm_label_nft_to, RCommon.string.truapi_confirm_value_nft_refund)
 }
 
 private fun TrUAPIConfirmation.Prompt.build(

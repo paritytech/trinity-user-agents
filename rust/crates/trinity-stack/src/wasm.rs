@@ -2,8 +2,9 @@
 //! crate's own types, and errors as a `TrinityStackError` carrying the rule's [`Error::code`].
 
 use crate::{
-	Accepted, DEFAULT_LINK_BASE, Descriptor, Document, Error, Fetched, Pointer, PublishState,
-	Rendered, SpecFile, Verified, accept as accept_fetched, format, open as open_bytes,
+	Accepted, DEFAULT_LINK_BASE, Descriptor, Document, Error, FetchRequest, Fetched, Pointer,
+	PublishState, Refresh, Refreshed, Rendered, Served, SpecFile, StackRead, Verified,
+	accept as accept_fetched, format, open as open_bytes,
 };
 use serde::Serialize;
 use tsify::{Ts, Tsify};
@@ -165,8 +166,103 @@ pub fn check_spec(spec: Ts<SpecFile>, bytes: &[u8]) -> Result<(), JsValue> {
 	spec.check(bytes).map_err(to_js_error)
 }
 
+/// The URL a dotNS name opens at on the stack's `web-gateway`, or `undefined` when it names none.
+#[wasm_bindgen(js_name = webUrl)]
+pub fn web_url(descriptor: Ts<Descriptor>, name: &str) -> Result<Option<String>, JsValue> {
+	let descriptor = descriptor
+		.to_rust()
+		.map_err(|_| type_error("a descriptor must be one this package returned"))?;
+	descriptor.web_url(name).map_err(to_js_error)
+}
+
 /// The 0x-prefixed genesis hash a light spec implies.
 #[wasm_bindgen(js_name = lightSpecGenesis)]
 pub fn light_spec_genesis(bytes: &[u8]) -> Result<String, JsValue> {
 	Ok(format::to_hex(&crate::light_spec_genesis(bytes).map_err(to_js_error)?))
+}
+
+/// [`crate::StackReader`] for JS.
+#[wasm_bindgen(js_name = StackReader)]
+pub struct JsStackReader(crate::StackReader);
+
+#[wasm_bindgen(js_class = StackReader)]
+impl JsStackReader {
+	/// A reader that refreshes by `refresh`: `"never"`, `"once"` or `"maxAge"`, the last
+	/// with `maxAgeSeconds`.
+	#[wasm_bindgen(constructor)]
+	pub fn new(refresh: &str, max_age_seconds: Option<f64>) -> Result<JsStackReader, JsValue> {
+		let refresh = match (refresh, max_age_seconds) {
+			("never", None) => Refresh::Never,
+			("once", None) => Refresh::Once,
+			("maxAge", Some(seconds)) if seconds.is_finite() && seconds >= 1.0 => {
+				Refresh::MaxAge(seconds as u64)
+			},
+			_ => {
+				return Err(type_error(
+					"refresh is never, once, or maxAge with a finite maxAgeSeconds of at least 1",
+				));
+			},
+		};
+		Ok(Self(crate::StackReader::new(refresh)))
+	}
+
+	/// Starts a stack from its build copy and the record the caller stored.
+	pub fn load(
+		&mut self,
+		pointer: Ts<Pointer>,
+		build: Option<Vec<u8>>,
+		stored: Option<Vec<u8>>,
+	) -> Result<(), JsValue> {
+		self.0
+			.load(&self::pointer(&pointer)?, build.as_deref(), stored.as_deref())
+			.map_err(to_js_error)
+	}
+
+	/// The copy to use now, and a fetch to make.
+	pub fn get(
+		&mut self,
+		pointer: Ts<Pointer>,
+		now_unix_seconds: f64,
+	) -> Result<Ts<StackRead>, JsValue> {
+		to_js(&self.0.get(&self::pointer(&pointer)?, now_unix_seconds as i64))
+	}
+
+	/// A fetch whatever the policy, unless one is out already.
+	pub fn refresh(
+		&mut self,
+		pointer: Ts<Pointer>,
+		now_unix_seconds: f64,
+	) -> Result<Option<Ts<FetchRequest>>, JsValue> {
+		self.0
+			.refresh(&self::pointer(&pointer)?, now_unix_seconds as i64)
+			.map(|request| to_js(&request))
+			.transpose()
+	}
+
+	/// The `stackId`s whose background refresh is due.
+	pub fn due(&self, now_unix_seconds: f64) -> Vec<String> {
+		self.0.due(now_unix_seconds as i64)
+	}
+
+	/// Takes the answer to a fetch: the bytes and `ETag` served, `notModified` for a `304`, or
+	/// no bytes when it failed.
+	pub fn fetched(
+		&mut self,
+		pointer: Ts<Pointer>,
+		document: Option<Vec<u8>>,
+		etag: Option<String>,
+		not_modified: bool,
+		now_unix_seconds: f64,
+	) -> Result<Ts<Refreshed>, JsValue> {
+		let served = match (&document, not_modified) {
+			(_, true) => Served::NotModified,
+			(Some(bytes), false) => Served::Document { bytes, etag: etag.as_deref() },
+			(None, false) => Served::Unreachable,
+		};
+		let refreshed = self
+			.0
+			.fetched(&self::pointer(&pointer)?, served, now_unix_seconds as i64)
+			.map_err(to_js_error)?;
+		to_js(&refreshed)
+	}
 }
