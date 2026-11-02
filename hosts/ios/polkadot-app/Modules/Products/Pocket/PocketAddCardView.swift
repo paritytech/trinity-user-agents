@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import DesignSystem
 import PolkadotUI
 import SwiftUI
@@ -42,7 +43,7 @@ struct PocketAddCardView: View {
         .task { await viewModel.load() }
     }
 
-    private func header(productName: String, productId: String) -> some View {
+    private func header(productName: String, productId: ProductId) -> some View {
         VStack(spacing: 4) {
             Text(String(localized: .Products.pocketAddCardTitle))
                 .textStyle(.title24SemiBold())
@@ -55,7 +56,7 @@ struct PocketAddCardView: View {
                 .foregroundStyle(Color(.fgSecondary))
                 .lineLimit(1)
                 .truncationMode(.tail)
-            Text(productId)
+            Text(productId.rawValue)
                 .textStyle(.caption12Regular())
                 .foregroundStyle(Color(.fgTertiary))
                 .lineLimit(1)

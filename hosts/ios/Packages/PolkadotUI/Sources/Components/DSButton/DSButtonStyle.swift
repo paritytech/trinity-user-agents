@@ -22,6 +22,7 @@ public struct DSButtonStyle: ButtonStyle {
         case large
         case mediumIncreased
         case medium
+        case small
     }
 
     let style: Style
@@ -143,6 +144,7 @@ public extension DSButtonStyle.Size {
         case .large: 52
         case .mediumIncreased: 48
         case .medium: 44
+        case .small: 32
         }
     }
 }
@@ -154,11 +156,15 @@ public extension DSButtonStyle.Size {
         case .large: DSSpacings.medium
         case .mediumIncreased: DSSpacings.extraMedium
         case .medium: DSSpacings.smallIncreased
+        case .small: DSSpacings.extraSmall
         }
     }
 
     var horizontalPadding: CGFloat {
-        DSSpacings.mediumIncreased
+        switch self {
+        case .small: DSSpacings.extraMedium
+        default: DSSpacings.mediumIncreased
+        }
     }
 
     var typography: TypographyStyle {
@@ -166,7 +172,8 @@ public extension DSButtonStyle.Size {
         case .largeIncreased: .titleLarge
         case .large,
              .mediumIncreased,
-             .medium: .titleMedium.emphasized
+             .medium,
+             .small: .titleMedium.emphasized
         }
     }
 
@@ -175,7 +182,8 @@ public extension DSButtonStyle.Size {
         case .largeIncreased: 20
         case .large,
              .mediumIncreased,
-             .medium: 16
+             .medium,
+             .small: 16
         }
     }
 }

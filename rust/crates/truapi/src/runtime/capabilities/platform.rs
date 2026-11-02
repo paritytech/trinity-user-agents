@@ -1,6 +1,8 @@
 //! Product-facing platform capability adapters.
 
-use crate::platform::{PermissionAuthorizationStatus, ProductExecutionKind, ProductId};
+use std::sync::Arc;
+
+use crate::platform::{ExecutableKind, PermissionAuthorizationStatus};
 use futures::StreamExt;
 use tracing::{instrument, warn};
 use truapi::{
@@ -65,12 +67,23 @@ impl System for ProductRuntimeHost {
 			)));
 		}
 		// A worker that agreed the codec can take the core's calls, so a
-		// funding provider's is handed the sessions it serves.
-		if self.connection.product.execution_kind == ProductExecutionKind::Worker {
-			self.connection
-				.services
-				.funding()
-				.connected(self.connection.product.product_id.as_str());
+		// funding provider's is handed the sessions it serves. Its own calls
+		// are refused while no user session is current, so that waits for one.
+		if self.connection.product.execution_kind == ExecutableKind::Worker {
+			let connection = Arc::downgrade(&self.connection);
+			let mut changes = self.connection.session_state.subscribe();
+			(self.connection.services.spawner)(Box::pin(async move {
+				while changes.next().await.is_some() {
+					let Some(connection) = connection.upgrade() else { return };
+					if connection.session_state.current().is_some() {
+						connection
+							.services
+							.funding()
+							.connected(connection.product.product_id.as_str());
+						return;
+					}
+				}
+			}));
 		}
 		Ok(HostHandshakeResponse::V1)
 	}
@@ -279,8 +292,6 @@ impl LocalStorage for ProductRuntimeHost {
 					|| CallError::Domain(latest::HostLocalStorageReadError::AccessNotGranted);
 				let owner = match product {
 					Some(target) => {
-						let target =
-							target.parse::<ProductId>().map_err(|_| access_not_granted())?;
 						if !self
 							.connection
 							.holds_cross_product_scope(&target, Granted::Storage)

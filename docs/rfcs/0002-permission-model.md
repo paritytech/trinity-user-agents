@@ -70,7 +70,7 @@ That means that fetch requests, WebSockets, WebRTC, and device permissions shoul
 `#[wire(internal)]` hides the consuming authorization methods from the product
 SDK; it does not authenticate callers. Rust still accepts those calls and
 checks permissions for the calling product execution. A direct product call
-can consume that execution's one-use grant. `ProductExecutionKind` describes
+can consume that execution's one-use grant. `ExecutableKind` describes
 App, Widget or Worker entrypoints, not whether the caller is the container.
 
 The shared container authorizes operations through generated internal SDK

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import KeyDerivation
 import Products
@@ -30,7 +31,7 @@ struct ProductAccountSelectorCodingTests {
     func productAccountIdScaleVector() throws {
         // Pinned on Android (ProductAccountIdScaleTest) and generated from the JS SDK:
         // ProductAccountId.enc(['browse.dot', derivationIndexOf(5)]).
-        let account = ProductAccountId(productId: "browse.dot", derivationIndex: .index(5))
+        let account = ProductAccountId(productId: try! ProductId("browse.dot"), derivationIndex: .index(5))
 
         let encoder = ScaleEncoder()
         try account.encode(scaleEncoder: encoder)

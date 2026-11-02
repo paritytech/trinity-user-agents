@@ -539,6 +539,9 @@ fn js_arg_expr(name: &str, ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> 
 		return Ok(format!("Uint8Array::from({name}.encode().as_slice()).into()"));
 	}
 	if let Some(primitive) = ctx.alias_primitive(ty) {
+		if primitive == "str" {
+			return Ok(format!("JsValue::from_str({name}.as_str())"));
+		}
 		return numeric_js_arg(name, primitive);
 	}
 	if let TypeRef::Primitive(primitive) = ty {

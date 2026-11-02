@@ -1,4 +1,5 @@
 import Foundation
+import struct TrUAPIHost.ProductId
 import Observation
 
 @Observable
@@ -7,7 +8,7 @@ final class DebugPocketCardsViewModel {
     private(set) var cards: [DebugPocketCard] = []
     private(set) var refusal: String?
 
-    var productId = ""
+    var productIdInput = ""
     var cardId = ""
     var title = ""
     var faceUrl = "http://127.0.0.1:5173/pocket/devicehood.json"
@@ -21,7 +22,7 @@ final class DebugPocketCardsViewModel {
     }
 
     var canSave: Bool {
-        !productId.isEmpty && !cardId.isEmpty && !title.isEmpty && !faceUrl.isEmpty
+        (try? ProductId(productIdInput)) != nil && !cardId.isEmpty && !title.isEmpty && !faceUrl.isEmpty
     }
 
     func load() {
@@ -32,6 +33,11 @@ final class DebugPocketCardsViewModel {
     /// id the core refuses reads as no card at all, which looks like the
     /// card simply never arriving.
     func save() {
+        guard let productId = try? ProductId(productIdInput) else {
+            refusal = "Enter a valid product ID"
+            return
+        }
+
         let card = DebugPocketCard(
             productId: productId,
             cardId: cardId,

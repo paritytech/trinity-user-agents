@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import KeyDerivation
 import Keystore_iOS
@@ -46,7 +47,7 @@ enum SsoTestData {
         return ChainMock.makeChainModel(from: remote, order: 0)
     }
 
-    static func makeAccount(productId: String = "test.product", derivationIndex: UInt32 = 0) -> ProductAccountId {
+    static func makeAccount(productId: ProductId = try! ProductId("test.product.dot"), derivationIndex: UInt32 = 0) -> ProductAccountId {
         ProductAccountId(productId: productId, derivationIndex: .index(derivationIndex))
     }
 

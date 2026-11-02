@@ -10,7 +10,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOver
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayRequest
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameTarget
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.DeviceCountryDetector
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
@@ -33,10 +32,11 @@ import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingSession
 import uniffi.truapi.HostFundingStatusSubscribeItem
+import uniffi.truapi.ProductId
 import uniffi.truapi.U128
 import javax.inject.Inject
-import kotlin.time.Duration.Companion.seconds
 import javax.inject.Singleton
+import kotlin.time.Duration.Companion.seconds
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
 /** Serves the core's funding sessions through the app's [FundingOverlay]. */
@@ -87,13 +87,13 @@ class AppFundingHostBridge @Inject constructor(
     fun quoteLists(): SharedFlow<FundingQuoteListUpdate> = quoteLists.asSharedFlow()
 
     override suspend fun presentFunding(
-        productId: String?,
+        productId: ProductId?,
         intent: String,
         direction: CoreFundingDirection,
         amount: U128?,
     ): FundingPresentOutcome {
         val request = FundingOverlayRequest(
-            productId = productId?.let { ProductId.fromStoredValue(it) },
+            productId = productId,
             intent = intent,
             direction = direction.toDomain(),
             amount = amount?.toBalance(),
@@ -117,7 +117,9 @@ class AppFundingHostBridge @Inject constructor(
             is FundingFrameTarget.Page -> ProviderFrameTarget.Page(target.url, target.returnUrl)
         }
 
-        return when (val outcome = overlay.get().presentProviderFrame(ProductId.fromStoredValue(providerId), intent, frameTarget)) {
+        // The core names providers by product id, so one that does not parse has no screen to show.
+        val provider = ProductId.parse(providerId).getOrElse { return FundingFrameOutcome.Dismissed }
+        return when (val outcome = overlay.get().presentProviderFrame(provider, intent, frameTarget)) {
             ProviderFrameOutcome.Closed -> FundingFrameOutcome.Closed
             ProviderFrameOutcome.Dismissed -> FundingFrameOutcome.Dismissed
             is ProviderFrameOutcome.Returned -> FundingFrameOutcome.Returned(outcome.url)
@@ -125,14 +127,15 @@ class AppFundingHostBridge @Inject constructor(
     }
 
     override fun closeProviderFrame(providerId: String, intent: String) {
-        overlay.get().closeProviderFrame(ProductId.fromStoredValue(providerId), intent)
+        ProductId.parse(providerId).getOrNull()?.let { overlay.get().closeProviderFrame(it, intent) }
     }
 
     // An App the app does not ship comes from dotNS, as the frame opens it. One that cannot be resolved in time gets
     // its App route through, so the frame fails as it did before.
     override suspend fun providerHasApp(providerId: String): Boolean {
         if (bundledProducts.product(providerId)?.let(bundledProducts::hasApp) == true) return true
-        val resolved = withTimeoutOrNull(APP_LOOKUP_TIMEOUT) { resolveProduct.resolve(ProductId.fromStoredValue(providerId)) }
+        val provider = ProductId.parse(providerId).getOrElse { return true }
+        val resolved = withTimeoutOrNull(APP_LOOKUP_TIMEOUT) { resolveProduct.resolve(provider) }
             ?: return true
         resolved.exceptionOrNull()?.let { if (it is CancellationException) throw it }
         return resolved.map { it.executables.app != null }.getOrDefault(true)

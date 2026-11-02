@@ -1,10 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.gatewayUrlOf
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 /** How a provider is shown: its product's display name and icon. */
@@ -26,7 +26,7 @@ class FundingProviderBranding @Inject constructor(
     suspend fun brand(providerId: String): FundingProviderBrand {
         if (bundledProducts.product(providerId) != null) return placeholder(providerId)
 
-        val product = resolveProductUseCase.resolve(ProductId.fromStoredValue(providerId)).getOrNull()?.product
+        val product = ProductId.parse(providerId).getOrNull()?.let { resolveProductUseCase.resolve(it).getOrNull() }?.product
             ?: return placeholder(providerId)
 
         return FundingProviderBrand(

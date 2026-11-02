@@ -6,7 +6,6 @@ import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.childScope
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProductContent
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.WebViewRuntime
@@ -34,7 +33,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import timber.log.Timber
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Duration.Companion.seconds
@@ -160,7 +160,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 productId,
                 chainDirectory.resolve(),
                 navigation.policy(productId, worker.scope),
-                ProductExecutionKind.WORKER,
+                ExecutableKind.WORKER,
                 chat = if (includesChat) {
                     ProductChatHostBridge(productId, refCounter.get().chatMessaging(productId))
                 } else {
@@ -201,7 +201,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     /** Called outside [transitions]: the core may answer with a start at once, which takes it. */
     private suspend fun reportExited(productId: ProductId) {
         runtimeProvider.get().runtime()
-            .mapCatching { it.workerExited(productId.value) }
+            .mapCatching { it.workerExited(productId) }
             .logFailure("TrUAPI worker exit for ${productId.value} was not reported")
     }
 
