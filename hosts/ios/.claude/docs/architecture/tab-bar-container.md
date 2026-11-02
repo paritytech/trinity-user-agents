@@ -229,7 +229,7 @@ A second pan sits on the chrome root view (`installGrabRecognizer`, `isGrabPan`)
 
 ## Fold
 
-Design vocabulary and decisions for the Docklet work live in `.scratch/docklet-r2/` until they move to `CONTEXT.md` and `docs/adr/`.
+Docklet vocabulary is in [CONTEXT.md](../../../CONTEXT.md). The decision that the motion runs on a display link is in [ADR 0001](../../../docs/adr/0001-docklet-motion-display-link.md).
 
 The three states are `shown`, `tucked` and `hidden`. The bar's position between shown and tucked is one value, the hide progress: 0 when shown, 1 when tucked. `DockletMotion` (`polkadot-app/Modules/MainTabBar/Chrome/DockletMotion.swift`) owns that value. It is a pure value type with no UIKit and no clock, so the caller passes in time.
 
