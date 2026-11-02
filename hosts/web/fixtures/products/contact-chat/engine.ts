@@ -575,7 +575,9 @@ export class ContactChat implements ConversationEngine {
     } catch (error) {
       // The allowance may have lapsed: the next send asks the host again.
       delete conversation.allowedUntil;
-      return fail(errorText(error));
+      const reason = errorText(error);
+      this.system(conversation, `Your message was not sent: ${reason}`);
+      return fail(reason);
     }
     conversation.lastExpiry = expiry.toString();
     let sent = 0;

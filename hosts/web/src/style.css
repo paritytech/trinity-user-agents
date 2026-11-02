@@ -4293,6 +4293,30 @@ body[data-search="open"] .product-slot::after {
   text-align: right;
 }
 
+/* A narrow dock puts the note on its own line under the view tabs, which scroll when they do not fit. */
+.inspector {
+  container: inspector / inline-size;
+}
+
+.devtools .inspector .inspector-views {
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+@container inspector (max-width: 600px) {
+  .inspector .panel-head {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+
+  .inspector .panel-head .note {
+    flex-basis: 100%;
+    padding-bottom: 8px;
+    text-align: left;
+  }
+}
+
 .inspector-mount {
   border-radius: 0 0 12px 12px;
 }

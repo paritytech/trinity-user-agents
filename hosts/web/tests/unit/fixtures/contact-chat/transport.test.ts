@@ -83,13 +83,55 @@ describe("Contact Chat's transport", () => {
       { submit: { ...statement, proof: PROOF } },
     ]);
     refuse = true;
+    // The reason the core gave, not the error's raw value.
     await expect(
       statements.post(
         INDEX,
         { topics: [TOPIC], channel: CHANNEL, data: "0x01" },
         8n,
       ),
-    ).rejects.toThrow("no allowance");
+    ).rejects.toThrow(/^no allowance$/);
+  });
+
+  test("a refused submission says the reason its error carries, else its kind, never the error's value", async () => {
+    let error: unknown = null;
+    const statements = truapiStatements(
+      {
+        statementStore: {
+          createProof: () => okAsync({ proof: PROOF }),
+          submit: () => errAsync(error),
+        },
+      } as never,
+      PRODUCT,
+      () => () => {},
+    );
+    const refusal = async (value: unknown) => {
+      error = value;
+      return statements
+        .post(INDEX, { topics: [TOPIC], channel: CHANNEL, data: "0x01" }, 9n)
+        .then(
+          () => "posted",
+          (thrown: Error) => thrown.message,
+        );
+    };
+    const said: string[] = [];
+    for (const value of [
+      {
+        tag: "Domain",
+        value: {
+          tag: "V1",
+          value: { reason: "statement-store submit failed: refused" },
+        },
+      },
+      { tag: "Denied" },
+      { secret: "0x01" },
+    ])
+      said.push(await refusal(value));
+    expect(said).toEqual([
+      "statement-store submit failed: refused",
+      "the host answered Denied",
+      "unknown error",
+    ]);
   });
 
   test("follows the topics through TrUAPI, and starts again after the subscription ends", () => {

@@ -685,7 +685,9 @@ agreed API.
       fails and says which slot it would take. "This browser, validate chat claims only" keeps requests between tabs of
       this browser, like the local delivery, but validates each chat account's claim in the same way; its tab, too,
       refuses every submission. The local delivery and the demo users give no allowance: a message fails and says the
-      host gives none.
+      host gives none. A post the core reports failed, refused by this tab's guard or by the light client, fails its
+      messages, and Contact Chat adds a line with the reason the core gave; the message's own "Not sent" line names no
+      reason, since the draft chat contract carries none.
   - **Diagnostics** (draft). Contact Chat reports each conversation to its host for the inspector's Chat view: its
     protocol, state, request handle, conversation account, the peer accounts and topics it reads, where it posts, and
     counts since the worker started (messages sent, received and dropped as copies, failures, posts) with its last
@@ -1079,8 +1081,9 @@ statements without a channel, not known expired, this tab's own broadcasts inclu
 It is neither a lower nor an upper bound of what the network holds now, and the view never sets it against the grant as
 room used or left. None observed does not mean none stored. `knownExpired`, a full node's answer, would show as given:
 the core counts it a failure and the network delivery counts it posted. A claim validated only allocated nothing. A
-refusal by this tab's no-submit guard shows as refused in this tab, apart from an RPC error. Remaining daily slots of a
-person are not shown: no read gives them to the host.
+refusal by this tab's no-submit guard shows as refused in this tab, apart from an RPC error: the submission counts as
+tried, never as the light client's, and the account says how many were refused here. Remaining daily slots of a person
+are not shown: no read gives them to the host.
 
 The ledger keeps the last 800 events, 1,000 statements, 400 submissions and waiting requests, 200 subscriptions, 300
 accounts and topics, 600 channels, 64 conversations and 200 requests in memory, and says how many it dropped, a channel

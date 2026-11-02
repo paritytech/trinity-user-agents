@@ -390,6 +390,7 @@
 .statements-inspector .si-event-head {
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: start;
   gap: 0 8px;
   width: 100%;
   padding: 2px 0;

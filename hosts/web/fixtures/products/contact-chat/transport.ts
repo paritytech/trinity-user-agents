@@ -52,8 +52,27 @@ export interface Statements {
 
 type StatementClient = Pick<TrUApiClient, "account" | "statementStore">;
 
-const errorText = (error: unknown): string =>
-  error instanceof Error ? error.message : JSON.stringify(error);
+/**
+ * Why a TrUAPI call failed, as text the user may see: the reason its error
+ * carries, else its kind. Never the error's raw value.
+ */
+function errorText(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  let value = error;
+  for (let depth = 0; depth < 3; depth++) {
+    if (typeof value !== "object" || value === null) break;
+    const { reason, value: inner } = value as {
+      reason?: unknown;
+      value?: unknown;
+    };
+    if (typeof reason === "string") return reason;
+    value = inner;
+  }
+  const kind = (error as { tag?: unknown } | null)?.tag;
+  return typeof kind === "string"
+    ? `the host answered ${kind}`
+    : "unknown error";
+}
 
 /** The product's TrUAPI Statement Store, as Contact Chat uses it, for the product `productId`. */
 export function truapiStatements(

@@ -274,6 +274,39 @@ describe("the statement ledger", () => {
       rpcErrors: 1,
       unanswered: 1,
     });
+    // The account counts every attempt, and which of them never reached the light client.
+    expect(book.accountRecord(SIGNER_HEX)).toMatchObject({
+      submits: 3,
+      refusedLocally: 1,
+      rpcErrors: 1,
+      answers: {},
+      wentOut: 0,
+    });
+    expect(
+      book
+        .eventList()
+        .filter((event) => event.kind === "submit")
+        .map((event) => [event.source, event.text]),
+    ).toEqual([
+      [
+        "core",
+        "Submit #1 asked by the core: 8 data bytes, signer 0x070707…0707",
+      ],
+      ["host", "Submit #1 refused in this tab: it submits nothing"],
+      [
+        "core",
+        "Submit #2 asked by the core: 8 data bytes, signer 0x070707…0707",
+      ],
+      ["client", "Submit #2: RPC error internal"],
+      [
+        "core",
+        "Submit #3 asked by the core: 8 data bytes, signer 0x070707…0707",
+      ],
+      [
+        "inspector",
+        "Submit #3: no answer seen (the connection closed before an answer came)",
+      ],
+    ]);
   });
 
   test("classifies pages from the node's remaining count, and says when it cannot", () => {

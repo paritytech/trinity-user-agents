@@ -48,8 +48,10 @@ const VIEW_PAGE = `<!doctype html>
       import { mountChatView } from "/tools/chat/view.ts";
       import { observedConnection } from "/src/platform/statement-observer.ts";
       import { encodeSigned } from "/src/platform/statement.ts";
+      import { isNoSubmitRefusal } from "/tools/demos/no-submit.ts";
 
-      const ledger = new StatementLedger();
+      // As the host page builds it: the dev tools' guard says which errors it made.
+      const ledger = new StatementLedger({}, Date.now, isNoSubmitRefusal);
       ledger.startSession("demo", "demo wallet, signed in");
       const shown = [];
       const peopleConnections = [];
@@ -157,6 +159,12 @@ const VIEW_PAGE = `<!doctype html>
         await settle();
         return { own: hex(own) };
       };
+      // A submission this tab's no-submit guard answers, before any light client.
+      window.__refuseHere = async () => {
+        connection.send(JSON.stringify({ jsonrpc: "2.0", id: 5, method: "statement_submit", params: [statement(own, sendTopic, 7400, text([]))] }));
+        answer({ jsonrpc: "2.0", id: 5, error: { code: -32000, message: "statement_submit refused: this tab submits nothing" } });
+        await settle();
+      };
       // A negative case, kept out of the example: another product naming
       // Alice's request handle and account.
       window.__borrow = async () => {
@@ -174,6 +182,7 @@ const VIEW_PAGE = `<!doctype html>
 interface ViewWindow {
   __feed(): Promise<{ own: string }>;
   __borrow(): Promise<void>;
+  __refuseHere(): Promise<void>;
   __showView(name: "chat" | "statements"): void;
   __shown: string[];
 }
@@ -272,7 +281,14 @@ describe("the Statements and Chat views", () => {
           /\| derived \| derived 1\.00 stmts · \d+ B \(2 broadcast · 3 tried · 2 sent\)/,
         );
         // Resources are Statements': none show in the Chat card.
-        for (const label of ["Claim", "Grant", "Observed", "Posts", "Channel"])
+        for (const label of [
+          "Claim",
+          "Grant",
+          "Observed",
+          "Posts",
+          "Answers",
+          "Channel",
+        ])
           expect(line(label)).toBe("");
         expect(await card.locator(".si-why[open]").count()).toBe(0);
         await shot(page, "chat");
@@ -295,7 +311,11 @@ describe("the Statements and Chat views", () => {
         expect(at("Observed")).toMatch(
           /1 stmt · \d+ B · seen \d\d:\d\d:\d\d · not current/,
         );
-        expect(at("Posts")).toContain("3 submitted: 2 broadcast");
+        expect(at("Posts")).toContain("| inspector | inspector 3 tried");
+        expect(at("Answers")).toContain(
+          "| light client | light client 2 broadcast · 1 RPC error",
+        );
+        expect(at("Refused here")).toBe("");
         expect(at("Peer refusals")).toMatch(/\| inspector not visible\s*why ‖/);
         expect(account.filter((entry) => entry.startsWith("Role |"))).toEqual([
           expect.stringContaining(
@@ -544,6 +564,125 @@ describe("the Statements and Chat views", () => {
           await page.locator("#chat-inspector .si-empty").innerText(),
         ).toContain("No conversation reported.");
         await shot(page, "host-empty");
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
+    "a submission this tab's no-submit guard refused counts as tried and refused here, never as the light client's",
+    async () => {
+      const { context, page } = await openView();
+      try {
+        await page.evaluate(() =>
+          (window as unknown as ViewWindow).__refuseHere(),
+        );
+        await page.evaluate(() =>
+          (window as unknown as ViewWindow).__showView("statements"),
+        );
+        await page
+          .locator("#statements-inspector .si-list-row")
+          .first()
+          .click();
+        await page.locator("#statements-inspector .si-detail").waitFor();
+        const account = await factsOf(page, "#statements-inspector .si-detail");
+        const at = (label: string) =>
+          account.find((entry) => entry.startsWith(`${label} |`)) ?? "";
+        expect(at("Posts")).toContain("| inspector | inspector 4 tried");
+        expect(at("Answers")).toContain(
+          "| light client | light client 2 broadcast · 1 RPC error",
+        );
+        expect(at("Refused here")).toContain(
+          "| host | host 1 by the no-submit guard",
+        );
+        expect(at("Refused here")).toContain("no peer got them");
+        expect(
+          await page.locator("#statements-inspector .si-summary").innerText(),
+        ).toContain("4 submits · 2 answered · 1 errors · 1 refused here");
+        await shot(page, "refused-here-account");
+
+        await page.locator(".si-tab", { hasText: "Timeline" }).click();
+        await page.locator(".si-chip", { hasText: "Submits" }).click();
+        const events = await page
+          .locator("#statements-inspector .si-event")
+          .evaluateAll((rows) =>
+            rows.map(
+              (row) =>
+                `${row.querySelector(".si-src")?.textContent} | ${row.querySelector(".si-event-text")?.textContent}`,
+            ),
+          );
+        expect(events.slice(-2)).toEqual([
+          expect.stringMatching(/^core \| Submit #4 asked by the core: /),
+          "host | Submit #4 refused in this tab: it submits nothing",
+        ]);
+        await shot(page, "refused-here-timeline");
+
+        // At a phone's width an event's text wraps; its source tag stays one line.
+        await page
+          .locator(".devtools")
+          .evaluate((node) => ((node as HTMLElement).style.width = "390px"));
+        const heights = await page
+          .locator("#statements-inspector .si-event")
+          .evaluateAll((rows) =>
+            rows.map((row) => [
+              row.querySelector(".si-event-text")!.getBoundingClientRect()
+                .height,
+              row.querySelector(".si-src")!.getBoundingClientRect().height,
+            ]),
+          );
+        const tallest = Math.max(...heights.map(([text]) => text!));
+        const tagLine = Math.min(...heights.map(([, tag]) => tag!));
+        expect(tallest).toBeGreaterThan(tagLine * 2);
+        for (const [, tag] of heights) expect(tag).toBe(tagLine);
+        await shot(page, "refused-here-timeline-narrow");
+      } finally {
+        await context.close();
+      }
+    },
+    TEST_MS,
+  );
+
+  test(
+    "on a phone-width dock the inspector's note sits on its own line under the view tabs",
+    async () => {
+      const context = await browser.newContext({
+        viewport: { width: 390, height: 844 },
+      });
+      context.setDefaultTimeout(STEP_MS);
+      await context.route("**/*", (route) =>
+        new URL(route.request().url()).hostname === "localhost"
+          ? route.continue()
+          : route.abort(),
+      );
+      const page = await context.newPage();
+      try {
+        await page.goto(host.origin);
+        await openTools(page, "inspector");
+        for (const view of ["statements", "chat", "activity"] as const) {
+          await page.click(`[data-inspector-view="${view}"]`);
+          const [head, tabs, note] = await Promise.all(
+            [
+              ".inspector .panel-head",
+              ".inspector .inspector-views",
+              "#inspector-note",
+            ].map(
+              async (selector) => (await page.locator(selector).boundingBox())!,
+            ),
+          );
+          expect(note.y).toBeGreaterThanOrEqual(tabs.y + tabs.height - 1);
+          expect(note.width).toBeGreaterThan(head.width * 0.8);
+          expect(note.x + note.width).toBeLessThanOrEqual(390);
+          expect(tabs.x + tabs.width).toBeLessThanOrEqual(390);
+        }
+        const dir = process.env.STATEMENTS_SCREENSHOT;
+        if (dir !== undefined && dir !== "") {
+          await page.click('[data-inspector-view="statements"]');
+          await page.screenshot({ path: `${dir}/host-narrow-statements.png` });
+          await page.click('[data-inspector-view="chat"]');
+          await page.screenshot({ path: `${dir}/host-narrow-chat.png` });
+        }
       } finally {
         await context.close();
       }
