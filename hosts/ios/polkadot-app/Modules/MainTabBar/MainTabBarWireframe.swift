@@ -36,7 +36,7 @@ final class MainTabBarWireframe: MainTabBarWireframeProtocol {
         ) else {
             return
         }
-        view?.controller.present(signInView.controller, animated: true)
+        view?.controller.topmostPresented.present(signInView.controller, animated: true)
     }
 
     func showPaymentsSetupNotice(isVisible: Bool) {
@@ -90,7 +90,7 @@ private extension MainTabBarWireframe {
             showDeviceDetails(device, view: view)
         case let .noFreeSlots(message):
             let controller = NoSlotsAvailableViewFactory.createView(message: message)
-            view?.controller.present(controller, animated: true)
+            view?.controller.topmostPresented.present(controller, animated: true)
         case .failed:
             view?.controller.showToast(
                 message: String(localized: .linkedDevicesSignInError),
