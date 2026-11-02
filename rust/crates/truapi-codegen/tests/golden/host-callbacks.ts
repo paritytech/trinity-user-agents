@@ -38,7 +38,6 @@ import type {
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
-  HostChatSetRoomConfigRequest,
   HostChatSetRoomFooterRequest,
   HostChatSetRoomMetadataRequest,
   HostChatSetRoomPreviewRequest,
@@ -1549,13 +1548,15 @@ export interface ChatPlatform {
 
   /**
    * Replace the configuration of a room whole and keep it across restarts.
-   * The core checks that the product hosts the room before this call. If a
-   * Rust host does not implement this method, it accepts only the default
-   * configuration. That configuration changes nothing that the host shows.
+   * The core calls it after each `create_chat_room`, for a new room and for
+   * a room that exists. If a Rust host does not implement this method, it
+   * accepts only the default configuration. That configuration changes
+   * nothing that the host shows.
    */
   setChatRoomConfig?(
     product: ProductContext,
-    request: HostChatSetRoomConfigRequest,
+    roomId: string,
+    config: ChatRoomConfig,
   ): Promise<void>;
 
   /**
