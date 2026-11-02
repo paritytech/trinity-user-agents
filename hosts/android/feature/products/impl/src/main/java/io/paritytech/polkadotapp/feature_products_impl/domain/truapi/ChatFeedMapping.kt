@@ -19,6 +19,7 @@ import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageBody
 import uniffi.truapi.ChatMessageStatus
 import uniffi.truapi.ChatPageAnchor
+import uniffi.truapi.ChatPreviewMessage
 import uniffi.truapi.ProductChatMessagesQueryResponse
 import uniffi.truapi.ProductChatQueryError
 import uniffi.truapi.ProductChatUserActionError
@@ -66,6 +67,19 @@ fun CoreChatMessage.toModel(productId: ProductId) = ProductRoomMessage(
     reactions = reactions.map { ProductReactionSummaryModel(it.emoji, it.count.toInt(), it.reactedByUser) },
     request = request,
     replyPreview = reply?.preview?.let { ProductReplyPreviewModel(it.origin.participantId, it.body.toContent(productId)) },
+)
+
+/** A preview message has no reactions: the preview shows them through its last reaction and its unseen count. */
+fun ChatPreviewMessage.toModel(productId: ProductId) = ProductRoomMessage(
+    messageId = messageId,
+    participantId = origin.participantId,
+    timestamp = timestamp.toLong(),
+    content = body.toMessageContent(request, productId),
+    status = status.toModel(),
+    replyTo = replyTo,
+    editedAt = editedAt?.toLong(),
+    reactions = emptyList(),
+    request = request,
 )
 
 fun ChatFeedUpdate.toModel(productId: ProductId): ProductFeedUpdateModel = when (this) {

@@ -37,6 +37,46 @@ extension ChatMessage {
         )
     }
 
+    var isFromUser: Bool {
+        origin.participantId == productUserParticipantId
+    }
+
+    /// A message of the contact that the user has not seen: the product gives it `Delivered` until the user sees
+    /// it and `Read` after.
+    var isUnreadByUser: Bool {
+        !isFromUser && status == .delivered
+    }
+
+    /// The content of the native chat.
+    var nativeContent: Chat.LocalMessage.Content {
+        body.nativeContent(replyTo: reply?.messageId)
+    }
+
+    /// One reaction for each count of a summary. The user reaction has the user origin. The product gives no time
+    /// for a reaction in the summary, so each reaction takes the time of the message plus its place in the
+    /// summaries: the native chat then orders the emojis of the same count as the product does.
+    private func localReactions(chatId: Chat.Id, extensionId: ChatExtension.Id) -> [Chat.MessageReaction] {
+        let origins = reactions.flatMap { summary in
+            let total = Int(summary.count)
+            let others = summary.reactedByUser ? max(total - 1, 0) : total
+            let userReaction: [Chat.LocalMessage.Origin] = summary.reactedByUser ? [.user] : []
+            let productReactions = Array(repeating: Chat.LocalMessage.Origin.chatExtension(extensionId), count: others)
+            return (userReaction + productReactions).map { (emoji: summary.emoji, origin: $0) }
+        }
+
+        return origins.enumerated().map { offset, reaction in
+            Chat.MessageReaction(
+                messageId: messageId,
+                emoji: reaction.emoji,
+                origin: reaction.origin,
+                chatId: chatId,
+                timestamp: timestamp + UInt64(offset)
+            )
+        }
+    }
+}
+
+extension ChatPreviewMessage {
     /// The message as the chat list draws it in the preview line of the room.
     func previewMessage() -> Chat.RoomPreviewMessage {
         let localStatus: Chat.LocalMessage.Status = isFromUser
@@ -64,7 +104,7 @@ extension ChatMessage {
 
     /// The content of the native chat.
     var nativeContent: Chat.LocalMessage.Content {
-        body.nativeContent(replyTo: reply?.messageId)
+        body.nativeContent(replyTo: replyTo)
     }
 
     /// The last edit, which the native preview line shows as "Edited: <text>".
@@ -81,29 +121,6 @@ extension ChatMessage {
         )
 
         return [edit]
-    }
-
-    /// One reaction for each count of a summary. The user reaction has the user origin. The product gives no time
-    /// for a reaction in the summary, so each reaction takes the time of the message plus its place in the
-    /// summaries: the native chat then orders the emojis of the same count as the product does.
-    private func localReactions(chatId: Chat.Id, extensionId: ChatExtension.Id) -> [Chat.MessageReaction] {
-        let origins = reactions.flatMap { summary in
-            let total = Int(summary.count)
-            let others = summary.reactedByUser ? max(total - 1, 0) : total
-            let userReaction: [Chat.LocalMessage.Origin] = summary.reactedByUser ? [.user] : []
-            let productReactions = Array(repeating: Chat.LocalMessage.Origin.chatExtension(extensionId), count: others)
-            return (userReaction + productReactions).map { (emoji: summary.emoji, origin: $0) }
-        }
-
-        return origins.enumerated().map { offset, reaction in
-            Chat.MessageReaction(
-                messageId: messageId,
-                emoji: reaction.emoji,
-                origin: reaction.origin,
-                chatId: chatId,
-                timestamp: timestamp + UInt64(offset)
-            )
-        }
     }
 }
 
