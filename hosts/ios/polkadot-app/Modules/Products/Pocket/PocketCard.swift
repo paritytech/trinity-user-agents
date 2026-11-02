@@ -19,7 +19,7 @@ struct PocketCardKey: Hashable {
     func launchUrl(pageQuery: String = "") -> URL? {
         var components = URLComponents()
         components.scheme = "https"
-        components.host = productId
+        components.host = productId.rawValue
         components.queryItems = [URLQueryItem(name: "card", value: cardId.value)]
         if !pageQuery.isEmpty { components.percentEncodedQuery? += "&\(pageQuery)" }
 

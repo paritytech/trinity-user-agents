@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Testing
 import UIKit
 import UIKitExt
@@ -40,7 +41,7 @@ struct ProductsRouterTests {
 
     @Test
     func actionReviewsOfferOnlyConfirmationAndRejection() async throws {
-        let request = TrUAPIActionConfirmationRequest.productSubtree(productId: "test.product")
+        let request = TrUAPIActionConfirmationRequest.productSubtree(productId: try! ProductId("test.product.dot"))
         for approved in [true, false] {
             let context = TrUAPIActionConfirmationContext(request: request)
             let model = TrUAPIActionPromptViewFactory.makeViewModel(for: context)
@@ -56,7 +57,7 @@ struct ProductsRouterTests {
                 case let .normal(text): text
                 case let .attributed(text): text.string
                 }
-            #expect(body.contains("test.product"))
+            #expect(body.contains("test.product.dot"))
             #expect(!body.contains(String(localized: .Products.permissionBodyManageInSettingsHint)))
 
             let decision = await withCheckedContinuation { continuation in

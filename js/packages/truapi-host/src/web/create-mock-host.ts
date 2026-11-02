@@ -1,3 +1,5 @@
+import { asProductId } from "@parity/truapi";
+import type { ProductId } from "@parity/truapi";
 // A deterministic, in-memory mock host. `createMockHost` returns a complete
 // `RequiredHostCallbacks` set (the JS sibling of `truapi::platform`'s
 // `MockPlatform`) plus recordings for assertions. Hand `host.callbacks` to
@@ -273,7 +275,7 @@ function liveSubscription<T>(
 /** One operation a product began and has not ended. */
 export interface OpenOperation {
   /** Product that began it. */
-  productId: string;
+  productId: ProductId;
   /** Id the mock handed back, unique among this product's open operations. */
   id: number;
   /** Label the product gave, empty when it gave none. */
@@ -1666,7 +1668,7 @@ export function mockRuntimeConfig(
   overrides: Partial<ProductRuntimeConfig> = {},
 ): ProductRuntimeConfig {
   return {
-    productId: "mock.dot",
+    productId: asProductId("mock.dot"),
     host: {
       name: "Mock Host",
       icon: "https://example.invalid/mock.png",

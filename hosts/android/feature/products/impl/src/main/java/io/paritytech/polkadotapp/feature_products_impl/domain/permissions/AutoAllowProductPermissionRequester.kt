@@ -1,9 +1,9 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.permissions
 
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission.RemotePermission
+import uniffi.truapi.ProductId
 
 class AutoAllowProductPermissionRequester(
     private val whitelistedProductsProvider: WhitelistedProductsProvider,

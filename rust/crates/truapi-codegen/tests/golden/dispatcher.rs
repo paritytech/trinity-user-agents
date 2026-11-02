@@ -41,7 +41,7 @@ use truapi::api::{
     Worker,
 };
 use truapi::versioned::{self, Versioned};
-use crate::platform::ProductExecutionKind;
+use crate::platform::ExecutableKind;
 
 use crate::dispatcher::Dispatcher;
 use crate::frame::downgrade_call_error;
@@ -651,7 +651,7 @@ where
     P: Chat + Send + Sync + 'static,
 {
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host.clone();
         dispatcher.on_request(wire_table::CHAT_CREATE_ROOM, move |request_id: String, request: versioned::chat::HostChatCreateRoomRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
@@ -676,7 +676,7 @@ where
         });
     }
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host.clone();
         dispatcher.on_request(wire_table::CHAT_REGISTER_BOT, move |request_id: String, request: versioned::chat::HostChatRegisterBotRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
@@ -701,7 +701,7 @@ where
         });
     }
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host.clone();
         dispatcher.on_subscription(wire_table::CHAT_LIST_SUBSCRIBE, move |request_id: String, request: versioned::chat::HostChatListSubscribeRequest| {
             let host = host.clone();
@@ -730,7 +730,7 @@ where
         });
     }
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host.clone();
         dispatcher.on_request(wire_table::CHAT_POST_MESSAGE, move |request_id: String, request: versioned::chat::HostChatPostMessageRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
@@ -755,7 +755,7 @@ where
         });
     }
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host.clone();
         dispatcher.on_subscription(wire_table::CHAT_ACTION_SUBSCRIBE, move |request_id: String, request: versioned::chat::HostChatActionSubscribeRequest| {
             let host = host.clone();
@@ -784,7 +784,7 @@ where
         });
     }
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host;
         dispatcher.on_request(wire_table::CHAT_SET_ROOM_FOOTER, move |request_id: String, request: versioned::chat::HostChatSetRoomFooterRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
@@ -1067,7 +1067,7 @@ where
     P: ExpandedCard + Send + Sync + 'static,
 {
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Widget);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Widget);
         let host = host;
         dispatcher.on_request(wire_table::EXPANDED_CARD_SET_FACE_SHOWN, move |request_id: String, request: versioned::expanded_card::HostExpandedCardSetFaceShownRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
@@ -1191,7 +1191,7 @@ where
     P: FundingProvider + Send + Sync + 'static,
 {
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host.clone();
         dispatcher.on_request(wire_table::FUNDING_PROVIDER_REPORT, move |request_id: String, request: versioned::funding_provider::HostFundingReportRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
@@ -1216,7 +1216,7 @@ where
         });
     }
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host.clone();
         dispatcher.on_request(wire_table::FUNDING_PROVIDER_PRESENT_FRAME, move |request_id: String, request: versioned::funding_provider::HostFundingPresentFrameRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
@@ -1241,7 +1241,7 @@ where
         });
     }
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host;
         dispatcher.on_request(wire_table::FUNDING_PROVIDER_CLOSE_FRAME, move |request_id: String, request: versioned::funding_provider::HostFundingCloseFrameRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
@@ -1937,7 +1937,7 @@ where
     P: Pocket + Send + Sync + 'static,
 {
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host.clone();
         dispatcher.on_subscription(wire_table::POCKET_LIST_SUBSCRIBE, move |request_id: String, request: versioned::pocket::HostPocketListSubscribeRequest| {
             let host = host.clone();
@@ -1966,7 +1966,7 @@ where
         });
     }
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host;
         dispatcher.on_request(wire_table::POCKET_REMOVE_CARD, move |request_id: String, request: versioned::pocket::HostPocketRemoveCardRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
@@ -2046,7 +2046,7 @@ where
     P: Renderer + Send + Sync + 'static,
 {
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host;
         dispatcher.on_subscription(wire_table::RENDERER_ACTION_SUBSCRIBE, move |request_id: String, request: versioned::renderer::HostRendererActionSubscribeRequest| {
             let host = host.clone();
@@ -2507,7 +2507,7 @@ where
     P: Worker + Send + Sync + 'static,
 {
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host.clone();
         dispatcher.on_request(wire_table::WORKER_BEGIN_OPERATION, move |request_id: String, request: versioned::worker::HostWorkerBeginOperationRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
@@ -2532,7 +2532,7 @@ where
         });
     }
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host;
         dispatcher.on_request(wire_table::WORKER_END_OPERATION, move |request_id: String, request: versioned::worker::HostWorkerEndOperationRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();

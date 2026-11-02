@@ -4,10 +4,10 @@ import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.database.dao.ProductTopUpDao
 import io.paritytech.polkadotapp.database.model.ProductTopUpLocal
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.PaymentTopUpId
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpOperation
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpStatus
+import uniffi.truapi.ProductId
 import java.math.BigInteger
 import javax.inject.Inject
 import kotlin.time.ExperimentalTime
@@ -42,14 +42,14 @@ class RealTopUpRepository @Inject constructor(
     }
 
     override suspend fun get(productId: ProductId, id: PaymentTopUpId): TopUpOperation? =
-        dao.get(productId.value, id.asHex())?.toDomain()
+        dao.get(productId, id.asHex())?.toDomain()
 
     override suspend fun unfinished(): List<TopUpOperation> = dao.getUnfinished().map { it.toDomain() }
 
     override suspend fun settle(operation: TopUpOperation, outcome: TopUpStatus): Result<Unit> =
         runCancellableCatching {
             dao.settle(
-                productId = operation.productId.value,
+                productId = operation.productId,
                 topUpId = operation.id.asHex(),
                 outcome = outcome.toLocal(),
                 actualClaimedPlanks = (outcome as? TopUpStatus.ClaimedPartially)?.actualClaimed?.value,
@@ -59,7 +59,7 @@ class RealTopUpRepository @Inject constructor(
 
 @OptIn(ExperimentalTime::class)
 private fun TopUpOperation.toLocal() = ProductTopUpLocal(
-    productId = productId.value,
+    productId = productId,
     topUpId = id.asHex(),
     amountPlanks = amount.value,
     startedAtMillis = startedAt.toEpochMilliseconds(),
@@ -70,7 +70,7 @@ private fun TopUpOperation.toLocal() = ProductTopUpLocal(
 @OptIn(ExperimentalTime::class)
 private fun ProductTopUpLocal.toDomain() = TopUpOperation(
     id = PaymentTopUpId.fromHex(topUpId).getOrThrow(),
-    productId = ProductId.fromStoredValue(productId),
+    productId = productId,
     amount = amountPlanks.intoBalance(),
     startedAt = Instant.fromEpochMilliseconds(startedAtMillis),
     outcome = outcome?.toDomain(actualClaimedPlanks),
