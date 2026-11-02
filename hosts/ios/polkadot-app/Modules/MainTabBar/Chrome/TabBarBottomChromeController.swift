@@ -9,6 +9,7 @@ final class TabBarBottomChromeController: UIViewController {
     private static let centerPanelTopGap: CGFloat = 12
 
     let chromeSurface = TabBarChromeSurfaceView()
+    let edgeGlowView = UIView()
     let centerButtonAnchorGuide = UILayoutGuide()
     let barModel = TabBarBarViewModel()
     lazy var barHost = UIHostingController(rootView: TabBarBarView(model: barModel))
@@ -34,6 +35,10 @@ final class TabBarBottomChromeController: UIViewController {
         foldSurface: chromeSurface,
         chromeBounds: { [unowned self] in view.bounds },
         bottomSafeAreaInset: { [unowned self] in view.safeAreaInsets.bottom },
+        glowSink: { [weak self] rect, opacity in
+            self?.edgeGlowView.frame = rect
+            self?.edgeGlowView.alpha = opacity
+        },
         grabZoneSink: { [weak self] zone in
             (self?.viewIfLoaded as? TabBarChromePassthroughView)?.foldGrabZone = zone
         },
@@ -145,6 +150,7 @@ final class TabBarBottomChromeController: UIViewController {
 
         installDimLayer()
         installChromeSurface()
+        installEdgeGlow()
         installBar()
 
         installOutsideTapRecognizer()
@@ -394,8 +400,8 @@ extension TabBarBottomChromeController {
     func handleSlotTap(itemIndex: Int) {
         tipController.retireForUserInteraction()
 
-        guard !foldController.isFolded else {
-            foldController.setUserOverride(.shown, velocityX: 0)
+        guard !foldController.isTucked else {
+            foldController.setUserOverride(.shown)
             return
         }
 

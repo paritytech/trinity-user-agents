@@ -1,6 +1,6 @@
 import UIKit
 
-/// The chrome's full-bleed root: transparent to touches except the folded bar's grab zone and,
+/// The chrome's full-bleed root: transparent to touches except the tucked bar's grab zone and,
 /// while a panel is open, the area outside it that dismisses on tap.
 final class TabBarChromePassthroughView: UIView {
     var isOutsideTapEnabled = false

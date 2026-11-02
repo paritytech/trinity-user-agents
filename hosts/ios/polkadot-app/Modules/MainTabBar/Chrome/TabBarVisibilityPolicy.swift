@@ -2,39 +2,31 @@ import Foundation
 
 enum TabBarVisibilityState: Equatable {
     case shown
-    case folded
+    case tucked
     case hidden
 }
 
 enum TabBarFoldOverride: Equatable {
     case none
-    case folded
+    case tucked
     case shown
 }
 
 enum TabBarFoldDerived: Equatable {
     case none
-    case folded
+    case tucked
     case hidden
 }
 
 enum TabBarVisibilityPolicy {
-    static func state(
-        isTabRoot: Bool,
-        derived: TabBarFoldDerived,
-        override: TabBarFoldOverride
-    ) -> TabBarVisibilityState {
-        guard !isTabRoot else {
-            return .shown
-        }
-
+    static func state(derived: TabBarFoldDerived, override: TabBarFoldOverride) -> TabBarVisibilityState {
         switch override {
-        case .folded:
-            return .folded
+        case .tucked:
+            .tucked
         case .shown:
-            return .shown
+            .shown
         case .none:
-            return state(for: derived)
+            state(for: derived)
         }
     }
 
@@ -48,8 +40,8 @@ private extension TabBarVisibilityPolicy {
         switch derived {
         case .none:
             .shown
-        case .folded:
-            .folded
+        case .tucked:
+            .tucked
         case .hidden:
             .hidden
         }

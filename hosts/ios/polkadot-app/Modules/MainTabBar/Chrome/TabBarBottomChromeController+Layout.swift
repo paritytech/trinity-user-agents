@@ -28,6 +28,15 @@ extension TabBarBottomChromeController {
         }
     }
 
+    /// Sits above the chrome surface, so a tucked bar's glow is not moved by the bar's transform. It takes no touches,
+    /// and the grab zone on the passthrough root does the restoring.
+    func installEdgeGlow() {
+        edgeGlowView.backgroundColor = .bgSurfaceContainerInverted
+        edgeGlowView.isUserInteractionEnabled = false
+        edgeGlowView.alpha = 0
+        view.addSubview(edgeGlowView)
+    }
+
     func installOutsideTapRecognizer() {
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleOutsideTap))
         recognizer.delegate = self
@@ -105,8 +114,8 @@ private extension TabBarBottomChromeController {
     static let keyboardButtonOverlap: CGFloat = 4
 
     @objc func handleOutsideTap() {
-        guard !foldController.isFolded else {
-            foldController.setUserOverride(.shown, velocityX: 0)
+        guard !foldController.isTucked else {
+            foldController.setUserOverride(.shown)
             return
         }
         panelController.setPanel(nil)
@@ -151,14 +160,18 @@ private extension TabBarBottomChromeController {
     }
 
     @objc func handleFoldPan(_ recognizer: UIPanGestureRecognizer) {
-        guard recognizer.state == .ended else {
-            return
+        switch recognizer.state {
+        case .began:
+            foldController.foldPanBegan(touchX: recognizer.location(in: view).x)
+        case .changed:
+            foldController.foldPanChanged(translationX: recognizer.translation(in: view).x)
+        case .ended:
+            foldController.foldPanEnded(velocityX: recognizer.velocity(in: view).x)
+        case .cancelled:
+            foldController.foldPanEnded(velocityX: 0)
+        default:
+            break
         }
-
-        foldController.foldPanEnded(
-            translationX: recognizer.translation(in: chromeSurface).x,
-            velocityX: recognizer.velocity(in: chromeSurface).x
-        )
     }
 
     /// The tip popover points at the resting centre button. Its frame follows from the bar geometry, because the
@@ -173,22 +186,9 @@ private extension TabBarBottomChromeController {
         }
     }
 
-    /// A fold drag starts on the bar row, outside the centre hole where the centre control sits.
+    /// A fold drag may start anywhere on the bar, centre button and centre hole included.
     func canStartFoldDrag(at touch: UITouch) -> Bool {
-        // The hosting view is taller than the row while the centre panel is open, and the row sits at its bottom.
-        let bounds = barHost.view.bounds
-        let row = CGRect(
-            x: 0,
-            y: bounds.height - DSTabBarStyle.height - barModel.keyboardLift,
-            width: bounds.width,
-            height: DSTabBarStyle.height
-        )
-        let point = touch.location(in: barHost.view)
-        guard row.contains(point) else {
-            return false
-        }
-        let pointInRow = CGPoint(x: point.x, y: point.y - row.minY)
-        return !DSTabBarStyle.isInCenterHole(pointInRow, inRowOfWidth: row.width)
+        touch.view?.isDescendant(of: barHost.view) ?? false
     }
 }
 
@@ -202,16 +202,16 @@ extension TabBarBottomChromeController: UIGestureRecognizerDelegate {
         return canStartFoldDrag(at: touch)
     }
 
-    /// Only a drag that leads horizontally folds the bar, so a vertical scroll past it is left alone. A tab root
-    /// cannot fold, and a hidden bar has nothing to fold.
+    /// Only a drag that leads horizontally folds the bar, so a vertical scroll past it is left alone. A hidden bar
+    /// and an open panel take no drag.
     func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
         guard let pan = recognizer as? UIPanGestureRecognizer else {
             return true
         }
-        guard !foldController.isTabRoot, foldController.state != .hidden else {
+        guard foldController.state != .hidden, panelController.open == nil else {
             return false
         }
-        let translation = pan.translation(in: chromeSurface)
+        let translation = pan.translation(in: view)
         return abs(translation.x) > abs(translation.y)
     }
 }

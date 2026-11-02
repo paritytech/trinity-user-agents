@@ -9,7 +9,7 @@ The bottom tab bar is SwiftUI inside a thin UIKit shell. SwiftUI draws the bar r
 - The bar row has four fixed slots around a center hole. Slots select tabs or open the shelf.
 - The center control sits in the hole and morphs into the center panel. Every size is read from one progress value between 0 and 1.
 - One value, `TabBarPanelKind?`, says which panel is open: `.shelf` or `.content(.scan)`. The shelf and the center panel cannot both be open.
-- One value, `TabBarVisibilityState` (`shown`, `folded`, `hidden`), says where the bar sits. The fold controller animates it.
+- One value, `TabBarVisibilityState` (`shown`, `tucked`, `hidden`), says where the bar sits. The fold controller animates it.
 
 ## Ownership
 
@@ -18,11 +18,14 @@ MainTabBarViewController            container, status strip, widget and inset la
 ├── TabBarContainer                 mounts one tab or one SPA
 ├── ChainConnectionStatusBarView    20 pt strip, informational only
 └── TabBarBottomChromeController    bar, panels, fold, outside tap, bar items
+    ├── TabBarFoldController        visibility state, hide progress via DockletMotion,
+    │                               CADisplayLink; sole writer of the surface transform
     └── TabBarChromePassthroughView full-bleed, hit tests only the grab zone and the outside-tap area
-        └── TabBarChromeSurfaceView fold transform target, bar layout
-            └── TabBarBarHostView   accepts touches in the bar row and the open panel's rise
-                └── UIHostingController<TabBarBarView>
-                                    SwiftUI bar row, center control, shelf
+        ├── TabBarChromeSurfaceView fold transform target, bar layout
+        │   └── TabBarBarHostView   accepts touches in the bar row and the open panel's rise
+        │       └── UIHostingController<TabBarBarView>
+        │                           SwiftUI bar row, center control, shelf
+        └── Edge glow view          right-edge band of a tucked bar, outside the surface transform
 ```
 
 ## Where Things Live
@@ -43,7 +46,7 @@ MainTabBarViewController            container, status strip, widget and inset la
 | Fold transform target, bar width | `polkadot-app/Modules/MainTabBar/Chrome/TabBarChromeSurfaceView.swift` |
 | Fold state machine | `polkadot-app/Modules/MainTabBar/Chrome/TabBarFoldController.swift` |
 | Fold state resolution | `polkadot-app/Modules/MainTabBar/Chrome/TabBarVisibilityPolicy.swift` |
-| Fold drag decision | `polkadot-app/Modules/MainTabBar/Chrome/TabBarFoldDecision.swift` |
+| Hide progress, pose geometry, spring | `polkadot-app/Modules/MainTabBar/Chrome/DockletMotion.swift` (pure value type) |
 | Panel state machine | `polkadot-app/Modules/MainTabBar/Chrome/TabBarPanelController.swift` |
 | Panel kinds | `polkadot-app/Modules/MainTabBar/Chrome/TabBarPanelKind.swift` |
 | Bar row view (SwiftUI) | `polkadot-app/Modules/MainTabBar/Chrome/TabBarBarView.swift` |
@@ -84,7 +87,7 @@ The bar row is an accessibility container with the tab-bar trait.
 - The Apps slot opens the shelf. It shows the open-product count and reads as active while the shelf is open or a product is mounted.
 - `TabBarSlotMap` converts between bar position (item index) and tab position (tab index). Only tab indices cross into `TabBarContainer`.
 - Titles appear under the icons only when the interactor enables labels (`setLabels(visible:)`).
-- While the bar is folded, a slot tap only unfolds the bar. It does not select.
+- While the bar is tucked, no slot is reachable. A tap in the grab zone restores the bar.
 
 ## Center Control and Center Panel
 
@@ -161,7 +164,7 @@ The chrome takes the width from `DSTabBarStyle.rowWidth(inAvailableWidth:)` of i
 
 ## Haptics and Accessibility
 
-**Haptics.** The PolkadotUI components play sensory feedback next to the gestures that trigger it. `DSTabBarCenterControl` owns the open and close feedback for the control. `DSTabBarContainer` owns the feedback for a bar-hidden change while the panel is open. The app chrome plays no haptics. The landing focus of a swipe into Search passes a flag that mutes the container's bar-hidden feedback. Each slot tap plays a selection feedback from a simultaneous gesture in the bar row, including a reselect.
+**Haptics.** The PolkadotUI components play sensory feedback next to the gestures that trigger it. `DSTabBarCenterControl` owns the open and close feedback for the control. `DSTabBarContainer` owns the feedback for a bar-hidden change while the panel is open. The app chrome plays two haptics, and only for a tuck or restore the user starts: a heavy impact when the bar lands tucked, and a medium impact when it lands shown. `TabBarFoldController` plays them through `UIImpactFeedbackGenerator`. A settle the app starts, or one that keeps the same rest, plays nothing. The landing focus of a swipe into Search passes a flag that mutes the container's bar-hidden feedback. Each slot tap plays a selection feedback from a simultaneous gesture in the bar row, including a reselect.
 
 **Accessibility.** VoiceOver sees the center control as a button. The caller passes its label. The app passes the `QR scanner` string. When the panel is open, the escape action closes it.
 
@@ -197,37 +200,36 @@ The rise is the taller of two values:
 
 The rise is set when the panel state commits and is not animated. The live region is set as soon as the bar is installed. The SwiftUI springs animate what is drawn inside it.
 
-`TabBarChromePassthroughView` claims a touch in only two cases: the folded grab zone, and the dismiss area while a panel is open. Every other touch goes to the content behind the chrome. `TabBarChromeSurfaceView` returns nil for hits on its own empty area. `TabBarBarHostView` accepts touches in its live region.
+`TabBarChromePassthroughView` claims a touch in only two cases: the grab zone, and the dismiss area while a panel is open. The grab zone is 47 pt wide on the right edge and 200 pt tall from the top of the tucked bar. It is set only while the bar is tucked or settling toward tucked. A tap in it restores the bar through the chrome's outside-tap recognizer. Every other touch goes to the content behind the chrome. `TabBarChromeSurfaceView` returns nil for hits on its own empty area. `TabBarBarHostView` accepts touches in its live region.
 
-The fold pan recognizer starts only on the bar row outside the center hole, and only for a drag that leads horizontally. It does not start on a tab root or while the bar is `hidden`.
+The fold pan recognizer starts on any part of the bar row, the center button and the center hole included, for a drag that leads horizontally. It does not start while the bar is `hidden` or a panel is open.
 
 ## Fold
 
-The three states are `shown`, `folded` and `hidden`.
+Design vocabulary and decisions for the Docklet work live in `.scratch/docklet-r2/` until they move to `CONTEXT.md` and `docs/adr/`.
+
+The three states are `shown`, `tucked` and `hidden`. The bar's position between shown and tucked is one value, the hide progress: 0 when shown, 1 when tucked. `DockletMotion` (`polkadot-app/Modules/MainTabBar/Chrome/DockletMotion.swift`) owns that value. It is a pure value type with no UIKit and no clock, so the caller passes in time.
 
 - **Shown.** The bar sits at the bottom of the screen.
-- **Folded.** The bar slides to the leading edge and leaves a sliver. A grab zone on the passthrough view restores it on tap.
-- **Hidden.** The bar slides fully off the leading edge. There is no sliver and no grab zone, so tab navigation is not available on that screen. The only conformer to `TabBarChromeVisibilityCustomizing` in the app is `ChatViewController`.
+- **Tucked.** The bar turns a quarter about a pivot 14 pt past its right end, at its vertical center, with the leading end up. It then slides out to the right by (gap to the screen edge + 60 pt) × progress³. An Edge glow, 24 pt wide and 200 pt tall from the top of the tucked bar, sits on the right edge. Its opacity follows the hide progress.
+- **Hidden.** The bar slides fully off the leading edge. There is no Edge glow and no grab zone, so tab navigation is not available on that screen. The only conformer to `TabBarChromeVisibilityCustomizing` in the app is `ChatViewController`.
 
-`TabBarVisibilityPolicy.state(isTabRoot:derived:override:)` resolves the state in this order:
+`TabBarVisibilityPolicy` resolves the state in this order:
 
-1. A tab root is always `shown`. A tab root never folds.
-2. A per-screen user override (`folded` or `shown`) wins.
-3. Otherwise the derived state applies.
+1. A per-screen user override (`tucked` or `shown`) wins.
+2. Otherwise the derived state applies.
 
-The derived state comes from `TabBarHiddenPolicy.deriveFoldState(in:showing:)`. It is `hidden` when the target opts out. It is `folded` when any controller above the root, up to the target, sets `hidesBottomBarWhenPushed`. The root is excluded, so a tab root that sets the flag does not fold.
+A tab root follows the same order and can be tucked by a user override. Tab-root bottom clearance does not change when the bar tucks, and it does not follow the motion.
 
-Overrides are stored per screen, weakly keyed on the navigation screen, so folding one pushed screen does not affect another. The fold controller ignores override requests while the bar is `hidden`.
+The derived state comes from `TabBarHiddenPolicy.deriveFoldState(in:showing:)`. It is `hidden` when the target opts out. It is `tucked` when any controller above the root, up to the target, sets `hidesBottomBarWhenPushed`. The root is excluded, so a tab root that sets the flag does not tuck. A mounted product also derives `tucked`.
+
+Overrides are stored per screen, weakly keyed on the navigation screen, so tucking one pushed screen does not affect another. The fold controller ignores override requests while the bar is `hidden`.
 
 **Interactive pops.** The transition coordinator drives the fold. `setInteractiveTarget` runs inside `animate(alongsideTransition:)`. When the interaction ends, the chrome commits the incoming screen's state. If the pop was cancelled, it commits the staying screen's state, rebuilt with `TabBarHiddenPolicy.stackAfterCancelledPop`.
 
-**Animation.** A spring takes the gesture's velocity as its initial velocity.
+**Drag.** A horizontal pan that starts on the bar follows the finger live. Hide travel is the distance a full hide takes from where the drag began: `min(max(160, 0.75 × bar width), max(60, 1.2 × room from the touch to the right edge))`. A drag that starts near the right edge needs less travel. On release the bar tucks when `progress + velocity × 0.1 s ≥ 0.5`, and shows otherwise. A release that changes the rest records the screen's override.
 
-`TabBarFoldDecision` classifies the end of a horizontal drag on the bar row.
-
-- From `shown`, a fast leftward flick folds the bar. Any other drag reads as a selection, which the bar takes no action on, so the bar stays shown.
-- From `folded`, a tap or a fast rightward flick unfolds.
-- Otherwise the drag decides by how far it passes the fold distance. It unfolds when it passes far enough. Otherwise it settles back to folded.
+**Animation.** A release starts a critically damped spring that takes the release velocity as its initial velocity. A `CADisplayLink` in `TabBarFoldController` drives it, with ω = 2π / 0.32 s. The settle lands once the remaining distance is under 0.0015 after 80 ms, and at 1.4 s at the latest. `TabBarFoldController` is the only writer of the chrome surface transform. Moves to or from `hidden` use a plain UIKit spring animator instead, because the display link drives only the shown and tucked poses.
 
 ## Clearance and Safe Area
 
@@ -282,7 +284,7 @@ Opening a product:
 1. `SPABrowserCoordinator.findOrCreateTab(for:)` matches on `dotDomain`. An existing tab with another page is navigated in place.
 2. `SPAControllerPool` vends one `SPAViewController` per tab id.
 3. `container.mountSPA(_:for:)` sets the selection to `.spa(id)` and cross-fades the controller in.
-4. `applyChrome(.spa(controller))` sets `isTabRoot: false` and a derived state of `folded`. The bar folds and contributes no clearance.
+4. `applyChrome(.spa(controller))` sets `isTabRoot: false` and a derived state of `tucked`. The bar tucks and contributes no clearance.
 
 `presentProduct(page:)` is the one-shot path for funding products. It presents a page sheet. The product never enters the tab store, so closing it leaves no chip.
 

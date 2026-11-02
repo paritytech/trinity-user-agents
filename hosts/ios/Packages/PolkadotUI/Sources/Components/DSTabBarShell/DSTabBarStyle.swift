@@ -59,13 +59,6 @@ public enum DSTabBarStyle {
     /// Gap the two inner slots leave around the notch. It is the cutout's width at the bar's top edge.
     static let notchShoulderWidth: CGFloat = 74
 
-    /// Whether a point in the bar row's coordinate space falls on the centre button, which the
-    /// fold gesture must not claim.
-    public static func isInCenterHole(_ point: CGPoint, inRowOfWidth width: CGFloat) -> Bool {
-        let center = CGPoint(x: width / 2, y: notchCenterY)
-        return hypot(point.x - center.x, point.y - center.y) <= notchRadius
-    }
-
     /// Strength of the bar's variable blur. The public API cannot set the backdrop blur radius or saturation,
     /// so this is tuned by eye toward the brief's radius.
     static let barBlurIntensity: Double = 0.35

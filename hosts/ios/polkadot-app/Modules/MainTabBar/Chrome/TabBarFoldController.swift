@@ -7,22 +7,19 @@ private struct ScreenOverride {
     var value: TabBarFoldOverride
 }
 
-/// Owns the tab bar's fold/hide state machine and the transform that realises it. The chrome
+/// Owns the tab bar's visibility state machine and the transform that realises it. The chrome
 /// keeps view installation and layout; this decides which state applies and drives the offset.
 @MainActor
 final class TabBarFoldController {
-    /// Width of the folded bar that stays on screen at the leading edge.
-    private static let foldedVisibleWidth: CGFloat = 19
-    /// Width of the strip at the leading edge that unfolds the folded bar.
-    private static let grabZoneWidth: CGFloat = 44
-
     private unowned let foldSurface: UIView
 
-    /// Bounds of the chrome's own full-bleed view; every fold distance derives from it.
+    /// Bounds of the chrome's own full-bleed view; every distance derives from it.
     private let chromeBounds: () -> CGRect
     /// The bottom safe area inset the resting bar's gap depends on.
     private let bottomSafeAreaInset: () -> CGFloat
-    /// Receives the folded bar's tap target, or `.zero` when it is not folded.
+    /// Receives the Edge glow's rect and opacity. The glow is drawn outside the bar's transform.
+    private let glowSink: (CGRect, CGFloat) -> Void
+    /// Receives the tucked bar's tap target, or `.zero` when it is not tucked.
     private let grabZoneSink: (CGRect) -> Void
     /// A state other than `.shown` must dismiss any open panel.
     private let closePanel: () -> Void
@@ -32,21 +29,24 @@ final class TabBarFoldController {
     private(set) var state: TabBarVisibilityState = .shown
     private(set) var isTabRoot = true
     /// Set together with the offset, so it can lead `state` during an interactive transition.
-    private(set) var isFolded = false
+    private(set) var isTucked = false
 
     private var foldDerived: TabBarFoldDerived = .none
     private weak var navigationScreen: UIViewController?
     private var screenOverrides: [ScreenOverride] = []
-    private var pendingFoldVelocity: CGFloat = 0
-    private var isFoldInterpolating = false
+    private var motion = DockletMotion()
+    private var displayLink: CADisplayLink?
     private var foldAnimator: UIViewPropertyAnimator?
     private var foldOffsetWidth: CGFloat?
-    private var foldOffset: CGFloat = 0
+    private var isFoldInterpolating = false
+    private let heavyImpact = UIImpactFeedbackGenerator(style: .heavy)
+    private let mediumImpact = UIImpactFeedbackGenerator(style: .medium)
 
     init(
         foldSurface: UIView,
         chromeBounds: @escaping () -> CGRect,
         bottomSafeAreaInset: @escaping () -> CGFloat,
+        glowSink: @escaping (CGRect, CGFloat) -> Void,
         grabZoneSink: @escaping (CGRect) -> Void,
         closePanel: @escaping () -> Void,
         stateSink: @escaping (TabBarVisibilityState) -> Void
@@ -54,6 +54,7 @@ final class TabBarFoldController {
         self.foldSurface = foldSurface
         self.chromeBounds = chromeBounds
         self.bottomSafeAreaInset = bottomSafeAreaInset
+        self.glowSink = glowSink
         self.grabZoneSink = grabZoneSink
         self.closePanel = closePanel
         self.stateSink = stateSink
@@ -62,6 +63,7 @@ final class TabBarFoldController {
     deinit {
         MainActor.assumeIsolated {
             foldAnimator?.cancelInPlace()
+            displayLink?.invalidate()
         }
     }
 
@@ -79,74 +81,89 @@ final class TabBarFoldController {
             return false
         }
         foldOffsetWidth = chromeBounds().width
-        applyVisibility(state, animated: false, initialVelocity: 0)
+        applyVisibility(state, from: state, animated: false, isUserDriven: false)
         return true
     }
 
     /// Resolves the visibility state a context would settle on, without committing it — used to
     /// drive the offset alongside an interactive navigation transition.
     func resolvedState(for context: TabBarChromeContext) -> TabBarVisibilityState {
-        TabBarVisibilityPolicy.state(
-            isTabRoot: context.isTabRoot,
-            derived: context.foldDerived,
-            override: override(for: context.screen)
-        )
+        TabBarVisibilityPolicy.state(derived: context.foldDerived, override: override(for: context.screen))
     }
 
     /// Moves the chrome toward `state` in sync with an interactive transition. Unlike `apply(state:)`
-    /// it runs no animator of its own, so the caller's transition coordinator owns the timing.
+    /// it runs no animator or display link of its own, so the caller's transition coordinator owns the timing.
     func setInteractiveTarget(_ state: TabBarVisibilityState) {
         isFoldInterpolating = true
-        isFolded = state == .folded
-        applyFoldOffset(translationX(for: state))
+        isTucked = state == .tucked
+        stopSettling()
+        cancelFoldAnimator()
+        motion.snap(to: state == .tucked ? .tucked : .shown)
+        writeTransform(pose(for: state))
     }
 
-    func setUserOverride(_ override: TabBarFoldOverride, velocityX: CGFloat) {
-        guard state != .hidden, !isTabRoot, let navigationScreen else {
+    /// Records the user's choice for the current screen and moves the bar to it. Tapping a tucked bar restores it.
+    func setUserOverride(_ override: TabBarFoldOverride) {
+        guard state != .hidden else {
             return
         }
-
-        screenOverrides.removeAll { $0.screen == nil || $0.screen === navigationScreen }
-        screenOverrides.append(ScreenOverride(screen: navigationScreen, value: override))
-
-        pendingFoldVelocity = velocityX
-        refresh()
+        storeOverride(override)
+        apply(state: policyState, isUserDriven: true)
     }
 
-    /// Folds or unfolds from a horizontal pan on the bar. The fold distance comes from the chrome's own width,
-    /// which is the width the fold travels across.
-    func foldPanEnded(translationX: CGFloat, velocityX: CGFloat) {
-        let decision = TabBarFoldDecision.decide(
-            velocityX: velocityX,
-            translationX: translationX,
-            isFolded: isFolded,
-            foldDistance: Self.foldedTranslationX(availableWidth: chromeBounds().width)
-        )
+    func foldPanBegan(touchX: CGFloat) {
+        heavyImpact.prepare()
+        mediumImpact.prepare()
+        cancelFoldAnimator()
+        stopSettling()
+        motion.begin(touchX: touchX, geometry: geometry)
+    }
 
-        switch decision {
-        case .fold:
-            setUserOverride(.folded, velocityX: velocityX)
-        case .unfold:
-            setUserOverride(.shown, velocityX: velocityX)
-        // Neither a fold nor an unfold. The bar takes no action on it, and taps are handled by the slots.
-        case .select,
-             .settle:
-            break
+    func foldPanChanged(translationX: CGFloat) {
+        motion.move(translationX: translationX)
+        writeTransform(dockletTransform())
+    }
+
+    /// The release starts a settle that carries the finger's velocity. A change of state is recorded as the
+    /// screen's override without restarting that settle.
+    func foldPanEnded(velocityX: CGFloat) {
+        motion.end(velocityX: velocityX, now: CACurrentMediaTime())
+        if motion.isSettling {
+            startSettling()
         }
+        let tucks = motion.destination == .tucked
+        guard tucks != (state == .tucked) else {
+            return
+        }
+        storeOverride(tucks ? .tucked : .shown)
+        commit(tucks ? .tucked : .shown)
     }
 
     func refresh() {
-        apply(state: TabBarVisibilityPolicy.state(
-            isTabRoot: isTabRoot,
-            derived: foldDerived,
-            override: currentOverride
-        ))
+        apply(state: policyState)
     }
 }
 
 private extension TabBarFoldController {
     var currentOverride: TabBarFoldOverride {
         override(for: navigationScreen)
+    }
+
+    var policyState: TabBarVisibilityState {
+        TabBarVisibilityPolicy.state(derived: foldDerived, override: currentOverride)
+    }
+
+    var geometry: DockletGeometry {
+        let bounds = chromeBounds()
+        let rowWidth = DSTabBarStyle.rowWidth(inAvailableWidth: bounds.width)
+        let bottomGap = DSTabBarStyle.bottomGap(bottomSafeAreaInset: bottomSafeAreaInset())
+        let dockFrame = CGRect(
+            x: Self.barMaxX(availableWidth: bounds.width) - rowWidth,
+            y: bounds.height - bottomGap - DSTabBarStyle.height,
+            width: rowWidth,
+            height: DSTabBarStyle.height
+        )
+        return DockletGeometry(dockFrame: dockFrame, bounds: bounds)
     }
 
     func override(for screen: UIViewController?) -> TabBarFoldOverride {
@@ -156,46 +173,65 @@ private extension TabBarFoldController {
         return screenOverrides.first { $0.screen === screen }?.value ?? .none
     }
 
-    func apply(state newState: TabBarVisibilityState) {
-        let foldVelocity = pendingFoldVelocity
-        pendingFoldVelocity = 0
+    func storeOverride(_ override: TabBarFoldOverride) {
+        guard let navigationScreen else {
+            return
+        }
+        screenOverrides.removeAll { $0.screen == nil || $0.screen === navigationScreen }
+        screenOverrides.append(ScreenOverride(screen: navigationScreen, value: override))
+    }
 
+    func apply(state newState: TabBarVisibilityState, isUserDriven: Bool = false) {
         guard newState != state || isFoldInterpolating else {
             return
         }
         isFoldInterpolating = false
 
+        let previous = state
+        commit(newState)
+        applyVisibility(newState, from: previous, animated: true, isUserDriven: isUserDriven)
+    }
+
+    func commit(_ newState: TabBarVisibilityState) {
         state = newState
+        isTucked = newState == .tucked
         stateSink(newState)
         if newState != .shown {
             closePanel()
         }
-        applyVisibility(newState, animated: true, initialVelocity: foldVelocity)
     }
 
-    func applyVisibility(_ state: TabBarVisibilityState, animated: Bool, initialVelocity: CGFloat) {
-        isFolded = state == .folded
+    func applyVisibility(
+        _ state: TabBarVisibilityState,
+        from previous: TabBarVisibilityState,
+        animated: Bool,
+        isUserDriven: Bool
+    ) {
         foldOffsetWidth = chromeBounds().width
+        stopSettling()
+        cancelFoldAnimator()
 
-        let previousFoldAnimator = foldAnimator
-        foldAnimator = nil
-        previousFoldAnimator?.cancelInPlace()
-
-        let offset = translationX(for: state)
-        let apply = { self.applyFoldOffset(offset) }
-
+        let rest: DockletRest = state == .tucked ? .tucked : .shown
         guard animated else {
-            apply()
+            motion.snap(to: rest)
+            writeTransform(pose(for: state))
             return
         }
+        guard state != .hidden, previous != .hidden else {
+            motion.snap(to: rest)
+            animateSlide(to: pose(for: state))
+            return
+        }
+        motion.settle(to: rest, now: CACurrentMediaTime(), isUserDriven: isUserDriven)
+        startSettling()
+    }
 
-        let normalized = foldReferenceDistance(for: state).map { abs(initialVelocity) / $0 } ?? 0
-        let timing = UISpringTimingParameters(
-            dampingRatio: 0.85,
-            initialVelocity: CGVector(dx: normalized, dy: 0)
-        )
-        let animator = UIViewPropertyAnimator(duration: 0.45, timingParameters: timing)
-        animator.addAnimations(apply)
+    /// Slides between the hidden pose and a docklet pose with a plain spring, since the display link only drives
+    /// the docklet pose.
+    func animateSlide(to transform: CGAffineTransform) {
+        let animator = UIViewPropertyAnimator(duration: 0.45, dampingRatio: 0.85) { [weak self] in
+            self?.writeTransform(transform)
+        }
         animator.addCompletion { [weak self] _ in
             self?.foldAnimator = nil
         }
@@ -203,57 +239,69 @@ private extension TabBarFoldController {
         animator.startAnimation()
     }
 
-    func translationX(for state: TabBarVisibilityState) -> CGFloat {
-        switch state {
-        case .shown:
-            0
-        case .folded:
-            Self.foldedTranslationX(availableWidth: chromeBounds().width)
-        case .hidden:
-            Self.hiddenTranslationX(availableWidth: chromeBounds().width)
-        }
+    func cancelFoldAnimator() {
+        let previous = foldAnimator
+        foldAnimator = nil
+        previous?.cancelInPlace()
     }
 
-    /// Normalises gesture velocity by the state's travel distance; `nil` when there is no travel.
-    func foldReferenceDistance(for state: TabBarVisibilityState) -> CGFloat? {
-        let distance = state == .hidden
-            ? abs(Self.hiddenTranslationX(availableWidth: chromeBounds().width))
-            : abs(Self.foldedTranslationX(availableWidth: chromeBounds().width))
-        return distance > 0 ? distance : nil
-    }
-
-    /// The whole chrome surface is translated, so the bar and any open panel move together.
-    func applyFoldOffset(_ offset: CGFloat) {
-        foldOffset = offset
-        updateFoldTransform()
-        updateFoldGrabZone()
-    }
-
-    /// The only writer of the chrome's transform, which carries the fold translation. The keyboard lift is a
-    /// padding in the bar view.
-    func updateFoldTransform() {
-        foldSurface.transform = CGAffineTransform(translationX: foldOffset, y: 0)
-    }
-
-    /// The inset container no longer reaches the screen edge, so the folded bar's tap target
-    /// lives on the full-bleed chrome view instead.
-    func updateFoldGrabZone() {
-        guard isFolded else {
-            grabZoneSink(.zero)
+    func startSettling() {
+        guard displayLink == nil else {
             return
         }
-
-        let height = DSTabBarStyle.height
-        grabZoneSink(CGRect(
-            x: 0,
-            y: chromeBounds().height - DSTabBarStyle.bottomGap(bottomSafeAreaInset: bottomSafeAreaInset()) - height,
-            width: Self.grabZoneWidth,
-            height: height
-        ))
+        let frameTarget = DisplayLinkFrameTarget { [weak self] link in
+            self?.tickSettle(at: link.targetTimestamp)
+        }
+        let link = CADisplayLink(target: frameTarget, selector: #selector(DisplayLinkFrameTarget.frame(_:)))
+        link.add(to: .main, forMode: .common)
+        displayLink = link
     }
 
-    static func foldedTranslationX(availableWidth: CGFloat) -> CGFloat {
-        foldedVisibleWidth - barMaxX(availableWidth: availableWidth)
+    func stopSettling() {
+        displayLink?.invalidate()
+        displayLink = nil
+    }
+
+    func tickSettle(at time: CFTimeInterval) {
+        let haptic = motion.tick(now: time)
+        writeTransform(dockletTransform())
+        if let haptic {
+            playHaptic(haptic)
+        }
+        if !motion.isSettling {
+            stopSettling()
+        }
+    }
+
+    func playHaptic(_ haptic: DockletHaptic) {
+        switch haptic {
+        case .heavy:
+            heavyImpact.impactOccurred()
+        case .medium:
+            mediumImpact.impactOccurred()
+        }
+    }
+
+    /// The only writer of the chrome's transform. The Edge glow and Grab zone follow the same progress.
+    func writeTransform(_ transform: CGAffineTransform) {
+        let geometry = geometry
+        foldSurface.transform = transform
+        glowSink(geometry.edgeGlowRect, motion.progress)
+        grabZoneSink(motion.destination == .tucked ? geometry.grabZoneRect : .zero)
+    }
+
+    /// The docklet pose about the centre of the full-bleed chrome, which is where the chrome's transform is anchored.
+    func dockletTransform() -> CGAffineTransform {
+        let bounds = chromeBounds()
+        return geometry.transform(progress: motion.progress, anchor: CGPoint(x: bounds.midX, y: bounds.midY))
+    }
+
+    func hiddenTransform() -> CGAffineTransform {
+        CGAffineTransform(translationX: Self.hiddenTranslationX(availableWidth: chromeBounds().width), y: 0)
+    }
+
+    func pose(for state: TabBarVisibilityState) -> CGAffineTransform {
+        state == .hidden ? hiddenTransform() : dockletTransform()
     }
 
     static func hiddenTranslationX(availableWidth: CGFloat) -> CGFloat {
@@ -264,5 +312,20 @@ private extension TabBarFoldController {
     static func barMaxX(availableWidth: CGFloat) -> CGFloat {
         let width = DSTabBarStyle.rowWidth(inAvailableWidth: availableWidth)
         return ((availableWidth - width) / 2).rounded() + width
+    }
+}
+
+/// Relays display link frames to a closure. A display link retains its target, so the link is given this object
+/// rather than the controller.
+@MainActor
+private final class DisplayLinkFrameTarget: NSObject {
+    private let onFrame: (CADisplayLink) -> Void
+
+    init(onFrame: @escaping (CADisplayLink) -> Void) {
+        self.onFrame = onFrame
+    }
+
+    @objc func frame(_ link: CADisplayLink) {
+        onFrame(link)
     }
 }
