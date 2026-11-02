@@ -18,17 +18,17 @@ pub enum NativeChatQueryAnswer {
 	/// The answer to `chat_messages_query`.
 	Messages {
 		/// One page of messages.
-		page: latest::ProductChatMessagesQueryItem,
+		page: latest::ProductChatMessagesQueryResponse,
 	},
 	/// The answer to `chat_user_action`.
 	UserAction {
 		/// The stored message, or an acknowledgement.
-		answer: latest::ProductChatUserActionItem,
+		answer: latest::ProductChatUserActionResponse,
 	},
 	/// The answer to `chat_reactions_query`.
 	Reactions {
 		/// Who reacted.
-		reactions: latest::ProductChatReactionsQueryItem,
+		reactions: latest::ProductChatReactionsQueryResponse,
 	},
 }
 

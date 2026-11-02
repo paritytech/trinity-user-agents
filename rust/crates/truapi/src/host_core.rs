@@ -1863,18 +1863,18 @@ impl ProductRuntimeControl {
 	pub fn chat_messages_query(
 		&self,
 		request: truapi::latest::ProductChatMessagesQueryRequest,
-	) -> Result<ChatQuery<truapi::latest::ProductChatMessagesQueryItem>, ProductRuntimeError> {
+	) -> Result<ChatQuery<truapi::latest::ProductChatMessagesQueryResponse>, ProductRuntimeError> {
 		let page_size = request.page_size;
 		let request = crate::platform::validate_chat_messages_query(request);
 		self.chat_query(
 			request.as_ref().map(|request| request.room_id.clone()).map_err(Clone::clone),
 			crate::runtime::ChatHandler::Config(|config| config.product_source),
 			move |subscriptions, transport| {
-				Ok(crate::generated::dispatcher::chat_messages_query(
+				Ok(Box::pin(crate::generated::dispatcher::chat_messages_query(
 					subscriptions,
 					transport,
 					truapi::versioned::chat::ProductChatMessagesQueryRequest::V1(request?),
-				))
+				)))
 			},
 			move |page| crate::platform::validate_chat_messages_page(page, page_size),
 		)
@@ -1889,7 +1889,7 @@ impl ProductRuntimeControl {
 		request: truapi::latest::ProductChatUserActionRequest,
 	) -> Result<
 		ChatQuery<
-			truapi::latest::ProductChatUserActionItem,
+			truapi::latest::ProductChatUserActionResponse,
 			truapi::latest::ProductChatUserActionError,
 		>,
 		ProductRuntimeError,
@@ -1908,16 +1908,16 @@ impl ProductRuntimeControl {
 					room_id: room_id?,
 					action: crate::platform::validate_chat_user_action(request.action)?,
 				};
-				Ok(crate::generated::dispatcher::chat_user_action(
+				Ok(Box::pin(crate::generated::dispatcher::chat_user_action(
 					subscriptions,
 					transport,
 					truapi::versioned::chat::ProductChatUserActionRequest::V1(request),
-				))
+				)))
 			},
 			|answer| match answer {
-				truapi::latest::ProductChatUserActionItem::MessageCreated(message) => {
+				truapi::latest::ProductChatUserActionResponse::MessageCreated(message) => {
 					crate::platform::validate_chat_message(message)
-						.map(truapi::latest::ProductChatUserActionItem::MessageCreated)
+						.map(truapi::latest::ProductChatUserActionResponse::MessageCreated)
 				},
 				acknowledged => Ok(acknowledged),
 			},
@@ -1929,7 +1929,8 @@ impl ProductRuntimeControl {
 	pub fn chat_reactions_query(
 		&self,
 		request: truapi::latest::ProductChatReactionsQueryRequest,
-	) -> Result<ChatQuery<truapi::latest::ProductChatReactionsQueryItem>, ProductRuntimeError> {
+	) -> Result<ChatQuery<truapi::latest::ProductChatReactionsQueryResponse>, ProductRuntimeError>
+	{
 		let room_id = crate::platform::normalize_chat_identifier("roomId", &request.room_id);
 		self.chat_query(
 			room_id.clone(),
@@ -1939,11 +1940,11 @@ impl ProductRuntimeControl {
 					room_id: room_id?,
 					..request
 				};
-				Ok(crate::generated::dispatcher::chat_reactions_query(
+				Ok(Box::pin(crate::generated::dispatcher::chat_reactions_query(
 					subscriptions,
 					transport,
 					truapi::versioned::chat::ProductChatReactionsQueryRequest::V1(request),
-				))
+				)))
 			},
 			crate::platform::validate_chat_reactions_answer,
 		)
@@ -1956,11 +1957,11 @@ impl ProductRuntimeControl {
 		&self,
 		room_id: Result<String, crate::platform::ChatFieldError>,
 		handler: crate::runtime::ChatHandler,
-		start: impl FnOnce(
-			&HostInitiatedSubscriptionManager,
+		ask: impl for<'a> FnOnce(
+			&'a HostInitiatedSubscriptionManager,
 			Arc<dyn Transport>,
 		) -> Result<
-			truapi::Subscription<Envelope, truapi::CallError<EnvelopeError>>,
+			futures::future::BoxFuture<'a, Result<Envelope, truapi::CallError<EnvelopeError>>>,
 			crate::platform::ChatFieldError,
 		> + Send
 		+ 'static,
@@ -1980,34 +1981,24 @@ impl ProductRuntimeControl {
 			let failed = |reason: String| truapi::CallError::Domain(Error::unknown(reason));
 			let room_id = match room_id {
 				Ok(room_id) => room_id,
-				Err(error) => return Some(Err(failed(error.to_string()))),
+				Err(error) => return Err(failed(error.to_string())),
 			};
 			match runtime.chat_handler_declared(room_id, handler).await {
 				Ok(true) => {},
-				Ok(false) => return Some(Err(truapi::CallError::Domain(Error::not_declared()))),
-				Err(reason) => return Some(Err(truapi::CallError::HostFailure { reason })),
+				Ok(false) => return Err(truapi::CallError::Domain(Error::not_declared())),
+				Err(reason) => return Err(truapi::CallError::HostFailure { reason }),
 			}
 			// Held from the product's `Start` to its answer, and released
 			// when this future ends, whichever way it ends.
 			let _reference = WorkerReference::acquire(runtime.connection().clone());
-			let mut stream = match start(&subscriptions, transport) {
-				Ok(stream) => stream,
-				Err(error) => return Some(Err(failed(error.to_string()))),
-			};
-			let item = match stream.next().await? {
-				Ok(item) => item.into_latest(),
-				Err(interrupt) => {
-					return Some(Err(crate::interrupt::interrupt_into_latest(interrupt)));
-				},
-			};
-			match screen(item) {
-				Ok(item) => Some(Ok(item)),
-				Err(error) => Some(Err(failed(error.to_string()))),
-			}
+			let call = ask(&subscriptions, transport).map_err(|error| failed(error.to_string()))?;
+			let answer = call
+				.await
+				.map(truapi::versioned::IntoLatest::into_latest)
+				.map_err(crate::interrupt::interrupt_into_latest)?;
+			screen(answer).map_err(|error| failed(error.to_string()))
 		};
-		Ok(truapi::Subscription::new(
-			futures::stream::once(answer).filter_map(futures::future::ready),
-		))
+		Ok(truapi::Subscription::new(futures::stream::once(answer)))
 	}
 }
 
@@ -4821,17 +4812,55 @@ mod tests {
 			),
 			Ok(truapi::versioned::chat::ProductChatMessagesQueryRequest::V1(messages_request(10)))
 		);
-		let page = truapi::latest::ProductChatMessagesQueryItem {
+		let page = truapi::latest::ProductChatMessagesQueryResponse {
 			messages: vec![text_message("m1")],
 			next: Some("older".to_string()),
 		};
 		deliver_chat_frame(
 			&runtime,
 			&start,
-			truapi::versioned::chat::ProductChatMessagesQueryItem::V1(page.clone()).encode(),
+			truapi::versioned::chat::ProductChatMessagesQueryResponse::V1(page.clone()).encode(),
 		);
 
 		assert_eq!(futures::executor::block_on(query.next()), Some(Ok(page)));
+		assert_eq!(futures::executor::block_on(query.next()), None);
+		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
+	}
+
+	// A query asks for one answer. A product that closes it without one fails
+	// the query, so the host shows a failure and does not wait.
+	#[test]
+	fn a_chat_query_the_product_closes_without_an_answer_fails() {
+		let (runtime, sink) = chat_query_runtime(truapi::latest::ChatRoomConfig {
+			product_source: true,
+			..Default::default()
+		});
+		let services = runtime.admin.product_runtime().connection().services().clone();
+		let mut query = runtime
+			.control()
+			.chat_messages_query(messages_request(10))
+			.expect("may be asked");
+		let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
+		assert!(query.poll_next_unpin(&mut cx).is_pending());
+
+		let start = sent_frames(&sink).remove(0);
+		let close = ProtocolMessage {
+			request_id: start.request_id.clone(),
+			payload: Payload {
+				trait_id: start.payload.trait_id,
+				method_id: start.payload.method_id,
+				message_type: crate::frame::MESSAGE_TYPE_INTERRUPT,
+				value: crate::frame::encode_clean_interrupt(),
+			},
+		}
+		.encode();
+		futures::executor::block_on(runtime.receive_frame(close))
+			.expect("the product frame is well formed");
+
+		assert!(matches!(
+			futures::executor::block_on(query.next()),
+			Some(Err(truapi::CallError::HostFailure { .. }))
+		));
 		assert_eq!(futures::executor::block_on(query.next()), None);
 		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 	}
@@ -4879,8 +4908,8 @@ mod tests {
 		deliver_chat_frame(
 			&runtime,
 			&start,
-			truapi::versioned::chat::ProductChatMessagesQueryItem::V1(
-				truapi::latest::ProductChatMessagesQueryItem {
+			truapi::versioned::chat::ProductChatMessagesQueryResponse::V1(
+				truapi::latest::ProductChatMessagesQueryResponse {
 					messages: vec![text_message("m1"), text_message("m2")],
 					next: None,
 				},
