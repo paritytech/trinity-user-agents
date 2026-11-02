@@ -31,6 +31,16 @@ final class DSTabBarFieldMaterialView: UIView {
 private extension DSTabBarFieldMaterialView {
     func setupLayers() {
         isUserInteractionEnabled = false
+        if #available(iOS 26, *) {
+            let glass = UIVisualEffectView(effect: UIGlassEffect())
+            glass.frame = bounds
+            glass.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            glass.layer.cornerRadius = cornerRadius
+            glass.layer.cornerCurve = .continuous
+            glass.clipsToBounds = true
+            addSubview(glass)
+            return
+        }
         layer.cornerRadius = cornerRadius
         layer.cornerCurve = .continuous
         layer.borderWidth = 1
@@ -62,6 +72,9 @@ private extension DSTabBarFieldMaterialView {
     }
 
     func updateTopLine() {
+        guard topLineLayer.superlayer != nil else {
+            return
+        }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         topLineLayer.frame = bounds

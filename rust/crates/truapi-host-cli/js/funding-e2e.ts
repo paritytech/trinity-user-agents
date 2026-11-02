@@ -253,10 +253,16 @@ export async function runFundingE2e(
     });
     if (toppedUp.isErr()) throw new Error(stringify(toppedUp.error));
     await report(client, session.intent, {
-      tag: "Crediting",
-      value: { topUpId, amount: 900n },
+      tag: "In",
+      value: {
+        tag: "Crediting",
+        value: { topUpId, amount: 900n },
+      },
     });
-    await report(client, session.intent, { tag: "Delivered" });
+    await report(client, session.intent, {
+      tag: "In",
+      value: { tag: "Delivered" },
+    });
   });
   provider.plan("Out", 500n, async (client, session) => {
     const paymentId = randomId();
@@ -268,8 +274,11 @@ export async function runFundingE2e(
     });
     if (paid.isErr()) throw new Error(stringify(paid.error));
     await report(client, session.intent, {
-      tag: "Collecting",
-      value: { paymentId, amount: 500n },
+      tag: "Out",
+      value: {
+        tag: "Collecting",
+        value: { paymentId, amount: 500n },
+      },
     });
   });
   provider.plan("In", 2_000n, async (client, session) => {

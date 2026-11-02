@@ -52,7 +52,6 @@ pub enum PaymentTopUpSource {
 
 /// Request to top up the product payment balance.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct HostPaymentTopUpRequest {
 	/// Optional purse selector. `None` means MAIN_PURSE.
 	pub into: Option<u32>,
@@ -63,16 +62,10 @@ pub struct HostPaymentTopUpRequest {
 	/// Caller-chosen id the top-up's status is followed by. Reusing one is
 	/// refused with `AlreadyExists`, which makes a retried call safe.
 	pub id: [u8; 32],
-	/// The funding session this top-up credits, when a funding provider's
-	/// worker starts it for one it serves. Only such a top-up can be named in
-	/// that session's reports. A repeat under the same id must ask the same.
-	#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), uniffi(default))]
-	pub funding: Option<String>,
 }
 
 /// Request to initiate a payment to another account.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct HostPaymentRequest {
 	/// Optional purse selector. `None` means MAIN_PURSE.
 	pub from: Option<u32>,
@@ -83,12 +76,6 @@ pub struct HostPaymentRequest {
 	/// Caller-chosen id the payment's status is followed by. Reusing one is
 	/// refused with `AlreadyExists`, which makes a retried call safe.
 	pub id: [u8; 32],
-	/// The funding session this payment collects for, when a funding
-	/// provider's worker requests it for one it serves. Only such a payment
-	/// can be named in that session's reports. A repeat under the same id must
-	/// ask the same.
-	#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), uniffi(default))]
-	pub funding: Option<String>,
 }
 
 /// Payment lifecycle status pushed to subscribers.
@@ -143,7 +130,6 @@ pub enum HostPaymentBalanceSubscribeError {
 ///
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::Display)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Error))]
 pub enum HostPaymentTopUpError {
 	/// The source key is malformed, or the source was not found.
 	#[display("invalid top-up source")]
@@ -163,10 +149,6 @@ pub enum HostPaymentTopUpError {
 	/// A top-up with this id already exists.
 	#[display("a top-up with this id already exists")]
 	AlreadyExists,
-	/// The funding session named is not open and served by this worker for
-	/// inbound funds, or holds as many top-ups as it may.
-	#[display("the funding session does not take this top-up")]
-	FundingNotServed,
 }
 
 /// Error from [`crate::api::Payment::request`].
@@ -175,7 +157,6 @@ pub enum HostPaymentTopUpError {
 ///
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::Display)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Error))]
 pub enum HostPaymentError {
 	/// User rejected the payment request.
 	#[display("the payment was declined")]
@@ -195,10 +176,6 @@ pub enum HostPaymentError {
 	/// A payment with this id already exists.
 	#[display("a payment with this id already exists")]
 	AlreadyExists,
-	/// The funding session named is not open and served by this worker for
-	/// outbound funds, or holds as many payments as it may.
-	#[display("the funding session does not take this payment")]
-	FundingNotServed,
 }
 
 /// Error from [`crate::api::Payment::status_subscribe`].
