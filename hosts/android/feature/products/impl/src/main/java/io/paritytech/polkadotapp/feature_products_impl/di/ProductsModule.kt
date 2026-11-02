@@ -136,6 +136,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.serialization.JsWi
 import io.paritytech.polkadotapp.feature_products_impl.domain.serialization.ScaleWidgetSerializer
 import io.paritytech.polkadotapp.feature_products_impl.domain.spaBrowser.RealSpaBrowserInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.spaBrowser.SpaBrowserInteractor
+import io.paritytech.polkadotapp.feature_products_impl.domain.spaBrowser.statusBar.ProductStatusBarInteractor
+import io.paritytech.polkadotapp.feature_products_impl.domain.spaBrowser.statusBar.RealProductStatusBarInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.ExecuteTopUpUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealExecuteTopUpUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealTopUpService
@@ -356,6 +358,9 @@ internal interface ProductsModule {
 
     @Binds
     fun bindSpaBrowserInteractor(impl: RealSpaBrowserInteractor): SpaBrowserInteractor
+
+    @Binds
+    fun bindProductStatusBarInteractor(impl: RealProductStatusBarInteractor): ProductStatusBarInteractor
 
     @Binds
     fun bindProductChatMenuInteractor(impl: RealProductChatMenuInteractor): ProductChatMenuInteractor

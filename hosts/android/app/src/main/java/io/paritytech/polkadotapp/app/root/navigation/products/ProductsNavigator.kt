@@ -31,8 +31,9 @@ class ProductsNavigator @Inject constructor(
         args = payload.toPayloadBundle(SpaBrowserPayload::class.java.name),
     )
 
+    // SpaBrowserViewModel.quitOnLastTabClosed calls this too when Close app closes the last tab.
     override fun leaveBrowser() {
-        back()
+        if (isCurrentDestination(R.id.spaBrowserFragment)) back()
     }
 
     override fun openProductChat(productId: ProductId) {

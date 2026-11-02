@@ -15,3 +15,6 @@ fun String.toCanonicalDotHost(): String {
     if (!isDotWebMirrorHost(this)) return this
     return removeSuffix(MIRROR_ZONE_SUFFIX)
 }
+
+fun String.toDotWebMirrorHostOrNull(): String? =
+    if (isDotWebMirrorHost(this)) this else (this + MIRROR_ZONE_SUFFIX).takeIf(::isDotWebMirrorHost)

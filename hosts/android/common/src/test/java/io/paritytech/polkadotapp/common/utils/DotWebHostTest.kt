@@ -31,6 +31,22 @@ class DotWebHostTest {
     }
 
     @Test
+    fun `mirrors a dotNS host and canonicalizes it back`() {
+        assertEquals("coinflip.paseo.li", "coinflip.paseo".toDotWebMirrorHostOrNull())
+        assertEquals("coinflip.paseo", "coinflip.paseo".toDotWebMirrorHostOrNull()?.toCanonicalDotHost())
+    }
+
+    @Test
+    fun `leaves a mirror host as it is when mirroring`() {
+        assertEquals("coinflip.paseo.li", "coinflip.paseo.li".toDotWebMirrorHostOrNull())
+    }
+
+    @Test
+    fun `has no mirror for a network the mirrors do not serve`() {
+        assertEquals(null, "coinflip.westend".toDotWebMirrorHostOrNull())
+    }
+
+    @Test
     fun `recognizes mirror hosts`() {
         assertTrue(isDotWebMirrorHost("coinflip.dot.li"))
         assertTrue(isDotWebMirrorHost("coinflip.paseo.li"))

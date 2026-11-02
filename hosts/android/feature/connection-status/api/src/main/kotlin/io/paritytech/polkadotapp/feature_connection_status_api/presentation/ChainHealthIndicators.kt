@@ -118,12 +118,16 @@ object ChainHealthBarDefaults {
     val ContentHeight = ChainIndicatorSize.Bar.diameter
 }
 
-/** Always-on, transparent, overlaid at the very top like the system status indicators. */
+/**
+ * Always-on, transparent, overlaid at the very top like the system status indicators. [title] takes the
+ * width the indicators leave, so a long title ends before them.
+ */
 @Composable
 fun ChainHealthBar(
     model: ChainHealthIndicatorsModel,
     tooltipVisible: Boolean,
     onTooltipDismiss: () -> Unit,
+    title: @Composable () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -131,9 +135,16 @@ fun ChainHealthBar(
             .statusBarsPadding()
             .height(ChainHealthBarDefaults.ContentHeight)
             .padding(horizontal = PolkadotTheme.spacings.medium),
-        horizontalArrangement = Arrangement.End,
+        horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        Box(
+            modifier = Modifier.weight(1f),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            title()
+        }
+
         Box {
             ChainHealthIndicators(model = model)
 

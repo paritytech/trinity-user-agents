@@ -34,8 +34,6 @@ import io.paritytech.polkadotapp.common.presentation.screens.ObserveViewModelEve
 import io.paritytech.polkadotapp.design.components.dialog.NovaAlertDialog
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
-import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
-import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleSize
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
@@ -244,11 +242,6 @@ private fun PocketList(
                 .fillMaxSize()
                 .statusBarsPadding()
         ) {
-            PolkadotTopBar(
-                title = stringResource(RCommon.string.pocket_toolbar_title),
-                titleSize = TopBarTitleSize.Large
-            )
-
             LazyColumn(
                 state = listState,
                 verticalArrangement = Arrangement.spacedBy(-CardSizes.OVERLAP),

@@ -32,8 +32,6 @@ import io.paritytech.polkadotapp.design.components.menu.PolkadotMenuListCustomIt
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
-import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
-import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleSize
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.designsystem.themes.PolkadotAppTheme
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageAccountBackupStatus
@@ -85,11 +83,6 @@ private fun SettingsScreenInternal(
                 .fillMaxSize()
                 .statusBarsPadding()
         ) {
-            PolkadotTopBar(
-                title = stringResource(RCommon.string.settings_toolbar_title),
-                titleSize = TopBarTitleSize.Large,
-            )
-
             VerticalSpacer { large }
 
             Column(

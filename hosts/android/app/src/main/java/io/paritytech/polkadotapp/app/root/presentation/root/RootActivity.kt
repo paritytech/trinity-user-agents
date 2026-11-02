@@ -23,6 +23,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.navigation.NavController
 import androidx.navigation.fragment.NavHostFragment
 import dagger.hilt.android.AndroidEntryPoint
@@ -33,6 +34,7 @@ import io.paritytech.polkadotapp.app.root.presentation.debug.reportIssue.DebugSc
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.DevResetOverlay
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.PaymentsSetupNotice
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.RootNavBarHost
+import io.paritytech.polkadotapp.app.root.presentation.root.compose.StatusBarTitle
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.chatoverlay.ChatExtensionOverlayHost
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
 import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
@@ -189,11 +191,21 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
             setContent {
                 val model by viewModel.chainsHealth.collectAsStateWithLifecycle()
                 val tooltipVisible by viewModel.isNetworkStatusTooltipVisible.collectAsStateWithLifecycle()
+                val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
+                val currentEntry by navController.currentBackStackEntryFlow.collectAsStateWithLifecycle(initialValue = null)
                 PolkadotTheme {
                     ChainHealthBar(
                         model = model,
                         tooltipVisible = tooltipVisible,
                         onTooltipDismiss = viewModel::dismissNetworkStatusTooltip,
+                        title = {
+                            currentEntry?.let { entry ->
+                                // Scoped to the shown entry, so a pending Proceed in Chat is dropped once the browser is popped.
+                                CompositionLocalProvider(LocalViewModelStoreOwner provides entry) {
+                                    StatusBarTitle(model = statusBarTitleOf(entry.destination.id, currentTab))
+                                }
+                            }
+                        },
                     )
                 }
             }
