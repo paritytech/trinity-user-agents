@@ -137,7 +137,7 @@ blend modes: a material does its own image maths.
 Any tree may carry `Materials`. A host draws them only on the surfaces it supports, Pocket cards first, and draws the
 content plain elsewhere.
 
-Materials amend the Closed requirement of the Unified Renderer, which reads:
+Materials amend the Closed requirement of the Unified Renderer to read:
 
 - **Closed.** A product names layouts and tokens from a fixed vocabulary, never markup, stylesheets or URLs. Materials
   are the one exception: shader code the host runs only inside the node's bounds, with only the inputs the host
@@ -152,9 +152,11 @@ platform's shader language and compiles it. Hosts translate on their own side, a
 translations. Image arguments load through the core image loader proposed in
 [#1800](https://github.com/paritytech/trinity-user-agents/pull/1800).
 
-A node that fails draws its content plain, and the rest of the tree draws as usual. The host logs one code on the
-device, and the product is not told. A format error is logged with its own code beside the node's: `unsupported-version`
-and `unsupported-feature` under `unsupported`, the others under `invalid-material`.
+A node that fails draws its children without its layers, so a product chooses its fallback look by what it puts there,
+such as an `Effect` with `Rainbow`. The rest of the tree draws as usual. While a node's materials or images load, the
+host draws the node's last output if it had one, and its children otherwise. The host logs one code on the device for a
+failure, and the product is not told. A format error is logged with its own code beside the node's:
+`unsupported-version` and `unsupported-feature` under `unsupported`, the others under `invalid-material`.
 
 Failure codes, by cause:
 
@@ -172,26 +174,29 @@ Materials can be switched off remotely.
 
 The limits are the same on every host:
 
-| Limit                                          | Value      |
-| ---------------------------------------------- | ---------- |
-| Layers in one `Materials` node                 | 16         |
-| Layers in one tree, across all nodes           | 32         |
-| Distinct materials in one tree                 | 16         |
-| Image arguments per material                   | 13         |
-| Pixels per side of one image argument          | 2048       |
-| Image argument pixels in one tree, all images  | 16 million |
-| `Materials` inside another `Materials`         | none       |
-| Tree size and depth, from the Unified Renderer | unchanged  |
-| Material text and parameters, from the format  | unchanged  |
+| Limit                                          | Value     |
+| ---------------------------------------------- | --------- |
+| Layers in one `Materials` node                 | 16        |
+| Layers in one tree, across all nodes           | 32        |
+| Distinct materials in one tree                 | 16        |
+| Image arguments per material                   | 13        |
+| Pixels per side of one image argument          | 2048      |
+| Distinct images in one tree                    | 16        |
+| `Materials` inside another `Materials`         | none      |
+| Tree size and depth, from the Unified Renderer | unchanged |
+| Material text and parameters, from the format  | unchanged |
 
-Limits are checked in tree order, and the per-tree totals count nodes in that order, so a tree falls back at the same
-nodes on every host. Image sizes are checked when each image loads. A node over a limit draws its content plain with
-`limit-exceeded` and adds nothing to the totals. A nested `Materials` node falls back and its ancestor still draws.
+Limits are checked on the tree alone, in tree order, before anything loads. Every node counts toward the per-tree totals
+whether it draws or falls back, except a node over a limit, which falls back with `limit-exceeded` and adds nothing. A
+tree therefore falls back at the same nodes on every host, whatever the network does. An image wider or taller than 2048
+pixels fails its node with `limit-exceeded` when it loads. A nested `Materials` node falls back and its ancestor still
+draws.
 
 When the materials on screen cost more than the device can afford, the host steps down in this order:
 
 - Stop drawing materials that are not seen.
-- Draw a node whose layers read no time or orientation input once, not every frame.
+- Draw a node once, not every frame, when nothing about it changes: no layer reads a time or orientation input, and
+  nothing in its children or behind it moves.
 - Draw fewer frames.
 - Draw fewer pixels, with `sl_resolution` reporting the pixels drawn.
 - Freeze: draw one still frame with the reduced-motion inputs.
@@ -220,8 +225,11 @@ Renderer inputs and their values:
 | `sl_rotation`    | Device-to-reference rotation in intrinsic Z-X′-Y″ order, column-major.                       |
 | `sl_resolution`  | Width and height in the pixels drawn.                                                        |
 
-Device angles are raw: no starting position, gain or smoothing. With reduced motion on, time and tilt are zero,
-orientation is zero and rotation is the identity.
+Device angles are raw: no starting position, gain or smoothing. They use the device's own axes, whatever the screen's
+rotation. The platform owns the reference frame, so alpha may be relative to any heading, and a material must not depend
+on its absolute value. If beta or gamma is missing, the host keeps the last values. If only alpha is missing,
+orientation is zero and rotation is the identity, and tilt carries on. With reduced motion on, or with no motion sensor
+the host can read, time and tilt are zero, orientation is zero and rotation is the identity.
 
 The noise image is 1024 × 1024 bytes in row order, made of 32,768 chunks. Chunk `c` is the BLAKE2b-256 hash of the seed
 as a little-endian u32 followed by `c` as a little-endian u32. It is sampled nearest with repeat. The seed is the 32-bit
@@ -231,7 +239,8 @@ Images follow Shaderlab's rules: channels are normalised, with no colour-space c
 image is read as four channels: a greyscale image repeats its value in red, green and blue, and an image without alpha
 has alpha 1. The noise image has one channel, so it fills only a `samplerFloat` parameter, and any other use fails with
 `invalid-stack`. Images sample linearly with clamped edges, the noise image nearest with repeat. Images between layers
-keep at least 16-bit float precision.
+keep 32-bit float precision. Where a GPU cannot sample them linearly, the host filters them in the shader, as
+Shaderlab's fallback translation does.
 
 ### Capability
 
@@ -269,8 +278,8 @@ pub enum RenderSurface {
 }
 ```
 
-The answer is yes only when the host reads that version and every named feature, and draws materials on that surface. A
-host that receives a material it does not read still falls back with `unsupported`.
+The answer is yes only when the host reads that version and every named feature, draws materials on that surface, and
+has materials switched on. A host that receives a material it does not read still falls back with `unsupported`.
 
 ## Compatibility
 
@@ -283,8 +292,8 @@ host that receives a material it does not read still falls back with `unsupporte
   same way. Each new question takes the next free variant index when it lands, so neither changes the other's.
 - `Effect::Rainbow` stays. A product that draws it, such as the Humanity card, keeps sending it to hosts that answer no,
   and sends materials to hosts that answer yes.
-- Shaderlab's parser and the host's validation both refuse unknown directives and read `// @requires` before version 1
-  is adopted.
+- Before version 1 is adopted, Shaderlab's parser and the host's validation both refuse unknown directives and read
+  `// @requires`, and Shaderlab's vectors cover those rules and the seed.
 
 ## Trade-offs
 
