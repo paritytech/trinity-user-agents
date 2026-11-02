@@ -3,8 +3,9 @@
 //! A worker is a product script the host launches as its own process, on a
 //! frame socket of its own that serves the product as a Worker execution, so
 //! the core reaches it as it would a worker on any other host. The core's
-//! `Start` launches it and its `Stop` kills it. A worker that exits on its own
-//! stays stopped until the core asks for it again.
+//! `Start` launches it and its `Stop` kills it. The core is not told when a
+//! worker exits on its own, so it stays stopped while a session still holds
+//! it, and starts again only once those sessions end and the core asks anew.
 //!
 //! Every launch, stop and exit is appended to the host's transcript, so a
 //! battery can tell the core starting a worker from one already running.
