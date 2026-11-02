@@ -36,6 +36,7 @@ use std::sync::{
 	atomic::{AtomicBool, Ordering},
 };
 
+use crate::markers;
 use tracing::{
 	Event, Id, Level, Subscriber,
 	field::{Field, Visit},
@@ -146,9 +147,18 @@ fn subscriber(
 				// another thread which logs; admitting every crate's warnings
 				// would make that loop reachable through any dependency, and
 				// would ship their lines off the device besides.
-				meta.target().starts_with(CRATE_TARGET_PREFIX) &&
-					(meta.target().starts_with(HOST_MARKER_PREFIX) ||
-						*meta.level() <= HOST_SINK_EVENT_LEVEL)
+				if !meta.target().starts_with(CRATE_TARGET_PREFIX) {
+					return false;
+				}
+				if meta.target().starts_with(HOST_MARKER_PREFIX) {
+					// A host-addressed target the table does not list is a
+					// mistake, not a line to pass on: nothing downstream knows
+					// what its detail carries.
+					return markers::class_of(meta.target()).is_some();
+				}
+				// A module path reaches a host only for being a warning, and
+				// arrives under the `truapi.tracing.*` markers the layer builds.
+				*meta.level() <= HOST_SINK_EVENT_LEVEL
 			})
 			.with_max_level_hint(HOST_MARKER_MAX_LEVEL),
 		),
@@ -349,7 +359,7 @@ impl<S: Subscriber> Layer<S> for HostSinkLayer {
 	}
 }
 
-fn truncate_to_chars(text: &str, max_chars: usize) -> &str {
+pub(crate) fn truncate_to_chars(text: &str, max_chars: usize) -> &str {
 	match text.char_indices().nth(max_chars) {
 		Some((end, _)) => &text[..end],
 		None => text,
@@ -486,6 +496,33 @@ mod tests {
 	/// The floor must stay at `ERROR` so a host that never calls
 	/// `setLogLevel` still sees protocol violations, and a typo must not be
 	/// able to silence them.
+	/// A host-addressed target the table does not list never reaches a sink,
+	/// so a marker added without saying what it carries stays on the device.
+	#[test]
+	fn an_unregistered_marker_is_refused() {
+		let _owned = SINK_TESTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+		init();
+		set_level(DEFAULT_LEVEL);
+		let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+		let recorder = seen.clone();
+		let _sink = set_host_sink(Arc::new(move |marker: &str, _detail: &str| {
+			recorder.lock().unwrap().push(marker.to_string());
+		}));
+
+		tracing::warn!(target: "truapi.not.registered", "a marker nobody declared");
+		tracing::warn!(target: "truapi.core.started", "a marker that is declared");
+
+		let seen = seen.lock().unwrap().clone();
+		assert!(
+			!seen.iter().any(|marker| marker == "truapi.not.registered"),
+			"an unregistered marker reached the sink: {seen:?}",
+		);
+		assert!(
+			seen.iter().any(|marker| marker == "truapi.core.started"),
+			"the registered marker beside it was dropped too: {seen:?}",
+		);
+	}
+
 	/// A marked event reaches the host's sink even though the level filter is
 	/// at its default, which is what an ordinary `warn!` cannot do.
 	#[test]
@@ -499,7 +536,7 @@ mod tests {
 			recorder.lock().unwrap().push((marker.to_string(), detail.to_string()));
 		}));
 
-		tracing::warn!(target: "truapi.test.marker", "something a host operator needs to see");
+		tracing::warn!(target: "truapi.chain.follow_budget_reached", "four of four");
 		tracing::warn!(target: "truapi::test", "routine crate traffic");
 
 		// Filtered rather than compared whole: other tests in this binary share
@@ -507,8 +544,8 @@ mod tests {
 		let seen = seen.lock().unwrap().clone();
 		assert!(
 			seen.contains(&(
-				"truapi.test.marker".to_string(),
-				"something a host operator needs to see".to_string()
+				"truapi.chain.follow_budget_reached".to_string(),
+				"four of four".to_string()
 			)),
 			"the sink missed the marked event with the default ERROR filter in place: {seen:?}",
 		);
@@ -537,10 +574,10 @@ mod tests {
 			// logs on the way, and every warning in the process reaches this
 			// sink, so this is the path that actually recurses in production.
 			tracing::warn!("raised from inside the sink");
-			tracing::info!(target: "truapi.test.echo", "and a marked one");
+			tracing::info!(target: "truapi.core.started", "and a marked one");
 		}));
 
-		tracing::info!(target: "truapi.test.reentrancy", "one marked event");
+		tracing::info!(target: "truapi.core.started", "one marked event");
 
 		assert_eq!(*depth.lock().unwrap(), 1, "the event the sink raised re-entered the sink",);
 
