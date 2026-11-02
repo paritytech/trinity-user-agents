@@ -5,8 +5,9 @@
 // asks for it and stops it when the core lets it go.
 //
 // The worker (`ScriptedProvider`, run by `scripts/funding-worker.ts`) answers
-// the core's `assign`, `cancel` and `settleCancel` calls and calls the core
-// with `report` and `presentFrame`. What it does with a session is set by the
+// the core's `quote`, `assign`, `cancel` and `settleCancel` calls and calls the
+// core with `report` and `presentFrame`. What it does with a session, how it
+// answers its cancel and how it settles an accepted one are set by the
 // session's direction and amount, as the product and the worker are separate
 // processes, and it records what it was asked and what it did in the journal
 // `TRUAPI_FUNDING_WORKER_LOG` names. The product's cases read that journal and
@@ -62,7 +63,8 @@ export const FAILED_AMOUNT = 2_000n;
 /** The inbound session the worker shows screens for and takes to its
  *  top-up, and delivers after the restart. */
 export const IN_AMOUNT = 1_100n;
-/** An outbound session the worker pays out in full. */
+/** An outbound session the worker pays out in full, then reports its payout
+ *  on, through retries, to the end. */
 export const OUT_AMOUNT = 550n;
 /** An inbound session whose cancel the worker stops. */
 export const CANCEL_AMOUNT = 300n;
@@ -71,7 +73,12 @@ export const CANCEL_AMOUNT = 300n;
 export const OFFER_AMOUNT = 250n;
 /** An inbound session the worker starts crediting before the user cancels. */
 export const LATE_AMOUNT = 200n;
+/** An outbound session whose cancel the worker answers with an offer only
+ *  once the session is released, and refunds once the user accepts. */
+export const RELEASED_CANCEL_AMOUNT = 400n;
 const CANCEL_FEE = 3n;
+/** What the worker refunds of an accepted cancel after release. */
+const REFUND = RELEASED_CANCEL_AMOUNT - CANCEL_FEE;
 
 /** Type one command into the host, as the user at its terminal would. The
  *  battery hands the host this pipe as its stdin. */
@@ -102,12 +109,14 @@ const stateKey = (intent: string) => `funding:${intent}`;
 /** One line of the worker's journal. `pid` names the worker process. */
 export type JournalLine = { pid: number } & (
   | { kind: "connected" }
+  | { kind: "quoted"; direction: string; amount: string; quoteId: string }
   | {
       kind: "assigned";
       intent: string;
       direction: string;
       amount?: string;
       lastUpdate?: FundingUpdate;
+      quoteId?: string;
     }
   | { kind: "cancel"; intent: string }
   | { kind: "settled"; intent: string; decision: string }
@@ -198,9 +207,12 @@ async function topUp(
   }
 }
 
-/** Request a payment of `amount` for session `intent` and name it in a
- *  Collecting report. */
-async function payOut(client: TrUApiClient, intent: string, amount: bigint) {
+/** Request a payment of `amount` for session `intent`, and return its id. */
+async function requestPayment(
+  client: TrUApiClient,
+  intent: string,
+  amount: bigint,
+): Promise<HexString> {
   const paymentId = randomId();
   const paid = await client.payment.request({
     amount,
@@ -211,21 +223,59 @@ async function payOut(client: TrUApiClient, intent: string, amount: bigint) {
   if (paid.isErr()) {
     throw new Error(`payment.request failed: ${stringify(paid.error)}`);
   }
+  return paymentId;
+}
+
+/** Name payment `paymentId` of `amount` in a Collecting report. */
+async function collecting(
+  client: TrUApiClient,
+  intent: string,
+  paymentId: HexString,
+  amount: bigint,
+) {
   await report(client, intent, {
     tag: "Out",
     value: { tag: "Collecting", value: { paymentId, amount } },
   });
 }
 
-/** The provider's worker: it takes every session the core assigns, does
- *  what the session's direction and amount call for, answers cancels and
- *  settles accepted offers by ending the session. Every call is recorded in
- *  the journal, and every call is idempotent, as the core repeats what is
- *  pending when the worker connects. */
+/** Request a payment of `amount` for session `intent` and name it in a
+ *  Collecting report. */
+async function payOut(client: TrUApiClient, intent: string, amount: bigint) {
+  const paymentId = await requestPayment(client, intent, amount);
+  await collecting(client, intent, paymentId, amount);
+}
+
+/** Wait for the host to see session `intent` released. */
+function releasedOnHost(fundingLogPath: string, intent: string) {
+  return waitForTranscript(
+    fundingLogPath,
+    (line) =>
+      line.kind === "status" &&
+      line.intent === intent &&
+      line.tag === "Released",
+    `${intent} released on the host`,
+  );
+}
+
+/** The provider's worker: it prices every ask one to one, takes every
+ *  session the core assigns, does what the session's direction and amount
+ *  call for, answers cancels by them too, and settles accepted offers by
+ *  ending the session or refunding it. Every call is recorded in the
+ *  journal, and every call is idempotent, as the core repeats what is pending
+ *  when the worker connects. */
 export class ScriptedProvider {
   private readonly pid = process.pid;
   private readonly started = new Set<string>();
-  private readonly cancelAnswers = new Map<string, FundingCancelAnswer>();
+  /** Each assigned session's direction and amount, which choose what the
+   *  worker does with it. */
+  private readonly kinds = new Map<string, string>();
+  /** Sessions whose payment arrived, so their cancel is answered with an
+   *  offer. */
+  private readonly paid = new Set<string>();
+  /** The payment requested for a session, named only once the user cancels
+   *  it. */
+  private readonly payments = new Map<string, HexString>();
 
   constructor(
     private readonly client: TrUApiClient,
@@ -233,6 +283,29 @@ export class ScriptedProvider {
     private readonly fundingLogPath: string,
   ) {
     this.record({ kind: "connected" });
+    client.fundingProvider.onQuote(({ ask }) => {
+      const quoteId = `q-${crypto.randomUUID()}`;
+      this.record({
+        kind: "quoted",
+        direction: ask.direction,
+        amount: ask.amount.toString(),
+        quoteId,
+      });
+      return ok({
+        tag: "Quoted",
+        value: {
+          quote: {
+            quoteId,
+            sendAmount: ask.amount,
+            receiveAmount: ask.amount,
+            providerFee: 0n,
+            networkFee: 0n,
+            etaSecs: 60n,
+            assetDecimals: 2,
+          },
+        },
+      });
+    });
     client.fundingProvider.onAssign(({ session }) => {
       this.record({
         kind: "assigned",
@@ -240,31 +313,87 @@ export class ScriptedProvider {
         direction: session.direction,
         amount: session.amount?.toString(),
         lastUpdate: session.lastUpdate,
+        quoteId: session.quote?.quoteId,
       });
+      this.kinds.set(session.intent, kindOf(session));
       if (!this.started.has(session.intent)) {
         this.started.add(session.intent);
         afterAnswer(() => this.serve(session));
       }
       return ok(undefined);
     });
-    client.fundingProvider.onCancel(({ intent }) => {
+    client.fundingProvider.onCancel(async ({ intent }) => {
       this.record({ kind: "cancel", intent });
-      return ok(this.cancelAnswers.get(intent) ?? refused);
+      return ok(await this.cancelAnswer(intent));
     });
     client.fundingProvider.onSettleCancel(({ intent, decision }) => {
       this.record({ kind: "settled", intent, decision: decision.tag });
       if (decision.tag === "Accepted") {
-        afterAnswer(() =>
-          this.step(intent, "settle_cancel", async () => {
-            await report(client, intent, {
-              tag: "Failed",
-              value: { reason: { tag: "Cancelled" } },
-            });
-            return "ended the session as cancelled";
-          }),
-        );
+        afterAnswer(() => this.settleAccepted(intent));
       }
       return ok(undefined);
+    });
+  }
+
+  /** How the worker answers the cancel of session `intent`. An answer may
+   *  wait for the worker's own work, as an offer on a withdrawal waits for
+   *  its release. */
+  private async cancelAnswer(intent: string): Promise<FundingCancelAnswer> {
+    switch (this.kinds.get(intent)) {
+      case `In:${CANCEL_AMOUNT}`:
+        return { tag: "Stopped" };
+      case `In:${OFFER_AMOUNT}`:
+        return this.paid.has(intent)
+          ? {
+              tag: "Offer",
+              value: { fee: CANCEL_FEE, refund: OFFER_AMOUNT - CANCEL_FEE },
+            }
+          : refused;
+      case `Out:${RELEASED_CANCEL_AMOUNT}`: {
+        let answer = refused;
+        await this.step(intent, "offer_once_released", async () => {
+          const paymentId = this.payments.get(intent);
+          if (!paymentId) throw new Error("no payment was requested");
+          // A withdrawal can be offered for only once it is released, so the
+          // worker names its payment now and answers once it completes.
+          await collecting(
+            this.client,
+            intent,
+            paymentId,
+            RELEASED_CANCEL_AMOUNT,
+          );
+          await releasedOnHost(this.fundingLogPath, intent);
+          answer = { tag: "Offer", value: { fee: CANCEL_FEE, refund: REFUND } };
+          return "named the payment, and offered terms once it was released";
+        });
+        return answer;
+      }
+      default:
+        return refused;
+    }
+  }
+
+  /** Settle the cancel of session `intent` the user accepted: refund a
+   *  released withdrawal, and end any other session as cancelled. */
+  private settleAccepted(intent: string) {
+    const { client } = this;
+    if (this.kinds.get(intent) === `Out:${RELEASED_CANCEL_AMOUNT}`) {
+      return this.step(intent, "refund", async () => {
+        const topUpId = randomId();
+        await topUp(client, intent, topUpId, REFUND);
+        await report(client, intent, {
+          tag: "Out",
+          value: { tag: "Refunding", value: { topUpId, amount: REFUND } },
+        });
+        return "refunded the withdrawal less the fee";
+      });
+    }
+    return this.step(intent, "settle_cancel", async () => {
+      await report(client, intent, {
+        tag: "Failed",
+        value: { reason: { tag: "Cancelled" } },
+      });
+      return "ended the session as cancelled";
     });
   }
 
@@ -299,11 +428,19 @@ export class ScriptedProvider {
     }
   }
 
-  /** Do what session `session`'s direction and amount call for. */
+  /** Do what session `session`'s direction and amount call for. A session
+   *  assigned again after a restart is carried on only where the worker
+   *  kept its own state for it. */
   private async serve(session: FundingAssignment) {
     const { client } = this;
     const { intent } = session;
-    const key = `${session.direction}:${session.amount ?? "any"}`;
+    const key = kindOf(session);
+    if (session.lastUpdate !== undefined) {
+      if (key === `In:${IN_AMOUNT}`) {
+        await this.resumeInbound(intent, session.lastUpdate);
+      }
+      return;
+    }
     switch (key) {
       case `In:${DELIVERED_AMOUNT}`:
         return this.step(intent, "deliver", async () => {
@@ -348,32 +485,74 @@ export class ScriptedProvider {
           return "failed the session";
         });
       case `In:${IN_AMOUNT}`:
-        return session.lastUpdate === undefined
-          ? this.serveInbound(intent)
-          : this.resumeInbound(intent, session.lastUpdate);
+        return this.serveInbound(intent);
       case `Out:${OUT_AMOUNT}`:
-        return this.step(intent, "release", async () => {
-          await payOut(client, intent, OUT_AMOUNT);
-          return "paid out";
-        });
-      case `In:${CANCEL_AMOUNT}`:
-        this.cancelAnswers.set(intent, { tag: "Stopped" });
-        return;
+        return this.serveOutbound(intent);
       case `In:${OFFER_AMOUNT}`:
         return this.step(intent, "payment_received", async () => {
           await report(client, intent, {
             tag: "In",
             value: { tag: "PaymentReceived", value: { finalized: true } },
           });
-          this.cancelAnswers.set(intent, {
-            tag: "Offer",
-            value: { fee: CANCEL_FEE, refund: OFFER_AMOUNT - CANCEL_FEE },
-          });
+          this.paid.add(intent);
           return "the payment arrived";
         });
       case `In:${LATE_AMOUNT}`:
         return this.serveLate(intent);
+      case `Out:${RELEASED_CANCEL_AMOUNT}`:
+        return this.step(intent, "payment_requested", async () => {
+          this.payments.set(
+            intent,
+            await requestPayment(client, intent, RELEASED_CANCEL_AMOUNT),
+          );
+          return "requested the payment, to name once the user cancels";
+        });
     }
+  }
+
+  /** Pay the session out, then once it is released report its payout
+   *  through two retries and its references to the end, and check a report
+   *  after that is refused. */
+  private async serveOutbound(intent: string) {
+    const { client } = this;
+    await this.step(intent, "release", async () => {
+      await payOut(client, intent, OUT_AMOUNT);
+      return "paid out";
+    });
+    await this.step(intent, "payout", async () => {
+      await releasedOnHost(this.fundingLogPath, intent);
+      await report(client, intent, {
+        tag: "Out",
+        value: { tag: "Converting" },
+      });
+      await report(client, intent, {
+        tag: "Out",
+        value: { tag: "PayoutRetrying" },
+      });
+      await report(client, intent, {
+        tag: "Out",
+        value: { tag: "PayoutRetrying" },
+      });
+      await report(client, intent, {
+        tag: "Details",
+        value: { transactionId: "payout-tx-1", reference: "battery-payout" },
+      });
+      await report(client, intent, {
+        tag: "Out",
+        value: { tag: "Payout", value: { outcome: { tag: "PaidOut" } } },
+      });
+      const late = await client.fundingProvider.report({
+        intent,
+        update: { tag: "Out", value: { tag: "PayoutRetrying" } },
+      });
+      // A paid-out withdrawal is over, so the core no longer serves it.
+      if (!late.isErr() || !stringify(late.error).includes("NotFound")) {
+        throw new Error(
+          `a retry after the payout was not refused: ${stringify(late)}`,
+        );
+      }
+      return "the payout's retries and references were taken after the release, and a retry once it was paid out was refused";
+    });
   }
 
   /** Show a screen and a page, report forward and back, and start the
@@ -415,6 +594,25 @@ export class ScriptedProvider {
       });
       await report(client, intent, {
         tag: "In",
+        value: {
+          tag: "Deposit",
+          value: {
+            deposit: {
+              tag: "Crypto",
+              value: {
+                address: "0x0000000000000000000000000000000000000001",
+                network: "polkadot",
+                asset: "USDT",
+                amount: 1_000n,
+                decimals: 6,
+                exact: true,
+              },
+            },
+          },
+        },
+      });
+      await report(client, intent, {
+        tag: "In",
         value: { tag: "PaymentReceived", value: { finalized: true } },
       });
       await report(client, intent, {
@@ -433,7 +631,7 @@ export class ScriptedProvider {
           `a backwards report was not refused: ${stringify(backwards)}`,
         );
       }
-      return "updates moved forward and a backwards one was refused";
+      return "updates moved forward, with a deposit to pay, and a backwards one was refused";
     });
     await this.step(intent, "credits_through_top_up", async () => {
       const topUpId = randomId();
@@ -513,6 +711,11 @@ const refused: FundingCancelAnswer = {
   value: { reason: "the battery set no answer" },
 };
 
+/** The direction and amount that choose what the worker does with a
+ *  session. */
+const kindOf = (session: FundingAssignment) =>
+  `${session.direction}:${session.amount ?? "any"}`;
+
 /** A case runner that records one row per case, passing on a returned
  *  output and failing on a thrown error. */
 export function rowFactory(rows: DiagnosisRow[]) {
@@ -587,25 +790,40 @@ export async function runProviderStart(
   const rows: DiagnosisRow[] = [];
   const check = rowFactory(rows);
   let inbound = "";
+  let outbound = "";
   let state: ProviderState | undefined;
 
   await check("provider_assigned", async () => {
     inbound = await requestFunding(client, "In", IN_AMOUNT);
-    const { direction, amount, lastUpdate } = await journaled(
+    const { direction, amount, lastUpdate, quoteId } = await journaled(
       journalPath,
       "assigned",
       inbound,
     );
+    const quoted = journal(journalPath).some(
+      (line) => line.kind === "quoted" && line.quoteId === quoteId,
+    );
     if (
       direction !== "In" ||
       amount !== IN_AMOUNT.toString() ||
-      lastUpdate !== undefined
+      lastUpdate !== undefined ||
+      !quoteId ||
+      !quoted
     ) {
       throw new Error(
-        `unexpected assignment ${stringify({ direction, amount, lastUpdate })}`,
+        `unexpected assignment ${stringify({ direction, amount, lastUpdate, quoteId, quoted })}`,
       );
     }
-    return "the core assigned the session to the provider's worker the user chose";
+    await waitForTranscript(
+      fundingLogPath,
+      (line) =>
+        line.kind === "presented" &&
+        line.intent === inbound &&
+        (line.providers ?? []).length > 0 &&
+        (line.quotes ?? []).some((row) => row.state === `Quoted:${quoteId}`),
+      `the provider and quote lists for ${inbound}`,
+    );
+    return "the host listed the provider, its worker quoted, and the core assigned it the session on that quote";
   });
 
   await check("provider_present_frame", async () => {
@@ -628,7 +846,7 @@ export async function runProviderStart(
 
   await check("provider_reports_forward_only", async () => {
     await stepDone(journalPath, inbound, "reports_forward_only");
-    return "updates moved forward and a backwards one was refused";
+    return "updates moved forward, with a deposit to pay, and a backwards one was refused";
   });
 
   await check("provider_credits_through_top_up", async () => {
@@ -643,12 +861,42 @@ export async function runProviderStart(
   });
 
   await check("provider_out_released", async () => {
-    const outbound = await requestFunding(client, "Out", OUT_AMOUNT);
+    outbound = await requestFunding(client, "Out", OUT_AMOUNT);
     const last = await lastStatus(client, outbound);
     if (last?.tag !== "Released" || last.value.debited !== OUT_AMOUNT) {
       throw new Error(`ended as ${stringify(last)}`);
     }
     return "the core released the session once the named payment completed";
+  });
+
+  await check("provider_payout_retrying", async () => {
+    if (!outbound) throw new Error("no released withdrawal");
+    return (await stepDone(journalPath, outbound, "payout")).output;
+  });
+
+  await check("provider_cancel_refund_after_release", async () => {
+    const intent = await requestFunding(client, "Out", RELEASED_CANCEL_AMOUNT);
+    await stepDone(journalPath, intent, "payment_requested");
+    await cancelAsUser(fundingLogPath, intent, "Requested");
+    await stepDone(journalPath, intent, "offer_once_released");
+    const last = await lastStatus(client, intent);
+    if (
+      last?.tag !== "Released" ||
+      last.value.debited !== RELEASED_CANCEL_AMOUNT
+    ) {
+      throw new Error(`was not released: ${stringify(last)}`);
+    }
+    await stepDone(journalPath, intent, "refund");
+    await waitForTranscript(
+      fundingLogPath,
+      (line) =>
+        line.kind === "status" &&
+        line.intent === intent &&
+        typeof line.progress === "string" &&
+        line.progress.startsWith(`Cancelled { refunded: Some(${REFUND})`),
+      `${intent} ending cancelled with its refund`,
+    );
+    return "a released withdrawal the user cancelled on the provider's terms was refunded less the fee";
   });
 
   await check("provider_cancel", async () => {

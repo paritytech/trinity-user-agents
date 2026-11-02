@@ -10,12 +10,12 @@
 //! core that can read the old format still finds it.
 
 use parity_scale_codec::{Decode, Encode};
-use rusqlite::{Transaction, named_params};
+use rusqlite::{Connection, Transaction, named_params};
 use tracing::error;
 
 pub(super) use crate::store::Db;
 use crate::{
-	host_logic::funding::{FundingSession, FundingSessionError, FundingSessionSummary},
+	host_logic::funding::{FundingSession, FundingSessionError, PackedSession},
 	store::DbError,
 };
 
@@ -23,7 +23,7 @@ use crate::{
 /// variants added later decode alongside the ones a row was written with.
 const SESSION_FORMAT: u16 = 3;
 /// Format of a stored summary.
-const SUMMARY_FORMAT: u16 = 1;
+const SUMMARY_FORMAT: u16 = 4;
 
 /// A table of records keyed by intent, with its queries.
 struct Table {
@@ -63,7 +63,7 @@ impl From<DbError> for FundingSessionError {
 /// the registry, which writes only after a load, leaves every row as it is.
 pub(super) async fn load(
 	db: &Db,
-) -> Result<(Vec<FundingSession>, Vec<FundingSessionSummary>), FundingSessionError> {
+) -> Result<(Vec<FundingSession>, Vec<PackedSession>), FundingSessionError> {
 	db.write(|tx| {
 		let sessions = scan(tx, &SESSIONS)?;
 		let summaries = scan(tx, &SUMMARIES)?;
@@ -81,7 +81,7 @@ pub(super) async fn write(
 	db: &Db,
 	sessions: &[&FundingSession],
 	removed: Vec<String>,
-	summaries: &[FundingSessionSummary],
+	summaries: &[PackedSession],
 ) -> Result<(), FundingSessionError> {
 	let sessions: Vec<_> = sessions
 		.iter()
@@ -89,7 +89,7 @@ pub(super) async fn write(
 		.collect();
 	let summaries: Vec<_> = summaries
 		.iter()
-		.map(|summary| (summary.intent.clone(), (SUMMARY_FORMAT, summary).encode()))
+		.map(|packed| (packed.summary.intent.clone(), (SUMMARY_FORMAT, packed).encode()))
 		.collect();
 	db.write(move |tx| {
 		upsert(tx, &SESSIONS, &sessions)?;
@@ -107,9 +107,9 @@ struct Scanned<T> {
 	newer: Option<u16>,
 }
 
-fn scan<T: Decode>(tx: &Transaction<'_>, table: &Table) -> Result<Scanned<T>, DbError> {
+fn scan<T: Decode>(conn: &Connection, table: &Table) -> Result<Scanned<T>, DbError> {
 	let mut scanned = Scanned { records: Vec::new(), newer: None };
-	let mut statement = tx.prepare_cached(table.select)?;
+	let mut statement = conn.prepare_cached(table.select)?;
 	let mut rows = statement.query([])?;
 	while let Some(row) = rows.next()? {
 		let intent: String = row.get("intent")?;
@@ -241,14 +241,14 @@ mod tests {
 		)
 	}
 
-	fn summary(intent: &str) -> FundingSessionSummary {
-		FundingSessionSummary::from(FundingSession {
+	fn summary(intent: &str) -> PackedSession {
+		PackedSession::from(&FundingSession {
 			stage: FundingStage::Failed { reason: FundingFailure::Expired, settled_at_ms: NOW },
 			..session(intent)
 		})
 	}
 
-	fn stored(db: &Db) -> (Vec<FundingSession>, Vec<FundingSessionSummary>) {
+	fn stored(db: &Db) -> (Vec<FundingSession>, Vec<PackedSession>) {
 		block_on(load(db)).expect("loaded")
 	}
 

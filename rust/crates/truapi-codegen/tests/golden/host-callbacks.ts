@@ -12,6 +12,8 @@ import {
   ChainIdentifier,
   CodeFormat,
   FundingDirection,
+  FundingQuote,
+  FundingQuoteRefusal,
   HostAccountSignVrfRequest,
   HostDevicePermissionRequest,
   HostSignPayloadRequest,
@@ -234,7 +236,22 @@ export type CoreStorageKey =
    * core honours it for a bounded lifetime, which is what makes a revoked
    * trust grant eventually take effect.
    */
-  | { tag: "ProductManifest"; value: { productId: string } };
+  | { tag: "ProductManifest"; value: { productId: string } }
+  /**
+   * A product's Worker executable manifest as last read from dotNS, and when,
+   * cached for the same lifetime as `Self::ProductManifest`.
+   */
+  | { tag: "WorkerManifest"; value: { productId: string } }
+  /**
+   * The products published to browse on this network, as last read, and
+   * when, cached for the same lifetime as `Self::ProductManifest`.
+   */
+  | { tag: "PublishedProducts"; value?: undefined }
+  /**
+   * What funding providers' quote answers showed about what they serve,
+   * each record trusted for twelve hours.
+   */
+  | { tag: "FundingSupport"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -347,6 +364,83 @@ export interface FundingPresentation {
    */
   amount?: bigint;
 }
+
+/**
+ * The providers' quotes for one ask, as the host draws its provider list.
+ */
+export interface FundingQuoteList {
+  /**
+   * The request this list answers, as `request_funding_quotes` returned
+   * it. Ids only grow, and a list can reach the host before the call that
+   * returns its id does, so a host shows a list only when its id is at
+   * least the latest it has seen, and drops the rest.
+   */
+  requestId: bigint;
+
+  /**
+   * One row per provider asked, in the host's provider order.
+   */
+  rows: Array<FundingQuoteRow>;
+
+  /**
+   * The provider whose quote is best for the user, which the host selects
+   * until the user picks another: the least to pay inbound, the most to
+   * receive outbound. ``undefined`` until one quotes.
+   */
+  best?: string;
+
+  /**
+   * When the core asks every provider again, in Unix milliseconds. The
+   * rows go back to `Pending` then.
+   */
+  refreshAtMs: bigint;
+}
+
+/**
+ * One provider's place in the list a quote request fills in.
+ */
+export interface FundingQuoteRow {
+  /**
+   * The provider.
+   */
+  providerId: string;
+
+  /**
+   * Where its quote stands.
+   */
+  state: FundingQuoteState;
+}
+
+/**
+ * Where a provider's quote stands.
+ */
+export type FundingQuoteState =
+  /**
+   * Asked, not answered yet.
+   */
+  | { tag: "Pending"; value?: undefined }
+  /**
+   * The provider's price.
+   */
+  | { tag: "Quoted"; value: { quote: FundingQuote } }
+  /**
+   * The provider cannot be offered for this ask; the host shows it
+   * disabled.
+   */
+  | { tag: "Unavailable"; value: { reason: FundingQuoteUnavailable } };
+
+/**
+ * Why a provider cannot be offered for an ask.
+ */
+export type FundingQuoteUnavailable =
+  /**
+   * The provider refused to price it.
+   */
+  | { tag: "Refused"; value: { reason: FundingQuoteRefusal } }
+  /**
+   * The provider did not answer in time.
+   */
+  | { tag: "Timeout"; value?: undefined };
 
 /**
  * One chain a host serves: a protocol chain role mapped to the concrete
@@ -893,45 +987,66 @@ export const ChainExtensionVersion: S.Codec<ChainExtensionVersion> = S.lazy(
  */
 export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
   (): S.Codec<CoreStorageKey> =>
-    S.TaggedUnion({
-      AuthSession: S._void,
-      PairingDeviceIdentity: S._void,
-      PermissionAuthorization: S.Struct({
-        productId: S.str,
-        request: PermissionAuthorizationRequest,
-      }) as S.Codec<{
-        productId: string;
-        request: PermissionAuthorizationRequest;
-      }>,
-      AllowanceKeys: S.Struct({ sessionId: S.str }) as S.Codec<{
-        sessionId: string;
-      }>,
-      LastProcessedPairingStatement: S._void,
-      AutoSigningKey: S.Struct({ productId: S.str }) as S.Codec<{
-        productId: string;
-      }>,
-      AutoSigningKeys: S._void,
-      RingVrfRegistry: S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
-        rootPublicKey: Uint8Array;
-      }>,
-      StatementRenewalTargets: S._void,
-      DeviceEncryptionKey: S._void,
-      ProductSubtree: S.Struct({
-        sessionId: S.str,
-        productId: S.str,
-      }) as S.Codec<{ sessionId: string; productId: string }>,
-      SsoResponderRequestLedger: S.Struct({
-        rootPublicKey: S.Bytes(32),
-        peerStatementAccountId: S.Bytes(32),
-        peerEncryptionPublicKey: S.Bytes(32),
-      }) as S.Codec<{
-        rootPublicKey: Uint8Array;
-        peerStatementAccountId: Uint8Array;
-        peerEncryptionPublicKey: Uint8Array;
-      }>,
-      ProductManifest: S.Struct({ productId: S.str }) as S.Codec<{
-        productId: string;
-      }>,
+    S.indexedTaggedUnion({
+      AuthSession: [0, S._void] as const,
+      PairingDeviceIdentity: [1, S._void] as const,
+      PermissionAuthorization: [
+        2,
+        S.Struct({
+          productId: S.str,
+          request: PermissionAuthorizationRequest,
+        }) as S.Codec<{
+          productId: string;
+          request: PermissionAuthorizationRequest;
+        }>,
+      ] as const,
+      AllowanceKeys: [
+        3,
+        S.Struct({ sessionId: S.str }) as S.Codec<{ sessionId: string }>,
+      ] as const,
+      LastProcessedPairingStatement: [4, S._void] as const,
+      AutoSigningKey: [
+        5,
+        S.Struct({ productId: S.str }) as S.Codec<{ productId: string }>,
+      ] as const,
+      AutoSigningKeys: [6, S._void] as const,
+      RingVrfRegistry: [
+        7,
+        S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
+          rootPublicKey: Uint8Array;
+        }>,
+      ] as const,
+      StatementRenewalTargets: [8, S._void] as const,
+      DeviceEncryptionKey: [9, S._void] as const,
+      ProductSubtree: [
+        10,
+        S.Struct({ sessionId: S.str, productId: S.str }) as S.Codec<{
+          sessionId: string;
+          productId: string;
+        }>,
+      ] as const,
+      SsoResponderRequestLedger: [
+        11,
+        S.Struct({
+          rootPublicKey: S.Bytes(32),
+          peerStatementAccountId: S.Bytes(32),
+          peerEncryptionPublicKey: S.Bytes(32),
+        }) as S.Codec<{
+          rootPublicKey: Uint8Array;
+          peerStatementAccountId: Uint8Array;
+          peerEncryptionPublicKey: Uint8Array;
+        }>,
+      ] as const,
+      ProductManifest: [
+        12,
+        S.Struct({ productId: S.str }) as S.Codec<{ productId: string }>,
+      ] as const,
+      WorkerManifest: [
+        14,
+        S.Struct({ productId: S.str }) as S.Codec<{ productId: string }>,
+      ] as const,
+      PublishedProducts: [15, S._void] as const,
+      FundingSupport: [16, S._void] as const,
     }),
 );
 
@@ -1026,6 +1141,59 @@ export const FundingPresentation: S.Codec<FundingPresentation> = S.lazy(
       direction: FundingDirection,
       amount: S.Option(S.u128),
     }) as S.Codec<FundingPresentation>,
+);
+
+/**
+ * The providers' quotes for one ask, as the host draws its provider list.
+ */
+export const FundingQuoteList: S.Codec<FundingQuoteList> = S.lazy(
+  (): S.Codec<FundingQuoteList> =>
+    S.Struct({
+      requestId: S.u64,
+      rows: S.Vector(FundingQuoteRow),
+      best: S.Option(S.str),
+      refreshAtMs: S.u64,
+    }) as S.Codec<FundingQuoteList>,
+);
+
+/**
+ * One provider's place in the list a quote request fills in.
+ */
+export const FundingQuoteRow: S.Codec<FundingQuoteRow> = S.lazy(
+  (): S.Codec<FundingQuoteRow> =>
+    S.Struct({
+      providerId: S.str,
+      state: FundingQuoteState,
+    }) as S.Codec<FundingQuoteRow>,
+);
+
+/**
+ * Where a provider's quote stands.
+ */
+export const FundingQuoteState: S.Codec<FundingQuoteState> = S.lazy(
+  (): S.Codec<FundingQuoteState> =>
+    S.TaggedUnion({
+      Pending: S._void,
+      Quoted: S.Struct({ quote: FundingQuote }) as S.Codec<{
+        quote: FundingQuote;
+      }>,
+      Unavailable: S.Struct({ reason: FundingQuoteUnavailable }) as S.Codec<{
+        reason: FundingQuoteUnavailable;
+      }>,
+    }),
+);
+
+/**
+ * Why a provider cannot be offered for an ask.
+ */
+export const FundingQuoteUnavailable: S.Codec<FundingQuoteUnavailable> = S.lazy(
+  (): S.Codec<FundingQuoteUnavailable> =>
+    S.TaggedUnion({
+      Refused: S.Struct({ reason: FundingQuoteRefusal }) as S.Codec<{
+        reason: FundingQuoteRefusal;
+      }>,
+      Timeout: S._void,
+    }),
 );
 
 /**
@@ -1746,6 +1914,29 @@ export interface FundingPlatform {
   ): Promise<FundingFrameOutcome>;
 
   /**
+   * Close the frame `present_provider_frame` shows for `provider`'s
+   * session `intent`, answering that call `Closed`, and show the
+   * session's progress in its place. Does nothing when no frame is
+   * open for it.
+   */
+  closeProviderFrame(provider: ProductContext, intent: string): void;
+
+  /**
+   * Whether `provider` ships an App, so an App route of its can be shown.
+   * A provider without one shows only external pages.
+   */
+  providerHasApp?(provider: ProductContext): Promise<boolean>;
+
+  /**
+   * The country the user is likely in, as an ISO 3166-1 alpha-2 code, for
+   * the quotes the core asks before the user picks one. Best effort,
+   * without asking for any permission: the device's coarse location when
+   * already permitted, then its SIM or network country, then its locale's
+   * region. ``undefined`` when nothing says.
+   */
+  detectedCountry?(): Promise<string | undefined>;
+
+  /**
    * Observe a session's status change, for host UI such as the in-flight
    * pill.
    */
@@ -1753,6 +1944,13 @@ export interface FundingPlatform {
     intent: string,
     status: HostFundingStatusSubscribeItem,
   ): void;
+
+  /**
+   * Observe the quote list the host requested, for the provider list:
+   * again whenever a provider answers, and each time the core asks every
+   * provider again.
+   */
+  fundingQuotesChanged?(intent: string, quotes: FundingQuoteList): void;
 }
 
 /**

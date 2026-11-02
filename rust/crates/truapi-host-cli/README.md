@@ -770,22 +770,26 @@ Scripts under `js/scripts/` include:
   host and the product agree rather than resting on the product's word.
 
   The funding phase runs the signing host's funding overlay as a host app
-  would. `TRUAPI_FUNDING_PROVIDERS` names the providers the overlay offers,
-  comma-separated, each a product id optionally followed by `=` and the path
-  of its worker script (`fundtest.dot=./worker.ts,other.dot`). The host acts
-  as the provider's host: when the core asks for a provider's worker, it
-  launches that script as its own process on a frame socket of its own,
-  served as a Worker execution of the provider, and kills it when the core
-  lets the worker go. A provider without a script has no worker on this host.
-  The phase runs the product script (`funding-battery.ts`, an App) and the
-  provider `fundtest.dot` with `funding-worker.ts` as its worker, which serves
-  sessions through `onAssign`, `onCancel` and `onSettleCancel` by their
-  direction and amount and records what it did in
-  `TRUAPI_FUNDING_WORKER_LOG`. The cases check that no worker runs until a
-  session is assigned to the provider, and that once its sessions end the
+  would. `TRUAPI_FUNDING_PROVIDERS` names the providers the host offers,
+  comma-separated, each with a Worker manifest the CLI ships for it, and each
+  a product id optionally followed by `=` and the path of its worker script
+  (`fundtest.dot=./worker.ts,other.dot`). The host acts as the provider's
+  host: when the core asks for a provider's worker, it launches that script
+  as its own process on a frame socket of its own, served as a Worker
+  execution of the provider, and kills it when the core lets the worker go.
+  A provider without a script has no worker on this host. The phase runs the
+  product script (`funding-battery.ts`, an App) and the provider
+  `fundtest.dot` with `funding-worker.ts` as its worker, which serves
+  sessions through `onQuote`, `onAssign`, `onCancel` and `onSettleCancel` by
+  their direction and amount and records what it did in
+  `TRUAPI_FUNDING_WORKER_LOG`. The overlay lists the providers serving a
+  session and their quotes. The cases check that no worker runs until the
+  overlay asks the provider for a quote, and that once its sessions end the
   host stops it and a new worker process is started for the next session.
-  The auto-accepting user picks the provider and accepts its cancel offers.
-  The script acts as the user
+  The auto-accepting user picks the first quote and accepts cancel offers,
+  including one the worker makes on a withdrawal only once it is released,
+  which it then refunds; a paid-out withdrawal's payout is reported through
+  retries and its references. The script acts as the user
   through the host's stdin, a pipe in `TRUAPI_FUNDING_USER`: with `--script`,
   a stdin that is not a terminal takes `/funding cancel <intent>` and
   `/approval manual|automatic`, so a case cancels a session or has the overlay
@@ -796,7 +800,8 @@ Scripts under `js/scripts/` include:
   identities are real. The
   phase runs the host twice on the same storage, so the restarted host starts
   the provider's worker for the inbound session still open, which is assigned
-  it again and finishes it from the state it kept in its own storage. Every
+  it again and finishes it from the state it kept in its own storage. The
+  device detects the country `TRUAPI_FUNDING_COUNTRY` names, if any. Every
   overlay request, screen, cancel, answer, session change and worker launch,
   stop or exit is recorded in
   `TRUAPI_FUNDING_LOG`, which the cases read. CI runs this phase on every

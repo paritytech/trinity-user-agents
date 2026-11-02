@@ -38,19 +38,20 @@ use truapi::{
 	latest::{
 		AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage, ChatFile,
 		ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, CodeFormat, FundingDirection,
-		GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest,
-		HostChatCreateRoomResponse, HostChatListSubscribeItem, HostChatPostMessageError,
-		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
-		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
-		HostDevicePermissionRequest, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
-		HostFundingStatusSubscribeItem, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
-		HostNavigateToError, HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem,
-		HostPaymentError, HostPaymentRequest, HostPaymentStatusSubscribeError,
-		HostPaymentStatusSubscribeItem, HostPaymentTopUpError, HostPaymentTopUpRequest,
-		HostPaymentTopUpStatusSubscribeError, HostPaymentTopUpStatusSubscribeItem, HostPlatform,
-		HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
-		HostPushNotificationRequest, HostPushNotificationResponse, HostScannerScanRequest,
-		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
+		FundingQuote, FundingQuoteRefusal, GenericError, HostChatCreateRoomError,
+		HostChatCreateRoomRequest, HostChatCreateRoomResponse, HostChatListSubscribeItem,
+		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
+		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+		HostChatSetRoomFooterRequest, HostDevicePermissionRequest, HostFeatureSupportedRequest,
+		HostFeatureSupportedResponse, HostFundingStatusSubscribeItem, HostLocalStorageChangeItem,
+		HostLocaleSubscribeItem, HostNavigateToError, HostPaymentBalanceSubscribeError,
+		HostPaymentBalanceSubscribeItem, HostPaymentError, HostPaymentRequest,
+		HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem, HostPaymentTopUpError,
+		HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
+		HostPaymentTopUpStatusSubscribeItem, HostPlatform, HostPocketListSubscribeItem,
+		HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPushNotificationRequest,
+		HostPushNotificationResponse, HostScannerScanRequest, HostSignPayloadRequest,
+		HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
 		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
 		NftPurseOwner, ProductAccountId, ProductAccountTxPayload, ProductProofContext,
@@ -1276,6 +1277,21 @@ pub enum CoreStorageKey {
 		/// Product whose manifest was cached, normalized.
 		product_id: String,
 	},
+	/// A product's Worker executable manifest as last read from dotNS, and when,
+	/// cached for the same lifetime as [`Self::ProductManifest`].
+	#[codec(index = 14)]
+	WorkerManifest {
+		/// Bare label of the product whose Worker manifest was cached.
+		product_id: String,
+	},
+	/// The products published to browse on this network, as last read, and
+	/// when, cached for the same lifetime as [`Self::ProductManifest`].
+	#[codec(index = 15)]
+	PublishedProducts,
+	/// What funding providers' quote answers showed about what they serve,
+	/// each record trusted for twelve hours.
+	#[codec(index = 16)]
+	FundingSupport,
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
@@ -1331,6 +1347,9 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::DeviceEncryptionKey => ("DeviceEncryptionKey", None),
 		CoreStorageKey::SsoResponderRequestLedger { .. } => ("SsoResponderRequestLedger", None),
 		CoreStorageKey::ProductManifest { product_id } => ("ProductManifest", Some(product_id)),
+		CoreStorageKey::WorkerManifest { product_id } => ("WorkerManifest", Some(product_id)),
+		CoreStorageKey::PublishedProducts => ("PublishedProducts", None),
+		CoreStorageKey::FundingSupport => ("FundingSupport", None),
 	};
 	Ok(CoreStorageKeyDescription { kind, product_id })
 }
@@ -2136,6 +2155,13 @@ mod tests {
 				"SsoResponderRequestLedger",
 				None,
 			),
+			(
+				CoreStorageKey::WorkerManifest { product_id: "ramp".to_string() },
+				"WorkerManifest",
+				Some("ramp"),
+			),
+			(CoreStorageKey::PublishedProducts, "PublishedProducts", None),
+			(CoreStorageKey::FundingSupport, "FundingSupport", None),
 		] {
 			let description = describe_core_storage_key(&key.encode()).expect("valid key");
 			assert_eq!(description.kind, kind);
@@ -2936,6 +2962,68 @@ pub struct FundingPresentation {
 	pub amount: Option<u128>,
 }
 
+/// The providers' quotes for one ask, as the host draws its provider list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingQuoteList {
+	/// The request this list answers, as `request_funding_quotes` returned
+	/// it. Ids only grow, and a list can reach the host before the call that
+	/// returns its id does, so a host shows a list only when its id is at
+	/// least the latest it has seen, and drops the rest.
+	pub request_id: u64,
+	/// One row per provider asked, in the host's provider order.
+	pub rows: Vec<FundingQuoteRow>,
+	/// The provider whose quote is best for the user, which the host selects
+	/// until the user picks another: the least to pay inbound, the most to
+	/// receive outbound. `None` until one quotes.
+	pub best: Option<String>,
+	/// When the core asks every provider again, in Unix milliseconds. The
+	/// rows go back to `Pending` then.
+	pub refresh_at_ms: u64,
+}
+
+/// One provider's place in the list a quote request fills in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingQuoteRow {
+	/// The provider.
+	pub provider_id: String,
+	/// Where its quote stands.
+	pub state: FundingQuoteState,
+}
+
+/// Where a provider's quote stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingQuoteState {
+	/// Asked, not answered yet.
+	Pending,
+	/// The provider's price.
+	Quoted {
+		/// The quote.
+		quote: FundingQuote,
+	},
+	/// The provider cannot be offered for this ask; the host shows it
+	/// disabled.
+	Unavailable {
+		/// Why.
+		reason: FundingQuoteUnavailable,
+	},
+}
+
+/// Why a provider cannot be offered for an ask.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingQuoteUnavailable {
+	/// The provider refused to price it.
+	Refused {
+		/// Why.
+		reason: FundingQuoteRefusal,
+	},
+	/// The provider did not answer in time.
+	Timeout,
+}
+
 /// How the user left the funding overlay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
@@ -2971,10 +3059,38 @@ pub trait FundingPlatform: Send + Sync {
 		target: truapi::latest::FundingFrameTarget,
 	) -> Result<truapi::latest::FundingFrameOutcome, GenericError>;
 
+	/// Close the frame `present_provider_frame` shows for `provider`'s
+	/// session `intent`, answering that call `Closed`, and show the
+	/// session's progress in its place. Does nothing when no frame is
+	/// open for it.
+	fn close_provider_frame(&self, provider: &ProductContext, intent: String);
+
+	/// Whether `provider` ships an App, so an App route of its can be shown.
+	/// A provider without one shows only external pages.
+	async fn provider_has_app(&self, _provider: &ProductContext) -> bool {
+		true
+	}
+
+	/// The country the user is likely in, as an ISO 3166-1 alpha-2 code, for
+	/// the quotes the core asks before the user picks one. Best effort,
+	/// without asking for any permission: the device's coarse location when
+	/// already permitted, then its SIM or network country, then its locale's
+	/// region. `None` when nothing says.
+	async fn detected_country(&self) -> Option<String> {
+		None
+	}
+
 	/// Observe a session's status change, for host UI such as the in-flight
 	/// pill.
 	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
 		let _ = (intent, status);
+	}
+
+	/// Observe the quote list the host requested, for the provider list:
+	/// again whenever a provider answers, and each time the core asks every
+	/// provider again.
+	fn funding_quotes_changed(&self, intent: String, quotes: FundingQuoteList) {
+		let _ = (intent, quotes);
 	}
 }
 

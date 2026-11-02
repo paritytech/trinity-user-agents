@@ -197,6 +197,26 @@ impl PairingHostRuntime {
 		self.pairing_host.set_submit_preimages_locally(local);
 	}
 
+	/// `product_id`'s Worker manifest from dotNS, cached for a day like the
+	/// root manifest. `Ok(None)` when the product publishes no Worker, or one
+	/// this core cannot use; `Err` when dotNS could not be read.
+	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.worker_manifest"))]
+	pub async fn worker_manifest(
+		&self,
+		product_id: &str,
+	) -> Result<Option<crate::host_logic::worker_manifest::WorkerManifest>, v01::GenericError> {
+		let product_id = product_id
+			.parse::<ProductId>()
+			.map_err(|error| v01::GenericError { reason: error.to_string() })?;
+		crate::runtime::product_manifest::worker_manifest(
+			&self.services,
+			self.services.platform.as_ref(),
+			&product_id,
+		)
+		.await
+		.map_err(|reason| v01::GenericError { reason })
+	}
+
 	/// Build a long-lived pairing-host runtime around a platform implementation.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.new"))]
 	pub fn new<P>(platform: Arc<P>, config: PairingHostConfig, spawner: Spawner) -> Self
@@ -447,6 +467,13 @@ impl PairingHostRuntime {
 		&self.services.worker_ledger
 	}
 
+	/// Report that the product's worker stopped without being asked to:
+	/// it is started again while something holds it, with a growing wait
+	/// when it keeps crashing.
+	pub fn worker_exited(&self, product_id: &ProductId) {
+		self.services.worker_exited(product_id);
+	}
+
 	/// Read the active session's X25519 chat identity private key, for hosts
 	/// running their own P2P chat channel for the paired identity.
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.session_chat_identity_key"))]
@@ -627,6 +654,26 @@ pub struct SigningHostRuntime {
 }
 
 impl SigningHostRuntime {
+	/// `product_id`'s Worker manifest from dotNS, cached for a day like the
+	/// root manifest. `Ok(None)` when the product publishes no Worker, or one
+	/// this core cannot use; `Err` when dotNS could not be read.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.worker_manifest"))]
+	pub async fn worker_manifest(
+		&self,
+		product_id: &str,
+	) -> Result<Option<crate::host_logic::worker_manifest::WorkerManifest>, v01::GenericError> {
+		let product_id = product_id
+			.parse::<ProductId>()
+			.map_err(|error| v01::GenericError { reason: error.to_string() })?;
+		crate::runtime::product_manifest::worker_manifest(
+			&self.services,
+			self.services.platform.as_ref(),
+			&product_id,
+		)
+		.await
+		.map_err(|reason| v01::GenericError { reason })
+	}
+
 	/// Answer resource allocation as granted without performing it.
 	///
 	/// For test hosts only, with the `test-host` feature enabled.
@@ -655,6 +702,20 @@ impl SigningHostRuntime {
 		self.signing_host
 			.derive_subtree_public_key(product_id)
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
+	}
+
+	/// End funding session `intent` with `stage` as though its funds had
+	/// moved, so a test host can drive the flow with no chain behind it.
+	/// Returns whether it was still in flight.
+	///
+	/// For test hosts only, with the `test-host` feature enabled.
+	#[cfg(feature = "test-host")]
+	pub async fn settle_funding_for_test(
+		&self,
+		intent: &str,
+		stage: crate::host_logic::funding::FundingStage,
+	) -> Result<bool, v01::GenericError> {
+		Ok(self.services.settle_funding_for_test(intent, stage).await?)
 	}
 
 	/// Answer these resource tags as refused, replacing any earlier set.
@@ -763,24 +824,24 @@ impl SigningHostRuntime {
 		self.services.install_funding_platform(platform)
 	}
 
-	/// Every funding session the core keeps, in flight first, then ended,
-	/// each newest first.
-	pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
-		self.services.funding().sessions()
+	/// Install the feed the host draws its funding screens from: sessions,
+	/// whether funding is in progress, and the overlay's options.
+	/// Install it before [`Self::set_funding_platform`], which resumes
+	/// funding. Set-once; returns whether this call installed it.
+	pub fn set_funding_feed(&self, feed: Arc<dyn crate::runtime::FundingFeed>) -> bool {
+		self.services.funding().install_feed(feed)
 	}
 
-	/// Every ended funding session the host recorded or the core compacted,
-	/// as summaries newest first,
-	/// for rebuilding the host's own history when it was lost. Compacted
-	/// sessions are kept for good, so this never forgets one.
+	/// Every ended funding session, as summaries newest first: the ones
+	/// held in full and the ones compacted, which are kept for good. The
+	/// host reads it whenever it shows history.
 	pub fn funding_history(&self) -> Vec<crate::host_logic::funding::FundingSessionSummary> {
 		self.services.funding().history()
 	}
 
-	/// Record that the host wrote ended session `intent` into its own
-	/// history. Until it does, the session is handed over again through
-	/// `funding_session_changed` each time funding resumes; the host reads
-	/// the full record with `funding_session`.
+	/// Record that the host told the user how ended session `intent` went.
+	/// Until it does, the session is handed over again through
+	/// `funding_session_changed` each time funding resumes.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.acknowledge_funding_session"))]
 	pub async fn acknowledge_funding_session(
 		&self,
@@ -800,6 +861,73 @@ impl SigningHostRuntime {
 		Ok(self.services.cancel_funding(intent).await?)
 	}
 
+	/// Replace the funding providers this host offers, each with the Worker
+	/// manifest it ships for it. The core re-reads each one from dotNS in the
+	/// background, and that answer wins once it has one.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_providers"))]
+	pub fn set_funding_providers(
+		&self,
+		providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
+	) -> Result<(), v01::GenericError> {
+		self.services
+			.set_funding_providers(providers)
+			.map_err(|err| v01::GenericError { reason: err.to_string() })
+	}
+
+	/// Live quotes for funding session `intent`: one row per funding
+	/// provider, whatever routes its manifest declares, `Pending` and then
+	/// `Quoted` or `Unavailable` as each provider answers or runs out of time.
+	/// The stream ends once every provider has, and never errors; dropping it
+	/// withdraws the asks still open.
+	pub fn get_funding_quote(
+		&self,
+		intent: &str,
+		ask: v01::FundingQuoteAsk,
+	) -> futures::stream::BoxStream<'static, crate::platform::FundingQuoteRow> {
+		self.services.get_funding_quote(intent, ask)
+	}
+
+	/// Quotes for funding session `intent`, for hosts that take the list
+	/// through [`FundingPlatform::funding_quotes_changed`]: every provider is
+	/// asked again at the list's `refresh_at_ms` until the session is handed
+	/// to a provider or ends, the host asks for another `ask`, or calls
+	/// [`Self::stop_funding_quotes`]. Returns the request id each list
+	/// carries; once any of those happens, no list of this request arrives
+	/// any more.
+	pub fn request_funding_quotes(&self, intent: &str, ask: v01::FundingQuoteAsk) -> u64 {
+		let (request_id, lists) = self.services.watch_funding_quotes(intent, ask);
+		let platform = self.services.funding().platform();
+		let services = self.services.clone();
+		let intent = intent.to_string();
+		(self.services.spawner)(Box::pin(async move {
+			let Some(platform) = platform else {
+				return;
+			};
+			futures::pin_mut!(lists);
+			while let Some(list) = futures::StreamExt::next(&mut lists).await {
+				platform.funding_quotes_changed(intent.clone(), list);
+				services.send_funding_options(&intent);
+			}
+		}));
+		request_id
+	}
+
+	/// Stop asking again for funding session `intent`'s quotes.
+	pub fn stop_funding_quotes(&self, intent: &str) {
+		self.services.funding_quotes().stop_watching(intent);
+	}
+
+	/// Record what the user picked in funding session `intent`'s overlay;
+	/// the options it leads to arrive through
+	/// [`crate::runtime::FundingFeed::funding_options_changed`].
+	pub fn select_funding_options(
+		&self,
+		intent: &str,
+		selection: crate::host_logic::funding_providers::FundingSelection,
+	) {
+		self.services.select_funding_options(intent, selection);
+	}
+
 	/// Answer the provider's cancel offer on funding session `intent`:
 	/// accept it on `terms`, the fee and refund the host showed, so the
 	/// provider settles the cancel, or decline it with `None`, so the session
@@ -814,26 +942,19 @@ impl SigningHostRuntime {
 	}
 
 	/// Hand open funding session `intent` to the provider the user chose,
-	/// by product id. Returns whether it was open and not yet assigned.
+	/// by product id, on the quote they chose it by, when it was quoted.
+	/// Returns whether it was open and not yet assigned.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.select_funding_provider"))]
 	pub async fn select_funding_provider(
 		&self,
 		intent: &str,
 		provider_id: &str,
+		quote_id: Option<&str>,
 	) -> Result<bool, v01::GenericError> {
 		self.services
-			.select_funding_provider(intent, provider_id)
+			.select_funding_provider(intent, provider_id, quote_id)
 			.await
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
-	}
-
-	/// One funding session as the core holds it, for the host's own status
-	/// and history views.
-	pub fn funding_session(
-		&self,
-		intent: &str,
-	) -> Option<crate::host_logic::funding::FundingSession> {
-		self.services.funding().get(intent)
 	}
 
 	/// Open a funding session on the host's own behalf, as the Balance card's
@@ -1113,6 +1234,13 @@ impl SigningHostRuntime {
 	/// this host.
 	pub fn worker_ledger(&self) -> &WorkerLedger {
 		&self.services.worker_ledger
+	}
+
+	/// Report that the product's worker stopped without being asked to:
+	/// it is started again while something holds it, with a growing wait
+	/// when it keeps crashing.
+	pub fn worker_exited(&self, product_id: &ProductId) {
+		self.services.worker_exited(product_id);
 	}
 
 	/// Return whether this host currently has an authenticated signing session.
@@ -1898,6 +2026,28 @@ impl FundingProviderLink for WorkerFundingLink {
 			)
 			.await
 			.is_ok()
+		})
+	}
+
+	fn quote(
+		&self,
+		ask: v01::FundingQuoteAsk,
+	) -> BoxFuture<'static, Option<v01::FundingQuoteAnswer>> {
+		use truapi::versioned::funding_provider::{
+			ProductFundingQuoteRequest, ProductFundingQuoteResponse,
+		};
+		let subscriptions = self.host_subscriptions.clone();
+		let transport = self.transport();
+		Box::pin(async move {
+			let ProductFundingQuoteResponse::V1(answer) =
+				crate::generated::dispatcher::funding_provider_quote(
+					&subscriptions,
+					transport,
+					ProductFundingQuoteRequest::V1(v01::ProductFundingQuoteRequest { ask }),
+				)
+				.await
+				.ok()?;
+			Some(answer)
 		})
 	}
 

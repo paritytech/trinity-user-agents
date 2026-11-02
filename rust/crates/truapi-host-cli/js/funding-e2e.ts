@@ -41,10 +41,13 @@ export interface TranscriptLine {
   amount?: string | null;
   outcome?: string;
   tag?: string;
+  progress?: string | null;
   route?: string;
   answer?: string;
   provider?: string;
   transition?: string;
+  providers?: string[];
+  quotes?: { provider: string; state: string }[];
 }
 
 /** What the host recorded. */
@@ -280,6 +283,7 @@ export async function runFundingE2e(
   // Nothing has asked for the provider's worker yet, so the host runs none.
   const runningBefore =
     workerTransitions(fundingLogPath, provider).at(-1)?.transition === "Start";
+  const beforeRequest = transcript(fundingLogPath).length;
   const delivered = await settles(
     "request_in_delivered",
     "In",
@@ -290,9 +294,9 @@ export async function runFundingE2e(
     { tag: "Delivered", amount: DELIVERED_CREDIT.toString() },
   );
 
-  // The core asked for the worker once the user picked the provider, and the
+  // The core asked for the worker once the overlay needed its quote, and the
   // host launched it then: it was not running before, and its launch comes
-  // after the overlay in the host's transcript.
+  // after the product's request in the host's transcript.
   let served: number | undefined;
   await check("worker_started_on_demand", async () => {
     if (runningBefore) {
@@ -301,17 +305,15 @@ export async function runFundingE2e(
       );
     }
     if (!delivered) throw new Error("the delivered session never started");
-    const presented = transcript(fundingLogPath).findIndex(
-      (line) => line.kind === "presented" && line.intent === delivered,
-    );
     const started = workerTransitions(fundingLogPath, provider).find(
-      ({ index, transition }) => transition === "Start" && index > presented,
+      ({ index, transition }) =>
+        transition === "Start" && index >= beforeRequest,
     );
-    if (presented < 0 || !started) {
-      throw new Error("the host never launched the worker after the overlay");
+    if (!started) {
+      throw new Error("the host never launched the worker for the request");
     }
     served = (await journaled(journalPath, "assigned", delivered)).pid;
-    return `the host launched the worker after the user picked ${provider}, and it was assigned the session`;
+    return `the host launched the worker once the overlay asked ${provider} for a quote, and it was assigned the session`;
   });
 
   // Once its last session ended the core let the worker go and the host

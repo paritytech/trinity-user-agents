@@ -13,6 +13,7 @@ mod allowances;
 /// Core-owned auth/session UI state machine.
 pub mod auth_state;
 mod authority;
+mod browse;
 /// In-core Bulletin preimage submission over the shared Subxt client.
 pub mod bulletin_rpc;
 mod capabilities;
@@ -20,6 +21,8 @@ mod chat;
 pub mod contacts;
 mod dotns_lookup;
 mod funding;
+mod funding_providers;
+mod funding_quotes;
 mod host_session;
 mod identity;
 pub mod login_failure;
@@ -64,7 +67,7 @@ use authority::{AccountCaller, AuthorityCancelError, AuthoritySession};
 pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
-pub use funding::FundingProviderLink;
+pub use funding::{FundingFeed, FundingProviderLink};
 pub use host_session::HostSession;
 
 /// The host's contact picker plus the key its handles are minted under:
@@ -121,9 +124,10 @@ use truapi::{
 			HostFundingStatusSubscribeRequest,
 		},
 		funding_provider::{
-			HostFundingPresentFrameError, HostFundingPresentFrameRequest,
-			HostFundingPresentFrameResponse, HostFundingReportError, HostFundingReportRequest,
-			HostFundingReportResponse,
+			HostFundingCloseFrameError, HostFundingCloseFrameRequest,
+			HostFundingCloseFrameResponse, HostFundingPresentFrameError,
+			HostFundingPresentFrameRequest, HostFundingPresentFrameResponse,
+			HostFundingReportError, HostFundingReportRequest, HostFundingReportResponse,
 		},
 		pocket::{
 			HostPocketListSubscribeError, HostPocketListSubscribeItem,
@@ -1673,11 +1677,39 @@ impl FundingProvider for ProductRuntimeHost {
 				}
 				let target = crate::host_logic::funding::checked_frame_target(target)
 					.ok_or_else(|| domain(latest::HostFundingPresentFrameError::InvalidUrl))?;
+				if matches!(target, latest::FundingFrameTarget::App { .. }) &&
+					!platform.provider_has_app(&self.connection.product).await
+				{
+					return Err(domain(latest::HostFundingPresentFrameError::NoApp));
+				}
 				let outcome = platform
 					.present_provider_frame(&self.connection.product, intent, target)
 					.await
 					.map_err(|error| CallError::HostFailure { reason: error.reason })?;
 				Ok(latest::HostFundingPresentFrameResponse { outcome })
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "funding_provider.close_frame"))]
+	async fn close_frame(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingCloseFrameRequest,
+	) -> Result<HostFundingCloseFrameResponse, CallError<HostFundingCloseFrameError>> {
+		version(request)
+			.exec(|latest::HostFundingCloseFrameRequest { intent }| async move {
+				let platform = self.connection.funding_provider_access()?;
+				if !self
+					.connection
+					.services
+					.funding()
+					.is_serving(self.connection.product.product_id.as_str(), &intent)
+				{
+					return Err(CallError::Domain(latest::HostFundingCloseFrameError::NotFound));
+				}
+				platform.close_provider_frame(&self.connection.product, intent);
+				Ok(())
 			})
 			.await
 	}

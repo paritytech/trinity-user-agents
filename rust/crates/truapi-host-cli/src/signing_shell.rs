@@ -150,7 +150,7 @@ impl ScriptCommand {
 pub enum FundingCommand {
 	/// Cancel the session with this intent.
 	Cancel(String),
-	/// List the sessions in flight and those ended the host has not recorded.
+	/// List the sessions the core pushed this run, with their latest status.
 	Sessions,
 	/// List every ended session, as history keeps it.
 	History,
@@ -885,7 +885,7 @@ pub const HELP_TEXT: &str = "\
 /session --clear-all    permanently clear all sessions for this network
 /renew                  renew statement-store allowances now
 /funding cancel <intent> cancel a funding session
-/funding sessions       list funding sessions in flight
+/funding sessions       list funding sessions pushed this run
 /funding history        list ended funding sessions
 /help                   show this help
 /clear                  clear the visible transcript

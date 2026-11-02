@@ -304,8 +304,9 @@ impl NativeTrUApiHostRuntime {
 	/// Install the host's funding overlay. Set-once; answers whether this
 	/// call installed it. Call it before opening any product execution.
 	pub fn set_funding_callbacks(&self, callbacks: Arc<dyn NativeFundingCallbacks>) -> bool {
-		self.runtime
-			.set_funding_platform(Arc::new(FundingCallbackPlatform { funding: callbacks }))
+		let platform = Arc::new(FundingCallbackPlatform { funding: callbacks });
+		self.runtime.set_funding_feed(platform.clone()) &&
+			self.runtime.set_funding_platform(platform)
 	}
 
 	/// Open a funding session on the host's own behalf, as the Balance
@@ -319,30 +320,14 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.runtime.open_funding(direction, amount).await?)
 	}
 
-	/// Session `intent` as the core holds it, for the host's status and
-	/// history views.
-	pub fn funding_session(
-		&self,
-		intent: String,
-	) -> Option<crate::host_logic::funding::FundingSession> {
-		self.runtime.funding_session(&intent)
-	}
-
-	/// Every funding session the core keeps, in flight first, then ended,
-	/// each newest first.
-	pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
-		self.runtime.funding_sessions()
-	}
-
-	/// Every ended funding session the host recorded or the core compacted,
-	/// as summaries newest first,
-	/// for rebuilding the host's own history when it was lost.
+	/// Every ended funding session, as summaries newest first. The host
+	/// reads it whenever it shows history.
 	pub fn funding_history(&self) -> Vec<crate::host_logic::funding::FundingSessionSummary> {
 		self.runtime.funding_history()
 	}
 
-	/// Record that the host wrote ended session `intent` into its own
-	/// history; until then it is handed over again on each resume.
+	/// Record that the host told the user how ended session `intent` went;
+	/// until then it is handed over again on each resume.
 	pub async fn acknowledge_funding_session(&self, intent: String) -> Result<bool, HostRejection> {
 		Ok(self.runtime.acknowledge_funding_session(&intent).await?)
 	}
@@ -435,14 +420,54 @@ impl NativeTrUApiHostRuntime {
 		}
 	}
 
+	/// Replace the funding providers this host offers, each with the Worker
+	/// manifest JSON it ships for it.
+	pub fn set_funding_providers(
+		&self,
+		providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
+	) -> Result<(), HostRejection> {
+		Ok(self.runtime.set_funding_providers(providers)?)
+	}
+
+	/// Ask every funding provider to price `ask` for session `intent`. The
+	/// list arrives through `funding_quotes_changed`, and is asked for again
+	/// every minute until the session is handed to a provider or ends, the
+	/// host asks for another `ask`, or calls [`Self::stop_funding_quotes`].
+	/// Returns the request id every list of this request carries, so the
+	/// host shows only the latest request's lists.
+	pub fn get_funding_quote(&self, intent: String, ask: v01::FundingQuoteAsk) -> u64 {
+		self.runtime.request_funding_quotes(&intent, ask)
+	}
+
+	/// Stop asking again for session `intent`'s quotes, as when the user
+	/// leaves the provider list.
+	pub fn stop_funding_quotes(&self, intent: String) {
+		self.runtime.stop_funding_quotes(&intent);
+	}
+
+	/// Report what the user picked so far in session `intent`'s overlay. The
+	/// countries and amount limits it leads to arrive through
+	/// `funding_options_changed`.
+	pub fn select_funding_options(
+		&self,
+		intent: String,
+		selection: crate::host_logic::funding_providers::FundingSelection,
+	) {
+		self.runtime.select_funding_options(&intent, selection);
+	}
+
 	/// Hand open funding session `intent` to the provider the user chose, by
-	/// product id.
+	/// product id, on the quote it was chosen by when it was quoted.
 	pub async fn select_funding_provider(
 		&self,
 		intent: String,
 		provider_id: String,
+		quote_id: Option<String>,
 	) -> Result<bool, HostRejection> {
-		Ok(self.runtime.select_funding_provider(&intent, &provider_id).await?)
+		Ok(self
+			.runtime
+			.select_funding_provider(&intent, &provider_id, quote_id.as_deref())
+			.await?)
 	}
 }
 
@@ -523,6 +548,17 @@ impl NativeTrUApiHostRuntime {
 			Err(error) => {
 				tracing::warn!(%error, "worker reference for an id that is not a product id")
 			},
+		}
+	}
+
+	/// Report that the product's worker stopped running without being asked
+	/// to: it crashed or the system killed it. While references remain, the
+	/// host is asked through [`HostCallbacks::request_worker_transition`] to
+	/// start it again. An id that is not a product id is logged and dropped.
+	pub fn worker_exited(&self, product_id: String) {
+		match product_id.parse::<ProductId>() {
+			Ok(product_id) => self.runtime.worker_exited(&product_id),
+			Err(error) => tracing::warn!(%error, "worker exit for an id that is not a product id"),
 		}
 	}
 
@@ -754,6 +790,15 @@ impl NativeTrUApiHostRuntime {
 			self.runtime.activate_local_session_with_identity(secret, lite_username),
 		)
 		.map_err(Into::into)
+	}
+
+	/// `product_id`'s Worker manifest from dotNS, cached for a day. `None`
+	/// when the product publishes no Worker, or one the core cannot use.
+	pub async fn worker_manifest(
+		&self,
+		product_id: String,
+	) -> Result<Option<crate::host_logic::worker_manifest::WorkerManifest>, HostRejection> {
+		Ok(self.runtime.worker_manifest(&product_id).await?)
 	}
 
 	/// Reports the core database's SQLite version, schema version and file

@@ -108,6 +108,10 @@ impl crate::host_logic::worker::WorkerController for CallbackPlatform {
 	fn request_worker_transition(&self, product_id: &ProductId, transition: WorkerTransition) {
 		self.callbacks.request_worker_transition(product_id.clone(), transition);
 	}
+
+	fn worker_crashing(&self, product_id: &ProductId, crashes: u32) {
+		self.callbacks.worker_crashing(product_id.clone(), crashes);
+	}
 }
 
 impl crate::durable::DurableWorkObserver for CallbackPlatform {
@@ -833,8 +837,44 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 			.map_err(v01::GenericError::from)
 	}
 
-	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem) {
-		self.funding.funding_session_changed(intent, status);
+	fn close_provider_frame(&self, provider: &ProductContext, intent: String) {
+		self.funding.close_provider_frame(provider.product_id.to_string(), intent);
+	}
+
+	async fn provider_has_app(&self, provider: &ProductContext) -> bool {
+		self.funding.provider_has_app(provider.product_id.to_string()).await
+	}
+
+	async fn detected_country(&self) -> Option<String> {
+		self.funding.detected_country().await
+	}
+
+	fn funding_quotes_changed(&self, intent: String, quotes: crate::platform::FundingQuoteList) {
+		self.funding.funding_quotes_changed(intent, quotes);
+	}
+}
+
+impl crate::runtime::FundingFeed for FundingCallbackPlatform {
+	fn funding_session_changed(
+		&self,
+		intent: String,
+		status: v01::HostFundingStatusSubscribeItem,
+		session: Option<crate::host_logic::funding::FundingSession>,
+		progress: Option<crate::host_logic::funding::FundingProgress>,
+	) {
+		self.funding.funding_session_changed(intent, status, session, progress);
+	}
+
+	fn funding_in_progress_changed(&self, in_progress: bool) {
+		self.funding.funding_in_progress_changed(in_progress);
+	}
+
+	fn funding_options_changed(
+		&self,
+		intent: String,
+		options: crate::host_logic::funding_providers::FundingOptions,
+	) {
+		self.funding.funding_options_changed(intent, options);
 	}
 }
 

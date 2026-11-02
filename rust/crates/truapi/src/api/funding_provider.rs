@@ -3,11 +3,13 @@
 use crate::{
 	CallContext, CallError,
 	versioned::funding_provider::{
+		HostFundingCloseFrameError, HostFundingCloseFrameRequest, HostFundingCloseFrameResponse,
 		HostFundingPresentFrameError, HostFundingPresentFrameRequest,
 		HostFundingPresentFrameResponse, HostFundingReportError, HostFundingReportRequest,
 		HostFundingReportResponse, ProductFundingAssignError, ProductFundingAssignRequest,
 		ProductFundingAssignResponse, ProductFundingCancelError, ProductFundingCancelRequest,
-		ProductFundingCancelResponse, ProductFundingSettleCancelError,
+		ProductFundingCancelResponse, ProductFundingQuoteError, ProductFundingQuoteRequest,
+		ProductFundingQuoteResponse, ProductFundingSettleCancelError,
 		ProductFundingSettleCancelRequest, ProductFundingSettleCancelResponse,
 	},
 	wire, wire_trait,
@@ -27,6 +29,27 @@ use crate::{
 #[crate::service(required_execution = Worker)]
 #[crate::async_trait]
 pub trait FundingProvider: Send + Sync {
+	/// Price an ask for the host's quote list, or say why the provider will
+	/// not. The core asks every provider and drops a call that has not
+	/// answered within 10 seconds.
+	///
+	/// ```ts
+	/// import { ok } from "neverthrow";
+	///
+	/// truapi.fundingProvider.onQuote(({ ask }) => {
+	///   console.log("asked to price:", ask.amount);
+	///   return ok({ tag: "Refused", value: { reason: { tag: "Unavailable", value: undefined } } });
+	/// });
+	/// ```
+	#[wire(host_initiated, id = 0)]
+	async fn quote(
+		&self,
+		_cx: &CallContext,
+		_request: ProductFundingQuoteRequest,
+	) -> Result<ProductFundingQuoteResponse, CallError<ProductFundingQuoteError>> {
+		Err(CallError::unavailable())
+	}
+
 	/// Take a session the user chose this provider for, or resume one after
 	/// the worker restarted: `last_update` says where it stopped. The worker
 	/// answers once it holds the session.
@@ -127,6 +150,27 @@ pub trait FundingProvider: Send + Sync {
 		_cx: &CallContext,
 		_request: HostFundingPresentFrameRequest,
 	) -> Result<HostFundingPresentFrameResponse, CallError<HostFundingPresentFrameError>> {
+		Err(CallError::unavailable())
+	}
+
+	/// Close the screen `present_frame` opened for a session once the
+	/// provider is done with it, such as a card payment the user made. That
+	/// `present_frame` call answers `Closed`, and the host shows the
+	/// session's progress in its place. Closing a session with no screen
+	/// open does nothing.
+	///
+	/// ```ts
+	/// const result = await truapi.fundingProvider.closeFrame({
+	///   intent: "fs_example",
+	/// });
+	/// console.log("provider frame closed:", result);
+	/// ```
+	#[wire(id = 6)]
+	async fn close_frame(
+		&self,
+		_cx: &CallContext,
+		_request: HostFundingCloseFrameRequest,
+	) -> Result<HostFundingCloseFrameResponse, CallError<HostFundingCloseFrameError>> {
 		Err(CallError::unavailable())
 	}
 }

@@ -1753,6 +1753,7 @@ async fn start_signing_host(
 		pocket.clone(),
 	)?;
 	apply_local_product_grants(platform.as_ref(), network, &args.product_config).await?;
+	funding_host::offer_providers(&runtime, platform.as_ref()).await?;
 	let runtime_factory = frame_server::SwitchableSigningRuntime::new(runtime.clone());
 	let last_script = profile
 		.as_ref()
@@ -2743,18 +2744,9 @@ async fn run_funding(runtime: &SigningHostRuntime, command: FundingCommand) -> R
 			Ok(format!("Cancel of {intent}: {outcome}"))
 		},
 		FundingCommand::Sessions => {
-			let lines: Vec<String> = runtime
-				.funding_sessions()
+			let lines: Vec<String> = funding_host::pushed_sessions()
 				.into_iter()
-				.map(|session| {
-					format!(
-						"{} {:?} {} {:?}",
-						session.intent,
-						session.direction,
-						funding_amount(session.amount),
-						session.wire_item()
-					)
-				})
+				.map(|(intent, status)| format!("{intent} {status}"))
 				.collect();
 			Ok(if lines.is_empty() { "No funding sessions".to_string() } else { lines.join("\n") })
 		},
