@@ -48,7 +48,7 @@ extension SPAPresenter: SPAPresenterProtocol {
                 icon: .iconRefresh,
                 title: String(localized: .spaActionRefresh),
                 isEnabled: true,
-                handler: { [weak self] in self?.view?.reload() }
+                handler: { [weak self] in self?.didTapRefresh() }
             ),
             SPAMoreAction(
                 icon: .iconShare,
@@ -71,9 +71,8 @@ extension SPAPresenter: SPAPresenterProtocol {
         wireframe.close(tabId: browserTabId)
     }
 
-    func didTapRetry() {
-        view?.showLoading()
-        interactor.retry()
+    func didTapRefresh() {
+        interactor.reloadLatestBuild()
     }
 
     func hasChatEntry() -> Bool {
@@ -85,8 +84,7 @@ extension SPAPresenter: SPAPresenterProtocol {
     }
 
     func didTapShare() {
-        let host = configuration.page.host.name
-        guard let url = AppConfig.ProductUniversalLink.url(for: host) else {
+        guard let url = AppConfig.ProductUniversalLink.url(for: configuration.page.host) else {
             return
         }
         wireframe.shareURL(url, from: view)
@@ -113,12 +111,20 @@ extension SPAPresenter: SPAInteractorOutputProtocol {
         view?.navigate(to: url)
     }
 
+    func didRequestReload() {
+        view?.reload()
+    }
+
+    func didRestartLoading() {
+        view?.showLoading()
+    }
+
     func didPrepareChat(chatId: Chat.Id) {
         wireframe.openChat(from: view, chatId: chatId)
     }
 
-    func didUpdateLoadProgress(_ progress: DotNsLoadProgress) {
-        view?.updateLoadProgress(progress)
+    func didUpdateLoadPhase(_ phase: ProductLoadPhase) {
+        view?.updateLoadPhase(phase)
     }
 
     func didFail(error: Error) {

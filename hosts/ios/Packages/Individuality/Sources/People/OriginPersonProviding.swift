@@ -16,10 +16,11 @@ public enum NoPersonStrategy: Sendable {
     /// Fail right away with ``OriginPersonProviderError/noPersonsExist``.
     case noPersonError
     /// The lite person may still be registering — its entry lands a few blocks after onboarding — so
-    /// watch its status for up to the delay before failing.
-    case waitLight(Duration)
+    /// watch its status until it is included in the ring, giving up after the delay when one is set.
+    case waitLight(Duration?)
 
     public static let `default`: NoPersonStrategy = .waitLight(.seconds(20))
+    public static let untilIncluded: NoPersonStrategy = .waitLight(nil)
 }
 
 // Returns all origins the person is a member of, full first. Checks ring status of both lite and full person.
@@ -122,10 +123,18 @@ private extension OriginPersonProvider {
             throw OriginPersonProviderError.noPersonsExist
         case let .waitLight(delay):
             let liteInput = MembershipStatusInput(memberKey: liteMemberKey, collection: liteCollectionId)
-            guard let ringIndex = try await liteStatusWaiter.waitForStatus(of: liteInput, timeout: delay) else {
+            guard let ringIndex = try await waitForLiteStatus(of: liteInput, delay: delay) else {
                 throw OriginPersonProviderError.noPersonsExist
             }
             return .lite(ringIndex, liteVrfManager)
         }
+    }
+
+    func waitForLiteStatus(of input: MembershipStatusInput, delay: Duration?) async throws -> MembersPallet.RingIndex? {
+        guard let delay else {
+            return try await liteStatusWaiter.waitForStatus(of: input)
+        }
+
+        return try await liteStatusWaiter.waitForStatus(of: input, timeout: delay)
     }
 }

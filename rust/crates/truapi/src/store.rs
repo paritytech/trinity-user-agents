@@ -8,6 +8,7 @@
 mod migration;
 mod observe;
 
+use core::convert::Infallible;
 use std::{
 	path::{Path, PathBuf},
 	sync::Arc,
@@ -145,6 +146,7 @@ impl Db {
 				conn.pragma_update(None, "foreign_keys", true)?;
 				conn.pragma_update(None, "temp_store", "MEMORY")?;
 				conn.busy_timeout(BUSY_TIMEOUT)?;
+				rusqlite::vtab::array::load_module(conn)?;
 				match migrations().to_latest(conn) {
 					Ok(()) |
 					Err(rusqlite_migration::Error::MigrationDefinition(
@@ -168,6 +170,7 @@ impl Db {
 				readers
 					.conn_for_each(|conn| {
 						conn.busy_timeout(BUSY_TIMEOUT)?;
+						rusqlite::vtab::array::load_module(conn)?;
 						conn.authorizer(Some(authorize_for_change_tracking))
 					})
 					.await
@@ -189,17 +192,34 @@ impl Db {
 		F: FnOnce(&rusqlite::Transaction<'_>) -> Result<T, DbError> + Send + 'static,
 		T: Send + 'static,
 	{
+		let never_refused = move |tx: &rusqlite::Transaction<'_>| Ok(Ok::<_, Infallible>(f(tx)?));
+		Ok(self
+			.write_unless_refused(never_refused)
+			.await?
+			.unwrap_or_else(|never| match never {}))
+	}
+
+	/// Runs `f` in one `BEGIN IMMEDIATE` transaction on the writer, like
+	/// [`Self::write`], and commits only when `f` returns `Ok(Ok(_))`. An
+	/// inner `Err` is a refusal: the transaction rolls back and the refusal is
+	/// returned as it is.
+	pub async fn write_unless_refused<T, E, F>(&self, f: F) -> Result<Result<T, E>, DbError>
+	where
+		F: FnOnce(&rusqlite::Transaction<'_>) -> Result<Result<T, E>, DbError> + Send + 'static,
+		T: Send + 'static,
+		E: Send + 'static,
+	{
 		let invalidation = self.invalidation.clone();
 		self.writer
 			.conn_mut_and_then(move |conn| {
-				let committed = in_transaction(conn, f);
+				let outcome = in_transaction_unless_refused(conn, f);
 				// Publish only once readers can see the rows: `commit_hook`
 				// runs before the commit is visible.
-				match committed {
-					Ok(_) => invalidation.publish(),
-					Err(_) => invalidation.discard(),
+				match outcome {
+					Ok(Ok(_)) => invalidation.publish(),
+					Ok(Err(_)) | Err(_) => invalidation.discard(),
 				}
-				committed
+				outcome
 			})
 			.await
 	}
@@ -237,15 +257,19 @@ impl Db {
 	}
 }
 
-/// Runs `f` in one `BEGIN IMMEDIATE` transaction, committing on `Ok`.
-fn in_transaction<T>(
+/// Runs `f` in a transaction that commits only when `f` returns `Ok(Ok(_))`
+/// and otherwise rolls back when it is dropped.
+fn in_transaction_unless_refused<T, E>(
 	conn: &mut rusqlite::Connection,
-	f: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<T, DbError>,
-) -> Result<T, DbError> {
+	f: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<Result<T, E>, DbError>,
+) -> Result<Result<T, E>, DbError> {
 	let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-	let value = f(&tx)?;
+	let value = match f(&tx)? {
+		Ok(value) => value,
+		Err(refusal) => return Ok(Err(refusal)),
+	};
 	tx.commit()?;
-	Ok(value)
+	Ok(Ok(value))
 }
 
 const BUSY_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(5);
@@ -318,6 +342,34 @@ mod tests {
 
 		assert!(matches!(result, Err(DbError::Connection(_))));
 		assert_eq!(notes(&db), Vec::<String>::new());
+	}
+
+	#[test]
+	fn a_refused_write_leaves_nothing_behind_and_returns_the_refusal() {
+		// A domain hook refuses a registration after the ledger rows are
+		// written; the refusal must undo them and still reach the caller.
+		let db = block_on(Db::open(memory_config())).unwrap();
+
+		let result = block_on(db.write_unless_refused(|tx| {
+			tx.execute("INSERT INTO ledger (note) VALUES ('refused')", [])?;
+			Ok(Err::<(), _>("item in use"))
+		}));
+
+		assert_eq!(result.unwrap(), Err("item in use"));
+		assert_eq!(notes(&db), Vec::<String>::new());
+	}
+
+	#[test]
+	fn an_accepted_write_unless_refused_commits() {
+		let db = block_on(Db::open(memory_config())).unwrap();
+
+		let result = block_on(db.write_unless_refused(|tx| {
+			tx.execute("INSERT INTO ledger (note) VALUES ('kept')", [])?;
+			Ok(Ok::<_, &str>(()))
+		}));
+
+		assert_eq!(result.unwrap(), Ok(()));
+		assert_eq!(notes(&db), vec!["kept".to_owned()]);
 	}
 
 	#[test]

@@ -35,10 +35,10 @@ public enum DSTabBarStyle {
     }
 
     static var cornerRadius: CGFloat { height / 2 }
-    static let itemInset: CGFloat = 4
-    /// Vertical inset of the selection pill inside the bar row.
-    static let selectionInset: CGFloat = 4
-    /// Width of the selection pill. It is centred on its slot and may overflow the slot.
+    /// Inset of the selection pill inside the bar row, the same on every side.
+    static let selectionInset: CGFloat = 2
+    static let itemInset: CGFloat = selectionInset
+    /// Widest the selection pill grows. It is centred on its slot and never wider than it.
     static let selectionWidth: CGFloat = 80
     /// Length of the ease that carries the selection pill between slots and recolours the slot icons.
     static let selectionDuration: Double = 0.238
@@ -77,6 +77,8 @@ public enum DSTabBarStyle {
     static let centerBlurIntensityLight: Double = 0.7
     /// Strength of the scrim behind the bar while the centre panel is open, tuned by eye like `barBlurIntensity`.
     static let dimBlurIntensity: Double = 0.3
+    /// `dimBlurIntensity` on iOS 26 and later, lighter under Liquid Glass.
+    static let dimBlurIntensityGlass: Double = 0.15
 
     /// Horizontal radius of the bar's wash ellipse as a fraction of the bar's width. Its vertical radius is the bar
     /// height.

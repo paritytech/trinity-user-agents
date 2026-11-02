@@ -44,15 +44,13 @@ private func makeRuntime(
     execution: MockProductExecution = MockProductExecution(),
     chainConnections: MockChainConnections = MockChainConnections(),
     configuration: SPAConfiguration,
-    dotNsResolver: DotNsResolverProtocol = StubDotNsResolver(),
-    productResolver: ProductResolving = StubProductResolver(),
+    contentLoader: ProductContentLoading = StubProductContentLoader(),
     hostEventRecorder: HostEventRecording = NoopHostEventRecorder()
 ) -> SPARustRuntime {
     SPARustRuntime(
         executionModel: makeExecutionModel(execution: execution, chainConnections: chainConnections),
         configuration: configuration,
-        dotNsResolver: dotNsResolver,
-        productResolver: productResolver,
+        contentLoader: contentLoader,
         schemeHandlerProxy: SchemeHandlerProxy(),
         logger: Logger.shared,
         hostEventRecorder: hostEventRecorder
@@ -110,13 +108,13 @@ struct SPARustRuntimeTests {
             let configuration = try makeConfiguration(
                 contentSource: .devServer(url: address, productId: "humanity.dot")
             )
-            let resolver = StubDotNsResolver()
-            let runtime = makeRuntime(configuration: configuration, dotNsResolver: resolver)
+            let loader = StubProductContentLoader()
+            let runtime = makeRuntime(configuration: configuration, contentLoader: loader)
 
             let url = try await runtime.start(with: MockJSEngine())
 
             #expect(url == address)
-            #expect(resolver.resolvedNames.isEmpty)
+            #expect(loader.openedIds.isEmpty)
             #expect(configuration.productId == "humanity.dot")
 
             await runtime.dispose()
@@ -134,13 +132,13 @@ struct SPARustRuntimeTests {
 
     @Test func startWithDotNsResolvesContentAndReturnsProductURL() async throws {
         let configuration = try makeConfiguration(contentSource: .dotNs)
-        let resolver = StubDotNsResolver()
+        let loader = StubProductContentLoader()
         let engine = MockJSEngine()
-        let runtime = makeRuntime(configuration: configuration, dotNsResolver: resolver)
+        let runtime = makeRuntime(configuration: configuration, contentLoader: loader)
 
         let url = try await runtime.start(with: engine)
 
-        #expect(resolver.resolvedNames == ["test.dot"])
+        #expect(loader.openedIds == ["test.dot"])
         #expect(url.scheme == ProductScriptSchemeHandler.scheme)
         #expect(url.host == "test.dot")
         #expect(url.path == "/")
@@ -154,7 +152,6 @@ struct SPARustRuntimeTests {
     /// widget is what an expanded card runs.
     @Test @MainActor func startForACardsPageLoadsTheWidget() async throws {
         let configuration = try makeConfiguration(contentSource: .dotNs, cardFace: StubCardFace())
-        let resolver = StubDotNsResolver()
         let widget = ProductExecutable.Widget(
             identifier: "widget.test.dot",
             appVersion: .zero,
@@ -172,13 +169,12 @@ struct SPARustRuntimeTests {
         )
         let runtime = makeRuntime(
             configuration: configuration,
-            dotNsResolver: resolver,
-            productResolver: StubProductResolver(alwaysResolvingTo: product)
+            contentLoader: StubProductContentLoader(product: product)
         )
 
         _ = try await runtime.start(with: MockJSEngine())
 
-        #expect(resolver.resolvedNames == ["widget.test.dot"])
+        #expect(await runtime.servedBuild()?.localURL.lastPathComponent == "widget.test.dot")
         await runtime.dispose()
     }
 

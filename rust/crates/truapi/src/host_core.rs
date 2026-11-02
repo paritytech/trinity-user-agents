@@ -923,11 +923,23 @@ impl SigningHostRuntime {
 		self.services.install_installation_provider(provider)
 	}
 
+	/// Install the host storage encrypted at rest, which keeps the secrets the
+	/// core database must not hold. Set-once; returns whether this call
+	/// installed it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn set_encrypted_storage(
+		&self,
+		storage: Arc<dyn crate::encrypted_storage::EncryptedStorage>,
+	) -> bool {
+		self.services.install_encrypted_storage(storage)
+	}
+
 	/// Starts what runs over the core database: the durable transaction
 	/// engine, then NFT purses with the tracker of their holdings. Call it
 	/// once the setters it reads have run: [`Self::set_core_db`],
-	/// [`Self::set_installation_provider`] and
-	/// [`Self::set_durable_work_observer`]. A part whose inputs are missing
+	/// [`Self::set_installation_provider`], [`Self::set_encrypted_storage`]
+	/// and [`Self::set_durable_work_observer`]. NFT transfers and purses need
+	/// the encrypted storage. A part whose inputs are missing
 	/// is skipped and logged. A second call does nothing.
 	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.start_core_services"))]
@@ -936,25 +948,54 @@ impl SigningHostRuntime {
 			tracing::warn!("no core database set, durable transactions and NFT purses are off");
 			return;
 		};
-		if !start_durable_engine(&self.services, db.clone()) {
-			return;
-		}
-		self.start_nft_purses(db);
-	}
-
-	/// Installs the NFT ledger over `db` and starts tracking its holdings,
-	/// when an installation provider is set.
-	#[cfg(not(target_arch = "wasm32"))]
-	fn start_nft_purses(&self, db: crate::store::Db) {
-		let Some(installation) = self.services.installation_provider() else {
-			tracing::warn!("no installation provider set, NFT purses are off");
+		let signer = Arc::new(Arc::downgrade(&self.signing_host));
+		let Some(engine) = start_durable_engine(&self.services, db.clone(), signer) else {
 			return;
 		};
-		let keys = Arc::new(Arc::downgrade(&self.signing_host));
-		let ledger =
-			crate::nft::NftLedger::new(crate::nft::NftLedgerDeps { db, installation, keys });
+		self.start_nft_purses(db, engine);
+	}
+
+	/// Installs the NFT ledger over `db` and `durable`, with the static receive
+	/// secret NFT purses open cheques with, and starts tracking its holdings,
+	/// when an installation provider and encrypted storage are set.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn start_nft_purses(
+		&self,
+		db: crate::store::Db,
+		durable: Arc<crate::durable::DurableTxEngine>,
+	) {
+		let Some(ledger) = self.nft_ledger(db, durable) else {
+			return;
+		};
+		let static_secret = Arc::new(Arc::downgrade(&self.signing_host));
+		self.services.install_static_receive_secret(static_secret);
 		self.services.install_nft_ledger(ledger.clone());
 		start_holding_tracker(&self.services, ledger);
+	}
+
+	/// The NFT ledger over `db` and `durable`, deriving item keys from the
+	/// signing host, or `None`, logged, without an installation provider or
+	/// encrypted storage.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn nft_ledger(
+		&self,
+		db: crate::store::Db,
+		durable: Arc<crate::durable::DurableTxEngine>,
+	) -> Option<crate::nft::NftLedger> {
+		let Some(installation) = self.services.installation_provider() else {
+			tracing::warn!("no installation provider set, NFT purses are off");
+			return None;
+		};
+		let Some(encrypted) = self.services.encrypted_storage() else {
+			tracing::warn!("no encrypted storage set, NFT purses are off");
+			return None;
+		};
+		let signing_host = Arc::downgrade(&self.signing_host);
+		let keys = Arc::new(signing_host.clone());
+		let secrets = Arc::new(signing_host);
+		let imported = crate::nft::ImportedSecretStore::new(encrypted);
+		let deps = crate::nft::NftLedgerDeps { db, installation, keys, durable, secrets, imported };
+		Some(crate::nft::NftLedger::new(deps))
 	}
 
 	/// Install the host observer told whether durable transactions are
@@ -1271,35 +1312,42 @@ impl SigningHostRuntime {
 }
 
 /// Installs the durable transaction engine over `db`, reports its pending
-/// work and starts its submissions. False when an engine is already
+/// work and starts its submissions. `None` when an engine is already
 /// installed.
 #[cfg(not(target_arch = "wasm32"))]
-fn start_durable_engine(services: &Arc<RuntimeServices>, db: crate::store::Db) -> bool {
-	let engine = durable_engine(services, db);
+fn start_durable_engine(
+	services: &Arc<RuntimeServices>,
+	db: crate::store::Db,
+	signer: Arc<dyn crate::nft::ItemSigner>,
+) -> Option<Arc<crate::durable::DurableTxEngine>> {
+	let engine = durable_engine(services, db, signer);
 	if !services.install_durable_engine(engine.clone()) {
-		return false;
+		return None;
 	}
 	forward_durable_work(services, &engine);
 	engine.ensure_submissions_started();
-	true
+	Some(engine)
 }
 
 /// The durable transaction engine over `db`, reading and submitting through
-/// the runtime's chain connections.
+/// the runtime's chain connections. It serves NFT transfers when an Asset Hub
+/// genesis is configured.
 #[cfg(not(target_arch = "wasm32"))]
 fn durable_engine(
 	services: &RuntimeServices,
 	db: crate::store::Db,
+	signer: Arc<dyn crate::nft::ItemSigner>,
 ) -> Arc<crate::durable::DurableTxEngine> {
 	use crate::{
-		durable::{DurableDeps, DurableRegistry, DurableTxEngine},
+		durable::{DurableDeps, DurableTxEngine},
 		time::RealTimer,
 	};
 
 	let chain = Arc::new(services.chain.clone());
+	let registry = durable_registry(services, signer);
 	DurableTxEngine::new(DurableDeps {
 		db,
-		registry: DurableRegistry::new(),
+		registry,
 		heads: chain.clone(),
 		blocks: chain.clone(),
 		validator: chain.clone(),
@@ -1307,6 +1355,37 @@ fn durable_engine(
 		timer: Arc::new(RealTimer),
 		spawner: services.spawner.clone(),
 	})
+}
+
+/// The domains and policies the durable engine serves: NFT transfers, on the
+/// Asset Hub that runs the Scarcity pallet. They need encrypted storage, which
+/// keeps the secrets of imported item keys.
+#[cfg(not(target_arch = "wasm32"))]
+fn durable_registry(
+	services: &RuntimeServices,
+	signer: Arc<dyn crate::nft::ItemSigner>,
+) -> crate::durable::DurableRegistry {
+	use crate::nft::{ImportedSecretStore, ScarcityTransfersDeps, with_scarcity_transfers};
+
+	let registry = crate::durable::DurableRegistry::new();
+	let Some(genesis) = services.asset_hub_chain_genesis_hash() else {
+		tracing::warn!("no Asset Hub genesis configured, NFT transfers are off");
+		return registry;
+	};
+	let Some(encrypted) = services.encrypted_storage() else {
+		tracing::warn!("no encrypted storage set, NFT transfers are off");
+		return registry;
+	};
+	let chain = Arc::new(services.chain.clone());
+	let deps = ScarcityTransfersDeps {
+		storage: chain.clone(),
+		heads: chain,
+		genesis: genesis.into(),
+		signer,
+		imported: ImportedSecretStore::new(encrypted),
+		extrinsics: services.extrinsics.clone(),
+	};
+	with_scarcity_transfers(registry, deps)
 }
 
 /// Starts tracking what NFT item keys hold on Asset Hub, which runs the
@@ -2173,9 +2252,9 @@ mod tests {
 			product_account::derive_identity_keypair,
 			sso::pairing::{
 				PairingBootstrap, derive_x25519_keypair_from_entropy, establish_sso_session_info,
-				x25519_public_key,
 			},
 			worker::WorkerTransition,
+			x25519_seal::X25519PrivateKey,
 		},
 		test_support::{StubPlatform, runtime_config, test_spawner, wait_until},
 	};
@@ -3157,6 +3236,59 @@ mod tests {
 		(runtime, sink)
 	}
 
+	#[test]
+	fn host_request_uses_subscription_routing() {
+		let (runtime, sink) = render_runtime();
+		let ids = crate::generated::wire_table::MethodIds { trait_id: 195, method_id: 14 };
+		let mut request = Box::pin(runtime.host_subscriptions.request::<u32, String>(
+			ids,
+			vec![9],
+			runtime.transport.clone(),
+		));
+		assert_eq!(request.as_mut().now_or_never(), None);
+		let sent = sink.frames.lock().unwrap()[0].clone();
+		let mut response = ProtocolMessage::decode(&mut &sent[..]).unwrap();
+		response.payload.message_type = crate::frame::MESSAGE_TYPE_RECEIVE;
+		response.payload.value = 7_u32.encode();
+		futures::executor::block_on(runtime.receive_frame(response.encode())).unwrap();
+		assert_eq!(request.as_mut().now_or_never(), Some(Ok(7)));
+	}
+
+	#[test]
+	fn disposing_the_runtime_finishes_its_host_requests() {
+		let (runtime, sink) = render_runtime();
+		let ids = crate::generated::wire_table::MethodIds { trait_id: 195, method_id: 14 };
+		let mut request = Box::pin(runtime.host_subscriptions.request::<u32, String>(
+			ids,
+			vec![9],
+			runtime.transport.clone(),
+		));
+		assert_eq!(request.as_mut().now_or_never(), None);
+		runtime.dispose();
+		let closed = Err(truapi::CallError::HostFailure {
+			reason: "the product connection closed while the stream was open".into(),
+		});
+		let next = runtime.host_subscriptions.request::<u32, String>(
+			ids,
+			vec![10],
+			runtime.transport.clone(),
+		);
+		assert_eq!(
+			(
+				request.as_mut().now_or_never(),
+				next.now_or_never(),
+				sink.frames.lock().unwrap().len()
+			),
+			(
+				Some(closed),
+				Some(Err(truapi::CallError::HostFailure {
+					reason: "host-initiated subscriptions are closed".into(),
+				})),
+				1,
+			),
+		);
+	}
+
 	/// Open one render for a Pocket card.
 	fn start_render(
 		runtime: &ProductRuntime,
@@ -3293,8 +3425,10 @@ mod tests {
 		let mut render = start_render(&runtime, "loyalty");
 		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 1);
 
+		// The render fails rather than finishing, so the host opens it again on
+		// the next connection; the failure is where its reference is released.
 		runtime.dispose();
-		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(None)));
+		assert!(matches!(poll_render(&mut render), core::task::Poll::Ready(Some(Err(_)))));
 
 		assert_eq!(services.worker_ledger.count(&ProductId::for_test("worker.dot")), 0);
 		drop(render);
@@ -3805,6 +3939,20 @@ mod tests {
 		assert!(runtime.services.nft_purses().is_none());
 	}
 
+	/// A receive key whose secret the host does not keep could never open a
+	/// cheque, so without encrypted storage there are no purses at all.
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn nft_purses_stay_off_without_encrypted_storage() {
+		let (runtime, platform) = test_signing_runtime();
+		runtime.set_core_db(memory_db());
+		runtime.set_installation_provider(platform);
+
+		runtime.start_core_services();
+
+		assert!(runtime.services.nft_purses().is_none());
+	}
+
 	/// The setters only store their inputs, so purses are served once the
 	/// services start and not before.
 	#[cfg(not(target_arch = "wasm32"))]
@@ -3813,6 +3961,9 @@ mod tests {
 		let (runtime, platform) = test_signing_runtime();
 		runtime.set_core_db(memory_db());
 		runtime.set_installation_provider(platform);
+		runtime.set_encrypted_storage(Arc::new(
+			crate::encrypted_storage::MemoryEncryptedStorage::default(),
+		));
 
 		runtime.start_core_services();
 
@@ -3828,6 +3979,9 @@ mod tests {
 		let (runtime, platform) = test_signing_runtime();
 		runtime.set_core_db(memory_db());
 		runtime.set_installation_provider(platform);
+		runtime.set_encrypted_storage(Arc::new(
+			crate::encrypted_storage::MemoryEncryptedStorage::default(),
+		));
 		runtime.start_core_services();
 		let services = Arc::downgrade(&runtime.services);
 
@@ -3958,7 +4112,7 @@ mod tests {
 		let peer_encryption_secret = [0x42; 32];
 		let peer = PairedSsoPeer {
 			statement_account_id: [0x31; 32],
-			encryption_public_key: x25519_public_key(peer_encryption_secret),
+			encryption_public_key: X25519PrivateKey::from(peer_encryption_secret).public_key().0,
 		};
 		let identity =
 			derive_identity_keypair(&[0xab; 32], "testnet").expect("identity derivation succeeds");
@@ -4021,7 +4175,7 @@ mod tests {
 		let runtime = activated_signing_runtime(platform);
 		let peer = PairedSsoPeer {
 			statement_account_id: [0x31; 32],
-			encryption_public_key: x25519_public_key([0x42; 32]),
+			encryption_public_key: X25519PrivateKey::from([0x42; 32]).public_key().0,
 		};
 
 		let error = futures::executor::block_on(runtime.disconnect_paired_host(peer))

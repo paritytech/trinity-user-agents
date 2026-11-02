@@ -1,4 +1,4 @@
-use core::time::Duration;
+use core::{iter, ops::ControlFlow, time::Duration};
 use std::sync::{
 	Arc, Mutex,
 	atomic::{AtomicBool, Ordering},
@@ -19,12 +19,15 @@ use futures::{
 };
 use parity_scale_codec::Encode;
 use truapi::v01;
+use zeroize::Zeroizing;
 
 use crate::{
 	DevicePairingObserver, PairedSsoPeer,
+	encrypted_storage::EncryptedStorage,
 	host_internal::bulletin::preimage_key,
 	host_logic::worker::WorkerTransition,
 	installation::{InstallationId, InstallationIdProvider},
+	time::{RealTimer, Timer, retry},
 };
 
 use super::{
@@ -116,6 +119,25 @@ impl crate::durable::DurableWorkObserver for CallbackPlatform {
 impl DevicePairingObserver for CallbackPlatform {
 	fn device_paired(&self, device: PairedSsoPeer) {
 		self.callbacks.device_paired(device);
+	}
+}
+
+#[async_trait]
+impl EncryptedStorage for CallbackPlatform {
+	async fn read_encrypted(
+		&self,
+		key: &[u8],
+	) -> Result<Option<Zeroizing<Vec<u8>>>, v01::GenericError> {
+		let value = self.callbacks.encrypted_storage_read(key.to_vec()).await?;
+		Ok(value.map(Zeroizing::new))
+	}
+
+	async fn write_encrypted(&self, key: &[u8], value: &[u8]) -> Result<(), v01::GenericError> {
+		Ok(self.callbacks.encrypted_storage_write(key.to_vec(), value.to_vec()).await?)
+	}
+
+	async fn delete_encrypted(&self, key: &[u8]) -> Result<(), v01::GenericError> {
+		Ok(self.callbacks.encrypted_storage_delete(key.to_vec()).await?)
 	}
 }
 
@@ -533,7 +555,7 @@ const PREIMAGE_RETRY_PAUSE_SLOW: Duration = Duration::from_secs(30);
 const PREIMAGE_RETRY_PAUSE_FAST: Duration = Duration::from_millis(1);
 #[cfg(test)]
 const PREIMAGE_RETRY_PAUSE_SLOW: Duration = Duration::from_millis(4);
-const PREIMAGE_FAST_RETRIES: u32 = 5;
+const PREIMAGE_FAST_RETRIES: usize = 5;
 
 impl PreimageHost for CallbackPlatform {
 	fn lookup_preimage(
@@ -566,32 +588,42 @@ impl PreimageHost for CallbackPlatform {
 	}
 }
 
-/// Retry the host lookup until it returns bytes that hash to `digest` or an
-/// error.
+/// Retry a host lookup that missed until it returns bytes that hash to
+/// `digest` or an error.
 async fn lookup_until_found(
 	callbacks: Arc<dyn HostCallbacks>,
 	digest: [u8; 32],
 ) -> Result<Vec<u8>, HostRejection> {
 	let key_hex = hex_lower(&digest);
 	callbacks.on_core_log("truapi.native.preimage.retrying".to_string(), key_hex.clone());
+	let mut fast_pauses = iter::repeat_n(PREIMAGE_RETRY_PAUSE_FAST, PREIMAGE_FAST_RETRIES);
+	let mut next_pause = move || fast_pauses.next().unwrap_or(PREIMAGE_RETRY_PAUSE_SLOW);
+	// The first lookup already missed, so even the first retry waits.
+	RealTimer.sleep(next_pause()).await;
 	let mut retries = 0u32;
-	loop {
-		let pause = if retries < PREIMAGE_FAST_RETRIES {
-			PREIMAGE_RETRY_PAUSE_FAST
-		} else {
-			PREIMAGE_RETRY_PAUSE_SLOW
-		};
-		futures_timer::Delay::new(pause).await;
-		retries += 1;
-		let value = callbacks.lookup_preimage(digest.to_vec()).await?;
-		if let Some(value) = value.filter(|bytes| preimage_key(bytes) == digest) {
-			callbacks.on_core_log(
-				"truapi.native.preimage.found".to_string(),
-				format!("{key_hex} on retry {retries}"),
-			);
-			return Ok(value);
-		}
+	let found = retry(
+		|| {
+			retries += 1;
+			async {
+				match callbacks.lookup_preimage(digest.to_vec()).await {
+					Ok(Some(value)) if preimage_key(&value) == digest => {
+						ControlFlow::Break(Ok(value))
+					},
+					Ok(_) => ControlFlow::Continue(()),
+					Err(rejection) => ControlFlow::Break(Err(rejection)),
+				}
+			}
+		},
+		|()| next_pause(),
+	)
+	.await;
+	if found.is_ok() {
+		callbacks.on_core_log(
+			"truapi.native.preimage.found".to_string(),
+			format!("{key_hex} on retry {retries}"),
+		);
 	}
+	found
 }
 
 /// [`crate::platform::ChatPlatform`] served by host-provided

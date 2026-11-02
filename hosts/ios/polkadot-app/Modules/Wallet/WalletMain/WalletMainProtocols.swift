@@ -7,7 +7,6 @@ import Products
 protocol WalletMainViewProtocol: ControllerBackedProtocol, PocketCardOrigin {
     func didReceive(isCollectiblesAvailable: Bool)
     func didReceive(pocketCards: [PocketCardViewModel])
-    func didReceive(titleViewModel: NetworkStatusTitleView.ViewModel)
 }
 
 @MainActor
@@ -33,6 +32,5 @@ protocol WalletMainInteractorInputProtocol: AnyObject {
 @MainActor
 protocol WalletMainInteractorOutputProtocol: AnyObject {
     func didReceiveCollectibles(page: ProductPage)
-    func didReceive(networkStatus: NetworkStatus)
     func didReceive(pocketCards: [PocketCardViewModel])
 }

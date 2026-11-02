@@ -53,8 +53,8 @@ use truapi::{
 		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
 		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
-		ProductAccountId, ProductAccountTxPayload, ProductProofContext, RemotePermission,
-		RemotePermissionRequest, RingLocation,
+		NftPurseOwner, ProductAccountId, ProductAccountTxPayload, ProductProofContext,
+		RemotePermission, RemotePermissionRequest, RingLocation,
 	},
 	v01::HostAccountSignVrfRequest,
 };
@@ -2678,6 +2678,43 @@ pub struct ProductSubtreeReview {
 	pub product_id: ProductId,
 }
 
+/// Review shown before a product moves items out of an NFT purse it does
+/// not own: Root's, or another product's.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct NftPurseDrainReview {
+	/// Product making the request.
+	pub calling_product_id: ProductId,
+	/// Purse the items leave.
+	pub from_purse: u32,
+	/// Who owns that purse.
+	pub owner: NftPurseOwner,
+	/// How many items leave it.
+	pub item_count: u32,
+	/// Where they go.
+	pub destination: NftPurseDrainDestination,
+}
+
+/// Where items drained from a purse go.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum NftPurseDrainDestination {
+	/// Fresh keys of this purse.
+	Purse {
+		/// The purse's id.
+		purse: u32,
+	},
+	/// This key, outside every purse.
+	ExternalKey {
+		/// The key's public bytes.
+		key: Bytes32,
+	},
+	/// A cheque the product delivers to its recipient.
+	Cheque,
+	/// The keys of a deposited cheque, back to its sender.
+	Refund,
+}
+
 /// Review shown before a user-confirmed core action continues.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -2710,6 +2747,9 @@ pub enum UserConfirmationReview {
 	/// Resolve a product's own account subtree over SSO.
 	#[codec(index = 11)]
 	ProductSubtree(ProductSubtreeReview),
+	/// Move items out of an NFT purse the product does not own.
+	#[codec(index = 12)]
+	NftPurseDrain(NftPurseDrainReview),
 }
 
 /// Local user confirmation UI for sensitive core-owned operations.
@@ -3214,9 +3254,8 @@ pub enum HostScan {
 	/// The device has no camera, or the user refused the host application one.
 	/// The host has already told the user how to turn it on.
 	CameraUnavailable,
-	/// The requesting App or Widget is not the screen the user sees, so the
-	/// host opened nothing. A Worker's request was already checked by the core
-	/// and is never answered this way.
+	/// The requesting App or Widget is not the screen the user sees, or the
+	/// host application is not in front, so the host opened nothing.
 	NotVisible,
 }
 
@@ -3226,8 +3265,9 @@ pub enum HostScan {
 /// - Title the viewfinder with the product id. Show `request.hint` under it as the product's words.
 /// - Pass every code the camera reads to a `ScanFilter` built from `request`, and never follow a
 ///   scanned link.
-/// - Answer [`HostScan::NotVisible`] for an App or Widget that is not on screen. A Worker reaching
-///   the host already passed the core's tap check.
+/// - Answer [`HostScan::NotVisible`] for an App or Widget that is not on screen, or for any product
+///   while the host application is not in front. A Worker reaching the host already passed the
+///   core's tap check.
 /// - Close the viewfinder when the core drops the future, and close any still open before opening
 ///   another. A JS host is not told about a drop.
 #[async_trait]

@@ -36,11 +36,6 @@ struct WalletView: View {
                 }
                 .scrollClipDisabled(viewModel.openPocketCard != nil)
                 .modifier(TopScrollEdgeEffectHidden(hidden: viewModel.openPocketCard != nil))
-                .safeAreaInset(edge: .bottom) {
-                    if viewModel.expandedSection == .assetDetails {
-                        AssetDetailsFundingBar(viewModel: viewModel.assetDetailsViewModel)
-                    }
-                }
                 .modifier(OverscrollReader(overscroll: $overscroll))
                 .onChange(of: viewModel.expandedSection) { _, newValue in
                     guard newValue == .none else { return }

@@ -131,7 +131,6 @@ dependencies {
     // Region features
     implementation(project(":feature:backup:impl"))
     implementation(project(":feature:xcm:impl"))
-    implementation(project(":feature:fund:impl"))
     implementation(project(":feature:swap:impl"))
     implementation(project(":feature:chats:impl"))
     implementation(project(":feature:device-sync:impl"))
@@ -191,6 +190,7 @@ dependencies {
     "vanillaImplementation"(libs.google.mlkit.barcode.scanning)
 
     testImplementation(project(":test-shared"))
+    testImplementation(libs.mockk)
     testImplementation(libs.squareup.okhttp3.mockwebserver)
     testImplementation(libs.squareup.okhttp3.tls)
 
@@ -218,4 +218,16 @@ sentry {
     // Sentry only runs on debug/nightly; skip release so the plugin
     // doesn't try to process a variant that has no DSN/auth token
     ignoredBuildTypes.set(setOf("release"))
+
+    // The logcat rewrite would add every Log.w and Log.e in the app.
+    tracingInstrumentation {
+        logcat {
+            enabled.set(false)
+        }
+    }
+}
+
+// The iOS host turns no log line into a Sentry event, and SentryLogTree covers the truapi lines.
+configurations.configureEach {
+    exclude(group = "io.sentry", module = "sentry-android-timber")
 }

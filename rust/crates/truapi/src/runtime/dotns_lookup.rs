@@ -4,7 +4,10 @@
 //! so a sequence of storage reads and contract views sees one consistent state.
 //! No chain metadata is needed.
 
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::{
+	fmt,
+	sync::atomic::{AtomicU64, Ordering},
+};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 #[cfg(target_arch = "wasm32")]
@@ -24,8 +27,12 @@ use crate::chain_runtime::{
 };
 use tracing::{debug, info};
 
-use crate::host_logic::dotns_gateway::{
-	DotnsError, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, encode_revive_call, view_output,
+use crate::{
+	host_logic::dotns_gateway::{
+		DotnsError, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, encode_revive_call,
+		view_output,
+	},
+	platform::ProductId,
 };
 
 /// Budget for one step of a lookup: opening the follow, one storage read, one
@@ -40,6 +47,30 @@ const BEST_BLOCK_TIMEOUT: Duration = Duration::from_secs(2);
 /// Monotonic salt for follow ids, so concurrent lookups do not collide.
 static DOTNS_LOOKUP_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+/// What a dotNS lookup is resolving, as it reads in that lookup's follow id.
+///
+/// A named kind rather than free text, because the follow id reaches a host's
+/// log through the events that name the follows holding a connection's budget.
+/// It has to say what is being read without saying whose account is reading.
+/// [`DOTNS_LOOKUP_COUNTER`] already tells concurrent lookups apart, so a kind
+/// needs no identifier of its own to be unique.
+pub enum DotnsLookupKind<'a> {
+	/// The usernames on an account. Carries nothing: an account id here would
+	/// put a user identifier in every log line that names this follow.
+	Identity,
+	/// A product's root manifest, named by the product it belongs to.
+	Manifest(&'a ProductId),
+}
+
+impl fmt::Display for DotnsLookupKind<'_> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Self::Identity => f.write_str("identity"),
+			Self::Manifest(product_id) => write!(f, "manifest:{product_id}"),
+		}
+	}
+}
+
 /// One pinned-block context for a sequence of dotNS reads. It owns the
 /// `chainHead_v1` follow every read and view runs over.
 pub struct DotnsLookup<'a> {
@@ -53,16 +84,16 @@ pub struct DotnsLookup<'a> {
 impl<'a> DotnsLookup<'a> {
 	/// Opens a follow on Asset Hub and pins it to the current best block.
 	///
-	/// `label` distinguishes this lookup's follow id from concurrent ones and
-	/// appears in chain logs, so it should name what is being resolved.
+	/// `kind` names what this lookup resolves and appears in its follow id, so
+	/// it is a named kind rather than free text. See [`DotnsLookupKind`].
 	pub async fn pinned_to_best_block(
 		chain: &'a ChainRuntime,
 		asset_hub_chain_genesis_hash: [u8; 32],
-		label: &str,
+		kind: DotnsLookupKind<'_>,
 	) -> Result<Self, DotnsViewError> {
 		let genesis_hash = asset_hub_chain_genesis_hash.to_vec();
 		let lookup_id = DOTNS_LOOKUP_COUNTER.fetch_add(1, Ordering::Relaxed);
-		let follow_id = format!("truapi:dotns:{lookup_id}:{label}");
+		let follow_id = format!("truapi:dotns:{lookup_id}:{kind}");
 		let mut follow = chain.remote_chain_head_follow_items(
 			follow_id.clone(),
 			RemoteChainHeadFollowRequest { genesis_hash: genesis_hash.clone(), with_runtime: true },
@@ -206,5 +237,29 @@ fn started_operation_id(operation: OperationStartedResult) -> Result<String, Str
 		OperationStartedResult::LimitReached => {
 			Err("Asset Hub operation limit reached".to_string())
 		},
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	/// An identity lookup names what it reads and nothing about whose account
+	/// it reads, so the follow id built from it carries no user identifier
+	/// into the logs that name a connection's follows.
+	#[test]
+	fn an_identity_lookup_is_named_without_an_account() {
+		assert_eq!(DotnsLookupKind::Identity.to_string(), "identity");
+	}
+
+	/// A manifest lookup still names its product, which identifies what was
+	/// opened rather than who opened it.
+	#[test]
+	fn a_manifest_lookup_is_named_by_its_product() {
+		let product_id = ProductId::for_test("shop.paseo");
+		assert_eq!(
+			DotnsLookupKind::Manifest(&product_id).to_string(),
+			format!("manifest:{product_id}"),
+		);
 	}
 }
