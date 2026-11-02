@@ -1399,9 +1399,9 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
           }
         );
       },
-      async setChatRoomConfig(_product, request) {
-        declareChatRoom(request.roomId, (room) => {
-          room.config = request.config;
+      async setChatRoomConfig(_product, roomId, config) {
+        declareChatRoom(roomId, (room) => {
+          room.config = config;
         });
       },
       async setChatRoomMetadata(_product, request) {
