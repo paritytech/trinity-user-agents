@@ -57,6 +57,54 @@ final class ProductContentLoaderTests {
         #expect(environment.fetcher.fetchCount == 2)
     }
 
+    @Test func workerOpenRetriesAnUnreachableChain() async throws {
+        contracts.failNextReads(with: [chainUnreachable])
+        let environment = try Environment(self)
+
+        let open = Task { try await environment.loader.openWorker(productId, policy: .attempts(3)) }
+        await clock.resumeSleep(for: .seconds(1))
+
+        #expect(try await open.value.id == productId)
+    }
+
+    @Test func workerOpenGivesUpOnceTheRefreshAttemptsAreSpent() async throws {
+        contracts.failAllReads(with: chainUnreachable)
+        let environment = try Environment(self)
+
+        let open = Task { try await environment.loader.openWorker(productId, policy: .attempts(2)) }
+        await clock.resumeSleep(for: .seconds(1))
+
+        await #expect(throws: DotNsContractError.self) { try await open.value }
+    }
+
+    @Test func workerOpenRetriesTheWorkerDownload() async throws {
+        let workerName = "worker.\(productId)"
+        let workerHash = try Data.randomOrError(of: 34)
+        defer { contentHashCache.removeContentHash(name: workerName) }
+        contracts.set(
+            text: #"{"$v":1,"displayName":"Shop","description":"","icon":{"cid":"bafyicon","format":"png"}}"#,
+            name: productId,
+            key: ProductManifestRecords.rootKey
+        )
+        contracts.set(
+            text: #"""
+            {"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"worker.js",
+             "includes":{"chat":true,"pocket":false}}
+            """#,
+            name: workerName,
+            key: ProductManifestRecords.executableKey
+        )
+        contracts.set(contentHash: workerHash, name: workerName)
+        let environment = try Environment(self, fetchFailures: [HTTPResponseError(statusCode: 504)])
+
+        let open = Task { try await environment.loader.openWorker(productId, policy: .attempts(3)) }
+        await clock.resumeSleep(for: .seconds(1))
+        _ = try await open.value
+
+        #expect(contentHashCache.getContentHash(name: workerName) == workerHash.toHex())
+        #expect(environment.fetcher.fetchCount == 2)
+    }
+
     @Test func failsWithoutRetryingWhenTheContractRefusesTheRead() async throws {
         contracts
             .failNextReads(with: [DotNsContractError
@@ -282,9 +330,150 @@ final class ProductContentLoaderTests {
             try await environment.loader.open(self.productId, kind: .app, policy: .attempts(1))
         }
     }
+
+    @Test func stallIsReportedOnceAfterTheFifthFailedAttempt() async throws {
+        let reporter = RecordingIssueReporter()
+        let environment = try Environment(
+            self,
+            fetchFailures: Array(repeating: URLError(.timedOut), count: 7),
+            reporter: reporter
+        )
+
+        let open = Task { try await environment.loader.open(productId, kind: .app, policy: .untilCancelled) }
+
+        for delay in [1, 2, 4, 4, 4, 4, 4] {
+            await clock.resumeSleep(for: .seconds(delay))
+        }
+        _ = try await open.value
+
+        let issue = try #require(reporter.reported.first)
+        #expect(reporter.reported.count == 1)
+        #expect(issue.kind == "contentFetchStalled")
+        #expect(issue.counters["attempts"] == 5)
+        #expect(issue.counters["urlErrorCode"] == URLError.Code.timedOut.rawValue)
+    }
+
+    @Test func stallIsReportedOnceTheLoadRunsLongerThanTheThreshold() async throws {
+        let reporter = RecordingIssueReporter()
+        let start = Date(timeIntervalSince1970: 0)
+        let environment = try Environment(
+            self,
+            fetchFailures: [URLError(.timedOut)],
+            reporter: reporter,
+            dates: [start, start.addingTimeInterval(61)]
+        )
+
+        let open = Task { try await environment.loader.open(productId, kind: .app, policy: .untilCancelled) }
+
+        await clock.resumeSleep(for: .seconds(1))
+        _ = try await open.value
+
+        #expect(reporter.reported.map(\.kind) == ["contentFetchStalled"])
+        #expect(reporter.reported.first?.counters["elapsedSeconds"] == 61)
+    }
+
+    @Test func timeSpentOfflineDoesNotCountTowardsAStall() async throws {
+        let reporter = RecordingIssueReporter()
+        let start = Date(timeIntervalSince1970: 0)
+        let environment = try Environment(
+            self,
+            fetchFailures: [URLError(.notConnectedToInternet), URLError(.timedOut)],
+            isPathSatisfied: false,
+            reporter: reporter,
+            dates: [start, start.addingTimeInterval(300), start.addingTimeInterval(301)]
+        )
+
+        let open = Task { try await environment.loader.open(self.productId, kind: .app, policy: .attempts(1)) }
+
+        await environment.path.waitForStreamRequests(2)
+        environment.path.simulate(isSatisfied: true)
+
+        await #expect(throws: URLError.self) { try await open.value }
+        #expect(reporter.reported.isEmpty)
+    }
+
+    @Test func damagedContentIsReportedAsUnavailable() async throws {
+        let reporter = RecordingIssueReporter()
+        let environment = try Environment(self, fetchFailures: [CarFetcherError.notCarArchive], reporter: reporter)
+
+        await #expect(throws: CarFetcherError.self) {
+            try await environment.loader.open(self.productId, kind: .app, policy: .untilCancelled)
+        }
+
+        let issue = try #require(reporter.reported.first)
+        #expect(issue.kind == "contentUnavailable")
+        #expect(issue.errorCode == "notCarArchive")
+    }
+
+    @Test func productWithNoPublishedContentIsNotReported() async throws {
+        let reporter = RecordingIssueReporter()
+        contracts.removeContentHash(name: productId)
+        let environment = try Environment(self, reporter: reporter)
+
+        await #expect(throws: DotNsContractError.self) {
+            try await environment.loader.open(self.productId, kind: .app, policy: .untilCancelled)
+        }
+
+        #expect(reporter.reported.isEmpty)
+    }
+
+    @Test func backgroundRefreshFailuresAreNotReported() async throws {
+        let reporter = RecordingIssueReporter()
+        let environment = try Environment(self, reporter: reporter)
+        _ = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
+
+        contracts.failAllReads(with: DotNsContractError.contractCallFailed(Unreachable()))
+
+        #expect(await environment.loader.refresh(productId).isEmpty)
+        #expect(reporter.reported.isEmpty)
+    }
+
+    @Test func supersededArchiveIsRemovedOnceNothingUsesIt() async throws {
+        let environment = try Environment(self)
+        try await applyUpdatedArchive(using: environment)
+
+        await environment.loader.removeSupersededContent(keeping: [])
+
+        #expect(!storage.contentExists(contentHash: contentHash.toHex()))
+        #expect(storage.contentExists(contentHash: updatedContentHash.toHex()))
+    }
+
+    @Test func pinnedArchiveIsKept() async throws {
+        let environment = try Environment(self)
+        try await applyUpdatedArchive(using: environment)
+
+        await environment.loader.removeSupersededContent(keeping: [contentHash.toHex()])
+
+        #expect(storage.contentExists(contentHash: contentHash.toHex()))
+    }
+
+    @Test func appliedArchiveIsKeptWithoutBeingPinned() async throws {
+        let environment = try Environment(self)
+        _ = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
+
+        await environment.loader.removeSupersededContent(keeping: [])
+
+        #expect(storage.contentExists(contentHash: contentHash.toHex()))
+    }
+
+    @Test func recentlyWrittenArchiveIsKept() async throws {
+        let environment = try Environment(self, now: Date(timeIntervalSince1970: 60))
+        try await applyUpdatedArchive(using: environment)
+
+        await environment.loader.removeSupersededContent(keeping: [])
+
+        #expect(storage.contentExists(contentHash: contentHash.toHex()))
+    }
 }
 
 private extension ProductContentLoaderTests {
+    func applyUpdatedArchive(using environment: Environment) async throws {
+        _ = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
+        contracts.set(contentHash: updatedContentHash, name: productId)
+        let update = try #require(await environment.loader.refresh(productId).first)
+        await environment.loader.apply(update)
+    }
+
     var chainUnreachable: Error {
         DotNsContractError.contractCallFailed(Unreachable())
     }
@@ -298,7 +487,10 @@ private extension ProductContentLoaderTests {
             _ suite: ProductContentLoaderTests,
             fetchFailures: [Error] = [],
             isPathSatisfied: Bool = true,
-            expiringBackgroundRuns: Int = 0
+            expiringBackgroundRuns: Int = 0,
+            reporter: RecordingIssueReporter = RecordingIssueReporter(),
+            dates: [Date] = [Date(timeIntervalSince1970: 0)],
+            now: Date = Date()
         ) throws {
             fetcher = StubCarFetcher(failures: fetchFailures)
             path = StubNetworkPath(isSatisfied: isPathSatisfied)
@@ -322,7 +514,9 @@ private extension ProductContentLoaderTests {
                 ),
                 environment: ProductContentLoader.Environment(
                     pathProvider: path,
-                    backgroundExecutor: StubBackgroundExecutor(expiringRuns: expiringBackgroundRuns)
+                    backgroundExecutor: StubBackgroundExecutor(expiringRuns: expiringBackgroundRuns),
+                    diagnostics: ProductLoadDiagnostics(reporter: reporter, dateProvider: SequencedDateProvider(dates)),
+                    dateProvider: SequencedDateProvider([now])
                 ),
                 timing: ProductContentLoader.Timing(
                     maxBackoff: .seconds(4),

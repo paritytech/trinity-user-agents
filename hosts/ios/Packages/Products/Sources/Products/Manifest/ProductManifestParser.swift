@@ -14,7 +14,7 @@ protocol ProductManifestParsing {
     func parseExecutable(
         _ rawText: String?,
         kind: ExecutableKind,
-        identifier: ProductId
+        identifier: ProductExecutable.Identifier
     ) -> ProductExecutable?
 }
 
@@ -80,7 +80,7 @@ struct ProductManifestParser: ProductManifestParsing {
     func parseExecutable(
         _ rawText: String?,
         kind: ExecutableKind,
-        identifier: ProductId
+        identifier: ProductExecutable.Identifier
     ) -> ProductExecutable? {
         guard let rawText, !rawText.isEmpty else { return nil }
 
@@ -126,7 +126,7 @@ private extension ProductManifestParser {
 
     func parseWidget(
         _ dto: ExecutableManifestDTO,
-        identifier: ProductId,
+        identifier: ProductExecutable.Identifier,
         appVersion: SemVer
     ) -> ProductExecutable? {
         guard let heights = dto.dimensions?.height, !heights.isEmpty else {
@@ -146,7 +146,7 @@ private extension ProductManifestParser {
 
     func parseWorker(
         _ dto: ExecutableManifestDTO,
-        identifier: ProductId,
+        identifier: ProductExecutable.Identifier,
         appVersion: SemVer
     ) -> ProductExecutable? {
         guard let entrypoint = dto.entrypoint, !entrypoint.isEmpty else {
@@ -187,7 +187,7 @@ private extension ProductManifestParser {
     func pocketCards(
         _ dto: PocketDTO?,
         includesPocket: Bool,
-        identifier: ProductId
+        identifier: ProductExecutable.Identifier
     ) -> [PocketCardDefinition] {
         let cards: [PocketCardDTO]
 

@@ -107,6 +107,66 @@ struct TrUAPIWorkerManagerTests {
         #expect(manager.currentExecution(of: "game.paseo") == nil)
     }
 
+    /// A release of the worker's archive restarts it, so the next boot reads
+    /// the newly applied archive.
+    @Test
+    func reloadBootsAFreshWorker() async throws {
+        let builder = StubWorkerBuilder()
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+
+        manager.demandChanged(productId: "game.paseo", transition: .start)
+        try await execution(of: "game.paseo", in: manager)
+        let previous = try #require(builder.executions["game.paseo"])
+        await manager.reload(productId: "game.paseo")
+        try await withTimeout(.hangGuard) { await previous.awaitClose() }
+        let reloaded = try await execution(of: "game.paseo", in: manager)
+
+        #expect(reloaded !== previous)
+        #expect(builder.built == ["game.paseo", "game.paseo"])
+    }
+
+    /// A stop the ledger sends while a reload is disposing the worker must
+    /// still land: a restart that overtook it would run a worker nobody holds,
+    /// and the core never sends another stop to clear it.
+    @Test
+    func aStopSentDuringAReloadLeavesNoWorker() async throws {
+        let builder = StubWorkerBuilder()
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+        let disposing = AsyncStream<Void>.makeStream()
+        let releaseDispose = AsyncStream<Void>.makeStream()
+
+        manager.demandChanged(productId: "game.paseo", transition: .start)
+        try await execution(of: "game.paseo", in: manager)
+        try #require(builder.engines["game.paseo"]).onDestroy = {
+            disposing.continuation.yield()
+            for await _ in releaseDispose.stream {}
+        }
+        let reloading = Task { await manager.reload(productId: "game.paseo") }
+        try await withTimeout(.hangGuard) {
+            for await _ in disposing.stream {
+                return
+            }
+        }
+        manager.demandChanged(productId: "game.paseo", transition: .stop)
+        releaseDispose.continuation.finish()
+        await reloading.value
+        try await barrier(manager)
+
+        try await noExecution(of: "game.paseo", in: manager)
+        #expect(manager.currentExecution(of: "game.paseo") == nil)
+    }
+
+    @Test
+    func reloadDoesNotStartAWorkerThatIsNotRunning() async throws {
+        let builder = StubWorkerBuilder()
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+
+        await manager.reload(productId: "game.paseo")
+        try await barrier(manager)
+
+        #expect(builder.built == ["barrier.paseo"])
+    }
+
     /// A worker whose engine fails once it is already in the running map must
     /// leave nothing behind: the core keeps counting the reference the card
     /// holds, so no further stop arrives to clear a half-started entry, and

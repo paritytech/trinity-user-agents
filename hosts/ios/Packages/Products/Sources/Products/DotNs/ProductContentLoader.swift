@@ -1,6 +1,7 @@
 import AsyncExtensions
 import BackgroundExecution
 import Foundation
+import FoundationExt
 import SDKLogger
 import StructuredConcurrency
 
@@ -8,11 +9,24 @@ public actor ProductContentLoader {
     public struct Environment: Sendable {
         let pathProvider: NetworkPathProviding
         let backgroundExecutor: BackgroundExecuting
+        let diagnostics: ProductLoadDiagnostics
+        let dateProvider: DateProviding
 
-        public init(pathProvider: NetworkPathProviding, backgroundExecutor: BackgroundExecuting) {
+        public init(
+            pathProvider: NetworkPathProviding,
+            backgroundExecutor: BackgroundExecuting,
+            diagnostics: ProductLoadDiagnostics = ProductLoadDiagnostics(),
+            dateProvider: DateProviding = NowDateProvider()
+        ) {
             self.pathProvider = pathProvider
             self.backgroundExecutor = backgroundExecutor
+            self.diagnostics = diagnostics
+            self.dateProvider = dateProvider
         }
+    }
+
+    private enum Constants {
+        static let minimumAgeBeforeRemoval: TimeInterval = 10 * 60
     }
 
     public struct Timing: Sendable {
@@ -72,7 +86,12 @@ extension ProductContentLoader: ProductContentLoading {
 
         try Task.checkCancellation()
 
-        let (manifest, content) = try await retrying(productId, policy: policy, onPhase: onPhase) { [fetcher] in
+        let (manifest, content) = try await retrying(
+            productId,
+            policy: policy,
+            trigger: .open,
+            onPhase: onPhase
+        ) { [fetcher] in
             onPhase(.resolving)
 
             let manifest = try await fetcher.fetchManifest(productId)
@@ -88,20 +107,23 @@ extension ProductContentLoader: ProductContentLoading {
         return content
     }
 
-    public func openWorker(_ productId: ProductId) async throws -> ResolvedProduct {
+    public func openWorker(_ productId: ProductId, policy: ProductLoadPolicy) async throws -> ResolvedProduct {
         if let cached = try? await cache.manifest(productId) {
-            await stageWorkerIfMissing(of: cached)
+            await stageWorkerIfMissing(of: cached, policy: policy)
             scheduleRefresh(productId)
             return cached.product
         }
 
-        let manifest = try await fetcher.fetchManifest(productId)
+        let manifest = try await retrying(productId, policy: policy, trigger: .open) { [fetcher] in
+            try await fetcher.fetchManifest(productId)
+        }
         await cache.adopt(manifest)
-        await stageWorkerIfMissing(of: manifest)
+        await stageWorkerIfMissing(of: manifest, policy: policy)
 
         return manifest.product
     }
 
+    @discardableResult
     public func refresh(_ productId: ProductId) async -> [ExecutableRelease] {
         let key = productId.lowercased()
 
@@ -121,6 +143,11 @@ extension ProductContentLoader: ProductContentLoading {
         await cache.apply(release)
     }
 
+    public func removeSupersededContent(keeping pinnedHashes: Set<String>) async {
+        let cutoff = await environment.dateProvider.read().addingTimeInterval(-Constants.minimumAgeBeforeRemoval)
+        await cache.removeSupersededContent(keeping: pinnedHashes, modifiedBefore: cutoff)
+    }
+
     public nonisolated func updates() -> AnyAsyncSequence<ExecutableRelease> {
         updatesSubject.eraseToAnyAsyncSequence()
     }
@@ -128,11 +155,11 @@ extension ProductContentLoader: ProductContentLoading {
 
 private struct FetchedContent: Sendable {
     let manifest: ProductManifest
-    let archives: [ProductId: DotNsResolvedContent]
+    let archives: [ProductExecutable.Identifier: DotNsResolvedContent]
 }
 
 private extension ProductManifest {
-    func release(of contentId: ProductId, archive: DotNsResolvedContent?) -> ExecutableRelease {
+    func release(of contentId: ProductExecutable.Identifier, archive: DotNsResolvedContent?) -> ExecutableRelease {
         ExecutableRelease(
             contentId: contentId,
             archive: archive,
@@ -154,10 +181,10 @@ private extension ProductContentLoader {
     }
 
     func scheduleRefresh(_ productId: ProductId) {
-        Task { _ = await self.refresh(productId) }
+        Task { await self.refresh(productId) }
     }
 
-    func stageWorkerIfMissing(of manifest: ProductManifest) async {
+    func stageWorkerIfMissing(of manifest: ProductManifest, policy: ProductLoadPolicy) async {
         guard
             let worker = ProductWorkerSource.published(for: manifest.product),
             await cache.appliedArchive(of: worker.contentId) == nil
@@ -166,7 +193,10 @@ private extension ProductContentLoader {
         }
 
         do {
-            let archive = try await fetcher.stage(worker.contentId)
+            let productId = manifest.product.id
+            let archive = try await retrying(productId, policy: policy, trigger: .open) { [fetcher] in
+                try await fetcher.stage(worker.contentId)
+            }
             await cache.apply(manifest.release(of: worker.contentId, archive: archive))
         } catch {
             logger.error("Failed to stage the worker archive \(worker.contentId): \(error)")
@@ -179,7 +209,7 @@ private extension ProductContentLoader {
         let served = await servedContentIds(of: applied.product)
 
         do {
-            let latest = try await retrying(productId, policy: timing.refreshPolicy) { [fetcher] in
+            let latest = try await retrying(productId, policy: timing.refreshPolicy, trigger: .refresh) { [fetcher] in
                 try await Self.fetchLatest(productId, kinds: Array(served.keys), using: fetcher)
             }
 
@@ -190,8 +220,8 @@ private extension ProductContentLoader {
         }
     }
 
-    func servedContentIds(of resolved: ResolvedProduct) async -> [ExecutableKind: ProductId] {
-        var served: [ExecutableKind: ProductId] = [:]
+    func servedContentIds(of resolved: ResolvedProduct) async -> [ExecutableKind: ProductExecutable.Identifier] {
+        var served: [ExecutableKind: ProductExecutable.Identifier] = [:]
 
         for kind in ExecutableKind.allCases {
             let contentId = resolved.contentId(for: kind)
@@ -212,7 +242,7 @@ private extension ProductContentLoader {
         let manifest = try await fetcher.fetchManifest(productId)
         let contentIds = Set(kinds.map(manifest.product.contentId(for:)))
 
-        var archives: [ProductId: DotNsResolvedContent] = [:]
+        var archives: [ProductExecutable.Identifier: DotNsResolvedContent] = [:]
 
         for contentId in contentIds {
             do {
@@ -225,7 +255,7 @@ private extension ProductContentLoader {
         return FetchedContent(manifest: manifest, archives: archives)
     }
 
-    func commit(_ latest: FetchedContent, served: Set<ProductId>) async -> [ExecutableRelease] {
+    func commit(_ latest: FetchedContent, served: Set<ProductExecutable.Identifier>) async -> [ExecutableRelease] {
         await cache.adopt(latest.manifest)
 
         var updates: [ExecutableRelease] = []
@@ -256,9 +286,12 @@ private extension ProductContentLoader {
     func retrying<T: Sendable>(
         _ productId: ProductId,
         policy: ProductLoadPolicy,
+        trigger: ProductLoadTrigger,
         onPhase: @escaping ProductLoadPhaseHandler = { _ in },
         _ operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
+        let diagnosis = await environment.diagnostics.diagnosis(of: productId, trigger: trigger)
+
         let strategy = NetworkFetchRetryStrategy(
             classifier: ProductLoadErrorClassifier(),
             maxAttempts: policy.maxAttempts,
@@ -269,13 +302,15 @@ private extension ProductContentLoader {
                 switch event {
                 case .waitingForNetwork:
                     onPhase(.waitingForNetwork)
+                case .networkRestored:
+                    await diagnosis?.restart()
                 case let .attemptFailed(attempt, error):
                     logger.warning("Product load attempt \(attempt) failed for \(productId): \(error)")
+                    await diagnosis?.recordFailure(error)
                 case let .willRetry(attempt):
                     onPhase(.retrying(attempt: attempt))
-                case .networkRestored,
-                     .notRetryable:
-                    break
+                case let .notRetryable(error):
+                    diagnosis?.reportUnavailable(error)
                 }
             }
         )

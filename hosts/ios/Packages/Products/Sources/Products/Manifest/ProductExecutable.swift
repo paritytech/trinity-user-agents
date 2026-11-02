@@ -3,22 +3,24 @@ import Foundation
 /// One deployable artifact. `identifier` is the subname the executable was read from, which is
 /// also the name its content archive resolves under.
 public enum ProductExecutable: Hashable, Sendable {
+    public typealias Identifier = String
+
     case app(App)
     case widget(Widget)
     case worker(Worker)
 
     public struct App: Hashable, Sendable {
-        public let identifier: ProductId
+        public let identifier: ProductExecutable.Identifier
         public let appVersion: SemVer
 
-        public init(identifier: ProductId, appVersion: SemVer) {
+        public init(identifier: ProductExecutable.Identifier, appVersion: SemVer) {
             self.identifier = identifier
             self.appVersion = appVersion
         }
     }
 
     public struct Widget: Hashable, Sendable {
-        public let identifier: ProductId
+        public let identifier: ProductExecutable.Identifier
         public let appVersion: SemVer
         public let description: String?
         /// Grid-step heights the widget can render at.
@@ -26,7 +28,7 @@ public enum ProductExecutable: Hashable, Sendable {
         public let width: Int
 
         public init(
-            identifier: ProductId,
+            identifier: ProductExecutable.Identifier,
             appVersion: SemVer,
             description: String?,
             heights: [Int],
@@ -56,14 +58,14 @@ public enum ProductExecutable: Hashable, Sendable {
             }
         }
 
-        public let identifier: ProductId
+        public let identifier: ProductExecutable.Identifier
         public let appVersion: SemVer
         /// Entry module path relative to the executable directory root.
         public let entrypoint: String
         public let modalities: [Modality]
 
         public init(
-            identifier: ProductId,
+            identifier: ProductExecutable.Identifier,
             appVersion: SemVer,
             entrypoint: String,
             modalities: [Modality]

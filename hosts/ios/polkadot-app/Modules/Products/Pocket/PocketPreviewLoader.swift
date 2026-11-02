@@ -8,7 +8,7 @@ protocol PocketArchiveReading {
     /// Reads at most `maxBytes`, refusing anything longer rather than holding
     /// it: what the file weighs is the product's choice, and this is read
     /// before the user has approved anything.
-    func file(contentId: ProductId, path: String, maxBytes: Int) async throws -> Data
+    func file(contentId: ProductExecutable.Identifier, path: String, maxBytes: Int) async throws -> Data
 }
 
 enum PocketPreviewError: Error, CustomStringConvertible {
@@ -42,7 +42,7 @@ struct PocketPreviewLoader {
         self.fetch = fetch
     }
 
-    func load(contentId: ProductId, preview: PocketCardPreview) async throws -> RendererNode {
+    func load(contentId: ProductExecutable.Identifier, preview: PocketCardPreview) async throws -> RendererNode {
         let data =
             switch preview {
             case let .archive(path):

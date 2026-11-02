@@ -121,7 +121,8 @@ private extension SPAFlowStateProvider {
             ),
             environment: ProductContentLoader.Environment(
                 pathProvider: ProductNetworkPath(),
-                backgroundExecutor: backgroundExecutor
+                backgroundExecutor: backgroundExecutor,
+                diagnostics: ProductLoadDiagnostics(reporter: IssueReportingFacade.shared)
             ),
             logger: Logger.shared
         )
