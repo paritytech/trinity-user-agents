@@ -58,6 +58,17 @@ final class TabBarEdgeGlowView: UIView {
         refreshLayers()
     }
 
+    /// Restores the tucked bar when VoiceOver activates the glow, its one accessibility element.
+    var onAccessibilityActivate: (() -> Void)?
+
+    override func accessibilityActivate() -> Bool {
+        guard let onAccessibilityActivate else {
+            return false
+        }
+        onAccessibilityActivate()
+        return true
+    }
+
     /// Sets the whole view's opacity, cancelling any fade out in progress.
     func setOpacity(_ opacity: CGFloat) {
         layer.removeAnimation(forKey: Self.fadeKey)

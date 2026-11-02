@@ -144,7 +144,7 @@ final class TabBarFoldController {
     /// screen's override without restarting that settle.
     func foldPanEnded() {
         isDragging = false
-        motion.end(time: CACurrentMediaTime(), geometry: geometry)
+        motion.end(time: CACurrentMediaTime(), geometry: geometry, reduceMotion: isReduceMotionEnabled)
         if motion.isSettling {
             startSettling()
         }
@@ -159,6 +159,15 @@ final class TabBarFoldController {
 
     func refresh() {
         apply(state: policyState)
+    }
+
+    /// Ends a running settle at its rest when Reduce Motion turns on, so the rest of it does not swing.
+    func reduceMotionChanged() {
+        guard isReduceMotionEnabled, motion.isSettling else {
+            return
+        }
+        motion.snap(to: motion.destination)
+        writeTransform(dockletTransform())
     }
 
     /// Feeds a touch to the auto-hide. A touch on the Docklet cancels a pending outside-touch tuck.
@@ -181,6 +190,10 @@ final class TabBarFoldController {
 }
 
 private extension TabBarFoldController {
+    var isReduceMotionEnabled: Bool {
+        UIAccessibility.isReduceMotionEnabled
+    }
+
     var policyState: TabBarVisibilityState {
         TabBarVisibilityPolicy.state(derived: foldDerived, override: userOverride)
     }
@@ -243,13 +256,22 @@ private extension TabBarFoldController {
             animateSlide(to: pose(for: state))
             return
         }
-        motion.settle(to: rest, now: CACurrentMediaTime(), isUserDriven: isUserDriven)
+        motion.settle(
+            to: rest,
+            now: CACurrentMediaTime(),
+            isUserDriven: isUserDriven,
+            reduceMotion: isReduceMotionEnabled
+        )
         startSettling()
     }
 
     /// Slides between the hidden pose and a docklet pose with a plain spring, since the display link only drives
     /// the docklet pose.
     func animateSlide(to transform: CGAffineTransform) {
+        guard !isReduceMotionEnabled else {
+            writeTransform(transform)
+            return
+        }
         let animator = UIViewPropertyAnimator(duration: 0.45, dampingRatio: 0.85) { [weak self] in
             self?.writeTransform(transform)
         }
@@ -335,9 +357,12 @@ private extension TabBarFoldController {
     }
 
     /// The Edge glow follows the hide progress while a finger drags the bar or it settles toward tucked. A settle
-    /// toward shown fades it out instead.
+    /// toward shown fades it out instead. A Reduce Motion fade crosses the glow with the content.
     var glowOpacity: TabBarEdgeGlowOpacity {
-        isDragging || motion.destination == .tucked ? .progress(motion.progress) : .fadeOut
+        if motion.isFading {
+            return .progress(1 - motion.contentOpacity)
+        }
+        return isDragging || motion.destination == .tucked ? .progress(motion.progress) : .fadeOut
     }
 
     /// The docklet pose about the centre of the full-bleed chrome, which is where the chrome's transform is anchored.
@@ -365,7 +390,7 @@ private extension TabBarFoldController {
         pendingTuckKind = .autoHide
         commit(.tucked)
         cancelFoldAnimator()
-        motion.quietSettle(to: .tucked, now: CACurrentMediaTime())
+        motion.quietSettle(to: .tucked, now: CACurrentMediaTime(), reduceMotion: isReduceMotionEnabled)
         startSettling()
         rescheduleAutoHide()
     }
@@ -381,7 +406,7 @@ private extension TabBarFoldController {
     }
 
     func armNudge() {
-        guard nudge.arm() else {
+        guard !isReduceMotionEnabled, nudge.arm() else {
             return
         }
         nudgeTask = Task.delayed(by: DockletNudge.delaySeconds) { [weak self] in

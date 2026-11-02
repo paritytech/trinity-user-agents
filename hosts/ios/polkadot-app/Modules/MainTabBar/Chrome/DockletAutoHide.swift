@@ -12,6 +12,8 @@ enum DockletHideBlocker: Hashable {
     case notShown
     /// A tip about the tucked Docklet is on screen.
     case tipShown
+    /// VoiceOver is running. The auto-hide never tucks the Docklet while it is on.
+    case voiceOver
 }
 
 /// When the Docklet tucks itself. The first outside touch tucks it at once. Every touch and key press restarts an

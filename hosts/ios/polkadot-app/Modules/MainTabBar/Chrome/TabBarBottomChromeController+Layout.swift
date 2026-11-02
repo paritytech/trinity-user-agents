@@ -32,6 +32,11 @@ extension TabBarBottomChromeController {
     /// and the grab zone on the passthrough root does the restoring.
     func installEdgeGlow() {
         edgeGlowView.alpha = 0
+        edgeGlowView.accessibilityLabel = String(localized: .Common.tabBarShowAccessibilityLabel)
+        edgeGlowView.accessibilityTraits = .button
+        edgeGlowView.onAccessibilityActivate = { [weak self] in
+            self?.foldController.setUserOverride(.shown)
+        }
         view.addSubview(edgeGlowView)
         let passthrough = view as? TabBarChromePassthroughView
         passthrough?.onGrabZoneTouchBegan = { [weak self] in
@@ -71,6 +76,37 @@ extension TabBarBottomChromeController {
             name: UIResponder.keyboardWillChangeFrameNotification,
             object: nil
         )
+    }
+
+    /// VoiceOver blocks the auto-hide while it runs. Reduce Motion is read live by each motion, so only its change is
+    /// observed, to end a settle that is running.
+    func installAccessibilityObservers() {
+        handleVoiceOverStatusChange()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleVoiceOverStatusChange),
+            name: UIAccessibility.voiceOverStatusDidChangeNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleReduceMotionStatusChange),
+            name: UIAccessibility.reduceMotionStatusDidChangeNotification,
+            object: nil
+        )
+    }
+
+    /// A tucked bar is off screen, so VoiceOver reaches it through the Edge glow alone. Focus moves to the glow when
+    /// the bar tucks, and to the bar when it comes back.
+    func applyAccessibility(for state: TabBarVisibilityState) {
+        let isTucked = state == .tucked
+        chromeSurface.accessibilityElementsHidden = isTucked
+        edgeGlowView.isAccessibilityElement = isTucked
+        if isTucked {
+            UIAccessibility.post(notification: .layoutChanged, argument: edgeGlowView)
+        } else if state == .shown {
+            UIAccessibility.post(notification: .layoutChanged, argument: chromeSurface)
+        }
     }
 
     /// Reports each touch in the window to the auto-hide. The observer never recognizes, so no touch is taken.
@@ -157,6 +193,14 @@ private extension TabBarBottomChromeController {
             return
         }
         panelController.setPanel(nil)
+    }
+
+    @objc func handleVoiceOverStatusChange() {
+        foldController.setAutoHideBlocked(.voiceOver, UIAccessibility.isVoiceOverRunning)
+    }
+
+    @objc func handleReduceMotionStatusChange() {
+        foldController.reduceMotionChanged()
     }
 
     /// The keyboard's duration drives the lift. The lift, the room above the bar and the filled panel's height

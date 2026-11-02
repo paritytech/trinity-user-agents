@@ -11,11 +11,11 @@ struct DockletMotionTests {
     )
 
     /// Drags from `touchX` by `translationX`, then releases with no velocity at time zero.
-    private func release(from touchX: CGFloat, translationX: CGFloat) -> DockletMotion {
+    private func release(from touchX: CGFloat, translationX: CGFloat, reduceMotion: Bool = false) -> DockletMotion {
         var motion = DockletMotion()
         motion.begin(touch: CGPoint(x: touchX, y: 816), time: 0, geometry: geometry)
         _ = motion.move(location: CGPoint(x: touchX + translationX, y: 816), translationX: translationX, time: 0)
-        motion.end(time: 0, geometry: geometry)
+        motion.end(time: 0, geometry: geometry, reduceMotion: reduceMotion)
         return motion
     }
 
@@ -399,5 +399,61 @@ struct DockletMotionTests {
         #expect(DockletContentFade.opacity(progress: 0.906) < 1e-3)
         #expect(DockletContentFade.opacity(progress: 0.91) == 0)
         #expect(DockletContentFade.opacity(progress: 1) == 0)
+    }
+
+    @Test("A Reduce Motion tuck holds its pose, fades the content out over 0.22 s, then lands tucked")
+    func reducedTuckFadesThenLands() {
+        var motion = release(from: 40, translationX: 200, reduceMotion: true)
+        let heldPose = motion.pose(geometry: geometry)
+        let heldProgress = motion.progress
+        #expect(motion.tick(now: 0.11) == nil)
+        #expect(abs(motion.contentOpacity - 0.5) < 1e-6)
+        #expect(motion.progress == heldProgress)
+        #expect(isNear(motion.pose(geometry: geometry), heldPose))
+        #expect(motion.tick(now: 0.22) == .heavy)
+        #expect(!motion.isSettling)
+        #expect(motion.progress == 1)
+        #expect(motion.contentOpacity == 1)
+    }
+
+    @Test("A Reduce Motion restore places the bar at shown at once and fades the content in over 0.22 s")
+    func reducedRestoreFadesContentIn() {
+        var motion = DockletMotion()
+        motion.snap(to: .tucked)
+        motion.settle(to: .shown, now: 0, isUserDriven: true, reduceMotion: true)
+        #expect(motion.progress == 0)
+        #expect(motion.contentOpacity == 0)
+        #expect(motion.tick(now: 0.11) == nil)
+        #expect(abs(motion.contentOpacity - 0.5) < 1e-6)
+        #expect(motion.progress == 0)
+        #expect(motion.tick(now: 0.22) == .medium)
+        #expect(motion.contentOpacity == 1)
+        #expect(!motion.isSettling)
+    }
+
+    @Test("A Reduce Motion drag moves the bar with the finger, and only the release starts the fade")
+    func reducedDragFollowsFingerUntilRelease() {
+        let travel = geometry.hideTravel(touchX: 40)
+        var motion = DockletMotion()
+        motion.begin(touch: CGPoint(x: 40, y: 816), time: 0, geometry: geometry)
+        _ = motion.move(location: CGPoint(x: 40 + 0.5 * travel, y: 816), translationX: 0.5 * travel, time: 0.1)
+        #expect(abs(motion.progress - 0.5) < 1e-9)
+        #expect(!motion.isSettling)
+        motion.end(time: 0.1, geometry: geometry, reduceMotion: true)
+        #expect(motion.isFading)
+        #expect(abs(motion.progress - 0.5) < 1e-9)
+    }
+
+    @Test("A Reduce Motion quiet hide fades the content out over 0.22 s and lands tucked with no haptic")
+    func reducedQuietHideFadesThenLands() {
+        var motion = DockletMotion()
+        motion.quietSettle(to: .tucked, now: 0, reduceMotion: true)
+        #expect(motion.tick(now: 0.11) == nil)
+        #expect(abs(motion.contentOpacity - 0.5) < 1e-6)
+        #expect(motion.progress == 0)
+        #expect(motion.tick(now: 0.22) == nil)
+        #expect(!motion.isSettling)
+        #expect(motion.progress == 1)
+        #expect(motion.contentOpacity == 0)
     }
 }

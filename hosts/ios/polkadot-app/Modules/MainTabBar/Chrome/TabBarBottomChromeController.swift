@@ -58,6 +58,7 @@ final class TabBarBottomChromeController: UIViewController {
             state: { [weak self] state in
                 self?.tipController.setBarShown(state == .shown)
                 self?.dockletTipController.barStateChanged(state)
+                self?.applyAccessibility(for: state)
             },
             contentOpacity: { [weak self] opacity in
                 self?.barModel.contentOpacity = opacity
@@ -189,6 +190,7 @@ final class TabBarBottomChromeController: UIViewController {
         installOutsideTapRecognizer()
         installGrabRecognizer()
         installKeyboardObserver()
+        installAccessibilityObservers()
         installTouchObserver()
     }
 

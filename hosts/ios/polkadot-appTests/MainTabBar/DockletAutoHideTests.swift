@@ -57,12 +57,23 @@ struct DockletAutoHideTests {
         .motionRunning,
         .notShown,
         .tipShown,
+        .voiceOver,
     ])
     func blockerSuppressesHide(_ blocker: DockletHideBlocker) {
         var autoHide = DockletAutoHide(startedAt: 0)
         autoHide.setBlocked(blocker, true, at: 0)
         #expect(autoHide.deadline == nil)
         #expect(!autoHide.isDue(at: 100))
+    }
+
+    @Test("Switching VoiceOver off restarts the idle countdown from the time it was switched off")
+    func clearingVoiceOverRestartsCountdown() {
+        var autoHide = DockletAutoHide(startedAt: 0)
+        autoHide.setBlocked(.voiceOver, true, at: 0)
+        autoHide.setBlocked(.voiceOver, false, at: 20)
+        #expect(autoHide.deadline == 20 + idle)
+        #expect(!autoHide.isDue(at: 22.9))
+        #expect(autoHide.isDue(at: 23))
     }
 
     @Test("Clearing the last blocker restarts the idle countdown from the clear time")
