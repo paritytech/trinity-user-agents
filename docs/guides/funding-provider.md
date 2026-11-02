@@ -7,12 +7,15 @@ building one. The [RFC](../rfcs/funding-modality.md) is the full contract, and t
 
 ## What you build
 
-A provider is a TrUAPI product with two parts:
+A provider is a TrUAPI product with a Worker and, if you want your own screens, an App:
 
-| Part       | What it does                                                                                     |
-| ---------- | ------------------------------------------------------------------------------------------------ |
-| **Worker** | Answers quotes and runs each session: talks to your API, moves funds, reports progress.          |
-| **App**    | Your own screens (card form, bank details, KYC), which the Worker shows inside the host's frame. |
+| Part                 | What it does                                                                                     |
+| -------------------- | ------------------------------------------------------------------------------------------------ |
+| **Worker**           | Answers quotes and runs each session: talks to your API, moves funds, reports progress.          |
+| **App** _(optional)_ | Your own screens (card form, bank details, KYC), which the Worker shows inside the host's frame. |
+
+Without an App, the Worker shows external https pages instead, such as your hosted checkout or a KYC vendor's flow, or
+no screen at all, as a crypto deposit to an address needs none.
 
 You do not build the overlay, the provider list, the session sheet or the history: the host draws them from what your
 Worker reports, in the user's language. Your Worker never decides whether a session succeeded either: the core does,
@@ -120,10 +123,11 @@ await client.fundingProvider.presentFrame({ intent, target: { tag: "App", value:
 await client.fundingProvider.presentFrame({ intent, target: { tag: "Page", value: { url, returnUrl } } });
 ```
 
-`App` opens a route of your own App; `Page` opens an external https page, such as an onramp widget, and hands back the
-`returnUrl` it reached, query included. `presentFrame` answers once the frame closes: `Closed`, `Dismissed` by the user,
-or `Returned { url }`. When the user has done what the screen was for, call `fundingProvider.closeFrame({ intent })`:
-the host closes it and shows the session sheet instead.
+`App` opens a route of your own App, if you ship one; `Page` opens an external https page, such as an onramp widget,
+with its address shown, and hands back the `returnUrl` it reached, query included, so the Worker can read the result
+from it. A page cannot call TrUAPI: the Worker still takes the result and moves the funds. `presentFrame` answers once
+the frame closes: `Closed`, `Dismissed` by the user, or `Returned { url }`. When the user has done what the screen was
+for, call `fundingProvider.closeFrame({ intent })`: the host closes it and shows the session sheet instead.
 
 ## 6. Say what is happening within a step
 
