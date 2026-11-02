@@ -22,6 +22,7 @@ use super::{
 	SsoRequestService,
 };
 use crate::{
+	Spawner,
 	host_logic::{
 		session::{SessionInfo, encode_persisted_session},
 		sso::pairing::{
@@ -32,7 +33,6 @@ use crate::{
 		},
 		statement_store::{decode_verified_statement_data, parse_new_statements_result},
 	},
-	subscription::Spawner,
 };
 
 use crate::platform::{CoreStorage, CoreStorageKey};
@@ -475,7 +475,7 @@ async fn wait_for_v2_pairing_success(
 					// `RpcClient` is transport-only here; spawning lets live
 					// notifications continue to be consumed while a snapshot
 					// query is waiting for backlog completion or timeout.
-					(spawner)(fut.boxed());
+					spawner.spawn(fut);
 				}
 				poll.set(futures_timer::Delay::new(PAIRING_QUERY_INTERVAL).fuse());
 			}
@@ -556,7 +556,7 @@ mod tests {
 		test_support::{
 			StubPlatform, core_storage_test_key, pairing_device_from_deeplink,
 			peer_statement_keypair, runtime_config, session_info, signed_test_statement,
-			stub_platform, subscribe_ack_frame, test_spawner, wallet_device_encryption_public_key,
+			stub_platform, subscribe_ack_frame, wallet_device_encryption_public_key,
 			wallet_handshake_statement,
 		},
 	};
@@ -582,7 +582,7 @@ mod tests {
 	fn request_login_presents_pairing_and_rejects_when_cancelled() {
 		let platform = stub_platform();
 		let (host, pairing) =
-			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 		let sso = pairing.session().clone();
 		let host = Arc::new(host);
 		cancel_on_pairing(&platform, sso);
@@ -618,7 +618,7 @@ mod tests {
 		let platform =
 			Arc::new(StubPlatform { pairing_silent_after_subscribe: true, ..Default::default() });
 		let (host, _pairing) =
-			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 		let host = Arc::new(host);
 		let cx = CallContext::default();
 		let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
@@ -639,7 +639,7 @@ mod tests {
 	fn request_login_gives_up_when_the_pairing_topic_never_acks() {
 		let platform = stub_platform();
 		let (host, _pairing) =
-			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 		let host = Arc::new(host);
 		let cx = CallContext::default();
 		let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
@@ -663,7 +663,7 @@ mod tests {
 	#[test]
 	fn request_login_gives_up_when_core_storage_never_answers() {
 		let platform = Arc::new(StubPlatform { core_storage_pending: true, ..Default::default() });
-		let host = ProductRuntimeHost::new_compat(platform, test_spawner());
+		let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
 		let cx = CallContext::default();
 		let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
 
@@ -681,7 +681,7 @@ mod tests {
 	fn request_login_gives_up_when_the_statement_store_never_connects() {
 		let platform = Arc::new(StubPlatform { chain_connect_pending: true, ..Default::default() });
 		let (host, _pairing) =
-			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 		let host = Arc::new(host);
 		let cx = CallContext::default();
 		let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
@@ -699,7 +699,7 @@ mod tests {
 	fn request_login_regenerates_unmarked_pairing_device_identity_between_attempts() {
 		let platform = stub_platform();
 		let (host, pairing) =
-			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 		let sso = pairing.session().clone();
 		let host = Arc::new(host);
 		cancel_on_pairing(&platform, sso);
@@ -749,7 +749,7 @@ mod tests {
 			vec![0xde, 0xad],
 		);
 		let (host, pairing) =
-			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 		let sso = pairing.session().clone();
 		let host = Arc::new(host);
 		cancel_on_pairing(&platform, sso);
@@ -803,7 +803,7 @@ mod tests {
 			],
 			..Default::default()
 		});
-		let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+		let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
 		let cx = CallContext::default();
 		let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
 		let err = futures::executor::block_on(host.request_login(&cx, request)).unwrap_err();
@@ -843,8 +843,11 @@ mod tests {
 			session_writes: session_writes.clone(),
 			..Default::default()
 		});
-		let host =
-			ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+		let host = ProductRuntimeHost::new(
+			platform.clone(),
+			runtime_config("myapp.dot"),
+			Spawner::for_test(),
+		);
 		let mut statuses = host.test_session_state().subscribe();
 		assert_eq!(
 			futures::executor::block_on(statuses.next()).unwrap(),
@@ -924,7 +927,7 @@ mod tests {
 		let platform =
 			Arc::new(StubPlatform { pairing_pending_response: true, ..Default::default() });
 		let (host, pairing) =
-			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 		let sso = pairing.session().clone();
 		let cancel_host = sso.clone();
 		*platform.on_auth_state.lock().expect("auth state hook mutex poisoned") =
@@ -954,8 +957,11 @@ mod tests {
 			session_writes: session_writes.clone(),
 			..Default::default()
 		});
-		let host =
-			ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+		let host = ProductRuntimeHost::new(
+			platform.clone(),
+			runtime_config("myapp.dot"),
+			Spawner::for_test(),
+		);
 		let cx = CallContext::default();
 		let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
 		let err = futures::executor::block_on(host.request_login(&cx, request)).unwrap_err();
@@ -984,7 +990,7 @@ mod tests {
 			..Default::default()
 		});
 		let (host, pairing) =
-			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 		let sso = pairing.session().clone();
 		let cancel_host = sso.clone();
 		*platform
@@ -1011,7 +1017,7 @@ mod tests {
 		let host = Arc::new(ProductRuntimeHost::new(
 			platform.clone(),
 			runtime_config("myapp.dot"),
-			test_spawner(),
+			Spawner::for_test(),
 		));
 		let disconnect_host = host.clone();
 		*platform.on_auth_state.lock().expect("auth state hook mutex poisoned") =
@@ -1053,7 +1059,8 @@ mod tests {
 		let connection =
 			futures::executor::block_on(platform.connect(host_config.people_chain_genesis_hash))
 				.unwrap();
-		let rpc_client = RpcClient::new(HostRpcClient::new(Arc::from(connection), test_spawner()));
+		let rpc_client =
+			RpcClient::new(HostRpcClient::new(Arc::from(connection), Spawner::for_test()));
 		let progress = futures::executor::block_on(run_pairing_snapshot_query(
 			rpc_client,
 			bootstrap.topic,
@@ -1118,7 +1125,7 @@ mod tests {
 			local_storage_error: Some("identity storage unavailable"),
 			..Default::default()
 		});
-		let host = ProductRuntimeHost::new_compat(platform.clone(), test_spawner());
+		let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
 		let cx = CallContext::default();
 		let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
 		let err = futures::executor::block_on(host.request_login(&cx, request)).unwrap_err();
@@ -1139,7 +1146,7 @@ mod tests {
 
 		let platform = Arc::new(StubPlatform { chain_connect_pending: true, ..Default::default() });
 		let (host, pairing) =
-			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 		let sso = pairing.session().clone();
 		let host = Arc::new(host);
 		let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });
@@ -1187,7 +1194,7 @@ mod tests {
 			..Default::default()
 		});
 		let (host, pairing) =
-			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 		let sso = pairing.session().clone();
 		let host = Arc::new(host);
 		cancel_on_pairing(&platform, sso);
@@ -1208,7 +1215,7 @@ mod tests {
 			..Default::default()
 		});
 		let (host, pairing) =
-			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 		let sso = pairing.session().clone();
 		let host = Arc::new(host);
 		cancel_on_pairing(&platform, sso);
@@ -1226,7 +1233,7 @@ mod tests {
 		let platform =
 			Arc::new(StubPlatform { session_error: Some("storage failed"), ..Default::default() });
 		let (host, pairing) =
-			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), test_spawner());
+			ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 		let sso = pairing.session().clone();
 		let host = Arc::new(host);
 		cancel_on_pairing(&platform, sso);
@@ -1240,7 +1247,7 @@ mod tests {
 
 	#[test]
 	fn request_login_returns_already_connected_when_session_exists() {
-		let host = ProductRuntimeHost::new_compat(stub_platform(), test_spawner());
+		let host = ProductRuntimeHost::new_compat(stub_platform(), Spawner::for_test());
 		host.test_session_state().set_session(session_info());
 		let cx = CallContext::default();
 		let request = HostRequestLoginRequest::V1(api::HostRequestLoginRequest { reason: None });

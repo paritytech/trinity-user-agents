@@ -60,13 +60,12 @@ use clap::{
 	ArgMatches, Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum,
 	parser::ValueSource,
 };
-use futures::future::BoxFuture;
 use subxt::utils::H256;
 use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 use truapi::{
 	AnnouncedPairing, DebugSink, PairedSsoPeer, PairingHostConfig, PairingHostRuntime,
-	PairingProposal, ResponderExit, SigningHostConfig, SigningHostRuntime, StatementRenewalTarget,
-	WsDebugSink,
+	PairingProposal, ResponderExit, SigningHostConfig, SigningHostRuntime, Spawner,
+	StatementRenewalTarget, WsDebugSink,
 	chain::ExtrinsicService,
 	host_logic::dotns_gateway::{
 		MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,
@@ -77,7 +76,6 @@ use truapi::{
 	},
 	statement_allowance as alloc,
 	statement_allowance::{ExtrinsicTarget, PersonhoodSigner, collection::PersonhoodCollection},
-	subscription::Spawner,
 	time::{Backoff, retry},
 };
 
@@ -1108,24 +1106,11 @@ fn extrinsic_service(network: &NetworkConfig) -> ExtrinsicService {
 	let provider =
 		Arc::new(chain::WsChainProvider::new(network.people_ws, network.live_chain_endpoints));
 	let versions = Arc::new(chain::PresetExtensionVersions(network.extension_versions()));
-	ExtrinsicService::from_provider(provider, tokio_spawner(), versions)
-}
-
-/// Spawner that runs runtime futures on the tokio runtime, so their WebSocket
-/// connects and timers have a reactor.
-///
-/// The core spawns teardown work from `Drop`, which can run after the runtime
-/// has shut down; `tokio::spawn` panics there, so the handle is looked up
-/// rather than assumed.
-fn tokio_spawner() -> Spawner {
-	Arc::new(|fut: BoxFuture<'static, ()>| match tokio::runtime::Handle::try_current() {
-		Ok(handle) => {
-			handle.spawn(fut);
-		},
-		Err(error) => {
-			tracing::warn!(%error, "dropping a runtime future: no tokio runtime is running");
-		},
-	})
+	ExtrinsicService::from_provider(
+		provider,
+		Spawner::new(tokio::runtime::Handle::current()),
+		versions,
+	)
 }
 
 fn host_info(name: &str) -> HostInfo {
@@ -1306,7 +1291,7 @@ async fn run_pairing_host(
 	let pairing_runtime = Arc::new(PairingHostRuntime::with_chat_platform(
 		platform,
 		config,
-		tokio_spawner(),
+		Spawner::new(tokio::runtime::Handle::current()),
 		chat_host.map(|chat| chat as Arc<dyn ChatPlatform>),
 	));
 	pairing_runtime.set_permission_status_host(status_host);
@@ -1850,7 +1835,7 @@ fn build_signing_runtime(
 	let runtime = Arc::new(SigningHostRuntime::with_chat_platform(
 		platform.clone(),
 		config,
-		tokio_spawner(),
+		Spawner::new(tokio::runtime::Handle::current()),
 		chat.map(|chat| chat as Arc<dyn ChatPlatform>),
 	));
 	runtime.set_permission_status_host(status_host);

@@ -426,7 +426,7 @@ impl FundingRegistry {
 		}
 		let registry = Arc::downgrade(self);
 		let storage: Arc<dyn Platform> = services.platform.clone();
-		(services.spawner)(Box::pin(async move {
+		services.spawner.spawn(async move {
 			while let Some(wait_ms) = Self::next_wait(&registry) {
 				futures_timer::Delay::new(Duration::from_millis(wait_ms)).await;
 				let Some(live) = registry.upgrade() else {
@@ -437,7 +437,7 @@ impl FundingRegistry {
 					futures_timer::Delay::new(SWEEP_RETRY).await;
 				}
 			}
-		}));
+		});
 	}
 
 	/// Milliseconds until the earliest open deadline, or `None` once nothing
@@ -595,7 +595,7 @@ impl RuntimeServices {
 	/// before a restart end on time and the host hears of them.
 	pub fn resume_funding(self: &Arc<Self>) {
 		let services = self.clone();
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			let registry = services.funding();
 			// The host's session views read what the core has loaded, so a
 			// failed load is retried until the sessions are in.
@@ -636,7 +636,7 @@ impl RuntimeServices {
 				},
 			)
 			.await;
-		}));
+		});
 	}
 
 	/// End session `intent` with `stage` as though its funds had moved, for
@@ -722,12 +722,12 @@ impl RuntimeServices {
 		let (finished, outcome) = oneshot::channel();
 		let services = self.clone();
 		let product = product.cloned();
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			let result = services.finish_presenting(platform, product, session).await;
 			// A caller that went away no longer waits for the result, and
 			// the session is already settled either way.
 			let _ = finished.send(result);
-		}));
+		});
 		outcome.await.unwrap_or(Err(OpenFundingError::Stopped))
 	}
 

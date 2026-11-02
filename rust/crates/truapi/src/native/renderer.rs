@@ -8,7 +8,7 @@ use futures::{
 };
 use truapi::{CallError, Subscription, latest::ProductRendererRenderItem};
 
-use crate::{interrupt::interrupt_reason, subscription::Spawner};
+use crate::{Spawner, interrupt::interrupt_reason};
 
 /// Observer implemented by a native host to receive renderer tree replacements.
 #[uniffi::export(callback_interface)]
@@ -55,7 +55,7 @@ pub fn observe_renderer(
 	spawner: Spawner,
 ) -> Arc<NativeRendererSubscription> {
 	let (abort, registration) = AbortHandle::new_pair();
-	(spawner)(Box::pin(async move {
+	spawner.spawn(async move {
 		let _ = Abortable::new(
 			async move {
 				while let Some(item) = stream.next().await {
@@ -69,6 +69,6 @@ pub fn observe_renderer(
 			registration,
 		)
 		.await;
-	}));
+	});
 	Arc::new(NativeRendererSubscription { abort: Mutex::new(Some(abort)) })
 }

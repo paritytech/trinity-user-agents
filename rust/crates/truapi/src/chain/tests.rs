@@ -18,11 +18,12 @@ use super::{
 	TxSubmitter, TxValidator, WatchEvent,
 };
 use crate::{
+	Spawner,
 	chain_runtime::{ChainRuntime, RuntimeFailureKind},
 	host_internal::extrinsic::tests::{
 		BULLETIN_METADATA_BYTES, bulletin_chain_state, runtime_call_serving_metadata, system_events,
 	},
-	test_support::{ScriptedProvider, notification_sender, test_spawner, wait_for_sent},
+	test_support::{ScriptedProvider, notification_sender, wait_for_sent},
 };
 
 mod live_extrinsic_builder;
@@ -356,7 +357,7 @@ pub fn serve(node: Node) -> (Arc<Mutex<Node>>, Arc<ScriptedProvider>, ChainRunti
 	let provider = Arc::new(ScriptedProvider::with_frames(move |request| {
 		scripted.lock().unwrap().respond(request)
 	}));
-	let chain = ChainRuntime::new(provider.clone(), test_spawner());
+	let chain = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	(node, provider, chain)
 }
 

@@ -192,7 +192,7 @@ mod tests {
 				[0; 32],
 				[0xbb; 32],
 				asset_hub_chain_genesis_hash,
-				crate::test_support::test_spawner(),
+				crate::Spawner::for_test(),
 			);
 			futures::executor::block_on(root_manifest_within(
 				ceiling,

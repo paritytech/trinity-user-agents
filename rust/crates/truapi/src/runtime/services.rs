@@ -15,6 +15,7 @@ use crate::durable::{DurableTxEngine, DurableWorkObserver};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::store::{Db, DbError};
 use crate::{
+	Spawner,
 	chain::ExtrinsicService,
 	chain_runtime::{ChainRuntime, HostChainProvider},
 	host_logic::worker::WorkerLedger,
@@ -26,7 +27,6 @@ use crate::{
 		bulletin_rpc::BulletinRpc, sso_responder_service::DevicePairingObserver,
 		statement_store_rpc::StatementStoreRpc,
 	},
-	subscription::Spawner,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::{

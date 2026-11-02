@@ -36,6 +36,7 @@ use tracing::{instrument, warn};
 use truapi::{CallContext, CancellationReason, v01};
 
 use crate::{
+	Spawner,
 	frame::ProtocolMessage,
 	host_internal::sso_messages::{RemoteMessage, SsoRequestOutcome},
 	host_logic::worker::WorkerLedger,
@@ -45,7 +46,7 @@ use crate::{
 		ProductConnection, ProductRuntimeHost, ResponderExit, RuntimeServices, SigningHostRole,
 		SigningHostSsoService, SsoResponderService, sso_service::Dispatch,
 	},
-	subscription::{HostInitiatedSubscriptionManager, Spawner},
+	subscription::HostInitiatedSubscriptionManager,
 	transport::Transport,
 	truapi_core::TrUApiCore,
 };
@@ -2256,7 +2257,7 @@ mod tests {
 			worker::WorkerTransition,
 			x25519_seal::X25519PrivateKey,
 		},
-		test_support::{StubPlatform, runtime_config, test_spawner, wait_until},
+		test_support::{StubPlatform, runtime_config, wait_until},
 	};
 	use parity_scale_codec::Encode;
 	use std::sync::atomic::Ordering;
@@ -2295,7 +2296,7 @@ mod tests {
 			"testnet".to_string(),
 		)
 		.expect("signing host config is valid");
-		let runtime = SigningHostRuntime::new(platform, config, test_spawner());
+		let runtime = SigningHostRuntime::new(platform, config, Spawner::for_test());
 		futures::executor::block_on(runtime.activate_local_session(vec![0xab; 32]))
 			.expect("activation succeeds");
 		runtime
@@ -2375,7 +2376,7 @@ mod tests {
 		futures::executor::block_on(async {
 			let platform = Arc::new(StubPlatform::default());
 			let (config, _) = runtime_config("fetch.dot");
-			let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
+			let runtime = PairingHostRuntime::new(platform.clone(), config, Spawner::for_test());
 			let admin = runtime.product_admin(product_context(&ProductId::for_test("fetch.dot")));
 			let cx = CallContext::default();
 			let request = network_permission(&["api.example.com"]);
@@ -2440,7 +2441,7 @@ mod tests {
 					platform.clone(),
 					config,
 					product,
-					test_spawner(),
+					Spawner::for_test(),
 					sink.clone(),
 				);
 				let permission = network_permission(&["api.example.com"]);
@@ -2496,7 +2497,7 @@ mod tests {
 			let platform =
 				Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() });
 			let (config, _) = runtime_config("fetch.dot");
-			let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
+			let runtime = PairingHostRuntime::new(platform.clone(), config, Spawner::for_test());
 			let admin = runtime.product_admin(product_context(&ProductId::for_test("fetch.dot")));
 			let cx = CallContext::default();
 			admin
@@ -2579,7 +2580,7 @@ mod tests {
 		futures::executor::block_on(async {
 			let platform = Arc::new(StubPlatform::default());
 			let (config, _) = runtime_config("peopl.dot");
-			let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
+			let runtime = PairingHostRuntime::new(platform.clone(), config, Spawner::for_test());
 			let admin = runtime.product_admin(product_context(&ProductId::for_test("peopl.dot")));
 			let cx = CallContext::default();
 			let request = network_permission(&["api.example.com"]);
@@ -2626,7 +2627,7 @@ mod tests {
 	fn a_cached_subtree_answers_without_reaching_the_wallet() {
 		let platform = Arc::new(StubPlatform::default());
 		let (host_config, _) = runtime_config("myapp.dot");
-		let runtime = PairingHostRuntime::new(platform.clone(), host_config, test_spawner());
+		let runtime = PairingHostRuntime::new(platform.clone(), host_config, Spawner::for_test());
 		let session = crate::test_support::sso_session_info();
 		install_session_after_boot(&runtime, &platform, session.clone());
 		runtime.pairing_host.cache_product_subtree_for_test(
@@ -2651,7 +2652,7 @@ mod tests {
 	fn a_timeout_bounds_the_wait_for_the_account_holder() {
 		let platform = Arc::new(StubPlatform::default());
 		let (host_config, _) = runtime_config("myapp.dot");
-		let runtime = PairingHostRuntime::new(platform.clone(), host_config, test_spawner());
+		let runtime = PairingHostRuntime::new(platform.clone(), host_config, Spawner::for_test());
 		install_session_after_boot(&runtime, &platform, crate::test_support::sso_session_info());
 
 		// Nothing answers the wallet request, and wait_for_sso_remote_response exits
@@ -2673,7 +2674,7 @@ mod tests {
 			Arc::new(StubPlatform::default()),
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 			Arc::new(RecordingSink::default()),
 		);
 
@@ -2707,7 +2708,7 @@ mod tests {
 			platform,
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 			sink.clone(),
 		);
 		runtime.set_debug_sink(ChannelId("myapp.dot".to_string()), debug.clone());
@@ -2824,7 +2825,7 @@ mod tests {
 			platform,
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 			transport,
 		);
 		let channel = ChannelId("myapp.dot".to_string());
@@ -2867,7 +2868,7 @@ mod tests {
 			platform,
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 			transport,
 		);
 		let debug = Arc::new(RecordingDebugSink::default());
@@ -2928,7 +2929,7 @@ mod tests {
 			platform,
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 			transport,
 		));
 		let channel = ChannelId("myapp.dot".to_string());
@@ -2985,7 +2986,7 @@ mod tests {
 			platform,
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 			transport.clone(),
 		);
 		let debug = Arc::new(DeliveryOrderSink {
@@ -3081,7 +3082,7 @@ mod tests {
 			Arc::new(StubPlatform::default()),
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 			Arc::new(RecordingSink::default()),
 		);
 
@@ -3111,7 +3112,7 @@ mod tests {
 			Arc::new(StubPlatform::default()),
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 			Arc::new(RecordingSink::default()),
 		);
 		let host = runtime.admin.product_runtime().clone();
@@ -3186,7 +3187,7 @@ mod tests {
 			Arc::new(StubPlatform::default()),
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 			Arc::new(RecordingSink::default()),
 		);
 		let services = runtime.admin.product_runtime().connection().services().clone();
@@ -3230,7 +3231,7 @@ mod tests {
 			Arc::new(StubPlatform::default()),
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 			sink.clone(),
 		);
 		(runtime, sink)
@@ -3471,7 +3472,7 @@ mod tests {
 			Arc::new(StubPlatform::default()),
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 			Arc::new(RecordingSink::default()),
 		);
 
@@ -3492,7 +3493,7 @@ mod tests {
 			Arc::new(StubPlatform::default()),
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 			Arc::new(RecordingSink::default()),
 		);
 
@@ -3518,7 +3519,7 @@ mod tests {
 			Arc::new(StubPlatform::default()),
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 			sink.clone(),
 		);
 		let ids = crate::frame::request_ids("chat_create_room").expect("known Chat request");
@@ -3561,7 +3562,7 @@ mod tests {
 			Arc::new(StubPlatform::default()),
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 			sink.clone(),
 		);
 		let ids = crate::frame::request_ids("chat_register_bot").expect("known Chat request");
@@ -3604,7 +3605,7 @@ mod tests {
 			Arc::new(StubPlatform::default()),
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 			sink.clone(),
 		);
 		let ids = subscription_ids("chat_action_subscribe").expect("known Chat subscription");
@@ -3658,7 +3659,7 @@ mod tests {
 			platform,
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 			Arc::new(RecordingSink::default()),
 		));
 
@@ -3716,7 +3717,7 @@ mod tests {
 			platform,
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 			sink,
 		);
 		let host = runtime.admin.product_runtime().clone();
@@ -3758,7 +3759,7 @@ mod tests {
 			platform.clone(),
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 			sink,
 		);
 		let host = runtime.admin.product_runtime().clone();
@@ -3807,7 +3808,7 @@ mod tests {
 			platform,
 			host_config,
 			product,
-			test_spawner(),
+			Spawner::for_test(),
 			sink,
 		);
 
@@ -3861,7 +3862,7 @@ mod tests {
 		)
 		.expect("signing host config is valid");
 		let runtime =
-			SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, test_spawner());
+			SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, Spawner::for_test());
 
 		assert!(runtime.set_device_pairing_observer(Arc::new(Inert)));
 		assert!(!runtime.set_device_pairing_observer(Arc::new(Inert)));
@@ -3889,7 +3890,7 @@ mod tests {
 		)
 		.expect("signing host config is valid");
 		let platform = Arc::new(StubPlatform::default());
-		(SigningHostRuntime::new(platform.clone(), config, test_spawner()), platform)
+		(SigningHostRuntime::new(platform.clone(), config, Spawner::for_test()), platform)
 	}
 
 	/// An empty database in memory.
@@ -4027,7 +4028,7 @@ mod tests {
 		)
 		.expect("signing host config is valid");
 		let runtime =
-			SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, test_spawner());
+			SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, Spawner::for_test());
 		futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
 			.expect("activation succeeds");
 
@@ -4074,7 +4075,7 @@ mod tests {
 		)
 		.expect("signing host config is valid");
 		let runtime =
-			SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, test_spawner());
+			SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, Spawner::for_test());
 		futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
 			.expect("activation succeeds");
 
@@ -4218,7 +4219,7 @@ mod tests {
 		let runtime = SigningHostRuntime::new(
 			Arc::new(StubPlatform::default()),
 			signing_config_with_asset_hub([0xcc; 32]),
-			test_spawner(),
+			Spawner::for_test(),
 		);
 		assert_eq!(
 			runtime.services.asset_hub_chain_genesis_hash(),
@@ -4248,7 +4249,7 @@ mod tests {
 		)
 		.expect("pairing host config is valid");
 		let runtime =
-			PairingHostRuntime::new(Arc::new(StubPlatform::default()), config, test_spawner());
+			PairingHostRuntime::new(Arc::new(StubPlatform::default()), config, Spawner::for_test());
 		assert_eq!(
 			runtime.services.asset_hub_chain_genesis_hash(),
 			Some([0xdd; 32]),
@@ -4263,7 +4264,7 @@ mod tests {
 		let runtime = SigningHostRuntime::new(
 			Arc::new(StubPlatform::default()),
 			signing_config_with_asset_hub([0; 32]),
-			test_spawner(),
+			Spawner::for_test(),
 		);
 		// The hash is a constructor argument, so `None` here can only mean the
 		// configured zeros.
@@ -4286,7 +4287,7 @@ mod tests {
 			[0xaa; 32],
 			[0xbb; 32],
 			[0xcc; 32],
-			test_spawner(),
+			Spawner::for_test(),
 		);
 		assert_eq!(
 			services.asset_hub_chain_genesis_hash(),
@@ -4315,7 +4316,7 @@ mod tests {
 		let runtime = SigningHostRuntime::new(
 			platform.clone(),
 			signing_config_with_asset_hub(asset_hub),
-			test_spawner(),
+			Spawner::for_test(),
 		);
 		let host = ProductRuntimeHost::from_services(
 			runtime.services.clone(),

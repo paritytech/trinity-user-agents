@@ -2,13 +2,12 @@
 
 use std::{
 	io,
-	sync::{Arc, Mutex, OnceLock},
+	sync::{Mutex, OnceLock},
 };
 
-use futures::future::BoxFuture;
 use tokio::runtime::{Handle, Runtime};
 
-use crate::subscription::Spawner;
+use crate::Spawner;
 
 /// Process-wide executor shared by every native host runtime and product bridge.
 ///
@@ -43,10 +42,7 @@ impl SharedNativeExecutor {
 
 	/// Spawner that runs core tasks on this runtime, whichever thread spawns them.
 	pub fn spawner(&self) -> Spawner {
-		let handle = self.handle();
-		Arc::new(move |task: BoxFuture<'static, ()>| {
-			handle.spawn(task);
-		})
+		Spawner::new(self.handle())
 	}
 }
 
@@ -75,7 +71,7 @@ pub fn shared_native_executor() -> io::Result<&'static SharedNativeExecutor> {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use futures::FutureExt;
+	use std::sync::Arc;
 
 	#[test]
 	fn shared_executor_uses_multithread_scheduler() {
@@ -119,13 +115,10 @@ mod tests {
 		let executor = shared_native_executor().expect("shared native executor");
 		let (runtime_tx, runtime_rx) = std::sync::mpsc::channel();
 
-		executor.spawner()(
-			async move {
-				let runtime = Handle::try_current().map(|handle| handle.id());
-				runtime_tx.send(runtime.ok()).unwrap();
-			}
-			.boxed(),
-		);
+		executor.spawner().spawn(async move {
+			let runtime = Handle::try_current().map(|handle| handle.id());
+			runtime_tx.send(runtime.ok()).unwrap();
+		});
 
 		let ran_on = runtime_rx
 			.recv_timeout(std::time::Duration::from_secs(5))

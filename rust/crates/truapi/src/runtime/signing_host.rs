@@ -267,7 +267,7 @@ impl SigningHost {
 			[0; 32],
 			[0xbb; 32],
 			[0xcc; 32],
-			crate::test_support::test_spawner(),
+			crate::Spawner::for_test(),
 		);
 		Arc::new(Self {
 			services,
@@ -1499,6 +1499,7 @@ mod tests {
 		ring_vrf::{MemberCandidate, ResolvedRing, RingResolver},
 	};
 	use crate::{
+		Spawner,
 		host_internal::{
 			extrinsic::tests::split_v4,
 			sso_messages::{ProductRequest, RingVrfError},
@@ -1513,7 +1514,7 @@ mod tests {
 			SigningHostConfig,
 		},
 		runtime::statement_allowance::collection::PersonhoodCollection,
-		test_support::{StubPlatform, test_spawner},
+		test_support::StubPlatform,
 	};
 	use truapi::{
 		CallContext, CallError,
@@ -1648,7 +1649,7 @@ mod tests {
 			config.people_chain_genesis_hash,
 			config.bulletin_chain_genesis_hash,
 			config.asset_hub_chain_genesis_hash,
-			test_spawner(),
+			Spawner::for_test(),
 		);
 		let signing_host = SigningHostRole::new(services.clone(), config.network_suffix);
 		(services, signing_host)

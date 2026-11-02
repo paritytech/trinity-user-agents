@@ -24,6 +24,7 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::{
+	Spawner,
 	chain_runtime::{ChainRuntime, RuntimeFailure},
 	host_logic::statement_store::{
 		NewStatements, SUBMIT_STATEMENT_METHOD, SUBSCRIBE_STATEMENT_METHOD, StatementBatches,
@@ -33,7 +34,6 @@ use crate::{
 	},
 	host_rpc_client::HostRpcClient,
 	stream_extensions::StreamExtensions as _,
-	subscription::Spawner,
 };
 
 #[cfg(test)]
@@ -392,13 +392,14 @@ mod tests {
 
 	use super::{LIVE_WAIT, LivePeopleStatements, StatementStoreRpc, is_no_allowance_rejection};
 	use crate::{
+		Spawner,
 		chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
 		host_logic::statement_store::{
 			MAX_MATCH_ALL_TOPICS, NewStatements, StatementStoreApi, StatementWatchError,
 			TopicFilter, hex_topic,
 		},
 		platform::JsonRpcConnection,
-		test_support::{StubPlatform, statement_page_frame, subscribe_ack_frame, test_spawner},
+		test_support::{StubPlatform, statement_page_frame, subscribe_ack_frame},
 	};
 
 	const PEOPLE_GENESIS: [u8; 32] = [0x11; 32];
@@ -493,9 +494,9 @@ mod tests {
 	fn statement_store(chain: &Arc<PeopleChain>) -> StatementStoreRpc {
 		StatementStoreRpc::new(
 			Arc::new(StubPlatform::default()),
-			ChainRuntime::new(chain.clone(), test_spawner()),
+			ChainRuntime::new(chain.clone(), Spawner::for_test()),
 			PEOPLE_GENESIS,
-			test_spawner(),
+			Spawner::for_test(),
 		)
 	}
 
@@ -569,9 +570,9 @@ mod tests {
 		let chain = PeopleChain::new(vec![Upstream::Drops]);
 		let statement_store = StatementStoreRpc::new(
 			platform.clone(),
-			ChainRuntime::new(chain, test_spawner()),
+			ChainRuntime::new(chain, Spawner::for_test()),
 			PEOPLE_GENESIS,
-			test_spawner(),
+			Spawner::for_test(),
 		);
 		(statement_store, platform)
 	}

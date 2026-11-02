@@ -31,7 +31,7 @@ pub async fn load() -> Result<Vrf, RingVrfError> {
 
 /// Native builds link the operations in, so there is nothing to prefetch.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn prefetch(_spawner: &crate::subscription::Spawner) {}
+pub fn prefetch(_spawner: &crate::Spawner) {}
 
 #[cfg(target_arch = "wasm32")]
 pub use module::{load, prefetch};
@@ -159,12 +159,12 @@ export const prove = (...args) => module.prove(...args);
 	/// Load the module in the background, so a later call does not wait on
 	/// it. A call made while it loads waits on this load instead of starting
 	/// another.
-	pub fn prefetch(spawner: &crate::subscription::Spawner) {
-		spawner(Box::pin(async {
+	pub fn prefetch(spawner: &crate::Spawner) {
+		spawner.spawn(async {
 			if let Err(error) = load().await {
 				tracing::warn!(%error, "truapi-verifiable prefetch failed");
 			}
-		}));
+		});
 	}
 
 	async fn start_module() -> Result<(), String> {

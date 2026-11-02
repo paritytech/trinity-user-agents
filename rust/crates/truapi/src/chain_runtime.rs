@@ -72,7 +72,7 @@ use truapi::v01::{
 	RuntimeSpec, RuntimeType, StorageQueryItem, StorageQueryType, StorageResultItem,
 };
 
-use crate::{host_rpc_client::HostRpcClient, subscription::Spawner};
+use crate::{Spawner, host_rpc_client::HostRpcClient};
 
 mod runtime_call_cache;
 mod runtime_call_client;
@@ -533,12 +533,9 @@ impl ChainRuntime {
 		.boxed()
 		.shared();
 		self.record_follow_start(follow_start_key, start.clone());
-		(self.spawner)(
-			async move {
-				let _ = start.await;
-			}
-			.boxed(),
-		);
+		self.spawner.spawn(async move {
+			let _ = start.await;
+		});
 
 		ManagedSubscription::new(
 			rx.boxed(),
@@ -1320,22 +1317,19 @@ impl ChainConnection {
 		// The pump holds only a weak handle so a torn-down connection is not
 		// kept alive by its own driver task.
 		let pump_connection = Arc::downgrade(&self);
-		(self.spawner)(
-			async move {
-				while let Some(result) = driver.next().await {
-					if let Err(error) = result {
-						tracing::debug!(target: "subxt", "chainHead backend error={error}");
-					}
-				}
-				// The backend can make no further progress; drop the cached
-				// Subxt bundle so the next caller rebuilds instead of hitting
-				// a permanently dead backend.
-				if let Some(connection) = pump_connection.upgrade() {
-					connection.invalidate_subxt_connection(generation);
+		self.spawner.spawn(async move {
+			while let Some(result) = driver.next().await {
+				if let Err(error) = result {
+					tracing::debug!(target: "subxt", "chainHead backend error={error}");
 				}
 			}
-			.boxed(),
-		);
+			// The backend can make no further progress; drop the cached
+			// Subxt bundle so the next caller rebuilds instead of hitting
+			// a permanently dead backend.
+			if let Some(connection) = pump_connection.upgrade() {
+				connection.invalidate_subxt_connection(generation);
+			}
+		});
 		let backend = Arc::new(backend);
 		let client = OnlineClient::from_backend_with_config(config, backend.clone())
 			.await
@@ -1610,7 +1604,7 @@ impl ChainConnection {
 			return Err(follow_closed());
 		}
 
-		(self.spawner)(Abortable::new(pump, abort_registration).map(|_| ()).boxed());
+		self.spawner.spawn(Abortable::new(pump, abort_registration).map(|_| ()));
 		Ok(remote_follow_id)
 	}
 
@@ -2195,17 +2189,6 @@ mod tests {
 	use parking_lot::{Condvar, Mutex as ParkingMutex};
 	use std::sync::atomic::{AtomicUsize, Ordering};
 
-	fn spawner_for_tests() -> Spawner {
-		#[cfg(not(target_arch = "wasm32"))]
-		{
-			crate::subscription::thread_per_subscription_spawner()
-		}
-		#[cfg(target_arch = "wasm32")]
-		{
-			Arc::new(futures::executor::block_on)
-		}
-	}
-
 	/// A stop the node acknowledges.
 	const STOPPED: &str = r#""result":null"#;
 
@@ -2363,7 +2346,7 @@ mod tests {
 				None
 			}
 		}));
-		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let _follow_stream = runtime.remote_chain_head_follow(
 			"local-follow".to_string(),
 			RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false },
@@ -2408,7 +2391,7 @@ mod tests {
 		}));
 		let gate = Arc::new((ParkingMutex::new(false), Condvar::new()));
 		let spawner_gate = gate.clone();
-		let spawner: Spawner = Arc::new(move |future| {
+		let spawner = Spawner::with_test_scheduler(move |future| {
 			let task_gate = spawner_gate.clone();
 			std::thread::spawn(move || {
 				let (released, ready) = &*task_gate;
@@ -2482,7 +2465,7 @@ mod tests {
 				None
 			}
 		}));
-		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let _follow_stream = runtime.remote_chain_head_follow(
 			"transport-request-id".to_string(),
 			RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: true },
@@ -2526,7 +2509,7 @@ mod tests {
 				None
 			}
 		}));
-		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let follow_request =
 			|| RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false };
 		let header_request = |follow_subscription_id: &str| RemoteChainHeadHeaderRequest {
@@ -2583,7 +2566,7 @@ mod tests {
 	#[test]
 	fn pending_follow_aliases_are_product_scoped_and_ambiguous_aliases_fail_closed() {
 		let provider = Arc::new(ScriptedProvider::new(|_| None));
-		let runtime = ChainRuntime::new(provider, spawner_for_tests());
+		let runtime = ChainRuntime::new(provider, Spawner::for_test());
 		let genesis_hash = vec![0u8; 32];
 
 		runtime.register_follow_intent(&genesis_hash, "c1:request-first");
@@ -2613,7 +2596,7 @@ mod tests {
 	fn transaction_stop_uses_host_handle_and_accepts_finished_provider_operation() {
 		let provider =
 			broadcast_provider(r#""error":{"code":-32602,"message":"Invalid operation id"}"#);
-		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let genesis = vec![0x11; 32];
 
 		let local_id = broadcast(&runtime, &genesis);
@@ -2635,7 +2618,7 @@ mod tests {
 
 	#[test]
 	fn transaction_operations_evict_oldest_beyond_cap() {
-		let runtime = ChainRuntime::new(broadcast_provider(STOPPED), spawner_for_tests());
+		let runtime = ChainRuntime::new(broadcast_provider(STOPPED), Spawner::for_test());
 		let genesis = vec![0x11; 32];
 
 		let first_id = broadcast(&runtime, &genesis);
@@ -2659,7 +2642,7 @@ mod tests {
 				None
 			}
 		}));
-		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let _follow_stream = runtime.remote_chain_head_follow(
 			"local-follow".to_string(),
 			RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false },
@@ -2722,7 +2705,7 @@ mod tests {
 				None
 			}
 		}));
-		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 
 		let err = futures::executor::block_on(runtime.remote_chain_head_header(
 			RemoteChainHeadHeaderRequest {
@@ -2772,7 +2755,7 @@ mod tests {
 				}
 			}),
 		});
-		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 
 		let (first, second) = futures::executor::block_on(futures::future::join(
 			runtime.remote_chain_spec_chain_name(vec![0u8; 32]),
@@ -2790,7 +2773,7 @@ mod tests {
 	#[test]
 	fn subxt_connection_pins_configured_genesis_and_is_cached() {
 		let provider = Arc::new(ScriptedProvider::new(|_| None));
-		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let genesis = vec![0xab; 32];
 
 		let connection =
@@ -2835,7 +2818,7 @@ mod tests {
 	#[test]
 	fn subxt_connection_invalidated_when_backend_driver_exits() {
 		let provider = Arc::new(ScriptedProvider::new(|_| None));
-		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let genesis = vec![0xab; 32];
 
 		let connection =
@@ -2870,7 +2853,7 @@ mod tests {
 				.contains("chainSpec_v1_chainName")
 				.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"Polkadot"}}"#))
 		}));
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let genesis = vec![0xab; 32];
 
 		let first = core.for_product(1);
@@ -2892,7 +2875,7 @@ mod tests {
 	#[test]
 	fn the_same_product_reuses_its_connection() {
 		let provider = Arc::new(ScriptedProvider::new(|_| None));
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let genesis = vec![0xab; 32];
 
 		futures::executor::block_on(core.for_product(7).connection_for("scope_test", &genesis))
@@ -2919,7 +2902,7 @@ mod tests {
 				.contains("chainHead_v1_follow")
 				.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-{id}"}}"#))
 		}));
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let genesis = vec![0xab; 32];
 
 		let busy = core.for_product(1);
@@ -2991,7 +2974,7 @@ mod tests {
 	#[test]
 	fn a_scope_releases_its_connections_when_it_ends() {
 		let provider = Arc::new(ScriptedProvider::new(|_| None));
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let genesis = vec![0xab; 32];
 		let other_chain = vec![0xcd; 32];
 
@@ -3034,7 +3017,7 @@ mod tests {
 				.contains("chainHead_v1_follow")
 				.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
 		}));
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let product = core.for_product(1);
 
 		// Hold the stream, so nothing tears the follow down on our behalf.
@@ -3092,7 +3075,7 @@ mod tests {
 
 		let gate = Arc::new((ParkingMutex::new(false), Condvar::new()));
 		let provider = Arc::new(ParkedProvider { gate: gate.clone() });
-		let core = ChainRuntime::new(provider, spawner_for_tests());
+		let core = ChainRuntime::new(provider, Spawner::for_test());
 		let product = core.for_product(1);
 		let genesis = vec![0xab; 32];
 
@@ -3163,7 +3146,7 @@ mod tests {
 	#[test]
 	fn releasing_a_product_drops_only_its_own_follow_intents() {
 		let provider = Arc::new(ScriptedProvider::new(|_| None));
-		let core = ChainRuntime::new(provider, spawner_for_tests());
+		let core = ChainRuntime::new(provider, Spawner::for_test());
 		let genesis = vec![0xab; 32];
 		let first = core.for_product(1);
 		let second = core.for_product(2);
@@ -3187,7 +3170,7 @@ mod tests {
 	#[test]
 	fn a_product_cannot_resolve_another_products_follow() {
 		let provider = Arc::new(ScriptedProvider::new(|_| None));
-		let core = ChainRuntime::new(provider, spawner_for_tests());
+		let core = ChainRuntime::new(provider, Spawner::for_test());
 		let genesis = vec![0xab; 32];
 		let first = core.for_product(1);
 		let second = core.for_product(2);
@@ -3206,7 +3189,7 @@ mod tests {
 	#[test]
 	fn a_product_cannot_stop_another_products_transaction() {
 		let provider = broadcast_provider(STOPPED);
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let genesis = vec![0x11; 32];
 		let owner = core.for_product(1);
 		let other = core.for_product(2);
@@ -3232,7 +3215,7 @@ mod tests {
 
 	#[test]
 	fn the_transaction_cap_applies_per_product() {
-		let core = ChainRuntime::new(broadcast_provider(STOPPED), spawner_for_tests());
+		let core = ChainRuntime::new(broadcast_provider(STOPPED), Spawner::for_test());
 		let genesis = vec![0x11; 32];
 		let quiet = core.for_product(1);
 		let flooding = core.for_product(2);
@@ -3247,7 +3230,7 @@ mod tests {
 
 	#[test]
 	fn releasing_a_product_forgets_its_transactions() {
-		let core = ChainRuntime::new(broadcast_provider(STOPPED), spawner_for_tests());
+		let core = ChainRuntime::new(broadcast_provider(STOPPED), Spawner::for_test());
 		let genesis = vec![0x11; 32];
 		let product = core.for_product(1);
 		broadcast(&product, &genesis);
@@ -3264,7 +3247,7 @@ mod tests {
 	/// same entries and hide a missing release gate.
 	#[test]
 	fn a_call_finishing_after_release_leaves_nothing_behind() {
-		let inert: Spawner = Arc::new(|_task| {});
+		let inert = Spawner::with_test_scheduler(|_task| {});
 		let core = ChainRuntime::new(broadcast_provider(STOPPED), inert);
 		let genesis = vec![0x11; 32];
 		let product = core.for_product(1);
@@ -3291,7 +3274,7 @@ mod tests {
 
 	#[test]
 	fn releasing_a_product_sweeps_only_its_own_follow_starts() {
-		let core = ChainRuntime::new(broadcast_provider(STOPPED), spawner_for_tests());
+		let core = ChainRuntime::new(broadcast_provider(STOPPED), Spawner::for_test());
 		let genesis = vec![0xab; 32];
 		let first = core.for_product(1);
 		let second = core.for_product(2);
@@ -3318,7 +3301,7 @@ mod tests {
 	#[test]
 	fn releasing_one_product_does_not_touch_another() {
 		let provider = Arc::new(ScriptedProvider::new(|_| None));
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let genesis = vec![0xab; 32];
 
 		let first = core.for_product(1);
@@ -3346,7 +3329,7 @@ mod tests {
 	fn a_queued_follow_cannot_open_a_connection_after_product_release() {
 		let queued = Arc::new(Mutex::new(Vec::<BoxFuture<'static, ()>>::new()));
 		let queue = queued.clone();
-		let spawner: Spawner = Arc::new(move |task| queue.lock().unwrap().push(task));
+		let spawner = Spawner::with_test_scheduler(move |task| queue.lock().unwrap().push(task));
 		let provider = Arc::new(ScriptedProvider::new(|_| None));
 		let core = ChainRuntime::new(provider, spawner);
 		let product = core.for_product(1);
@@ -3392,7 +3375,7 @@ mod tests {
 			attempted: AtomicBool::new(false),
 			inner: ScriptedProvider::new(|_| None),
 		});
-		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let genesis = vec![0xab; 32];
 		let failed =
 			futures::executor::block_on(runtime.connection_for("retry", &genesis)).map(|_| ());
@@ -3411,7 +3394,7 @@ mod tests {
 	#[test]
 	fn closed_products_do_not_accumulate_in_the_connection_registry() {
 		let provider = Arc::new(ScriptedProvider::new(|_| None));
-		let core = ChainRuntime::new(provider, spawner_for_tests());
+		let core = ChainRuntime::new(provider, Spawner::for_test());
 		for instance in 1..=1_000 {
 			core.for_product(instance).release_scope();
 		}
@@ -3422,7 +3405,7 @@ mod tests {
 	#[test]
 	fn unknown_genesis_chain_spec_propagates_failure() {
 		let provider = Arc::new(UnavailableChainProvider);
-		let runtime = ChainRuntime::new(provider, spawner_for_tests());
+		let runtime = ChainRuntime::new(provider, Spawner::for_test());
 		let err = match futures::executor::block_on(
 			runtime.remote_chain_spec_chain_name(vec![0u8; 32]),
 		) {
@@ -3440,7 +3423,7 @@ mod tests {
 	fn dropped_connection_keeps_the_transport_reason() {
 		let provider = Arc::new(ScriptedProvider::new(|_| None));
 		provider.sender.lock().unwrap().take();
-		let runtime = ChainRuntime::new(provider, spawner_for_tests());
+		let runtime = ChainRuntime::new(provider, Spawner::for_test());
 		let err = match futures::executor::block_on(
 			runtime.remote_chain_spec_genesis_hash(vec![0u8; 32]),
 		) {
@@ -3481,7 +3464,7 @@ mod tests {
 				r#"{{"jsonrpc":"2.0","id":"{id}","error":{{"code":-32601,"message":"method not found"}}}}"#
 			))
 		}));
-		let runtime = ChainRuntime::new(provider, spawner_for_tests());
+		let runtime = ChainRuntime::new(provider, Spawner::for_test());
 		let err = match futures::executor::block_on(
 			runtime.remote_chain_spec_chain_name(vec![0u8; 32]),
 		) {
@@ -3502,7 +3485,7 @@ mod tests {
 				.contains("chainHead_v1_follow")
 				.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
 		}));
-		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let mut follow = runtime.remote_chain_head_follow(
 			"local-follow".to_string(),
 			RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false },
@@ -3569,7 +3552,7 @@ mod tests {
 				None
 			}
 		}));
-		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 
 		let mut stream = runtime.remote_chain_head_follow(
 			"local-follow".to_string(),
@@ -3619,7 +3602,7 @@ mod tests {
 	/// reads as a subscription that simply had nothing more to say.
 	#[test]
 	fn follow_setup_failure_ends_the_stream_with_the_failure() {
-		let runtime = ChainRuntime::new(Arc::new(UnavailableChainProvider), spawner_for_tests());
+		let runtime = ChainRuntime::new(Arc::new(UnavailableChainProvider), Spawner::for_test());
 
 		let mut stream = runtime.remote_chain_head_follow(
 			"local-follow".to_string(),
@@ -3648,7 +3631,7 @@ mod tests {
 				None
 			}
 		}));
-		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 
 		let mut stream = runtime.remote_chain_head_follow(
 			"local-follow".to_string(),
@@ -3690,7 +3673,7 @@ mod tests {
 				None
 			}
 		}));
-		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let sent = provider.sent.clone();
 
 		let stream = runtime.remote_chain_head_follow(
@@ -4039,7 +4022,7 @@ mod tests {
 	#[test]
 	fn products_share_one_metadata_download() {
 		let provider = runtime_call_node(true);
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let (first, mut first_follow) = following_product(&core, 1);
 		let (second, mut second_follow) = following_product(&core, 2);
 		let (third, mut third_follow) = following_product(&core, 3);
@@ -4072,7 +4055,7 @@ mod tests {
 	#[test]
 	fn a_caller_during_the_download_waits_for_it() {
 		let provider = runtime_call_node(false);
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let (first, mut first_follow) = following_product(&core, 1);
 		let (second, mut second_follow) = following_product(&core, 2);
 
@@ -4097,7 +4080,7 @@ mod tests {
 	#[test]
 	fn a_call_that_reads_state_is_never_shared() {
 		let provider = runtime_call_node(true);
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let (first, mut first_follow) = following_product(&core, 1);
 		let (second, mut second_follow) = following_product(&core, 2);
 
@@ -4118,7 +4101,7 @@ mod tests {
 	#[test]
 	fn blocks_of_one_runtime_share_one_download() {
 		let provider = runtime_call_node(true);
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let (first, mut first_follow) = following_product(&core, 1);
 		let (second, mut second_follow) = following_product(&core, 2);
 
@@ -4138,7 +4121,7 @@ mod tests {
 	#[test]
 	fn blocks_of_different_runtimes_never_share() {
 		let provider = runtime_call_node(true);
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let (first, mut first_follow) = following_product(&core, 1);
 		let (second, mut second_follow) = following_product(&core, 2);
 
@@ -4158,7 +4141,7 @@ mod tests {
 	#[test]
 	fn a_block_whose_code_cannot_be_read_is_never_shared() {
 		let provider = runtime_call_node_with(true, |_| None);
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let (first, mut first_follow) = following_product(&core, 1);
 		let (second, mut second_follow) = following_product(&core, 2);
 
@@ -4179,7 +4162,7 @@ mod tests {
 	#[test]
 	fn stopping_the_download_releases_its_waiters() {
 		let provider = runtime_call_node(false);
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let (first, _first_follow) = following_product(&core, 1);
 		let (second, mut second_follow) = following_product(&core, 2);
 
@@ -4208,7 +4191,7 @@ mod tests {
 	#[test]
 	fn a_follow_ending_during_the_download_releases_its_waiters() {
 		let provider = runtime_call_node(false);
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let (first, first_follow) = following_product(&core, 1);
 		let (second, mut second_follow) = following_product(&core, 2);
 		call(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK);
@@ -4230,7 +4213,7 @@ mod tests {
 	#[test]
 	fn a_follow_ending_before_the_node_names_the_download_releases_its_waiters() {
 		let provider = runtime_call_node_withholding(&["chainHead_v1_call"]);
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let (first, first_follow) = following_product(&core, 1);
 		let (second, mut second_follow) = following_product(&core, 2);
 		std::thread::spawn(move || call(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK));
@@ -4259,7 +4242,7 @@ mod tests {
 	#[test]
 	fn a_call_dropped_before_the_node_names_the_download_releases_its_waiters() {
 		let provider = runtime_call_node_withholding(&["chainHead_v1_call"]);
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let (first, _first_follow) = following_product(&core, 1);
 		let (second, mut second_follow) = following_product(&core, 2);
 		let (abort, registration) = AbortHandle::new_pair();
@@ -4291,7 +4274,7 @@ mod tests {
 	fn a_call_on_a_follow_that_ended_is_never_waited_on() {
 		let provider =
 			runtime_call_node_withholding(&["state_getStorageHash", "chainHead_v1_call"]);
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let (first, first_follow) = following_product(&core, 1);
 		let (second, mut second_follow) = following_product(&core, 2);
 		std::thread::spawn(move || call(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK));
@@ -4319,7 +4302,7 @@ mod tests {
 	#[test]
 	fn stopping_a_cached_operation_never_reaches_the_node() {
 		let provider = runtime_call_node(false);
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let (first, mut first_follow) = following_product(&core, 1);
 		let (second, mut second_follow) = following_product(&core, 2);
 
@@ -4459,7 +4442,7 @@ mod tests {
 	#[test]
 	fn the_core_reuses_metadata_a_product_downloaded() {
 		let provider = subxt_node();
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let (product, mut product_follow) = following_product(&core, 1);
 		call_with(&product, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK, 14u32.encode());
 		output_of(&mut product_follow).expect("the product gets the metadata");
@@ -4477,7 +4460,7 @@ mod tests {
 	#[test]
 	fn the_core_never_waits_on_a_download_in_flight() {
 		let provider = subxt_node_with(|follow, _| follow != 1);
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let (product, _product_follow) = following_product(&core, 1);
 		call_with(&product, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK, 14u32.encode());
 
@@ -4493,7 +4476,7 @@ mod tests {
 	#[test]
 	fn a_download_alongside_a_stalled_one_answers_its_waiters() {
 		let provider = subxt_node_with(|follow, _| follow != 1);
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let (first, _first_follow) = following_product(&core, 1);
 		let (second, mut second_follow) = following_product(&core, 2);
 		call_with(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK, 14u32.encode());
@@ -4522,7 +4505,7 @@ mod tests {
 		let provider = subxt_node_with(|follow, function| {
 			follow != 1 || function != "Metadata_metadata_at_version"
 		});
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let client =
 			futures::executor::block_on(core.online_client(&SHARED_GENESIS)).expect("client");
 		std::thread::spawn(move || futures::executor::block_on(client.at_current_block()).is_ok());
@@ -4552,7 +4535,7 @@ mod tests {
 	#[test]
 	fn a_download_reported_before_its_reply_still_answers_its_waiters() {
 		let provider = runtime_call_node_withholding(&["chainHead_v1_call"]);
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let (first, mut first_follow) = following_product(&core, 1);
 		let (second, mut second_follow) = following_product(&core, 2);
 		std::thread::spawn(move || call(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK));
@@ -4582,7 +4565,7 @@ mod tests {
 	#[test]
 	fn products_reuse_metadata_the_core_downloaded() {
 		let provider = subxt_node();
-		let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 		let client =
 			futures::executor::block_on(core.online_client(&SHARED_GENESIS)).expect("client");
 		let loaded = runtime_loads(&client);

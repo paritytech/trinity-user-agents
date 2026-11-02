@@ -398,6 +398,7 @@ mod tests {
 		*,
 	};
 	use crate::{
+		Spawner,
 		host_logic::{
 			product_account::{
 				SR25519_SIGNING_CONTEXT, derive_product_keypair, derive_root_keypair_from_entropy,
@@ -409,7 +410,7 @@ mod tests {
 		test_support::{
 			StubPlatform, account_id, new_statements_frame, runtime_config, signed_statement,
 			sso_session_info, sso_success_response_script, statement, stub_platform,
-			submitted_remote_message, subscribe_ack_frame, test_spawner,
+			submitted_remote_message, subscribe_ack_frame,
 		},
 	};
 	use futures::StreamExt;
@@ -470,7 +471,7 @@ mod tests {
 			[0; 32],
 			[0xbb; 32],
 			[0xcc; 32],
-			test_spawner(),
+			Spawner::for_test(),
 		);
 		let signing_host = SigningHostRole::new(services.clone(), "paseo".to_string());
 		futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
@@ -487,8 +488,11 @@ mod tests {
 
 	#[test]
 	fn statement_store_create_proof_pairing_host_does_not_use_session_key() {
-		let host =
-			ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), test_spawner());
+		let host = ProductRuntimeHost::new(
+			stub_platform(),
+			runtime_config("myapp.dot"),
+			Spawner::for_test(),
+		);
 		let session = sso_session_info();
 		host.test_cache_product_subtree(
 			&session,
@@ -685,8 +689,11 @@ mod tests {
 
 	#[test]
 	fn statement_store_create_proof_rejects_wrong_product_account() {
-		let host =
-			ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), test_spawner());
+		let host = ProductRuntimeHost::new(
+			stub_platform(),
+			runtime_config("myapp.dot"),
+			Spawner::for_test(),
+		);
 		host.test_session_state().set_session(sso_session_info());
 		let cx = CallContext::default();
 		let request = RemoteStatementStoreCreateProofRequest::V1(
@@ -736,8 +743,11 @@ mod tests {
             )),
             ..Default::default()
         });
-		let host =
-			ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+		let host = ProductRuntimeHost::new(
+			platform.clone(),
+			runtime_config("myapp.dot"),
+			Spawner::for_test(),
+		);
 		host.test_session_state().set_session(session.clone());
 		let cx = CallContext::with_request_id("proof-auth-1".to_string());
 		let request = RemoteStatementStoreCreateProofAuthorizedRequest::V1(statement);
@@ -782,8 +792,11 @@ mod tests {
 			],
 			..Default::default()
 		});
-		let host =
-			ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+		let host = ProductRuntimeHost::new(
+			platform.clone(),
+			runtime_config("myapp.dot"),
+			Spawner::for_test(),
+		);
 		let cx = CallContext::with_request_id("submit-1".to_string());
 		let request = RemoteStatementStoreSubmitRequest::V1(signed_statement([7; 32]));
 
@@ -818,8 +831,11 @@ mod tests {
 			],
 			..Default::default()
 		});
-		let host =
-			ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+		let host = ProductRuntimeHost::new(
+			platform.clone(),
+			runtime_config("myapp.dot"),
+			Spawner::for_test(),
+		);
 		let cancel = truapi::CancellationToken::default();
 		cancel.cancel();
 		let cx = CallContext::with_parts("submit-withdrawn".to_string(), cancel);
@@ -840,8 +856,11 @@ mod tests {
 	fn statement_store_submit_requires_remote_permission_before_rpc() {
 		let platform =
 			Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() });
-		let host =
-			ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+		let host = ProductRuntimeHost::new(
+			platform.clone(),
+			runtime_config("myapp.dot"),
+			Spawner::for_test(),
+		);
 		let cx = CallContext::with_request_id("submit-1".to_string());
 		let request = RemoteStatementStoreSubmitRequest::V1(signed_statement([7; 32]));
 
@@ -872,8 +891,11 @@ mod tests {
 			],
 			..Default::default()
 		});
-		let host =
-			ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+		let host = ProductRuntimeHost::new(
+			platform.clone(),
+			runtime_config("myapp.dot"),
+			Spawner::for_test(),
+		);
 		let cx = CallContext::with_request_id("sub-1".to_string());
 		let mut subscription = futures::executor::block_on(StatementStore::subscribe(
 			&host,
@@ -911,7 +933,8 @@ mod tests {
 			],
 			..Default::default()
 		});
-		let host = ProductRuntimeHost::new(platform, runtime_config("myapp.dot"), test_spawner());
+		let host =
+			ProductRuntimeHost::new(platform, runtime_config("myapp.dot"), Spawner::for_test());
 		host.connection.services.cache_statement(cached.clone());
 		let cx = CallContext::with_request_id("sub-cached".to_string());
 		let mut subscription = futures::executor::block_on(StatementStore::subscribe(
@@ -965,7 +988,8 @@ mod tests {
 			],
 			..Default::default()
 		});
-		let host = ProductRuntimeHost::new(platform, runtime_config("myapp.dot"), test_spawner());
+		let host =
+			ProductRuntimeHost::new(platform, runtime_config("myapp.dot"), Spawner::for_test());
 		let cx = CallContext::with_request_id("sub-pre".to_string());
 		let mut subscription = futures::executor::block_on(StatementStore::subscribe(
 			&host,
@@ -999,8 +1023,11 @@ mod tests {
 			],
 			..Default::default()
 		});
-		let host =
-			ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+		let host = ProductRuntimeHost::new(
+			platform.clone(),
+			runtime_config("myapp.dot"),
+			Spawner::for_test(),
+		);
 		let cx = CallContext::with_request_id("sub-drop".to_string());
 		let mut subscription = futures::executor::block_on(StatementStore::subscribe(
 			&host,
@@ -1031,7 +1058,8 @@ mod tests {
 			],
 			..Default::default()
 		});
-		let host = ProductRuntimeHost::new(platform, runtime_config("myapp.dot"), test_spawner());
+		let host =
+			ProductRuntimeHost::new(platform, runtime_config("myapp.dot"), Spawner::for_test());
 		let cx = CallContext::with_request_id("sub-empty-complete".to_string());
 		let mut subscription = futures::executor::block_on(StatementStore::subscribe(
 			&host,
@@ -1053,8 +1081,11 @@ mod tests {
 	#[test]
 	fn statement_store_subscribe_rejects_topic_limit_violations() {
 		let platform = stub_platform();
-		let host =
-			ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+		let host = ProductRuntimeHost::new(
+			platform.clone(),
+			runtime_config("myapp.dot"),
+			Spawner::for_test(),
+		);
 		let cx = CallContext::with_request_id("sub-too-many".to_string());
 		let topics = vec![[7; 32]; MAX_MATCH_ANY_TOPICS + 1];
 
@@ -1090,8 +1121,11 @@ mod tests {
 			chain_connect_error: Some("chain unavailable"),
 			..Default::default()
 		});
-		let host =
-			ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+		let host = ProductRuntimeHost::new(
+			platform.clone(),
+			runtime_config("myapp.dot"),
+			Spawner::for_test(),
+		);
 		let cx = CallContext::with_request_id("sub-connect-fail".to_string());
 
 		let mut subscription = futures::executor::block_on(StatementStore::subscribe(

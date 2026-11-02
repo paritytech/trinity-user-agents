@@ -933,6 +933,7 @@ mod tests {
 	mod orchestration {
 		use super::*;
 		use crate::{
+			Spawner,
 			chain_runtime::{RuntimeChainProvider, RuntimeFailure},
 			host_internal::extrinsic::tests::{
 				OfflineChainState, bulletin_chain_state, bulletin_runtime_call, split_v4,
@@ -940,7 +941,6 @@ mod tests {
 			},
 			host_logic::product_account::SR25519_SIGNING_CONTEXT,
 			platform::JsonRpcConnection,
-			subscription::thread_per_subscription_spawner,
 		};
 		use async_trait::async_trait;
 		use futures::{StreamExt, channel::mpsc, stream::BoxStream};
@@ -1537,7 +1537,7 @@ mod tests {
 		}
 
 		fn rpc(provider: Arc<BulletinScriptedProvider>) -> BulletinRpc {
-			let chain = ChainRuntime::new(provider, thread_per_subscription_spawner());
+			let chain = ChainRuntime::new(provider, Spawner::for_test());
 			let extrinsics = Arc::new(ExtrinsicService::over_chain(
 				chain.clone(),
 				Arc::new(crate::chain::V4OnlyHost),
