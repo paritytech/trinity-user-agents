@@ -1801,7 +1801,7 @@ impl RuntimeServices {
 
 	/// End session `intent` with `stage` as though its funds had moved.
 	/// Returns whether it was still in flight.
-	#[cfg(test)]
+	#[cfg(any(test, feature = "test-host"))]
 	pub async fn settle_funding_for_test(
 		&self,
 		intent: &str,

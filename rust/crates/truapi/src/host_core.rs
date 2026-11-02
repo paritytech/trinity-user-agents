@@ -704,6 +704,20 @@ impl SigningHostRuntime {
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
+	/// End funding session `intent` with `stage` as though its funds had
+	/// moved, so a test host can drive the flow with no chain behind it.
+	/// Returns whether it was still in flight.
+	///
+	/// For test hosts only, with the `test-host` feature enabled.
+	#[cfg(feature = "test-host")]
+	pub async fn settle_funding_for_test(
+		&self,
+		intent: &str,
+		stage: crate::host_logic::funding::FundingStage,
+	) -> Result<bool, v01::GenericError> {
+		Ok(self.services.settle_funding_for_test(intent, stage).await?)
+	}
+
 	/// Answer these resource tags as refused, replacing any earlier set.
 	///
 	/// For test hosts only, with the `test-host` feature enabled.
