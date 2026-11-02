@@ -2750,6 +2750,23 @@ async fn run_funding(runtime: &SigningHostRuntime, command: FundingCommand) -> R
 				.collect();
 			Ok(if lines.is_empty() { "No funding sessions".to_string() } else { lines.join("\n") })
 		},
+		FundingCommand::Close(intent) => Ok(
+			if funding_host::answer_frame(&intent, truapi::latest::FundingFrameOutcome::Dismissed) {
+				format!("Closed the provider's screen for {intent}")
+			} else {
+				format!("No provider screen is open for {intent}")
+			},
+		),
+		FundingCommand::Returned(intent, url) => Ok(
+			if funding_host::answer_frame(
+				&intent,
+				truapi::latest::FundingFrameOutcome::Returned { url },
+			) {
+				format!("Answered the provider's screen for {intent}")
+			} else {
+				format!("No provider screen is open for {intent}")
+			},
+		),
 		FundingCommand::History => {
 			let lines: Vec<String> = runtime
 				.funding_history()

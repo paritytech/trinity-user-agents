@@ -59,7 +59,10 @@ use truapi::{
 };
 
 use crate::{
-	NetworkConfig, platform::CliPlatform, terminal_ui::UiHandle, transcript::Transcript,
+	NetworkConfig,
+	platform::{ApprovalPolicy, CliPlatform},
+	terminal_ui::UiHandle,
+	transcript::Transcript,
 	worker_host::CliWorkerHost,
 };
 
@@ -249,6 +252,28 @@ impl CliFundingHost {
 	}
 }
 
+/// Where a provider's App is opened: the web host that serves dotNS
+/// products, as a browser opens them.
+const APP_GATEWAY: &str = "https://dot.li";
+
+/// The provider screens waiting on the user, by session intent, each
+/// answered once.
+static FRAMES: Mutex<BTreeMap<String, futures::channel::oneshot::Sender<FundingFrameOutcome>>> =
+	Mutex::new(BTreeMap::new());
+
+fn lock_frames() -> std::sync::MutexGuard<
+	'static,
+	BTreeMap<String, futures::channel::oneshot::Sender<FundingFrameOutcome>>,
+> {
+	FRAMES.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Answer session `intent`'s open provider screen with `outcome`. Returns
+/// whether one was open.
+pub fn answer_frame(intent: &str, outcome: FundingFrameOutcome) -> bool {
+	lock_frames().remove(intent).is_some_and(|answer| answer.send(outcome).is_ok())
+}
+
 /// The latest status the core pushed for each session this run, by intent,
 /// as a host keeps what it is pushed rather than reading it back.
 static PUSHED: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
@@ -344,14 +369,29 @@ impl FundingPlatform for CliFundingHost {
 		Ok(FundingPresentOutcome::Started)
 	}
 
+	/// Print a link to the provider's screen, which the user opens in a
+	/// browser: its App on dotNS at the route, or the page itself. The frame
+	/// stays open until the provider closes it, or the user answers it with
+	/// `/funding close` or `/funding returned`. Under `--auto-accept` no one is
+	/// there to answer, so it finishes at once, a page at its return URL.
 	async fn present_provider_frame(
 		&self,
 		provider: &ProductContext,
 		intent: String,
 		target: FundingFrameTarget,
 	) -> Result<FundingFrameOutcome, GenericError> {
-		let (shown, finished) = match target {
-			FundingFrameTarget::App { route } => (route, FundingFrameOutcome::Closed),
+		let (link, finished) = match target {
+			FundingFrameTarget::App { route } => {
+				let route = if route.starts_with('/') || route.starts_with('#') {
+					route
+				} else {
+					format!("/{route}")
+				};
+				(
+					format!("{APP_GATEWAY}/{}{route}", provider.product_id),
+					FundingFrameOutcome::Closed,
+				)
+			},
 			FundingFrameTarget::Page { url, return_url } => {
 				let finished = match return_url {
 					Some(url) => FundingFrameOutcome::Returned { url },
@@ -360,24 +400,36 @@ impl FundingPlatform for CliFundingHost {
 				(url, finished)
 			},
 		};
-		let done = self
-			.user
-			.decide(
-				"finish the provider's screen",
-				format!("{} shows {shown} for {intent}", provider.product_id),
-			)
-			.await;
+		crate::terminal_ui::output_success(
+			format!("{} asks you to open a screen for {intent}", provider.product_id),
+			Some(format!(
+				"{link}\nWhen you are done, the provider closes it, or type \
+				 /funding close {intent} or /funding returned {intent} <url>"
+			)),
+		);
 		self.transcript.record(serde_json::json!({
 			"kind": "frame",
 			"intent": intent,
 			"provider": provider.product_id.as_str(),
-			"route": shown,
-			"finished": done,
+			"link": link,
 		}));
-		Ok(if done { finished } else { FundingFrameOutcome::Dismissed })
+		let outcome = if self.user.approval_policy() == ApprovalPolicy::AutoAccept {
+			finished
+		} else {
+			let (answer, answered) = futures::channel::oneshot::channel();
+			lock_frames().insert(intent.clone(), answer);
+			answered.await.unwrap_or(FundingFrameOutcome::Dismissed)
+		};
+		self.transcript.record(serde_json::json!({
+			"kind": "frame_answered",
+			"intent": intent,
+			"outcome": format!("{outcome:?}"),
+		}));
+		Ok(outcome)
 	}
 
 	fn close_provider_frame(&self, provider: &ProductContext, intent: String) {
+		answer_frame(&intent, FundingFrameOutcome::Closed);
 		self.transcript.record(serde_json::json!({
 			"kind": "frame_closed",
 			"intent": intent,

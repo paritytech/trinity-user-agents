@@ -154,6 +154,11 @@ pub enum FundingCommand {
 	Sessions,
 	/// List every ended session, as history keeps it.
 	History,
+	/// Close the provider's screen open for this session, as the user would.
+	Close(String),
+	/// Answer the provider's screen open for this session with the URL its
+	/// page returned to.
+	Returned(String, String),
 }
 
 /// A command accepted by the signing-host command bar or `exec` mode.
@@ -364,7 +369,19 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, CommandParseError> {
 			None if argument.trim() == "history" => {
 				Ok(ShellCommand::Funding(FundingCommand::History))
 			},
-			_ => Err("usage: /funding cancel <intent> | sessions | history".into()),
+			Some(("close", intent)) if !intent.trim().is_empty() => {
+				Ok(ShellCommand::Funding(FundingCommand::Close(intent.trim().to_string())))
+			},
+			Some(("returned", rest)) => match rest.trim().split_once(char::is_whitespace) {
+				Some((intent, url)) if !url.trim().is_empty() => Ok(ShellCommand::Funding(
+					FundingCommand::Returned(intent.to_string(), url.trim().to_string()),
+				)),
+				_ => Err("usage: /funding returned <intent> <url>".into()),
+			},
+			_ => Err(
+				"usage: /funding cancel <intent> | close <intent> | returned <intent> <url> | sessions | history"
+					.into(),
+			),
 		},
 		"/quit" => no_argument(name, argument, ShellCommand::Quit),
 		_ => Err(format!("unknown command `{name}`; use /help to list commands").into()),
@@ -885,6 +902,8 @@ pub const HELP_TEXT: &str = "\
 /session --clear-all    permanently clear all sessions for this network
 /renew                  renew statement-store allowances now
 /funding cancel <intent> cancel a funding session
+/funding close <intent>  close the provider screen open for a session
+/funding returned <intent> <url> answer it with the URL its page returned to
 /funding sessions       list funding sessions pushed this run
 /funding history        list ended funding sessions
 /help                   show this help
@@ -990,6 +1009,17 @@ mod tests {
 		assert_eq!(
 			parse_command("/funding sessions"),
 			Ok(ShellCommand::Funding(FundingCommand::Sessions))
+		);
+		assert_eq!(
+			parse_command("/funding close fs_abc"),
+			Ok(ShellCommand::Funding(FundingCommand::Close("fs_abc".to_string())))
+		);
+		assert_eq!(
+			parse_command("/funding returned fs_abc https://ramp.example/done?id=7"),
+			Ok(ShellCommand::Funding(FundingCommand::Returned(
+				"fs_abc".to_string(),
+				"https://ramp.example/done?id=7".to_string()
+			)))
 		);
 		assert_eq!(
 			parse_command("/funding history"),

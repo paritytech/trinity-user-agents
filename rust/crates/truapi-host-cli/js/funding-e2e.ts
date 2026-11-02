@@ -42,7 +42,7 @@ export interface TranscriptLine {
   outcome?: string;
   tag?: string;
   progress?: string | null;
-  route?: string;
+  link?: string;
   answer?: string;
   provider?: string;
   transition?: string;

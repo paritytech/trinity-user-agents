@@ -843,10 +843,12 @@ export async function runProviderStart(
       (line) =>
         line.kind === "frame" &&
         line.intent === inbound &&
-        line.route === "/kyc",
-      "the provider frame",
+        typeof line.link === "string" &&
+        line.link.startsWith("https://dot.li/") &&
+        line.link.endsWith("/kyc"),
+      "the link to the provider's App",
     );
-    return "the host showed the provider's screen and it closed";
+    return "the host linked the provider's App on dotNS at its route, and the screen closed";
   });
 
   await check("provider_present_page", async () => {
