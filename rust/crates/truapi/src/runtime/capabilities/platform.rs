@@ -1,5 +1,7 @@
 //! Product-facing platform capability adapters.
 
+use std::sync::Arc;
+
 use crate::platform::{ExecutableKind, PermissionAuthorizationStatus};
 use futures::StreamExt;
 use tracing::{instrument, warn};
@@ -65,12 +67,23 @@ impl System for ProductRuntimeHost {
 			)));
 		}
 		// A worker that agreed the codec can take the core's calls, so a
-		// funding provider's is handed the sessions it serves.
+		// funding provider's is handed the sessions it serves. Its own calls
+		// are refused while no user session is current, so that waits for one.
 		if self.connection.product.execution_kind == ExecutableKind::Worker {
-			self.connection
-				.services
-				.funding()
-				.connected(self.connection.product.product_id.as_str());
+			let connection = Arc::downgrade(&self.connection);
+			let mut changes = self.connection.session_state.subscribe();
+			(self.connection.services.spawner)(Box::pin(async move {
+				while changes.next().await.is_some() {
+					let Some(connection) = connection.upgrade() else { return };
+					if connection.session_state.current().is_some() {
+						connection
+							.services
+							.funding()
+							.connected(connection.product.product_id.as_str());
+						return;
+					}
+				}
+			}));
 		}
 		Ok(HostHandshakeResponse::V1)
 	}

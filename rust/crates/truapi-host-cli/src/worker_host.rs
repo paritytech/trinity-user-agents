@@ -21,7 +21,7 @@ use tokio::{runtime::Handle, task::JoinHandle};
 use truapi::{
 	SigningHostRuntime,
 	host_logic::worker::{WorkerController, WorkerTransition},
-	platform::{ProductExecutionKind, ProductId},
+	platform::{ExecutableKind, ProductId},
 };
 
 use crate::{frame_server, script_runner, terminal_ui::UiHandle, transcript::Transcript};
@@ -179,8 +179,7 @@ async fn run(
 	script: &Path,
 	ui: Option<UiHandle>,
 ) -> anyhow::Result<ExitStatus> {
-	let product =
-		frame_server::ProductSelection::new(product_id.to_string(), ProductExecutionKind::Worker)?;
+	let product = frame_server::ProductSelection::new(product_id.clone(), ExecutableKind::Worker);
 	let frames = frame_server::bind(None).await?;
 	let frame_url = frames.endpoint().to_string();
 	tokio::select! {

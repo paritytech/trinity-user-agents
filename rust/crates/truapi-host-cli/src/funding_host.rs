@@ -624,7 +624,7 @@ mod tests {
 		let host = CliPaymentHost { ledger: directory.path().join("missing").join("ledger.jsonl") };
 		let product = ProductContext::new_with_execution(
 			"ramp.dot".parse().expect("valid product"),
-			truapi::platform::ProductExecutionKind::Worker,
+			truapi::platform::ExecutableKind::Worker,
 		);
 
 		let started = futures::executor::block_on(host.top_up(
