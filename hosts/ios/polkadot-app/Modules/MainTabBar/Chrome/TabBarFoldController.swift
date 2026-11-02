@@ -2,11 +2,6 @@ import UIKit
 import DesignSystem
 import PolkadotUI
 
-private struct ScreenOverride {
-    weak var screen: UIViewController?
-    var value: TabBarFoldOverride
-}
-
 /// How the Edge glow's opacity is set: from the hide progress, or faded out once a settle toward shown starts.
 enum TabBarEdgeGlowOpacity {
     case progress(CGFloat)
@@ -45,7 +40,8 @@ final class TabBarFoldController {
 
     private var foldDerived: TabBarFoldDerived = .none
     private weak var navigationScreen: UIViewController?
-    private var screenOverrides: [ScreenOverride] = []
+    /// The user's tuck or restore. Only a tucked value carries across navigation.
+    private var userOverride: TabBarFoldOverride = .none
     private var motion = DockletMotion()
     /// Decides when the auto-hide tucks the bar. The drag, settle and state blockers are read from this controller.
     private var autoHide = DockletAutoHide(startedAt: CACurrentMediaTime())
@@ -90,6 +86,9 @@ final class TabBarFoldController {
     }
 
     func update(context: TabBarChromeContext) {
+        if context.screen !== navigationScreen {
+            userOverride = TabBarVisibilityPolicy.carriedOverride(from: state)
+        }
         isTabRoot = context.isTabRoot
         foldDerived = context.foldDerived
         navigationScreen = context.screen
@@ -111,7 +110,10 @@ final class TabBarFoldController {
     /// Resolves the visibility state a context would settle on, without committing it — used to
     /// drive the offset alongside an interactive navigation transition.
     func resolvedState(for context: TabBarChromeContext) -> TabBarVisibilityState {
-        TabBarVisibilityPolicy.state(derived: context.foldDerived, override: override(for: context.screen))
+        let override = context.screen === navigationScreen
+            ? userOverride
+            : TabBarVisibilityPolicy.carriedOverride(from: state)
+        return TabBarVisibilityPolicy.state(derived: context.foldDerived, override: override)
     }
 
     /// Moves the chrome toward `state` in sync with an interactive transition. Unlike `apply(state:)`
@@ -131,7 +133,7 @@ final class TabBarFoldController {
         guard state != .hidden else {
             return
         }
-        storeOverride(override)
+        userOverride = override
         apply(state: policyState, isUserDriven: true)
     }
 
@@ -165,7 +167,7 @@ final class TabBarFoldController {
         guard tucks != (state == .tucked) else {
             return
         }
-        storeOverride(tucks ? .tucked : .shown)
+        userOverride = tucks ? .tucked : .shown
         commit(tucks ? .tucked : .shown)
     }
 
@@ -193,12 +195,8 @@ final class TabBarFoldController {
 }
 
 private extension TabBarFoldController {
-    var currentOverride: TabBarFoldOverride {
-        override(for: navigationScreen)
-    }
-
     var policyState: TabBarVisibilityState {
-        TabBarVisibilityPolicy.state(derived: foldDerived, override: currentOverride)
+        TabBarVisibilityPolicy.state(derived: foldDerived, override: userOverride)
     }
 
     var geometry: DockletGeometry {
@@ -212,21 +210,6 @@ private extension TabBarFoldController {
             height: DSTabBarStyle.height
         )
         return DockletGeometry(dockFrame: dockFrame, bounds: bounds)
-    }
-
-    func override(for screen: UIViewController?) -> TabBarFoldOverride {
-        guard let screen else {
-            return .none
-        }
-        return screenOverrides.first { $0.screen === screen }?.value ?? .none
-    }
-
-    func storeOverride(_ override: TabBarFoldOverride) {
-        guard let navigationScreen else {
-            return
-        }
-        screenOverrides.removeAll { $0.screen == nil || $0.screen === navigationScreen }
-        screenOverrides.append(ScreenOverride(screen: navigationScreen, value: override))
     }
 
     func apply(state newState: TabBarVisibilityState, isUserDriven: Bool = false) {
@@ -261,7 +244,7 @@ private extension TabBarFoldController {
         cancelFoldAnimator()
 
         let rest: DockletRest = state == .tucked ? .tucked : .shown
-        guard animated else {
+        guard animated, !TabBarVisibilityPolicy.isOffScreenSwap(from: previous, to: state) else {
             motion.snap(to: rest)
             writeTransform(pose(for: state))
             return
@@ -376,7 +359,7 @@ private extension TabBarFoldController {
 
     /// Tucks the bar on the quiet settle, with no haptic. The tuck is recorded as the screen's override, as a swipe is.
     func tuckQuietly() {
-        storeOverride(.tucked)
+        userOverride = .tucked
         commit(.tucked)
         cancelFoldAnimator()
         motion.quietSettle(to: .tucked, now: CACurrentMediaTime())

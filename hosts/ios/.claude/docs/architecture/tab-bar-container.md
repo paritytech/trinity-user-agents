@@ -224,20 +224,25 @@ The three states are `shown`, `tucked` and `hidden`. The bar's position between 
 - **Tucked.** The bar turns a quarter about a pivot 14 pt past its right end, at its vertical center, with the leading end up. It then slides out to the right by (gap to the screen edge + 60 pt) × progress³. An Edge glow, 24 pt wide and 200 pt tall from the top of the tucked bar, sits on the right edge, outside the bar's transform. Its top and height follow the grab zone's clamps. Its opacity follows the hide progress while a finger drags the bar or it settles toward tucked. A settle toward shown fades it out over 320 ms. While a finger holds the grab zone, a brighter copy and a shimmer light it up and it widens to 1.08 from the screen edge. Release fades that look out over 320 ms. Reduce Motion keeps the fades and skips the widening and the shimmer's movement.
 - **Hidden.** The bar slides fully off the leading edge. There is no Edge glow and no grab zone, so tab navigation is not available on that screen. The only conformer to `TabBarChromeVisibilityCustomizing` in the app is `ChatViewController`.
 
-`TabBarVisibilityPolicy` resolves the state in this order:
+`TabBarVisibilityPolicy.state(derived:override:)` resolves the state in this order:
 
-1. A per-screen user override (`tucked` or `shown`) wins.
-2. Otherwise the derived state applies.
+1. A derived `hidden` (chat) wins over everything.
+2. A user override (`tucked` or `shown`) wins.
+3. Otherwise the derived state applies.
 
 A tab root follows the same order and can be tucked by a user override. Tab-root bottom clearance does not change when the bar tucks, and it does not follow the motion.
 
-The derived state comes from `TabBarHiddenPolicy.deriveFoldState(in:showing:)`. It is `hidden` when the target opts out. It is `tucked` when any controller above the root, up to the target, sets `hidesBottomBarWhenPushed`. The root is excluded, so a tab root that sets the flag does not tuck. A mounted product also derives `tucked`.
+The derived state comes from `TabBarHiddenPolicy.deriveFoldState(in:showing:)`. It is `hidden` when the target opts out. It is `tucked` when any controller above the root, up to the target, sets `hidesBottomBarWhenPushed`. The root is excluded, so a tab root that sets the flag does not tuck. A mounted product also derives `tucked`. The grab zone can bring the bar back over it.
 
-Overrides are stored per screen, weakly keyed on the navigation screen, so tucking one pushed screen does not affect another. The fold controller ignores override requests while the bar is `hidden`.
+`TabBarFoldController` holds one user override, not one per screen: `none`, `shown` or `tucked`. A user tuck or restore sets it, and so does an auto-hide tuck. The value lives in memory, so a relaunch starts with the bar shown. The fold controller ignores override requests while the bar is `hidden`.
 
-**Interactive pops.** The transition coordinator drives the fold. `setInteractiveTarget` runs inside `animate(alongsideTransition:)`. When the interaction ends, the chrome commits the incoming screen's state. If the pop was cancelled, it commits the staying screen's state, rebuilt with `TabBarHiddenPolicy.stackAfterCancelledPop`.
+**Navigation.** When the screen changes (push, back, tab switch, or an interactive transition resolving), the new screen starts with `tucked` if the bar was tucked. Otherwise it starts with no override, so its derived state decides. A tucked bar therefore stays tucked across navigation, including when the user leaves a product. Leaving a chat shows the bar. A mounted product or a `hidesBottomBarWhenPushed` screen still tucks.
 
-**Drag.** A horizontal pan that starts on the bar follows the finger live. `DockletDirectionLock` decides the pan's direction once it has moved 10 pt. At rest, sideways means between 30° up and 45° down. A bar caught mid-settle accepts any pan within 60° of horizontal. A touch on a moving bar catches it where it is. A drag that starts near the right edge needs less travel to hide the bar. A release that changes the rest records the screen's override.
+**Tucked and hidden.** Moving between `tucked` and `hidden` writes the end pose without animation, because the bar is off screen at both ends.
+
+**Interactive pops.** The transition coordinator drives the fold. `resolvedState(for:)` gives the incoming screen's state, using the carried override. `setInteractiveTarget` moves the bar toward it inside `animate(alongsideTransition:)`. When the interaction ends, the chrome commits the incoming screen's state. If the pop was cancelled, the staying screen's state is rebuilt with `TabBarHiddenPolicy.stackAfterCancelledPop`.
+
+**Drag.** A horizontal pan that starts on the bar follows the finger live. `DockletDirectionLock` decides the pan's direction once it has moved 10 pt. At rest, sideways means between 30° up and 45° down. A bar caught mid-settle accepts any pan within 60° of horizontal. A touch on a moving bar catches it where it is. A drag that starts near the right edge needs less travel to hide the bar. A release that changes the rest records the user override.
 
 **Held pose.** `DockletHold` owns the pose while a finger holds the bar. The bar turns half as far as its plain pose, about the point under the finger, and follows the finger. It leads the finger towards the right edge by up to 56 pt, keeping the finger 14 pt inside the bar's leading end. Past the ends, progress rubber-bands by at most 0.25. The bar resists past Shown (40 pt) and above the tucked bar's top (40 pt). It never sinks below the screen bottom unless the finger drags below it (36 pt).
 
@@ -245,14 +250,14 @@ Overrides are stored per screen, weakly keyed on the navigation screen, so tucki
 
 **Bringing it back.** A touch in the Grab zone catches a tucked bar, or one still settling toward tucked, and turns it to point at the finger. `DockletMotion.beginAim` starts the drag. Progress is the finger's angle from the pivot over a quarter turn. The pivot slides out with progress, so the angle is solved in two passes per frame (`DockletAim`). Low and far in gives shown. High at the edge gives tucked. The grab's progress and pose blend out over the first 80 pt of finger travel, so catching the bar does not make it jump. Release uses the same rules as a tuck drag, plus one: a leftward finger speed above 350 pt/s over the last 100 ms restores the bar, however short the drag.
 
-**Animation.** A release starts a spring that takes the release velocity as its initial velocity. Faster than 4 progress per second, the spring is under-damped (ratio 0.78). Otherwise it is critically damped. A `CADisplayLink` in `TabBarFoldController` drives it. The held offset unwinds on the same clock. The settle lands once it is near rest, after 80 ms, and at 1.4 s at the latest. `TabBarFoldController` is the only writer of the chrome surface transform. Moves to or from `hidden` use a plain UIKit spring animator instead, because the display link drives only the shown and tucked poses.
+**Animation.** A release starts a spring that takes the release velocity as its initial velocity. Faster than 4 progress per second, the spring is under-damped (ratio 0.78). Otherwise it is critically damped. A `CADisplayLink` in `TabBarFoldController` drives it. The held offset unwinds on the same clock. The settle lands once it is near rest, after 80 ms, and at 1.4 s at the latest. `TabBarFoldController` is the only writer of the chrome surface transform. A move between `shown` and `hidden` uses a plain UIKit spring animator instead, because the display link drives only the shown and tucked poses. A swap between `tucked` and `hidden` writes the end pose without animation.
 
 **Auto-hide.** A shown bar tucks itself without a drag, in two cases:
 
 - The first touch outside the Docklet tucks it at once.
 - Otherwise it tucks 3 s after the last touch or hardware key press.
 
-The Docklet is the bar, the open panel and the Grab zone. The Edge glow strip does not count while the bar is shown. A touch on the Docklet restarts the 3 s countdown and cancels a pending outside-touch tuck. Further outside touches do not restart that tuck. The tuck is stored as the screen's override.
+The Docklet is the bar, the open panel and the Grab zone. The Edge glow strip does not count while the bar is shown. A touch on the Docklet restarts the 3 s countdown and cancels a pending outside-touch tuck. Further outside touches do not restart that tuck. The tuck is stored as the user override.
 
 Blockers hold the tuck: an open panel, the keyboard, a drag or settle in progress, and a bar that is not shown. While a blocker holds, an outside touch starts no tuck. Clearing the last blocker restarts the 3 s countdown from that moment. Onboarding tips and VoiceOver will add more blockers.
 
