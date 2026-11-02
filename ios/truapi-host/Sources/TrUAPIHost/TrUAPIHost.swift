@@ -293,7 +293,7 @@ public protocol ChatHostBridge: AnyObject, Sendable {
     func roomConfig(roomId: String) async throws -> ChatRoomConfig
 
     /// Replace the configuration of a room whole, and keep it across
-    /// restarts, when the product declares one with `setRoomConfig`. A room
+    /// restarts, when the product declares one with `createRoom`. A room
     /// the product declared none for has ``ChatRoomConfig/hostDefault``. A
     /// change of `productSource` discards the stored messages or the cached
     /// pages of the room.

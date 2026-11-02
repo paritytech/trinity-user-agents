@@ -172,6 +172,7 @@ fn frames() -> Vec<String> {
 				room_id_source: "support".into(),
 				name: "Room".into(),
 				icon: "https://icons.example/room.png".into(),
+				config: config(),
 			}),
 		),
 		line(
@@ -307,21 +308,6 @@ fn frames() -> Vec<String> {
 			wire_table::CHAT_SET_ROOM_FOOTER,
 			MESSAGE_TYPE_RESPONSE,
 			Ok::<_, CallError<HostChatSetRoomFooterError>>(HostChatSetRoomFooterResponse::V1),
-		),
-		line(
-			"7.set_room_config.request",
-			wire_table::CHAT_SET_ROOM_CONFIG,
-			MESSAGE_TYPE_REQUEST,
-			HostChatSetRoomConfigRequest::V1(v01::HostChatSetRoomConfigRequest {
-				room_id: room(),
-				config: config(),
-			}),
-		),
-		line(
-			"7.set_room_config.response",
-			wire_table::CHAT_SET_ROOM_CONFIG,
-			MESSAGE_TYPE_RESPONSE,
-			Ok::<_, CallError<HostChatSetRoomConfigError>>(HostChatSetRoomConfigResponse::V1),
 		),
 		line(
 			"8.set_room_metadata.request",

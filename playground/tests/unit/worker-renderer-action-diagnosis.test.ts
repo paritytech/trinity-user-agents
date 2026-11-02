@@ -107,7 +107,6 @@ test("worker diagnosis completes after !diagnose alone, without a renderer actio
       },
       listSubscribe: () => chatRooms.observable,
       setRoomFooter: () => okAsync<undefined, never>(undefined),
-      setRoomConfig: () => okAsync<undefined, never>(undefined),
       setRoomMetadata: () => okAsync<undefined, never>(undefined),
       setRoomPreview: () => okAsync<undefined, never>(undefined),
       updateFeed: () => okAsync<undefined, never>(undefined),

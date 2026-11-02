@@ -69,16 +69,18 @@ truapi_macros::versioned_type! {
 	pub enum ProductChatUserActionError { V1 => v01::ProductChatUserActionError }
 	pub enum ProductChatReactionsQueryRequest { V1 => v01::ProductChatReactionsQueryRequest }
 	pub enum ProductChatReactionsQueryResponse { V1 => v01::ProductChatReactionsQueryResponse }
-	pub enum HostChatSetRoomConfigRequest { V1 => v01::HostChatSetRoomConfigRequest }
-	pub enum HostChatSetRoomConfigResponse { V1 }
-	pub enum HostChatSetRoomConfigError { V1 => v01::HostChatSetRoomConfigError }
 }
 
 impl IntoLatest for HostChatCreateRoomRequest {
 	fn into_latest(self) -> Self::Latest {
 		match self {
 			Self::V1(v01::HostChatCreateRoomRequest { room_id, name, icon }) => {
-				v02::HostChatCreateRoomRequest { room_id_source: room_id, name, icon }
+				v02::HostChatCreateRoomRequest {
+					room_id_source: room_id,
+					name,
+					icon,
+					config: v01::ChatRoomConfig::default(),
+				}
 			},
 			Self::V2(latest) => latest,
 		}
@@ -227,6 +229,7 @@ mod tests {
 				room_id_source: "room".into(),
 				name: "Room".into(),
 				icon: String::new(),
+				config: Default::default(),
 			}
 		);
 	}

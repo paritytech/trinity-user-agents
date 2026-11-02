@@ -508,7 +508,7 @@ interface ChatHostBridge {
 
     /**
      * Replace the configuration of a room whole, and keep it across restarts,
-     * when the product declares one with `setRoomConfig`. A room the product
+     * when the product declares one with `createRoom`. A room the product
      * declared none for has [HOST_DEFAULT_CHAT_ROOM_CONFIG]. A change of
      * `productSource` discards the stored messages or the cached pages of the
      * room.
