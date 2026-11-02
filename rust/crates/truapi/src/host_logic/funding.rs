@@ -1558,9 +1558,9 @@ impl FundingSession {
 			return None;
 		}
 		let mut named = self.started.iter().filter(|record| record.named_at_ms.is_some());
-		// The last step, not the last update: an answer to a cancel or a
-		// detail must not hide the outcome the provider handed over.
-		match self.last_update()? {
+		// The last step, not the last update: a detail or deposit must not
+		// hide the outcome the provider handed over.
+		match self.last_step()? {
 			FundingUpdate::In(FundingInboundUpdate::Delivered) => {
 				Some(Settlement::TopUps(named.cloned().collect()))
 			},
@@ -2666,6 +2666,36 @@ mod tests {
 		assert_eq!(
 			(answer, session.cancel.clone(), session.pending_cancel_call()),
 			(CancelConfirmation::TooLate, Some(FundingCancel::Declined), declined())
+		);
+	}
+
+	// A detail reported after the provider handed over the outcome must not
+	// stop the session from settling.
+	#[test]
+	fn a_detail_after_delivered_still_settles() {
+		let mut session = served(FundingDirection::In);
+		reported(
+			&mut session,
+			&[FundingUpdate::In(FundingInboundUpdate::PaymentReceived {
+				finalized: true,
+				mismatch: None,
+			})],
+		);
+		start(&mut session, [1; 32], 100);
+		reported(
+			&mut session,
+			&[
+				FundingUpdate::In(FundingInboundUpdate::Crediting {
+					top_up_id: [1; 32],
+					amount: 100,
+				}),
+				FundingUpdate::In(FundingInboundUpdate::Delivered),
+				FundingUpdate::Details { transaction_id: Some("tx".into()), reference: None },
+			],
+		);
+
+		assert!(
+			matches!(session.settlement_due(), Some(Settlement::TopUps(top_ups)) if top_ups.len() == 1)
 		);
 	}
 
