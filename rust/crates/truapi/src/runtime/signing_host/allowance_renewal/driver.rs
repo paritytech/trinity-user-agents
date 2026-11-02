@@ -347,7 +347,7 @@ mod tests {
 	use parity_scale_codec::Encode;
 	use std::{collections::HashMap, sync::Mutex};
 
-	use truapi::latest::{GenericError, ProductId};
+	use truapi::{ProductId, latest::GenericError};
 
 	#[derive(Default)]
 	struct MemStorage {

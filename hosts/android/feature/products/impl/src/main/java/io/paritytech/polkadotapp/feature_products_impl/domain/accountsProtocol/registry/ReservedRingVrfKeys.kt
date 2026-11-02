@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.GenesisHash
 import io.paritytech.polkadotapp.chains.multiNetwork.getRuntime
 import io.paritytech.polkadotapp.chains.util.Modules
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.DerivationIndex32
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
@@ -14,8 +15,8 @@ import io.paritytech.polkadotapp.feature_people_api.domain.PEOPLE_LITE
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RingLocation
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RingLocationJunction
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 // Mirrors the personhood indices wired in ProductDerivationModule. RFC-0022 pins index 0 as the full
@@ -35,38 +36,28 @@ class ReservedRingVrfKeys @Inject constructor(
     private val dotNsTldProvider: DotNsTldProvider,
 ) {
     suspend fun isReserved(handle: ProductAccountId): Boolean {
-        if (handle.productId != personhoodId().value) return false
-
-        return handle.index == FULL_PERSONHOOD_INDEX || handle.index == LIGHT_PERSONHOOD_INDEX
+        return handle.productId == personhoodId() &&
+            (handle.index == FULL_PERSONHOOD_INDEX || handle.index == LIGHT_PERSONHOOD_INDEX)
     }
-
-    private suspend fun ownedBy(owner: ProductId): Boolean = owner == personhoodId()
 
     private suspend fun personhoodId(): ProductId {
         return ReservedProductIds.personhood(dotNsTldProvider.getTldRetrying())
     }
 
-    /**
-     * Fails rather than returning an empty list when the chain cannot be read, so a caller can tell
-     * "this user has no personhood key" apart from "the ring could not be resolved".
-     */
-    suspend fun entriesOf(owner: ProductId): Result<List<ReservedRingVrfKeyEntry>> {
-        if (!ownedBy(owner)) return Result.success(emptyList())
+    /** Fails when the reserved ring cannot be resolved. */
+    suspend fun entriesOf(owner: ProductId): Result<List<ReservedRingVrfKeyEntry>> = runCancellableCatching {
+        if (owner != personhoodId()) return@runCancellableCatching emptyList()
 
-        return runCatching {
-            val peopleChain = chainRegistry.peopleChain()
+        val peopleChain = chainRegistry.peopleChain()
+        val chainId = chainRegistry.knownChains.people
+        val membersPalletIndex = chainRegistry.getRuntime(chainId).metadata
+            .moduleOrNull(Modules.MEMBERS)?.index?.toInt()?.toUByte()
+            ?: error("MEMBERS pallet is absent from ${peopleChain.name} metadata")
 
-            val chainId = chainRegistry.knownChains.people
-
-            val membersPalletIndex = chainRegistry.getRuntime(chainId).metadata
-                .moduleOrNull(Modules.MEMBERS)?.index?.toInt()?.toUByte()
-                ?: error("MEMBERS pallet is absent from ${peopleChain.name} metadata")
-
-            listOf(
-                reservedEntry(owner, peopleChain.genesisHash, membersPalletIndex, FULL_PERSONHOOD_INDEX, RingCollectionId.PEOPLE),
-                reservedEntry(owner, peopleChain.genesisHash, membersPalletIndex, LIGHT_PERSONHOOD_INDEX, RingCollectionId.PEOPLE_LITE),
-            )
-        }
+        listOf(
+            reservedEntry(owner, peopleChain.genesisHash, membersPalletIndex, FULL_PERSONHOOD_INDEX, RingCollectionId.PEOPLE),
+            reservedEntry(owner, peopleChain.genesisHash, membersPalletIndex, LIGHT_PERSONHOOD_INDEX, RingCollectionId.PEOPLE_LITE),
+        )
     }
 
     private fun reservedEntry(
@@ -85,7 +76,7 @@ class ReservedRingVrfKeys @Inject constructor(
         )
 
         return ReservedRingVrfKeyEntry(
-            handle = ProductAccountId(owner.value, index),
+            handle = ProductAccountId(owner, index),
             ring = ring,
         )
     }

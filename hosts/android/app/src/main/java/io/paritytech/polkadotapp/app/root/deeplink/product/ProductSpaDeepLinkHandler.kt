@@ -5,7 +5,6 @@ import io.paritytech.polkadotapp.app.root.presentation.root.RootRouter
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
-import io.paritytech.polkadotapp.common.presentation.deeplink.asWebUri
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.repository.awaitAccountsInitialized
@@ -25,7 +24,7 @@ internal class ProductSpaDeepLinkHandler @Inject constructor(
 ) : DeepLinkHandler {
     override suspend fun canHandle(data: Uri): Boolean {
         val tld = dotNsTldProvider.currentTldOrNull() ?: return false
-        if (!DotNsUtils.isDotDomain(data.asWebUri(), tld)) return false
+        if (!DotNsUtils.isDotDomain(data, tld)) return false
 
         return gate.opens()
     }
@@ -36,7 +35,7 @@ internal class ProductSpaDeepLinkHandler @Inject constructor(
             dotNsTldProvider.getTld().mapCatching { tld ->
                 accountRepository.awaitAccountsInitialized()
 
-                val normalized = DotNsUtils.normalize(data.asWebUri(), tld)
+                val normalized = DotNsUtils.normalize(data, tld)
                     ?: error("Not a $tld domain: $data")
 
                 DeeplinkProcessingOutcome.Navigate {

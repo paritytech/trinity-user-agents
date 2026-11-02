@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TrUAPIHost
 @testable import Products
 
 struct BundledProductsTests {
@@ -12,9 +13,9 @@ struct BundledProductsTests {
         try write("ignored", to: root, ".staging/worker/index.js")
 
         let products = BundledProducts(root: root)
-        let product = try #require(products.product("provider.dot"))
+        let product = try #require(try products.product(ProductId("provider.dot")))
 
-        #expect(products.all.map(\.id) == ["provider.dot"])
+        #expect(products.all.map(\.id.rawValue) == ["provider.dot"])
         #expect(product.workerManifest() == "{\"kind\":\"worker\"}")
         #expect(product.hasWorker())
         #expect(product.hasApp())
@@ -27,10 +28,13 @@ struct BundledProductsTests {
     /// The app's network has its own top-level domain, which a bundled id
     /// need not end in, and a provider's screen must still resolve.
     @Test func opensPagesUnderItsOwnIdOnAnyNetwork() throws {
-        let product = BundledProduct(id: "provider.dot", directory: URL(fileURLWithPath: "/bundle/provider.dot"))
+        let product = try BundledProduct(
+            id: ProductId("provider.dot"),
+            directory: URL(fileURLWithPath: "/bundle/provider.dot")
+        )
         let page = try #require(product.page(navigationDestination: "provider.dot/card?intent=fs_1"))
 
-        #expect(page.host.toDotDomain() == "provider.dot")
+        #expect(page.host.toDotDomain().rawValue == "provider.dot")
         #expect(page.page == "/card?intent=fs_1")
     }
 

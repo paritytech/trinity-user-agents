@@ -41,7 +41,7 @@ struct TrUAPIWsBridgeTests {
         let execution = try runtime.openProductExecution(
             bridge: bridge,
             configuration: ProductExecutionConfig(
-                productId: "test.dot",
+                productId: ProductId("test.dot"),
                 executionKind: .app
             )
         )
@@ -78,7 +78,7 @@ struct TrUAPIWsBridgeTests {
         let execution = try runtime.openProductExecution(
             bridge: bridge,
             configuration: ProductExecutionConfig(
-                productId: "test.dot",
+                productId: ProductId("test.dot"),
                 executionKind: .app
             )
         )
@@ -116,7 +116,7 @@ struct TrUAPIWsBridgeTests {
         let execution = try runtime.openProductExecution(
             bridge: bridge,
             configuration: ProductExecutionConfig(
-                productId: "test.dot",
+                productId: ProductId("test.dot"),
                 executionKind: .app
             )
         )

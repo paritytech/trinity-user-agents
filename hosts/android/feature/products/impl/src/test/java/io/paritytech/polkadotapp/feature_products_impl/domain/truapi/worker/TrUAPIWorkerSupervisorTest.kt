@@ -11,7 +11,6 @@ import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.InMemoryBundledProductFiles
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
@@ -34,6 +33,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TrUAPIWorkerSupervisorTest {
@@ -70,7 +70,7 @@ class TrUAPIWorkerSupervisorTest {
     fun `a running worker whose renderer died is reported exited and boots again`() = runTest {
         val supervisor = supervisor()
         // The core still holds the worker, so it answers the exit with a start.
-        every { runtime.workerExited(PRODUCT.value) } answers { supervisor.onDemandChanged(PRODUCT, WorkerDemand.START) }
+        every { runtime.workerExited(PRODUCT) } answers { supervisor.onDemandChanged(PRODUCT, WorkerDemand.START) }
         val seen = mutableListOf<TrUAPIProductExecution?>()
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { supervisor.execution(PRODUCT).toList(seen) }
 
@@ -79,7 +79,7 @@ class TrUAPIWorkerSupervisorTest {
         rendererGoneListeners.getValue(providers.single()).forEach { it() }
         advanceUntilIdle()
 
-        verify(exactly = 1) { runtime.workerExited(PRODUCT.value) }
+        verify(exactly = 1) { runtime.workerExited(PRODUCT) }
         assertEquals(listOf(null, executions[0], null, executions[1]), seen)
     }
 
@@ -92,7 +92,7 @@ class TrUAPIWorkerSupervisorTest {
         supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
         advanceUntilIdle()
 
-        verify(exactly = 1) { runtime.workerExited(PRODUCT.value) }
+        verify(exactly = 1) { runtime.workerExited(PRODUCT) }
     }
 
     // The core asked for the stop, so it knows; reporting it as an exit would start the worker again.
@@ -203,7 +203,7 @@ class TrUAPIWorkerSupervisorTest {
     }
 
     private companion object {
-        val PRODUCT = ProductId.fromStoredValue("worker.paseo")
+        val PRODUCT = ProductId.parse("worker.paseo").getOrThrow()
         const val SCRIPT_URL = "https://worker.paseo/worker.js"
     }
 }

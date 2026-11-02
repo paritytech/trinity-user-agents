@@ -109,7 +109,7 @@ private extension TrUAPIConfirmationPresenter {
         return await presentSigning(input: input, requester: requesterName)
     }
 
-    func presentSigning(input: ProductsSignConfirmInput, requester: ProductId) async -> Bool {
+    func presentSigning(input: ProductsSignConfirmInput, requester: String) async -> Bool {
         await awaitDecision(cancelled: false) { [routerFacade] _ in
             await withCheckedContinuation { continuation in
                 let context = ProductsSignConfirmContext(

@@ -174,22 +174,22 @@ public protocol HostBridge: AnyObject, Sendable {
     /// and re-entrantly: hand the transition off rather than blocking on
     /// another thread from inside it. Defaults to a no-op for a host that
     /// runs no workers.
-    func requestWorkerTransition(productId: String, transition: WorkerTransition)
+    func requestWorkerTransition(productId: ProductId, transition: WorkerTransition)
 
     /// The product's worker crashed `crashes` times in a row while it was
     /// needed: tell the user that product is not working. The core keeps
     /// starting it again, waiting longer each time, so this needs no answer.
     /// Arrives on any thread. Defaults to a no-op for a host that runs no
     /// workers.
-    func workerCrashing(productId: String, crashes: UInt32)
+    func workerCrashing(productId: ProductId, crashes: UInt32)
 
     /// Begin a pending operation, whose id keeps the product's worker alive
     /// until it ends. `label` is a log/UI hint, empty when the product gave none.
-    func beginOperation(productId: String, label: String) async throws -> UInt32
+    func beginOperation(productId: ProductId, label: String) async throws -> UInt32
 
     /// End a pending operation. Idempotent: an unknown or already-ended id
     /// succeeds, so a retry after an ambiguous failure is safe.
-    func endOperation(productId: String, id: UInt32) async throws
+    func endOperation(productId: ProductId, id: UInt32) async throws
 
     /// A device finished pairing with this signing host.
     ///
@@ -359,7 +359,7 @@ public protocol ContactsHostBridge: AnyObject, Sendable {
     /// Present the picker on behalf of `productId` and report what the user
     /// did. With no contacts, answer `.noContacts` instead of drawing an empty
     /// overlay.
-    func pickContact(productId: String) async throws -> HostContactPick
+    func pickContact(productId: ProductId) async throws -> HostContactPick
 }
 
 /// Host-implemented funding overlay: the native screen a funding session is
@@ -381,7 +381,7 @@ public protocol FundingHostBridge: AnyObject, Sendable {
     /// whether the user started or dismissed it. `amount` is a decimal string
     /// of CASH units, `nil` when the opener named none.
     func presentFunding(
-        productId: String?,
+        productId: ProductId?,
         intent: String,
         direction: FundingDirection,
         amount: U128?
@@ -459,12 +459,12 @@ public protocol TopUpHostBridge: AnyObject, Sendable {
     /// Start `request` for `productId`, returning once the host has accepted
     /// it. Throw a `HostPaymentTopUpError` to answer with its code; anything
     /// else reaches the product as `Unknown`.
-    func topUp(productId: String, request: HostPaymentTopUpRequest) async throws
+    func topUp(productId: ProductId, request: HostPaymentTopUpRequest) async throws
 
     /// The current status of `productId`'s top-up `id`, or `nil` when the
     /// host holds none. Report every later status with
     /// ``TrUAPIHostRuntime/notifyTopUpStatus(productId:id:status:)``.
-    func topUpStatus(productId: String, id: Data) throws -> HostPaymentTopUpStatusSubscribeItem?
+    func topUpStatus(productId: ProductId, id: Data) throws -> HostPaymentTopUpStatusSubscribeItem?
 }
 
 /// Host-implemented payment engine: pays from the user's balance to an
@@ -479,12 +479,12 @@ public protocol PaymentHostBridge: AnyObject, Sendable {
     /// user authorized it and the host took it on. Throw a `HostPaymentError`
     /// to answer with its code; anything else reaches the product as
     /// `Unknown`.
-    func requestPayment(productId: String, request: HostPaymentRequest) async throws
+    func requestPayment(productId: ProductId, request: HostPaymentRequest) async throws
 
     /// The current status of `productId`'s payment `id`, or `nil` when the
     /// host holds none. Report every later status with
     /// ``TrUAPIHostRuntime/notifyPaymentStatus(productId:id:status:)``.
-    func paymentStatus(productId: String, id: Data) throws -> HostPaymentStatusSubscribeItem?
+    func paymentStatus(productId: ProductId, id: Data) throws -> HostPaymentStatusSubscribeItem?
 }
 
 /// Host-implemented balance view: what a payment request can spend right now.
@@ -498,15 +498,15 @@ public protocol BalanceHostBridge: AnyObject, Sendable {
     /// string of CASH units. The balance is the user's, the same for every
     /// product; `productId` only names who is asking. Report every change with
     /// ``TrUAPIHostRuntime/notifyBalance(purse:available:)``.
-    func balance(productId: String, purse: UInt32?) async throws -> U128
+    func balance(productId: ProductId, purse: UInt32?) async throws -> U128
 }
 
 /// Draws the viewfinder for `scanner.scan`, following the rules on the core's
 /// `ScannerPlatform`. Closes it when the task is cancelled.
 public protocol ScannerHostBridge: AnyObject, Sendable {
     func scanCode(
-        productId: String,
-        executionKind: ProductExecutionKind,
+        productId: ProductId,
+        executionKind: ExecutableKind,
         request: HostScannerScanRequest
     ) async throws -> HostScan
 }
@@ -537,8 +537,8 @@ public extension HostBridge {
     func transactionExtensionVersions() async throws -> ExtensionVersionMap {
         ExtensionVersionMap(chains: [])
     }
-    func requestWorkerTransition(productId: String, transition: WorkerTransition) {}
-    func workerCrashing(productId: String, crashes: UInt32) {}
+    func requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {}
+    func workerCrashing(productId: ProductId, crashes: UInt32) {}
     func devicePaired(device: PairedSsoPeer) {}
     func durableWorkChanged(pending: Bool) {}
     func currentInstallation() async throws -> Data {
@@ -564,11 +564,11 @@ public extension HostBridge {
     /// an `OperationId` names one operation: a host overriding only
     /// `endOperation`, and the core's own demand accounting, both end the
     /// wrong ones when every operation shares an id.
-    func beginOperation(productId: String, label: String) async throws -> UInt32 {
+    func beginOperation(productId: ProductId, label: String) async throws -> UInt32 {
         defaultOperationIds.take()
     }
 
-    func endOperation(productId: String, id: UInt32) async throws {}
+    func endOperation(productId: ProductId, id: UInt32) async throws {}
 }
 
 /// Ids handed out by the default `beginOperation`, distinct for the life of
@@ -685,7 +685,7 @@ private final class ContactsCallbackAdapter: NativeContactsCallbacks, @unchecked
         try withHostRejection { try bridge.contacts(lookup: lookup) }
     }
 
-    func pickContact(productId: String) async throws -> HostContactPick {
+    func pickContact(productId: ProductId) async throws -> HostContactPick {
         try await withHostRejection { try await bridge.pickContact(productId: productId) }
     }
 }
@@ -700,8 +700,8 @@ private final class ScannerCallbackAdapter: NativeScannerCallbacks, @unchecked S
     }
 
     func scanCode(
-        productId: String,
-        executionKind: ProductExecutionKind,
+        productId: ProductId,
+        executionKind: ExecutableKind,
         request: HostScannerScanRequest
     ) async throws -> HostScan {
         try await withHostRejection {
@@ -720,7 +720,7 @@ private final class FundingCallbackAdapter: NativeFundingCallbacks, @unchecked S
     }
 
     func presentFunding(
-        productId: String?,
+        productId: ProductId?,
         intent: String,
         direction: FundingDirection,
         amount: U128?
@@ -798,7 +798,7 @@ private final class TopUpCallbackAdapter: NativeTopUpCallbacks, @unchecked Senda
         self.bridge = bridge
     }
 
-    func topUp(productId: String, request: HostPaymentTopUpRequest) async throws {
+    func topUp(productId: ProductId, request: HostPaymentTopUpRequest) async throws {
         do {
             try await bridge.topUp(productId: productId, request: request)
         } catch let error as HostPaymentTopUpError {
@@ -808,7 +808,7 @@ private final class TopUpCallbackAdapter: NativeTopUpCallbacks, @unchecked Senda
         }
     }
 
-    func topUpStatus(productId: String, id: Bytes32) throws -> HostPaymentTopUpStatusSubscribeItem? {
+    func topUpStatus(productId: ProductId, id: Bytes32) throws -> HostPaymentTopUpStatusSubscribeItem? {
         do {
             return try bridge.topUpStatus(productId: productId, id: id)
         } catch let error as HostRejection {
@@ -828,7 +828,7 @@ private final class PaymentCallbackAdapter: NativePaymentCallbacks, @unchecked S
         self.bridge = bridge
     }
 
-    func requestPayment(productId: String, request: HostPaymentRequest) async throws {
+    func requestPayment(productId: ProductId, request: HostPaymentRequest) async throws {
         do {
             try await bridge.requestPayment(productId: productId, request: request)
         } catch let error as HostPaymentError {
@@ -838,7 +838,7 @@ private final class PaymentCallbackAdapter: NativePaymentCallbacks, @unchecked S
         }
     }
 
-    func paymentStatus(productId: String, id: Bytes32) throws -> HostPaymentStatusSubscribeItem? {
+    func paymentStatus(productId: ProductId, id: Bytes32) throws -> HostPaymentStatusSubscribeItem? {
         do {
             return try bridge.paymentStatus(productId: productId, id: id)
         } catch let error as HostRejection {
@@ -858,7 +858,7 @@ private final class BalanceCallbackAdapter: NativeBalanceCallbacks, @unchecked S
         self.bridge = bridge
     }
 
-    func balance(productId: String, purse: UInt32?) async throws -> U128 {
+    func balance(productId: ProductId, purse: UInt32?) async throws -> U128 {
         do {
             return try await bridge.balance(productId: productId, purse: purse)
         } catch let error as HostPaymentBalanceSubscribeError {
@@ -883,11 +883,11 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         bridge.onCoreLog(marker: marker, detail: detail)
     }
 
-    func requestWorkerTransition(productId: String, transition: WorkerTransition) {
+    func requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
         bridge.requestWorkerTransition(productId: productId, transition: transition)
     }
 
-    func workerCrashing(productId: String, crashes: UInt32) {
+    func workerCrashing(productId: ProductId, crashes: UInt32) {
         bridge.workerCrashing(productId: productId, crashes: crashes)
     }
 
@@ -1085,13 +1085,13 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
-    func beginOperation(productId: String, label: String) async throws -> UInt32 {
+    func beginOperation(productId: ProductId, label: String) async throws -> UInt32 {
         try await withHostRejection {
             try await bridge.beginOperation(productId: productId, label: label)
         }
     }
 
-    func endOperation(productId: String, id: UInt32) async throws {
+    func endOperation(productId: ProductId, id: UInt32) async throws {
         try await withHostRejection {
             try await bridge.endOperation(productId: productId, id: id)
         }
@@ -1308,7 +1308,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 
     /// Report a later status of `productId`'s top-up `id` to the products
     /// following it. A terminal status ends their streams.
-    public func notifyTopUpStatus(productId: String, id: Data, status: HostPaymentTopUpStatusSubscribeItem) throws {
+    public func notifyTopUpStatus(productId: ProductId, id: Data, status: HostPaymentTopUpStatusSubscribeItem) throws {
         try inner.notifyTopUpStatus(productId: productId, id: id, status: status)
     }
 
@@ -1324,7 +1324,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
 
     /// Report a later status of `productId`'s payment `id` to the products
     /// following it. A terminal status ends their streams.
-    public func notifyPaymentStatus(productId: String, id: Data, status: HostPaymentStatusSubscribeItem) throws {
+    public func notifyPaymentStatus(productId: ProductId, id: Data, status: HostPaymentStatusSubscribeItem) throws {
         try inner.notifyPaymentStatus(productId: productId, id: id, status: status)
     }
 
@@ -1385,13 +1385,13 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// ``HostBridge/requestWorkerTransition(productId:transition:)``, which is
     /// where the host starts the worker. Pair every call with one
     /// ``releaseWorker(productId:)``.
-    public func acquireWorker(productId: String) {
+    public func acquireWorker(productId: ProductId) {
         inner.acquireWorker(productId: productId)
     }
 
     /// Release one reference. The last one reports `.stop`, after which the
     /// host may stop the worker. Releasing with none held is a no-op.
-    public func releaseWorker(productId: String) {
+    public func releaseWorker(productId: ProductId) {
         inner.releaseWorker(productId: productId)
     }
 
@@ -1399,7 +1399,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// on a crash or a system kill. While references remain, `.start` is
     /// reported again through
     /// ``HostBridge/requestWorkerTransition(productId:transition:)``.
-    public func workerExited(productId: String) {
+    public func workerExited(productId: ProductId) {
         inner.workerExited(productId: productId)
     }
 

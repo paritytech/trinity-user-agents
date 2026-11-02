@@ -88,7 +88,7 @@ pub struct RingLocation {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct ProductProofContext {
 	/// dotNS product identifier (e.g. `"my-product.dot"`) scoping the context.
-	pub product_id: String,
+	pub product_id: ProductId,
 	/// Selector distinguishing contexts within the product; expands to the
 	/// same 32-byte derivation index as [`ProductAccountId::derivation_index`].
 	pub suffix: DerivationIndex,
@@ -140,7 +140,7 @@ pub struct HostAccountRegisterRingVrfKeyRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostAccountListRingVrfKeysRequest {
 	/// Product whose registry entries should be listed.
-	pub owner: String,
+	pub owner: ProductId,
 	/// Disclosure level requested by the caller.
 	pub disclosure: RingVrfKeyDisclosure,
 }

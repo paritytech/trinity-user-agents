@@ -10,7 +10,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOver
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayRequest
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameTarget
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.FundingSessionEntry
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.async
@@ -34,6 +33,7 @@ import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingStage
 import uniffi.truapi.FundingStatus
 import uniffi.truapi.FundingStep
+import uniffi.truapi.ProductId
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
 class AppFundingOverlayTest {
@@ -53,7 +53,7 @@ class AppFundingOverlayTest {
         push(session(FundingRail.CARD, FundingStage.Open))
         contexts.put(FundingOverlayContext(FundingOverlayRequest(null, "intent", FundingDirection.IN, null), FundingOverlayMode.New))
 
-        val outcome = async { overlay.presentProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent", ProviderFrameTarget.App("/pay")) }
+        val outcome = async { overlay.presentProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent", ProviderFrameTarget.App("/pay")) }
         runCurrent()
         coVerify { router.openFundingProviderFrame("intent") }
 
@@ -67,7 +67,7 @@ class AppFundingOverlayTest {
     fun `a bank transfer's provider screen offers to say the funds were sent`() = runTest {
         push(session(FundingRail.BANK, FundingStage.Open))
 
-        val outcome = async { overlay.presentProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent", ProviderFrameTarget.App("pay")) }
+        val outcome = async { overlay.presentProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent", ProviderFrameTarget.App("pay")) }
         runCurrent()
 
         val frame = requireNotNull(frames.get("intent"))
@@ -83,7 +83,7 @@ class AppFundingOverlayTest {
         sheet.selection = FundingSelection(rail = FundingRail.BANK, asset = "EUR", network = null, country = null)
         contexts.put(sheet)
 
-        val outcome = async { overlay.presentProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent", ProviderFrameTarget.App("pay")) }
+        val outcome = async { overlay.presentProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent", ProviderFrameTarget.App("pay")) }
         runCurrent()
 
         val frame = requireNotNull(frames.get("intent"))
@@ -97,9 +97,9 @@ class AppFundingOverlayTest {
     fun `a provider closing its screen answers it closed and shows the session's sheet in its place`() = runTest {
         push(session(FundingRail.CARD, FundingStage.Open))
 
-        val outcome = async { overlay.presentProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent", ProviderFrameTarget.App("/pay")) }
+        val outcome = async { overlay.presentProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent", ProviderFrameTarget.App("/pay")) }
         runCurrent()
-        overlay.closeProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent")
+        overlay.closeProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent")
 
         assertEquals(ProviderFrameOutcome.Closed, outcome.await())
         coVerifyOrder {
@@ -116,9 +116,9 @@ class AppFundingOverlayTest {
         val sheet = FundingOverlayContext(FundingOverlayRequest(null, "intent", FundingDirection.IN, null), FundingOverlayMode.New)
         contexts.put(sheet)
 
-        val outcome = async { overlay.presentProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent", ProviderFrameTarget.App("/pay")) }
+        val outcome = async { overlay.presentProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent", ProviderFrameTarget.App("/pay")) }
         runCurrent()
-        overlay.closeProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent")
+        overlay.closeProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent")
 
         assertEquals(ProviderFrameOutcome.Closed, outcome.await())
         assertSame(sheet, contexts.get("intent"))
@@ -127,12 +127,12 @@ class AppFundingOverlayTest {
 
     @Test
     fun `closing a screen that is not open, or another provider's, does nothing`() = runTest {
-        overlay.closeProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent")
+        overlay.closeProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent")
         push(session(FundingRail.CARD, FundingStage.Open))
 
-        val outcome = async { overlay.presentProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent", ProviderFrameTarget.App("/pay")) }
+        val outcome = async { overlay.presentProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent", ProviderFrameTarget.App("/pay")) }
         runCurrent()
-        overlay.closeProviderFrame(ProductId.fromStoredValue("other.dot"), "intent")
+        overlay.closeProviderFrame(ProductId.parse("other.dot").getOrThrow(), "intent")
         runCurrent()
         assertFalse(outcome.isCompleted)
 

@@ -3,12 +3,12 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bundled
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.BuildConfig
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import uniffi.truapi.FundingProviderEntry
 import uniffi.truapi.FundingProviderOrigin
+import uniffi.truapi.ProductId
 import java.io.InputStream
 import java.net.URI
 import java.util.Locale
@@ -93,12 +93,13 @@ class BundledProducts internal constructor(
         files.list(ROOT)
             .filterNot { it.startsWith(".") }
             .filter { name -> files.list("$ROOT/$name").isNotEmpty() }
-            .associate { name -> ProductId.fromStoredValue(name) to BundledProduct(ProductId.fromStoredValue(name), "$ROOT/$name") }
+            .mapNotNull { name -> ProductId.parse(name).getOrNull()?.let { id -> id to BundledProduct(id, "$ROOT/$name") } }
+            .toMap()
     }
 
     fun product(id: ProductId): BundledProduct? = products[id]
 
-    fun product(id: String): BundledProduct? = products[ProductId.fromStoredValue(id)]
+    fun product(id: String): BundledProduct? = ProductId.parse(id).getOrNull()?.let(products::get)
 
     /** Every product shipped, ordered by id. */
     val all: List<BundledProduct>

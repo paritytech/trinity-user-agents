@@ -1,12 +1,12 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bundled
 
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.FundingProviderEntry
 import uniffi.truapi.FundingProviderOrigin
+import uniffi.truapi.ProductId
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 
@@ -42,7 +42,7 @@ class BundledProductsTest {
 
     @Test
     fun `reads each product under the root`() {
-        val product = products.product(ProductId.fromStoredValue("provider.dot"))!!
+        val product = products.product(ProductId.parse("provider.dot").getOrThrow())!!
 
         assertEquals(listOf("chat.dot", "provider.dot"), products.all.map { it.id.value })
         assertEquals(manifest, products.workerManifest(product))

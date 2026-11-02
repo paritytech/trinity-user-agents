@@ -16,7 +16,6 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageBalance
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.CoinageRecyclingStrategySettings
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingStrategyType
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TotalBalanceUseCase
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionGuard
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
@@ -26,6 +25,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 /**
  * What a product has to get past before its payment is registered: an id it has not used, a balance that covers
@@ -55,7 +55,7 @@ class RealRequestPaymentUseCaseTest {
         productsRouter = router,
     )
 
-    private val product = ProductId.fromStoredValue("product.dot")
+    private val product = ProductId.parse("product.dot").getOrThrow()
     private val id = ProductPaymentRequestId.fromBytes(DataByteArray(ByteArray(32) { 1 })).getOrThrow()
     private val key = ExternalPaymentKey(origin = product.value, id = id.asHex())
     private val destination = byteArrayOf(7).intoAccountId()

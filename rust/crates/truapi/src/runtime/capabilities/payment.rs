@@ -46,8 +46,8 @@ use crate::{
 	},
 	host_logic::funding::StartRecord,
 	platform::{
-		PermissionAuthorizationStatus, PermissionStatusHost, Platform, ProductContext,
-		ProductExecutionKind,
+		ExecutableKind, PermissionAuthorizationStatus, PermissionStatusHost, Platform,
+		ProductContext,
 	},
 	runtime::{
 		ProductRuntimeHost,
@@ -213,7 +213,7 @@ impl ProductRuntimeHost {
 	) -> Result<FundingStart, CallError<E>> {
 		let host_id = asked.host_id;
 		let registry = self.connection.services.funding();
-		if self.connection.product.execution_kind != ProductExecutionKind::Worker ||
+		if self.connection.product.execution_kind != ExecutableKind::Worker ||
 			registry.platform().is_none()
 		{
 			return Err(CallError::Domain(not_served));

@@ -1,7 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_api.domain.funding
 
 import io.paritytech.polkadotapp.chains.network.binding.Balance
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 
 /** A funding session waiting on the overlay. [productId] is `null` when the host opened it. */
 data class FundingOverlayRequest(

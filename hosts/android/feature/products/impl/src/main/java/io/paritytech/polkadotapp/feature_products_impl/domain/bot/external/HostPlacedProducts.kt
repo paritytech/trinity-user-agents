@@ -7,10 +7,10 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.model.Product
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 import io.paritytech.polkadotapp.common.R as RCommon

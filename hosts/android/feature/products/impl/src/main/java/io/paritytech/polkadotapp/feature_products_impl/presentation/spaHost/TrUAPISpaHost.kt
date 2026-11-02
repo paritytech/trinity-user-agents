@@ -11,8 +11,7 @@ import io.paritytech.polkadotapp.common.presentation.deeplink.handleAndProcessOu
 import io.paritytech.polkadotapp.common.presentation.screens.MessageDisplay
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownRequest
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
@@ -31,6 +30,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 import java.net.URI
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -93,7 +94,7 @@ class TrUAPISpaHost @Inject constructor(
             currentUrlFlow.value = url
             scope.launch {
                 val productId = bundled?.id ?: servedPage?.productId ?: dotNsTldProvider.getTld().getOrNull()
-                    ?.let { tld -> ProductId.fromUrl(url.toUri(), tld).getOrNull() }
+                    ?.let { tld -> productIdFromUrl(url.toUri(), tld).getOrNull() }
                 productId?.let { productRegistrar.ensureRegistered(it) }
             }
         }
@@ -124,7 +125,7 @@ class TrUAPISpaHost @Inject constructor(
     // says nothing about which product it is.
     private fun debugServedPage(launchUrl: String): DebugServedPage? {
         val tld = dotNsTldProvider.currentTldOrNull() ?: return null
-        val productId = ProductId.fromUrl(launchUrl.toUri(), tld).getOrNull() ?: return null
+        val productId = productIdFromUrl(launchUrl.toUri(), tld).getOrNull() ?: return null
         val appUrl = debugPocketCards.appUrl(productId) ?: return null
         val servedUrl = debugServedUrl(appUrl, launchUrl)
         val served = URI(servedUrl)

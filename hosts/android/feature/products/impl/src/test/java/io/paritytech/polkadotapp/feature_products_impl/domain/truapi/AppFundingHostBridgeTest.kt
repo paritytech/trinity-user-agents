@@ -15,11 +15,10 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOver
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayRequest
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameTarget
-import io.paritytech.polkadotapp.feature_products_api.model.Executables
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
+import io.paritytech.polkadotapp.feature_products_api.model.Executables
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.SemVer
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProduct
@@ -43,6 +42,7 @@ import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingStage
 import uniffi.truapi.FundingStatus
 import uniffi.truapi.HostFundingStatusSubscribeItem
+import uniffi.truapi.ProductId
 import java.math.BigInteger
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
@@ -67,12 +67,12 @@ class AppFundingHostBridgeTest {
     fun `the overlay is shown the session as the core opened it`() = runBlocking {
         coEvery { overlay.present(any()) } returns FundingOverlayOutcome.DISMISSED
 
-        bridge.presentFunding("market.dot", "intent", CoreFundingDirection.OUT, "1000000000000000000000")
+        bridge.presentFunding(ProductId.parse("market.dot").getOrThrow(), "intent", CoreFundingDirection.OUT, "1000000000000000000000")
 
         coVerify {
             overlay.present(
                 FundingOverlayRequest(
-                    productId = ProductId.fromStoredValue("market.dot"),
+                    productId = ProductId.parse("market.dot").getOrThrow(),
                     intent = "intent",
                     direction = FundingDirection.OUT,
                     amount = Balance(BigInteger("1000000000000000000000")),
@@ -95,7 +95,7 @@ class AppFundingHostBridgeTest {
     @Test
     fun `a provider frame answers how it closed`() = runBlocking {
         coEvery {
-            overlay.presentProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent", ProviderFrameTarget.App("/kyc"))
+            overlay.presentProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent", ProviderFrameTarget.App("/kyc"))
         } returns ProviderFrameOutcome.Closed
 
         assertEquals(FundingFrameOutcome.Closed, bridge.presentProviderFrame("ramp.dot", "intent", FundingFrameTarget.App("/kyc")))
@@ -106,7 +106,7 @@ class AppFundingHostBridgeTest {
     fun `an external page hands back the URL it returned to`() = runBlocking {
         val page = ProviderFrameTarget.Page("https://ramp.example/widget", "https://ramp.dot/return")
         val returned = "https://ramp.dot/return?status=done"
-        coEvery { overlay.presentProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent", page) } returns
+        coEvery { overlay.presentProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent", page) } returns
             ProviderFrameOutcome.Returned(returned)
 
         assertEquals(
@@ -185,13 +185,13 @@ class AppFundingHostBridgeTest {
 
         bridge.closeProviderFrame("ramp.dot", "intent")
 
-        verify { overlay.closeProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent") }
+        verify { overlay.closeProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent") }
     }
 
     @Test
     fun `a provider has an App only when its product declares one`() = runBlocking {
-        coEvery { resolveProduct.resolve(ProductId.fromStoredValue("ramp.dot")) } returns Result.success(resolved(app = true))
-        coEvery { resolveProduct.resolve(ProductId.fromStoredValue("widget.dot")) } returns Result.success(resolved(app = false))
+        coEvery { resolveProduct.resolve(ProductId.parse("ramp.dot").getOrThrow()) } returns Result.success(resolved(app = true))
+        coEvery { resolveProduct.resolve(ProductId.parse("widget.dot").getOrThrow()) } returns Result.success(resolved(app = false))
 
         assertEquals(true, bridge.providerHasApp("ramp.dot"))
         assertEquals(false, bridge.providerHasApp("widget.dot"))
@@ -203,7 +203,7 @@ class AppFundingHostBridgeTest {
         val bundled = mockk<BundledProduct>()
         every { bundledProducts.product("ramp.dot") } returns bundled
         every { bundledProducts.hasApp(bundled) } returns false
-        coEvery { resolveProduct.resolve(ProductId.fromStoredValue("ramp.dot")) } returns Result.success(resolved(app = true))
+        coEvery { resolveProduct.resolve(ProductId.parse("ramp.dot").getOrThrow()) } returns Result.success(resolved(app = true))
 
         assertEquals(true, bridge.providerHasApp("ramp.dot"))
     }
@@ -217,7 +217,7 @@ class AppFundingHostBridgeTest {
     }
 
     private fun resolved(app: Boolean) = ResolvedProduct(
-        product = Product(id = ProductId.fromStoredValue("ramp.dot"), name = "Ramp", icon = null),
+        product = Product(id = ProductId.parse("ramp.dot").getOrThrow(), name = "Ramp", icon = null),
         description = null,
         executables = Executables(
             app = if (app) ProductExecutable.App(ExecutableHost("ramp.dot"), SemVer.ZERO) else null,

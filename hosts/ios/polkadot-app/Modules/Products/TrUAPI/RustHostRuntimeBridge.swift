@@ -62,7 +62,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     /// Demand is runtime-wide, so it arrives here rather than on a product's
     /// own bridge, and can arrive re-entrantly from inside `acquireWorker`,
     /// the manager hands the transition off rather than acting on it here.
-    func requestWorkerTransition(productId: String, transition: WorkerTransition) {
+    func requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
         workerManager?.demandChanged(productId: productId, transition: transition)
     }
 
@@ -72,9 +72,9 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         crashNotice.withLock { $0 = notice }
     }
 
-    func workerCrashing(productId: String, crashes: UInt32) {
+    func workerCrashing(productId: ProductId, crashes: UInt32) {
         logger.error("[truapi] \(productId)'s worker crashed \(crashes) times in a row")
-        crashNotice.withLock { $0 }?(productId)
+        crashNotice.withLock { $0 }?(productId.rawValue)
     }
 
     func navigateTo(url: String) async throws {
