@@ -326,15 +326,6 @@ pub struct ImageProps {
     pub fit: Option<ImageFit>,
 }
 
-/// A visual effect. Each variant names one effect and carries its parameters.
-pub enum Effect {
-    Rainbow,
-}
-
-pub struct EffectProps {
-    pub effect: Effect,
-}
-
 pub struct TextFieldProps {
     /// Current value.
     pub text: String,
@@ -399,10 +390,9 @@ pub enum RendererNode {
         modifiers: Vec<Modifier>,
         props: ImageProps,
     },
-    /// Applies its effect to its children. As large as its children, which it
-    /// places at the top start like a `Box`.
-    Effect {
-        props: EffectProps,
+    /// Runs materials over its children, as [Materials](materials.md) defines.
+    Materials {
+        props: MaterialsProps,
         children: Vec<RendererNode>,
     },
 }

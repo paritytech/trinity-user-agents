@@ -11,16 +11,17 @@ status: draft
 A renderer tree can apply materials to part of itself. A material is a small shader that a provider publishes on
 Bulletin in a shared material format, named by the hash of its text. The host fetches each material, checks it,
 translates it for its own platform and draws it over the node's content, so one material draws the same on every host.
-Materials extend the [Unified Renderer](unified-renderer.md) and amend its Closed requirement.
+Materials extend the [Unified Renderer](unified-renderer.md), replace its `Effect` node and amend its Closed
+requirement.
 
 Tracking issue: [#1758](https://github.com/paritytech/trinity-user-agents/issues/1758), epic
 [#1410](https://github.com/paritytech/trinity-user-agents/issues/1410).
 
 ## Motivation
 
-A tree can name layouts, theme tokens and images, plus one host-made `Effect::Rainbow`. A designed surface, with foil,
-relief and highlights that follow the phone's tilt, cannot be described. One host-made effect per design would have
-every host ship every effect, and none would match what the designer saw.
+A tree can name layouts, theme tokens and images. A designed surface, with foil, relief and highlights that follow the
+phone's tilt, cannot be described. The Unified Renderer's `Effect` node has one placeholder effect, `Rainbow`, and one
+host-made effect per design would have every host ship every effect, none matching what the designer saw.
 
 Materials already exist outside the hosts: authoring tools define them, and products draw them in their own pages. Hosts
 have no shared definition, so the same material would look different in each renderer.
@@ -64,12 +65,14 @@ Version 1 defines no features.
 
 ### Materials node
 
-`RendererNode` gains a `Materials` variant after `Effect`.
+`Materials` replaces the `Effect` node, and `Effect` with `Rainbow` is removed. `Materials` takes variant index 11, and
+index 10, which `Effect` held, is never reused, so a build that still has `Effect` refuses a tree with `Materials`
+instead of misreading it.
 
 ```rust
 /// A node in a product-rendered tree.
 pub enum RendererNode {
-    // Nil to Effect, as in the Unified Renderer.
+    // Nil to Image, as in the Unified Renderer.
     /// Draws its children, then runs its layers over them. As large as its
     /// children, which it places at the top start like a `Box`.
     Materials {
@@ -257,12 +260,9 @@ has materials switched on.
 
 ## Compatibility
 
-- A host built before `Materials` cannot decode a tree that contains it, and fails the stream, so the body shows only
-  the product's identity. A product therefore sends materials only to a host that answers yes to the capability
-  question.
-- A host built before the `Materials` question cannot decode it and answers an error, which products read as no.
-- `Effect::Rainbow` stays. A product that draws it keeps sending it to hosts that answer no, and sends materials to
-  hosts that answer yes.
+- Removing `Effect` breaks every tree that uses it. No host is in production, so hosts and products move to `Materials`
+  together.
+- Products ask the capability question before sending materials.
 - Before version 1 is adopted, the format's reference parser and the host's validation both refuse unknown directives
   and read `// @requires`, and the format's vectors cover those rules and the seed.
 
@@ -282,6 +282,4 @@ has materials switched on.
   - A `capabilities()` call listing versions, features and limits. The limits are fixed, and one question covers the
     rest.
   - The node's own text or image shape as a host image. It depends on an editor's own objects.
-  - A version 2 tree without `Effect`. The generated client answers every render request in the version it was built
-    for, so it would have to convert trees down for older hosts, hosts would retry older products with version 1, and
-    released apps would lose the `Rainbow` products draw today.
+  - Keeping `Effect` beside `Materials`. Its only effect is a placeholder, and materials cover what it was for.
