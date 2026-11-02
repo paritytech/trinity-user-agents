@@ -7,15 +7,17 @@ building one. The [RFC](../rfcs/funding-modality.md) is the full contract, and t
 
 ## What you build
 
-A provider is a TrUAPI product with a Worker and, if you want your own screens, an App:
+A provider is a TrUAPI product with a Worker, which answers quotes and runs each session: it talks to your API, moves
+funds and reports progress. Pick one of three shapes for the screens the user sees:
 
-| Part                 | What it does                                                                                     |
-| -------------------- | ------------------------------------------------------------------------------------------------ |
-| **Worker**           | Answers quotes and runs each session: talks to your API, moves funds, reports progress.          |
-| **App** _(optional)_ | Your own screens (card form, bank details, KYC), which the Worker shows inside the host's frame. |
+| Shape               | What you publish                                            | How the Worker shows a screen                                                            |
+| ------------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| **Worker only**     | the Worker                                                  | it shows none; the host's session sheet is enough, as for a crypto deposit to an address |
+| **App on dotNS**    | the Worker and an App, both under your product's dotNS name | `App { route }`: the host opens your App at that route, as a product                     |
+| **Self-hosted app** | the Worker; your screens stay on your own https site        | `Page { url, returnUrl }`: the host shows the site with its address visible              |
 
-Without an App, the Worker shows external https pages instead, such as your hosted checkout or a KYC vendor's flow, or
-no screen at all, as a crypto deposit to an address needs none.
+An `App` route always means your own product's App on dotNS, never another product's or an outside site; a Worker-only
+or self-hosted provider that sends one gets `NoApp`.
 
 You do not build the overlay, the provider list, the session sheet or the history: the host draws them from what your
 Worker reports, in the user's language. Your Worker never decides whether a session succeeded either: the core does,
@@ -131,12 +133,15 @@ await client.fundingProvider.presentFrame({ intent, target: { tag: "App", value:
 await client.fundingProvider.presentFrame({ intent, target: { tag: "Page", value: { url, returnUrl } } });
 ```
 
-`App` opens a route of your own App, if you ship one; `Page` opens an external https page, such as an onramp widget,
-with its address shown, and hands back the `returnUrl` it reached, query included, so the Worker can read the result
-from it. A page cannot call TrUAPI: the Worker still takes the result and moves the funds. An App route from a provider
-that ships no App fails with `NoApp`. `presentFrame` answers once the frame closes: `Closed`, `Dismissed` by the user,
-or `Returned { url }`. When the user has done what the screen was for, call `fundingProvider.closeFrame({ intent })`:
-the host closes it and shows the session sheet instead.
+`App` opens your dotNS App at `route`: a relative path with an optional query and fragment, such as
+`/card?intent=fs_abc123`, which your App's router reads. Anything that would leave your App, such as `https://…` or
+`//other.dot`, fails with `InvalidUrl`, and an App route from a provider that publishes no App fails with `NoApp`.
+
+`Page` opens your self-hosted https site, such as an onramp widget, with its address shown, and hands back the
+`returnUrl` it reached, query included, so the Worker can read the result from it. A page cannot call TrUAPI: the Worker
+still takes the result and moves the funds. `presentFrame` answers once the frame closes: `Closed`, `Dismissed` by the
+user, or `Returned { url }`. When the user has done what the screen was for, call
+`fundingProvider.closeFrame({ intent })`: the host closes it and shows the session sheet instead.
 
 ## 6. Say what is happening within a step
 
@@ -202,6 +207,7 @@ reporting holds the session for good.
 ## Checklist
 
 - [ ] `includes.funding` in the Worker manifest, routes matching what you quote
+- [ ] One screen shape: Worker only, an App on dotNS, or a self-hosted site
 - [ ] Four handlers registered at start, each safe to repeat
 - [ ] Quotes within 10 s, with `etaSecs`, refusals with limits
 - [ ] Every top-up and payment passes `funding: intent` and is named in a report
