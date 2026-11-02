@@ -9149,21 +9149,29 @@ fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: 
 
 /// A provider's worker connection, signed in.
 fn provider_worker(services: &Arc<RuntimeServices>, provider_id: &str) -> ProductRuntimeHost {
+	let host = signed_out_provider_worker(services, provider_id);
+	install_pairing_session(&host, session_info());
+	host
+}
+
+/// As [`provider_worker`], before the user signs in.
+fn signed_out_provider_worker(
+	services: &Arc<RuntimeServices>,
+	provider_id: &str,
+) -> ProductRuntimeHost {
 	let (host_config, _) = runtime_config(provider_id);
 	let product = ProductContext::new_with_execution(
 		ProductId::for_test(provider_id),
 		crate::platform::ExecutableKind::Worker,
 	);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
-	let host = ProductRuntimeHost::from_services(
+	ProductRuntimeHost::from_services(
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(services),
 		pairing_host.clone(),
 		pairing_host.session().clone(),
 		product,
-	);
-	install_pairing_session(&host, session_info());
-	host
+	)
 }
 
 /// A call a provider's worker received from the core.
@@ -12416,28 +12424,32 @@ fn two_chains_failing_alike_are_counted_apart() {
 	);
 }
 
-/// Whether `provider_id`'s link is ready for the core's calls, checked over a
-/// short wait.
-fn provider_link_ready(services: &RuntimeServices, provider_id: &str) -> bool {
-	let mut ready = Box::pin(services.funding().connected_link(provider_id));
-	for _ in 0..50 {
-		if futures::FutureExt::now_or_never(&mut ready).is_some() {
-			return true;
-		}
-		std::thread::sleep(std::time::Duration::from_millis(10));
-	}
-	false
-}
-
 // A provider's own calls are refused while no user session is current, so
 // a worker that handshakes before sign-in is handed its sessions only once
 // one is.
 #[test]
 fn a_worker_handshake_waits_for_a_session_before_its_sessions_are_handed_over() {
-	let host = pocket_host(crate::platform::ExecutableKind::Worker, None, false);
-	let services = host.connection.services().clone();
-	let provider_id = host.connection.product_id().to_string();
-	services.funding().link(&provider_id, Arc::new(ScriptedProviderLink::default()));
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let provider_id = "ramp.dot";
+	offer_provider(&services, provider_id, RAMP_MANIFEST);
+	let host = signed_out_provider_worker(&services, provider_id);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(&intent, provider_id, None))
+			.expect("selected")
+	);
+	let link = Arc::new(ScriptedProviderLink::default());
+	services.funding().link(provider_id, link.clone());
 
 	futures::executor::block_on(System::handshake(
 		&host,
@@ -12447,8 +12459,11 @@ fn a_worker_handshake_waits_for_a_session_before_its_sessions_are_handed_over() 
 		}),
 	))
 	.expect("handshake");
-	assert!(!provider_link_ready(&services, &provider_id), "readied without a session");
+	assert_eq!(link.calls(1), Vec::new(), "handed its sessions without a session");
 
 	install_pairing_session(&host, session_info());
-	assert!(provider_link_ready(&services, &provider_id), "not readied once signed in");
+	assert!(
+		matches!(link.calls(1).first(), Some(ProviderCallSeen::Assign(assignment)) if assignment.intent == intent),
+		"not handed its session once signed in"
+	);
 }
