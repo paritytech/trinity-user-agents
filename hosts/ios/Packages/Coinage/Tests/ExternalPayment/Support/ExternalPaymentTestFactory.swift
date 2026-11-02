@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import BigInt
 import DurableTransactionsTestSupport
 import Foundation
@@ -75,7 +76,7 @@ enum ExternalPaymentTestFactory {
     }
 
     static func payment(
-        productId: String = "getcash.dot",
+        productId: ProductId? = try! ProductId("getcash.dot"),
         paymentId: String = "0xaa",
         amount: Balance = planks(3),
         settled: Balance = 0,

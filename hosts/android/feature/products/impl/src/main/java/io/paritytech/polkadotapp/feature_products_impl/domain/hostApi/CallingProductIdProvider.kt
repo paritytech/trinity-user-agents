@@ -3,7 +3,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.hostApi
 import androidx.core.net.toUri
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
+import uniffi.truapi.ProductId
 
 /**
  * Provides the [ProductId] of the product that is currently calling the host API.
@@ -34,6 +35,6 @@ class UrlDerivedProductId(
     override suspend fun getProductId(): Result<ProductId> {
         val url = urlProvider()
             ?: return Result.failure(IllegalStateException("No current URL available"))
-        return dotNsTldProvider.getTld().flatMap { tld -> ProductId.fromUrl(url.toUri(), tld) }
+        return dotNsTldProvider.getTld().flatMap { tld -> productIdFromUrl(url.toUri(), tld) }
     }
 }

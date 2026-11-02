@@ -1,18 +1,19 @@
+import type { ProductId } from "@parity/truapi";
 import type { PermissionAuthorizationStatus } from "./runtime.js";
 import type { WorkerToMain } from "./worker-protocol.js";
 import { errorMessage } from "./error.js";
 
 export interface PermissionAuthorizationRuntime {
   permissionAuthorizationStatus(
-    productId: string,
+    productId: ProductId,
     request: Uint8Array,
   ): Promise<PermissionAuthorizationStatus>;
   permissionAuthorizationStatuses(
-    productId: string,
+    productId: ProductId,
     requests: Uint8Array[],
   ): Promise<PermissionAuthorizationStatus[]>;
   setPermissionAuthorizationStatus(
-    productId: string,
+    productId: ProductId,
     request: Uint8Array,
     status: PermissionAuthorizationStatus,
   ): Promise<void>;
@@ -23,7 +24,7 @@ type PostToMain = (msg: WorkerToMain) => void;
 export async function handleGetPermissionAuthorizationStatus(
   runtime: PermissionAuthorizationRuntime | null,
   postToMain: PostToMain,
-  productId: string,
+  productId: ProductId,
   requestId: number,
   request: Uint8Array,
 ): Promise<void> {
@@ -60,7 +61,7 @@ export async function handleGetPermissionAuthorizationStatus(
 export async function handleGetPermissionAuthorizationStatuses(
   runtime: PermissionAuthorizationRuntime | null,
   postToMain: PostToMain,
-  productId: string,
+  productId: ProductId,
   requestId: number,
   requests: Uint8Array[],
 ): Promise<void> {
@@ -97,7 +98,7 @@ export async function handleGetPermissionAuthorizationStatuses(
 export async function handleSetPermissionAuthorizationStatus(
   runtime: PermissionAuthorizationRuntime | null,
   postToMain: PostToMain,
-  productId: string,
+  productId: ProductId,
   requestId: number,
   request: Uint8Array,
   status: PermissionAuthorizationStatus,

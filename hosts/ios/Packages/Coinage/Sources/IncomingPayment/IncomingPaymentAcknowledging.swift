@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import SubstrateSdk
 
@@ -10,7 +11,7 @@ import SubstrateSdk
 /// original amount, shown against the credited figure on the mismatch screen.
 public protocol IncomingPaymentAcknowledging: Sendable {
     func acknowledge(
-        productId: String,
+        productId: ProductId,
         paymentId: IncomingPaymentId,
         requestedAmount: Balance,
         outcome: IncomingPaymentTerminalOutcome
