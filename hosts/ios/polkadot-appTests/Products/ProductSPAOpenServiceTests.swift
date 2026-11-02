@@ -32,6 +32,7 @@ struct ProductSPAOpenServiceTests {
 private struct ProductLinkTldProvider: DotNsTldProviding {
     func currentTld() -> String? { "dot" }
     func resolveTld() async throws -> String { "dot" }
+    func currentTldElseResolve() async throws -> String { "dot" }
     func refresh() {}
     func reset() {}
 }

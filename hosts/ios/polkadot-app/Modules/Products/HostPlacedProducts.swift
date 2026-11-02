@@ -1,6 +1,8 @@
 import struct TrUAPIHost.ProductId
 import Foundation
 import KeyDerivation
+import Keystore_iOS
+import Products
 
 /// A product the host itself puts in chat: present on first run, with no add, install or discover
 /// step, and removable by nobody. The chat analogue of Pocket's privileged card
@@ -37,5 +39,28 @@ enum HostPlacedProducts {
         }
 
         return all.contains { (try? $0.productId(String(tld))) == productId }
+    }
+}
+
+protocol HostPlacedProductsProviding: Sendable {
+    func placedProductIds() async -> [ProductId]
+}
+
+final class HostPlacedProductsProvider: HostPlacedProductsProviding, @unchecked Sendable {
+    private let settingsManager: SettingsManagerProtocol
+    private let tldProvider: DotNsTldProviding
+
+    init(settingsManager: SettingsManagerProtocol, tldProvider: DotNsTldProviding) {
+        self.settingsManager = settingsManager
+        self.tldProvider = tldProvider
+    }
+
+    func placedProductIds() async -> [ProductId] {
+        guard settingsManager.isHostPlacementEnabled,
+              let tld = try? await tldProvider.currentTldElseResolve() else {
+            return []
+        }
+
+        return HostPlacedProducts.all.compactMap { try? $0.productId(tld) }
     }
 }

@@ -38,6 +38,14 @@ private struct StubTldProvider: DotNsTldProviding {
     func refresh() {}
 
     func reset() {}
+
+    func currentTldElseResolve() async throws -> String {
+        if let tld = currentTld() {
+            return tld
+        }
+
+        return try await resolveTld()
+    }
 }
 
 private func makeRuntime(
@@ -175,6 +183,35 @@ struct SPARustRuntimeTests {
         _ = try await runtime.start(with: MockJSEngine())
 
         #expect(await runtime.servedBuild()?.localURL.lastPathComponent == "widget.test.dot")
+        await runtime.dispose()
+    }
+
+    @Test func useLatestBuildServesTheAppliedBuildWhenItChanged() async throws {
+        let configuration = try makeConfiguration(contentSource: .dotNs)
+        let loader = StubProductContentLoader()
+        let runtime = makeRuntime(configuration: configuration, contentLoader: loader)
+        _ = try await runtime.start(with: MockJSEngine())
+
+        loader.simulate(appliedContentHash: "01")
+        try await runtime.useLatestBuild()
+
+        #expect(await runtime.servedBuild()?.contentHash == "01")
+
+        await runtime.dispose()
+    }
+
+    @Test func useLatestBuildKeepsTheServedBuildWhenNothingChanged() async throws {
+        let configuration = try makeConfiguration(contentSource: .dotNs)
+        let loader = StubProductContentLoader()
+        let runtime = makeRuntime(configuration: configuration, contentLoader: loader)
+        _ = try await runtime.start(with: MockJSEngine())
+        let served = await runtime.servedBuild()
+
+        try await runtime.useLatestBuild()
+
+        #expect(await runtime.servedBuild() == served)
+        #expect(loader.openedIds.count == 2)
+
         await runtime.dispose()
     }
 

@@ -7,12 +7,16 @@ public enum ProductUpdateFetchError: Error, Equatable {
 }
 
 public protocol ProductUpdateFetching: Sendable {
-    func fetch(_ productId: ProductId, onPhase: @escaping ProductLoadPhaseHandler) async throws -> ProductContent
+    func fetchManifest(_ productId: ProductId) async throws -> ProductManifest
+    func stage(
+        _ contentId: ProductId,
+        onPhase: @escaping ProductLoadPhaseHandler
+    ) async throws -> DotNsResolvedContent
 }
 
 public extension ProductUpdateFetching {
-    func fetch(_ productId: ProductId) async throws -> ProductContent {
-        try await fetch(productId, onPhase: { _ in })
+    func stage(_ contentId: ProductId) async throws -> DotNsResolvedContent {
+        try await stage(contentId, onPhase: { _ in })
     }
 }
 
@@ -39,10 +43,7 @@ public actor ProductUpdateFetcher {
 }
 
 extension ProductUpdateFetcher: ProductUpdateFetching {
-    public func fetch(
-        _ productId: ProductId,
-        onPhase: @escaping ProductLoadPhaseHandler
-    ) async throws -> ProductContent {
+    public func fetchManifest(_ productId: ProductId) async throws -> ProductManifest {
         do {
             _ = try await hostProvider.resolveHost(rawString: productId.rawValue)
         } catch is CancellationError {
@@ -51,59 +52,21 @@ extension ProductUpdateFetcher: ProductUpdateFetching {
             throw ProductUpdateFetchError.tldUnavailable
         }
 
-        onPhase(.resolving)
-
-        let dotNsResolver = makeDotNsResolver()
-
-        let resolved = try await resolverFactory.makeResolver(
+        return try await resolverFactory.makeResolver(
             metadataRepository: ProductMetadataRepository(contractApi: contractApi),
             hostProvider: hostProvider
-        ).resolve(productId)
-
-        var contents: [ProductId: DotNsResolvedContent] = [:]
-        if let appId = resolved.executables.app?.identifier {
-            contents[appId] = try await dotNsResolver.stageContent(dotNsName: appId.rawValue, onPhase: onPhase)
-        }
-
-        for contentId in optionalContentIds(of: resolved) where contents[contentId] == nil {
-            if let content = try await resolveOptional(contentId, of: resolved.id, using: dotNsResolver, onPhase: onPhase) {
-                contents[contentId] = content
-            }
-        }
-
-        for (contentId, content) in contents {
-            storage.contentHashes.putContentHash(name: contentId.rawValue, hash: content.contentHash)
-        }
-
-        return ProductContent(resolved: resolved, contents: contents)
+        ).resolveProductManifest(productId)
     }
-}
 
-private extension ProductUpdateFetcher {
-    func makeDotNsResolver() -> DotNsResolver {
-        DotNsResolver(
+    public func stage(
+        _ contentId: ProductId,
+        onPhase: @escaping ProductLoadPhaseHandler
+    ) async throws -> DotNsResolvedContent {
+        try await DotNsResolver(
             contractApi: contractApi,
             carFetcher: carFetcher,
             contentStorage: storage.content,
             contentHashCache: storage.contentHashes
-        )
-    }
-
-    func optionalContentIds(of resolved: ResolvedProduct) -> [ProductId] {
-        [resolved.executables.widget?.identifier, resolved.executables.worker?.identifier].compactMap { $0 }
-    }
-
-    func resolveOptional(
-        _ contentId: ProductId,
-        of productId: ProductId,
-        using dotNsResolver: DotNsResolver,
-        onPhase: @escaping ProductLoadPhaseHandler
-    ) async throws -> DotNsResolvedContent? {
-        do {
-            return try await dotNsResolver.stageContent(dotNsName: contentId.rawValue, onPhase: onPhase)
-        } catch DotNsContractError.contentHashNotFound {
-            resolverFactory.logger.warning("Product \(productId) has no published content at \(contentId)")
-            return nil
-        }
+        ).stageContent(dotNsName: contentId.rawValue, onPhase: onPhase)
     }
 }

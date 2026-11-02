@@ -67,7 +67,8 @@ let package = Package(
         .package(path: "../SubstrateOperation"),
         .package(path: "../SubstrateSdkExt"),
         .package(path: "../Revive"),
-        .package(path: "../BackgroundExecution")
+        .package(path: "../BackgroundExecution"),
+        .package(path: "../IssueMonitoring")
     ],
     targets: [
         .target(
@@ -93,7 +94,8 @@ let package = Package(
                 "SubstrateOperation",
                 "SubstrateSdkExt",
                 "Revive",
-                "BackgroundExecution"
+                "BackgroundExecution",
+                "IssueMonitoring"
             ],
             resources: [.process("Resources")]
         ),
@@ -103,6 +105,7 @@ let package = Package(
                 "Products",
                 "FoundationExt",
                 "BackgroundExecution",
+                "IssueMonitoring",
                 .product(name: "StructuredConcurrency", package: "StructuredConcurrency"),
                 .product(name: "StructuredConcurrencyTestSupport", package: "StructuredConcurrency"),
                 .product(name: "SubstrateSdk", package: "substrate-sdk-ios"),
