@@ -19,8 +19,9 @@ use crate::{
 /// awaits one answer to each. The worker calls the core to report progress. The core decides
 /// `Delivered` and `Released` itself, from the top-ups and payments the worker names.
 ///
-/// When the worker connects, the core assigns it every session it still
-/// serves, then repeats any cancel or cancel settlement it never answered.
+/// Once the worker has connected and a user is signed in, the core assigns it
+/// every session it still serves, then repeats any cancel or cancel
+/// settlement it never answered.
 /// The worker keeps its own state per session, such as an onramp order id, in
 /// its storage under the session's `intent`.
 #[wire_trait(id = 24)]
