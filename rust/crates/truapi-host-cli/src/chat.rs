@@ -43,7 +43,7 @@ use truapi::{
 		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
 		HostChatSetRoomConfigRequest, HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
 		HostChatSetRoomPreviewRequest, HostChatUpdateFeedError, HostChatUpdateFeedRequest,
-		ProductChatUserActionItem,
+		ProductChatUserActionResponse,
 	},
 	platform::{ChatPlatform, ProductContext, async_trait},
 };
@@ -405,7 +405,7 @@ impl CliChatHost {
 		&self,
 		room_id: &str,
 		action: &ChatUserAction,
-		answer: &ProductChatUserActionItem,
+		answer: &ProductChatUserActionResponse,
 	) {
 		let mut state = self.lock();
 		let Some(room) = state.rooms.get_mut(room_id) else {
@@ -421,7 +421,7 @@ impl CliChatHost {
 		let changed = match (action, answer) {
 			(
 				ChatUserAction::NewMessage { .. },
-				ProductChatUserActionItem::MessageCreated(message),
+				ProductChatUserActionResponse::MessageCreated(message),
 			) => match room.position(&message.message_id) {
 				Some(index) => {
 					room.messages[index] = StoredMessage::new(message.clone());
@@ -432,7 +432,7 @@ impl CliChatHost {
 					Some(room.messages.len() - 1)
 				},
 			},
-			(_, ProductChatUserActionItem::MessageCreated(_)) => None,
+			(_, ProductChatUserActionResponse::MessageCreated(_)) => None,
 			(ChatUserAction::EditMessage { message_id, body }, _) => {
 				room.position(message_id).inspect(|&index| {
 					let message = &mut room.messages[index].message;
@@ -1875,9 +1875,9 @@ mod tests {
 				message_id: None,
 				timestamp: None,
 			},
-			&ProductChatUserActionItem::MessageCreated(created.clone()),
+			&ProductChatUserActionResponse::MessageCreated(created.clone()),
 		);
-		let acknowledged = ProductChatUserActionItem::Acknowledged;
+		let acknowledged = ProductChatUserActionResponse::Acknowledged;
 		host.apply_source_action(
 			"kept",
 			&ChatUserAction::EditMessage { message_id: "s-1".to_string(), body: body("edited") },

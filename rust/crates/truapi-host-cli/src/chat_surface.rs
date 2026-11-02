@@ -36,9 +36,9 @@ use truapi::{
 	CallError, ProductRuntime, ProductRuntimeError, Subscription,
 	latest::{
 		ChatActionPayload, ChatMessageBody, ChatMessageContent, ChatPageAnchor, ChatUserAction,
-		HostChatActionSubscribeItem, ProductChatMessagesQueryItem, ProductChatMessagesQueryRequest,
-		ProductChatQueryError, ProductChatReactionsQueryItem, ProductChatReactionsQueryRequest,
-		ProductChatUserActionError, ProductChatUserActionItem, ProductChatUserActionRequest,
+		HostChatActionSubscribeItem, ProductChatMessagesQueryResponse, ProductChatMessagesQueryRequest,
+		ProductChatQueryError, ProductChatReactionsQueryResponse, ProductChatReactionsQueryRequest,
+		ProductChatUserActionError, ProductChatUserActionResponse, ProductChatUserActionRequest,
 	},
 };
 
@@ -95,19 +95,19 @@ pub trait ChatWorker: Send + Sync {
 	fn messages_query(
 		&self,
 		request: ProductChatMessagesQueryRequest,
-	) -> Result<Query<ProductChatMessagesQueryItem>, ProductRuntimeError>;
+	) -> Result<Query<ProductChatMessagesQueryResponse>, ProductRuntimeError>;
 
 	/// Tell the product what the user did in a room it keeps.
 	fn user_action(
 		&self,
 		request: ProductChatUserActionRequest,
-	) -> Result<Query<ProductChatUserActionItem, ProductChatUserActionError>, ProductRuntimeError>;
+	) -> Result<Query<ProductChatUserActionResponse, ProductChatUserActionError>, ProductRuntimeError>;
 
 	/// Ask who reacted to one message.
 	fn reactions_query(
 		&self,
 		request: ProductChatReactionsQueryRequest,
-	) -> Result<Query<ProductChatReactionsQueryItem>, ProductRuntimeError>;
+	) -> Result<Query<ProductChatReactionsQueryResponse>, ProductRuntimeError>;
 }
 
 impl ChatWorker for ProductRuntime {
@@ -121,14 +121,14 @@ impl ChatWorker for ProductRuntime {
 	fn messages_query(
 		&self,
 		request: ProductChatMessagesQueryRequest,
-	) -> Result<Query<ProductChatMessagesQueryItem>, ProductRuntimeError> {
+	) -> Result<Query<ProductChatMessagesQueryResponse>, ProductRuntimeError> {
 		self.control().chat_messages_query(request)
 	}
 
 	fn user_action(
 		&self,
 		request: ProductChatUserActionRequest,
-	) -> Result<Query<ProductChatUserActionItem, ProductChatUserActionError>, ProductRuntimeError>
+	) -> Result<Query<ProductChatUserActionResponse, ProductChatUserActionError>, ProductRuntimeError>
 	{
 		self.control().chat_user_action(request)
 	}
@@ -136,7 +136,7 @@ impl ChatWorker for ProductRuntime {
 	fn reactions_query(
 		&self,
 		request: ProductChatReactionsQueryRequest,
-	) -> Result<Query<ProductChatReactionsQueryItem>, ProductRuntimeError> {
+	) -> Result<Query<ProductChatReactionsQueryResponse>, ProductRuntimeError> {
 		self.control().chat_reactions_query(request)
 	}
 }
@@ -808,14 +808,14 @@ fn user_action_error_json(error: &ProductChatUserActionError) -> Value {
 	}
 }
 
-fn page_json(page: &ProductChatMessagesQueryItem) -> Value {
+fn page_json(page: &ProductChatMessagesQueryResponse) -> Value {
 	json!({
 		"messages": page.messages.iter().map(message_json).collect::<Vec<_>>(),
 		"next": page.next,
 	})
 }
 
-fn reactions_json(item: &ProductChatReactionsQueryItem) -> Value {
+fn reactions_json(item: &ProductChatReactionsQueryResponse) -> Value {
 	json!({
 		"reactions": item.reactions.iter().map(|reaction| json!({
 			"participantId": reaction.participant_id,
@@ -824,12 +824,12 @@ fn reactions_json(item: &ProductChatReactionsQueryItem) -> Value {
 	})
 }
 
-fn user_action_json(item: &ProductChatUserActionItem) -> Value {
+fn user_action_json(item: &ProductChatUserActionResponse) -> Value {
 	match item {
-		ProductChatUserActionItem::MessageCreated(message) => {
+		ProductChatUserActionResponse::MessageCreated(message) => {
 			json!({ "type": "MessageCreated", "message": message_json(message) })
 		},
-		ProductChatUserActionItem::Acknowledged => json!({ "type": "Acknowledged" }),
+		ProductChatUserActionResponse::Acknowledged => json!({ "type": "Acknowledged" }),
 	}
 }
 
@@ -855,9 +855,9 @@ mod tests {
 	struct FakeWorker {
 		received: Mutex<Vec<HostChatActionSubscribeItem>>,
 		asked: Mutex<Vec<String>>,
-		pages: Scripted<ProductChatMessagesQueryItem>,
-		actions: Scripted<ProductChatUserActionItem, ProductChatUserActionError>,
-		reactions: Scripted<ProductChatReactionsQueryItem>,
+		pages: Scripted<ProductChatMessagesQueryResponse>,
+		actions: Scripted<ProductChatUserActionResponse, ProductChatUserActionError>,
+		reactions: Scripted<ProductChatReactionsQueryResponse>,
 	}
 
 	fn scripted<Item: Send + 'static, Error: Send + 'static>(
@@ -906,7 +906,7 @@ mod tests {
 		fn messages_query(
 			&self,
 			request: ProductChatMessagesQueryRequest,
-		) -> Result<Query<ProductChatMessagesQueryItem>, ProductRuntimeError> {
+		) -> Result<Query<ProductChatMessagesQueryResponse>, ProductRuntimeError> {
 			self.ask(request);
 			Ok(scripted(&self.pages))
 		}
@@ -914,7 +914,7 @@ mod tests {
 		fn user_action(
 			&self,
 			request: ProductChatUserActionRequest,
-		) -> Result<Query<ProductChatUserActionItem, ProductChatUserActionError>, ProductRuntimeError>
+		) -> Result<Query<ProductChatUserActionResponse, ProductChatUserActionError>, ProductRuntimeError>
 		{
 			self.ask(request);
 			Ok(scripted(&self.actions))
@@ -923,7 +923,7 @@ mod tests {
 		fn reactions_query(
 			&self,
 			request: ProductChatReactionsQueryRequest,
-		) -> Result<Query<ProductChatReactionsQueryItem>, ProductRuntimeError> {
+		) -> Result<Query<ProductChatReactionsQueryResponse>, ProductRuntimeError> {
 			self.ask(request);
 			Ok(scripted(&self.reactions))
 		}
@@ -943,14 +943,14 @@ mod tests {
 		fn messages_query(
 			&self,
 			_request: ProductChatMessagesQueryRequest,
-		) -> Result<Query<ProductChatMessagesQueryItem>, ProductRuntimeError> {
+		) -> Result<Query<ProductChatMessagesQueryResponse>, ProductRuntimeError> {
 			Err(ProductRuntimeError::Denied)
 		}
 
 		fn user_action(
 			&self,
 			_request: ProductChatUserActionRequest,
-		) -> Result<Query<ProductChatUserActionItem, ProductChatUserActionError>, ProductRuntimeError>
+		) -> Result<Query<ProductChatUserActionResponse, ProductChatUserActionError>, ProductRuntimeError>
 		{
 			Err(ProductRuntimeError::Denied)
 		}
@@ -958,7 +958,7 @@ mod tests {
 		fn reactions_query(
 			&self,
 			_request: ProductChatReactionsQueryRequest,
-		) -> Result<Query<ProductChatReactionsQueryItem>, ProductRuntimeError> {
+		) -> Result<Query<ProductChatReactionsQueryResponse>, ProductRuntimeError> {
 			Err(ProductRuntimeError::Denied)
 		}
 	}
@@ -1182,7 +1182,7 @@ mod tests {
 		let created = product_message("kept-u-1", "user");
 		FakeWorker::script(
 			&worker.actions,
-			Ok(ProductChatUserActionItem::MessageCreated(created.clone())),
+			Ok(ProductChatUserActionResponse::MessageCreated(created.clone())),
 		);
 
 		let reply = run(
@@ -1244,7 +1244,7 @@ mod tests {
 		FakeWorker::script(&worker.pages, Err(CallError::unavailable()));
 		FakeWorker::script(
 			&worker.pages,
-			Ok(ProductChatMessagesQueryItem {
+			Ok(ProductChatMessagesQueryResponse {
 				messages: vec![product_message("h-1", "product")],
 				next: Some("0".to_string()),
 			}),
@@ -1288,7 +1288,7 @@ mod tests {
 		let (worker, _attachment) = attach(&surface);
 		FakeWorker::script(
 			&worker.reactions,
-			Ok(ProductChatReactionsQueryItem {
+			Ok(ProductChatReactionsQueryResponse {
 				reactions: vec![ChatReactionDetail {
 					participant_id: "p1".to_string(),
 					emoji: "+1".to_string(),
@@ -1315,7 +1315,7 @@ mod tests {
 			.chat()
 			.cache_page("kept", &[product_message("s-1", "user"), product_message("s-2", "user")]);
 		for _ in 0..4 {
-			FakeWorker::script(&worker.actions, Ok(ProductChatUserActionItem::Acknowledged));
+			FakeWorker::script(&worker.actions, Ok(ProductChatUserActionResponse::Acknowledged));
 		}
 
 		let react = run(
@@ -1358,7 +1358,7 @@ mod tests {
 		let (worker, _attachment) = attach(&surface);
 		FakeWorker::script(
 			&worker.pages,
-			Ok(ProductChatMessagesQueryItem {
+			Ok(ProductChatMessagesQueryResponse {
 				messages: vec![product_message("h-9", "product")],
 				next: None,
 			}),
