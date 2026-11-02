@@ -350,7 +350,7 @@ describe("the network delivery", () => {
     });
   });
 
-  test("a pending request is posted again each day with a new account; a cancelled one is not, and its reply is refused", async () => {
+  test("a pending request is posted again each day with a new account; a cancelled one is not, and its reply does not open", async () => {
     const alice = new Actor(ALICE, chain, clock);
     const kept = await invite(alice, BOB);
     const cancelled = await invite(alice, CAROL);
@@ -381,9 +381,8 @@ describe("the network delivery", () => {
       bobSees: 1,
       keptStatus: "waiting",
       cancelledReply: [],
-      refused: [
-        `Ignored a reply to request ${cancelled.slice(2, 10)}: it is cancelled.`,
-      ],
+      // Its reply key's secret went with the cancel: the reply does not open.
+      refused: [],
     });
   });
 

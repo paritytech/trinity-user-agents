@@ -7,10 +7,13 @@ import {
   openRequest,
   requestDigest,
   requestSender,
+  replyKeyPair,
   sealReply,
   sealRequest,
+  type ReplySuite,
 } from "./binding.js";
 import {
+  isHexOf,
   readPayload,
   readProductCall,
   readSendRequest,
@@ -32,13 +35,7 @@ import type {
 } from "./ports.js";
 import type { InvitationEvent, InvitationObserver } from "./observer.js";
 import { ReceivedRequests, type ReceivedRequest } from "./received.js";
-import {
-  digest,
-  fromHex,
-  toHex,
-  x25519Pair,
-  type RandomBytes,
-} from "./sealing.js";
+import { digest, fromHex, toHex, type RandomBytes } from "./sealing.js";
 
 /**
  * One user's host side of the proposed request service (`contract.ts`) for
@@ -47,8 +44,11 @@ import {
  *
  * Sending: the product names a contact by handle and gives its payload. The
  * host resolves the contact, asks its user, makes the request id and a reply
- * key pair, asks its delivery for a return route and watches it, then
- * authenticates, seals and posts the request. It has no deadline: it is
+ * key pair of the suite {@link InvitationServiceDeps.replySuite} answers then
+ * (X-Wing unless told otherwise) and keeps them, asks its delivery for a
+ * return route and watches it, then authenticates, seals and posts the
+ * request. The reply key it keeps says the request's suite for good. Closing
+ * the request drops the reply key's secret. It has no deadline: it is
  * pending, and kept posted while this host runs, until the product completes
  * it or it is cancelled. When the delivery cannot keep it posted it is
  * paused, still pending, and the host says why. A reply on that route reaches
@@ -83,6 +83,14 @@ export const REPLY_POSTING_MS = 60 * 60_000;
 
 /** How often a request whose recipient the host could not find yet is tried again. */
 export const REACH_RETRY_MS = 60_000;
+
+/** The reply-key suite of a new request when the host is not told one. */
+export const DEFAULT_REPLY_SUITE: ReplySuite = "xwing";
+
+const SUITE_NAMES: Record<ReplySuite, string> = {
+  xwing: "X-Wing, hybrid post-quantum",
+  x25519: "X25519, classical",
+};
 
 /** What the host asks its user before a request leaves. */
 export interface SendPrompt {
@@ -120,6 +128,11 @@ export interface InvitationServiceDeps {
   /** Run `task` after `delayMs`. Returns a function that cancels it. */
   schedule(task: () => void, delayMs: number): () => void;
   random: RandomBytes;
+  /**
+   * The reply-key suite of the next new request. Absent:
+   * {@link DEFAULT_REPLY_SUITE}. Read once per request, which keeps it.
+   */
+  replySuite?(): ReplySuite;
   /** Ask the user whether to send. */
   confirmSend(prompt: SendPrompt): Promise<boolean>;
   /**
@@ -164,6 +177,10 @@ export function productPort(port: MessagePort): ProductPort {
     close: () => port.close(),
   };
 }
+
+/** The 32-byte secret replies to `item` open with, or null: it is closed, or what is kept is not one. */
+const replySecretOf = (item: OutgoingRequest): Uint8Array | null =>
+  isHexOf(item.replySecret, 32) ? fromHex(item.replySecret) : null;
 
 const failure = (reason: FailureReason, detail: string): CallResult => ({
   ok: false,
@@ -567,7 +584,8 @@ export class InvitationService {
       return failure("Unknown", "Your host cannot reach this contact now.");
     }
     const { random } = this.deps;
-    const replyKey = x25519Pair(random(32));
+    const replySuite = this.deps.replySuite?.() ?? DEFAULT_REPLY_SUITE;
+    const replyKey = replyKeyPair(replySuite, random(32));
     const now = this.deps.now();
     const { context, sealed } = sealRequest(
       this.deps.auth,
@@ -613,7 +631,7 @@ export class InvitationService {
       handle: item.handle,
     });
     this.deps.log(
-      `Request ${short(item.handle)}: watching its return route, then posting it, sealed for ${person.name}.`,
+      `Request ${short(item.handle)}: watching its return route, then posting it, sealed for ${person.name}; its reply key is ${SUITE_NAMES[replySuite]}.`,
     );
     this.post(item);
     return { ok: true, request: this.outgoingView(item) };
@@ -643,7 +661,8 @@ export class InvitationService {
     if ("failure" in item) return item.failure;
     if (item.replies.length === 0)
       return failure("Refused", "No authenticated reply has arrived.");
-    this.outbox.close(handle, { tag: "completed", at: this.deps.now() });
+    if (!this.outbox.close(handle, { tag: "completed", at: this.deps.now() }))
+      return this.closedElsewhere(item);
     this.outgoingChanged();
     this.stopPosting(item);
     this.observe({
@@ -658,10 +677,18 @@ export class InvitationService {
     return { ok: true, request: this.outgoingView(item) };
   }
 
+  /** Another tab closed `item` first: stop posting it here, and say how it was closed. */
+  private closedElsewhere(item: OutgoingRequest): CallResult {
+    this.stopPosting(item);
+    this.pushOutgoing(item);
+    return failure("Refused", `This request is ${this.outbox.status(item)}.`);
+  }
+
   private cancel(handle: RequestHandle): CallResult {
     const item = this.waitingItem(handle);
     if ("failure" in item) return item.failure;
-    this.outbox.close(handle, { tag: "cancelled", at: this.deps.now() });
+    if (!this.outbox.close(handle, { tag: "cancelled", at: this.deps.now() }))
+      return this.closedElsewhere(item);
     this.outgoingChanged();
     this.stopPosting(item);
     this.observe({
@@ -710,13 +737,23 @@ export class InvitationService {
       return settle(failure("Unknown", "The sender is no longer a contact."));
     if (received.replied !== null)
       return settle(failure("Refused", "This request was already answered."));
-    const sealed = sealReply(
-      this.deps.auth,
-      sender,
-      { context: received.context, digest: received.digest },
-      payload,
-      this.deps.random,
-    );
+    let sealed: string;
+    try {
+      sealed = sealReply(
+        this.deps.auth,
+        sender,
+        { context: received.context, digest: received.digest },
+        payload,
+        this.deps.random,
+      );
+    } catch (error) {
+      return settle(
+        failure(
+          "Invalid",
+          `The request's reply key cannot be sealed to: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
+    }
     // Before the request counts as answered, so a reply too large changes nothing.
     const tooLarge = this.tooLarge("reply", sealed);
     if (tooLarge !== null) return settle(failure("Invalid", tooLarge));
@@ -962,27 +999,26 @@ export class InvitationService {
   }
 
   /**
-   * A sealed reply arrived on a return route. Every request on that route is
-   * tried, since a route may be shared; the one whose reply key opens it
-   * decides. Handed to the product only once authenticated, and only while
-   * that request is pending. A request that is not pending is tried only
-   * when its contact is known already, so a closed request costs no read.
+   * A sealed reply arrived on a return route. Every pending request on that
+   * route is tried, since a route may be shared; the one whose reply key
+   * opens it decides, with the suite of that key. Handed to the product only
+   * once authenticated. A closed request has no reply secret any more, so no
+   * reply opens for it.
    */
   private async receiveReply(route: string, sealed: string): Promise<void> {
     for (const { handle } of this.outbox.withRoute(route)) {
       if (this.stopped) return;
-      let item = this.outbox.get(handle);
-      if (item === undefined) continue;
+      const tried = this.outbox.get(handle);
+      if (tried === undefined || replySecretOf(tried) === null) continue;
       const label = short(handle);
-      let peer = this.deps.contacts.byIdentity(item.context.to);
-      if (peer === undefined && isPending(item)) {
-        peer = await this.learnIdentity(item.context.to);
-        if (this.stopped) return;
-        // It may have been completed or cancelled while the key was read.
-        item = this.outbox.get(handle);
-        if (item === undefined) continue;
-      }
-      if (peer === undefined) continue;
+      const peer =
+        this.deps.contacts.byIdentity(tried.context.to) ??
+        (await this.learnIdentity(tried.context.to));
+      if (this.stopped) return;
+      // It may have been completed or cancelled while the key was read.
+      const item = this.outbox.get(handle);
+      const secret = item === undefined ? null : replySecretOf(item);
+      if (item === undefined || peer === undefined || secret === null) continue;
       const opened = openReply(
         this.deps.auth,
         {
@@ -990,19 +1026,14 @@ export class InvitationService {
           productId: this.deps.product.id,
           requestId: item.context.requestId,
           requestDigest: item.digest,
-          replyKey: x25519Pair(fromHex(item.replySecret)),
+          replyKey: item.context.replyKey,
+          replySecret: secret,
         },
         sealed,
       );
       if (!opened.ok && opened.sealedElsewhere) continue;
       if (!opened.ok) {
         this.deps.log(`Ignored a reply to request ${label}: ${opened.reason}.`);
-        return;
-      }
-      if (!isPending(item)) {
-        this.deps.log(
-          `Ignored a reply to request ${label}: it is ${this.outbox.status(item)}.`,
-        );
         return;
       }
       if (!this.outbox.addReply(handle, opened.payload)) return;

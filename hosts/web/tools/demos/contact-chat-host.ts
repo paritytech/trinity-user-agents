@@ -18,6 +18,7 @@ import type {
   Product,
 } from "../../src/invitations/ports.js";
 import type { InvitationObserver } from "../../src/invitations/observer.js";
+import type { ReplySuite } from "../../src/invitations/binding.js";
 import { cryptoRandom } from "../../src/invitations/sealing.js";
 import type { NotificationStore } from "../../src/notifications/notifications.js";
 import type { IdentityProblem } from "../../src/invitations/published-keys.js";
@@ -49,6 +50,8 @@ export interface ContactChatHostOptions {
   auth: IdentityAuth;
   /** How requests and replies travel. Absent: the local simulated delivery. */
   delivery?: HostDelivery;
+  /** The reply-key suite of the next new request. Absent: the service's default. */
+  replySuite?(): ReplySuite;
   /**
    * How Contact Chat's conversation accounts get their Statement Store
    * allowance. Absent: they get none, and Contact Chat cannot post text.
@@ -140,6 +143,9 @@ export function startContactChatHost(
     now,
     schedule,
     random: cryptoRandom,
+    ...(options.replySuite === undefined
+      ? {}
+      : { replySuite: options.replySuite }),
     confirmSend: options.confirmSend,
     ...(options.confirmAccept === undefined
       ? {}

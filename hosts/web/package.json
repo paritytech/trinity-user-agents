@@ -16,6 +16,7 @@
     "@noble/ciphers": "^2.4.0",
     "@noble/curves": "^2.4.0",
     "@noble/hashes": "^2.2.0",
+    "@noble/post-quantum": "^0.7.1",
     "@parity/truapi": "file:../../js/packages/truapi",
     "@parity/truapi-debugger": "file:../../js/packages/truapi-debugger",
     "@parity/truapi-host": "file:../../js/packages/truapi-host",

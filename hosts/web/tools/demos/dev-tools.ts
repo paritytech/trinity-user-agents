@@ -14,10 +14,12 @@ import {
   parseWorkerManifest,
   type ResolvedWorker,
 } from "../../src/products/worker-manifest.js";
-import type {
-  AcceptPrompt,
-  SendPrompt,
+import {
+  DEFAULT_REPLY_SUITE,
+  type AcceptPrompt,
+  type SendPrompt,
 } from "../../src/invitations/invitation-service.js";
+import type { ReplySuite } from "../../src/invitations/binding.js";
 import type {
   ConversationAllowance,
   Product,
@@ -388,6 +390,18 @@ const WALLET_CHAT_KEY = "truapi-web-signing-host:dev:wallet-contact-chat";
 const WALLET_DELIVERY_KEY = "truapi-web-signing-host:dev:wallet-delivery";
 type WalletDelivery = "local" | "local-validate" | "validate" | "network";
 
+/**
+ * sessionStorage key: the reply-key suite of new Contact Chat requests in
+ * this tab. Absent: the request service's default, X-Wing.
+ */
+const REPLY_SUITE_KEY = "truapi-web-signing-host:dev:reply-suite";
+
+/** The reply-key suite new requests of this tab use; read at each send. */
+const devReplySuite = (): ReplySuite =>
+  sessionStorage.getItem(REPLY_SUITE_KEY) === "x25519"
+    ? "x25519"
+    : DEFAULT_REPLY_SUITE;
+
 function walletDelivery(): WalletDelivery {
   const value = sessionStorage.getItem(WALLET_DELIVERY_KEY);
   return value === "local-validate" ||
@@ -609,6 +623,7 @@ function startWalletChat(
     network: session.network,
     self: bytesToHex(keys.chatPublic),
     auth: new WalletIdentityAuth(keys),
+    replySuite: devReplySuite,
     ...(mode === "local"
       ? {}
       : { accounts: conversationAllowance(session, mode === "network") }),
@@ -731,6 +746,7 @@ function startTestUser(deps: DevToolsDeps, self: TestUser): TestUserSession {
     network: deps.network.id,
     self: auth.identityFor().agreementPublic,
     auth,
+    replySuite: devReplySuite,
     contacts,
     handles: deps.handles,
     notifications: deps.notifications,
@@ -887,12 +903,35 @@ function drawSection(
   const deliveryLabel = el("label", "", "Contact Chat delivery");
   deliveryLabel.htmlFor = deliverySelect.id;
 
+  const suiteSelect = el("select");
+  suiteSelect.id = "reply-key-suite";
+  suiteSelect.append(
+    new Option("X-Wing: hybrid post-quantum reply (default)", "xwing"),
+    new Option("X25519: classical reply", "x25519"),
+  );
+  suiteSelect.value = devReplySuite();
+  suiteSelect.title =
+    "The kind of reply key your host makes for each new Contact Chat request. The key's length tells the recipient's host how to seal its reply, and your host opens it the same way. Changing this changes only requests sent after it. The request itself and the identity proof stay classical either way.";
+  suiteSelect.addEventListener("change", () => {
+    const next = suiteSelect.value as ReplySuite;
+    if (next === DEFAULT_REPLY_SUITE)
+      sessionStorage.removeItem(REPLY_SUITE_KEY);
+    else sessionStorage.setItem(REPLY_SUITE_KEY, next);
+    deps.log(
+      `New Contact Chat requests in this tab use ${next === "xwing" ? "an X-Wing" : "an X25519"} reply key; requests already sent keep theirs.`,
+    );
+  });
+  const suiteLabel = el("label", "", "Reply key for new requests");
+  suiteLabel.htmlFor = suiteSelect.id;
+
   const rows: HTMLElement[] = [
     demoLabel,
     demoSelect,
     walletChatRow,
     deliveryLabel,
     deliverySelect,
+    suiteLabel,
+    suiteSelect,
   ];
   if (session !== null) {
     const clearRow = el("div", "row");

@@ -16,12 +16,17 @@ import {
   digest,
   fromHex,
   fromUtf8,
+  isXWingPublic,
   openSealed,
+  openXWingSealed,
   sealTo,
+  sealToXWing,
   toHex,
   utf8,
+  x25519Pair,
+  xwingPair,
+  XWING_PUBLIC_BYTES,
   type RandomBytes,
-  type X25519Pair,
 } from "./sealing.js";
 
 /**
@@ -32,23 +37,102 @@ import {
  *   id, when it was made, the return route the sender's delivery chose and the
  *   public reply key),
  *   the product's payload and the sender's evidence over all of it. It is
- *   sealed to the recipient's identity key.
+ *   sealed to the recipient's published X25519 chat key: classical.
  * - A reply carries its context (both identities, the product, the request id
  *   and the digest of the exact request), the product's payload and the
  *   responder's evidence over all of it. It is sealed to the request's reply
- *   key, which only the sender's host holds.
+ *   key, which the sender's host made for that request and alone holds the
+ *   secret of. The key's exact length says how: 1,216 bytes, X-Wing, hybrid
+ *   post-quantum; 32 bytes, X25519, classical. The responder needs no
+ *   published post-quantum key.
  *
  * Kind, version and the order of the identities are in every transcript, so
  * evidence for one direction or kind does not check as another. Evidence is
  * made and checked by the host's {@link IdentityAuth}; this module holds no
- * identity credential. Encoding here is length-prefixed BLAKE2b over UTF-8
- * fields, a prototype choice, not the design's wire format.
+ * identity credential, and the evidence stays classical. Encoding here is
+ * length-prefixed BLAKE2b over UTF-8 fields, a prototype choice, not the
+ * design's wire format.
+ *
+ * The reply key is in the request's transcript, so only the sender chooses
+ * its suite: a reply is sealed with the suite of that key and opened only
+ * with it, never another. A key of any other length is refused.
  */
 
 /** Version of the hosts' envelopes. */
 export const WIRE_VERSION = "host-requests-wire/1";
 export const REQUEST_SEAL = "truapi-web-host/request-seal/1";
-export const REPLY_SEAL = "truapi-web-host/reply-seal/1";
+
+/**
+ * How a reply is sealed to the request's reply key: `xwing`, the X-Wing KEM,
+ * hybrid post-quantum; or `x25519`, classical. Either way the reply is
+ * encrypted with a key derived for it, never with the key exchange alone.
+ */
+export type ReplySuite = "xwing" | "x25519";
+
+interface ReplyKeySuite {
+  /** The purpose label the reply is sealed under. */
+  seal: string;
+  pair(secret: Uint8Array): { secret: Uint8Array; public: Uint8Array };
+  sealTo(
+    key: Uint8Array,
+    plaintext: Uint8Array,
+    purpose: string,
+    random: RandomBytes,
+  ): Uint8Array;
+  open(
+    secret: Uint8Array,
+    sealed: Uint8Array,
+    purpose: string,
+  ): Uint8Array | null;
+}
+
+const REPLY_SUITES: Record<ReplySuite, ReplyKeySuite> = {
+  xwing: {
+    seal: "truapi-web-host/reply-seal/xwing/1",
+    pair: xwingPair,
+    sealTo: sealToXWing,
+    open: openXWingSealed,
+  },
+  x25519: {
+    seal: "truapi-web-host/reply-seal/1",
+    pair: x25519Pair,
+    sealTo,
+    open: (secret, sealed, purpose) =>
+      openSealed(x25519Pair(secret), sealed, purpose),
+  },
+};
+
+/** The purpose label each suite's replies are sealed under. */
+export const REPLY_SEALS: Record<ReplySuite, string> = {
+  xwing: REPLY_SUITES.xwing.seal,
+  x25519: REPLY_SUITES.x25519.seal,
+};
+
+/**
+ * The suite of a reply key from another host, `0x` hex, by its exact length,
+ * or null when it is none: 32 bytes is X25519; 1,216 bytes passing the ML-KEM
+ * key check is X-Wing.
+ */
+export function replySuiteOf(key: unknown): ReplySuite | null {
+  const suite = suiteByLength(key);
+  return suite === "xwing" && !isXWingPublic(fromHex(key as string))
+    ? null
+    : suite;
+}
+
+/**
+ * The suite a reply key's exact length gives, with no other check: for a key
+ * that was checked when it arrived, or that this host made.
+ */
+function suiteByLength(key: unknown): ReplySuite | null {
+  if (isHexOf(key, 32)) return "x25519";
+  return isHexOf(key, XWING_PUBLIC_BYTES) ? "xwing" : null;
+}
+
+/** The reply key pair of `suite` for a 32-byte random `secret`. */
+export const replyKeyPair = (suite: ReplySuite, secret: Uint8Array) =>
+  REPLY_SUITES[suite].pair(secret);
+
 const REQUEST_ID_BYTES = 16;
 /**
  * The largest sealed envelope: a largest payload as hex, twice its bytes, and
@@ -72,7 +156,7 @@ export interface RequestContext {
   createdAt: number;
   /** Where the reply reaches the sender, as the sender's delivery chose it. Opaque here. */
   returnRoute: string;
-  /** The public reply-envelope key. */
+  /** The public key the reply is sealed to, made for this request. Its length gives its suite. */
   replyKey: string;
 }
 
@@ -165,7 +249,7 @@ function readRequestContext(value: unknown): RequestContext | null {
     typeof item.returnRoute === "string" &&
     item.returnRoute !== "" &&
     item.returnRoute.length <= ROUTE_MAX_CHARS &&
-    isKey(item.replyKey)
+    replySuiteOf(item.replyKey) !== null
     ? {
         version: WIRE_VERSION,
         from: item.from,
@@ -175,7 +259,7 @@ function readRequestContext(value: unknown): RequestContext | null {
         requestId: item.requestId,
         createdAt: item.createdAt,
         returnRoute: item.returnRoute,
-        replyKey: item.replyKey,
+        replyKey: item.replyKey as string,
       }
     : null;
 }
@@ -332,7 +416,11 @@ export function requestSender(
     : (parse(plain, readRequestContext)?.context.from ?? null);
 }
 
-/** The reply from this host to `peer`'s `request`, authenticated and sealed to its reply key. */
+/**
+ * The reply from this host to `peer`'s `request`, authenticated and sealed to
+ * its reply key. Throws when the key cannot be sealed to, such as an X25519
+ * key of low order.
+ */
 export function sealReply(
   auth: IdentityAuth,
   peer: Person,
@@ -353,11 +441,14 @@ export function sealReply(
     replyTranscript(context, payload),
     peer,
   );
+  const suite = suiteByLength(request.context.replyKey);
+  if (suite === null) throw new Error("the request's reply key has no suite");
+  const { sealTo: seal, seal: purpose } = REPLY_SUITES[suite];
   return toHex(
-    sealTo(
+    seal(
       fromHex(request.context.replyKey),
       encode({ context, payload, evidence }),
-      REPLY_SEAL,
+      purpose,
       random,
     ),
   );
@@ -370,7 +461,10 @@ export interface ExpectedReply {
   productId: string;
   requestId: string;
   requestDigest: string;
-  replyKey: X25519Pair;
+  /** The request's public reply key: its suite is the only one the reply is opened with. */
+  replyKey: string;
+  /** The 32-byte secret of the request's reply key. */
+  replySecret: Uint8Array;
 }
 
 export type OpenedReply = { ok: true; payload: string } | Refused;
@@ -393,7 +487,16 @@ export function openReply(
   const bytes = hexBytes(sealed);
   if (bytes === null || bytes > ENVELOPE_MAX_BYTES)
     return refuse("not a reply");
-  const plain = openSealed(expected.replyKey, fromHex(sealed), REPLY_SEAL);
+  // This host made the key; a full check would cost an encapsulation per post.
+  const suite = suiteByLength(expected.replyKey);
+  const plain =
+    suite === null
+      ? null
+      : REPLY_SUITES[suite].open(
+          expected.replySecret,
+          fromHex(sealed),
+          REPLY_SUITES[suite].seal,
+        );
   if (plain === null)
     return {
       ok: false,

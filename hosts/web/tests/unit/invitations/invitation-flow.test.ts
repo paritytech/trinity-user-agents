@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import {
-  REPLY_SEAL,
+  REPLY_SEALS,
   REQUEST_SEAL,
+  replySuiteOf,
   replyTranscript,
   sealReply,
   sealRequest,
   type ReplyContext,
+  type ReplySuite,
   type RequestContext,
 } from "../../../src/invitations/binding.js";
 import {
@@ -29,8 +31,10 @@ import {
   fromHex,
   fromUtf8,
   sealTo,
+  sealToXWing,
   toHex,
   utf8,
+  xwingPair,
 } from "../../../src/invitations/sealing.js";
 import { NotificationStore } from "../../../src/notifications/notifications.js";
 import { MemoryStorage, settle } from "../../support/test-support.js";
@@ -130,6 +134,8 @@ class Actor {
   /** While set, this host's reads of published chat keys wait for it. */
   gate: Promise<void> | null = null;
   confirm = true;
+  /** The reply-key suite this host gives the next request it sends. */
+  replySuite: ReplySuite = "xwing";
   service!: InvitationService;
   private handler: ((value: unknown) => void) | null = null;
   private readonly pending = new Map<number, (result: CallResult) => void>();
@@ -196,6 +202,7 @@ class Actor {
       now: this.clock.now,
       schedule: this.clock.schedule,
       random: cryptoRandom,
+      replySuite: () => this.replySuite,
       confirmSend: async () => this.confirm,
       showProduct: () => {},
       log: (line) => this.log.push(line),
@@ -357,10 +364,10 @@ function forgeReply(
   parts: { context: ReplyContext; payload: string; evidence: AuthEvidence },
 ): string {
   return toHex(
-    sealTo(
+    sealToXWing(
       fromHex(item.context.replyKey),
       utf8(JSON.stringify(parts)),
-      REPLY_SEAL,
+      REPLY_SEALS.xwing,
       cryptoRandom,
     ),
   );
@@ -388,6 +395,44 @@ for (const kind of ["inbox", "topic"] as const)
   describe(`a request between two users' hosts and products, with ${kind} return routes`, () => {
     beforeEach(() => {
       routes = kind;
+    });
+
+    // A request keeps the suite it was sent with, so changing the choice
+    // can never move a pending request to another one.
+    test("each request keeps the reply-key suite chosen when it was sent, and its reply is sealed and opened with that one", async () => {
+      const { alice, bob } = world();
+      alice.replySuite = "x25519";
+      const classical = await invite(alice, BOB);
+      alice.replySuite = "xwing";
+      const hybrid = await invite(alice, BOB);
+      // Restarted with another choice, Alice's host keeps each request's own.
+      alice.stop();
+      alice.replySuite = "x25519";
+      alice.start();
+      const [toHybrid, toClassical] = bob.notifications.list();
+      await accept(bob, toClassical!.id);
+      await accept(bob, toHybrid!.id);
+      await settle();
+
+      const sentWith = (handle: string) => {
+        const { context } = alice.outgoing(handle);
+        const received = bob.service.received
+          .list()
+          .find((item) => item.context.requestId === context.requestId)!;
+        return {
+          suite: replySuiteOf(context.replyKey),
+          keyBytes: fromHex(context.replyKey).length,
+          answered: replySuiteOf(received.context.replyKey),
+          replies: alice.responses(handle).length,
+        };
+      };
+      expect([sentWith(classical.handle), sentWith(hybrid.handle)]).toEqual([
+        { suite: "x25519", keyBytes: 32, answered: "x25519", replies: 1 },
+        { suite: "xwing", keyBytes: 1216, answered: "xwing", replies: 1 },
+      ]);
+      expect(alice.log.filter((line) => line.startsWith("Ignored"))).toEqual(
+        [],
+      );
     });
 
     test("connects only after the sender's host authenticates the reply and its product checks it", async () => {
@@ -457,6 +502,7 @@ for (const kind of ["inbox", "topic"] as const)
     test("no product sees a person's name, account or keys, or the request's id, route, reply key or evidence", async () => {
       const { alice, bob } = world();
       const sent = await invite(alice, BOB);
+      const { replySecret } = alice.outgoing(sent.handle);
       await accept(bob);
       const context = alice.outgoing(sent.handle).context;
       const received = bob.service.received.get(newest(bob))!;
@@ -474,7 +520,7 @@ for (const kind of ["inbox", "topic"] as const)
         context.requestId,
         context.returnRoute,
         context.replyKey,
-        alice.outgoing(sent.handle).replySecret,
+        replySecret!,
         received.replied!.sealed.slice(2, 66),
       ].map((value) => value.replace(/^0x/, ""));
       const seenBy = (actor: Actor) =>
@@ -705,7 +751,7 @@ for (const kind of ["inbox", "topic"] as const)
         {
           returnRoute: `inbox:${inboxOf(personOf(CAROL).identity.agreementPublic)}:0x${"11".repeat(16)}`,
         },
-        { replyKey: `0x${"22".repeat(32)}` },
+        { replyKey: toHex(xwingPair(cryptoRandom(32)).public) },
         { requestId: `0x${"33".repeat(16)}` },
       ])
         deliver(
@@ -888,18 +934,19 @@ for (const kind of ["inbox", "topic"] as const)
       release();
       await settle();
 
+      // Cancelled, its reply key's secret is gone, so the reply does not open.
       expect({
         responses: alice.responses(sent.handle),
         kept: alice.outgoing(sent.handle).replies,
         status: alice.status(sent.handle),
+        replySecret: alice.outgoing(sent.handle).replySecret,
         log: alice.log.filter((line) => line.startsWith("Ignored a reply")),
       }).toEqual({
         responses: [],
         kept: [],
         status: "cancelled",
-        log: [
-          `Ignored a reply to request ${sent.handle.slice(2, 10)}: it is cancelled.`,
-        ],
+        replySecret: null,
+        log: [],
       });
     });
 
