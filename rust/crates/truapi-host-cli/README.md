@@ -793,7 +793,14 @@ Scripts under `js/scripts/` include:
   through the host's stdin, a pipe in `TRUAPI_FUNDING_USER`: with `--script`,
   a stdin that is not a terminal takes `/funding cancel <intent>` and
   `/approval manual|automatic`, so a case cancels a session or has the overlay
-  closed. The provider reports progress and starts top-ups and payment
+  closed. A provider's screen is a link the host prints: the provider's App on
+  dotNS at the route it asked for (`https://dot.li/<product><route>`), or the
+  page's own URL. It stays open until the provider calls `closeFrame`, or the
+  user types `/funding close <intent>` (answered `Dismissed`) or
+  `/funding returned <intent> <url>` (answered `Returned`); under
+  `--auto-accept` it finishes at once, a page at its return URL. A worker
+  that exits on its own is reported to the core, which starts it again while
+  a session still holds it. The provider reports progress and starts top-ups and payment
   requests, which ledger engines complete in full and record in
   `TRUAPI_FUNDING_LEDGER`, and the core settles each session from them. The
   ledger moves no real funds, so the host refuses it on a network preset whose
