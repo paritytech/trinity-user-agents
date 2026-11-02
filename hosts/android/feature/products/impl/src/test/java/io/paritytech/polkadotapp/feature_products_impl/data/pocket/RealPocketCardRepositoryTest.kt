@@ -17,6 +17,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 import uniffi.truapi.BoxProps
+import uniffi.truapi.ProductId
 import uniffi.truapi.RendererNode
 
 // A face the app once wrote and can no longer read: a variant index no renderer node carries, which
@@ -26,7 +27,7 @@ private val UNREADABLE_FACE = byteArrayOf(0x7F)
 class RealPocketCardRepositoryTest {
     private class FakePocketCardDao : PocketCardDao {
         val rows = MutableStateFlow<List<PocketCardLocal>>(emptyList())
-        val faces = mutableMapOf<Pair<String, String>, ByteArray>()
+        val faces = mutableMapOf<Pair<ProductId, String>, ByteArray>()
 
         override fun observeAll(): Flow<List<PocketCardLocal>> = rows
 
@@ -34,19 +35,19 @@ class RealPocketCardRepositoryTest {
             rows.value = rows.value.filterNot { it.productId == card.productId && it.cardId == card.cardId } + card
         }
 
-        override suspend fun delete(productId: String, cardId: String): Int {
+        override suspend fun delete(productId: ProductId, cardId: String): Int {
             val before = rows.value.size
             rows.value = rows.value.filterNot { it.productId == productId && it.cardId == cardId }
             return before - rows.value.size
         }
 
-        override suspend fun getFace(productId: String, cardId: String): ByteArray? = faces[productId to cardId]
+        override suspend fun getFace(productId: ProductId, cardId: String): ByteArray? = faces[productId to cardId]
 
         override suspend fun insertFace(face: PocketCardFaceLocal) {
             faces[face.productId to face.cardId] = face.face
         }
 
-        override suspend fun deleteFace(productId: String, cardId: String) {
+        override suspend fun deleteFace(productId: ProductId, cardId: String) {
             faces -= productId to cardId
         }
     }
@@ -63,7 +64,7 @@ class RealPocketCardRepositoryTest {
     @Test
     fun `a card whose stored face no longer decodes keeps its place and answers no face`() = runTest {
         repository.insert(card("stamps", faceOf("Stamps")))
-        dao.faces["game.dot" to "stamps"] = UNREADABLE_FACE
+        dao.faces[gameProduct to "stamps"] = UNREADABLE_FACE
 
         assertEquals(listOf(key("stamps")), repository.observeCards().first().map { it.key })
         assertNull(repository.face(key("stamps")))

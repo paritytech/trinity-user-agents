@@ -7,7 +7,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.FakeChatMessaging
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatMessaging
@@ -49,6 +48,7 @@ import uniffi.truapi.ChatActionPayload
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostRendererActionSubscribeItem
+import uniffi.truapi.ProductId
 import uniffi.truapi.ProductRendererRenderRequest
 import uniffi.truapi.ProductRuntimeException
 import uniffi.truapi.RenderContext
@@ -57,7 +57,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 
 class TrUAPIChatWorkerTest {
-    private val productId = ProductId.fromStoredValue("chat.dot")
+    private val productId = ProductId.parse("chat.dot").getOrThrow()
     private val roomId = ProductChatIdParameter("room-1")
     private val messageId: ChatMessageId = "msg-1"
     private val messageType = "custom.widget"
@@ -521,12 +521,12 @@ class TrUAPIChatWorkerTest {
 
         worker(runtime = runtime, scope = workerScope)
 
-        verify(runtime, times(1)).acquireWorker(productId.value)
-        verify(runtime, never()).releaseWorker(productId.value)
+        verify(runtime, times(1)).acquireWorker(productId)
+        verify(runtime, never()).releaseWorker(productId)
 
         workerScope.cancel()
         advanceUntilIdle()
 
-        verify(runtime, times(1)).releaseWorker(productId.value)
+        verify(runtime, times(1)).releaseWorker(productId)
     }
 }

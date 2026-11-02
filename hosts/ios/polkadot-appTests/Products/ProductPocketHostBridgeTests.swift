@@ -91,7 +91,7 @@ struct ProductPocketHostBridgeTests {
     func republishesOnlyWhenItsOwnSliceChanges() async throws {
         let deliveries = AsyncStream<[PocketCardEntry]>.makeStream()
         let bridge = ProductPocketHostBridge(
-            productId: "game.paseo",
+            productId: try! ProductId("game.paseo"),
             collection: DrivenCollection(deliveries: deliveries.stream)
         )
         await bridge.begin()
@@ -165,25 +165,25 @@ struct ProductPocketHostBridgeTests {
 // MARK: - Fixtures
 
 private let loyalty = PocketCardEntry(
-    key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty")),
+    key: PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty")),
     title: "Loyalty",
     privileged: false
 )
 
 private let otherProductCard = PocketCardEntry(
-    key: PocketCardKey(productId: "shop.paseo", cardId: PocketCardId(value: "trophy")),
+    key: PocketCardKey(productId: try! ProductId("shop.paseo"), cardId: PocketCardId(value: "trophy")),
     title: "Trophy",
     privileged: false
 )
 
 private let humanity = PocketCardEntry(
-    key: PocketCardKey(productId: "peopl.paseo", cardId: PocketCardId(value: "humanity")),
+    key: PocketCardKey(productId: try! ProductId("peopl.paseo"), cardId: PocketCardId(value: "humanity")),
     title: "Humanity",
     privileged: true
 )
 
 private func makeBridge(
-    productId: String = "game.paseo",
+    productId: ProductId = try! ProductId("game.paseo"),
     pinned: [PocketCardEntry] = [],
     stored: [PocketCardEntry] = [],
     collection: InMemoryPocketCardStore? = nil
@@ -198,7 +198,7 @@ private func makeBridge(
 }
 
 private func makeUnreadableBridge() async -> ProductPocketHostBridge {
-    let bridge = ProductPocketHostBridge(productId: "game.paseo", collection: UnreadableCollection())
+    let bridge = ProductPocketHostBridge(productId: try! ProductId("game.paseo"), collection: UnreadableCollection())
     await bridge.begin()
     return bridge
 }

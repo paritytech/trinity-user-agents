@@ -1071,7 +1071,7 @@ struct JsonMap {
 #[serde(rename_all = "camelCase")]
 struct ProductStorageDocument {
 	version: u32,
-	product_id: String,
+	product_id: ProductId,
 	values: HashMap<String, String>,
 }
 
@@ -1134,17 +1134,7 @@ fn load_product_storage_file(path: &Path) -> Option<(ProductId, HashMap<String, 
 		);
 		return None;
 	}
-	let normalized = document
-		.product_id
-		.parse::<ProductId>()
-		.inspect_err(|error| {
-			tracing::warn!(
-				path = %path.display(),
-				%error,
-				"product storage contains an invalid product id"
-			);
-		})
-		.ok()?;
+
 	let values = document
 		.values
 		.into_iter()
@@ -1158,7 +1148,7 @@ fn load_product_storage_file(path: &Path) -> Option<(ProductId, HashMap<String, 
 			);
 		})
 		.ok()?;
-	Some((normalized, values))
+	Some((document.product_id, values))
 }
 
 fn save_product_storage(
@@ -1172,7 +1162,7 @@ fn save_product_storage(
 	})?;
 	let document = ProductStorageDocument {
 		version: 1,
-		product_id: product_id.to_string(),
+		product_id: product_id.clone(),
 		values: values.iter().map(|(key, value)| (key.clone(), hex::encode(value))).collect(),
 	};
 	let text = serde_json::to_string_pretty(&document)?;

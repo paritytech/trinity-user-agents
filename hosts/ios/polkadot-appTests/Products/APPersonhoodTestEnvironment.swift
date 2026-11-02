@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Individuality
 import Products
@@ -13,8 +14,8 @@ final class APPersonhoodTestEnvironment {
     let fullCollectionId = PeoplePallet.membersIdentifier
     let liteCollectionId = PeopleLitePallet.membersIdentifier
 
-    let sameProductContext = ProductProofContext(productId: "caller.product", suffix: .index(0))
-    let crossProductContext = ProductProofContext(productId: "other.product", suffix: .index(0))
+    let sameProductContext = ProductProofContext(productId: try! ProductId("caller.product.dot"), suffix: .index(0))
+    let crossProductContext = ProductProofContext(productId: try! ProductId("other.product.dot"), suffix: .index(0))
 
     let fullKeyManager = MockBandersnatchKeyManager()
     let liteKeyManager = MockBandersnatchKeyManager()
@@ -37,7 +38,7 @@ final class APPersonhoodTestEnvironment {
         )
     }
 
-    func makeCreateProofHandler(callingProductId: ProductId? = "caller.product") -> APCreateProofHandler {
+    func makeCreateProofHandler(callingProductId: ProductId? = try! ProductId("caller.product.dot")) -> APCreateProofHandler {
         APCreateProofHandler(
             callingProductId: callingProductId,
             options: makeOptions(),
@@ -47,7 +48,7 @@ final class APPersonhoodTestEnvironment {
         )
     }
 
-    func makeAliasHandler(callingProductId: ProductId? = "caller.product") -> APAliasHandler {
+    func makeAliasHandler(callingProductId: ProductId? = try! ProductId("caller.product.dot")) -> APAliasHandler {
         APAliasHandler(
             callingProductId: callingProductId,
             options: makeOptions(),

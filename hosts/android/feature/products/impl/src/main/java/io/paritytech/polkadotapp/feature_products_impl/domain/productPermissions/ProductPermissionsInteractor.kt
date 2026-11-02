@@ -1,11 +1,11 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.productPermissions
 
 import io.paritytech.polkadotapp.feature_products_api.model.Product
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
 import kotlinx.coroutines.flow.Flow
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 class ProductPermissionsInteractor @Inject constructor(

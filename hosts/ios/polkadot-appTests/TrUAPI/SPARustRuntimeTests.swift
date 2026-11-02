@@ -38,6 +38,14 @@ private struct StubTldProvider: DotNsTldProviding {
     func refresh() {}
 
     func reset() {}
+
+    func currentTldElseResolve() async throws -> String {
+        if let tld = currentTld() {
+            return tld
+        }
+
+        return try await resolveTld()
+    }
 }
 
 private func makeRuntime(
@@ -106,7 +114,7 @@ struct SPARustRuntimeTests {
         @Test func devServerLoadsItsAddressAndRunsUnderTheCoresIdentifier() async throws {
             let address = try #require(URL(string: "http://192.168.1.59:3000/app?product_id=humanity.dot"))
             let configuration = try makeConfiguration(
-                contentSource: .devServer(url: address, productId: "humanity.dot")
+                contentSource: .devServer(url: address, productId: try! ProductId("humanity.dot"))
             )
             let loader = StubProductContentLoader()
             let runtime = makeRuntime(configuration: configuration, contentLoader: loader)
@@ -115,7 +123,7 @@ struct SPARustRuntimeTests {
 
             #expect(url == address)
             #expect(loader.openedIds.isEmpty)
-            #expect(configuration.productId == "humanity.dot")
+            #expect(configuration.productId.rawValue == "humanity.dot")
 
             await runtime.dispose()
         }
@@ -127,7 +135,7 @@ struct SPARustRuntimeTests {
             contentSource: .directURL(#require(URL(string: "http://localhost:3000")))
         )
 
-        #expect(configuration.productId == "test.dot")
+        #expect(configuration.productId.rawValue == "test.dot")
     }
 
     @Test func startWithDotNsResolvesContentAndReturnsProductURL() async throws {
@@ -138,8 +146,8 @@ struct SPARustRuntimeTests {
 
         let url = try await runtime.start(with: engine)
 
-        #expect(loader.openedIds == ["test.dot"])
-        #expect(url.scheme == ProductScriptSchemeHandler.scheme)
+        #expect(loader.openedIds == [try ProductId("test.dot")])
+        #expect(url.scheme == productContentScheme())
         #expect(url.host == "test.dot")
         #expect(url.path == "/")
         #expect(engine.initializedScripts[0]
@@ -153,14 +161,14 @@ struct SPARustRuntimeTests {
     @Test @MainActor func startForACardsPageLoadsTheWidget() async throws {
         let configuration = try makeConfiguration(contentSource: .dotNs, cardFace: StubCardFace())
         let widget = ProductExecutable.Widget(
-            identifier: "widget.test.dot",
+            identifier: try! ProductId("widget.test.dot"),
             appVersion: .zero,
             description: nil,
             heights: [1],
             width: 1
         )
         let product = ResolvedProduct(
-            id: "test.dot",
+            id: try! ProductId("test.dot"),
             displayName: "Test",
             description: nil,
             icon: nil,
@@ -175,6 +183,35 @@ struct SPARustRuntimeTests {
         _ = try await runtime.start(with: MockJSEngine())
 
         #expect(await runtime.servedBuild()?.localURL.lastPathComponent == "widget.test.dot")
+        await runtime.dispose()
+    }
+
+    @Test func useLatestBuildServesTheAppliedBuildWhenItChanged() async throws {
+        let configuration = try makeConfiguration(contentSource: .dotNs)
+        let loader = StubProductContentLoader()
+        let runtime = makeRuntime(configuration: configuration, contentLoader: loader)
+        _ = try await runtime.start(with: MockJSEngine())
+
+        loader.simulate(appliedContentHash: "01")
+        try await runtime.useLatestBuild()
+
+        #expect(await runtime.servedBuild()?.contentHash == "01")
+
+        await runtime.dispose()
+    }
+
+    @Test func useLatestBuildKeepsTheServedBuildWhenNothingChanged() async throws {
+        let configuration = try makeConfiguration(contentSource: .dotNs)
+        let loader = StubProductContentLoader()
+        let runtime = makeRuntime(configuration: configuration, contentLoader: loader)
+        _ = try await runtime.start(with: MockJSEngine())
+        let served = await runtime.servedBuild()
+
+        try await runtime.useLatestBuild()
+
+        #expect(await runtime.servedBuild() == served)
+        #expect(loader.openedIds.count == 2)
+
         await runtime.dispose()
     }
 
