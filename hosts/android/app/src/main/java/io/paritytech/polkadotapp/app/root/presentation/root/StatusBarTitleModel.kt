@@ -11,7 +11,7 @@ sealed interface StatusBarTitleModel {
     data object None : StatusBarTitleModel
 }
 
-fun statusBarTitleOf(destinationId: Int?, currentTab: BottomTab): StatusBarTitleModel = when (destinationId) {
+fun statusBarTitleOf(destinationId: Int, currentTab: BottomTab): StatusBarTitleModel = when (destinationId) {
     R.id.mainFragment -> StatusBarTitleModel.Tab(currentTab)
     R.id.spaBrowserFragment -> StatusBarTitleModel.Product
     else -> StatusBarTitleModel.None

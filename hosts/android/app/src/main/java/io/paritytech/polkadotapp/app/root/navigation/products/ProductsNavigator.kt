@@ -31,7 +31,7 @@ class ProductsNavigator @Inject constructor(
         args = payload.toPayloadBundle(SpaBrowserPayload::class.java.name),
     )
 
-    // SpaBrowserViewModel.quitOnLastTabClosed calls this too when Close app closes the last tab.
+    // Closing the last tab leaves twice; only the call made while the browser is shown may pop.
     override fun leaveBrowser() {
         if (isCurrentDestination(R.id.spaBrowserFragment)) back()
     }

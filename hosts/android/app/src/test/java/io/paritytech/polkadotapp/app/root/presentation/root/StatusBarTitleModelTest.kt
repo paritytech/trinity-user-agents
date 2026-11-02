@@ -37,9 +37,4 @@ class StatusBarTitleModelTest {
             titles,
         )
     }
-
-    @Test
-    fun `no title before the first destination is known`() {
-        assertEquals(StatusBarTitleModel.None, statusBarTitleOf(null, BottomTab.CHATS))
-    }
 }

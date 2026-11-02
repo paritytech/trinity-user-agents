@@ -37,7 +37,6 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.s
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.ProductMenu
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.ProductStatusBarUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.ProductStatusBarViewModel
-import uniffi.truapi.ProductId
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val LogoSize = 16.dp
@@ -153,12 +152,7 @@ private fun ProductMenuOption(
 private fun ProductStatusBarTitlePreview() {
     PolkadotTheme {
         ProductStatusBarTitleInternal(
-            state = ProductStatusBarUiState(
-                title = "Coin Flip",
-                menu = ProductId.parse("coinflip.paseo").getOrNull()
-                    ?.let { ProductMenu.Product(it, ProductChat.Served) }
-                    ?: ProductMenu.WebPage,
-            ),
+            state = ProductStatusBarUiState(title = "Coin Flip", menu = ProductMenu.WebPage),
             onProceedInChatClick = {},
             onReloadClick = {},
             onShareClick = {},
