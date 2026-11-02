@@ -453,7 +453,7 @@ fn frames() -> Vec<String> {
 			"12.messages_query.receive",
 			wire_table::CHAT_MESSAGES_QUERY,
 			MESSAGE_TYPE_RESPONSE,
-			ProductChatMessagesQueryItem::V1(v01::ProductChatMessagesQueryItem {
+			ProductChatMessagesQueryResponse::V1(v01::ProductChatMessagesQueryResponse {
 				messages: vec![message()],
 				next: Some("c0".into()),
 			}),
@@ -511,15 +511,15 @@ fn frames() -> Vec<String> {
 			"13.user_action.receive",
 			wire_table::CHAT_USER_ACTION,
 			MESSAGE_TYPE_RESPONSE,
-			ProductChatUserActionItem::V1(
-				v01::ProductChatUserActionItem::MessageCreated(message()),
-			),
+			ProductChatUserActionResponse::V1(v01::ProductChatUserActionResponse::MessageCreated(
+				message(),
+			)),
 		),
 		line(
 			"13.user_action.acknowledged",
 			wire_table::CHAT_USER_ACTION,
 			MESSAGE_TYPE_RESPONSE,
-			ProductChatUserActionItem::V1(v01::ProductChatUserActionItem::Acknowledged),
+			ProductChatUserActionResponse::V1(v01::ProductChatUserActionResponse::Acknowledged),
 		),
 		line(
 			"13.user_action.error",
@@ -542,7 +542,7 @@ fn frames() -> Vec<String> {
 			"14.reactions_query.receive",
 			wire_table::CHAT_REACTIONS_QUERY,
 			MESSAGE_TYPE_RESPONSE,
-			ProductChatReactionsQueryItem::V1(v01::ProductChatReactionsQueryItem {
+			ProductChatReactionsQueryResponse::V1(v01::ProductChatReactionsQueryResponse {
 				reactions: vec![v01::ChatReactionDetail {
 					participant_id: "p1".into(),
 					emoji: "👍".into(),

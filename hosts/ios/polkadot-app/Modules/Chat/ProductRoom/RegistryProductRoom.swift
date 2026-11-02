@@ -17,12 +17,12 @@ struct RegistryProductRoom: @unchecked Sendable {
 }
 
 extension RegistryProductRoom: ProductChatQuerying, ChatRoomLifecycle {
-    func messagesPage(_ request: ProductChatMessagesQueryRequest) async throws -> ProductChatMessagesQueryItem {
+    func messagesPage(_ request: ProductChatMessagesQueryRequest) async throws -> ProductChatMessagesQueryResponse {
         guard let bot else { throw MissingBot() }
         return try await bot.messagesPage(request)
     }
 
-    func userAction(_ request: ProductChatUserActionRequest) async throws -> ProductChatUserActionItem {
+    func userAction(_ request: ProductChatUserActionRequest) async throws -> ProductChatUserActionResponse {
         guard let bot else { throw MissingBot() }
         return try await bot.userAction(request)
     }

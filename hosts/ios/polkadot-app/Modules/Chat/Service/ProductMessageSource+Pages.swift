@@ -62,7 +62,7 @@ extension ProductMessageSource {
         await storeCache()
     }
 
-    func replaceWindow(with item: ProductChatMessagesQueryItem) {
+    func replaceWindow(with item: ProductChatMessagesQueryResponse) {
         let pendingMessages = pending.compactMap { messages[$0] }
         messages = [:]
         droppedOlder = []
@@ -170,7 +170,7 @@ extension ProductMessageSource {
         return false
     }
 
-    func appendNewer(_ chunk: [Page], items: [ProductChatMessagesQueryItem]) -> ChatPageOutcome {
+    func appendNewer(_ chunk: [Page], items: [ProductChatMessagesQueryResponse]) -> ChatPageOutcome {
         _ = droppedNewer.popLast()
 
         for item in items {

@@ -3671,7 +3671,7 @@ impl NativeChatQueryObserver for RecordingQueryObserver {
 fn a_native_chat_query_observer_receives_one_outcome() {
 	let observe = |items: Vec<
 		Result<
-			truapi::latest::ProductChatReactionsQueryItem,
+			truapi::latest::ProductChatReactionsQueryResponse,
 			truapi::CallError<truapi::latest::ProductChatQueryError>,
 		>,
 	>| {
@@ -3690,7 +3690,7 @@ fn a_native_chat_query_observer_receives_one_outcome() {
 		std::thread::sleep(std::time::Duration::from_millis(20));
 		observer.outcomes.lock().unwrap().clone()
 	};
-	let reactions = truapi::latest::ProductChatReactionsQueryItem { reactions: vec![] };
+	let reactions = truapi::latest::ProductChatReactionsQueryResponse { reactions: vec![] };
 
 	assert_eq!(
 		observe(vec![Ok(reactions.clone()), Ok(reactions.clone())]),

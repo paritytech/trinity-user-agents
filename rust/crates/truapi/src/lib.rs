@@ -246,19 +246,21 @@ pub mod latest {
 	pub type ProductChatMessagesQueryRequest =
 		LatestOf<versioned::chat::ProductChatMessagesQueryRequest>;
 	/// Product-to-host page of chat messages.
-	pub type ProductChatMessagesQueryItem = LatestOf<versioned::chat::ProductChatMessagesQueryItem>;
+	pub type ProductChatMessagesQueryResponse =
+		LatestOf<versioned::chat::ProductChatMessagesQueryResponse>;
 	/// Host-to-product report of what the user did in a chat room.
 	pub type ProductChatUserActionRequest = LatestOf<versioned::chat::ProductChatUserActionRequest>;
 	/// Product-to-host answer to a chat user action.
-	pub type ProductChatUserActionItem = LatestOf<versioned::chat::ProductChatUserActionItem>;
+	pub type ProductChatUserActionResponse =
+		LatestOf<versioned::chat::ProductChatUserActionResponse>;
 	/// Failure to apply a chat user action.
 	pub type ProductChatUserActionError = LatestOf<versioned::chat::ProductChatUserActionError>;
 	/// Host-to-product question about who reacted to a chat message.
 	pub type ProductChatReactionsQueryRequest =
 		LatestOf<versioned::chat::ProductChatReactionsQueryRequest>;
 	/// Product-to-host list of who reacted to a chat message.
-	pub type ProductChatReactionsQueryItem =
-		LatestOf<versioned::chat::ProductChatReactionsQueryItem>;
+	pub type ProductChatReactionsQueryResponse =
+		LatestOf<versioned::chat::ProductChatReactionsQueryResponse>;
 	/// Request to set the parts of a native chat room the product serves.
 	pub type HostChatSetRoomConfigRequest = LatestOf<versioned::chat::HostChatSetRoomConfigRequest>;
 	/// Failure to declare the configuration of a native chat room.

@@ -122,13 +122,13 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol, ProductChatQuerying, ChatRoomLifec
 
     // MARK: - ProductChatQuerying
 
-    func messagesPage(_ request: ProductChatMessagesQueryRequest) async throws -> ProductChatMessagesQueryItem {
+    func messagesPage(_ request: ProductChatMessagesQueryRequest) async throws -> ProductChatMessagesQueryResponse {
         try await withWorker { execution in
             try await execution.chatMessagesQuery(request, timeout: ChatQueryTimeout.messages)
         }
     }
 
-    func userAction(_ request: ProductChatUserActionRequest) async throws -> ProductChatUserActionItem {
+    func userAction(_ request: ProductChatUserActionRequest) async throws -> ProductChatUserActionResponse {
         try await withWorker { execution in
             try await execution.chatUserAction(request, timeout: ChatQueryTimeout.timeout(for: request.action))
         }
