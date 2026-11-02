@@ -119,7 +119,7 @@ private extension ProductResourceKeyManager {
             Self.domain,
             storeIdProvider.getStoreId(),
             Self.namespace,
-            productId,
+            productId.rawValue,
             kind.rawValue
         ]
         .joined(separator: ":")
