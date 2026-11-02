@@ -2,12 +2,6 @@ import UIKit
 import DesignSystem
 import PolkadotUI
 
-/// How the Edge glow's opacity is set: from the hide progress, or faded out once a settle toward shown starts.
-enum TabBarEdgeGlowOpacity {
-    case progress(CGFloat)
-    case fadeOut
-}
-
 /// Owns the tab bar's visibility state machine and the transform that realises it. The chrome
 /// keeps view installation and layout; this decides which state applies and drives the offset.
 @MainActor
@@ -18,16 +12,7 @@ final class TabBarFoldController {
     private let chromeBounds: () -> CGRect
     /// The bottom safe area inset the resting bar's gap depends on.
     private let bottomSafeAreaInset: () -> CGFloat
-    /// Receives the Edge glow's rect and how its opacity is set. The glow is drawn outside the bar's transform.
-    private let glowSink: (CGRect, TabBarEdgeGlowOpacity) -> Void
-    /// Receives the tucked bar's tap target, or `.zero` when it is not tucked.
-    private let grabZoneSink: (CGRect) -> Void
-    /// A state other than `.shown` must dismiss any open panel.
-    private let closePanel: () -> Void
-    /// Reports each committed state.
-    private let stateSink: (TabBarVisibilityState) -> Void
-    /// Receives the content opacity each time the transform is written.
-    private let contentOpacitySink: (CGFloat) -> Void
+    private let outputs: Outputs
 
     private(set) var state: TabBarVisibilityState = .shown
     private(set) var isTabRoot = true
@@ -47,6 +32,12 @@ final class TabBarFoldController {
     private var autoHide = DockletAutoHide(startedAt: CACurrentMediaTime())
     /// The one wake-up that runs the auto-hide tuck at its deadline.
     private var autoHideTask: Task<Void, Never>?
+    /// The kind of tuck whose settle is running. It is announced when the settle lands tucked.
+    private var pendingTuckKind: DockletTuckKind?
+    /// The nudge that plays once per session after the first tuck lands.
+    private var nudge = DockletNudge()
+    /// The wake-up that starts the nudge after its delay.
+    private var nudgeTask: Task<Void, Never>?
     /// A finger is on the bar, from the start of a drag to its release.
     private var isDragging = false
     private var displayLink: CADisplayLink?
@@ -61,20 +52,12 @@ final class TabBarFoldController {
         foldSurface: UIView,
         chromeBounds: @escaping () -> CGRect,
         bottomSafeAreaInset: @escaping () -> CGFloat,
-        glowSink: @escaping (CGRect, TabBarEdgeGlowOpacity) -> Void,
-        grabZoneSink: @escaping (CGRect) -> Void,
-        closePanel: @escaping () -> Void,
-        stateSink: @escaping (TabBarVisibilityState) -> Void,
-        contentOpacitySink: @escaping (CGFloat) -> Void
+        outputs: Outputs
     ) {
         self.foldSurface = foldSurface
         self.chromeBounds = chromeBounds
         self.bottomSafeAreaInset = bottomSafeAreaInset
-        self.glowSink = glowSink
-        self.grabZoneSink = grabZoneSink
-        self.closePanel = closePanel
-        self.stateSink = stateSink
-        self.contentOpacitySink = contentOpacitySink
+        self.outputs = outputs
     }
 
     deinit {
@@ -82,6 +65,7 @@ final class TabBarFoldController {
             foldAnimator?.cancelInPlace()
             displayLink?.invalidate()
             autoHideTask?.cancel()
+            nudgeTask?.cancel()
         }
     }
 
@@ -123,6 +107,7 @@ final class TabBarFoldController {
         isTucked = state == .tucked
         stopSettling()
         cancelFoldAnimator()
+        cancelNudge()
         motion.snap(to: state == .tucked ? .tucked : .shown)
         writeTransform(pose(for: state))
         rescheduleAutoHide()
@@ -168,6 +153,7 @@ final class TabBarFoldController {
             return
         }
         userOverride = tucks ? .tucked : .shown
+        pendingTuckKind = tucks ? .user : nil
         commit(tucks ? .tucked : .shown)
     }
 
@@ -227,9 +213,12 @@ private extension TabBarFoldController {
     func commit(_ newState: TabBarVisibilityState) {
         state = newState
         isTucked = newState == .tucked
-        stateSink(newState)
+        if newState != .tucked {
+            cancelNudge()
+        }
+        outputs.state(newState)
         if newState != .shown {
-            closePanel()
+            outputs.closePanel()
         }
     }
 
@@ -278,6 +267,8 @@ private extension TabBarFoldController {
         selectionFeedback.prepare()
         cancelFoldAnimator()
         stopSettling()
+        cancelNudge()
+        pendingTuckKind = nil
         isDragging = true
         rescheduleAutoHide()
     }
@@ -306,14 +297,20 @@ private extension TabBarFoldController {
     }
 
     func tickSettle(at time: CFTimeInterval) {
+        let wasSettling = motion.isSettling
         let haptic = motion.tick(now: time)
         writeTransform(dockletTransform())
         if let haptic {
             playHaptic(haptic)
         }
-        if !motion.isSettling {
+        if nudge.isOver(at: CACurrentMediaTime()) {
+            nudge.stop()
+        }
+        if wasSettling, !motion.isSettling {
+            settleLanded()
+        }
+        if !motion.isSettling, !nudge.isPlaying {
             stopSettling()
-            rescheduleAutoHide()
         }
     }
 
@@ -332,9 +329,9 @@ private extension TabBarFoldController {
     func writeTransform(_ transform: CGAffineTransform) {
         let geometry = geometry
         foldSurface.transform = transform
-        glowSink(geometry.edgeGlowRect, glowOpacity)
-        grabZoneSink(motion.destination == .tucked ? geometry.grabZoneRect : .zero)
-        contentOpacitySink(motion.contentOpacity)
+        outputs.glow(geometry.edgeGlowRect, glowOpacity)
+        outputs.grabZone(motion.destination == .tucked ? geometry.grabZoneRect : .zero)
+        outputs.contentOpacity(motion.contentOpacity)
     }
 
     /// The Edge glow follows the hide progress while a finger drags the bar or it settles toward tucked. A settle
@@ -346,7 +343,12 @@ private extension TabBarFoldController {
     /// The docklet pose about the centre of the full-bleed chrome, which is where the chrome's transform is anchored.
     func dockletTransform() -> CGAffineTransform {
         let bounds = chromeBounds()
-        return geometry.transform(motion.pose(geometry: geometry), anchor: CGPoint(x: bounds.midX, y: bounds.midY))
+        let pose = motion.pose(geometry: geometry)
+        let nudgedPose = DockletPose(
+            angle: pose.angle,
+            offset: CGVector(dx: pose.offset.dx - nudge.inset(at: CACurrentMediaTime()), dy: pose.offset.dy)
+        )
+        return geometry.transform(nudgedPose, anchor: CGPoint(x: bounds.midX, y: bounds.midY))
     }
 
     func hiddenTransform() -> CGAffineTransform {
@@ -360,11 +362,44 @@ private extension TabBarFoldController {
     /// Tucks the bar on the quiet settle, with no haptic. The tuck is recorded as the screen's override, as a swipe is.
     func tuckQuietly() {
         userOverride = .tucked
+        pendingTuckKind = .autoHide
         commit(.tucked)
         cancelFoldAnimator()
         motion.quietSettle(to: .tucked, now: CACurrentMediaTime())
         startSettling()
         rescheduleAutoHide()
+    }
+
+    /// A settle has landed. A tuck that lands tucked is announced, and the session's first one arms the nudge.
+    func settleLanded() {
+        if let kind = pendingTuckKind, state == .tucked {
+            outputs.tuckLanded(kind)
+            armNudge()
+        }
+        pendingTuckKind = nil
+        rescheduleAutoHide()
+    }
+
+    func armNudge() {
+        guard nudge.arm() else {
+            return
+        }
+        nudgeTask = Task.delayed(by: DockletNudge.delaySeconds) { [weak self] in
+            self?.startNudge()
+        }
+    }
+
+    func startNudge() {
+        nudgeTask = nil
+        nudge.start(at: CACurrentMediaTime())
+        startSettling()
+    }
+
+    /// Ends the nudge, including one still waiting for its delay. An armed nudge never plays again.
+    func cancelNudge() {
+        nudgeTask?.cancel()
+        nudgeTask = nil
+        nudge.stop()
     }
 
     /// Cancels the pending wake-up and, unless a blocker holds, sleeps one wake-up until the auto-hide deadline.
@@ -375,11 +410,7 @@ private extension TabBarFoldController {
         guard let deadline = autoHide.deadline else {
             return
         }
-        autoHideTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(max(0, deadline - CACurrentMediaTime())))
-            guard !Task.isCancelled else {
-                return
-            }
+        autoHideTask = Task.delayed(by: max(0, deadline - CACurrentMediaTime())) { [weak self] in
             self?.autoHideFired()
         }
     }

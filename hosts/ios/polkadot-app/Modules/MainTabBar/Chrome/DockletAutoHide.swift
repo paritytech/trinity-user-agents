@@ -10,6 +10,8 @@ enum DockletHideBlocker: Hashable {
     case motionRunning
     /// The Docklet is not shown, so it is already tucked or hidden.
     case notShown
+    /// A tip about the tucked Docklet is on screen.
+    case tipShown
 }
 
 /// When the Docklet tucks itself. The first outside touch tucks it at once. Every touch and key press restarts an

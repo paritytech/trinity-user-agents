@@ -25,6 +25,8 @@ enum SettingsKey: String {
     case coinageRecyclingStrategy
     case tabBarLabelsEnabled
     case debugPocketCards
+    case dockletTuckedTipShown
+    case dockletAutoHiddenTipShown
     #if TESTNET_FEATURE
         case tipsResetPending
     #endif

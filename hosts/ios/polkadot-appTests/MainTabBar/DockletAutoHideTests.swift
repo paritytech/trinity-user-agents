@@ -56,6 +56,7 @@ struct DockletAutoHideTests {
         .keyboardUp,
         .motionRunning,
         .notShown,
+        .tipShown,
     ])
     func blockerSuppressesHide(_ blocker: DockletHideBlocker) {
         var autoHide = DockletAutoHide(startedAt: 0)

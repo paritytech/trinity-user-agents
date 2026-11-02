@@ -1,6 +1,30 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "autoHidden.message": {
+      "comment": "Message of the Docklet tip shown when the bar first tucks itself away",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "It hides when you're not using it. Drag it in from the glow, or tap here"
+          }
+        }
+      }
+    },
+    "autoHidden.title": {
+      "comment": "Title of the Docklet tip shown when the bar first tucks itself away",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Docklet tucked itself away"
+          }
+        }
+      }
+    },
     "chainStatus.message": {
       "comment": "Message of the tip pointing at the chain status strip",
       "extractionState": "manual",
@@ -45,6 +69,30 @@
           "stringUnit": {
             "state": "translated",
             "value": "Scan a QR code"
+          }
+        }
+      }
+    },
+    "tucked.message": {
+      "comment": "Message of the Docklet tip shown on the first swipe tuck",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Drag in from the right edge, or tap here"
+          }
+        }
+      }
+    },
+    "tucked.title": {
+      "comment": "Title of the Docklet tip shown on the first swipe tuck",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your dock is tucked away"
           }
         }
       }

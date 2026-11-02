@@ -50,6 +50,12 @@ MainTabBarViewController            container, status strip, widget and inset la
 | Hide progress, drag and release, settle spring, quiet hide and content fade | `polkadot-app/Modules/MainTabBar/Chrome/DockletMotion.swift` (pure value type) |
 | Auto-hide blockers, idle countdown, outside-touch tuck | `polkadot-app/Modules/MainTabBar/Chrome/DockletAutoHide.swift` (pure value type) |
 | Window touch observer that feeds the auto-hide | `polkadot-app/Modules/MainTabBar/Chrome/DockletTouchObserver.swift` |
+| Docklet tip rules: which tip a tuck shows, fling distance | `polkadot-app/Modules/MainTabBar/Chrome/DockletTipPolicy.swift` (pure value type) |
+| Docklet tip lifecycle: appear delay, seen flags, restore, fly-off | `polkadot-app/Modules/MainTabBar/Chrome/DockletTipController.swift` |
+| Docklet tip view: layout, slide in, drag, fly-off | `polkadot-app/Modules/MainTabBar/Chrome/DockletTipView.swift` |
+| Session nudge timing and inset | `polkadot-app/Modules/MainTabBar/Chrome/DockletNudge.swift` (pure value type) |
+| Fold controller outputs to the chrome | `polkadot-app/Modules/MainTabBar/Chrome/TabBarFoldController+Outputs.swift` |
+| Delayed main-actor task | `polkadot-app/Modules/MainTabBar/Chrome/Task+Delayed.swift` |
 | Bar frame, pivot, slide, Edge glow and Grab zone rects, plain pose | `polkadot-app/Modules/MainTabBar/Chrome/DockletGeometry.swift` (pure value type) |
 | Edge glow alpha profile, blur and feather stops | `polkadot-app/Modules/MainTabBar/Chrome/DockletGlowProfile.swift` (pure value type) |
 | Grab aim: progress and pose from a finger in the Grab zone | `polkadot-app/Modules/MainTabBar/Chrome/DockletAim.swift` (pure value type) |
@@ -259,7 +265,7 @@ The derived state comes from `TabBarHiddenPolicy.deriveFoldState(in:showing:)`. 
 
 The Docklet is the bar, the open panel and the Grab zone. The Edge glow strip does not count while the bar is shown. A touch on the Docklet restarts the 3 s countdown and cancels a pending outside-touch tuck. Further outside touches do not restart that tuck. The tuck is stored as the user override.
 
-Blockers hold the tuck: an open panel, the keyboard, a drag or settle in progress, and a bar that is not shown. While a blocker holds, an outside touch starts no tuck. Clearing the last blocker restarts the 3 s countdown from that moment. Onboarding tips and VoiceOver will add more blockers.
+Blockers hold the tuck: an open panel, the keyboard, a drag or settle in progress, a bar that is not shown, and a Docklet tip on screen (`tipShown`). While a blocker holds, an outside touch starts no tuck. Clearing the last blocker restarts the 3 s countdown from that moment.
 
 `DockletAutoHide` is the pure policy and reads no clock, so the caller passes in times. `DockletTouchObserver` is a window recognizer. It reports each touch that begins and never recognizes, cancels or delays one. `TabBarFoldController` feeds both and schedules one wake-up for the next deadline.
 
@@ -268,6 +274,20 @@ Blockers hold the tuck: an open panel, the keyboard, a drag or settle in progres
 Only the content inside the glass fades: the icons, the labels and the centre glyph. Its opacity is `1 − 1.12 × progress^1.15`, floored at zero, so it is gone from about progress 0.906. The glass and its ancestors never take alpha, because alpha on a visual effect view breaks the effect. `TabBarBarView` and `DSTabBarCenterControl` (`glyphOpacity`) apply the value.
 
 The fade stays while the bar is tucked. A drag, a grab or a return to shown clears it.
+
+**Nudge.** The first tuck that lands in a launch, user or auto-hide, starts a nudge 700 ms later. The bar moves 8 pt in from the edge and back over 400 ms. A drag or a restore cancels it. The arm is held in memory, so each launch plays the nudge at most once.
+
+## Tips
+
+The Docklet tips are custom views beside the Edge glow, not TipKit, because a user can fling them away and TipKit does not follow a drag. Each tip shows once per device. Its seen flag is a `SettingsManager` key: `dockletTuckedTipShown` or `dockletAutoHiddenTipShown`.
+
+- **Tucked tip.** Shows 420 ms after the first swipe tuck lands.
+- **Auto-hide tip.** Shows 420 ms after the first auto-hide tuck lands. It also marks the tucked tip as seen.
+- A tip is skipped while a TipKit popover is presented. It stays unseen, so a later tuck can show it.
+- A fold drag or a grab that begins before the tip appears cancels it.
+- While a tip shows, it blocks auto-hide (`tipShown`).
+- A tap, or a release more than 56 pt from rest, restores the bar as the user's own restore, with a medium haptic. A shorter release snaps the tip back.
+- Any other way the bar leaves the tucked state flies the tip off to the right over 320 ms.
 
 ## Clearance and Safe Area
 

@@ -42,6 +42,12 @@ extension TabBarBottomChromeController {
         }
     }
 
+    /// Added after the Edge glow so the tip sits above it. The tip is a sibling of the chrome surface, so the bar's
+    /// transform leaves it where it is.
+    func installTipView() {
+        view.addSubview(dockletTipController.tipView)
+    }
+
     func installOutsideTapRecognizer() {
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleOutsideTap))
         recognizer.delegate = self
@@ -196,6 +202,7 @@ private extension TabBarBottomChromeController {
     @objc func handleFoldPan(_ recognizer: UIPanGestureRecognizer) {
         switch recognizer.state {
         case .began:
+            dockletTipController.cancelPending()
             let location = recognizer.location(in: view)
             if isGrabPan(recognizer) {
                 foldController.grabPanBegan(location: location)

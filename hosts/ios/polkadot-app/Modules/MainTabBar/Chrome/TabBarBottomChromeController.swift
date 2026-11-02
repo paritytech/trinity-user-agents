@@ -1,8 +1,10 @@
 import UIKit
 import SwiftUI
 import DesignSystem
+import Keystore_iOS
 import PolkadotUI
 import SnapKit
+import TipKit
 
 final class TabBarBottomChromeController: UIViewController {
     /// Room the open centre panel leaves below the top safe area.
@@ -36,28 +38,34 @@ final class TabBarBottomChromeController: UIViewController {
         foldSurface: chromeSurface,
         chromeBounds: { [unowned self] in view.bounds },
         bottomSafeAreaInset: { [unowned self] in view.safeAreaInsets.bottom },
-        glowSink: { [weak self] rect, opacity in
-            self?.edgeGlowView.frame = rect
-            switch opacity {
-            case let .progress(progress):
-                self?.edgeGlowView.setOpacity(progress)
-            case .fadeOut:
-                self?.edgeGlowView.fadeOut()
+        outputs: .init(
+            glow: { [weak self] rect, opacity in
+                self?.edgeGlowView.frame = rect
+                switch opacity {
+                case let .progress(progress):
+                    self?.edgeGlowView.setOpacity(progress)
+                case .fadeOut:
+                    self?.edgeGlowView.fadeOut()
+                }
+            },
+            grabZone: { [weak self] zone in
+                (self?.viewIfLoaded as? TabBarChromePassthroughView)?.foldGrabZone = zone
+            },
+            closePanel: { [weak self] in
+                self?.barModel.setCenterPanelOpen(false)
+                self?.setPanel(nil)
+            },
+            state: { [weak self] state in
+                self?.tipController.setBarShown(state == .shown)
+                self?.dockletTipController.barStateChanged(state)
+            },
+            contentOpacity: { [weak self] opacity in
+                self?.barModel.contentOpacity = opacity
+            },
+            tuckLanded: { [weak self] kind in
+                self?.dockletTipController.tuckLanded(kind)
             }
-        },
-        grabZoneSink: { [weak self] zone in
-            (self?.viewIfLoaded as? TabBarChromePassthroughView)?.foldGrabZone = zone
-        },
-        closePanel: { [weak self] in
-            self?.barModel.setCenterPanelOpen(false)
-            self?.setPanel(nil)
-        },
-        stateSink: { [weak self] state in
-            self?.tipController.setBarShown(state == .shown)
-        },
-        contentOpacitySink: { [weak self] opacity in
-            self?.barModel.contentOpacity = opacity
-        }
+        )
     )
 
     private lazy var tipController = TabBarTipController(
@@ -65,6 +73,14 @@ final class TabBarBottomChromeController: UIViewController {
         sequence: TabBarTipOrderedSequence(steps: TabBarTips.steps),
         centerButtonAnchor: centerButtonAnchorGuide,
         statusStripAnchor: { [weak self] in self?.statusStripAnchorProvider?() }
+    )
+
+    /// The Docklet tips wait out the TipKit popover, which only shows while the bar is shown.
+    lazy var dockletTipController: DockletTipController = .init(
+        settingsManager: SettingsManager.shared,
+        glowFrame: { [unowned self] in edgeGlowView.frame },
+        isAnotherTipShowing: { [unowned self] in presentedViewController is TipUIPopoverViewController },
+        foldController: foldController
     )
 
     lazy var panelController = TabBarPanelController(
@@ -167,6 +183,7 @@ final class TabBarBottomChromeController: UIViewController {
         installDimLayer()
         installChromeSurface()
         installEdgeGlow()
+        installTipView()
         installBar()
 
         installOutsideTapRecognizer()
