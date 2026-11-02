@@ -56,7 +56,7 @@ function afterAnswer(work: () => unknown) {
 /** An inbound session the worker credits `DELIVERED_CREDIT` of, in full. */
 export const DELIVERED_AMOUNT = 1_000n;
 export const DELIVERED_CREDIT = 900n;
-/** An outbound session the worker pays out in full. */
+/** An outbound session the worker pays out in full, and reports paid out. */
 export const RELEASED_AMOUNT = 500n;
 /** An inbound session the worker fails. */
 export const FAILED_AMOUNT = 2_000n;
@@ -460,9 +460,19 @@ export class ScriptedProvider {
           return "credited and delivered";
         });
       case `Out:${RELEASED_AMOUNT}`:
-        return this.step(intent, "release", async () => {
+        await this.step(intent, "release", async () => {
           await payOut(client, intent, RELEASED_AMOUNT);
           return "paid out";
+        });
+        // A released withdrawal holds the worker until its payout is
+        // reported, so the worker reports it and the run leaves nothing open.
+        return this.step(intent, "payout", async () => {
+          await releasedOnHost(this.fundingLogPath, intent);
+          await report(client, intent, {
+            tag: "Out",
+            value: { tag: "Payout", value: { outcome: { tag: "PaidOut" } } },
+          });
+          return "reported the payout";
         });
       case `In:${FAILED_AMOUNT}`:
         return this.step(intent, "fail", async () => {
