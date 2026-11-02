@@ -456,10 +456,13 @@ fn shows_the_user(message: &latest::ChatMessage) -> bool {
 
 /// Whether `preview` shows a message or a reaction of the host's user.
 fn preview_shows_the_user(preview: &latest::ChatRoomPreview) -> bool {
-	let last_message = preview.last_message.as_ref().is_some_and(shows_the_user);
-	let last_reaction = preview.last_reaction.as_ref().is_some_and(|reaction| {
-		reaction.by_user || reaction.message.as_ref().is_some_and(shows_the_user)
-	});
+	let by_user =
+		|message: &latest::ChatPreviewMessage| message.origin.participant_id == USER_PARTICIPANT_ID;
+	let last_message = preview.last_message.as_ref().is_some_and(by_user);
+	let last_reaction = preview
+		.last_reaction
+		.as_ref()
+		.is_some_and(|reaction| reaction.by_user || reaction.message.as_ref().is_some_and(by_user));
 	last_message || last_reaction
 }
 
@@ -800,9 +803,16 @@ mod tests {
 	}
 
 	/// Previews that show a message or a reaction of the user.
-	fn previews_of_the_user() -> [latest::ChatRoomPreview; 4] {
-		let latest::ChatFeedUpdate::New(user_message) = text_message("user") else {
-			unreachable!("text_message builds a new message")
+	fn previews_of_the_user() -> [latest::ChatRoomPreview; 3] {
+		let user_message = latest::ChatPreviewMessage {
+			message_id: "m1".to_string(),
+			origin: latest::ChatMessageOrigin { participant_id: "user".to_string() },
+			timestamp: 1,
+			body: latest::ChatMessageBody::Text { text: "hi".to_string() },
+			status: latest::ChatMessageStatus::Sent,
+			reply_to: None,
+			edited_at: None,
+			request: false,
 		};
 		let preview = |last_message, last_reaction| latest::ChatRoomPreview {
 			timestamp: None,
@@ -821,7 +831,6 @@ mod tests {
 		};
 		[
 			preview(Some(user_message.clone()), None),
-			preview(Some(quoting("user")), None),
 			preview(None, Some(reaction(true, None))),
 			preview(None, Some(reaction(false, Some(user_message)))),
 		]
@@ -972,7 +981,7 @@ mod tests {
 			);
 			set_preview(&runtime, "sourced", preview).expect("a preview of a product room");
 		}
-		assert_eq!(chat.calls(), ["preview sourced"; 4]);
+		assert_eq!(chat.calls(), ["preview sourced"; 3]);
 	}
 
 	// A deletion names no author, so the core sends it to the host. The host

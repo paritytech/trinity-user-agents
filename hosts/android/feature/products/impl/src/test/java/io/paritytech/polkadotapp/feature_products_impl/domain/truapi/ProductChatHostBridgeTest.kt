@@ -39,6 +39,7 @@ import uniffi.truapi.ChatMessageBody
 import uniffi.truapi.ChatMessageOrigin
 import uniffi.truapi.ChatMessageStatus
 import uniffi.truapi.ChatMessageContent
+import uniffi.truapi.ChatPreviewMessage
 import uniffi.truapi.ChatPreviewReaction
 import uniffi.truapi.ChatReaction
 import uniffi.truapi.ChatRoomActivity
@@ -49,7 +50,6 @@ import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomPreview
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.HostRejection
-import uniffi.truapi.ChatMessage as CoreChatMessage
 
 private const val MESSAGING_NOT_SUPPORTED_CODE = "messaging_not_supported"
 private const val ROOM = "jollity"
@@ -320,15 +320,14 @@ class ProductChatHostBridgeTest {
     fun `a custom last message is drawn by the renderer of the product`() = runTest {
         val messaging = mockk<ProductChatMessaging>()
         coEvery { messaging.setRoomPreview(any(), any()) } returns Result.success(Unit)
-        val custom = CoreChatMessage(
+        val custom = ChatPreviewMessage(
             messageId = "m1",
             origin = ChatMessageOrigin("contact"),
             timestamp = 5uL,
             body = ChatMessageBody.Custom(ChatCustomMessage("poll", byteArrayOf(1, 2)), alt = "A poll"),
             status = ChatMessageStatus.DELIVERED,
-            reply = null,
+            replyTo = null,
             editedAt = null,
-            reactions = emptyList(),
             request = false,
         )
 
