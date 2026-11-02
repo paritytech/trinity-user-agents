@@ -146,6 +146,9 @@ enum CatchUp {
 	Due { not_before_ms: u64 },
 	/// Being handed over.
 	Running,
+	/// Being handed over, and due again once that ends, as a call outside
+	/// it went unanswered meanwhile.
+	RunningThenDue,
 	/// Every call was answered on this connection.
 	Done,
 }
@@ -1004,17 +1007,40 @@ impl FundingRegistry {
 	/// A link replaced meanwhile is left as it is.
 	fn caught_up(&self, provider_id: &str, generation: u64, answered: bool) {
 		let retry_ms = current_unix_millis().saturating_add(CATCH_UP_RETRY.as_millis() as u64);
-		if let Some(held) = self
-			.lock_links()
-			.get_mut(provider_id)
-			.filter(|held| held.generation == generation)
-		{
-			held.catch_up =
-				if answered { CatchUp::Done } else { CatchUp::Due { not_before_ms: retry_ms } };
-		}
-		if !answered {
+		let due = {
+			let mut links = self.lock_links();
+			let held = links.get_mut(provider_id).filter(|held| held.generation == generation);
+			let due = !answered ||
+				held.as_ref().is_some_and(|held| held.catch_up == CatchUp::RunningThenDue);
+			if let Some(held) = held {
+				held.catch_up =
+					if due { CatchUp::Due { not_before_ms: retry_ms } } else { CatchUp::Done };
+			}
+			due
+		};
+		if due {
 			self.retry_by(retry_ms);
 		}
+	}
+
+	/// A call outside a catch-up went unanswered on link `generation` of
+	/// `provider_id`: hand the link its sessions again, which repeats the
+	/// call. A link still connecting or already due is caught up anyway, and
+	/// one being caught up is due again once that ends.
+	fn call_unanswered(&self, provider_id: &str, generation: u64) {
+		let retry_ms = current_unix_millis().saturating_add(CATCH_UP_RETRY.as_millis() as u64);
+		let mut links = self.lock_links();
+		let Some(held) = links.get_mut(provider_id).filter(|held| held.generation == generation)
+		else {
+			return;
+		};
+		match held.catch_up {
+			CatchUp::Done => held.catch_up = CatchUp::Due { not_before_ms: retry_ms },
+			CatchUp::Running => held.catch_up = CatchUp::RunningThenDue,
+			CatchUp::Connecting | CatchUp::Due { .. } | CatchUp::RunningThenDue => return,
+		}
+		drop(links);
+		self.retry_by(retry_ms);
 	}
 
 	/// Milliseconds until the next pass is due on its own: a session expires
@@ -1038,8 +1064,14 @@ impl FundingRegistry {
 				_ => None,
 			})
 			.min();
-		let resolving =
-			self.lock_resolving().values().copied().filter(|at_ms| *at_ms != u64::MAX).min();
+		// Only deadlines still ahead: one already past waits on a call in
+		// flight under its id, which wakes the reconciler when it ends.
+		let resolving = self
+			.lock_resolving()
+			.values()
+			.copied()
+			.filter(|at_ms| *at_ms > now_ms && *at_ms != u64::MAX)
+			.min();
 		[self.next_deadline(), retry, link, resolving]
 			.into_iter()
 			.flatten()
@@ -1072,7 +1104,7 @@ impl FundingRegistry {
 				answered &= registry.put(link.as_ref(), call).await;
 			}
 			if !answered {
-				registry.caught_up(&provider_id, generation, false);
+				registry.call_unanswered(&provider_id, generation);
 			}
 		}));
 	}
@@ -1948,6 +1980,67 @@ mod tests {
 		registry.lock_resolving().insert([2; 32], u64::MAX);
 
 		assert_eq!(registry.next_wake(NOW), Some(60_000));
+	}
+
+	/// A worker link that takes nothing, for tests of the catch-up state.
+	struct IdleLink;
+
+	impl FundingProviderLink for IdleLink {
+		fn assign(&self, _session: FundingAssignment) -> BoxFuture<'static, bool> {
+			Box::pin(async { false })
+		}
+
+		fn cancel(&self, _intent: String) -> BoxFuture<'static, Option<FundingCancelAnswer>> {
+			Box::pin(async { None })
+		}
+
+		fn settle_cancel(
+			&self,
+			_intent: String,
+			_decision: FundingCancelDecision,
+		) -> BoxFuture<'static, bool> {
+			Box::pin(async { false })
+		}
+	}
+
+	// An unanswered call makes a caught-up link due again, but never starts
+	// a second catch-up beside a running one nor one before the worker is
+	// ready: a running one is due again once it ends.
+	#[test]
+	fn an_unanswered_call_leaves_a_connecting_or_running_catch_up_alone() {
+		let registry = FundingRegistry::default();
+		registry.link("ramp.dot", Arc::new(IdleLink));
+		let state = || registry.lock_links()["ramp.dot"].catch_up;
+		let set = |catch_up| {
+			registry.lock_links().get_mut("ramp.dot").expect("linked").catch_up = catch_up
+		};
+		let generation = registry.lock_links()["ramp.dot"].generation;
+
+		registry.call_unanswered("ramp.dot", generation);
+		let connecting = state();
+		set(CatchUp::Running);
+		registry.call_unanswered("ramp.dot", generation);
+		let running = state();
+		registry.caught_up("ramp.dot", generation, true);
+		let after_run = matches!(state(), CatchUp::Due { .. });
+		set(CatchUp::Done);
+		registry.call_unanswered("ramp.dot", generation);
+		let after_done = matches!(state(), CatchUp::Due { .. });
+
+		assert_eq!(
+			(connecting, running, after_run, after_done),
+			(CatchUp::Connecting, CatchUp::RunningThenDue, true, true)
+		);
+	}
+
+	// A deadline already past belongs to funds whose call is still in
+	// flight, which the reconciler skips; waking for it would spin.
+	#[test]
+	fn a_past_deadline_of_funds_in_flight_sets_no_wake() {
+		let registry = FundingRegistry::default();
+		registry.lock_resolving().insert([1; 32], NOW - 1);
+
+		assert_eq!(registry.next_wake(NOW), None);
 	}
 
 	fn registry_on(db: &Db) -> FundingRegistry {
