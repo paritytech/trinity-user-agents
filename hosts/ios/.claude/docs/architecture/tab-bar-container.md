@@ -46,7 +46,9 @@ MainTabBarViewController            container, status strip, widget and inset la
 | Fold transform target, bar width | `polkadot-app/Modules/MainTabBar/Chrome/TabBarChromeSurfaceView.swift` |
 | Fold state machine | `polkadot-app/Modules/MainTabBar/Chrome/TabBarFoldController.swift` |
 | Fold state resolution | `polkadot-app/Modules/MainTabBar/Chrome/TabBarVisibilityPolicy.swift` |
-| Hide progress, pose geometry, spring | `polkadot-app/Modules/MainTabBar/Chrome/DockletMotion.swift` (pure value type) |
+| Hide progress, drag and release, settle spring | `polkadot-app/Modules/MainTabBar/Chrome/DockletMotion.swift` (pure value type) |
+| Bar frame, pivot, slide, Edge glow and Grab zone rects, plain pose | `polkadot-app/Modules/MainTabBar/Chrome/DockletGeometry.swift` (pure value type) |
+| Grab aim: progress and pose from a finger in the Grab zone | `polkadot-app/Modules/MainTabBar/Chrome/DockletAim.swift` (pure value type) |
 | Held pose, direction lock | `polkadot-app/Modules/MainTabBar/Chrome/DockletHeldPose.swift` (`DockletHold`, `DockletDirectionLock`, `DockletPose`) |
 | Panel state machine | `polkadot-app/Modules/MainTabBar/Chrome/TabBarPanelController.swift` |
 | Panel kinds | `polkadot-app/Modules/MainTabBar/Chrome/TabBarPanelKind.swift` |
@@ -165,7 +167,7 @@ The chrome takes the width from `DSTabBarStyle.rowWidth(inAvailableWidth:)` of i
 
 ## Haptics and Accessibility
 
-**Haptics.** The PolkadotUI components play sensory feedback next to the gestures that trigger it. `DSTabBarCenterControl` owns the open and close feedback for the control. `DSTabBarContainer` owns the feedback for a bar-hidden change while the panel is open. The app chrome plays two impacts, and only for a tuck or restore the user starts: a heavy impact when the bar lands tucked, and a medium impact when it lands shown. `TabBarFoldController` plays them through `UIImpactFeedbackGenerator`. A settle the app starts, or one that keeps the same rest, plays nothing. While a drag moves the bar, `TabBarFoldController` also plays a selection tick (`UISelectionFeedbackGenerator`) when projected progress crosses 0.54 upward or 0.46 downward. The landing focus of a swipe into Search passes a flag that mutes the container's bar-hidden feedback. Each slot tap plays a selection feedback from a simultaneous gesture in the bar row, including a reselect.
+**Haptics.** The PolkadotUI components play sensory feedback next to the gestures that trigger it. `DSTabBarCenterControl` owns the open and close feedback for the control. `DSTabBarContainer` owns the feedback for a bar-hidden change while the panel is open. The app chrome plays two impacts, and only for a tuck or restore the user starts: a heavy impact when the bar lands tucked, and a medium impact when it lands shown. `TabBarFoldController` plays them through `UIImpactFeedbackGenerator`. A settle the app starts, or one that keeps the same rest, plays nothing. A grab released back to tucked plays nothing. A grab released to shown plays the medium impact. While a drag moves the bar, `TabBarFoldController` also plays a selection tick (`UISelectionFeedbackGenerator`) when projected progress crosses 0.54 upward or 0.46 downward. The landing focus of a swipe into Search passes a flag that mutes the container's bar-hidden feedback. Each slot tap plays a selection feedback from a simultaneous gesture in the bar row, including a reselect.
 
 **Accessibility.** VoiceOver sees the center control as a button. The caller passes its label. The app passes the `QR scanner` string. When the panel is open, the escape action closes it.
 
@@ -203,7 +205,9 @@ The rise is set when the panel state commits and is not animated. The live regio
 
 `TabBarChromePassthroughView` claims a touch in only two cases: the grab zone, and the dismiss area while a panel is open. The grab zone is 47 pt wide on the right edge and 200 pt tall from the top of the tucked bar. It is set only while the bar is tucked or settling toward tucked. A tap in it restores the bar through the chrome's outside-tap recognizer. Every other touch goes to the content behind the chrome. `TabBarChromeSurfaceView` returns nil for hits on its own empty area. `TabBarBarHostView` accepts touches in its live region.
 
-The fold pan recognizer starts on any part of the bar row, the center button and the center hole included, for a drag that `DockletDirectionLock` accepts as sideways. It does not start while the bar is `hidden` or a panel is open.
+The fold pan recognizer starts on any part of the bar row, the center button and the center hole included, for a drag that `DockletDirectionLock` accepts as sideways. It does not start while the bar is `hidden` or a panel is open. It refuses touches in the Grab zone.
+
+A second pan sits on the chrome root view (`installGrabRecognizer`, `isGrabPan`). It receives only touches inside the Grab zone, in any direction, with no direction lock. The two pans never share a touch. A tap with no movement in the Grab zone still restores the bar through the outside-tap path.
 
 ## Fold
 
@@ -233,6 +237,8 @@ Overrides are stored per screen, weakly keyed on the navigation screen, so tucki
 **Held pose.** `DockletHold` owns the pose while a finger holds the bar. The bar turns half as far as its plain pose, about the point under the finger, and follows the finger. It leads the finger towards the right edge by up to 56 pt, keeping the finger 14 pt inside the bar's leading end. Past the ends, progress rubber-bands by at most 0.25. The bar resists past Shown (40 pt) and above the tucked bar's top (40 pt). It never sinks below the screen bottom unless the finger drags below it (36 pt).
 
 **Release.** Velocity comes from the last 100 ms of samples. A final pause is ignored. The bar tucks when projected progress (progress + velocity × 0.1 s) is at least 0.5. A drag that came back more than 30% of its furthest travel returns to the rest it started from.
+
+**Bringing it back.** A touch in the Grab zone catches a tucked bar, or one still settling toward tucked, and turns it to point at the finger. `DockletMotion.beginAim` starts the drag. Progress is the finger's angle from the pivot over a quarter turn. The pivot slides out with progress, so the angle is solved in two passes per frame (`DockletAim`). Low and far in gives shown. High at the edge gives tucked. The grab's progress and pose blend out over the first 80 pt of finger travel, so catching the bar does not make it jump. Release uses the same rules as a tuck drag, plus one: a leftward finger speed above 350 pt/s over the last 100 ms restores the bar, however short the drag.
 
 **Animation.** A release starts a spring that takes the release velocity as its initial velocity. Faster than 4 progress per second, the spring is under-damped (ratio 0.78). Otherwise it is critically damped. A `CADisplayLink` in `TabBarFoldController` drives it. The held offset unwinds on the same clock. The settle lands once it is near rest, after 80 ms, and at 1.4 s at the latest. `TabBarFoldController` is the only writer of the chrome surface transform. Moves to or from `hidden` use a plain UIKit spring animator instead, because the display link drives only the shown and tucked poses.
 

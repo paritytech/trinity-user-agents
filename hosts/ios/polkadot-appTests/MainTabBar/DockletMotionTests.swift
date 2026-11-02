@@ -272,4 +272,86 @@ struct DockletMotionTests {
         #expect(staying == nil)
         #expect(falling == .selection)
     }
+
+    /// A tucked bar grabbed at `touch`, with no movement yet.
+    private func grabbedTucked(at touch: CGPoint) -> DockletMotion {
+        var motion = DockletMotion()
+        motion.snap(to: .tucked)
+        motion.beginAim(touch: touch, time: 0, geometry: geometry)
+        return motion
+    }
+
+    @Test("A grab dragged low and far in from the edge aims the bar at shown")
+    func aimLowAndFarInIsShown() {
+        var motion = grabbedTucked(at: CGPoint(x: 370, y: 600))
+        _ = motion.move(location: CGPoint(x: 60, y: 800), translationX: -310, time: 0.01)
+        #expect(motion.progress < 0.1)
+    }
+
+    @Test("A grab dragged high at the edge aims the bar at tucked")
+    func aimHighAtEdgeIsTucked() {
+        var motion = grabbedTucked(at: CGPoint(x: 370, y: 600))
+        _ = motion.move(location: CGPoint(x: 400, y: 430), translationX: 30, time: 0.01)
+        #expect(motion.progress > 0.9)
+    }
+
+    @Test("The first move after a grab keeps the progress the bar was grabbed with")
+    func firstMoveKeepsGrabbedProgress() {
+        var motion = grabbedTucked(at: CGPoint(x: 390, y: 500))
+        _ = motion.move(location: CGPoint(x: 390, y: 500), translationX: 0, time: 0.01)
+        #expect(abs(motion.progress - 1) < 1e-9)
+    }
+
+    @Test("A grab dragged partly in and then down releases to shown")
+    func grabDraggedDownReleasesShown() {
+        var motion = grabbedTucked(at: CGPoint(x: 390, y: 500))
+        _ = motion.move(location: CGPoint(x: 260, y: 830), translationX: -130, time: 0.05)
+        motion.end(time: 0.05, geometry: geometry)
+        #expect(motion.destination == .shown)
+    }
+
+    @Test("A grab flicked left faster than 350 points a second releases to shown, though it would tuck")
+    func leftwardFlickReleasesShown() {
+        var motion = grabbedTucked(at: CGPoint(x: 390, y: 430))
+        _ = motion.move(location: CGPoint(x: 350, y: 430), translationX: -40, time: 0.05)
+        _ = motion.move(location: CGPoint(x: 300, y: 430), translationX: -90, time: 0.1)
+        motion.end(time: 0.1, geometry: geometry)
+        #expect(motion.destination == .shown)
+    }
+
+    @Test("A grab pulled 20 points and released slowly tucks again")
+    func smallPullReleasesTucked() {
+        var motion = grabbedTucked(at: CGPoint(x: 390, y: 500))
+        _ = motion.move(location: CGPoint(x: 370, y: 500), translationX: -20, time: 0.5)
+        motion.end(time: 0.5, geometry: geometry)
+        #expect(motion.destination == .tucked)
+    }
+
+    @Test("A grab caught while settling to tucked keeps the pose it was on screen with")
+    func grabCaughtFlyingToTuckedKeepsPose() {
+        var motion = DockletMotion()
+        motion.settle(to: .tucked, now: 0, isUserDriven: false)
+        _ = motion.tick(now: 0.125)
+        #expect(abs(motion.progress - 0.7) < 0.01)
+        let before = motion.pose(geometry: geometry)
+        motion.beginAim(touch: CGPoint(x: 380, y: 500), time: 0.125, geometry: geometry)
+        #expect(isNear(motion.pose(geometry: geometry), before))
+    }
+
+    @Test("A grab released to shown lands with a medium haptic")
+    func grabRestoreEmitsMedium() {
+        var motion = grabbedTucked(at: CGPoint(x: 390, y: 500))
+        _ = motion.move(location: CGPoint(x: 200, y: 830), translationX: -190, time: 0.05)
+        motion.end(time: 0.05, geometry: geometry)
+        #expect(motion.tick(now: 2) == .medium)
+    }
+
+    @Test("A grab released back to tucked lands silently, since the bar never left")
+    func grabReturnToTuckedEmitsNothing() {
+        var motion = grabbedTucked(at: CGPoint(x: 390, y: 500))
+        _ = motion.move(location: CGPoint(x: 390, y: 500), translationX: 0, time: 0.5)
+        motion.end(time: 0.5, geometry: geometry)
+        #expect(motion.destination == .tucked)
+        #expect(motion.tick(now: 2) == nil)
+    }
 }

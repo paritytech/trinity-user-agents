@@ -43,6 +43,14 @@ extension TabBarBottomChromeController {
         view.addGestureRecognizer(recognizer)
     }
 
+    /// Any direction drags a tucked bar out from its Grab zone. The pan shares the fold pan's handler, which
+    /// starts a grab because this pan sits on the root.
+    func installGrabRecognizer() {
+        let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handleFoldPan(_:)))
+        recognizer.delegate = self
+        view.addGestureRecognizer(recognizer)
+    }
+
     func installKeyboardObserver() {
         NotificationCenter.default.addObserver(
             self,
@@ -162,7 +170,12 @@ private extension TabBarBottomChromeController {
     @objc func handleFoldPan(_ recognizer: UIPanGestureRecognizer) {
         switch recognizer.state {
         case .began:
-            foldController.foldPanBegan(location: recognizer.location(in: view))
+            let location = recognizer.location(in: view)
+            if isGrabPan(recognizer) {
+                foldController.grabPanBegan(location: location)
+            } else {
+                foldController.foldPanBegan(location: location)
+            }
         case .changed:
             foldController.foldPanChanged(
                 location: recognizer.location(in: view),
@@ -192,6 +205,16 @@ private extension TabBarBottomChromeController {
     func canStartFoldDrag(at touch: UITouch) -> Bool {
         touch.view?.isDescendant(of: barHost.view) ?? false
     }
+
+    /// The pan on the root view, which drags a tucked bar out of its Grab zone. The other pan sits on the bar.
+    func isGrabPan(_ recognizer: UIGestureRecognizer) -> Bool {
+        recognizer.view === view
+    }
+
+    /// The tucked bar's Grab zone, which the fold controller publishes while tucked or settling toward tucked.
+    func isInGrabZone(_ location: CGPoint) -> Bool {
+        (view as? TabBarChromePassthroughView)?.foldGrabZone.contains(location) ?? false
+    }
 }
 
 // MARK: - UIGestureRecognizerDelegate
@@ -201,13 +224,17 @@ extension TabBarBottomChromeController: UIGestureRecognizerDelegate {
         guard recognizer is UIPanGestureRecognizer else {
             return touch.view === view
         }
-        return canStartFoldDrag(at: touch)
+        let touchIsInGrabZone = isInGrabZone(touch.location(in: view))
+        if isGrabPan(recognizer) {
+            return touchIsInGrabZone
+        }
+        return canStartFoldDrag(at: touch) && !touchIsInGrabZone
     }
 
     /// Only a drag that leads sideways folds the bar, so a vertical scroll past it is left alone. A hidden bar
     /// and an open panel take no drag.
     func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
-        guard let pan = recognizer as? UIPanGestureRecognizer else {
+        guard let pan = recognizer as? UIPanGestureRecognizer, !isGrabPan(pan) else {
             return true
         }
         guard foldController.state != .hidden, panelController.open == nil else {

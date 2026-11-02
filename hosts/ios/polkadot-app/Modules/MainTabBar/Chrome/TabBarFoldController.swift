@@ -117,12 +117,14 @@ final class TabBarFoldController {
     }
 
     func foldPanBegan(location: CGPoint) {
-        heavyImpact.prepare()
-        mediumImpact.prepare()
-        selectionFeedback.prepare()
-        cancelFoldAnimator()
-        stopSettling()
+        prepareDrag()
         motion.begin(touch: location, time: CACurrentMediaTime(), geometry: geometry)
+    }
+
+    /// A touch in the Grab zone catches a tucked bar, or one still settling toward tucked, and turns it to the finger.
+    func grabPanBegan(location: CGPoint) {
+        prepareDrag()
+        motion.beginAim(touch: location, time: CACurrentMediaTime(), geometry: geometry)
     }
 
     func foldPanChanged(location: CGPoint, translationX: CGFloat) {
@@ -245,6 +247,15 @@ private extension TabBarFoldController {
         }
         foldAnimator = animator
         animator.startAnimation()
+    }
+
+    /// Readies the feedback generators and stops whatever was moving the bar, before a drag takes it over.
+    func prepareDrag() {
+        heavyImpact.prepare()
+        mediumImpact.prepare()
+        selectionFeedback.prepare()
+        cancelFoldAnimator()
+        stopSettling()
     }
 
     func cancelFoldAnimator() {

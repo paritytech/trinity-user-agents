@@ -154,6 +154,7 @@ final class TabBarBottomChromeController: UIViewController {
         installBar()
 
         installOutsideTapRecognizer()
+        installGrabRecognizer()
         installKeyboardObserver()
     }
 
