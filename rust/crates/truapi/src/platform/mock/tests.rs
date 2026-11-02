@@ -625,6 +625,7 @@ fn create_room(p: &MockPlatform, room_id: &str) -> latest::ChatRoomRegistrationS
 			room_id_source: room_id.to_string(),
 			name: format!("{room_id} room"),
 			icon: "https://example.invalid/i.png".to_string(),
+			config: Default::default(),
 		},
 	))
 	.expect("room registration succeeds")
@@ -697,6 +698,7 @@ fn an_injected_chat_error_refuses_every_chat_entry_point() {
 			room_id_source: "lobby".to_string(),
 			name: "lobby room".to_string(),
 			icon: "https://example.invalid/i.png".to_string(),
+			config: Default::default(),
 		},
 	))
 	.expect_err("room creation carries the injected reason");

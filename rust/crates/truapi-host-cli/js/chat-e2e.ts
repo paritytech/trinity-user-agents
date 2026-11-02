@@ -12,12 +12,20 @@ import type { TrUApiClient } from "../../../../js/packages/truapi/src/index.ts";
 import { ChatMessageContent } from "../../../../js/packages/truapi/src/generated/types.ts";
 import type {
   ChatMessageContent as ChatMessageContentValue,
+  ChatRoomConfig,
   HostChatPostMessageRequest,
 } from "../../../../js/packages/truapi/src/generated/types.ts";
 import type { DiagnosisRow } from "./diagnosis.ts";
 
 /** Room every case posts into, created by the first case. */
 const ROOM_ID_SOURCE = "support";
+
+/** The host stores the messages of the rooms these cases create. */
+const HOST_STORED_ROOM: ChatRoomConfig = {
+  productSource: false,
+  reactionDetails: false,
+  reportSeen: false,
+};
 
 /** Published limits, mirrored from `truapi::platform` so a case can cross one. */
 const BODY_MAX_BYTES = 16 * 1024;
@@ -188,6 +196,7 @@ export async function runChatScreeningE2e(
     roomIdSource: ROOM_ID_SOURCE,
     name: "Support",
     icon: "https://rooms.invalid/support.png",
+    config: HOST_STORED_ROOM,
   });
   rows.push(
     created.isOk()
@@ -241,6 +250,7 @@ export async function runChatScreeningE2e(
     roomIdSource: "oversized-icon",
     name: "Oversized",
     icon: `https://icons.invalid/${pathThatGrowsPast(ICON_MAX_BYTES)}`,
+    config: HOST_STORED_ROOM,
   });
   const roomsAfter = registrations(chatLogPath);
   rows.push(

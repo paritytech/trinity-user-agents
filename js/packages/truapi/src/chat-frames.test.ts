@@ -255,6 +255,7 @@ describe("chat extension v2 frames", () => {
                             roomIdSource: "support",
                             name: "Room",
                             icon: "https://icons.example/room.png",
+                            config,
                         },
                     }),
                 ),
@@ -440,17 +441,6 @@ describe("chat extension v2 frames", () => {
                     }),
                 ),
             ],
-            [
-                "7.set_room_config.request",
-                frame(
-                    W.CHAT_SET_ROOM_CONFIG,
-                    MESSAGE_TYPE_REQUEST,
-                    T.VersionedHostChatSetRoomConfigRequest.enc({
-                        tag: "V1",
-                        value: { roomId: "room", config },
-                    }),
-                ),
-            ],
         ];
         for (const [name, encoded] of legs) {
             expect(`${name} ${encoded}`).toBe(`${name} ${snapshot.get(name)}`);
@@ -463,6 +453,7 @@ describe("chat extension v2 frames", () => {
             roomIdSource: "support",
             name: "Room",
             icon: "https://icons.example/room.png",
+            config,
         });
         expect(created.sent).toEqual([snapshot.get("0.create_room.request")]);
         created.receive(snapshot.get("0.create_room.response")!);
@@ -538,13 +529,6 @@ describe("chat extension v2 frames", () => {
             client.chat.updateFeed({ roomId: "room", update }),
         );
         expect(notFed._unsafeUnwrapErr()).toEqual(notOwner);
-
-        const configured = await answered(
-            "7.set_room_config.request",
-            "7.set_room_config.response",
-            (client) => client.chat.setRoomConfig({ roomId: "room", config }),
-        );
-        expect(configured._unsafeUnwrap()).toBeUndefined();
     });
 
     it("answers the host's queries with the frames the Rust snapshot pins", async () => {

@@ -12,7 +12,6 @@ export const WORKER_DIAGNOSIS_METHODS = [
   "Chat/post_message",
   "Chat/set_room_footer",
   "Chat/action_subscribe",
-  "Chat/set_room_config",
   "Chat/set_room_metadata",
   "Chat/set_room_preview",
   "Chat/update_feed",

@@ -1731,6 +1731,7 @@ fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 			room_id_source: "cafe".to_string(),
 			name: "Cafe".to_string(),
 			icon: String::new(),
+			config: Default::default(),
 		}),
 	))
 	.expect("create_room accepts the room");
@@ -1858,6 +1859,7 @@ fn a_card_docks_in_the_footer_of_the_room_the_product_created() {
 			room_id_source: "room".to_string(),
 			name: "Room".to_string(),
 			icon: String::new(),
+			config: Default::default(),
 		}),
 	))
 	.expect("create_room accepts the room");
@@ -2013,6 +2015,7 @@ fn each_spelling_of_a_room_source_names_one_room() {
 				room_id_source: room_id_source.to_string(),
 				name: "Cafe".to_string(),
 				icon: String::new(),
+				config: Default::default(),
 			}),
 		))
 		.expect("create_room accepts a normalizable source");

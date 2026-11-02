@@ -83,6 +83,7 @@ fn a_v01_room_id_becomes_the_source_of_the_host_id() {
 			room_id_source: "room".into(),
 			name: "Room".into(),
 			icon: String::new(),
+			config: Default::default(),
 		}
 	);
 }

@@ -9,7 +9,6 @@ use crate::{
 		HostChatListSubscribeError, HostChatListSubscribeItem, HostChatListSubscribeRequest,
 		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
 		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
-		HostChatSetRoomConfigError, HostChatSetRoomConfigRequest, HostChatSetRoomConfigResponse,
 		HostChatSetRoomFooterError, HostChatSetRoomFooterRequest, HostChatSetRoomFooterResponse,
 		HostChatSetRoomMetadataError, HostChatSetRoomMetadataRequest,
 		HostChatSetRoomMetadataResponse, HostChatSetRoomPreviewError,
@@ -31,11 +30,18 @@ pub trait Chat: Send + Sync {
 	/// `roomIdSource`, so the same source gives the same room again. Every
 	/// later call names the room with the `roomId` of the answer.
 	///
+	/// `config` declares the parts of the room that the product serves: its
+	/// messages (`productSource`), who reacted (`reactionDetails`) and the
+	/// reports of what the user saw (`reportSeen`). The host keeps it across
+	/// restarts. Each call replaces it, also for a room that exists, so a
+	/// product declares its rooms again when it starts.
+	///
 	/// ```ts
 	/// const result = await truapi.chat.createRoom({
 	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
+	///   config: { productSource: false, reactionDetails: false, reportSeen: false },
 	/// });
 	/// assert(result.isOk(), "createRoom failed:", result);
 	/// console.log("room created:", result.value.roomId);
@@ -107,6 +113,7 @@ pub trait Chat: Send + Sync {
 	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
+	///   config: { productSource: false, reactionDetails: false, reportSeen: false },
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.postMessage({
@@ -156,6 +163,7 @@ pub trait Chat: Send + Sync {
 	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
+	///   config: { productSource: false, reactionDetails: false, reportSeen: false },
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.setRoomFooter({
@@ -178,36 +186,6 @@ pub trait Chat: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// Declare the parts of a room the product serves itself: its messages
-	/// (`productSource`), who reacted (`reactionDetails`) and the reports of
-	/// what the user saw (`reportSeen`). The host keeps the configuration
-	/// across restarts, and a new one replaces the previous one completely. A
-	/// room the product declared no configuration for keeps the behaviour of a
-	/// room the host stores. Declare it right after `createRoom`, before the
-	/// room shows messages.
-	///
-	/// ```ts
-	/// const created = await truapi.chat.createRoom({
-	///   roomIdSource: "test-room",
-	///   name: "Test Room",
-	///   icon: "",
-	/// });
-	/// assert(created.isOk(), "createRoom failed:", created);
-	/// const result = await truapi.chat.setRoomConfig({
-	///   roomId: created.value.roomId,
-	///   config: { productSource: false, reactionDetails: true, reportSeen: true },
-	/// });
-	/// assert(result.isOk(), "setRoomConfig failed:", result);
-	/// ```
-	#[wire(id = 7)]
-	async fn set_room_config(
-		&self,
-		_cx: &CallContext,
-		_request: HostChatSetRoomConfigRequest,
-	) -> Result<HostChatSetRoomConfigResponse, CallError<HostChatSetRoomConfigError>> {
-		Err(CallError::unavailable())
-	}
-
 	/// Replace the name, description and empty-room text of a room, and its
 	/// icon when the metadata names one.
 	///
@@ -216,6 +194,7 @@ pub trait Chat: Send + Sync {
 	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
+	///   config: { productSource: false, reactionDetails: false, reportSeen: false },
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.setRoomMetadata({
@@ -248,6 +227,7 @@ pub trait Chat: Send + Sync {
 	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
+	///   config: { productSource: false, reactionDetails: false, reportSeen: false },
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.setRoomPreview({
@@ -288,6 +268,7 @@ pub trait Chat: Send + Sync {
 	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
+	///   config: { productSource: false, reactionDetails: false, reportSeen: false },
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.deleteRoom({ roomId: created.value.roomId });
@@ -313,6 +294,7 @@ pub trait Chat: Send + Sync {
 	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
+	///   config: { productSource: false, reactionDetails: false, reportSeen: false },
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.updateFeed({
@@ -385,6 +367,7 @@ pub trait Chat: Send + Sync {
 	///   roomIdSource: "test-room",
 	///   name: "Test Room",
 	///   icon: "",
+	///   config: { productSource: false, reactionDetails: false, reportSeen: false },
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const { roomId: testRoom } = created.value;
