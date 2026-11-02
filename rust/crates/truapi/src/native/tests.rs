@@ -1946,6 +1946,7 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 		room_id_source: "support".to_string(),
 		name: "Support".to_string(),
 		icon: String::new(),
+		config: Default::default(),
 	};
 	let mut rooms = crate::platform::ChatPlatform::subscribe_chat_rooms(&platform, &product);
 	assert!(ready_rooms(rooms.as_mut(), "initial room list").rooms.is_empty());
@@ -2022,6 +2023,7 @@ fn room_request(room_id_source: &str) -> truapi::latest::HostChatCreateRoomReque
 		room_id_source: room_id_source.to_string(),
 		name: "Support".to_string(),
 		icon: String::new(),
+		config: Default::default(),
 	}
 }
 
@@ -2117,15 +2119,7 @@ fn native_chat_adapter_forwards_every_declaration() {
 
 	use crate::platform::ChatPlatform as _;
 	futures::executor::block_on(async {
-		platform
-			.set_chat_room_config(
-				&product,
-				truapi::latest::HostChatSetRoomConfigRequest {
-					room_id: room(),
-					config: room_config(),
-				},
-			)
-			.await?;
+		platform.set_chat_room_config(&product, room(), room_config()).await?;
 		platform
 			.set_chat_room_metadata(
 				&product,
