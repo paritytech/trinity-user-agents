@@ -1,6 +1,7 @@
 import Coinage
 import Foundation
 import Products
+import TrUAPIHost
 import UIKit
 import UIKitExt
 
@@ -61,7 +62,9 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
         let flowState = flowStateProvider.flowState()
 
         // A provider the app ships opens from its own files, under its own id.
-        let bundled = bundledProducts.product(providerId).flatMap { $0.hasApp() ? $0 : nil }
+        let bundled = (try? ProductId(providerId))
+            .flatMap(bundledProducts.product)
+            .flatMap { $0.hasApp() ? $0 : nil }
         let page = bundled.flatMap { $0.page(navigationDestination: destination) }
             ?? flowState.hostProvider.page(navigationDestination: destination)
         guard let page else { return nil }
@@ -79,10 +82,11 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
     /// A provider's App comes from its bundle when the app ships one, and
     /// from dotNS otherwise, as `providerPage` opens it.
     func providerHasApp(providerId: String) async -> Bool {
-        if bundledProducts.product(providerId)?.hasApp() == true {
+        guard let provider = try? ProductId(providerId) else { return true }
+        if bundledProducts.product(provider)?.hasApp() == true {
             return true
         }
-        guard let product = try? await flowStateProvider.flowState().productResolver.resolve(providerId) else {
+        guard let product = try? await flowStateProvider.flowState().productResolver.resolve(provider) else {
             return true
         }
         return product.executables.app != nil
@@ -127,13 +131,13 @@ actor ManifestFundingProviderBranding: FundingProviderBranding {
     func brand(for providerId: String) async -> FundingProviderBrand {
         if let brand = resolved[providerId] { return brand }
 
-        guard bundledProducts.product(providerId) == nil else {
+        guard let provider = try? ProductId(providerId), bundledProducts.product(provider) == nil else {
             return FundingProviderBrand.placeholder(for: providerId)
         }
 
         let resolver = flowStateProvider.flowState().productResolver
-        let name = try? await resolver.resolve(providerId).displayName
-        let iconData = await ProductIconLoader(productResolver: resolver).loadIcon(for: providerId)
+        let name = try? await resolver.resolve(provider).displayName
+        let iconData = await ProductIconLoader(productResolver: resolver).loadIcon(for: provider)
 
         let brand = FundingProviderBrand(
             name: name ?? FundingProviderBrand.placeholder(for: providerId).name,

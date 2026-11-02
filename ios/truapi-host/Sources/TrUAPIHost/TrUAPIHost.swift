@@ -381,7 +381,7 @@ public protocol FundingHostBridge: AnyObject, Sendable {
     /// whether the user started or dismissed it. `amount` is a decimal string
     /// of CASH units, `nil` when the opener named none.
     func presentFunding(
-        productId: String?,
+        productId: ProductId?,
         intent: String,
         direction: FundingDirection,
         amount: U128?
@@ -720,7 +720,7 @@ private final class FundingCallbackAdapter: NativeFundingCallbacks, @unchecked S
     }
 
     func presentFunding(
-        productId: String?,
+        productId: ProductId?,
         intent: String,
         direction: FundingDirection,
         amount: U128?
@@ -1399,7 +1399,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// on a crash or a system kill. While references remain, `.start` is
     /// reported again through
     /// ``HostBridge/requestWorkerTransition(productId:transition:)``.
-    public func workerExited(productId: String) {
+    public func workerExited(productId: ProductId) {
         inner.workerExited(productId: productId)
     }
 

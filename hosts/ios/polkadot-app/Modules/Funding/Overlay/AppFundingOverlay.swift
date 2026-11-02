@@ -41,7 +41,7 @@ final class AppFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
     }
 
     func presentFunding(
-        productId _: String?,
+        productId _: ProductId?,
         intent: String,
         direction: FundingDirection,
         amount: U128?

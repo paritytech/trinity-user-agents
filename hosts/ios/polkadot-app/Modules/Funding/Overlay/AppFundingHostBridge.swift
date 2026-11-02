@@ -10,7 +10,7 @@ import TrUAPIHost
 /// `.started`.
 protocol FundingOverlayPresenting: AnyObject, Sendable {
     func presentFunding(
-        productId: String?,
+        productId: ProductId?,
         intent: String,
         direction: FundingDirection,
         amount: U128?
@@ -64,7 +64,7 @@ final class AppFundingHostBridge: FundingHostBridge, @unchecked Sendable {
     }
 
     func presentFunding(
-        productId: String?,
+        productId: ProductId?,
         intent: String,
         direction: FundingDirection,
         amount: U128?
