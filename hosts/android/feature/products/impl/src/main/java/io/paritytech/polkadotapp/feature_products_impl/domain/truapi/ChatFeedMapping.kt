@@ -19,7 +19,7 @@ import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMessageBody
 import uniffi.truapi.ChatMessageStatus
 import uniffi.truapi.ChatPageAnchor
-import uniffi.truapi.ProductChatMessagesQueryItem
+import uniffi.truapi.ProductChatMessagesQueryResponse
 import uniffi.truapi.ProductChatQueryError
 import uniffi.truapi.ProductChatUserActionError
 import uniffi.truapi.ChatMessage as CoreChatMessage
@@ -91,7 +91,7 @@ fun ChatPageAnchorModel.toCore(): ChatPageAnchor = when (this) {
     is ChatPageAnchorModel.Before -> ChatPageAnchor.Before(cursor)
 }
 
-fun ProductChatMessagesQueryItem.toModel(productId: ProductId) =
+fun ProductChatMessagesQueryResponse.toModel(productId: ProductId) =
     ProductMessagesPage(messages = messages.map { it.toModel(productId) }, next = next)
 
 /** The failure that a room screen shows for a query that has no answer. */
