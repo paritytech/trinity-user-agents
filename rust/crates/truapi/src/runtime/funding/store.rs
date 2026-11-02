@@ -2,15 +2,16 @@
 //! stored session and one `funding_summary` row per compacted one, keyed by
 //! intent.
 //!
-//! Each record is a SCALE value led by its format as a `u16`. Loading drops a
-//! row of an older format, fails on one of a newer format, which a newer app
-//! left before a downgrade, and skips one that does not decode. A write
-//! touches only the rows of the sessions it names, so a skipped row stays in
-//! place for diagnosis.
+//! Each record is a SCALE value led by its format as a `u16`. Loading fails on
+//! a row of a newer format, which a newer app left before a downgrade, and
+//! skips one of an older format or one that does not decode. A write touches
+//! only the rows of the sessions it names, so a skipped row stays in place: a
+//! session with money in flight is never lost to a format change, and a later
+//! core that can read the old format still finds it.
 
 use parity_scale_codec::{Decode, Encode};
 use rusqlite::{Transaction, named_params};
-use tracing::{error, info};
+use tracing::error;
 
 pub(super) use crate::store::Db;
 use crate::{
@@ -57,9 +58,8 @@ impl From<DbError> for FundingSessionError {
 	}
 }
 
-/// Read every stored session and summary, in no particular order, and
-/// delete the rows of an older format. A row of a newer format fails the
-/// load with [`FundingSessionError::NewerFormat`] and nothing is deleted, so
+/// Read every stored session and summary, in no particular order. A row of a
+/// newer format fails the load with [`FundingSessionError::NewerFormat`], so
 /// the registry, which writes only after a load, leaves every row as it is.
 pub(super) async fn load(
 	db: &Db,
@@ -70,8 +70,6 @@ pub(super) async fn load(
 		if let Some(format) = sessions.newer.max(summaries.newer) {
 			return Ok(Err(FundingSessionError::NewerFormat { format }));
 		}
-		delete(tx, &SESSIONS, &sessions.older)?;
-		delete(tx, &SUMMARIES, &summaries.older)?;
 		Ok(Ok((sessions.records, summaries.records)))
 	})
 	.await?
@@ -105,14 +103,12 @@ pub(super) async fn write(
 /// The rows of one table, by what this core makes of them.
 struct Scanned<T> {
 	records: Vec<T>,
-	/// Intents of the rows of an older format.
-	older: Vec<String>,
 	/// The newest format above this core's, when a row has one.
 	newer: Option<u16>,
 }
 
 fn scan<T: Decode>(tx: &Transaction<'_>, table: &Table) -> Result<Scanned<T>, DbError> {
-	let mut scanned = Scanned { records: Vec::new(), older: Vec::new(), newer: None };
+	let mut scanned = Scanned { records: Vec::new(), newer: None };
 	let mut statement = tx.prepare_cached(table.select)?;
 	let mut rows = statement.query([])?;
 	while let Some(row) = rows.next()? {
@@ -122,14 +118,13 @@ fn scan<T: Decode>(tx: &Transaction<'_>, table: &Table) -> Result<Scanned<T>, Db
 		match u16::decode(input) {
 			Ok(stored) if stored > table.format => scanned.newer = scanned.newer.max(Some(stored)),
 			Ok(stored) if stored < table.format => {
-				info!(
+				error!(
 					table = table.name,
 					%intent,
 					stored,
 					format = table.format,
-					"dropping a funding record of an older format"
+					"funding record of an older format; leaving it in place"
 				);
-				scanned.older.push(intent);
 			},
 			Ok(_) => match T::decode(input) {
 				Ok(value) if input.is_empty() => scanned.records.push(value),
@@ -217,7 +212,7 @@ pub(super) async fn rows(db: &Db, table: &'static str) -> Vec<(String, Vec<u8>)>
 
 /// Store `record` as session `intent`'s row, as it is.
 #[cfg(test)]
-pub(super) async fn put_session_row(db: &Db, intent: &str, record: Vec<u8>) {
+pub(crate) async fn put_session_row(db: &Db, intent: &str, record: Vec<u8>) {
 	let rows = vec![(intent.to_string(), record)];
 	db.write(move |tx| upsert(tx, &SESSIONS, &rows))
 		.await
@@ -300,14 +295,18 @@ mod tests {
 		assert_eq!(stored(&db), (vec![session("fs_1")], Vec::new()));
 	}
 
+	// A row of an older format may hold a session with money in flight, so it
+	// is skipped and kept, never deleted.
 	#[test]
-	fn a_row_of_an_older_format_is_deleted() {
+	fn a_row_of_an_older_format_is_skipped_and_kept() {
 		let db = open_memory_core_db();
 		block_on(put_session_row(&db, "fs_old", (SESSION_FORMAT - 1, "anything").encode()));
 		block_on(write(&db, &[&session("fs_1")], Vec::new(), &[])).expect("written");
 
-		assert_eq!(stored(&db).0, vec![session("fs_1")]);
-		assert_eq!(block_on(rows(&db, "funding_session")).len(), 1);
+		assert_eq!(
+			(stored(&db).0, block_on(rows(&db, "funding_session")).len()),
+			(vec![session("fs_1")], 2)
+		);
 	}
 
 	// An app downgraded below the one that stored its sessions cannot read

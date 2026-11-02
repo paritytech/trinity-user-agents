@@ -2982,6 +2982,29 @@ fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
 	let platform =
 		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 	assert!(services.funding().install_platform(platform.clone()));
+	let intent = cancelled_session(&services, &tasks);
+	let announced_on_resume = || {
+		platform.announced.lock().expect("announced mutex poisoned").clear();
+		services.resume_funding();
+		futures::executor::block_on(tasks.run());
+		platform.announced.lock().expect("announced mutex poisoned").clone()
+	};
+
+	let before = announced_on_resume();
+	let acknowledged = futures::executor::block_on(services.acknowledge_funding_session(&intent))
+		.expect("acknowledged");
+	let after = announced_on_resume();
+
+	assert_eq!((before, acknowledged, after), (vec![intent], true, Vec::new()));
+}
+
+/// Opens a funding session and cancels it, returning its intent. The session
+/// is left ended but not acknowledged by the host, which is what a resume
+/// announces.
+///
+/// Opening also schedules an expiry task that sleeps until the session's
+/// deadline. It is discarded, so a test running the held tasks never waits on it.
+fn cancelled_session(services: &Arc<RuntimeServices>, tasks: &HeldTasks) -> String {
 	let opening =
 		services.open_funding(None, "fs_resume".to_string(), v01::FundingDirection::Out, None);
 	// The overlay runs on a task of its own, which these held tasks run.
@@ -2999,19 +3022,63 @@ fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
 		futures::executor::block_on(services.cancel_funding(&intent)).expect("cancelled"),
 		CancelOutcome::Ended
 	);
-	let announced_on_resume = || {
-		platform.announced.lock().expect("announced mutex poisoned").clear();
-		services.resume_funding();
-		futures::executor::block_on(tasks.run());
-		platform.announced.lock().expect("announced mutex poisoned").clone()
-	};
+	intent
+}
 
-	let before = announced_on_resume();
-	let acknowledged = futures::executor::block_on(services.acknowledge_funding_session(&intent))
-		.expect("acknowledged");
-	let after = announced_on_resume();
+// The host's session views read what the core has loaded, so a resume that
+// cannot store the sessions keeps trying, and the host hears of them once
+// storage recovers.
+#[test]
+fn funding_resume_is_retried_until_storage_recovers() {
+	let tasks = HeldTasks::default();
+	let db = crate::store::open_memory_core_db();
+	let services = funding_services_on(&db, tasks.spawner());
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	let intent = cancelled_session(&services, &tasks);
+	let announced = || platform.announced.lock().expect("announced mutex poisoned").clone();
+	let reopened = funding_services_on(&db, tasks.spawner());
+	assert!(reopened.funding().install_platform(platform.clone()));
+	platform.announced.lock().expect("announced mutex poisoned").clear();
+	futures::executor::block_on(super::funding::fail_writes(&db, true));
+	reopened.resume_funding();
+	let mut resume = tasks.take().pop().expect("resume task");
 
-	assert_eq!((before, acknowledged, after), (vec![intent], true, Vec::new()));
+	let (waiting, while_failing, after_recovery) = futures::executor::block_on(async {
+		let waiting = futures::poll!(&mut resume).is_pending();
+		let while_failing = announced();
+		super::funding::fail_writes(&db, false).await;
+		resume.await;
+		(waiting, while_failing, announced())
+	});
+
+	assert_eq!((waiting, while_failing, after_recovery), (true, Vec::new(), vec![intent]));
+}
+
+// Retrying cannot read sessions a newer app stored, so resume gives up at once.
+#[test]
+fn funding_resume_stops_at_sessions_of_a_newer_format() {
+	let tasks = HeldTasks::default();
+	let db = crate::store::open_memory_core_db();
+	futures::executor::block_on(super::funding::put_session_row(
+		&db,
+		"fs_new",
+		(u16::MAX, "anything").encode(),
+	));
+	let services = funding_services_on(&db, tasks.spawner());
+	services.resume_funding();
+	let resume = tasks.take().pop().expect("resume task");
+	let (done, finished) = std::sync::mpsc::channel();
+	std::thread::spawn(move || {
+		futures::executor::block_on(resume);
+		let _ = done.send(());
+	});
+
+	assert_eq!(
+		(finished.recv_timeout(Duration::from_secs(5)).is_ok(), tasks.take().len()),
+		(true, 0)
+	);
 }
 
 /// A funding overlay that, while it is up, records how many sessions the
@@ -9732,8 +9799,8 @@ fn a_settled_top_up_started_again_settles_nothing() {
 		),
 		(
 			Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 1 }),
-			Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V1(
-				v01::HostPaymentTopUpError::AlreadyExists
+			Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V2(
+				truapi::latest::HostPaymentTopUpError::AlreadyExists
 			))),
 			Err(not_started()),
 			Some(Vec::new()),
@@ -10120,13 +10187,15 @@ fn top_up(
 	futures::executor::block_on(truapi::api::Payment::top_up(
 		host,
 		&CallContext::default(),
-		truapi::versioned::payment::HostPaymentTopUpRequest::V1(v01::HostPaymentTopUpRequest {
-			into: None,
-			amount,
-			source,
-			id: [7; 32],
-			funding: None,
-		}),
+		truapi::versioned::payment::HostPaymentTopUpRequest::V2(
+			truapi::latest::HostPaymentTopUpRequest {
+				into: None,
+				amount,
+				source,
+				id: [7; 32],
+				funding: None,
+			},
+		),
 	))
 }
 
@@ -10143,13 +10212,15 @@ fn fund_top_up(
 	futures::executor::block_on(truapi::api::Payment::top_up(
 		worker,
 		&CallContext::default(),
-		truapi::versioned::payment::HostPaymentTopUpRequest::V1(v01::HostPaymentTopUpRequest {
-			into: None,
-			amount,
-			source: product_account_source(),
-			id: [7; 32],
-			funding: Some(intent.to_string()),
-		}),
+		truapi::versioned::payment::HostPaymentTopUpRequest::V2(
+			truapi::latest::HostPaymentTopUpRequest {
+				into: None,
+				amount,
+				source: product_account_source(),
+				id: [7; 32],
+				funding: Some(intent.to_string()),
+			},
+		),
 	))
 }
 
@@ -10173,7 +10244,7 @@ fn a_top_up_reaches_the_host_engine_scoped_to_its_product() {
 		started.as_slice(),
 		[(
 			"wallet.dot".to_string(),
-			v01::HostPaymentTopUpRequest {
+			truapi::latest::HostPaymentTopUpRequest {
 				into: None,
 				amount: 1_000,
 				source: product_account_source(),
@@ -10202,8 +10273,8 @@ fn a_top_up_from_an_unusable_source_is_refused_before_the_host_sees_it() {
 	let refused = sources.map(|source| top_up(&host, 1_000, source));
 
 	let invalid = || {
-		Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V1(
-			v01::HostPaymentTopUpError::InvalidSource,
+		Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V2(
+			truapi::latest::HostPaymentTopUpError::InvalidSource,
 		)))
 	};
 	assert_eq!(
@@ -10301,8 +10372,8 @@ impl crate::platform::PaymentPlatform for RecordingPaymentPlatform {
 	}
 }
 
-fn payment_request() -> v01::HostPaymentRequest {
-	v01::HostPaymentRequest {
+fn payment_request() -> truapi::latest::HostPaymentRequest {
+	truapi::latest::HostPaymentRequest {
 		from: None,
 		amount: 1_000,
 		destination: [3; 32],
@@ -10320,7 +10391,7 @@ fn request_payment(
 	futures::executor::block_on(truapi::api::Payment::request(
 		host,
 		&CallContext::default(),
-		truapi::versioned::payment::HostPaymentRequest::V1(payment_request()),
+		truapi::versioned::payment::HostPaymentRequest::V2(payment_request()),
 	))
 }
 
@@ -10367,7 +10438,7 @@ fn a_payment_reaches_the_host_engine_and_its_status_is_relayed() {
 			followed,
 		),
 		(
-			Ok(truapi::versioned::payment::HostPaymentResponse::V1),
+			Ok(truapi::versioned::payment::HostPaymentResponse::V2),
 			vec![
 				Ok(truapi::versioned::payment::HostPaymentStatusSubscribeItem::V1(
 					v01::HostPaymentStatusSubscribeItem::Processing
@@ -10378,7 +10449,7 @@ fn a_payment_reaches_the_host_engine_and_its_status_is_relayed() {
 			],
 			vec![(
 				"wallet.dot".to_string(),
-				v01::HostPaymentRequest { id: host_id, ..payment_request() }
+				truapi::latest::HostPaymentRequest { id: host_id, ..payment_request() }
 			)],
 			vec![("wallet.dot".to_string(), host_id)],
 		)
@@ -10647,7 +10718,7 @@ impl crate::platform::PaymentPlatform for ShortPaymentPlatform {
 		_product: &ProductContext,
 		_request: truapi::latest::HostPaymentRequest,
 	) -> Result<(), truapi::latest::HostPaymentError> {
-		Err(v01::HostPaymentError::InsufficientBalance)
+		Err(truapi::latest::HostPaymentError::InsufficientBalance)
 	}
 
 	fn subscribe_payment_status(
@@ -10686,7 +10757,7 @@ fn a_short_balance_reads_as_a_refusal_unless_the_product_may_see_it() {
 	let with_access = request_payment(&host);
 
 	let refused =
-		|error| CallError::Domain(truapi::versioned::payment::HostPaymentError::V1(error));
+		|error| CallError::Domain(truapi::versioned::payment::HostPaymentError::V2(error));
 	assert_eq!(
 		(
 			without_access,
@@ -10698,8 +10769,8 @@ fn a_short_balance_reads_as_a_refusal_unless_the_product_may_see_it() {
 				.len(),
 		),
 		(
-			Err(refused(v01::HostPaymentError::Rejected)),
-			Err(refused(v01::HostPaymentError::InsufficientBalance)),
+			Err(refused(truapi::latest::HostPaymentError::Rejected)),
+			Err(refused(truapi::latest::HostPaymentError::InsufficientBalance)),
 			0,
 		)
 	);
@@ -10717,8 +10788,8 @@ fn a_top_up_of_nothing_is_refused_before_the_host_sees_it() {
 	assert_eq!(
 		(refused, engine.started.lock().expect("started mutex poisoned").len()),
 		(
-			Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V1(
-				v01::HostPaymentTopUpError::InvalidAmount,
+			Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V2(
+				truapi::latest::HostPaymentTopUpError::InvalidAmount,
 			))),
 			0,
 		)
@@ -10736,7 +10807,7 @@ fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
 	let refused = futures::executor::block_on(truapi::api::Payment::request(
 		&host,
 		&CallContext::default(),
-		truapi::versioned::payment::HostPaymentRequest::V1(v01::HostPaymentRequest {
+		truapi::versioned::payment::HostPaymentRequest::V2(truapi::latest::HostPaymentRequest {
 			amount: 0,
 			..payment_request()
 		}),
@@ -10745,8 +10816,8 @@ fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
 	assert_eq!(
 		(refused, engine.requested.lock().expect("requested mutex poisoned").len()),
 		(
-			Err(CallError::Domain(truapi::versioned::payment::HostPaymentError::V1(
-				v01::HostPaymentError::InvalidAmount,
+			Err(CallError::Domain(truapi::versioned::payment::HostPaymentError::V2(
+				truapi::latest::HostPaymentError::InvalidAmount,
 			))),
 			0,
 		)
@@ -10755,7 +10826,8 @@ fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
 
 /// A host engine that refuses every top-up, as one does when the user
 /// declines it or its source is busy.
-struct RefusingTopUpPlatform;
+/// A top-up engine that answers every top-up with its error.
+struct RefusingTopUpPlatform(truapi::latest::HostPaymentTopUpError);
 
 #[truapi::async_trait]
 impl crate::platform::TopUpPlatform for RefusingTopUpPlatform {
@@ -10764,7 +10836,7 @@ impl crate::platform::TopUpPlatform for RefusingTopUpPlatform {
 		_product: &ProductContext,
 		_request: truapi::latest::HostPaymentTopUpRequest,
 	) -> Result<(), truapi::latest::HostPaymentTopUpError> {
-		Err(v01::HostPaymentTopUpError::SourceBusy)
+		Err(self.0.clone())
 	}
 
 	fn subscribe_top_up_status(
@@ -10792,7 +10864,9 @@ fn a_refused_repeat_of_a_recorded_top_up_leaves_no_record_behind() {
 	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
-	assert!(services.install_top_up_platform(Arc::new(RefusingTopUpPlatform)));
+	assert!(services.install_top_up_platform(Arc::new(RefusingTopUpPlatform(
+		truapi::latest::HostPaymentTopUpError::SourceBusy
+	))));
 	let intent = served_session(&services, 500);
 	let worker = provider_worker(&services, "ramp.dot");
 	let provider = ProductContext::new_with_execution(
@@ -10820,6 +10894,24 @@ fn a_refused_repeat_of_a_recorded_top_up_leaves_no_record_behind() {
 
 	let session = services.funding().get(&intent).expect("kept");
 	assert_eq!((repeated.is_err(), session.started.len(), session.money_moved()), (true, 0, false));
+}
+
+// A host engine that fails without saying whether it took the top-up may
+// hold it, so the record stays for the reconciler to place from the engine
+// rather than being forgotten.
+#[test]
+fn a_top_up_the_engine_is_unsure_of_keeps_its_record() {
+	let (services, intent, worker) = served_with_engine(
+		Arc::new(RefusingTopUpPlatform(truapi::latest::HostPaymentTopUpError::Unknown {
+			reason: "engine timed out".to_string(),
+		})),
+		500,
+	);
+
+	let answered = fund_top_up(&worker, &intent, 500);
+
+	let session = services.funding().get(&intent).expect("kept");
+	assert_eq!((answered.is_err(), session.started.len()), (true, 1));
 }
 
 /// The terms digest the core keeps for a top-up from the product account.
@@ -10857,8 +10949,8 @@ fn served_with_engine(
 }
 
 fn top_up_already_exists() -> CallError<truapi::versioned::payment::HostPaymentTopUpError> {
-	CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V1(
-		v01::HostPaymentTopUpError::AlreadyExists,
+	CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V2(
+		truapi::latest::HostPaymentTopUpError::AlreadyExists,
 	))
 }
 
@@ -11170,6 +11262,25 @@ fn a_session_a_worker_did_not_take_is_handed_over_again() {
 	std::thread::sleep(Duration::from_millis(200));
 
 	assert_eq!((taken, link.assigned()), (true, vec![intent]));
+}
+
+// A call a connected worker leaves unanswered is not lost until the worker
+// reconnects: the link is due to be handed its sessions again, which repeats
+// it.
+#[test]
+fn an_unanswered_call_is_repeated_without_a_reconnect() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let link = UnsteadyProviderLink::new(1, true);
+	services.funding().link("ramp.dot", link.clone());
+	services.funding().connected("ramp.dot");
+	std::thread::sleep(Duration::from_millis(200));
+
+	let intent = served_session(&services, 500);
+
+	assert!(eventually(10, || link.assigned() == [intent.clone()]));
 }
 
 // A link replaced while it was being handed its sessions cannot mark its

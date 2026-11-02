@@ -176,6 +176,8 @@ enum EngineAnswer {
 	Holds,
 	/// It refused them, so nothing moves under the id.
 	Refused,
+	/// It failed without saying whether it took them.
+	Unsure,
 }
 
 impl ProductRuntimeHost {
@@ -249,13 +251,19 @@ impl ProductRuntimeHost {
 
 	/// Settle the record `start` made by what the engine did: kept as taken
 	/// when it took the funds, or when it holds the id from an earlier call
-	/// that recorded them; dropped otherwise. A record that cannot be stored
-	/// is placed later by the reconciler, from the engine.
+	/// that recorded them; dropped when it refused them. A record the engine
+	/// left unsure, or that cannot be stored, is placed later by the
+	/// reconciler, from the engine.
 	async fn finish_funding_start(&self, start: FundingStart, answer: EngineAnswer) {
 		let taken = match answer {
 			EngineAnswer::Took => true,
 			EngineAnswer::Holds => !start.fresh,
 			EngineAnswer::Refused => false,
+			EngineAnswer::Unsure => {
+				drop(start);
+				self.connection.services.funding().wake();
+				return;
+			},
 		};
 		let finished = self
 			.connection
@@ -485,6 +493,7 @@ impl ProductRuntimeHost {
 				let answer = match &requested {
 					Ok(()) => EngineAnswer::Took,
 					Err(latest::HostPaymentError::AlreadyExists) => EngineAnswer::Holds,
+					Err(latest::HostPaymentError::Unknown { .. }) => EngineAnswer::Unsure,
 					Err(_) => EngineAnswer::Refused,
 				};
 				self.finish_funding_start(start, answer).await;
@@ -549,6 +558,7 @@ impl ProductRuntimeHost {
 		let answer = match &started {
 			Ok(()) => EngineAnswer::Took,
 			Err(latest::HostPaymentTopUpError::AlreadyExists) => EngineAnswer::Holds,
+			Err(latest::HostPaymentTopUpError::Unknown { .. }) => EngineAnswer::Unsure,
 			Err(_) => EngineAnswer::Refused,
 		};
 		self.finish_funding_start(start, answer).await;

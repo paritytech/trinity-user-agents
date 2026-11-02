@@ -17,6 +17,8 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod store;
 #[cfg(test)]
+pub(crate) use store::put_session_row;
+#[cfg(test)]
 pub(crate) use store::{fail_writes, stored_sessions};
 
 /// A wasm core has no core database, so it holds no funding session: every
@@ -51,7 +53,7 @@ use std::{
 	},
 };
 
-use core::time::Duration;
+use core::{ops::ControlFlow, time::Duration};
 
 use futures::{
 	channel::{mpsc, oneshot},
@@ -79,6 +81,7 @@ use crate::{
 		ProductExecutionKind, ProductId,
 	},
 	runtime::payment_id::host_payment_id,
+	time::{Backoff, retry},
 	unix_time::current_unix_millis,
 };
 
@@ -1061,8 +1064,9 @@ impl FundingRegistry {
 	}
 
 	/// Milliseconds until the next pass is due on its own: a session expires
-	/// or its offer lapses, a step asked to be retried, or a link is due to
-	/// be handed its sessions again.
+	/// or its offer lapses, a step asked to be retried, a link is due to be
+	/// handed its sessions again, or recorded funds are due to be read again
+	/// or dropped.
 	fn next_wake(&self, now_ms: u64) -> Option<u64> {
 		let retry = {
 			let mut retry_at = self.lock_retry_at();
@@ -1080,7 +1084,9 @@ impl FundingRegistry {
 				_ => None,
 			})
 			.min();
-		[self.next_deadline(), retry, link]
+		let resolving =
+			self.lock_resolving().values().copied().filter(|at_ms| *at_ms != u64::MAX).min();
+		[self.next_deadline(), retry, link, resolving]
 			.into_iter()
 			.flatten()
 			.min()
@@ -1089,18 +1095,30 @@ impl FundingRegistry {
 
 	/// Put `calls` to `provider_id`'s worker one after another, on a task of
 	/// their own, and store its answers. Without a link they wait for the
-	/// worker to connect, which repeats whatever is still pending.
+	/// worker to connect, which repeats whatever is still pending. A call
+	/// that goes unanswered leaves the link due to be handed its sessions
+	/// again, which repeats it.
 	fn call(&self, provider_id: &str, calls: Vec<ProviderCall>) {
 		let Some(services) = self.services.upgrade() else {
 			return;
 		};
-		let Some(link) = self.lock_links().get(provider_id).map(|held| held.link.clone()) else {
+		let Some((link, generation)) = self
+			.lock_links()
+			.get(provider_id)
+			.map(|held| (held.link.clone(), held.generation))
+		else {
 			return;
 		};
+		let provider_id = provider_id.to_string();
 		let spawner = services.spawner.clone();
 		spawner(Box::pin(async move {
+			let registry = services.funding().clone();
+			let mut answered = true;
 			for call in calls {
-				services.funding().put(link.as_ref(), call).await;
+				answered &= registry.put(link.as_ref(), call).await;
+			}
+			if !answered {
+				registry.caught_up(&provider_id, generation, false);
 			}
 		}));
 	}
@@ -1433,10 +1451,12 @@ pub fn new_funding_intent() -> String {
 	format!("fs_{}", nanoid::nanoid!(10))
 }
 
-/// First wait before retrying a failed load of the sessions on resume.
-const RESUME_RETRY_FIRST: Duration = Duration::from_secs(1);
-/// Longest wait between retries of that load.
-const RESUME_RETRY_LONGEST: Duration = Duration::from_secs(60);
+// Pauses between retries when loading the sessions fails on resume.
+#[cfg(not(test))]
+const RESUME_RETRY_PAUSES: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(60));
+#[cfg(test)]
+const RESUME_RETRY_PAUSES: Backoff =
+	Backoff::new(Duration::from_millis(1), Duration::from_millis(4));
 
 impl RuntimeServices {
 	/// Install the host's funding surface and resume the sessions stored
@@ -1472,36 +1492,40 @@ impl RuntimeServices {
 			let registry = services.funding();
 			// The host's session views read what the core has loaded, so a
 			// failed load is retried until the sessions are in.
-			let mut retry_in = RESUME_RETRY_FIRST;
-			loop {
-				let loaded = registry
-					.commit(current_unix_millis(), |sessions| {
-						// Ended sessions the host has not recorded are
-						// handed over again, so its history gets every
-						// outcome.
-						let pending = sessions
-							.values()
-							.filter(|session| session.needs_handoff())
-							.map(|session| session.intent.clone())
-							.collect();
-						((), pending)
-					})
-					.await;
-				match loaded {
-					Ok(()) => break,
-					// Left for the newer app that wrote them; retrying cannot
-					// read them.
-					Err(error @ FundingSessionError::NewerFormat { .. }) => {
-						tracing::warn!(%error, "funding stays unavailable");
-						break;
-					},
-					Err(error) => {
-						tracing::warn!(%error, ?retry_in, "loading funding sessions failed");
-						futures_timer::Delay::new(retry_in).await;
-						retry_in = (retry_in * 2).min(RESUME_RETRY_LONGEST);
-					},
-				}
-			}
+			let mut pauses = RESUME_RETRY_PAUSES;
+			retry(
+				|| async {
+					let loaded = registry
+						.commit(current_unix_millis(), |sessions| {
+							// Ended sessions the host has not recorded are
+							// handed over again, so its history gets every
+							// outcome.
+							let pending = sessions
+								.values()
+								.filter(|session| session.needs_handoff())
+								.map(|session| session.intent.clone())
+								.collect();
+							((), pending)
+						})
+						.await;
+					match loaded {
+						Ok(()) => ControlFlow::Break(()),
+						// Left for the newer app that wrote them; retrying cannot
+						// read them.
+						Err(error @ FundingSessionError::NewerFormat { .. }) => {
+							tracing::warn!(%error, "funding stays unavailable");
+							ControlFlow::Break(())
+						},
+						Err(error) => ControlFlow::Continue(error),
+					}
+				},
+				|error| {
+					let retry_in = pauses.next_pause();
+					tracing::warn!(%error, ?retry_in, "loading funding sessions failed");
+					retry_in
+				},
+			)
+			.await;
 		}));
 	}
 
@@ -1998,6 +2022,17 @@ mod tests {
 			Some(100),
 			opened_at_ms,
 		)
+	}
+
+	// Recorded funds waiting out their grace are dropped on time even when
+	// an earlier retry already fired, and funds being read now set no wake.
+	#[test]
+	fn the_next_wake_includes_when_recorded_funds_are_read_again() {
+		let registry = FundingRegistry::default();
+		registry.lock_resolving().insert([1; 32], NOW + 60_000);
+		registry.lock_resolving().insert([2; 32], u64::MAX);
+
+		assert_eq!(registry.next_wake(NOW), Some(60_000));
 	}
 
 	fn registry_on(db: &Db) -> FundingRegistry {

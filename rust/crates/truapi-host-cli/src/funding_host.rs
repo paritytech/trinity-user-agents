@@ -53,7 +53,7 @@ use truapi::{
 	},
 };
 
-use crate::{platform::CliPlatform, transcript::Transcript};
+use crate::{NetworkConfig, platform::CliPlatform, transcript::Transcript};
 
 /// The manifest the CLI ships for every provider it offers: card in, and
 /// crypto in and out, quoted by its worker.
@@ -121,8 +121,13 @@ pub struct CliFundingHost {
 
 impl CliFundingHost {
 	/// Serve funding on `runtime`, asking `user`, with the files the
-	/// environment names.
-	pub fn install(runtime: &Arc<SigningHostRuntime>, user: Arc<CliPlatform>) {
+	/// environment names. The payment ledger moves no real funds, so it is
+	/// refused on a network whose identities are real.
+	pub fn install(
+		runtime: &Arc<SigningHostRuntime>,
+		user: Arc<CliPlatform>,
+		network: &NetworkConfig,
+	) -> anyhow::Result<()> {
 		runtime.set_funding_platform(Arc::new(Self {
 			user,
 			transcript: Arc::new(Transcript::from_env("TRUAPI_FUNDING_LOG", "funding")),
@@ -130,10 +135,17 @@ impl CliFundingHost {
 			asked: Mutex::new(HashSet::new()),
 		}));
 		if let Some(ledger) = std::env::var_os("TRUAPI_FUNDING_LEDGER").map(PathBuf::from) {
+			anyhow::ensure!(
+				network.disposable_identities,
+				"{} holds real identities, so TRUAPI_FUNDING_LEDGER, which credits and pays \
+				 without moving funds, is only available on test network presets",
+				network.id
+			);
 			let payments = Arc::new(CliPaymentHost { ledger });
 			runtime.set_top_up_platform(payments.clone());
 			runtime.set_payment_platform(payments);
 		}
+		Ok(())
 	}
 
 	/// Put the provider's cancel offer on session `intent` to the user, once

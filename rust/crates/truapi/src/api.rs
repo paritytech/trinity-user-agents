@@ -29,9 +29,10 @@
 //! | 20 | `Contacts` |
 //! | 21 | `Game` |
 //! | 22 | `Funding` |
-//! | 23 | reserved: expanded card face |
+//! | 23 | `ExpandedCard` |
 //! | 24 | `FundingProvider` |
 //! | 25 | `Scanner` |
+//! | 26 | `NftPurse` |
 
 pub mod account;
 pub mod chain;

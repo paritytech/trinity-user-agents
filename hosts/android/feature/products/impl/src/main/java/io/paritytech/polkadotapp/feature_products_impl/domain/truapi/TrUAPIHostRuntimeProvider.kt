@@ -224,6 +224,8 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
         override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
 
+        private val encryptedStorage = EncryptedHostValues(encryptedPreferences)
+
         override fun onCoreLog(marker: String, detail: String) {
             logCoreLine(marker, detail)
         }
@@ -245,6 +247,13 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         // Item keys derived under an installation that is not registered yet could not be recovered from the seed.
         override suspend fun currentInstallation(): ByteArray =
             installations.awaitBackedUp().getOrThrow().value.value
+
+        override suspend fun encryptedStorageRead(key: ByteArray): ByteArray? = encryptedStorage.read(key)
+
+        override suspend fun encryptedStorageWrite(key: ByteArray, value: ByteArray) =
+            encryptedStorage.write(key, value)
+
+        override suspend fun encryptedStorageDelete(key: ByteArray) = encryptedStorage.delete(key)
 
         override suspend fun navigateTo(url: String) {
             throw HostNavigateToException.Unknown("navigation unavailable at host level")

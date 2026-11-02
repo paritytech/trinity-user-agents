@@ -69,6 +69,47 @@ class EncryptedHostCoreStorage(
     }
 }
 
+/**
+ * Secrets the core keeps encrypted at rest, apart from its core storage slots.
+ * Shared preferences are excluded from backups, and the AndroidKeyStore key
+ * wrapping them never leaves the device.
+ *
+ * Unlike core storage, a stored value that no longer decrypts is an error, not
+ * a miss: the core must not mistake an unreadable secret for an unknown key.
+ */
+class EncryptedHostValues(
+    private val preferences: EncryptedPreferences,
+) {
+    suspend fun read(key: ByteArray): ByteArray? {
+        val field = qualify(key)
+        if (!preferences.hasKey(field)) return null
+        return readValue(preferences, field)
+            ?: throw HostRejection.Rejected("encrypted storage: $field is stored but does not decrypt")
+    }
+
+    // The core records what a secret belongs to right after this returns, so
+    // the secret must already be on disk.
+    suspend fun write(key: ByteArray, value: ByteArray) {
+        writeValue(preferences, qualify(key), value, persist = ::persistNow)
+            ?.let { throw HostRejection.Rejected("encrypted storage: $it") }
+    }
+
+    private fun persistNow(field: String, tagged: String) {
+        check(preferences.putEncryptedStringNow(field, tagged)) { "not written to disk" }
+    }
+
+    fun delete(key: ByteArray) {
+        runCatching { preferences.removeKey(qualify(key)) }
+            .getOrElse { throw HostRejection.Rejected("encrypted storage: failed to delete: ${it.message}") }
+    }
+
+    private fun qualify(key: ByteArray) = "$ENCRYPTED_NAMESPACE/${key.toHex()}"
+
+    private companion object {
+        const val ENCRYPTED_NAMESPACE = "truapi/encrypted"
+    }
+}
+
 /** Namespace for one product's core-facing local storage. */
 fun productStorageNamespace(productId: String): String = "truapi/product/$productId"
 
@@ -106,9 +147,14 @@ private fun readValue(preferences: EncryptedPreferences, key: String): ByteArray
 }
 
 /** Returns null on success, or a reason to report to the core. */
-private fun writeValue(preferences: EncryptedPreferences, key: String, value: ByteArray): String? {
+private fun writeValue(
+    preferences: EncryptedPreferences,
+    key: String,
+    value: ByteArray,
+    persist: (String, String) -> Unit = preferences::putEncryptedString,
+): String? {
     val tagged = VALUE_TAG + value.toHex()
-    val failure = runCatching { preferences.putEncryptedString(key, tagged) }.exceptionOrNull()
+    val failure = runCatching { persist(key, tagged) }.exceptionOrNull()
     if (failure != null) return "failed to persist $key: ${failure.message}"
 
     // The encrypt path swallows its own exceptions, so the only reliable
