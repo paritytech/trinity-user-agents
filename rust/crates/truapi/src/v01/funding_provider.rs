@@ -572,6 +572,10 @@ pub enum HostFundingPresentFrameError {
 		/// Human-readable failure reason.
 		reason: String,
 	},
+	/// An App route from a provider that ships no App; such a provider shows
+	/// external pages instead.
+	#[codec(index = 3)]
+	NoApp,
 }
 
 /// Request to close the provider screen open for a session.
