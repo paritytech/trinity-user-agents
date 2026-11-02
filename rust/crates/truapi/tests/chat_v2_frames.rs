@@ -152,7 +152,16 @@ fn frames() -> Vec<String> {
 	let preview = v01::ChatRoomPreview {
 		timestamp: Some(5),
 		badge: Some(v01::ChatRoomBadge::UnreadCount { count: 3 }),
-		last_message: Some(message()),
+		last_message: Some(v01::ChatPreviewMessage {
+			message_id: "m1".into(),
+			origin: v01::ChatMessageOrigin { participant_id: "contact".into() },
+			timestamp: 1_700_000_000_000,
+			body: v01::ChatMessageBody::Text { text: "Three new answers".into() },
+			status: v01::ChatMessageStatus::Delivered,
+			reply_to: Some("m0".into()),
+			edited_at: Some(1_700_000_000_500),
+			request: false,
+		}),
 		last_reaction: Some(v01::ChatPreviewReaction {
 			emoji: "👍".into(),
 			by_user: false,

@@ -271,7 +271,14 @@ async function runRoomDeclarationProbe(): Promise<void> {
       preview: {
         timestamp: message.timestamp,
         badge: { tag: "UnreadCount", value: { count: 1 } },
-        lastMessage: message,
+        lastMessage: {
+          messageId: message.messageId,
+          origin: message.origin,
+          timestamp: message.timestamp,
+          body: message.body,
+          status: message.status,
+          request: message.request,
+        },
         unseenReactions: 0,
         pinned: true,
         activity: { text: "Diagnosis running", ongoing: true },

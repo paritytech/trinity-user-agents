@@ -193,7 +193,16 @@ const custom: T.ChatMessage = {
 const preview: T.ChatRoomPreview = {
     timestamp: 5n,
     badge: { tag: "UnreadCount", value: { count: 3 } },
-    lastMessage: message,
+    lastMessage: {
+        messageId: "m1",
+        origin: { participantId: "contact" },
+        timestamp: 1_700_000_000_000n,
+        body: { tag: "Text", value: { text: "Three new answers" } },
+        status: "Delivered",
+        replyTo: "m0",
+        editedAt: 1_700_000_000_500n,
+        request: false,
+    },
     lastReaction: {
         emoji: "👍",
         byUser: false,
