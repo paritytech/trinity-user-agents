@@ -49,11 +49,14 @@ class FundingActivityCenter @Inject constructor(
      */
     private val acknowledged = mutableSetOf<FundingSessionEntry>()
 
+    /** Ended sessions handed over as their summary only and acknowledged in this process. Under [reloadMutex]. */
+    private val acknowledgedSummaries = mutableSetOf<String>()
+
     /** Built again whenever the core pushes a session or resumes funding. Starts the core, which then pushes them. */
     fun observe(): Flow<FundingActivity> =
-        combine(runtime.sessions, runtime.inProgress) { sessions, _ -> sessions.values }
+        combine(runtime.sessions, runtime.endedSummaries, runtime.inProgress) { sessions, summaries, _ -> sessions.values to summaries }
             .onStart { runtime.start().logFailure("Failed to start the core for funding activity") }
-            .map { sessions -> reloadMutex.withLock { reload(sessions) } }
+            .map { (sessions, summaries) -> reloadMutex.withLock { reload(sessions, summaries) } }
 
     /** The ended session [intent] as the user is shown it, or `null` when the core holds no ended session by that id. */
     suspend fun ended(intent: String): FundingRecord? =
@@ -63,7 +66,7 @@ class FundingActivityCenter @Inject constructor(
             ?.firstOrNull { it.intent == intent }
             ?.let(FundingRecord::of)
 
-    private suspend fun reload(sessions: Collection<FundingSessionEntry>): FundingActivity {
+    private suspend fun reload(sessions: Collection<FundingSessionEntry>, summaries: Set<String>): FundingActivity {
         val entries = sessions.sortedByDescending { it.session.openedAtMs }
 
         val inFlight = entries.mapNotNull { inFlightItem(it.session, it.progress) }
@@ -76,6 +79,7 @@ class FundingActivityCenter @Inject constructor(
             .mapNotNull(FundingRecord::of)
 
         acknowledgeEnded(entries)
+        acknowledgeSummaries(summaries.filterTo(mutableSetOf()) { intent -> records.any { it.intent == intent } })
 
         return FundingActivity(
             inFlight = inFlight,
@@ -94,6 +98,15 @@ class FundingActivityCenter @Inject constructor(
                     .logFailure("Funding acknowledgement failed")
                     .onSuccess { acknowledged += entry }
             }
+    }
+
+    /** Acknowledges each ended session handed over as its summary once its history row is built. */
+    private suspend fun acknowledgeSummaries(intents: Set<String>) {
+        (intents - acknowledgedSummaries).forEach { intent ->
+            runtime.acknowledge(intent)
+                .logFailure("Funding acknowledgement failed")
+                .onSuccess { acknowledgedSummaries += intent }
+        }
     }
 
     /** The row of a session the core still has in progress, or `null` once its status is final. */

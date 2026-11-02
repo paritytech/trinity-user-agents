@@ -35,9 +35,11 @@ import uniffi.truapi.FundingStatus
 class FundingActivityCenterTest {
     private val sessions = MutableStateFlow<Map<String, FundingSessionEntry>>(emptyMap())
     private val inProgress = MutableStateFlow<Boolean?>(null)
+    private val endedSummaries = MutableStateFlow<Set<String>>(emptySet())
     private var recorded = emptyList<FundingSessionSummary>()
     private val runtime = mockk<FundingRuntime> {
         every { sessions } returns this@FundingActivityCenterTest.sessions
+        every { endedSummaries } returns this@FundingActivityCenterTest.endedSummaries
         every { inProgress } returns this@FundingActivityCenterTest.inProgress
         coEvery { history() } answers { Result.success(recorded) }
         coEvery { start() } returns Result.success(Unit)
@@ -67,6 +69,19 @@ class FundingActivityCenterTest {
         coVerify { runtime.acknowledge("out") }
         assertEquals(listOf(FundingActivityStep.PreparingPayout), activity.inFlight.map { (it.status as FundingActivityStatus.InProgress).step })
         assertEquals(emptyList<String>(), activity.history.map { it.id })
+    }
+
+    // The core hands over an ending it has compacted as its summary only; its row tells the user how it went.
+    @Test
+    fun `an ending handed over as its summary is acknowledged once its row is built`() = runBlocking {
+        recorded = listOf(summary("in", FundingStage.Delivered("50", settledAtMs = 1uL), FundingStatus.ToppedUp))
+        endedSummaries.value = setOf("in")
+
+        val activity = center.observe().first()
+        center.observe().first()
+
+        coVerify(exactly = 1) { runtime.acknowledge("in") }
+        assertEquals(listOf("in"), activity.history.map { it.id })
     }
 
     @Test

@@ -29,6 +29,9 @@ interface FundingRuntime {
     /** Every session the core pushed and still holds, with its latest progress, by intent. */
     val sessions: StateFlow<Map<String, FundingSessionEntry>>
 
+    /** Ended sessions the core handed over as their summary only and the host has not acknowledged, by intent. */
+    val endedSummaries: StateFlow<Set<String>>
+
     /**
      * Whether a provider still works on any session, as the core last pushed it: `null` until funding resumed, which
      * is also when the core has loaded the sessions [history] reads.
