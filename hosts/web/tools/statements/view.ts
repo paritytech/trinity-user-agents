@@ -106,6 +106,33 @@ function roleText(role: Role): string {
   }
 }
 
+/** A role in a few words, for the accounts list; the detail says it in full. */
+function roleLabel(role: Role): string {
+  switch (role.kind) {
+    case "product-account":
+      return "Product account";
+    case "notification-account":
+      return "Setup notification";
+    case "conversation-account":
+      return "Chat sender";
+    case "conversation-peer":
+      return "Chat peer";
+    case "chat-allowance":
+      return "Chat allowance";
+  }
+}
+
+/** The accounts list's columns. */
+const COLUMNS = ["Account", "Role", "Allocation", "Grant", "Observed"];
+
+/** What each column of the accounts list says, and what it does not. */
+const COLUMNS_ABOUT = [
+  "Role: what the host or core recorded. Reported: what a product said, unchecked.",
+  "Allocation: the latest daily slot claim this tab saw.",
+  "Grant: statements · size the chain grants, read at a block. Not what is left.",
+  "Observed: statements · size · last seen in this tab. Not what the network holds now.",
+];
+
 function roleSource(role: Role): FactSource {
   return role.kind === "conversation-account" ||
     role.kind === "conversation-peer"
@@ -116,15 +143,9 @@ function roleSource(role: Role): FactSource {
 }
 
 /**
- * An account's latest claim: an allowance slot for one UTC day, which the
- * core claimed with the person's membership. It is not the person's own
- * registration.
+ * A claim: an allowance slot for one UTC day, which the core claimed with the
+ * person's membership. It is not the person's own registration.
  */
-function claimText(account: AccountRecord): string | null {
-  const claim = account.claims.at(-1);
-  return claim === undefined ? null : claimLine(claim);
-}
-
 function claimLine(claim: AccountRecord["claims"][number]): string {
   const slot =
     claim.seq === undefined
@@ -142,6 +163,43 @@ function claimLine(claim: AccountRecord["claims"][number]): string {
   }
 }
 
+/** An account's latest claim, in a few words; the detail has its day, collection and time. */
+function allocationLabel(account: AccountRecord): string {
+  const claim = account.claims.at(-1);
+  if (claim === undefined) return "None seen";
+  const slot = claim.seq === undefined ? "Slot" : `Slot ${claim.seq}`;
+  switch (claim.outcome) {
+    case "registered":
+      return `${slot} · claimed`;
+    case "alreadyAllocated":
+      return `${slot} · held`;
+    case "validated":
+      return "Validated only";
+    case "failed":
+      return "Claim failed";
+  }
+}
+
+/** An account's grant, in a few words. */
+function grantLabel(account: AccountRecord): string {
+  const grant = account.grant;
+  if (grant === undefined) return "Not read";
+  if ("error" in grant) return "Read failed";
+  return grant.value === null
+    ? "No grant"
+    : `${grant.value.maxCount} · ${bytes(grant.value.maxSize)}`;
+}
+
+/** An account's latest observed statements, in a few words. */
+function observedLabel(
+  ledger: StatementLedger,
+  account: AccountRecord,
+): string {
+  const observed = ledger.latestObserved(account.account);
+  if (observed.lastObservedAt === null) return "Not observed";
+  return `${observed.statements} · ${bytes(observed.dataBytes)} · ${clock(observed.lastObservedAt).slice(0, 5)}`;
+}
+
 function grantText(account: AccountRecord): {
   text: string;
   note?: string;
@@ -152,7 +210,7 @@ function grantText(account: AccountRecord): {
   return {
     text:
       grant.value === null
-        ? "none stored"
+        ? "no grant stored"
         : `${grant.value.maxCount} stmts · ${bytes(grant.value.maxSize)} · not remaining`,
     note: `Read at block ${short(grant.block)}, ${clock(grant.at)}. A grant, not what is used or what is left.`,
   };
@@ -170,7 +228,7 @@ function latestObservedText(
   ].filter((note) => note !== null);
   const extra = notes.length === 0 ? "" : ` · ${notes.join(" · ")}`;
   if (observed.lastObservedAt === null)
-    return `none seen${extra} · not none stored`;
+    return `not observed${extra} · not the same as none stored`;
   return `${observed.statements} stmt${observed.statements === 1 ? "" : "s"} · ${bytes(observed.dataBytes)} · seen ${clock(observed.lastObservedAt)}${extra} · not current`;
 }
 
@@ -182,21 +240,18 @@ const LATEST_OBSERVED_NOTE =
 const NO_PROBE_NOTE =
   "In this host's light client every People connection shares one topic filter that is sent to peers, and each connection's subscriptions replace it, so a subscription made to look would take the chat's topics off it. An open subscription below is one the core or the host made; it does not show that peers send to it.";
 
-/** The distinctions every fact depends on, as short as they stay true. */
-const CAVEATS = [
-  "light client",
-  "new = broadcast, not stored",
-  "peer refusals unseen",
-  "observed ≠ current",
-  "grant ≠ remaining",
-  "data is public",
+/** The one thing to know before reading any fact here. */
+const TAKEAWAY = "Observed traffic, not network state";
+
+/** What every fact depends on, one short line each; the full transport note is in the evidence. */
+const ABOUT = [
+  "Source: this tab's light client. It holds no statements.",
+  "new = broadcast to a peer, not stored. Peers' refusals never reach this tab.",
+  "Observed ≠ current: a first page is always empty; later pages carry what peers send.",
+  "Grant ≠ remaining: a grant is the allowance, not what is left.",
+  "Statement bytes are public; encrypted contents stay sealed. Contact Chat text is plaintext.",
+  "Source tags: light client, core, host, chain, reported (unchecked), derived, inspector.",
 ];
-
-const PUBLIC_NOTE =
-  "Statements are public: anyone who reads the Statement Store reads their topics, accounts, sizes and data.";
-
-const SOURCES_NOTE =
-  "Each fact is tagged with its source: light client (its answer, or a page of what peers sent), core (a claim result), host (this host's records), chain (a read at a block), reported (what a product said, unchecked), derived (worked out here from what this tab saw and when) or inspector.";
 
 /** What this tab cannot see of peers' refusals. */
 const PEER_REFUSALS =
@@ -268,22 +323,19 @@ export function mountStatementsView(
 
   const warning = el("p", "si-warning");
   warning.setAttribute("role", "note");
-  // The distinctions every fact below depends on, short; the full text opens.
+  // One takeaway; the distinctions every fact depends on open below it.
   const transport = el("details", "si-caveats");
   transport.setAttribute("role", "note");
   const caveats = el("summary");
   caveats.append(
-    ...CAVEATS.flatMap((caveat, index) => [
-      ...(index === 0 ? [] : [" · "]),
-      el("span", "si-caveat", caveat),
-    ]),
+    el("span", "si-caveat", TAKEAWAY),
+    " · ",
+    el("span", "si-about", "About this data"),
   );
-  transport.append(
-    caveats,
-    el("p", "si-note si-transport", TRANSPORT_NOTE),
-    el("p", "si-note", PUBLIC_NOTE),
-    el("p", "si-note", SOURCES_NOTE),
-  );
+  caveats.title = TRANSPORT_NOTE;
+  const about = el("ul", "si-note si-about-list");
+  about.append(...ABOUT.map((line) => el("li", undefined, line)));
+  transport.append(caveats, about);
   const status = el("p", "si-status");
   status.setAttribute("role", "status");
 
@@ -447,27 +499,45 @@ export function mountStatementsView(
       () =>
         void readGrantsFor(accounts.slice(0, 64).map((entry) => entry.account)),
     );
-    tools.append(
-      readAll,
-      el("span", "si-note", "Claimed, reported or seen signing."),
-    );
+    const about = el("details", "si-columns-about");
+    about.dataset.key = "accounts-columns";
+    const aboutList = el("ul", "si-note si-about-list");
+    aboutList.append(...COLUMNS_ABOUT.map((line) => el("li", undefined, line)));
+    about.append(el("summary", undefined, "About these columns"), aboutList);
+    tools.append(readAll, about);
     if (accounts.length === 0)
       return [tools, el("p", "si-empty", "No account seen yet.")];
-    const table = el("div", "si-list");
+    const table = el("div", "si-list si-accounts");
     table.setAttribute("role", "list");
+    const header = el("div", "si-list-head");
+    header.setAttribute("aria-hidden", "true");
+    for (const name of COLUMNS) header.append(el("span", undefined, name));
+    table.append(header);
     for (const account of accounts) {
       const row = button("si-list-row", "", `Show ${account.account}`);
       row.setAttribute(
         "aria-pressed",
         String(account.account === selectedAccount),
       );
-      const roles = account.roles.map(roleText);
+      const [first, ...others] = account.roles;
+      const role = el("span", "si-cell si-role");
+      role.dataset.label = COLUMNS[1];
+      role.append(first === undefined ? "Observed signer" : roleLabel(first));
+      if (first !== undefined && roleSource(first) === "product")
+        role.append(" ", tag("product"));
+      if (others.length > 0)
+        role.append(el("span", "si-more", ` +${others.length}`));
+      const column = (index: number, text: string) => {
+        const cell = el("span", "si-cell", text);
+        cell.dataset.label = COLUMNS[index];
+        return cell;
+      };
       row.append(
         el("span", "si-mono", short(account.account)),
-        el("span", "si-cell", roles.length === 0 ? "signer seen" : roles[0]),
-        el("span", "si-cell", claimText(account) ?? "no claim seen"),
-        el("span", "si-cell", grantText(account).text),
-        el("span", "si-cell", latestObservedText(ledger, account)),
+        role,
+        column(2, allocationLabel(account)),
+        column(3, grantLabel(account)),
+        column(4, observedLabel(ledger, account)),
       );
       row.addEventListener("click", () => {
         selectedAccount =

@@ -326,14 +326,109 @@ describe("the Statements and Chat views", () => {
             "| reported | reported contact-chat.test says it posts as this account",
           ),
         ]);
+        // The list says each account in a few words under named columns;
+        // the caveats are said once, under About these columns.
+        const rows = page.locator("#statements-inspector .si-list-row");
+        const selected = page.locator(
+          '#statements-inspector .si-list-row[aria-pressed="true"]',
+        );
+        expect(await selected.locator(".si-cell").allTextContents()).toEqual([
+          "Product account +2",
+          "Slot 4 · claimed",
+          "2 · 500.0 KiB",
+          expect.stringMatching(/^1 · \d+ B · \d\d:\d\d$/),
+        ]);
+        expect(
+          await page
+            .locator("#statements-inspector .si-list-head span")
+            .allTextContents(),
+        ).toEqual(["Account", "Role", "Allocation", "Grant", "Observed"]);
+        // On a wide dock the headings sit over their columns.
+        await page.setViewportSize({ width: 1240, height: 940 });
+        const devtools = page.locator(".devtools");
+        await devtools.evaluate((node) => {
+          (node as HTMLElement).style.width = "1200px";
+        });
+        const lefts = await page.evaluate(() => {
+          const left = (nodes: Iterable<Element>) =>
+            [...nodes].map((node) =>
+              Math.round(node.getBoundingClientRect().left),
+            );
+          return {
+            head: left(
+              document.querySelectorAll(
+                "#statements-inspector .si-list-head span",
+              ),
+            ),
+            row: left(
+              document.querySelector("#statements-inspector .si-list-row")!
+                .children,
+            ),
+          };
+        });
+        expect(lefts.head).toEqual(lefts.row);
+        expect(new Set(lefts.head).size).toBe(5);
+        await devtools.evaluate((node) => {
+          (node as HTMLElement).style.width = "";
+        });
+        await page.setViewportSize({ width: 800, height: 940 });
+        const listText = (
+          await rows.evaluateAll((nodes) =>
+            nodes.map((node) => (node as HTMLElement).innerText),
+          )
+        ).join("\n");
+        for (const repeated of [
+          "not remaining",
+          "not current",
+          "says it",
+          "claimed now",
+          "day ",
+        ])
+          expect({ repeated, found: listText.includes(repeated) }).toEqual({
+            repeated,
+            found: false,
+          });
+        const columnsAbout = page.locator(
+          "#statements-inspector .si-columns-about",
+        );
+        expect(await columnsAbout.getAttribute("open")).toBeNull();
+        await columnsAbout.locator("summary").click();
+        expect(await columnsAbout.locator("li").allInnerTexts()).toEqual([
+          "Role: what the host or core recorded. Reported: what a product said, unchecked.",
+          "Allocation: the latest daily slot claim this tab saw.",
+          "Grant: statements · size the chain grants, read at a block. Not what is left.",
+          "Observed: statements · size · last seen in this tab. Not what the network holds now.",
+        ]);
+        await columnsAbout.locator("summary").click();
+        // A role a product reported, unchecked, is marked so.
+        expect(await rows.locator(".si-role").allInnerTexts()).toEqual([
+          "Product account +2",
+          "Chat peer reported",
+        ]);
+
         const shown = await page.locator("#statements-inspector").innerText();
         expect(shown).not.toMatch(/at least \d+ of|lower bound|\bof 2\b/i);
         // Statements names no protocol.
         expect(shown).not.toContain("simple-text");
+        // One short takeaway, closed; the distinctions open under it.
         const caveats = page.locator("#statements-inspector .si-caveats");
-        expect(await caveats.locator("summary").innerText()).toBe(
-          "light client · new = broadcast, not stored · peer refusals unseen · observed ≠ current · grant ≠ remaining · data is public",
-        );
+        expect({
+          summary: await caveats.locator("summary").innerText(),
+          open: await caveats.getAttribute("open"),
+        }).toEqual({
+          summary: "Observed traffic, not network state · About this data",
+          open: null,
+        });
+        await caveats.locator("summary").click();
+        expect(await caveats.locator("li").allInnerTexts()).toEqual([
+          "Source: this tab's light client. It holds no statements.",
+          "new = broadcast to a peer, not stored. Peers' refusals never reach this tab.",
+          "Observed ≠ current: a first page is always empty; later pages carry what peers send.",
+          "Grant ≠ remaining: a grant is the allowance, not what is left.",
+          "Statement bytes are public; encrypted contents stay sealed. Contact Chat text is plaintext.",
+          "Source tags: light client, core, host, chain, reported (unchecked), derived, inspector.",
+        ]);
+        await caveats.locator("summary").click();
         await shot(page, "accounts");
 
         // An open "why" stays open when the ledger changes and the view draws again.
