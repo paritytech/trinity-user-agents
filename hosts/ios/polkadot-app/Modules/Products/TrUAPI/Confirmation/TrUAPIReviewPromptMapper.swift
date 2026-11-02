@@ -60,6 +60,7 @@ struct TrUAPIReviewPromptMapper: TrUAPIReviewPromptMapping {
         case let .purse(purse): .purse(purse)
         case let .externalKey(key): .key(hex: key.map { String(format: "%02x", $0) }.joined())
         case .cheque: .cheque
+        case .refund: .refund
         }
         return .nftPurseDrain(
             productId: review.callingProductId,

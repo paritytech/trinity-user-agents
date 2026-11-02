@@ -10,6 +10,7 @@ mod pointer;
 mod publish;
 mod reader;
 mod spec;
+mod stack_reader;
 #[cfg(feature = "js")]
 mod wasm;
 
@@ -24,3 +25,6 @@ pub use pointer::{DEFAULT_LINK_BASE, Pointer};
 pub use publish::{PublishState, Rendered, render};
 pub use reader::{Accepted, Fetched, Status, accept};
 pub use spec::light_spec_genesis;
+pub use stack_reader::{
+	CurrentStack, FetchRequest, Refresh, Refreshed, Served, StackRead, StackReader,
+};

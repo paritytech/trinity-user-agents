@@ -44,6 +44,8 @@ pub mod statement_allowance;
 /// `StatementStore` surface: proofs plus submit and subscribe flows.
 pub mod statement_store;
 mod statement_store_rpc;
+#[cfg(test)]
+pub use statement_store_rpc::{LIVE_WAIT, LivePeopleStatements};
 #[cfg(feature = "test-host")]
 mod test_resource_controls;
 mod versioning;
