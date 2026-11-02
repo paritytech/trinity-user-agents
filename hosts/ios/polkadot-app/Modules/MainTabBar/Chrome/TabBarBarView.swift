@@ -32,6 +32,7 @@ struct TabBarBarView: View {
                     onCloseRequested: { model.onCenterPanelCloseRequested?($0) },
                     onSwipeOpenBegan: model.onCenterPanelSwipeOpenBegan,
                     onSwipeOpenLanding: model.onCenterPanelSwipeOpenLanding,
+                    glyphOpacity: model.contentOpacity,
                     content: {
                         TabBarScanPanelContent(makeController: model.makeCenterContent)
                     }
@@ -66,6 +67,7 @@ struct TabBarBarView: View {
                 item: item,
                 isSelected: index == model.selectedSlot,
                 isActive: index == model.activeActionItemIndex,
+                contentOpacity: model.contentOpacity,
                 action: { model.onSlotTapped?(index) }
             )
         }
@@ -78,6 +80,7 @@ private struct TabBarSlotView: View {
     let item: TabBarBarItem
     let isSelected: Bool
     let isActive: Bool
+    let contentOpacity: CGFloat
     let action: () -> Void
 
     private var isEmphasized: Bool {
@@ -99,6 +102,7 @@ private struct TabBarSlotView: View {
                         .padding(.top, 2)
                 }
             }
+            .opacity(contentOpacity)
             .padding(.vertical, item.title == nil ? 0 : 6)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())

@@ -354,4 +354,50 @@ struct DockletMotionTests {
         #expect(motion.destination == .tucked)
         #expect(motion.tick(now: 2) == nil)
     }
+
+    @Test("A quiet hide holds still on its first frame, then lands tucked by about 0.6 s with no haptic")
+    func quietHideLandsSilently() {
+        var motion = DockletMotion()
+        motion.quietSettle(to: .tucked, now: 0)
+        #expect(motion.tick(now: 1.0 / 60) == nil)
+        #expect(motion.progress == 0)
+        #expect(motion.tick(now: 0.5) == nil)
+        #expect(motion.isSettling)
+        #expect(motion.tick(now: 0.7) == nil)
+        #expect(!motion.isSettling)
+        #expect(motion.progress == 1)
+    }
+
+    @Test("Only a quiet hide fades the content, and a swipe tuck keeps it")
+    func onlyQuietHideFadesContent() {
+        var quiet = DockletMotion()
+        quiet.quietSettle(to: .tucked, now: 0)
+        _ = quiet.tick(now: 1.0 / 60)
+        _ = quiet.tick(now: 0.7)
+        #expect(quiet.contentOpacity == 0)
+
+        var swipe = release(from: 40, translationX: 200)
+        _ = swipe.tick(now: 1.4)
+        #expect(swipe.progress == 1)
+        #expect(swipe.contentOpacity == 1)
+    }
+
+    @Test("Settling back to shown restores the content at once")
+    func shownRestoresContent() {
+        var motion = DockletMotion()
+        motion.quietSettle(to: .tucked, now: 0)
+        _ = motion.tick(now: 1.0 / 60)
+        _ = motion.tick(now: 0.7)
+        motion.settle(to: .shown, now: 0.7, isUserDriven: false)
+        #expect(motion.contentOpacity == 1)
+    }
+
+    @Test("Content fades from full at shown to none just before tucked, and never below none")
+    func contentFadeCurve() {
+        #expect(DockletContentFade.opacity(progress: 0) == 1)
+        #expect(abs(DockletContentFade.opacity(progress: 0.5) - 0.495) < 1e-3)
+        #expect(DockletContentFade.opacity(progress: 0.906) < 1e-3)
+        #expect(DockletContentFade.opacity(progress: 0.91) == 0)
+        #expect(DockletContentFade.opacity(progress: 1) == 0)
+    }
 }

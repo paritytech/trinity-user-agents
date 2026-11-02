@@ -143,6 +143,11 @@ final class MainTabBarViewController: UIViewController {
         applyWidgetLayout(for: chromeContext(for: container.selectedController))
     }
 
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        super.pressesBegan(presses, with: event)
+        chromeController.foldController.recordKeyPress()
+    }
+
     override var childForStatusBarStyle: UIViewController? {
         container.selectedController
     }

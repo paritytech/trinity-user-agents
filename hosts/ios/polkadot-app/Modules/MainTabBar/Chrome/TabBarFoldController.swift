@@ -31,6 +31,8 @@ final class TabBarFoldController {
     private let closePanel: () -> Void
     /// Reports each committed state.
     private let stateSink: (TabBarVisibilityState) -> Void
+    /// Receives the content opacity each time the transform is written.
+    private let contentOpacitySink: (CGFloat) -> Void
 
     private(set) var state: TabBarVisibilityState = .shown
     private(set) var isTabRoot = true
@@ -45,6 +47,10 @@ final class TabBarFoldController {
     private weak var navigationScreen: UIViewController?
     private var screenOverrides: [ScreenOverride] = []
     private var motion = DockletMotion()
+    /// Decides when the auto-hide tucks the bar. The drag, settle and state blockers are read from this controller.
+    private var autoHide = DockletAutoHide(startedAt: CACurrentMediaTime())
+    /// The one wake-up that runs the auto-hide tuck at its deadline.
+    private var autoHideTask: Task<Void, Never>?
     /// A finger is on the bar, from the start of a drag to its release.
     private var isDragging = false
     private var displayLink: CADisplayLink?
@@ -62,7 +68,8 @@ final class TabBarFoldController {
         glowSink: @escaping (CGRect, TabBarEdgeGlowOpacity) -> Void,
         grabZoneSink: @escaping (CGRect) -> Void,
         closePanel: @escaping () -> Void,
-        stateSink: @escaping (TabBarVisibilityState) -> Void
+        stateSink: @escaping (TabBarVisibilityState) -> Void,
+        contentOpacitySink: @escaping (CGFloat) -> Void
     ) {
         self.foldSurface = foldSurface
         self.chromeBounds = chromeBounds
@@ -71,12 +78,14 @@ final class TabBarFoldController {
         self.grabZoneSink = grabZoneSink
         self.closePanel = closePanel
         self.stateSink = stateSink
+        self.contentOpacitySink = contentOpacitySink
     }
 
     deinit {
         MainActor.assumeIsolated {
             foldAnimator?.cancelInPlace()
             displayLink?.invalidate()
+            autoHideTask?.cancel()
         }
     }
 
@@ -95,6 +104,7 @@ final class TabBarFoldController {
         }
         foldOffsetWidth = chromeBounds().width
         applyVisibility(state, from: state, animated: false, isUserDriven: false)
+        rescheduleAutoHide()
         return true
     }
 
@@ -113,6 +123,7 @@ final class TabBarFoldController {
         cancelFoldAnimator()
         motion.snap(to: state == .tucked ? .tucked : .shown)
         writeTransform(pose(for: state))
+        rescheduleAutoHide()
     }
 
     /// Records the user's choice for the current screen and moves the bar to it. Tapping a tucked bar restores it.
@@ -160,6 +171,24 @@ final class TabBarFoldController {
 
     func refresh() {
         apply(state: policyState)
+    }
+
+    /// Feeds a touch to the auto-hide. A touch on the Docklet cancels a pending outside-touch tuck.
+    func recordTouch(isOnDocklet: Bool) {
+        autoHide.touch(isOnDocklet: isOnDocklet, at: CACurrentMediaTime())
+        rescheduleAutoHide()
+    }
+
+    /// Feeds a hardware key press to the auto-hide, which restarts the idle countdown.
+    func recordKeyPress() {
+        autoHide.keyPress(at: CACurrentMediaTime())
+        rescheduleAutoHide()
+    }
+
+    /// Holds or releases an auto-hide blocker that the chrome owns, such as an open panel or the keyboard.
+    func setAutoHideBlocked(_ blocker: DockletHideBlocker, _ isBlocked: Bool) {
+        autoHide.setBlocked(blocker, isBlocked, at: CACurrentMediaTime())
+        rescheduleAutoHide()
     }
 }
 
@@ -209,6 +238,7 @@ private extension TabBarFoldController {
         let previous = state
         commit(newState)
         applyVisibility(newState, from: previous, animated: true, isUserDriven: isUserDriven)
+        rescheduleAutoHide()
     }
 
     func commit(_ newState: TabBarVisibilityState) {
@@ -266,6 +296,7 @@ private extension TabBarFoldController {
         cancelFoldAnimator()
         stopSettling()
         isDragging = true
+        rescheduleAutoHide()
     }
 
     func cancelFoldAnimator() {
@@ -299,6 +330,7 @@ private extension TabBarFoldController {
         }
         if !motion.isSettling {
             stopSettling()
+            rescheduleAutoHide()
         }
     }
 
@@ -319,6 +351,7 @@ private extension TabBarFoldController {
         foldSurface.transform = transform
         glowSink(geometry.edgeGlowRect, glowOpacity)
         grabZoneSink(motion.destination == .tucked ? geometry.grabZoneRect : .zero)
+        contentOpacitySink(motion.contentOpacity)
     }
 
     /// The Edge glow follows the hide progress while a finger drags the bar or it settles toward tucked. A settle
@@ -339,6 +372,50 @@ private extension TabBarFoldController {
 
     func pose(for state: TabBarVisibilityState) -> CGAffineTransform {
         state == .hidden ? hiddenTransform() : dockletTransform()
+    }
+
+    /// Tucks the bar on the quiet settle, with no haptic. The tuck is recorded as the screen's override, as a swipe is.
+    func tuckQuietly() {
+        storeOverride(.tucked)
+        commit(.tucked)
+        cancelFoldAnimator()
+        motion.quietSettle(to: .tucked, now: CACurrentMediaTime())
+        startSettling()
+        rescheduleAutoHide()
+    }
+
+    /// Cancels the pending wake-up and, unless a blocker holds, sleeps one wake-up until the auto-hide deadline.
+    func rescheduleAutoHide() {
+        autoHideTask?.cancel()
+        autoHideTask = nil
+        syncAutoHideBlockers()
+        guard let deadline = autoHide.deadline else {
+            return
+        }
+        autoHideTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(max(0, deadline - CACurrentMediaTime())))
+            guard !Task.isCancelled else {
+                return
+            }
+            self?.autoHideFired()
+        }
+    }
+
+    func autoHideFired() {
+        autoHideTask = nil
+        syncAutoHideBlockers()
+        guard autoHide.isDue(at: CACurrentMediaTime()) else {
+            rescheduleAutoHide()
+            return
+        }
+        tuckQuietly()
+    }
+
+    /// The drag, settle and state blockers, which change inside this controller.
+    func syncAutoHideBlockers() {
+        let now = CACurrentMediaTime()
+        autoHide.setBlocked(.motionRunning, isDragging || motion.isSettling, at: now)
+        autoHide.setBlocked(.notShown, state != .shown, at: now)
     }
 
     static func hiddenTranslationX(availableWidth: CGFloat) -> CGFloat {

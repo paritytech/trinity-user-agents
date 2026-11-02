@@ -17,6 +17,8 @@ final class TabBarBarViewModel {
     var isBarHidden = false
     /// Whether the next `isBarHidden` change plays the container's medium impact.
     var playsBarHiddenFeedback = true
+    /// Opacity of the bar's icons and labels. A quiet hide fades them, and the glass never fades.
+    var contentOpacity: CGFloat = 1
     var onSlotTapped: ((Int) -> Void)?
 
     /// Whether the shelf is open. Written by the chrome from the open panel, never by the shelf itself.

@@ -62,9 +62,16 @@ struct DockletMotion {
     /// The held pose's extra turn and offset over the plain pose at release. It fades as the settle runs.
     private var releaseExtra: DockletPose = .zero
     private var unwindFactor: CGFloat = 0
+    /// Whether the bar is in a quiet hide, or rests tucked after one. Only that fades the content inside the glass.
+    private var isQuietHide = false
 
     var isSettling: Bool {
         spring != nil
+    }
+
+    /// Opacity of the content inside the glass. Only a quiet hide fades it.
+    var contentOpacity: CGFloat {
+        isQuietHide ? DockletContentFade.opacity(progress: progress) : 1
     }
 
     /// Jumps to `rest` with no motion, for changes the caller animates itself.
@@ -75,6 +82,9 @@ struct DockletMotion {
         unwindFactor = 0
         progress = rest.progress
         destination = rest
+        if rest != .tucked {
+            isQuietHide = false
+        }
     }
 
     /// Starts a drag at `touch`. A touch on a moving bar catches it where it is.
@@ -149,14 +159,34 @@ struct DockletMotion {
         )
     }
 
+    /// Settles to `rest` on the quiet spring, with no haptic. The first frame only starts the clock, so the bar holds
+    /// still for that frame.
+    mutating func quietSettle(to rest: DockletRest, now: TimeInterval) {
+        drag = nil
+        startSpring(
+            to: rest,
+            velocity: 0,
+            now: now,
+            wasTucked: progress >= Self.tuckThreshold,
+            isUserDriven: false,
+            isQuiet: true
+        )
+    }
+
     /// Advances the settle to `now`. Returns the haptic when a user-started settle lands on a new rest.
     mutating func tick(now: TimeInterval) -> DockletHaptic? {
-        guard let spring else {
+        guard var spring else {
+            return nil
+        }
+        if spring.isAwaitingFirstFrame {
+            spring.isAwaitingFirstFrame = false
+            spring.start = now
+            self.spring = spring
             return nil
         }
         let elapsed = now - spring.start
         let offset = spring.offset(after: elapsed)
-        unwindFactor = Self.unwindShare(after: elapsed)
+        unwindFactor = spring.unwindShare(after: elapsed)
         let hasLanded = elapsed > Self.hardStopSeconds
             || (elapsed > Self.minimumSettleSeconds
                 && abs(offset) < Self.landingTolerance
@@ -220,20 +250,25 @@ struct DockletMotion {
     private struct Spring {
         /// Gives a critically damped settle that is close to rest after about 0.32 s.
         static let angularFrequency: CGFloat = 2 * .pi / 0.32
+        /// Gives the quiet hide's critically damped settle a period of 0.42 s.
+        static let quietAngularFrequency: CGFloat = 2 * .pi / 0.42
         /// Damping ratio of a fast settle, which overshoots its rest once.
         static let underDampedRatio: CGFloat = 0.78
 
-        let start: TimeInterval
+        var start: TimeInterval
         let rest: DockletRest
         let initialOffset: CGFloat
         let initialVelocity: CGFloat
         let dampingRatio: CGFloat
         let landingHaptic: DockletHaptic?
+        let angularFrequency: CGFloat
+        /// Set on a quiet settle, whose first frame only starts the clock.
+        var isAwaitingFirstFrame: Bool
 
         /// Distance from the rest after `elapsed` seconds.
         func offset(after elapsed: TimeInterval) -> CGFloat {
             let time = CGFloat(elapsed)
-            let omega = Self.angularFrequency
+            let omega = angularFrequency
             guard dampingRatio < 1 else {
                 let linear = initialOffset + (initialVelocity + omega * initialOffset) * time
                 return linear * exp(-omega * time)
@@ -243,6 +278,25 @@ struct DockletMotion {
             let oscillation = initialOffset * cos(dampedOmega * time) + sineCoefficient * sin(dampedOmega * time)
             return exp(-dampingRatio * omega * time) * oscillation
         }
+
+        /// Share of the held pose's extra that remains `elapsed` seconds into the settle.
+        func unwindShare(after elapsed: TimeInterval) -> CGFloat {
+            let time = CGFloat(elapsed)
+            return (1 + angularFrequency * time) * exp(-angularFrequency * time)
+        }
+    }
+}
+
+/// The opacity of the content inside the glass during a quiet hide. The glass itself never fades.
+enum DockletContentFade {
+    /// Scale of the fade's curve, which reaches zero just before progress 1.
+    private static let scale: CGFloat = 1.12
+    /// Exponent of the fade's curve.
+    private static let exponent: CGFloat = 1.15
+
+    /// Opacity at `progress`: 1 at shown, and zero from about 0.906 on.
+    static func opacity(progress: CGFloat) -> CGFloat {
+        max(0, 1 - scale * pow(max(0, progress), exponent))
     }
 }
 
@@ -261,18 +315,12 @@ private extension DockletMotion {
         rubberBandMaximum * (1 - 1 / (1 + rubberBandRate * overdrag))
     }
 
-    /// Share of the held pose's extra that remains `elapsed` seconds into a settle.
-    static func unwindShare(after elapsed: TimeInterval) -> CGFloat {
-        let time = CGFloat(elapsed)
-        let omega = Spring.angularFrequency
-        return (1 + omega * time) * exp(-omega * time)
-    }
-
     /// Stops any settle and takes the bar under the finger from its current progress.
     private mutating func startDrag(touch: CGPoint, time: TimeInterval, travel: CGFloat, grip: Grip) {
         spring = nil
         releaseExtra = .zero
         unwindFactor = 0
+        isQuietHide = false
         drag = Drag(
             startProgress: progress,
             travel: travel,
@@ -355,7 +403,8 @@ private extension DockletMotion {
         velocity: CGFloat,
         now: TimeInterval,
         wasTucked: Bool,
-        isUserDriven: Bool
+        isUserDriven: Bool,
+        isQuiet: Bool = false
     ) {
         let landsTucked = rest == .tucked
         var landingHaptic: DockletHaptic?
@@ -365,13 +414,16 @@ private extension DockletMotion {
         destination = rest
         releaseExtra = .zero
         unwindFactor = 0
+        isQuietHide = isQuiet
         spring = Spring(
             start: now,
             rest: rest,
             initialOffset: progress - rest.progress,
             initialVelocity: velocity,
             dampingRatio: abs(velocity) > Self.underDampedSpeed ? Spring.underDampedRatio : 1,
-            landingHaptic: landingHaptic
+            landingHaptic: landingHaptic,
+            angularFrequency: isQuiet ? Spring.quietAngularFrequency : Spring.angularFrequency,
+            isAwaitingFirstFrame: isQuiet
         )
     }
 }

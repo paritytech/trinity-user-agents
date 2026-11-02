@@ -67,6 +67,23 @@ extension TabBarBottomChromeController {
         )
     }
 
+    /// Reports each touch in the window to the auto-hide. The observer never recognizes, so no touch is taken.
+    func installTouchObserver() {
+        dockletTouchObserver.onTouchBegan = { [weak self] touch in
+            self?.observeTouch(touch)
+        }
+    }
+
+    /// Keeps the touch observer on the window that holds the chrome, which exists only once the chrome is laid out.
+    func attachTouchObserver() {
+        let window = view.window
+        guard dockletTouchObserver.view !== window else {
+            return
+        }
+        dockletTouchObserver.view?.removeGestureRecognizer(dockletTouchObserver)
+        window?.addGestureRecognizer(dockletTouchObserver)
+    }
+
     /// Re-derives the lift on the centre ease, so a panel commit moves the bar with the centre control.
     func refreshKeyboardLift() {
         applyKeyboardLift(animation: UIAccessibility.isReduceMotionEnabled ? nil : DSTabBarStyle.centerEaseOut)
@@ -145,6 +162,8 @@ private extension TabBarBottomChromeController {
             return
         }
         keyboardFrame = frame
+        let isKeyboardUp = view.convert(frame, from: nil).minY < view.bounds.maxY
+        foldController.setAutoHideBlocked(.keyboardUp, isKeyboardUp)
         let duration = userInfo[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0
         let animates = duration > 0 && !UIAccessibility.isReduceMotionEnabled
         applyKeyboardLift(animation: animates ? .spring(duration: duration, bounce: 0) : nil)
@@ -221,6 +240,19 @@ private extension TabBarBottomChromeController {
     /// The tucked bar's Grab zone, which the fold controller publishes while tucked or settling toward tucked.
     func isInGrabZone(_ location: CGPoint) -> Bool {
         (view as? TabBarChromePassthroughView)?.foldGrabZone.contains(location) ?? false
+    }
+
+    /// A touch on the Docklet restarts its idle countdown and cancels a pending outside-touch tuck.
+    func observeTouch(_ touch: UITouch) {
+        let location = touch.location(in: view)
+        foldController.recordTouch(isOnDocklet: isOnDocklet(at: location))
+    }
+
+    /// The bar's host, which holds the open panel, and the Grab zone count as the Docklet. The Edge glow does not,
+    /// since it sits on the right edge even while the bar is shown.
+    func isOnDocklet(at location: CGPoint) -> Bool {
+        let barFrame = barHost.view.convert(barHost.view.bounds, to: view)
+        return barFrame.contains(location) || isInGrabZone(location)
     }
 }
 

@@ -17,6 +17,7 @@ public struct DSTabBarCenterControl<Content: View>: View {
     private let onCloseRequested: ((TimeInterval?) -> Void)?
     private let onSwipeOpenBegan: (() -> Void)?
     private let onSwipeOpenLanding: (() -> Void)?
+    private let glyphOpacity: CGFloat
     private let content: Content
 
     @State private var dragStart: CGFloat?
@@ -56,7 +57,8 @@ public struct DSTabBarCenterControl<Content: View>: View {
     /// settle closed from open. It receives the close's duration, nil for the default, and the host closes the panel
     /// through `progress`. `onSwipeOpenBegan` is called once per drag when a drag on the button that began short
     /// of fully open moves up past the tap slop. `onSwipeOpenLanding` is called when that drag's release settles
-    /// open and the settle has run, at once under Reduce Motion.
+    /// open and the settle has run, at once under Reduce Motion. `glyphOpacity` fades the glyph in the lobe, so a host
+    /// can fade it with the rest of its content.
     public init(
         progress: Binding<CGFloat>,
         contentHeight: CGFloat,
@@ -66,6 +68,7 @@ public struct DSTabBarCenterControl<Content: View>: View {
         onCloseRequested: ((TimeInterval?) -> Void)? = nil,
         onSwipeOpenBegan: (() -> Void)? = nil,
         onSwipeOpenLanding: (() -> Void)? = nil,
+        glyphOpacity: CGFloat = 1,
         @ViewBuilder content: () -> Content
     ) {
         _progress = progress
@@ -76,6 +79,7 @@ public struct DSTabBarCenterControl<Content: View>: View {
         self.onCloseRequested = onCloseRequested
         self.onSwipeOpenBegan = onSwipeOpenBegan
         self.onSwipeOpenLanding = onSwipeOpenLanding
+        self.glyphOpacity = glyphOpacity
         self.content = content()
     }
 
@@ -309,6 +313,7 @@ private extension DSTabBarCenterControl {
             .frame(width: DSTabBarStyle.centerButtonSize, height: DSTabBarStyle.centerButtonSize)
             .contentShape(Circle().inset(by: lerp(0, (DSTabBarStyle.centerButtonSize - openTouchSize) / 2)))
             .offset(y: lerp(0, openGlyphDrop))
+            .opacity(glyphOpacity)
             .gesture(drag)
             .accessibilityElement()
             .accessibilityLabel(progress > 0.5 ? openAccessibilityLabel : accessibilityLabel)

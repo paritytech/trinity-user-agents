@@ -18,7 +18,7 @@ MainTabBarViewController            container, status strip, widget and inset la
 ├── TabBarContainer                 mounts one tab or one SPA
 ├── ChainConnectionStatusBarView    20 pt strip, informational only
 └── TabBarBottomChromeController    bar, panels, fold, outside tap, bar items
-    ├── TabBarFoldController        visibility state, hide progress via DockletMotion,
+    ├── TabBarFoldController        visibility state, auto-hide, hide progress via DockletMotion,
     │                               CADisplayLink; sole writer of the surface transform
     └── TabBarChromePassthroughView full-bleed, hit tests only the grab zone and the outside-tap area
         ├── TabBarChromeSurfaceView fold transform target, bar layout
@@ -47,7 +47,9 @@ MainTabBarViewController            container, status strip, widget and inset la
 | Fold transform target, bar width | `polkadot-app/Modules/MainTabBar/Chrome/TabBarChromeSurfaceView.swift` |
 | Fold state machine | `polkadot-app/Modules/MainTabBar/Chrome/TabBarFoldController.swift` |
 | Fold state resolution | `polkadot-app/Modules/MainTabBar/Chrome/TabBarVisibilityPolicy.swift` |
-| Hide progress, drag and release, settle spring | `polkadot-app/Modules/MainTabBar/Chrome/DockletMotion.swift` (pure value type) |
+| Hide progress, drag and release, settle spring, quiet hide and content fade | `polkadot-app/Modules/MainTabBar/Chrome/DockletMotion.swift` (pure value type) |
+| Auto-hide blockers, idle countdown, outside-touch tuck | `polkadot-app/Modules/MainTabBar/Chrome/DockletAutoHide.swift` (pure value type) |
+| Window touch observer that feeds the auto-hide | `polkadot-app/Modules/MainTabBar/Chrome/DockletTouchObserver.swift` |
 | Bar frame, pivot, slide, Edge glow and Grab zone rects, plain pose | `polkadot-app/Modules/MainTabBar/Chrome/DockletGeometry.swift` (pure value type) |
 | Edge glow alpha profile, blur and feather stops | `polkadot-app/Modules/MainTabBar/Chrome/DockletGlowProfile.swift` (pure value type) |
 | Grab aim: progress and pose from a finger in the Grab zone | `polkadot-app/Modules/MainTabBar/Chrome/DockletAim.swift` (pure value type) |
@@ -93,6 +95,7 @@ The bar row is an accessibility container with the tab-bar trait.
 - `TabBarSlotMap` converts between bar position (item index) and tab position (tab index). Only tab indices cross into `TabBarContainer`.
 - Titles appear under the icons only when the interactor enables labels (`setLabels(visible:)`).
 - While the bar is tucked, no slot is reachable. A tap in the grab zone restores the bar.
+- During a quiet hide, the icons and labels fade with the bar. See Quiet hide under Fold.
 
 ## Center Control and Center Panel
 
@@ -169,7 +172,7 @@ The chrome takes the width from `DSTabBarStyle.rowWidth(inAvailableWidth:)` of i
 
 ## Haptics and Accessibility
 
-**Haptics.** The PolkadotUI components play sensory feedback next to the gestures that trigger it. `DSTabBarCenterControl` owns the open and close feedback for the control. `DSTabBarContainer` owns the feedback for a bar-hidden change while the panel is open. The app chrome plays two impacts, and only for a tuck or restore the user starts: a heavy impact when the bar lands tucked, and a medium impact when it lands shown. `TabBarFoldController` plays them through `UIImpactFeedbackGenerator`. A settle the app starts, or one that keeps the same rest, plays nothing. A grab released back to tucked plays nothing. A grab released to shown plays the medium impact. While a drag moves the bar, `TabBarFoldController` also plays a selection tick (`UISelectionFeedbackGenerator`) when projected progress crosses 0.54 upward or 0.46 downward. The landing focus of a swipe into Search passes a flag that mutes the container's bar-hidden feedback. Each slot tap plays a selection feedback from a simultaneous gesture in the bar row, including a reselect.
+**Haptics.** The PolkadotUI components play sensory feedback next to the gestures that trigger it. `DSTabBarCenterControl` owns the open and close feedback for the control. `DSTabBarContainer` owns the feedback for a bar-hidden change while the panel is open. The app chrome plays two impacts, and only for a tuck or restore the user starts: a heavy impact when the bar lands tucked, and a medium impact when it lands shown. `TabBarFoldController` plays them through `UIImpactFeedbackGenerator`. A settle the app starts, or one that keeps the same rest, plays nothing. An auto-hide tuck plays nothing either. A grab released back to tucked plays nothing. A grab released to shown plays the medium impact. While a drag moves the bar, `TabBarFoldController` also plays a selection tick (`UISelectionFeedbackGenerator`) when projected progress crosses 0.54 upward or 0.46 downward. The landing focus of a swipe into Search passes a flag that mutes the container's bar-hidden feedback. Each slot tap plays a selection feedback from a simultaneous gesture in the bar row, including a reselect.
 
 **Accessibility.** VoiceOver sees the center control as a button. The caller passes its label. The app passes the `QR scanner` string. When the panel is open, the escape action closes it.
 
@@ -243,6 +246,23 @@ Overrides are stored per screen, weakly keyed on the navigation screen, so tucki
 **Bringing it back.** A touch in the Grab zone catches a tucked bar, or one still settling toward tucked, and turns it to point at the finger. `DockletMotion.beginAim` starts the drag. Progress is the finger's angle from the pivot over a quarter turn. The pivot slides out with progress, so the angle is solved in two passes per frame (`DockletAim`). Low and far in gives shown. High at the edge gives tucked. The grab's progress and pose blend out over the first 80 pt of finger travel, so catching the bar does not make it jump. Release uses the same rules as a tuck drag, plus one: a leftward finger speed above 350 pt/s over the last 100 ms restores the bar, however short the drag.
 
 **Animation.** A release starts a spring that takes the release velocity as its initial velocity. Faster than 4 progress per second, the spring is under-damped (ratio 0.78). Otherwise it is critically damped. A `CADisplayLink` in `TabBarFoldController` drives it. The held offset unwinds on the same clock. The settle lands once it is near rest, after 80 ms, and at 1.4 s at the latest. `TabBarFoldController` is the only writer of the chrome surface transform. Moves to or from `hidden` use a plain UIKit spring animator instead, because the display link drives only the shown and tucked poses.
+
+**Auto-hide.** A shown bar tucks itself without a drag, in two cases:
+
+- The first touch outside the Docklet tucks it at once.
+- Otherwise it tucks 3 s after the last touch or hardware key press.
+
+The Docklet is the bar, the open panel and the Grab zone. The Edge glow strip does not count while the bar is shown. A touch on the Docklet restarts the 3 s countdown and cancels a pending outside-touch tuck. Further outside touches do not restart that tuck. The tuck is stored as the screen's override.
+
+Blockers hold the tuck: an open panel, the keyboard, a drag or settle in progress, and a bar that is not shown. While a blocker holds, an outside touch starts no tuck. Clearing the last blocker restarts the 3 s countdown from that moment. Onboarding tips and VoiceOver will add more blockers.
+
+`DockletAutoHide` is the pure policy and reads no clock, so the caller passes in times. `DockletTouchObserver` is a window recognizer. It reports each touch that begins and never recognizes, cancels or delays one. `TabBarFoldController` feeds both and schedules one wake-up for the next deadline.
+
+**Quiet hide.** The auto-hide tuck uses the quiet settle, a critically damped spring with a 0.42 s period and no haptic. The first frame only starts its clock, so motion begins on the second frame.
+
+Only the content inside the glass fades: the icons, the labels and the centre glyph. Its opacity is `1 − 1.12 × progress^1.15`, floored at zero, so it is gone from about progress 0.906. The glass and its ancestors never take alpha, because alpha on a visual effect view breaks the effect. `TabBarBarView` and `DSTabBarCenterControl` (`glyphOpacity`) apply the value.
+
+The fade stays while the bar is tucked. A drag, a grab or a return to shown clears it.
 
 ## Clearance and Safe Area
 

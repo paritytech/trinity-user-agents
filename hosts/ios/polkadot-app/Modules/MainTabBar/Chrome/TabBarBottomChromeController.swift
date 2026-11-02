@@ -11,6 +11,7 @@ final class TabBarBottomChromeController: UIViewController {
     let chromeSurface = TabBarChromeSurfaceView()
     let edgeGlowView = TabBarEdgeGlowView(frame: .zero)
     let centerButtonAnchorGuide = UILayoutGuide()
+    let dockletTouchObserver = DockletTouchObserver(target: nil, action: nil)
     let barModel = TabBarBarViewModel()
     lazy var barHost = UIHostingController(rootView: TabBarBarView(model: barModel))
     lazy var dimHost = UIHostingController(rootView: TabBarDimView(model: barModel))
@@ -53,6 +54,9 @@ final class TabBarBottomChromeController: UIViewController {
         },
         stateSink: { [weak self] state in
             self?.tipController.setBarShown(state == .shown)
+        },
+        contentOpacitySink: { [weak self] opacity in
+            self?.barModel.contentOpacity = opacity
         }
     )
 
@@ -71,6 +75,7 @@ final class TabBarBottomChromeController: UIViewController {
             self?.updateActiveActionIndex()
             self?.applyBarLiveHeight()
             self?.refreshKeyboardLift()
+            self?.foldController.setAutoHideBlocked(.panelOpen, kind != nil)
             (self?.viewIfLoaded as? TabBarChromePassthroughView)?.isOutsideTapEnabled = kind != nil
             if kind != nil {
                 self?.tipController.dismissForPanel()
@@ -138,6 +143,12 @@ final class TabBarBottomChromeController: UIViewController {
         max(0, restingBarHeight - view.safeAreaInsets.bottom)
     }
 
+    deinit {
+        MainActor.assumeIsolated {
+            dockletTouchObserver.view?.removeGestureRecognizer(dockletTouchObserver)
+        }
+    }
+
     override func loadView() {
         view = TabBarChromePassthroughView()
     }
@@ -161,6 +172,7 @@ final class TabBarBottomChromeController: UIViewController {
         installOutsideTapRecognizer()
         installGrabRecognizer()
         installKeyboardObserver()
+        installTouchObserver()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -177,6 +189,8 @@ final class TabBarBottomChromeController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+
+        attachTouchObserver()
 
         // Order matters: the centre content height is clamped to the available height the first call writes.
         refreshAvailablePanelHeight()
