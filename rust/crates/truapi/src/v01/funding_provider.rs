@@ -24,27 +24,46 @@ pub struct FundingAssignment {
 
 /// Progress a provider reports for a session it serves.
 ///
-/// Updates only move forward. Once funds are moving the host decides the
-/// outcome: an inbound session is delivered from the claims of the top-ups it
-/// names, an outbound one is released once the user's payment completes.
+/// Updates only move forward, each in the direction of its session. Once
+/// funds are moving the host decides the outcome: an inbound session is
+/// delivered from the claims of the top-ups it names, an outbound one is
+/// released once the user's payment completes.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingUpdate {
-	/// Inbound: waiting for the user to pay the provider.
+	/// A step of an inbound session.
+	#[codec(index = 0)]
+	In(FundingInboundUpdate),
+	/// A step of an outbound session.
+	#[codec(index = 1)]
+	Out(FundingOutboundUpdate),
+	/// The session ended without success, before any funds moved.
+	#[codec(index = 2)]
+	Failed {
+		/// Why it ended.
+		reason: FundingFailure,
+	},
+}
+
+/// A step of an inbound session: the user pays the provider, which credits
+/// the user's balance.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingInboundUpdate {
+	/// Waiting for the user to pay the provider.
 	#[codec(index = 0)]
 	AwaitingPayment,
-	/// Inbound: the provider has seen the user's payment.
+	/// The provider has seen the user's payment.
 	#[codec(index = 1)]
 	PaymentReceived {
 		/// Whether the payment can no longer be reversed.
 		finalized: bool,
 	},
-	/// Inbound: the provider is converting the payment to the user's balance
-	/// asset.
+	/// The provider is converting the payment to the user's balance asset.
 	#[codec(index = 2)]
 	Converting,
-	/// Inbound: the provider started a top-up with `payment.topUp` to credit
-	/// the user. A partial claim may be followed by further top-ups.
+	/// The provider started a top-up with `payment.topUp` to credit the user.
+	/// A partial claim may be followed by further top-ups.
 	#[codec(index = 3)]
 	Crediting {
 		/// Id the top-up was started with.
@@ -52,25 +71,25 @@ pub enum FundingUpdate {
 		/// Amount the top-up asks to credit.
 		amount: u128,
 	},
-	/// Inbound: the provider started every top-up it will. The session is
-	/// delivered with what they claimed.
+	/// The provider started every top-up it will. The session is delivered
+	/// with what they claimed.
 	#[codec(index = 4)]
 	Delivered,
-	/// Outbound: the provider asked the user to pay it with
-	/// `payment.request`. The session is released once that payment
-	/// completes.
-	#[codec(index = 5)]
+}
+
+/// A step of an outbound session: the provider collects the user's balance
+/// and pays the user out.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingOutboundUpdate {
+	/// The provider asked the user to pay it with `payment.request`. The
+	/// session is released once that payment completes.
+	#[codec(index = 0)]
 	Collecting {
 		/// Id the payment request was made with.
 		payment_id: [u8; 32],
 		/// Amount the payment asks for.
 		amount: u128,
-	},
-	/// The session ended without success, before any funds moved.
-	#[codec(index = 6)]
-	Failed {
-		/// Why it ended.
-		reason: FundingFailure,
 	},
 }
 
