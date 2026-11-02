@@ -2741,7 +2741,48 @@ async fn run_funding(runtime: &SigningHostRuntime, command: FundingCommand) -> R
 				.map_err(|reason| anyhow::anyhow!("cancelling {intent} failed: {reason}"))?;
 			Ok(format!("Cancel of {intent}: {outcome}"))
 		},
+		FundingCommand::Sessions => {
+			let lines: Vec<String> = runtime
+				.funding_sessions()
+				.into_iter()
+				.map(|session| {
+					format!(
+						"{} {:?} {} {:?}",
+						session.intent,
+						session.direction,
+						funding_amount(session.amount),
+						session.wire_item()
+					)
+				})
+				.collect();
+			Ok(if lines.is_empty() { "No funding sessions".to_string() } else { lines.join("\n") })
+		},
+		FundingCommand::History => {
+			let lines: Vec<String> = runtime
+				.funding_history()
+				.into_iter()
+				.map(|summary| {
+					format!(
+						"{} {:?} {} {:?}",
+						summary.intent,
+						summary.direction,
+						funding_amount(summary.amount),
+						summary.stage
+					)
+				})
+				.collect();
+			Ok(if lines.is_empty() {
+				"No ended funding sessions".to_string()
+			} else {
+				lines.join("\n")
+			})
+		},
 	}
+}
+
+/// A session's amount, or that the user picks it on the provider's screens.
+fn funding_amount(amount: Option<u128>) -> String {
+	amount.map_or_else(|| "amount open".to_string(), |amount| amount.to_string())
 }
 
 async fn run_renew(session: &mut SigningHostSession) -> Result<()> {
