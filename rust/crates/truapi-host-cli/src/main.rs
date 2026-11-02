@@ -40,6 +40,7 @@ mod stack;
 mod terminal_ui;
 mod transcript;
 mod update;
+mod worker_host;
 
 use std::{
 	collections::HashMap,
@@ -1841,7 +1842,7 @@ fn build_signing_runtime(
 		network,
 		Some(CliStoragePaths::new(storage_path, product_storage_dir)),
 		approval,
-		ui,
+		ui.clone(),
 	);
 	let config = SigningHostConfig::new(
 		host_info("Headless Signing Host"),
@@ -1865,7 +1866,7 @@ fn build_signing_runtime(
 	if let Some(pocket) = pocket {
 		runtime.set_pocket_platform(pocket);
 	}
-	funding_host::CliFundingHost::install(&runtime, platform.clone(), &network)?;
+	funding_host::CliFundingHost::install(&runtime, platform.clone(), ui, &network)?;
 	runtime.set_game_platform(Arc::new(game::CliGameHost));
 	runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
 	runtime.set_installation_provider(installation);

@@ -175,6 +175,29 @@ pub async fn run_captured(
 	capture(command, ui).await
 }
 
+/// Run `script` as `product_id`'s worker until it exits, killing it if the
+/// returned future is dropped first. Its output goes to the terminal UI when
+/// there is one, and to this process's own output otherwise.
+pub async fn run_worker(
+	frame_url: &str,
+	product_id: &ProductId,
+	script: &Path,
+	ui: Option<UiHandle>,
+) -> Result<ExitStatus> {
+	script_project::prepare(script, ui.clone()).await?;
+	let mut command = command(frame_url, product_id, script, ScriptHostRole::SigningHost)?;
+	// The host reads the user's commands from its own stdin.
+	command.stdin(Stdio::null());
+	match ui {
+		Some(ui) => capture(command, ui).await,
+		None => command
+			.kill_on_drop(true)
+			.status()
+			.await
+			.context("failed to spawn `bun` for the worker script (is bun installed?)"),
+	}
+}
+
 /// Stream a child process into the terminal UI and stop it on cancellation.
 pub async fn capture(mut command: Command, ui: UiHandle) -> Result<ExitStatus> {
 	command.stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);

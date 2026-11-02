@@ -3,6 +3,8 @@
 | Method | Status | Details |
 | --- | --- | --- |
 | `Funding/request_in_delivered` | ✅ |  |
+| `Funding/worker_started_on_demand` | ✅ |  |
+| `Funding/worker_reassigned_after_stop` | ✅ |  |
 | `Funding/request_out_released` | ✅ |  |
 | `Funding/request_failed` | ✅ |  |
 | `Funding/request_dismissed` | ✅ |  |

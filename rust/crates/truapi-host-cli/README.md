@@ -771,10 +771,21 @@ Scripts under `js/scripts/` include:
 
   The funding phase runs the signing host's funding overlay as a host app
   would. `TRUAPI_FUNDING_PROVIDERS` names the providers the overlay offers,
-  here the phase's own product, which runs as a Worker and is both the product
-  asking for funds and the provider's worker serving them through
-  `onAssign`, `onCancel` and `onSettleCancel`. The auto-accepting user picks
-  the provider and accepts its cancel offers. The script acts as the user
+  comma-separated, each a product id optionally followed by `=` and the path
+  of its worker script (`fundtest.dot=./worker.ts,other.dot`). The host acts
+  as the provider's host: when the core asks for a provider's worker, it
+  launches that script as its own process on a frame socket of its own,
+  served as a Worker execution of the provider, and kills it when the core
+  lets the worker go. A provider without a script has no worker on this host.
+  The phase runs the product script (`funding-battery.ts`, an App) and the
+  provider `fundtest.dot` with `funding-worker.ts` as its worker, which serves
+  sessions through `onAssign`, `onCancel` and `onSettleCancel` by their
+  direction and amount and records what it did in
+  `TRUAPI_FUNDING_WORKER_LOG`. The cases check that no worker runs until a
+  session is assigned to the provider, and that once its sessions end the
+  host stops it and a new worker process is started for the next session.
+  The auto-accepting user picks the provider and accepts its cancel offers.
+  The script acts as the user
   through the host's stdin, a pipe in `TRUAPI_FUNDING_USER`: with `--script`,
   a stdin that is not a terminal takes `/funding cancel <intent>` and
   `/approval manual|automatic`, so a case cancels a session or has the overlay
@@ -783,10 +794,11 @@ Scripts under `js/scripts/` include:
   `TRUAPI_FUNDING_LEDGER`, and the core settles each session from them. The
   ledger moves no real funds, so the host refuses it on a network preset whose
   identities are real. The
-  phase runs the host twice on the same storage, so the provider is assigned
-  an inbound session again after a restart and finishes it from the state it
-  kept in its own storage. Every overlay request, screen, cancel, answer and
-  session change is recorded in
+  phase runs the host twice on the same storage, so the restarted host starts
+  the provider's worker for the inbound session still open, which is assigned
+  it again and finishes it from the state it kept in its own storage. Every
+  overlay request, screen, cancel, answer, session change and worker launch,
+  stop or exit is recorded in
   `TRUAPI_FUNDING_LOG`, which the cases read. CI runs this phase on every
   change to the core, the CLI or the client, with a fixed development signer
   in `HOST_CLI_SIGNER_MNEMONIC` so the host needs no account provisioned on

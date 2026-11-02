@@ -50,6 +50,8 @@ SCRIPT="rust/crates/truapi-host-cli/js/scripts/battery.ts"
 CHAT_SCRIPT="rust/crates/truapi-host-cli/js/scripts/chat-battery.ts"
 POCKET_SCRIPT="rust/crates/truapi-host-cli/js/scripts/pocket-battery.ts"
 FUNDING_SCRIPT="rust/crates/truapi-host-cli/js/scripts/funding-battery.ts"
+FUNDING_WORKER_SCRIPT="rust/crates/truapi-host-cli/js/scripts/funding-worker.ts"
+FUNDING_PROVIDER_ID="fundtest.dot"
 PRODUCT_ID="truapi-playground.dot"
 REPORTS="explorer/diagnosis-reports/spa"
 LOG_DIR="target/battery"
@@ -254,14 +256,16 @@ funding_phase() {
   # Overlay requests and session changes as the host saw them. The cases read
   # it so a pass cannot rest on the product's word alone.
   export TRUAPI_FUNDING_LOG="$ROOT/$LOG_DIR/funding-host-transcript.jsonl"
-  # The overlay offers the script's own product, which serves as the provider.
-  export TRUAPI_FUNDING_PROVIDERS="$PRODUCT_ID"
+  # The overlay offers one provider, whose worker the host launches from its
+  # own script when the core asks for it.
+  export TRUAPI_FUNDING_PROVIDERS="$FUNDING_PROVIDER_ID=$ROOT/$FUNDING_WORKER_SCRIPT"
+  # What the worker was asked and did, across every process the host runs it in.
+  export TRUAPI_FUNDING_WORKER_LOG="$ROOT/$LOG_DIR/funding-worker-journal.jsonl"
   # The ledger top-up and payment engines' record, kept across the restart.
   export TRUAPI_FUNDING_LEDGER="$ROOT/$LOG_DIR/funding-host-ledger.jsonl"
   export TRUAPI_FUNDING_STATE="$ROOT/$LOG_DIR/funding-battery-state.json"
-  rm -f "$TRUAPI_FUNDING_LOG" "$TRUAPI_FUNDING_LEDGER" "$TRUAPI_FUNDING_STATE"
-  # Run as a Worker, so the script can also serve the sessions it asks for as
-  # the provider; then once more on the same storage, as a restarted host.
+  rm -f "$TRUAPI_FUNDING_LOG" "$TRUAPI_FUNDING_WORKER_LOG" "$TRUAPI_FUNDING_LEDGER" "$TRUAPI_FUNDING_STATE"
+  # Run the product, then once more on the same storage, as a restarted host.
   local rc=0
   funding_run start "$log" || rc=$?
   [ "$rc" = 0 ] || return "$rc"
@@ -281,7 +285,6 @@ funding_run() {
   exec 7<>"$TRUAPI_FUNDING_USER"
   TRUAPI_FUNDING_STAGE="$stage" "$HOST" signing-host \
     --product-id "$PRODUCT_ID" \
-    --execution-kind worker \
     --script "$FUNDING_SCRIPT" \
     --auto-accept \
     ${HOST_ARGS[@]+"${HOST_ARGS[@]}"} < "$TRUAPI_FUNDING_USER" > >(tee "$log") 2>&1 &

@@ -1,26 +1,30 @@
-// End-to-end check of a provider worker serving funding sessions, against the
-// CLI signing host with `TRUAPI_FUNDING_PROVIDERS` naming this product: the
-// overlay offers it, the auto-accepting user picks it, so this script is both
-// the product requesting funds and the provider's worker serving them.
+// End-to-end check of a provider's worker serving funding sessions, against
+// the CLI signing host with `TRUAPI_FUNDING_PROVIDERS` naming the provider and
+// its worker script. The overlay offers the provider, the auto-accepting user
+// picks it, and the host launches the worker as its own process when the core
+// asks for it and stops it when the core lets it go.
 //
-// The core calls the worker with `assign`, `cancel` and `settleCancel`, which
-// `ScriptedProvider` answers; the worker calls the core with `report` and
-// `presentFrame`. The battery acts as the user through the host's commands
+// The worker (`ScriptedProvider`, run by `scripts/funding-worker.ts`) answers
+// the core's `assign`, `cancel` and `settleCancel` calls and calls the core
+// with `report` and `presentFrame`. What it does with a session is set by the
+// session's direction and amount, as the product and the worker are separate
+// processes, and it records what it was asked and what it did in the journal
+// `TRUAPI_FUNDING_WORKER_LOG` names. The product's cases read that journal and
+// the host's transcript, and act as the user through the host's commands
 // (`actAsUser`), as a person at the terminal would.
 //
-// The run is split across a host restart. `runProviderStart` takes an
-// inbound session as far as its top-up, and `runProviderResume`, in a new host
-// process on the same storage, checks the session is assigned again when the
-// worker connects, with the worker's own state still in its storage, and lets
-// the core deliver it from the claim. Top-ups and payments go to the host's
-// ledger engines, which complete them in full.
-import { appendFileSync } from "node:fs";
+// The run is split across a host restart. `runProviderStart` takes an inbound
+// session as far as its top-up, and `runProviderResume`, in a new host process
+// on the same storage, checks the core starts the worker again for the session
+// still open, assigns it where it stopped with the worker's own state still in
+// its storage, and delivers it from the claim. Top-ups and payments go to the
+// host's ledger engines, which complete them in full.
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { ok } from "neverthrow";
 import type { TrUApiClient } from "../../../../js/packages/truapi/src/index.ts";
 import type {
   FundingAssignment,
   FundingCancelAnswer,
-  FundingCancelDecision,
   FundingUpdate,
   HostFundingStatusSubscribeItem,
 } from "../../../../js/packages/truapi/src/generated/types.ts";
@@ -48,11 +52,25 @@ function afterAnswer(work: () => unknown) {
   setTimeout(work, 0);
 }
 
-const IN_AMOUNT = 1_100n;
-const OUT_AMOUNT = 550n;
-const CANCEL_AMOUNT = 300n;
-const OFFER_AMOUNT = 250n;
-const LATE_AMOUNT = 200n;
+/** An inbound session the worker credits `DELIVERED_CREDIT` of, in full. */
+export const DELIVERED_AMOUNT = 1_000n;
+export const DELIVERED_CREDIT = 900n;
+/** An outbound session the worker pays out in full. */
+export const RELEASED_AMOUNT = 500n;
+/** An inbound session the worker fails. */
+export const FAILED_AMOUNT = 2_000n;
+/** The inbound session the worker shows screens for and takes to its
+ *  top-up, and delivers after the restart. */
+export const IN_AMOUNT = 1_100n;
+/** An outbound session the worker pays out in full. */
+export const OUT_AMOUNT = 550n;
+/** An inbound session whose cancel the worker stops. */
+export const CANCEL_AMOUNT = 300n;
+/** An inbound session the worker takes payment for, then offers terms to
+ *  cancel. */
+export const OFFER_AMOUNT = 250n;
+/** An inbound session the worker starts crediting before the user cancels. */
+export const LATE_AMOUNT = 200n;
 const CANCEL_FEE = 3n;
 
 /** Type one command into the host, as the user at its terminal would. The
@@ -65,7 +83,7 @@ export function actAsUser(command: string) {
 }
 
 /** Wait until `reached` holds, up to `WAIT_MS`. */
-async function until<T>(
+export async function until<T>(
   reached: () => T | undefined,
   what: string,
 ): Promise<T> {
@@ -81,111 +99,69 @@ async function until<T>(
 /** The storage key the worker keeps a session's own state under. */
 const stateKey = (intent: string) => `funding:${intent}`;
 
-/** What the provider does with a session it is assigned. */
-export type Plan = (
-  client: TrUApiClient,
-  session: FundingAssignment,
-) => Promise<void>;
+/** One line of the worker's journal. `pid` names the worker process. */
+export type JournalLine = { pid: number } & (
+  | { kind: "connected" }
+  | {
+      kind: "assigned";
+      intent: string;
+      direction: string;
+      amount?: string;
+      lastUpdate?: FundingUpdate;
+    }
+  | { kind: "cancel"; intent: string }
+  | { kind: "settled"; intent: string; decision: string }
+  | {
+      kind: "step";
+      intent: string;
+      step: string;
+      ok: boolean;
+      output: string;
+      topUpId?: string;
+    }
+);
 
-/** The provider's worker: it takes every session the core assigns, runs the
- *  plan set for its direction and amount, answers cancels with the answer
- *  set for the session, and settles accepted offers by ending the session.
- *  Every call is recorded, and every call is idempotent, as the core repeats
- *  what is pending when the worker connects. */
-export class ScriptedProvider {
-  readonly assigned: FundingAssignment[] = [];
-  readonly cancels: string[] = [];
-  readonly settled: { intent: string; decision: FundingCancelDecision }[] = [];
-  private readonly plans = new Map<string, Plan>();
-  private readonly started = new Set<string>();
-  private readonly cancelAnswers = new Map<string, FundingCancelAnswer>();
-  private readonly failures: string[] = [];
-
-  constructor(private readonly client: TrUApiClient) {
-    client.fundingProvider.onAssign(({ session }) => {
-      this.assigned.push(session);
-      const plan = this.plans.get(planKey(session.direction, session.amount));
-      if (plan && !this.started.has(session.intent)) {
-        this.started.add(session.intent);
-        afterAnswer(() =>
-          plan(client, session).catch((error) =>
-            this.failures.push(`${session.intent}: ${String(error)}`),
-          ),
-        );
+/** What the worker recorded, across every process that ran it. */
+export function journal(path: string): JournalLine[] {
+  if (!existsSync(path)) return [];
+  // A line still being written is skipped; the next read sees it whole.
+  return readFileSync(path, "utf8")
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line) as JournalLine];
+      } catch {
+        return [];
       }
-      return ok(undefined);
     });
-    client.fundingProvider.onCancel(({ intent }) => {
-      this.cancels.push(intent);
-      return ok(
-        this.cancelAnswers.get(intent) ?? {
-          tag: "Refused",
-          value: { reason: "the battery set no answer" },
-        },
-      );
-    });
-    client.fundingProvider.onSettleCancel(({ intent, decision }) => {
-      this.settled.push({ intent, decision });
-      if (decision.tag === "Accepted") {
-        afterAnswer(() =>
-          report(client, intent, {
-            tag: "Failed",
-            value: { reason: { tag: "Cancelled" } },
-          }).catch((error) =>
-            this.failures.push(`${intent}: ${String(error)}`),
-          ),
-        );
-      }
-      return ok(undefined);
-    });
-  }
-
-  /** Run `plan` on the session assigned for `direction` and `amount`. */
-  plan(direction: "In" | "Out", amount: bigint, plan: Plan) {
-    this.plans.set(planKey(direction, amount), plan);
-  }
-
-  /** Answer the cancel of session `intent` with `answer`. */
-  answerCancel(intent: string, answer: FundingCancelAnswer) {
-    this.cancelAnswers.set(intent, answer);
-  }
-
-  /** The assignment of session `intent`, once the worker holds it. */
-  assignment(intent: string): Promise<FundingAssignment> {
-    return until(
-      () => this.assigned.findLast((session) => session.intent === intent),
-      `the session ${intent} assigned`,
-    );
-  }
-
-  /** What went wrong in a plan run outside a case, if anything. */
-  planFailures(): string[] {
-    return [...this.failures];
-  }
 }
 
-const planKey = (direction: string, amount: bigint | undefined) =>
-  `${direction}:${amount ?? "any"}`;
+/** The worker's first record of `kind` about session `intent`. */
+export function journaled<Kind extends JournalLine["kind"]>(
+  path: string,
+  kind: Kind,
+  intent: string,
+  step?: string,
+): Promise<Extract<JournalLine, { kind: Kind }>> {
+  return until(
+    () =>
+      journal(path).find(
+        (line): line is Extract<JournalLine, { kind: Kind }> =>
+          line.kind === kind &&
+          "intent" in line &&
+          line.intent === intent &&
+          (step === undefined || ("step" in line && line.step === step)),
+      ),
+    `the worker's ${step ?? kind} on ${intent}`,
+  );
+}
 
-function rowFactory(rows: DiagnosisRow[]) {
-  return async (methodName: string, check: () => Promise<string>) => {
-    const startedAt = performance.now();
-    const row = (status: DiagnosisRow["status"], output: string) =>
-      rows.push({
-        id: `Funding/${methodName}`,
-        serviceName: "Funding",
-        methodName,
-        status,
-        output,
-        durationMs: Math.round(performance.now() - startedAt),
-      });
-    try {
-      row("pass", await check());
-    } catch (error) {
-      // One stuck case is recorded and the rest still run.
-      row("fail", error instanceof Error ? error.message : String(error));
-    }
-  };
+/** The worker's step `step` on session `intent`, or an error if it failed. */
+async function stepDone(path: string, intent: string, step: string) {
+  const done = await journaled(path, "step", intent, step);
+  if (!done.ok) throw new Error(`the worker's ${step} failed: ${done.output}`);
+  return done;
 }
 
 export async function report(
@@ -199,30 +175,6 @@ export async function report(
       `report ${update.tag} refused: ${stringify(reported.error)}`,
     );
   }
-}
-
-/** Request a session and return its intent, which the provider sees too. */
-async function requestFunding(
-  client: TrUApiClient,
-  direction: "In" | "Out",
-  amount: bigint,
-): Promise<string> {
-  const requested = await client.funding.request({ direction, amount });
-  if (requested.isErr()) {
-    throw new Error(`funding.request failed: ${stringify(requested.error)}`);
-  }
-  return requested.value.intent;
-}
-
-async function lastStatus(
-  client: TrUApiClient,
-  intent: string,
-): Promise<HostFundingStatusSubscribeItem | undefined> {
-  const items = await untilComplete(
-    client.funding.statusSubscribe({ request: { intent } }),
-    `session ${intent}`,
-  );
-  return items.at(-1);
 }
 
 /** Start a top-up of `amount` under `topUpId` for session `intent`. */
@@ -246,6 +198,368 @@ async function topUp(
   }
 }
 
+/** Request a payment of `amount` for session `intent` and name it in a
+ *  Collecting report. */
+async function payOut(client: TrUApiClient, intent: string, amount: bigint) {
+  const paymentId = randomId();
+  const paid = await client.payment.request({
+    amount,
+    destination: `0x${"22".repeat(32)}`,
+    id: paymentId,
+    funding: intent,
+  });
+  if (paid.isErr()) {
+    throw new Error(`payment.request failed: ${stringify(paid.error)}`);
+  }
+  await report(client, intent, {
+    tag: "Out",
+    value: { tag: "Collecting", value: { paymentId, amount } },
+  });
+}
+
+/** The provider's worker: it takes every session the core assigns, does
+ *  what the session's direction and amount call for, answers cancels and
+ *  settles accepted offers by ending the session. Every call is recorded in
+ *  the journal, and every call is idempotent, as the core repeats what is
+ *  pending when the worker connects. */
+export class ScriptedProvider {
+  private readonly pid = process.pid;
+  private readonly started = new Set<string>();
+  private readonly cancelAnswers = new Map<string, FundingCancelAnswer>();
+
+  constructor(
+    private readonly client: TrUApiClient,
+    private readonly journalPath: string,
+    private readonly fundingLogPath: string,
+  ) {
+    this.record({ kind: "connected" });
+    client.fundingProvider.onAssign(({ session }) => {
+      this.record({
+        kind: "assigned",
+        intent: session.intent,
+        direction: session.direction,
+        amount: session.amount?.toString(),
+        lastUpdate: session.lastUpdate,
+      });
+      if (!this.started.has(session.intent)) {
+        this.started.add(session.intent);
+        afterAnswer(() => this.serve(session));
+      }
+      return ok(undefined);
+    });
+    client.fundingProvider.onCancel(({ intent }) => {
+      this.record({ kind: "cancel", intent });
+      return ok(this.cancelAnswers.get(intent) ?? refused);
+    });
+    client.fundingProvider.onSettleCancel(({ intent, decision }) => {
+      this.record({ kind: "settled", intent, decision: decision.tag });
+      if (decision.tag === "Accepted") {
+        afterAnswer(() =>
+          this.step(intent, "settle_cancel", async () => {
+            await report(client, intent, {
+              tag: "Failed",
+              value: { reason: { tag: "Cancelled" } },
+            });
+            return "ended the session as cancelled";
+          }),
+        );
+      }
+      return ok(undefined);
+    });
+  }
+
+  private record(line: Record<string, unknown>) {
+    appendFileSync(
+      this.journalPath,
+      `${stringify({ pid: this.pid, ...line })}\n`,
+    );
+  }
+
+  /** Run `work` as step `step` of session `intent` and record how it went. */
+  private async step(
+    intent: string,
+    step: string,
+    work: () => Promise<string | { output: string; topUpId: string }>,
+  ) {
+    try {
+      const done = await work();
+      this.record(
+        typeof done === "string"
+          ? { kind: "step", intent, step, ok: true, output: done }
+          : { kind: "step", intent, step, ok: true, ...done },
+      );
+    } catch (error) {
+      this.record({
+        kind: "step",
+        intent,
+        step,
+        ok: false,
+        output: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /** Do what session `session`'s direction and amount call for. */
+  private async serve(session: FundingAssignment) {
+    const { client } = this;
+    const { intent } = session;
+    const key = `${session.direction}:${session.amount ?? "any"}`;
+    switch (key) {
+      case `In:${DELIVERED_AMOUNT}`:
+        return this.step(intent, "deliver", async () => {
+          const topUpId = randomId();
+          await topUp(client, intent, topUpId, DELIVERED_CREDIT);
+          await report(client, intent, {
+            tag: "In",
+            value: {
+              tag: "Crediting",
+              value: { topUpId, amount: DELIVERED_CREDIT },
+            },
+          });
+          await report(client, intent, {
+            tag: "In",
+            value: { tag: "Delivered" },
+          });
+          return "credited and delivered";
+        });
+      case `Out:${RELEASED_AMOUNT}`:
+        return this.step(intent, "release", async () => {
+          await payOut(client, intent, RELEASED_AMOUNT);
+          return "paid out";
+        });
+      case `In:${FAILED_AMOUNT}`:
+        return this.step(intent, "fail", async () => {
+          // Failing at once would end the session before the product
+          // watches it, and the case checks the product sees it in
+          // progress first.
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          await report(client, intent, {
+            tag: "Failed",
+            value: {
+              reason: {
+                tag: "Other",
+                value: {
+                  code: "provider_failed",
+                  message: "the battery's provider failed the session",
+                },
+              },
+            },
+          });
+          return "failed the session";
+        });
+      case `In:${IN_AMOUNT}`:
+        return session.lastUpdate === undefined
+          ? this.serveInbound(intent)
+          : this.resumeInbound(intent, session.lastUpdate);
+      case `Out:${OUT_AMOUNT}`:
+        return this.step(intent, "release", async () => {
+          await payOut(client, intent, OUT_AMOUNT);
+          return "paid out";
+        });
+      case `In:${CANCEL_AMOUNT}`:
+        this.cancelAnswers.set(intent, { tag: "Stopped" });
+        return;
+      case `In:${OFFER_AMOUNT}`:
+        return this.step(intent, "payment_received", async () => {
+          await report(client, intent, {
+            tag: "In",
+            value: { tag: "PaymentReceived", value: { finalized: true } },
+          });
+          this.cancelAnswers.set(intent, {
+            tag: "Offer",
+            value: { fee: CANCEL_FEE, refund: OFFER_AMOUNT - CANCEL_FEE },
+          });
+          return "the payment arrived";
+        });
+      case `In:${LATE_AMOUNT}`:
+        return this.serveLate(intent);
+    }
+  }
+
+  /** Show a screen and a page, report forward and back, and start the
+   *  top-up, keeping its id in the worker's own storage first. */
+  private async serveInbound(intent: string) {
+    const { client } = this;
+    await this.step(intent, "present_frame", async () => {
+      const framed = await client.fundingProvider.presentFrame({
+        intent,
+        target: { tag: "App", value: { route: "/kyc" } },
+      });
+      if (framed.isErr() || framed.value.outcome.tag !== "Closed") {
+        throw new Error(`presentFrame: ${stringify(framed)}`);
+      }
+      return "the screen closed";
+    });
+    await this.step(intent, "present_page", async () => {
+      const returnUrl = "https://onramp.example.com/meld/return?flow=buy";
+      const framed = await client.fundingProvider.presentFrame({
+        intent,
+        target: {
+          tag: "Page",
+          value: { url: "https://widget.example.com/buy", returnUrl },
+        },
+      });
+      if (
+        framed.isErr() ||
+        framed.value.outcome.tag !== "Returned" ||
+        framed.value.outcome.value.url !== returnUrl
+      ) {
+        throw new Error(`presentFrame page: ${stringify(framed)}`);
+      }
+      return "the page returned its return URL";
+    });
+    await this.step(intent, "reports_forward_only", async () => {
+      await report(client, intent, {
+        tag: "In",
+        value: { tag: "AwaitingPayment" },
+      });
+      await report(client, intent, {
+        tag: "In",
+        value: { tag: "PaymentReceived", value: { finalized: true } },
+      });
+      await report(client, intent, {
+        tag: "In",
+        value: { tag: "Converting" },
+      });
+      const backwards = await client.fundingProvider.report({
+        intent,
+        update: { tag: "In", value: { tag: "AwaitingPayment" } },
+      });
+      if (
+        !backwards.isErr() ||
+        !stringify(backwards.error).includes("OutOfOrder")
+      ) {
+        throw new Error(
+          `a backwards report was not refused: ${stringify(backwards)}`,
+        );
+      }
+      return "updates moved forward and a backwards one was refused";
+    });
+    await this.step(intent, "credits_through_top_up", async () => {
+      const topUpId = randomId();
+      // Written before the top-up, so a restart in between still knows which
+      // top-up it started.
+      const kept = await client.localStorage.write({
+        key: stateKey(intent),
+        value: topUpId,
+      });
+      if (kept.isErr()) {
+        throw new Error(`keeping its state failed: ${stringify(kept.error)}`);
+      }
+      await topUp(client, intent, topUpId, IN_AMOUNT);
+      await report(client, intent, {
+        tag: "In",
+        value: { tag: "Crediting", value: { topUpId, amount: IN_AMOUNT } },
+      });
+      return { output: "started the top-up and named it", topUpId };
+    });
+  }
+
+  /** Check the kept state against the update the core repeated, and
+   *  deliver the session. */
+  private async resumeInbound(intent: string, lastUpdate: FundingUpdate) {
+    const { client } = this;
+    await this.step(intent, "kept_state", async () => {
+      const kept = await client.localStorage.read({ key: stateKey(intent) });
+      if (
+        lastUpdate.tag !== "In" ||
+        lastUpdate.value.tag !== "Crediting" ||
+        kept.isErr() ||
+        kept.value.value !== lastUpdate.value.value.topUpId
+      ) {
+        throw new Error(
+          `assigned with ${stringify(lastUpdate)}, kept ${stringify(kept)}`,
+        );
+      }
+      return "the kept top-up matches the last update";
+    });
+    await this.step(intent, "deliver", async () => {
+      await report(client, intent, { tag: "In", value: { tag: "Delivered" } });
+      await client.localStorage.clear({ key: stateKey(intent) });
+      return "delivered";
+    });
+  }
+
+  /** Start crediting, wait for the user's cancel to be too late, then
+   *  deliver. */
+  private async serveLate(intent: string) {
+    const { client } = this;
+    const topUpId = randomId();
+    await this.step(intent, "topped_up", async () => {
+      await topUp(client, intent, topUpId, LATE_AMOUNT);
+      return "started the top-up";
+    });
+    await this.step(intent, "deliver", async () => {
+      await waitForTranscript(
+        this.fundingLogPath,
+        (line) =>
+          line.kind === "cancel" &&
+          line.intent === intent &&
+          line.outcome === "TooLate",
+        `the user's cancel of ${intent}`,
+      );
+      await report(client, intent, {
+        tag: "In",
+        value: { tag: "Crediting", value: { topUpId, amount: LATE_AMOUNT } },
+      });
+      await report(client, intent, { tag: "In", value: { tag: "Delivered" } });
+      return "delivered";
+    });
+  }
+}
+
+const refused: FundingCancelAnswer = {
+  tag: "Refused",
+  value: { reason: "the battery set no answer" },
+};
+
+/** A case runner that records one row per case, passing on a returned
+ *  output and failing on a thrown error. */
+export function rowFactory(rows: DiagnosisRow[]) {
+  return async (methodName: string, check: () => Promise<string>) => {
+    const startedAt = performance.now();
+    const row = (status: DiagnosisRow["status"], output: string) =>
+      rows.push({
+        id: `Funding/${methodName}`,
+        serviceName: "Funding",
+        methodName,
+        status,
+        output,
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+    try {
+      row("pass", await check());
+    } catch (error) {
+      // One stuck case is recorded and the rest still run.
+      row("fail", error instanceof Error ? error.message : String(error));
+    }
+  };
+}
+
+/** Request a session and return its intent, which the worker sees too. */
+export async function requestFunding(
+  client: TrUApiClient,
+  direction: "In" | "Out",
+  amount: bigint,
+): Promise<string> {
+  const requested = await client.funding.request({ direction, amount });
+  if (requested.isErr()) {
+    throw new Error(`funding.request failed: ${stringify(requested.error)}`);
+  }
+  return requested.value.intent;
+}
+
+export async function lastStatus(
+  client: TrUApiClient,
+  intent: string,
+): Promise<HostFundingStatusSubscribeItem | undefined> {
+  const items = await untilComplete(
+    client.funding.statusSubscribe({ request: { intent } }),
+    `session ${intent}`,
+  );
+  return items.at(-1);
+}
+
 /** Cancel session `intent` as the user, and wait for the host to record it. */
 async function cancelAsUser(
   fundingLogPath: string,
@@ -267,8 +581,8 @@ async function cancelAsUser(
  *  outbound and cancelled sessions, and an inbound one up to its top-up. */
 export async function runProviderStart(
   client: TrUApiClient,
-  provider: ScriptedProvider,
   fundingLogPath: string,
+  journalPath: string,
 ): Promise<{ rows: DiagnosisRow[]; state?: ProviderState }> {
   const rows: DiagnosisRow[] = [];
   const check = rowFactory(rows);
@@ -277,11 +591,14 @@ export async function runProviderStart(
 
   await check("provider_assigned", async () => {
     inbound = await requestFunding(client, "In", IN_AMOUNT);
-    const { direction, amount, lastUpdate } =
-      await provider.assignment(inbound);
+    const { direction, amount, lastUpdate } = await journaled(
+      journalPath,
+      "assigned",
+      inbound,
+    );
     if (
       direction !== "In" ||
-      amount !== IN_AMOUNT ||
+      amount !== IN_AMOUNT.toString() ||
       lastUpdate !== undefined
     ) {
       throw new Error(
@@ -292,13 +609,7 @@ export async function runProviderStart(
   });
 
   await check("provider_present_frame", async () => {
-    const framed = await client.fundingProvider.presentFrame({
-      intent: inbound,
-      target: { tag: "App", value: { route: "/kyc" } },
-    });
-    if (framed.isErr() || framed.value.outcome.tag !== "Closed") {
-      throw new Error(`presentFrame: ${stringify(framed)}`);
-    }
+    await stepDone(journalPath, inbound, "present_frame");
     await waitForTranscript(
       fundingLogPath,
       (line) =>
@@ -311,100 +622,28 @@ export async function runProviderStart(
   });
 
   await check("provider_present_page", async () => {
-    const returnUrl = "https://onramp.example.com/meld/return?flow=buy";
-    const framed = await client.fundingProvider.presentFrame({
-      intent: inbound,
-      target: {
-        tag: "Page",
-        value: { url: "https://widget.example.com/buy", returnUrl },
-      },
-    });
-    if (
-      framed.isErr() ||
-      framed.value.outcome.tag !== "Returned" ||
-      framed.value.outcome.value.url !== returnUrl
-    ) {
-      throw new Error(`presentFrame page: ${stringify(framed)}`);
-    }
+    await stepDone(journalPath, inbound, "present_page");
     return "the host showed the provider's page and handed back its return URL";
   });
 
   await check("provider_reports_forward_only", async () => {
-    await report(client, inbound, {
-      tag: "In",
-      value: { tag: "AwaitingPayment" },
-    });
-    await report(client, inbound, {
-      tag: "In",
-      value: {
-        tag: "PaymentReceived",
-        value: { finalized: true },
-      },
-    });
-    await report(client, inbound, { tag: "In", value: { tag: "Converting" } });
-    const backwards = await client.fundingProvider.report({
-      intent: inbound,
-      update: { tag: "In", value: { tag: "AwaitingPayment" } },
-    });
-    const outOfOrder =
-      backwards.isErr() && stringify(backwards.error).includes("OutOfOrder");
-    if (!outOfOrder) {
-      throw new Error(
-        `a backwards report was not refused: ${stringify(backwards)}`,
-      );
-    }
+    await stepDone(journalPath, inbound, "reports_forward_only");
     return "updates moved forward and a backwards one was refused";
   });
 
   await check("provider_credits_through_top_up", async () => {
-    const topUpId = randomId();
-    // The worker keeps its own state, and writes it before the top-up, so a
-    // restart in between still knows which top-up it started.
-    const kept = await client.localStorage.write({
-      key: stateKey(inbound),
-      value: topUpId,
-    });
-    if (kept.isErr()) {
-      throw new Error(
-        `keeping the worker's state failed: ${stringify(kept.error)}`,
-      );
-    }
-    await topUp(client, inbound, topUpId, IN_AMOUNT);
-    await report(client, inbound, {
-      tag: "In",
-      value: {
-        tag: "Crediting",
-        value: { topUpId, amount: IN_AMOUNT },
-      },
-    });
-    state = {
-      intent: inbound,
-      topUpId,
-      amount: IN_AMOUNT.toString(),
-    };
+    const { topUpId } = await stepDone(
+      journalPath,
+      inbound,
+      "credits_through_top_up",
+    );
+    if (!topUpId) throw new Error("the worker named no top-up");
+    state = { intent: inbound, topUpId, amount: IN_AMOUNT.toString() };
     return "the top-up was started and named in a Crediting report";
   });
 
   await check("provider_out_released", async () => {
     const outbound = await requestFunding(client, "Out", OUT_AMOUNT);
-    await provider.assignment(outbound);
-    const paymentId = randomId();
-    const paid = await client.payment.request({
-      amount: OUT_AMOUNT,
-      destination: `0x${"11".repeat(32)}`,
-      id: paymentId,
-      funding: outbound,
-    });
-    if (paid.isErr()) {
-      throw new Error(`payment.request failed: ${stringify(paid.error)}`);
-    }
-    await report(client, outbound, {
-      tag: "Out",
-      value: {
-        tag: "Collecting",
-        value: { paymentId, amount: OUT_AMOUNT },
-      },
-    });
     const last = await lastStatus(client, outbound);
     if (last?.tag !== "Released" || last.value.debited !== OUT_AMOUNT) {
       throw new Error(`ended as ${stringify(last)}`);
@@ -414,33 +653,19 @@ export async function runProviderStart(
 
   await check("provider_cancel", async () => {
     const cancelled = await requestFunding(client, "In", CANCEL_AMOUNT);
-    await provider.assignment(cancelled);
-    provider.answerCancel(cancelled, { tag: "Stopped" });
+    await journaled(journalPath, "assigned", cancelled);
     await cancelAsUser(fundingLogPath, cancelled, "Requested");
     const last = await lastStatus(client, cancelled);
     if (last?.tag !== "Failed" || last.value.reason.tag !== "Cancelled") {
       throw new Error(`ended as ${stringify(last)}`);
     }
-    if (!provider.cancels.includes(cancelled)) {
-      throw new Error("the provider never heard the cancel");
-    }
+    await journaled(journalPath, "cancel", cancelled);
     return "before money moved, the user's cancel reached the provider, which stopped, and the core ended the session";
   });
 
   await check("provider_cancel_offer_accepted", async () => {
     const intent = await requestFunding(client, "In", OFFER_AMOUNT);
-    await provider.assignment(intent);
-    await report(client, intent, {
-      tag: "In",
-      value: {
-        tag: "PaymentReceived",
-        value: { finalized: true },
-      },
-    });
-    provider.answerCancel(intent, {
-      tag: "Offer",
-      value: { fee: CANCEL_FEE, refund: OFFER_AMOUNT - CANCEL_FEE },
-    });
+    await stepDone(journalPath, intent, "payment_received");
     await cancelAsUser(fundingLogPath, intent, "Requested");
     await waitForTranscript(
       fundingLogPath,
@@ -450,11 +675,8 @@ export async function runProviderStart(
         line.answer === "Accepted",
       `the user accepting the offer on ${intent}`,
     );
-    const settled = await until(
-      () => provider.settled.find((entry) => entry.intent === intent),
-      `the provider hearing the decision on ${intent}`,
-    );
-    if (settled.decision.tag !== "Accepted") {
+    const settled = await journaled(journalPath, "settled", intent);
+    if (settled.decision !== "Accepted") {
       throw new Error(`the provider heard ${stringify(settled)}`);
     }
     const last = await lastStatus(client, intent);
@@ -466,23 +688,17 @@ export async function runProviderStart(
 
   await check("provider_cancel_too_late", async () => {
     const intent = await requestFunding(client, "In", LATE_AMOUNT);
-    await provider.assignment(intent);
-    const topUpId = randomId();
-    await topUp(client, intent, topUpId, LATE_AMOUNT);
+    await stepDone(journalPath, intent, "topped_up");
     await cancelAsUser(fundingLogPath, intent, "TooLate");
-    await report(client, intent, {
-      tag: "In",
-      value: {
-        tag: "Crediting",
-        value: { topUpId, amount: LATE_AMOUNT },
-      },
-    });
-    await report(client, intent, { tag: "In", value: { tag: "Delivered" } });
     const last = await lastStatus(client, intent);
     if (last?.tag !== "Delivered" || last.value.credited !== LATE_AMOUNT) {
       throw new Error(`ended as ${stringify(last)}`);
     }
-    if (provider.cancels.includes(intent)) {
+    if (
+      journal(journalPath).some(
+        (line) => line.kind === "cancel" && line.intent === intent,
+      )
+    ) {
       throw new Error(
         "the provider was asked to cancel a session already crediting",
       );
@@ -493,12 +709,13 @@ export async function runProviderStart(
   return { rows, state };
 }
 
-/** The run after the restart: the session is assigned again where it
- *  stopped, and the core delivers it from what its top-up claimed. */
+/** The run after the restart: the core starts the worker for the session
+ *  still open and assigns it where it stopped, and delivers it from what its
+ *  top-up claimed. */
 export async function runProviderResume(
   client: TrUApiClient,
-  provider: ScriptedProvider,
   fundingLogPath: string,
+  journalPath: string,
   state: ProviderState | undefined,
 ): Promise<DiagnosisRow[]> {
   const rows: DiagnosisRow[] = [];
@@ -511,28 +728,29 @@ export async function runProviderResume(
   }
 
   await check("provider_resumes_after_restart", async () => {
-    const { lastUpdate } = await provider.assignment(state.intent);
+    const assigned = await until(
+      () =>
+        journal(journalPath).findLast(
+          (line) =>
+            line.kind === "assigned" &&
+            line.intent === state.intent &&
+            line.lastUpdate !== undefined,
+        ),
+      `the session ${state.intent} assigned again`,
+    );
     if (
-      lastUpdate?.tag !== "In" ||
-      lastUpdate.value.tag !== "Crediting" ||
-      lastUpdate.value.value.topUpId !== state.topUpId
+      assigned.kind !== "assigned" ||
+      assigned.lastUpdate?.tag !== "In" ||
+      assigned.lastUpdate.value.tag !== "Crediting" ||
+      assigned.lastUpdate.value.value.topUpId !== state.topUpId
     ) {
-      throw new Error(`assigned again with ${stringify(lastUpdate)}`);
+      throw new Error(`assigned again with ${stringify(assigned)}`);
     }
-    const kept = await client.localStorage.read({
-      key: stateKey(state.intent),
-    });
-    if (kept.isErr() || kept.value.value !== state.topUpId) {
-      throw new Error(`the worker's own state was ${stringify(kept)}`);
-    }
-    return "the restarted worker was assigned the session with its last update, and its own state was still kept";
+    await stepDone(journalPath, state.intent, "kept_state");
+    return "the core started the worker for the session still open, assigned it with its last update, and the worker's own state was still kept";
   });
 
   await check("provider_in_delivered", async () => {
-    await report(client, state.intent, {
-      tag: "In",
-      value: { tag: "Delivered" },
-    });
     const last = await lastStatus(client, state.intent);
     if (
       last?.tag !== "Delivered" ||
@@ -549,7 +767,6 @@ export async function runProviderResume(
         line.amount === state.amount,
       `Delivered reaching the host for ${state.intent}`,
     );
-    await client.localStorage.clear({ key: stateKey(state.intent) });
     return "the core delivered the session from the claim of the named top-up";
   });
 

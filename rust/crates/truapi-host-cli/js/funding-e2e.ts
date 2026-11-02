@@ -1,12 +1,14 @@
 // End-to-end funding check against the CLI signing host's funding overlay.
 //
 // The host shows the overlay, the auto-accepting user picks the provider
-// `TRUAPI_FUNDING_PROVIDERS` names, and the provider's worker, which is this
-// same script (`ScriptedProvider`), delivers, releases or fails each session
-// through top-ups, payments and reports, so the core settles it as it would
-// any other. The host records every request and session change in
-// TRUAPI_FUNDING_LOG. These cases are the product side, and each also reads
-// the host's transcript, so a pass cannot rest on the product's word alone.
+// `TRUAPI_FUNDING_PROVIDERS` names, and the host launches that provider's
+// worker (`scripts/funding-worker.ts`) as its own process once the core asks
+// for it. The worker delivers, releases or fails each session through
+// top-ups, payments and reports, by the session's direction and amount, so
+// the core settles it as it would any other. The host records every request,
+// session change and worker launch or stop in TRUAPI_FUNDING_LOG. These cases
+// are the product side, and each also reads the host's transcript, so a pass
+// cannot rest on the product's word alone.
 import { existsSync, readFileSync } from "node:fs";
 import type {
   ObservableLike,
@@ -15,9 +17,14 @@ import type {
 import type { HostFundingStatusSubscribeItem } from "../../../../js/packages/truapi/src/generated/types.ts";
 import type { DiagnosisRow } from "./diagnosis.ts";
 import {
-  type ScriptedProvider,
+  DELIVERED_AMOUNT,
+  DELIVERED_CREDIT,
+  FAILED_AMOUNT,
+  RELEASED_AMOUNT,
   actAsUser,
-  report,
+  journaled,
+  requestFunding,
+  until,
 } from "./funding-provider-e2e.ts";
 
 export const WAIT_MS = 15_000;
@@ -35,6 +42,9 @@ export interface TranscriptLine {
   outcome?: string;
   tag?: string;
   route?: string;
+  answer?: string;
+  provider?: string;
+  transition?: string;
 }
 
 /** What the host recorded. */
@@ -132,12 +142,24 @@ export const stringify = (value: unknown) =>
     typeof inner === "bigint" ? inner.toString() : inner,
   );
 
-/** Run sessions the provider delivers, releases and fails, one the user
+/** The host's launches and stops of `provider`'s worker, in order, each
+ *  with its position in the transcript. */
+function workerTransitions(path: string, provider: string) {
+  return transcript(path).flatMap((line, index) =>
+    line.kind === "worker" && line.provider === provider && line.transition
+      ? [{ index, transition: line.transition }]
+      : [],
+  );
+}
+
+/** Run sessions the provider delivers, releases and fails, with the core
+ *  starting its worker on demand and again after it stopped, one the user
  *  dismisses, and a watch of a session that does not exist. */
 export async function runFundingE2e(
   client: TrUApiClient,
-  provider: ScriptedProvider,
   fundingLogPath: string | undefined,
+  journalPath: string | undefined,
+  provider: string | undefined,
 ): Promise<DiagnosisRow[]> {
   const rows: DiagnosisRow[] = [];
   const row = (
@@ -154,14 +176,15 @@ export async function runFundingE2e(
     durationMs: Math.round(performance.now() - startedAt),
   });
 
-  if (!fundingLogPath) {
-    // Without it a pass could not tell "the host showed the overlay and the
-    // session settled" from "the product was told it did".
+  if (!fundingLogPath || !journalPath || !provider) {
+    // Without them a pass could not tell "the host showed the overlay, its
+    // worker served the session and it settled" from "the product was told
+    // it did".
     return [
       row(
         "e2e",
         "skipped",
-        "TRUAPI_FUNDING_LOG not set; cannot read what the host observed",
+        "TRUAPI_FUNDING_LOG, TRUAPI_FUNDING_WORKER_LOG or TRUAPI_FUNDING_PROVIDERS not set; cannot read what the host and the worker observed",
         performance.now(),
       ),
     ];
@@ -176,7 +199,7 @@ export async function runFundingE2e(
     first: HostFundingStatusSubscribeItem["tag"],
     terminal: (item: HostFundingStatusSubscribeItem) => boolean,
     hostStatus: { tag: string; amount?: string },
-  ) => {
+  ): Promise<string | undefined> => {
     const startedAt = performance.now();
     try {
       const requested = await client.funding.request({ direction, amount });
@@ -184,7 +207,7 @@ export async function runFundingE2e(
         rows.push(
           row(methodName, "fail", stringify(requested.error), startedAt),
         );
-        return;
+        return undefined;
       }
       const { intent } = requested.value;
       const items = await untilComplete(
@@ -228,93 +251,114 @@ export async function runFundingE2e(
               startedAt,
             ),
       );
+      return intent;
     } catch (error) {
       // One stuck case is recorded and the rest still run.
       rows.push(row(methodName, "fail", String(error), startedAt));
+      return undefined;
     }
   };
 
-  // The provider credits 900 of an inbound 1000, pays out an outbound 500
-  // in full, and fails an inbound 2000.
-  provider.plan("In", 1_000n, async (client, session) => {
-    const topUpId = randomId();
-    const toppedUp = await client.payment.topUp({
-      amount: 900n,
-      source: {
-        tag: "ProductAccount",
-        value: { derivationIndex: { tag: "Index", value: 0 } },
-      },
-      id: topUpId,
-      funding: session.intent,
-    });
-    if (toppedUp.isErr()) throw new Error(stringify(toppedUp.error));
-    await report(client, session.intent, {
-      tag: "In",
-      value: {
-        tag: "Crediting",
-        value: { topUpId, amount: 900n },
-      },
-    });
-    await report(client, session.intent, {
-      tag: "In",
-      value: { tag: "Delivered" },
-    });
+  // A case that passes with what `run` returns and fails with what it
+  // throws.
+  const check = async (methodName: string, run: () => Promise<string>) => {
+    const startedAt = performance.now();
+    try {
+      rows.push(row(methodName, "pass", await run(), startedAt));
+    } catch (error) {
+      rows.push(
+        row(
+          methodName,
+          "fail",
+          error instanceof Error ? error.message : String(error),
+          startedAt,
+        ),
+      );
+    }
+  };
+
+  // Nothing has asked for the provider's worker yet, so the host runs none.
+  const runningBefore =
+    workerTransitions(fundingLogPath, provider).at(-1)?.transition === "Start";
+  const delivered = await settles(
+    "request_in_delivered",
+    "In",
+    DELIVERED_AMOUNT,
+    "InProgress",
+    (item) =>
+      item.tag === "Delivered" && item.value.credited === DELIVERED_CREDIT,
+    { tag: "Delivered", amount: DELIVERED_CREDIT.toString() },
+  );
+
+  // The core asked for the worker once the user picked the provider, and the
+  // host launched it then: it was not running before, and its launch comes
+  // after the overlay in the host's transcript.
+  let served: number | undefined;
+  await check("worker_started_on_demand", async () => {
+    if (runningBefore) {
+      throw new Error(
+        "the provider's worker was running before anything asked for it",
+      );
+    }
+    if (!delivered) throw new Error("the delivered session never started");
+    const presented = transcript(fundingLogPath).findIndex(
+      (line) => line.kind === "presented" && line.intent === delivered,
+    );
+    const started = workerTransitions(fundingLogPath, provider).find(
+      ({ index, transition }) => transition === "Start" && index > presented,
+    );
+    if (presented < 0 || !started) {
+      throw new Error("the host never launched the worker after the overlay");
+    }
+    served = (await journaled(journalPath, "assigned", delivered)).pid;
+    return `the host launched the worker after the user picked ${provider}, and it was assigned the session`;
   });
-  provider.plan("Out", 500n, async (client, session) => {
-    const paymentId = randomId();
-    const paid = await client.payment.request({
-      amount: 500n,
-      destination: `0x${"22".repeat(32)}`,
-      id: paymentId,
-      funding: session.intent,
-    });
-    if (paid.isErr()) throw new Error(stringify(paid.error));
-    await report(client, session.intent, {
-      tag: "Out",
-      value: {
-        tag: "Collecting",
-        value: { paymentId, amount: 500n },
-      },
-    });
-  });
-  provider.plan("In", 2_000n, async (client, session) => {
-    // Failing at once would end the session before the product watches it,
-    // and the case checks the product sees it in progress first.
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    await report(client, session.intent, {
-      tag: "Failed",
-      value: {
-        reason: {
-          tag: "Other",
-          value: {
-            code: "provider_failed",
-            message: "the battery's provider failed the session",
-          },
-        },
-      },
-    });
+
+  // Once its last session ended the core let the worker go and the host
+  // stopped it; the next session starts a new worker process, which is
+  // assigned it.
+  await check("worker_reassigned_after_stop", async () => {
+    const stopped = await until(
+      () =>
+        workerTransitions(fundingLogPath, provider)
+          .filter(({ transition }) => transition === "Stop")
+          .at(-1),
+      "the host stopping the worker",
+    );
+    const intent = await requestFunding(client, "In", DELIVERED_AMOUNT);
+    const assigned = await journaled(journalPath, "assigned", intent);
+    const restarted = workerTransitions(fundingLogPath, provider).some(
+      ({ index, transition }) =>
+        transition === "Start" && index > stopped.index,
+    );
+    if (!restarted || assigned.pid === served) {
+      throw new Error(
+        `restarted=${restarted}, served by ${served} and then by ${assigned.pid}`,
+      );
+    }
+    const items = await untilComplete(
+      client.funding.statusSubscribe({ request: { intent } }),
+      `session ${intent}`,
+    );
+    const last = items.at(-1);
+    if (last?.tag !== "Delivered") {
+      throw new Error(`ended as ${stringify(last)}`);
+    }
+    return "the host stopped the worker once its sessions ended, launched a new one for the next session, and it delivered it";
   });
 
   await settles(
-    "request_in_delivered",
-    "In",
-    1_000n,
-    "InProgress",
-    (item) => item.tag === "Delivered" && item.value.credited === 900n,
-    { tag: "Delivered", amount: "900" },
-  );
-  await settles(
     "request_out_released",
     "Out",
-    500n,
+    RELEASED_AMOUNT,
     "InProgress",
-    (item) => item.tag === "Released" && item.value.debited === 500n,
-    { tag: "Released", amount: "500" },
+    (item) => item.tag === "Released" && item.value.debited === RELEASED_AMOUNT,
+    { tag: "Released", amount: RELEASED_AMOUNT.toString() },
   );
   await settles(
     "request_failed",
     "In",
-    2_000n,
+    FAILED_AMOUNT,
     "InProgress",
     (item) =>
       item.tag === "Failed" &&

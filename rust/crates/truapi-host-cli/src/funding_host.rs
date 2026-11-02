@@ -2,11 +2,16 @@
 //! the user's answers, as a host app serves them.
 //!
 //! A product's funding request shows the overlay: the user picks one of the
-//! providers named in `TRUAPI_FUNDING_PROVIDERS` (comma-separated product
-//! ids) or closes it. Every question goes through the host's approval policy,
-//! as its other confirmations do: a prompt on a terminal, the first provider
-//! and every offer accepted under `--auto-accept`, and a refusal when a
-//! prompt has no terminal to ask on. The user cancels a session with
+//! providers named in `TRUAPI_FUNDING_PROVIDERS` or closes it. Each entry is a
+//! product id, optionally followed by `=` and the path of the script its
+//! worker runs (`ramp.dot=./worker.ts,other.dot`). The host launches that
+//! script as the provider's worker when the core asks for it, and stops it
+//! when the core lets it go; a provider without a script has no worker here.
+//!
+//! Every question goes through the host's approval policy, as its other
+//! confirmations do: a prompt on a terminal, the first provider and every
+//! offer accepted under `--auto-accept`, and a refusal when a prompt has no
+//! terminal to ask on. The user cancels a session with
 //! `/funding cancel <intent>`, and the provider's cancel offer is put to them
 //! the same way.
 //!
@@ -17,13 +22,13 @@
 //! requests from a ledger file: every one completes in full once started, and
 //! the ledger keeps them across a restart. There is no chain behind it.
 //!
-//! Every overlay, screen, cancel, answer and session change is appended to
-//! the transcript named by `TRUAPI_FUNDING_LOG`, one JSON object per line, so
-//! a battery can assert what the host saw rather than only what the product
-//! was told.
+//! Every overlay, screen, cancel, answer, session change and worker launch,
+//! stop or exit is appended to the transcript named by `TRUAPI_FUNDING_LOG`,
+//! one JSON object per line, so a battery can assert what the host saw rather
+//! than only what the product was told.
 
 use std::{
-	collections::HashSet,
+	collections::{HashMap, HashSet},
 	fs::OpenOptions,
 	io::Write,
 	path::PathBuf,
@@ -47,7 +52,10 @@ use truapi::{
 	},
 };
 
-use crate::{NetworkConfig, platform::CliPlatform, transcript::Transcript};
+use crate::{
+	NetworkConfig, platform::CliPlatform, terminal_ui::UiHandle, transcript::Transcript,
+	worker_host::CliWorkerHost,
+};
 
 /// The funding overlay and provider screens of the CLI signing host.
 pub struct CliFundingHost {
@@ -62,31 +70,42 @@ pub struct CliFundingHost {
 }
 
 impl CliFundingHost {
-	/// Serve funding on `runtime`, asking `user`, with the providers and
-	/// files the environment names. The payment ledger moves no real funds,
-	/// so it is refused on a network whose identities are real.
+	/// Serve funding on `runtime`, asking `user`, with the providers, worker
+	/// scripts and files the environment names. Worker output goes to `ui`
+	/// when the host runs one. The payment ledger moves no real funds, so it
+	/// is refused on a network whose identities are real.
 	pub fn install(
 		runtime: &Arc<SigningHostRuntime>,
 		user: Arc<CliPlatform>,
+		ui: Option<UiHandle>,
 		network: &NetworkConfig,
 	) -> anyhow::Result<()> {
-		let providers = std::env::var("TRUAPI_FUNDING_PROVIDERS")
-			.unwrap_or_default()
-			.split(',')
-			.map(str::trim)
-			.filter(|entry| !entry.is_empty())
-			.filter_map(|entry| match entry.parse() {
-				Ok(provider) => Some(provider),
+		let mut providers = Vec::new();
+		let mut workers = HashMap::new();
+		let configured = std::env::var("TRUAPI_FUNDING_PROVIDERS").unwrap_or_default();
+		for entry in configured.split(',').map(str::trim).filter(|entry| !entry.is_empty()) {
+			let (provider, script) = match entry.split_once('=') {
+				Some((provider, script)) => (provider.trim(), Some(script.trim())),
+				None => (entry, None),
+			};
+			let provider: ProductId = match provider.parse() {
+				Ok(provider) => provider,
 				Err(error) => {
 					tracing::warn!(%entry, %error, "skipping a funding provider that is not a product id");
-					None
+					continue;
 				},
-			})
-			.collect();
+			};
+			if let Some(script) = script {
+				workers.insert(provider.clone(), PathBuf::from(script));
+			}
+			providers.push(provider);
+		}
+		let transcript = Arc::new(Transcript::from_env("TRUAPI_FUNDING_LOG", "funding"));
+		CliWorkerHost::install(runtime, workers, ui, transcript.clone())?;
 		runtime.set_funding_platform(Arc::new(Self {
 			providers,
 			user,
-			transcript: Arc::new(Transcript::from_env("TRUAPI_FUNDING_LOG", "funding")),
+			transcript,
 			runtime: Arc::downgrade(runtime),
 			asked: Mutex::new(HashSet::new()),
 		}));
