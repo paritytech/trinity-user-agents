@@ -752,7 +752,7 @@ Scripts under `js/scripts/` include:
   make e2e-chat-cli                     # chat phase only
   scripts/battery.sh --pocket-host      # Pocket phase only
   make e2e-pocket-cli                   # Pocket phase only
-  scripts/battery.sh --funding-host     # funding phase only
+  scripts/battery.sh --funding-host     # funding phase only, on a test-host build
   make e2e-funding-cli                  # funding phase only
   scripts/battery.sh --release          # release binary
   scripts/battery.sh -- --network foo   # arguments after `--` go to every host process
@@ -769,31 +769,13 @@ Scripts under `js/scripts/` include:
   in `TRUAPI_POCKET_LOG`. The cases read that transcript, so a pass means the
   host and the product agree rather than resting on the product's word.
 
-  The funding phase runs the signing host's funding overlay as a host app
-  would. `TRUAPI_FUNDING_PROVIDERS` names the providers the host offers, each
-  with a Worker manifest the CLI ships for it, here the phase's own product,
-  which runs as a Worker and is both the product asking for funds and the
-  provider's worker serving them through `onQuote`, `onAssign`, `onCancel`
-  and `onSettleCancel`. The overlay lists the providers serving a session and
-  their quotes; the auto-accepting user picks the first quote and accepts
-  cancel offers. The script acts as the user
-  through the host's stdin, a pipe in `TRUAPI_FUNDING_USER`: with `--script`,
-  a stdin that is not a terminal takes `/funding cancel <intent>` and
-  `/approval manual|automatic`, so a case cancels a session or has the overlay
-  closed. The provider reports progress and starts top-ups and payment
-  requests, which ledger engines complete in full and record in
-  `TRUAPI_FUNDING_LEDGER`, and the core settles each session from them. The
-  ledger moves no real funds, so the host refuses it on a network preset whose
-  identities are real. The
-  phase runs the host twice on the same storage, so the provider is assigned
-  an inbound session again after a restart and finishes it from the state it
-  kept in its own storage. The device detects the country
-  `TRUAPI_FUNDING_COUNTRY` names, if any. Every overlay request, screen,
-  cancel, answer and session change is recorded in
-  `TRUAPI_FUNDING_LOG`, which the cases read. CI runs this phase on every
-  change to the core, the CLI or the client, with a fixed development signer
-  in `HOST_CLI_SIGNER_MNEMONIC` so the host needs no account provisioned on
-  chain.
+  The funding phase builds the host with `--features test-host` and installs
+  a scripted funding overlay: each request the product makes is answered with
+  the next outcome from `TRUAPI_FUNDING_OUTCOMES`
+  (`deliver:900,release:500,fail,dismiss`), and a started session is settled
+  through the core's test hook with no chain behind it. Every overlay request
+  and session change is recorded in `TRUAPI_FUNDING_LOG`, which the cases read.
+  The live on-ramp on Paseo Next is `truapi-host funding-check`.
 
   The CLI accepts and logs Game reminders on every execution kind, without
   holding or firing them. The core serves Game to the game product (`dim2`)
