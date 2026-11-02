@@ -3133,8 +3133,7 @@ mod bridge_lines {
 	fn recorded(marker: &str, detail: &str) -> Vec<(String, String)> {
 		let callbacks = EventCallbacks::new();
 		forward_bridge_line(&callbacks, marker, detail);
-		let logs = callbacks.logs.lock().expect("logs mutex poisoned").clone();
-		logs
+		callbacks.logs.lock().expect("logs mutex poisoned").clone()
 	}
 
 	#[test]
