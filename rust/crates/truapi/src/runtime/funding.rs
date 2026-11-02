@@ -1465,7 +1465,17 @@ impl FundingRegistry {
 				Some(Announcement::Session(intent, item)) => {
 					platform.funding_session_changed(intent.clone(), item.clone());
 					if let Some(feed) = feed {
-						let ending = self.lock_ending().remove(&intent);
+						// The full record of a session compacted as it ended
+						// goes with every change still queued, and is let go
+						// with the one that ends it.
+						let ending = {
+							let mut ending = self.lock_ending();
+							if matches!(item, HostFundingStatusSubscribeItem::InProgress { .. }) {
+								ending.get(&intent).cloned()
+							} else {
+								ending.remove(&intent)
+							}
+						};
 						let session = self.get(&intent).or(ending);
 						let progress =
 							session.as_ref().map(|session| session.progress(current_unix_millis()));
@@ -2974,6 +2984,36 @@ mod tests {
 		assert_eq!(
 			(registry.get("fs_ended"), packed.acknowledged, registry.history()),
 			(None, false, vec![packed.summary])
+		);
+	}
+
+	// Changes queued before the one that ended a compacted session still
+	// carry its full record, and so does the ending itself.
+	#[test]
+	fn every_queued_change_of_a_session_compacted_as_it_ended_carries_its_record() {
+		let registry = registry_on(&open_memory_core_db());
+		let feed = Arc::new(RecordingFeed::default());
+		assert!(registry.install_platform(Arc::new(SilentPlatform)));
+		registry.install_feed(feed.clone());
+		let ended = FundingSession {
+			stage: FundingStage::Failed { reason: FundingFailure::Expired, settled_at_ms: NOW },
+			..session("fs_1", NOW)
+		};
+		registry.lock_ending().insert("fs_1".to_string(), ended.clone());
+		{
+			let mut announcements = registry.lock_announcements();
+			announcements.pending.push_back((
+				"fs_1".to_string(),
+				HostFundingStatusSubscribeItem::InProgress { expires_at: None },
+			));
+			announcements.pending.push_back(("fs_1".to_string(), ended.wire_item()));
+		}
+
+		registry.announce();
+
+		assert_eq!(
+			(feed.sessions("fs_1"), registry.lock_ending().is_empty()),
+			(vec![true, true], true)
 		);
 	}
 

@@ -2029,16 +2029,21 @@ impl From<&FundingSession> for PackedSession {
 }
 
 /// Split `sessions` into those kept in full and the ended ones to compact
-/// into the pack. Kept in full: every one its provider still has work on, and
-/// a cancelled top-up a late payment may still open again. Every other ended
-/// session is compacted at once, whether or not the host acknowledged it.
+/// into the pack. Kept in full: every one its provider still has work on, a
+/// released withdrawal whose payout outcome is not in, as a payout can still
+/// land after a cancel was refunded, and a cancelled top-up a late payment
+/// may still open again. Every other ended session is compacted at once,
+/// whether or not the host acknowledged it.
 pub fn retained(
 	sessions: impl IntoIterator<Item = FundingSession>,
 	now_ms: u64,
 ) -> (Vec<FundingSession>, Vec<FundingSession>) {
-	sessions
-		.into_iter()
-		.partition(|session| session.serves_provider() || session.takes_late_arrival(now_ms))
+	sessions.into_iter().partition(|session| {
+		session.serves_provider() ||
+			(matches!(session.stage, FundingStage::Released { .. }) &&
+				session.payout().is_none()) ||
+			session.takes_late_arrival(now_ms)
+	})
 }
 
 #[cfg(test)]
@@ -2854,6 +2859,40 @@ mod tests {
 				Ok(()),
 				true
 			)
+		);
+	}
+
+	// A withdrawal refunded after an accepted cancel stays in full until its
+	// payout outcome is in, so a payout that lands anyway is still taken.
+	#[test]
+	fn a_refunded_withdrawal_stays_in_full_until_its_payout_outcome() {
+		let mut released = served(FundingDirection::Out);
+		released.stage = FundingStage::Released { debited: 100, settled_at_ms: NOW };
+		start(&mut released, [4; 32], 95);
+		released.refund = Some(FundingRefund {
+			top_up: released
+				.started
+				.iter()
+				.find(|record| record.host_id == [4; 32])
+				.cloned()
+				.expect("recorded"),
+			refunded: Some(95),
+		});
+		let mut paid = released.clone();
+		paid.updates.push(FundingUpdateRecord {
+			update: FundingUpdate::Out(FundingOutboundUpdate::Payout {
+				outcome: FundingPayout::PaidOut,
+			}),
+			at_ms: NOW,
+		});
+
+		assert_eq!(
+			(
+				released.awaits_provider(),
+				retained([released], NOW).0.len(),
+				retained([paid], NOW).0.len(),
+			),
+			(false, 1, 0)
 		);
 	}
 
