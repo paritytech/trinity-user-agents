@@ -31,6 +31,10 @@ final class PocketCardScreenViewController: UIViewController {
     private var pageMoveTarget: CGPoint?
     private var lastPagePull: CGFloat = 0
     private var lastPageOffset: CGFloat = 0
+    private var closePanStartedAtRest = false
+    private var pageDragStartedAtRest = false
+    private var isClosing = false
+    private lazy var closePan = UIPanGestureRecognizer(target: self, action: #selector(followClosePan))
     private var isInFlight = false
     private weak var coveredScreen: UIViewController?
 
@@ -61,6 +65,7 @@ final class PocketCardScreenViewController: UIViewController {
         setupFace()
         setupProduct()
         setupPageDrag()
+        setupClosePan()
 
         // The card flies over the page when it is opened and closed.
         scrollView.bringSubviewToFront(face.view)
@@ -111,6 +116,7 @@ final class PocketCardScreenViewController: UIViewController {
     /// it, so a card opened again must find it free to show.
     func handBackProduct() {
         product.pageScrollView.panGestureRecognizer.removeTarget(self, action: nil)
+        product.pageScrollView.alwaysBounceVertical = false
         for child in children {
             child.willMove(toParent: nil)
             child.view.removeFromSuperview()
@@ -267,6 +273,17 @@ extension PocketCardScreenViewController: UIScrollViewDelegate {
     }
 }
 
+// MARK: - UIGestureRecognizerDelegate
+
+extension PocketCardScreenViewController: UIGestureRecognizerDelegate {
+    func gestureRecognizer(
+        _: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith _: UIGestureRecognizer
+    ) -> Bool {
+        true
+    }
+}
+
 // MARK: - Private
 
 private extension PocketCardScreenViewController {
@@ -278,6 +295,40 @@ private extension PocketCardScreenViewController {
 
         coveredScreen = presented.presentingViewController
         coveredScreen?.beginAppearanceTransition(false, animated: animated)
+    }
+
+    var isAtRest: Bool {
+        let page = product.pageScrollView
+        return scrollView.contentOffset.y <= 0 && page.contentOffset.y <= -page.adjustedContentInset.top
+    }
+
+    func setupClosePan() {
+        closePan.delegate = self
+        view.addGestureRecognizer(closePan)
+    }
+
+    @objc func followClosePan(_ pan: UIPanGestureRecognizer) {
+        switch pan.state {
+        case .began:
+            closePanStartedAtRest = isAtRest
+        case .ended:
+            if closePull(startedAtRest: closePanStartedAtRest, travel: pan.translation(in: view).y).closes {
+                close()
+            }
+        default:
+            break
+        }
+    }
+
+    func closePull(startedAtRest: Bool, travel: CGFloat) -> PocketCardClosePull {
+        PocketCardClosePull(startedAtRest: startedAtRest, travel: travel, screenHeight: view.bounds.height)
+    }
+
+    func close() {
+        guard !isInFlight, !isClosing else { return }
+
+        isClosing = true
+        (navigationController ?? self).presentingViewController?.dismiss(animated: true)
     }
 
     func setupScrollView() {
@@ -293,6 +344,7 @@ private extension PocketCardScreenViewController {
     }
 
     func setupPageDrag() {
+        product.pageScrollView.alwaysBounceVertical = true
         product.pageScrollView.panGestureRecognizer.addTarget(self, action: #selector(followPageDrag))
     }
 
@@ -306,11 +358,17 @@ private extension PocketCardScreenViewController {
         case .began:
             lastPagePull = pull
             lastPageOffset = product.pageScrollView.contentOffset.y
+            pageDragStartedAtRest = isAtRest
         case .changed:
             moveFaceWithPage(by: pull - lastPagePull)
             lastPagePull = pull
-        case .ended,
-             .cancelled:
+        case .ended:
+            if closePull(startedAtRest: pageDragStartedAtRest, travel: pull).closes {
+                close()
+                return
+            }
+            fallthrough
+        case .cancelled:
             guard userOwnsFace else { return }
 
             userOwnsFace = false
