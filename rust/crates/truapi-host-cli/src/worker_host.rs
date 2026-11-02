@@ -3,9 +3,9 @@
 //! A worker is a product script the host launches as its own process, on a
 //! frame socket of its own that serves the product as a Worker execution, so
 //! the core reaches it as it would a worker on any other host. The core's
-//! `Start` launches it and its `Stop` kills it. The core is not told when a
-//! worker exits on its own, so it stays stopped while a session still holds
-//! it, and starts again only once those sessions end and the core asks anew.
+//! `Start` launches it and its `Stop` kills it. A worker that exits on its own
+//! is reported to the core with `worker_exited`, which starts it again while
+//! a session still holds it, waiting longer each time it keeps crashing.
 //!
 //! Every launch, stop and exit is appended to the host's transcript, so a
 //! battery can tell the core starting a worker from one already running.
@@ -26,6 +26,10 @@ use truapi::{
 
 use crate::{frame_server, script_runner, terminal_ui::UiHandle, transcript::Transcript};
 
+/// The task serving each running worker, by product, with the id it was
+/// launched under.
+type Running = HashMap<ProductId, (u64, JoinHandle<()>)>;
+
 /// Launches and stops the worker scripts of the products it knows.
 pub struct CliWorkerHost {
 	/// The script each product's worker runs.
@@ -35,8 +39,11 @@ pub struct CliWorkerHost {
 	ui: Option<UiHandle>,
 	transcript: Arc<Transcript>,
 	tokio: Handle,
-	/// The task serving each running worker. Aborting it kills the worker.
-	running: Mutex<HashMap<ProductId, JoinHandle<()>>>,
+	/// The task serving each running worker, with the id it was launched
+	/// under. Aborting it kills the worker.
+	running: Arc<Mutex<Running>>,
+	/// The id the next launch takes.
+	next_launch: std::sync::atomic::AtomicU64,
 }
 
 impl CliWorkerHost {
@@ -54,7 +61,8 @@ impl CliWorkerHost {
 			ui,
 			transcript,
 			tokio: Handle::current(),
-			running: Mutex::new(HashMap::new()),
+			running: Arc::default(),
+			next_launch: std::sync::atomic::AtomicU64::new(0),
 		});
 		anyhow::ensure!(
 			runtime.worker_ledger().install_worker_controller(host),
@@ -71,23 +79,28 @@ impl CliWorkerHost {
 		let Some(runtime) = self.runtime.upgrade() else {
 			return;
 		};
-		let mut running = self.lock_running();
-		if running.get(product_id).is_some_and(|task| !task.is_finished()) {
+		let mut running = lock(&self.running);
+		if running.get(product_id).is_some_and(|(_, task)| !task.is_finished()) {
 			return;
 		}
 		self.record(product_id, "Start");
+		let launch = self.next_launch.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 		let task = self.tokio.spawn(serve(
-			runtime,
-			product_id.clone(),
+			Launch {
+				runtime,
+				product_id: product_id.clone(),
+				launch,
+				running: self.running.clone(),
+			},
 			script.clone(),
 			self.ui.clone(),
 			self.transcript.clone(),
 		));
-		running.insert(product_id.clone(), task);
+		running.insert(product_id.clone(), (launch, task));
 	}
 
 	fn stop(&self, product_id: &ProductId) {
-		let Some(task) = self.lock_running().remove(product_id) else {
+		let Some((_, task)) = lock(&self.running).remove(product_id) else {
 			return;
 		};
 		task.abort();
@@ -101,10 +114,6 @@ impl CliWorkerHost {
 			"transition": transition,
 		}));
 	}
-
-	fn lock_running(&self) -> MutexGuard<'_, HashMap<ProductId, JoinHandle<()>>> {
-		self.running.lock().unwrap_or_else(PoisonError::into_inner)
-	}
 }
 
 impl WorkerController for CliWorkerHost {
@@ -116,15 +125,30 @@ impl WorkerController for CliWorkerHost {
 	}
 }
 
-/// Run `product_id`'s worker until it exits, and record how it ended.
-async fn serve(
+/// One launch of a product's worker, and where it is held while it runs.
+struct Launch {
 	runtime: Arc<SigningHostRuntime>,
 	product_id: ProductId,
+	launch: u64,
+	running: Arc<Mutex<Running>>,
+}
+
+/// The running workers, whatever a holder panicked with.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+	mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Run a product's worker until it exits, record how it ended, and tell the
+/// core it stopped without being asked. A `Stop` aborts this task before it
+/// gets that far, so only an exit of the worker's own is reported.
+async fn serve(
+	launched: Launch,
 	script: PathBuf,
 	ui: Option<UiHandle>,
 	transcript: Arc<Transcript>,
 ) {
-	let exited = match run(runtime, &product_id, &script, ui).await {
+	let Launch { runtime, product_id, launch, running } = launched;
+	let exited = match run(runtime.clone(), &product_id, &script, ui).await {
 		Ok(status) => serde_json::json!(status.code()),
 		Err(error) => {
 			tracing::warn!(%product_id, error = %format!("{error:#}"), "the worker could not run");
@@ -136,6 +160,15 @@ async fn serve(
 		"provider": product_id.as_str(),
 		"exited": exited,
 	}));
+	// Let go of this launch first, so the core's `Start` for it launches a
+	// new worker; a later launch in its place is left alone.
+	{
+		let mut running = lock(&running);
+		if running.get(&product_id).is_some_and(|(held, _)| *held == launch) {
+			running.remove(&product_id);
+		}
+	}
+	runtime.worker_exited(&product_id);
 }
 
 /// Serve `product_id` as a Worker on a frame socket of its own and run
