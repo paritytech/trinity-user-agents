@@ -5,8 +5,8 @@ import TrUAPIHost
 
 /// Answers the queries of a product-source room with the closures of a test, and records each request.
 final class ScriptedProductChatQuerying: ProductChatQuerying {
-    typealias PageAnswer = @Sendable (ProductChatMessagesQueryRequest) async throws -> ProductChatMessagesQueryItem
-    typealias ActionAnswer = @Sendable (ProductChatUserActionRequest) async throws -> ProductChatUserActionItem
+    typealias PageAnswer = @Sendable (ProductChatMessagesQueryRequest) async throws -> ProductChatMessagesQueryResponse
+    typealias ActionAnswer = @Sendable (ProductChatUserActionRequest) async throws -> ProductChatUserActionResponse
 
     private let page: PageAnswer
     private let action: ActionAnswer
@@ -14,7 +14,7 @@ final class ScriptedProductChatQuerying: ProductChatQuerying {
     private let actions = OSAllocatedUnfairLock<[ProductChatUserActionRequest]>(initialState: [])
 
     init(
-        page: @escaping PageAnswer = { _ in ProductChatMessagesQueryItem(messages: [], next: nil) },
+        page: @escaping PageAnswer = { _ in ProductChatMessagesQueryResponse(messages: [], next: nil) },
         action: @escaping ActionAnswer = { _ in .acknowledged }
     ) {
         self.page = page
@@ -29,12 +29,12 @@ final class ScriptedProductChatQuerying: ProductChatQuerying {
         actions.withLock { $0 }
     }
 
-    func messagesPage(_ request: ProductChatMessagesQueryRequest) async throws -> ProductChatMessagesQueryItem {
+    func messagesPage(_ request: ProductChatMessagesQueryRequest) async throws -> ProductChatMessagesQueryResponse {
         pages.withLock { $0.append(request) }
         return try await page(request)
     }
 
-    func userAction(_ request: ProductChatUserActionRequest) async throws -> ProductChatUserActionItem {
+    func userAction(_ request: ProductChatUserActionRequest) async throws -> ProductChatUserActionResponse {
         actions.withLock { $0.append(request) }
         return try await action(request)
     }

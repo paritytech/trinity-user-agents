@@ -29,7 +29,7 @@ actor ProductMessageSource: ChatMessageSourcing {
 
     /// How a page request ended after its retry.
     enum PageResult {
-        case page(ProductChatMessagesQueryItem)
+        case page(ProductChatMessagesQueryResponse)
         /// The product cannot give pages for this end (`NotAvailable`).
         case notAvailable
         /// The product did not answer in time, or refused the room.
