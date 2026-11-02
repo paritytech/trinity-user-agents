@@ -12434,6 +12434,7 @@ fn a_worker_handshake_waits_for_a_session_before_its_sessions_are_handed_over() 
 		crate::platform::FundingPresentOutcome::Started,
 	)));
 	let provider_id = "ramp.dot";
+	offer_provider(&services, provider_id, RAMP_MANIFEST);
 	let host = signed_out_provider_worker(&services, provider_id);
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
@@ -12444,7 +12445,7 @@ fn a_worker_handshake_waits_for_a_session_before_its_sessions_are_handed_over() 
 	.expect("opened")
 	.intent;
 	assert!(
-		futures::executor::block_on(services.select_funding_provider(&intent, provider_id))
+		futures::executor::block_on(services.select_funding_provider(&intent, provider_id, None))
 			.expect("selected")
 	);
 	let link = Arc::new(ScriptedProviderLink::default());
