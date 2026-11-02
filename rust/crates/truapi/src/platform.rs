@@ -59,8 +59,8 @@ use truapi::{
 		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
 		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
-		NftPurseOwner, ProductAccountId, ProductAccountTxPayload, ProductChatMessagesQueryItem,
-		ProductChatMessagesQueryRequest, ProductChatReactionsQueryItem, ProductProofContext,
+		NftPurseOwner, ProductAccountId, ProductAccountTxPayload, ProductChatMessagesQueryRequest,
+		ProductChatMessagesQueryResponse, ProductChatReactionsQueryResponse, ProductProofContext,
 		RemotePermission, RemotePermissionRequest, RingLocation,
 	},
 	v01::HostAccountSignVrfRequest,
@@ -950,11 +950,11 @@ fn check_chat_page_size(page_size: u32, max: u32) -> Result<u32, ChatFieldError>
 
 /// Validate a page of messages a product answers for a page of `page_size`.
 pub fn validate_chat_messages_page(
-	page: ProductChatMessagesQueryItem,
+	page: ProductChatMessagesQueryResponse,
 	page_size: u32,
-) -> Result<ProductChatMessagesQueryItem, ChatFieldError> {
+) -> Result<ProductChatMessagesQueryResponse, ChatFieldError> {
 	check_chat_count("messages", &page.messages, page_size as usize)?;
-	Ok(ProductChatMessagesQueryItem {
+	Ok(ProductChatMessagesQueryResponse {
 		messages: page.messages.into_iter().map(validate_chat_message).collect::<Result<_, _>>()?,
 		next: page.next.map(|next| validate_chat_cursor("next", next)).transpose()?,
 	})
@@ -962,9 +962,9 @@ pub fn validate_chat_messages_page(
 
 /// Validate who reacted to a message, as a product answers it.
 pub fn validate_chat_reactions_answer(
-	answer: ProductChatReactionsQueryItem,
-) -> Result<ProductChatReactionsQueryItem, ChatFieldError> {
-	Ok(ProductChatReactionsQueryItem {
+	answer: ProductChatReactionsQueryResponse,
+) -> Result<ProductChatReactionsQueryResponse, ChatFieldError> {
+	Ok(ProductChatReactionsQueryResponse {
 		reactions: answer
 			.reactions
 			.into_iter()
@@ -3150,7 +3150,7 @@ mod tests {
 	// the cache past what the screen requested.
 	#[test]
 	fn an_answer_holds_no_more_than_the_page_asked() {
-		let page = |count: usize| ProductChatMessagesQueryItem {
+		let page = |count: usize| ProductChatMessagesQueryResponse {
 			messages: (0..count).map(|index| text_message(&format!("m{index}"))).collect(),
 			next: None,
 		};
