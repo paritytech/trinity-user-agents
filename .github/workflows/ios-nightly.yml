@@ -350,7 +350,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          sparse-checkout: .github/actions/announce-nightly
+          sparse-checkout: |
+            .github/actions/announce-nightly
+            .github/actions/mark-nightly-announced
 
       # An earlier attempt of this run that announced left a record on the run,
       # which outlives the attempt, so a re-run of any leg finds it.
@@ -394,9 +396,9 @@ jobs:
           relay_url: ${{ secrets.NOTIFICATION_BOT_URL }}
           relay_token: ${{ secrets.NOTIFICATION_BOT_TOKEN }}
           room_ids: ${{ secrets.CI_MATRIX_ROOM_IDS }}
-          release_tag: ${{ needs.simulator.outputs.tag }}
-          github_token: ${{ github.token }}
 
+      # Recorded as soon as the post lands, so a marking that fails below
+      # cannot make a re-run post the night again.
       - name: Record that this night was announced
         if: steps.announced.outputs.done != 'true'
         run: echo "${GITHUB_RUN_ATTEMPT}" > "$RUNNER_TEMP/nightly-announced"
@@ -408,3 +410,11 @@ jobs:
           name: nightly-announced
           path: ${{ runner.temp }}/nightly-announced
           retention-days: 30
+
+      # A re-run after an earlier attempt posted but failed here marks it then.
+      - name: Mark the simulator release as announced
+        if: needs.simulator.outputs.tag != ''
+        uses: ./.github/actions/mark-nightly-announced
+        with:
+          release_tag: ${{ needs.simulator.outputs.tag }}
+          github_token: ${{ github.token }}
