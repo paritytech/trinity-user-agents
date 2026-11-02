@@ -41,7 +41,7 @@ use truapi::{
 		HostChatCreateRoomRequest, HostChatDeleteRoomRequest, HostChatListSubscribeItem,
 		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
 		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
-		HostChatSetRoomConfigRequest, HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
+		HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
 		HostChatSetRoomPreviewRequest, HostChatUpdateFeedError, HostChatUpdateFeedRequest,
 		ProductChatUserActionResponse,
 	},
@@ -1079,10 +1079,11 @@ impl ChatPlatform for CliChatHost {
 	async fn set_chat_room_config(
 		&self,
 		_product: &ProductContext,
-		request: HostChatSetRoomConfigRequest,
+		room_id: String,
+		config: ChatRoomConfig,
 	) -> Result<(), GenericError> {
-		self.declare("config", &request.room_id, &request, |room| {
-			room.config = request.config.clone();
+		self.declare("config", &room_id, &config, |room| {
+			room.config = config.clone();
 		})
 	}
 
@@ -1194,6 +1195,7 @@ mod tests {
 			room_id_source: room_id_source.to_string(),
 			name: "Support".to_string(),
 			icon: String::new(),
+			config: Default::default(),
 		}
 	}
 
@@ -1212,7 +1214,8 @@ mod tests {
 	fn configure(host: &CliChatHost, room_id: &str, config: ChatRoomConfig) {
 		futures::executor::block_on(host.set_chat_room_config(
 			&product(),
-			HostChatSetRoomConfigRequest { room_id: room_id.to_string(), config },
+			room_id.to_string(),
+			config,
 		))
 		.expect("the room exists");
 	}

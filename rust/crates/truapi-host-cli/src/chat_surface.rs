@@ -36,9 +36,10 @@ use truapi::{
 	CallError, ProductRuntime, ProductRuntimeError, Subscription,
 	latest::{
 		ChatActionPayload, ChatMessageBody, ChatMessageContent, ChatPageAnchor, ChatUserAction,
-		HostChatActionSubscribeItem, ProductChatMessagesQueryResponse, ProductChatMessagesQueryRequest,
-		ProductChatQueryError, ProductChatReactionsQueryResponse, ProductChatReactionsQueryRequest,
-		ProductChatUserActionError, ProductChatUserActionResponse, ProductChatUserActionRequest,
+		HostChatActionSubscribeItem, ProductChatMessagesQueryRequest,
+		ProductChatMessagesQueryResponse, ProductChatQueryError, ProductChatReactionsQueryRequest,
+		ProductChatReactionsQueryResponse, ProductChatUserActionError,
+		ProductChatUserActionRequest, ProductChatUserActionResponse,
 	},
 };
 
@@ -841,7 +842,7 @@ mod tests {
 	use truapi::{
 		latest::{
 			ChatMessage, ChatMessageOrigin, ChatMessageStatus, ChatReactionDetail, ChatRoomConfig,
-			HostChatCreateRoomRequest, HostChatSetRoomConfigRequest,
+			HostChatCreateRoomRequest,
 		},
 		platform::{ChatPlatform, ProductContext},
 	};
@@ -914,8 +915,10 @@ mod tests {
 		fn user_action(
 			&self,
 			request: ProductChatUserActionRequest,
-		) -> Result<Query<ProductChatUserActionResponse, ProductChatUserActionError>, ProductRuntimeError>
-		{
+		) -> Result<
+			Query<ProductChatUserActionResponse, ProductChatUserActionError>,
+			ProductRuntimeError,
+		> {
 			self.ask(request);
 			Ok(scripted(&self.actions))
 		}
@@ -950,8 +953,10 @@ mod tests {
 		fn user_action(
 			&self,
 			_request: ProductChatUserActionRequest,
-		) -> Result<Query<ProductChatUserActionResponse, ProductChatUserActionError>, ProductRuntimeError>
-		{
+		) -> Result<
+			Query<ProductChatUserActionResponse, ProductChatUserActionError>,
+			ProductRuntimeError,
+		> {
 			Err(ProductRuntimeError::Denied)
 		}
 
@@ -987,12 +992,14 @@ mod tests {
 					room_id_source: room_id.to_string(),
 					name: name.to_string(),
 					icon: String::new(),
+					config: ChatRoomConfig::default(),
 				},
 			))
 			.expect("a new room is created");
 			futures::executor::block_on(chat.set_chat_room_config(
 				&product(),
-				HostChatSetRoomConfigRequest { room_id: room_id.to_string(), config },
+				room_id.to_string(),
+				config,
 			))
 			.expect("the room takes its configuration");
 		};

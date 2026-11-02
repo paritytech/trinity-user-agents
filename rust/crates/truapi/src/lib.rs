@@ -262,10 +262,6 @@ pub mod latest {
 	/// Product-to-host list of who reacted to a chat message.
 	pub type ProductChatReactionsQueryResponse =
 		LatestOf<versioned::chat::ProductChatReactionsQueryResponse>;
-	/// Request to set the parts of a native chat room the product serves.
-	pub type HostChatSetRoomConfigRequest = LatestOf<versioned::chat::HostChatSetRoomConfigRequest>;
-	/// Failure to declare the configuration of a native chat room.
-	pub type HostChatSetRoomConfigError = LatestOf<versioned::chat::HostChatSetRoomConfigError>;
 	/// Current native room list for a product.
 	pub type HostChatListSubscribeItem = LatestOf<versioned::chat::HostChatListSubscribeItem>;
 	/// Native chat message posting request.
