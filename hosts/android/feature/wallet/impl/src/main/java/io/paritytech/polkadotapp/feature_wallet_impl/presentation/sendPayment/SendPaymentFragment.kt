@@ -6,6 +6,7 @@ import androidx.compose.runtime.Composable
 import androidx.fragment.app.viewModels
 import dagger.hilt.android.AndroidEntryPoint
 import io.paritytech.polkadotapp.common.presentation.screens.BaseComposeFragment
+import io.paritytech.polkadotapp.design.utils.SensitiveScreenEffect
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.scanAddressQr.ScanAddressQrResultPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.compose.SendPaymentScreen
 
@@ -21,7 +22,10 @@ class SendPaymentFragment : BaseComposeFragment<SendPaymentViewModel>() {
     }
 
     @Composable
-    override fun Screen() = SendPaymentScreen(viewModel)
+    override fun Screen() {
+        SensitiveScreenEffect()
+        SendPaymentScreen(viewModel)
+    }
 
     companion object {
         const val REQUEST_KEY = "scan_qr_address"

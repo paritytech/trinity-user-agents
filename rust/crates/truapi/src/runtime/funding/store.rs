@@ -217,7 +217,7 @@ pub(super) async fn rows(db: &Db, table: &'static str) -> Vec<(String, Vec<u8>)>
 
 /// Store `record` as session `intent`'s row, as it is.
 #[cfg(test)]
-pub(super) async fn put_session_row(db: &Db, intent: &str, record: Vec<u8>) {
+pub(crate) async fn put_session_row(db: &Db, intent: &str, record: Vec<u8>) {
 	let rows = vec![(intent.to_string(), record)];
 	db.write(move |tx| upsert(tx, &SESSIONS, &rows))
 		.await

@@ -2968,6 +2968,29 @@ fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
 	let platform =
 		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
 	assert!(services.funding().install_platform(platform.clone()));
+	let intent = cancelled_session(&services, &tasks);
+	let announced_on_resume = || {
+		platform.announced.lock().expect("announced mutex poisoned").clear();
+		services.resume_funding();
+		futures::executor::block_on(tasks.run());
+		platform.announced.lock().expect("announced mutex poisoned").clone()
+	};
+
+	let before = announced_on_resume();
+	let acknowledged = futures::executor::block_on(services.acknowledge_funding_session(&intent))
+		.expect("acknowledged");
+	let after = announced_on_resume();
+
+	assert_eq!((before, acknowledged, after), (vec![intent], true, Vec::new()));
+}
+
+/// Opens a funding session and cancels it, returning its intent. The session
+/// is left ended but not acknowledged by the host, which is what a resume
+/// announces.
+///
+/// Opening also schedules an expiry task that sleeps until the session's
+/// deadline. It is discarded, so a test running the held tasks never waits on it.
+fn cancelled_session(services: &Arc<RuntimeServices>, tasks: &HeldTasks) -> String {
 	let opening =
 		services.open_funding(None, "fs_resume".to_string(), v01::FundingDirection::Out, None);
 	// The overlay runs on a task of its own, which these held tasks run.
@@ -2985,19 +3008,63 @@ fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
 		futures::executor::block_on(services.cancel_funding(&intent)).expect("cancelled"),
 		CancelOutcome::Ended
 	);
-	let announced_on_resume = || {
-		platform.announced.lock().expect("announced mutex poisoned").clear();
-		services.resume_funding();
-		futures::executor::block_on(tasks.run());
-		platform.announced.lock().expect("announced mutex poisoned").clone()
-	};
+	intent
+}
 
-	let before = announced_on_resume();
-	let acknowledged = futures::executor::block_on(services.acknowledge_funding_session(&intent))
-		.expect("acknowledged");
-	let after = announced_on_resume();
+// The host's session views read what the core has loaded, so a resume that
+// cannot store the sessions keeps trying, and the host hears of them once
+// storage recovers.
+#[test]
+fn funding_resume_is_retried_until_storage_recovers() {
+	let tasks = HeldTasks::default();
+	let db = crate::store::open_memory_core_db();
+	let services = funding_services_on(&db, tasks.spawner());
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	let intent = cancelled_session(&services, &tasks);
+	let announced = || platform.announced.lock().expect("announced mutex poisoned").clone();
+	let reopened = funding_services_on(&db, tasks.spawner());
+	assert!(reopened.funding().install_platform(platform.clone()));
+	platform.announced.lock().expect("announced mutex poisoned").clear();
+	futures::executor::block_on(super::funding::fail_writes(&db, true));
+	reopened.resume_funding();
+	let mut resume = tasks.take().pop().expect("resume task");
 
-	assert_eq!((before, acknowledged, after), (vec![intent], true, Vec::new()));
+	let (waiting, while_failing, after_recovery) = futures::executor::block_on(async {
+		let waiting = futures::poll!(&mut resume).is_pending();
+		let while_failing = announced();
+		super::funding::fail_writes(&db, false).await;
+		resume.await;
+		(waiting, while_failing, announced())
+	});
+
+	assert_eq!((waiting, while_failing, after_recovery), (true, Vec::new(), vec![intent]));
+}
+
+// Retrying cannot read sessions a newer app stored, so resume gives up at once.
+#[test]
+fn funding_resume_stops_at_sessions_of_a_newer_format() {
+	let tasks = HeldTasks::default();
+	let db = crate::store::open_memory_core_db();
+	futures::executor::block_on(super::funding::put_session_row(
+		&db,
+		"fs_new",
+		(u16::MAX, "anything").encode(),
+	));
+	let services = funding_services_on(&db, tasks.spawner());
+	services.resume_funding();
+	let resume = tasks.take().pop().expect("resume task");
+	let (done, finished) = std::sync::mpsc::channel();
+	std::thread::spawn(move || {
+		futures::executor::block_on(resume);
+		let _ = done.send(());
+	});
+
+	assert_eq!(
+		(finished.recv_timeout(Duration::from_secs(5)).is_ok(), tasks.take().len()),
+		(true, 0)
+	);
 }
 
 /// A funding overlay that, while it is up, records how many sessions the

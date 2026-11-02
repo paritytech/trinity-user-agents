@@ -28,7 +28,7 @@ enum LegacyGameAlarmCleanup {
 
         if #available(iOS 26.1, *) {
             AlarmKitGameReminder(
-                alarmManger: .shared,
+                alarmManger: AlarmManager.shared,
                 settingsManager: settingsManager,
                 keys: keys
             ).cancelReminder()

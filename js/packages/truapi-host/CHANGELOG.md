@@ -1,5 +1,103 @@
 # @parity/truapi-host
 
+## 0.28.0
+
+### Minor Changes
+
+- 7a9b1e7: Native hosts can provide encrypted storage for the secrets the core keeps through the new
+  `encryptedStorageRead`, `encryptedStorageWrite` and `encryptedStorageDelete` host callbacks, which default to a
+  rejection. A missing key reads as absent; a store that cannot be read, or a value that no longer decrypts, is an
+  error.
+- 1136d53: Native hosts serve `NftPurse.createReceiveKey` and `NftPurse.createCheque`. `createReceiveKey` makes a
+  one-time X25519 receive key into any purse, with no grant; its secret is kept in the host's encrypted storage, so a
+  host that does not provide it cannot create receive keys. `createCheque` seals the secret of each item to the receive
+  key or a static X25519 key and returns the cheque for the product to deliver; the items are spent from then on.
+  `encryptedSecrets` is the ephemeral X25519 key, the 12-byte nonce, and the ChaCha20-Poly1305 ciphertext (HKDF-SHA256
+  key) of the SCALE-encoded 64-byte sr25519 secrets in `items` order, each in schnorrkel's `SecretKey::to_bytes` form
+  (scalar, then nonce), not the ed25519-expanded form. An ephemeral cheque id is
+  `blake2_256("nft-purse/cheque-id" ++ receiveKey)`. `NftPurseCreateChequeError` gains `NoItems` and `OperationExists`,
+  the latter for a second cheque with the same id from the same product. Handing off items of a purse the product does
+  not own asks the user through `NftPurseDrain`, whose destination gains `Cheque`. The browser core answers both calls
+  `Unsupported`.
+- 860a5f4: Native hosts serve `NftPurse.deposit` and the new `NftPurse.staticReceiveKey`. `deposit` opens a received
+  cheque and registers one move per item into the purse the product names, under the cheque id, which
+  `observeOperationStatus` follows. An `Ephemeral` cheque may be deposited only by the product that made its receive
+  key, and only into that key's purse: another purse answers the new `NftPurseDepositError.PurseMismatch`, and another
+  product's receive key answers `CorruptedCheque`. A `Static` cheque opens with the key `staticReceiveKey` returns, the
+  same for every product, so it is returned only with the identity disclosure consent `getUserId` asks for
+  (`NftPurseStaticReceiveKeyError.PermissionDenied` otherwise). Any product may deposit a `Static` cheque into any
+  purse, but items another deposit already moves answer the new `NftPurseDepositError.ItemsInUse`. Each move waits up to
+  an hour for its cheque key to hold an NFT. The item secrets are kept in the host's encrypted storage, so each move can
+  be signed again after a restart. The browser core answers both calls `Unsupported`.
+- 54f55e6: Native hosts serve `NftPurse.listenOneTimePayment`, which replaces `listenForPayment`, and the new
+  `NftPurse.listenPaymentInbox`. A sender publishes a statement whose data is the cheque sealed to the receiver's key:
+  the ephemeral X25519 key, the nonce, then the ChaCha20-Poly1305 ciphertext of `SCALE(version: u8 = 0, topic, cheque)`.
+  `listenOneTimePayment` watches `blake2_256("nft-purse/payment-channel" ‖ receiveKey)` for a receive key the product
+  made, emits that channel, then the first cheque addressed to the key, and ends; another product's key answers
+  `ReceiveKeyNotFound`. `listenPaymentInbox` watches
+  `blake2_256("nft-purse/payment-inbox" ‖ identityAccount ‖ blake2_256(productId) ‖ inboxDomain)` for `Static` cheques
+  sealed to the static receive key, emits that channel, then every cheque already stored as one batch, possibly empty,
+  then each batch of new ones. Both emit cheques already deposited again while the store holds them, and end with
+  `Other` when the connection drops. The browser core answers both `Unsupported`.
+- 24f3157: Native hosts serve `NftPurse.rebalancePurse`, `NftPurse.transferItem` and the new
+  `NftPurse.observeOperationStatus`. A chain operation takes an `idempotencyKey` the product chooses and returns once it
+  is registered; a second call under the same key fails with `OperationExists`. `observeOperationStatus` follows any
+  operation the product registered, by its key, until it is `Cleared` or `Incomplete`; deposits and refunds will be
+  followed by their cheque id once they are served. Each transfer is a fee-less Scarcity transfer signed by its item
+  key; an item a live transfer spends is no longer listed by `queryPurse`. Transferring items out of a purse the product
+  does not own asks the user through the new `NftPurseDrain` confirmation review. `deposit` and `refund` take the same
+  shape and still answer unavailable. The browser core answers the new calls `Unsupported`.
+- 4a92efa: Native hosts serve `NftPurse.revokeCheque` and `NftPurse.refund`. `revokeCheque` moves the items at the keys
+  of a cheque the product created back into fresh keys of its purse, and can be repeated to retry the keys whose move
+  failed; another product's cheque answers `ChequeNotFound`, a cheque whose items a deposit on this device already moves
+  answers the new `NftPurseRevokeChequeError.ItemsInUse`, and `NftPurseRevokeChequeError.Denied` is gone. `refund`
+  returns the items a product deposited from a cheque to the cheque's keys once the deposit has settled, and answers
+  which items move and which stay, with the new `NftPurseRefundError.DepositInProgress` and `ItemUnavailable`. Both are
+  followed by `observeOperationStatus` under `blake2_256("nft-purse/revoke" ‖ chequeId)` and
+  `blake2_256("nft-purse/refund" ‖ chequeId)`. Refunding out of a purse the product does not own asks the user through
+  `NftPurseDrain` with the new `Refund` destination. A transfer now moves whatever its item key holds on its first
+  attempt. The browser core answers both calls `Unsupported`.
+- 5dfdb50: `NavigateDecision::Pocket` carries an `open` link's query parameters other than `product` and `card` in
+  `page_query`, still encoded, and keeps them in `canonical_url`. A link with over 2048 bytes of them, or with
+  characters a URL query cannot hold, is rejected. Swift code matching `.pocket` by position needs a slot for the new
+  field.
+
+### Patch Changes
+
+- bbc7d8d: A chain call that fails because its connection dropped or closed carries the reason the transport gave, as in
+  `remote_chain_spec_genesis_hash: RPC error: client error: json-rpc connection closed`. Each failed chain call is also
+  logged as a warning with its failure kind, and a native host receives warnings and errors through `on_core_log` as
+  `truapi.tracing.warn` and `truapi.tracing.error` lines, whatever the log level, each detail capped at 512 characters.
+- f63cda7: Host-initiated methods returning `Result` generate asynchronous Rust callers and TypeScript handlers
+  returning typed `neverthrow` results over one-item subscriptions. Calls support cooperative cancellation, startup
+  buffering, and connection cleanup through the existing subscription transport.
+- 38a51ce: A render stream the host opened fails with a host failure when its product connection closes, instead of
+  finishing. A finished stream is a body the product completed, so the host keeps it as final; a failed one is a body
+  the host can request again on the next connection. A product that ends a body itself still finishes the stream.
+- bbc7d8d: A ring-VRF proof or signature refused as `NotAllowlisted` by the manifest check or the context check, or an
+  alias read refused by the context check, is logged as a warning, so a native host receives it as a
+  `truapi.tracing.warn` line. This covers the manifest check the runtime makes before a product call reaches the signing
+  or pairing host, and each refusal is logged once, by the check that made it. The line names the reason, the
+  `trustedProducts` entry checked, the proof context, where the manifest came from, and the scopes the entry lists. The
+  source is the cache and its age in seconds, a fresh dotNS read, no Asset Hub, the dotNS lookup failure, or a timeout.
+  A lookup that runs past the deadline of the product call is logged as a timeout, and a call the product cancels logs
+  nothing. A context on another network from the key owner is logged with no source, since no manifest is read. An alias
+  read the owner manifest does not grant still falls back to user consent and logs no warning. A caller, key handle or
+  context that names no product is still refused without a line. The error a product receives is unchanged.
+- Updated dependencies [bbc7d8d]
+- Updated dependencies [f449b93]
+- Updated dependencies [f63cda7]
+- Updated dependencies [1136d53]
+- Updated dependencies [860a5f4]
+- Updated dependencies [54f55e6]
+- Updated dependencies [24f3157]
+- Updated dependencies [4a92efa]
+- Updated dependencies [b1e64dc]
+- Updated dependencies [2c8a677]
+- Updated dependencies [c1a894d]
+- Updated dependencies [2dfc294]
+  - @parity/truapi@0.28.0
+
 ## 0.27.0
 
 ### Major Changes

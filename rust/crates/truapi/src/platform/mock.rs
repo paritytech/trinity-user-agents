@@ -94,6 +94,8 @@ pub enum ConfirmKind {
 	SignVrf,
 	/// [`UserConfirmationReview::ProductSubtree`].
 	ProductSubtree,
+	/// [`UserConfirmationReview::NftPurseDrain`].
+	NftPurseDrain,
 }
 
 impl ConfirmKind {
@@ -112,6 +114,7 @@ impl ConfirmKind {
 			},
 			UserConfirmationReview::SignVrf(_) => ConfirmKind::SignVrf,
 			UserConfirmationReview::ProductSubtree(_) => ConfirmKind::ProductSubtree,
+			UserConfirmationReview::NftPurseDrain(_) => ConfirmKind::NftPurseDrain,
 		}
 	}
 }

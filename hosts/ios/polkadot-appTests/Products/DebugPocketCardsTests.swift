@@ -32,6 +32,18 @@ struct DebugPocketCardsTests {
         #expect(store.widgetURL(for: gold) == nil)
     }
 
+    /// A link's page params reach a debug-served page too, after the card,
+    /// so a page served from the Mac can be checked against the same link.
+    @Test
+    func handsTheWidgetPageALinksPageParams() throws {
+        let store = DebugPocketCards(settingsManager: InMemorySettingsManager())
+        store.save(card(widgetUrl: URL(string: "http://127.0.0.1:5173/?hideOnLoad")))
+
+        let url = try #require(store.widgetURL(for: loyaltyKey, pageQuery: "open=scratch"))
+
+        #expect(url.absoluteString == "http://127.0.0.1:5173/?hideOnLoad&card=loyalty&open=scratch")
+    }
+
     // MARK: - Cards typed in before
 
     /// A card saved before it could name a page or a face setting must still
