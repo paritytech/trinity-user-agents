@@ -7,7 +7,7 @@ let productUserParticipantId = "user"
 // A message of a product room. The room screen and the chat list then draw it with the views and the strings of the
 // native person chat: a text with Markdown and links, or an info row.
 
-extension ChatMessage {
+extension ChatPreviewMessage {
     /// The message as the chat list draws it in the preview line of the room.
     func previewMessage() -> Chat.RoomPreviewMessage {
         let localStatus: Chat.LocalMessage.Status = isFromUser
@@ -35,7 +35,7 @@ extension ChatMessage {
 
     /// The content of the native chat.
     var nativeContent: Chat.LocalMessage.Content {
-        body.nativeContent(replyTo: reply?.messageId)
+        body.nativeContent(replyTo: replyTo)
     }
 
     /// The last edit, which the native preview line shows as "Edited: <text>".
