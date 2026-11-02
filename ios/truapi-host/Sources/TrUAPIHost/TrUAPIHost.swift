@@ -399,6 +399,11 @@ public protocol FundingHostBridge: AnyObject, Sendable {
     /// no frame is open for it. Called inline.
     func closeProviderFrame(providerId: String, intent: String)
 
+    /// Whether provider `providerId` ships an App, so an App route of its can
+    /// be shown in ``presentProviderFrame(providerId:intent:target:)``. A
+    /// provider without one shows only external pages.
+    func providerHasApp(providerId: String) async -> Bool
+
     /// Whether a provider still works on any session: once funding resumes,
     /// and again whenever it changes. A host that keeps it starts funding at
     /// its next launch. Called inline.
@@ -723,6 +728,10 @@ private final class FundingCallbackAdapter: NativeFundingCallbacks, @unchecked S
 
     func closeProviderFrame(providerId: String, intent: String) {
         bridge.closeProviderFrame(providerId: providerId, intent: intent)
+    }
+
+    func providerHasApp(providerId: String) async -> Bool {
+        await bridge.providerHasApp(providerId: providerId)
     }
 
     func fundingInProgressChanged(inProgress: Bool) {

@@ -1660,6 +1660,11 @@ impl FundingProvider for ProductRuntimeHost {
 				}
 				let target = crate::host_logic::funding::checked_frame_target(target)
 					.ok_or_else(|| domain(latest::HostFundingPresentFrameError::InvalidUrl))?;
+				if matches!(target, latest::FundingFrameTarget::App { .. }) &&
+					!platform.provider_has_app(&self.connection.product).await
+				{
+					return Err(domain(latest::HostFundingPresentFrameError::NoApp));
+				}
 				let outcome = platform
 					.present_provider_frame(&self.connection.product, intent, target)
 					.await

@@ -11,7 +11,9 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOver
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameTarget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.DeviceCountryDetector
+import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,6 +42,8 @@ class AppFundingHostBridge @Inject constructor(
     // Lazy: the overlay reaches the runtime, whose provider is built with this bridge.
     private val overlay: Lazy<FundingOverlay>,
     private val countryDetector: DeviceCountryDetector,
+    private val bundledProducts: BundledProducts,
+    private val resolveProduct: ResolveProductUseCase,
 ) : FundingHostBridge {
     private val sessions = MutableStateFlow<Map<String, FundingSessionEntry>>(emptyMap())
     private val options = MutableStateFlow<Map<String, FundingOptions>>(emptyMap())
@@ -115,6 +119,15 @@ class AppFundingHostBridge @Inject constructor(
 
     override fun closeProviderFrame(providerId: String, intent: String) {
         overlay.get().closeProviderFrame(ProductId.fromStoredValue(providerId), intent)
+    }
+
+    // A product that cannot be resolved gets its App route through, so the frame fails as it did before.
+    override suspend fun providerHasApp(providerId: String): Boolean {
+        val bundled = bundledProducts.product(providerId)
+        if (bundled != null) return bundledProducts.hasApp(bundled)
+        return resolveProduct.resolve(ProductId.fromStoredValue(providerId))
+            .map { it.executables.app != null }
+            .getOrDefault(true)
     }
 
     override suspend fun detectedCountry(): String? = countryDetector.detect()

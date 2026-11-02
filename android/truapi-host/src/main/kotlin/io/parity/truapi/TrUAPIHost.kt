@@ -847,6 +847,12 @@ interface FundingHostBridge {
     fun closeProviderFrame(providerId: String, intent: String)
 
     /**
+     * Whether provider [providerId] ships an App, so an App route of its can be shown in [presentProviderFrame]. A
+     * provider without one shows only external pages.
+     */
+    suspend fun providerHasApp(providerId: String): Boolean
+
+    /**
      * The country the user is likely in, as an ISO 3166-1 alpha-2 code: the device's coarse location when
      * already permitted, then its SIM or network country, then its locale's region. Never asks for a
      * permission. `null` when nothing says.
@@ -904,6 +910,17 @@ private class FundingCallbackAdapter(private val bridge: FundingHostBridge) : Na
     override fun closeProviderFrame(providerId: String, intent: String) {
         runCatching { bridge.closeProviderFrame(providerId, intent) }
     }
+
+    // Infallible across the FFI: a host that cannot tell lets the App route through, as before. A cancelled call
+    // stays cancelled.
+    override suspend fun providerHasApp(providerId: String): Boolean =
+        try {
+            bridge.providerHasApp(providerId)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            true
+        }
 
     // Infallible across the FFI: a host that cannot tell answers no country. A cancelled call stays cancelled.
     override suspend fun detectedCountry(): String? =

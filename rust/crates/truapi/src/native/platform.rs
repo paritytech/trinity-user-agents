@@ -809,6 +809,10 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 		self.funding.close_provider_frame(provider.product_id.to_string(), intent);
 	}
 
+	async fn provider_has_app(&self, provider: &ProductContext) -> bool {
+		self.funding.provider_has_app(provider.product_id.to_string()).await
+	}
+
 	async fn detected_country(&self) -> Option<String> {
 		self.funding.detected_country().await
 	}

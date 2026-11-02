@@ -17,6 +17,9 @@ protocol FundingOverlayEnvironment: AnyObject {
     func present(_ controller: UIViewController) -> Bool
     /// The provider product's page at `route`, as the app shows products.
     func providerPage(providerId: String, route: String, title: String) -> UIViewController?
+    /// Whether the provider product ships an App; true when that cannot be
+    /// told, so its page is tried as before.
+    func providerHasApp(providerId: String) async -> Bool
     /// A session changed, for the CASH card's lists.
     func fundingActivityChanged()
     /// A passing notice over whatever is on screen.
@@ -56,6 +59,10 @@ final class AppFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
 
     func closeProviderFrame(providerId: String, intent: String) {
         Task { @MainActor in coordinator?.closeFrame(providerId: providerId, intent: intent) }
+    }
+
+    func providerHasApp(providerId: String) async -> Bool {
+        await hasApp(providerId: providerId)
     }
 
     func fundingSessionChanged(intent: String, status _: HostFundingStatusSubscribeItem) {
@@ -106,6 +113,12 @@ private extension AppFundingOverlay {
     func present(intent: String, direction: FundingDirection, amount: U128?) async -> FundingPresentOutcome {
         guard let coordinator else { return .dismissed }
         return await coordinator.presentFunding(intent: intent, direction: direction, amount: amount)
+    }
+
+    @MainActor
+    func hasApp(providerId: String) async -> Bool {
+        guard let coordinator else { return true }
+        return await coordinator.providerHasApp(providerId: providerId)
     }
 
     @MainActor
@@ -194,6 +207,10 @@ final class FundingOverlayCoordinator {
             sheet?.dismissIfPresented { self?.startOver(direction: record.direction) }
         }
         _ = environment.present(sheet)
+    }
+
+    func providerHasApp(providerId: String) async -> Bool {
+        await environment.providerHasApp(providerId: providerId)
     }
 
     /// The provider closed its frame for session `intent`: the frame answers

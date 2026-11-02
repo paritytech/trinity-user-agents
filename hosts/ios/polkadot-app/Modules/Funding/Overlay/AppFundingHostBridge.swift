@@ -23,6 +23,9 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
     /// `.closed` and show the session sheet in its place.
     func closeProviderFrame(providerId: String, intent: String)
 
+    /// Whether provider `providerId` ships an App its frame can show.
+    func providerHasApp(providerId: String) async -> Bool
+
     func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem)
 
     /// What session `intent`'s overlay offers changed in the session book.
@@ -86,6 +89,10 @@ final class AppFundingHostBridge: FundingHostBridge, @unchecked Sendable {
 
     func closeProviderFrame(providerId: String, intent: String) {
         overlay.closeProviderFrame(providerId: providerId, intent: intent)
+    }
+
+    func providerHasApp(providerId: String) async -> Bool {
+        await overlay.providerHasApp(providerId: providerId)
     }
 
     func fundingSessionChanged(
