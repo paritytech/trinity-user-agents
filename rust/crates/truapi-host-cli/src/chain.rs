@@ -11,7 +11,10 @@ use std::{
 
 use async_trait::async_trait;
 use clap::ValueEnum;
-use futures::{Stream, StreamExt, stream};
+use futures::{
+	Stream, StreamExt,
+	stream::{self, FusedStream},
+};
 use subxt_rpcs::client::RpcClient;
 use tracing::debug;
 use truapi::{
@@ -229,43 +232,48 @@ impl LightClient {
 	/// Waits until the light client follows `genesis_hash`; see [`until_ready`].
 	/// Connect to the chain first, since only a running chain has a lifecycle.
 	async fn synced(&self, genesis_hash: [u8; 32]) -> Result<(), ProviderError> {
-		let tagged = |genesis| {
-			Ok::<_, ProviderError>(
-				self.provider.lifecycle(genesis)?.map(move |state| (genesis, state)),
-			)
+		let relay = match self.provider.relay_of(genesis_hash) {
+			Some(relay) => self.provider.lifecycle(relay)?,
+			None => stream::empty().boxed(),
 		};
-		let relay = self.provider.relay_of(genesis_hash).map(tagged).transpose()?;
-		let states = stream::select(tagged(genesis_hash)?, stream::iter(relay).flatten());
-		until_ready(genesis_hash, states).await
+		until_ready(genesis_hash, self.provider.lifecycle(genesis_hash)?, relay.fuse()).await
 	}
 }
 
-/// Waits for `chain` to be `Ready` in `states`, which also carries its relay's
-/// updates. A stall of either fails, since a parachain never reports its relay's.
+/// Waits for the chain to be `Ready`. A stall of the chain or of its relay
+/// fails, since a parachain never reports its relay's.
 async fn until_ready(
-	chain: [u8; 32],
-	states: impl Stream<Item = ([u8; 32], ChainLifecycle)>,
+	genesis: [u8; 32],
+	chain: impl Stream<Item = ChainLifecycle>,
+	relay: impl FusedStream<Item = ChainLifecycle>,
 ) -> Result<(), ProviderError> {
-	let mut states = std::pin::pin!(states);
-	while let Some((genesis, state)) = states.next().await {
-		if let ChainHealth::Stalled { reason } = state.health {
-			let which = if genesis == chain { "chain" } else { "relay" };
-			let why = match reason {
-				StallReason::NoPeers => "it has no peers",
-				StallReason::NoProgress => "its warp sync stopped advancing",
-			};
-			return Err(ProviderError::Host {
-				reason: format!(
-					"the light client stalled on {which} 0x{}: {why}",
-					hex::encode(genesis)
-				),
-			});
-		}
-		if genesis == chain && state.phase == ChainPhase::Ready {
-			return Ok(());
+	let (mut chain, mut relay) = (std::pin::pin!(chain), std::pin::pin!(relay));
+	loop {
+		tokio::select! {
+			state = chain.next() => {
+				let state = state.ok_or(ProviderError::NotRunning { genesis })?;
+				healthy(genesis, "chain", state.health)?;
+				if state.phase == ChainPhase::Ready {
+					return Ok(());
+				}
+			},
+			Some(state) = relay.next() => healthy(genesis, "the relay of chain", state.health)?,
 		}
 	}
-	Err(ProviderError::NotRunning { genesis: chain })
+}
+
+/// Fails when `health` reports a stall of `which`, named with `genesis`.
+fn healthy(genesis: [u8; 32], which: &str, health: ChainHealth) -> Result<(), ProviderError> {
+	let ChainHealth::Stalled { reason } = health else {
+		return Ok(());
+	};
+	let why = match reason {
+		StallReason::NoPeers => "it has no peers",
+		StallReason::NoProgress => "its warp sync stopped advancing",
+	};
+	Err(ProviderError::Host {
+		reason: format!("the light client stalled on {which} 0x{}: {why}", hex::encode(genesis)),
+	})
 }
 
 #[cfg(test)]
@@ -362,20 +370,25 @@ mod tests {
 	}
 
 	const PARACHAIN: [u8; 32] = [0x11; 32];
-	const RELAY: [u8; 32] = [0x22; 32];
 
 	fn lifecycle(phase: ChainPhase, health: ChainHealth) -> ChainLifecycle {
 		ChainLifecycle { phase, peers: 1, health }
 	}
 
-	/// What `until_ready` has decided for `PARACHAIN` once `updates` are
+	/// `updates`, then nothing more while the chain keeps running.
+	fn then_quiet(updates: Vec<ChainLifecycle>) -> impl Stream<Item = ChainLifecycle> {
+		stream::iter(updates).chain(stream::pending())
+	}
+
+	/// What `until_ready` has decided for `PARACHAIN` once the updates are
 	/// delivered and nothing else changes, or `None` while it still waits.
-	fn decided_after(
-		updates: Vec<([u8; 32], ChainLifecycle)>,
+	fn decided(
+		chain: impl Stream<Item = ChainLifecycle>,
+		relay: Vec<ChainLifecycle>,
 	) -> Option<Result<(), ProviderError>> {
 		use futures::FutureExt;
 
-		until_ready(PARACHAIN, stream::iter(updates).chain(stream::pending())).now_or_never()
+		until_ready(PARACHAIN, chain, then_quiet(relay).fuse()).now_or_never()
 	}
 
 	/// Only the chain's own phase lets the first request through. Its relay being
@@ -387,11 +400,23 @@ mod tests {
 
 		assert_eq!(
 			[
-				decided_after(vec![(PARACHAIN, connecting), (RELAY, ready)]),
-				decided_after(vec![(PARACHAIN, connecting), (PARACHAIN, ready)]),
+				decided(then_quiet(vec![connecting]), vec![ready]),
+				decided(then_quiet(vec![connecting, ready]), vec![]),
 			],
 			[None, Some(Ok(()))]
 		);
+	}
+
+	/// A chain the light client stopped running will never be `Ready`, however
+	/// healthy its relay is.
+	#[test]
+	fn a_chain_that_stops_ends_the_wait() {
+		let decided = decided(
+			stream::iter(vec![lifecycle(ChainPhase::Connecting, ChainHealth::Ok)]),
+			vec![lifecycle(ChainPhase::Ready, ChainHealth::Ok)],
+		);
+
+		assert_eq!(decided, Some(Err(ProviderError::NotRunning { genesis: PARACHAIN })));
 	}
 
 	/// A parachain reports a stall only from its own peers, so it looks healthy
@@ -400,17 +425,18 @@ mod tests {
 	fn a_stalled_relay_fails_the_wait() {
 		let stalled = ChainHealth::Stalled { reason: StallReason::NoProgress };
 
-		let decided = decided_after(vec![
-			(PARACHAIN, lifecycle(ChainPhase::Connecting, ChainHealth::Ok)),
-			(RELAY, lifecycle(ChainPhase::Syncing { at: 1, target: 9 }, stalled)),
-		]);
+		let decided = decided(
+			then_quiet(vec![lifecycle(ChainPhase::Connecting, ChainHealth::Ok)]),
+			vec![lifecycle(ChainPhase::Syncing { at: 1, target: 9 }, stalled)],
+		);
 
 		assert_eq!(
 			decided,
 			Some(Err(ProviderError::Host {
 				reason: format!(
-					"the light client stalled on relay 0x{}: its warp sync stopped advancing",
-					"22".repeat(32)
+					"the light client stalled on the relay of chain 0x{}: its warp sync stopped \
+					 advancing",
+					"11".repeat(32)
 				),
 			}))
 		);
