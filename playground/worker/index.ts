@@ -3,6 +3,7 @@ import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import type {
   CallErrorValue,
   ChatMessage,
+  ChatRoomConfig,
   HostChatActionSubscribeItem,
   HostChatListSubscribeItem,
   HostRendererActionSubscribeItem,
@@ -26,6 +27,12 @@ const DIAGNOSIS_COMMAND = "!diagnose";
 const ECHO_COMMAND = "!echo";
 const RENDER_MESSAGE_TYPE = "truapi-chat-diagnosis";
 const BOT_ID = "truapi-diagnosis-bot";
+// The host stores the messages of these rooms.
+const HOST_STORED_ROOM: ChatRoomConfig = {
+  productSource: false,
+  reactionDetails: false,
+  reportSeen: false,
+};
 // A one-pixel PNG: the icon rules of `createRoom` accept an inline image.
 const DIAGNOSIS_ROOM_ICON =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
@@ -128,6 +135,7 @@ async function runStartupDiagnosis(): Promise<void> {
     roomIdSource: diagnosticRoomSource,
     name: `TrUAPI Diagnosis ${runId}`,
     icon: "",
+    config: HOST_STORED_ROOM,
   });
   if (first.isErr()) {
     throw new Error(`createRoom failed: ${JSON.stringify(first.error)}`);
@@ -144,6 +152,7 @@ async function runStartupDiagnosis(): Promise<void> {
     roomIdSource: diagnosticRoomSource,
     name: `TrUAPI Diagnosis ${runId}`,
     icon: "",
+    config: HOST_STORED_ROOM,
   });
   if (second.isErr()) {
     throw new Error(
@@ -209,7 +218,6 @@ async function runStartupDiagnosis(): Promise<void> {
 async function runRoomDeclarationProbe(): Promise<void> {
   // The calls of the probe, in the order it makes them.
   const methods: readonly WorkerDiagnosisMethod[] = [
-    "Chat/set_room_config",
     "Chat/set_room_metadata",
     "Chat/set_room_preview",
     "Chat/update_feed",
@@ -232,26 +240,12 @@ async function runRoomDeclarationProbe(): Promise<void> {
   // Set while the room exists, so a failed run can remove it.
   let roomId: string | undefined;
   try {
+    // These values are not the defaults, so a host that ignores the
+    // declaration keeps other values. No call reads the config back.
     roomId = await ensureRoom(
       `${diagnosticRoomSource}-v2`,
       `TrUAPI Diagnosis v2 ${runId}`,
-    );
-
-    // These values are not the defaults, so a host that ignores the declaration
-    // keeps other values. No call reads the config back.
-    const config = await chat.setRoomConfig({
-      roomId,
-      config: {
-        productSource: false,
-        reactionDetails: true,
-        reportSeen: true,
-      },
-    });
-    if (config.isErr()) {
-      throw new Error(`setRoomConfig failed: ${JSON.stringify(config.error)}`);
-    }
-    done(
-      "declared a room the host stores, with reaction details and seen reports; no call reads the config back",
+      { productSource: false, reactionDetails: true, reportSeen: true },
     );
 
     const metadata = await chat.setRoomMetadata({
@@ -392,8 +386,12 @@ async function runBotRegistrationProbe(): Promise<void> {
   }
 }
 
-async function ensureRoom(roomIdSource: string, name: string): Promise<string> {
-  const result = await chat.createRoom({ roomIdSource, name, icon: "" });
+async function ensureRoom(
+  roomIdSource: string,
+  name: string,
+  config: ChatRoomConfig = HOST_STORED_ROOM,
+): Promise<string> {
+  const result = await chat.createRoom({ roomIdSource, name, icon: "", config });
   if (result.isErr()) {
     throw new Error(
       `Unable to create the room ${roomIdSource}: ${JSON.stringify(result.error)}`,

@@ -738,10 +738,11 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 	async fn set_chat_room_config(
 		&self,
 		_product: &ProductContext,
-		request: truapi::latest::HostChatSetRoomConfigRequest,
+		room_id: String,
+		config: truapi::latest::ChatRoomConfig,
 	) -> Result<(), truapi::latest::GenericError> {
 		self.chat
-			.set_room_config(request.room_id, request.config)
+			.set_room_config(room_id, config)
 			.await
 			.map_err(truapi::latest::GenericError::from)
 	}
