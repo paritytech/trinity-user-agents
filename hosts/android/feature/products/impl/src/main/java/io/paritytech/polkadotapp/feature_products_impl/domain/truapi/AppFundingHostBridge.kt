@@ -14,6 +14,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.DeviceCountryDetector
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 import uniffi.truapi.FundingFrameOutcome
 import uniffi.truapi.FundingFrameTarget
@@ -33,6 +35,7 @@ import uniffi.truapi.FundingSession
 import uniffi.truapi.HostFundingStatusSubscribeItem
 import uniffi.truapi.U128
 import javax.inject.Inject
+import kotlin.time.Duration.Companion.seconds
 import javax.inject.Singleton
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
@@ -125,13 +128,14 @@ class AppFundingHostBridge @Inject constructor(
         overlay.get().closeProviderFrame(ProductId.fromStoredValue(providerId), intent)
     }
 
-    // A product that cannot be resolved gets its App route through, so the frame fails as it did before.
+    // An App the app does not ship comes from dotNS, as the frame opens it. One that cannot be resolved in time gets
+    // its App route through, so the frame fails as it did before.
     override suspend fun providerHasApp(providerId: String): Boolean {
-        val bundled = bundledProducts.product(providerId)
-        if (bundled != null) return bundledProducts.hasApp(bundled)
-        return resolveProduct.resolve(ProductId.fromStoredValue(providerId))
-            .map { it.executables.app != null }
-            .getOrDefault(true)
+        if (bundledProducts.product(providerId)?.let(bundledProducts::hasApp) == true) return true
+        val resolved = withTimeoutOrNull(APP_LOOKUP_TIMEOUT) { resolveProduct.resolve(ProductId.fromStoredValue(providerId)) }
+            ?: return true
+        resolved.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+        return resolved.map { it.executables.app != null }.getOrDefault(true)
     }
 
     override suspend fun detectedCountry(): String? = countryDetector.detect()
@@ -166,6 +170,7 @@ class AppFundingHostBridge @Inject constructor(
 
     private companion object {
         const val EVENT_BUFFER = 64
+        val APP_LOOKUP_TIMEOUT = 10.seconds
     }
 }
 

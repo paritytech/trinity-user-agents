@@ -22,6 +22,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.SemVer
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProduct
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.DeviceCountryDetector
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
@@ -194,6 +195,17 @@ class AppFundingHostBridgeTest {
 
         assertEquals(true, bridge.providerHasApp("ramp.dot"))
         assertEquals(false, bridge.providerHasApp("widget.dot"))
+    }
+
+    // An App the app does not ship lives on dotNS, as the frame opens it.
+    @Test
+    fun `a bundled provider without a bundled App is looked up on dotNS`() = runBlocking {
+        val bundled = mockk<BundledProduct>()
+        every { bundledProducts.product("ramp.dot") } returns bundled
+        every { bundledProducts.hasApp(bundled) } returns false
+        coEvery { resolveProduct.resolve(ProductId.fromStoredValue("ramp.dot")) } returns Result.success(resolved(app = true))
+
+        assertEquals(true, bridge.providerHasApp("ramp.dot"))
     }
 
     // Not knowing must not refuse a provider's screen that would open.
