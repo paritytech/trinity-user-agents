@@ -228,19 +228,7 @@ final class TabBarBottomChromeController: UIViewController {
     /// Re-declares the centre content's height. Call it when the content's own
     /// height changes, so an open panel regrows.
     func refreshCenterContentHeight() {
-        guard let contentHeightForCenterPanel else {
-            return
-        }
-        let rise = max(0, barModel.availablePanelHeight - Self.centerPanelTopGap)
-        let cap = DSTabBarStyle.centerContentHeight(fittingRise: rise)
-        let contentHeight: CGFloat =
-            switch contentHeightForCenterPanel() {
-            case let .fits(declared):
-                min(declared, cap)
-            case .fill:
-                cap
-            }
-        guard contentHeight != barModel.centerContentHeight else {
+        guard let contentHeight = changedCenterContentHeight() else {
             return
         }
         guard hasPerformedInitialLayout else {
@@ -252,6 +240,19 @@ final class TabBarBottomChromeController: UIViewController {
             self.barModel.setCenterContentHeight(contentHeight)
             self.applyBarLiveHeight()
         }
+    }
+
+    /// Re-declares the centre content's height in the caller's transaction, so it moves with whatever the caller
+    /// changes alongside it.
+    func refreshCenterContentHeight(animation: Animation?) {
+        guard let contentHeight = changedCenterContentHeight() else {
+            return
+        }
+        // Before the first layout the height snaps, even inside the caller's animated transaction.
+        withAnimation(hasPerformedInitialLayout ? animation : nil) {
+            barModel.centerContentHeight = contentHeight
+        }
+        applyBarLiveHeight()
     }
 
     func apply(_ context: TabBarChromeContext) {
@@ -373,13 +374,16 @@ extension TabBarBottomChromeController {
                  .content:
                 0
             }
-        chromeSurface.setBarLiveHeight(DSTabBarStyle.height + max(DSTabBarStyle.centerButtonRestingRise, rise))
+        chromeSurface
+            .setBarLiveHeight(
+                DSTabBarStyle.height + max(DSTabBarStyle.centerButtonRestingRise, rise) + barModel.keyboardLift
+            )
     }
 
     /// The room above the bar row down to the top safe area, which the chrome's own layout already measures,
-    /// less whatever the keyboard lifts the chrome by. It caps both the shelf's growth and the centre panel's height.
+    /// less whatever the keyboard lifts the bar by. It caps both the shelf's growth and the centre panel's height.
     func refreshAvailablePanelHeight() {
-        let availableHeight = max(0, chromeSurface.restingPanelHeight - foldController.keyboardLift)
+        let availableHeight = max(0, chromeSurface.restingPanelHeight - barModel.keyboardLift)
         guard availableHeight != barModel.availablePanelHeight else {
             return
         }
@@ -417,5 +421,24 @@ extension TabBarBottomChromeController {
         case .scan:
             panelController.togglePanel(.content(.scan))
         }
+    }
+}
+
+private extension TabBarBottomChromeController {
+    /// The declared centre content height, or nil when there is no content provider or it is unchanged.
+    func changedCenterContentHeight() -> CGFloat? {
+        guard let contentHeightForCenterPanel else {
+            return nil
+        }
+        let rise = max(0, barModel.availablePanelHeight - Self.centerPanelTopGap)
+        let cap = DSTabBarStyle.centerContentHeight(fittingRise: rise)
+        let contentHeight: CGFloat =
+            switch contentHeightForCenterPanel() {
+            case let .fits(declared):
+                min(declared, cap)
+            case .fill:
+                cap
+            }
+        return contentHeight != barModel.centerContentHeight ? contentHeight : nil
     }
 }

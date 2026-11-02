@@ -3,7 +3,7 @@
 # Its own workflow rather than a job in ci.yml, because starting it needs the
 # `labeled` event and adding that to ci.yml would rerun every gate each time
 # any label changed. on-label.yml calls it for a pull request labelled
-# android-device-build.
+# ci:android-device.
 #
 # The artifact is attached to the run and nothing else. Unlike the iOS device
 # preview there is no provisioning to do: an Android debug build installs on

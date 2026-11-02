@@ -14,6 +14,7 @@
 //! Message size, outbound queues, authenticated connections and pending
 //! handshakes are bounded to contain a misbehaving local peer.
 
+use core::{future::ready, ops::ControlFlow};
 use std::{
 	collections::{HashMap, VecDeque},
 	io,
@@ -42,7 +43,10 @@ use tokio_tungstenite::{
 };
 
 use super::executor::shared_native_executor;
-use crate::{FrameSink, ProductRuntime};
+use crate::{
+	FrameSink, ProductRuntime,
+	time::{Backoff, RealTimer, Timer, retry},
+};
 
 // Allow reconnect overlap without one execution exhausting the shared limit.
 const MAX_WS_CONNECTIONS_PER_EXECUTION: usize = 8;
@@ -68,8 +72,8 @@ const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10
 
 // A rebind that keeps failing, for example once another socket holds the port,
 // must not retry in a tight loop; a successful rebind resets the pause.
-const RELISTEN_PAUSE_MIN: std::time::Duration = std::time::Duration::from_millis(50);
-const RELISTEN_PAUSE_MAX: std::time::Duration = std::time::Duration::from_secs(5);
+const RELISTEN_PAUSES: Backoff =
+	Backoff::new(std::time::Duration::from_millis(50), std::time::Duration::from_secs(5));
 const ACCEPT_RETRY_PAUSE: std::time::Duration = std::time::Duration::from_millis(50);
 
 /// Per-session descriptor returned to the host: product uses `port + token`
@@ -482,7 +486,6 @@ async fn accept_loop(
 	let mut setup_tasks: VecDeque<tokio::task::JoinHandle<()>> = VecDeque::new();
 	// Absent while a lost listener waits to be bound again on the same port.
 	let mut listener = Some(listener);
-	let mut relisten_pause = RELISTEN_PAUSE_MIN;
 	loop {
 		tokio::select! {
 			// Shutdown first, so a stopping loop never binds its port again.
@@ -533,21 +536,32 @@ async fn accept_loop(
 					connection_setup(stream, peer, registry, logger).await;
 				}));
 			}
-			_ = tokio::time::sleep(relisten_pause), if listener.is_none() => {
-				match bind_loopback(port).and_then(TcpListener::from_std) {
-					Ok(rebound) => {
-						logger("truapi.ws_bridge.relistened", &format!("port={port}"));
-						listener = Some(rebound);
-						relisten_pause = RELISTEN_PAUSE_MIN;
-					}
-					Err(err) => {
-						logger("truapi.ws_bridge.relisten_failed", &err.to_string());
-						relisten_pause = (relisten_pause * 2).min(RELISTEN_PAUSE_MAX);
-					}
-				}
+			rebound = rebind(port, &logger), if listener.is_none() => {
+				logger("truapi.ws_bridge.relistened", &format!("port={port}"));
+				listener = Some(rebound);
 			}
 		}
 	}
+}
+
+/// Bind `port` again for a lost listener, backing off between failed binds.
+async fn rebind(port: u16, logger: &BridgeLogger) -> TcpListener {
+	let mut pauses = RELISTEN_PAUSES;
+	// Pause before binding too, so a listener lost right after each bind can't spin.
+	RealTimer.sleep(pauses.next_pause()).await;
+	retry(
+		|| {
+			ready(match bind_loopback(port).and_then(TcpListener::from_std) {
+				Ok(listener) => ControlFlow::Break(listener),
+				Err(err) => ControlFlow::Continue(err),
+			})
+		},
+		|err| {
+			logger("truapi.ws_bridge.relisten_failed", &err.to_string());
+			pauses.next_pause()
+		},
+	)
+	.await
 }
 
 async fn connection_setup(

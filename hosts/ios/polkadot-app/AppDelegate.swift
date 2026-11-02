@@ -11,6 +11,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         dsn: GeneratedSecrets.sentryDSN
     )
     let hostEventRecorder = IssueMonitoringFactory.createHostEventRecorder()
+    let deviceReadingsMonitor = IssueMonitoringFactory.createDeviceReadingsMonitor { Logger.shared.info($0) }
 
     var apnsTokenProvider: APNSTokenProviding {
         APNSTokenProviderFacade.sharedManager
@@ -31,6 +32,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
         issueMonitoringService.setup()
         addHostLogSink()
+        deviceReadingsMonitor.start()
         hostEventRecorder.record(.processStarted(
             origin: .current,
             truapiHostVersion: truapiHostVersion(),

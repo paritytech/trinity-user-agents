@@ -14,7 +14,10 @@ use truapi::latest::GenericError;
 
 use super::ExtrinsicService;
 use crate::{
-	chain::{ExtrinsicBuildError, ExtrinsicVersion, MortalExtrinsic, Node, method_count, serve},
+	chain::{
+		BlockBackend, ExtrinsicBuildError, ExtrinsicVersion, HashAndNumber, MortalExtrinsic, Node,
+		method_count, serve,
+	},
 	host_internal::extrinsic::{Sr25519Signer, tests::split_v4},
 	platform::{ChainExtensionVersion, ExtensionVersionMap, ExtrinsicVersionHost},
 	test_support::ScriptedProvider,
@@ -203,4 +206,19 @@ fn every_build_reads_a_fresh_birth() {
 	build_remark(&service, &signer, Some(0)).unwrap();
 
 	assert_eq!(method_count(&provider, "chain_getFinalizedHead"), 2);
+}
+
+/// A cached runtime fixes the birth of every build on its chain, so a batch
+/// built from it shares one era wherever the finalized head moves meanwhile.
+#[test]
+fn builds_on_a_cached_runtime_are_born_at_its_block() {
+	let (_node, _provider, chain) = serve(Node::new(FINALIZED, 8));
+	let service = ExtrinsicService::over_chain(chain.clone(), no_v5_chains());
+	let hash = block_on(chain.block_hash(GENESIS, 2)).unwrap().unwrap();
+	let block = HashAndNumber { hash, number: 2 };
+
+	let cached = block_on(service.cache_runtime_at(GENESIS, block)).unwrap();
+	let built = build_remark(&cached, &test_signer(), Some(0)).unwrap();
+
+	assert_eq!(built.mortality.birth(), block);
 }
