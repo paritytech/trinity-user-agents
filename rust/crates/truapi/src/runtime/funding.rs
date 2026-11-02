@@ -2072,6 +2072,10 @@ mod tests {
 	struct IdleLink;
 
 	impl FundingProviderLink for IdleLink {
+		fn quote(&self, _ask: FundingQuoteAsk) -> BoxFuture<'static, Option<FundingQuoteAnswer>> {
+			Box::pin(async { None })
+		}
+
 		fn assign(&self, _session: FundingAssignment) -> BoxFuture<'static, bool> {
 			Box::pin(async { false })
 		}
