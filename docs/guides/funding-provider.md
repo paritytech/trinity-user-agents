@@ -125,9 +125,10 @@ await client.fundingProvider.presentFrame({ intent, target: { tag: "Page", value
 
 `App` opens a route of your own App, if you ship one; `Page` opens an external https page, such as an onramp widget,
 with its address shown, and hands back the `returnUrl` it reached, query included, so the Worker can read the result
-from it. A page cannot call TrUAPI: the Worker still takes the result and moves the funds. `presentFrame` answers once
-the frame closes: `Closed`, `Dismissed` by the user, or `Returned { url }`. When the user has done what the screen was
-for, call `fundingProvider.closeFrame({ intent })`: the host closes it and shows the session sheet instead.
+from it. A page cannot call TrUAPI: the Worker still takes the result and moves the funds. An App route from a provider
+that ships no App fails with `NoApp`. `presentFrame` answers once the frame closes: `Closed`, `Dismissed` by the user,
+or `Returned { url }`. When the user has done what the screen was for, call `fundingProvider.closeFrame({ intent })`:
+the host closes it and shows the session sheet instead.
 
 ## 6. Say what is happening within a step
 
