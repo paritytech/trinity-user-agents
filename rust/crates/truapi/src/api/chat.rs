@@ -235,7 +235,6 @@ pub trait Chat: Send + Sync {
 	///       timestamp: BigInt(Date.now()),
 	///       body: { tag: "Text", value: { text: "Three new answers" } },
 	///       status: "Delivered",
-	///       reactions: [],
 	///       request: false,
 	///     },
 	///     unseenReactions: 0,
