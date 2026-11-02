@@ -160,10 +160,14 @@ class PocketViewModelTest {
     fun `cards that arrive before the screen finishes building do not crash it`() = runTest(testDispatcher) {
         val immediate = UnconfinedTestDispatcher(testScheduler)
         Dispatchers.setMain(immediate)
+        every { interactor.observeProductCards() } returns flowOf(listOf(privilegedCard("humanity")))
 
         val viewModel = createViewModel(TestCoroutineDispatchers(immediate))
 
-        assertEquals(listOf("digital_dollar_card"), viewModel.cards.value.map { it.id })
+        assertEquals(
+            listOf("digital_dollar_card", "product_card:peopl.dot:humanity"),
+            viewModel.cards.value.map { it.id },
+        )
     }
 
     // The collectibles page reads the collection over the host's chain connection, which it gets only
