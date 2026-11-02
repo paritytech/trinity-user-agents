@@ -232,10 +232,19 @@ of device backups: it holds durable-transaction state that must not be restored
 onto another device. The required `HostRuntimeConfig.database_directory` sets
 it on iOS and Android, and `SigningHostRuntime::set_core_db` on any other
 embedder. Such an embedder also sets the `InstallationIdProvider` whose id NFT
-purse item keys are derived under with `set_installation_provider`, then calls
-`start_core_services` once, which starts the durable engine and NFT purses over
+purse item keys are derived under with `set_installation_provider`, and the
+`EncryptedStorage` that keeps NFT receive key and deposited item secrets with
+`set_encrypted_storage`, then calls `start_core_services` once, which starts the durable engine and NFT purses over
 the database. `core_database_status()` reports the SQLite version, schema
 version and path. Web hosts do not compile the store.
+
+Secrets the database must not hold go to the host's `EncryptedStorage`: the
+Keychain on iOS, encrypted preferences on Android, a plaintext file in the CLI.
+It reads, writes and deletes values by key and cannot list them, so a feature
+keeps its public rows in the database and stores each secret under a key
+derived from its row. Native hosts install it from their callbacks; any other
+embedder calls `SigningHostRuntime::set_encrypted_storage`. Web hosts do not
+compile it.
 
 ### Durable transactions
 
@@ -515,9 +524,9 @@ for raw bytes signed inside the `<Bytes>` watermark.
   session reads as `NotFound`. The overlay runs on a task of its own, so no
   call waits on it; a session the user dismisses ends its watchers as
   `Failed { Cancelled }`. Sessions and the pack live in the core database,
-  one versioned row per session: a row that does not decode is skipped and
-  left in place, one of an older format is dropped, and one in a newer
-  format is left untouched while funding answers a host failure. Funding
+  one versioned row per session: a row that does not decode or is of an older
+  format is skipped and left in place, and one in a newer format is left
+  untouched while funding answers a host failure. Funding
   needs the core database: natively the configured `database_directory`,
   otherwise `set_core_db`. Products see a session in flight as
   `InProgress`.

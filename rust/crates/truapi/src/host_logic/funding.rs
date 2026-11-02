@@ -601,7 +601,7 @@ pub enum FundingCancel {
 	/// The provider will not cancel. The session carries on.
 	#[codec(index = 1)]
 	Refused {
-		/// Why, as the provider put it.
+		/// Why, as the provider put it; empty when its answer did not fit.
 		reason: String,
 	},
 	/// The provider can cancel on these terms and waits for the user.
@@ -1714,8 +1714,9 @@ impl FundingSession {
 
 	/// Apply the provider's answer to the user's cancel. An answer is taken
 	/// only while the cancel waits for one: `Stopped` before money moved, an
-	/// offer only on terms it may make. Returns whether it changed the
-	/// session.
+	/// offer only on terms it may make. Any other answer counts as a refusal
+	/// with no reason, so the user can ask again. Returns whether it changed
+	/// the session.
 	pub fn answer_cancel(&mut self, answer: FundingCancelAnswer, now_ms: u64) -> bool {
 		if !self.serves_provider() || self.cancel != Some(FundingCancel::Requested) {
 			return false;
@@ -1736,7 +1737,8 @@ impl FundingSession {
 			},
 			answer => {
 				error!(intent = %self.intent, ?answer, "a provider's cancel answer does not fit");
-				false
+				self.cancel = Some(FundingCancel::Refused { reason: String::new() });
+				true
 			},
 		};
 		// A released withdrawal was handed to the host already.
@@ -2600,7 +2602,7 @@ mod tests {
 
 	// Before money moved the provider stops, and the core ends the session as
 	// cancelled; once money moved, stopping is not the provider's answer to
-	// give.
+	// give, so it counts as a refusal and the user can ask again.
 	#[test]
 	fn a_provider_stops_only_before_money_moved() {
 		let mut fresh = served(FundingDirection::In);
@@ -2614,13 +2616,17 @@ mod tests {
 				fresh.answer_cancel(FundingCancelAnswer::Stopped, NOW),
 				fresh.wire_item(),
 				paid.answer_cancel(FundingCancelAnswer::Stopped, NOW),
-				paid.cancel,
+				paid.cancel.clone(),
+				cancelled(&mut paid),
+				paid.is_terminal(),
 			),
 			(
 				true,
 				HostFundingStatusSubscribeItem::Failed { reason: FundingFailure::Cancelled },
+				true,
+				Some(FundingCancel::Refused { reason: String::new() }),
+				CancelOutcome::Requested,
 				false,
-				Some(FundingCancel::Requested),
 			)
 		);
 	}
@@ -2648,7 +2654,8 @@ mod tests {
 
 	// An offer cannot hand back more than the session moves, an inbound
 	// session whose credit started cannot be offered, and an outbound offer
-	// waits for the refund path of a released withdrawal.
+	// waits for the refund path of a released withdrawal. One that does not
+	// fit counts as a refusal, so the cancel does not wait on it for good.
 	#[test]
 	fn an_offer_must_fit_the_session() {
 		let mut over = served(FundingDirection::In);
@@ -2666,7 +2673,7 @@ mod tests {
 				outbound.answer_cancel(offer(5, 95, None), NOW),
 				over.cancel,
 			),
-			(false, false, false, Some(FundingCancel::Requested))
+			(true, true, true, Some(FundingCancel::Refused { reason: String::new() }))
 		);
 	}
 

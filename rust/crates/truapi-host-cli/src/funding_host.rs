@@ -26,7 +26,7 @@
 //! was told.
 
 use std::{
-	collections::{HashMap, HashSet},
+	collections::{BTreeMap, HashMap, HashSet},
 	fs::OpenOptions,
 	io::Write,
 	path::PathBuf,
@@ -53,7 +53,7 @@ use truapi::{
 	},
 };
 
-use crate::{platform::CliPlatform, transcript::Transcript};
+use crate::{NetworkConfig, platform::CliPlatform, transcript::Transcript};
 
 /// The manifest the CLI ships for every provider it offers: card in, and
 /// crypto in and out, quoted by its worker.
@@ -125,8 +125,13 @@ pub struct CliFundingHost {
 
 impl CliFundingHost {
 	/// Serve funding on `runtime`, asking `user`, with the files the
-	/// environment names.
-	pub fn install(runtime: &Arc<SigningHostRuntime>, user: Arc<CliPlatform>) {
+	/// environment names. The payment ledger moves no real funds, so it is
+	/// refused on a network whose identities are real.
+	pub fn install(
+		runtime: &Arc<SigningHostRuntime>,
+		user: Arc<CliPlatform>,
+		network: &NetworkConfig,
+	) -> anyhow::Result<()> {
 		let host = Arc::new(Self {
 			user,
 			transcript: Arc::new(Transcript::from_env("TRUAPI_FUNDING_LOG", "funding")),
@@ -137,10 +142,17 @@ impl CliFundingHost {
 		runtime.set_funding_feed(host.clone());
 		runtime.set_funding_platform(host);
 		if let Some(ledger) = std::env::var_os("TRUAPI_FUNDING_LEDGER").map(PathBuf::from) {
+			anyhow::ensure!(
+				network.disposable_identities,
+				"{} holds real identities, so TRUAPI_FUNDING_LEDGER, which credits and pays \
+				 without moving funds, is only available on test network presets",
+				network.id
+			);
 			let payments = Arc::new(CliPaymentHost { ledger });
 			runtime.set_top_up_platform(payments.clone());
 			runtime.set_payment_platform(payments);
 		}
+		Ok(())
 	}
 
 	/// Put the provider's cancel offer on `session` to the user, once per
@@ -191,6 +203,20 @@ impl CliFundingHost {
 	fn lock_candidates(&self) -> std::sync::MutexGuard<'_, HashMap<String, Vec<String>>> {
 		self.candidates.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 	}
+}
+
+/// The latest status the core pushed for each session this run, by intent,
+/// as a host keeps what it is pushed rather than reading it back.
+static PUSHED: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
+
+/// Each session the core pushed this run, with its latest status.
+pub fn pushed_sessions() -> Vec<(String, String)> {
+	PUSHED
+		.lock()
+		.unwrap_or_else(std::sync::PoisonError::into_inner)
+		.iter()
+		.map(|(intent, line)| (intent.clone(), line.clone()))
+		.collect()
 }
 
 /// Cancel session `intent` at the user's request, and record what that did.
@@ -350,6 +376,15 @@ impl FundingFeed for CliFundingHost {
 			"amount": amount.map(|amount| amount.to_string()),
 			"progress": progress,
 		}));
+		let line = match (&progress, amount) {
+			(Some(progress), _) => format!("{tag} {progress}"),
+			(None, Some(amount)) => format!("{tag} {amount}"),
+			(None, None) => tag.to_string(),
+		};
+		PUSHED
+			.lock()
+			.unwrap_or_else(std::sync::PoisonError::into_inner)
+			.insert(intent.clone(), line);
 		self.ask_about_offer(intent, session.as_ref());
 	}
 
