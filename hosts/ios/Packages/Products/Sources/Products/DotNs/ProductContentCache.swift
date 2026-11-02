@@ -1,10 +1,11 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import SDKLogger
 
 public protocol ProductContentCaching: Sendable {
     func manifest(_ productId: ProductId) async throws -> ProductManifest
     /// Nil also when the applied archive is no longer on disk.
-    func appliedArchive(of contentId: ProductExecutable.Identifier) async -> DotNsResolvedContent?
+    func appliedArchive(of contentId: ProductId) async -> DotNsResolvedContent?
     /// An applied executable keeps its record until a release of it is applied.
     func adopt(_ manifest: ProductManifest) async
     func apply(_ release: ExecutableRelease) async
@@ -38,9 +39,6 @@ extension ProductContentCache: ProductContentCaching {
     public func manifest(_ productId: ProductId) async throws -> ProductManifest {
         let hostProvider = ProductHostFactory(tldProvider: tldProvider)
 
-        // Without a known TLD the resolver would guess a legacy product, so this is a cache miss.
-        _ = try await hostProvider.resolveHost(rawString: productId.lowercased())
-
         return try await resolverFactory.makeResolver(
             metadataRepository: CachedProductMetadataRepository(store: store),
             hostProvider: hostProvider
@@ -65,9 +63,9 @@ extension ProductContentCache: ProductContentCaching {
         }
     }
 
-    public func appliedArchive(of contentId: ProductExecutable.Identifier) -> DotNsResolvedContent? {
+    public func appliedArchive(of contentId: ProductId) -> DotNsResolvedContent? {
         guard
-            let contentHash = storage.contentHashes.getContentHash(name: contentId),
+            let contentHash = storage.contentHashes.getContentHash(name: contentId.rawValue),
             let localURL = storage.content.getContentDirectory(contentHash: contentHash)
         else {
             return nil
@@ -92,9 +90,9 @@ extension ProductContentCache: ProductContentCaching {
         }
 
         if let archive = release.archive {
-            storage.contentHashes.putContentHash(name: release.contentId, hash: archive.contentHash)
+            storage.contentHashes.putContentHash(name: release.contentId.rawValue, hash: archive.contentHash)
         } else {
-            storage.contentHashes.removeContentHash(name: release.contentId)
+            storage.contentHashes.removeContentHash(name: release.contentId.rawValue)
         }
     }
 

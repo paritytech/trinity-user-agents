@@ -1,6 +1,6 @@
+import struct TrUAPIHost.ProductId
 import Testing
 import Keystore_iOS
-import KeyDerivation
 @testable import polkadot_app
 
 @Suite("Host-placed products")
@@ -13,15 +13,14 @@ struct HostPlacedProductsTests {
 
         #expect(HostPlacedProducts.all.count == 1)
         #expect(hostPlaced.fallbackName == "Jollity")
-        #expect(hostPlaced.productId("paseo") == BuiltInProduct.dim2(for: "paseo"))
     }
 
     /// A reserved identity lives in each network's own namespace, so one entry has to answer for
     /// whichever chain the build is pointed at. Writing the product id out would silently stop
     /// placing it on Paseo.
-    @Test("A reserved identity matches across TLDs", arguments: ["dim2.dot", "dim2.paseo", "dim2.test"])
-    func reservedIdentityMatchesEveryTld(productId: String) {
-        #expect(HostPlacedProducts.contains(productId: productId))
+    @Test("A reserved identity matches across TLDs", arguments: ["dim2.dot", "dim2.paseo", "dim2.testnet"])
+    func reservedIdentityMatchesEveryTld(input: String) throws {
+        #expect(HostPlacedProducts.contains(productId: try ProductId(input)))
     }
 
     /// An exact match, so a subdomain is a separate product and a separate publisher, and a bare
@@ -29,10 +28,10 @@ struct HostPlacedProductsTests {
     /// in `truapi::platform::has_trusted_remote_permissions`.
     @Test(
         "Only the reserved identity itself is host-placed",
-        arguments: ["app.dim2.dot", "dim2x.dot", "xdim2.dot", "dim2", "", "notdim2.paseo"]
+        arguments: ["app.dim2.dot", "dim2x.dot", "xdim2.dot", "notdim2.paseo", "localhost", "localhost:3000"]
     )
-    func neighbouringIdentifiersAreNotHostPlaced(productId: String) {
-        #expect(!HostPlacedProducts.contains(productId: productId))
+    func neighbouringIdentifiersAreNotHostPlaced(input: String) throws {
+        #expect(!HostPlacedProducts.contains(productId: try ProductId(input)))
     }
 }
 
@@ -65,7 +64,7 @@ struct HostPlacedChatPinningTests {
     @Test("A host-placed product's bot is pinned")
     func hostPlacedBotIsPinned() throws {
         let hostPlaced = try #require(HostPlacedProducts.all.first)
-        let peer = Chat.Peer.chatExtension(hostPlaced.productId("paseo"), roomId: nil)
+        let peer = try Chat.Peer.chatExtension(hostPlaced.productId("paseo").rawValue, roomId: nil)
 
         #expect(peer.isPinnedToTop)
     }

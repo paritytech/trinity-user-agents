@@ -1,3 +1,5 @@
+import enum TrUAPIHost.ExecutableKind
+import struct TrUAPIHost.ProductId
 import AsyncExtensions
 import Foundation
 
@@ -27,19 +29,19 @@ public struct ProductContent: Equatable, Sendable {
         self.archive = archive
     }
 
-    public var contentId: ProductExecutable.Identifier {
-        resolved.contentId(for: kind)
+    public var contentId: ProductId {
+        get throws { try resolved.contentId(for: kind) }
     }
 }
 
 /// A nil `archive` removes the applied one; `record` is nil for a legacy product.
 public struct ExecutableRelease: Equatable, Sendable {
-    public let contentId: ProductExecutable.Identifier
+    public let contentId: ProductId
     public let archive: DotNsResolvedContent?
     public let record: ProductManifest.Record?
 
     public init(
-        contentId: ProductExecutable.Identifier,
+        contentId: ProductId,
         archive: DotNsResolvedContent?,
         record: ProductManifest.Record? = nil
     ) {

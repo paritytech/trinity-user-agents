@@ -29,7 +29,7 @@ extension ChatViewModelFactory {
             .createViewModel(for: detected.host.toDotDomain())
 
         let preview = ChatProductLinkPreviewConfiguration(
-            domain: detected.host.toDotDomain(),
+            domain: detected.host.toDotDomain().rawValue,
             style: previewStyle(for: status),
             nameProvider: nameProvider,
             imageViewModel: imageViewModel,

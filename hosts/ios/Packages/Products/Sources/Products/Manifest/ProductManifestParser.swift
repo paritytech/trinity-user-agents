@@ -1,3 +1,4 @@
+import TrUAPIHost
 import Foundation
 import SDKLogger
 
@@ -14,7 +15,7 @@ protocol ProductManifestParsing {
     func parseExecutable(
         _ rawText: String?,
         kind: ExecutableKind,
-        identifier: ProductExecutable.Identifier
+        identifier: ProductId
     ) -> ProductExecutable?
 }
 
@@ -80,7 +81,7 @@ struct ProductManifestParser: ProductManifestParsing {
     func parseExecutable(
         _ rawText: String?,
         kind: ExecutableKind,
-        identifier: ProductExecutable.Identifier
+        identifier: ProductId
     ) -> ProductExecutable? {
         guard let rawText, !rawText.isEmpty else { return nil }
 
@@ -92,8 +93,9 @@ struct ProductManifestParser: ProductManifestParsing {
             return reject("\(identifier): unsupported $v=\(String(describing: dto.version))")
         }
 
-        guard dto.kind == kind.rawValue else {
-            return reject("\(identifier): kind '\(dto.kind ?? "none")' does not match subname '\(kind.rawValue)'")
+        let kindLabel = executableKindLabel(kind: kind)
+        guard dto.kind == kindLabel else {
+            return reject("\(identifier): kind '\(dto.kind ?? "none")' does not match subname '\(kindLabel)'")
         }
 
         guard let appVersion = dto.appVersion?.value else {
@@ -126,7 +128,7 @@ private extension ProductManifestParser {
 
     func parseWidget(
         _ dto: ExecutableManifestDTO,
-        identifier: ProductExecutable.Identifier,
+        identifier: ProductId,
         appVersion: SemVer
     ) -> ProductExecutable? {
         guard let heights = dto.dimensions?.height, !heights.isEmpty else {
@@ -146,7 +148,7 @@ private extension ProductManifestParser {
 
     func parseWorker(
         _ dto: ExecutableManifestDTO,
-        identifier: ProductExecutable.Identifier,
+        identifier: ProductId,
         appVersion: SemVer
     ) -> ProductExecutable? {
         guard let entrypoint = dto.entrypoint, !entrypoint.isEmpty else {
@@ -187,7 +189,7 @@ private extension ProductManifestParser {
     func pocketCards(
         _ dto: PocketDTO?,
         includesPocket: Bool,
-        identifier: ProductExecutable.Identifier
+        identifier: ProductId
     ) -> [PocketCardDefinition] {
         let cards: [PocketCardDTO]
 

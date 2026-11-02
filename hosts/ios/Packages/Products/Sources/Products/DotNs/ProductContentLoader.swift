@@ -1,3 +1,5 @@
+import enum TrUAPIHost.ExecutableKind
+import struct TrUAPIHost.ProductId
 import AsyncExtensions
 import BackgroundExecution
 import Foundation
@@ -102,7 +104,7 @@ extension ProductContentLoader: ProductContentLoading {
         }
 
         await cache.adopt(manifest)
-        await cache.apply(manifest.release(of: content.contentId, archive: content.archive))
+        try await cache.apply(manifest.release(of: content.contentId, archive: content.archive))
 
         return content
     }
@@ -125,16 +127,14 @@ extension ProductContentLoader: ProductContentLoading {
 
     @discardableResult
     public func refresh(_ productId: ProductId) async -> [ExecutableRelease] {
-        let key = productId.lowercased()
-
-        if let running = refreshTasks[key] {
+        if let running = refreshTasks[productId] {
             return await running.value
         }
 
         let task = Task { await performRefresh(productId) }
-        refreshTasks[key] = task
+        refreshTasks[productId] = task
         let updates = await task.value
-        refreshTasks[key] = nil
+        refreshTasks[productId] = nil
 
         return updates
     }
@@ -155,11 +155,11 @@ extension ProductContentLoader: ProductContentLoading {
 
 private struct FetchedContent: Sendable {
     let manifest: ProductManifest
-    let archives: [ProductExecutable.Identifier: DotNsResolvedContent]
+    let archives: [ProductId: DotNsResolvedContent]
 }
 
 private extension ProductManifest {
-    func release(of contentId: ProductExecutable.Identifier, archive: DotNsResolvedContent?) -> ExecutableRelease {
+    func release(of contentId: ProductId, archive: DotNsResolvedContent?) -> ExecutableRelease {
         ExecutableRelease(
             contentId: contentId,
             archive: archive,
@@ -172,7 +172,8 @@ private extension ProductContentLoader {
     func cachedContent(_ productId: ProductId, kind: ExecutableKind) async -> ProductContent? {
         guard
             let manifest = try? await cache.manifest(productId),
-            let archive = await cache.appliedArchive(of: manifest.product.contentId(for: kind))
+            let contentId = try? manifest.product.contentId(for: kind),
+            let archive = await cache.appliedArchive(of: contentId)
         else {
             return nil
         }
@@ -220,11 +221,11 @@ private extension ProductContentLoader {
         }
     }
 
-    func servedContentIds(of resolved: ResolvedProduct) async -> [ExecutableKind: ProductExecutable.Identifier] {
-        var served: [ExecutableKind: ProductExecutable.Identifier] = [:]
+    func servedContentIds(of resolved: ResolvedProduct) async -> [ExecutableKind: ProductId] {
+        var served: [ExecutableKind: ProductId] = [:]
 
-        for kind in ExecutableKind.allCases {
-            let contentId = resolved.contentId(for: kind)
+        for kind in [ExecutableKind.app, .widget, .worker] {
+            guard let contentId = try? resolved.contentId(for: kind) else { continue }
 
             if await cache.appliedArchive(of: contentId) != nil {
                 served[kind] = contentId
@@ -240,9 +241,9 @@ private extension ProductContentLoader {
         using fetcher: ProductUpdateFetching
     ) async throws -> FetchedContent {
         let manifest = try await fetcher.fetchManifest(productId)
-        let contentIds = Set(kinds.map(manifest.product.contentId(for:)))
+        let contentIds = Set(kinds.compactMap { try? manifest.product.contentId(for: $0) })
 
-        var archives: [ProductExecutable.Identifier: DotNsResolvedContent] = [:]
+        var archives: [ProductId: DotNsResolvedContent] = [:]
 
         for contentId in contentIds {
             do {
@@ -255,7 +256,7 @@ private extension ProductContentLoader {
         return FetchedContent(manifest: manifest, archives: archives)
     }
 
-    func commit(_ latest: FetchedContent, served: Set<ProductExecutable.Identifier>) async -> [ExecutableRelease] {
+    func commit(_ latest: FetchedContent, served: Set<ProductId>) async -> [ExecutableRelease] {
         await cache.adopt(latest.manifest)
 
         var updates: [ExecutableRelease] = []

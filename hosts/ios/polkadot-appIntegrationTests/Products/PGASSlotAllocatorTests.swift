@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 @testable import polkadot_app
 import XCTest
 import Keystore_iOS
@@ -30,8 +31,8 @@ final class PGASSlotAllocatorTests: XCTestCase {
             operationManager: OperationManager(operationQueue: operationQueue)
         )
 
-        let liteVrfManager = BandersnatchKeyManager.litePerson(for: "dot", entropyManager: setupResult.entropyManager)
-        let fullVrfManager = BandersnatchKeyManager.fullPerson(for: "dot", entropyManager: setupResult.entropyManager)
+        let liteVrfManager = try BandersnatchKeyManager.litePerson(for: "dot", entropyManager: setupResult.entropyManager)
+        let fullVrfManager = try BandersnatchKeyManager.fullPerson(for: "dot", entropyManager: setupResult.entropyManager)
 
         let keyResolver = BandersnatchKeyResolver(
             liteKeyManager: liteVrfManager,
@@ -88,7 +89,7 @@ final class PGASSlotAllocatorTests: XCTestCase {
         )
 
         let accountHolder = ProductAccountHolder(entropyManager: setupResult.entropyManager)
-        let accountId = try accountHolder.deriveStatementStoreAccount(for: "test-product1").getRawPublicKey()
+        let accountId = try accountHolder.deriveStatementStoreAccount(for: try ProductId("test-product1.dot")).getRawPublicKey()
 
         try await allocator.assignSlot(accountId: accountId, priority: .normal)
     }

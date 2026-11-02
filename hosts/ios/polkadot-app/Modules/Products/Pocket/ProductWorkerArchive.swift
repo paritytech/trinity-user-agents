@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 @preconcurrency import Products
 
@@ -34,13 +35,13 @@ struct ProductWorkerArchive: PocketArchiveReading, Sendable {
 
     /// The file `path` names inside `contentId`'s archive, or nil when the
     /// archive cannot be reached or the path would leave it.
-    func url(contentId: ProductExecutable.Identifier, path: String) async -> URL? {
+    func url(contentId: ProductId, path: String) async -> URL? {
         guard let root = await root(of: contentId) else { return nil }
 
         return ContentArchivePath.inside(root, path: path)
     }
 
-    func file(contentId: ProductExecutable.Identifier, path: String, maxBytes: Int) async throws -> Data {
+    func file(contentId: ProductId, path: String, maxBytes: Int) async throws -> Data {
         guard let file = await url(contentId: contentId, path: path) else {
             throw PocketPreviewError.notReachable(path)
         }
@@ -56,9 +57,9 @@ struct ProductWorkerArchive: PocketArchiveReading, Sendable {
         return read
     }
 
-    private func root(of contentId: ProductExecutable.Identifier) async -> URL? {
+    private func root(of contentId: ProductId) async -> URL? {
         if case .onDisk = content, let cached = cachedRoot(contentId) { return cached }
 
-        return try? await dotNsResolver.resolveToLocalURL(dotNsName: contentId)
+        return try? await dotNsResolver.resolveToLocalURL(dotNsName: contentId.rawValue)
     }
 }

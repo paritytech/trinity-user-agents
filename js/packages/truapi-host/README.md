@@ -245,11 +245,12 @@ It is asynchronous, it takes the account and product to derive rather than a
 public key, and it loads the testing WASM bundle itself:
 
 ```ts
+import { asProductId } from "@parity/truapi";
 import { productAccountAddress } from "@parity/truapi-host/testing/playwright";
 
 const address = await productAccountAddress({
   account: "bob", // a dev account name, or a `DevAccount`
-  productId: "tx-demo.dot",
+  productId: asProductId("tx-demo.dot"),
   index: 0, // optional, defaults to 0
 });
 ```
@@ -315,15 +316,15 @@ const runtime = await createWebWorkerPairingHostRuntime(
   },
 );
 
-const firstProvider = await runtime.createProvider({ productId: "first.dot" });
+const firstProvider = await runtime.createProvider({ productId: await runtime.parseProductId("first.dot") });
 const secondProvider = await runtime.createProvider({
-  productId: "second.dot",
+  productId: await runtime.parseProductId("second.dot"),
 });
 ```
 
 `@parity/truapi-host/web` also exports `createIframeHost` for the
 protocol-iframe MessageChannel handshake. Host code creates one worker runtime
-and then opens one provider per product id.
+and then opens one provider per product ID. `runtime.parseProductId(input)` validates and normalizes through the already loaded Rust worker. It returns the same `ProductId` branded string exported by `@parity/truapi`, so IDs remain ordinary strings in memory and across worker messages.
 
 ## Session lifecycle
 
@@ -355,7 +356,7 @@ const runtime = await createWebWorkerPairingHostRuntime(
 // there was nothing to restore.
 await runtime.activateStoredSession().catch(() => {});
 
-const provider = await runtime.createProvider({ productId: "first.dot" });
+const provider = await runtime.createProvider({ productId: await runtime.parseProductId("first.dot") });
 ```
 
 ### Statement-store traffic of the host's own

@@ -1,3 +1,5 @@
+use crate::product_id::ProductId;
+
 use derive_more::Display;
 use parity_scale_codec::{Decode, Encode};
 
@@ -11,7 +13,7 @@ use parity_scale_codec::{Decode, Encode};
 pub struct HostLocalStorageReadRequest {
 	/// Product whose storage is read. `None`, or the caller's own id, means the
 	/// caller, and consults no grant.
-	pub product: Option<String>,
+	pub product: Option<ProductId>,
 	/// Storage key to read.
 	pub key: String,
 }

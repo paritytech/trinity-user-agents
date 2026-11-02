@@ -1,8 +1,11 @@
+import TrUAPIHost
 import Foundation
 import SDKLogger
 
 public enum ProductResolutionError: Error {
     case malformedManifest(ProductId)
+    case productNotOnNetwork(ProductId)
+    case missingExecutable(ProductId, ExecutableKind)
 }
 
 public protocol ProductResolving: Sendable {
@@ -51,19 +54,10 @@ public actor ProductResolver: ProductResolving {
     }
 
     public func resolveProductManifest(_ productId: ProductId) async throws -> ProductManifest {
-        // Every form a caller might hold collapses here — a `<kind>.` subname, a `<root>.li`
-        // mirror host, any casing — so no call site has to remember to canonicalise, and two
-        // forms of one product cannot key the cache twice.
-        //
-        // dotNS is case-insensitive while name hashing is byte-exact.
-        let unprefixed = ProductManifestRecords.baseName(of: productId.lowercased())
+        let unprefixed = try productIdOwner(productId: productId)
 
-        // An id that is not a name on this network holds no records: a product installed by hand
-        // through debug settings, or one whose TLD could not be read. Neither is worth a read.
-        guard let baseName = try? await hostProvider.resolveHost(rawString: unprefixed)?.toDotDomain() else {
-            // Strip the kind prefix but keep the case: a hand-installed id is keyed byte-exact by the
-            // script storage and the chat extension id, so lowercasing it here loses the debug bot.
-            return ProductManifest(product: .legacy(id: ProductManifestRecords.baseName(of: productId)), records: [:])
+        guard let baseName = try await hostProvider.resolveHost(rawString: unprefixed.rawValue)?.toDotDomain() else {
+            throw ProductResolutionError.productNotOnNetwork(unprefixed)
         }
 
         if let cached = cache[baseName] {
@@ -96,7 +90,7 @@ private struct ResolvedExecutable: Sendable {
 private extension ProductResolver {
     func resolveFromChain(_ baseName: ProductId) async throws -> ProductManifest {
         let rootKey = ProductManifest.RecordKey(name: baseName, key: ProductManifestRecords.rootKey)
-        let rootText = try await metadataRepository.fetchMetadata(name: rootKey.name, key: rootKey.key)
+        let rootText = try await metadataRepository.fetchMetadata(name: rootKey.name.rawValue, key: rootKey.key)
         let rootRecords = [rootKey: ProductManifest.Record(rootText)]
 
         // No record is the legacy path: an app rooted at the base name, named after its domain.
@@ -124,7 +118,7 @@ private extension ProductResolver {
 
     /// Every kind a surface on this host runs: an app screen, the widget an
     /// expanded Pocket card runs, and the product's worker.
-    static let resolvedKinds: [ExecutableKind] = ExecutableKind.allCases
+    static let resolvedKinds: [ExecutableKind] = [.app, .widget, .worker]
 
     func resolveExecutables(
         _ baseName: ProductId
@@ -148,10 +142,10 @@ private extension ProductResolver {
     /// different thing and propagates: swallowing it would cache a product as missing executables
     /// it actually publishes, and every surface would serve the base archive until the next launch.
     func resolveExecutable(_ baseName: ProductId, kind: ExecutableKind) async throws -> ResolvedExecutable {
-        let subname = ProductManifestRecords.subname(base: baseName, kind: kind)
+        let subname = try productIdExecutable(productId: baseName, kind: kind)
         let recordKey = ProductManifest.RecordKey(name: subname, key: ProductManifestRecords.executableKey)
 
-        let text = try await metadataRepository.fetchMetadata(name: recordKey.name, key: recordKey.key)
+        let text = try await metadataRepository.fetchMetadata(name: recordKey.name.rawValue, key: recordKey.key)
 
         // Only the base-name owner can create these subnames, so ownership needs no re-check.
         return ResolvedExecutable(

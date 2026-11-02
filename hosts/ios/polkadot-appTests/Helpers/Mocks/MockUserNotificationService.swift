@@ -6,6 +6,7 @@ final class MockUserNotificationService: UserNotificationServicing, @unchecked S
     var accessStatus: NotificationAccessStatus = .allowed
     var scheduleError: Error?
     private(set) var scheduledIdentifiers: [String] = []
+    private(set) var scheduledContents: [UNNotificationContent] = []
 
     func notificationAccessStatus() async -> NotificationAccessStatus {
         accessStatus
@@ -17,11 +18,12 @@ final class MockUserNotificationService: UserNotificationServicing, @unchecked S
 
     func scheduleNotification(
         withIdentifier identifier: String,
-        content _: UNNotificationContent,
+        content: UNNotificationContent,
         after _: TimeInterval,
         completion: ((Error?) -> Void)?
     ) {
         scheduledIdentifiers.append(identifier)
+        scheduledContents.append(content)
         completion?(scheduleError)
     }
 

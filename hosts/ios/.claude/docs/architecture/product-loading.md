@@ -12,7 +12,7 @@ they reach screens and workers. Code: `Packages/Products/Sources/Products/DotNs/
 | Manifest records | `DotNsContent/Manifests/<base>.json` | Root `manifest` record plus one `executable` record per subname |
 | Pointers | `ContentHashCache`: content id → hash | Which archive each executable serves |
 
-A content id (`ProductExecutable.Identifier`) is the name an executable's archive resolves under:
+A content id (`ProductId`) is the name an executable's archive resolves under:
 `app.<base>`, `widget.<base>`, `worker.<base>`, or `<base>` for a legacy product.
 
 Invariants:
@@ -25,7 +25,8 @@ Invariants:
 
 ## Opening
 
-`ProductContentLoader` is cache first.
+`ProductContentLoader` is cache first. Requesting an executable kind that the product does not
+publish fails with `ProductResolutionError.missingExecutable`.
 
 - **`open(_:kind:policy:onPhase:)`**, for an SPA or widget: with a cached manifest and an applied
   archive, serves it at once and schedules a background refresh. Otherwise fetches the manifest and
