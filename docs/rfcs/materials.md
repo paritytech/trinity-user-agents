@@ -150,18 +150,65 @@ through the core image loader proposed in [#1800](https://github.com/paritytech/
 
 A node that fails draws its children without its layers, so a product chooses its fallback look. The rest of the tree
 draws as usual. While a node's materials or images load, the host draws the node's last output if it had one, and its
-children otherwise. The host logs one code on the device for a failure, and the product is not told.
+children otherwise.
 
-Failure codes, by cause:
+For each node that falls back, the host reports why on `Renderer::failure_subscribe`, once per node per tree, and logs
+it on the device with the format's own code where there is one. A product that never subscribes sees no change. Reports
+made before the product subscribes are buffered, as actions are. Stepping down for performance is not a failure, and is
+not reported.
 
-| Code               | Cause                                                                                                                                                                 |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `not-found`        | A material or image argument cannot be fetched, or has expired.                                                                                                       |
-| `integrity`        | Fetched bytes do not match their ID.                                                                                                                                  |
-| `invalid-material` | The material breaks the format, with any format code but the two under `unsupported`.                                                                                 |
-| `invalid-stack`    | The arguments do not match the declared parameters, an image is not PNG, JPEG or WebP, or the noise image fills a parameter other than `samplerFloat`.                |
-| `limit-exceeded`   | The node breaks a limit.                                                                                                                                              |
-| `unsupported`      | The host does not read the version (`unsupported-version`) or a required feature (`unsupported-feature`), cannot compile the material, or has materials switched off. |
+```rust
+/// Product-rendered bodies, the actions triggered inside them, and the
+/// materials that fell back in them.
+pub trait Renderer: Send + Sync {
+    // render and action_subscribe, as in the Unified Renderer.
+
+    /// Subscribe to the `Materials` nodes that fell back in this product's
+    /// rendered bodies.
+    async fn failure_subscribe(
+        &self,
+        _cx: &CallContext,
+    ) -> Subscription<HostRendererFailureSubscribeItem, CallError<GenericError>> {
+        Subscription::interrupted(CallError::unavailable())
+    }
+}
+
+/// A `Materials` node that fell back.
+pub struct HostRendererFailureSubscribeItem {
+    /// Where the body lives.
+    pub context: RenderContext,
+    /// The node's position among the tree's `Materials` nodes, depth first,
+    /// starting at 0.
+    pub node: u32,
+    /// The material that failed, when the failure belongs to one.
+    pub material: Option<[u8; 32]>,
+    /// Why the node fell back.
+    pub reason: MaterialFailure,
+}
+
+/// Why a `Materials` node fell back.
+pub enum MaterialFailure {
+    /// A material or image argument cannot be fetched, or has expired.
+    NotFound,
+    /// Fetched bytes do not match their ID.
+    Integrity,
+    /// The material breaks the format, with any format code but
+    /// `unsupported-version` and `unsupported-feature`.
+    InvalidMaterial,
+    /// The arguments do not match the declared parameters, an image is not
+    /// PNG, JPEG or WebP, or the noise image fills a parameter other than
+    /// `samplerFloat`.
+    InvalidStack,
+    /// The node breaks a limit.
+    LimitExceeded,
+    /// The host does not read the version or a required feature, cannot
+    /// compile the material, or has materials switched off.
+    Unsupported,
+}
+```
+
+`Unsupported` covers a material the device cannot compile and materials switched off alike, so a report says nothing
+more about the device than the capability answer does.
 
 Compiling never blocks drawing or crashes the app. A material that crashed the app is not compiled again on that device.
 Materials can be switched off remotely.
@@ -179,8 +226,8 @@ The limits are the same on every host:
 | `Materials` inside another `Materials` | none  |
 
 Limits are checked on the tree alone, in tree order, before anything loads. Every node counts toward the per-tree totals
-whether it draws or falls back, except a node over a limit, which falls back with `limit-exceeded` and adds nothing. An
-image wider or taller than 2048 pixels fails its node with `limit-exceeded` when it loads. A nested `Materials` node
+whether it draws or falls back, except a node over a limit, which falls back with `LimitExceeded` and adds nothing. An
+image wider or taller than 2048 pixels fails its node with `LimitExceeded` when it loads. A nested `Materials` node
 falls back and its ancestor still draws.
 
 When the materials on screen cost more than the device can afford, the host steps down in this order:
@@ -256,12 +303,11 @@ pub enum RenderSurface {
 ```
 
 The answer is yes only when the host reads that version and every named feature, draws materials on that surface, and
-has materials switched on.
+has materials switched on. A host that answers yes serves `Renderer::failure_subscribe`.
 
 ## Compatibility
 
-- Removing `Effect` breaks every tree that uses it. No host is in production, so hosts and products move to `Materials`
-  together.
+- Removing `Effect` breaks every tree that uses it. Hosts and products move to `Materials` together.
 - Products ask the capability question before sending materials.
 - Before version 1 is adopted, the format's reference parser and the host's validation both refuse unknown directives
   and read `// @requires`, and the format's vectors cover those rules and the seed.
@@ -271,7 +317,6 @@ has materials switched on.
 - Any product can make the host run shader code it wrote. The safety rules, the limits and the step-down order are what
   that costs every host.
 - Each host keeps its own translator, so agreement between hosts rests on the format's vectors.
-- Failures reach only the device log. Reporting them to the product is a later amendment.
 - Limits are fixed, so raising one is an amendment.
 - Out of scope: a material library and users' own materials, DotNS names for materials, and renewing expired materials,
   which open RFC [#1833](https://github.com/paritytech/trinity-user-agents/pull/1833) covers. A product's own pages draw
