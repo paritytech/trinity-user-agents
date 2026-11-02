@@ -1,4 +1,5 @@
 import Foundation
+import TrUAPIHost
 
 /// A product the app ships inside itself, run from its files with no dotNS or
 /// Bulletin lookup. Its pages and its worker keep the product's own id, so
@@ -49,7 +50,7 @@ public struct BundledProduct: Hashable, Sendable {
     /// The id is the same on every network, so it is read against its own
     /// root rather than the network's top-level domain.
     public func page(navigationDestination: String) -> ProductPage? {
-        guard let root = id.components(separatedBy: ProductHost.separator).last else { return nil }
+        guard let root = id.rawValue.split(separator: ".").last.map(String.init) else { return nil }
 
         return ProductPage.fromNavigationDestination(navigationDestination, tld: root)
     }
@@ -76,10 +77,11 @@ public struct BundledProducts: Sendable {
             let directory = root.appendingPathComponent(name, isDirectory: true)
             var isDirectory: ObjCBool = false
             guard fileManager.fileExists(atPath: directory.path, isDirectory: &isDirectory),
-                  isDirectory.boolValue
+                  isDirectory.boolValue,
+                  let id = try? ProductId(name)
             else { continue }
 
-            products[name] = BundledProduct(id: name, directory: directory)
+            products[id] = BundledProduct(id: id, directory: directory)
         }
         self.init(products: products)
     }
@@ -94,7 +96,7 @@ public struct BundledProducts: Sendable {
 
     /// Every product shipped, ordered by id.
     public var all: [BundledProduct] {
-        products.values.sorted { $0.id < $1.id }
+        products.values.sorted { $0.id.rawValue < $1.id.rawValue }
     }
 }
 
