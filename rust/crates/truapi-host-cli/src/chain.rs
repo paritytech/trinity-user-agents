@@ -115,7 +115,7 @@ impl CliChainProvider {
 	pub async fn rpc_client(&self, genesis_hash: [u8; 32]) -> Result<RpcClient, ProviderError> {
 		let connection = self.connect(genesis_hash).await?;
 		if let (Backend::LightClient, Some(chain)) = (&self.backend, self.chain_for(genesis_hash)) {
-			LightClient::shared(self.network.id)?.synced(chain.genesis).await?;
+			LightClient::shared(self.network.id)?.wait_until_synced(chain.genesis).await?;
 		}
 		let client = HostRpcClient::new(Arc::from(connection), crate::tokio_spawner());
 		Ok(RpcClient::new(client))
@@ -229,25 +229,26 @@ impl LightClient {
 		self.provider.connect(genesis_hash).await
 	}
 
-	/// Waits until the light client follows `genesis_hash`; see [`until_ready`].
-	/// Connect to the chain first, since only a running chain has a lifecycle.
-	async fn synced(&self, genesis_hash: [u8; 32]) -> Result<(), ProviderError> {
+	/// Waits until the light client has synced `genesis_hash`; see
+	/// [`synced_or_stalled`]. Connect to the chain first, since only a running
+	/// chain has a lifecycle.
+	async fn wait_until_synced(&self, genesis_hash: [u8; 32]) -> Result<(), ProviderError> {
 		let relay = match self.provider.relay_of(genesis_hash) {
 			Some(relay) => self.provider.lifecycle(relay)?,
 			None => stream::empty().boxed(),
 		};
-		until_ready(genesis_hash, self.provider.lifecycle(genesis_hash)?, relay.fuse()).await
+		synced_or_stalled(genesis_hash, self.provider.lifecycle(genesis_hash)?, relay.fuse()).await
 	}
 }
 
-/// Waits for the chain to be `Ready`. A stall of the chain or of its relay
-/// fails, since a parachain never reports its relay's.
-async fn until_ready(
+/// Waits until the chain is synced, which smoldot reports as `Ready`. A stall of
+/// the chain or of its relay fails, since a parachain never reports its relay's.
+async fn synced_or_stalled(
 	genesis: [u8; 32],
-	chain: impl Stream<Item = ChainLifecycle>,
-	relay: impl FusedStream<Item = ChainLifecycle>,
+	chain_lifecycle: impl Stream<Item = ChainLifecycle>,
+	relay_lifecycle: impl FusedStream<Item = ChainLifecycle>,
 ) -> Result<(), ProviderError> {
-	let (mut chain, mut relay) = (std::pin::pin!(chain), std::pin::pin!(relay));
+	let (mut chain, mut relay) = (std::pin::pin!(chain_lifecycle), std::pin::pin!(relay_lifecycle));
 	loop {
 		tokio::select! {
 			state = chain.next() => {
@@ -380,7 +381,7 @@ mod tests {
 		stream::iter(updates).chain(stream::pending())
 	}
 
-	/// What `until_ready` has decided for `PARACHAIN` once the updates are
+	/// What `synced_or_stalled` has decided for `PARACHAIN` once the updates are
 	/// delivered and nothing else changes, or `None` while it still waits.
 	fn decided(
 		chain: impl Stream<Item = ChainLifecycle>,
@@ -388,7 +389,7 @@ mod tests {
 	) -> Option<Result<(), ProviderError>> {
 		use futures::FutureExt;
 
-		until_ready(PARACHAIN, chain, then_quiet(relay).fuse()).now_or_never()
+		synced_or_stalled(PARACHAIN, chain, then_quiet(relay).fuse()).now_or_never()
 	}
 
 	/// Only the chain's own phase lets the first request through. Its relay being
