@@ -719,11 +719,11 @@ fn with_kind(kind: &str, mut body: Value) -> Value {
 	body
 }
 
-/// The chat-list text of one message: its text, the `alt` of its first
+/// The chat-list text of a message body: its text, the `alt` of its first
 /// media item, the line of an event, a call or a payment, the `alt` of a
 /// custom message, or a generic line.
-pub fn preview_text(message: &ChatMessage) -> String {
-	let text = match &message.body {
+pub fn preview_text(body: &ChatMessageBody) -> String {
+	let text = match body {
 		ChatMessageBody::Text { text } => Some(text.clone()),
 		ChatMessageBody::RichText { text, media } => text
 			.clone()
@@ -794,9 +794,12 @@ fn room_json(room_id: &str, room: &RoomRecord) -> Value {
 /// holds.
 fn list_json(room: &RoomRecord) -> Value {
 	let preview = room.preview.as_ref();
-	let last = preview
-		.and_then(|preview| preview.last_message.as_ref())
-		.or_else(|| room.last_message());
+	let last = match preview.and_then(|preview| preview.last_message.as_ref()) {
+		Some(message) => Some((message.timestamp, &message.body, &message.origin)),
+		None => room
+			.last_message()
+			.map(|message| (message.timestamp, &message.body, &message.origin)),
+	};
 	let reaction = preview.and_then(|preview| preview.last_reaction.as_ref());
 	let badge = match preview.and_then(|preview| preview.badge.as_ref()) {
 		Some(ChatRoomBadge::UnreadCount { count }) if *count > 0 => {
@@ -815,9 +818,9 @@ fn list_json(room: &RoomRecord) -> Value {
 	json!({
 		"timestamp": preview
 			.and_then(|preview| preview.timestamp)
-			.or_else(|| last.map(|message| message.timestamp)),
-		"text": last.map(preview_text),
-		"origin": last.map(|message| &message.origin.participant_id),
+			.or_else(|| last.map(|(timestamp, ..)| timestamp)),
+		"text": last.map(|(_, body, _)| preview_text(body)),
+		"origin": last.map(|(.., origin)| &origin.participant_id),
 		"lastReaction": reaction.map(|reaction| json!({
 			"emoji": reaction.emoji,
 			"byUser": reaction.by_user,
@@ -877,7 +880,7 @@ pub fn message_json(message: &ChatMessage) -> Value {
 			"count": reaction.count,
 			"reactedByUser": reaction.reacted_by_user,
 		})).collect::<Vec<_>>(),
-		"preview": preview_text(message),
+		"preview": preview_text(&message.body),
 		"request": message.request,
 	})
 }
@@ -1169,8 +1172,8 @@ mod tests {
 	use std::fs::read_to_string;
 	use truapi::{
 		latest::{
-			ChatCallClose, ChatCustomMessage, ChatPaymentRecord, ChatPreviewReaction,
-			ChatRoomActivity, HostChatSetRoomFooterRequest,
+			ChatCallClose, ChatCustomMessage, ChatPaymentRecord, ChatPreviewMessage,
+			ChatPreviewReaction, ChatRoomActivity, HostChatSetRoomFooterRequest,
 		},
 		platform::ProductId,
 	};
@@ -1541,14 +1544,24 @@ mod tests {
 			.expect("the room exists");
 			room_view(&host, "support")["list"].clone()
 		};
+		let from_the_product = ChatPreviewMessage {
+			message_id: "c-1".to_string(),
+			origin: ChatMessageOrigin { participant_id: "contact".to_string() },
+			timestamp: 1_767_225_600_000,
+			body: body("from the product"),
+			status: ChatMessageStatus::Sent,
+			reply_to: None,
+			edited_at: None,
+			request: false,
+		};
 		let list = preview(ChatRoomPreview {
 			timestamp: Some(42),
 			badge: Some(ChatRoomBadge::UnreadCount { count: 7 }),
-			last_message: Some(message("c-1", "contact", "from the product")),
+			last_message: Some(from_the_product.clone()),
 			last_reaction: Some(ChatPreviewReaction {
 				emoji: "+1".to_string(),
 				by_user: false,
-				message: Some(message("c-1", "contact", "from the product")),
+				message: Some(from_the_product),
 				removed: true,
 			}),
 			unseen_reactions: 2,
@@ -1912,7 +1925,6 @@ mod tests {
 
 	#[test]
 	fn the_list_text_of_a_message_falls_back_in_order() {
-		let with = |body| ChatMessage { body, ..message("m", PRODUCT, "") };
 		let meta = |alt: Option<&str>| ChatMediaMeta {
 			mime_type: "image/png".to_string(),
 			size_bytes: None,
@@ -1923,43 +1935,43 @@ mod tests {
 			duration_ms: None,
 		};
 		let image = |alt| ChatMediaItem::Image { resource: hop(), meta: meta(alt) };
-		assert_eq!(preview_text(&with(body("hi"))), "hi");
+		assert_eq!(preview_text(&body("hi")), "hi");
 		assert_eq!(
-			preview_text(&with(ChatMessageBody::RichText {
+			preview_text(&ChatMessageBody::RichText {
 				text: None,
 				media: vec![image(Some("A cat"))]
-			})),
+			}),
 			"A cat"
 		);
 		assert_eq!(
-			preview_text(&with(ChatMessageBody::RichText { text: None, media: vec![image(None)] })),
+			preview_text(&ChatMessageBody::RichText { text: None, media: vec![image(None)] }),
 			SENT_A_MESSAGE
 		);
 		assert_eq!(
-			preview_text(&with(ChatMessageBody::Event(ChatContactEvent::RequestAccepted))),
+			preview_text(&ChatMessageBody::Event(ChatContactEvent::RequestAccepted)),
 			"Request accepted"
 		);
 		assert_eq!(
-			preview_text(&with(ChatMessageBody::Call(ChatCallRecord {
+			preview_text(&ChatMessageBody::Call(ChatCallRecord {
 				video: true,
 				answered_at: None,
 				closed: Some(ChatCallClose { at: 1, by_user: false }),
-			}))),
+			})),
 			"Video call, not answered"
 		);
 		assert_eq!(
-			preview_text(&with(ChatMessageBody::Payment(ChatPaymentRecord {
+			preview_text(&ChatMessageBody::Payment(ChatPaymentRecord {
 				amount: 1_500,
 				legacy: false,
-			}))),
+			})),
 			"Payment of 1500"
 		);
 		let custom = |alt: Option<&str>| ChatMessageBody::Custom {
 			message: ChatCustomMessage { message_type: "poll".to_string(), payload: vec![1] },
 			alt: alt.map(str::to_string),
 		};
-		assert_eq!(preview_text(&with(custom(Some("A poll")))), "A poll");
-		assert_eq!(preview_text(&with(custom(None))), SENT_A_MESSAGE);
+		assert_eq!(preview_text(&custom(Some("A poll"))), "A poll");
+		assert_eq!(preview_text(&custom(None)), SENT_A_MESSAGE);
 	}
 
 	fn hop() -> ChatResource {
