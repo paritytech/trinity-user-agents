@@ -94,10 +94,9 @@ flowchart LR
   core --> A["assign → ack"]
   core --> C["cancel → Stopped | Offer | Refused"]
   core --> S["settleCancel(Accepted | Declined) → ack"]
-  report["worker reports"] --> u1[AwaitingPayment · PaymentReceived · Converting]
-  report --> u2[Crediting · Delivered · Collecting]
-  report --> u3[Payout · PayoutRetrying · Refunding]
-  report --> u4[Deposit · Details · Failed]
+  report["worker reports"] --> u1["In: AwaitingPayment · PaymentReceived · Converting · Crediting · Delivered · Deposit"]
+  report --> u2["Out: Collecting · Converting · Payout · PayoutRetrying · Refunding"]
+  report --> u3["shared: Failed · Details · Progress"]
 ```
 
 ## Top-up
@@ -219,8 +218,8 @@ flowchart TD
 ```mermaid
 flowchart LR
   subgraph db["Core database · core.sqlite3 · core-owned"]
-    s[(funding_session<br/>in flight · ≤200 unrecorded · ≤64 recorded/product)]
-    k[(funding_summary<br/>compacted, never trimmed)]
+    s[(funding_session<br/>in flight · provider still owes · late arrival open)]
+    k[(funding_summary<br/>every other ended session · acknowledged flag · never trimmed)]
   end
   subgraph kv["Core storage · host-backed slots"]
     l[(FundingSupport<br/>learned limits · 12 h)]
@@ -230,20 +229,20 @@ flowchart LR
     t[(Secure tokens)]
   end
   hv["Host history view"]
-  s -- overflow, same transaction --> k
+  s -- "ended, same transaction" --> k
   s -- "funding_history(): ended sessions" --> hv
   k -- "funding_history(): compacted" --> hv
-  hv -. acknowledge_funding_session .-> s
+  hv -. acknowledge_funding_session .-> k
 ```
 
 One row per session and per compacted summary, keyed by intent. Each record is SCALE, led by a u16 format: session 2,
-summary 1. A session is written once a provider takes it or the user starts it, and every commit is one transaction:
+summary 4. A session is written once a provider takes it or the user starts it, and every commit is one transaction:
 changed rows upserted, rows that left the stored set deleted, new summaries inserted, before anyone hears of the change.
 
 | Row               | Rule                                             |
 | ----------------- | ------------------------------------------------ |
 | current format    | read                                             |
-| older             | deleted when loaded                              |
+| older             | skipped and kept                                 |
 | does not decode   | skipped and kept, never written over             |
 | newer (downgrade) | load fails, nothing touched, funding unavailable |
 
