@@ -509,7 +509,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   has told the user how it ended. A released withdrawal whose
   provider still owes its payout outcome, or the refund of a failed payout,
   is kept and served whether or not the host acknowledged it, and is handed
-  over again when the provider reports. A cancelled top-up a late payment may
+  over again when the provider reports; one refunded after an accepted
+  cancel stays in full until its payout outcome is in. A cancelled top-up a late payment may
   still open stays in full for its window too. Every other ended session is
   compacted into the session pack once it ends, acknowledged or not (intent,
   owner, direction, amounts, outcome and times, the provider, rail and asset,
