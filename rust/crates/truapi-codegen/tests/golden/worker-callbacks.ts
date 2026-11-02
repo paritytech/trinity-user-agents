@@ -258,10 +258,11 @@ function chatRawCallbacks(
         product,
         roomId,
       ]) as ReturnType<Required<RawCallbacks>["readChatRoomConfig"]>,
-    setChatRoomConfig: (product, request) =>
+    setChatRoomConfig: (product, roomId, config) =>
       bridge.callbackRequest("setChatRoomConfig", [
         product,
-        request,
+        roomId,
+        config,
       ]) as ReturnType<Required<RawCallbacks>["setChatRoomConfig"]>,
     setChatRoomMetadata: (product, request) =>
       bridge.callbackRequest("setChatRoomMetadata", [

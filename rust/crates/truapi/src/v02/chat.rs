@@ -1,10 +1,11 @@
-use crate::v01::{ChatMessageContent, ChatRoomRegistrationStatus};
+use crate::v01::{ChatMessageContent, ChatRoomConfig, ChatRoomRegistrationStatus};
 use parity_scale_codec::{Decode, Encode};
 
 /// Request to create a chat room.
 ///
 /// v0.2 lets the host make the room id. The product names the room with its
 /// own source, and the host derives the id from the product and that source.
+/// It also declares the parts of the room that the product serves.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostChatCreateRoomRequest {
 	/// The product's own name for the room. The same source resolves the same
@@ -14,6 +15,10 @@ pub struct HostChatCreateRoomRequest {
 	pub name: String,
 	/// URL or base64 image.
 	pub icon: String,
+	/// The parts of the room that the product serves. It replaces the
+	/// configuration that the host keeps for the room, also when the room
+	/// exists. The host keeps it across restarts.
+	pub config: ChatRoomConfig,
 }
 
 /// Result of a room registration.
