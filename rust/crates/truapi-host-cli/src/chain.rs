@@ -11,13 +11,16 @@ use std::{
 
 use async_trait::async_trait;
 use clap::ValueEnum;
+use futures::{Stream, StreamExt, stream};
 use subxt_rpcs::client::RpcClient;
 use tracing::debug;
 use truapi::{
 	HostRpcClient,
 	platform::{ChainProvider, JsonRpcConnection, ProviderError},
 };
-use truapi_provider::{ChainSource, EmbeddedChainProvider};
+use truapi_provider::{
+	ChainHealth, ChainLifecycle, ChainPhase, ChainSource, EmbeddedChainProvider, StallReason,
+};
 
 use crate::network::{ChainEndpoint, NetworkConfig};
 
@@ -102,8 +105,15 @@ impl CliChainProvider {
 	/// A subxt RPC client over a new connection to the chain `genesis_hash`
 	/// routes to. A request fails once the connection has been silent for
 	/// [`HostRpcClient`]'s deadline while it waits.
+	///
+	/// On the light client this first waits for the chain to sync. smoldot sends
+	/// nothing on the connection until then, so a first request sent during a
+	/// long sync would run into that deadline.
 	pub async fn rpc_client(&self, genesis_hash: [u8; 32]) -> Result<RpcClient, ProviderError> {
 		let connection = self.connect(genesis_hash).await?;
+		if let (Backend::LightClient, Some(chain)) = (&self.backend, self.chain_for(genesis_hash)) {
+			LightClient::shared(self.network.id)?.synced(chain.genesis).await?;
+		}
 		let client = HostRpcClient::new(Arc::from(connection), crate::tokio_spawner());
 		Ok(RpcClient::new(client))
 	}
@@ -215,6 +225,52 @@ impl LightClient {
 		}
 		self.provider.connect(genesis_hash).await
 	}
+
+	/// Waits until the light client follows `genesis_hash`, watching the relay
+	/// it syncs through as well; see [`until_ready`]. Connect to the chain first,
+	/// since only a running chain has a lifecycle.
+	async fn synced(&self, genesis_hash: [u8; 32]) -> Result<(), ProviderError> {
+		let tagged = |genesis| {
+			Ok::<_, ProviderError>(
+				self.provider.lifecycle(genesis)?.map(move |state| (genesis, state)),
+			)
+		};
+		let relay = self.provider.relay_of(genesis_hash).map(tagged).transpose()?;
+		let states = stream::select(tagged(genesis_hash)?, stream::iter(relay).flatten());
+		until_ready(genesis_hash, states).await
+	}
+}
+
+/// Waits until `chain` reaches [`ChainPhase::Ready`] in `states`, the lifecycle
+/// updates of `chain` and of its relay, each tagged with its genesis.
+///
+/// A stall of either fails the wait. A parachain reports a stall only from its
+/// own peers, so it would otherwise wait forever behind a relay that stopped
+/// syncing.
+async fn until_ready(
+	chain: [u8; 32],
+	states: impl Stream<Item = ([u8; 32], ChainLifecycle)>,
+) -> Result<(), ProviderError> {
+	let mut states = std::pin::pin!(states);
+	while let Some((genesis, state)) = states.next().await {
+		if let ChainHealth::Stalled { reason } = state.health {
+			let which = if genesis == chain { "chain" } else { "relay" };
+			let why = match reason {
+				StallReason::NoPeers => "it has no peers",
+				StallReason::NoProgress => "its warp sync stopped advancing",
+			};
+			return Err(ProviderError::Host {
+				reason: format!(
+					"the light client stalled on {which} 0x{}: {why}",
+					hex::encode(genesis)
+				),
+			});
+		}
+		if genesis == chain && state.phase == ChainPhase::Ready {
+			return Ok(());
+		}
+	}
+	Err(ProviderError::NotRunning { genesis: chain })
 }
 
 #[cfg(test)]
@@ -307,6 +363,61 @@ mod tests {
 		assert_eq!(
 			error.to_string(),
 			format!("no chain registered for genesis 0x{}", "00".repeat(32))
+		);
+	}
+
+	const PARACHAIN: [u8; 32] = [0x11; 32];
+	const RELAY: [u8; 32] = [0x22; 32];
+
+	fn lifecycle(phase: ChainPhase, health: ChainHealth) -> ChainLifecycle {
+		ChainLifecycle { phase, peers: 1, health }
+	}
+
+	/// What `until_ready` has decided for `PARACHAIN` once `updates` are
+	/// delivered and nothing else changes, or `None` while it still waits.
+	fn decided_after(
+		updates: Vec<([u8; 32], ChainLifecycle)>,
+	) -> Option<Result<(), ProviderError>> {
+		use futures::FutureExt;
+
+		until_ready(PARACHAIN, stream::iter(updates).chain(stream::pending())).now_or_never()
+	}
+
+	/// Only the chain's own phase lets the first request through. Its relay being
+	/// synced does not mean the parachain can answer yet.
+	#[test]
+	fn a_synced_relay_does_not_release_its_parachain() {
+		let connecting = lifecycle(ChainPhase::Connecting, ChainHealth::Ok);
+		let ready = lifecycle(ChainPhase::Ready, ChainHealth::Ok);
+
+		assert_eq!(
+			[
+				decided_after(vec![(PARACHAIN, connecting), (RELAY, ready)]),
+				decided_after(vec![(PARACHAIN, connecting), (PARACHAIN, ready)]),
+			],
+			[None, Some(Ok(()))]
+		);
+	}
+
+	/// A parachain reports a stall only from its own peers, so it looks healthy
+	/// while its relay has stopped syncing, and would be waited on forever.
+	#[test]
+	fn a_stalled_relay_fails_the_wait() {
+		let stalled = ChainHealth::Stalled { reason: StallReason::NoProgress };
+
+		let decided = decided_after(vec![
+			(PARACHAIN, lifecycle(ChainPhase::Connecting, ChainHealth::Ok)),
+			(RELAY, lifecycle(ChainPhase::Syncing { at: 1, target: 9 }, stalled)),
+		]);
+
+		assert_eq!(
+			decided,
+			Some(Err(ProviderError::Host {
+				reason: format!(
+					"the light client stalled on relay 0x{}: its warp sync stopped advancing",
+					"22".repeat(32)
+				),
+			}))
 		);
 	}
 
@@ -411,9 +522,28 @@ mod tests {
 		reach_paseo_next_v2(ChainBackend::Rpc).await;
 	}
 
+	/// Also checks that a client is handed out only once its chain is synced,
+	/// which a fast sync would otherwise hide.
 	#[tokio::test]
 	#[ignore = "needs network access to the preset's chains"]
 	async fn the_light_client_reaches_paseo_next_v2() {
+		let network = NetworkConfig {
+			chain_backend: ChainBackend::LightClient,
+			..Network::PaseoNextV2.config()
+		};
+		CliChainProvider::new(&network)
+			.rpc_client(network.asset_hub_genesis)
+			.await
+			.expect("connect to Asset Hub");
+		let light = LightClient::shared(network.id).expect("paseo-next-v2 is bundled");
+		let state = light
+			.provider
+			.lifecycle(network.asset_hub_genesis)
+			.expect("Asset Hub is running")
+			.next()
+			.await;
+		assert_eq!(state.map(|state| state.phase), Some(ChainPhase::Ready));
+
 		reach_paseo_next_v2(ChainBackend::LightClient).await;
 	}
 

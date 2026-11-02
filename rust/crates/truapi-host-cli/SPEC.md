@@ -1828,11 +1828,15 @@ specs `truapi-provider` bundles, which cover `paseo-next-v2` and `previewnet`. I
 cannot be combined with the `HOST_CLI_*_WS` overrides or
 `HOST_CLI_LOCAL_NETWORK_CONFIG`. One light client per network serves the process
 and keeps one idle connection per chain, since smoldot stops a chain when its
-last connection closes. A chain's first request waits for it to sync. A PGAS
-claim on Asset Hub is dropped: smoldot validates a transaction before
-broadcasting it, and the proof Asset Hub's nodes return for that validation is
-missing entries the validation reads. `pgas-check --submit` refuses to run on
-the light client for that reason.
+last connection closes. One of the CLI's own commands waits for its chain to
+sync before sending a request, because smoldot sends nothing on the connection
+until then and the 30-second limit above would fail the request. The wait fails
+when the chain, or the relay a parachain syncs through, stalls: smoldot reports
+a parachain's stall from the parachain's peers alone. A PGAS claim on Asset Hub
+is dropped: smoldot validates a transaction before broadcasting it, and the
+proof Asset Hub's nodes return for that validation is missing entries the
+validation reads. `pgas-check --submit` refuses to run on the light client for
+that reason.
 
 `wss://` certificates are verified with the root certificates built into the
 binary, on both backends, not with certificate authorities added to the
