@@ -218,6 +218,32 @@ pub trait HostCallbacks: Send + Sync {
 	/// with.
 	async fn current_installation(&self) -> Result<Vec<u8>, HostRejection>;
 
+	/// Read a value the host keeps encrypted at rest: the Keychain on iOS,
+	/// encrypted preferences on Android. Return `None` when nothing is stored
+	/// under `key`, and an error when the store cannot be read or the value
+	/// no longer decrypts.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with.
+	async fn encrypted_storage_read(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection>;
+
+	/// Store `value` under `key`, encrypted at rest and excluded from backups,
+	/// replacing any earlier value.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with.
+	async fn encrypted_storage_write(
+		&self,
+		key: Vec<u8>,
+		value: Vec<u8>,
+	) -> Result<(), HostRejection>;
+
+	/// Delete the value stored under `key`. Deleting nothing succeeds.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with.
+	async fn encrypted_storage_delete(&self, key: Vec<u8>) -> Result<(), HostRejection>;
+
 	/// Read a value from the host's scoped key-value store.
 	async fn local_storage_read(
 		&self,
@@ -397,8 +423,8 @@ pub trait NativePaymentCallbacks: Send + Sync {
 	async fn request_payment(
 		&self,
 		product_id: ProductId,
-		request: v01::HostPaymentRequest,
-	) -> Result<(), v01::HostPaymentError>;
+		request: crate::latest::HostPaymentRequest,
+	) -> Result<(), crate::latest::HostPaymentError>;
 
 	/// The current status of `product_id`'s payment `id`, or `None` when the
 	/// host holds no such payment.
@@ -424,8 +450,8 @@ pub trait NativeTopUpCallbacks: Send + Sync {
 	async fn top_up(
 		&self,
 		product_id: ProductId,
-		request: v01::HostPaymentTopUpRequest,
-	) -> Result<(), v01::HostPaymentTopUpError>;
+		request: crate::latest::HostPaymentTopUpRequest,
+	) -> Result<(), crate::latest::HostPaymentTopUpError>;
 
 	/// The current status of `product_id`'s top-up `id`, or `None` when the
 	/// host holds no such top-up.

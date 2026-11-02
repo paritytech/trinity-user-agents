@@ -47,6 +47,8 @@ pub mod statement_allowance;
 /// `StatementStore` surface: proofs plus submit and subscribe flows.
 pub mod statement_store;
 mod statement_store_rpc;
+#[cfg(test)]
+pub use statement_store_rpc::{LIVE_WAIT, LivePeopleStatements};
 #[cfg(feature = "test-host")]
 mod test_resource_controls;
 mod versioning;
@@ -156,7 +158,7 @@ use crate::{
 			derivation_index_bytes, derive_product_public_key, public_key_from_address,
 		},
 		session::{SessionInfo, SessionState},
-		sso::pairing::x25519_public_key,
+		x25519_seal::X25519PrivateKey,
 	},
 };
 
@@ -470,6 +472,19 @@ impl ProductConnection {
 		denied_error: E,
 	) -> Result<(), CallError<E>> {
 		match self.remote_permission_authorization(permission).await {
+			Ok(PermissionAuthorizationStatus::Authorized) => Ok(()),
+			Ok(
+				PermissionAuthorizationStatus::Denied |
+				PermissionAuthorizationStatus::NotDetermined,
+			) => Err(CallError::Domain(denied_error)),
+			Err(reason) => Err(CallError::HostFailure { reason }),
+		}
+	}
+
+	/// Require the user's consent to disclose their identity to this product,
+	/// prompting only when no decision is stored.
+	async fn require_identity_disclosure<E>(&self, denied_error: E) -> Result<(), CallError<E>> {
+		match self.identity_disclosure_authorization().await {
 			Ok(PermissionAuthorizationStatus::Authorized) => Ok(()),
 			Ok(
 				PermissionAuthorizationStatus::Denied |
@@ -1207,7 +1222,9 @@ fn connected_session_ui_info(session: &SessionInfo) -> SessionUiInfo {
 	SessionUiInfo {
 		public_key: session.public_key,
 		identity_account_id: session.identity_account_id,
-		chat_public_key: session.identity_chat_private_key.map(x25519_public_key),
+		chat_public_key: session
+			.identity_chat_private_key
+			.map(|secret| X25519PrivateKey::from(secret).public_key().0),
 		device_enc_public_key: session.device_enc_public_key,
 		peer_statement_account_id: session.sso.as_ref().map(|sso| sso.identity_account_id),
 		device_statement_account_id: session.sso.as_ref().map(|sso| sso.ss_public_key),

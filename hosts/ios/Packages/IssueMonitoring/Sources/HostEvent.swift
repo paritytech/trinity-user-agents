@@ -20,21 +20,41 @@ public struct HostEvent: Sendable, Equatable {
         self.extras = extras
     }
 
+    /// An event carrying the fields every host event shares; `tags` and `extras` add its own.
+    public static func make(
+        name: String,
+        origin: HostEventOrigin,
+        monotonicMilliseconds: Int,
+        tags: [String: String] = [:],
+        extras: [String: HostEventValue] = [:]
+    ) -> HostEvent {
+        var sharedTags = tags
+        sharedTags["host.app_variant"] = origin.appVariant
+        sharedTags["host.platform"] = "ios"
+        sharedTags["host.native_app_version"] = origin.appVersion
+
+        var sharedExtras = extras
+        sharedExtras["host.app_build"] = origin.appBuild.map(HostEventValue.integer)
+        sharedExtras["event.monotonic_ms"] = .integer(monotonicMilliseconds)
+
+        return HostEvent(name: name, tags: sharedTags, extras: sharedExtras)
+    }
+
     /// The event for the app process finishing launch.
     public static func processStarted(
         origin: HostEventOrigin,
         truapiHostVersion: String,
         monotonicMilliseconds: Int
     ) -> HostEvent {
-        HostEvent(
+        make(
             name: "host.process.started",
-            tags: tags(origin: origin, truapiHostVersion: truapiHostVersion).merging([
+            origin: origin,
+            monotonicMilliseconds: monotonicMilliseconds,
+            tags: [
+                "truapi.host_version": truapiHostVersion,
                 "host.os_version": origin.osVersion
-            ]) { _, value in value },
-            extras: appMetadata(origin: origin).merging([
-                "app.launch_id": .string(origin.launchID.uuidString.lowercased()),
-                "event.monotonic_ms": .integer(monotonicMilliseconds)
-            ]) { _, value in value }
+            ],
+            extras: ["app.launch_id": .string(origin.launchID.uuidString.lowercased())]
         )
     }
 
@@ -45,31 +65,12 @@ public struct HostEvent: Sendable, Equatable {
         truapiHostVersion: String,
         monotonicMilliseconds: Int
     ) -> HostEvent {
-        HostEvent(
+        make(
             name: "host.webview.created",
-            tags: tags(origin: origin, truapiHostVersion: truapiHostVersion),
-            extras: appMetadata(origin: origin).merging([
-                "host.session_id": .string(hostSessionID.uuidString.lowercased()),
-                "event.monotonic_ms": .integer(monotonicMilliseconds)
-            ]) { _, value in value }
+            origin: origin,
+            monotonicMilliseconds: monotonicMilliseconds,
+            tags: ["truapi.host_version": truapiHostVersion],
+            extras: ["host.session_id": .string(hostSessionID.uuidString.lowercased())]
         )
-    }
-}
-
-private extension HostEvent {
-    static func tags(origin: HostEventOrigin, truapiHostVersion: String) -> [String: String] {
-        var tags = [
-            "host.app_variant": origin.appVariant,
-            "host.platform": "ios",
-            "truapi.host_version": truapiHostVersion
-        ]
-        tags["host.native_app_version"] = origin.appVersion
-        return tags
-    }
-
-    static func appMetadata(origin: HostEventOrigin) -> [String: HostEventValue] {
-        var extras: [String: HostEventValue] = [:]
-        extras["host.app_build"] = origin.appBuild.map(HostEventValue.integer)
-        return extras
     }
 }

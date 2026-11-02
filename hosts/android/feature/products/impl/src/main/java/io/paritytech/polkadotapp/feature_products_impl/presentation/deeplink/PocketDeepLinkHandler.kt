@@ -73,7 +73,9 @@ internal class PocketDeepLinkHandler @Inject constructor(
             PocketDeeplink.Collection -> openCollection()
             is PocketDeeplink.Card -> dotNsTldProvider.getTld()
                 .flatMap { tld -> ProductId.fromString(deeplink.productHost, tld) }
-                .flatMap { productId -> dispatchCard(PocketCardKey(productId, PocketCardId(deeplink.cardId))) }
+                .flatMap { productId ->
+                    dispatchCard(PocketCardKey(productId, PocketCardId(deeplink.cardId)), deeplink.pageQuery)
+                }
         }
     }
 
@@ -83,7 +85,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
         DeeplinkProcessingOutcome.Navigate { router.openWalletTab() }
     }
 
-    private suspend fun dispatchCard(key: PocketCardKey): Result<DeeplinkProcessingOutcome> {
+    private suspend fun dispatchCard(key: PocketCardKey, pageQuery: String): Result<DeeplinkProcessingOutcome> {
         val present = collection.observeCards().first().any { it.key == key }
 
         // A card already held is opened, whichever action asked for it. One that is not held has to
@@ -92,7 +94,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
         return if (present) {
             Result.success(
                 DeeplinkProcessingOutcome.Navigate {
-                    cardOpenRequests.request(key)
+                    cardOpenRequests.request(key, pageQuery)
                     router.openWalletTab()
                 },
             )

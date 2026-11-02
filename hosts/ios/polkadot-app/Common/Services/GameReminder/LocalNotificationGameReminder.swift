@@ -9,17 +9,20 @@ final class LocalNotificationGameReminder {
     private let settingsManager: SettingsManagerProtocol
     private let keys: GameReminderStorageKeys
     private let logger: LoggerProtocol
+    private let diagnostics: GameReminderDiagnostics
 
     init(
         localNotificationService: UserNotificationServicing,
         settingsManager: SettingsManagerProtocol,
         keys: GameReminderStorageKeys,
-        logger: LoggerProtocol = Logger.shared
+        logger: LoggerProtocol = Logger.shared,
+        diagnostics: GameReminderDiagnostics = GameReminderDiagnostics()
     ) {
         self.localNotificationService = localNotificationService
         self.settingsManager = settingsManager
         self.keys = keys
         self.logger = logger
+        self.diagnostics = diagnostics
     }
 }
 
@@ -27,6 +30,7 @@ extension LocalNotificationGameReminder: GameStartReminderServicing {
     func scheduleReminder(gameDate: Date, productId: ProductId) {
         localNotificationService.notificationAccessStatus { status in
             guard status == .allowed else {
+                self.diagnostics.notScheduled(productId: productId, startsAt: gameDate, reason: .notAuthorized)
                 return
             }
             self.performScheduleReminder(gameDate: gameDate, productId: productId)
@@ -56,6 +60,7 @@ private extension LocalNotificationGameReminder {
 
         guard fireDate > Date() else {
             logger.debug("fire date is in the past, skipping")
+            diagnostics.notScheduled(productId: productId, startsAt: fireDate, reason: .startInPast)
             return
         }
 
@@ -67,6 +72,11 @@ private extension LocalNotificationGameReminder {
             after: fireDate.timeIntervalSince(Date())
         ) { [logger] error in
             logger.debug("gameStart scheduled with error: \(String(describing: error))")
+            if error == nil {
+                self.diagnostics.scheduled(productId: productId, startsAt: fireDate, delivery: .notification)
+            } else {
+                self.diagnostics.notScheduled(productId: productId, startsAt: fireDate, reason: .failed)
+            }
         }
     }
 

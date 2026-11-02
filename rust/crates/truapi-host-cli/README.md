@@ -783,6 +783,8 @@ Scripts under `js/scripts/` include:
   closed. The provider reports progress and starts top-ups and payment
   requests, which ledger engines complete in full and record in
   `TRUAPI_FUNDING_LEDGER`, and the core settles each session from them. The
+  ledger moves no real funds, so the host refuses it on a network preset whose
+  identities are real. The
   phase runs the host twice on the same storage, so the provider is assigned
   an inbound session again after a restart and finishes it from the state it
   kept in its own storage. The device detects the country
