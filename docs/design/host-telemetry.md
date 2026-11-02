@@ -27,7 +27,7 @@ Three things follow from that shape.
 
 **Severity does not survive the crossing.** `ProductTrUAPIHostBridge.kt:441` and `LoggerProtocol+CoreLog.swift:20` both collapse every allowlisted marker to info, so `truapi.tracing.error` and `truapi.tracing.warn` arrive identically and a core error cannot be alerted on. Host-originated lines keep their severity, so two lines under one tag namespace mean different things depending on who raised them.
 
-The detail string is also built at the call site, so what a marker may carry is decided there rather than by its type. `account_handle` (`logging.rs:107-114`) exists for exactly this and shortens an account id before it is formatted; making that the only shape a detail can take is step 2 of the delivery below.
+The detail string is also built at the call site, so what a marker may carry is decided there rather than by its type. `account_handle` (`logging.rs:107-114`) exists for exactly this and shortens an account id before it is formatted. Making that the only shape a detail can take is step 2 of the delivery below.
 
 ## Current state
 
@@ -53,55 +53,15 @@ Telemetry also leaves through eight capture senders, four per platform, with sev
 
 **The web host has no core-log channel at all.** `on_core_log` is declared in `native/callbacks.rs:37`, inside `truapi::native`, which is `#[cfg(not(target_arch = "wasm32"))]` at `lib.rs:793-794`. There is no `onCoreLog` in any TypeScript source, and `truapi-codegen` walks the `platform` modules (`truapi-codegen/src/platform.rs:1-10`), never `native`. So Desktop and dot.li receive no core diagnostics today, under any design.
 
-## Options
-
-All options assume the same core-side registry: one table of markers, each with what it carries and whether it may leave the device, and a `HostSinkLayer` that forwards on an exact match rather than a prefix. They differ only in how the table reaches a host.
-
-None of them reaches the web host for free, because there is no channel to carry it on. That is separate work under every option and is therefore not a differentiator between them.
-
-### Option 1: convention in the marker name
-
-Encode the class in the string, `truapi.chain.budget_reached` becoming `truapi.export.chain.budget_reached` against `truapi.local.native.push_notification`. Each host matches one prefix.
-
-**Trade-offs.** No new machinery and a one-line host diff, but it is a convention rather than a guarantee, it renames 45 production markers, and nothing stops the next marker choosing the wrong prefix. That is the failure mode we already have, respelled.
-
-### Option 2: carry the class over the boundary
-
-`on_core_log` gains an argument. Hosts route on it and hold no policy.
-
-**Trade-offs.** The decision becomes data carried with the line, and it puts the class in the signature where a host author cannot miss it. Against that, it changes a boundary signature, so `native/callbacks.rs:37`, both native packages, both app bridges on each platform and every test double update together, including three `on_core_log` impls in `native/tests.rs` alone.
-
-### Option 3: export the table over UniFFI
-
-The core exposes the registry as an exported function. Each host reads it once at startup and matches exactly.
-
-**Trade-offs.** No new emitter, no boundary change, no new CI job, and the table rides `uniffi-bindgen-cli` with every other binding. The core already exports thirteen free functions this way; `parse_navigate` at `native.rs:65-68` is the same construction, a pure stateless function over an exported type, though it is called per navigation where this is read once. Nothing here is weaker than Option 2 except that a host must call the function rather than being handed its result.
-
-### Option 4: a new codegen emitter
-
-`truapi-codegen` emits the table as a Kotlin object and a Swift enum.
-
-**Trade-offs.** The Swift and Kotlin bindings come from `uniffi-bindgen-cli` (`Makefile:169,315,351,363`), not from `truapi-codegen`, so this is two new emitters rather than reuse of the existing Rust and TypeScript ones. It buys nothing Option 3 does not.
-
-## Comparison
-
-| Axis | 1: convention | 2: carried class | 3: exported table | 4: new emitter |
-|---|---|---|---|---|
-| Single source of truth | No | Yes | Yes | Yes |
-| Boundary change | None | UniFFI signature | None | None |
-| New machinery for iOS and Android | None | None | None | 2 emitters |
-| Severity preserved | No | Yes | Yes | Yes |
-| Cost on the hosts that exist | 45 renames | 8 conformers plus test doubles | 1 function, 2 read sites | 2 emitters, 2 read sites |
-
 ## Approach
 
-**Option 3, with each host reading the whole table once at startup rather than calling per line.**
+The core owns a table of every marker it may address to a host, each entry carrying what its detail may hold and whether it may leave the device. It exposes that table through a `#[uniffi::export]` function, the way `parse_navigate` at `native.rs:65-68` is already exposed, so it rides `uniffi-bindgen-cli` with every other binding and needs no new emitter and no new CI job. Each host reads it once at startup and matches a target exactly, instead of keeping a list of exported prefixes of its own.
 
-It is the cheapest option on the two hosts that exist, and it scales without getting more expensive. Two hosts mean two hand-written copies today and four hosts would mean four; one table keeps that number at zero however many hosts are added. What it does not do is carry itself to Desktop and dot.li, because they have no core-log channel to carry it on. Giving them one is separate work, and when it happens it should read this table rather than start a third copy.
+Exact matching is what makes a marker local by default. A target the table does not hold stays on the device, so a marker added later cannot ship off-device until someone says what it carries. `HostSinkLayer` applies the same rule on the way out, and refuses a host-addressed target the table does not list.
 
-The question that settled the shape was whether a marker's class is fixed or varies line by line. It is fixed. The case for varying it is `truapi.ws_bridge.*`, where the detail differs every time, but the answer there is to type the detail so it cannot carry what we do not want, not to let the class float. A floating class puts the decision back at the call site, which is where it sits today and what this is meant to move.
+The class is a property of the marker rather than of the line. The case for varying it per line is `truapi.ws_bridge.*`, where the detail differs every time, but the answer there is to type the detail so it cannot carry what we do not want, not to let the class float. A floating class puts the decision back at the call site, which is where it sits today and what this is meant to move.
 
-Option 2 remains the better shape on one axis, in that the class in the signature is impossible to miss, whereas this relies on a host calling a function it could skip. Both host allowlists are deleted in the same change, so there is nothing to skip to, but that is the real argument against this and it is worth recording.
+This does not carry itself to Desktop and dot.li, because they have no core-log channel to carry it on. Giving them one is separate work, and when it happens it should read this table rather than start a third copy.
 
 ## Interface
 
@@ -138,7 +98,7 @@ An unregistered target is caught three times over, in this order:
 
 The first is the real guarantee. The other two are backstops for runtime-built targets and for a host whose bindings are older than the core.
 
-**What this changes:** exact-match lookup replaces prefix matching, so a marker absent from the table is local; `MarkerClass::Export(Severity)` means a core error is no longer a core warning in Sentry; and both host allowlists are deleted.
+**What this changes.** Exact-match lookup replaces prefix matching, so a marker absent from the table is local. `MarkerClass::Export(Severity)` means a core error is no longer a core warning in Sentry. Both host allowlists are deleted.
 
 The two tag filters stay. They are the only gate on host-originated lines such as `truapi.payments`, which the core table says nothing about. Deleting them would ship every host debug line on any tag.
 
@@ -146,13 +106,15 @@ The two tag filters stay. They are the only gate on host-originated lines such a
 
 The cost is that every new marker has to be registered, which the author cannot skip because an unregistered target does not compile. That is deliberate: it is the same friction that stops a marker shipping off-device without anyone saying what it carries.
 
+A host has to call the function to hold the table at all, so a host that never calls it holds no policy. Carrying the class on the callback itself would make that impossible to miss, at the cost of a boundary signature every conformer and test double would follow. Both host allowlists go in the same change, so there is nothing to fall back to, but that is the real weakness here and it is worth stating.
+
 The benefit is that the number of places the rule is written stays at one as hosts are added, and that a marker is local until someone states otherwise rather than exported until someone notices.
 
 ## Open questions
 
 1. Does the registry belong beside the logging layer in `truapi`, or in the `truapi::platform` module with the other host-facing contracts?
 2. Do events and metrics want the same treatment, or is the log channel the only one with a boundary worth policing?
-3. When Desktop and dot.li get a core-log channel, does it carry the class per line (Option 2's shape) or read the table (this one)?
+3. When Desktop and dot.li get a core-log channel, does it carry the class on each line or read the table the way the native hosts do?
 
 ## Delivery
 
