@@ -82,43 +82,43 @@ where
     register_worker(dispatcher, host);
 }
 
-/// Start the host-initiated `chat_messages_query` subscription.
-pub fn chat_messages_query(
+/// Call the product's `chat_messages_query` handler and await its response.
+pub async fn chat_messages_query(
     subscriptions: &HostInitiatedSubscriptionManager,
     transport: Arc<dyn Transport>,
     request: versioned::chat::ProductChatMessagesQueryRequest,
-) -> truapi::Subscription<versioned::chat::ProductChatMessagesQueryItem, truapi::CallError<versioned::chat::ProductChatQueryError>> {
-    subscriptions.start(
+) -> Result<versioned::chat::ProductChatMessagesQueryResponse, truapi::CallError<versioned::chat::ProductChatQueryError>> {
+    subscriptions.request(
         wire_table::CHAT_MESSAGES_QUERY,
         parity_scale_codec::Encode::encode(&request),
         transport,
-    )
+    ).await
 }
 
-/// Start the host-initiated `chat_user_action` subscription.
-pub fn chat_user_action(
+/// Call the product's `chat_user_action` handler and await its response.
+pub async fn chat_user_action(
     subscriptions: &HostInitiatedSubscriptionManager,
     transport: Arc<dyn Transport>,
     request: versioned::chat::ProductChatUserActionRequest,
-) -> truapi::Subscription<versioned::chat::ProductChatUserActionItem, truapi::CallError<versioned::chat::ProductChatUserActionError>> {
-    subscriptions.start(
+) -> Result<versioned::chat::ProductChatUserActionResponse, truapi::CallError<versioned::chat::ProductChatUserActionError>> {
+    subscriptions.request(
         wire_table::CHAT_USER_ACTION,
         parity_scale_codec::Encode::encode(&request),
         transport,
-    )
+    ).await
 }
 
-/// Start the host-initiated `chat_reactions_query` subscription.
-pub fn chat_reactions_query(
+/// Call the product's `chat_reactions_query` handler and await its response.
+pub async fn chat_reactions_query(
     subscriptions: &HostInitiatedSubscriptionManager,
     transport: Arc<dyn Transport>,
     request: versioned::chat::ProductChatReactionsQueryRequest,
-) -> truapi::Subscription<versioned::chat::ProductChatReactionsQueryItem, truapi::CallError<versioned::chat::ProductChatQueryError>> {
-    subscriptions.start(
+) -> Result<versioned::chat::ProductChatReactionsQueryResponse, truapi::CallError<versioned::chat::ProductChatQueryError>> {
+    subscriptions.request(
         wire_table::CHAT_REACTIONS_QUERY,
         parity_scale_codec::Encode::encode(&request),
         transport,
-    )
+    ).await
 }
 
 /// Start the host-initiated `renderer_render` subscription.

@@ -888,7 +888,7 @@ pub struct ProductChatMessagesQueryRequest {
 /// One page of messages.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
-pub struct ProductChatMessagesQueryItem {
+pub struct ProductChatMessagesQueryResponse {
 	/// The messages, oldest first.
 	pub messages: Vec<ChatMessage>,
 	/// Cursor for the next page in the same direction. `None` ends the
@@ -993,7 +993,7 @@ pub struct ProductChatUserActionRequest {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
-pub enum ProductChatUserActionItem {
+pub enum ProductChatUserActionResponse {
 	/// For `NewMessage`: the message as the product stored it.
 	MessageCreated(ChatMessage),
 	/// The product applied the action.
@@ -1045,7 +1045,7 @@ pub struct ChatReactionDetail {
 /// Who reacted to one message.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
-pub struct ProductChatReactionsQueryItem {
+pub struct ProductChatReactionsQueryResponse {
 	/// One entry for each participant and emoji.
 	pub reactions: Vec<ChatReactionDetail>,
 }
