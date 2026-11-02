@@ -12,6 +12,7 @@ import type {
   FundingFact,
   FundingUpdate,
 } from "@parity/truapi";
+import { step, type Step } from "../worker/steps";
 
 // Every simulated stage is instant, but for a bank top-up's, which the
 // timing cases below measure.
@@ -147,14 +148,14 @@ beforeEach(() => {
 /** What a partly claimed payment takes. */
 const PARTIAL = 20_000_000n;
 
-const reportKey = (update: FundingUpdate) =>
+const reportKey = (update: Step) =>
   JSON.stringify(update, (_key, value) =>
     typeof value === "bigint" ? value.toString() : value,
   );
 
 /** The rank `update_rank` gives an update, or none for those outside the
  *  order. */
-function rankOf(update: FundingUpdate): number | undefined {
+function rankOf(update: Step): number | undefined {
   switch (update.tag) {
     case "AwaitingPayment":
       return 0;
@@ -175,7 +176,7 @@ function rankOf(update: FundingUpdate): number | undefined {
 }
 
 /** The core's answer to `update` on an outbound session it released. */
-function reportReleased(update: FundingUpdate): string | undefined {
+function reportReleased(update: Step): string | undefined {
   const { core } = world;
   if (!core.released) return core.failed ? "NotFound" : "OutOfOrder";
   const owedRefund = core.payout === "failed" || core.cancel === "accepted";
@@ -199,7 +200,7 @@ function reportReleased(update: FundingUpdate): string | undefined {
 }
 
 /** The core's answer to `update` on an open session. */
-function reportOpen(update: FundingUpdate): string | undefined {
+function reportOpen(update: Step): string | undefined {
   const { core } = world;
   // A released withdrawal takes `Details` until its payout is settled.
   const awaitsPayout =
@@ -245,7 +246,14 @@ function reportOpen(update: FundingUpdate): string | undefined {
 
 const client = {
   fundingProvider: {
-    report: ({ intent, update }: { intent: string; update: FundingUpdate }) => {
+    report: ({
+      intent,
+      update: wire,
+    }: {
+      intent: string;
+      update: FundingUpdate;
+    }) => {
+      const update = step(wire);
       if (update.tag === "Progress") {
         world.progress.push(update.value.detail.fact);
         return ok();
@@ -1154,7 +1162,7 @@ function onRail(rail: "Bank" | "Crypto", saved?: Saved): Handed {
  *  flag for a `PaymentReceived`. */
 function reportedAt(tag: string, finalized?: boolean): number {
   const index = world.reports.findIndex((key) => {
-    const update = JSON.parse(key) as FundingUpdate;
+    const update = JSON.parse(key) as Step;
     return (
       update.tag === tag &&
       (finalized === undefined ||

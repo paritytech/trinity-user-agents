@@ -14,7 +14,6 @@ import type {
   FundingCancelAnswer,
   FundingFact,
   FundingFailure,
-  FundingUpdate,
 } from "@parity/truapi";
 import {
   FundingHeldError,
@@ -27,6 +26,7 @@ import { blake2b } from "@noble/hashes/blake2.js";
 import type { ScreenAction, SessionView } from "../shared/channel";
 import { FAUCET_PERMISSION } from "../shared/faucet";
 import { toHex } from "../shared/hex";
+import { onWire, type Step } from "./steps";
 import {
   paymentIdFor,
   refundIdFor,
@@ -479,15 +479,15 @@ export class Session {
    * has marked the session released, which it answers with `OutOfOrder` too,
    * so that refusal is retried for a while before it counts as taken.
    */
-  private async report(
-    update: FundingUpdate,
-    afterRelease = false,
-  ): Promise<void> {
+  private async report(update: Step, afterRelease = false): Promise<void> {
     const client = await truapi();
     for (let attempt = 0; ; attempt++) {
       try {
         await unwrap(
-          client.fundingProvider.report({ intent: this.intent, update }),
+          client.fundingProvider.report({
+            intent: this.intent,
+            update: onWire(update, this.terms.direction),
+          }),
           `report ${update.tag}`,
         );
         return;
