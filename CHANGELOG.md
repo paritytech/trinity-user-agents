@@ -5,7 +5,50 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
-## [0.27.0] - 2026-10-27
+## [0.28.0] - 2026-10-31
+
+### Added
+
+- keep stacks as build copies and refresh them by policy (#1799)
+- listen for NFT payments over the statement store (#1791)
+- add web-gateway and evm-explorer service kinds (#1719)
+- state dotNS addresses in the descriptor (#1803)
+- revoke and refund NFT cheques (#1769)
+- deposit NFT cheques and serve the static receive key (#1710)
+- move the new chat button to the bottom right of Chats (#1775)
+- open a Pocket card's page with its link's page params (#1789)
+- create NFT receive keys and cheques (#1700)
+- host encrypted storage (#1780)
+- open a Pocket card's page with its link's page params (#1772)
+- report game reminder lifecycle to Sentry (#1678)
+- forward a Pocket link's other params to the card's page (#1771)
+- move the new chat button from the chats bar to a floating bottom right (#1746)
+- send device CPU, memory, storage, thermal and battery readings to Sentry (#1494)
+- send truapi chain and core logs to Sentry on Android and iOS (#1492)
+- let products scan codes with the app's scanner (#1383)
+- report the follows and the product connections a host is holding (#1690)
+- add async host-initiated calls (#1722)
+
+### Changed
+
+- serve NFT purse rebalance_purse, transfer_item and operation status (#1696)
+- run the retry loops through one retry function (#1702)
+
+### Fixed
+
+- refuse a URL that is not ASCII (#1824)
+- keep the Pocket card face still on drags the page handles itself (#1792)
+- refuse a backslash in a URL (#1798)
+- stop issue-areas redeclaring github-script's glob (#1813)
+- let a player leave a product screen (#1706)
+- share a product link on correct network (#1786)
+- alarm localization (#1790)
+- widget resoluton fallback (#1773)
+- add the app version, build and device model to the iOS product UA (#1427)
+- restore chat action subscription (#1694)
+- resolve a bare product name passed to navigateTo (#1363)
+
+## [0.27.0] - 2026-10-28
 
 ### Added
 
@@ -22,6 +65,7 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- @parity/truapi 0.27.0, @parity/truapi-host 0.27.0 (#1742)
 - report the embedded truapi version in system.info (#1467)
 - introduce general-purpose extrinsic construction service (#1669)
 - name worker lifecycle requests (#1693)

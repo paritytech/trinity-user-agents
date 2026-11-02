@@ -288,6 +288,14 @@ impl WatchedStorage for ScriptedWatchedStorage {
 		self.chain.client_at_finalized_head(genesis).await
 	}
 
+	async fn client_at(
+		&self,
+		genesis: H256,
+		at: HashAndNumber,
+	) -> Result<OnlineClientAtBlock<SubstrateConfig>, RuntimeFailure> {
+		self.chain.client_at(genesis, at).await
+	}
+
 	async fn watch_raw_key_changes(
 		&self,
 		_genesis: H256,
@@ -299,6 +307,14 @@ impl WatchedStorage for ScriptedWatchedStorage {
 		Ok(receiver.boxed())
 	}
 
+	async fn read_raw_keys_at(
+		&self,
+		_genesis: H256,
+		_at: H256,
+		_keys: Vec<Vec<u8>>,
+	) -> Result<StorageSnapshot, RuntimeFailure> {
+		Err(RuntimeFailure::host_failure("test", "this fake only watches"))
+	}
 	fn timer(&self) -> Arc<dyn Timer> {
 		self.timer.clone()
 	}

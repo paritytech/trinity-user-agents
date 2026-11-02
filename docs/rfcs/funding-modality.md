@@ -77,23 +77,44 @@ ordinary calls.
 #[wire_trait(id = 24)]
 #[service(required_execution = Worker)]
 pub trait FundingProvider {
-    #[wire(host_initiated, id = 0)] // every provider, each quote round; 10 s to answer
-    async fn quote(&self, cx, request: ProductFundingQuoteRequest) -> Result<FundingQuoteAnswer, _>;
-    #[wire(host_initiated, id = 1)] // the user picked it; again when the worker connects
-    async fn assign(&self, cx, request: ProductFundingAssignRequest) -> Result<(), _>;
-    #[wire(host_initiated, id = 2)] // the user asked to cancel
-    async fn cancel(&self, cx, request: ProductFundingCancelRequest) -> Result<FundingCancelAnswer, _>;
-    #[wire(host_initiated, id = 3)] // the user answered the provider's offer
-    async fn settle_cancel(&self, cx, request: ProductFundingSettleCancelRequest) -> Result<(), _>;
-    #[wire(id = 4)] // stored before it answers
-    async fn report(&self, cx, request: HostFundingReportRequest) -> Result<(), HostFundingReportError>;
-    #[wire(id = 5)] // an App route or an external https page, answers once the frame closes
+    /// Price the user's ask. Every provider is asked in each quote round and
+    /// has 10 s to answer.
+    #[wire(host_initiated, id = 0)]
+    async fn quote(&self, cx, request: ProductFundingQuoteRequest)
+        -> Result<ProductFundingQuoteResponse, CallError<ProductFundingQuoteError>>;
+    /// Hand the provider the session the user picked it for, and again
+    /// whenever its worker connects.
+    #[wire(host_initiated, id = 1)]
+    async fn assign(&self, cx, request: ProductFundingAssignRequest)
+        -> Result<ProductFundingAssignResponse, CallError<ProductFundingAssignError>>;
+    /// Ask the provider to stop a session the user wants to cancel.
+    #[wire(host_initiated, id = 2)]
+    async fn cancel(&self, cx, request: ProductFundingCancelRequest)
+        -> Result<ProductFundingCancelResponse, CallError<ProductFundingCancelError>>;
+    /// Tell the provider the user's answer to its cancel offer.
+    #[wire(host_initiated, id = 3)]
+    async fn settle_cancel(&self, cx, request: ProductFundingSettleCancelRequest)
+        -> Result<ProductFundingSettleCancelResponse, CallError<ProductFundingSettleCancelError>>;
+    /// Store a step of the session. Answers once it is stored.
+    #[wire(id = 4)]
+    async fn report(&self, cx, request: HostFundingReportRequest)
+        -> Result<HostFundingReportResponse, CallError<HostFundingReportError>>;
+    /// Show an App route or an external https page in a host frame. Answers
+    /// once the frame closes.
+    #[wire(id = 5)]
     async fn present_frame(&self, cx, request: HostFundingPresentFrameRequest)
-        -> Result<HostFundingPresentFrameResponse, HostFundingPresentFrameError>;
-    #[wire(id = 6)] // the provider is done with its screen; the host shows the session instead
-    async fn close_frame(&self, cx, request: HostFundingCloseFrameRequest) -> Result<(), HostFundingCloseFrameError>;
+        -> Result<HostFundingPresentFrameResponse, CallError<HostFundingPresentFrameError>>;
+    /// The provider is done with its screen; the host shows the session in
+    /// its place.
+    #[wire(id = 6)]
+    async fn close_frame(&self, cx, request: HostFundingCloseFrameRequest)
+        -> Result<HostFundingCloseFrameResponse, CallError<HostFundingCloseFrameError>>;
 }
 ```
+
+Every request, response and error is a versioned envelope, as everywhere else in TrUAPI, so each can gain a version
+without breaking the others. `ProductFundingQuoteResponse` carries a `FundingQuoteAnswer`, `ProductFundingCancelResponse`
+a `FundingCancelAnswer`, and the other responses carry no payload yet.
 
 ```
 CORE   --- quote(ask) ----------------------> WORKER   every provider, each quote round
@@ -188,20 +209,40 @@ the quote's.
 ### `report`
 
 ```rust
+/// A step of the session, grouped by the direction it belongs to, so a step of the other direction cannot be sent.
 enum FundingUpdate {
-    AwaitingPayment,                                  // In
-    PaymentReceived { finalized: bool, mismatch: Option<FundingReceived> }, // In
-    Converting,                                       // In; Out: once, after release, before Payout
-    Crediting { top_up_id: [u8; 32], amount: u128 },  // In, up to 3
-    Delivered,                                        // In: no more top-ups
-    Collecting { payment_id: [u8; 32], amount: u128 },// Out
-    Failed { reason: FundingFailure },                // before funds move
-    Deposit { deposit: FundingDeposit },              // In, until funds move, outside the order
-    Details { transaction_id: Option<String>, reference: Option<String> }, // any time, outside the order
-    Payout { outcome: FundingPayout },                // Out: once, after release
-    Refunding { top_up_id: [u8; 32], amount: u128 }, // Out: once, after a failed payout or an accepted cancel
-    PayoutRetrying,                                   // Out: after release, before Payout, at each retry
-    Progress { detail: FundingDetail },               // while the provider works on it, outside the order, not kept
+    In(FundingInboundUpdate),
+    Out(FundingOutboundUpdate),
+    /// Ends the session before funds move.
+    Failed { reason: FundingFailure },
+    /// The provider's references, at any time and outside the order.
+    Details { transaction_id: Option<String>, reference: Option<String> },
+    /// What the provider is doing within the step, while it works on the session, outside the order, not kept.
+    Progress { detail: FundingDetail },
+}
+
+enum FundingInboundUpdate {
+    AwaitingPayment,
+    PaymentReceived { finalized: bool, mismatch: Option<FundingReceived> },
+    Converting,
+    /// Up to 3.
+    Crediting { top_up_id: [u8; 32], amount: u128 },
+    /// No more top-ups.
+    Delivered,
+    /// Where and what the user pays, until funds move and outside the order.
+    Deposit { deposit: FundingDeposit },
+}
+
+enum FundingOutboundUpdate {
+    Collecting { payment_id: [u8; 32], amount: u128 },
+    /// Once, after release, before `Payout`.
+    Converting,
+    /// Once, after release.
+    Payout { outcome: FundingPayout },
+    /// Once, after a failed payout or an accepted cancel.
+    Refunding { top_up_id: [u8; 32], amount: u128 },
+    /// After release, before `Payout`, at each retry.
+    PayoutRetrying,
 }
 
 struct FundingDetail { fact: FundingFact, at_ms: Option<u64> }  // at_ms: an age when past, a countdown when due
@@ -227,11 +268,12 @@ enum FundingDeposit {
 
 - Only the provider a session is assigned to may report on it, and updates only move forward. Otherwise the report
   fails with `NotFound` or `OutOfOrder`.
-- The core stores each report before answering and keeps the session until the host has told the user how it ended. After that it keeps the newest 64 acknowledged sessions per product in full, and the newest 200 the host has not acknowledged yet; older ones are compacted into a session pack it never trims (intent, owner, direction, amounts, outcome and times, the provider, rail and asset, the row's status, the payout, the refund and the provider's references), so a product watching any session it opened gets its terminal item instead of `NotFound`, and the host reads every ended session, full or compacted, with `funding_history()` whenever it shows history. Sessions and the pack are stored in the core database, one versioned row per session, and each change is written in one transaction: a row that does not decode is skipped and left in place, one in a newer format, left by a newer app before a downgrade, is left untouched while funding stays unavailable, and one in an older format is dropped.
-- A worker names the session when it starts funds: `payment.topUp` and `payment.request` take `funding: Some(intent)`
-  for an open session it serves in that direction, or fail with `FundingNotServed`. A withdrawal whose payout failed
-  takes top-ups too, as its refund, and a top-up the user cancelled before paying takes one as a payment that arrived
-  anyway, and opens again. The core records the id, amount
+- The core stores each report before answering. It keeps a session in full while its provider still works on it, and a cancelled top-up for as long as a late payment may open it again; every other ended session is compacted at once into a session pack it never trims (intent, owner, direction, amounts, outcome and times, the provider, rail and asset, the row's status, the payout, the refund and the provider's references), which also keeps whether the host acknowledged it. The host gets the session in full with the change that ended it, and the 200 newest it has not acknowledged come through again as summaries when funding resumes, so a product watching any session it opened gets its terminal item instead of `NotFound`, and the host reads every ended session, full or compacted, with `funding_history()` whenever it shows history. Sessions and the pack are stored in the core database, one versioned row per session, and each change is written in one transaction: a row that does not decode is skipped and left in place, one in a newer format, left by a newer app before a downgrade, is left untouched while funding stays unavailable, and one in an older format is skipped and left in place, so a format change never loses a session with money in flight.
+- A worker names the session when it starts funds: the v0.2 `payment.topUp` and `payment.request` take
+  `funding: Some(intent)` for an open session it serves in that direction, or fail with `FundingNotServed`. The v0.1
+  shapes, which products built before funding still send, name no session. A withdrawal whose payout failed takes
+  top-ups too, as its refund, and a top-up the user cancelled before paying takes one as a payment that arrived anyway,
+  and opens again. The core records the id, amount
   and the rest of the request before the host is asked, at most 3 per session, and marks the record taken once the
   host's engine takes it. A repeat under the id must ask the same, and an id another session or the engine already
   holds fails with `AlreadyExists`. A record whose call was lost is placed from the engine: taken once it holds the
