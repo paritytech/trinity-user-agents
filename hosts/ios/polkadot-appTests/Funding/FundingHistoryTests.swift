@@ -309,6 +309,10 @@ private final class WindowEnvironment: FundingOverlayEnvironment {
         UIViewController()
     }
 
+    func providerHasApp(providerId _: String) async -> Bool {
+        true
+    }
+
     func fundingActivityChanged() {}
 
     private(set) var notices: [String] = []
