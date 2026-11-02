@@ -1850,6 +1850,7 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 		room_id_source: "support".to_string(),
 		name: "Support".to_string(),
 		icon: String::new(),
+		config: Default::default(),
 	};
 	let mut rooms = crate::platform::ChatPlatform::subscribe_chat_rooms(&platform, &product);
 	assert!(ready_rooms(rooms.as_mut(), "initial room list").rooms.is_empty());
