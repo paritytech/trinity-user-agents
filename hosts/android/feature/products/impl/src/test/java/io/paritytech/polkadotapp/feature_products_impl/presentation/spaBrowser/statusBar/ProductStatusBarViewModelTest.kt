@@ -11,7 +11,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.BrowserSessionInfo
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.spaBrowser.statusBar.ProductStatusBarInteractor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.CompletableDeferred
@@ -27,6 +26,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 private const val COIN_FLIP_URL = "https://coinflip.paseo"
 private const val COIN_FLIP_GAME_URL = "https://coinflip.paseo/game"
@@ -37,8 +37,8 @@ private const val PLAIN_URL = "https://example.com"
 class ProductStatusBarViewModelTest {
     private val testDispatcher = StandardTestDispatcher()
 
-    private val coinFlip = ProductId.fromStoredValue("coinflip.paseo")
-    private val chess = ProductId.fromStoredValue("chess.paseo")
+    private val coinFlip = ProductId.parse("coinflip.paseo").getOrThrow()
+    private val chess = ProductId.parse("chess.paseo").getOrThrow()
     private val room = ChatId.fromRawValue(byteArrayOf(1, 2, 3))
 
     private val activeTab = MutableStateFlow<BrowserSessionInfo?>(null)

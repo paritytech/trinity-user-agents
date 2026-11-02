@@ -6,9 +6,9 @@ package io.paritytech.polkadotapp.feature_dotns_api.presentation
  * from elsewhere. Identity unless something in the graph knows better.
  */
 fun interface DotNsServingHostResolver {
-    suspend fun servingHostFor(requestHost: String): String
+    suspend fun servingHostFor(requestHost: String): Result<String>
 
     companion object {
-        val Identity = DotNsServingHostResolver { it }
+        val Identity = DotNsServingHostResolver { Result.success(it) }
     }
 }

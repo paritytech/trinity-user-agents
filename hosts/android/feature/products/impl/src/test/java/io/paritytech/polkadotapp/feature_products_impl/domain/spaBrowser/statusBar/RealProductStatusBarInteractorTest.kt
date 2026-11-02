@@ -8,16 +8,16 @@ import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolu
 import io.paritytech.polkadotapp.feature_products_api.model.Executables
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.SemVer
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 class RealProductStatusBarInteractorTest {
-    private val productId = ProductId.fromStoredValue("dim2.paseo")
+    private val productId = ProductId.parse("dim2.paseo").getOrThrow()
 
     private val resolveProductUseCase: ResolveProductUseCase = mockk()
     private val sharingManager: SharingManager = mockk(relaxUnitFun = true)
@@ -61,7 +61,7 @@ class RealProductStatusBarInteractorTest {
     @Test
     fun `share sends the product's web mirror link`() {
         interactor.share(productId)
-        interactor.share(ProductId.fromStoredValue("sub.browse.dot"))
+        interactor.share(ProductId.parse("sub.browse.dot").getOrThrow())
 
         verify {
             sharingManager.shareText("https://dim2.paseo.li")
@@ -70,10 +70,10 @@ class RealProductStatusBarInteractorTest {
     }
 
     @Test
-    fun `share sends the product's own link where no mirror serves it`() {
-        interactor.share(ProductId.fromStoredValue("coinflip.westend"))
+    fun `share sends a development product's own link`() {
+        interactor.share(ProductId.parse("localhost:3000").getOrThrow())
 
-        verify { sharingManager.shareText("https://coinflip.westend") }
+        verify { sharingManager.shareText("https://localhost:3000") }
     }
 
     private fun withWorker(worker: ProductExecutable.Worker?) {

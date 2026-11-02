@@ -9,7 +9,7 @@ import Testing
 struct PerChatRequestAccountsTests {
     private let entropyManager = FixedRootEntropyManager()
     private let peerAccountId = Data(repeating: 0xAB, count: 32)
-    private let ownSignKeyId = WalletDerivationPath.main(for: "dot")
+    private let ownSignKeyId = try! WalletDerivationPath.main(for: "dot")
 
     @Test func innerRequestProofIsSignedByIdentityAccount() throws {
         let acceptorKey = Curve25519.KeyAgreement.PrivateKey()

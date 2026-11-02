@@ -33,11 +33,11 @@ import io.paritytech.polkadotapp.design.components.menu.NovaMenuOption
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.ProductChat
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.ProductMenu
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.ProductStatusBarUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.ProductStatusBarViewModel
+import uniffi.truapi.ProductId
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val LogoSize = 16.dp
@@ -153,7 +153,12 @@ private fun ProductMenuOption(
 private fun ProductStatusBarTitlePreview() {
     PolkadotTheme {
         ProductStatusBarTitleInternal(
-            state = ProductStatusBarUiState(title = "Coin Flip", menu = ProductMenu.Product(ProductId.fromStoredValue("coinflip.paseo"), ProductChat.Served)),
+            state = ProductStatusBarUiState(
+                title = "Coin Flip",
+                menu = ProductId.parse("coinflip.paseo").getOrNull()
+                    ?.let { ProductMenu.Product(it, ProductChat.Served) }
+                    ?: ProductMenu.WebPage,
+            ),
             onProceedInChatClick = {},
             onReloadClick = {},
             onShareClick = {},

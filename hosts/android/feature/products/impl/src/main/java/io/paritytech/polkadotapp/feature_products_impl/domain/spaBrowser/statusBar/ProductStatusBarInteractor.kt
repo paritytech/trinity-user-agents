@@ -4,18 +4,20 @@ import androidx.core.net.toUri
 import io.paritytech.polkadotapp.common.presentation.sharing.SharingManager
 import io.paritytech.polkadotapp.common.utils.Urls
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
-import io.paritytech.polkadotapp.common.utils.toDotWebMirrorHostOrNull
 import io.paritytech.polkadotapp.feature_chats_api.domain.ReadOnlyChatRoomRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
+import io.paritytech.polkadotapp.feature_products_api.model.toUrl
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIntegrationRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.IntegrationType
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
+import uniffi.truapi.ProductId
+import uniffi.truapi.productIdShareHost
 import javax.inject.Inject
 
 interface ProductStatusBarInteractor {
@@ -36,7 +38,7 @@ class RealProductStatusBarInteractor @Inject constructor(
     private val dotNsTldProvider: DotNsTldProvider,
 ) : ProductStatusBarInteractor {
     override suspend fun productIdOrNull(url: String): ProductId? =
-        ProductId.fromUrl(url.toUri(), dotNsTldProvider.getTldRetrying()).getOrNull()
+        productIdFromUrl(url.toUri(), dotNsTldProvider.getTldRetrying()).getOrNull()
 
     override suspend fun includesChat(productId: ProductId): Result<Boolean> =
         resolveProductUseCase.resolve(productId).map { it.executables.worker?.includesChat == true }
@@ -52,7 +54,7 @@ class RealProductStatusBarInteractor @Inject constructor(
     }
 
     override fun share(productId: ProductId) {
-        val host = productId.value.toDotWebMirrorHostOrNull() ?: productId.value
-        sharingManager.shareText(Urls.ensureHasProtocolOrHttps(host))
+        val link = productIdShareHost(productId)?.let(Urls::ensureHasProtocolOrHttps) ?: productId.toUrl()
+        sharingManager.shareText(link)
     }
 }

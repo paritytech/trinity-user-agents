@@ -1,7 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar
 
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import kotlinx.coroutines.flow.StateFlow
+import uniffi.truapi.ProductId
 
 interface ProductStatusBarContract {
     val state: StateFlow<ProductStatusBarUiState>
