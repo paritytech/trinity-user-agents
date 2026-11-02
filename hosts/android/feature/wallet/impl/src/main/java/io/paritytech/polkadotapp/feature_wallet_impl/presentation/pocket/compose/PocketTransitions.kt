@@ -95,23 +95,6 @@ fun Modifier.pocketCollectiblesImageSharedElement(): Modifier {
 }
 
 @Composable
-fun Modifier.pocketBalanceSharedElement(cardId: String): Modifier {
-    val sharedScope = LocalSharedTransitionScope.current
-    val visibilityScope = LocalNavAnimatedVisibilityScope.current
-    return if (sharedScope == null || visibilityScope == null) {
-        this
-    } else {
-        with(sharedScope) {
-            this@pocketBalanceSharedElement.sharedElement(
-                sharedContentState = rememberSharedContentState("pocket_balance_$cardId"),
-                animatedVisibilityScope = visibilityScope,
-                boundsTransform = PocketBoundsTransform
-            )
-        }
-    }
-}
-
-@Composable
 fun Modifier.pocketCornerBalanceFade(): Modifier {
     val alpha by LocalPocketScreenTransition.current.animateFloat(
         transitionSpec = { tween(POCKET_BALANCE_FADE_DURATION_MS, easing = EaseInOut) },
