@@ -76,6 +76,16 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
         return SPAViewFactory.createView(configuration: configuration, flowState: flowState)?.controller
     }
 
+    func providerHasApp(providerId: String) async -> Bool {
+        if let bundled = bundledProducts.product(providerId) {
+            return bundled.hasApp()
+        }
+        guard let product = try? await flowStateProvider.flowState().productResolver.resolve(providerId) else {
+            return true
+        }
+        return product.executables.app != nil
+    }
+
     func showNotice(_ message: String) {
         UIWindow.topWindow?.rootViewController?.topModalViewController.showToast(
             message: message,
