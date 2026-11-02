@@ -391,12 +391,23 @@ impl FundingRegistry {
 	/// waiting for it when it has not. A caller holds the worker meanwhile,
 	/// so the host runs it, and bounds the wait itself.
 	pub async fn connected_link(&self, provider_id: &str) -> Arc<dyn FundingProviderLink> {
+		self.connected_link_besides(provider_id, None).await
+	}
+
+	/// As [`Self::connected_link`], but waiting past `besides`, a link a call
+	/// just failed on, for the connection that follows it.
+	pub async fn connected_link_besides(
+		&self,
+		provider_id: &str,
+		besides: Option<&Arc<dyn FundingProviderLink>>,
+	) -> Arc<dyn FundingProviderLink> {
 		loop {
 			let connected = {
 				let links = self.lock_links();
-				if let Some(held) =
-					links.get(provider_id).filter(|held| held.catch_up != CatchUp::Connecting)
-				{
+				if let Some(held) = links.get(provider_id).filter(|held| {
+					held.catch_up != CatchUp::Connecting &&
+						!besides.is_some_and(|failed| Arc::ptr_eq(&held.link, failed))
+				}) {
 					return held.link.clone();
 				}
 				let (sender, connected) = oneshot::channel();
@@ -2392,6 +2403,24 @@ mod tests {
 			(connecting, running, after_run, after_done),
 			(CatchUp::Connecting, CatchUp::RunningThenDue, true, true)
 		);
+	}
+
+	// A worker the host is stopping keeps its link until its connection
+	// closes, so a call that failed on it waits for the worker started in
+	// its place.
+	#[test]
+	fn a_link_a_call_failed_on_is_passed_over_for_the_next_connection() {
+		let registry = FundingRegistry::default();
+		let stopping: Arc<dyn FundingProviderLink> = Arc::new(IdleLink);
+		registry.link("ramp.dot", stopping.clone());
+		registry.connected("ramp.dot");
+		let mut next = Box::pin(registry.connected_link_besides("ramp.dot", Some(&stopping)));
+		let waited = futures::FutureExt::now_or_never(&mut next).is_none();
+		let started: Arc<dyn FundingProviderLink> = Arc::new(IdleLink);
+		registry.link("ramp.dot", started.clone());
+		registry.connected("ramp.dot");
+
+		assert!(waited && Arc::ptr_eq(&block_on(next), &started));
 	}
 
 	// A deadline already past belongs to funds whose call is still in
