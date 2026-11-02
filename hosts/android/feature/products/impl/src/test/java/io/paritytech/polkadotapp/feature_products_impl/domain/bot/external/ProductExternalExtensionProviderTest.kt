@@ -4,8 +4,8 @@ import android.content.Context
 import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.Product
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIntegrationRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotFactory
@@ -14,14 +14,18 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatExt
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.IntegrationType
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Test
+import uniffi.truapi.ProductId
+import uniffi.truapi.ProductIdException
 
 class ProductExternalExtensionProviderTest {
     private val tld = requireNotNull(DotNsTld.parse("paseo"))
     private val jollity = Product(ReservedProductIds.game(tld), "Jollity", icon = null)
-    private val playground = Product(ProductId.fromStoredValue("truapi-playground.paseo"), "TrUAPI Playground", icon = null)
+    private val playground = Product(ProductId.parse("truapi-playground.paseo").getOrThrow(), "TrUAPI Playground", icon = null)
 
     private val integrationRepository: ProductIntegrationRepository = mockk()
     private val hostPlacedProducts: HostPlacedProducts = mockk()
@@ -43,6 +47,24 @@ class ProductExternalExtensionProviderTest {
         val extensions = extensions(stored = listOf(playground), placed = emptyList())
 
         assertEquals(listOf(playground to ProductChatExtensionOrigin.InstalledByUser), extensions.map { it.product to it.origin })
+    }
+
+    @Test
+    fun `an unsupported configured network is not silently omitted from host chats`() {
+        val context: Context = mockk(relaxed = true)
+        val tldProvider: DotNsTldProvider = mockk {
+            every { currentTldOrNull() } returns DotNsTld.parse("test")!!
+        }
+        val provider = ProductExternalExtensionProvider(
+            integrationRepository,
+            ProductBotFactory(context, mockk(), mockk(), mockk()),
+            HostPlacedProducts(context, tldProvider),
+        )
+        every { integrationRepository.observeProductsByType(IntegrationType.Chat) } returns flowOf(listOf(playground))
+
+        assertThrows(ProductIdException::class.java) {
+            runBlocking { provider.observeExtensions().first() }
+        }
     }
 
     // Unioned rather than written to the product tables, as Pocket does with its pinned card:

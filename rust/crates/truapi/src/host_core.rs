@@ -19,11 +19,10 @@ use std::{
 };
 
 use crate::platform::{
-	BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin, ExpandedCardHost, FundingPlatform,
-	GamePlatform, PairingHostAdmin, PairingHostConfig, PaymentPlatform,
+	BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin, ExecutableKind, ExpandedCardHost,
+	FundingPlatform, GamePlatform, PairingHostAdmin, PairingHostConfig, PaymentPlatform,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionStatusHost, Platform,
-	PocketPlatform, ProductContext, ProductExecutionKind, ProductId, ScannerPlatform,
-	SigningHostConfig, TopUpPlatform,
+	PocketPlatform, ProductContext, ProductId, ScannerPlatform, SigningHostConfig, TopUpPlatform,
 };
 use futures::{
 	FutureExt, StreamExt,
@@ -175,7 +174,7 @@ pub enum ProductRuntimeError {
 }
 
 fn product_context(product_id: &ProductId) -> ProductContext {
-	ProductContext::new_with_execution(product_id.clone(), ProductExecutionKind::App)
+	ProductContext::new_with_execution(product_id.clone(), ExecutableKind::App)
 }
 
 /// A seedless pairing host: the user's keys live in an external wallet reached
@@ -938,8 +937,9 @@ impl SigningHostRuntime {
 	/// engine, then NFT purses with the tracker of their holdings. Call it
 	/// once the setters it reads have run: [`Self::set_core_db`],
 	/// [`Self::set_installation_provider`], [`Self::set_encrypted_storage`]
-	/// and [`Self::set_durable_work_observer`]. A part whose inputs are
-	/// missing is skipped and logged. A second call does nothing.
+	/// and [`Self::set_durable_work_observer`]. NFT transfers and purses need
+	/// the encrypted storage. A part whose inputs are missing
+	/// is skipped and logged. A second call does nothing.
 	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.start_core_services"))]
 	pub fn start_core_services(&self) {
@@ -954,29 +954,47 @@ impl SigningHostRuntime {
 		self.start_nft_purses(db, engine);
 	}
 
-	/// Installs the NFT ledger over `db` and `durable` and starts tracking
-	/// its holdings, when an installation provider is set.
+	/// Installs the NFT ledger over `db` and `durable`, with the static receive
+	/// secret NFT purses open cheques with, and starts tracking its holdings,
+	/// when an installation provider and encrypted storage are set.
 	#[cfg(not(target_arch = "wasm32"))]
 	fn start_nft_purses(
 		&self,
 		db: crate::store::Db,
 		durable: Arc<crate::durable::DurableTxEngine>,
 	) {
-		let Some(installation) = self.services.installation_provider() else {
-			tracing::warn!("no installation provider set, NFT purses are off");
+		let Some(ledger) = self.nft_ledger(db, durable) else {
 			return;
 		};
-		if self.services.encrypted_storage().is_none() {
-			tracing::warn!("no encrypted storage set, NFT purses are off");
-		}
+		let static_secret = Arc::new(Arc::downgrade(&self.signing_host));
+		self.services.install_static_receive_secret(static_secret);
+		self.services.install_nft_ledger(ledger.clone());
+		start_holding_tracker(&self.services, ledger);
+	}
 
+	/// The NFT ledger over `db` and `durable`, deriving item keys from the
+	/// signing host, or `None`, logged, without an installation provider or
+	/// encrypted storage.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn nft_ledger(
+		&self,
+		db: crate::store::Db,
+		durable: Arc<crate::durable::DurableTxEngine>,
+	) -> Option<crate::nft::NftLedger> {
+		let Some(installation) = self.services.installation_provider() else {
+			tracing::warn!("no installation provider set, NFT purses are off");
+			return None;
+		};
+		let Some(encrypted) = self.services.encrypted_storage() else {
+			tracing::warn!("no encrypted storage set, NFT purses are off");
+			return None;
+		};
 		let signing_host = Arc::downgrade(&self.signing_host);
 		let keys = Arc::new(signing_host.clone());
 		let secrets = Arc::new(signing_host);
-		let deps = crate::nft::NftLedgerDeps { db, installation, keys, durable, secrets };
-		let ledger = crate::nft::NftLedger::new(deps);
-		self.services.install_nft_ledger(ledger.clone());
-		start_holding_tracker(&self.services, ledger);
+		let imported = crate::nft::ImportedSecretStore::new(encrypted);
+		let deps = crate::nft::NftLedgerDeps { db, installation, keys, durable, secrets, imported };
+		Some(crate::nft::NftLedger::new(deps))
 	}
 
 	/// Install the host observer told whether durable transactions are
@@ -1339,17 +1357,22 @@ fn durable_engine(
 }
 
 /// The domains and policies the durable engine serves: NFT transfers, on the
-/// Asset Hub that runs the Scarcity pallet.
+/// Asset Hub that runs the Scarcity pallet. They need encrypted storage, which
+/// keeps the secrets of imported item keys.
 #[cfg(not(target_arch = "wasm32"))]
 fn durable_registry(
 	services: &RuntimeServices,
 	signer: Arc<dyn crate::nft::ItemSigner>,
 ) -> crate::durable::DurableRegistry {
-	use crate::nft::{ScarcityTransfersDeps, with_scarcity_transfers};
+	use crate::nft::{ImportedSecretStore, ScarcityTransfersDeps, with_scarcity_transfers};
 
 	let registry = crate::durable::DurableRegistry::new();
 	let Some(genesis) = services.asset_hub_chain_genesis_hash() else {
 		tracing::warn!("no Asset Hub genesis configured, NFT transfers are off");
+		return registry;
+	};
+	let Some(encrypted) = services.encrypted_storage() else {
+		tracing::warn!("no encrypted storage set, NFT transfers are off");
 		return registry;
 	};
 	let chain = Arc::new(services.chain.clone());
@@ -1358,6 +1381,7 @@ fn durable_registry(
 		heads: chain,
 		genesis: genesis.into(),
 		signer,
+		imported: ImportedSecretStore::new(encrypted),
 		extrinsics: services.extrinsics.clone(),
 	};
 	with_scarcity_transfers(registry, deps)
@@ -2307,7 +2331,7 @@ mod tests {
 		futures::executor::block_on(runtime.set_permission_authorization_status(
 			&requester,
 			PermissionAuthorizationRequest::AccountAccess {
-				target_product_id: "peopl.dot".to_string(),
+				target_product_id: ProductId::for_test("peopl.dot"),
 			},
 			PermissionAuthorizationStatus::NotDetermined,
 		))
@@ -3080,7 +3104,7 @@ mod tests {
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
 			ProductId::for_test("worker.dot"),
-			crate::platform::ProductExecutionKind::Worker,
+			crate::platform::ExecutableKind::Worker,
 		);
 		let runtime = ProductRuntime::from_platform_with_config(
 			Arc::new(StubPlatform::default()),
@@ -3155,7 +3179,7 @@ mod tests {
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
 			ProductId::for_test("worker.dot"),
-			crate::platform::ProductExecutionKind::Worker,
+			crate::platform::ExecutableKind::Worker,
 		);
 		let runtime = ProductRuntime::from_platform_with_config(
 			Arc::new(StubPlatform::default()),
@@ -3198,7 +3222,7 @@ mod tests {
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
 			ProductId::for_test("worker.dot"),
-			crate::platform::ProductExecutionKind::Worker,
+			crate::platform::ExecutableKind::Worker,
 		);
 		let sink = Arc::new(RecordingSink::default());
 		let runtime = ProductRuntime::from_platform_with_config(
@@ -4305,7 +4329,7 @@ mod tests {
 			&host,
 			&truapi::CallContext::default(),
 			HostLocalStorageReadRequest::V2(truapi::v02::HostLocalStorageReadRequest {
-				product: Some("wallet.dot".to_string()),
+				product: Some(ProductId::for_test("wallet.dot")),
 				key: "k".to_string(),
 			}),
 		));

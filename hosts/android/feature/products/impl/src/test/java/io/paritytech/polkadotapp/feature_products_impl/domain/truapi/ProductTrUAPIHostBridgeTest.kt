@@ -11,7 +11,6 @@ import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
@@ -31,14 +30,15 @@ import org.mockito.Mockito.mock
 import org.mockito.stubbing.Answer
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.HostRejection
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 import uniffi.truapi.WsBridgeEndpoint
 
 class ProductTrUAPIHostBridgeTest {
     private val refusingCore = Answer<Any> { throw IllegalStateException("loopback port unavailable") }
 
     private val gameReminder = mockk<ProductGameReminder>(relaxUnitFun = true)
-    private val game = ProductId.fromStoredValue("game.dot")
+    private val game = ProductId.parse("game.dot").getOrThrow()
 
     private fun TestScope.bridge(
         scope: CoroutineScope = CoroutineScope(StandardTestDispatcher(testScheduler)),
@@ -61,10 +61,10 @@ class ProductTrUAPIHostBridgeTest {
     fun `a core that refuses to open the execution fails the attach instead of throwing`() = runTest {
         val outcome = bridge().attach(
             runtime = mock(TrUAPIHostRuntime::class.java, refusingCore),
-            productId = ProductId.fromStoredValue("game.dot"),
+            productId = ProductId.parse("game.dot").getOrThrow(),
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
-            kind = ProductExecutionKind.APP,
+            kind = ExecutableKind.APP,
             onReadyToInject = {},
         )
 
@@ -87,10 +87,10 @@ class ProductTrUAPIHostBridgeTest {
 
         bridge.attach(
             runtime = runtime,
-            productId = ProductId.fromStoredValue("game.dot"),
+            productId = ProductId.parse("game.dot").getOrThrow(),
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
-            kind = ProductExecutionKind.WORKER,
+            kind = ExecutableKind.WORKER,
             onReadyToInject = {},
         )
         scope.cancel()
@@ -111,7 +111,7 @@ class ProductTrUAPIHostBridgeTest {
             productId = game,
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
-            kind = ProductExecutionKind.WIDGET,
+            kind = ExecutableKind.WIDGET,
             card = card,
             onReadyToInject = {},
         )

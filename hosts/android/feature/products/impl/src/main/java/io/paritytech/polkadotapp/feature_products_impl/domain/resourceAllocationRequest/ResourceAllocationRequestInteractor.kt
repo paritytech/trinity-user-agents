@@ -13,7 +13,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Ap
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.OnExistingAllowancePolicy
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.deriveAccountId
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.ProductAccountDerivationUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol.AllowanceAccountDerivation
 import io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol.AllowanceSystem
@@ -21,6 +20,7 @@ import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocato
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotAllocator
 import io.paritytech.polkadotapp.feature_transaction_storage_api.domain.slotAllocator.TransactionStorageSlotAllocator
 import kotlinx.coroutines.withContext
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import io.paritytech.polkadotapp.feature_pgas_api.domain.OnExistingAllocationStrategy as PgasOnExistingAllocationStrategy
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.OnExistingAllocationStrategy as StatementStoreOnExistingAllocationStrategy
@@ -76,7 +76,7 @@ class ResourceAllocationRequestInteractor @Inject constructor(
                 }
 
         is ApAllocatableResource.SmartContractAllowance -> {
-            val productAccountId = ProductAccountId(callingProduct.value, resource.dest)
+            val productAccountId = ProductAccountId(callingProduct, resource.dest)
             productAccountDerivationUseCase.deriveAccountId(productAccountId)
                 .flatMap { pgasClaimer.claim(it, onExisting.toPgasStrategy()) }
                 .map { ApAllocationOutcome.Allocated(ApAllocatedResource.SmartContractAllowance) }

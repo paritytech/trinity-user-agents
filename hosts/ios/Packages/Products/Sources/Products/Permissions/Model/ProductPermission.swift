@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 /// Permission a product can request from the host.
@@ -17,7 +18,7 @@ public enum ProductPermission: Equatable, Sendable {
 
     case deviceCapability(DeviceCapabilityType)
     case networkAccess(domain: String)
-    case accountAccess(targetProductId: String)
+    case accountAccess(targetProductId: ProductId)
     case balanceAccess
     case webRtcAccess
     case chainSubmitAccess
@@ -25,7 +26,7 @@ public enum ProductPermission: Equatable, Sendable {
     case statementSubmitAccess
     case userIdentityAccess
     /// Reading the NFT purses of another owner: a product, or the user's own account when `nil`.
-    case nftPurseRead(ownerProductId: String?)
+    case nftPurseRead(ownerProductId: ProductId?)
 
     /// Whether this is one of the core's `RemotePermission` cases: a product's
     /// own outbound access.
@@ -83,9 +84,9 @@ public enum ProductPermission: Equatable, Sendable {
         case let .networkAccess(domain):
             domain
         case let .accountAccess(targetProductId):
-            targetProductId
+            targetProductId.rawValue
         case let .nftPurseRead(ownerProductId):
-            ownerProductId ?? ""
+            ownerProductId?.rawValue ?? ""
         case .balanceAccess,
              .webRtcAccess,
              .chainSubmitAccess,
@@ -106,7 +107,8 @@ public enum ProductPermission: Equatable, Sendable {
         case networkAccessTypeName:
             return .networkAccess(domain: key)
         case accountAccessTypeName:
-            return .accountAccess(targetProductId: key)
+            guard let target = try? ProductId(key) else { return nil }
+            return .accountAccess(targetProductId: target)
         case balanceAccessTypeName:
             return .balanceAccess
         case webRtcAccessTypeName:
@@ -120,7 +122,9 @@ public enum ProductPermission: Equatable, Sendable {
         case userIdentityAccessTypeName:
             return .userIdentityAccess
         case nftPurseReadTypeName:
-            return .nftPurseRead(ownerProductId: key.isEmpty ? nil : key)
+            if key.isEmpty { return .nftPurseRead(ownerProductId: nil) }
+            guard let owner = try? ProductId(key) else { return nil }
+            return .nftPurseRead(ownerProductId: owner)
         default:
             return nil
         }

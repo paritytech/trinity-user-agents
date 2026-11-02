@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import MessageExchangeKit
 import Products
@@ -16,13 +17,13 @@ extension PolkadotHostRemoteMessage {
 
 extension PolkadotHostRemoteMessage.ResourceAllocationRequest: MessageExchange.CodableMessage {
     init(scaleDecoder: any ScaleDecoding) throws {
-        callingProduct = try String(scaleDecoder: scaleDecoder)
+        callingProduct = try ProductId(String(scaleDecoder: scaleDecoder))
         resources = try [AllocatableResource](scaleDecoder: scaleDecoder)
         onExisting = try OnExistingAllowancePolicy(scaleDecoder: scaleDecoder)
     }
 
     func encode(scaleEncoder: any ScaleEncoding) throws {
-        try callingProduct.encode(scaleEncoder: scaleEncoder)
+        try callingProduct.rawValue.encode(scaleEncoder: scaleEncoder)
         try resources.encode(scaleEncoder: scaleEncoder)
         try onExisting.encode(scaleEncoder: scaleEncoder)
     }

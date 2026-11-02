@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Testing
 import SubstrateSdk
@@ -5,10 +6,10 @@ import SubstrateSdk
 
 @Suite("AutoAllowPaymentApprovalRequester Tests")
 struct AutoAllowPaymentApprovalRequesterTests {
-    private let allowedLabels = Set(["getcash"])
     private let destination = Data(repeating: 7, count: 32)
 
     private func makeSUT(
+        allowedLabels: Set<String> = ["getcash"],
         wrappedDecision: PaymentApprovalDecision = .rejected
     ) -> (requester: AutoAllowPaymentApprovalRequester, wrapped: MockPaymentApprovalRequester) {
         let wrapped = MockPaymentApprovalRequester()
@@ -22,7 +23,7 @@ struct AutoAllowPaymentApprovalRequesterTests {
         let (requester, wrapped) = makeSUT()
 
         let decision = await requester.requestApproval(
-            productId: "getcash.dot",
+            productId: try! ProductId("getcash.dot"),
             amount: 100,
             destination: destination
         )
@@ -36,27 +37,23 @@ struct AutoAllowPaymentApprovalRequesterTests {
         let (requester, wrapped) = makeSUT(wrappedDecision: .rejected)
 
         let decision = await requester.requestApproval(
-            productId: "other.dot",
+            productId: try! ProductId("other.dot"),
             amount: 100,
             destination: destination
         )
 
         #expect(decision == .rejected)
         #expect(wrapped.calls.count == 1)
-        #expect(wrapped.calls.first?.productId == "other.dot")
+        #expect(wrapped.calls.first?.productId.rawValue == "other.dot")
     }
 
-    @Test("delegates bare productId without root", arguments: ["getcash", "getcash..dot"])
-    func delegatesMalformedProductId(productId: String) async {
-        let (requester, wrapped) = makeSUT(wrappedDecision: .approved)
+    @Test func productWithoutADotNsNameStillAsksWhenEmptyLabelIsAllowed() async throws {
+        let (requester, wrapped) = makeSUT(allowedLabels: [""])
+        let productId = try ProductId("localhost:3000")
 
-        let decision = await requester.requestApproval(
-            productId: productId,
-            amount: 100,
-            destination: destination
-        )
+        let decision = await requester.requestApproval(productId: productId, amount: 100, destination: destination)
 
-        #expect(decision == .approved)
-        #expect(wrapped.calls.count == 1)
+        #expect(decision == .rejected)
+        #expect(wrapped.calls.map(\.productId) == [productId])
     }
 }

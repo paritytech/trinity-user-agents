@@ -233,7 +233,7 @@ onto another device. The required `HostRuntimeConfig.database_directory` sets
 it on iOS and Android, and `SigningHostRuntime::set_core_db` on any other
 embedder. Such an embedder also sets the `InstallationIdProvider` whose id NFT
 purse item keys are derived under with `set_installation_provider`, and the
-`EncryptedStorage` that keeps NFT receive key secrets with
+`EncryptedStorage` that keeps NFT receive key and deposited item secrets with
 `set_encrypted_storage`, then calls `start_core_services` once, which starts the durable engine and NFT purses over
 the database. `core_database_status()` reports the SQLite version, schema
 version and path. Web hosts do not compile the store.
@@ -411,7 +411,7 @@ flows, permission state, and auth state transitions.
 
 Most host-facing wire types are imported from `truapi::latest` by this module and
 are exposed through the trait signatures below. `ProductContext` and
-`ProductExecutionKind` are defined here instead, and codegen emits their host
+`ExecutableKind` are defined here instead, and codegen emits their host
 codecs from these definitions. Both are SCALE-encodable so they can cross the
 wasm callback boundary, where every parameter is encoded with
 `parity-scale-codec`; `ProductContext` holds a `ProductId`, which decodes by

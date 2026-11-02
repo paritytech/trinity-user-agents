@@ -1,16 +1,17 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import PolkadotUI
 import Products
 import UIKitExt
 
 protocol AppsListViewProtocol: ControllerBackedProtocol {
-    func didReceive(items: [AppsListViewLayout.Item])
+    func didReceive(items: [AppsListViewLayout<ProductId>.Item])
 }
 
 @MainActor
 protocol AppsListPresenterProtocol: AnyObject {
     func setup()
-    func selectApp(_ item: AppsListViewLayout.Item)
+    func selectApp(_ item: AppsListViewLayout<ProductId>.Item)
 }
 
 protocol AppsListInteractorInputProtocol: AnyObject {

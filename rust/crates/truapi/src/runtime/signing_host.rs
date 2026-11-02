@@ -532,7 +532,7 @@ impl SigningHost {
 		session: &AuthoritySession,
 		owner: &ProductId,
 	) -> Result<(), RingVrfError> {
-		if owner.as_str() != personhood_product_id(&self.network_suffix) {
+		if owner != &personhood_product_id(&self.network_suffix) {
 			return Ok(());
 		}
 		let chains = self
@@ -1176,18 +1176,14 @@ impl ProductAuthority for SigningHost {
 		request: ProductRequest<HostAccountListRingVrfKeysRequest>,
 	) -> Result<Vec<v01::RegisteredRingVrfKey>, RingVrfError> {
 		self.require_current_session(session)?;
-		let owner = request
-			.payload
-			.owner
-			.parse::<ProductId>()
-			.map_err(|err| RingVrfError::Unknown { reason: err.to_string() })?;
+		let owner = &request.payload.owner;
 		let caller = &request.calling_product_id;
-		if *caller != owner {
-			self.require_account_access(cx, caller, &owner).await?;
+		if caller != owner {
+			self.require_account_access(cx, caller, owner).await?;
 		}
 
-		self.register_builtin_personhood_keys_if_needed(session, &owner).await?;
-		let mut entries = self.ring_vrf_registry.owner_entries(session.public_key, &owner).await?;
+		self.register_builtin_personhood_keys_if_needed(session, owner).await?;
+		let mut entries = self.ring_vrf_registry.owner_entries(session.public_key, owner).await?;
 		self.require_current_session(session)?;
 		apply_ring_vrf_disclosure(&mut entries, request.payload.disclosure);
 		Ok(entries)
@@ -1456,6 +1452,19 @@ impl crate::nft::ItemSecrets for SigningHost {
 	) -> Result<Vec<crate::nft::ItemSecret>, AuthorityError> {
 		let entropy = self.root_entropy()?;
 		crate::nft::item_secrets_from_entropy(&entropy, slots).map_err(AuthorityError::from)
+	}
+}
+
+/// The user's chat key, until the team settles which key products publish
+/// for `Static` cheques.
+#[cfg(not(target_arch = "wasm32"))]
+impl crate::nft_purse::StaticReceiveSecret for SigningHost {
+	fn static_receive_secret(
+		&self,
+	) -> Result<crate::host_logic::x25519_seal::X25519PrivateKey, AuthorityError> {
+		let entropy = self.root_entropy()?;
+		let chat_key = crate::host_logic::sso::pairing::derive_identity_chat_private_key(&entropy);
+		Ok(crate::host_logic::x25519_seal::X25519PrivateKey::from(chat_key))
 	}
 }
 
@@ -1735,10 +1744,12 @@ mod tests {
 		futures::executor::block_on(
 			// Bare-labelled on both sides, as `ProductConsent::account_access`
 			// writes it in production.
-			crate::host_internal::permissions::set_account_access_status(
+			crate::host_internal::permissions::set_authorization_status(
 				platform,
-				ProductId::for_test(caller).bare_label(),
-				ProductId::for_test(target).bare_label(),
+				CoreStorageKey::product_account_access_authorization(
+					&ProductId::for_test(caller),
+					&ProductId::for_test(target),
+				),
 				crate::platform::PermissionAuthorizationStatus::Denied,
 			),
 		)
@@ -2094,7 +2105,7 @@ mod tests {
 		let ring = full_person_ring_location();
 		register_full_person_key(&authority, &session, &ring);
 		let context = v01::ProductProofContext {
-			product_id: "dim2.dot".to_string(),
+			product_id: ProductId::for_test("dim2.dot"),
 			suffix: v01::DerivationIndex::Index(0),
 		};
 		let alias_for = |caller: &str| {
@@ -2168,7 +2179,7 @@ mod tests {
 					payload: v01::HostAccountCreateProofRequest {
 						key_handle: full_person_key_handle(),
 						context: v01::ProductProofContext {
-							product_id: context.to_string(),
+							product_id: ProductId::for_test(context),
 							suffix: v01::DerivationIndex::Index(0),
 						},
 						ring_location: ring.clone(),
@@ -2283,7 +2294,7 @@ mod tests {
 
 	fn context_of(product_id: &str) -> v01::ProductProofContext {
 		v01::ProductProofContext {
-			product_id: product_id.to_string(),
+			product_id: ProductId::for_test(product_id),
 			suffix: v01::DerivationIndex::Index(0),
 		}
 	}
@@ -2430,7 +2441,7 @@ mod tests {
 			ProductRequest {
 				calling_product_id: ProductId::for_test("PEOPL.DOT"),
 				payload: v01::HostAccountListRingVrfKeysRequest {
-					owner: "peopl.dot".to_string(),
+					owner: ProductId::for_test("peopl.dot"),
 					disclosure: v01::RingVrfKeyDisclosure::PublicKey,
 				},
 			},
@@ -2480,7 +2491,7 @@ mod tests {
 				payload: v01::HostAccountCreateProofRequest {
 					key_handle: full_person_key_handle(),
 					context: v01::ProductProofContext {
-						product_id: "bank.dot".to_string(),
+						product_id: ProductId::for_test("bank.dot"),
 						suffix: v01::DerivationIndex::Index(0),
 					},
 					ring_location: ring.clone(),
@@ -2520,7 +2531,7 @@ mod tests {
 					payload: v01::HostAccountCreateProofRequest {
 						key_handle: full_person_key_handle(),
 						context: v01::ProductProofContext {
-							product_id: context.to_string(),
+							product_id: ProductId::for_test(context),
 							suffix: v01::DerivationIndex::Index(0),
 						},
 						ring_location: ring.clone(),
@@ -2554,10 +2565,12 @@ mod tests {
 		let platform = Arc::new(StubPlatform::default());
 		cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
 		// Written exactly as the previous release wrote it: full ids, both sides.
-		futures::executor::block_on(crate::host_internal::permissions::set_account_access_status(
+		futures::executor::block_on(crate::host_internal::permissions::set_authorization_status(
 			platform.as_ref(),
-			"ordinary.dot",
-			"peopl.dot",
+			CoreStorageKey::account_access_authorization(
+				&ProductId::for_test("ordinary.dot"),
+				&ProductId::for_test("peopl.dot"),
+			),
 			crate::platform::PermissionAuthorizationStatus::Denied,
 		))
 		.expect("stub core storage accepts the decision");
@@ -2654,7 +2667,7 @@ mod tests {
 					payload: v01::HostAccountGetAliasRequest {
 						key_handle: full_person_key_handle(),
 						context: v01::ProductProofContext {
-							product_id: context.to_string(),
+							product_id: ProductId::for_test(context),
 							suffix: v01::DerivationIndex::Index(0),
 						},
 						ring_location: ring.clone(),
@@ -2719,7 +2732,7 @@ mod tests {
 					payload: v01::HostAccountCreateProofRequest {
 						key_handle: full_person_key_handle(),
 						context: v01::ProductProofContext {
-							product_id: "peopl.dot".to_string(),
+							product_id: ProductId::for_test("peopl.dot"),
 							suffix: v01::DerivationIndex::Index(0),
 						},
 						ring_location: ring.clone(),
@@ -3001,7 +3014,7 @@ mod tests {
 				payload: v01::HostAccountCreateProofRequest {
 					key_handle: full_person_key_handle(),
 					context: v01::ProductProofContext {
-						product_id: "dim2.dot".to_string(),
+						product_id: ProductId::for_test("dim2.dot"),
 						suffix: v01::DerivationIndex::Index(0),
 					},
 					ring_location,
@@ -3018,7 +3031,7 @@ mod tests {
 			v01::HostAccountCreateProofRequest {
 				key_handle: full_person_key_handle(),
 				context: v01::ProductProofContext {
-					product_id: "dim2.dot".to_string(),
+					product_id: ProductId::for_test("dim2.dot"),
 					suffix: v01::DerivationIndex::Index(0),
 				},
 				ring_location: ring_location.clone(),
@@ -3149,7 +3162,7 @@ mod tests {
 		let session = authority.current_session().expect("active session");
 		let cx = CallContext::default();
 		let context = v01::ProductProofContext {
-			product_id: "myapp.dot".to_string(),
+			product_id: ProductId::for_test("myapp.dot"),
 			suffix: v01::DerivationIndex::Index(0),
 		};
 		let ring_location = full_person_ring_location();
@@ -3208,7 +3221,7 @@ mod tests {
 				payload: HostAccountGetAliasRequest {
 					key_handle: full_person_key_handle(),
 					context: v01::ProductProofContext {
-						product_id: "myapp.dot".to_string(),
+						product_id: ProductId::for_test("myapp.dot"),
 						suffix: v01::DerivationIndex::Index(0),
 					},
 					ring_location: v01::RingLocation {
@@ -3272,7 +3285,7 @@ mod tests {
 		let session = authority.current_session().expect("active session");
 		let cx = CallContext::default();
 		let context = v01::ProductProofContext {
-			product_id: "other.dot".to_string(),
+			product_id: ProductId::for_test("other.dot"),
 			suffix: v01::DerivationIndex::Index(0),
 		};
 		let ring_location = full_person_ring_location();
@@ -3331,7 +3344,7 @@ mod tests {
 			payload: HostAccountGetAliasRequest {
 				key_handle: full_person_key_handle(),
 				context: v01::ProductProofContext {
-					product_id: "other.dot".to_string(),
+					product_id: ProductId::for_test("other.dot"),
 					suffix: v01::DerivationIndex::Index(0),
 				},
 				ring_location: full_person_ring_location(),

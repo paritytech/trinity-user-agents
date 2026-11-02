@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import AsyncExtensions
 import Coinage
@@ -36,7 +37,7 @@ struct ProductPayments {
     /// preset is `minPrivacy`, warns whenever private vouchers alone cannot pay: spending a voucher
     /// still gaining privacy, or a coin loaded just to be unloaded, gives up privacy. The privacy
     /// warning is never allowlisted. `false` when the user declined either.
-    func awaitUserConsent(productId: String, amount: Balance, destination: AccountId) async throws -> Bool {
+    func awaitUserConsent(productId: ProductId, amount: Balance, destination: AccountId) async throws -> Bool {
         let decision = await approvalRequester.requestApproval(
             productId: productId,
             amount: amount,
@@ -54,7 +55,7 @@ struct ProductPayments {
 
     /// Registers the payment. Throws `ExternalPaymentError`.
     func initiatePayment(
-        productId: String,
+        productId: ProductId,
         id: PaymentRequestId,
         amount: Balance,
         destination: AccountId
@@ -69,7 +70,7 @@ struct ProductPayments {
 
     /// Ends after the first terminal status; fails with `ExternalPaymentError.notFound` for an
     /// unknown id.
-    func paymentStatuses(productId: String, id: PaymentRequestId) -> AnyAsyncSequence<ExternalPaymentStatus> {
+    func paymentStatuses(productId: ProductId, id: PaymentRequestId) -> AnyAsyncSequence<ExternalPaymentStatus> {
         support.coinageService.subscribeExternalPaymentStatus(
             productId: productId,
             paymentId: Self.paymentKey(id)
@@ -81,7 +82,12 @@ struct ProductPayments {
     /// Registers an idempotent top-up bound to `(productId, id)` and returns once initialization has
     /// concluded; `IncomingPaymentService` drives the claim. Throws ``ProductTopUpSourceError`` when
     /// the source cannot be described, `IncomingPaymentError` otherwise.
-    func acceptTopUp(productId: String, id: PaymentTopUpId, amount: Balance, source: PaymentTopUpSource) async throws {
+    func acceptTopUp(
+        productId: ProductId,
+        id: PaymentTopUpId,
+        amount: Balance,
+        source: PaymentTopUpSource
+    ) async throws {
         let descriptor: IncomingPaymentSourceDescriptor
         do {
             descriptor = try Self.incomingPaymentDescriptor(from: source, productId: productId)
@@ -99,7 +105,10 @@ struct ProductPayments {
 
     /// The live statuses of an active top-up, or the stored verdict of a settled one. Throws
     /// `IncomingPaymentError.notFound` for an unknown id.
-    func topUpStatuses(productId: String, id: PaymentTopUpId) async throws -> AnyAsyncSequence<IncomingPaymentStatus> {
+    func topUpStatuses(
+        productId: ProductId,
+        id: PaymentTopUpId
+    ) async throws -> AnyAsyncSequence<IncomingPaymentStatus> {
         try await support.incomingPaymentService.subscribeStatus(for: Self.topUpKey(id), productId: productId)
     }
 }
@@ -135,7 +144,7 @@ private extension ProductPayments {
     /// `IncomingPaymentSourceResolver` resolves and validates it later.
     static func incomingPaymentDescriptor(
         from source: PaymentTopUpSource,
-        productId: String
+        productId: ProductId
     ) throws -> IncomingPaymentSourceDescriptor {
         switch source {
         case let .productAccount(derivationIndex):

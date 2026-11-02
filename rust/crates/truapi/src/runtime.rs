@@ -44,6 +44,8 @@ pub mod statement_allowance;
 /// `StatementStore` surface: proofs plus submit and subscribe flows.
 pub mod statement_store;
 mod statement_store_rpc;
+#[cfg(test)]
+pub use statement_store_rpc::{LIVE_WAIT, LivePeopleStatements};
 #[cfg(feature = "test-host")]
 mod test_resource_controls;
 mod versioning;
@@ -378,7 +380,7 @@ impl ProductConnection {
 	}
 
 	/// Trusted executable kind attached to this product connection.
-	pub fn execution_kind(&self) -> crate::platform::ProductExecutionKind {
+	pub fn execution_kind(&self) -> crate::platform::ExecutableKind {
 		self.product.execution_kind
 	}
 
@@ -461,6 +463,19 @@ impl ProductConnection {
 		denied_error: E,
 	) -> Result<(), CallError<E>> {
 		match self.remote_permission_authorization(permission).await {
+			Ok(PermissionAuthorizationStatus::Authorized) => Ok(()),
+			Ok(
+				PermissionAuthorizationStatus::Denied |
+				PermissionAuthorizationStatus::NotDetermined,
+			) => Err(CallError::Domain(denied_error)),
+			Err(reason) => Err(CallError::HostFailure { reason }),
+		}
+	}
+
+	/// Require the user's consent to disclose their identity to this product,
+	/// prompting only when no decision is stored.
+	async fn require_identity_disclosure<E>(&self, denied_error: E) -> Result<(), CallError<E>> {
+		match self.identity_disclosure_authorization().await {
 			Ok(PermissionAuthorizationStatus::Authorized) => Ok(()),
 			Ok(
 				PermissionAuthorizationStatus::Denied |
@@ -631,7 +646,7 @@ impl ProductConnection {
 	}
 
 	fn pocket_platform<E>(&self) -> Result<Arc<dyn crate::platform::PocketPlatform>, CallError<E>> {
-		if self.product.execution_kind != crate::platform::ProductExecutionKind::Worker ||
+		if self.product.execution_kind != crate::platform::ExecutableKind::Worker ||
 			self.session_state.current().is_none()
 		{
 			return Err(CallError::Denied);

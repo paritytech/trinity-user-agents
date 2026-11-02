@@ -6,6 +6,7 @@ mod v2_to_v3_nft_purses;
 mod v3_to_v4_nft_items;
 mod v4_to_v5_nft_consumption;
 mod v5_to_v6_nft_receive_keys;
+mod v6_to_v7_foreign_nft_consumption;
 
 use rusqlite_migration::Migrations;
 
@@ -19,5 +20,6 @@ pub fn core_migrations() -> Migrations<'static> {
 		v3_to_v4_nft_items::create_nft_items(),
 		v4_to_v5_nft_consumption::create_nft_consumption(),
 		v5_to_v6_nft_receive_keys::create_nft_receive_keys(),
+		v6_to_v7_foreign_nft_consumption::recreate_nft_consumption_for_foreign_keys(),
 	])
 }

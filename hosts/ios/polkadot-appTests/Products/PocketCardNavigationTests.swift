@@ -48,7 +48,7 @@ struct PocketCardNavigationTests {
 }
 
 private let trophyCard = PocketCardViewModel(
-    key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "trophy")),
+    key: PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "trophy")),
     title: "Trophy",
     privileged: false,
     face: nil
