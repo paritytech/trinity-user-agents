@@ -50,8 +50,8 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     /// The chat queries, in order.
     private(set) var queryLog: [ChatQueryCall] = []
     /// The answers of the chat queries. Nil answers as the product without the query does.
-    var messagesAnswer: Result<ProductChatMessagesQueryItem, Error>?
-    var userActionAnswer: Result<ProductChatUserActionItem, Error>?
+    var messagesAnswer: Result<ProductChatMessagesQueryResponse, Error>?
+    var userActionAnswer: Result<ProductChatUserActionResponse, Error>?
 
     private let renderSignal: AsyncStream<Void>.Continuation
     private var renderSignals: AsyncStream<Void>.AsyncIterator
@@ -118,7 +118,7 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     func chatMessagesQuery(
         _ request: ProductChatMessagesQueryRequest,
         timeout: Duration
-    ) async throws -> ProductChatMessagesQueryItem {
+    ) async throws -> ProductChatMessagesQueryResponse {
         queryLog.append(.messages(request, timeout))
         return try (messagesAnswer ?? .failure(ChatQueryError.refused(.notAvailable))).get()
     }
@@ -126,7 +126,7 @@ final class MockProductExecution: TrUAPIProductExecutionProtocol, @unchecked Sen
     func chatUserAction(
         _ request: ProductChatUserActionRequest,
         timeout: Duration
-    ) async throws -> ProductChatUserActionItem {
+    ) async throws -> ProductChatUserActionResponse {
         queryLog.append(.userAction(request, timeout))
         return try (userActionAnswer ?? .failure(ChatQueryError.actionRefused(.unknownRoom))).get()
     }
