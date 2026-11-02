@@ -18,6 +18,7 @@ struct ProductUpdateCoordinatorTests {
     private let workerReloader = StubProductWorkerReloader()
     private let notice = StubProductUpdateNoticePresenter()
     private let hostPlaced = StubHostPlacedProducts()
+    private let notificationCenter = NotificationCenter()
     private let coordinator: ProductUpdateCoordinator
     private let first = StubSPAProductReloader()
     private let second = StubSPAProductReloader()
@@ -28,7 +29,7 @@ struct ProductUpdateCoordinatorTests {
             workerReloader: workerReloader,
             noticePresenter: notice,
             refreshSources: ProductUpdateCoordinator.RefreshSources(
-                applicationStateStreams: ApplicationStateStreamFactory(),
+                applicationStateStreams: ApplicationStateStreamFactory(notificationCenter: notificationCenter),
                 hostPlacedProducts: hostPlaced
             ),
             logger: Logger.shared
@@ -164,7 +165,7 @@ struct ProductUpdateCoordinatorTests {
         register(first)
         coordinator.start()
 
-        NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
+        notificationCenter.post(name: UIApplication.willEnterForegroundNotification, object: nil)
         await loader.waitForRefreshes(1)
 
         #expect(loader.refreshedIds == [Self.productId])
@@ -174,7 +175,7 @@ struct ProductUpdateCoordinatorTests {
         hostPlaced.productIds = [Self.hostPlacedId]
         coordinator.start()
 
-        NotificationCenter.default.post(name: UIApplication.willEnterForegroundNotification, object: nil)
+        notificationCenter.post(name: UIApplication.willEnterForegroundNotification, object: nil)
         await loader.waitForRefreshes(1)
 
         #expect(loader.refreshedIds == [Self.hostPlacedId])
