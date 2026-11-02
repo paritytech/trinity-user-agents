@@ -25,11 +25,10 @@ use crate::platform::ProductId;
 
 /// How long a session may stay open before it expires.
 const SESSION_WINDOW_MS: u64 = 24 * 60 * 60 * 1_000;
-/// How many ended sessions the host has not acknowledged yet the core keeps
-/// in full, newest first, so a host that never acknowledges them cannot grow the
-/// stored sessions without bound. Older ones are compacted into the session
-/// pack.
-const UNACKNOWLEDGED_LIMIT: usize = 200;
+/// How many ended sessions the host has not acknowledged yet are handed to it
+/// again when funding resumes, newest first, so a host that never
+/// acknowledges them is not handed an ever longer list.
+pub const UNACKNOWLEDGED_LIMIT: usize = 200;
 /// Most top-ups a provider may name for one session, and most top-ups or
 /// payments it may hold started for one at a time, as getcash claims or pays
 /// in up to three attempts, each under a new id after the host refused the
@@ -43,14 +42,9 @@ const PROVIDER_SILENCE_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 /// How long a top-up the user cancelled before paying stays open to a payment
 /// that arrives anyway, as a bank transfer already sent can take days.
 pub const LATE_ARRIVAL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
-/// How many ended sessions the host has recorded the core keeps in full per
-/// owner, newest first. Older ones are compacted into the session pack.
-pub(crate) const RECORDED_PER_OWNER: usize = 64;
-
-/// An ended session the host acknowledged, compacted once newer acknowledged sessions
-/// of its owner pushed it out of the full record. It keeps what history needs,
-/// so its owner can still read how it ended and the host can still list it;
-/// the pack is never trimmed.
+/// An ended session as the session pack keeps it once nothing can change it.
+/// It keeps what history needs, so its owner can still read how it ended and
+/// the host can still list it; the pack is never trimmed.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingSessionSummary {
@@ -2017,42 +2011,34 @@ impl<D> From<FundingSessionError> for crate::CallError<D> {
 	}
 }
 
-/// Split `sessions` into those kept in full and the ended ones to compact.
-/// Kept in full: every one its provider still has work on, the ended ones the
-/// host has not acknowledged yet, newest first up to a fixed bound, and the newest
-/// ended ones it has acknowledged, up to a fixed bound per owner. The ended ones
-/// past either bound go to the pack, so no outcome is lost.
+/// An ended session in the session pack, with whether the host has told the
+/// user how it ended. One it has not is handed to it again when funding
+/// resumes.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct PackedSession {
+	/// The session as history keeps it.
+	pub summary: FundingSessionSummary,
+	/// Whether the host told the user how the session ended.
+	pub acknowledged: bool,
+}
+
+impl From<&FundingSession> for PackedSession {
+	fn from(session: &FundingSession) -> Self {
+		Self { summary: session.summary(), acknowledged: session.acknowledged }
+	}
+}
+
+/// Split `sessions` into those kept in full and the ended ones to compact
+/// into the pack. Kept in full: every one its provider still has work on, and
+/// a cancelled top-up a late payment may still open again. Every other ended
+/// session is compacted at once, whether or not the host acknowledged it.
 pub fn retained(
 	sessions: impl IntoIterator<Item = FundingSession>,
-) -> (Vec<FundingSession>, Vec<FundingSessionSummary>) {
-	let (mut open, ended): (Vec<_>, Vec<_>) =
-		sessions.into_iter().partition(FundingSession::serves_provider);
-	let (mut unrecorded, mut recorded): (Vec<_>, Vec<_>) =
-		ended.into_iter().partition(|session| !session.acknowledged);
-	unrecorded.sort_by_key(|session| core::cmp::Reverse(session.settled_at_ms()));
-	let unrecorded_overflow = unrecorded.split_off(UNACKNOWLEDGED_LIMIT.min(unrecorded.len()));
-	// Grouped by owner, newest first within each, so each owner's newest run is
-	// what survives the per-owner bound.
-	recorded.sort_by(|a, b| {
-		a.owner_product_id
-			.cmp(&b.owner_product_id)
-			.then_with(|| b.settled_at_ms().cmp(&a.settled_at_ms()))
-	});
-	open.append(&mut unrecorded);
-	let mut owner: Option<Option<ProductId>> = None;
-	let mut owner_run = 0;
-	let (newest, older): (Vec<_>, Vec<_>) = recorded.into_iter().partition(|session| {
-		if owner.as_ref() == Some(&session.owner_product_id) {
-			owner_run += 1;
-		} else {
-			owner = Some(session.owner_product_id.clone());
-			owner_run = 1;
-		}
-		owner_run <= RECORDED_PER_OWNER
-	});
-	open.extend(newest);
-	let compacted = older.into_iter().chain(unrecorded_overflow);
-	(open, compacted.map(FundingSessionSummary::from).collect())
+	now_ms: u64,
+) -> (Vec<FundingSession>, Vec<FundingSession>) {
+	sessions
+		.into_iter()
+		.partition(|session| session.serves_provider() || session.takes_late_arrival(now_ms))
 }
 
 #[cfg(test)]
@@ -2160,51 +2146,36 @@ mod tests {
 		}
 	}
 
-	// Each owner keeps its newest recorded sessions in full, so no owner can
-	// crowd out another, and its older ones are compacted rather than dropped.
+	// An ended session is compacted at once, acknowledged or not, keeping
+	// whether the host told the user. What can still change stays in full: a
+	// session in flight, and a cancelled top-up a late payment may open.
 	#[test]
-	fn recorded_sessions_keep_the_newest_per_owner_and_compact_the_rest() {
-		let recorded = |intent: String, owner: &str, settled_at_ms: u64| FundingSession {
-			acknowledged: true,
-			owner_product_id: Some(ProductId::for_test(owner)),
-			..expired(&intent, settled_at_ms)
+	fn ended_sessions_are_compacted_at_once_unless_they_can_still_change() {
+		let seen = FundingSession { acknowledged: true, ..expired("fs_seen", NOW) };
+		let unseen = expired("fs_unseen", NOW + 1);
+		let cancelled = FundingSession {
+			intent: "fs_cancelled".to_string(),
+			provider_id: Some(PROVIDER.to_string()),
+			stage: FundingStage::Failed { reason: FundingFailure::Cancelled, settled_at_ms: NOW },
+			..session(FundingDirection::In)
 		};
-		let mut sessions: Vec<FundingSession> = (0..RECORDED_PER_OWNER as u64 + 2)
-			.map(|n| recorded(format!("a_{n}"), "a.dot", NOW + n))
-			.collect();
-		sessions.push(recorded("b_0".to_string(), "b.dot", NOW));
-		sessions.push(session(FundingDirection::In));
+		let open = session(FundingDirection::Out);
 
-		let (kept, compacted) = retained(sessions);
-		let count = |owner: &str| {
-			kept.iter()
-				.filter(|session| session.owner_product_id.as_ref().is_some_and(|id| *id == owner))
-				.count()
-		};
+		let (kept, ended) =
+			retained([seen.clone(), unseen.clone(), cancelled.clone(), open.clone()], NOW + 2);
+		let packed: Vec<PackedSession> = ended.iter().map(PackedSession::from).collect();
+		let (later, _) = retained([cancelled], NOW + LATE_ARRIVAL_MS + 1);
 
+		assert_eq!((kept.len(), packed.len(), later.len()), (2, 2, 0));
 		assert_eq!(
-			(
-				count("a.dot"),
-				count("b.dot"),
-				kept.iter().any(|session| session.intent == "a_0" || session.intent == "a_1"),
-				kept.iter().any(|session| !session.is_terminal()),
-				compacted,
-			),
-			(
-				RECORDED_PER_OWNER,
-				1,
-				false,
-				true,
-				vec![
-					FundingSessionSummary::from(recorded("a_1".to_string(), "a.dot", NOW + 1)),
-					FundingSessionSummary::from(recorded("a_0".to_string(), "a.dot", NOW)),
-				]
-			)
+			packed
+				.iter()
+				.map(|packed| (packed.summary.intent.as_str(), packed.acknowledged))
+				.collect::<Vec<_>>(),
+			vec![("fs_seen", true), ("fs_unseen", false)]
 		);
 	}
 
-	// A product only waits for the outcome; the host draws the steps, so an
-	// open session reads the same whichever way value moves.
 	#[test]
 	fn an_open_session_reads_in_progress_until_its_deadline() {
 		let in_progress = HostFundingStatusSubscribeItem::InProgress {
@@ -2294,38 +2265,6 @@ mod tests {
 
 		assert!(!session.fail(FundingFailure::Cancelled, NOW + 1));
 		assert_eq!(session, expired("fs_1", NOW));
-	}
-
-	// The host owns the history: open sessions come first, then the ones it
-	// has not recorded, newest first and not without bound, then the recorded
-	// ones kept only so their owner can read how they ended. An unrecorded
-	// session past the bound is compacted, not lost.
-	#[test]
-	fn the_core_keeps_open_then_unrecorded_then_recorded_sessions() {
-		let ended = |index: usize, acknowledged| FundingSession {
-			acknowledged,
-			..expired(&format!("fs_s{index}"), NOW + index as u64)
-		};
-		let open = session(FundingDirection::Out);
-		let recorded = (0..3).map(|index| ended(index, true));
-		let unrecorded = (100..101 + UNACKNOWLEDGED_LIMIT).map(|index| ended(index, false));
-
-		let (kept, compacted) = retained(recorded.chain(unrecorded).chain([open]));
-		let kept: Vec<String> = kept.into_iter().map(|session| session.intent).collect();
-
-		let newest_unrecorded =
-			(101..101 + UNACKNOWLEDGED_LIMIT).rev().map(|index| format!("fs_s{index}"));
-		let recorded_newest_first = (0..3).rev().map(|index| format!("fs_s{index}"));
-		assert_eq!(
-			(kept, compacted),
-			(
-				std::iter::once("fs_1".to_string())
-					.chain(newest_unrecorded)
-					.chain(recorded_newest_first)
-					.collect::<Vec<_>>(),
-				vec![FundingSessionSummary::from(ended(100, false))],
-			)
-		);
 	}
 
 	fn served(direction: FundingDirection) -> FundingSession {
@@ -4074,8 +4013,10 @@ mod tests {
 		);
 		assert!(released.settle(100, NOW + 1));
 		released.acknowledged = true;
-		let served_before =
-			retained([released.clone()]).0.iter().any(FundingSession::serves_provider);
+		let served_before = retained([released.clone()], NOW + 1)
+			.0
+			.iter()
+			.any(FundingSession::serves_provider);
 		released
 			.report(
 				PROVIDER,
@@ -4088,15 +4029,8 @@ mod tests {
 			.expect("reported");
 		released.acknowledged = true;
 
-		let (kept_after, _) = retained([released]);
-		assert_eq!(
-			(
-				served_before,
-				kept_after.len(),
-				kept_after.iter().any(FundingSession::serves_provider)
-			),
-			(true, 1, false)
-		);
+		let (kept_after, _) = retained([released], NOW + 2);
+		assert_eq!((served_before, kept_after.len()), (true, 0));
 	}
 
 	// A failed payout leaves the user's CASH with the provider, so the
@@ -4194,7 +4128,7 @@ mod tests {
 		assert_eq!(
 			(
 				released.serves_provider(),
-				retained([released.clone()]).0.len(),
+				retained([released.clone()], NOW + 2).0.len(),
 				released.expires_at()
 			),
 			(true, 1, None)

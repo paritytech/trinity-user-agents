@@ -509,7 +509,8 @@ export async function runProviderStart(
       intent: outbound,
       update: { tag: "Out", value: { tag: "PayoutRetrying" } },
     });
-    if (!late.isErr() || !stringify(late.error).includes("OutOfOrder")) {
+    // A paid-out withdrawal is over, so the core no longer serves it.
+    if (!late.isErr() || !stringify(late.error).includes("NotFound")) {
       throw new Error(
         `a retry after the payout was not refused: ${stringify(late)}`,
       );

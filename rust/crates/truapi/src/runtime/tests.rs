@@ -3807,7 +3807,7 @@ fn a_test_host_settles_a_funding_session_once() {
 			settle(&intent, 900),
 			settle(&intent, 1),
 			settle("fs_unknown", 900),
-			services.funding().get(&intent).map(|session| session.wire_item()),
+			services.funding().ended(&intent),
 		),
 		(
 			true,
@@ -9317,10 +9317,10 @@ fn wait_for_stage(
 	intent: &str,
 ) -> Option<v01::HostFundingStatusSubscribeItem> {
 	for _ in 0..200 {
-		let session = services.funding().get(intent)?;
-		if session.is_terminal() {
-			return Some(session.wire_item());
+		if let Some(ended) = services.funding().ended(intent) {
+			return Some(ended);
 		}
+		services.funding().get(intent)?;
 		std::thread::sleep(Duration::from_millis(10));
 	}
 	None
@@ -10618,17 +10618,14 @@ fn a_top_up_unknown_at_first_still_settles_once_claimed() {
 
 	let mut stage = None;
 	for _ in 0..300 {
-		stage = services.funding().get(&intent).filter(|session| session.is_terminal());
+		stage = services.funding().ended(&intent);
 		if stage.is_some() {
 			break;
 		}
 		std::thread::sleep(Duration::from_millis(10));
 	}
 
-	assert_eq!(
-		stage.map(|session| session.wire_item()),
-		Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 500 })
-	);
+	assert_eq!(stage, Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 500 }));
 }
 
 // A provider that never answers a cancel would hold the session and keep its
@@ -11856,11 +11853,8 @@ fn a_settlement_whose_write_failed_is_written_again() {
 	assert_eq!(
 		(
 			while_failing,
-			eventually(10, || services
-				.funding()
-				.get(&intent)
-				.is_some_and(|session| session.is_terminal())),
-			services.funding().get(&intent).map(|session| session.wire_item()),
+			eventually(10, || services.funding().ended(&intent).is_some()),
+			services.funding().ended(&intent),
 		),
 		(false, true, Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 500 }),)
 	);
