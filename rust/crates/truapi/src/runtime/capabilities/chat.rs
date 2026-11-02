@@ -23,13 +23,12 @@ use truapi::{
 			HostChatDeleteRoomResponse, HostChatListSubscribeError, HostChatListSubscribeItem,
 			HostChatListSubscribeRequest, HostChatPostMessageError, HostChatPostMessageRequest,
 			HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-			HostChatRegisterBotResponse, HostChatSetRoomConfigError, HostChatSetRoomConfigRequest,
-			HostChatSetRoomConfigResponse, HostChatSetRoomFooterError,
-			HostChatSetRoomFooterRequest, HostChatSetRoomFooterResponse,
-			HostChatSetRoomMetadataError, HostChatSetRoomMetadataRequest,
-			HostChatSetRoomMetadataResponse, HostChatSetRoomPreviewError,
-			HostChatSetRoomPreviewRequest, HostChatSetRoomPreviewResponse, HostChatUpdateFeedError,
-			HostChatUpdateFeedRequest, HostChatUpdateFeedResponse,
+			HostChatRegisterBotResponse, HostChatSetRoomFooterError, HostChatSetRoomFooterRequest,
+			HostChatSetRoomFooterResponse, HostChatSetRoomMetadataError,
+			HostChatSetRoomMetadataRequest, HostChatSetRoomMetadataResponse,
+			HostChatSetRoomPreviewError, HostChatSetRoomPreviewRequest,
+			HostChatSetRoomPreviewResponse, HostChatUpdateFeedError, HostChatUpdateFeedRequest,
+			HostChatUpdateFeedResponse,
 		},
 	},
 };
@@ -76,10 +75,19 @@ impl Chat for ProductRuntimeHost {
 				request.icon = validate_chat_icon("icon", &request.icon).map_err(field_error)?;
 				let room_id =
 					self.connection.product.product_id.chat_room_id(&request.room_id_source);
+				let config = request.config.clone();
 				let status = platform
 					.create_chat_room(&self.connection.product, room_id.clone(), request)
 					.await
 					.map_err(CallError::Domain)?;
+				platform
+					.set_chat_room_config(&self.connection.product, room_id.clone(), config)
+					.await
+					.map_err(|error| {
+						CallError::Domain(latest::HostChatCreateRoomError::Unknown {
+							reason: error.reason,
+						})
+					})?;
 				Ok(latest::HostChatCreateRoomResponse { status, room_id })
 			})
 			.await
@@ -216,24 +224,6 @@ impl Chat for ProductRuntimeHost {
 						})
 					},
 				)
-			})
-			.await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "chat.set_room_config"))]
-	async fn set_room_config(
-		&self,
-		_cx: &CallContext,
-		request: HostChatSetRoomConfigRequest,
-	) -> Result<HostChatSetRoomConfigResponse, CallError<HostChatSetRoomConfigError>> {
-		version(request)
-			.exec(|mut request| async move {
-				let platform = self.connection.chat_platform()?;
-				request.room_id = self.hosted_room(&platform, &request.room_id).await?;
-				platform
-					.set_chat_room_config(&self.connection.product, request)
-					.await
-					.map_err(room_host_error)
 			})
 			.await
 	}
@@ -376,16 +366,6 @@ enum RoomRefusal {
 	NotRoomHost,
 	/// The id was malformed, or the host could not list the rooms.
 	Failed(String),
-}
-
-impl From<RoomRefusal> for latest::HostChatSetRoomConfigError {
-	fn from(refusal: RoomRefusal) -> Self {
-		match refusal {
-			RoomRefusal::UnknownRoom => Self::UnknownRoom,
-			RoomRefusal::NotRoomHost => Self::NotRoomHost,
-			RoomRefusal::Failed(reason) => Self::Unknown { reason },
-		}
-	}
 }
 
 impl From<RoomRefusal> for latest::HostChatSetRoomMetadataError {
@@ -707,10 +687,11 @@ mod tests {
 		async fn set_chat_room_config(
 			&self,
 			_product: &ProductContext,
-			request: latest::HostChatSetRoomConfigRequest,
+			room_id: String,
+			config: latest::ChatRoomConfig,
 		) -> Result<(), latest::GenericError> {
-			self.configs.lock().unwrap().insert(request.room_id.clone(), request.config);
-			self.record("config", &request.room_id)
+			self.configs.lock().unwrap().insert(room_id.clone(), config);
+			self.record("config", &room_id)
 		}
 
 		async fn set_chat_room_preview(
@@ -879,31 +860,36 @@ mod tests {
 			("lobby", latest::ChatRoomParticipation::Bot),
 		]);
 		let runtime = chat_runtime(chat.clone());
-		let set_config = |room_id: &str| {
-			block_on(Chat::set_room_config(
+		let preview = |room_id: &str| {
+			set_preview(
 				&runtime,
-				&CallContext::default(),
-				HostChatSetRoomConfigRequest::V1(latest::HostChatSetRoomConfigRequest {
-					room_id: room_id.to_string(),
-					config: Default::default(),
-				}),
-			))
+				room_id,
+				latest::ChatRoomPreview {
+					timestamp: None,
+					badge: None,
+					last_message: None,
+					last_reaction: None,
+					unseen_reactions: 0,
+					pinned: false,
+					activity: None,
+				},
+			)
 		};
 
 		assert_eq!(
-			set_config("missing"),
-			Err(CallError::Domain(HostChatSetRoomConfigError::V1(
-				latest::HostChatSetRoomConfigError::UnknownRoom
+			preview("missing"),
+			Err(CallError::Domain(HostChatSetRoomPreviewError::V1(
+				latest::HostChatSetRoomPreviewError::UnknownRoom
 			)))
 		);
 		assert_eq!(
-			set_config("lobby"),
-			Err(CallError::Domain(HostChatSetRoomConfigError::V1(
-				latest::HostChatSetRoomConfigError::NotRoomHost
+			preview("lobby"),
+			Err(CallError::Domain(HostChatSetRoomPreviewError::V1(
+				latest::HostChatSetRoomPreviewError::NotRoomHost
 			)))
 		);
-		assert_eq!(set_config(" support "), Ok(HostChatSetRoomConfigResponse::V1));
-		assert_eq!(chat.calls(), ["config support"]);
+		assert_eq!(preview(" support "), Ok(HostChatSetRoomPreviewResponse::V1));
+		assert_eq!(chat.calls(), ["preview support"]);
 	}
 
 	// A host-store room keeps what `update_feed` writes; a product-source room
@@ -1225,24 +1211,25 @@ mod tests {
 		assert!(chat.calls().is_empty());
 	}
 
-	// A room keeps the default configuration, a room the host stores, until
-	// the product declares one; a declaration replaces the previous one.
+	// A room keeps the configuration of its last `create_room`, also when the
+	// room exists, so a product that declares another one changes the room.
 	#[test]
-	fn a_room_takes_the_configuration_the_product_declares() {
-		let chat = RecordingHost::with_rooms(&[
-			hosted("support"),
-			("lobby", latest::ChatRoomParticipation::Bot),
-		]);
+	fn a_room_takes_the_configuration_of_its_last_create_room() {
+		let chat = RecordingHost::with_rooms(&[]);
 		let runtime = chat_runtime(chat.clone());
-		let set = |room_id: &str, config: latest::ChatRoomConfig| {
-			block_on(Chat::set_room_config(
+		let create = |config: latest::ChatRoomConfig| {
+			let created = block_on(Chat::create_room(
 				&runtime,
 				&CallContext::default(),
-				HostChatSetRoomConfigRequest::V1(latest::HostChatSetRoomConfigRequest {
-					room_id: room_id.to_string(),
+				HostChatCreateRoomRequest::V2(latest::HostChatCreateRoomRequest {
+					room_id_source: "support".to_string(),
+					name: "Support".to_string(),
+					icon: String::new(),
 					config,
 				}),
 			))
+			.expect("create_room accepts the room");
+			created.into_latest().room_id
 		};
 		let sourced = latest::ChatRoomConfig {
 			product_source: true,
@@ -1250,10 +1237,11 @@ mod tests {
 			report_seen: true,
 		};
 
-		update_feed(&runtime, "support", text_message("product")).expect("a stored update");
-		assert_eq!(set(" support ", sourced.clone()), Ok(HostChatSetRoomConfigResponse::V1));
-		assert_eq!(chat.configs.lock().unwrap().get("support"), Some(&sourced));
-		update_feed(&runtime, "support", text_message("product")).expect("a shown update");
+		let room_id = create(latest::ChatRoomConfig::default());
+		update_feed(&runtime, &room_id, text_message("product")).expect("a stored update");
+		assert_eq!(create(sourced.clone()), room_id);
+		assert_eq!(chat.configs.lock().unwrap().get(&room_id), Some(&sourced));
+		update_feed(&runtime, &room_id, text_message("product")).expect("a shown update");
 		assert_eq!(
 			chat.feed
 				.lock()
@@ -1263,13 +1251,8 @@ mod tests {
 				.collect::<Vec<_>>(),
 			[true, false]
 		);
-		assert_eq!(
-			set("lobby", sourced),
-			Err(CallError::Domain(HostChatSetRoomConfigError::V1(
-				latest::HostChatSetRoomConfigError::NotRoomHost
-			)))
-		);
-		assert_eq!(chat.calls(), ["config support"]);
+		let config = format!("config {room_id}");
+		assert_eq!(chat.calls(), [config.clone(), config]);
 	}
 
 	// The icon of a room keeps its rules: a scheme the host must not fetch is
