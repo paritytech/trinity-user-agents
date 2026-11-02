@@ -4,6 +4,7 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.updateTransition
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.rememberScrollState
@@ -50,6 +51,7 @@ import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmou
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.DigitalDollarCardDetailsViewModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageScene
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.debug.CoinageTestDataMode
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.LocalPocketScreenTransition
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketCardSharedElement
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketContentSlide
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.BalanceRestoreUiState
@@ -57,6 +59,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.DigitalDollarCardDetailsUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketScreenState
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
 import io.paritytech.polkadotapp.common.R as RCommon
@@ -122,8 +125,7 @@ private fun DigitalDollarCardDetailsContent(
         modifier = Modifier.fillMaxSize()
     ) {
         PolkadotTopBar(
-            title = stringResource(RCommon.string.pocket_digital_dollar_title, LocalPaymentAssetBrand.current.symbol)
-                .withCurrencyTickerStyle(PolkadotTheme.typography.title.large),
+            title = stringResource(RCommon.string.pocket_digital_dollar_title),
             navigationAction = rememberTopBarAction(onBack),
             titleAlignment = TopBarTitleAlignment.Center,
             titleSize = TopBarTitleSize.Medium
@@ -284,18 +286,21 @@ private fun CashActionButton(
 @Preview
 @Composable
 private fun DigitalDollarCardDetailsPreview() {
+    val card = PocketCardUiModel.DigitalDollar(
+        amounts = LoadingState.Loaded(
+            PocketCardUiModel.DigitalDollar.Amounts(TokenAmountModel.mock, TokenAmountModel.mock)
+        ),
+        syncInProgress = false,
+    )
+
     PolkadotTheme {
         CompositionLocalProvider(
             LocalTokenAmountFormatter provides TokenAmountFormatter.mocked,
-            LocalPaymentAssetBrand provides PaymentAssetBrand.mocked
+            LocalPaymentAssetBrand provides PaymentAssetBrand.mocked,
+            LocalPocketScreenTransition provides updateTransition(PocketScreenState.CardDetails(card), label = "preview")
         ) {
             DigitalDollarCardDetailsContent(
-                card = PocketCardUiModel.DigitalDollar(
-                    amounts = LoadingState.Loaded(
-                        PocketCardUiModel.DigitalDollar.Amounts(TokenAmountModel.mock, TokenAmountModel.mock)
-                    ),
-                    syncInProgress = false,
-                ),
+                card = card,
                 onBack = {},
                 cardIndex = 0,
                 coinageLoadingState = LoadingState.Loaded(

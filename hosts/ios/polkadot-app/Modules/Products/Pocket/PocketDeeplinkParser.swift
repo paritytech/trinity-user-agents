@@ -18,6 +18,9 @@ struct PocketDeeplink: Equatable {
     /// Already screened, by the core, as part of classifying the link. Nothing
     /// downstream screens it again.
     let cardId: PocketCardId
+    /// An open link's other query params, still percent-encoded and in link
+    /// order, for the card's page. Empty for an add link.
+    let pageQuery: String
     /// The normalized `polkadotapp://` form, with the product and card
     /// percent-encoded, so re-parsing it names the same card.
     let canonicalUrl: String
@@ -64,7 +67,7 @@ struct PocketDeeplinkParser {
         }
 
         switch parseNavigate(input: link) {
-        case let .pocket(identifier, action, cardId, canonicalUrl):
+        case let .pocket(identifier, action, cardId, pageQuery, canonicalUrl):
             let linkAction: PocketLinkAction =
                 switch action {
                 case .add: .add
@@ -75,6 +78,7 @@ struct PocketDeeplinkParser {
                 productHost: identifier,
                 action: linkAction,
                 cardId: PocketCardId(value: cardId),
+                pageQuery: pageQuery,
                 canonicalUrl: canonicalUrl
             ))
         case .pocketCollection:

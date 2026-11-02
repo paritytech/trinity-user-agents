@@ -22,7 +22,7 @@ use crate::{
 		},
 		session::SessionInfo,
 	},
-	runtime::dotns_lookup::DotnsLookup,
+	runtime::dotns_lookup::{DotnsLookup, DotnsLookupKind},
 	session_usernames::SessionUsernames,
 };
 
@@ -154,8 +154,11 @@ async fn lookup_with_retries(
 				return LookupOutcome::NoRecord;
 			},
 			Err(reason) => {
+				// A warning leaves the device, so the account is named by a
+				// handle rather than in full. The debug lines above, which stay
+				// on it, still carry the whole id.
 				warn!(
-					account = %hex::encode(account),
+					account = %crate::logging::account_handle(&account),
 					attempt,
 					reason = %reason.reason(),
 					"dotNS {label} lookup failed"
@@ -181,7 +184,7 @@ async fn lookup_dotns_identity(
 		let mut lookup = DotnsLookup::pinned_to_best_block(
 			chain,
 			asset_hub_chain_genesis_hash,
-			&format!("identity:{}", hex::encode(account_id)),
+			DotnsLookupKind::Identity,
 		)
 		.await?;
 		let Some(controller) = discover_pop_controller(&mut lookup).await? else {

@@ -18,4 +18,6 @@ object ReservedProductIds {
     fun lightPersonIdentity(tld: DotNsTld): ProductId = ProductId.fromName("uid", tld.value).getOrThrow()
 
     fun personhood(tld: DotNsTld): ProductId = ProductId.fromName("peopl", tld.value).getOrThrow()
+
+    fun chat(tld: DotNsTld): ProductId = ProductId.fromName("chat", tld.value).getOrThrow()
 }

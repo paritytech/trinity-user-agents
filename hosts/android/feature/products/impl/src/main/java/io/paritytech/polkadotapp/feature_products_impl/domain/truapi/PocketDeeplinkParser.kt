@@ -17,6 +17,7 @@ sealed interface PocketDeeplink {
         val productId: ProductId,
         val action: PocketDeeplinkAction,
         val cardId: String,
+        val pageQuery: String,
     ) : PocketDeeplink
 
     data object Collection : PocketDeeplink
@@ -35,6 +36,7 @@ class PocketDeeplinkParser @Inject constructor() {
                 NativePocketDeeplinkAction.OPEN -> PocketDeeplinkAction.OPEN
             },
             cardId = decision.cardId,
+            pageQuery = decision.pageQuery,
         )
 
         is NavigateDecision.PocketCollection -> PocketDeeplink.Collection

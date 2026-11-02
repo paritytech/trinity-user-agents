@@ -17,6 +17,8 @@ import uniffi.truapi.AllocatableResource
 import uniffi.truapi.CreateTransactionReview
 import uniffi.truapi.DerivationIndex
 import uniffi.truapi.HostSignPayloadData
+import uniffi.truapi.NftPurseDrainDestination
+import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductId
 import uniffi.truapi.RawPayload
 import uniffi.truapi.RingLocation
@@ -82,6 +84,23 @@ fun UserConfirmationReview.toConfirmation(callingProductId: ProductId?): TrUAPIC
 
     is UserConfirmationReview.ProductSubtree ->
         TrUAPIConfirmation.ProductSubtree(requesterProductId = v1.productId)
+
+    is UserConfirmationReview.NftPurseDrain ->
+        TrUAPIConfirmation.NftPurseDrain(
+            requesterProductId = v1.callingProductId,
+            fromPurse = v1.fromPurse,
+            ownerProductId = (v1.owner as? NftPurseOwner.Product)?.v1,
+            itemCount = v1.itemCount,
+            destination = v1.destination.toDomain(),
+        )
+}
+
+@OptIn(ExperimentalStdlibApi::class)
+private fun NftPurseDrainDestination.toDomain(): TrUAPIConfirmation.NftPurseDrain.Destination = when (this) {
+    is NftPurseDrainDestination.Purse -> TrUAPIConfirmation.NftPurseDrain.Destination.Purse(purse)
+    is NftPurseDrainDestination.ExternalKey -> TrUAPIConfirmation.NftPurseDrain.Destination.ExternalKey(key.toHexString())
+    NftPurseDrainDestination.Cheque -> TrUAPIConfirmation.NftPurseDrain.Destination.Cheque
+    NftPurseDrainDestination.Refund -> TrUAPIConfirmation.NftPurseDrain.Destination.Refund
 }
 
 @OptIn(ExperimentalStdlibApi::class)

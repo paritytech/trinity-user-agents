@@ -126,6 +126,33 @@ final class ProductContentLoaderTests {
         #expect(environment.fetcher.fetchCount == 1)
     }
 
+    @Test func anAppOnlyProductDoesNotServeItsBaseArchiveAsAWidget() async throws {
+        let appId = try ProductId("app.\(productId.rawValue)")
+        defer { contentHashCache.removeContentHash(name: appId.rawValue) }
+        let appContentHash = try Data.randomOrError(of: 34)
+        contracts.set(
+            text: #"{"$v":1,"displayName":"Shop","description":"A shop","icon":{"cid":"bafyicon","format":"png"}}"#,
+            name: productId.rawValue,
+            key: ProductManifestRecords.rootKey
+        )
+        contracts.set(
+            text: #"{"$v":1,"kind":"app","appVersion":[1,0,0]}"#,
+            name: appId.rawValue,
+            key: ProductManifestRecords.executableKey
+        )
+        contracts.set(contentHash: appContentHash, name: appId.rawValue)
+        let environment = try Environment(self)
+
+        let content = try await environment.loader.open(productId, policy: .attempts(1))
+
+        #expect(content.contents == [appId: DotNsResolvedContent(
+            contentHash: appContentHash.toHex(),
+            localURL: storage.directory(for: appContentHash.toHex())
+        )])
+        #expect(throws: ProductResolutionError.self) { try content.content(for: .widget) }
+        #expect(environment.fetcher.fetchCount == 1)
+    }
+
     @Test func networkOpenReportsResolvingDownloadAndUnpacking() async throws {
         let environment = try Environment(self)
         let phases = PhaseRecorder()

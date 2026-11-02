@@ -552,6 +552,12 @@ mod runtime {
 			Some(identifier)
 		}
 
+		/// The public share host on this identity's network, excluding local development.
+		pub fn to_share_host(&self) -> Option<String> {
+			self.network_suffix()?;
+			Some(format!("{self}{PRODUCT_SHARE_SUFFIX}"))
+		}
+
 		/// Name an executable without changing its product's nested namespace.
 		pub fn executable(&self, kind: ExecutableKind) -> Result<Self, ProductIdError> {
 			format!("{}.{self}", kind.dotns_label()).parse()
@@ -584,6 +590,19 @@ mod runtime {
 			);
 			for input in ["browse.test.li", "browse.dot", "https://browse.dot.li", "localhost.li"] {
 				assert_eq!(ProductId::from_share_host(input), None, "{input}");
+			}
+		}
+
+		#[test]
+		fn share_hosts_preserve_the_product_network() {
+			for (input, expected) in [
+				("browse.dot", Some("browse.dot.li")),
+				("browse.paseo", Some("browse.paseo.li")),
+				("widget.browse.testnet", Some("widget.browse.testnet.li")),
+				("localhost", None),
+				("localhost:3000", None),
+			] {
+				assert_eq!(ProductId::for_test(input).to_share_host().as_deref(), expected);
 			}
 		}
 

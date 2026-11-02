@@ -27,10 +27,12 @@ class FileUploadWorker @AssistedInject constructor(
         runCancellableCatching { setForeground(getForegroundInfo()) }
             .onFailure { Timber.d(it, "Failed to promote upload worker to foreground; continuing as background work") }
 
-        val processed = runCancellableCatching { transferQueueProcessor.processPending(transferQueue) }
+        val processed = runCancellableCatching {
+            transferQueueProcessor.processPendingConcurrently(transferQueue)
 
-        transferQueue.soonestNextAttemptAt()?.let { soonest ->
-            enqueueDelayedTransfer<FileUploadWorker>(applicationContext, WORK_ID, soonest)
+            transferQueue.nextBackoffEndAt()?.let { backoffEnd ->
+                enqueueDelayedTransfer<FileUploadWorker>(applicationContext, WORK_ID, backoffEnd)
+            }
         }
 
         return processed.toWorkerResult(retryOnFailure = true)

@@ -146,6 +146,12 @@ pub fn parse_product_share_host(input: String) -> Option<ProductId> {
 	ProductId::from_share_host(&input)
 }
 
+/// The public share host for this identity, excluding local development.
+#[uniffi::export]
+pub fn product_id_share_host(product_id: ProductId) -> Option<String> {
+	product_id.to_share_host()
+}
+
 /// Share domains recognized by the canonical Rust parser.
 #[uniffi::export]
 pub fn product_share_hosts() -> Vec<String> {
@@ -390,6 +396,7 @@ pub fn has_trusted_remote_permissions(product_id: ProductId) -> bool {
 /// the `tracing` output, which on native routes to stderr (system logs on
 /// iOS/Android). Most native diagnostics flow through `on_core_log` instead;
 /// this controls the cross-platform `tracing` events shared with wasm.
+/// Warnings and errors reach `on_core_log` as well, whatever this level.
 #[uniffi::export]
 pub fn set_log_level(level: String) {
 	crate::logging::set_level_from_str(&level);

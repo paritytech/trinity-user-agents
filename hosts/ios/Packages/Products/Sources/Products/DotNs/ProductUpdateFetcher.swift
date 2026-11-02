@@ -102,7 +102,7 @@ private extension ProductUpdateFetcher {
         do {
             return try await dotNsResolver.stageContent(dotNsName: contentId.rawValue, onPhase: onPhase)
         } catch DotNsContractError.contentHashNotFound {
-            resolverFactory.logger.warning("Product \(productId) declares \(contentId) with no published content")
+            resolverFactory.logger.warning("Product \(productId) has no published content at \(contentId)")
             return nil
         }
     }

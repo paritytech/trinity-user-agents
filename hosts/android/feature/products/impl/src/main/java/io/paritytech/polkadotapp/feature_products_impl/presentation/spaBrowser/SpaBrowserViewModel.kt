@@ -111,6 +111,10 @@ class SpaBrowserViewModel @Inject constructor(
         productSessionController.reload()
     }
 
+    override fun onMinimizeClick() {
+        router.leaveBrowser()
+    }
+
     // Back unwinds the active tab's page history first, then the tab visit history (tabs stay open), and
     // only leaves the browser once neither has anything left.
     override fun onBackPressed() {

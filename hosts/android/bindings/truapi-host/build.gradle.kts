@@ -71,6 +71,7 @@ android {
                 hostShellDir.get().asFile.path,
             )
         }
+        getByName("test") { java.srcDirs("src/test/kotlin") }
         getByName("androidTest") { java.srcDirs("src/androidTest/kotlin") }
     }
 
@@ -223,6 +224,9 @@ dependencies {
 
     // OkHttp WebSocket backs the chain JSON-RPC transport (WebSocketChainProvider).
     implementation(libs.squareup.okhttp3.core)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.squareup.okhttp3.mockwebserver)
 
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.test.runner)

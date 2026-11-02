@@ -22,6 +22,10 @@ public struct ProductHost: Sendable {
     public func toDotDomain() -> ProductId {
         identifier
     }
+
+    public func toShareDomain() -> String {
+        productIdShareHost(productId: identifier)!
+    }
 }
 
 extension ProductHost {

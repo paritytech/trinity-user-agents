@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import ChainRegistry
+import Keystore_iOS
 import SubstrateSdk
 import TrUAPIHost
 @testable import polkadot_app
@@ -29,6 +30,7 @@ private func makeHostBridge(
         chainConnections: chainConnections,
         confirmationPresenter: confirmationPresenter,
         backedUpInstallation: TrUAPIBackedUpInstallation(),
+        encryptedStorage: TrUAPIEncryptedStorage(keychain: InMemoryKeychain()),
         logger: Logger.shared
     )
 }
