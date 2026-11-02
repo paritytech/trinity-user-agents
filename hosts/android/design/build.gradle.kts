@@ -34,6 +34,8 @@ dependencies {
 
     api(libs.kotlinx.collections.immutable)
 
+    implementation(libs.jakewharton.timber)
+
     debugApi(libs.androidx.compose.ui.tooling)
     nightlyApi(libs.androidx.compose.ui.tooling)
     "safetynetApi"(libs.androidx.compose.ui.tooling)
@@ -41,6 +43,7 @@ dependencies {
     testApi(libs.androidx.compose.ui.test)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(project(":test-shared"))
     debugImplementation(libs.androidx.compose.material.icons.extended)
     nightlyImplementation(libs.androidx.compose.material.icons.extended)
     "safetynetImplementation"(libs.androidx.compose.material.icons.extended)

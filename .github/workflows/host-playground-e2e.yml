@@ -3,7 +3,7 @@ name: host-playground e2e
 # Runs host-playground inside the iOS and Android host apps built from this commit.
 # See e2e/host-playground/README.md.
 # Each nightly calls this for its own platform and commit. on-label.yml calls
-# it for both platforms on a pull request labelled host-playground-e2e, never
+# it for both platforms on a pull request labelled ci:host-playground-e2e, never
 # one from a fork.
 on:
   workflow_dispatch:

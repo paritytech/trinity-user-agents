@@ -29,6 +29,17 @@ pub fn serialize_bytes<S: serde::Serializer>(
 	serializer.serialize_bytes(bytes)
 }
 
+/// [`serialize_bytes`] for bytes that may be absent: `undefined` in JS.
+pub fn serialize_optional_bytes<S: serde::Serializer>(
+	bytes: &Option<Vec<u8>>,
+	serializer: S,
+) -> Result<S::Ok, S::Error> {
+	match bytes {
+		Some(bytes) => serializer.serialize_bytes(bytes),
+		None => serializer.serialize_none(),
+	}
+}
+
 /// Which schemes a URL may use where it appears.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Schemes {
@@ -36,16 +47,22 @@ pub enum Schemes {
 	Web,
 	/// `stun`, for the URLs of a `stun` service.
 	Stun,
+	/// `https` on a hostname, or `http` on `localhost`, for a `web-gateway`, which takes a name's
+	/// label in front of its host and so cannot be a literal address.
+	Gateway,
 }
 
 /// Parses a URL and checks it against the RFC's scheme rule. Descriptors keep the text as written,
 /// so the text itself must be the URL: the parser would forgive whitespace, control characters
-/// and a missing `//`, which other readers refuse.
+/// and a missing `//`, which other readers refuse, and in `http(s)` and `ws(s)` URLs reads `\` as
+/// `/`, which RFC 3986 readers do not. A URL must also be ASCII, since IDNA readers map some
+/// hosts differently: `faß.example` is `xn--fa-hia.example` to the parser and `fass.example` to
+/// Python's standard library.
 pub fn url(value: &str, schemes: Schemes) -> Result<Url, Error> {
 	let invalid = || Error::InvalidUrl(value.to_owned());
 	if value
 		.chars()
-		.any(|character| character.is_whitespace() || character.is_control())
+		.any(|character| !character.is_ascii_graphic() || character == '\\')
 	{
 		return Err(invalid());
 	}
@@ -61,6 +78,13 @@ pub fn url(value: &str, schemes: Schemes) -> Result<Url, Error> {
 		(Schemes::Web, "https" | "wss") => web,
 		(Schemes::Web, "http" | "ws") => web && parsed.host().is_some_and(is_private_literal),
 		(Schemes::Web, _) => false,
+		(Schemes::Gateway, "https") => web && matches!(parsed.host(), Some(Host::Domain(_))),
+		// Also as written: this parser reads `\` as `/`, so `http://localhost\@evil.example/` is
+		// localhost here and evil.example to an RFC 3986 parser.
+		(Schemes::Gateway, "http") => {
+			web && parsed.host_str() == Some("localhost") && written_host(value) == "localhost"
+		},
+		(Schemes::Gateway, _) => false,
 	};
 	if allowed { Ok(parsed) } else { Err(invalid()) }
 }
@@ -119,6 +143,7 @@ mod tests {
 			"http://192.168.1.2",
 			"wss://8.8.8.8/",
 			"https://A.Example/",
+			"https://xn--fa-hia.example/caf%C3%A9",
 		] {
 			assert!(url(allowed, Schemes::Web).is_ok(), "{allowed}");
 		}
@@ -144,9 +169,15 @@ mod tests {
 
 	#[test]
 	fn a_url_is_read_as_written() {
-		for refused in
-			[" https://a.example/", "https://a.example/\n", "https://a.exa\tmple/", "wss:a.example"]
-		{
+		for refused in [
+			" https://a.example/",
+			"https://a.example/\n",
+			"https://a.exa\tmple/",
+			"wss:a.example",
+			"https://a.example\\@evil.example/",
+			"https://faß.example/",
+			"https://a.example/café",
+		] {
 			assert!(url(refused, Schemes::Web).is_err(), "{refused:?}");
 		}
 		assert!(url("stun:stun.example:3478 ", Schemes::Stun).is_err());

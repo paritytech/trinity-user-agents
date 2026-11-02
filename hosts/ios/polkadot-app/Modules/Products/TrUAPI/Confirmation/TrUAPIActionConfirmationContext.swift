@@ -20,6 +20,10 @@ enum NftPurseDrainTarget: Equatable, Sendable {
     case purse(UInt32)
     /// A key outside every purse, as hex.
     case key(hex: String)
+    /// A cheque the product hands to another user.
+    case cheque
+    /// The keys of a deposited cheque, back to its sender.
+    case refund
 }
 
 @MainActor

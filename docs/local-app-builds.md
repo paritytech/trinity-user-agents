@@ -8,9 +8,9 @@ To request the dev credentials a local iOS build needs, reach out to the host SD
 
 | | Local | CI |
 |---|---|---|
-| iOS simulator | Yes, with the dev credentials | `ios-simulator-build` label |
-| iPhone | | `ios-device-build` label, once your device is registered |
-| Android emulator or phone | | `android-device-build` label |
+| iOS simulator | Yes, with the dev credentials | `ci:ios-simulator` label |
+| iPhone | | `ci:ios-device` label, once your device is registered |
+| Android emulator or phone | | `ci:android-device` label |
 | TestFlight, Firebase App Distribution, Play Store, GitHub releases | | Release workflows only |
 
 Every build here talks to the dev backend, so its accounts and backups land there.
@@ -21,9 +21,9 @@ Add the label to your pull request. The run posts a comment on it with the downl
 
 | Label | Runs on | Delivers | Kept for |
 |---|---|---|---|
-| `ios-simulator-build` | macOS | An arm64 simulator `.app`, for Apple Silicon Macs | 14 days |
-| `ios-device-build` | macOS | A signed `.ipa` for registered devices | 14 days |
-| `android-device-build` | Linux | An APK signed with the shared develop key | 5 days |
+| `ci:ios-simulator` | macOS | An arm64 simulator `.app`, for Apple Silicon Macs | 14 days |
+| `ci:ios-device` | macOS | A signed `.ipa` for registered devices | 14 days |
+| `ci:android-device` | Linux | An APK signed with the shared develop key | 5 days |
 
 The Android build does not queue behind the macOS jobs.
 

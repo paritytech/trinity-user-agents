@@ -506,7 +506,15 @@ export type NftPurseDrainDestination =
   /**
    * This key, outside every purse.
    */
-  | { tag: "ExternalKey"; value: { key: Bytes32 } };
+  | { tag: "ExternalKey"; value: { key: Bytes32 } }
+  /**
+   * A cheque the product delivers to its recipient.
+   */
+  | { tag: "Cheque"; value?: undefined }
+  /**
+   * The keys of a deposited cheque, back to its sender.
+   */
+  | { tag: "Refund"; value?: undefined };
 
 /**
  * Review shown before a product moves items out of an NFT purse it does
@@ -1160,6 +1168,8 @@ export const NftPurseDrainDestination: S.Codec<NftPurseDrainDestination> =
       S.TaggedUnion({
         Purse: S.Struct({ purse: S.u32 }) as S.Codec<{ purse: number }>,
         ExternalKey: S.Struct({ key: Bytes32 }) as S.Codec<{ key: Bytes32 }>,
+        Cheque: S._void,
+        Refund: S._void,
       }),
   );
 

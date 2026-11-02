@@ -63,6 +63,44 @@ struct TrUAPIReviewPromptMapperTests {
     }
 
     @Test
+    func mapsNftPurseDrainIntoACheque() {
+        let request = mapper.makeActionRequest(from: NftPurseDrainReview(
+            callingProductId: "caller.dot",
+            fromPurse: 4,
+            owner: .product("other.dot"),
+            itemCount: 2,
+            destination: .cheque
+        ))
+
+        #expect(request == .nftPurseDrain(
+            productId: "caller.dot",
+            fromPurse: 4,
+            ownerProductId: "other.dot",
+            itemCount: 2,
+            destination: .cheque
+        ))
+    }
+
+    @Test
+    func mapsNftPurseDrainBackToAChequeSender() {
+        let request = mapper.makeActionRequest(from: NftPurseDrainReview(
+            callingProductId: "caller.dot",
+            fromPurse: 4,
+            owner: .product("other.dot"),
+            itemCount: 2,
+            destination: .refund
+        ))
+
+        #expect(request == .nftPurseDrain(
+            productId: "caller.dot",
+            fromPurse: 4,
+            ownerProductId: "other.dot",
+            itemCount: 2,
+            destination: .refund
+        ))
+    }
+
+    @Test
     func mapsAccountAliasToContextProductAccountAccess() {
         let request = mapper.makePermissionRequest(from: AccountAliasReview(
             callingProductId: "caller.dot",

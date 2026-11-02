@@ -657,24 +657,33 @@ fn statement_submit_ack_frame(request_id: &str) -> String {
 	.to_string()
 }
 
-/// JSON-RPC `newStatements` notification carrying SCALE statements.
+/// JSON-RPC `newStatements` notification carrying SCALE statements, the last
+/// page of the backlog.
 pub fn new_statements_frame(subscription_id: &str, statements: Vec<Vec<u8>>) -> String {
+	statement_page_frame(subscription_id, statements, Some(0))
+}
+
+/// JSON-RPC `newStatements` notification carrying SCALE statements, with
+/// `remaining` left out when `None`, as on a page of new statements.
+pub fn statement_page_frame(
+	subscription_id: &str,
+	statements: Vec<Vec<u8>>,
+	remaining: Option<u64>,
+) -> String {
 	let statements = statements
 		.into_iter()
 		.map(|statement| format!("0x{}", hex::encode(statement)))
 		.collect::<Vec<_>>();
+	let mut data = serde_json::json!({ "statements": statements });
+	if let Some(remaining) = remaining {
+		data["remaining"] = remaining.into();
+	}
 	serde_json::json!({
 		"jsonrpc": "2.0",
 		"method": "statement_subscribeStatement",
 		"params": {
 			"subscription": subscription_id,
-			"result": {
-				"event": "newStatements",
-				"data": {
-					"statements": statements,
-					"remaining": 0,
-				},
-			},
+			"result": { "event": "newStatements", "data": data },
 		},
 	})
 	.to_string()
@@ -685,7 +694,7 @@ fn sso_statement(
 	data: pairing::SsoStatementData,
 	nonce_seed: u8,
 ) -> Vec<u8> {
-	let mut nonce = [0; pairing::AEAD_NONCE_LEN];
+	let mut nonce = [0; crate::host_logic::x25519_seal::AEAD_NONCE_LEN];
 	nonce[0] = nonce_seed;
 	let encrypted = pairing::encrypt_session_statement_data_with_nonce(
 		session.sso.as_ref().unwrap(),
@@ -743,7 +752,7 @@ pub fn failed_wallet_handshake_statement(deeplink: &str, reason: &str) -> Vec<u8
 /// tests catch a session that keys device-scoped material off the SSO channel
 /// key by mistake.
 pub fn wallet_device_encryption_public_key() -> [u8; 32] {
-	pairing::x25519_public_key([9; 32])
+	crate::host_logic::x25519_seal::X25519PrivateKey::from([9; 32]).public_key().0
 }
 
 fn wallet_handshake_success() -> pairing::v2::Success {

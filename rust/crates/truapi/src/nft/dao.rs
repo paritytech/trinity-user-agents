@@ -6,6 +6,7 @@ use futures::stream::BoxStream;
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, named_params, types::Value};
 
 use super::{
+	handoff::HandoffTag,
 	holding::HeldItem,
 	keys::{ItemIndex, ItemKey, ItemSlot},
 	purse::{PurseId, PurseRecord, PurseTag},
@@ -156,10 +157,27 @@ pub fn key_standings(
 	keys: &[ItemKey],
 ) -> Result<HashMap<ItemKey, KeyStanding>, DbError> {
 	let mut statement = conn.prepare_cached(KEY_STANDINGS)?;
+	let params = named_params! { ":purse": purse.0, ":keys": key_array(keys) };
+	let rows = statement.query_map(params, key_standing_from_row)?;
+	Ok(rows.collect::<Result<_, _>>()?)
+}
+
+const MOVING_KEYS: &str = concat!(
+	"SELECT DISTINCT spent.key AS key FROM nft_consumption AS spent
+	JOIN durable_tx AS tx ON tx.id = spent.tx
+	WHERE spent.kind = 'INPUT' AND tx.status IN ",
+	live_statuses!(),
+	" AND spent.key IN rarray(:keys)"
+);
+
+/// Those of `keys` that a live transaction moves, whether the key is ours or
+/// one imported from a cheque.
+pub fn moving_keys(conn: &Connection, keys: &[ItemKey]) -> Result<Vec<ItemKey>, DbError> {
+	let mut statement = conn.prepare_cached(MOVING_KEYS)?;
 	let key_values: Rc<Vec<Value>> =
 		Rc::new(keys.iter().map(|key| Value::Blob(key.0.to_vec())).collect());
-	let params = named_params! { ":purse": purse.0, ":keys": key_values };
-	let rows = statement.query_map(params, key_standing_from_row)?;
+	let rows = statement
+		.query_map(named_params! { ":keys": key_values }, |row| Ok(ItemKey(row.get("key")?)))?;
 	Ok(rows.collect::<Result<_, _>>()?)
 }
 
@@ -176,6 +194,65 @@ pub fn insert_inputs(
 		statement.execute(named_params! { ":key": key.0, ":tx": spender.0 })?;
 	}
 	Ok(())
+}
+
+const TAG_IN_USE: &str = "SELECT EXISTS (SELECT 1 FROM nft_consumption WHERE handoff_tag = :tag)";
+
+/// Whether any key was handed off under `tag`.
+pub fn handoff_tag_in_use(conn: &Connection, tag: &HandoffTag) -> Result<bool, DbError> {
+	let mut statement = conn.prepare_cached(TAG_IN_USE)?;
+	Ok(statement.query_row(named_params! { ":tag": tag.0 }, |row| row.get(0))?)
+}
+
+const INSERT_HANDOFF: &str =
+	"INSERT INTO nft_consumption (key, kind, handoff_tag) VALUES (:key, 'HANDOFF', :tag)";
+
+/// Records that each of `keys` is handed off under `tag`.
+pub fn insert_handoffs(
+	tx: &Transaction<'_>,
+	keys: &[ItemKey],
+	tag: &HandoffTag,
+) -> Result<(), DbError> {
+	let mut statement = tx.prepare_cached(INSERT_HANDOFF)?;
+	for key in keys {
+		statement.execute(named_params! { ":key": key.0, ":tag": tag.0 })?;
+	}
+	Ok(())
+}
+
+const HANDOFF_KEYS: &str = "SELECT item.key AS key, item.purse AS purse,
+	item.installation AS installation, item.idx AS idx
+	FROM nft_consumption AS spent JOIN nft_item AS item ON item.key = spent.key
+	WHERE spent.kind = 'HANDOFF' AND spent.handoff_tag = :tag ORDER BY item.idx";
+
+/// Every key handed off under `tag`, with its slot, ordered by slot.
+pub fn handoff_keys(
+	conn: &Connection,
+	tag: &HandoffTag,
+) -> Result<Vec<(ItemKey, ItemSlot)>, DbError> {
+	let mut statement = conn.prepare_cached(HANDOFF_KEYS)?;
+	let rows = statement.query_map(named_params! { ":tag": tag.0 }, keyed_slot_from_row)?;
+	Ok(rows.collect::<Result<_, _>>()?)
+}
+
+const UNCONSUMED_KEYS: &str = "SELECT item.key AS key, item.purse AS purse,
+	item.installation AS installation, item.idx AS idx FROM nft_item AS item
+	WHERE item.key IN rarray(:keys) AND NOT EXISTS (SELECT 1 FROM nft_consumption AS spent
+	LEFT JOIN durable_tx AS tx ON tx.id = spent.tx
+	WHERE spent.key = item.key AND (spent.kind = 'HANDOFF' OR tx.status != 'FAILURE'))
+	ORDER BY item.key";
+
+/// Each of `keys` that is ours and that nothing consumed, with its slot,
+/// ordered by key. A key is consumed once it is handed off or spent by a
+/// transaction that did not fail, landed or not. No holding is needed.
+pub fn unconsumed_keys(
+	conn: &Connection,
+	keys: &[ItemKey],
+) -> Result<Vec<(ItemKey, ItemSlot)>, DbError> {
+	let mut statement = conn.prepare_cached(UNCONSUMED_KEYS)?;
+	let rows =
+		statement.query_map(named_params! { ":keys": key_array(keys) }, keyed_slot_from_row)?;
+	Ok(rows.collect::<Result<_, _>>()?)
 }
 
 const PURSE_OF: &str = "SELECT purse FROM nft_item WHERE key = :key";
@@ -227,12 +304,22 @@ fn key_standing_from_row(row: &Row<'_>) -> rusqlite::Result<(ItemKey, KeyStandin
 		return Ok((key, KeyStanding::Spent));
 	}
 	let instance: i64 = row.get("instance")?;
+	let (_, slot) = keyed_slot_from_row(row)?;
+	Ok((key, KeyStanding::Idle { instance: instance as u64, slot }))
+}
+
+/// `keys` as the value of an `rarray` parameter.
+fn key_array(keys: &[ItemKey]) -> Rc<Vec<Value>> {
+	Rc::new(keys.iter().map(|key| Value::Blob(key.0.to_vec())).collect())
+}
+
+fn keyed_slot_from_row(row: &Row<'_>) -> rusqlite::Result<(ItemKey, ItemSlot)> {
 	let slot = ItemSlot {
 		purse: PurseId(row.get("purse")?),
 		installation: InstallationId(row.get("installation")?),
 		index: ItemIndex(row.get("idx")?),
 	};
-	Ok((key, KeyStanding::Idle { instance: instance as u64, slot }))
+	Ok((ItemKey(row.get("key")?), slot))
 }
 
 fn purse_record(row: &Row<'_>) -> rusqlite::Result<PurseRecord> {
