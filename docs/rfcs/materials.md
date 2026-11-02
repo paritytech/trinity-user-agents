@@ -48,7 +48,7 @@ The design has five parts:
 
 A material is one UTF-8 text file in Shaderlab's
 [material format](https://github.com/paritytech/shaderlab-spa/blob/f8251d2bd546b8177a0b6e533552cb3c4e3b363a/docs/materials-platform/MATERIAL_FORMAT.md)
-version 1, as of commit `f8251d2b`. Its
+version 1, as of commit `f8251d2b`, including the versioning rules that document proposes. Its
 [core conformance vectors](https://github.com/paritytech/shaderlab-spa/tree/f8251d2bd546b8177a0b6e533552cb3c4e3b363a/tools/fixtures/conformance/core)
 are the test: a host that disagrees with a vector is wrong. Its ID is the BLAKE2b-256 hash of its exact canonical text.
 The same 32 bytes are its Bulletin preimage key, shown as a CIDv1 with the raw codec in base32.
@@ -72,9 +72,9 @@ Version 1 defines no features.
 included.
 
 ```rust
-/// A node in a product-rendered tree. The variants `Nil` to `Effect` are
-/// unchanged.
+/// A node in a product-rendered tree.
 pub enum RendererNode {
+    // Nil to Effect, as in the Unified Renderer.
     /// Draws its children, then runs its layers over them. As large as its
     /// children, which it places at the top start like a `Box`.
     Materials {
@@ -128,10 +128,11 @@ pub enum ImageRef {
 }
 ```
 
-The base image is the host's drawing of the node's children, clipped to the node's bounds, with whatever is behind a
-transparent part flattened into its colour. `r_base` and the first `r_input` are the base image, each layer's output is
-the next layer's `r_input`, and the last layer's output is drawn in the node's place. Layers have no blend modes: a
-material does its own image maths.
+The base image is the host's drawing of the node's children, clipped to the node's bounds. Behind a transparent part it
+holds what the tree draws behind the node, flattened into its colour, and black where the tree draws nothing. `r_base`
+and the first `r_input` are the base image, and each layer's output is the next layer's `r_input`. The last layer's
+output is drawn in the node's place, over what is behind it, using its alpha without premultiplication. Layers have no
+blend modes: a material does its own image maths.
 
 Any tree may carry `Materials`. A host draws them only on the surfaces it supports, Pocket cards first, and draws the
 content plain elsewhere.
@@ -152,42 +153,45 @@ translations. Image arguments load through the core image loader proposed in
 [#1800](https://github.com/paritytech/trinity-user-agents/pull/1800).
 
 A node that fails draws its content plain, and the rest of the tree draws as usual. The host logs one code on the
-device, and the product is not told.
+device, and the product is not told. A format error is logged with its own code beside the node's: `unsupported-version`
+and `unsupported-feature` under `unsupported`, the others under `invalid-material`.
 
 Failure codes, by cause:
 
-| Code               | Cause                                                                                                       |
-| ------------------ | ----------------------------------------------------------------------------------------------------------- |
-| `not-found`        | A material or image argument cannot be fetched, or has expired.                                             |
-| `integrity`        | Fetched bytes do not match their ID.                                                                        |
-| `invalid-material` | The material breaks the format.                                                                             |
-| `invalid-stack`    | The arguments do not match the declared parameters, or an image is not PNG, JPEG or WebP.                   |
-| `limit-exceeded`   | The node breaks a limit.                                                                                    |
-| `unsupported`      | The host does not read the version or a required feature, cannot compile it, or has materials switched off. |
+| Code               | Cause                                                                                                                                                  |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `not-found`        | A material or image argument cannot be fetched, or has expired.                                                                                        |
+| `integrity`        | Fetched bytes do not match their ID.                                                                                                                   |
+| `invalid-material` | The material breaks the format.                                                                                                                        |
+| `invalid-stack`    | The arguments do not match the declared parameters, an image is not PNG, JPEG or WebP, or the noise image fills a parameter other than `samplerFloat`. |
+| `limit-exceeded`   | The node breaks a limit.                                                                                                                               |
+| `unsupported`      | The host does not read the version or a required feature, cannot compile it, or has materials switched off.                                            |
 
 Compiling never blocks drawing or crashes the app. A material that crashed the app is not compiled again on that device.
 Materials can be switched off remotely.
 
 The limits are the same on every host:
 
-| Limit                                          | Value     |
-| ---------------------------------------------- | --------- |
-| Layers in one `Materials` node                 | 16        |
-| Layers in one tree, across all nodes           | 32        |
-| Distinct materials in one tree                 | 16        |
-| Image arguments per material                   | 13        |
-| `Materials` inside another `Materials`         | none      |
-| Tree size and depth, from the Unified Renderer | unchanged |
-| Material text and parameters, from the format  | unchanged |
+| Limit                                          | Value      |
+| ---------------------------------------------- | ---------- |
+| Layers in one `Materials` node                 | 16         |
+| Layers in one tree, across all nodes           | 32         |
+| Distinct materials in one tree                 | 16         |
+| Image arguments per material                   | 13         |
+| Pixels per side of one image argument          | 2048       |
+| Image argument pixels in one tree, all images  | 16 million |
+| `Materials` inside another `Materials`         | none       |
+| Tree size and depth, from the Unified Renderer | unchanged  |
+| Material text and parameters, from the format  | unchanged  |
 
-Limits are checked on the tree alone, and the per-tree totals count nodes in tree order, so a tree falls back at the
-same nodes on every host. A node over a limit draws its content plain with `limit-exceeded` and adds nothing to the
-totals. A nested `Materials` node falls back and its ancestor still draws.
+Limits are checked in tree order, and the per-tree totals count nodes in that order, so a tree falls back at the same
+nodes on every host. Image sizes are checked when each image loads. A node over a limit draws its content plain with
+`limit-exceeded` and adds nothing to the totals. A nested `Materials` node falls back and its ancestor still draws.
 
 When the materials on screen cost more than the device can afford, the host steps down in this order:
 
 - Stop drawing materials that are not seen.
-- Draw a layer that reads no time or orientation input once, not every frame.
+- Draw a node whose layers read no time or orientation input once, not every frame.
 - Draw fewer frames.
 - Draw fewer pixels, with `sl_resolution` reporting the pixels drawn.
 - Freeze: draw one still frame with the reduced-motion inputs.
@@ -205,16 +209,16 @@ with the same values for the same frame.
 
 Renderer inputs and their values:
 
-| Input            | Value                                                                                |
-| ---------------- | ------------------------------------------------------------------------------------ |
-| `r_base`         | The base image.                                                                      |
-| `r_input`        | The base image for the first layer, the previous layer's output for the others.      |
-| `r_noise`        | The body's noise image.                                                              |
-| `sl_time`        | Seconds since the body came on screen. It holds while paused and stops while hidden. |
-| `sl_tilt`        | `(gamma / 90, beta / 90)` from raw device angles, with beta not clipped.             |
-| `sl_orientation` | Raw `(alpha, beta, gamma)` in degrees.                                               |
-| `sl_rotation`    | Device-to-reference rotation in intrinsic Z-X′-Y″ order, column-major.               |
-| `sl_resolution`  | Width and height in the pixels drawn.                                                |
+| Input            | Value                                                                                        |
+| ---------------- | -------------------------------------------------------------------------------------------- |
+| `r_base`         | The base image.                                                                              |
+| `r_input`        | The base image for the first layer, the previous layer's output for the others.              |
+| `r_noise`        | The body's noise image.                                                                      |
+| `sl_time`        | Seconds since the body came on screen. It starts at zero each time the body comes on screen. |
+| `sl_tilt`        | `(gamma / 90, beta / 90)` from raw device angles, with beta not clipped.                     |
+| `sl_orientation` | Raw `(alpha, beta, gamma)` in degrees.                                                       |
+| `sl_rotation`    | Device-to-reference rotation in intrinsic Z-X′-Y″ order, column-major.                       |
+| `sl_resolution`  | Width and height in the pixels drawn.                                                        |
 
 Device angles are raw: no starting position, gain or smoothing. With reduced motion on, time and tilt are zero,
 orientation is zero and rotation is the identity.
@@ -223,9 +227,11 @@ The noise image is 1024 × 1024 bytes in row order, made of 32,768 chunks. Chunk
 as a little-endian u32 followed by `c` as a little-endian u32. It is sampled nearest with repeat. The seed is the 32-bit
 FNV-1a hash of the UTF-8 id that names the body in its `RenderContext`: `card_id`, `message_id` or `candidate_id`.
 
-Images follow Shaderlab's rules: channels are normalised, with no colour-space conversion and no premultiplication.
-Images sample linearly with clamped edges, the noise image nearest with repeat. Images between layers keep full float
-precision.
+Images follow Shaderlab's rules: channels are normalised, with no colour-space conversion and no premultiplication. Each
+image is read as four channels: a greyscale image repeats its value in red, green and blue, and an image without alpha
+has alpha 1. The noise image has one channel, so it fills only a `samplerFloat` parameter, and any other use fails with
+`invalid-stack`. Images sample linearly with clamped edges, the noise image nearest with repeat. Images between layers
+keep at least 16-bit float precision.
 
 ### Capability
 
@@ -274,7 +280,7 @@ host that receives a material it does not read still falls back with `unsupporte
   question.
 - A host built before the `Materials` question cannot decode it and answers an error, which products read as no. Open
   RFC [#420](https://github.com/paritytech/trinity-user-agents/pull/420) adds its question to `feature_supported` the
-  same way.
+  same way. Each new question takes the next free variant index when it lands, so neither changes the other's.
 - `Effect::Rainbow` stays. A product that draws it, such as the Humanity card, keeps sending it to hosts that answer no,
   and sends materials to hosts that answer yes.
 - Shaderlab's parser and the host's validation both refuse unknown directives and read `// @requires` before version 1
