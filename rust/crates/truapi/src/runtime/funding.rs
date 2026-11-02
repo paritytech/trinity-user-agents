@@ -77,8 +77,8 @@ use crate::{
 		retained,
 	},
 	platform::{
-		FundingPlatform, FundingPresentOutcome, FundingPresentation, ProductContext,
-		ProductExecutionKind, ProductId,
+		ExecutableKind, FundingPlatform, FundingPresentOutcome, FundingPresentation,
+		ProductContext, ProductId,
 	},
 	runtime::payment_id::host_payment_id,
 	time::{Backoff, retry},
@@ -1682,7 +1682,7 @@ impl RuntimeServices {
 			let registry = self.funding().clone();
 			let provider = match provider_id.parse::<ProductId>() {
 				Ok(product_id) => {
-					ProductContext::new_with_execution(product_id, ProductExecutionKind::Worker)
+					ProductContext::new_with_execution(product_id, ExecutableKind::Worker)
 				},
 				Err(error) => {
 					// Kept as followed: nothing could settle it, and following it
@@ -1752,7 +1752,7 @@ impl RuntimeServices {
 		let held = match provider_id.parse::<ProductId>() {
 			Ok(product_id) => {
 				let provider =
-					ProductContext::new_with_execution(product_id, ProductExecutionKind::Worker);
+					ProductContext::new_with_execution(product_id, ExecutableKind::Worker);
 				engine_holds(&self, &provider, direction, funds.host_id).await
 			},
 			Err(error) => Err(error.to_string()),
@@ -2274,10 +2274,7 @@ mod tests {
 	}
 
 	fn worker(provider_id: &str) -> ProductContext {
-		ProductContext::new_with_execution(
-			ProductId::for_test(provider_id),
-			ProductExecutionKind::Worker,
-		)
+		ProductContext::new_with_execution(ProductId::for_test(provider_id), ExecutableKind::Worker)
 	}
 
 	/// Funds a report named, as the core follows them.

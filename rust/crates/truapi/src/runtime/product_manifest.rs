@@ -20,7 +20,7 @@ use crate::{
 	chain_runtime::ChainRuntime,
 	dotns_views::{call_bytes32_string, network_tld, protocol_component, read_view, tld_node},
 	host_internal::{
-		permissions::account_access_status,
+		permissions::authorization_status,
 		product_manifest::{Granted, RootManifest},
 		sso_messages::RingVrfError,
 	},
@@ -550,10 +550,12 @@ async fn stored_account_decision(
 	// overrides is resolved by `ProductId::bare_label` for the target as well as
 	// the caller, so filing the refusal against the full target would let
 	// `app.peopl.dot` carry a grant the user refused for `peopl.dot`.
-	let candidates =
-		[(caller_id.bare_label(), target.bare_label()), (caller_id.as_str(), target.as_str())];
-	for (caller, target) in candidates {
-		match account_access_status(platform, caller, target).await {
+	let candidates = [
+		CoreStorageKey::product_account_access_authorization(caller_id, target),
+		CoreStorageKey::account_access_authorization(caller_id, target),
+	];
+	for key in candidates {
+		match authorization_status(platform, key).await {
 			Ok(PermissionAuthorizationStatus::Denied) => return StoredDecision::Denied,
 			Ok(
 				PermissionAuthorizationStatus::NotDetermined |
@@ -631,15 +633,7 @@ pub async fn require_context_access(
 	if access.caller == access.owner {
 		return Ok(());
 	}
-	// Normalized like every other identity the gate decided about. This is the
-	// one that arrives straight off the request payload, so leaving it raw would
-	// refuse a grantee for spelling its own context `DIM2.paseo`, the hazard
-	// the gate exists to remove, one layer down. A context that names no
-	// product has no manifest to consent with, so it fails closed.
-	let context_id = context
-		.product_id
-		.parse::<ProductId>()
-		.map_err(|_| RingVrfError::NotAllowlisted)?;
+	let context_id = &context.product_id;
 	// A product is all its executables, so `app.dim2.dot` is `dim2.dot`'s context
 	// and `app.peopl.dot` is the owner's. The network is not part of that: a
 	// grant published on `.dot` must not reach the pseudonym a namesake presents
@@ -659,7 +653,7 @@ pub async fn require_context_access(
 		Refusal { because: RefusedBecause::ContextOffNetwork, source: None, scopes: None }.warn(
 			&access.caller,
 			&access.owner,
-			Some(&context_id),
+			Some(context_id),
 		);
 		return Err(RingVrfError::NotAllowlisted);
 	}
@@ -667,7 +661,7 @@ pub async fn require_context_access(
 		services,
 		services.platform.as_ref(),
 		&access.caller,
-		&context_id,
+		context_id,
 		Granted::Context,
 		MANIFEST_RESOLUTION_CEILING,
 	)
@@ -686,7 +680,7 @@ pub async fn require_context_access(
 			Ok(())
 		},
 		Err(refusal) => {
-			refusal.warn(&access.caller, &access.owner, Some(&context_id));
+			refusal.warn(&access.caller, &access.owner, Some(context_id));
 			Err(RingVrfError::NotAllowlisted)
 		},
 	}
@@ -853,7 +847,7 @@ pub async fn worker_manifest(
 /// Cache key for a product's Worker manifest, keyed by bare label as
 /// [`CoreStorageKey::product_manifest`] is.
 pub fn worker_manifest_cache_key(product_id: &ProductId) -> CoreStorageKey {
-	CoreStorageKey::WorkerManifest { product_id: product_id.bare_label().to_string() }
+	CoreStorageKey::WorkerManifest { product_label: product_id.bare_label().to_string() }
 }
 
 /// Where [`cached_dotns_json`] read its answer.

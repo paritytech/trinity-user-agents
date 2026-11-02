@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import UIKit
 import PolkadotUI
 import Products

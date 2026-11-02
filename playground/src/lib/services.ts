@@ -2,12 +2,12 @@ import { services as generatedServices } from "@parity/truapi/playground/service
 import { servicesForExecution } from "@parity/truapi/playground/services-types";
 import type {
   MethodInfo,
-  ProductExecutionKind,
+  ExecutableKind,
   ServiceInfo,
 } from "@parity/truapi/playground/services-types";
 import { WEBRTC_SERVICE } from "./webrtc-check";
 
-export type { MethodInfo, ProductExecutionKind, ServiceInfo };
+export type { MethodInfo, ExecutableKind, ServiceInfo };
 export { servicesForExecution };
 
 // Generated App-compatible services plus the synthetic WebRTC browser-capability

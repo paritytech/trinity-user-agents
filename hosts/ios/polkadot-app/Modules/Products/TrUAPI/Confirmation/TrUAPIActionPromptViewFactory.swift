@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation_iOS
 import PolkadotUI
 import Products
@@ -23,14 +24,14 @@ enum TrUAPIActionPromptViewFactory {
         switch context.request {
         case let .productSubtree(productId):
             title = String(localized: .Products.actionProductSubtreeTitle)
-            body = String(localized: .Products.actionProductSubtreeBody(productId: productId))
+            body = String(localized: .Products.actionProductSubtreeBody(productId: productId.rawValue))
             iconName = "person.crop.circle"
         case let .nftPurseDrain(productId, fromPurse, ownerProductId, itemCount, destination):
             title = String(localized: .Products.actionNftPurseDrainTitle)
             body = makeNftPurseDrainBody(
                 productId: productId,
                 fromPurse: fromPurse,
-                owner: ownerProductId ?? String(localized: .Products.actionNftPurseDrainOwnerYou),
+                owner: ownerProductId?.rawValue ?? String(localized: .Products.actionNftPurseDrainOwnerYou),
                 itemCount: itemCount,
                 destination: destination
             )
@@ -66,7 +67,7 @@ enum TrUAPIActionPromptViewFactory {
         switch destination {
         case let .purse(toPurse):
             String(localized: .Products.actionNftPurseDrainToPurseBody(
-                productId: productId,
+                productId: productId.rawValue,
                 itemCount: String(itemCount),
                 fromPurse: String(fromPurse),
                 owner: owner,
@@ -74,7 +75,7 @@ enum TrUAPIActionPromptViewFactory {
             ))
         case let .key(hex):
             String(localized: .Products.actionNftPurseDrainToKeyBody(
-                productId: productId,
+                productId: productId.rawValue,
                 itemCount: String(itemCount),
                 fromPurse: String(fromPurse),
                 owner: owner,
@@ -82,14 +83,14 @@ enum TrUAPIActionPromptViewFactory {
             ))
         case .cheque:
             String(localized: .Products.actionNftPurseDrainToChequeBody(
-                productId: productId,
+                productId: productId.rawValue,
                 itemCount: String(itemCount),
                 fromPurse: String(fromPurse),
                 owner: owner
             ))
         case .refund:
             String(localized: .Products.actionNftPurseDrainToRefundBody(
-                productId: productId,
+                productId: productId.rawValue,
                 itemCount: String(itemCount),
                 fromPurse: String(fromPurse),
                 owner: owner

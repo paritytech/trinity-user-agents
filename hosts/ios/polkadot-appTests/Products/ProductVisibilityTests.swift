@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Testing
 import UIKit
 @testable import polkadot_app
@@ -7,20 +8,23 @@ import UIKit
 /// the camera.
 @MainActor
 struct ProductVisibilityTests {
+    private let productId = try! ProductId("shop.dot")
+    private let otherProductId = try! ProductId("other.dot")
+
     @Test("An App may ask only while its own page is the top screen of the app in front")
     func appNeedsItsPageOnTop() async throws {
-        let page = StubProductPage(productId: "shop.dot")
+        let page = StubProductPage(productId: productId)
         let window = try makeTestWindow(root: page)
         let application = StubApplication()
         let visibility = ProductVisibility(application: application, window: { window })
 
-        let onTop = visibility.canShow(productId: "shop.dot", executionKind: .app)
-        let otherProduct = visibility.canShow(productId: "other.dot", executionKind: .app)
+        let onTop = visibility.canShow(productId: productId, executionKind: .app)
+        let otherProduct = visibility.canShow(productId: otherProductId, executionKind: .app)
         application.applicationState = .inactive
-        let appBehind = visibility.canShow(productId: "shop.dot", executionKind: .app)
+        let appBehind = visibility.canShow(productId: productId, executionKind: .app)
         application.applicationState = .active
         await present(UIViewController(), over: page)
-        let covered = visibility.canShow(productId: "shop.dot", executionKind: .app)
+        let covered = visibility.canShow(productId: productId, executionKind: .app)
 
         #expect([onTop, otherProduct, appBehind, covered] == [true, false, false, false])
     }
@@ -31,9 +35,9 @@ struct ProductVisibilityTests {
         let application = StubApplication()
         let visibility = ProductVisibility(application: application, window: { window })
 
-        let inFront = visibility.canShow(productId: "shop.dot", executionKind: .worker)
+        let inFront = visibility.canShow(productId: productId, executionKind: .worker)
         application.applicationState = .background
-        let inBackground = visibility.canShow(productId: "shop.dot", executionKind: .worker)
+        let inBackground = visibility.canShow(productId: productId, executionKind: .worker)
 
         #expect([inFront, inBackground] == [true, false])
     }
@@ -41,16 +45,16 @@ struct ProductVisibilityTests {
     @Test("A Widget's page may sit inside the screen that shows it, as on an open Pocket card")
     func widgetPageInsideItsScreen() throws {
         let screen = UIViewController()
-        screen.addChild(StubProductPage(productId: "shop.dot"))
+        screen.addChild(StubProductPage(productId: productId))
         let window = try makeTestWindow(root: screen)
         let visibility = ProductVisibility(application: StubApplication(), window: { window })
 
-        #expect(visibility.canShow(productId: "shop.dot", executionKind: .widget))
+        #expect(visibility.canShow(productId: productId, executionKind: .widget))
     }
 
     @Test("Only a screen still opening or closing is waited for, so a hidden product is refused at once")
     func hiddenProductIsNotWaitedFor() async throws {
-        let page = StubProductPage(productId: "shop.dot")
+        let page = StubProductPage(productId: productId)
         let window = try makeTestWindow(root: page)
         let application = StubApplication()
         let visibility = ProductVisibility(application: application, window: { window })
@@ -58,11 +62,11 @@ struct ProductVisibilityTests {
         let clock = ContinuousClock()
 
         let covered = await clock.measure {
-            _ = await visibility.waitUntilVisible(productId: "shop.dot", executionKind: .app)
+            _ = await visibility.waitUntilVisible(productId: productId, executionKind: .app)
         }
         application.applicationState = .background
         let background = await clock.measure {
-            _ = await visibility.waitUntilVisible(productId: "shop.dot", executionKind: .worker)
+            _ = await visibility.waitUntilVisible(productId: productId, executionKind: .worker)
         }
 
         #expect(covered < .milliseconds(300))
@@ -71,13 +75,13 @@ struct ProductVisibilityTests {
 
     @Test("A screen closing over the page holds the request until it has gone")
     func closingScreenIsWaitedFor() async throws {
-        let page = StubProductPage(productId: "shop.dot")
+        let page = StubProductPage(productId: productId)
         let window = try makeTestWindow(root: page)
         let visibility = ProductVisibility(application: StubApplication(), window: { window })
         await present(UIViewController(), over: page)
 
         page.dismiss(animated: true)
-        let visible = await visibility.waitUntilVisible(productId: "shop.dot", executionKind: .app)
+        let visible = await visibility.waitUntilVisible(productId: productId, executionKind: .app)
 
         #expect(visible)
     }
