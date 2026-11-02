@@ -257,7 +257,8 @@ private func session(_ intent: String, stage: FundingStage) -> FundingSession {
         updates: [],
         started: [],
         choice: FundingChoice(quote: quote(send: "50000000"), rail: .card, asset: "EUR", network: nil),
-        refund: nil
+        refund: nil,
+        detail: nil
     )
 }
 

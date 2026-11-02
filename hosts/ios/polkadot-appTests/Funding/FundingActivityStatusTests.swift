@@ -117,7 +117,8 @@ private extension FundingActivityStatusTests {
             updates: [],
             started: [],
             choice: FundingChoice(quote: quote, rail: .bank, asset: "EUR", network: nil),
-            refund: nil
+            refund: nil,
+            detail: nil
         )
     }
 
@@ -130,6 +131,7 @@ private extension FundingActivityStatusTests {
             steps: [FundingProgressStep(step: .started, reachedAtMs: Self.openedAtMs)],
             band: .awaitingPayment,
             lastHeardAtMs: nil,
+            detail: nil,
             failedAtMs: nil,
             transactionId: nil,
             reference: nil,
