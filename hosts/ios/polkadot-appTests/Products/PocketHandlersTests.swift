@@ -155,7 +155,7 @@ final class StubPublishedCards: PublishedPocketCardsResolving, @unchecked Sendab
 
         return PublishedPocketCard(
             productId: productId,
-            productName: productId,
+            productName: productId.rawValue,
             workerContentId: productId,
             definition: PocketCardDefinition(id: cardId, title: "Card", preview: .archive(path: "face.json"))
         )
