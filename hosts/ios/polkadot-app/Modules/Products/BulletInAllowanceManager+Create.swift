@@ -56,14 +56,14 @@ extension BulletInAllowanceManager {
         }
 
         let chainTimeProvider = ChainTimeProvider(
-            chainId: AppConfig.Chains.usernameChain,
+            chainId: AppConfig.Chains.peopleChain,
             chainRegistry: chainRegistry,
             storageRequestFactory: storageRequestFactory
         )
 
         let infoProvider = BulletInSlotInfoProvider(
             bulletInChainId: AppConfig.Chains.bulletInChain,
-            peopleChainId: AppConfig.Chains.usernameChain,
+            peopleChainId: AppConfig.Chains.peopleChain,
             chainRegistry: chainRegistry,
             keyResolver: keyResolver,
             operationQueue: operationQueue,
@@ -73,7 +73,7 @@ extension BulletInAllowanceManager {
         )
 
         let allocator = BulletinSlotAllocator(
-            submissionChainId: AppConfig.Chains.usernameChain,
+            submissionChainId: AppConfig.Chains.peopleChain,
             slotInfoProvider: infoProvider,
             originFactory: originFactory,
             submitter: SlotAssignmentSubmitter(monitorFactory: monitorFactory)

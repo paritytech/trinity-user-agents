@@ -59,6 +59,8 @@ interface CoinageAssetLedger {
      */
     suspend fun markHandedOff(assets: List<LedgerAsset>): Result<Unit>
 
+    suspend fun markHandedOffCommitted(assets: List<LedgerAsset>): Result<Unit>
+
     /** Makes the marks on [keys] final. */
     suspend fun commitHandoffs(keys: List<AssetPublicKey>): Result<Unit>
 

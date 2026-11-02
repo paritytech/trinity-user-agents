@@ -3,7 +3,7 @@
 //! `async_trait`.
 
 use truapi::platform::{
-	HostIdentity, HostInfo, PairingHostConfig, Platform, PlatformInfo, ProductContext,
+	HostIdentity, HostInfo, PairingHostConfig, Platform, PlatformInfo, ProductId, ProductIdError,
 	ProductStorageKey, RuntimeConfigValidationError,
 };
 
@@ -106,48 +106,41 @@ fn pairing_config_validation_cases() {
 }
 
 #[test]
-fn product_context_validation_cases() {
-	let dotli = ProductContext::new("Dotli.DOT".to_string()).expect("dot product id is valid");
-	assert_eq!(dotli.product_id, "dotli.dot");
-
-	let localhost =
-		ProductContext::new(" localhost:3000 ".to_string()).expect("localhost product id is valid");
-	assert_eq!(localhost.product_id, "localhost:3000");
-
-	assert_eq!(
-		ProductContext::new("localhost".to_string()).map(|context| context.product_id),
-		Ok("localhost".to_string())
-	);
-	assert_eq!(ProductContext::new("dotli.dot".to_string()).map(|_| ()), Ok(()));
-	assert_eq!(
-		ProductContext::new("Host-Playground44.PASEO".to_string())
-			.map(|context| context.product_id),
-		Ok("host-playground44.paseo".to_string())
-	);
-	assert_eq!(
-		ProductContext::new("Browse.TESTNET".to_string()).map(|context| context.product_id),
-		Ok("browse.testnet".to_string())
-	);
+fn product_id_validation_cases() {
+	for (raw, normalized) in [
+		("Dotli.DOT", "dotli.dot"),
+		(" localhost:3000 ", "localhost:3000"),
+		("localhost", "localhost"),
+		("dotli.dot", "dotli.dot"),
+		("Host-Playground44.PASEO", "host-playground44.paseo"),
+		("Browse.TESTNET", "browse.testnet"),
+	] {
+		assert_eq!(
+			raw.parse::<ProductId>().map(String::from),
+			Ok(normalized.to_string()),
+			"{raw:?}"
+		);
+	}
 	for domain in ["example.com", "example.org", "dotli.dotty"] {
 		assert_eq!(
-			ProductContext::new(domain.to_string()).map(|_| ()),
-			Err(RuntimeConfigValidationError::InvalidProductId { product_id: domain.to_string() }),
+			domain.parse::<ProductId>(),
+			Err(ProductIdError::Invalid { product_id: domain.to_string() }),
 			"{domain} must not be accepted as a product identifier"
 		);
 	}
-	assert_eq!(
-		ProductContext::new(" ".to_string()).map(|_| ()),
-		Err(RuntimeConfigValidationError::EmptyField { field: "product_id" })
-	);
+	assert_eq!(" ".parse::<ProductId>(), Err(ProductIdError::Empty));
 }
 
 #[test]
 fn product_storage_key_round_trips_scopes_and_arbitrary_keys() {
-	let key = ProductStorageKey::new("Tést.DOT", "settings:theme").expect("valid product key");
+	let key = ProductStorageKey::new(
+		"Test.DOT".parse::<ProductId>().expect("valid product key"),
+		"settings:theme",
+	);
 	let encoded = key.encode();
 	let decoded = ProductStorageKey::decode(&encoded).expect("decode product key");
 
-	assert_eq!(decoded.product_id(), "tést.dot");
+	assert_eq!(decoded.product_id().as_str(), "test.dot");
 	assert_eq!(decoded.key(), "settings:theme");
 	assert_eq!(decoded, key);
 	assert!(ProductStorageKey::decode("unknown:key").is_err());

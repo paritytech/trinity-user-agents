@@ -27,7 +27,7 @@ class ProductExternalExtensionProviderTest {
     private val hostPlacedProducts: HostPlacedProducts = mockk()
     private val provider = ProductExternalExtensionProvider(
         integrationRepository,
-        ProductBotFactory(mockk<Context>(relaxed = true), mockk()),
+        ProductBotFactory(mockk<Context>(relaxed = true), mockk(), mockk(), mockk()),
         hostPlacedProducts,
     )
 

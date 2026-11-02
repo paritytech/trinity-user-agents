@@ -11,6 +11,8 @@ typealias TrUAPIHostAllocatableResource = AllocatableResource
 typealias TrUAPIHostVrfTranscriptItem = VrfTranscriptItem
 typealias TrUAPIHostSignVrfRequest = HostAccountSignVrfRequest
 typealias TrUAPIHostRingLocation = RingLocation
+typealias TrUAPIHostPaymentTopUpSource = PaymentTopUpSource
+typealias TrUAPIHostPaymentTopUpError = HostPaymentTopUpError
 
 // Renderer leaves, named apart so SwiftUI-importing files can extend them
 // without colliding with SwiftUI's own types of the same name.

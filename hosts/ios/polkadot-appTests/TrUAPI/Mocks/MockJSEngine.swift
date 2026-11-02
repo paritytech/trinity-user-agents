@@ -58,4 +58,17 @@ final class MockJSEngine: JSEngineProtocol, @unchecked Sendable {
     func registerJSDeviceCapabilityHandler(_ handler: @escaping JSDeviceCapabilityHandler) async {
         deviceCapabilityHandler = handler
     }
+
+    private var terminationHandler: (@Sendable () -> Void)?
+
+    func onTermination(_ handler: @escaping @Sendable () -> Void) async {
+        terminationHandler = handler
+    }
+
+    /// Dies the way a web view does when iOS kills its content process.
+    func terminate() {
+        let handler = terminationHandler
+        terminationHandler = nil
+        handler?()
+    }
 }

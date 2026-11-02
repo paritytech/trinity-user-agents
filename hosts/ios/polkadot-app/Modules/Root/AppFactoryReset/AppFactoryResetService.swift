@@ -13,6 +13,7 @@
     final class AppFactoryResetService {
         private let tldProvider: DotNsTldProviding
         private let remoteConfig: AppliedConfigDiscarding
+        private let initializer: AppSharedInitializing
         private let mnemonicBackupHelper: MnemonicBackupHelperProtocol
         private let notificationCenter: UNUserNotificationCenter
         private let logger: LoggerProtocol
@@ -20,18 +21,23 @@
         init(
             tldProvider: DotNsTldProviding,
             remoteConfig: AppliedConfigDiscarding,
+            initializer: AppSharedInitializing,
             mnemonicBackupHelper: MnemonicBackupHelperProtocol,
             notificationCenter: UNUserNotificationCenter = .current(),
             logger: LoggerProtocol
         ) {
             self.tldProvider = tldProvider
             self.remoteConfig = remoteConfig
+            self.initializer = initializer
             self.mnemonicBackupHelper = mnemonicBackupHelper
             self.notificationCenter = notificationCenter
             self.logger = logger
         }
 
         func resetAllData() async {
+            // The process survives the reset; the services must not outlive the data they were built on.
+            await DashboardServices.manager.reset()
+
             if #available(iOS 26.0, *) {
                 clearAlarmKitAlarms()
             }
@@ -43,6 +49,8 @@
             deleteCloudBackup()
             deleteCoreDataDatabases()
             clearSDKCaches()
+            // Last: applying a config syncs the chain registry, which must not write into stores being deleted.
+            await initializer.refetchConfig()
 
             logger.debug("App reset performed")
         }

@@ -1,9 +1,6 @@
 package io.paritytech.polkadotapp.app.root.presentation.root.compose
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -15,28 +12,29 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.exclude
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.tappableElement
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,13 +44,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -62,38 +55,48 @@ import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.util.fastForEach
+import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
-import io.paritytech.polkadotapp.app.root.presentation.main.compose.components.ScannerIconWithTooltip
+import io.paritytech.polkadotapp.app.root.presentation.main.compose.components.ScannerTooltip
+import io.paritytech.polkadotapp.app.root.presentation.main.compose.components.rememberScannerIconColor
 import io.paritytech.polkadotapp.app.root.presentation.main.compose.icon
 import io.paritytech.polkadotapp.app.root.presentation.main.compose.title
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.components.ScanPanel
+import io.paritytech.polkadotapp.common.presentation.tabbar.DockletSlotTarget
+import io.paritytech.polkadotapp.common.presentation.tabbar.dockletHighlightedSlot
 import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
+import io.paritytech.polkadotapp.design.components.docklet.Docklet
+import io.paritytech.polkadotapp.design.components.docklet.DockletBackdrop
+import io.paritytech.polkadotapp.design.components.docklet.DockletCard
+import io.paritytech.polkadotapp.design.components.docklet.DockletCardFrames
+import io.paritytech.polkadotapp.design.components.docklet.DockletCardState
+import io.paritytech.polkadotapp.design.components.docklet.DockletFrame
+import io.paritytech.polkadotapp.design.components.docklet.DockletGeometry
+import io.paritytech.polkadotapp.design.components.docklet.DockletSlot
+import io.paritytech.polkadotapp.design.components.docklet.DockletStep
+import io.paritytech.polkadotapp.design.components.docklet.liftDockWhileKeyboardLeaves
+import io.paritytech.polkadotapp.design.components.docklet.rememberDockletKeyboardHeight
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.NetworkStatus
-import io.paritytech.polkadotapp.design.components.icon.vectors.TabsBox
-import io.paritytech.polkadotapp.design.components.icon.vectors.TabsDigitBox
 import io.paritytech.polkadotapp.design.components.icon.vectors.Trash
 import io.paritytech.polkadotapp.design.components.image.NovaAsyncImage
-import io.paritytech.polkadotapp.design.components.navigationbar.PolkadotNavigationBar
-import io.paritytech.polkadotapp.design.components.navigationbar.PolkadotNavigationBarItem
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
-import io.paritytech.polkadotapp.design.utils.modifyIf
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.search.compose.AddContactStep
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthPanel
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicatorsModel
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.TabInfo
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableMap
-import kotlinx.coroutines.flow.first
+import kotlinx.collections.immutable.toImmutableList
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private const val APPS_PER_ROW = 5
@@ -103,31 +106,20 @@ private val AppIconSize = 24.dp
 // the same size whether it shows one row of products or the "no products" hint.
 private val EmptyAppsRowHeight = 44.dp
 
-// Height of the center pill (scanner + open-tabs). Matches the tab row so the whole bar sits at 62dp
-// (54 + the nav bar's 4dp top/bottom padding).
-private val CenterPillHeight = 54.dp
-
-// Corner radius shared by the bar (a pill at its height) and the products container — same rounding.
-private val NavBarCornerRadius = 32.dp
+private val PanelCornerRadius = 32.dp
 
 private const val CAMERA_START_AT_OPENING_FRACTION = 0.3f
 
 private val AppMenuIconSize = 20.dp
 private val AppMenuShadowElevation = 8.dp
 
-/**
- * The global navigation bar: the available tab buttons around a center pill that holds the scanner and,
- * beside it, the open-tabs button (a stacked-cards icon with the tab count — white while the apps grid is
- * expanded, otherwise the same muted colour as the scanner). Without the Browse tab there are no product
- * tabs to manage, so the pill keeps the scanner alone.
- *
- * With [FeatureOption.FULL_TAB_BAR] off the bar is reduced to icons: no item labels, and the scanner drops
- * the pill to sit as a bare icon — unless [FeatureOption.TAB_BAR_CONNECTIVITY_INDICATOR] is on, whose design
- * keeps the pill and the full width with the labels still off.
- */
+private val PillBodyHeight = DockletGeometry.PillDiameter - DockletGeometry.LobeDepth
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun RootNavBar(
-    modifier: Modifier = Modifier,
+    cardState: DockletCardState,
+    backdrop: DockletBackdrop?,
     currentTab: BottomTab,
     tabWarnings: ImmutableMap<BottomTab, Boolean>,
     apps: ImmutableList<TabInfo>,
@@ -135,177 +127,156 @@ fun RootNavBar(
     chainsHealth: ChainHealthIndicatorsModel,
     networkStatusExpanded: Boolean,
     scannerTooltipVisible: Boolean,
-    scanExpanded: Boolean,
-    onTabSelected: (BottomTab) -> Unit,
-    onCountClicked: () -> Unit,
-    onNetworkStatusClicked: () -> Unit,
+    keyboardRequested: Boolean,
+    pullState: TabBarPullState,
+    forceShown: Boolean,
+    onSlotClick: (DockletSlotTarget) -> Unit,
+    onOpenCard: (DockletStep) -> Unit,
+    onCloseCard: () -> Unit,
+    onCardStepChange: (DockletStep) -> Unit,
+    onKeyboardRequest: () -> Unit,
     onAppClick: (Long) -> Unit,
     onAppClose: (Long) -> Unit,
-    onScanClicked: () -> Unit,
     onScanHandled: (navigate: (() -> Unit)?) -> Unit,
-    onScanDismiss: () -> Unit,
     onScannerTooltipDismiss: () -> Unit,
     onRestingHeightChange: (Dp) -> Unit,
+    onBarWidthChange: (Float) -> Unit,
 ) {
-    val availableTabs = BottomTab.availableEntries
-    val fullTabBar = FeatureOption.FULL_TAB_BAR.isEnabled
-    val networkStatusItem = FeatureOption.TAB_BAR_CONNECTIVITY_INDICATOR.isEnabled
-    val pillBar = fullTabBar || networkStatusItem
-    val networkStatusUp = networkStatusItem && networkStatusExpanded
-    val networkStatusSlot = availableTabs.size
-    val selectedIndex = if (networkStatusUp) networkStatusSlot else availableTabs.indexOf(currentTab).coerceAtLeast(0)
-
-    val scanPanel = updateTransition(targetState = scanExpanded, label = "ScanPanel")
-    val scanPanelShown = scanPanel.currentState || scanPanel.targetState
-    val focusManager = LocalFocusManager.current
-
-    // The scan panel holds the username field. Its focus goes as soon as the panel starts closing, so the keyboard
-    // leaves while the panel animates out and the bar, still padded above it, rides down with it.
-    LaunchedEffect(scanExpanded) {
-        if (!scanExpanded) focusManager.clearFocus()
-    }
-
     val density = LocalDensity.current
-    var tabRowHeight by remember { mutableStateOf(0.dp) }
-    val topPadding = PolkadotTheme.spacings.small
-    val bottomPadding = PolkadotTheme.spacings.small
-
-    val navigationBarsBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val navigationInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val threeButtonNavigation = WindowInsets.tappableElement.asPaddingValues().calculateBottomPadding() > 0.dp
+    val statusInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val keyboardHeight = rememberDockletKeyboardHeight()
+    val networkStatusItem = FeatureOption.TAB_BAR_CONNECTIVITY_INDICATOR.isEnabled
     val currentOnRestingHeightChange by rememberUpdatedState(onRestingHeightChange)
-    LaunchedEffect(tabRowHeight, navigationBarsBottom) {
-        if (tabRowHeight > 0.dp) {
-            currentOnRestingHeightChange(topPadding + tabRowHeight + bottomPadding + navigationBarsBottom)
+    val currentOnBarWidthChange by rememberUpdatedState(onBarWidthChange)
+
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val dock = DockletGeometry.dockFrame(maxWidth, maxHeight, navigationInset, threeButtonNavigation)
+        val screenHeight = maxHeight
+        val keyboardTop = { screenHeight - keyboardHeight() }
+        var dockOnKeyboard by remember { mutableStateOf(false) }
+        LaunchedEffect(cardState, keyboardHeight) {
+            liftDockWhileKeyboardLeaves(
+                cardOpen = snapshotFlow { cardState.isOpen },
+                keyboardUp = snapshotFlow { keyboardHeight() > 0.dp },
+                onLift = { dockOnKeyboard = it },
+            )
         }
-    }
-
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(top = topPadding, bottom = bottomPadding)
-            .navigationBarsPadding()
-            .modifyIf(scanPanelShown) {
-                windowInsetsPadding(WindowInsets.ime.exclude(WindowInsets(bottom = tabRowHeight + bottomPadding)))
-            },
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        ExpandablePanel(visible = appsExpanded) {
-            OpenAppsRow(apps = apps, onAppClick = onAppClick, onAppClose = onAppClose)
-        }
-        if (networkStatusItem) {
-            ExpandablePanel(visible = networkStatusExpanded) {
-                ChainHealthPanel(model = chainsHealth)
-            }
-        }
-
-        // Weighted so that on a short screen the panel, not the bar below it, gives up height.
-        BarContainer(modifier = Modifier.weight(1f, fill = false)) {
-            scanPanel.AnimatedVisibility(
-                visible = { it },
-                modifier = Modifier.weight(1f, fill = false),
-                enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
-                exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut(),
-            ) {
-                var cameraActive by remember { mutableStateOf(false) }
-                LaunchedEffect(scanExpanded) {
-                    if (scanExpanded) {
-                        snapshotFlow {
-                            val playTime = scanPanel.playTimeNanos
-                            scanPanel.currentState ||
-                                (playTime > 0 && playTime >= scanPanel.totalDurationNanos * CAMERA_START_AT_OPENING_FRACTION)
-                        }.first { it }
-                        cameraActive = true
-                    }
-                }
-
-                BackHandler(enabled = scanExpanded, onBack = onScanDismiss)
-
-                val dragState = rememberScanPanelDragState(onDismiss = onScanDismiss)
-                LaunchedEffect(scanExpanded) {
-                    if (scanExpanded) dragState.reset()
-                }
-
-                val panelPadding = PolkadotTheme.spacings.small
-                ScanPanel(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .dragToDismiss(dragState)
-                        .padding(panelPadding),
-                    scannerShape = RoundedCornerShape(NavBarCornerRadius - panelPadding),
-                    cameraActive = cameraActive,
-                    onScanHandled = onScanHandled,
+        val liftedDock = { if (dockOnKeyboard) DockletGeometry.keyboardDock(dock, keyboardTop()) else dock }
+        val frames: () -> DockletCardFrames = remember(dock, statusInset) {
+            {
+                val lifted = liftedDock()
+                val pill = DockletGeometry.pillFrame(lifted)
+                DockletCardFrames(
+                    rest = DockletFrame(pill.left, pill.top, pill.width, PillBodyHeight),
+                    step1 = DockletGeometry.step1CardFrame(lifted),
+                    step2 = DockletGeometry.step2CardFrame(dock, keyboardTop(), statusInset),
                 )
             }
+        }
+        val restingHeight = maxHeight - dock.top + DockletGeometry.PillProud
+        LaunchedEffect(restingHeight) { currentOnRestingHeightChange(restingHeight) }
+        LaunchedEffect(dock.right, density) { currentOnBarWidthChange(with(density) { dock.right.toPx() }) }
 
-            PolkadotNavigationBar(
-                modifier = Modifier
-                    .onSizeChanged { tabRowHeight = with(density) { it.height.toDp() } },
-                selectedIndex = selectedIndex,
-                itemCount = availableTabs.size + if (networkStatusItem) 1 else 0,
-                shape = RoundedCornerShape(NavBarCornerRadius),
-                color = Color.Transparent,
-                border = null,
-                fillWidth = pillBar,
-                centerContent = {
-                    if (pillBar) {
-                        CenterPill(
-                            scannerTooltipVisible = scannerTooltipVisible,
-                            scanActive = scanExpanded,
-                            onScanClicked = onScanClicked,
-                            onScannerTooltipDismiss = onScannerTooltipDismiss,
-                            tabsVisible = FeatureOption.BROWSE_TAB.isEnabled,
-                            tabsCount = apps.size,
-                            appsExpanded = appsExpanded,
-                            onTabsClicked = onCountClicked,
-                        )
-                    } else {
-                        ScannerButton(
-                            scannerTooltipVisible = scannerTooltipVisible,
-                            active = scanExpanded,
-                            onScanClicked = onScanClicked,
-                            onScannerTooltipDismiss = onScannerTooltipDismiss,
-                            shape = PolkadotTheme.shapes.full,
-                        )
-                    }
-                },
-            ) {
-                availableTabs.fastForEach { tab ->
-                    PolkadotNavigationBarItem(
-                        selected = tab == currentTab && !networkStatusUp,
-                        onClick = { onTabSelected(tab) },
-                        icon = tab.icon(),
-                        label = if (fullTabBar) tab.title() else null,
-                        hasNotification = tabWarnings[tab] == true,
-                    )
-                }
-                if (networkStatusItem) {
-                    PolkadotNavigationBarItem(
-                        selected = networkStatusExpanded,
-                        onClick = onNetworkStatusClicked,
-                        label = null,
-                    ) { contentColor ->
-                        NovaIcon(
-                            modifier = Modifier.fillMaxSize(),
-                            imageVector = NovaIcons.NetworkStatus,
-                            tint = contentColor,
-                            contentDescription = stringResource(RCommon.string.chain_health_panel_title),
-                        )
-                    }
+        val highlighted = dockletHighlightedSlot(
+            currentTab = currentTab,
+            networkStatusExpanded = networkStatusItem && networkStatusExpanded,
+        )
+        val targets = remember(networkStatusItem) {
+            (BottomTab.availableEntries.map(DockletSlotTarget::Tab) +
+                listOfNotNull(DockletSlotTarget.NetworkStatus.takeIf { networkStatusItem })).toImmutableList()
+        }
+        val titles = targets.map { it.title() }
+        val currentOnSlotClick by rememberUpdatedState(onSlotClick)
+        val slots = remember(targets, titles, highlighted, apps.size, tabWarnings) {
+            targets.mapIndexed { index, target ->
+                DockletSlot(
+                    icon = target.icon(),
+                    contentDescription = titles[index],
+                    selected = target == highlighted,
+                    badgeCount = if (target == DockletSlotTarget.Tab(BottomTab.EXPLORE)) apps.size else 0,
+                    warning = target is DockletSlotTarget.Tab && tabWarnings[target.tab] == true,
+                    onClick = { currentOnSlotClick(target) },
+                )
+            }.toImmutableList()
+        }
+
+        Column(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = dock.left, bottom = maxHeight - dock.bottom)
+                .width(dock.width)
+                .systemGestureExclusion()
+                .pullOutGestures(pullState, forceShown, density)
+                .grabBandAbove(SWIPE_AREA_EXPANSION),
+        ) {
+            ExpandablePanel(visible = appsExpanded) {
+                OpenAppsRow(apps = apps, onAppClick = onAppClick, onAppClose = onAppClose)
+            }
+            if (networkStatusItem) {
+                ExpandablePanel(visible = networkStatusExpanded) {
+                    ChainHealthPanel(model = chainsHealth)
                 }
             }
+            VerticalSpacer { DockletGeometry.PillProud }
+            Docklet(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .offset {
+                        val lifted = liftedDock()
+                        val open = lerp(
+                            DockletGeometry.step1DockTop(lifted),
+                            DockletGeometry.keyboardDock(dock, keyboardTop()).top,
+                            cardState.stepProgress,
+                        )
+                        IntOffset(0, (lerp(lifted.top, open, cardState.clampedProgress) - dock.top).roundToPx())
+                    },
+                slots = slots,
+                cardProgress = { cardState.clampedProgress },
+                backdrop = backdrop,
+            )
+        }
+
+        val cameraActive by remember(cardState) {
+            derivedStateOf {
+                cardState.step == DockletStep.Step1 && cardState.clampedProgress >= CAMERA_START_AT_OPENING_FRACTION
+            }
+        }
+        DockletCard(
+            state = cardState,
+            frames = frames,
+            backdrop = backdrop,
+            closeLabel = stringResource(RCommon.string.docklet_close_search),
+            lobeIconColor = { rememberScannerIconColor(animating = scannerTooltipVisible) },
+            onOpenRequest = onOpenCard,
+            onCloseRequest = onCloseCard,
+            onKeyboardRequest = onKeyboardRequest,
+            lobeAnchor = { ScannerTooltip(tooltipVisible = scannerTooltipVisible, onTooltipDismiss = onScannerTooltipDismiss) },
+        ) {
+            ScanPanel(
+                modifier = Modifier.fillMaxSize(),
+                step = if (cardState.contentStep == DockletStep.Step2) AddContactStep.Search else AddContactStep.Scan,
+                cameraActive = cameraActive,
+                keyboardRequested = keyboardRequested,
+                onSearchFieldClick = { onCardStepChange(DockletStep.Step2) },
+                onScanClick = { onCardStepChange(DockletStep.Step1) },
+                onClose = onCloseCard,
+                onScanHandled = onScanHandled,
+            )
         }
     }
 }
 
+private fun DockletSlotTarget.icon() = when (this) {
+    is DockletSlotTarget.Tab -> tab.icon()
+    DockletSlotTarget.NetworkStatus -> NovaIcons.NetworkStatus
+}
+
 @Composable
-private fun BarContainer(modifier: Modifier, content: @Composable ColumnScope.() -> Unit) {
-    PolkadotSurface(
-        modifier = modifier,
-        shape = RoundedCornerShape(NavBarCornerRadius),
-        color = PolkadotTheme.colors.bg.surface.container,
-        border = BorderStroke(PolkadotTheme.borders.default, PolkadotTheme.colors.stroke.primary),
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, content = content)
-    }
+private fun DockletSlotTarget.title() = when (this) {
+    is DockletSlotTarget.Tab -> tab.title()
+    DockletSlotTarget.NetworkStatus -> stringResource(RCommon.string.chain_health_panel_title)
 }
 
 @Composable
@@ -318,131 +289,13 @@ private fun ExpandablePanel(visible: Boolean, content: @Composable () -> Unit) {
         Column(modifier = Modifier.fillMaxWidth()) {
             PolkadotSurface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(NavBarCornerRadius),
+                shape = RoundedCornerShape(PanelCornerRadius),
                 color = PolkadotTheme.colors.bg.surface.container,
                 border = BorderStroke(PolkadotTheme.borders.default, PolkadotTheme.colors.stroke.primary),
             ) {
                 content()
             }
             VerticalSpacer { tiny }
-        }
-    }
-}
-
-// The center pill: scanner and open-tabs button sharing one rounded container, split by a thin divider.
-@Composable
-private fun CenterPill(
-    scannerTooltipVisible: Boolean,
-    scanActive: Boolean,
-    onScanClicked: () -> Unit,
-    onScannerTooltipDismiss: () -> Unit,
-    tabsVisible: Boolean,
-    tabsCount: Int,
-    appsExpanded: Boolean,
-    onTabsClicked: () -> Unit,
-) {
-    PolkadotSurface(
-        modifier = Modifier.height(CenterPillHeight),
-        shape = PolkadotTheme.shapes.full,
-        color = PolkadotTheme.colors.bg.surface.nested,
-        border = BorderStroke(PolkadotTheme.borders.default, PolkadotTheme.colors.stroke.secondary),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxHeight(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ScannerButton(
-                scannerTooltipVisible = scannerTooltipVisible,
-                active = scanActive,
-                onScanClicked = onScanClicked,
-                onScannerTooltipDismiss = onScannerTooltipDismiss,
-                shape = RectangleShape,
-            )
-
-            if (tabsVisible) {
-                Box(
-                    modifier = Modifier
-                        .width(PolkadotTheme.borders.default)
-                        .padding(vertical = PolkadotTheme.spacings.smallIncreased)
-                        .fillMaxHeight()
-                        .background(PolkadotTheme.colors.stroke.secondary),
-                )
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .clickable(onClick = onTabsClicked)
-                        .padding(horizontal = PolkadotTheme.spacings.medium),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    OpenTabsIcon(count = tabsCount, active = appsExpanded)
-                }
-            }
-        }
-    }
-}
-
-// The scanner tap target, sized to the center pill so the bar keeps its height whether the pill is drawn
-// around it or the icon stands alone. [shape] bounds the press ripple: inside the pill the surface already
-// clips it, but standing alone the button has to round it off itself or the ripple comes out square.
-@Composable
-private fun ScannerButton(
-    scannerTooltipVisible: Boolean,
-    active: Boolean,
-    onScanClicked: () -> Unit,
-    onScannerTooltipDismiss: () -> Unit,
-    shape: Shape,
-) {
-    Box(
-        modifier = Modifier
-            .size(CenterPillHeight)
-            .clip(shape)
-            .clickable(onClick = onScanClicked),
-        contentAlignment = Alignment.Center,
-    ) {
-        ScannerIconWithTooltip(
-            tooltipVisible = scannerTooltipVisible,
-            active = active,
-            onTooltipDismiss = onScannerTooltipDismiss,
-        )
-    }
-}
-
-// The stacked-tabs icon from the design: a front card ([NovaIcons.TabsDigitBox]) carrying the tab count,
-// with a second card ([NovaIcons.TabsBox]) peeking behind it. White while [active] (apps grid expanded),
-// otherwise the muted tab-secondary colour.
-@Composable
-private fun OpenTabsIcon(count: Int, active: Boolean) {
-    val color by animateColorAsState(
-        targetValue = if (active) PolkadotTheme.colors.fg.primary else PolkadotTheme.colors.fg.secondary,
-        label = "OpenTabsIconColor",
-    )
-    Box(modifier = Modifier.size(24.dp)) {
-        NovaIcon(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .size(width = 18.dp, height = 17.dp),
-            imageVector = NovaIcons.TabsBox,
-            tint = color,
-        )
-
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .size(19.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            NovaIcon(
-                modifier = Modifier.fillMaxSize(),
-                imageVector = NovaIcons.TabsDigitBox,
-                tint = color,
-            )
-            NovaText(
-                text = count.toString(),
-                style = PolkadotTheme.typography.label.smallEmphasized,
-                color = color,
-                maxLines = 1,
-            )
         }
     }
 }

@@ -2,16 +2,35 @@ use crate::{
 	Error,
 	format::{self, Schemes},
 };
+use serde::{Serialize, Serializer};
 use url::{Url, form_urlencoded};
 
 /// The link base the Polkadot app opens.
 pub const DEFAULT_LINK_BASE: &str = "polkadotapp://stack";
 
 /// Where a stack's descriptor lives, and the key that signs it when it is signed.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// Serialises as `{ url, key? }` with a 0x-prefixed key, the form a link carries.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "js", derive(tsify::Tsify))]
 pub struct Pointer {
+	#[serde(serialize_with = "url_string")]
+	#[cfg_attr(feature = "js", tsify(type = "string"))]
 	url: Url,
+	#[serde(serialize_with = "hex_key", skip_serializing_if = "Option::is_none")]
+	#[cfg_attr(feature = "js", tsify(type = "string", optional))]
 	key: Option<[u8; 32]>,
+}
+
+fn url_string<S: Serializer>(url: &Url, serializer: S) -> Result<S::Ok, S::Error> {
+	serializer.serialize_str(url.as_str())
+}
+
+fn hex_key<S: Serializer>(key: &Option<[u8; 32]>, serializer: S) -> Result<S::Ok, S::Error> {
+	match key {
+		Some(key) => serializer.serialize_str(&format::to_hex(key)),
+		None => serializer.serialize_none(),
+	}
 }
 
 impl Pointer {

@@ -39,6 +39,7 @@ let package = Package(
             from: "0.0.1"
         ),
         .package(path: "../OperationExt"),
+        .package(path: "../FoundationExt"),
     ],
     targets: [
         .target(
@@ -51,6 +52,7 @@ let package = Package(
                 .product(name: "Foundation-iOS", package: "foundation-ios"),
                 .product(name: "SDKLogger", package: "logger-ios"),
                 "OperationExt",
+                "FoundationExt",
             ],
             path: "Sources"
         ),
@@ -62,7 +64,10 @@ let package = Package(
             name: "StructuredConcurrencyTests",
             dependencies: [
                 "StructuredConcurrency",
+                "StructuredConcurrencyTestSupport",
                 .product(name: "Operation-iOS", package: "operation-ios"),
+                .product(name: "AsyncExtensions", package: "AsyncExtensions"),
+                "FoundationExt",
             ],
             path: "Tests"
         )

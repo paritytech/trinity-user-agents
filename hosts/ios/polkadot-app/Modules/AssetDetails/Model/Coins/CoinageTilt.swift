@@ -43,9 +43,13 @@ final class CoinageTilt {
     /// axis the wrist chose.
     typealias Turn = SIMD3<Double>
 
-    /// How far the studio turns at the ends of the travel. A whole rotation would swing the
-    /// highlight right around the coin, which reads as a spinning lamp rather than a coin in a hand.
-    static let travel: Double = 0.9
+    /// How far the studio turns at the ends of the travel: as far as the phone itself, so the
+    /// room stays exactly where it is as the phone moves under it.
+    ///
+    /// It was half that for a while, to tame how far the brightness swung with a tilt. The swing
+    /// is the room's own contrast, and it is now tamed in the room rather than in the hand: a
+    /// coin that is really turned edge-on in the strip should be lit as a coin turned edge-on.
+    static let travel: Double = range
 
     /// The tilt that reaches the ends of the travel. Deliberately short of a right angle: nobody
     /// turns a phone ninety degrees to look at it, and the whole range should be within a normal
@@ -127,7 +131,8 @@ final class CoinageTilt {
     func advance(by seconds: CGFloat) -> Bool {
         guard !isSettled else { return false }
 
-        turn += (target - turn) * min(Double(seconds) * Self.smoothing, 1)
+        let blend = min(Double(seconds) * Self.smoothing, 1)
+        turn += (target - turn) * blend
 
         return true
     }
@@ -165,6 +170,22 @@ final class CoinageTilt {
         min(max(angle, -range), range) / range * travel
     }
 
+    /// Where the studio sits for a phone leaned back by `lean` and with its right edge dipped by
+    /// `sideways`, both already scaled into the travel.
+    ///
+    /// The studio stays where it is in the room while the phone turns under it, exactly as the
+    /// coins do when they lean, so this is the inverse of the coins' own turn for the same pose:
+    /// the coins are geometry turned into the phone's frame, and the studio is sampled by
+    /// directions turned back out of it. Tilt the screen to face upward and a coin mirrors the
+    /// ceiling; dip the right edge and it mirrors the right wall.
+    ///
+    /// The merged code rolled the room about the view axis for a sideways tilt instead, to hide
+    /// a dead side that came from the key light sitting off axis against a near-black wall. The
+    /// room is lifted now and the wall is no longer black, so the physical turn is back.
+    static func studioTurn(lean: Double, sideways: Double) -> Turn {
+        -leaned(pitch: lean, yaw: -sideways)
+    }
+
     /// The two turns as one, in the order they are felt: the room rolls about the view axis, and
     /// the whole of it is then pitched by however far the phone is leaned back.
     ///
@@ -174,7 +195,20 @@ final class CoinageTilt {
         let turn = simd_quatd(angle: pitch, axis: SIMD3(1, 0, 0))
             * simd_quatd(angle: roll, axis: SIMD3(0, 0, 1))
 
-        return abs(turn.angle) < 1e-9 ? Turn() : turn.axis * turn.angle
+        return axisAngle(turn)
+    }
+
+    /// A pitch and a yaw as one turn: the two turns that show a disc's wall. A roll about the
+    /// view axis would only spin the figure on its face.
+    static func leaned(pitch: Double, yaw: Double) -> Turn {
+        let turn = simd_quatd(angle: pitch, axis: SIMD3(1, 0, 0))
+            * simd_quatd(angle: yaw, axis: SIMD3(0, 1, 0))
+
+        return axisAngle(turn)
+    }
+
+    private static func axisAngle(_ turn: simd_quatd) -> Turn {
+        abs(turn.angle) < 1e-9 ? Turn() : turn.axis * turn.angle
     }
 }
 
@@ -226,9 +260,9 @@ extension CoinageTilt {
 
         /// Where the studio sits with the phone here, against this reading as square.
         func turn(to other: Pose) -> Turn {
-            CoinageTilt.composed(
-                pitch: CoinageTilt.scaled(other.lean - lean),
-                roll: CoinageTilt.scaled(other.sideways - sideways)
+            CoinageTilt.studioTurn(
+                lean: CoinageTilt.scaled(other.lean - lean),
+                sideways: CoinageTilt.scaled(other.sideways - sideways)
             )
         }
 

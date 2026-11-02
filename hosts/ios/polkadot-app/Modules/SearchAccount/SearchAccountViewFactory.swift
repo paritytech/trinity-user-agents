@@ -27,7 +27,7 @@ enum SearchAccountViewFactory {
                 operationQueue: operationQueue
             ),
             chainRegistry: chainRegistry,
-            usernameChainId: AppConfig.Chains.usernameChain,
+            usernameChainId: AppConfig.Chains.assethubChain,
             operationQueue: operationQueue,
             logger: logger
         )

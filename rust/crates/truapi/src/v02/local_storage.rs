@@ -17,7 +17,7 @@ pub struct HostLocalStorageReadRequest {
 }
 
 /// Local storage read failure.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display, derive_more::From)]
 pub enum HostLocalStorageReadError {
 	/// Storage quota exceeded.
 	#[display("storage quota exhausted")]
@@ -33,6 +33,7 @@ pub enum HostLocalStorageReadError {
 	AccessNotGranted,
 	/// Catch-all.
 	#[display("{reason}")]
+	#[from]
 	Unknown {
 		/// Human-readable failure reason.
 		reason: String,

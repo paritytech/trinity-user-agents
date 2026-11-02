@@ -28,14 +28,14 @@ uniform float uTilePx;          // atlas tile size
 uniform float uEnvMaxLod;       // cube levels - 1
 uniform vec3 uLightTurn;        // studio turned with the phone: an axis scaled by the angle turned
 uniform float uExposure, uLuster, uRimLuster, uLusterMinPx, uStudioRadius, uStudioScale;
-uniform float uBasin, uRollGloss, uRollReliefHaze, uEnvSharpen, uHaze, uPolish, uTone, uGrime;
+uniform float uRollGloss, uRollReliefHaze, uEnvSharpen, uHaze, uPolish, uTone, uGrime;
 uniform float uEngraveDark, uFrost, uWallRough, uAaVariance, uAaThreshold, uReliefBias;
 uniform float uReliefGain;      // how much harder than the atlas the struck relief slopes
 uniform float uRoomLift;        // light added to the whole studio: its grey walls painted lighter
 uniform vec4 uPanels[6];        // three softboxes of our own, two vec4 each: unit direction + cos(half
                                 // angle), gain + pad
 uniform int uDebug;
-uniform vec4 uMetals[12];       // six metals, two vec4 each: f0 + roughness, tone + pad
+uniform vec4 uMetals[14];       // seven metals, two vec4 each: f0 + roughness, tone + pad
 
 uniform sampler2D uAtlas;
 uniform samplerCube uEnv;
@@ -210,10 +210,6 @@ void main() {
   float height = texel.a * 2.0 - 1.0;
   float mask = vSurf.w * (1.0 - smoothstep(RELIEF_RADIUS - 0.015, RELIEF_RADIUS + 0.01, length(lp.xy)));
   vec2 slope = vec2(nr.x * side, nr.y) / max(nr.z, 0.2) * uReliefGain;
-  float rr = length(lp.xy);
-  float k = PI_F / 2.0 / RELIEF_RADIUS;
-  float basinSlope = uBasin * k * sin(rr * 2.0 * k) * (rr < RELIEF_RADIUS ? 1.0 : 0.0);
-  slope -= lp.xy / max(rr, 1e-4) * basinSlope;
 
   // ---- wear marks ----
   vec2 markSlope = vec2(0.0);

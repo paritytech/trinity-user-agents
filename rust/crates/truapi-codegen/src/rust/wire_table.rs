@@ -113,7 +113,7 @@ fn method_entry(trait_def: &TraitDef, trait_id: u8, method: &MethodDef) -> Resul
 		)
 	})?;
 	let ids = MethodIds { trait_id, method_id };
-	match method.kind {
+	match method.wire_kind() {
 		MethodKind::Request => Ok(MethodEntry::Request(ids)),
 		MethodKind::Subscription => Ok(MethodEntry::Subscription(ids)),
 	}

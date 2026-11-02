@@ -9,6 +9,8 @@ interface SpaBrowserContract {
 
     fun onBackPressed()
 
+    fun onMinimizeClick()
+
     fun onRefresh()
 }
 

@@ -1,6 +1,6 @@
 # Release process
 
-The `@parity/truapi` and `@parity/truapi-host` npm packages are published by
+The `@parity/truapi`, `@parity/truapi-host` and `@parity/trinity-stack` npm packages are published by
 [`paritytech/npm_publish_automation`](https://github.com/paritytech/npm_publish_automation).
 We never run `npm publish` locally or from a personal account; the
 `Release` workflow in `.github/workflows/release.yml` packs the packages
@@ -28,25 +28,26 @@ and lockfiles, and package build scripts and configuration. Deleting, editing
 or renaming an existing changeset, or adding `.changeset/README.md`, does not
 satisfy the guard.
 
-A change that ships nothing can use the `no-changeset` label. After adding the
+A change that ships nothing can use the `ci:no-changeset` label. After adding the
 label or correcting a title to `release:`, select **Re-run failed jobs** on CI;
 the guard reads the current PR metadata, so no new commit or full CI run is
-needed. Repository maintainers must create the label once before using it:
-
-```bash
-gh label create no-changeset --color d4c5f9 --description "No published artifact changes; changeset not required"
-```
+needed. The label is defined in `.github/labels.yml`, like every other.
 
 The first command writes a markdown file under `.changeset/`; the second
 consumes it, bumps the selected package `package.json`, appends the package
 `CHANGELOG.md`, deletes the changeset file, and then runs
 `scripts/sync-release-versions.mjs`. That script keeps
-`rust/crates/truapi/Cargo.toml` and the host package's `@parity/truapi`
-dependency aligned with `js/packages/truapi/package.json`; the command then
-refreshes `package-lock.json`. A protocol release should therefore include the
-`@parity/truapi` package, its changelog, the Cargo version, the host dependency,
-and the lockfile. A host-runtime-only release can bump
+`rust/crates/truapi/Cargo.toml`, the host package's `@parity/truapi`
+dependency and the `@parity/truapi` version recorded in
+`js/container/package-lock.json` aligned with `js/packages/truapi/package.json`;
+the command then refreshes `package-lock.json`. A protocol release should
+therefore include the `@parity/truapi` package, its changelog, the Cargo
+version, the host dependency, and both lockfiles. A host-runtime-only release can bump
 `@parity/truapi-host` without changing the Rust crate version.
+
+`@parity/trinity-stack` ships the `rust/crates/trinity-stack` crate built to
+WebAssembly, so a change to that crate needs a changeset for the package. Its
+version is independent of the protocol, and a release of it alone skips step 2.
 
 ### 2. Cut the protocol version
 
@@ -81,6 +82,7 @@ release: @parity/truapi 0.1.1
 release: @parity/truapi-host 0.1.1
 release: @parity/truapi 0.5.0, @parity/truapi-host 0.2.0
 release: @parity/android-host 0.1.0
+release: @parity/trinity-stack 0.1.0
 release: @parity/truapi 0.5.0, @parity/ios-host 0.5.0, @parity/android-host 0.1.0
 ```
 

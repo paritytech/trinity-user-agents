@@ -11,13 +11,8 @@ enum SettingsKey: String {
     case playerTooltipShown
     case swipeTooltipShown
     case selectedCurrencyCode
-    case fiatOnrampSessionIds
-    case fiatOnrampTrackedTransactionIds
     case productGameReminders
-    // Balance restored notification
     case deviceEncryptId = "deviceEncryptId.v3"
-    // App Group suite. The raw key predates the rename from "entropy id" and is kept so existing
-    // installs keep resolving their Keychain items.
     case installationKeyId = "io.polkadot.app.entropy.id.v3"
     case nextSyncUpdateId = "nextSyncUpdateId.v3"
     case themeSelected = "themeSelected.v3"

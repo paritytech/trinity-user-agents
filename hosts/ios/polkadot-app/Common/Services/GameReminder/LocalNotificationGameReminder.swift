@@ -9,27 +9,31 @@ final class LocalNotificationGameReminder {
     private let settingsManager: SettingsManagerProtocol
     private let keys: GameReminderStorageKeys
     private let logger: LoggerProtocol
+    private let diagnostics: GameReminderDiagnostics
 
     init(
         localNotificationService: UserNotificationServicing,
         settingsManager: SettingsManagerProtocol,
         keys: GameReminderStorageKeys,
-        logger: LoggerProtocol = Logger.shared
+        logger: LoggerProtocol = Logger.shared,
+        diagnostics: GameReminderDiagnostics = GameReminderDiagnostics()
     ) {
         self.localNotificationService = localNotificationService
         self.settingsManager = settingsManager
         self.keys = keys
         self.logger = logger
+        self.diagnostics = diagnostics
     }
 }
 
 extension LocalNotificationGameReminder: GameStartReminderServicing {
-    func scheduleReminder(gameDate: Date, productId: ProductId, timingSeconds: Int) {
+    func scheduleReminder(gameDate: Date, productId: ProductId) {
         localNotificationService.notificationAccessStatus { status in
             guard status == .allowed else {
+                self.diagnostics.notScheduled(productId: productId, startsAt: gameDate, reason: .notAuthorized)
                 return
             }
-            self.performScheduleReminder(gameDate: gameDate, productId: productId, timingSeconds: timingSeconds)
+            self.performScheduleReminder(gameDate: gameDate, productId: productId)
         }
     }
 
@@ -40,8 +44,8 @@ extension LocalNotificationGameReminder: GameStartReminderServicing {
 }
 
 private extension LocalNotificationGameReminder {
-    func performScheduleReminder(gameDate: Date, productId: ProductId, timingSeconds: Int) {
-        let notificationDate = Int(gameDate.timeIntervalSinceReferenceDate) - timingSeconds
+    func performScheduleReminder(gameDate: Date, productId: ProductId) {
+        let notificationDate = Int(gameDate.timeIntervalSinceReferenceDate)
         let storedDate = settingsManager.integer(for: keys.notificationDate)
 
         guard notificationDate != storedDate else {
@@ -56,6 +60,7 @@ private extension LocalNotificationGameReminder {
 
         guard fireDate > Date() else {
             logger.debug("fire date is in the past, skipping")
+            diagnostics.notScheduled(productId: productId, startsAt: fireDate, reason: .startInPast)
             return
         }
 
@@ -63,10 +68,15 @@ private extension LocalNotificationGameReminder {
 
         localNotificationService.scheduleNotification(
             withIdentifier: keys.notificationIdentifier,
-            content: makeContent(timingSeconds: timingSeconds, productId: productId),
+            content: makeContent(productId: productId),
             after: fireDate.timeIntervalSince(Date())
         ) { [logger] error in
             logger.debug("gameStart scheduled with error: \(String(describing: error))")
+            if error == nil {
+                self.diagnostics.scheduled(productId: productId, startsAt: fireDate, delivery: .notification)
+            } else {
+                self.diagnostics.notScheduled(productId: productId, startsAt: fireDate, reason: .failed)
+            }
         }
     }
 
@@ -74,11 +84,9 @@ private extension LocalNotificationGameReminder {
         localNotificationService.cancelScheduledNotifications(withIdentifiers: [keys.notificationIdentifier])
     }
 
-    func makeContent(timingSeconds: Int, productId: ProductId) -> UNNotificationContent {
+    func makeContent(productId: ProductId) -> UNNotificationContent {
         let content = UNMutableNotificationContent()
-        content.title = String(
-            localized: .Notification.gameNotificationGameStartTitle(String(timingSeconds))
-        )
+        content.title = String(localized: .Notification.gameNotificationGameStartTitle)
         content.body = String(localized: .Notification.gameNotificationGameStartBody)
         // An ordinary notification: the core asks for this one when no alarm may ring.
         content.sound = .default

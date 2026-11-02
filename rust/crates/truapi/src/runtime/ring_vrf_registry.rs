@@ -5,7 +5,7 @@ use std::{
 	sync::{Arc, Mutex},
 };
 
-use crate::platform::{CoreStorageKey, Platform, normalize_product_identifier};
+use crate::platform::{CoreStorageKey, Platform, ProductId};
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::{ProductAccountId, RegisteredRingVrfKey, RingLocation, RingVrfKeyDisclosure};
 
@@ -21,7 +21,7 @@ struct SelectedProvider {
 struct RegistrySnapshot {
 	entries: Vec<RegisteredRingVrfKey>,
 	/// Owners for which `entries` is a complete Account Holder snapshot.
-	complete_owners: Vec<String>,
+	complete_owners: Vec<ProductId>,
 	/// First registration wins until the user selects another provider.
 	selected_providers: Vec<SelectedProvider>,
 }
@@ -91,7 +91,7 @@ impl RegistryUpdate<'_> {
 	/// Merge a complete owner listing without discarding local registrations.
 	pub fn reconcile_owner(
 		&mut self,
-		owner: &str,
+		owner: &ProductId,
 		entries: Vec<RegisteredRingVrfKey>,
 	) -> Result<Vec<RegisteredRingVrfKey>, RingVrfError> {
 		validate_authoritative_owner_entries(owner, &entries)?;
@@ -99,7 +99,7 @@ impl RegistryUpdate<'_> {
 		let mut owner_entries = snapshot
 			.entries
 			.iter()
-			.filter(|entry| entry.handle.dot_ns_identifier == owner)
+			.filter(|entry| entry.handle.dot_ns_identifier == owner.as_str())
 			.cloned()
 			.collect::<Vec<_>>();
 		for entry in entries {
@@ -120,10 +120,10 @@ impl RegistryUpdate<'_> {
 				owner_entries.push(entry);
 			}
 		}
-		snapshot.entries.retain(|entry| entry.handle.dot_ns_identifier != owner);
+		snapshot.entries.retain(|entry| entry.handle.dot_ns_identifier != *owner);
 		snapshot.entries.extend(owner_entries.iter().cloned());
-		if !snapshot.complete_owners.iter().any(|item| item == owner) {
-			snapshot.complete_owners.push(owner.to_string());
+		if !snapshot.complete_owners.contains(owner) {
+			snapshot.complete_owners.push(owner.clone());
 		}
 		snapshot.selected_providers.retain(|provider| {
 			snapshot.entries.iter().any(|entry| {
@@ -174,17 +174,17 @@ impl RingVrfRegistryStore {
 	pub async fn complete_owner_entries(
 		&self,
 		root_public_key: [u8; 32],
-		owner: &str,
+		owner: &ProductId,
 	) -> Result<Option<Vec<RegisteredRingVrfKey>>, RingVrfError> {
 		let snapshot = self.snapshot(root_public_key).await?;
-		if !snapshot.complete_owners.iter().any(|item| item == owner) {
+		if !snapshot.complete_owners.contains(owner) {
 			return Ok(None);
 		}
 		Ok(Some(
 			snapshot
 				.entries
 				.into_iter()
-				.filter(|entry| entry.handle.dot_ns_identifier == owner)
+				.filter(|entry| entry.handle.dot_ns_identifier == owner.as_str())
 				.collect(),
 		))
 	}
@@ -192,14 +192,14 @@ impl RingVrfRegistryStore {
 	pub async fn owner_entries(
 		&self,
 		root_public_key: [u8; 32],
-		owner: &str,
+		owner: &ProductId,
 	) -> Result<Vec<RegisteredRingVrfKey>, RingVrfError> {
 		Ok(self
 			.snapshot(root_public_key)
 			.await?
 			.entries
 			.into_iter()
-			.filter(|entry| entry.handle.dot_ns_identifier == owner)
+			.filter(|entry| entry.handle.dot_ns_identifier == owner.as_str())
 			.collect())
 	}
 
@@ -235,7 +235,7 @@ impl RingVrfRegistryStore {
 	pub async fn reconcile_owner(
 		&self,
 		root_public_key: [u8; 32],
-		owner: &str,
+		owner: &ProductId,
 		entries: Vec<RegisteredRingVrfKey>,
 	) -> Result<Vec<RegisteredRingVrfKey>, RingVrfError> {
 		let mut update = self.prepare_update(root_public_key).await?;
@@ -378,11 +378,6 @@ fn decode_snapshot(blob: &[u8]) -> Result<RegistrySnapshot, RingVrfError> {
 fn validate_snapshot(snapshot: &RegistrySnapshot) -> Result<(), RingVrfError> {
 	let mut handles = HashSet::new();
 	for entry in &snapshot.entries {
-		let owner = normalize_product_identifier(&entry.handle.dot_ns_identifier)
-			.map_err(|error| invalid_registry(error.to_string()))?;
-		if owner != entry.handle.dot_ns_identifier {
-			return Err(invalid_registry("non-canonical key owner"));
-		}
 		if entry.public_key.is_none() {
 			return Err(invalid_registry("stored entry is missing its public key"));
 		}
@@ -399,10 +394,8 @@ fn validate_snapshot(snapshot: &RegistrySnapshot) -> Result<(), RingVrfError> {
 	}
 	let mut owners = HashSet::new();
 	for owner in &snapshot.complete_owners {
-		let canonical = normalize_product_identifier(owner)
-			.map_err(|error| invalid_registry(error.to_string()))?;
-		if canonical != *owner || !owners.insert(owner) {
-			return Err(invalid_registry("invalid complete owner"));
+		if !owners.insert(owner) {
+			return Err(invalid_registry("duplicate complete owner"));
 		}
 	}
 	let mut provider_rings = HashSet::new();
@@ -434,17 +427,12 @@ pub fn apply_ring_vrf_disclosure(
 }
 
 pub fn validate_owner_listing(
-	owner: &str,
+	owner: &ProductId,
 	entries: &[RegisteredRingVrfKey],
 ) -> Result<(), RingVrfError> {
-	let canonical_owner = normalize_product_identifier(owner)
-		.map_err(|error| invalid_registry_listing(error.to_string()))?;
-	if canonical_owner != owner {
-		return Err(invalid_registry_listing("non-canonical listing owner"));
-	}
 	let mut handles = HashSet::new();
 	for entry in entries {
-		if entry.handle.dot_ns_identifier != owner {
+		if entry.handle.dot_ns_identifier != owner.as_str() {
 			return Err(invalid_registry_listing("owner listing contains a foreign key handle"));
 		}
 		if entry.rings.is_empty() {
@@ -464,7 +452,7 @@ pub fn validate_owner_listing(
 }
 
 fn validate_authoritative_owner_entries(
-	owner: &str,
+	owner: &ProductId,
 	entries: &[RegisteredRingVrfKey],
 ) -> Result<(), RingVrfError> {
 	validate_owner_listing(owner, entries)?;
@@ -499,7 +487,7 @@ mod tests {
 
 	fn handle(owner: &str, index: u32) -> ProductAccountId {
 		ProductAccountId {
-			dot_ns_identifier: owner.to_string(),
+			dot_ns_identifier: ProductId::for_test(owner),
 			derivation_index: truapi::v01::DerivationIndex::Index(index),
 		}
 	}
@@ -604,7 +592,7 @@ mod tests {
 
 		let reconciled = futures::executor::block_on(store.reconcile_owner(
 			root,
-			"owner.dot",
+			&ProductId::for_test("owner.dot"),
 			vec![remote.clone()],
 		))
 		.unwrap();
@@ -621,7 +609,10 @@ mod tests {
 			]
 		);
 		assert_eq!(
-			futures::executor::block_on(store.complete_owner_entries(root, "owner.dot")).unwrap(),
+			futures::executor::block_on(
+				store.complete_owner_entries(root, &ProductId::for_test("owner.dot"))
+			)
+			.unwrap(),
 			Some(reconciled)
 		);
 	}
@@ -635,7 +626,7 @@ mod tests {
 
 		let error = futures::executor::block_on(store.reconcile_owner(
 			root,
-			"owner.dot",
+			&ProductId::for_test("owner.dot"),
 			vec![RegisteredRingVrfKey {
 				handle: key.clone(),
 				rings: vec![ring(1)],
@@ -676,22 +667,22 @@ mod tests {
 
 	#[test]
 	fn owner_listing_rejects_foreign_and_duplicate_entries() {
-		let owner = "owner.dot";
+		let owner = ProductId::for_test("owner.dot");
 		let entry = RegisteredRingVrfKey {
-			handle: handle(owner, 0),
+			handle: handle(owner.as_str(), 0),
 			rings: vec![ring(1)],
 			public_key: None,
 		};
-		assert!(validate_owner_listing(owner, std::slice::from_ref(&entry)).is_ok());
+		assert!(validate_owner_listing(&owner, std::slice::from_ref(&entry)).is_ok());
 
 		let mut foreign = entry.clone();
 		foreign.handle = handle("foreign.dot", 0);
 		assert!(matches!(
-			validate_owner_listing(owner, &[foreign]),
+			validate_owner_listing(&owner, &[foreign]),
 			Err(RingVrfError::Unknown { reason }) if reason.contains("foreign key handle")
 		));
 		assert!(matches!(
-			validate_owner_listing(owner, &[entry.clone(), entry]),
+			validate_owner_listing(&owner, &[entry.clone(), entry]),
 			Err(RingVrfError::Unknown { reason }) if reason.contains("duplicate key handle")
 		));
 	}

@@ -36,8 +36,10 @@ import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
 import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleSize
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.designsystem.themes.PolkadotAppTheme
+import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageAccountBackupStatus
 import io.paritytech.polkadotapp.feature_coinage_api.domain.recycling.RecyclingStrategyType
 import io.paritytech.polkadotapp.feature_settings_impl.presentation.common.BackupSettingsMenuItem
+import io.paritytech.polkadotapp.feature_settings_impl.presentation.common.PaymentsBackupSettingsMenuItem
 import io.paritytech.polkadotapp.feature_settings_impl.presentation.common.SettingsMenuItem
 import io.paritytech.polkadotapp.feature_settings_impl.presentation.main.components.AppDeviceInfoSection
 import io.paritytech.polkadotapp.feature_settings_impl.presentation.main.components.privacyMode.PaymentPrivacyModeSelector
@@ -139,6 +141,9 @@ private fun SettingsScreenInternal(
                         onClick = onBackupClick,
                         isBackupMissing = state.isBackupMissing
                     )
+                    state.paymentsBackupStatus?.let { status ->
+                        PaymentsBackupSettingsMenuItem(status = status)
+                    }
                     if (state.productSettingsEnabled) {
                         SettingsMenuItem(
                             icon = NovaIcons.GridOutlined,
@@ -207,6 +212,7 @@ private fun SettingsScreenPreview() = CompositionLocalProvider(
                 productSettingsEnabled = true,
                 selectedTheme = PolkadotAppTheme.DEFAULT,
                 privacyMode = RecyclingStrategyType.BALANCED,
+                paymentsBackupStatus = CoinageAccountBackupStatus.Delayed,
                 isLanguageSettingsAvailable = true,
                 isBackupMissing = false,
                 hasBlockedUsers = false

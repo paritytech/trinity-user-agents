@@ -5,6 +5,7 @@ import FoundationExt
 import os
 import SubstrateSdk
 import Testing
+import FoundationExtTestSupport
 @testable import Coinage
 
 /// Real `ExternalPaymentService` and state machine over an in-memory store and the stubbed lowest
@@ -131,7 +132,7 @@ enum ExternalPaymentTestFactory {
             originFactory: StubOriginFactory(),
             quotaTracker: StubUnloadQuotaTracker(),
             blockNumberProvider: StubBlockInfoProvider(),
-            dateProvider: StubDateProvider(Date()),
+            dateProvider: FixedDateProvider(Date()),
             logger: nil
         )
     }
@@ -160,7 +161,7 @@ enum ExternalPaymentTestFactory {
             originFactory: StubOriginFactory(),
             quotaTracker: StubUnloadQuotaTracker(),
             blockNumberProvider: StubBlockInfoProvider(),
-            dateProvider: StubDateProvider(Date()),
+            dateProvider: FixedDateProvider(Date()),
             logger: nil
         )
 

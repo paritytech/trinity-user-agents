@@ -2,7 +2,7 @@
 
 use std::{
 	cmp::Ordering,
-	collections::{BTreeMap, HashMap},
+	collections::{BTreeMap, HashMap, HashSet},
 };
 
 use anyhow::{Context, Result, bail};
@@ -108,7 +108,7 @@ impl TraitDef {
 pub struct MethodDef {
 	/// Method name as it appears in source.
 	pub name: String,
-	/// What shape the method has on the wire (request, stream, ...).
+	/// Call shape declared by the protocol trait.
 	pub kind: MethodKind,
 	/// Parameter list with names preserved (excluding `&self` / `CallContext`).
 	pub params: Vec<ParamDef>,
@@ -120,13 +120,20 @@ pub struct MethodDef {
 	pub docs: Option<String>,
 }
 
+impl MethodDef {
+	/// Host-initiated single responses use the subscription exchange.
+	pub fn wire_kind(&self) -> MethodKind {
+		if self.wire.host_initiated { MethodKind::Subscription } else { self.kind }
+	}
+}
+
 /// Raw wire id extracted from `#[wire(...)]`. One id addresses the method
 /// regardless of shape; which leg of the exchange a frame carries
 /// (request/response, or a subscription's start/stop/interrupt/receive) is
 /// the outer wire's own `message_type` byte, not a separate id.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct WireAttrs {
-	/// This subscription is started by the host and served by the product.
+	/// This method is called by the host and served by the product.
 	pub host_initiated: bool,
 	/// Excluded from the public SDK; available to container and host bindings.
 	pub internal: bool,
@@ -134,7 +141,7 @@ pub struct WireAttrs {
 	pub id: Option<u8>,
 }
 
-/// Wire-shape classification of a trait method.
+/// Declared call shape of a trait method.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MethodKind {
 	/// One request, one response.
@@ -160,6 +167,16 @@ pub enum ReturnType {
 	Result { ok: TypeRef, err: TypeRef },
 	/// Subscription that yields `item`s and ends with an `interrupt`.
 	Subscription { item: TypeRef, interrupt: TypeRef },
+}
+
+impl ReturnType {
+	/// Success or item payload, followed by the failure payload.
+	pub fn response_types(&self) -> (&TypeRef, &TypeRef) {
+		match self {
+			Self::Result { ok, err } => (ok, err),
+			Self::Subscription { item, interrupt } => (item, interrupt),
+		}
+	}
 }
 
 /// Type reference parsed from rustdoc into a structural form codegen can emit.
@@ -265,12 +282,18 @@ struct ItemCandidate {
 	kind: String,
 }
 
+/// This crate's newtypes over a private `String`. rustdoc omits the field, so
+/// codegen emits them as `str`.
+const STRING_NEWTYPES: &[&str] = &["ProductId"];
+
 /// Maps rustdoc item ids and full paths to the output type names used in
 /// generated code, disambiguated when several types share a simple name.
 #[derive(Debug, Default)]
 pub struct NameContext {
 	by_item_id: HashMap<String, String>,
 	by_path: HashMap<String, String>,
+	/// Item ids of the [`STRING_NEWTYPES`], which resolve to `str`.
+	string_newtypes: HashSet<String>,
 }
 
 impl NameContext {
@@ -308,7 +331,7 @@ pub fn parse(json: &str) -> Result<Crate> {
 pub fn extract_api(krate: &Crate) -> Result<ApiDefinition> {
 	let trait_candidates = collect_public_candidates(krate, &["trait"]);
 	let type_candidates = collect_public_candidates(krate, &["struct", "enum", "type_alias"]);
-	let names = build_name_context(&type_candidates);
+	let names = build_name_context(krate, &type_candidates);
 	let public_trait_order = extract_public_trait_order(krate)?;
 
 	let mut traits = Vec::new();
@@ -370,7 +393,9 @@ pub fn extract_api(krate: &Crate) -> Result<ApiDefinition> {
 		}
 
 		for candidate in candidates {
-			if should_skip_type_candidate(&name, &candidate) {
+			if should_skip_type_candidate(&name, &candidate) ||
+				names.string_newtypes.contains(&candidate.item_id)
+			{
 				continue;
 			}
 			let item = krate
@@ -473,6 +498,7 @@ fn should_skip_type_name(name: &str) -> bool {
 			"FrameworkOnlyError" |
 			"Infallible" |
 			"LatestOf" |
+			"ProductIdError" |
 			"RequestId" |
 			"RuntimeFailure" |
 			"RuntimeFailureKind"
@@ -513,11 +539,33 @@ pub fn protocol_name_context(krate: &Crate) -> NameContext {
 			ctx.by_path.insert(candidate.path.join("::"), output_name);
 		}
 	}
+	ctx.string_newtypes = string_newtype_ids(krate);
 	ctx
 }
 
-fn build_name_context(type_candidates: &BTreeMap<String, Vec<ItemCandidate>>) -> NameContext {
-	let mut ctx = NameContext::default();
+fn string_newtype_ids(krate: &Crate) -> HashSet<String> {
+	krate
+		.paths
+		.iter()
+		.filter(|(_, item_path)| is_string_newtype(item_path))
+		.map(|(item_id, _)| item_id.clone())
+		.collect()
+}
+
+fn is_string_newtype(item_path: &ItemPath) -> bool {
+	item_path.crate_id == 0 &&
+		item_path
+			.path
+			.last()
+			.is_some_and(|name| STRING_NEWTYPES.contains(&name.as_str()))
+}
+
+fn build_name_context(
+	krate: &Crate,
+	type_candidates: &BTreeMap<String, Vec<ItemCandidate>>,
+) -> NameContext {
+	let mut ctx =
+		NameContext { string_newtypes: string_newtype_ids(krate), ..NameContext::default() };
 	for (simple_name, candidates) in type_candidates {
 		let candidates = candidates
 			.iter()
@@ -724,7 +772,7 @@ fn extract_method(item_id: &str, item: &Item, names: &NameContext) -> Result<Opt
 		.get("output")
 		.with_context(|| format!("Method `{name}` missing rustdoc return type"))?;
 	let wire = item.docs.as_deref().map(extract_wire_attrs).unwrap_or_default();
-	let output = if wire.host_initiated { raw_output } else { unwrap_future_output(raw_output) };
+	let output = unwrap_future_output(raw_output);
 
 	let (kind, return_type) = if is_result_subscription_return(output) {
 		bail!(
@@ -807,8 +855,11 @@ fn extract_method(item_id: &str, item: &Item, names: &NameContext) -> Result<Opt
 		);
 	}
 
-	if wire.host_initiated && !matches!(kind, MethodKind::Subscription) {
-		bail!("Host-initiated method `{name}` must return Subscription<Item, Interrupt>");
+	if wire.host_initiated &&
+		let ReturnType::Result { err, .. } = &return_type &&
+		!matches!(err, TypeRef::Named { name, args } if name == "CallError" && args.len() == 1)
+	{
+		bail!("Host-initiated method `{name}` must declare its failure as CallError<E>");
 	}
 
 	Ok(Some(MethodDef {
@@ -1038,6 +1089,10 @@ pub fn resolve_type(ty: &serde_json::Value, names: &NameContext) -> Result<TypeR
 			.get("path")
 			.and_then(|value| value.as_str())
 			.with_context(|| format!("resolved_path missing path in {}", summarize_json(ty)))?;
+		let resolved_id = resolved.get("id").and_then(|id| value_id(id).ok());
+		if resolved_id.as_ref().is_some_and(|id| names.string_newtypes.contains(id)) {
+			return Ok(TypeRef::Primitive("str".to_string()));
+		}
 		let name = raw_name.rsplit("::").next().unwrap_or(raw_name);
 		let args = resolve_resolved_path_args(resolved, names)?;
 
@@ -1067,9 +1122,7 @@ pub fn resolve_type(ty: &serde_json::Value, names: &NameContext) -> Result<TypeR
 			},
 			"Box" => expect_single_arg("Box", args),
 			_ => Ok(TypeRef::Named {
-				name: resolved
-					.get("id")
-					.and_then(|id| value_id(id).ok())
+				name: resolved_id
 					.map(|id| names.name_for_item(&id, path_suffix(raw_name)))
 					.unwrap_or_else(|| names.name_for_path(raw_name)),
 				args,
@@ -1592,6 +1645,46 @@ mod tests {
 			format!("{err}").contains("older than the tested minimum"),
 			"unexpected error: {err}"
 		);
+	}
+
+	#[test]
+	fn host_initiated_requests_accept_async_result_and_require_call_error() {
+		let named = |name: &str, args: Vec<serde_json::Value>| {
+			serde_json::json!({
+				"resolved_path": {
+					"path": name,
+					"args": { "angle_bracketed": { "args": args.into_iter().map(|ty| serde_json::json!({"type": ty})).collect::<Vec<_>>(), "constraints": [] } }
+				}
+			})
+		};
+		let request = named("ProductAnswerRequest", vec![]);
+		let response = named("ProductAnswerResponse", vec![]);
+		let domain = named("ProductAnswerError", vec![]);
+		let call_error = named("CallError", vec![domain.clone()]);
+		let method = |error: serde_json::Value| {
+			let result = named("Result", vec![response.clone(), error]);
+			let future = serde_json::json!({ "dyn_trait": { "traits": [{ "trait": {
+				"path": "Future",
+				"args": { "angle_bracketed": { "args": [], "constraints": [{
+					"name": "Output", "binding": { "equality": { "type": result } }
+				}] } }
+			} }], "lifetime": "'async_trait" } });
+			Item {
+				name: Some("answer".into()),
+				docs: Some("@wire_host_initiated\n@wire_id=7".into()),
+				attrs: Vec::new(),
+				inner: serde_json::json!({ "function": { "sig": {
+					"output": named("Pin", vec![named("Box", vec![future])]),
+					"inputs": [["_cx", { "borrowed_ref": { "type": named("CallContext", vec![]), "is_mutable": false } }], ["request", request]]
+				} } }),
+			}
+		};
+		let extracted = extract_method("1", &method(call_error), &NameContext::default())
+			.unwrap()
+			.unwrap();
+		assert_eq!((extracted.kind, extracted.wire.host_initiated), (MethodKind::Request, true));
+		let error = extract_method("1", &method(domain), &NameContext::default()).unwrap_err();
+		assert!(error.to_string().contains("CallError<E>"), "{error}");
 	}
 
 	#[test]

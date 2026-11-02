@@ -152,6 +152,7 @@ struct RendererNodeMappingTests {
         #expect(props.labelStyle.font == PolkadotUI.LabelStyle.caption12Regular().font)
     }
 
+    /// A box that names no alignment places its children at the top start.
     @Test func boxNodeMapsItsChildren() {
         let node = RendererNode.box(
             modifiers: [],
@@ -161,11 +162,12 @@ struct RendererNodeMappingTests {
 
         let mapped = node.toWidgetNode(resolver: resolver)
 
-        guard case let .box(_, children) = mapped?.content else {
+        guard case let .box(props, children) = mapped?.content else {
             Issue.record("expected a box node, got \(String(describing: mapped?.content))")
             return
         }
         #expect(children.count == 2)
+        #expect(props.alignment == .topLeading)
     }
 
     /// A `String` run is absorbed as its parent's text and `Nil` draws nothing,

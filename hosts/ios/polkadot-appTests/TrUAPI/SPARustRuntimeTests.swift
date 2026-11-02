@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import AsyncExtensions
+import IssueMonitoring
 import Products
 import TrUAPIHost
 @testable import polkadot_app
@@ -43,16 +44,16 @@ private func makeRuntime(
     execution: MockProductExecution = MockProductExecution(),
     chainConnections: MockChainConnections = MockChainConnections(),
     configuration: SPAConfiguration,
-    dotNsResolver: DotNsResolverProtocol = StubDotNsResolver(),
-    productResolver: ProductResolving = StubProductResolver()
+    contentLoader: ProductContentLoading = StubProductContentLoader(),
+    hostEventRecorder: HostEventRecording = NoopHostEventRecorder()
 ) -> SPARustRuntime {
     SPARustRuntime(
         executionModel: makeExecutionModel(execution: execution, chainConnections: chainConnections),
         configuration: configuration,
-        dotNsResolver: dotNsResolver,
-        productResolver: productResolver,
+        contentLoader: contentLoader,
         schemeHandlerProxy: SchemeHandlerProxy(),
-        logger: Logger.shared
+        logger: Logger.shared,
+        hostEventRecorder: hostEventRecorder
     )
 }
 
@@ -64,7 +65,12 @@ struct SPARustRuntimeTests {
         let configuration = try makeConfiguration(contentSource: .directURL(directURL))
         let execution = MockProductExecution()
         let engine = MockJSEngine()
-        let runtime = makeRuntime(execution: execution, configuration: configuration)
+        let hostEventRecorder = RecordingHostEventRecorder()
+        let runtime = makeRuntime(
+            execution: execution,
+            configuration: configuration,
+            hostEventRecorder: hostEventRecorder
+        )
 
         let url = try await runtime.start(with: engine)
 
@@ -73,7 +79,7 @@ struct SPARustRuntimeTests {
         #expect(execution.permissionRequests.isEmpty)
         #expect(engine.mediaHandlerWasInstalledAtInitialization)
 
-        // Bootstrap → container → zoom disable, doc-start ordering intact.
+        // Tests build IssueMonitoring without Sentry: bootstrap → container → zoom disable.
         #expect(engine.initializedScripts.count == 3)
         #expect(engine.initializedScripts[0]
             .content == #"window.__truapi_localhost = { url: "ws://127.0.0.1:0/?t=test" };"#)
@@ -84,6 +90,12 @@ struct SPARustRuntimeTests {
         #expect(engine.initializedScripts[2].content.contains("viewport"))
         #expect(engine.initializedScripts[2].insertionPoint == .atDocEnd)
         #expect(engine.initializedScripts[2].frameScope == .mainFrameOnly)
+
+        let webViewEvent = try #require(hostEventRecorder.events.first)
+        #expect(webViewEvent.name == "host.webview.created")
+        #expect(webViewEvent.tags["host.platform"] == "ios")
+        #expect(webViewEvent.extras["host.session_id"] != nil)
+        #expect(webViewEvent.extras["event.monotonic_ms"] != nil)
 
         await runtime.dispose()
     }
@@ -96,13 +108,13 @@ struct SPARustRuntimeTests {
             let configuration = try makeConfiguration(
                 contentSource: .devServer(url: address, productId: "humanity.dot")
             )
-            let resolver = StubDotNsResolver()
-            let runtime = makeRuntime(configuration: configuration, dotNsResolver: resolver)
+            let loader = StubProductContentLoader()
+            let runtime = makeRuntime(configuration: configuration, contentLoader: loader)
 
             let url = try await runtime.start(with: MockJSEngine())
 
             #expect(url == address)
-            #expect(resolver.resolvedNames.isEmpty)
+            #expect(loader.openedIds.isEmpty)
             #expect(configuration.productId == "humanity.dot")
 
             await runtime.dispose()
@@ -120,13 +132,13 @@ struct SPARustRuntimeTests {
 
     @Test func startWithDotNsResolvesContentAndReturnsProductURL() async throws {
         let configuration = try makeConfiguration(contentSource: .dotNs)
-        let resolver = StubDotNsResolver()
+        let loader = StubProductContentLoader()
         let engine = MockJSEngine()
-        let runtime = makeRuntime(configuration: configuration, dotNsResolver: resolver)
+        let runtime = makeRuntime(configuration: configuration, contentLoader: loader)
 
         let url = try await runtime.start(with: engine)
 
-        #expect(resolver.resolvedNames == ["test.dot"])
+        #expect(loader.openedIds == ["test.dot"])
         #expect(url.scheme == ProductScriptSchemeHandler.scheme)
         #expect(url.host == "test.dot")
         #expect(url.path == "/")
@@ -140,7 +152,6 @@ struct SPARustRuntimeTests {
     /// widget is what an expanded card runs.
     @Test @MainActor func startForACardsPageLoadsTheWidget() async throws {
         let configuration = try makeConfiguration(contentSource: .dotNs, cardFace: StubCardFace())
-        let resolver = StubDotNsResolver()
         let widget = ProductExecutable.Widget(
             identifier: "widget.test.dot",
             appVersion: .zero,
@@ -158,13 +169,12 @@ struct SPARustRuntimeTests {
         )
         let runtime = makeRuntime(
             configuration: configuration,
-            dotNsResolver: resolver,
-            productResolver: StubProductResolver(alwaysResolvingTo: product)
+            contentLoader: StubProductContentLoader(product: product)
         )
 
         _ = try await runtime.start(with: MockJSEngine())
 
-        #expect(resolver.resolvedNames == ["widget.test.dot"])
+        #expect(await runtime.servedBuild()?.localURL.lastPathComponent == "widget.test.dot")
         await runtime.dispose()
     }
 
@@ -192,17 +202,53 @@ struct SPARustRuntimeTests {
     }
 
     @Test func rustScriptsFactoryOrdersBootstrapBeforeContainer() throws {
-        let factory = RustRuntimeScriptsFactory(bootstrapScript: "/*bootstrap*/")
+        let hostSessionID = try #require(UUID(uuidString: "d93fe846-8f3c-4cfa-a440-402b6f7b43d3"))
+        let origin = try HostEventOrigin(
+            launchID: #require(UUID(uuidString: "18a5320e-3a4d-46df-ad7a-ebba4ef3ee3f")),
+            osVersion: "18.1",
+            appVersion: "1.2.3",
+            appBuild: 456,
+            appVariant: "nightly"
+        )
+        let telemetry = NativeHostTelemetry(
+            hostSessionID: hostSessionID,
+            origin: origin,
+            truapiHostVersion: "0.9.0"
+        )
+        let factory = RustRuntimeScriptsFactory(
+            bootstrapScript: "/*bootstrap*/",
+            hostTelemetry: telemetry
+        )
 
         let scripts = try factory.makeScripts()
+        let expectedJSON = [
+            #"{"appBuild":"456","appVariant":"nightly","appVersion":"1.2.3","#,
+            #""hostSessionId":"d93fe846-8f3c-4cfa-a440-402b6f7b43d3","osVersion":"18.1","#,
+            #""platform":"ios","schemaVersion":"1","truapiHostVersion":"0.9.0"}"#
+        ].joined()
 
-        #expect(scripts.count == 2)
-        #expect(scripts[0].content == "/*bootstrap*/")
+        #expect(scripts.count == 3)
+        let expectedTelemetryScript = """
+        try {
+            Object.defineProperty(globalThis, "__trinityHostTelemetry", {
+                value: Object.freeze(\(expectedJSON)),
+                writable: false,
+                configurable: false
+            });
+        } catch (error) {
+            console.warn("Native host telemetry bootstrap was not installed", error);
+        }
+        """
+
+        #expect(scripts[0].content == expectedTelemetryScript)
         #expect(scripts[0].insertionPoint == .atDocStart)
         #expect(scripts[0].frameScope == .mainFrameOnly)
-        #expect(scripts[1].content.contains("__truapi_localhost"))
+        #expect(scripts[1].content == "/*bootstrap*/")
         #expect(scripts[1].insertionPoint == .atDocStart)
-        #expect(scripts[1].frameScope == .allFrames)
+        #expect(scripts[1].frameScope == .mainFrameOnly)
+        #expect(scripts[2].content.contains("__truapi_localhost"))
+        #expect(scripts[2].insertionPoint == .atDocStart)
+        #expect(scripts[2].frameScope == .allFrames)
     }
 
     @Test func directURLHandlerAllowsSameHostInterceptsOthers() throws {

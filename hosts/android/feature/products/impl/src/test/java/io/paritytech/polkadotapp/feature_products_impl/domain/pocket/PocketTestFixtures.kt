@@ -39,6 +39,8 @@ internal class FakePinnedPocketCards(
     }
 
     override fun pinned(key: PocketCardKey): CachedPocketCard? = cards.firstOrNull { it.card.key == key }
+
+    override fun bundlesImage(productId: ProductId, path: String): Boolean = false
 }
 
 internal class InMemoryPocketCardRepository : PocketCardRepository {

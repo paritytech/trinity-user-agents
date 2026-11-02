@@ -59,3 +59,11 @@ suspend inline fun <reified E> assertPresentationErrorShown(viewModel: BaseViewM
     val error = (event as? BaseViewModelEvent.PresentationError)?.error
     assertTrue("expected a ${E::class.simpleName} but was ${error ?: event}", error is E)
 }
+
+fun assertFailure(result: Result<*>) {
+    assertTrue("Expected a failure, got $result", result.isFailure)
+}
+
+inline fun <reified E : Throwable> assertFailureOf(result: Result<*>) {
+    assertTrue("Expected a ${E::class.simpleName}, got ${result.exceptionOrNull()}", result.exceptionOrNull() is E)
+}

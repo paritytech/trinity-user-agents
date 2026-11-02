@@ -13,6 +13,7 @@ final class ContactsListViewController: UIViewController, ViewHolder, RootScreen
     var isLoading: Bool = true
 
     private let statusTitleView = NetworkStatusTitleView()
+    private let openingIndicator = UIActivityIndicatorView(style: .medium)
 
     init(
         presenter: ContactsListPresenterProtocol
@@ -91,20 +92,15 @@ final class ContactsListViewController: UIViewController, ViewHolder, RootScreen
 
 private extension ContactsListViewController {
     func setupBarItems() {
-        let action = UIAction { [weak self] _ in
-            self?.presenter.showScanPanel()
-        }
-
-        navigationItem.rightBarButtonItem = UIBarButtonItem(
-            image: .add24,
-            primaryAction: action
-        )
-
-        navigationItem.rightBarButtonItem?.accessibilityId(AccessibilityID.Chats.newChatButton)
         titleView?.accessibilityId(AccessibilityID.Chats.title)
     }
 
     func addHandlers() {
+        rootView.newChatButton.accessibilityId(AccessibilityID.Chats.newChatButton)
+        rootView.newChatHandler = { [weak self] in
+            self?.presenter.showScanPanel()
+        }
+
         rootView.contactSelectionHandler = { [weak self] id in
             self?.presenter.openChat(contactIdentifier: id)
         }
@@ -116,6 +112,16 @@ private extension ContactsListViewController {
 }
 
 extension ContactsListViewController: ContactsListViewProtocol {
+    func didStartOpeningChat() {
+        openingIndicator.startAnimating()
+        navigationItem.leftBarButtonItem = UIBarButtonItem(customView: openingIndicator)
+    }
+
+    func didStopOpeningChat() {
+        openingIndicator.stopAnimating()
+        navigationItem.leftBarButtonItem = nil
+    }
+
     func didReceive(viewModel: ContactsListViewLayout.ViewModel) {
         isLoading = false
         rootView.bind(viewModel: viewModel)

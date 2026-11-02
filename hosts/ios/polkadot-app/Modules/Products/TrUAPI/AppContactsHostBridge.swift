@@ -65,11 +65,11 @@ final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
     func pickContact(productId: String) async throws -> HostContactPick {
         if try await currentAccounts().isEmpty { return .noContacts }
 
-        let picked = await withCheckedContinuation { continuation in
-            Task { @MainActor [routerFacade] in
+        let picked: AccountId? = await awaitDecision(cancelled: nil) { [routerFacade] pending in
+            await withCheckedContinuation { continuation in
                 let context = ContactPickContext(productId: productId)
                 context.setContinuation(continuation)
-                routerFacade.productsRouter.showContactPick(context: context)
+                pending.screen = routerFacade.productsRouter.showContactPick(context: context)
             }
         }
 

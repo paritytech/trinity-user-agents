@@ -48,6 +48,7 @@ class ManifestParserTest {
         ).getOrNull()
 
         assertEquals("Coinflip", root?.displayName)
+        assertEquals("A game", root?.description)
         assertEquals(CID, root?.icon?.cid?.toString())
         assertEquals(ProductIcon.Format.PNG, root?.icon?.format)
     }
@@ -63,6 +64,16 @@ class ManifestParserTest {
         rejects("""{"${'$'}v":1,"displayName":"X","description":"d"}""")
         rejects("""{"${'$'}v":1,"displayName":"X","description":"d","icon":{"format":"png"}}""")
         rejects("""{"${'$'}v":1,"displayName":"X","description":"d","icon":{"cid":"not-a-cid","format":"png"}}""")
+    }
+
+    @Test
+    fun `a blank description counts as none, so a chat preview falls back past it`() {
+        val root = parser.parseRoot(
+            """{"${'$'}v":1,"displayName":"Coinflip","description":"  ","icon":{"cid":"$CID","format":"png"}}"""
+        ).getOrNull()
+
+        assertEquals("Coinflip", root?.displayName)
+        assertNull(root?.description)
     }
 
     @Test

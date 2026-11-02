@@ -28,6 +28,10 @@ public struct ProductHost: Sendable {
     public func toDotDomain() -> String {
         name + ProductHost.separator + root
     }
+
+    public func toShareDomain() -> String {
+        toDotDomain() + ProductHost.separator + ProductHost.liDomain
+    }
 }
 
 extension ProductHost {

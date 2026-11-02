@@ -13,7 +13,7 @@ public protocol ProductResolving: Sendable {
 ///
 /// Callers may pass a kind-prefixed subname; the canonical base is derived here.
 public actor ProductResolver: ProductResolving {
-    private let dotNsResolver: DotNsResolverProtocol
+    private let metadataRepository: ProductMetadataRepositoryProtocol
     private let hostProvider: ProductHostProviding
     private let parser: ProductManifestParsing
 
@@ -22,24 +22,24 @@ public actor ProductResolver: ProductResolving {
     private var inFlight: [ProductId: Task<ResolvedProduct, Error>] = [:]
 
     public init(
-        dotNsResolver: DotNsResolverProtocol,
+        metadataRepository: ProductMetadataRepositoryProtocol,
         hostProvider: ProductHostProviding,
         logger: SDKLoggerProtocol,
         screening: PocketCardScreening
     ) {
         self.init(
-            dotNsResolver: dotNsResolver,
+            metadataRepository: metadataRepository,
             hostProvider: hostProvider,
             parser: ProductManifestParser(logger: logger, screening: screening)
         )
     }
 
     init(
-        dotNsResolver: DotNsResolverProtocol,
+        metadataRepository: ProductMetadataRepositoryProtocol,
         hostProvider: ProductHostProviding,
         parser: ProductManifestParsing
     ) {
-        self.dotNsResolver = dotNsResolver
+        self.metadataRepository = metadataRepository
         self.hostProvider = hostProvider
         self.parser = parser
     }
@@ -83,8 +83,8 @@ public actor ProductResolver: ProductResolving {
 
 private extension ProductResolver {
     func resolveFromChain(_ baseName: ProductId) async throws -> ResolvedProduct {
-        let rootText = try await dotNsResolver.getMetadataEntry(
-            dotNsName: baseName,
+        let rootText = try await metadataRepository.fetchMetadata(
+            name: baseName,
             key: ProductManifestRecords.rootKey
         )
 
@@ -133,8 +133,8 @@ private extension ProductResolver {
     func resolveExecutable(_ baseName: ProductId, kind: ExecutableKind) async throws -> ProductExecutable? {
         let subname = ProductManifestRecords.subname(base: baseName, kind: kind)
 
-        let text = try await dotNsResolver.getMetadataEntry(
-            dotNsName: subname,
+        let text = try await metadataRepository.fetchMetadata(
+            name: subname,
             key: ProductManifestRecords.executableKey
         )
 

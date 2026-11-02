@@ -56,4 +56,15 @@ struct AssetPinnedPocketCards: PinnedPocketCards {
 
         return try? parseRendererNodeJson(json: json)
     }
+
+    /// The app's own copy of an image a pinned card's face names, so it needs
+    /// no archive. Every `/` becomes `-`, so the lookup stays at the bundle root.
+    ///
+    /// shortcut: the app's copy shadows the product's file at the same path
+    /// until the next app release.
+    static func image(at path: String) -> URL? {
+        guard path.hasPrefix("pocket/") else { return nil }
+
+        return Bundle.main.url(forResource: path.replacingOccurrences(of: "/", with: "-"), withExtension: nil)
+    }
 }

@@ -12,6 +12,7 @@ import io.paritytech.polkadotapp.feature_balances_api.data.type.subscribeAccount
 import io.paritytech.polkadotapp.feature_coinage_api.domain.common.breakdownRoundDown
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageTransferDetection
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.ValueExponent
+import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.CoinageTransactionService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageOperationGroupId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageTransactionState
@@ -60,6 +61,7 @@ class RealOnboardingUseCase @Inject constructor(
     private val tokenBalanceTypeRegistry: TokenBalanceTypeRegistry,
     private val submissionUseCase: CoinageOnboardingSubmissionUseCase,
     private val timeProvider: TimeProvider,
+    private val currentInstallationProvider: CurrentInstallationProvider,
 ) : OnboardingUseCase {
     private companion object {
         /**
@@ -119,6 +121,9 @@ class RealOnboardingUseCase @Inject constructor(
 
             // Every denomination has a voucher that finalized. Onboarding finished.
             if (outstanding.isEmpty()) break
+
+            currentInstallationProvider.awaitBackedUp()
+                .onFailure { coinageLogW("Onboarding could not read the current installation group=${groupId.value}") }
 
             // Deliberately checked before attempting, where a claim would still try once. The funds are the
             // caller's own and nothing else is going to spend them, so a window that closed on them is the

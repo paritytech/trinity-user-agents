@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import Products
 import UIKitExt
 
@@ -7,8 +8,7 @@ final class SPARustRuntimeFactory {
     struct Environment {
         let rust: RustRuntimeEnvironment
         let configuration: SPAConfiguration
-        let dotNsResolver: DotNsResolverProtocol
-        let productResolver: ProductResolving
+        let contentLoader: ProductContentLoading
         let schemeHandlerProxy: SchemeHandlerProxy
         let routers: ProductRoutersFacadeProtocol
     }
@@ -44,10 +44,10 @@ extension SPARustRuntimeFactory: SPARuntimeFactoryProtocol {
         return SPARustRuntime(
             executionModel: executionModel,
             configuration: environment.configuration,
-            dotNsResolver: environment.dotNsResolver,
-            productResolver: environment.productResolver,
+            contentLoader: environment.contentLoader,
             schemeHandlerProxy: environment.schemeHandlerProxy,
-            logger: environment.rust.logger
+            logger: environment.rust.logger,
+            hostEventRecorder: IssueMonitoringFactory.createHostEventRecorder()
         )
     }
 }

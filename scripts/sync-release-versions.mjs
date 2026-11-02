@@ -6,11 +6,12 @@ import { fileURLToPath } from "node:url";
 /**
  * Keep release metadata derived from @parity/truapi's version in sync.
  *
- * Update the tracked Cargo.toml versions and the host and truapi-debugger
- * dependency ranges:
+ * Update the tracked Cargo.toml versions, the host and truapi-debugger
+ * dependency ranges, and the @parity/truapi version recorded in
+ * js/container/package-lock.json:
  *   npm run sync-release-versions
  *
- * Verify those files and package-lock.json without writing changes:
+ * Verify those files and both package-lock.json files without writing changes:
  *   npm run check-release-versions
  *
  * `npm run version-packages` runs the update after consuming changesets and
@@ -32,6 +33,11 @@ const debuggerPath = resolve(
   "js/packages/truapi-debugger/package.json",
 );
 const lockPath = resolve(repoRoot, "package-lock.json");
+// The container links @parity/truapi from the tree (`file:../packages/truapi`),
+// so the version its own lockfile records is a copy of the package's. Left
+// behind on a release, the next `npm install` there rewrites the lockfile.
+const containerLockPath = resolve(repoRoot, "js/container/package-lock.json");
+const containerLinkKey = "../packages/truapi";
 const check = process.argv.includes("--check");
 
 const truapi = readJson(truapiPath);
@@ -121,6 +127,15 @@ if (check) {
     );
   }
 
+  const containerLock = readJson(containerLockPath);
+  const containerTruapi =
+    containerLock.packages?.[containerLinkKey]?.version;
+  if (containerTruapi !== truapi.version) {
+    errors.push(
+      `js/container/package-lock.json records @parity/truapi ${containerTruapi ?? "<missing>"}; expected ${truapi.version}`,
+    );
+  }
+
   if (errors.length > 0) {
     for (const error of errors) console.error(`${command}: ${error}`);
     console.error(`${command}: run \`npm run version-packages\` to sync`);
@@ -128,7 +143,7 @@ if (check) {
   }
 
   console.log(
-    `${command}: crate manifests, host and truapi-debugger dependencies, and package-lock.json use @parity/truapi ${truapi.version}`,
+    `${command}: crate manifests, host and truapi-debugger dependencies, and both package-lock.json files use @parity/truapi ${truapi.version}`,
   );
   process.exit(0);
 }
@@ -174,6 +189,26 @@ if (actualDebuggerDependency === expectedDependency) {
   writeFileSync(debuggerPath, `${JSON.stringify(wireDebugger, null, 2)}\n`);
   console.log(
     `${command}: updated truapi-debugger dependency to @parity/truapi ${expectedDependency}`,
+  );
+}
+
+const containerLock = readJson(containerLockPath);
+const containerLink = containerLock.packages?.[containerLinkKey];
+if (containerLink === undefined) {
+  fail(`could not find "${containerLinkKey}" in ${containerLockPath}`);
+}
+if (containerLink.version === truapi.version) {
+  console.log(
+    `${command}: js/container/package-lock.json already records @parity/truapi ${truapi.version}`,
+  );
+} else {
+  containerLink.version = truapi.version;
+  writeFileSync(
+    containerLockPath,
+    `${JSON.stringify(containerLock, null, 2)}\n`,
+  );
+  console.log(
+    `${command}: updated js/container/package-lock.json to @parity/truapi ${truapi.version}`,
   );
 }
 
