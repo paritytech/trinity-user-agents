@@ -1357,9 +1357,10 @@ impl ChatPlatform for MockPlatform {
 	async fn set_chat_room_config(
 		&self,
 		_product: &ProductContext,
-		request: latest::HostChatSetRoomConfigRequest,
+		room_id: String,
+		config: latest::ChatRoomConfig,
 	) -> Result<(), latest::GenericError> {
-		self.declare_chat_room(request.room_id, |room| room.config = Some(request.config))
+		self.declare_chat_room(room_id, |room| room.config = Some(config))
 	}
 
 	async fn set_chat_room_metadata(
@@ -1961,6 +1962,7 @@ mod tests {
 			room_id_source: room_id.to_string(),
 			name: format!("{room_id} room"),
 			icon: "https://example.invalid/i.png".to_string(),
+			config: Default::default(),
 		}
 	}
 
@@ -2350,11 +2352,8 @@ mod tests {
 		let config = latest::ChatRoomConfig { reaction_details: true, ..Default::default() };
 		block_on(p.create_chat_room(&product, "lobby".to_string(), mock_room_request("lobby")))
 			.expect("room registration succeeds");
-		block_on(p.set_chat_room_config(
-			&product,
-			latest::HostChatSetRoomConfigRequest { room_id: room(), config: config.clone() },
-		))
-		.expect("the configuration is recorded");
+		block_on(p.set_chat_room_config(&product, room(), config.clone()))
+			.expect("the configuration is recorded");
 		let metadata = latest::ChatRoomMetadata {
 			name: "Lobby".to_string(),
 			description: Some("Say hello".to_string()),

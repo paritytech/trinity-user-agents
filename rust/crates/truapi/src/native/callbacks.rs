@@ -332,7 +332,7 @@ pub trait NativeChatCallbacks: Send + Sync {
 	) -> Result<truapi::latest::ChatRoomConfig, HostRejection>;
 
 	/// Replace the configuration of a room whole, and keep it across
-	/// restarts. The core has already checked the product hosts the room.
+	/// restarts. The core calls it after each `create_room` of the product.
 	async fn set_room_config(
 		&self,
 		room_id: String,

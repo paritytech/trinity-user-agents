@@ -639,10 +639,7 @@ describe("createMockHost TestHostAPI parity", () => {
       reactionDetails: false,
       reportSeen: true,
     };
-    await host.callbacks.chat!.setChatRoomConfig!(product, {
-      roomId: "main",
-      config,
-    });
+    await host.callbacks.chat!.setChatRoomConfig!(product, "main", config);
 
     expect(host.chatRoomDeclarations("main")).toEqual({ feed: [], config });
     expect(host.chatRoomDeclarations("other")).toBeUndefined();
