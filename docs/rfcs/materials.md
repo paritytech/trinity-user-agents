@@ -10,8 +10,8 @@ status: draft
 
 A renderer tree can apply materials to part of itself. A material is a small shader that a provider publishes on
 Bulletin in a shared material format, named by the hash of its text. The host fetches each material, checks it,
-translates it for its own platform and draws it over the node's content, so one material draws the same on every host.
-Materials extend the [Unified Renderer](unified-renderer.md), replace its `Effect` node and amend its Closed
+translates it for its own platform and draws it over that part of the tree, so one material draws the same on every
+host. Materials extend the [Unified Renderer](unified-renderer.md), replace its `Effect` node and amend its Closed
 requirement.
 
 Tracking issue: [#1758](https://github.com/paritytech/trinity-user-agents/issues/1758), epic
@@ -31,8 +31,8 @@ have no shared definition, so the same material would look different in each ren
 - **Defined.** A material has one definition and one ID, and every host reads it with the same rules.
 - **Faithful.** The same material, arguments and inputs draw the same picture in every renderer that follows the format.
 - **Bounded.** The work a tree can ask of a host is capped by fixed limits, whatever the product sends.
-- **Local.** A material that cannot be drawn leaves only its own node plain, and never breaks the tree or the app.
-- **Versioned.** A host never misreads a material or tree newer than itself, and reads every one it ever accepted.
+- **Local.** A material that cannot be drawn affects only its own node, and never breaks the tree or the app.
+- **Versioned.** A host never misreads a material or tree newer than itself, and reads every material it ever accepted.
 
 ## Approach
 
@@ -130,10 +130,9 @@ The base image is the host's drawing of the node's children, clipped to the node
 holds what the tree draws behind the node, flattened into its colour, and black where the tree draws nothing. `r_base`
 and the first `r_input` are the base image, and each layer's output is the next layer's `r_input`. The last layer's
 output is drawn in the node's place, over what is behind it, using its alpha without premultiplication. Layers have no
-blend modes: a material does its own image maths.
+blend modes: a material does its own image maths. A node drawn plain shows its children without its layers.
 
-Any tree may carry `Materials`. A host draws them only on the surfaces it supports, and draws the content plain
-elsewhere.
+Any tree may carry `Materials`. A host draws them only on the surfaces it supports, and draws the nodes plain elsewhere.
 
 Materials amend the Closed requirement of the Unified Renderer to read:
 
@@ -146,11 +145,12 @@ Materials amend the Closed requirement of the Unified Renderer to read:
 Any host may draw any material published on Bulletin, with no approval or library. For each layer the host fetches the
 material by ID, cache first, checks it against the ID and the format, and matches the arguments to its parameters by
 count, type and finite value. It then translates and compiles the material for its own platform. Image arguments load
-through the core image loader proposed in [#1800](https://github.com/paritytech/trinity-user-agents/pull/1800).
+like an `Image` node's source, which open RFC [#1800](https://github.com/paritytech/trinity-user-agents/pull/1800) moves
+into the core.
 
-A node that fails draws its children without its layers, so a product chooses its fallback look. The rest of the tree
-draws as usual. While a node's materials or images load, the host draws the node's last output if it had one, and its
-children otherwise.
+A node falls back when one of its materials or images fails: it draws plain, so a product chooses its fallback look by
+its children. The rest of the tree draws as usual. While a node's materials or images load, the host draws the node's
+last output if it had one, and draws it plain otherwise.
 
 For each node that falls back, the host reports why on `Renderer::failure_subscribe`, once per node per tree, and logs
 it on the device with the format's own code where there is one. A product that never subscribes sees no change. Reports
@@ -207,8 +207,8 @@ pub enum MaterialFailure {
 }
 ```
 
-`Unsupported` covers a material the device cannot compile and materials switched off alike, so a report says nothing
-more about the device than the capability answer does.
+`Unsupported` covers a material the device cannot compile and materials switched off alike, so a report does not tell a
+product which of the two happened on the device.
 
 Compiling never blocks drawing or crashes the app. A material that crashed the app is not compiled again on that device.
 Materials can be switched off remotely.
@@ -222,13 +222,14 @@ The limits are the same on every host:
 | Distinct materials in one tree         | 16    |
 | Image arguments per material           | 13    |
 | Pixels per side of one image argument  | 2048  |
-| Distinct images in one tree            | 16    |
+| Distinct images in one tree, not noise | 16    |
 | `Materials` inside another `Materials` | none  |
 
-Limits are checked on the tree alone, in tree order, before anything loads. Every node counts toward the per-tree totals
-whether it draws or falls back, except a node over a limit, which falls back with `LimitExceeded` and adds nothing. An
-image wider or taller than 2048 pixels fails its node with `LimitExceeded` when it loads. A nested `Materials` node
-falls back and its ancestor still draws.
+Every limit but image size is checked on the tree alone, before anything loads, visiting `Materials` nodes depth first.
+A node that breaks one falls back with `LimitExceeded` and adds nothing to the per-tree totals. Every other node counts,
+whether it draws or falls back later, so a tree falls back at the same nodes on every host. An image wider or taller
+than 2048 pixels makes its node fall back with `LimitExceeded` when it loads, and the node still counts. A nested
+`Materials` node falls back and its ancestor still draws.
 
 When the materials on screen cost more than the device can afford, the host steps down in this order:
 
@@ -238,7 +239,7 @@ When the materials on screen cost more than the device can afford, the host step
 - Draw fewer frames.
 - Draw fewer pixels, with `sl_resolution` reporting the pixels drawn.
 - Freeze: draw one still frame with the reduced-motion inputs.
-- Draw the content plain.
+- Draw every node plain.
 
 The first two steps are always on. A host steps down when the materials on screen take longer than the frame budget, or
 the device is hot or in low-power mode. It may start lower on weak devices, and steps back up only after a calm period.
@@ -246,9 +247,8 @@ Thresholds and device lists are host policy. Fewer frames and fewer pixels never
 
 ### Inputs
 
-Every host supplies the format's renderer inputs, with the same values for the same frame. `sl_time` is the seconds
-since the body came on screen, and starts at zero each time it comes on screen. `sl_tilt` is `(gamma / 90, beta / 90)`,
-with beta not clipped.
+Every host supplies the format's renderer inputs, with the same values for the same frame. `sl_time` counts seconds from
+zero each time the body comes on screen. `sl_tilt` is `(gamma / 90, beta / 90)`, with beta not clipped.
 
 Device angles are raw: no starting position, gain or smoothing. They use the device's own axes, whatever the screen's
 rotation. The platform owns the reference frame, so alpha may be relative to any heading, and a material must not depend
@@ -316,7 +316,7 @@ has materials switched on. A host that answers yes serves `Renderer::failure_sub
 
 - Any product can make the host run shader code it wrote. The safety rules, the limits and the step-down order are what
   that costs every host.
-- Each host keeps its own translator, so agreement between hosts rests on the format's vectors.
+- Hosts translate for themselves, so agreement between hosts rests on the format's vectors.
 - Limits are fixed, so raising one is an amendment.
 - Out of scope: a material library and users' own materials, DotNS names for materials, and renewing expired materials,
   which open RFC [#1833](https://github.com/paritytech/trinity-user-agents/pull/1833) covers. A product's own pages draw
