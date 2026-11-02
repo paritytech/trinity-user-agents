@@ -58,29 +58,30 @@ flowchart LR
 
 ## Interfaces
 
-| Trait             | Id         | Methods                                                                                                                                                                                                                                          | Caller                   |
-| ----------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------ |
-| `Funding`         | 22         | `request({ direction, amount? })` → `{ intent }` · `statusSubscribe({ intent })`                                                                                                                                                                 | product                  |
-| `FundingProvider` | 24         | core → worker requests: `quote` · `assign` · `cancel` · `settleCancel`; worker → core: `report` · `presentFrame` · `closeFrame`                                                                                                                  | core and provider worker |
-| `Payment`         | 9          | `topUp` · `topUpStatusSubscribe` · `request` · `statusSubscribe` · `balanceSubscribe`                                                                                                                                                            | provider worker          |
-| `AuthTokens`      | 27 (#1553) | `store` · `get` · `remove`                                                                                                                                                                                                                       | provider worker          |
-| `FundingPlatform` | host       | `present_funding` · `present_provider_frame` · `close_provider_frame` · `detected_country` · `funding_session_changed(intent, status, session, progress)` · `funding_options_changed` · `funding_quotes_changed` · `funding_in_progress_changed` | core → host              |
-| Host runtime      | host       | `select_funding_options` · `request_funding_quotes` · `select_funding_provider` · `cancel_funding` · `confirm_funding_cancel` · `acknowledge_funding_session` · `funding_history()` · `worker_exited`                                            | host → core              |
+| Trait             | Id         | Methods                                                                                                                                                                                                                                                               | Caller                   |
+| ----------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| `Funding`         | 22         | `request({ direction, amount? })` → `{ intent }` · `statusSubscribe({ intent })`                                                                                                                                                                                      | product                  |
+| `FundingProvider` | 24         | core → worker requests: `quote` · `assign` · `cancel` · `settleCancel`; worker → core: `report` · `presentFrame` · `closeFrame`                                                                                                                                       | core and provider worker |
+| `Payment`         | 9          | `topUp` · `topUpStatusSubscribe` · `request` · `statusSubscribe` · `balanceSubscribe`                                                                                                                                                                                 | provider worker          |
+| `AuthTokens`      | 27 (#1780) | `store` · `get` · `remove`                                                                                                                                                                                                                                            | provider worker          |
+| `FundingPlatform` | host       | `present_funding` · `present_provider_frame` · `close_provider_frame` · `provider_has_app` · `detected_country` · `funding_session_changed(intent, status, session, progress)` · `funding_options_changed` · `funding_quotes_changed` · `funding_in_progress_changed` | core → host              |
+| Host runtime      | host       | `select_funding_options` · `request_funding_quotes` · `select_funding_provider` · `cancel_funding` · `confirm_funding_cancel` · `acknowledge_funding_session` · `funding_history()` · `worker_exited`                                                                 | host → core              |
 
 Session id: `fs_` + nanoid(10), for product- and host-opened sessions alike. Another product's session reads as
 `NotFound`.
 
 The core pushes everything the host draws while a session runs. Each `funding_session_changed` carries the session's
-status, the session itself (choice, cancel offer, amounts) and its progress. `funding_options_changed` carries the
-overlay's candidates, and the countries and amount limits for the rail, asset, network and country the host reports with
-`select_funding_options`: before the overlay shows, after each selection and after each quote list.
-`funding_in_progress_changed` comes each time funding resumes and again whenever it changes. The one read back is
-`funding_history()`: the host calls it whenever it shows history, and it lists every ended session, newest first, as
-soon as it ends. What the host sends the core is what the user did or what the host owns: the selection, the provider
-picked, a cancel and its answer, an acknowledgement that the user saw how a session ended, its providers, its payment
-engine's statuses, and a worker that stopped without being asked. Every session in flight, and every ended one not yet
-acknowledged, comes again when funding resumes, and a session comes again when it starts taking longer. The core awaits
-one answer to each provider request (10 s for `quote`, 60 s otherwise); a dropped call is stopped.
+status, the session itself (choice, cancel offer, amounts) and its progress, or only the status once the core keeps just
+the session's summary. `funding_options_changed` carries the overlay's candidates, and the countries and amount limits
+for the rail, asset, network and country the host reports with `select_funding_options`: before the overlay shows, after
+each selection and after each quote list. `funding_in_progress_changed` comes each time funding resumes and again
+whenever it changes. The one read back is `funding_history()`: the host calls it whenever it shows history, and it lists
+every ended session, newest first, as soon as it ends. What the host sends the core is what the user did or what the
+host owns: the selection, the provider picked, a cancel and its answer, an acknowledgement that the user saw how a
+session ended, its providers, its payment engine's statuses, and a worker that stopped without being asked. Every
+session in flight comes again when funding resumes, and so do the 200 newest ended ones not yet acknowledged, as their
+summary, and a session comes again when it starts taking longer. The core awaits one answer to each provider request (10
+s for `quote`, 60 s otherwise); a dropped call is stopped.
 
 Worker payments name their session (`funding`). A session the worker doesn't serve, the wrong direction, or a full
 session (≤3 top-ups/payments) → `FundingNotServed`. A repeat under the same id must ask the same.
