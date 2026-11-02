@@ -26,8 +26,8 @@ struct IncomingPaymentCoreDataStoreTests {
 
         try await store.save(saved)
 
-        #expect(try await store.fetch(groupId: "top up:prod:p1") == saved)
-        #expect(try await store.fetch(groupId: "top up:other:p1") == nil)
+        #expect(try await store.fetch(groupId: "top up:prod.dot:p1") == saved)
+        #expect(try await store.fetch(groupId: "top up:other.dot:p1") == nil)
     }
 
     @Test func activePaymentsExcludeSettledOnes() async throws {
@@ -35,7 +35,7 @@ struct IncomingPaymentCoreDataStoreTests {
         try await store.save(payment("active"))
         try await store.save(payment("done"))
 
-        try await store.settle(groupId: "top up:prod:done", outcome: .claimed)
+        try await store.settle(groupId: "top up:prod.dot:done", outcome: .claimed)
 
         let active = try await store.fetchActivePayments()
         #expect(active.map(\.paymentId) == ["active"])
@@ -45,9 +45,9 @@ struct IncomingPaymentCoreDataStoreTests {
         let store = makeStore()
         try await store.save(payment("p1", amount: 250))
 
-        try await store.settle(groupId: "top up:prod:p1", outcome: .claimedPartially(actualClaimed: 40))
+        try await store.settle(groupId: "top up:prod.dot:p1", outcome: .claimedPartially(actualClaimed: 40))
 
-        let settled = try #require(try await store.fetch(groupId: "top up:prod:p1"))
+        let settled = try #require(try await store.fetch(groupId: "top up:prod.dot:p1"))
         #expect(settled.outcome == .claimedPartially(actualClaimed: 40))
         #expect(settled.amount == 250)
         #expect(settled.createdAt == createdAt)
@@ -57,7 +57,7 @@ struct IncomingPaymentCoreDataStoreTests {
         let store = makeStore()
 
         await #expect(throws: (any Error).self) {
-            try await store.settle(groupId: "top up:prod:ghost", outcome: .notClaimed)
+            try await store.settle(groupId: "top up:prod.dot:ghost", outcome: .notClaimed)
         }
     }
 
@@ -66,7 +66,7 @@ struct IncomingPaymentCoreDataStoreTests {
         let store = makeStore()
         try await store.save(payment("active"))
         try await store.save(payment("done"))
-        try await store.settle(groupId: "top up:prod:done", outcome: .claimed)
+        try await store.settle(groupId: "top up:prod.dot:done", outcome: .claimed)
 
         for try await snapshot in store.observeActivePayments() {
             #expect(snapshot.map(\.paymentId) == ["active"])
