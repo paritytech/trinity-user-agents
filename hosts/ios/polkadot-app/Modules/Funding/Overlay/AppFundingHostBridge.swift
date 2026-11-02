@@ -101,7 +101,8 @@ final class AppFundingHostBridge: FundingHostBridge, @unchecked Sendable {
         session: FundingSession?,
         progress: FundingProgress?
     ) {
-        book.record(intent: intent, session: session, progress: progress)
+        let ended = if case .inProgress = status { false } else { true }
+        book.record(intent: intent, session: session, progress: progress, ended: ended)
         overlay.fundingSessionChanged(intent: intent, status: status)
     }
 

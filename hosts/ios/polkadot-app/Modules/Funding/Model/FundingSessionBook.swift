@@ -23,6 +23,9 @@ final class FundingSessionBook: Sendable {
     private struct State: Sendable {
         var entries: [String: Entry] = [:]
         var options: [String: FundingOptions] = [:]
+        /// Ended sessions the core handed over as a summary only, which the
+        /// user has not been shown yet.
+        var unacknowledged: Set<String> = []
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
@@ -48,14 +51,19 @@ final class FundingSessionBook: Sendable {
     }
 
     /// Keeps the session as the core holds it, or drops it once the core
-    /// keeps only its summary.
-    func record(intent: String, session: FundingSession?, progress: FundingProgress?) {
+    /// keeps only its summary. A summary of an ending the user has not been
+    /// told of, `ended`, stays owed an acknowledgement.
+    func record(intent: String, session: FundingSession?, progress: FundingProgress?, ended: Bool) {
         state.withLock { state in
             if let session {
                 state.entries[intent] = Entry(session: session, progress: progress)
+                state.unacknowledged.remove(intent)
             } else {
                 state.entries[intent] = nil
                 state.options[intent] = nil
+                if ended {
+                    state.unacknowledged.insert(intent)
+                }
             }
         }
     }
@@ -93,9 +101,12 @@ private extension FundingSessionBook {
     /// session.
     func setAcknowledged(intent: String, to acknowledged: Bool) -> Bool {
         state.withLock { state in
-            guard let entry = state.entries[intent], !entry.isInFlight,
-                  entry.session.acknowledged != acknowledged
-            else { return false }
+            guard let entry = state.entries[intent] else {
+                return acknowledged
+                    ? state.unacknowledged.remove(intent) != nil
+                    : state.unacknowledged.insert(intent).inserted
+            }
+            guard !entry.isInFlight, entry.session.acknowledged != acknowledged else { return false }
             state.entries[intent]?.session.acknowledged = acknowledged
             return true
         }

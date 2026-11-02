@@ -92,7 +92,21 @@ struct FundingHistoryTests {
     func anEndedSessionIsAcknowledgedOnce() async {
         let book = FundingSessionBook()
         let runtime = StubFundingRuntime()
-        book.record(intent: "intent", session: session("intent", stage: delivered(2_000)), progress: nil)
+        book.record(intent: "intent", session: session("intent", stage: delivered(2_000)), progress: nil, ended: false)
+
+        await book.acknowledgeShown(intent: "intent", runtime: runtime)
+        await book.acknowledgeShown(intent: "intent", runtime: runtime)
+
+        #expect(runtime.acknowledged == ["intent"])
+    }
+
+    // The core hands over an ending it has compacted as its summary only;
+    // the user is told of it in history, and it is acknowledged once.
+    @Test
+    func anEndingHandedOverAsItsSummaryIsAcknowledgedOnce() async {
+        let book = FundingSessionBook()
+        let runtime = StubFundingRuntime()
+        book.record(intent: "intent", session: nil, progress: nil, ended: true)
 
         await book.acknowledgeShown(intent: "intent", runtime: runtime)
         await book.acknowledgeShown(intent: "intent", runtime: runtime)
@@ -104,7 +118,7 @@ struct FundingHistoryTests {
     func aSessionInFlightIsNotAcknowledged() async {
         let book = FundingSessionBook()
         let runtime = StubFundingRuntime()
-        book.record(intent: "intent", session: session("intent", stage: .open), progress: nil)
+        book.record(intent: "intent", session: session("intent", stage: .open), progress: nil, ended: false)
 
         await book.acknowledgeShown(intent: "intent", runtime: runtime)
 
@@ -115,7 +129,7 @@ struct FundingHistoryTests {
     func aFailedAcknowledgementIsTriedAgain() async {
         let book = FundingSessionBook()
         let runtime = StubFundingRuntime(failsFirstAcknowledgement: true)
-        book.record(intent: "intent", session: session("intent", stage: delivered(2_000)), progress: nil)
+        book.record(intent: "intent", session: session("intent", stage: delivered(2_000)), progress: nil, ended: false)
 
         await book.acknowledgeShown(intent: "intent", runtime: runtime)
         await book.acknowledgeShown(intent: "intent", runtime: runtime)
@@ -132,7 +146,7 @@ struct FundingCloseFrameTests {
     func closingTheFrameAnswersClosedAndShowsTheSessionSheet() async throws {
         let environment = WindowEnvironment()
         let book = FundingSessionBook()
-        book.record(intent: "intent", session: session("intent", stage: .open), progress: nil)
+        book.record(intent: "intent", session: session("intent", stage: .open), progress: nil, ended: false)
         let coordinator = FundingOverlayCoordinator(
             runtime: StubFundingRuntime(),
             environment: environment,
@@ -152,7 +166,7 @@ struct FundingCloseFrameTests {
     func anotherProvidersCloseLeavesTheFrameOpen() async throws {
         let environment = WindowEnvironment()
         let book = FundingSessionBook()
-        book.record(intent: "intent", session: session("intent", stage: .open), progress: nil)
+        book.record(intent: "intent", session: session("intent", stage: .open), progress: nil, ended: false)
         let coordinator = FundingOverlayCoordinator(
             runtime: StubFundingRuntime(),
             environment: environment,
