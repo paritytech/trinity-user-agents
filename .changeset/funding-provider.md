@@ -17,5 +17,5 @@ is asked, refuses a repeat under the id with other terms or an id the host alrea
 are final, or of the named payment once it completes. An assigned session whose provider has not seen the user's payment
 expires 7 days after the provider's last update (`FundingAssignment.expiresAt`, `undefined` once funds move), and a
 second cancel ends it. Hosts assign a session with `select_funding_provider`, and must implement
-`present_provider_frame` on `FundingPlatform` (natively `NativeFundingCallbacks`). Funding sessions stored by 0.26.0 are
-dropped on the first load.
+`present_provider_frame` on `FundingPlatform` (natively `NativeFundingCallbacks`). Sessions now live in the core
+database; funding sessions 0.26.0 kept in core storage are not carried over.
