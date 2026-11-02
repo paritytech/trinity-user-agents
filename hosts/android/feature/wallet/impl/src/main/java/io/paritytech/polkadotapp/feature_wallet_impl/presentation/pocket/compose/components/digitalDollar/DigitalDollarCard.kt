@@ -48,7 +48,6 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.PocketCardColors
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.leather.WalletLeatherRenderer
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar.leather.WalletLeatherSurface
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketBalanceSharedElement
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.DigitalDollarBalanceStatus
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import io.paritytech.polkadotapp.common.R as RCommon
@@ -112,18 +111,13 @@ fun CashCardFace(
                 }
             }
 
-            BalanceAmount(amounts = card.amounts, cardId = card.id)
+            BalanceAmount(amounts = card.amounts)
         }
     }
 }
 
 @Composable
-private fun BalanceAmount(
-    amounts: LoadingState<PocketCardUiModel.DigitalDollar.Amounts>,
-    cardId: String,
-) {
-    val sharedElement = Modifier.pocketBalanceSharedElement(cardId)
-
+private fun BalanceAmount(amounts: LoadingState<PocketCardUiModel.DigitalDollar.Amounts>) {
     when (amounts) {
         is LoadingState.Loaded -> {
             val balance = rememberCountUp(amounts.data.balance)
@@ -132,7 +126,6 @@ private fun BalanceAmount(
                 with(density) { Shadow(color = BalanceShadow, offset = Offset(0f, 1.dp.toPx()), blurRadius = 2.dp.toPx()) }
             }
             NovaText(
-                modifier = sharedElement,
                 text = buildAnnotatedString {
                     withStyle(BalanceNumber.toSpanStyle().copy(shadow = shadow)) {
                         append(LocalTokenAmountFormatter.current.formatFiatSigned(balance))
@@ -149,7 +142,7 @@ private fun BalanceAmount(
         }
 
         else -> Shimmer(
-            modifier = sharedElement.size(width = AmountShimmerSizes.WIDTH, height = AmountShimmerSizes.HEIGHT),
+            modifier = Modifier.size(width = AmountShimmerSizes.WIDTH, height = AmountShimmerSizes.HEIGHT),
             shape = PolkadotTheme.shapes.small
         )
     }
