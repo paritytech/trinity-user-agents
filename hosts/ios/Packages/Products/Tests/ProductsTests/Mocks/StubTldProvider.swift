@@ -19,6 +19,14 @@ struct StubTldProvider: DotNsTldProviding {
     func refresh() {}
 
     func reset() {}
+
+    func currentTldElseResolve() async throws -> String {
+        if let tld = currentTld() {
+            return tld
+        }
+
+        return try await resolveTld()
+    }
 }
 
 /// Stands in for a network whose TLD cannot be read.
@@ -32,4 +40,12 @@ struct FailingTldProvider: DotNsTldProviding {
     func refresh() {}
 
     func reset() {}
+
+    func currentTldElseResolve() async throws -> String {
+        if let tld = currentTld() {
+            return tld
+        }
+
+        return try await resolveTld()
+    }
 }

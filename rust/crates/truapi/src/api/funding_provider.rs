@@ -97,7 +97,7 @@ pub trait FundingProvider: Send + Sync {
 	/// ```ts
 	/// const result = await truapi.fundingProvider.report({
 	///   intent: "fs_example",
-	///   update: { tag: "AwaitingPayment", value: undefined },
+	///   update: { tag: "In", value: { tag: "AwaitingPayment", value: undefined } },
 	/// });
 	/// console.log("funding report:", result);
 	/// ```

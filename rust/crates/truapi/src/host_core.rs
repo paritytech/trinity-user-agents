@@ -19,11 +19,10 @@ use std::{
 };
 
 use crate::platform::{
-	BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin, ExpandedCardHost, FundingPlatform,
-	GamePlatform, PairingHostAdmin, PairingHostConfig, PaymentPlatform,
+	BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin, ExecutableKind, ExpandedCardHost,
+	FundingPlatform, GamePlatform, PairingHostAdmin, PairingHostConfig, PaymentPlatform,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionStatusHost, Platform,
-	PocketPlatform, ProductContext, ProductExecutionKind, ProductId, ScannerPlatform,
-	SigningHostConfig, TopUpPlatform,
+	PocketPlatform, ProductContext, ProductId, ScannerPlatform, SigningHostConfig, TopUpPlatform,
 };
 use futures::{
 	FutureExt, StreamExt,
@@ -175,7 +174,7 @@ pub enum ProductRuntimeError {
 }
 
 fn product_context(product_id: &ProductId) -> ProductContext {
-	ProductContext::new_with_execution(product_id.clone(), ProductExecutionKind::App)
+	ProductContext::new_with_execution(product_id.clone(), ExecutableKind::App)
 }
 
 /// A seedless pairing host: the user's keys live in an external wallet reached
@@ -2067,8 +2066,8 @@ impl ProductRuntime {
 		sink: Arc<dyn FrameSink>,
 	) -> Self {
 		let session_state = host_session.session_state();
-		let worker = (product.execution_kind == ProductExecutionKind::Worker)
-			.then(|| product.product_id.clone());
+		let worker =
+			(product.execution_kind == ExecutableKind::Worker).then(|| product.product_id.clone());
 		let admin = HostAdmin::new(services.clone(), authority, host_session, product, adapters);
 		let disposed = Arc::new(AtomicBool::new(false));
 		let transport = Arc::new(SinkTransport {
@@ -2451,7 +2450,7 @@ mod tests {
 		futures::executor::block_on(runtime.set_permission_authorization_status(
 			&requester,
 			PermissionAuthorizationRequest::AccountAccess {
-				target_product_id: "peopl.dot".to_string(),
+				target_product_id: ProductId::for_test("peopl.dot"),
 			},
 			PermissionAuthorizationStatus::NotDetermined,
 		))
@@ -3224,7 +3223,7 @@ mod tests {
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
 			ProductId::for_test("worker.dot"),
-			crate::platform::ProductExecutionKind::Worker,
+			crate::platform::ExecutableKind::Worker,
 		);
 		let runtime = ProductRuntime::from_platform_with_config(
 			Arc::new(StubPlatform::default()),
@@ -3299,7 +3298,7 @@ mod tests {
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
 			ProductId::for_test("worker.dot"),
-			crate::platform::ProductExecutionKind::Worker,
+			crate::platform::ExecutableKind::Worker,
 		);
 		let runtime = ProductRuntime::from_platform_with_config(
 			Arc::new(StubPlatform::default()),
@@ -3342,7 +3341,7 @@ mod tests {
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
 			ProductId::for_test("worker.dot"),
-			crate::platform::ProductExecutionKind::Worker,
+			crate::platform::ExecutableKind::Worker,
 		);
 		let sink = Arc::new(RecordingSink::default());
 		let runtime = ProductRuntime::from_platform_with_config(
@@ -4436,7 +4435,7 @@ mod tests {
 			&host,
 			&truapi::CallContext::default(),
 			HostLocalStorageReadRequest::V2(truapi::v02::HostLocalStorageReadRequest {
-				product: Some("wallet.dot".to_string()),
+				product: Some(ProductId::for_test("wallet.dot")),
 				key: "k".to_string(),
 			}),
 		));

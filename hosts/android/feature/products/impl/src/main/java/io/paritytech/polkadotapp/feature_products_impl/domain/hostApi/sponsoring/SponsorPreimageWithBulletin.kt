@@ -14,7 +14,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Sl
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.deriveAccountId
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.requestResourceAllocation
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.PreimageSubmitSponsoring
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.allowance.AllowanceKeyUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.allowance.AllowanceResourceKind
 import io.paritytech.polkadotapp.feature_transaction_storage_api.domain.TransactionStorageRepository
@@ -22,6 +21,7 @@ import io.paritytech.polkadotapp.feature_transaction_storage_api.domain.model.Tr
 import io.paritytech.polkadotapp.feature_transaction_storage_api.domain.model.hasCapacityFor
 import io.paritytech.polkadotapp.feature_transaction_storage_api.domain.model.hasExpiredAt
 import timber.log.Timber
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 class SponsorPreimageWithBulletin @Inject constructor(

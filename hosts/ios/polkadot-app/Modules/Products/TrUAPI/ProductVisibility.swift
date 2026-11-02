@@ -33,7 +33,7 @@ struct ProductVisibility {
     }
 
     @MainActor
-    func canShow(productId: ProductId, executionKind: ProductExecutionKind) -> Bool {
+    func canShow(productId: ProductId, executionKind: ExecutableKind) -> Bool {
         guard application.applicationState == .active,
               let top = window()?.topmostViewController,
               !isMoving(top) else {
@@ -51,7 +51,7 @@ struct ProductVisibility {
     /// Gives a host screen over the page, such as the last scanner, time to
     /// finish opening and then closing. Nothing else is waited for.
     @MainActor
-    func waitUntilVisible(productId: ProductId, executionKind: ProductExecutionKind) async -> Bool {
+    func waitUntilVisible(productId: ProductId, executionKind: ExecutableKind) async -> Bool {
         for _ in 0 ..< 40 {
             if canShow(productId: productId, executionKind: executionKind) {
                 return true
