@@ -9721,13 +9721,15 @@ fn top_up(
 	futures::executor::block_on(truapi::api::Payment::top_up(
 		host,
 		&CallContext::default(),
-		truapi::versioned::payment::HostPaymentTopUpRequest::V2(truapi::latest::HostPaymentTopUpRequest {
-			into: None,
-			amount,
-			source,
-			id: [7; 32],
-			funding: None,
-		}),
+		truapi::versioned::payment::HostPaymentTopUpRequest::V2(
+			truapi::latest::HostPaymentTopUpRequest {
+				into: None,
+				amount,
+				source,
+				id: [7; 32],
+				funding: None,
+			},
+		),
 	))
 }
 
@@ -9744,13 +9746,15 @@ fn fund_top_up(
 	futures::executor::block_on(truapi::api::Payment::top_up(
 		worker,
 		&CallContext::default(),
-		truapi::versioned::payment::HostPaymentTopUpRequest::V2(truapi::latest::HostPaymentTopUpRequest {
-			into: None,
-			amount,
-			source: product_account_source(),
-			id: [7; 32],
-			funding: Some(intent.to_string()),
-		}),
+		truapi::versioned::payment::HostPaymentTopUpRequest::V2(
+			truapi::latest::HostPaymentTopUpRequest {
+				into: None,
+				amount,
+				source: product_account_source(),
+				id: [7; 32],
+				funding: Some(intent.to_string()),
+			},
+		),
 	))
 }
 
@@ -10356,7 +10360,8 @@ fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
 
 /// A host engine that refuses every top-up, as one does when the user
 /// declines it or its source is busy.
-struct RefusingTopUpPlatform;
+/// A top-up engine that answers every top-up with its error.
+struct RefusingTopUpPlatform(truapi::latest::HostPaymentTopUpError);
 
 #[truapi::async_trait]
 impl crate::platform::TopUpPlatform for RefusingTopUpPlatform {
@@ -10365,7 +10370,7 @@ impl crate::platform::TopUpPlatform for RefusingTopUpPlatform {
 		_product: &ProductContext,
 		_request: truapi::latest::HostPaymentTopUpRequest,
 	) -> Result<(), truapi::latest::HostPaymentTopUpError> {
-		Err(truapi::latest::HostPaymentTopUpError::SourceBusy)
+		Err(self.0.clone())
 	}
 
 	fn subscribe_top_up_status(
@@ -10393,7 +10398,9 @@ fn a_refused_repeat_of_a_recorded_top_up_leaves_no_record_behind() {
 	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,
 	)));
-	assert!(services.install_top_up_platform(Arc::new(RefusingTopUpPlatform)));
+	assert!(services.install_top_up_platform(Arc::new(RefusingTopUpPlatform(
+		truapi::latest::HostPaymentTopUpError::SourceBusy
+	))));
 	let intent = served_session(&services, 500);
 	let worker = provider_worker(&services, "ramp.dot");
 	let provider = ProductContext::new_with_execution(
@@ -10421,6 +10428,24 @@ fn a_refused_repeat_of_a_recorded_top_up_leaves_no_record_behind() {
 
 	let session = services.funding().get(&intent).expect("kept");
 	assert_eq!((repeated.is_err(), session.started.len(), session.money_moved()), (true, 0, false));
+}
+
+// A host engine that fails without saying whether it took the top-up may
+// hold it, so the record stays for the reconciler to place from the engine
+// rather than being forgotten.
+#[test]
+fn a_top_up_the_engine_is_unsure_of_keeps_its_record() {
+	let (services, intent, worker) = served_with_engine(
+		Arc::new(RefusingTopUpPlatform(truapi::latest::HostPaymentTopUpError::Unknown {
+			reason: "engine timed out".to_string(),
+		})),
+		500,
+	);
+
+	let answered = fund_top_up(&worker, &intent, 500);
+
+	let session = services.funding().get(&intent).expect("kept");
+	assert_eq!((answered.is_err(), session.started.len()), (true, 1));
 }
 
 /// The terms digest the core keeps for a top-up from the product account.
@@ -10764,6 +10789,25 @@ fn a_session_a_worker_did_not_take_is_handed_over_again() {
 	std::thread::sleep(Duration::from_millis(200));
 
 	assert_eq!((taken, link.assigned()), (true, vec![intent]));
+}
+
+// A call a connected worker leaves unanswered is not lost until the worker
+// reconnects: the link is due to be handed its sessions again, which repeats
+// it.
+#[test]
+fn an_unanswered_call_is_repeated_without_a_reconnect() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let link = UnsteadyProviderLink::new(1, true);
+	services.funding().link("ramp.dot", link.clone());
+	services.funding().connected("ramp.dot");
+	std::thread::sleep(Duration::from_millis(200));
+
+	let intent = served_session(&services, 500);
+
+	assert!(eventually(10, || link.assigned() == [intent.clone()]));
 }
 
 // A link replaced while it was being handed its sessions cannot mark its

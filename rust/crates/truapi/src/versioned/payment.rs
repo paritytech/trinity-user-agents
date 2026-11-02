@@ -68,13 +68,19 @@ impl IntoLatest for HostPaymentTopUpError {
 	fn into_latest(self) -> Self::Latest {
 		match self {
 			Self::V1(error) => match error {
-				v01::HostPaymentTopUpError::InvalidSource => v02::HostPaymentTopUpError::InvalidSource,
+				v01::HostPaymentTopUpError::InvalidSource => {
+					v02::HostPaymentTopUpError::InvalidSource
+				},
 				v01::HostPaymentTopUpError::SourceBusy => v02::HostPaymentTopUpError::SourceBusy,
-				v01::HostPaymentTopUpError::InvalidAmount => v02::HostPaymentTopUpError::InvalidAmount,
+				v01::HostPaymentTopUpError::InvalidAmount => {
+					v02::HostPaymentTopUpError::InvalidAmount
+				},
 				v01::HostPaymentTopUpError::Unknown { reason } => {
 					v02::HostPaymentTopUpError::Unknown { reason }
 				},
-				v01::HostPaymentTopUpError::AlreadyExists => v02::HostPaymentTopUpError::AlreadyExists,
+				v01::HostPaymentTopUpError::AlreadyExists => {
+					v02::HostPaymentTopUpError::AlreadyExists
+				},
 			},
 			Self::V2(latest) => latest,
 		}
@@ -129,8 +135,12 @@ impl IntoLatest for HostPaymentError {
 		match self {
 			Self::V1(error) => match error {
 				v01::HostPaymentError::Rejected => v02::HostPaymentError::Rejected,
-				v01::HostPaymentError::InsufficientBalance => v02::HostPaymentError::InsufficientBalance,
-				v01::HostPaymentError::Unknown { reason } => v02::HostPaymentError::Unknown { reason },
+				v01::HostPaymentError::InsufficientBalance => {
+					v02::HostPaymentError::InsufficientBalance
+				},
+				v01::HostPaymentError::Unknown { reason } => {
+					v02::HostPaymentError::Unknown { reason }
+				},
 				v01::HostPaymentError::InvalidAmount => v02::HostPaymentError::InvalidAmount,
 				v01::HostPaymentError::AlreadyExists => v02::HostPaymentError::AlreadyExists,
 			},
@@ -146,7 +156,9 @@ impl FromLatest for HostPaymentError {
 		}
 		Self::V1(match latest {
 			v02::HostPaymentError::Rejected => v01::HostPaymentError::Rejected,
-			v02::HostPaymentError::InsufficientBalance => v01::HostPaymentError::InsufficientBalance,
+			v02::HostPaymentError::InsufficientBalance => {
+				v01::HostPaymentError::InsufficientBalance
+			},
 			v02::HostPaymentError::Unknown { reason } => v01::HostPaymentError::Unknown { reason },
 			v02::HostPaymentError::InvalidAmount => v01::HostPaymentError::InvalidAmount,
 			v02::HostPaymentError::AlreadyExists => v01::HostPaymentError::AlreadyExists,
@@ -177,7 +189,13 @@ mod tests {
 		.into_latest();
 		assert_eq!(
 			upgraded,
-			v02::HostPaymentTopUpRequest { into: None, amount: 5, source, id: [7; 32], funding: None }
+			v02::HostPaymentTopUpRequest {
+				into: None,
+				amount: 5,
+				source,
+				id: [7; 32],
+				funding: None
+			}
 		);
 	}
 

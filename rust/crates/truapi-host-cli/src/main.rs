@@ -1865,7 +1865,7 @@ fn build_signing_runtime(
 	if let Some(pocket) = pocket {
 		runtime.set_pocket_platform(pocket);
 	}
-	funding_host::CliFundingHost::install(&runtime, platform.clone());
+	funding_host::CliFundingHost::install(&runtime, platform.clone(), &network)?;
 	runtime.set_game_platform(Arc::new(game::CliGameHost));
 	runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
 	runtime.set_installation_provider(installation);

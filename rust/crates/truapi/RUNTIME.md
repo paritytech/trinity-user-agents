@@ -497,9 +497,9 @@ for raw bytes signed inside the `<Bytes>` watermark.
   session reads as `NotFound`. The overlay runs on a task of its own, so no
   call waits on it; a session the user dismisses ends its watchers as
   `Failed { Cancelled }`. Sessions and the pack live in the core database,
-  one versioned row per session: a row that does not decode is skipped and
-  left in place, one of an older format is dropped, and one in a newer
-  format is left untouched while funding answers a host failure. Funding
+  one versioned row per session: a row that does not decode or is of an older
+  format is skipped and left in place, and one in a newer format is left
+  untouched while funding answers a host failure. Funding
   needs the core database: natively the configured `database_directory`,
   otherwise `set_core_db`. Products see a session in flight as
   `InProgress`.
