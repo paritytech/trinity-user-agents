@@ -127,7 +127,7 @@ struct TrUAPIReviewPromptMapperTests {
             message: message
         ))
 
-        #expect(request.callingProductId.rawValue == "caller.dot")
+        #expect(request.callingProductId?.rawValue == "caller.dot")
         #expect(request.onBehalfOfProductId.rawValue == "ring-owner.dot")
         #expect(request.suffix == DerivationIndex32(index: 9).bytes)
         #expect(request.message == message)
@@ -188,7 +188,7 @@ struct TrUAPIReviewPromptMapperTests {
             )
         ))
 
-        #expect(request.callingProductId.rawValue == "caller.dot")
+        #expect(request.callingProductId?.rawValue == "caller.dot")
         #expect(request.payload == SignVrfPayload(
             account: Products.ProductAccountId(productId: try! ProductId("signer.dot"), derivationIndex: .index(2)),
             transcriptLabel: label,

@@ -45,7 +45,7 @@ struct APSignVrfHandlerTests {
         #expect(signature.proof.count == 64)
         #expect(confirmation.requests.count == 1)
         #expect(confirmation.requests.first?.payload == payload)
-        #expect(confirmation.requests.first?.callingProductId.rawValue == "caller.product.dot")
+        #expect(confirmation.requests.first?.callingProductId?.rawValue == "caller.product.dot")
     }
 
     @Test("Rejected prompt throws rejected and never signs")
