@@ -164,11 +164,11 @@ private extension ChatRoomSourceContext {
 private struct MissingProductChatQuerying: ProductChatQuerying {
     struct NotServed: Error {}
 
-    func messagesPage(_: ProductChatMessagesQueryRequest) async throws -> ProductChatMessagesQueryItem {
+    func messagesPage(_: ProductChatMessagesQueryRequest) async throws -> ProductChatMessagesQueryResponse {
         throw NotServed()
     }
 
-    func userAction(_: ProductChatUserActionRequest) async throws -> ProductChatUserActionItem {
+    func userAction(_: ProductChatUserActionRequest) async throws -> ProductChatUserActionResponse {
         throw NotServed()
     }
 }

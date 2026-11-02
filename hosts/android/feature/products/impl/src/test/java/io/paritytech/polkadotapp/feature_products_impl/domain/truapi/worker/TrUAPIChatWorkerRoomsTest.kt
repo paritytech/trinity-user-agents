@@ -31,11 +31,11 @@ import org.junit.Test
 import uniffi.truapi.ChatMessageBody
 import uniffi.truapi.ChatPageAnchor
 import uniffi.truapi.ChatUserAction
-import uniffi.truapi.ProductChatMessagesQueryItem
+import uniffi.truapi.ProductChatMessagesQueryResponse
 import uniffi.truapi.ProductChatMessagesQueryRequest
 import uniffi.truapi.ProductChatQueryError
 import uniffi.truapi.ProductChatUserActionError
-import uniffi.truapi.ProductChatUserActionItem
+import uniffi.truapi.ProductChatUserActionResponse
 import uniffi.truapi.ProductRuntimeException
 
 class TrUAPIChatWorkerRoomsTest {
@@ -102,7 +102,7 @@ class TrUAPIChatWorkerRoomsTest {
 
     @Test
     fun `a page of messages is asked with the anchor of the room screen`() = runTest {
-        coEvery { execution.chatMessagesQuery(any(), any()) } returns ProductChatMessagesQueryItem(emptyList(), next = "c2")
+        coEvery { execution.chatMessagesQuery(any(), any()) } returns ProductChatMessagesQueryResponse(emptyList(), next = "c2")
 
         val page = worker().messagesPage(room, ChatPageAnchorModel.Before("c1"), pageSize = 40)
 
@@ -123,7 +123,7 @@ class TrUAPIChatWorkerRoomsTest {
     @Test
     fun `an unavailable worker is asked once more after a second`() = runTest {
         coEvery { execution.chatMessagesQuery(any(), any()) } throws ChatQueryException.Failed("not connected") andThen
-            ProductChatMessagesQueryItem(emptyList(), next = null)
+            ProductChatMessagesQueryResponse(emptyList(), next = null)
 
         val page = worker().messagesPage(room, ChatPageAnchorModel.Before(null), pageSize = 40)
 
@@ -135,7 +135,7 @@ class TrUAPIChatWorkerRoomsTest {
     fun `a page asked before the client of a restarted worker connects waits for the connection`() = runTest {
         coEvery { execution.chatMessagesQuery(any(), any()) } throws ProductRuntimeException.NotConnected() andThenThrows
             ProductRuntimeException.NotConnected() andThenThrows ProductRuntimeException.NotConnected() andThen
-            ProductChatMessagesQueryItem(emptyList(), next = null)
+            ProductChatMessagesQueryResponse(emptyList(), next = null)
 
         val page = worker().messagesPage(room, ChatPageAnchorModel.Before(null), pageSize = 40)
 
@@ -155,7 +155,7 @@ class TrUAPIChatWorkerRoomsTest {
 
     @Test
     fun `a new message goes to the product with its body`() = runTest {
-        coEvery { execution.chatUserAction(any(), any()) } returns ProductChatUserActionItem.Acknowledged
+        coEvery { execution.chatUserAction(any(), any()) } returns ProductChatUserActionResponse.Acknowledged
 
         worker().userAction(room, ChatUserActionModel.NewMessage(ChatMessage.Content.Text("hi"), replyTo = "m0", messageId = "id-1", timestamp = 7))
 
@@ -169,7 +169,7 @@ class TrUAPIChatWorkerRoomsTest {
 
     @Test
     fun `a deletion goes to the product with the id of its message`() = runTest {
-        coEvery { execution.chatUserAction(any(), any()) } returns ProductChatUserActionItem.Acknowledged
+        coEvery { execution.chatUserAction(any(), any()) } returns ProductChatUserActionResponse.Acknowledged
 
         val outcome = worker().userAction(room, ChatUserActionModel.DeleteMessage("m1"))
 
@@ -180,7 +180,7 @@ class TrUAPIChatWorkerRoomsTest {
     @Test
     fun `an unavailable worker is asked an action once more after a second`() = runTest {
         coEvery { execution.chatUserAction(any(), any()) } throws ChatQueryException.Failed("not connected") andThen
-            ProductChatUserActionItem.Acknowledged
+            ProductChatUserActionResponse.Acknowledged
 
         val outcome = worker().userAction(room, ChatUserActionModel.Seen("m1"))
 

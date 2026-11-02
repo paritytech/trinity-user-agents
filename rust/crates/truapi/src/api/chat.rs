@@ -14,10 +14,10 @@ use crate::{
 		HostChatSetRoomMetadataError, HostChatSetRoomMetadataRequest,
 		HostChatSetRoomMetadataResponse, HostChatSetRoomPreviewError,
 		HostChatSetRoomPreviewRequest, HostChatSetRoomPreviewResponse, HostChatUpdateFeedError,
-		HostChatUpdateFeedRequest, HostChatUpdateFeedResponse, ProductChatMessagesQueryItem,
-		ProductChatMessagesQueryRequest, ProductChatQueryError, ProductChatReactionsQueryItem,
-		ProductChatReactionsQueryRequest, ProductChatUserActionError, ProductChatUserActionItem,
-		ProductChatUserActionRequest,
+		HostChatUpdateFeedRequest, HostChatUpdateFeedResponse, ProductChatMessagesQueryRequest,
+		ProductChatMessagesQueryResponse, ProductChatQueryError, ProductChatReactionsQueryRequest,
+		ProductChatReactionsQueryResponse, ProductChatUserActionError,
+		ProductChatUserActionRequest, ProductChatUserActionResponse,
 	},
 	wire, wire_trait,
 };
@@ -335,14 +335,15 @@ pub trait Chat: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// Answer one page of messages of a room the product keeps. Send one item,
-	/// then the host closes the query. The host asks only for a room whose
-	/// configuration sets `productSource`.
+	/// Answer one page of messages of a room the product keeps. The host asks
+	/// only for a room whose configuration sets `productSource`.
 	///
 	/// ```ts
-	/// truapi.chat.onMessagesQuery(({ roomId, anchor, pageSize }, send) => {
+	/// import { ok } from "neverthrow";
+	///
+	/// truapi.chat.onMessagesQuery(({ roomId, anchor, pageSize }) => {
 	///   console.log("page asked:", roomId, anchor.tag, pageSize);
-	///   send({
+	///   return ok({
 	///     messages: [
 	///       {
 	///         messageId: "first",
@@ -358,20 +359,22 @@ pub trait Chat: Send + Sync {
 	/// });
 	/// ```
 	#[wire(host_initiated, id = 12)]
-	fn messages_query(
+	async fn messages_query(
 		&self,
 		_cx: &CallContext,
 		_request: ProductChatMessagesQueryRequest,
-	) -> Subscription<ProductChatMessagesQueryItem, CallError<ProductChatQueryError>> {
-		Subscription::interrupted(CallError::unavailable())
+	) -> Result<ProductChatMessagesQueryResponse, CallError<ProductChatQueryError>> {
+		Err(CallError::unavailable())
 	}
 
-	/// Apply what the user did in a room the product keeps. Send one item, then the
-	/// host closes the query. For a new message, the item is the stored message.
-	/// Store it under the `messageId` of the action when the action has one. For
-	/// each other action, the item is an acknowledgement.
+	/// Apply what the user did in a room the product keeps. For a new message,
+	/// the answer is the stored message. Store it under the `messageId` of the
+	/// action when the action has one. For each other action, the answer is an
+	/// acknowledgement.
 	///
 	/// ```ts
+	/// import { err, ok } from "neverthrow";
+	///
 	/// const created = await truapi.chat.createRoom({
 	///   roomIdSource: "test-room",
 	///   name: "Test Room",
@@ -379,13 +382,12 @@ pub trait Chat: Send + Sync {
 	/// });
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const { roomId: testRoom } = created.value;
-	/// truapi.chat.onUserAction(({ roomId, action }, send, interrupt) => {
+	/// truapi.chat.onUserAction(({ roomId, action }) => {
 	///   if (roomId !== testRoom) {
-	///     interrupt({ tag: "Domain", value: { tag: "V1", value: { tag: "UnknownRoom" } } });
-	///     return;
+	///     return err({ tag: "Domain", value: { tag: "V1", value: { tag: "UnknownRoom" } } });
 	///   }
 	///   if (action.tag === "NewMessage") {
-	///     send({
+	///     return ok({
 	///       tag: "MessageCreated",
 	///       value: {
 	///         messageId: action.value.messageId ?? `m-${Date.now()}`,
@@ -398,36 +400,38 @@ pub trait Chat: Send + Sync {
 	///         request: false,
 	///       },
 	///     });
-	///     return;
 	///   }
-	///   send({ tag: "Acknowledged" });
+	///   return ok({ tag: "Acknowledged" });
 	/// });
 	/// ```
 	#[wire(host_initiated, id = 13)]
-	fn user_action(
+	async fn user_action(
 		&self,
 		_cx: &CallContext,
 		_request: ProductChatUserActionRequest,
-	) -> Subscription<ProductChatUserActionItem, CallError<ProductChatUserActionError>> {
-		Subscription::interrupted(CallError::unavailable())
+	) -> Result<ProductChatUserActionResponse, CallError<ProductChatUserActionError>> {
+		Err(CallError::unavailable())
 	}
 
-	/// Answer who reacted to one message. Send one item, then the host closes
-	/// the query. The host asks only for a room whose configuration sets
-	/// `reactionDetails`.
+	/// Answer who reacted to one message. The host asks only for a room whose
+	/// configuration sets `reactionDetails`.
 	///
 	/// ```ts
-	/// truapi.chat.onReactionsQuery(({ messageId }, send) => {
+	/// import { ok } from "neverthrow";
+	///
+	/// truapi.chat.onReactionsQuery(({ messageId }) => {
 	///   console.log("reactions asked:", messageId);
-	///   send({ reactions: [{ participantId: "user", emoji: "👍", timestamp: BigInt(Date.now()) }] });
+	///   return ok({
+	///     reactions: [{ participantId: "user", emoji: "👍", timestamp: BigInt(Date.now()) }],
+	///   });
 	/// });
 	/// ```
 	#[wire(host_initiated, id = 14)]
-	fn reactions_query(
+	async fn reactions_query(
 		&self,
 		_cx: &CallContext,
 		_request: ProductChatReactionsQueryRequest,
-	) -> Subscription<ProductChatReactionsQueryItem, CallError<ProductChatQueryError>> {
-		Subscription::interrupted(CallError::unavailable())
+	) -> Result<ProductChatReactionsQueryResponse, CallError<ProductChatQueryError>> {
+		Err(CallError::unavailable())
 	}
 }

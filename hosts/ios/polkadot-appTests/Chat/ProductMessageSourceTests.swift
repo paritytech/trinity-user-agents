@@ -124,7 +124,7 @@ struct ProductMessageSourceTests {
             guard case .before(cursor: nil) = request.anchor else {
                 throw ChatQueryError.timedOut
             }
-            return ProductChatMessagesQueryItem(messages: [productMessage(1)], next: "1")
+            return ProductChatMessagesQueryResponse(messages: [productMessage(1)], next: "1")
         }
         let source = makeSource(querying)
         await open(source)
@@ -141,7 +141,7 @@ struct ProductMessageSourceTests {
             guard case .before(cursor: nil) = request.anchor else {
                 throw ChatQueryError.refused(.notAvailable)
             }
-            return ProductChatMessagesQueryItem(messages: [productMessage(1)], next: "1")
+            return ProductChatMessagesQueryResponse(messages: [productMessage(1)], next: "1")
         }
         let source = makeSource(querying)
         await open(source)
@@ -162,7 +162,7 @@ struct ProductMessageSourceTests {
             guard attempt > 1 else {
                 throw ChatQueryError.failed(reason: "the worker stopped")
             }
-            return ProductChatMessagesQueryItem(messages: [productMessage(1)], next: nil)
+            return ProductChatMessagesQueryResponse(messages: [productMessage(1)], next: nil)
         }
         let source = makeSource(querying)
         await open(source)
@@ -457,7 +457,7 @@ extension ProductMessageSourceTests {
                 body: .text(text: "quoted")
             )
         )
-        let page = ProductChatMessagesQueryItem(messages: [reply], next: "5")
+        let page = ProductChatMessagesQueryResponse(messages: [reply], next: "5")
         let querying = ScriptedProductChatQuerying(page: { _ in page })
         let source = makeSource(querying)
         await open(source)
@@ -472,7 +472,7 @@ extension ProductMessageSourceTests {
     @Test func anUnseenReactionNamesItsMessageAndGoesWithEachSeen() async throws {
         var reacted = productMessage(2)
         reacted.reactions = [ChatReactionSummary(emoji: "👍", count: 1, reactedByUser: false, unseen: true)]
-        let page = ProductChatMessagesQueryItem(messages: [productMessage(1), reacted, productMessage(3)], next: nil)
+        let page = ProductChatMessagesQueryResponse(messages: [productMessage(1), reacted, productMessage(3)], next: nil)
         let querying = ScriptedProductChatQuerying(
             page: { _ in page },
             action: { _ in .acknowledged }
@@ -593,7 +593,7 @@ private final class ProductRoomHistory: Sendable {
         { [self] request in page(request) }
     }
 
-    private func page(_ request: ProductChatMessagesQueryRequest) -> ProductChatMessagesQueryItem {
+    private func page(_ request: ProductChatMessagesQueryRequest) -> ProductChatMessagesQueryResponse {
         let total = count.withLock { $0 }
         let size = Int(request.pageSize)
 
@@ -601,14 +601,14 @@ private final class ProductRoomHistory: Sendable {
         case let .before(cursor):
             let end = cursor.flatMap(Int.init) ?? total
             let start = max(end - size, 0)
-            return ProductChatMessagesQueryItem(
+            return ProductChatMessagesQueryResponse(
                 messages: (start ..< end).map { productMessage($0, origin: origin) },
                 next: start > 0 ? String(start) : nil
             )
         case let .after(cursor):
             let start = cursor.flatMap(Int.init) ?? 0
             let end = min(start + size, total)
-            return ProductChatMessagesQueryItem(
+            return ProductChatMessagesQueryResponse(
                 messages: (start ..< end).map { productMessage($0, origin: origin) },
                 next: end < total ? String(end) : nil
             )
