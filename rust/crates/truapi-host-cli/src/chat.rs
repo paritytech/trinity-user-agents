@@ -233,6 +233,7 @@ mod tests {
 			room_id_source: room_id_source.to_string(),
 			name: "Support".to_string(),
 			icon: String::new(),
+			config: Default::default(),
 		}
 	}
 
