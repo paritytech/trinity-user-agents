@@ -63,12 +63,12 @@ truapi_macros::versioned_type! {
 	pub enum HostChatUpdateFeedResponse { V1 }
 	pub enum HostChatUpdateFeedError { V1 => v01::HostChatUpdateFeedError }
 	pub enum ProductChatMessagesQueryRequest { V1 => v01::ProductChatMessagesQueryRequest }
-	pub enum ProductChatMessagesQueryItem { V1 => v01::ProductChatMessagesQueryItem }
+	pub enum ProductChatMessagesQueryResponse { V1 => v01::ProductChatMessagesQueryResponse }
 	pub enum ProductChatUserActionRequest { V1 => v01::ProductChatUserActionRequest }
-	pub enum ProductChatUserActionItem { V1 => v01::ProductChatUserActionItem }
+	pub enum ProductChatUserActionResponse { V1 => v01::ProductChatUserActionResponse }
 	pub enum ProductChatUserActionError { V1 => v01::ProductChatUserActionError }
 	pub enum ProductChatReactionsQueryRequest { V1 => v01::ProductChatReactionsQueryRequest }
-	pub enum ProductChatReactionsQueryItem { V1 => v01::ProductChatReactionsQueryItem }
+	pub enum ProductChatReactionsQueryResponse { V1 => v01::ProductChatReactionsQueryResponse }
 	pub enum HostChatSetRoomConfigRequest { V1 => v01::HostChatSetRoomConfigRequest }
 	pub enum HostChatSetRoomConfigResponse { V1 }
 	pub enum HostChatSetRoomConfigError { V1 => v01::HostChatSetRoomConfigError }
