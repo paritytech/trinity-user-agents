@@ -659,7 +659,9 @@ for raw bytes signed inside the `<Bytes>` watermark.
   calls the core: `report` stores each update on the session (only from the
   assigned provider, only forward; `Details` may come at any point while the
   session is open), `presentFrame` asks the host to
-  show one of its screens through `present_provider_frame`, and `closeFrame`
+  show one of its screens through `present_provider_frame` (an App route only
+  when `provider_has_app` says the provider ships one, otherwise `NoApp`), and
+  `closeFrame`
   closes it through `close_provider_frame` once the provider is done with it,
   such as a card payment the user made: the open `presentFrame` answers
   `Closed` and the host shows the session sheet in its place. The core holds the

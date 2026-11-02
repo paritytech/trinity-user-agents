@@ -3339,6 +3339,10 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 
 	fn close_provider_frame(&self, _provider_id: String, _intent: String) {}
 
+	async fn provider_has_app(&self, _provider_id: String) -> bool {
+		true
+	}
+
 	fn funding_session_changed(
 		&self,
 		intent: String,
