@@ -42,10 +42,10 @@ class PermissionPromptViewModel @Inject constructor(
 private fun ProductPermissionContext.toUiState(): PermissionPromptUiState {
     val single = permissions.singleOrNull()
     return if (single != null) {
-        PermissionPromptUiState.Single(productId.value, single)
+        PermissionPromptUiState.Single(productId, single)
     } else {
         PermissionPromptUiState.Batched(
-            productId = productId.value,
+            productId = productId,
             permissions = permissions.filterIsInstance<RemotePermission>().toImmutableList(),
         )
     }

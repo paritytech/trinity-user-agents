@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import KeyDerivation
 import NovaCrypto
@@ -17,7 +18,7 @@ struct ProductAccountDerivationTests {
     func indexSegmentParsesToRawChainCode() throws {
         let index = DerivationIndex32(index: 5)
 
-        let path = try ProductDerivationPath.productAccount(productId: "browse.dot", index: index)
+        let path = ProductDerivationPath.productAccount(productId: try! ProductId("browse.dot"), index: index)
         let chaincodes = try SubstrateJunctionFactory().parse(path: path).chaincodes
 
         #expect(chaincodes.count == 3)
@@ -30,28 +31,18 @@ struct ProductAccountDerivationTests {
     func pathStructure() throws {
         let index = DerivationIndex32(index: 5)
 
-        let root = try ProductDerivationPath.productRoot(productId: "browse.dot")
-        let account = try ProductDerivationPath.productAccount(productId: "browse.dot", index: index)
+        let root = ProductDerivationPath.productRoot(productId: try! ProductId("browse.dot"))
+        let account = ProductDerivationPath.productAccount(productId: try! ProductId("browse.dot"), index: index)
 
         #expect(root == "//product//browse.dot")
         #expect(account == "\(root)/\(index.asPathSegment())")
     }
 
-    @Test("Built-in variant formats the same path as the validated one")
-    func builtInVariantMatchesValidated() throws {
-        let validated = try ProductDerivationPath.productAccount(
-            productId: "browse.dot",
-            index: DerivationIndex32(index: 5)
-        )
-
-        #expect(ProductDerivationPath.builtInAccount("browse.dot", index: 5) == validated)
-    }
-
     @Test("Child account is soft-derivable from the product root keypair")
     func childIsSoftDerivableFromSubtree() throws {
         let index = DerivationIndex32(index: 0)
-        let fullPath = try ProductDerivationPath.productAccount(productId: "browse.dot", index: index)
-        let rootPath = try ProductDerivationPath.productRoot(productId: "browse.dot")
+        let fullPath = ProductDerivationPath.productAccount(productId: try! ProductId("browse.dot"), index: index)
+        let rootPath = ProductDerivationPath.productRoot(productId: try! ProductId("browse.dot"))
 
         let fromRoot = try makeKeypair(path: fullPath)
         let subtree = try makeKeypair(path: rootPath)
@@ -65,7 +56,7 @@ struct ProductAccountDerivationTests {
 
     @Test("Product root secret is the 64-byte expanded sr25519 key")
     func productRootSecretIsExpanded() throws {
-        let rootPath = try ProductDerivationPath.productRoot(productId: "browse.dot")
+        let rootPath = ProductDerivationPath.productRoot(productId: try! ProductId("browse.dot"))
 
         let secret = try makeKeypair(path: rootPath).privateKey().rawData()
 
@@ -76,22 +67,13 @@ struct ProductAccountDerivationTests {
     func productsAreFirewalled() throws {
         let index = DerivationIndex32(index: 0)
         let first = try makeKeypair(
-            path: ProductDerivationPath.productAccount(productId: "a.dot", index: index)
+            path: ProductDerivationPath.productAccount(productId: try! ProductId("a.dot"), index: index)
         )
         let second = try makeKeypair(
-            path: ProductDerivationPath.productAccount(productId: "b.dot", index: index)
+            path: ProductDerivationPath.productAccount(productId: try! ProductId("b.dot"), index: index)
         )
 
         #expect(first.publicKey().rawData() != second.publicKey().rawData())
-    }
-
-    @Test("Product ids containing junction separators are rejected")
-    func invalidProductIdsThrow() throws {
-        for productId in ["", "a/b", "a//b"] {
-            #expect(throws: ProductDerivationPathError.invalidProductId(productId)) {
-                _ = try ProductDerivationPath.productRoot(productId: productId)
-            }
-        }
     }
 
     private func makeKeypair(path: String) throws -> IRCryptoKeypairProtocol {

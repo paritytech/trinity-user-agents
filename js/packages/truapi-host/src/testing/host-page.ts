@@ -23,6 +23,7 @@
 // has no UI to keep responsive, and one less moving part is one less thing to
 // debug when a suite fails.
 
+import type { ProductId } from "@parity/truapi";
 import { DerivationIndex } from "@parity/truapi";
 
 import { createIframeHost } from "../web/create-iframe-host.js";
@@ -160,7 +161,7 @@ export interface AccountControl {
    * stands.
    */
   getProductAccountAddress(
-    productId?: string,
+    productId?: ProductId,
     index?: number,
   ): Promise<string | undefined>;
 }
@@ -409,7 +410,7 @@ export async function startTestHost(
   const control: TestHostControl = Object.assign(host, {
     getAccounts: () => roster.map((account) => account.name),
     getActiveAccount: () => active?.name,
-    async getProductAccountAddress(productId?: string, index = 0) {
+    async getProductAccountAddress(productId?: ProductId, index = 0) {
       const target = productId ?? hostProduct;
       const subtree = await (directRuntime
         ? directRuntime.productSubtreePublicKey(target)
@@ -492,7 +493,7 @@ interface ProductAccountDerivation {
 interface DirectSigningRuntime {
   setGrantAllowancesUnchecked?(granted: boolean): void;
   productSubtreePublicKey(
-    productId: string,
+    productId: ProductId,
     timeoutMs?: number,
   ): Promise<Uint8Array | undefined>;
   setWithheldResources?(tags: string[]): void;
@@ -503,7 +504,7 @@ interface DirectSigningRuntime {
   ): Promise<void>;
   disconnectSession(): Promise<void>;
   productRuntime(
-    product: { productId: string },
+    product: { productId: ProductId },
     sink: { emitFrame(frame: Uint8Array): void },
   ): ProductCore;
 }
@@ -518,11 +519,11 @@ interface WorkerSigningRuntime {
   setLogLevel?(level: string): void;
   setGrantAllowancesUnchecked?(granted: boolean): Promise<void>;
   getProductSubtreePublicKey(
-    productId: string,
+    productId: ProductId,
     timeoutMs?: number,
   ): Promise<Uint8Array | undefined>;
   setWithheldResources?(tags: string[]): Promise<void>;
-  createProvider(product: { productId: string }): Promise<{
+  createProvider(product: { productId: ProductId }): Promise<{
     postMessage(frame: Uint8Array): void;
     subscribe(listener: (frame: Uint8Array) => void): () => void;
     dispose(): void;

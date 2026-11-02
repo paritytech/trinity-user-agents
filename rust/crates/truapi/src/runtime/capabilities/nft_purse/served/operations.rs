@@ -10,7 +10,7 @@ use super::host_failure;
 use crate::{
 	durable::RegistrationError,
 	nft::{AllocateItemsError, ItemKey, PurseId, StartOperationError},
-	nft_purse::{NftPurses, PurseOwner, drain_needs_confirmation},
+	nft_purse::{NftPurses, drain_needs_confirmation},
 	platform::{NftPurseDrainDestination, NftPurseDrainReview, UserConfirmationReview},
 	runtime::{ProductRuntimeHost, authority::AuthorityError},
 };
@@ -80,7 +80,7 @@ pub struct Drain {
 	/// The purse the items leave.
 	pub from: PurseId,
 	/// Who owns that purse.
-	pub owner: PurseOwner,
+	pub owner: latest::NftPurseOwner,
 	/// How many items leave it.
 	pub item_count: u32,
 	/// Where they go.
@@ -176,7 +176,7 @@ impl ProductRuntimeHost {
 		let review = UserConfirmationReview::NftPurseDrain(NftPurseDrainReview {
 			calling_product_id: caller.clone(),
 			from_purse: drain.from.0,
-			owner: drain.owner.to_wire(),
+			owner: drain.owner,
 			item_count: drain.item_count,
 			destination: drain.destination,
 		});
@@ -210,7 +210,7 @@ async fn rebalance_drain(
 async fn owner_or_purse_not_found(
 	purses: &NftPurses,
 	purse: PurseId,
-) -> Result<PurseOwner, CallError<latest::HostNftPurseRebalancePurseError>> {
+) -> Result<latest::NftPurseOwner, CallError<latest::HostNftPurseRebalancePurseError>> {
 	purses
 		.owner_of(purse)
 		.await

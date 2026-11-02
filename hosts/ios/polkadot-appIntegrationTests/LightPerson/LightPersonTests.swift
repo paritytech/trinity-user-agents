@@ -167,7 +167,7 @@ private extension LightPersonTests {
         let mnemonic = try IRMnemonicCreator().mnemonic(fromList: mnemonic)
         try manager.createWallets(with: .init(mnemonic: mnemonic))
 
-        return SetupParams(
+        return try SetupParams(
             main: DynamicDerivedWallet(
                 derivationPath: WalletDerivationPath.main(for: "dot"),
                 entropyManager: entropyManager

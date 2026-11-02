@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_api.model
 
+import uniffi.truapi.ProductId
+
 /**
  * The dotNS host one executable is served from — `app.coinflip.dot` for the app of `coinflip.dot`.
  * Distinct from [ProductId] on purpose: this addresses content, never identity.

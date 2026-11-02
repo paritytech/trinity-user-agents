@@ -18,7 +18,6 @@ import io.parity.truapi.HostBridge
 import io.parity.truapi.LocalhostBridgeBootstrap
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.common.utils.RealCoroutineDispatchers
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.WebViewProvider
@@ -34,7 +33,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.createTempDirectory
@@ -54,7 +54,7 @@ class RendererLossRecoveryTest : BaseIntegrationTest() {
         val reports = Reports()
         val bridge = mockk<HostBridge>(relaxed = true) { coEvery { coreStorage.read(any()) } returns null }
         TrUAPIHostRuntime(bridge, CONFIG).use { runtime ->
-            runtime.openProductExecution(bridge, ProductExecutionConfig(PRODUCT, ProductExecutionKind.APP)).use { execution ->
+            runtime.openProductExecution(bridge, ProductExecutionConfig(PRODUCT, ExecutableKind.APP)).use { execution ->
                 val endpoint = execution.startWsBridge()
                 val provider = PageProvider(context, scope)
                 try {
@@ -88,7 +88,7 @@ class RendererLossRecoveryTest : BaseIntegrationTest() {
         private val context: Context,
         private val scope: CoroutineScope,
     ) : WebViewProvider(RealCoroutineDispatchers()) {
-        override val callingProductIdProvider = FixedProductId(ProductId.fromStoredValue(PRODUCT))
+        override val callingProductIdProvider = FixedProductId(PRODUCT)
 
         override suspend fun createWebView() = WebView(context).apply {
             settings.javaScriptEnabled = true
@@ -122,7 +122,7 @@ class RendererLossRecoveryTest : BaseIntegrationTest() {
             }
         }
 
-        private const val PRODUCT = "recovery.paseo"
+        private val PRODUCT = ProductId.parse("recovery.paseo").getOrThrow()
         private const val ORIGIN = "http://localhost"
         private const val PAGE_URL = "$ORIGIN/"
         private val CONFIG = HostRuntimeConfig(
