@@ -31,6 +31,8 @@ export interface UsernamePage {
 export interface UsernameDirectory {
   /** Where the names come from, for the screen. */
   source: string;
+  /** What the picker's search field asks for, when it is not a name or a username prefix. */
+  placeholder?: string;
   search(
     prefix: string,
     limit: number,
@@ -221,6 +223,7 @@ export function exactUsernameDirectory(
 ): UsernameDirectory {
   return {
     source: "the chain, by exact username",
+    placeholder: "Search contacts, or type a full username",
     confirm: async () => null,
     async search(username, _limit, cursor, signal) {
       if (cursor !== null) return { users: [], nextCursor: null };

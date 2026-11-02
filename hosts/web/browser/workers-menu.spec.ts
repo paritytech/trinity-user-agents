@@ -17,6 +17,7 @@ import {
   openTools,
   type DevTab,
   useInvitationDemo,
+  withoutContactChat,
 } from "./support/fixtures.js";
 
 const STEP_MS = 60_000;
@@ -44,6 +45,8 @@ async function open(viewport: { width: number; height: number }): Promise<{
 }> {
   const context = await browser.newContext({ viewport });
   context.setDefaultTimeout(STEP_MS);
+  // The wallet's own Contact Chat worker would join the workers counted here.
+  await withoutContactChat(context);
   await context.routeWebSocket(/.*/, (socket) => socket.close());
   const outside: string[] = [];
   await context.route(/.*/, (route) => {

@@ -1,55 +1,49 @@
 import type { ContactHandle } from "@parity/truapi";
-import type { HandleNames } from "../../src/contacts/contacts.js";
+import type { HandleNames } from "../contacts/contacts.js";
 import type {
   ChatV2ProviderOptions,
   HandleContacts,
-} from "../../src/chat/draft/provider.js";
-import type { DirectoryContacts } from "../../src/invitations/directory-contacts.js";
+} from "../chat/draft/provider.js";
+import type { DirectoryContacts } from "./directory-contacts.js";
 import {
   InvitationService,
   productPort,
   type AcceptPrompt,
   type SendPrompt,
-} from "../../src/invitations/invitation-service.js";
+} from "./invitation-service.js";
 import type {
   ConversationAllowance,
   HostDelivery,
   IdentityAuth,
   Product,
-} from "../../src/invitations/ports.js";
-import type { InvitationObserver } from "../../src/invitations/observer.js";
-import type { ReplySuite } from "../../src/invitations/binding.js";
-import { cryptoRandom } from "../../src/invitations/sealing.js";
-import type { NotificationStore } from "../../src/notifications/notifications.js";
-import type { IdentityProblem } from "../../src/invitations/published-keys.js";
-import type { HostNotification } from "../../src/notifications/notifications.js";
-import type { SentRequest } from "../../src/notifications/screen.js";
-import { LocalDelivery } from "../../fixtures/invitations/local-delivery.js";
-import { pageStore } from "../../fixtures/invitations/shared-store.js";
+} from "./ports.js";
+import type { InvitationObserver } from "./observer.js";
+import type { ReplySuite } from "./binding.js";
+import { cryptoRandom } from "./sealing.js";
+import type { NotificationStore } from "../notifications/notifications.js";
+import type { IdentityProblem } from "./published-keys.js";
+import type { HostNotification } from "../notifications/notifications.js";
+import type { SentRequest } from "../notifications/screen.js";
 
 /**
- * DEV ONLY. Contact Chat's host side for one signed-in user: its request
- * service, over the user's wallet keys and the people a
- * {@link DirectoryContacts} knows. Both the invitation demo's test users and
- * a wallet signed in from the Account picker run it.
+ * Contact Chat's host side for one signed-in user: its request service, over
+ * the user's wallet keys and the people a {@link DirectoryContacts} knows. A
+ * wallet signed in from the Account picker runs it (`./wallet-chat.ts`), and
+ * so does the invitation demo's test user on the dev server.
  *
  * The request service starts only once `verify` found the wallet keys fit to
  * prove the user; until then Contact Chat's port is held, and closed if they
- * are not. Requests and replies go through the local simulated delivery
- * between tabs of this browser (`fixtures/invitations/local-delivery.ts`),
- * unless the caller hands it another delivery, such as the Statement Store's.
+ * are not. Requests and replies go through the delivery the caller hands it:
+ * the Statement Store's, or the invitation demo's simulated one.
  */
 
 export interface ContactChatHostOptions {
   product: Product;
   /** Where this user's sent and received requests of Contact Chat are kept. */
   keys: { sent: string; received: string };
-  network: string;
-  /** This user's published chat key, `0x` hex: the local delivery's inbox for them. */
-  self: string;
   auth: IdentityAuth;
-  /** How requests and replies travel. Absent: the local simulated delivery. */
-  delivery?: HostDelivery;
+  /** How requests and replies travel. */
+  delivery: HostDelivery;
   /** The reply-key suite of the next new request. Absent: the service's default. */
   replySuite?(): ReplySuite;
   /**
@@ -129,17 +123,7 @@ export function startContactChatHost(
     notifications: options.notifications,
     storage: localStorage,
     keys: options.keys,
-    delivery:
-      options.delivery ??
-      new LocalDelivery({
-        self: options.self,
-        network: options.network,
-        store: pageStore(),
-        now,
-        schedule,
-        random: cryptoRandom,
-        log: options.log,
-      }),
+    delivery: options.delivery,
     now,
     schedule,
     random: cryptoRandom,

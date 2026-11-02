@@ -1,13 +1,8 @@
-import {
-  fromHex,
-  fromUtf8,
-  toHex,
-  utf8,
-} from "../../../src/invitations/sealing.js";
+import { fromHex, fromUtf8, toHex, utf8 } from "../../invitations/sealing.js";
 import type { ChatProtocol, ChatText, Checked, Heard } from "./protocol.js";
 
 /**
- * DEV ONLY. `simple-text/1`: plain text between two conversation accounts,
+ * PROTOTYPE. `simple-text/1`: plain text between two conversation accounts,
  * with no encryption of its own. It is the first protocol behind
  * `./protocol.ts`, to have real messages before a chosen library (MLS,
  * libsignal or another) replaces it.

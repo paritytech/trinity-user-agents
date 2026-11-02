@@ -5,10 +5,10 @@ import {
   type HostMessage,
   type ProductCall,
   type ProductHello,
-} from "../../../src/invitations/contract.js";
+} from "../../invitations/contract.js";
 
 /**
- * DEV ONLY. A product's end of the proposed host request service
+ * PROTOTYPE. A product's end of the proposed host request service
  * (`src/invitations/contract.ts`): its calls, each answered with one result,
  * and what the host tells it unasked.
  */

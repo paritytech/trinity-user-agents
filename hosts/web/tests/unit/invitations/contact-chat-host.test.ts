@@ -1,20 +1,19 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bytesToHex } from "@parity/truapi/scale";
-import { DirectoryContacts } from "../../../../src/invitations/directory-contacts.js";
-import type { HostDelivery } from "../../../../src/invitations/ports.js";
-import type { IdentityProblem } from "../../../../src/invitations/published-keys.js";
-import { WalletIdentityAuth } from "../../../../src/invitations/wallet-auth.js";
-import { NotificationStore } from "../../../../src/notifications/notifications.js";
+import { DirectoryContacts } from "../../../src/invitations/directory-contacts.js";
+import type { HostDelivery } from "../../../src/invitations/ports.js";
+import type { IdentityProblem } from "../../../src/invitations/published-keys.js";
+import { WalletIdentityAuth } from "../../../src/invitations/wallet-auth.js";
+import { NotificationStore } from "../../../src/notifications/notifications.js";
 import {
   VERIFY_RETRY_MS,
   startContactChatHost,
-} from "../../../../tools/demos/contact-chat-host.js";
+} from "../../../src/invitations/contact-chat-host.js";
 import {
   TEST_USERS,
   testUserKeys,
-} from "../../../../fixtures/invitations/test-users.js";
-import { memoryDirectory } from "../../../support/statement-memory.js";
-import { MemoryStorage } from "../../../support/test-support.js";
+} from "../../../fixtures/invitations/test-users.js";
+import { memoryDirectory } from "../../support/statement-memory.js";
+import { MemoryStorage } from "../../support/test-support.js";
 
 /**
  * Contact Chat's host side for a wallet, from its identity check to a chat
@@ -60,8 +59,6 @@ function host(
   const chat = startContactChatHost({
     product: { id: "contact-chat.paseo", name: "Contact Chat" },
     keys: { sent: "sent", received: "received" },
-    network: "paseo",
-    self: bytesToHex(keys.chatPublic),
     auth: new WalletIdentityAuth(keys),
     delivery,
     contacts: new DirectoryContacts({

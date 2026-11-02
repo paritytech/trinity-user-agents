@@ -489,20 +489,31 @@ describe("invitations between test users", () => {
           return page.locator("#worker-status").innerText();
         };
 
-        // Signed out: the picker offers the test accounts as wallets.
+        // Signed out: the picker offers the shared test accounts as wallets,
+        // and chooses none of them for the user.
         expect(await chatNote()).toBe("Sign in to chat");
         await setMenu(page, true);
         expect(
           await page
-            .locator('#wallet optgroup[label="Test accounts"] option')
+            .locator('#wallet optgroup[label="Shared test accounts"] option')
             .allInnerTexts(),
         ).toEqual([
           "Alice (test account)",
           "Bob (test account)",
           "Carol (test account)",
         ]);
+        expect({
+          value: await page.inputValue("#wallet"),
+          shown: await page.locator("#wallet option:checked").innerText(),
+          signIn: await page.locator("#sign-in").isDisabled(),
+        }).toEqual({ value: "", shown: "Choose an account", signIn: true });
         const about = page.locator("#test-accounts-about");
+        expect(await about.isHidden()).toBe(true);
+        await page.selectOption("#wallet", "test-account:alice");
         expect(await about.isHidden()).toBe(false);
+        expect(await about.locator("summary").innerText()).toBe(
+          "Shared test account: anyone can act as it",
+        );
 
         // Alice signs in without a reload and runs as a wallet: Chat, workers
         // and the Account status, with Sign out and no Forget.
@@ -568,6 +579,7 @@ describe("invitations between test users", () => {
               options.map((option) => (option as HTMLOptionElement).value),
             ),
         ).toEqual([
+          "",
           walletId,
           "test-account:alice",
           "test-account:bob",

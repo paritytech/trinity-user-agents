@@ -75,6 +75,7 @@ import { ChatScreen } from "./chat/screen.js";
 import { bindWorkersMenu } from "./products/workers-menu.js";
 import { NotificationStore } from "./notifications/notifications.js";
 import { NotificationsScreen } from "./notifications/screen.js";
+import { WalletChat } from "./invitations/wallet-chat.js";
 import { ChatTabs, type ChatTab } from "./chat/tabs.js";
 import { AppsShelf } from "./app/apps-shelf.js";
 import { ChatInbox } from "./chat/inbox.js";
@@ -243,7 +244,7 @@ const productChat = new ProductChat(localStorage);
  */
 const chatV2 = new ChatV2Host({
   media: () => null,
-  contactRooms: (productId) => devSession?.isContactChat(productId) ?? false,
+  contactRooms: (productId) => contactChat.isContactChat(productId),
   log: linesFor("workers"),
 });
 /** The host's own names for the people of a chat product's contact rooms. */
@@ -257,10 +258,10 @@ document.body.append(workerFrames);
 const productWorkers = new ProductWorkers({
   runtime: () => runtime,
   resolve: (name, network) =>
-    devSession?.resolvesWorker(name)
-      ? devSession.resolveWorker()
+    contactChat.resolvesWorker(name)
+      ? contactChat.resolveWorker()
       : resolveWorker(name, network),
-  defaults: () => devSession?.workerNames() ?? [],
+  defaults: () => contactChat.workerNames(),
   container: workerFrames,
   base: BASE,
   storage: localStorage,
@@ -276,13 +277,10 @@ const productWorkers = new ProductWorkers({
       chatV2.connect(productId, messagePortBridge(port)),
     disconnect: (productId) => chatV2.disconnect(productId),
   },
-  // Only the invitation demo serves these, to its Contact Chat worker.
+  // Only Contact Chat's worker is served these.
   invitations: {
-    connect: (productId, port) =>
-      devSession === null
-        ? port.close()
-        : devSession.requests.connect(productId, port),
-    disconnect: (productId) => devSession?.requests.disconnect(productId),
+    connect: (productId, port) => contactChat.requests.connect(productId, port),
+    disconnect: (productId) => contactChat.requests.disconnect(productId),
   },
 });
 /** The faces of Pocket's cards, drawn by the workers of the products behind them. */
@@ -306,35 +304,28 @@ const chatInbox = new ChatInbox({
   workerNames: () => productWorkers.names(),
   log: linesFor("host"),
   chatV2,
-  chatV2Options: (productId) => devSession?.chatOptions(productId) ?? {},
+  chatV2Options: (productId) => contactChat.chatOptions(productId) ?? {},
 });
 /** Which of Chat's tabs shows: the conversations or the Inbox. */
 let chatTab: ChatTab = "chats";
 /**
- * The Inbox, a prototype the dev server offers on this machine only: Chat's
- * Inbox tab and the Apps shelf's Inbox open this one screen over this one
- * store. A build reads `import.meta.env.DEV` as false and leaves it out, with
- * both entries.
+ * The Inbox: Chat's Inbox tab and the Apps shelf's Inbox open this one screen
+ * over this one store. Contact Chat's requests arrive, and are accepted or
+ * cancelled, here.
  */
-const chatTabs =
-  import.meta.env.DEV && demoAllowed(true, window.location.hostname)
-    ? new ChatTabs(showChatTab)
-    : null;
-const notifications =
-  chatTabs === null
-    ? null
-    : (() => {
-        const store = new NotificationStore(localStorage);
-        // Attached from the start, so its count reads the same on any screen.
-        element("chat-screen").append(chatTabs.root);
-        const screen = new NotificationsScreen(
-          element("notifications-screen"),
-          store,
-          (unseen) => chatTabs.render(chatTab, unseen),
-          chatTabs.root,
-        );
-        return { store, screen };
-      })();
+const chatTabs = new ChatTabs(showChatTab);
+const notifications = (() => {
+  const store = new NotificationStore(localStorage);
+  // Attached from the start, so its count reads the same on any screen.
+  element("chat-screen").append(chatTabs.root);
+  const screen = new NotificationsScreen(
+    element("notifications-screen"),
+    store,
+    (unseen) => chatTabs.render(chatTab, unseen),
+    chatTabs.root,
+  );
+  return { store, screen };
+})();
 const chatScreen = new ChatScreen(
   element("chat-screen"),
   chatInbox,
@@ -345,7 +336,7 @@ const chatScreen = new ChatScreen(
     if (person !== null) hostNames.remember(person.account, person.name);
     return person;
   },
-  chatTabs?.root,
+  chatTabs.root,
   {
     list: () => walletContacts.blockedPeople(),
     blockable: () => walletContacts.blockable(),
@@ -379,13 +370,13 @@ bindWorkersMenu({
     }),
 });
 /**
- * The menu's Developer section: test users and sample data. Only a dev server
- * on this machine loads it, so a build has none of its code.
+ * The menu's Developer section: the invitation demo, sample data, and this
+ * tab's wallet delivery and reply-key choices. Only a dev server on this
+ * machine loads it, so a build has none of its code.
  */
 const devSession =
-  notifications === null
-    ? null
-    : (await import("../tools/demos/dev-tools.js")).startDevTools({
+  import.meta.env.DEV && demoAllowed(true, window.location.hostname)
+    ? (await import("../tools/demos/dev-tools.js")).startDevTools({
         network: activeNetwork,
         base: BASE,
         notifications: notifications.store,
@@ -408,13 +399,35 @@ const devSession =
           lastAuthState.tag === "Connected"
             ? Promise.resolve(lastAuthState.value)
             : new Promise((resolve) => connectedWaiters.push(resolve)),
-        blocked: () => blockedPeople(),
-        names: hostNames,
-        namedChanged: () => hostContacts.namesChanged(),
         log: linesFor("host"),
         observe: statements.invitations,
-      });
-notifications?.screen.setActions(devSession?.notificationActions ?? null);
+      })
+    : null;
+/** Contact Chat for the signed-in wallet: the host's own chat, on the network unless the dev tools chose otherwise. */
+const walletChat = new WalletChat({
+  base: BASE,
+  notifications: notifications.store,
+  handles: {
+    accountFor: (handle): HexString | null => hostContacts.accountFor(handle),
+    handleFor: (account): HexString | null => hostContacts.handleFor(account),
+    onChange: (listener): (() => void) => hostContacts.onChange(listener),
+  },
+  blocked: () => blockedPeople(),
+  names: hostNames,
+  namedChanged: () => hostContacts.namesChanged(),
+  showChat: () => void navigation.selectDestination("chat"),
+  log: linesFor("host"),
+  observe: statements.invitations,
+  ...(devSession === null
+    ? {}
+    : {
+        replySuite: devSession.replySuite,
+        devDelivery: devSession.walletDelivery,
+      }),
+});
+/** Contact Chat in this tab: the invitation demo's test user's, or the signed-in wallet's. */
+const contactChat = devSession?.testChat ?? walletChat.owner;
+notifications.screen.setActions(contactChat.notificationActions);
 /** The invitation demo's made-up user this tab acts as instead of a wallet, if any. */
 const testUser = devSession?.testUser ?? null;
 // Chat shows the demo's chat worker once the test user signs in.
@@ -494,7 +507,7 @@ const hostContacts = new HostContacts({
     (await runtime?.contactHandles(accounts.map(hexToBytes)))?.map(
       (handle) => bytesToHex(handle) as HexString,
     ),
-  named: (): readonly HexString[] => devSession?.people() ?? [],
+  named: (): readonly HexString[] => contactChat.people(),
   log: linesFor("host"),
 });
 /** Everything that belongs to the signed-in session, handed each change in order. */
@@ -503,11 +516,11 @@ const sessionMembers = new SessionMembership({
   pocketFaces,
   productWorkers,
   productChat,
-  notifications: notifications?.store ?? null,
+  notifications: notifications.store,
   signedOutNotifications: devSession?.notificationsScope ?? null,
   hostNames,
   walletContacts,
-  hidesWalletContacts: () => devSession?.hidesWalletContacts() === true,
+  hidesWalletContacts: () => walletChat.hidesWalletContacts(),
   chatV2,
   chatInbox,
 });
@@ -540,7 +553,7 @@ const appsShelf = new AppsShelf(
     close: (key) => navigation.closeApp(key),
   },
 );
-notifications?.store.onChange(renderShelf);
+notifications.store.onChange(renderShelf);
 const stageEmptyNote = element("stage-empty-note");
 const stageLoadingPill = element("stage-loading-pill");
 const stageLoadingText = element("stage-loading-text");
@@ -797,7 +810,7 @@ function renderWallets(): void {
         ? []
         : [group("Your wallets", walletOptions)]),
       group(
-        "Test accounts",
+        "Shared test accounts",
         testAccounts.map((wallet) => {
           // A test account's id says nothing, so until it has signed in its
           // name alone tells it apart.
@@ -819,6 +832,12 @@ function renderWallets(): void {
     activity.record({ category: "session", action: problem, failed: true });
   loggedWalletProblem = problem;
   if (findWallet(selected) !== undefined) walletSelect.value = selected;
+  else if (testAccounts.length > 0) {
+    // No account is chosen for the user: not even a test account.
+    const choose = new Option("Choose an account", "", true, true);
+    choose.disabled = true;
+    walletSelect.prepend(choose);
+  }
   savedCount = saved.length;
   renderControls();
 }
@@ -978,9 +997,7 @@ function renderDock(): void {
       button.dataset.live = "false";
       button.title =
         id === "chat"
-          ? notifications === null
-            ? "Chat: this wallet's conversations, kept by the host"
-            : "Chat: this wallet's conversations, and the Inbox of requests from products"
+          ? "Chat: this wallet's conversations, and the Inbox of requests from products"
           : "Pocket: this wallet's identity and balance";
       continue;
     }
@@ -1020,16 +1037,13 @@ function renderCoreDot(): void {
 
 function renderShelf(): void {
   renderCoreDot();
-  const store = notifications?.store ?? null;
+  const { store } = notifications;
   appsShelf.render({
     apps: navigation.openApps(),
-    inbox:
-      store === null
-        ? null
-        : {
-            unseen: store.unseen(),
-            unseenFor: (productId) => store.unseen(productId),
-          },
+    inbox: {
+      unseen: store.unseen(),
+      unseenFor: (productId) => store.unseen(productId),
+    },
     core: {
       network: activeNetwork.displayName,
       state: coreState,
@@ -1041,14 +1055,13 @@ function renderShelf(): void {
 /** Chat's tab bar: show the conversations or the Inbox, in place. */
 function showChatTab(tab: ChatTab): void {
   chatTab = tab;
-  chatTabs?.render(chatTab, notifications?.store.unseen() ?? 0);
+  chatTabs.render(chatTab, notifications.store.unseen());
   renderHostScreens();
-  chatTabs?.focus(tab);
+  chatTabs.focus(tab);
 }
 
 /** The Apps shelf's Inbox: Chat, at its Inbox tab. */
 function openInbox(): void {
-  if (notifications === null) return;
   chatTab = "inbox";
   void navigation.selectDestination("chat").then(() => {
     if (navigation.destination !== "chat") return;
@@ -1064,7 +1077,7 @@ function renderHostScreens(): void {
   const { destination } = navigation;
   const surface =
     destination === "chat"
-      ? chatTab === "inbox" && notifications !== null
+      ? chatTab === "inbox"
         ? "inbox"
         : "chat"
       : destination === "pocket"
@@ -1099,7 +1112,7 @@ function renderHostScreens(): void {
     );
   pocketFaces.setShown(surface === "pocket");
   chatScreen.show(surface === "chat");
-  notifications?.screen.show(surface === "inbox");
+  notifications.screen.show(surface === "inbox");
   browseLanding.show(surface === "browse");
   if (destination === "chat" || destination === "pocket")
     lastHost = destination;
@@ -1209,7 +1222,7 @@ function syncChatSession(): void {
   const access = chainAccess;
   const wallet = walletSession.active;
   // Before the session's workers start, so they see Contact Chat among them.
-  devSession?.setWallet(
+  walletChat.setWallet(
     lastAuthState.tag !== "Connected" || access === null || wallet === null
       ? null
       : {

@@ -45,13 +45,13 @@ import {
 import {
   CONNECTED_SUBTITLE,
   ContactChat,
-} from "../../../../fixtures/products/contact-chat/engine.js";
-import type { HostRequests } from "../../../../fixtures/products/contact-chat/requests.js";
+} from "../../../../src/chat/contact-chat/engine.js";
+import type { HostRequests } from "../../../../src/chat/contact-chat/requests.js";
 import {
   WINDOW_MESSAGES,
   simpleText,
   type Session,
-} from "../../../../fixtures/products/contact-chat/simple-text.js";
+} from "../../../../src/chat/contact-chat/simple-text.js";
 import { MemoryChatStatements } from "../../../support/chat-statements.js";
 
 /**

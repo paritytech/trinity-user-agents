@@ -9,7 +9,7 @@ import {
   WINDOW_MAX_BYTES,
   WINDOW_MESSAGES,
   simpleText,
-} from "../../../../fixtures/products/contact-chat/simple-text.js";
+} from "../../../../src/chat/contact-chat/simple-text.js";
 
 /**
  * `simple-text/1` on its own: what each side posts and reads. The setup is

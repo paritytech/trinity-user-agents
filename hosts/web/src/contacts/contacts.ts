@@ -443,7 +443,7 @@ export function chooseContact(
     layout: "list",
     search: {
       label: "Search contacts",
-      placeholder: "Search by name or username",
+      placeholder: directory.placeholder ?? "Search by name or username",
       empty: "No contact by that name.",
       lookup: usernameLookup(directory, contacts, blocked),
     },

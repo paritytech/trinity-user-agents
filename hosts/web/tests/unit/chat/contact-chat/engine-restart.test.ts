@@ -7,12 +7,12 @@ import type {
 import { cryptoRandom, toHex } from "../../../../src/invitations/sealing.js";
 import { settle } from "../../../support/test-support.js";
 import { KeptStorage } from "../../../support/product-storage.js";
-import { ContactChat } from "../../../../fixtures/products/contact-chat/engine.js";
-import type { RequestCall } from "../../../../fixtures/products/contact-chat/requests.js";
+import { ContactChat } from "../../../../src/chat/contact-chat/engine.js";
+import type { RequestCall } from "../../../../src/chat/contact-chat/requests.js";
 import {
   simpleText,
   type Session,
-} from "../../../../fixtures/products/contact-chat/simple-text.js";
+} from "../../../../src/chat/contact-chat/simple-text.js";
 import { MemoryChatStatements } from "../../../support/chat-statements.js";
 
 /**

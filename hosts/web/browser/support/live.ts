@@ -72,7 +72,7 @@ export async function contactChatRunning(page: Page): Promise<Frame> {
 }
 
 /**
- * Developer section: Contact Chat for this wallet, with a delivery that
+ * Developer section: a delivery for the wallet's Contact Chat that
  * submits nothing (`validate`, the network delivery that validates claims
  * only, by default; or `local-validate`, requests between tabs of this
  * browser and chat-account claims validated); then sign in as the test
@@ -85,12 +85,6 @@ export async function validatingWalletTab(
   delivery: "validate" | "local-validate" = "validate",
 ): Promise<void> {
   await page.goto(origin);
-  await ready(page);
-  await openTools(page, "more");
-  await Promise.all([
-    page.waitForEvent("load"),
-    page.check("#wallet-contact-chat"),
-  ]);
   await ready(page);
   await openTools(page, "more");
   const reload = page.waitForEvent("load");

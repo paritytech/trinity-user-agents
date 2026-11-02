@@ -361,7 +361,8 @@ describe("published chat keys", () => {
         again: false,
       },
       {
-        reason: "Your identity account: it has no chat identity on chain.",
+        reason:
+          "Your identity account: it has no chat identity on chain. To chat, register a username for this wallet in the Polkadot app, which publishes its chat key, then sign in again.",
         again: false,
       },
     ]);
