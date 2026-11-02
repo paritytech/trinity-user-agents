@@ -15,8 +15,16 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOver
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayRequest
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameTarget
+import io.paritytech.polkadotapp.feature_products_api.model.Executables
+import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
+import io.paritytech.polkadotapp.feature_products_api.model.Product
+import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
+import io.paritytech.polkadotapp.feature_products_api.model.SemVer
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.DeviceCountryDetector
+import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.runBlocking
@@ -40,7 +48,9 @@ import uniffi.truapi.FundingDirection as CoreFundingDirection
 class AppFundingHostBridgeTest {
     private val overlay = mockk<FundingOverlay>()
     private val countryDetector = mockk<DeviceCountryDetector>()
-    private val bridge = AppFundingHostBridge(Lazy { overlay }, countryDetector)
+    private val bundledProducts = mockk<BundledProducts> { every { product(any<String>()) } returns null }
+    private val resolveProduct = mockk<ResolveProductUseCase>()
+    private val bridge = AppFundingHostBridge(Lazy { overlay }, countryDetector, bundledProducts, resolveProduct)
 
     // The core reads anything but STARTED as the user walking away and discards the session.
     @Test
@@ -176,6 +186,33 @@ class AppFundingHostBridgeTest {
 
         verify { overlay.closeProviderFrame(ProductId.fromStoredValue("ramp.dot"), "intent") }
     }
+
+    @Test
+    fun `a provider has an App only when its product declares one`() = runBlocking {
+        coEvery { resolveProduct.resolve(ProductId.fromStoredValue("ramp.dot")) } returns Result.success(resolved(app = true))
+        coEvery { resolveProduct.resolve(ProductId.fromStoredValue("widget.dot")) } returns Result.success(resolved(app = false))
+
+        assertEquals(true, bridge.providerHasApp("ramp.dot"))
+        assertEquals(false, bridge.providerHasApp("widget.dot"))
+    }
+
+    // Not knowing must not refuse a provider's screen that would open.
+    @Test
+    fun `a provider that cannot be resolved keeps its App route`() = runBlocking {
+        coEvery { resolveProduct.resolve(any()) } returns Result.failure(IllegalStateException("offline"))
+
+        assertEquals(true, bridge.providerHasApp("ramp.dot"))
+    }
+
+    private fun resolved(app: Boolean) = ResolvedProduct(
+        product = Product(id = ProductId.fromStoredValue("ramp.dot"), name = "Ramp", icon = null),
+        description = null,
+        executables = Executables(
+            app = if (app) ProductExecutable.App(ExecutableHost("ramp.dot"), SemVer.ZERO) else null,
+            widget = null,
+            worker = null,
+        ),
+    )
 
     private fun options(min: String) = FundingOptions(
         candidates = emptyList(),
