@@ -3025,6 +3025,12 @@ pub trait FundingPlatform: Send + Sync {
 	/// open for it.
 	fn close_provider_frame(&self, provider: &ProductContext, intent: String);
 
+	/// Whether `provider` ships an App, so an App route of its can be shown.
+	/// A provider without one shows only external pages.
+	async fn provider_has_app(&self, _provider: &ProductContext) -> bool {
+		true
+	}
+
 	/// The country the user is likely in, as an ISO 3166-1 alpha-2 code, for
 	/// the quotes the core asks before the user picks one. Best effort,
 	/// without asking for any permission: the device's coarse location when

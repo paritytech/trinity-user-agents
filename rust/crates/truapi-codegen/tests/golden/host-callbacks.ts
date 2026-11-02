@@ -1835,6 +1835,12 @@ export interface FundingPlatform {
   closeProviderFrame(provider: ProductContext, intent: string): void;
 
   /**
+   * Whether `provider` ships an App, so an App route of its can be shown.
+   * A provider without one shows only external pages.
+   */
+  providerHasApp?(provider: ProductContext): Promise<boolean>;
+
+  /**
    * The country the user is likely in, as an ISO 3166-1 alpha-2 code, for
    * the quotes the core asks before the user picks one. Best effort,
    * without asking for any permission: the device's coarse location when

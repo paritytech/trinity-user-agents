@@ -272,6 +272,8 @@ enum FundingFrameOutcome {
 }
 ```
 
+- A provider's App is optional. An App route from a provider that ships no App fails with `NoApp`; such a provider
+  shows external pages, or no screen at all.
 - A page and its return URL must be https URLs with a host and no credentials; anything else fails with `InvalidUrl`
   before the host sees it. Any https origin is allowed, since onramps hand users on to changing sub-providers.
 - The host shows the page's origin in its own chrome, with a close button, and allows what KYC and card checks need:

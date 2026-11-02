@@ -2868,6 +2868,7 @@ struct RecordingFundingPlatform {
 	closed: Mutex<Vec<String>>,
 	country: Option<String>,
 	in_progress: Mutex<Vec<bool>>,
+	has_app: bool,
 }
 
 impl RecordingFundingPlatform {
@@ -2880,6 +2881,15 @@ impl RecordingFundingPlatform {
 			closed: Mutex::new(Vec::new()),
 			country: None,
 			in_progress: Mutex::new(Vec::new()),
+			has_app: true,
+		})
+	}
+
+	fn without_apps() -> Arc<Self> {
+		Arc::new(Self {
+			has_app: false,
+			..Arc::into_inner(Self::answering(crate::platform::FundingPresentOutcome::Started))
+				.expect("only reference")
 		})
 	}
 
@@ -2918,6 +2928,10 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 
 	fn close_provider_frame(&self, _provider: &ProductContext, intent: String) {
 		self.closed.lock().expect("closed mutex poisoned").push(intent);
+	}
+
+	async fn provider_has_app(&self, _provider: &ProductContext) -> bool {
+		self.has_app
 	}
 
 	async fn detected_country(&self) -> Option<String> {
@@ -9562,6 +9576,62 @@ fn a_provider_frame_opens_only_https_pages() {
 				url: "https://widget.example.com/buy".to_string(),
 				return_url: None,
 			}],
+		)
+	);
+}
+
+// A provider without an App shows external pages only, so the core refuses
+// an App route of its before the host sees it.
+#[test]
+fn a_provider_without_an_app_opens_only_pages() {
+	let services = funding_services();
+	let platform = RecordingFundingPlatform::without_apps();
+	assert!(services.funding().install_platform(platform.clone()));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		None,
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot", None))
+			.expect("selected")
+	);
+	let worker = provider_worker(&services, "ramp.dot");
+	let present = |target: v01::FundingFrameTarget| {
+		futures::executor::block_on(truapi::api::FundingProvider::present_frame(
+			&worker,
+			&CallContext::default(),
+			truapi::versioned::funding_provider::HostFundingPresentFrameRequest::V1(
+				v01::HostFundingPresentFrameRequest { intent: intent.clone(), target },
+			),
+		))
+	};
+	let page = v01::FundingFrameTarget::Page {
+		url: "https://widget.example.com/buy".to_string(),
+		return_url: None,
+	};
+
+	let route = present(v01::FundingFrameTarget::App { route: "/card".to_string() });
+	let shown = present(page.clone());
+
+	assert_eq!(
+		(
+			route.map(|_| ()),
+			shown.map(|_| ()),
+			platform.framed.lock().expect("framed mutex poisoned").clone(),
+		),
+		(
+			Err(CallError::Domain(
+				truapi::versioned::funding_provider::HostFundingPresentFrameError::V1(
+					v01::HostFundingPresentFrameError::NoApp
+				)
+			)),
+			Ok(()),
+			vec![page],
 		)
 	);
 }
