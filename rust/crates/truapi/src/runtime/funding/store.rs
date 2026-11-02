@@ -21,7 +21,7 @@ use crate::{
 
 /// Format of a stored session. The stored enums pin their SCALE indexes, so
 /// variants added later decode alongside the ones a row was written with.
-const SESSION_FORMAT: u16 = 2;
+const SESSION_FORMAT: u16 = 3;
 /// Format of a stored summary.
 const SUMMARY_FORMAT: u16 = 4;
 

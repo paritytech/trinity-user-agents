@@ -147,8 +147,8 @@ so a worker treats every call as idempotent and looks sessions up by `intent`.
 
 The worker keeps its own state, such as its onramp order id, in its storage under the session's `intent`. It writes
 before every external action, reads the entry when `assign` arrives, and deletes it after its last report. A session the
-core ended without it, by expiry or a second cancel, shows up as `NotFound` on its next `report`, and it deletes the
-entry then.
+provider no longer serves shows up as `NotFound` on its next `report`, whether it ended without the provider, by expiry
+or a second cancel, or ended with nothing left for it to report, and it deletes the entry then.
 
 ### `quote`
 
@@ -268,7 +268,7 @@ enum FundingDeposit {
 
 - Only the provider a session is assigned to may report on it, and updates only move forward. Otherwise the report
   fails with `NotFound` or `OutOfOrder`.
-- The core stores each report before answering. It keeps a session in full while its provider still works on it, and a cancelled top-up for as long as a late payment may open it again; every other ended session is compacted at once into a session pack it never trims (intent, owner, direction, amounts, outcome and times, the provider, rail and asset, the row's status, the payout, the refund and the provider's references), which also keeps whether the host acknowledged it. The host gets the session in full with the change that ended it, and the 200 newest it has not acknowledged come through again as summaries when funding resumes, so a product watching any session it opened gets its terminal item instead of `NotFound`, and the host reads every ended session, full or compacted, with `funding_history()` whenever it shows history. Sessions and the pack are stored in the core database, one versioned row per session, and each change is written in one transaction: a row that does not decode is skipped and left in place, one in a newer format, left by a newer app before a downgrade, is left untouched while funding stays unavailable, and one in an older format is skipped and left in place, so a format change never loses a session with money in flight.
+- The core stores each report before answering. It keeps a session in full while its provider still works on it, a released withdrawal until its payout outcome is in, and a cancelled top-up for as long as a late payment may open it again; every other ended session is compacted at once into a session pack it never trims (intent, owner, direction, amounts, outcome and times, the provider, rail and asset, the row's status, the payout, the refund and the provider's references), which also keeps whether the host acknowledged it. The host gets the session in full with the change that ended it, and the 200 newest it has not acknowledged come through again as summaries when funding resumes, so a product watching any session it opened gets its terminal item instead of `NotFound`, and the host reads every ended session, full or compacted, with `funding_history()` whenever it shows history. Sessions and the pack are stored in the core database, one versioned row per session, and each change is written in one transaction: a row that does not decode is skipped and left in place, one in a newer format, left by a newer app before a downgrade, is left untouched while funding stays unavailable, and one in an older format is skipped and left in place, so a format change never loses a session with money in flight.
 - A worker names the session when it starts funds: the v0.2 `payment.topUp` and `payment.request` take
   `funding: Some(intent)` for an open session it serves in that direction, or fail with `FundingNotServed`. The v0.1
   shapes, which products built before funding still send, name no session. A withdrawal whose payout failed takes
@@ -281,7 +281,8 @@ enum FundingDeposit {
   `Collecting` a taken payment request of that session, at the recorded amount, once; anything else fails with `NotStarted`.
   Funds started without `funding` belong to no session.
 - `Converting`, `Payout`, `Refunding` or `PayoutRetrying` on a withdrawal that is not released yet fails with
-  `OutOfOrder`, and so does `PayoutRetrying` once the payout outcome is reported.
+  `OutOfOrder`, and so does `PayoutRetrying` after a failed payout. Once a payout went through, the withdrawal is over
+  and any further report fails with `NotFound`.
 - A report on a session the user chose a provider for while the overlay is still up is stored like any other.
 - `Deposit` and `Details` carry what the host draws: where and what the user pays, and the provider's references. The
   latest of each is shown.
