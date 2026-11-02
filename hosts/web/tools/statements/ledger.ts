@@ -293,7 +293,12 @@ export interface AccountRecord {
   /** Submissions answered `new` or `known`: broadcast to a peer, not shown stored. With their data bytes. */
   wentOut: number;
   wentOutDataBytes: number;
+  /** The light client's answers to its submissions, by status. */
   answers: Partial<Record<string, number>>;
+  /** Its submissions the RPC layer answered with an error, past this tab's no-submit guard. */
+  rpcErrors: number;
+  /** Its submissions this tab's no-submit guard refused: none reached the light client. */
+  refusedLocally: number;
   lastRefusal?: { at: number; submit: number; answer: SubmitAnswer };
 }
 
@@ -717,7 +722,7 @@ export class StatementLedger {
       this.event(
         "submit",
         source === "core" ? "core" : "host",
-        `Submit #${record.id} sent by the ${source}${read === null ? "" : `: ${read.meta.dataBytes} data bytes, signer ${read.meta.signer === undefined ? "none" : short(read.meta.signer)}`}`,
+        `Submit #${record.id} asked by the ${source}${read === null ? "" : `: ${read.meta.dataBytes} data bytes, signer ${read.meta.signer === undefined ? "none" : short(read.meta.signer)}`}`,
         {
           submit: record.id,
           ...(read?.meta.signer === undefined
@@ -873,6 +878,12 @@ export class StatementLedger {
         };
         if (local) this.counters.refusedLocally += 1;
         else this.counters.rpcErrors += 1;
+        const signer = record.meta?.signer;
+        if (signer !== undefined) {
+          const account = this.account(signer);
+          if (local) account.refusedLocally += 1;
+          else account.rpcErrors += 1;
+        }
         this.event(
           "submit",
           local ? "host" : "client",
@@ -1921,6 +1932,8 @@ export class StatementLedger {
         wentOut: 0,
         wentOutDataBytes: 0,
         answers: {},
+        rpcErrors: 0,
+        refusedLocally: 0,
       };
       this.accounts.set(key, record);
       this.bound(this.accounts, this.limits.accounts, "accounts");

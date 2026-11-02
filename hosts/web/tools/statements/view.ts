@@ -202,10 +202,23 @@ const SOURCES_NOTE =
 const PEER_REFUSALS =
   "Peers check allowance, account room and channel priority themselves and do not tell the light client. No refusal shown does not mean none happened.";
 
-function answersText(answers: Partial<Record<string, number>>): string {
-  const parts = Object.entries(answers).map(
+/** What a submission the inspector saw does not show. */
+const POSTS_NOTE =
+  "Submissions signed by this account that the core or the host asked for. Asking does not mean the light client got it.";
+
+/** Why a submission refused here never reached the network. */
+const REFUSED_HERE_NOTE =
+  "This tab submits nothing: its no-submit guard answered these before the light client, so no peer got them.";
+
+/** The light client's answers to an account's submissions, and its RPC errors. */
+function answersText(account: AccountRecord): string {
+  const parts = Object.entries(account.answers).map(
     ([status, n]) => `${n} ${status === "new" ? "broadcast" : status}`,
   );
+  if (account.rpcErrors > 0)
+    parts.push(
+      `${account.rpcErrors} RPC error${account.rpcErrors === 1 ? "" : "s"}`,
+    );
   return parts.length === 0 ? "none answered" : parts.join(" · ");
 }
 
@@ -325,7 +338,11 @@ export function mountStatementsView(
     const open = ledger
       .subscriptionList()
       .filter((s) => s.state === "open" || s.state === "opening").length;
-    summary.textContent = `since ${clock(ledger.sessionStart())} · ${counts.submits} submits · ${answered} answered · ${counts.rpcErrors + counts.refusedLocally} errors · ${counts.delivered} delivered · ${open} subs open · ${counts.connections} conns`;
+    const refusedHere =
+      counts.refusedLocally > 0
+        ? ` · ${counts.refusedLocally} refused here`
+        : "";
+    summary.textContent = `since ${clock(ledger.sessionStart())} · ${counts.submits} submits · ${answered} answered · ${counts.rpcErrors} errors${refusedHere} · ${counts.delivered} delivered · ${open} subs open · ${counts.connections} conns`;
     summary.title =
       "Counters count since the session started in this tab. Lists below keep their newest entries within bounds.";
     const payload = ledger.payloadUse();
@@ -501,11 +518,20 @@ export function mountStatementsView(
       ),
     );
     facts.append(
-      ...fact(
-        "Posts",
-        `${account.submits} submitted: ${answersText(account.answers)}`,
-        "client",
-      ),
+      ...fact("Posts", `${account.submits} tried`, "inspector", POSTS_NOTE),
+    );
+    if (account.submits > account.refusedLocally)
+      facts.append(...fact("Answers", answersText(account), "client"));
+    if (account.refusedLocally > 0)
+      facts.append(
+        ...fact(
+          "Refused here",
+          `${account.refusedLocally} by the no-submit guard`,
+          "host",
+          REFUSED_HERE_NOTE,
+        ),
+      );
+    facts.append(
       ...fact("Peer refusals", "not visible", "inspector", PEER_REFUSALS),
     );
     if (account.lastRefusal !== undefined)

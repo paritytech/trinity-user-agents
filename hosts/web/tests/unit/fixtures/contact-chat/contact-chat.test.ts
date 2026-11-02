@@ -693,6 +693,31 @@ describe("Contact Chat between two hosts, by contact handle", () => {
     expect(store.taken).toEqual([]);
   });
 
+  test("a message the Statement Store refuses fails, and the room says why", async () => {
+    const { alice, bob, store } = world();
+    await alice.start();
+    await bob.start();
+    const roomId = await alice.startWith(BOB, "");
+    await bob.acceptNewest();
+    await settle();
+    await alice.provider.send(roomId, "One");
+    await settle();
+    // The host allowed the account; the store no longer takes its posts.
+    store.allowed.clear();
+    await alice.provider.send(roomId, "Two");
+    await settle();
+    const timeline = await alice.timeline(roomId);
+    expect(
+      timeline
+        .filter((message) => message.sender.label === "You")
+        .map((message) => message.status),
+    ).toEqual(["sent", "failed"]);
+    expect(texts(timeline).at(-1)!.text).toBe(
+      "Your message was not sent: statement-store submit failed: no allowance",
+    );
+    expect(store.taken).toHaveLength(1);
+  });
+
   test("the network keeps a bounded window: messages older than it are not read by a peer that was away", async () => {
     const { alice, bob } = world();
     await alice.start();
