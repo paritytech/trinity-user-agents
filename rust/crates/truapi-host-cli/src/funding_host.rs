@@ -85,7 +85,7 @@ pub async fn offer_providers(
 	let now_secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
 	let mut providers = Vec::new();
 	for (entry, _script) in entries {
-		let product_id = entry
+		let product_id: truapi::platform::ProductId = entry
 			.parse()
 			.map_err(|error| anyhow::anyhow!("funding provider {entry}: {error}"))?;
 		platform
@@ -96,7 +96,7 @@ pub async fn offer_providers(
 			.await
 			.map_err(|error| anyhow::anyhow!("caching the manifest of {entry}: {error:?}"))?;
 		providers.push(FundingProviderEntry {
-			product_id: entry.to_string(),
+			product_id,
 			worker_manifest: Some(SHIPPED_PROVIDER_MANIFEST.to_string()),
 			origin: FundingProviderOrigin::Published,
 		});
@@ -361,7 +361,7 @@ impl FundingPlatform for CliFundingHost {
 			return Ok(FundingPresentOutcome::Dismissed);
 		};
 		runtime
-			.select_funding_provider(&session.intent, &provider, Some(&quote_id))
+			.select_funding_provider(&session.intent, &provider, &quote_id)
 			.await?;
 		Ok(FundingPresentOutcome::Started)
 	}
