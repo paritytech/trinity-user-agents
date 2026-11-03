@@ -112,7 +112,7 @@ class TrUAPIChatWorkerRoomsTest {
 
     @Test
     fun `a question the product does not answer hides the feature`() = runTest {
-        coEvery { execution.chatMessagesQuery(any(), any()) } throws ChatQueryException.Refused(ProductChatQueryError.NotAvailable)
+        coEvery { execution.chatMessagesQuery(any(), any()) } throws ChatQueryException.Refused(ProductChatQueryError.NOT_AVAILABLE)
 
         val page = worker().messagesPage(room, ChatPageAnchorModel.Before(null), pageSize = 40)
 

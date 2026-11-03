@@ -32,6 +32,7 @@ use futures::{
 use parity_scale_codec::Encode;
 use serde_json::{Value, json};
 use truapi::{
+	CallError,
 	latest::{
 		ChatBotRegistrationStatus, ChatCallRecord, ChatContactEvent, ChatFeedUpdate, ChatMediaItem,
 		ChatMediaMeta, ChatMessage, ChatMessageBody, ChatMessageContent, ChatMessageOrigin,
@@ -1137,13 +1138,13 @@ impl ChatPlatform for CliChatHost {
 		_product: &ProductContext,
 		request: HostChatUpdateFeedRequest,
 		persist: bool,
-	) -> Result<(), HostChatUpdateFeedError> {
+	) -> Result<(), CallError<HostChatUpdateFeedError>> {
 		let mut state = self.lock();
 		let room = state
 			.rooms
 			.get_mut(&request.room_id)
-			.ok_or(HostChatUpdateFeedError::UnknownRoom)?;
-		match apply_feed(room, &request.update, persist)? {
+			.ok_or(CallError::Domain(HostChatUpdateFeedError::UnknownRoom))?;
+		match apply_feed(room, &request.update, persist).map_err(CallError::Domain)? {
 			Some(FeedChange::Message(index)) => {
 				Self::announce_message(&mut state, &request.room_id, index);
 			},
@@ -1172,7 +1173,7 @@ mod tests {
 	use std::fs::read_to_string;
 	use truapi::{
 		latest::{
-			ChatCallClose, ChatCustomMessage, ChatPaymentRecord, ChatPreviewMessage,
+			ChatCallClose, ChatCustomBody, ChatPaymentRecord, ChatPreviewMessage,
 			ChatPreviewReaction, ChatRoomActivity, HostChatSetRoomFooterRequest,
 		},
 		platform::ProductId,
@@ -1258,6 +1259,10 @@ mod tests {
 			HostChatUpdateFeedRequest { room_id: room_id.to_string(), update },
 			persist,
 		))
+		.map_err(|error| match error {
+			CallError::Domain(error) => error,
+			error => panic!("the CLI host refuses an update only with a domain error: {error:?}"),
+		})
 	}
 
 	fn room_view(host: &CliChatHost, room_id: &str) -> Value {
@@ -1967,7 +1972,7 @@ mod tests {
 			"Payment of 1500"
 		);
 		let custom = |alt: Option<&str>| ChatMessageBody::Custom {
-			message: ChatCustomMessage { message_type: "poll".to_string(), payload: vec![1] },
+			message: ChatCustomBody { message_type: "poll".to_string(), payload: vec![1] },
 			alt: alt.map(str::to_string),
 		};
 		assert_eq!(preview_text(&custom(Some("A poll"))), "A poll");

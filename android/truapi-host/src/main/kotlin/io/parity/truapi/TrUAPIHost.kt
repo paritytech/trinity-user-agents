@@ -1446,7 +1446,7 @@ object ChatQueryTimeout {
 sealed class ChatQueryException(message: String) : Exception(message) {
     /**
      * The product, or the core for a room that does not declare the handler,
-     * refused the query. [ProductChatQueryError.NotAvailable] asks the host to
+     * refused the query. [ProductChatQueryError.NOT_AVAILABLE] asks the host to
      * apply its default.
      */
     class Refused(val error: ProductChatQueryError) : ChatQueryException("chat query refused: $error")

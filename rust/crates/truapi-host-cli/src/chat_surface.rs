@@ -792,7 +792,6 @@ fn query_error_json(error: &ProductChatQueryError) -> Value {
 	match error {
 		ProductChatQueryError::UnknownRoom => json!({ "tag": "UnknownRoom" }),
 		ProductChatQueryError::NotAvailable => json!({ "tag": "NotAvailable" }),
-		ProductChatQueryError::Unknown { reason } => json!({ "tag": "Unknown", "reason": reason }),
 	}
 }
 
@@ -803,9 +802,7 @@ fn user_action_error_json(error: &ProductChatUserActionError) -> Value {
 		ProductChatUserActionError::Rejected { reason } => {
 			json!({ "tag": "Rejected", "reason": reason })
 		},
-		ProductChatUserActionError::Unknown { reason } => {
-			json!({ "tag": "Unknown", "reason": reason })
-		},
+		ProductChatUserActionError::NotAvailable => json!({ "tag": "NotAvailable" }),
 	}
 }
 

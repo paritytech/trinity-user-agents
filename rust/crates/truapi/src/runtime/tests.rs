@@ -1370,9 +1370,10 @@ impl crate::platform::ChatPlatform for RecordingChatPlatform {
 		_product: &ProductContext,
 		room_id: String,
 		_request: truapi::latest::HostChatCreateRoomRequest,
-	) -> Result<v01::ChatRoomRegistrationStatus, truapi::latest::HostChatCreateRoomError> {
+	) -> Result<truapi::latest::ChatRoomRegistrationStatus, truapi::latest::HostChatCreateRoomError>
+	{
 		self.created_rooms.lock().expect("created rooms mutex poisoned").push(room_id);
-		Ok(v01::ChatRoomRegistrationStatus::New)
+		Ok(truapi::latest::ChatRoomRegistrationStatus::New)
 	}
 
 	async fn register_chat_bot(

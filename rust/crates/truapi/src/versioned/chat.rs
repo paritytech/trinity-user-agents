@@ -6,6 +6,9 @@
 //!
 //! v0.2 also lets the host make the room id. The `room_id` of a v0.1 room
 //! request becomes the source of the id, and a v0.1 answer carries no id.
+//!
+//! The room, preview, feed and query methods are new in v0.2, so their
+//! envelopes start at `V2`.
 
 use crate::{
 	v01, v02,
@@ -23,7 +26,7 @@ truapi_macros::versioned_type! {
 	}
 	pub enum HostChatCreateRoomError {
 		V1 => v01::HostChatCreateRoomError,
-		V2 => v01::HostChatCreateRoomError,
+		V2 => v02::HostChatCreateRoomError,
 	}
 	pub enum HostChatRegisterBotRequest { V1 => v01::HostChatRegisterBotRequest }
 	pub enum HostChatRegisterBotResponse { V1 => v01::HostChatRegisterBotResponse }
@@ -49,26 +52,26 @@ truapi_macros::versioned_type! {
 	pub enum HostChatSetRoomFooterRequest { V1 => v01::HostChatSetRoomFooterRequest }
 	pub enum HostChatSetRoomFooterResponse { V1 }
 	pub enum HostChatSetRoomFooterError { V1 => v01::HostChatSetRoomFooterError }
-	pub enum ProductChatQueryError { V1 => v01::ProductChatQueryError }
-	pub enum HostChatSetRoomMetadataRequest { V1 => v01::HostChatSetRoomMetadataRequest }
-	pub enum HostChatSetRoomMetadataResponse { V1 }
-	pub enum HostChatSetRoomMetadataError { V1 => v01::HostChatSetRoomMetadataError }
-	pub enum HostChatSetRoomPreviewRequest { V1 => v01::HostChatSetRoomPreviewRequest }
-	pub enum HostChatSetRoomPreviewResponse { V1 }
-	pub enum HostChatSetRoomPreviewError { V1 => v01::HostChatSetRoomPreviewError }
-	pub enum HostChatDeleteRoomRequest { V1 => v01::HostChatDeleteRoomRequest }
-	pub enum HostChatDeleteRoomResponse { V1 }
-	pub enum HostChatDeleteRoomError { V1 => v01::HostChatDeleteRoomError }
-	pub enum HostChatUpdateFeedRequest { V1 => v01::HostChatUpdateFeedRequest }
-	pub enum HostChatUpdateFeedResponse { V1 }
-	pub enum HostChatUpdateFeedError { V1 => v01::HostChatUpdateFeedError }
-	pub enum ProductChatMessagesQueryRequest { V1 => v01::ProductChatMessagesQueryRequest }
-	pub enum ProductChatMessagesQueryResponse { V1 => v01::ProductChatMessagesQueryResponse }
-	pub enum ProductChatUserActionRequest { V1 => v01::ProductChatUserActionRequest }
-	pub enum ProductChatUserActionResponse { V1 => v01::ProductChatUserActionResponse }
-	pub enum ProductChatUserActionError { V1 => v01::ProductChatUserActionError }
-	pub enum ProductChatReactionsQueryRequest { V1 => v01::ProductChatReactionsQueryRequest }
-	pub enum ProductChatReactionsQueryResponse { V1 => v01::ProductChatReactionsQueryResponse }
+	pub enum ProductChatQueryError { V2 => v02::ProductChatQueryError }
+	pub enum HostChatSetRoomMetadataRequest { V2 => v02::HostChatSetRoomMetadataRequest }
+	pub enum HostChatSetRoomMetadataResponse { V2 }
+	pub enum HostChatSetRoomMetadataError { V2 => v02::HostChatSetRoomMetadataError }
+	pub enum HostChatSetRoomPreviewRequest { V2 => v02::HostChatSetRoomPreviewRequest }
+	pub enum HostChatSetRoomPreviewResponse { V2 }
+	pub enum HostChatSetRoomPreviewError { V2 => v02::HostChatSetRoomPreviewError }
+	pub enum HostChatDeleteRoomRequest { V2 => v02::HostChatDeleteRoomRequest }
+	pub enum HostChatDeleteRoomResponse { V2 }
+	pub enum HostChatDeleteRoomError { V2 => v02::HostChatDeleteRoomError }
+	pub enum HostChatUpdateFeedRequest { V2 => v02::HostChatUpdateFeedRequest }
+	pub enum HostChatUpdateFeedResponse { V2 }
+	pub enum HostChatUpdateFeedError { V2 => v02::HostChatUpdateFeedError }
+	pub enum ProductChatMessagesQueryRequest { V2 => v02::ProductChatMessagesQueryRequest }
+	pub enum ProductChatMessagesQueryResponse { V2 => v02::ProductChatMessagesQueryResponse }
+	pub enum ProductChatUserActionRequest { V2 => v02::ProductChatUserActionRequest }
+	pub enum ProductChatUserActionResponse { V2 => v02::ProductChatUserActionResponse }
+	pub enum ProductChatUserActionError { V2 => v02::ProductChatUserActionError }
+	pub enum ProductChatReactionsQueryRequest { V2 => v02::ProductChatReactionsQueryRequest }
+	pub enum ProductChatReactionsQueryResponse { V2 => v02::ProductChatReactionsQueryResponse }
 }
 
 impl IntoLatest for HostChatCreateRoomRequest {
@@ -79,7 +82,7 @@ impl IntoLatest for HostChatCreateRoomRequest {
 					room_id_source: room_id,
 					name,
 					icon,
-					config: v01::ChatRoomConfig::default(),
+					config: v02::ChatRoomConfig::default(),
 				}
 			},
 			Self::V2(latest) => latest,
@@ -94,6 +97,12 @@ impl IntoLatest for HostChatCreateRoomResponse {
 	fn into_latest(self) -> Self::Latest {
 		match self {
 			Self::V1(v01::HostChatCreateRoomResponse { status }) => {
+				let status = match status {
+					v01::ChatRoomRegistrationStatus::New => v02::ChatRoomRegistrationStatus::New,
+					v01::ChatRoomRegistrationStatus::Exists => {
+						v02::ChatRoomRegistrationStatus::Exists
+					},
+				};
 				v02::HostChatCreateRoomResponse { status, room_id: String::new() }
 			},
 			Self::V2(latest) => latest,
@@ -106,21 +115,41 @@ impl FromLatest for HostChatCreateRoomResponse {
 		if target >= 2 {
 			return Self::V2(latest);
 		}
-		Self::V1(v01::HostChatCreateRoomResponse { status: latest.status })
+		let status = match latest.status {
+			v02::ChatRoomRegistrationStatus::New => v01::ChatRoomRegistrationStatus::New,
+			v02::ChatRoomRegistrationStatus::Exists => v01::ChatRoomRegistrationStatus::Exists,
+		};
+		Self::V1(v01::HostChatCreateRoomResponse { status })
 	}
 }
 
 impl IntoLatest for HostChatCreateRoomError {
 	fn into_latest(self) -> Self::Latest {
 		match self {
-			Self::V1(payload) | Self::V2(payload) => payload,
+			Self::V1(v01::HostChatCreateRoomError::PermissionDenied) => {
+				v02::HostChatCreateRoomError::PermissionDenied
+			},
+			Self::V1(v01::HostChatCreateRoomError::Unknown { reason }) => {
+				v02::HostChatCreateRoomError::Unknown { reason }
+			},
+			Self::V2(latest) => latest,
 		}
 	}
 }
 
 impl FromLatest for HostChatCreateRoomError {
 	fn from_latest(latest: Self::Latest, target: u8) -> Self {
-		if target >= 2 { Self::V2(latest) } else { Self::V1(latest) }
+		if target >= 2 {
+			return Self::V2(latest);
+		}
+		Self::V1(match latest {
+			v02::HostChatCreateRoomError::PermissionDenied => {
+				v01::HostChatCreateRoomError::PermissionDenied
+			},
+			v02::HostChatCreateRoomError::Unknown { reason } => {
+				v01::HostChatCreateRoomError::Unknown { reason }
+			},
+		})
 	}
 }
 
@@ -239,7 +268,7 @@ mod tests {
 	#[test]
 	fn only_a_v02_room_answer_names_the_room_id() {
 		let latest = v02::HostChatCreateRoomResponse {
-			status: v01::ChatRoomRegistrationStatus::New,
+			status: v02::ChatRoomRegistrationStatus::New,
 			room_id: "0x01".into(),
 		};
 

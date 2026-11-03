@@ -23,7 +23,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.ChatCallRecord
 import uniffi.truapi.ChatContactEvent
-import uniffi.truapi.ChatCustomMessage
+import uniffi.truapi.ChatCustomBody
 import uniffi.truapi.ChatFeedUpdate
 import uniffi.truapi.ChatMediaItem
 import uniffi.truapi.ChatMediaMeta
@@ -103,7 +103,7 @@ class ProductChatHostBridgeFeedTest {
     fun `a custom body is stored for the renderer of the product`() = runTest {
         val update = slot<ProductFeedUpdateModel>()
         coEvery { messaging.applyFeedUpdate(room, capture(update)) } returns Result.success(Unit)
-        val body = ChatMessageBody.Custom(ChatCustomMessage("poll", byteArrayOf(1, 2)), alt = "A poll")
+        val body = ChatMessageBody.Custom(ChatCustomBody("poll", byteArrayOf(1, 2)), alt = "A poll")
 
         bridge.updateFeed(ROOM, ChatFeedUpdate.Edited("m1", body, 1uL), persist = true)
 
