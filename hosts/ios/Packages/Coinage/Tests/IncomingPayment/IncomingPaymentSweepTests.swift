@@ -47,11 +47,21 @@ struct IncomingPaymentSweepTests {
         let store = InMemoryIncomingPaymentStore()
         let service = makeService(store: store)
 
-        try await service.accept(amount: 10, descriptor: descriptor, paymentId: "p", productId: try! ProductId("prod.dot"))
+        try await service.accept(
+            amount: 10,
+            descriptor: descriptor,
+            paymentId: "p",
+            productId: try! ProductId("prod.dot")
+        )
 
         // A second accept for the same (product, paymentId) is rejected regardless of descriptor shape.
         await #expect {
-            try await service.accept(amount: 20, descriptor: descriptor, paymentId: "p", productId: try! ProductId("prod.dot"))
+            try await service.accept(
+                amount: 20,
+                descriptor: descriptor,
+                paymentId: "p",
+                productId: try! ProductId("prod.dot")
+            )
         } throws: { ($0 as? IncomingPaymentError) == .alreadyExists }
 
         // The original record is untouched.
@@ -98,7 +108,13 @@ struct IncomingPaymentSweepTests {
     func terminalVerdictReadBackExactly(outcome: IncomingPaymentTerminalOutcome) async throws {
         // Whatever verdict is persisted must round-trip through settle → store → status unchanged.
         let store = InMemoryIncomingPaymentStore(seed: [
-            IncomingPayment(paymentId: "p", productId: try! ProductId("prod.dot"), amount: 100, createdAt: Date(), outcome: nil)
+            IncomingPayment(
+                paymentId: "p",
+                productId: try! ProductId("prod.dot"),
+                amount: 100,
+                createdAt: Date(),
+                outcome: nil
+            )
         ])
         try await store.settle(groupId: "top up:prod.dot:p", outcome: outcome)
 
@@ -116,7 +132,13 @@ struct IncomingPaymentSweepTests {
     @Test(arguments: outcomes)
     func settleWipesSecretForEveryOutcome(outcome: IncomingPaymentTerminalOutcome) async throws {
         let store = InMemoryIncomingPaymentStore(seed: [
-            IncomingPayment(paymentId: "p", productId: try! ProductId("prod.dot"), amount: 100, createdAt: Date(), outcome: nil)
+            IncomingPayment(
+                paymentId: "p",
+                productId: try! ProductId("prod.dot"),
+                amount: 100,
+                createdAt: Date(),
+                outcome: nil
+            )
         ])
         try await store.settle(groupId: "top up:prod.dot:p", outcome: outcome)
 

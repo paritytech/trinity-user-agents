@@ -36,8 +36,8 @@ extension ProductPermissionGrantMapper: CoreDataMapperProtocol {
             throw ProductPermissionGrantMapperError.unknownPermission(typeName: typeName, key: key)
         }
 
-        return ProductPermissionGrant(
-            productId: try ProductId(productId),
+        return try ProductPermissionGrant(
+            productId: ProductId(productId),
             permission: permission,
             granted: entity.granted,
             grantedAt: entity.grantedAt

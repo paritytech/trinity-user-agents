@@ -8,10 +8,7 @@ import TrUAPIHost
 
 // MARK: - Helpers
 
-private func makeConfiguration(
-    contentSource: SPAContentSource,
-    cardFace: (any ExpandedCardFaceShowing)? = nil
-) throws -> SPAConfiguration {
+private func makeConfiguration(contentSource: SPAContentSource) throws -> SPAConfiguration {
     let tldProvider = StubTldProvider()
     let factory = ProductHostFactory(tldProvider: tldProvider)
     let host = try #require(factory.host(rawString: "test.dot"))
@@ -21,8 +18,7 @@ private func makeConfiguration(
         isRootScreen: false,
         showMoreButton: false,
         page: ProductPage(host: host),
-        contentSource: contentSource,
-        cardFace: cardFace
+        contentSource: contentSource
     )
 }
 
@@ -146,43 +142,13 @@ struct SPARustRuntimeTests {
 
         let url = try await runtime.start(with: engine)
 
-        #expect(loader.openedIds == [try ProductId("test.dot")])
+        #expect(try loader.openedIds == [ProductId("test.dot")])
         #expect(url.scheme == productContentScheme())
         #expect(url.host == "test.dot")
         #expect(url.path == "/")
         #expect(engine.initializedScripts[0]
             .content == #"window.__truapi_localhost = { url: "ws://127.0.0.1:0/?t=test" };"#)
 
-        await runtime.dispose()
-    }
-
-    /// A card's page loads the product's widget rather than its app, since the
-    /// widget is what an expanded card runs.
-    @Test @MainActor func startForACardsPageLoadsTheWidget() async throws {
-        let configuration = try makeConfiguration(contentSource: .dotNs, cardFace: StubCardFace())
-        let widget = ProductExecutable.Widget(
-            identifier: try! ProductId("widget.test.dot"),
-            appVersion: .zero,
-            description: nil,
-            heights: [1],
-            width: 1
-        )
-        let product = ResolvedProduct(
-            id: try! ProductId("test.dot"),
-            displayName: "Test",
-            description: nil,
-            icon: nil,
-            executables: ProductExecutables(app: nil, widget: widget, worker: nil),
-            hasManifest: true
-        )
-        let runtime = makeRuntime(
-            configuration: configuration,
-            contentLoader: StubProductContentLoader(product: product)
-        )
-
-        _ = try await runtime.start(with: MockJSEngine())
-
-        #expect(await runtime.servedBuild()?.localURL.lastPathComponent == "widget.test.dot")
         await runtime.dispose()
     }
 
