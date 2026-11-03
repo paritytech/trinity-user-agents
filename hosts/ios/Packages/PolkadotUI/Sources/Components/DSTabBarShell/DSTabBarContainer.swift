@@ -189,12 +189,9 @@ private extension DSTabBarContainer {
         .accessibilityHidden(!isShelfOpen)
     }
 
-    /// Strokes the outline of the bar. The stroke is clipped back to the bar, which keeps only the inner half of
-    /// every line, so its width is doubled first. The notch edge is stroked too.
+    /// Strokes the outline of the bar from inside its edges. The notch edge is stroked too.
     var border: some View {
-        DSTabBarShape()
-            .stroke(DSTabBarStyle.Palette.strokeGlass, lineWidth: DSTabBarStyle.strokeWidth * 2)
-            .clipShape(DSTabBarShape(), style: FillStyle(eoFill: true))
+        DSTabBarShape().strokeBorder(DSTabBarStyle.Palette.strokeGlass, lineWidth: DSTabBarStyle.strokeWidth)
     }
 }
 
