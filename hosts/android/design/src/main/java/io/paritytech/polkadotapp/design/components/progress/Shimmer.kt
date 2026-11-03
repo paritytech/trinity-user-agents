@@ -24,10 +24,9 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 @Composable
 fun Shimmer(
     modifier: Modifier,
-    shape: Shape = PolkadotTheme.shapes.large,
-    durationMillis: Int = 2000
+    shape: Shape = PolkadotTheme.shapes.large
 ) {
-    val shimmerOffset = rememberShimmerOffset(durationMillis = durationMillis)
+    val shimmerOffset = rememberShimmerOffset(durationMillis = 2000)
 
     Box(
         modifier = modifier.background(
