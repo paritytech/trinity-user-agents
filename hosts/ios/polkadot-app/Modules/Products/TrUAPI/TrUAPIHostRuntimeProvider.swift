@@ -49,11 +49,14 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let tldProvider: DotNsTldProviding
     private let fundingOverlay: FundingOverlayPresenting?
     private let bundledProducts: BundledProducts
+    private let remoteConfig: RemoteConfigObserving?
+    private let appliedConfig: () -> RemoteAppConfig?
     private let logger: LoggerProtocol
 
     private let lock = NSLock()
     private var cachedRuntime: TrUAPIHostRuntime?
     private var contactsChangeNotifier: ContactsChangeNotifier?
+    private var fundingProvidersObservation: Task<Void, Never>?
 
     /// Set once at startup, before any product opens. The runtime is built on
     /// first use, which is long after, so the manager is in place by then.
@@ -72,6 +75,8 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         fundingOverlay: FundingOverlayPresenting? = nil,
         bundledProducts: BundledProducts = .app,
+        remoteConfig: RemoteConfigObserving? = nil,
+        appliedConfig: @escaping () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() },
         logger: LoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
@@ -82,7 +87,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.tldProvider = tldProvider
         self.fundingOverlay = fundingOverlay
         self.bundledProducts = bundledProducts
+        self.remoteConfig = remoteConfig
+        self.appliedConfig = appliedConfig
         self.logger = logger
+    }
+
+    deinit {
+        fundingProvidersObservation?.cancel()
     }
 
     @MainActor
@@ -179,22 +190,15 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         ))
         paymentsBridge?.install(on: runtime)
         // Also before any execution opens, so a product's Funding request
-        // never answers unsupported. The core discovers the published
-        // providers; the host lists only the ones it ships itself.
+        // never answers unsupported. The core offers only the providers the
+        // host lists: the ones `funding_config` names, then the ones it ships.
         let router = confirmationRouterFacade
         let overlay = fundingOverlay ?? AppFundingOverlay(runtime: runtime) { [bundledProducts] in
             AppFundingEnvironment(router: router.productsRouter, bundledProducts: bundledProducts)
         }
         runtime.setFunding(AppFundingHostBridge(overlay: overlay))
         bridge.onWorkerCrashing { [weak overlay] productId in overlay?.workerCrashing(productId: productId) }
-        let bundledProviders = bundledProducts.fundingProviders
-        if !bundledProviders.isEmpty {
-            do {
-                try runtime.setFundingProviders(bundledProviders)
-            } catch {
-                logger.error("[truapi] the bundled funding providers were refused: \(error)")
-            }
-        }
+        followFundingProviders(on: runtime)
         FundingActivityCenter.attach(runtime: runtime, overlay: overlay)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
@@ -214,6 +218,17 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 }
 
 extension TrUAPIHostRuntimeProvider {
+    /// The providers the host lists with the core: the configured ones, read
+    /// from dotNS, first, then each bundled one the config does not name.
+    static func fundingProviders(
+        configured: [ProductId],
+        bundled: [FundingProviderEntry]
+    ) -> [FundingProviderEntry] {
+        let published = configured.map { FundingProviderEntry(productId: $0, workerManifest: nil, origin: .published) }
+        let configuredIds = Set(configured)
+        return published + bundled.filter { !configuredIds.contains($0.productId) }
+    }
+
     /// Assemble the immutable host-wide config. Genesis hashes are fetched from
     /// the registry and must resolve; a missing hash fails explicitly rather
     /// than degrading. `networkSuffix` is the dotNS TLD the core derives the
@@ -277,5 +292,46 @@ extension TrUAPIHostRuntimeProvider {
         values.isExcludedFromBackup = true
         try directory.setResourceValues(values)
         return directory.path
+    }
+}
+
+private extension TrUAPIHostRuntimeProvider {
+    /// List the providers known now, then list them again whenever a remote
+    /// config refresh changes them. Remote config usually lands after the
+    /// runtime is built, so startup never waits for it.
+    func followFundingProviders(on runtime: TrUAPIHostRuntime) {
+        let bundled = bundledProducts.fundingProviders
+        let initial = Self.fundingProviders(configured: appliedConfig()?.fundingProviders ?? [], bundled: bundled)
+        if !initial.isEmpty {
+            apply(fundingProviders: initial, on: runtime)
+        }
+
+        guard let stream = remoteConfig?.remoteConfigStream() else { return }
+
+        fundingProvidersObservation?.cancel()
+        fundingProvidersObservation = Task { [weak self, weak runtime] in
+            var listed = initial
+            do {
+                for try await config in stream {
+                    guard let self, let runtime, !Task.isCancelled else { return }
+
+                    let providers = Self.fundingProviders(configured: config.fundingProviders, bundled: bundled)
+                    guard providers != listed else { continue }
+
+                    apply(fundingProviders: providers, on: runtime)
+                    listed = providers
+                }
+            } catch {
+                self?.logger.error("[truapi] funding providers stopped following remote config: \(error)")
+            }
+        }
+    }
+
+    func apply(fundingProviders providers: [FundingProviderEntry], on runtime: TrUAPIHostRuntime) {
+        do {
+            try runtime.setFundingProviders(providers)
+        } catch {
+            logger.error("[truapi] the funding providers were refused: \(error)")
+        }
     }
 }
