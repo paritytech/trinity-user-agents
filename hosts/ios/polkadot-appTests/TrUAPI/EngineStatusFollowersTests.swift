@@ -10,7 +10,7 @@ import TrUAPIHost
 /// engine's status stream, and what it pushes to the core.
 @Suite(.timeLimit(.minutes(1)))
 struct EngineStatusFollowersTests {
-    private let key = EngineStatusKey(productId: "wallet.dot", id: Data(repeating: 7, count: 32))
+    private let key = EngineStatusKey(productId: try! ProductId("wallet.dot"), id: Data(repeating: 7, count: 32))
 
     @Test
     func readsTheFirstStatusTheEngineSends() async throws {
@@ -154,7 +154,7 @@ struct EngineStatusFollowersTests {
     func onlyTheMostRecentFinalStatusesAreKept() async throws {
         let engine = FakeEngine()
         let followers = engine.followers(finalCapacity: 2)
-        let keys = (1 ... 3).map { EngineStatusKey(productId: "wallet.dot", id: Data(repeating: UInt8($0), count: 32)) }
+        let keys = (1 ... 3).map { EngineStatusKey(productId: try! ProductId("wallet.dot"), id: Data(repeating: UInt8($0), count: 32)) }
 
         for (index, key) in keys.enumerated() {
             followers.follow(key)

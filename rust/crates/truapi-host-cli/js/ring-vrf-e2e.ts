@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import {
+  asProductId,
+  type ProductId,
   type ProductAccountId,
   type RegisteredRingVrfKey,
   type RingLocation,
@@ -146,7 +148,7 @@ function finish(
 /** Exercise the RFC-0024 registry and authorization contract before examples run. */
 export async function runRingVrfRegistryE2e(
   client: TrUApiClient,
-  productId: string,
+  productId: ProductId,
   approvalsLogPath: string | undefined,
 ): Promise<DiagnosisRow> {
   const startedAt = performance.now();
@@ -317,7 +319,7 @@ export async function runRingVrfRegistryE2e(
     );
     requireHexBytes(signature, 64, "ring VRF signature");
 
-    const foreignOwner = `rfc24${Date.now().toString(36)}.dot`;
+    const foreignOwner = asProductId(`rfc24${Date.now().toString(36)}.dot`);
     const beforeForeignRead = readTranscript();
     const foreignAnonymous = okValue<RegisteredRingVrfKey[]>(
       await client.account.listRingVrfKeys({
@@ -422,7 +424,7 @@ export async function runRingVrfRegistryE2e(
 /** Verify an AutoSigning host can create and immediately use a new registry entry. */
 export async function runAutoSigningRingVrfE2e(
   client: TrUApiClient,
-  productId: string,
+  productId: ProductId,
 ): Promise<DiagnosisRow> {
   const startedAt = performance.now();
   const index = {

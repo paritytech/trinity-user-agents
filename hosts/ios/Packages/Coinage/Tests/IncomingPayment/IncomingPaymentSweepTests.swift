@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Testing
 import Foundation
 import AsyncExtensions
@@ -46,15 +47,15 @@ struct IncomingPaymentSweepTests {
         let store = InMemoryIncomingPaymentStore()
         let service = makeService(store: store)
 
-        try await service.accept(amount: 10, descriptor: descriptor, paymentId: "p", productId: "prod")
+        try await service.accept(amount: 10, descriptor: descriptor, paymentId: "p", productId: try! ProductId("prod.dot"))
 
         // A second accept for the same (product, paymentId) is rejected regardless of descriptor shape.
         await #expect {
-            try await service.accept(amount: 20, descriptor: descriptor, paymentId: "p", productId: "prod")
+            try await service.accept(amount: 20, descriptor: descriptor, paymentId: "p", productId: try! ProductId("prod.dot"))
         } throws: { ($0 as? IncomingPaymentError) == .alreadyExists }
 
         // The original record is untouched.
-        #expect(store.payment(for: "top up:prod:p")?.amount == 10)
+        #expect(store.payment(for: "top up:prod.dot:p")?.amount == 10)
     }
 
     @Test(arguments: descriptors.indices)
@@ -69,17 +70,17 @@ struct IncomingPaymentSweepTests {
             amount: 10,
             descriptor: descriptorForProduct(index: index, salt: 0xA0),
             paymentId: "shared",
-            productId: "prodA"
+            productId: try! ProductId("prodA.dot")
         )
         try await service.accept(
             amount: 20,
             descriptor: descriptorForProduct(index: index, salt: 0xB0),
             paymentId: "shared",
-            productId: "prodB"
+            productId: try! ProductId("prodB.dot")
         )
 
-        let a = try #require(store.payment(for: "top up:prodA:shared"))
-        let b = try #require(store.payment(for: "top up:prodB:shared"))
+        let a = try #require(store.payment(for: "top up:proda.dot:shared"))
+        let b = try #require(store.payment(for: "top up:prodb.dot:shared"))
         #expect(a.groupId != b.groupId)
     }
 
@@ -97,12 +98,12 @@ struct IncomingPaymentSweepTests {
     func terminalVerdictReadBackExactly(outcome: IncomingPaymentTerminalOutcome) async throws {
         // Whatever verdict is persisted must round-trip through settle → store → status unchanged.
         let store = InMemoryIncomingPaymentStore(seed: [
-            IncomingPayment(paymentId: "p", productId: "prod", amount: 100, createdAt: Date(), outcome: nil)
+            IncomingPayment(paymentId: "p", productId: try! ProductId("prod.dot"), amount: 100, createdAt: Date(), outcome: nil)
         ])
-        try await store.settle(groupId: "top up:prod:p", outcome: outcome)
+        try await store.settle(groupId: "top up:prod.dot:p", outcome: outcome)
 
         let service = makeService(store: store)
-        let stream = try await service.subscribeStatus(for: "p", productId: "prod")
+        let stream = try await service.subscribeStatus(for: "p", productId: try! ProductId("prod.dot"))
 
         var observed: IncomingPaymentStatus?
         for try await status in stream {
@@ -115,12 +116,12 @@ struct IncomingPaymentSweepTests {
     @Test(arguments: outcomes)
     func settleWipesSecretForEveryOutcome(outcome: IncomingPaymentTerminalOutcome) async throws {
         let store = InMemoryIncomingPaymentStore(seed: [
-            IncomingPayment(paymentId: "p", productId: "prod", amount: 100, createdAt: Date(), outcome: nil)
+            IncomingPayment(paymentId: "p", productId: try! ProductId("prod.dot"), amount: 100, createdAt: Date(), outcome: nil)
         ])
-        try await store.settle(groupId: "top up:prod:p", outcome: outcome)
+        try await store.settle(groupId: "top up:prod.dot:p", outcome: outcome)
 
         // The record now carries the verdict and reports inactive.
-        #expect(store.payment(for: "top up:prod:p")?.outcome == outcome)
-        #expect(store.payment(for: "top up:prod:p")?.isActive == false)
+        #expect(store.payment(for: "top up:prod.dot:p")?.outcome == outcome)
+        #expect(store.payment(for: "top up:prod.dot:p")?.isActive == false)
     }
 }

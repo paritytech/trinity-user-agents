@@ -13,7 +13,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigi
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.productIconUri
@@ -39,11 +38,12 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 private const val ROOM = "truapi-playground"
 
 class ProductChatExtensionTest {
-    private val product = Product(ProductId.fromStoredValue("truapi-playground.dot"), "TrUAPI Playground", icon = null)
+    private val product = Product(ProductId.parse("truapi-playground.dot").getOrThrow(), "TrUAPI Playground", icon = null)
     private val extensionId = product.id.toChatExtensionId()
 
     private fun placedByHost(refCounter: ProductWorkerRefCounter) =

@@ -7,6 +7,7 @@ import androidx.room.Query
 import io.paritytech.polkadotapp.database.model.PocketCardFaceLocal
 import io.paritytech.polkadotapp.database.model.PocketCardLocal
 import kotlinx.coroutines.flow.Flow
+import uniffi.truapi.ProductId
 
 @Dao
 interface PocketCardDao {
@@ -17,14 +18,14 @@ interface PocketCardDao {
     suspend fun insert(card: PocketCardLocal)
 
     @Query("DELETE FROM pocket_cards WHERE productId = :productId AND cardId = :cardId")
-    suspend fun delete(productId: String, cardId: String): Int
+    suspend fun delete(productId: ProductId, cardId: String): Int
 
     @Query("SELECT face FROM pocket_card_faces WHERE productId = :productId AND cardId = :cardId")
-    suspend fun getFace(productId: String, cardId: String): ByteArray?
+    suspend fun getFace(productId: ProductId, cardId: String): ByteArray?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertFace(face: PocketCardFaceLocal)
 
     @Query("DELETE FROM pocket_card_faces WHERE productId = :productId AND cardId = :cardId")
-    suspend fun deleteFace(productId: String, cardId: String)
+    suspend fun deleteFace(productId: ProductId, cardId: String)
 }

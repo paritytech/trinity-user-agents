@@ -16,7 +16,7 @@ extension ProductsNativeApi {
         let model: PolkadotHostSigningModel = .signingRequest(signingRequest)
 
         let context = ProductSigningContext(
-            requesterName: productId,
+            requesterName: productId.rawValue,
             signingModel: model
         )
 
@@ -45,7 +45,7 @@ extension ProductsNativeApi {
         let model: PolkadotHostSigningModel = .signingRequest(signingRequest)
 
         let context = ProductSigningContext(
-            requesterName: productId,
+            requesterName: productId.rawValue,
             signingModel: model
         )
 
@@ -73,7 +73,7 @@ extension ProductsNativeApi {
         let model: PolkadotHostSigningModel = .createTransaction(payload)
 
         let context = ProductSigningContext(
-            requesterName: productId,
+            requesterName: productId.rawValue,
             signingModel: model
         )
 
@@ -99,7 +99,7 @@ extension ProductsNativeApi {
         let model: PolkadotHostSigningModel = .legacySignPayload(payload: payload)
 
         let context = ProductSigningContext(
-            requesterName: productId,
+            requesterName: productId.rawValue,
             signingModel: model
         )
 
@@ -132,7 +132,7 @@ extension ProductsNativeApi {
         let model: PolkadotHostSigningModel = .legacyRawPayload(account: payload.account, type: type)
 
         let context = ProductSigningContext(
-            requesterName: productId,
+            requesterName: productId.rawValue,
             signingModel: model
         )
 
@@ -161,7 +161,7 @@ extension ProductsNativeApi {
         let model: PolkadotHostSigningModel = .legacyCreateTransaction(payload: payload)
 
         let context = ProductSigningContext(
-            requesterName: productId,
+            requesterName: productId.rawValue,
             signingModel: model
         )
 

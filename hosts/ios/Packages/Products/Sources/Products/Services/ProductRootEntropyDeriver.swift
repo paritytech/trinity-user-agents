@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import KeyDerivation
 import SubstrateSdk
@@ -34,7 +35,7 @@ extension ProductRootEntropyDeriver: ProductRootEntropyDeriving {
         }
 
         let rootEntropySource = try rootEntropySourceDeriver.deriveRootEntropySource()
-        let productIdHash = try Data(productId.utf8).blake2b32()
+        let productIdHash = try Data(productId.rawValue.utf8).blake2b32()
         let perProductEntropy = try rootEntropySource.blake2b32WithKey(productIdHash)
         return try perProductEntropy.blake2b32WithKey(key)
     }

@@ -7,8 +7,8 @@ use std::{
 };
 
 use crate::platform::{
-	CoreAdmin, PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductContext,
-	ProductExecutionKind, ProductId,
+	CoreAdmin, ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
+	ProductContext, ProductId,
 };
 use parity_scale_codec::Encode;
 use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
@@ -233,7 +233,7 @@ impl NativeTrUApiHostRuntime {
 			product_control: Arc::new(Mutex::new(None)),
 		});
 
-		if product.execution_kind == ProductExecutionKind::Worker {
+		if product.execution_kind == ExecutableKind::Worker {
 			let previous = self
 				.worker_executions
 				.lock()
@@ -347,9 +347,25 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.runtime.acknowledge_funding_session(&intent).await?)
 	}
 
-	/// Cancel open funding session `intent`.
-	pub async fn cancel_funding(&self, intent: String) -> Result<bool, HostRejection> {
+	/// Cancel funding session `intent` at the user's request, and say what
+	/// that did. `TooLate` asks the host to tell the user the balance was
+	/// already credited.
+	pub async fn cancel_funding(
+		&self,
+		intent: String,
+	) -> Result<crate::host_logic::funding::CancelOutcome, HostRejection> {
 		Ok(self.runtime.cancel_funding(&intent).await?)
+	}
+
+	/// Answer the provider's cancel offer on funding session `intent`, which
+	/// the host showed from the session's `cancel`: accept it on `terms`, the
+	/// fee and refund shown, or decline it with `None`.
+	pub async fn confirm_funding_cancel(
+		&self,
+		intent: String,
+		terms: Option<crate::host_logic::funding::CancelTerms>,
+	) -> Result<crate::host_logic::funding::CancelConfirmation, HostRejection> {
+		Ok(self.runtime.confirm_funding_cancel(&intent, terms).await?)
 	}
 
 	/// Install the host's top-up engine. Set-once; answers whether this call
@@ -417,6 +433,16 @@ impl NativeTrUApiHostRuntime {
 		if let Some(platform) = self.balance.get() {
 			platform.notify_balance(purse, available);
 		}
+	}
+
+	/// Hand open funding session `intent` to the provider the user chose, by
+	/// product id.
+	pub async fn select_funding_provider(
+		&self,
+		intent: String,
+		provider_id: String,
+	) -> Result<bool, HostRejection> {
+		Ok(self.runtime.select_funding_provider(&intent, &provider_id).await?)
 	}
 }
 
@@ -487,30 +513,16 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Take one reference on the product's worker for a modality holder. The
-	/// first one reports [`WorkerTransition::Start`] to the runtime's
-	/// [`HostCallbacks::request_worker_transition`]; pair every call with one
-	/// [`Self::release_worker`]. An id that is not a product id is logged and
-	/// dropped.
-	pub fn acquire_worker(&self, product_id: String) {
-		match product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
-			Err(error) => {
-				tracing::warn!(%error, "worker reference for an id that is not a product id")
-			},
-		}
+	/// first one requests [`WorkerTransition::Start`]; pair every call with
+	/// one [`Self::release_worker`].
+	pub fn acquire_worker(&self, product_id: ProductId) {
+		self.runtime.worker_ledger().acquire(&product_id);
 	}
 
-	/// Release one reference. The last one reports
-	/// [`WorkerTransition::Stop`], after which the host may stop the worker;
-	/// releasing with none held is a no-op, and so is an id that is not a
-	/// product id.
-	pub fn release_worker(&self, product_id: String) {
-		match product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
-			Err(error) => {
-				tracing::warn!(%error, "worker reference for an id that is not a product id")
-			},
-		}
+	/// Release one reference. The last one requests [`WorkerTransition::Stop`].
+	/// Releasing with none held is a no-op.
+	pub fn release_worker(&self, product_id: ProductId) {
+		self.runtime.worker_ledger().release(&product_id);
 	}
 
 	/// Tell the pairing host behind `deeplink` that allowance allocation is
@@ -975,12 +987,9 @@ impl NativeProductExecution {
 	/// an error; `None` means no active session.
 	pub fn product_subtree_public_key(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<Bytes32>, HostRejection> {
-		let product_id = product_id
-			.parse::<ProductId>()
-			.map_err(|error| v01::GenericError { reason: error.to_string() })?;
 		Ok(futures::executor::block_on(
 			self.admin().get_product_subtree_public_key(&product_id, timeout_ms),
 		)?)
@@ -1158,8 +1167,8 @@ mod tests {
 		PairedSsoPeer,
 		native::tests::*,
 		platform::{
-			PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-			ProductExecutionKind,
+			ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
+			PermissionDecision,
 		},
 	};
 	use futures::stream::StreamExt;
@@ -1203,7 +1212,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("myapp.dot", ProductExecutionKind::App),
+				native_execution_config("myapp.dot", ExecutableKind::App),
 			)
 			.expect("open app execution");
 		let worker = host
@@ -1212,7 +1221,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("myapp.dot", ProductExecutionKind::Worker),
+				native_execution_config("myapp.dot", ExecutableKind::Worker),
 			)
 			.expect("open worker execution");
 
@@ -1248,7 +1257,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("myapp.dot", ProductExecutionKind::App),
+				native_execution_config("myapp.dot", ExecutableKind::App),
 			)
 			.expect("open app execution");
 
@@ -1300,7 +1309,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("shared.dot", ProductExecutionKind::App),
+				native_execution_config("shared.dot", ExecutableKind::App),
 			)
 			.expect("App execution should open");
 		let chat_host = Arc::new(EventCallbacks::new());
@@ -1310,7 +1319,7 @@ mod tests {
 				Some(chat_host.clone()),
 				None,
 				None,
-				native_execution_config("shared.dot", ProductExecutionKind::Worker),
+				native_execution_config("shared.dot", ExecutableKind::Worker),
 			)
 			.expect("Chat execution should open");
 
@@ -1328,7 +1337,7 @@ mod tests {
 				Some(chat_host.clone()),
 				None,
 				None,
-				native_execution_config("shared.dot", ProductExecutionKind::Worker),
+				native_execution_config("shared.dot", ExecutableKind::Worker),
 			)
 			.expect("replacement Chat execution should open");
 		assert!(matches!(
@@ -1354,7 +1363,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("chat.dot", ProductExecutionKind::Worker),
+				native_execution_config("chat.dot", ExecutableKind::Worker),
 			)
 			.expect("Worker execution should open");
 
@@ -1404,7 +1413,7 @@ mod tests {
 					None,
 					None,
 					None,
-					native_execution_config(product_id, ProductExecutionKind::Widget),
+					native_execution_config(product_id, ExecutableKind::Widget),
 				)
 				.expect("Widget execution should open");
 			(execution, callbacks)
@@ -1440,7 +1449,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("chain.dot", ProductExecutionKind::App),
+				native_execution_config("chain.dot", ExecutableKind::App),
 			)
 			.expect("App execution should open");
 		let mut shared_responses = host.events.register_chain(41, 0).unwrap();
@@ -1474,7 +1483,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("chain.dot", ProductExecutionKind::App),
+				native_execution_config("chain.dot", ExecutableKind::App),
 			)
 			.expect("App execution should open");
 
@@ -1510,7 +1519,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("chain.dot", ProductExecutionKind::App),
+				native_execution_config("chain.dot", ExecutableKind::App),
 			)
 			.expect("App execution should open");
 
@@ -1537,7 +1546,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("motion.dot", ProductExecutionKind::App),
+				native_execution_config("motion.dot", ExecutableKind::App),
 			)
 			.unwrap();
 		let motion = truapi::latest::HostDevicePermissionRequest::Motion;
@@ -1579,7 +1588,7 @@ mod tests {
 				None,
 				None,
 				None,
-				native_execution_config("fetch.dot", ProductExecutionKind::App),
+				native_execution_config("fetch.dot", ExecutableKind::App),
 			)
 			.unwrap()
 		};

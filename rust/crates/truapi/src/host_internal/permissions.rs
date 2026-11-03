@@ -95,21 +95,13 @@ enum BundleResolution {
 	Undecided(Vec<String>),
 }
 
-/// The key a cross-product signature approval is granted under. Both products
-/// are reduced to their bare label, as the manifest grant files them, so one
-/// approval covers every account of the owning product.
+/// Scope an approval like the manifest grant, across the product's executables.
 pub fn cross_product_signature_key(
 	product_id: &ProductId,
 	target_product_id: &ProductId,
 	kind: CrossProductSignatureKind,
 ) -> CoreStorageKey {
-	CoreStorageKey::PermissionAuthorization {
-		product_id: product_id.bare_label().to_string(),
-		request: PermissionAuthorizationRequest::CrossProductSignature {
-			target_product_id: target_product_id.bare_label().to_string(),
-			kind,
-		},
-	}
+	CoreStorageKey::product_signature_authorization(product_id, target_product_id, kind)
 }
 
 /// Permission prompts and one-use grants shared by a product execution's connections.
@@ -206,8 +198,8 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		self
 	}
 
-	fn product_id(&self) -> &str {
-		self.product.product_id.as_str()
+	fn product_id(&self) -> &ProductId {
+		&self.product.product_id
 	}
 
 	/// Revalidate device capabilities against the OS state `status` reports.
@@ -406,13 +398,10 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 				.await
 			},
 			PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
-				// An id that names no product owns no account, so nothing was approved for it.
-				let approved = target_product_id.parse::<ProductId>().is_ok_and(|target| {
-					self.temporary_permissions.authorize(
-						&cross_product_signature_key(&self.product.product_id, &target, *kind),
-						false,
-					)
-				});
+				let approved = self.temporary_permissions.authorize(
+					&cross_product_signature_key(self.product_id(), target_product_id, *kind),
+					false,
+				);
 				Ok(if approved {
 					PermissionAuthorizationStatus::Authorized
 				} else {
@@ -476,14 +465,12 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 			// Held in memory for the execution only, so nothing is stored. A
 			// denial is not kept either, like a refusal at the prompt.
 			PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
-				let target = target_product_id
-					.parse::<ProductId>()
-					.map_err(|err| GenericError { reason: err.to_string() })?;
-				let key = cross_product_signature_key(&self.product.product_id, &target, *kind);
+				let approval =
+					cross_product_signature_key(self.product_id(), target_product_id, *kind);
 				if status == PermissionAuthorizationStatus::Authorized {
-					self.temporary_permissions.grant(key);
+					self.temporary_permissions.grant(approval);
 				} else {
-					self.temporary_permissions.revoke(&key);
+					self.temporary_permissions.revoke(&approval);
 				}
 				return Ok(());
 			},
@@ -675,36 +662,8 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 	}
 }
 
-/// Stored decision on `caller_id` reaching `target_product_id`'s account.
-pub async fn account_access_status<S: CoreStorage + ?Sized>(
-	storage: &S,
-	caller_id: &str,
-	target_product_id: &str,
-) -> Result<PermissionAuthorizationStatus, GenericError> {
-	authorization_status(
-		storage,
-		CoreStorageKey::account_access_authorization(caller_id, target_product_id),
-	)
-	.await
-}
-
-/// Store a decision on `caller_id` reaching `target_product_id`'s account.
-/// `NotDetermined` clears it.
-pub async fn set_account_access_status<S: CoreStorage + ?Sized>(
-	storage: &S,
-	caller_id: &str,
-	target_product_id: &str,
-	status: PermissionAuthorizationStatus,
-) -> Result<(), GenericError> {
-	set_authorization_status(
-		storage,
-		CoreStorageKey::account_access_authorization(caller_id, target_product_id),
-		status,
-	)
-	.await
-}
-
-async fn authorization_status<S: CoreStorage + ?Sized>(
+/// Read the decision stored under an encoded permission scope.
+pub async fn authorization_status<S: CoreStorage + ?Sized>(
 	storage: &S,
 	key: CoreStorageKey,
 ) -> Result<PermissionAuthorizationStatus, GenericError> {
@@ -724,7 +683,8 @@ async fn peek_stored<S: CoreStorage + ?Sized>(
 	Ok(StoredAuthorizationStatus::decode(&mut &*raw).ok())
 }
 
-async fn set_authorization_status<S: CoreStorage + ?Sized>(
+/// Save or clear the decision stored under an encoded permission scope.
+pub async fn set_authorization_status<S: CoreStorage + ?Sized>(
 	storage: &S,
 	key: CoreStorageKey,
 	status: PermissionAuthorizationStatus,
@@ -1798,7 +1758,10 @@ mod tests {
 
 		assert_eq!(
 			futures::executor::block_on(storage.read_core_storage(
-				CoreStorageKey::remote_permission_authorization("peopl.dot", &request)
+				CoreStorageKey::remote_permission_authorization(
+					&ProductId::for_test("peopl.dot"),
+					&request
+				)
 			))
 			.unwrap(),
 			None,
@@ -1988,7 +1951,7 @@ mod tests {
 				))),
 				status(PermissionAuthorizationRequest::IdentityDisclosure),
 				status(PermissionAuthorizationRequest::AccountAccess {
-					target_product_id: "other.dot".to_string(),
+					target_product_id: ProductId::for_test("other.dot"),
 				}),
 				status(PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera)),
 				futures::executor::block_on(
@@ -2161,7 +2124,7 @@ mod tests {
 		let prompt = ScriptedPrompt::new(vec![], vec![]);
 		let service = PermissionsService::new(&storage, &prompt, &PRODUCT);
 		let request = PermissionAuthorizationRequest::AccountAccess {
-			target_product_id: "target.dot".to_string(),
+			target_product_id: ProductId::for_test("target.dot"),
 		};
 
 		futures::executor::block_on(
@@ -2175,7 +2138,7 @@ mod tests {
 		assert_eq!(
 			futures::executor::block_on(service.authorization_status(
 				&PermissionAuthorizationRequest::AccountAccess {
-					target_product_id: "other.dot".to_string(),
+					target_product_id: ProductId::for_test("other.dot"),
 				}
 			))
 			.unwrap(),
@@ -2259,7 +2222,7 @@ mod tests {
 		// Write garbage bytes under the canonical key.
 		futures::executor::block_on(storage.write_core_storage(
 			CoreStorageKey::device_permission_authorization(
-				"product.dot",
+				&ProductId::for_test("product.dot"),
 				&HostDevicePermissionRequest::Camera,
 			),
 			vec![0xff, 0xfe, 0xfd],
@@ -2747,7 +2710,7 @@ mod tests {
 		let service = PermissionsService::new(&storage, &prompt, &PRODUCT)
 			.with_temporary_permissions(Arc::clone(&grants));
 		let request = PermissionAuthorizationRequest::CrossProductSignature {
-			target_product_id: "dim2.dot".to_string(),
+			target_product_id: ProductId::for_test("dim2.dot"),
 			kind: CrossProductSignatureKind::Payload,
 		};
 		let checked_by_runtime = cross_product_signature_key(
@@ -2783,38 +2746,9 @@ mod tests {
 		);
 	}
 
-	/// The administration API reports a target that is not a product id as not
-	/// approved, and refuses to approve it.
 	#[test]
 	fn a_signature_approval_for_a_target_that_names_no_product_is_refused() {
-		let storage = MemStorage::default();
-		let prompt = ScriptedPrompt::new(vec![], vec![]);
-		let grants = Arc::new(TemporaryPermissions::default());
-		let service = PermissionsService::new(&storage, &prompt, &PRODUCT)
-			.with_temporary_permissions(Arc::clone(&grants));
-		let request = PermissionAuthorizationRequest::CrossProductSignature {
-			target_product_id: "example.com".to_string(),
-			kind: CrossProductSignatureKind::Payload,
-		};
-		// The key a lookup by the bare label of `example.com` would find, so a
-		// status read that skipped parsing would report this as authorized.
-		grants.grant(CoreStorageKey::PermissionAuthorization {
-			product_id: PRODUCT.product_id.bare_label().to_string(),
-			request: PermissionAuthorizationRequest::CrossProductSignature {
-				target_product_id: "example".to_string(),
-				kind: CrossProductSignatureKind::Payload,
-			},
-		});
-
-		let set = futures::executor::block_on(
-			service.set_authorization_status(&request, PermissionAuthorizationStatus::Authorized),
-		);
-		assert_eq!(
-			(
-				set.is_err(),
-				futures::executor::block_on(service.authorization_status(&request)).unwrap(),
-			),
-			(true, PermissionAuthorizationStatus::NotDetermined),
-		);
+		let encoded = (4u8, "example.com", CrossProductSignatureKind::Payload).encode();
+		assert!(PermissionAuthorizationRequest::decode(&mut encoded.as_slice()).is_err());
 	}
 }
