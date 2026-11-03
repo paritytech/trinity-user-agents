@@ -35,7 +35,8 @@ pub struct HostExpandedCardSetBackShownRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum HostExpandedCardSetBackShownError {
-	/// The Widget is not shown under its card right now.
+	/// The Widget is not shown under its card right now, such as one the host
+	/// keeps loaded after the card closed.
 	NotPresented,
 	/// The user is turning the card or moving its face; the request had no effect.
 	UserMoving,

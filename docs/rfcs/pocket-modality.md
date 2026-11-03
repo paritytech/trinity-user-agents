@@ -283,7 +283,7 @@ applies to a whole trait, so the calls are a trait of their own, `23`, with `set
 `set_back_shown` as method `1`.
 
 ```rust
-/// The card above the calling Widget when the Widget is an expanded card.
+/// The card a Widget is shown under.
 #[wire_trait(id = 23)]
 #[crate::service(required_execution = Widget)]
 #[crate::async_trait]
@@ -332,7 +332,7 @@ pub struct HostExpandedCardSetBackShownRequest {
 pub enum HostExpandedCardSetBackShownError {
     /// The Widget is not shown under its card right now, such as one the host keeps loaded after the card closed.
     NotPresented,
-    /// The user is dragging the card; the request had no effect.
+    /// The user is turning the card or moving its face; the request had no effect.
     UserMoving,
     /// The card has no back to show right now.
     NoBack,
