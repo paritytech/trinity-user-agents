@@ -2880,7 +2880,6 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 		&self,
 		intent: String,
 		_status: truapi::latest::HostFundingStatusSubscribeItem,
-		_progress: Option<crate::host_logic::funding::FundingProgress>,
 	) {
 		self.announced.lock().expect("announced mutex poisoned").push(intent);
 	}

@@ -169,6 +169,22 @@ struct Announcements {
 	delivering: bool,
 }
 
+/// What a native host draws its funding screens from, pushed by the core so
+/// the host never reads it back. A host without one gets only
+/// [`FundingPlatform::funding_session_changed`].
+pub trait FundingFeed: Send + Sync {
+	/// A session changed: its status and the progress the host draws. Every
+	/// session the host has to hear of comes through here once more when
+	/// funding resumes. `progress` is `None` once the core keeps only the
+	/// session's summary.
+	fn funding_session_changed(
+		&self,
+		intent: String,
+		status: HostFundingStatusSubscribeItem,
+		progress: Option<crate::host_logic::funding::FundingProgress>,
+	);
+}
+
 /// Host-global funding sessions, their subscribers and the host surface.
 #[derive(Default)]
 pub struct FundingRegistry {
@@ -189,6 +205,8 @@ pub struct FundingRegistry {
 	/// write lock.
 	loaded: AtomicBool,
 	platform: OnceLock<Arc<dyn FundingPlatform>>,
+	/// The feed a native host draws its funding screens from.
+	feed: OnceLock<Arc<dyn FundingFeed>>,
 	/// The core database the sessions are stored in.
 	db: OnceLock<store::Db>,
 	/// Each provider's worker connection, by product id.
@@ -223,6 +241,13 @@ impl FundingRegistry {
 	/// installed it.
 	pub fn install_platform(&self, platform: Arc<dyn FundingPlatform>) -> bool {
 		self.platform.set(platform).is_ok()
+	}
+
+	/// Install the feed the host draws its funding screens from, before the
+	/// funding surface, whose install resumes funding. Set-once; returns
+	/// whether this call installed it.
+	pub fn install_feed(&self, feed: Arc<dyn FundingFeed>) -> bool {
+		self.feed.set(feed).is_ok()
 	}
 
 	/// The host's funding surface, when one is installed.
@@ -1279,10 +1304,13 @@ impl FundingRegistry {
 			let Some((intent, item)) = next else {
 				return;
 			};
-			// Read as the session stands now, which is at least as new as
-			// `item`.
-			let progress = self.get(&intent).map(|session| session.progress());
-			platform.funding_session_changed(intent, item, progress);
+			platform.funding_session_changed(intent.clone(), item.clone());
+			if let Some(feed) = self.feed.get() {
+				// Read as the session stands now, which is at least as new as
+				// `item`.
+				let progress = self.get(&intent).map(|session| session.progress());
+				feed.funding_session_changed(intent, item, progress);
+			}
 		}
 	}
 
@@ -2480,12 +2508,7 @@ mod tests {
 			Ok(truapi::latest::FundingFrameOutcome::Closed)
 		}
 
-		fn funding_session_changed(
-			&self,
-			intent: String,
-			_status: HostFundingStatusSubscribeItem,
-			_progress: Option<crate::host_logic::funding::FundingProgress>,
-		) {
+		fn funding_session_changed(&self, intent: String, _status: HostFundingStatusSubscribeItem) {
 			let registry = self.registry.get().and_then(Weak::upgrade).expect("registry alive");
 			// Calling back while the lock is held would hang, so that is
 			// recorded instead of attempted.

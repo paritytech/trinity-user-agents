@@ -33,7 +33,6 @@ import {
 import type {
   FundingFrameOutcome,
   FundingFrameTarget,
-  FundingProgress,
   GenericError,
   HostChatCreateRoomRequest,
   HostChatCreateRoomResponse,
@@ -1912,13 +1911,11 @@ export interface FundingPlatform {
 
   /**
    * Observe a session's status change, for host UI such as the in-flight
-   * pill, with the progress the host draws for it: ``undefined`` once the core
-   * keeps only the session's summary.
+   * pill.
    */
   fundingSessionChanged?(
     intent: string,
     status: HostFundingStatusSubscribeItem,
-    progress: FundingProgress | undefined,
   ): void;
 
   /**

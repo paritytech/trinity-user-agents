@@ -833,6 +833,12 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 			.map_err(v01::GenericError::from)
 	}
 
+	fn funding_quote_changed(&self, intent: String, row: crate::platform::FundingQuoteRow) {
+		self.funding.funding_quote_changed(intent, row);
+	}
+}
+
+impl crate::runtime::FundingFeed for FundingCallbackPlatform {
 	fn funding_session_changed(
 		&self,
 		intent: String,
@@ -840,10 +846,6 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 		progress: Option<crate::host_logic::funding::FundingProgress>,
 	) {
 		self.funding.funding_session_changed(intent, status, progress);
-	}
-
-	fn funding_quote_changed(&self, intent: String, row: crate::platform::FundingQuoteRow) {
-		self.funding.funding_quote_changed(intent, row);
 	}
 }
 

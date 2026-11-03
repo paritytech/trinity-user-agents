@@ -3231,15 +3231,9 @@ pub trait FundingPlatform: Send + Sync {
 	) -> Result<truapi::latest::FundingFrameOutcome, GenericError>;
 
 	/// Observe a session's status change, for host UI such as the in-flight
-	/// pill, with the progress the host draws for it: `None` once the core
-	/// keeps only the session's summary.
-	fn funding_session_changed(
-		&self,
-		intent: String,
-		status: HostFundingStatusSubscribeItem,
-		progress: Option<crate::host_logic::funding::FundingProgress>,
-	) {
-		let _ = (intent, status, progress);
+	/// pill.
+	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
+		let _ = (intent, status);
 	}
 
 	/// Observe one provider's row of a quote list the host requested, for the

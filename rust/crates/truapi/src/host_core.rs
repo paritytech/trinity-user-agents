@@ -776,6 +776,13 @@ impl SigningHostRuntime {
 		self.services.install_funding_platform(platform)
 	}
 
+	/// Install the feed a native host draws its funding screens from. Install
+	/// it before [`Self::set_funding_platform`], which resumes funding.
+	/// Set-once; returns whether this call installed it.
+	pub fn set_funding_feed(&self, feed: Arc<dyn crate::runtime::FundingFeed>) -> bool {
+		self.services.funding().install_feed(feed)
+	}
+
 	/// Every funding session the core keeps, in flight first, then ended,
 	/// each newest first.
 	pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
