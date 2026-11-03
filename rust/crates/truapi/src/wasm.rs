@@ -17,9 +17,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::platform::{
-    ChainProvider, ChatPlatform, ContactsPlatform, HopProvider, HostInfo, JsonRpcConnection,
-    PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform, ProductContext,
-    ProductExecutionKind, ProviderError, RuntimeConfigValidationError,
+    ChainProvider, ChatPlatform, ContactsPlatform, GamePlatform, HopProvider, HostInfo,
+    JsonRpcConnection, PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform,
+    ProductContext, ProductExecutionKind, ProviderError, RuntimeConfigValidationError,
 };
 #[cfg(feature = "wasm-signing-host")]
 use crate::platform::{CoinageWalletHost, IdentityBackendHost, SigningHostConfig};
@@ -964,6 +964,7 @@ struct WasmPlatformAdapters {
     contacts_platform: Option<Arc<dyn ContactsPlatform>>,
     status_host: Option<Arc<dyn PermissionStatusHost>>,
     pocket_platform: Option<Arc<dyn PocketPlatform>>,
+    game_platform: Option<Arc<dyn GamePlatform>>,
     #[cfg(feature = "wasm-signing-host")]
     identity_backend_host: Option<Arc<dyn IdentityBackendHost>>,
     #[cfg(feature = "wasm-signing-host")]
@@ -976,6 +977,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
     let has_contacts = bridge.has_contacts();
     let has_permission_status = bridge.has_permission_status();
     let has_pocket = bridge.has_pocket();
+    let has_game = bridge.has_game();
     #[cfg(feature = "wasm-signing-host")]
     let has_identity_backend = bridge.has_identity_backend();
     #[cfg(feature = "wasm-signing-host")]
@@ -985,6 +987,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
     let contacts = has_contacts.then(|| platform.clone() as Arc<dyn ContactsPlatform>);
     let status = has_permission_status.then(|| platform.clone() as Arc<dyn PermissionStatusHost>);
     let pocket = has_pocket.then(|| platform.clone() as Arc<dyn PocketPlatform>);
+    let game = has_game.then(|| platform.clone() as Arc<dyn GamePlatform>);
     #[cfg(feature = "wasm-signing-host")]
     let identity_backend =
         has_identity_backend.then(|| platform.clone() as Arc<dyn IdentityBackendHost>);
@@ -996,6 +999,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
         contacts_platform: contacts,
         status_host: status,
         pocket_platform: pocket,
+        game_platform: game,
         #[cfg(feature = "wasm-signing-host")]
         identity_backend_host: identity_backend,
         #[cfg(feature = "wasm-signing-host")]
@@ -1016,6 +1020,7 @@ fn connection_adapters_from_js(
         contacts_platform,
         status_host,
         pocket_platform,
+        game_platform,
         ..
     } = wasm_platform(Arc::new(JsBridge::from_js(callbacks)?));
     Ok(Some(crate::host_core::ConnectionAdapters {
@@ -1027,6 +1032,7 @@ fn connection_adapters_from_js(
         // native adapter and `ConnectionAdapters`' own default.
         permission_grants: std::sync::Arc::default(),
         pocket_platform,
+        game_platform,
         chat: Arc::new(crate::runtime::ActionChannel::chat()),
         renderer: Arc::new(crate::runtime::ActionChannel::renderer()),
     }))
@@ -1092,6 +1098,7 @@ impl WasmPairingHostRuntime {
             contacts_platform,
             status_host,
             pocket_platform,
+            game_platform,
             ..
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
@@ -1110,6 +1117,9 @@ impl WasmPairingHostRuntime {
         }
         if let Some(pocket_platform) = pocket_platform {
             runtime.set_pocket_platform(pocket_platform);
+        }
+        if let Some(game_platform) = game_platform {
+            runtime.set_game_platform(game_platform);
         }
         install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
         Ok(Self {
@@ -1407,6 +1417,7 @@ impl WasmSigningHostRuntime {
             pocket_platform,
             identity_backend_host,
             native_wallet,
+            game_platform,
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
             wasm_bindgen_futures::spawn_local(fut);
@@ -1428,6 +1439,9 @@ impl WasmSigningHostRuntime {
         }
         if let Some(pocket_platform) = pocket_platform {
             runtime.set_pocket_platform(pocket_platform);
+        }
+        if let Some(game_platform) = game_platform {
+            runtime.set_game_platform(game_platform);
         }
         install_worker_demand_observer(runtime.worker_ledger(), &callbacks)?;
         Ok(Self {
@@ -1787,6 +1801,7 @@ impl WasmProductRuntime {
             contacts_platform,
             status_host,
             pocket_platform,
+            game_platform,
             ..
         } = wasm_platform(bridge);
         let spawner: Spawner = Arc::new(|fut| {
@@ -1802,6 +1817,9 @@ impl WasmProductRuntime {
         }
         if let Some(pocket_platform) = pocket_platform {
             pairing.set_pocket_platform(pocket_platform);
+        }
+        if let Some(game_platform) = game_platform {
+            pairing.set_game_platform(game_platform);
         }
         if let Some(contacts_platform) = contacts_platform {
             pairing.set_contacts_platform(contacts_platform);

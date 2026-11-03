@@ -30,7 +30,7 @@ pub use crate::host_internal::sso_messages::SsoRequestOutcome;
 pub use crate::host_logic::dotns::{NavigateDecision, PocketDeeplinkAction};
 pub use callbacks::{
     HostCallbacks, NativeChatCallbacks, NativeCoinageCallbackResult, NativeCoinageCallbacks,
-    NativeContactsCallbacks, NativePocketCallbacks, NativePocketRemoval,
+    NativeContactsCallbacks, NativeGameCallbacks, NativePocketCallbacks, NativePocketRemoval,
 };
 pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig};
 pub use errors::HostRejection;

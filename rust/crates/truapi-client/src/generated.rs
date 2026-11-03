@@ -5,7 +5,7 @@
 use super::*;
 
 /// Fingerprint of the generated wire contract.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "066cbf0a35a4aac4";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "516e36acf7c4eac9";
 
 /// `account_connection_status_subscribe` method marker.
 pub struct AccountConnectionStatusSubscribe;
@@ -1138,6 +1138,60 @@ impl RequestMethod for EntropyDerive {
     type Request = truapi::versioned::entropy::HostDeriveEntropyRequest;
     type Response = truapi::versioned::entropy::HostDeriveEntropyResponse;
     type Error = truapi::versioned::entropy::HostDeriveEntropyError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `game_remind_next_game` method marker.
+pub struct GameRemindNextGame;
+impl GameRemindNextGame {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Game",
+        method: "remind_next_game",
+        wire_name: "game_remind_next_game",
+        request_type: "truapi::versioned::game::HostRemindNextGameRequest",
+        response_type: "truapi::versioned::game::HostRemindNextGameResponse",
+        error_type: Some("truapi::versioned::game::HostRemindNextGameError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 21,
+            method_id: 0,
+        }),
+    };
+}
+impl RequestMethod for GameRemindNextGame {
+    type Request = truapi::versioned::game::HostRemindNextGameRequest;
+    type Response = truapi::versioned::game::HostRemindNextGameResponse;
+    type Error = truapi::versioned::game::HostRemindNextGameError;
+    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
+}
+
+/// `game_cancel_next_game` method marker.
+pub struct GameCancelNextGame;
+impl GameCancelNextGame {
+    /// Canonical metadata and frame ids for this method.
+    pub const DESCRIPTOR: MethodDescriptor = MethodDescriptor {
+        service: "Game",
+        method: "cancel_next_game",
+        wire_name: "game_cancel_next_game",
+        request_type: "truapi::versioned::game::HostCancelNextGameRequest",
+        response_type: "truapi::versioned::game::HostCancelNextGameResponse",
+        error_type: Some("truapi::versioned::game::HostCancelNextGameError"),
+        kind: MethodKind::Request,
+        direction: Direction::ProductToHost,
+        required_execution: None,
+        wire: MethodWire::Request(MethodIds {
+            trait_id: 21,
+            method_id: 1,
+        }),
+    };
+}
+impl RequestMethod for GameCancelNextGame {
+    type Request = truapi::versioned::game::HostCancelNextGameRequest;
+    type Response = truapi::versioned::game::HostCancelNextGameResponse;
+    type Error = truapi::versioned::game::HostCancelNextGameError;
     const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;
 }
 
@@ -2511,6 +2565,8 @@ pub const APP_METHODS: &[MethodDescriptor] = &[
     CoinPaymentListenForPayment::DESCRIPTOR,
     ContactsPick::DESCRIPTOR,
     EntropyDerive::DESCRIPTOR,
+    GameRemindNextGame::DESCRIPTOR,
+    GameCancelNextGame::DESCRIPTOR,
     JamPeerTransportDial::DESCRIPTOR,
     JamPeerTransportOpen::DESCRIPTOR,
     JamPeerTransportSend::DESCRIPTOR,
@@ -2595,6 +2651,8 @@ pub const WIDGET_METHODS: &[MethodDescriptor] = &[
     CoinPaymentListenForPayment::DESCRIPTOR,
     ContactsPick::DESCRIPTOR,
     EntropyDerive::DESCRIPTOR,
+    GameRemindNextGame::DESCRIPTOR,
+    GameCancelNextGame::DESCRIPTOR,
     JamPeerTransportDial::DESCRIPTOR,
     JamPeerTransportOpen::DESCRIPTOR,
     JamPeerTransportSend::DESCRIPTOR,
@@ -2684,6 +2742,8 @@ pub const WORKER_METHODS: &[MethodDescriptor] = &[
     CoinPaymentListenForPayment::DESCRIPTOR,
     ContactsPick::DESCRIPTOR,
     EntropyDerive::DESCRIPTOR,
+    GameRemindNextGame::DESCRIPTOR,
+    GameCancelNextGame::DESCRIPTOR,
     JamPeerTransportDial::DESCRIPTOR,
     JamPeerTransportOpen::DESCRIPTOR,
     JamPeerTransportSend::DESCRIPTOR,

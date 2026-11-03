@@ -2,6 +2,7 @@
 
 mod account;
 mod chain;
+mod game;
 mod jam_peer_transport;
 mod payment;
 mod platform;
