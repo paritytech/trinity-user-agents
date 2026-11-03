@@ -55,11 +55,12 @@ public struct ResolvedProduct: Hashable, Sendable {
 
     /// The archive `kind` is served from.
     public func contentId(for kind: ExecutableKind) throws -> ProductId {
-        let identifier = switch kind {
-        case .app: executables.app?.identifier
-        case .widget: executables.widget?.identifier
-        case .worker: executables.worker?.identifier
-        }
+        let identifier =
+            switch kind {
+            case .app: executables.app?.identifier
+            case .widget: executables.widget?.identifier
+            case .worker: executables.worker?.identifier
+            }
 
         guard let identifier else { throw ProductResolutionError.missingExecutable(id, kind) }
         return identifier

@@ -48,10 +48,9 @@ struct RustRuntimeEnvironment {
     /// the pool, so holding `ExecutionModel` pins the whole chain.
     func makeSPAExecution(
         productId: ProductId,
-        routers: ProductRoutersFacadeProtocol,
-        cardFace: (any ExpandedCardFaceShowing)?
+        routers: ProductRoutersFacadeProtocol
     ) throws -> ExecutionModel {
-        try makeExecution(productId: productId, routers: routers, purpose: .page(cardFace: cardFace))
+        try makeExecution(productId: productId, routers: routers, purpose: .app)
     }
 
     /// Open `productId`'s one Worker execution. The core keeps a single Worker
@@ -75,8 +74,8 @@ struct RustRuntimeEnvironment {
 
 /// What one execution serves, which decides the bridge the core calls back on.
 enum ExecutionPurpose {
-    /// A product's page, under the face of the Pocket card it was opened from, if any.
-    case page(cardFace: (any ExpandedCardFaceShowing)?)
+    /// A product's app, on its own screen or under the face of a Pocket card.
+    case app
     /// The product's one worker, serving its chat bot and its Pocket cards.
     case worker(chatMessaging: any ProductChatMessaging, pocket: any PocketHostBridge)
 }
@@ -162,7 +161,7 @@ private extension RustRuntimeEnvironment {
 extension ExecutionPurpose {
     var executionKind: ExecutableKind {
         switch self {
-        case let .page(cardFace): cardFace == nil ? .app : .widget
+        case .app: .app
         case .worker: .worker
         }
     }
@@ -180,8 +179,8 @@ private extension ExecutionPurpose {
         dependencies: RustProductExecutionBridge.Dependencies
     ) -> (host: RustProductExecutionBridge, chat: RustChatExecutionBridge?) {
         switch self {
-        case let .page(cardFace):
-            return (RustProductExecutionBridge(dependencies: dependencies, cardFace: cardFace), nil)
+        case .app:
+            return (RustProductExecutionBridge(dependencies: dependencies), nil)
         case let .worker(chatMessaging, _):
             let chat = RustChatExecutionBridge(dependencies: dependencies, chatMessaging: chatMessaging)
             return (chat, chat)
