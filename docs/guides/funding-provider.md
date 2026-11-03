@@ -125,8 +125,8 @@ report({ tag: "Out", value: { tag: "Collecting", value: { paymentId, amount } } 
    `Payout { Failed }`.
 3. After a failed payout, give the CASH back with a `payment.topUp` and `report Refunding { topUpId, amount }`.
 
-**Any time:** `Details { transactionId, reference }` for the references the user can quote to you, up to 8 per
-session, and `Failed { reason }` to end a session before any funds move.
+**Any time:** `Details { transactionId, reference }` for the references the user can quote to you, up to 8 per session,
+and `Failed { reason }` to end a session before any funds move.
 
 Every text you report (a reference, an address, a `Progress` `Other` text) is one plain line of at most 80 characters,
 with no control or invisible characters; a report that breaks a limit fails with `InvalidDetail`.
