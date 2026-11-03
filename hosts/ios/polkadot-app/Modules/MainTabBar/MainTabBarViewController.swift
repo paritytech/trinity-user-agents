@@ -321,7 +321,7 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
 
 extension MainTabBarViewController {
     func openScanPanel() {
-        chromeController.setPanel(.content(.scan))
+        chromeController.openPanelShowingDocklet(.content(.scan))
     }
 
     func makeScanPanel() -> UIViewController? {

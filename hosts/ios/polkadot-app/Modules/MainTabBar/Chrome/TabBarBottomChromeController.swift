@@ -62,7 +62,11 @@ final class TabBarBottomChromeController: UIViewController {
                 self?.applyAccessibility(for: state)
             },
             contentOpacity: { [weak self] opacity in
-                self?.barModel.contentFade.opacity = opacity
+                // The write comes from the display-link tick inside UIKit's update cycle. An @Observable write there
+                // makes SwiftUI read the old value in the first observer, so the write waits for the next main turn.
+                DispatchQueue.main.async { [weak self] in
+                    self?.barModel.contentFade.opacity = opacity
+                }
             },
             tuckLanded: { [weak self] kind in
                 self?.tipController.dockletTuckLanded(kind)
@@ -259,6 +263,14 @@ final class TabBarBottomChromeController: UIViewController {
 
     func setPanel(_ kind: TabBarPanelKind?) {
         panelController.setPanel(kind)
+    }
+
+    /// Opens `kind`, first restoring a tucked Docklet so the panel opens on a shown bar.
+    func openPanelShowingDocklet(_ kind: TabBarPanelKind) {
+        if foldController.isTucked {
+            foldController.setUserOverride(.shown)
+        }
+        setPanel(kind)
     }
 
     /// Fades the bar row out or back in. An open centre panel stays. `playsFeedback` false skips the medium impact.
