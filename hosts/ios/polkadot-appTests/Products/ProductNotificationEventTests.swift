@@ -74,26 +74,24 @@ struct ProductNotificationEventTests {
             )?.productId == "localhost:3000"
         )
 
-        let firstLaunch = deliveredAt.addingTimeInterval(60 * 60)
-        let secondLaunch = firstLaunch.addingTimeInterval(60 * 60)
+        let now = deliveredAt.addingTimeInterval(25 * 60 * 60)
+        let recent = (identifier: "product:example.dot:1", deliveredAt: now.addingTimeInterval(-60 * 60))
+        let old = (identifier: "product:example.dot:2", deliveredAt: now.addingTimeInterval(-25 * 60 * 60))
+        let later = (identifier: "product:example.dot:3", deliveredAt: now)
         #expect(
             [
-                ProductNotificationEvent.isNewSinceLastScan(
-                    deliveredAt: deliveredAt,
-                    scannedThrough: nil,
-                    now: firstLaunch
+                ProductNotificationEvent.identifiersToReport(delivered: [recent, old], alreadyReported: nil, now: now),
+                ProductNotificationEvent.identifiersToReport(
+                    delivered: [recent],
+                    alreadyReported: ["product:example.dot:1"],
+                    now: now
                 ),
-                ProductNotificationEvent.isNewSinceLastScan(
-                    deliveredAt: deliveredAt,
-                    scannedThrough: firstLaunch,
-                    now: secondLaunch
-                ),
-                ProductNotificationEvent.isNewSinceLastScan(
-                    deliveredAt: deliveredAt,
-                    scannedThrough: nil,
-                    now: deliveredAt.addingTimeInterval(25 * 60 * 60)
+                ProductNotificationEvent.identifiersToReport(
+                    delivered: [recent, later],
+                    alreadyReported: ["product:example.dot:1"],
+                    now: now
                 )
-            ] == [true, false, false]
+            ] == [["product:example.dot:1"], [], ["product:example.dot:3"]]
         )
     }
 

@@ -183,18 +183,31 @@ private extension UserNotificationService {
         Task {
             let now = Date()
             let delivered = await center.deliveredNotifications()
-            let scanKey = SettingsKey.productNotificationsScannedThrough.rawValue
-            let scannedThrough = settings.anyValue(for: scanKey) as? Date
-            settings.set(anyValue: now, for: scanKey)
-
-            for notification in delivered where ProductNotificationEvent.isNewSinceLastScan(
-                deliveredAt: notification.date,
-                scannedThrough: scannedThrough,
+            let key = SettingsKey.productNotificationsReported.rawValue
+            let alreadyReported = (settings.anyValue(for: key) as? [String]).map(Set.init)
+            let identifiersToReport = ProductNotificationEvent.identifiersToReport(
+                delivered: delivered.map { (identifier: $0.request.identifier, deliveredAt: $0.date) },
+                alreadyReported: alreadyReported,
                 now: now
-            ) {
+            )
+            settings.set(anyValue: delivered.map(\.request.identifier), for: key)
+
+            for notification in delivered where identifiersToReport.contains(notification.request.identifier) {
                 record(notification, step: .shown, seenVia: .nextLaunch)
             }
         }
+    }
+
+    func markReported(_ identifier: String) {
+        guard isReporting else {
+            return
+        }
+        let key = SettingsKey.productNotificationsReported.rawValue
+        var identifiers = settings.anyValue(for: key) as? [String] ?? []
+        if !identifiers.contains(identifier) {
+            identifiers.append(identifier)
+        }
+        settings.set(anyValue: identifiers, for: key)
     }
 
     func record(
@@ -318,6 +331,7 @@ extension UserNotificationService: UNUserNotificationCenterDelegate {
         let presentationOptions = foregroundPresentationDecider?.presentationOptions(for: notification) ?? []
         if !presentationOptions.isEmpty {
             record(notification, step: .shown, seenVia: .foreground)
+            markReported(notification.request.identifier)
         }
         completionHandler(presentationOptions)
     }

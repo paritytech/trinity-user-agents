@@ -36,10 +36,21 @@ struct ProductNotificationEvent: Equatable {
         self.deliveredAt = deliveredAt
     }
 
-    /// A notification stays in Notification Center across launches, so the launch scan reports only those delivered
-    /// since the previous scan, and on the first scan only those from the last day.
-    static func isNewSinceLastScan(deliveredAt: Date, scannedThrough: Date?, now: Date) -> Bool {
-        deliveredAt > (scannedThrough ?? now.addingTimeInterval(-24 * 60 * 60))
+    /// A notification stays in Notification Center across launches, including one shown in the foreground, so each
+    /// one is reported once. On the first scan, when nothing is recorded yet, only those from the last day count.
+    static func identifiersToReport(
+        delivered: [(identifier: String, deliveredAt: Date)],
+        alreadyReported: Set<String>?,
+        now: Date
+    ) -> Set<String> {
+        let oldest = now.addingTimeInterval(-24 * 60 * 60)
+        let unreported = delivered.filter { notification in
+            guard let alreadyReported else {
+                return notification.deliveredAt > oldest
+            }
+            return !alreadyReported.contains(notification.identifier)
+        }
+        return Set(unreported.map(\.identifier))
     }
 
     func hostEvent(
