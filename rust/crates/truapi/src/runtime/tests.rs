@@ -3031,7 +3031,7 @@ fn funding_resumes_by_announcing_sessions_a_provider_still_works_on() {
 	assert!(
 		futures::executor::block_on(before.select_funding_provider(
 			&intent,
-			"ramp.dot",
+			&ProductId::for_test("ramp.dot"),
 			&offer_test_quote(&before, &intent, "ramp.dot")
 		))
 		.expect("selected")
@@ -3624,8 +3624,8 @@ fn the_overlay_gets_its_options_for_each_selection_while_it_is_up() {
 			})
 			.collect::<Vec<_>>(),
 		vec![
-			(intent.clone(), vec!["ramp.dot".to_string()], floor.clone()),
-			(intent, vec!["ramp.dot".to_string()], floor),
+			(intent.clone(), vec![ProductId::for_test("ramp.dot")], floor.clone()),
+			(intent, vec![ProductId::for_test("ramp.dot")], floor),
 		]
 	);
 }
@@ -9263,8 +9263,8 @@ fn connect_provider(
 	provider_id: &str,
 ) -> Arc<ScriptedProviderLink> {
 	let link = Arc::new(ScriptedProviderLink::default());
-	services.funding().link(provider_id, link.clone());
-	services.funding().connected(provider_id);
+	services.funding().link(&ProductId::for_test(provider_id), link.clone());
+	services.funding().connected(&ProductId::for_test(provider_id));
 	link
 }
 
@@ -9335,7 +9335,7 @@ fn funding_resumes_by_telling_the_host_what_a_provider_still_works_on() {
 	assert!(
 		futures::executor::block_on(before.select_funding_provider(
 			&intent,
-			"ramp.dot",
+			&ProductId::for_test("ramp.dot"),
 			&offer_test_quote(&before, &intent, "ramp.dot")
 		))
 		.expect("selected")
@@ -9392,7 +9392,7 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 	assert!(
 		futures::executor::block_on(before.select_funding_provider(
 			&intent,
-			"ramp.dot",
+			&ProductId::for_test("ramp.dot"),
 			&offer_test_quote(&before, &intent, "ramp.dot")
 		))
 		.expect("selected")
@@ -9484,7 +9484,7 @@ fn a_provider_closes_its_screen_for_a_session_it_serves() {
 	assert!(
 		futures::executor::block_on(services.select_funding_provider(
 			&intent,
-			"ramp.dot",
+			&ProductId::for_test("ramp.dot"),
 			&offer_test_quote(&services, &intent, "ramp.dot")
 		))
 		.expect("selected")
@@ -9542,7 +9542,7 @@ fn a_provider_worker_that_crashes_mid_session_is_started_and_assigned_again() {
 	assert!(
 		futures::executor::block_on(services.select_funding_provider(
 			&intent,
-			"ramp.dot",
+			&ProductId::for_test("ramp.dot"),
 			&offer_test_quote(&services, &intent, "ramp.dot")
 		))
 		.expect("selected")
@@ -9550,7 +9550,7 @@ fn a_provider_worker_that_crashes_mid_session_is_started_and_assigned_again() {
 	let crashed = connect_provider(&services, "ramp.dot");
 	let assigned = crashed.calls(1);
 	let crashed: Arc<dyn crate::runtime::FundingProviderLink> = crashed;
-	services.funding().unlink("ramp.dot", &crashed);
+	services.funding().unlink(&ProductId::for_test("ramp.dot"), &crashed);
 	let before_crash = workers.seen().len();
 
 	services.worker_exited(&ProductId::for_test("ramp.dot"));
@@ -9584,7 +9584,7 @@ fn a_session_settles_from_the_top_up_the_provider_started() {
 	assert!(
 		futures::executor::block_on(services.select_funding_provider(
 			&intent,
-			"ramp.dot",
+			&ProductId::for_test("ramp.dot"),
 			&offer_test_quote(&services, &intent, "ramp.dot")
 		))
 		.expect("selected")
@@ -9634,7 +9634,7 @@ fn a_provider_frame_opens_only_https_pages() {
 	assert!(
 		futures::executor::block_on(services.select_funding_provider(
 			&intent,
-			"ramp.dot",
+			&ProductId::for_test("ramp.dot"),
 			&offer_test_quote(&services, &intent, "ramp.dot")
 		))
 		.expect("selected")
@@ -9699,7 +9699,7 @@ fn a_provider_without_an_app_opens_only_pages() {
 	assert!(
 		futures::executor::block_on(services.select_funding_provider(
 			&intent,
-			"ramp.dot",
+			&ProductId::for_test("ramp.dot"),
 			&offer_test_quote(&services, &intent, "ramp.dot")
 		))
 		.expect("selected")
@@ -9759,7 +9759,7 @@ fn only_the_assigned_provider_worker_reports() {
 	assert!(
 		futures::executor::block_on(services.select_funding_provider(
 			&intent,
-			"ramp.dot",
+			&ProductId::for_test("ramp.dot"),
 			&offer_test_quote(&services, &intent, "ramp.dot")
 		))
 		.expect("selected")
@@ -9810,10 +9810,10 @@ fn a_session_is_handed_only_to_a_known_funding_provider() {
 			.intent
 	};
 	let (inbound, outbound) = (open(v01::FundingDirection::In), open(v01::FundingDirection::Out));
-	let select = |intent: &str, provider| {
+	let select = |intent: &str, provider: &str| {
 		futures::executor::block_on(services.select_funding_provider(
 			intent,
-			provider,
+			&ProductId::for_test(provider),
 			&offer_test_quote(&services, intent, provider),
 		))
 		.is_ok()
@@ -9848,8 +9848,8 @@ fn answer_asks(
 ) -> Arc<Mutex<usize>> {
 	let link = Arc::new(ScriptedProviderLink::default());
 	*link.quote_answer.lock().expect("answer mutex poisoned") = Some(answer);
-	services.funding().link(provider_id, link.clone());
-	services.funding().connected(provider_id);
+	services.funding().link(&ProductId::for_test(provider_id), link.clone());
+	services.funding().connected(&ProductId::for_test(provider_id));
 	link.quotes.clone()
 }
 
@@ -9913,15 +9913,22 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 			.collect::<Vec<_>>(),
 	);
 	let select = |quote_id| {
-		futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot", quote_id))
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			quote_id,
+		))
 	};
 	let unknown = select("q-never");
 	let chosen = select("q1");
 	// The reconciler drops an assigned session's quotes on its next pass.
 	let offered = || {
-		services
-			.funding_quotes()
-			.offered(&intent, "ramp.dot", "q1", crate::current_unix_millis())
+		services.funding_quotes().offered(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			"q1",
+			crate::current_unix_millis(),
+		)
 	};
 	eventually(5, || offered().is_none());
 	let offered_after_assign = offered();
@@ -9984,8 +9991,8 @@ fn an_ask_without_a_country_takes_the_detected_one() {
 	let link = Arc::new(ScriptedProviderLink::default());
 	*link.quote_answer.lock().expect("answer mutex poisoned") =
 		Some(v01::FundingQuoteAnswer::Quoted { quote: card_quote("q-1") });
-	services.funding().link("ramp.dot", link.clone());
-	services.funding().connected("ramp.dot");
+	services.funding().link(&ProductId::for_test("ramp.dot"), link.clone());
+	services.funding().connected(&ProductId::for_test("ramp.dot"));
 	let quote = |country: Option<&str>| {
 		futures::executor::block_on(
 			services
@@ -10063,8 +10070,12 @@ fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
 	while !resolved(&second) {
 		second = next().expect("second round");
 	}
-	futures::executor::block_on(services.select_funding_provider(&intent, "cheap.dot", "q2"))
-		.expect("chosen");
+	futures::executor::block_on(services.select_funding_provider(
+		&intent,
+		&ProductId::for_test("cheap.dot"),
+		"q2",
+	))
+	.expect("chosen");
 	let mut after_choice = 0;
 	while next().is_some() {
 		after_choice += 1;
@@ -10073,8 +10084,8 @@ fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
 	assert_eq!(
 		(
 			first_shown.rows.iter().map(|row| row.provider_id.as_str()).collect::<Vec<_>>(),
-			first.best.as_deref(),
-			second.best.as_deref(),
+			first.best.as_ref().map(ProductId::as_str),
+			second.best.as_ref().map(ProductId::as_str),
 			second.refresh_at_ms > first.refresh_at_ms,
 			after_choice,
 		),
@@ -10152,9 +10163,11 @@ fn a_quote_must_price_the_sessions_amount() {
 				.get_funding_quote_within(&intent, card_ask(None), Duration::from_secs(5))
 				.collect::<Vec<_>>(),
 		);
-		let selected = futures::executor::block_on(
-			services.select_funding_provider(&intent, "ramp.dot", "q1"),
-		);
+		let selected = futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			"q1",
+		));
 		(selected, services.funding().get(&intent).and_then(|session| session.amount))
 	};
 
@@ -10256,7 +10269,7 @@ fn quotes_in_flight_keep_their_workers_until_another_provider_takes_the_session(
 	assert!(
 		futures::executor::block_on(services.select_funding_provider(
 			&intent,
-			"ramp.dot",
+			&ProductId::for_test("ramp.dot"),
 			&offer_test_quote(&services, &intent, "ramp.dot")
 		))
 		.expect("selected")
@@ -10402,7 +10415,7 @@ fn learning_before_the_stored_records_load_keeps_them() {
 	use crate::host_logic::funding_providers::LearnedSupport;
 	let storage = stub_platform();
 	let support = |provider_id: &str| LearnedSupport {
-		provider_id: provider_id.to_string(),
+		provider_id: ProductId::for_test(provider_id),
 		direction: v01::FundingDirection::In,
 		rail: v01::FundingRail::Card,
 		asset: "EUR".to_string(),
@@ -10445,7 +10458,7 @@ fn learning_before_the_stored_records_load_keeps_them() {
 		std::thread::sleep(Duration::from_millis(10));
 	}
 	stored.sort();
-	assert_eq!(stored, ["earlier.dot".to_string(), "now.dot".to_string()]);
+	assert_eq!(stored, ["earlier.dot", "now.dot"].map(ProductId::for_test));
 }
 
 /// Open an inbound session for `amount` and hand it to `ramp.dot`.
@@ -10462,7 +10475,7 @@ fn served_session(services: &Arc<RuntimeServices>, amount: u128) -> String {
 	assert!(
 		futures::executor::block_on(services.select_funding_provider(
 			&intent,
-			"ramp.dot",
+			&ProductId::for_test("ramp.dot"),
 			&offer_test_quote(services, &intent, "ramp.dot")
 		))
 		.expect("selected")
@@ -10807,8 +10820,8 @@ fn a_cancel_waits_for_the_provider_to_connect() {
 	let asked = futures::executor::block_on(services.cancel_funding(&intent)).expect("cancel");
 	let link = Arc::new(ScriptedProviderLink::default());
 	link.answer_cancels([v01::FundingCancelAnswer::Stopped]);
-	services.funding().link("ramp.dot", link.clone());
-	services.funding().connected("ramp.dot");
+	services.funding().link(&ProductId::for_test("ramp.dot"), link.clone());
+	services.funding().connected(&ProductId::for_test("ramp.dot"));
 
 	let calls = link.calls(2);
 	let ended = wait_for_session(&services, &intent, |session| session.is_terminal())
@@ -10854,7 +10867,7 @@ impl crate::platform::FundingPlatform for SelectThenCloseFundingPlatform {
 			services
 				.select_funding_provider(
 					&session.intent,
-					"ramp.dot",
+					&ProductId::for_test("ramp.dot"),
 					&offer_test_quote(&services, &session.intent, "ramp.dot"),
 				)
 				.await
@@ -11672,7 +11685,7 @@ fn a_refused_repeat_of_a_recorded_top_up_leaves_no_record_behind() {
 	);
 	futures::executor::block_on(services.funding().record_start(
 		crate::unix_time::current_unix_millis(),
-		"ramp.dot",
+		&ProductId::for_test("ramp.dot"),
 		&intent,
 		crate::runtime::funding::FundsAsked {
 			direction: v01::FundingDirection::In,
@@ -11768,7 +11781,7 @@ fn a_repeat_under_a_recorded_id_must_ask_the_same() {
 	let (services, intent, worker) = served_with_engine(engine.clone(), 1_000);
 	futures::executor::block_on(services.funding().record_start(
 		crate::unix_time::current_unix_millis(),
-		"ramp.dot",
+		&ProductId::for_test("ramp.dot"),
 		&intent,
 		crate::runtime::funding::FundsAsked {
 			direction: v01::FundingDirection::In,
@@ -12046,11 +12059,11 @@ fn a_session_a_worker_did_not_take_is_handed_over_again() {
 	)));
 	let intent = served_session(&services, 500);
 	let link = UnsteadyProviderLink::new(1, true);
-	services.funding().link("ramp.dot", link.clone());
-	services.funding().connected("ramp.dot");
+	services.funding().link(&ProductId::for_test("ramp.dot"), link.clone());
+	services.funding().connected(&ProductId::for_test("ramp.dot"));
 
 	let taken = eventually(10, || link.assigned() == [intent.clone()]);
-	services.funding().connected("ramp.dot");
+	services.funding().connected(&ProductId::for_test("ramp.dot"));
 	std::thread::sleep(Duration::from_millis(200));
 
 	assert_eq!((taken, link.assigned()), (true, vec![intent]));
@@ -12066,8 +12079,8 @@ fn an_unanswered_call_is_repeated_without_a_reconnect() {
 		crate::platform::FundingPresentOutcome::Started,
 	)));
 	let link = UnsteadyProviderLink::new(1, true);
-	services.funding().link("ramp.dot", link.clone());
-	services.funding().connected("ramp.dot");
+	services.funding().link(&ProductId::for_test("ramp.dot"), link.clone());
+	services.funding().connected(&ProductId::for_test("ramp.dot"));
 	std::thread::sleep(Duration::from_millis(200));
 
 	let intent = served_session(&services, 500);
@@ -12085,14 +12098,14 @@ fn a_replaced_link_does_not_catch_up_its_replacement() {
 	)));
 	let intent = served_session(&services, 500);
 	let old = UnsteadyProviderLink::new(0, false);
-	services.funding().link("ramp.dot", old.clone());
-	services.funding().connected("ramp.dot");
+	services.funding().link(&ProductId::for_test("ramp.dot"), old.clone());
+	services.funding().connected(&ProductId::for_test("ramp.dot"));
 	let old_handed = eventually(5, || old.assigned() == [intent.clone()]);
 	let new = UnsteadyProviderLink::new(0, true);
-	services.funding().link("ramp.dot", new.clone());
+	services.funding().link(&ProductId::for_test("ramp.dot"), new.clone());
 	old.released.store(true, Ordering::SeqCst);
 	std::thread::sleep(Duration::from_millis(200));
-	services.funding().connected("ramp.dot");
+	services.funding().connected(&ProductId::for_test("ramp.dot"));
 
 	assert_eq!((old_handed, eventually(5, || new.assigned() == [intent.clone()])), (true, true));
 }
@@ -12108,8 +12121,8 @@ fn a_worker_is_handed_its_sessions_one_call_at_a_time() {
 	)));
 	let intents: Vec<String> = (0..70).map(|_| served_session(&services, 10)).collect();
 	let link = UnsteadyProviderLink::new(0, true);
-	services.funding().link("ramp.dot", link.clone());
-	services.funding().connected("ramp.dot");
+	services.funding().link(&ProductId::for_test("ramp.dot"), link.clone());
+	services.funding().connected(&ProductId::for_test("ramp.dot"));
 
 	let all = eventually(30, || link.assigned().len() == intents.len());
 
@@ -12233,7 +12246,7 @@ fn a_session_ended_while_workers_start_lets_its_worker_go() {
 	assert!(
 		futures::executor::block_on(before.select_funding_provider(
 			&second,
-			"other.dot",
+			&ProductId::for_test("other.dot"),
 			&offer_test_quote(&before, &second, "other.dot")
 		))
 		.expect("selected")
@@ -12292,8 +12305,12 @@ fn the_host_hears_when_a_session_starts_taking_longer() {
 			.collect::<Vec<_>>(),
 	);
 	assert!(
-		futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot", "q1"))
-			.expect("selected")
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			"q1"
+		))
+		.expect("selected")
 	);
 	let worker = provider_worker(&services, "ramp.dot");
 	report_funding(
@@ -12502,13 +12519,13 @@ fn a_worker_handshake_waits_for_a_session_before_its_sessions_are_handed_over() 
 	assert!(
 		futures::executor::block_on(services.select_funding_provider(
 			&intent,
-			provider_id,
+			&ProductId::for_test(provider_id),
 			&offer_test_quote(&services, &intent, provider_id)
 		))
 		.expect("selected")
 	);
 	let link = Arc::new(ScriptedProviderLink::default());
-	services.funding().link(provider_id, link.clone());
+	services.funding().link(&ProductId::for_test(provider_id), link.clone());
 
 	futures::executor::block_on(System::handshake(
 		&host,
@@ -12595,8 +12612,11 @@ fn a_quote_is_offered_to_the_session_that_asked_only() {
 	quote(&first);
 	quote(&first);
 	let reused = *asked.lock().expect("count mutex poisoned");
-	let chosen_elsewhere =
-		futures::executor::block_on(services.select_funding_provider(&second, "ramp.dot", "q1"));
+	let chosen_elsewhere = futures::executor::block_on(services.select_funding_provider(
+		&second,
+		&ProductId::for_test("ramp.dot"),
+		"q1",
+	));
 	quote(&second);
 
 	assert_eq!(
@@ -12623,9 +12643,11 @@ fn a_quote_that_does_not_add_up_is_unavailable() {
 				.get_funding_quote_within(&intent, card_ask(None), Duration::from_secs(5))
 				.collect::<Vec<_>>(),
 		);
-		let chosen = futures::executor::block_on(
-			services.select_funding_provider(&intent, "ramp.dot", "q1"),
-		);
+		let chosen = futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			"q1",
+		));
 		(rows.last().map(|row| row.state.clone()), chosen.is_ok())
 	};
 
@@ -12717,8 +12739,12 @@ fn offer_test_quote(services: &Arc<RuntimeServices>, intent: &str, provider_id: 
 		asset_decimals: 2,
 	};
 	let ask = v01::FundingQuoteAsk { direction: session.direction, amount, ..card_ask(None) };
-	services
-		.funding_quotes()
-		.offer(intent, provider_id, quote, &ask, crate::current_unix_millis());
+	services.funding_quotes().offer(
+		intent,
+		&ProductId::for_test(provider_id),
+		quote,
+		&ask,
+		crate::current_unix_millis(),
+	);
 	"q-test".to_string()
 }

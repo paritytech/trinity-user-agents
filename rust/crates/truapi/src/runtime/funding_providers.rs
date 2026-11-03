@@ -41,11 +41,11 @@ use crate::{
 	unix_time::current_unix_millis,
 };
 
-/// A provider the host offers, with its product id normalized and the
-/// Worker manifest it shipped already read.
+/// A provider the host offers, with the Worker manifest it shipped already
+/// read.
 #[derive(Clone)]
 struct OfferedProvider {
-	product_id: String,
+	product_id: ProductId,
 	snapshot: Option<WorkerManifest>,
 	origin: FundingProviderOrigin,
 }
@@ -53,15 +53,15 @@ struct OfferedProvider {
 /// The host's funding providers and what each one serves.
 #[derive(Default)]
 pub struct FundingProviders {
-	/// The providers, in the host's order, with normalized product ids.
+	/// The providers, in the host's order.
 	entries: Mutex<Vec<OfferedProvider>>,
 	/// What dotNS last said each provider publishes: its Worker manifest, or
 	/// `None` for nothing usable.
-	live: Mutex<HashMap<String, Option<WorkerManifest>>>,
+	live: Mutex<HashMap<ProductId, Option<WorkerManifest>>>,
 	/// Products published to browse, in the Publishers' order.
-	discovered: Mutex<Vec<String>>,
+	discovered: Mutex<Vec<ProductId>>,
 	/// Providers whose manifest is being read.
-	refreshing: Mutex<HashSet<String>>,
+	refreshing: Mutex<HashSet<ProductId>>,
 	/// Whether the browse list is being read.
 	discovering: AtomicBool,
 	/// What providers' quote answers showed about what they serve, newest
@@ -101,7 +101,7 @@ impl FundingProviders {
 	/// it declares, since a provider can serve more or less than it last
 	/// published. One with no manifest yet, or whose manifest was withdrawn,
 	/// is neither asked nor chosen.
-	pub fn quote_targets(&self) -> Vec<String> {
+	pub fn quote_targets(&self) -> Vec<ProductId> {
 		self.providers()
 			.into_iter()
 			.filter(|(_, manifest)| {
@@ -113,7 +113,7 @@ impl FundingProviders {
 
 	/// The host's providers in its order, then the browse ones it does not
 	/// list, each with the manifest the core goes by.
-	fn providers(&self) -> Vec<(String, Option<WorkerManifest>)> {
+	fn providers(&self) -> Vec<(ProductId, Option<WorkerManifest>)> {
 		let entries = lock(&self.entries).clone();
 		let discovered = lock(&self.discovered).clone();
 		let offered = entries.iter().map(|entry| (entry.product_id.clone(), self.manifest(entry)));
@@ -125,22 +125,6 @@ impl FundingProviders {
 				(product_id, manifest)
 			});
 		offered.chain(published).collect()
-	}
-
-	/// Keep `published` as the browse list, normalized like the host's
-	/// entries so a product on both is one provider, and return it. An id that
-	/// does not normalize is left out.
-	fn set_discovered(&self, published: Vec<String>) -> Vec<String> {
-		let mut normalized: Vec<String> = Vec::with_capacity(published.len());
-		for product_id in published {
-			match normalized_product_id(product_id) {
-				Ok(product_id) if !normalized.contains(&product_id) => normalized.push(product_id),
-				Ok(_) => {},
-				Err(reason) => tracing::debug!(%reason, "skipping a browse product id"),
-			}
-		}
-		*lock(&self.discovered) = normalized.clone();
-		normalized
 	}
 
 	/// Record what an answer showed, replacing what was known for the same
@@ -177,8 +161,8 @@ impl FundingProviders {
 	}
 
 	/// Whether a session can be handed to `provider_id`: it is a quote target.
-	pub fn is_quote_target(&self, provider_id: &str) -> bool {
-		self.quote_targets().iter().any(|target| target == provider_id)
+	pub fn is_quote_target(&self, provider_id: &ProductId) -> bool {
+		self.quote_targets().contains(provider_id)
 	}
 
 	/// The manifest the core goes by for `entry`: the host's for a bundled
@@ -197,20 +181,20 @@ impl FundingProviders {
 
 impl RuntimeServices {
 	/// Replace the funding providers the host offers, and start reading their
-	/// manifests. A product id that does not normalize, or a shipped manifest
-	/// that does not parse, is refused, and nothing changes.
+	/// manifests. A shipped manifest that does not parse is refused, and
+	/// nothing changes.
 	pub fn set_funding_providers(
 		self: &Arc<Self>,
 		entries: Vec<FundingProviderEntry>,
 	) -> Result<(), FundingSessionError> {
-		let normalized = offered_providers(entries)?;
+		let offered = offered_providers(entries)?;
 		let providers = &self.funding_providers();
 		let discovered = lock(&providers.discovered).clone();
 		lock(&providers.live).retain(|product_id, _| {
-			normalized.iter().any(|entry| &entry.product_id == product_id) ||
+			offered.iter().any(|entry| &entry.product_id == product_id) ||
 				discovered.contains(product_id)
 		});
-		*lock(&providers.entries) = normalized;
+		*lock(&providers.entries) = offered;
 		self.refresh_funding_providers();
 		Ok(())
 	}
@@ -238,7 +222,7 @@ impl RuntimeServices {
 	/// Send the host what session `intent`'s overlay offers for the user's
 	/// selection so far. Nothing is sent for a session the core does not
 	/// hold.
-	pub(crate) fn send_funding_options(&self, intent: &str) {
+	pub fn send_funding_options(&self, intent: &str) {
 		let (Some(feed), Some(session)) = (self.funding().feed(), self.funding().get(intent))
 		else {
 			return;
@@ -307,7 +291,7 @@ impl RuntimeServices {
 
 	/// Forget what the user picked in session `intent`'s overlay, once it
 	/// closes.
-	pub(crate) fn forget_funding_selection(&self, intent: &str) {
+	pub fn forget_funding_selection(&self, intent: &str) {
 		lock(&self.funding_providers().selections).remove(intent);
 	}
 
@@ -356,7 +340,7 @@ impl RuntimeServices {
 		};
 		tracing::debug!(count = published.len(), "products published to browse");
 		let providers = &self.funding_providers();
-		let published = providers.set_discovered(published);
+		*lock(&providers.discovered) = published.clone();
 		for product_id in published {
 			if lock(&providers.refreshing).insert(product_id.clone()) {
 				self.read_provider_manifest(&product_id).await;
@@ -421,14 +405,11 @@ impl RuntimeServices {
 	}
 
 	/// Read `product_id`'s Worker manifest into what the core goes by.
-	async fn read_provider_manifest(&self, product_id: &str) {
-		let read = match product_id.parse::<ProductId>() {
-			Ok(provider) => worker_manifest(self, self.platform.as_ref(), &provider).await,
-			Err(error) => Err(error.to_string()),
-		};
+	async fn read_provider_manifest(&self, product_id: &ProductId) {
+		let read = worker_manifest(self, self.platform.as_ref(), product_id).await;
 		let providers = &self.funding_providers();
 		if let Ok(manifest) = read {
-			lock(&providers.live).insert(product_id.to_string(), manifest);
+			lock(&providers.live).insert(product_id.clone(), manifest);
 		}
 		lock(&providers.refreshing).remove(product_id);
 	}
@@ -441,7 +422,7 @@ fn offered_providers(
 ) -> Result<Vec<OfferedProvider>, FundingSessionError> {
 	let mut offered: Vec<OfferedProvider> = Vec::with_capacity(entries.len());
 	for entry in entries {
-		let product_id = entry.product_id.to_string();
+		let product_id = entry.product_id;
 		let snapshot = entry
 			.worker_manifest
 			.as_deref()
@@ -460,15 +441,6 @@ fn offered_providers(
 		}
 	}
 	Ok(offered)
-}
-
-/// `product_id` as the core names a provider's worker, so ids from the host
-/// and from browse compare equal.
-fn normalized_product_id(product_id: String) -> Result<String, String> {
-	product_id
-		.parse::<ProductId>()
-		.map(|product_id| product_id.to_string())
-		.map_err(|error| error.to_string())
 }
 
 /// The networks `candidates`' crypto routes declare in `direction`, each
@@ -538,7 +510,7 @@ mod tests {
 			countries: None,
 		};
 		let candidate = |routes| FundingCandidate {
-			provider_id: "ramp.dot".to_string(),
+			provider_id: ProductId::for_test("ramp.dot"),
 			routes,
 			unsupported: Vec::new(),
 			limits: Vec::new(),
@@ -603,7 +575,7 @@ mod tests {
 		providers
 	}
 
-	fn ids(candidates: Vec<FundingCandidate>) -> Vec<String> {
+	fn ids(candidates: Vec<FundingCandidate>) -> Vec<ProductId> {
 		candidates.into_iter().map(|candidate| candidate.provider_id).collect()
 	}
 
@@ -625,7 +597,7 @@ mod tests {
 				outbound.iter().map(|candidate| candidate.routes.clone()).collect::<Vec<_>>(),
 			),
 			(
-				vec!["card.dot".to_string(), "both.dot".to_string()],
+				vec![ProductId::for_test("card.dot"), ProductId::for_test("both.dot")],
 				vec![vec![FundingRoute {
 					rail: FundingRail::Crypto,
 					directions: vec![FundingDirection::Out],
@@ -650,12 +622,14 @@ mod tests {
 			}])
 			.expect("offered"),
 		);
-		lock(&providers.live)
-			.extend([("listed.dot".to_string(), None), ("bundled.dot".to_string(), None)]);
+		lock(&providers.live).extend([
+			(ProductId::for_test("listed.dot"), None),
+			(ProductId::for_test("bundled.dot"), None),
+		]);
 
 		assert_eq!(
 			ids(providers.candidates(FundingDirection::In)),
-			vec!["bundled.dot".to_string()]
+			vec![ProductId::for_test("bundled.dot")]
 		);
 	}
 
@@ -683,40 +657,17 @@ mod tests {
 		let providers = providers(&[("card.dot", Some(manifest(CARD_IN)))]);
 		let live = |routes: &str| WorkerManifest::parse(&manifest(routes)).ok();
 		*lock(&providers.discovered) = ["unread.dot", "found.dot", "card.dot", "nothing.dot"]
-			.map(str::to_string)
+			.map(ProductId::for_test)
 			.to_vec();
 		lock(&providers.live).extend([
-			("found.dot".to_string(), live(CARD_IN)),
-			("card.dot".to_string(), live(CARD_IN)),
-			("nothing.dot".to_string(), None),
+			(ProductId::for_test("found.dot"), live(CARD_IN)),
+			(ProductId::for_test("card.dot"), live(CARD_IN)),
+			(ProductId::for_test("nothing.dot"), None),
 		]);
 
 		assert_eq!(
 			ids(providers.candidates(FundingDirection::In)),
-			vec!["card.dot".to_string(), "found.dot".to_string()]
-		);
-	}
-
-	// Browse may name a product the way the host does not, so its ids are
-	// normalized like the host's: a product on both lists is one provider,
-	// and a selection by the normalized id finds it.
-	#[test]
-	fn browse_ids_are_normalized_like_the_hosts() {
-		let providers = providers(&[("card.dot", Some(manifest(CARD_IN)))]);
-		let live = |routes: &str| WorkerManifest::parse(&manifest(routes)).ok();
-		let discovered = providers.set_discovered(
-			["CARD.dot", "Found.dot", "found.dot", "not a product id"]
-				.map(str::to_string)
-				.to_vec(),
-		);
-		lock(&providers.live).insert("found.dot".to_string(), live(CARD_IN));
-
-		assert_eq!(
-			(discovered, ids(providers.candidates(FundingDirection::In))),
-			(
-				vec!["card.dot".to_string(), "found.dot".to_string()],
-				vec!["card.dot".to_string(), "found.dot".to_string()],
-			)
+			vec![ProductId::for_test("card.dot"), ProductId::for_test("found.dot")]
 		);
 	}
 
@@ -731,9 +682,9 @@ mod tests {
 		]);
 		let live = |routes: &str| WorkerManifest::parse(&manifest(routes)).ok();
 		lock(&providers.live).extend([
-			("withdrawn.dot".to_string(), None),
-			("changed.dot".to_string(), live(CRYPTO_OUT)),
-			("unshipped.dot".to_string(), live(CARD_IN)),
+			(ProductId::for_test("withdrawn.dot"), None),
+			(ProductId::for_test("changed.dot"), live(CRYPTO_OUT)),
+			(ProductId::for_test("unshipped.dot"), live(CARD_IN)),
 		]);
 
 		assert_eq!(
@@ -741,7 +692,7 @@ mod tests {
 				ids(providers.candidates(FundingDirection::In)),
 				ids(providers.candidates(FundingDirection::Out)),
 			),
-			(vec!["unshipped.dot".to_string()], vec!["changed.dot".to_string()])
+			(vec![ProductId::for_test("unshipped.dot")], vec![ProductId::for_test("changed.dot")])
 		);
 	}
 
@@ -751,7 +702,7 @@ mod tests {
 	fn a_limit_ages_on_its_own_and_a_lower_quote_clears_it() {
 		use crate::host_logic::funding_providers::{LEARNED_SUPPORT_TTL_MS, LearnedLimit};
 		let ask = |asked, min: Option<u128>, at_ms| LearnedSupport {
-			provider_id: "ramp.dot".to_string(),
+			provider_id: ProductId::for_test("ramp.dot"),
 			direction: FundingDirection::In,
 			rail: truapi::latest::FundingRail::Card,
 			asset: "EUR".to_string(),
@@ -795,15 +746,15 @@ mod tests {
 			("unshipped.dot", None),
 			("withdrawn.dot", Some(manifest(CARD_IN))),
 		]);
-		lock(&providers.live).insert("withdrawn.dot".to_string(), None);
+		lock(&providers.live).insert(ProductId::for_test("withdrawn.dot"), None);
 
 		assert_eq!(
 			(
 				providers.quote_targets(),
 				["card.dot", "unshipped.dot", "withdrawn.dot"]
-					.map(|provider_id| providers.is_quote_target(provider_id)),
+					.map(|provider_id| providers.is_quote_target(&ProductId::for_test(provider_id))),
 			),
-			(vec!["card.dot".to_string()], [true, false, false])
+			(vec![ProductId::for_test("card.dot")], [true, false, false])
 		);
 	}
 }

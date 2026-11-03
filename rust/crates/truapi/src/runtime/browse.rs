@@ -22,7 +22,7 @@ use crate::{
 	host_logic::dotns_gateway::{
 		DotnsTransport, call_bytes32, call_u256_pair, decode_bytes32_array, decode_string,
 	},
-	platform::{CoreStorageKey, Platform},
+	platform::{CoreStorageKey, Platform, ProductId},
 };
 
 /// Every `Publisher` deployment on each network, keyed by the Asset Hub
@@ -52,11 +52,12 @@ const PUBLISHER_3_0_0: [u8; 20] = [
 const PAGE_LIMIT: u64 = 1000;
 
 /// The product ids published to browse on the host's network, in the order
-/// the Publishers list them. Empty on a network with no Publisher.
+/// the Publishers list them, each once. Empty on a network with no
+/// Publisher. A listed name that is not a product id is left out.
 pub async fn published_products(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<ProductId>, String> {
 	let Some(genesis_hash) = services.asset_hub_chain_genesis_hash() else {
 		return Ok(Vec::new());
 	};
@@ -67,7 +68,23 @@ pub async fn published_products(
 		fetch_published_products(&services.chain, genesis_hash, publishers)
 	})
 	.await?;
-	Ok(json.and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default())
+	let listed: Vec<String> =
+		json.and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default();
+	Ok(product_ids(listed))
+}
+
+/// `listed` as product ids, in order, each once. A name that is not a
+/// product id is left out.
+fn product_ids(listed: Vec<String>) -> Vec<ProductId> {
+	let mut products: Vec<ProductId> = Vec::with_capacity(listed.len());
+	for name in listed {
+		match name.parse::<ProductId>() {
+			Ok(product_id) if !products.contains(&product_id) => products.push(product_id),
+			Ok(_) => {},
+			Err(reason) => tracing::debug!(%reason, "skipping a browse product id"),
+		}
+	}
+	products
 }
 
 /// The Publisher addresses on the network whose Asset Hub has `genesis_hash`.
@@ -152,6 +169,21 @@ async fn fetch_published_products(
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// Browse may name a product the way the host does not, so its names are
+	// normalized like the host's ids: a product listed twice, or under
+	// another case, is one product.
+	#[test]
+	fn browse_names_read_as_normalized_product_ids() {
+		assert_eq!(
+			product_ids(
+				["CARD.dot", "Found.dot", "found.dot", "not a product id"]
+					.map(str::to_string)
+					.to_vec()
+			),
+			["card.dot", "found.dot"].map(ProductId::for_test).to_vec()
+		);
+	}
 
 	#[test]
 	fn paseo_next_v2_lists_both_publisher_deployments() {

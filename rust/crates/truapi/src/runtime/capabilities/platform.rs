@@ -76,10 +76,7 @@ impl System for ProductRuntimeHost {
 				while changes.next().await.is_some() {
 					let Some(connection) = connection.upgrade() else { return };
 					if connection.session_state.current().is_some() {
-						connection
-							.services
-							.funding()
-							.connected(connection.product.product_id.as_str());
+						connection.services.funding().connected(&connection.product.product_id);
 						return;
 					}
 				}
