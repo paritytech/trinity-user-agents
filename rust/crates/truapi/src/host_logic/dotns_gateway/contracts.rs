@@ -1,71 +1,93 @@
 //! Solidity interfaces of the dotNS contracts the host reads, as far as it
-//! reads them. Signatures mirror `paritytech/dotns`.
+//! reads them. Signatures and docs mirror
+//! [`paritytech/dotns`](https://github.com/paritytech/dotns).
 
 alloy_sol_types::sol! {
-	/// The gateway's proof-of-personhood controller.
+	/// Dedicated PoP controller that issues device names and personhood names on
+	/// behalf of the dotNS gateway pallet.
+	///
+	/// [`DotnsPopController.sol`](https://github.com/paritytech/dotns/blob/94a778e0d1187ee6c0c199378cae8d916af6ad68/contracts/registrars/DotnsPopController.sol)
 	interface DotnsPopController {
-		/// A gateway-minted label waiting for `claimLabelStore`.
+		/// Deferred per-user binding of a freshly minted name to its `LabelStore`.
 		struct PendingClaim {
-			/// The bare label.
+			/// Bare label without the TLD, which is appended at settlement time.
 			string label;
-			/// Unix seconds of the mint.
+			/// Timestamp of the originating mint.
 			uint64 mintedAt;
 		}
 
-		/// The protocol registry the controller was deployed against.
+		/// Protocol-level address registry for all dotNS contracts.
 		function protocolRegistry() external view returns (address);
-		/// Whether the controller issued `label`.
+		/// Whether this controller issued `label` as a PoP identity.
 		function isPopIssued(string label) external view returns (bool);
-		/// One page of `user`'s pending claims.
+		/// Returns a paginated slice of a user's pending claims in queue order.
 		function pendingClaims(address user, uint256 offset, uint256 limit)
 			external view returns (PendingClaim[]);
 	}
 
-	/// The Root-gated dispatcher a chain may store in front of the controller.
+	/// Non-upgradeable shim that translates a substrate Root-origin dispatch into
+	/// an EVM-observable authority on the PoP controller proxy.
+	///
+	/// [`RootGatewayDispatcher.sol`](https://github.com/paritytech/dotns/blob/38c4c7d4d87c4e8630727d6f7f4c27e30bd71248/contracts/registrars/RootGatewayDispatcher.sol)
 	interface RootGatewayDispatcher {
-		/// The controller the dispatcher forwards to.
+		/// Controller proxy address this dispatcher forwards to.
 		function TARGET() external view returns (address);
 	}
 
-	/// The address book of the dotNS deployment.
+	/// Upgradeable address registry for all dotNS protocol contracts, and the
+	/// authority for the network's top-level domain.
+	///
+	/// [`DotnsProtocolRegistry.sol`](https://github.com/paritytech/dotns/blob/94a778e0d1187ee6c0c199378cae8d916af6ad68/contracts/registry/DotnsProtocolRegistry.sol)
 	interface ProtocolRegistry {
-		/// The component registered under `key`, a `bytes32("name")` literal.
+		/// Returns the address stored for a given key.
 		function get(bytes32 key) external view returns (address);
-		/// The network TLD with its leading dot.
+		/// Returns the network's TLD suffix, including the leading dot (e.g. `.dot`).
 		function tld() external view returns (string);
 	}
 
-	/// Deploys and locates per-account label stores.
+	/// Factory for the two per-user dotNS store types, sharing one factory
+	/// contract and two beacons.
+	///
+	/// [`StoreFactory.sol`](https://github.com/paritytech/dotns/blob/94a778e0d1187ee6c0c199378cae8d916af6ad68/contracts/store/StoreFactory.sol)
 	interface StoreFactory {
-		/// `user`'s label store, or the zero address when none is deployed.
+		/// Returns the `LabelStore` address bound to `user`, or the zero address if none.
 		function getLabelStore(address user) external view returns (address);
 	}
 
-	/// The append-only list of labels written for one account.
+	/// Permanent per-user dotNS label store.
+	///
+	/// [`LabelStore.sol`](https://github.com/paritytech/dotns/blob/94a778e0d1187ee6c0c199378cae8d916af6ad68/contracts/store/LabelStore.sol)
 	interface LabelStore {
-		/// One page of labels, each carrying the network TLD.
+		/// Paginated read returning just the stored labels, in insertion order.
 		function getLabels(uint256 offset, uint256 limit) external view returns (string[]);
 	}
 
-	/// The ERC-721 registrar whose token ids are name nodes.
+	/// ERC721-backed registrar implementing name ownership with no expiry.
+	///
+	/// [`DotnsRegistrar.sol`](https://github.com/paritytech/dotns/blob/94a778e0d1187ee6c0c199378cae8d916af6ad68/contracts/registrars/DotnsRegistrar.sol)
 	interface DotnsRegistrar {
-		/// Whether the name with node `tokenId` is minted.
+		/// Returns whether a given token id has been minted.
 		function exists(uint256 tokenId) external view returns (bool);
-		/// The holder of the name with node `tokenId`.
+		/// Returns the owner of the `tokenId` token.
 		function ownerOf(uint256 tokenId) external view returns (address);
 	}
 
-	/// The ENS-style registry of name records.
+	/// Upgradeable on-chain registry for hierarchical name ownership and resolution.
+	///
+	/// [`DotnsRegistry.sol`](https://github.com/paritytech/dotns/blob/94a778e0d1187ee6c0c199378cae8d916af6ad68/contracts/registry/DotnsRegistry.sol)
 	interface DotnsRegistry {
-		/// Whether `node` has a record.
+		/// Returns whether a node exists and resolves.
 		function recordExists(bytes32 node) external view returns (bool);
-		/// The resolver serving `node`, or the zero address.
+		/// Returns the resolver of a node, or zero when the node does not resolve.
 		function resolver(bytes32 node) external view returns (address);
 	}
 
-	/// A resolver serving text records.
+	/// Implements `IDotnsContentResolver` interface with content hash, text
+	/// records, and operator approvals.
+	///
+	/// [`DotnsContentResolver.sol`](https://github.com/paritytech/dotns/blob/94a778e0d1187ee6c0c199378cae8d916af6ad68/contracts/resolvers/DotnsContentResolver.sol)
 	interface ContentResolver {
-		/// The text record `key` of `node`.
+		/// Returns a text record for a node.
 		function text(bytes32 node, string key) external view returns (string);
 	}
 }
