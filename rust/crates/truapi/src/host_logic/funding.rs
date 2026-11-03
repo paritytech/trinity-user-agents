@@ -13,11 +13,11 @@
 use parity_scale_codec::{Decode, Encode};
 use tracing::error;
 use truapi::latest::{
-	FUNDING_DETAIL_MAX_BYTES, FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer,
-	FundingCancelDecision, FundingDeposit, FundingDetail, FundingDirection, FundingFact,
-	FundingFailure, FundingFrameTarget, FundingInboundUpdate, FundingOutboundUpdate, FundingPayout,
-	FundingQuote, FundingRail, FundingReceived, FundingUpdate, GenericError,
-	HostFundingReportError, HostFundingStatusSubscribeItem,
+	FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES, FUNDING_DETAIL_MAX_CHARS,
+	FundingAssignment, FundingCancelAnswer, FundingCancelDecision, FundingDeposit, FundingDetail,
+	FundingDirection, FundingFact, FundingFailure, FundingFrameTarget, FundingInboundUpdate,
+	FundingOutboundUpdate, FundingPayout, FundingQuote, FundingRail, FundingReceived,
+	FundingUpdate, GenericError, HostFundingReportError, HostFundingStatusSubscribeItem,
 };
 use url::Url;
 
@@ -34,6 +34,27 @@ pub const UNACKNOWLEDGED_LIMIT: usize = 200;
 /// in up to three attempts, each under a new id after the host refused the
 /// last.
 const TOP_UP_LIMIT: usize = 3;
+/// How many `Details` updates a session keeps.
+const DETAILS_LIMIT: usize = 8;
+/// How many sets of deposit instructions a session keeps.
+const DEPOSITS_LIMIT: usize = 8;
+/// Most decimals an asset's amount can carry and still fit a `u128`.
+const DECIMALS_LIMIT: u8 = 38;
+/// URI schemes deposit instructions cannot use: a page, a script or a file
+/// instead of a payment.
+const NOT_PAYMENT_SCHEMES: &[&str] = &[
+	"about",
+	"blob",
+	"data",
+	"file",
+	"ftp",
+	"http",
+	"https",
+	"javascript",
+	"vbscript",
+	"ws",
+	"wss",
+];
 /// How long an assigned session with no funds moving waits for its
 /// provider's next update before it expires, so a provider that went silent
 /// cannot hold the session and its worker for good. A bank transfer can take
@@ -1166,6 +1187,9 @@ impl FundingSession {
 		// can name the payout's transaction or reference until it reports
 		// how the payout went.
 		if matches!(update, FundingUpdate::Details { .. }) && self.awaits_provider() {
+			if !self.detail_fits(&update, now_ms) {
+				return Err(HostFundingReportError::InvalidDetail);
+			}
 			self.updates.push(FundingUpdateRecord { update, at_ms: now_ms });
 			return Ok(());
 		}
@@ -1174,6 +1198,9 @@ impl FundingSession {
 		}
 		if !self.follows(&update) {
 			return Err(HostFundingReportError::OutOfOrder);
+		}
+		if !self.detail_fits(&update, now_ms) {
+			return Err(HostFundingReportError::InvalidDetail);
 		}
 		if let Some((id, amount)) = named_funds(&update) {
 			let named = host_id(id);
@@ -1377,6 +1404,38 @@ impl FundingSession {
 			FundingUpdate::Out(FundingOutboundUpdate::Payout { outcome }) => Some(outcome),
 			_ => None,
 		})
+	}
+
+	/// Whether `update`'s own data is within its limits. `Details` and
+	/// `Deposit` sit outside the order of the others, so the session keeps
+	/// a bounded number of each; their texts are short plain lines; deposit
+	/// instructions name something to pay, have not expired, and pay by the
+	/// rail and asset of the quote the user chose, when there was one.
+	fn detail_fits(&self, update: &FundingUpdate, now_ms: u64) -> bool {
+		let kept = |same: fn(&FundingUpdate) -> bool| {
+			self.updates.iter().filter(|record| same(&record.update)).count()
+		};
+		match update {
+			FundingUpdate::Details { transaction_id, reference } => {
+				kept(|update| matches!(update, FundingUpdate::Details { .. })) < DETAILS_LIMIT &&
+					(transaction_id.is_some() || reference.is_some()) &&
+					[transaction_id, reference]
+						.into_iter()
+						.flatten()
+						.all(|text| plain_line(text))
+			},
+			FundingUpdate::In(FundingInboundUpdate::Deposit { deposit }) => {
+				kept(|update| {
+					matches!(update, FundingUpdate::In(FundingInboundUpdate::Deposit { .. }))
+				}) < DEPOSITS_LIMIT &&
+					deposit_fits(deposit, self.choice.as_ref(), now_ms)
+			},
+			FundingUpdate::In(FundingInboundUpdate::PaymentReceived {
+				mismatch: Some(received),
+				..
+			}) => plain_line(&received.asset),
+			_ => true,
+		}
 	}
 
 	/// Whether the provider may offer to cancel on these terms. An inbound
@@ -1894,21 +1953,6 @@ fn update_rank(update: &FundingUpdate) -> Option<u8> {
 	})
 }
 
-/// Whether `text` is a non-empty line of plain text within the `Other`
-/// limits: no line breaks, control characters, invisible characters or
-/// characters that change the text's direction.
-fn plain_line(text: &str) -> bool {
-	let hidden = |c: char| {
-		c.is_control() ||
-			matches!(c, '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' |
-				'\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}')
-	};
-	!text.trim().is_empty() &&
-		text.len() <= FUNDING_DETAIL_MAX_BYTES &&
-		text.chars().count() <= FUNDING_DETAIL_MAX_CHARS &&
-		!text.chars().any(hidden)
-}
-
 /// Why a session operation failed.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
 pub enum FundingSessionError {
@@ -2044,6 +2088,82 @@ pub fn retained(
 				session.payout().is_none()) ||
 			session.takes_late_arrival(now_ms)
 	})
+}
+
+/// Whether `deposit` names something to pay that has not expired by
+/// `now_ms`, with plain texts, and pays by the rail and asset of `choice`,
+/// the quote the user chose, when there was one.
+fn deposit_fits(deposit: &FundingDeposit, choice: Option<&FundingChoice>, now_ms: u64) -> bool {
+	let live = |expires_at: &Option<u64>| expires_at.is_none_or(|at| at > now_ms);
+	let chosen = |rail: FundingRail, asset: &str| {
+		choice.is_none_or(|choice| choice.rail == rail && choice.asset.eq_ignore_ascii_case(asset))
+	};
+	match deposit {
+		FundingDeposit::Crypto {
+			address,
+			network,
+			asset,
+			amount,
+			decimals,
+			uri,
+			expires_at,
+			..
+		} => {
+			*amount > 0 &&
+				*decimals <= DECIMALS_LIMIT &&
+				[address, network, asset].into_iter().all(|text| plain_line(text)) &&
+				uri.as_deref().is_none_or(payment_uri) &&
+				live(expires_at) &&
+				chosen(FundingRail::Crypto, asset)
+		},
+		FundingDeposit::Bank {
+			amount,
+			currency,
+			decimals,
+			beneficiary,
+			account,
+			bank_code,
+			reference,
+			expires_at,
+		} => {
+			*amount > 0 &&
+				*decimals <= DECIMALS_LIMIT &&
+				plain_line(currency) &&
+				plain_line(reference) &&
+				[beneficiary, account, bank_code]
+					.into_iter()
+					.flatten()
+					.all(|text| plain_line(text)) &&
+				live(expires_at) &&
+				chosen(FundingRail::Bank, currency)
+		},
+	}
+}
+
+/// Whether `uri` is a payment URI a host can put in a QR code: short, with
+/// no spaces or hidden characters, and of a scheme that is not a page, a
+/// script or a file.
+fn payment_uri(uri: &str) -> bool {
+	uri.len() <= FUNDING_DEPOSIT_URI_MAX_BYTES &&
+		!uri.chars().any(|c| c.is_whitespace() || hidden(c)) &&
+		Url::parse(uri).is_ok_and(|url| !NOT_PAYMENT_SCHEMES.contains(&url.scheme()))
+}
+
+/// Whether `text` is a non-empty line of plain text within the limits a
+/// provider's update text keeps to: no line breaks, control characters,
+/// invisible characters or characters that change the text's direction.
+fn plain_line(text: &str) -> bool {
+	!text.trim().is_empty() &&
+		text.len() <= FUNDING_DETAIL_MAX_BYTES &&
+		text.chars().count() <= FUNDING_DETAIL_MAX_CHARS &&
+		!text.chars().any(hidden)
+}
+
+/// Whether `c` breaks a line, is invisible, or changes the text's direction.
+fn hidden(c: char) -> bool {
+	c.is_control() ||
+		matches!(c, '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' |
+			'\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}')
 }
 
 #[cfg(test)]
@@ -3951,6 +4071,114 @@ mod tests {
 		let awaiting_payout = report(&mut outbound, details());
 
 		assert_eq!((fresh, done, collecting, awaiting_payout), (Ok(()), Ok(()), Ok(()), Ok(())));
+	}
+
+	// `Details` and `Deposit` sit outside the order of the others, so a
+	// session keeps a bounded number of each, and their texts are short plain
+	// lines: no line breaks, control or invisible characters.
+	#[test]
+	fn details_and_deposits_are_bounded_and_plain() {
+		let details = |text: &str| FundingUpdate::Details {
+			transaction_id: Some(text.into()),
+			reference: None,
+		};
+		let deposit = |deposit| FundingUpdate::In(FundingInboundUpdate::Deposit { deposit });
+		let mut session = served(FundingDirection::In);
+		let kept: Vec<_> =
+			(0..DETAILS_LIMIT).map(|_| report(&mut session, details("tx"))).collect();
+		let past_the_limit = report(&mut session, details("tx"));
+		let mut session = served(FundingDirection::In);
+		let deposits: Vec<_> = (0..DEPOSITS_LIMIT)
+			.map(|_| report(&mut session, deposit(usdt_deposit(1))))
+			.collect();
+		let deposits_past_the_limit = report(&mut session, deposit(usdt_deposit(1)));
+		let mut session = served(FundingDirection::In);
+		let refused = [
+			report(&mut session, FundingUpdate::Details { transaction_id: None, reference: None }),
+			report(&mut session, details("two\nlines")),
+			report(&mut session, details("\u{202E}gnp.exe")),
+			report(&mut session, details(&"x".repeat(FUNDING_DETAIL_MAX_CHARS + 1))),
+			report(
+				&mut session,
+				FundingUpdate::In(FundingInboundUpdate::PaymentReceived {
+					finalized: false,
+					mismatch: Some(FundingReceived { asset: "US\u{0}DT".into(), amount: 1 }),
+				}),
+			),
+		];
+
+		assert_eq!(
+			(
+				kept.iter().all(Result::is_ok),
+				past_the_limit,
+				deposits.iter().all(Result::is_ok),
+				deposits_past_the_limit,
+				refused,
+			),
+			(
+				true,
+				Err(HostFundingReportError::InvalidDetail),
+				true,
+				Err(HostFundingReportError::InvalidDetail),
+				[(); 5].map(|()| Err(HostFundingReportError::InvalidDetail)),
+			)
+		);
+	}
+
+	// Deposit instructions name something to pay, have not expired, carry a
+	// payment URI rather than a page or a script, and pay by the rail and
+	// asset of the quote the user chose.
+	#[test]
+	fn deposit_instructions_must_fit_the_chosen_quote() {
+		let usdt = |amount, decimals, uri: Option<&str>, expires_at| FundingDeposit::Crypto {
+			address: "0xdeposit".to_string(),
+			network: "Ethereum".to_string(),
+			asset: "USDT".to_string(),
+			amount,
+			decimals,
+			exact: true,
+			uri: uri.map(str::to_string),
+			expires_at,
+		};
+		let chosen = |rail, asset: &str| {
+			Some(FundingChoice {
+				quote: FundingQuote {
+					quote_id: "q1".into(),
+					send_amount: 100,
+					receive_amount: 100,
+					provider_fee: 0,
+					network_fee: 0,
+					eta_secs: None,
+					expires_at: None,
+					asset_decimals: 6,
+				},
+				rail,
+				asset: asset.into(),
+				network: None,
+			})
+		};
+		let fits = |deposit: FundingDeposit, choice: Option<FundingChoice>| {
+			let mut session = served(FundingDirection::In);
+			session.choice = choice;
+			report(&mut session, FundingUpdate::In(FundingInboundUpdate::Deposit { deposit }))
+				.is_ok()
+		};
+		let later = Some(NOW + 1_000);
+
+		assert_eq!(
+			[
+				fits(usdt(100, 6, None, later), chosen(FundingRail::Crypto, "usdt")),
+				fits(usdt(100, 6, Some("ethereum:0xdeposit@1/transfer?uint256=100"), later), None),
+				fits(usdt(0, 6, None, later), None),
+				fits(usdt(100, 6, Some("javascript:alert(1)"), later), None),
+				fits(usdt(100, 6, Some("https://phish.example/pay"), later), None),
+				fits(usdt(100, 6, None, Some(NOW)), None),
+				fits(usdt(100, DECIMALS_LIMIT + 1, None, later), None),
+				fits(usdt(100, 6, None, later), chosen(FundingRail::Crypto, "USDC")),
+				fits(usdt(100, 6, None, later), chosen(FundingRail::Card, "EUR")),
+			],
+			[true, true, false, false, false, false, false, false, false]
+		);
 	}
 
 	fn usdt_deposit(amount: u128) -> FundingDeposit {
