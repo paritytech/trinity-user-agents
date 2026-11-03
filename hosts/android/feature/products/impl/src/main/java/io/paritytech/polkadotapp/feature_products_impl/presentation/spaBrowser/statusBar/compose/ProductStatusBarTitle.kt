@@ -1,10 +1,16 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.compose
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -21,15 +27,12 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.paritytech.polkadotapp.design.components.docklet.DockletGlassTheme
+import io.paritytech.polkadotapp.design.components.docklet.LocalDockletPalette
 import io.paritytech.polkadotapp.design.components.dropdown.NovaDropdownMenu
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
-import io.paritytech.polkadotapp.design.components.icon.vectors.ChatFilled
-import io.paritytech.polkadotapp.design.components.icon.vectors.Close
 import io.paritytech.polkadotapp.design.components.icon.vectors.PolkadotMark
-import io.paritytech.polkadotapp.design.components.icon.vectors.Refreshing
-import io.paritytech.polkadotapp.design.components.icon.vectors.Share
-import io.paritytech.polkadotapp.design.components.menu.NovaMenuOption
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
@@ -37,9 +40,16 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.s
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.ProductMenu
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.ProductStatusBarUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.ProductStatusBarViewModel
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.compose.components.icons.ChatBubbleOvalLeft
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.compose.components.icons.ExternalLink
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.compose.components.icons.RotateCw
+import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.compose.components.icons.XMark
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val LogoSize = 16.dp
+private val MenuWidth = 238.dp
+private val MenuIconSize = 20.dp
+private val MenuItemHeight = 40.dp
 
 @Composable
 fun ProductStatusBarTitle() {
@@ -94,42 +104,56 @@ private fun ProductStatusBarTitleInternal(
             )
         }
 
-        NovaDropdownMenu(
-            expanded = menuExpanded,
-            onDismissRequest = { menuExpanded = false },
-        ) {
-            Column {
-                val menu = state.menu
+        DockletGlassTheme {
+            val glass = LocalDockletPalette.current
 
-                if (menu is ProductMenu.Product && menu.chat == ProductChat.Served) {
+            NovaDropdownMenu(
+                modifier = Modifier.width(MenuWidth),
+                expanded = menuExpanded,
+                onDismissRequest = { menuExpanded = false },
+                shape = PolkadotTheme.shapes.extraLarge,
+                color = glass.glassFill,
+                border = BorderStroke(PolkadotTheme.borders.default, glass.glassStroke),
+            ) {
+                Column(modifier = Modifier.padding(PolkadotTheme.spacings.small)) {
+                    val menu = state.menu
+
+                    if (menu is ProductMenu.Product && menu.chat == ProductChat.Served) {
+                        ProductMenuOption(
+                            text = stringResource(RCommon.string.spa_browser_menu_proceed_in_chat),
+                            icon = ChatBubbleOvalLeft,
+                            onClick = { select(onProceedInChatClick) },
+                        )
+                    }
+
                     ProductMenuOption(
-                        text = stringResource(RCommon.string.spa_browser_menu_proceed_in_chat),
-                        icon = NovaIcons.ChatFilled,
-                        onClick = { select(onProceedInChatClick) },
+                        text = stringResource(RCommon.string.spa_browser_menu_reload),
+                        icon = RotateCw,
+                        onClick = { select(onReloadClick) },
+                    )
+
+                    if (menu is ProductMenu.Product) {
+                        ProductMenuOption(
+                            text = stringResource(RCommon.string.spa_browser_menu_share),
+                            icon = ExternalLink,
+                            onClick = { select(onShareClick) },
+                        )
+                    }
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(
+                            horizontal = PolkadotTheme.spacings.small,
+                            vertical = PolkadotTheme.spacings.smallIncreased,
+                        ),
+                        color = PolkadotTheme.colors.stroke.primary,
+                    )
+
+                    ProductMenuOption(
+                        text = stringResource(RCommon.string.spa_browser_menu_close_app),
+                        icon = XMark,
+                        onClick = { select(onCloseAppClick) },
                     )
                 }
-
-                ProductMenuOption(
-                    text = stringResource(RCommon.string.spa_browser_menu_reload),
-                    icon = NovaIcons.Refreshing,
-                    onClick = { select(onReloadClick) },
-                )
-
-                if (menu is ProductMenu.Product) {
-                    ProductMenuOption(
-                        text = stringResource(RCommon.string.spa_browser_menu_share),
-                        icon = NovaIcons.Share,
-                        onClick = { select(onShareClick) },
-                    )
-                }
-
-                HorizontalDivider(color = PolkadotTheme.colors.stroke.primary)
-
-                ProductMenuOption(
-                    text = stringResource(RCommon.string.spa_browser_menu_close_app),
-                    icon = NovaIcons.Close,
-                    onClick = { select(onCloseAppClick) },
-                )
             }
         }
     }
@@ -141,12 +165,32 @@ private fun ProductMenuOption(
     icon: ImageVector,
     onClick: () -> Unit,
 ) {
-    NovaMenuOption(
-        text = text,
-        icon = icon,
-        color = PolkadotTheme.colors.fg.primary,
-        onClick = onClick,
-    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = MenuItemHeight)
+            .clickable(onClick = onClick)
+            .padding(
+                start = PolkadotTheme.spacings.extraMedium,
+                end = PolkadotTheme.spacings.small,
+                top = PolkadotTheme.spacings.small,
+                bottom = PolkadotTheme.spacings.small,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.extraMedium),
+    ) {
+        NovaIcon(
+            modifier = Modifier.size(MenuIconSize),
+            imageVector = icon,
+            tint = PolkadotTheme.colors.fg.primary,
+        )
+
+        NovaText(
+            text = text,
+            style = PolkadotTheme.typography.body.large,
+            color = PolkadotTheme.colors.fg.primary,
+        )
+    }
 }
 
 @Preview(backgroundColor = 0xFF000000, showBackground = true)
