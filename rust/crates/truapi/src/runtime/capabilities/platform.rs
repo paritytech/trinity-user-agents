@@ -1,6 +1,8 @@
 //! Product-facing platform capability adapters.
 
-use crate::platform::PermissionAuthorizationStatus;
+use std::sync::Arc;
+
+use crate::platform::{ExecutableKind, PermissionAuthorizationStatus};
 use futures::StreamExt;
 use tracing::{instrument, warn};
 use truapi::{
@@ -28,7 +30,8 @@ use truapi::{
 		system::{
 			HostFeatureSupportedError, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
 			HostGetProductContextError, HostGetProductContextRequest,
-			HostGetProductContextResponse, HostInfoError, HostInfoRequest, HostInfoResponse,
+			HostGetProductContextResponse, HostHandshakeError, HostHandshakeRequest,
+			HostHandshakeResponse, HostInfoError, HostInfoRequest, HostInfoResponse,
 			HostNavigateToError, HostNavigateToRequest, HostNavigateToResponse,
 		},
 		theme::{HostThemeSubscribeError, HostThemeSubscribeItem, HostThemeSubscribeRequest},
@@ -51,6 +54,40 @@ use crate::{
 
 #[truapi::async_trait]
 impl System for ProductRuntimeHost {
+	#[instrument(skip_all, fields(runtime.method = "system.handshake"))]
+	async fn handshake(
+		&self,
+		_cx: &CallContext,
+		request: HostHandshakeRequest,
+	) -> Result<HostHandshakeResponse, CallError<HostHandshakeError>> {
+		let HostHandshakeRequest::V1(version) = request;
+		if version.codec_version != truapi::WIRE_CODEC_VERSION {
+			return Err(CallError::Domain(HostHandshakeError::V1(
+				truapi::v01::HostHandshakeError::UnsupportedProtocolVersion,
+			)));
+		}
+		// A worker that agreed the codec can take the core's calls, so a
+		// funding provider's is handed the sessions it serves. Its own calls
+		// are refused while no user session is current, so that waits for one.
+		if self.connection.product.execution_kind == ExecutableKind::Worker {
+			let connection = Arc::downgrade(&self.connection);
+			let mut changes = self.connection.session_state.subscribe();
+			(self.connection.services.spawner)(Box::pin(async move {
+				while changes.next().await.is_some() {
+					let Some(connection) = connection.upgrade() else { return };
+					if connection.session_state.current().is_some() {
+						connection
+							.services
+							.funding()
+							.connected(connection.product.product_id.as_str());
+						return;
+					}
+				}
+			}));
+		}
+		Ok(HostHandshakeResponse::V1)
+	}
+
 	#[instrument(skip_all, fields(runtime.method = "system.feature_supported"))]
 	async fn feature_supported(
 		&self,
