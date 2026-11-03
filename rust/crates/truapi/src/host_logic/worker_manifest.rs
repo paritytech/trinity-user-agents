@@ -135,42 +135,6 @@ impl PublishedFunding {
 	}
 }
 
-/// A rail or direction name a Worker manifest uses that this core does not
-/// know.
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
-#[display("unknown funding name {name:?}")]
-pub struct UnknownFundingName {
-	/// The name as the manifest wrote it.
-	pub name: String,
-}
-
-impl core::str::FromStr for FundingRail {
-	type Err = UnknownFundingName;
-
-	/// A rail as a Worker manifest's route `mode` names it.
-	fn from_str(name: &str) -> Result<Self, Self::Err> {
-		match name {
-			"CARD" => Ok(Self::Card),
-			"BANK" => Ok(Self::Bank),
-			"CRYPTO" => Ok(Self::Crypto),
-			_ => Err(UnknownFundingName { name: name.to_string() }),
-		}
-	}
-}
-
-impl core::str::FromStr for FundingDirection {
-	type Err = UnknownFundingName;
-
-	/// A direction as a Worker manifest's route `directions` name it.
-	fn from_str(name: &str) -> Result<Self, Self::Err> {
-		match name {
-			"In" => Ok(Self::In),
-			"Out" => Ok(Self::Out),
-			_ => Err(UnknownFundingName { name: name.to_string() }),
-		}
-	}
-}
-
 impl PublishedRoute {
 	fn usable(self) -> Option<FundingRoute> {
 		let rail: FundingRail = self.mode.parse().ok()?;
@@ -194,25 +158,6 @@ impl PublishedRoute {
 #[cfg(test)]
 mod tests {
 	use super::*;
-
-	// Rails and directions read as a manifest spells them, exactly.
-	#[test]
-	fn rails_and_directions_read_as_a_manifest_names_them() {
-		assert_eq!(
-			(
-				["CARD", "BANK", "CRYPTO"].map(|name| name.parse::<FundingRail>().ok()),
-				["In", "Out"].map(|name| name.parse::<FundingDirection>().ok()),
-				"card".parse::<FundingRail>(),
-				"in".parse::<FundingDirection>(),
-			),
-			(
-				[Some(FundingRail::Card), Some(FundingRail::Bank), Some(FundingRail::Crypto)],
-				[Some(FundingDirection::In), Some(FundingDirection::Out)],
-				Err(UnknownFundingName { name: "card".to_string() }),
-				Err(UnknownFundingName { name: "in".to_string() }),
-			)
-		);
-	}
 
 	/// The RFC's example provider: card in, and crypto in and out.
 	const EXAMPLE: &str = r#"{

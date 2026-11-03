@@ -525,7 +525,7 @@ pub trait NativeFundingCallbacks: Send + Sync {
 	/// URL.
 	async fn present_provider_frame(
 		&self,
-		provider_id: String,
+		provider_id: ProductId,
 		intent: String,
 		target: v01::FundingFrameTarget,
 	) -> Result<v01::FundingFrameOutcome, HostRejection>;
@@ -534,11 +534,11 @@ pub trait NativeFundingCallbacks: Send + Sync {
 	/// `provider_id`'s session `intent`, answering that call `Closed`, and
 	/// show the session sheet in its place. Does nothing when no frame is
 	/// open for it.
-	fn close_provider_frame(&self, provider_id: String, intent: String);
+	fn close_provider_frame(&self, provider_id: ProductId, intent: String);
 
 	/// Whether provider `provider_id` ships an App, so an App route of its
 	/// can be shown. A provider without one shows only external pages.
-	async fn provider_has_app(&self, provider_id: String) -> bool;
+	async fn provider_has_app(&self, provider_id: ProductId) -> bool;
 
 	/// The country the user is likely in, as an ISO 3166-1 alpha-2 code:
 	/// the device's coarse location when already permitted, then its SIM or

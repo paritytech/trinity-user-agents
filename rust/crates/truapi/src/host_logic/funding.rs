@@ -82,7 +82,7 @@ pub struct FundingSessionSummary {
 	/// When the session was opened, in Unix milliseconds.
 	pub opened_at_ms: u64,
 	/// The provider that served it, `None` when none took it.
-	pub provider_id: Option<String>,
+	pub provider_id: Option<ProductId>,
 	/// The quote the provider was chosen on, with its rail, asset and
 	/// network. `None` when no provider took it.
 	pub choice: Option<FundingChoice>,
@@ -163,7 +163,7 @@ pub struct FundingSession {
 	/// session is handed to the host until it has.
 	pub acknowledged: bool,
 	/// Product id of the provider the user chose. `None` until they choose.
-	pub provider_id: Option<String>,
+	pub provider_id: Option<ProductId>,
 	/// When the provider was assigned, in Unix milliseconds.
 	pub assigned_at_ms: Option<u64>,
 	/// Where the user's cancel stands, while one is pending or answered.
@@ -812,11 +812,11 @@ impl FundingSession {
 	/// Assign the session to the provider the user chose, on the quote they
 	/// chose it by. A session without an amount takes the amount the quote
 	/// prices. Returns whether it was open and not yet assigned.
-	pub fn assign(&mut self, provider_id: &str, choice: FundingChoice, now_ms: u64) -> bool {
+	pub fn assign(&mut self, provider_id: &ProductId, choice: FundingChoice, now_ms: u64) -> bool {
 		if self.is_terminal() || self.provider_id.is_some() {
 			return false;
 		}
-		self.provider_id = Some(provider_id.to_string());
+		self.provider_id = Some(provider_id.clone());
 		self.assigned_at_ms = Some(now_ms);
 		if self.amount.is_none() {
 			self.amount = Some(choice.balance_amount(self.direction));
@@ -1137,12 +1137,12 @@ impl FundingSession {
 	/// report named yet.
 	pub fn report(
 		&mut self,
-		provider_id: &str,
+		provider_id: &ProductId,
 		update: FundingUpdate,
 		host_id: impl Fn(&[u8; 32]) -> [u8; 32],
 		now_ms: u64,
 	) -> Result<(), HostFundingReportError> {
-		if self.provider_id.as_deref() != Some(provider_id) {
+		if self.provider_id.as_ref() != Some(provider_id) {
 			return Err(HostFundingReportError::NotFound);
 		}
 		if let FundingUpdate::Progress { detail } = update {
@@ -2170,7 +2170,7 @@ fn hidden(c: char) -> bool {
 
 /// A quote chosen for a USDT top-up of 100, for tests.
 #[cfg(test)]
-pub(crate) fn test_choice() -> FundingChoice {
+pub fn test_choice() -> FundingChoice {
 	FundingChoice {
 		quote: FundingQuote {
 			quote_id: "q-test".to_string(),
@@ -2194,6 +2194,10 @@ mod tests {
 
 	const NOW: u64 = 1_700_000_000_000;
 	const PROVIDER: &str = "ramp.dot";
+
+	fn provider() -> ProductId {
+		ProductId::for_test(PROVIDER)
+	}
 
 	// The host opens a provider page in its own frame, so only an https page
 	// it can show the origin of reaches it, never one carrying credentials
@@ -2302,7 +2306,7 @@ mod tests {
 		let unseen = expired("fs_unseen", NOW + 1);
 		let cancelled = FundingSession {
 			intent: "fs_cancelled".to_string(),
-			provider_id: Some(PROVIDER.to_string()),
+			provider_id: Some(provider()),
 			stage: FundingStage::Failed { reason: FundingFailure::Cancelled, settled_at_ms: NOW },
 			..session(FundingDirection::In)
 		};
@@ -2357,7 +2361,7 @@ mod tests {
 		let heard_at = NOW + SESSION_WINDOW_MS;
 		session
 			.report(
-				PROVIDER,
+				&provider(),
 				FundingUpdate::In(FundingInboundUpdate::AwaitingPayment),
 				|id| *id,
 				heard_at,
@@ -2388,7 +2392,7 @@ mod tests {
 		let mut session = served(FundingDirection::In);
 		session
 			.report(
-				PROVIDER,
+				&provider(),
 				FundingUpdate::In(FundingInboundUpdate::PaymentReceived {
 					finalized: true,
 					mismatch: None,
@@ -2416,7 +2420,7 @@ mod tests {
 
 	fn served(direction: FundingDirection) -> FundingSession {
 		let mut session = session(direction);
-		assert!(session.assign(PROVIDER, test_choice(), NOW));
+		assert!(session.assign(&provider(), test_choice(), NOW));
 		session
 	}
 
@@ -2426,7 +2430,7 @@ mod tests {
 		session: &mut FundingSession,
 		update: FundingUpdate,
 	) -> Result<(), HostFundingReportError> {
-		session.report(PROVIDER, update, |id| *id, NOW)
+		session.report(&provider(), update, |id| *id, NOW)
 	}
 
 	fn reported(session: &mut FundingSession, updates: &[FundingUpdate]) {
@@ -2966,13 +2970,13 @@ mod tests {
 		let mut failed = released.clone();
 
 		let landed = released.report(
-			PROVIDER,
+			&provider(),
 			FundingUpdate::Out(FundingOutboundUpdate::Payout { outcome: FundingPayout::PaidOut }),
 			|id| *id,
 			NOW + 3,
 		);
 		let failed_payout = failed.report(
-			PROVIDER,
+			&provider(),
 			FundingUpdate::Out(FundingOutboundUpdate::Payout {
 				outcome: FundingPayout::Failed { reason: "bank".into() },
 			}),
@@ -3069,7 +3073,7 @@ mod tests {
 		assert!(released.settle(100, NOW + 1));
 		released
 			.report(
-				PROVIDER,
+				&provider(),
 				FundingUpdate::Out(FundingOutboundUpdate::Payout {
 					outcome: FundingPayout::Failed { reason: "bank".into() },
 				}),
@@ -3123,14 +3127,14 @@ mod tests {
 		let answer = released.confirm_cancel(Some(CancelTerms { fee: 5, refund: 95 }), NOW + 2);
 		let cancelling = released.status(NOW + 2);
 		let paid_out = released.clone().report(
-			PROVIDER,
+			&provider(),
 			FundingUpdate::Out(FundingOutboundUpdate::Payout { outcome: FundingPayout::PaidOut }),
 			|id| *id,
 			NOW + 3,
 		);
 		refund_taken(&mut released, [6; 32], 90);
 		let off_terms = released.clone().report(
-			PROVIDER,
+			&provider(),
 			FundingUpdate::Out(FundingOutboundUpdate::Refunding { top_up_id: [6; 32], amount: 90 }),
 			|id| *id,
 			NOW + 3,
@@ -3138,7 +3142,7 @@ mod tests {
 		refund_taken(&mut released, [5; 32], 95);
 		let refunding =
 			FundingUpdate::Out(FundingOutboundUpdate::Refunding { top_up_id: [5; 32], amount: 95 });
-		let named = released.report(PROVIDER, refunding, |id| *id, NOW + 3);
+		let named = released.report(&provider(), refunding, |id| *id, NOW + 3);
 		let settled = released.settle_refund(95);
 
 		assert_eq!(
@@ -3225,8 +3229,8 @@ mod tests {
 	fn a_session_is_assigned_once() {
 		let mut session = served(FundingDirection::In);
 
-		assert!(!session.assign("other.dot", test_choice(), NOW));
-		assert_eq!(session.provider_id.as_deref(), Some(PROVIDER));
+		assert!(!session.assign(&ProductId::for_test("other.dot"), test_choice(), NOW));
+		assert_eq!(session.provider_id, Some(provider()));
 	}
 
 	// Reports come only from the assigned provider and only move forward, so
@@ -3239,7 +3243,7 @@ mod tests {
 		assert_eq!(
 			(
 				session.report(
-					"other.dot",
+					&ProductId::for_test("other.dot"),
 					FundingUpdate::In(FundingInboundUpdate::Converting),
 					|id| *id,
 					NOW
@@ -3333,8 +3337,8 @@ mod tests {
 			FundingSession::new("fs_1".to_string(), None, FundingDirection::In, None, NOW);
 		let mut asked = session(FundingDirection::In);
 
-		assert!(open.assign(PROVIDER, choice.clone(), NOW));
-		assert!(asked.assign(PROVIDER, choice, NOW));
+		assert!(open.assign(&provider(), choice.clone(), NOW));
+		assert!(asked.assign(&provider(), choice, NOW));
 
 		assert_eq!((open.assignment().amount, asked.assignment().amount), (Some(5_000), Some(100)));
 	}
@@ -3352,7 +3356,7 @@ mod tests {
 			asset_decimals: 2,
 		};
 		let choice = FundingChoice { quote, rail, asset: "EUR".to_string(), network: None };
-		assert!(session.assign(PROVIDER, choice, NOW));
+		assert!(session.assign(&provider(), choice, NOW));
 		session
 	}
 
@@ -3553,7 +3557,7 @@ mod tests {
 		if let Some((id, amount)) = update.named_funds() {
 			taken(session, *id, amount);
 		}
-		session.report(PROVIDER, update, |id| *id, at_ms).expect("reported");
+		session.report(&provider(), update, |id| *id, at_ms).expect("reported");
 	}
 
 	fn detail(fact: FundingFact, at_ms: u64) -> FundingUpdate {
@@ -3839,7 +3843,7 @@ mod tests {
 
 		let in_time = cancelled.takes_late_arrival(NOW + 3);
 		let reported = cancelled.report(
-			PROVIDER,
+			&provider(),
 			FundingUpdate::In(FundingInboundUpdate::PaymentReceived {
 				finalized: true,
 				mismatch: None,
@@ -3889,26 +3893,26 @@ mod tests {
 		assert_eq!(
 			(
 				out.report(
-					PROVIDER,
+					&provider(),
 					FundingUpdate::Out(FundingOutboundUpdate::Converting),
 					|id| *id,
 					NOW + 3
 				),
 				out.report(
-					PROVIDER,
+					&provider(),
 					FundingUpdate::Out(FundingOutboundUpdate::Converting),
 					|id| *id,
 					NOW + 4
 				),
-				out.report(PROVIDER, paid_out(), |id| *id, NOW + 5),
+				out.report(&provider(), paid_out(), |id| *id, NOW + 5),
 				out.report(
-					PROVIDER,
+					&provider(),
 					FundingUpdate::Out(FundingOutboundUpdate::Converting),
 					|id| *id,
 					NOW + 6
 				),
 				delivered.report(
-					PROVIDER,
+					&provider(),
 					FundingUpdate::Out(FundingOutboundUpdate::Converting),
 					|id| *id,
 					NOW + 3
@@ -3931,7 +3935,7 @@ mod tests {
 	fn a_released_withdrawal_takes_payout_retries_until_the_outcome() {
 		let mut out = chosen(FundingDirection::Out, FundingRail::Bank);
 		let retrying = || FundingUpdate::Out(FundingOutboundUpdate::PayoutRetrying);
-		let early = out.report(PROVIDER, retrying(), |id| *id, NOW + 1);
+		let early = out.report(&provider(), retrying(), |id| *id, NOW + 1);
 		report_at(
 			&mut out,
 			FundingUpdate::Out(FundingOutboundUpdate::Collecting {
@@ -3942,25 +3946,25 @@ mod tests {
 		);
 		assert!(out.settle(100, NOW + 2));
 		let preparing = out.status(NOW + 2);
-		let first = out.report(PROVIDER, retrying(), |id| *id, NOW + 3);
+		let first = out.report(&provider(), retrying(), |id| *id, NOW + 3);
 		let after_first = out.status(NOW + 3);
-		let again = out.report(PROVIDER, retrying(), |id| *id, NOW + 4);
+		let again = out.report(&provider(), retrying(), |id| *id, NOW + 4);
 		let converting = out.report(
-			PROVIDER,
+			&provider(),
 			FundingUpdate::Out(FundingOutboundUpdate::Converting),
 			|id| *id,
 			NOW + 5,
 		);
 		let after_converting = out.status(NOW + 5);
-		let after_conversion = out.report(PROVIDER, retrying(), |id| *id, NOW + 6);
+		let after_conversion = out.report(&provider(), retrying(), |id| *id, NOW + 6);
 		let retrying_again = out.status(NOW + 6);
 		let paid_out = out.report(
-			PROVIDER,
+			&provider(),
 			FundingUpdate::Out(FundingOutboundUpdate::Payout { outcome: FundingPayout::PaidOut }),
 			|id| *id,
 			NOW + 7,
 		);
-		let late = out.report(PROVIDER, retrying(), |id| *id, NOW + 8);
+		let late = out.report(&provider(), retrying(), |id| *id, NOW + 8);
 
 		assert_eq!(
 			(early, first, again, converting, after_conversion, paid_out, late),
@@ -4034,7 +4038,7 @@ mod tests {
 	#[test]
 	fn details_are_taken_while_a_released_withdrawal_awaits_its_payout() {
 		let mut session = session(FundingDirection::Out);
-		assert!(session.assign("ramp.dot", test_choice(), 0));
+		assert!(session.assign(&ProductId::for_test("ramp.dot"), test_choice(), 0));
 		session.updates.push(FundingUpdateRecord {
 			update: FundingUpdate::Out(FundingOutboundUpdate::Collecting {
 				payment_id: [4; 32],
@@ -4048,14 +4052,16 @@ mod tests {
 			reference: None,
 		};
 
-		let awaiting = session.report("ramp.dot", details("payout-1"), |id| *id, 1);
+		let awaiting =
+			session.report(&ProductId::for_test("ramp.dot"), details("payout-1"), |id| *id, 1);
 		let paid = session.report(
-			"ramp.dot",
+			&ProductId::for_test("ramp.dot"),
 			FundingUpdate::Out(FundingOutboundUpdate::Payout { outcome: FundingPayout::PaidOut }),
 			|id| *id,
 			2,
 		);
-		let after = session.report("ramp.dot", details("payout-2"), |id| *id, 3);
+		let after =
+			session.report(&ProductId::for_test("ramp.dot"), details("payout-2"), |id| *id, 3);
 
 		assert_eq!(
 			(awaiting, paid, after, session.transaction_id()),
@@ -4286,15 +4292,15 @@ mod tests {
 		let mut recorded = released.clone();
 		recorded.acknowledged = true;
 		let first = released.report(
-			PROVIDER,
+			&provider(),
 			FundingUpdate::Out(FundingOutboundUpdate::Payout { outcome: failed.clone() }),
 			|id| *id,
 			NOW + 2,
 		);
-		let second = released.report(PROVIDER, paid_out(), |id| *id, NOW + 3);
+		let second = released.report(&provider(), paid_out(), |id| *id, NOW + 3);
 		let mut in_flight = served(FundingDirection::Out);
-		let too_early = in_flight.report(PROVIDER, paid_out(), |id| *id, NOW);
-		let after_recording = recorded.report(PROVIDER, paid_out(), |id| *id, NOW + 4);
+		let too_early = in_flight.report(&provider(), paid_out(), |id| *id, NOW);
+		let after_recording = recorded.report(&provider(), paid_out(), |id| *id, NOW + 4);
 
 		assert_eq!(
 			(
@@ -4338,7 +4344,7 @@ mod tests {
 			.any(FundingSession::serves_provider);
 		released
 			.report(
-				PROVIDER,
+				&provider(),
 				FundingUpdate::Out(FundingOutboundUpdate::Payout {
 					outcome: FundingPayout::PaidOut,
 				}),
@@ -4370,21 +4376,21 @@ mod tests {
 		let refunding = |amount| {
 			FundingUpdate::Out(FundingOutboundUpdate::Refunding { top_up_id: [5; 32], amount })
 		};
-		let early = released.clone().report(PROVIDER, refunding(95), |id| *id, NOW + 2);
+		let early = released.clone().report(&provider(), refunding(95), |id| *id, NOW + 2);
 		let failed = FundingPayout::Failed { reason: "card closed".to_string() };
 		released
 			.report(
-				PROVIDER,
+				&provider(),
 				FundingUpdate::Out(FundingOutboundUpdate::Payout { outcome: failed }),
 				|id| *id,
 				NOW + 2,
 			)
 			.expect("reported");
-		let unrecorded = released.clone().report(PROVIDER, refunding(95), |id| *id, NOW + 3);
+		let unrecorded = released.clone().report(&provider(), refunding(95), |id| *id, NOW + 3);
 		refund_taken(&mut released, [5; 32], 95);
-		let other_amount = released.clone().report(PROVIDER, refunding(90), |id| *id, NOW + 3);
-		let named = released.report(PROVIDER, refunding(95), |id| *id, NOW + 3);
-		let again = released.clone().report(PROVIDER, refunding(95), |id| *id, NOW + 4);
+		let other_amount = released.clone().report(&provider(), refunding(90), |id| *id, NOW + 3);
+		let named = released.report(&provider(), refunding(95), |id| *id, NOW + 3);
+		let again = released.clone().report(&provider(), refunding(95), |id| *id, NOW + 4);
 		let due = released.settlement_due();
 		released.acknowledged = true;
 		let settled = released.settle_refund(95);
@@ -4436,7 +4442,7 @@ mod tests {
 		let failed = FundingPayout::Failed { reason: "card closed".to_string() };
 		released
 			.report(
-				PROVIDER,
+				&provider(),
 				FundingUpdate::Out(FundingOutboundUpdate::Payout { outcome: failed }),
 				|id| *id,
 				NOW + 2,
