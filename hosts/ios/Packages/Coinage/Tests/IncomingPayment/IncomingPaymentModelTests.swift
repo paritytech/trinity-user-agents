@@ -7,7 +7,8 @@ import SubstrateSdk
 
 struct IncomingPaymentModelTests {
     @Test func groupIdIsProductBoundAndPrefixed() {
-        #expect(IncomingPayment.groupId(productId: try! ProductId("prodA.dot"), paymentId: "pay1") == "top up:proda.dot:pay1")
+        #expect(IncomingPayment
+            .groupId(productId: try! ProductId("prodA.dot"), paymentId: "pay1") == "top up:proda.dot:pay1")
 
         let payment = IncomingPayment(
             paymentId: "pay1",
@@ -21,7 +22,13 @@ struct IncomingPaymentModelTests {
 
     @Test func isActiveReflectsOutcome() {
         func make(_ outcome: IncomingPaymentTerminalOutcome?) -> IncomingPayment {
-            IncomingPayment(paymentId: "p", productId: try! ProductId("prod.dot"), amount: 0, createdAt: Date(), outcome: outcome)
+            IncomingPayment(
+                paymentId: "p",
+                productId: try! ProductId("prod.dot"),
+                amount: 0,
+                createdAt: Date(),
+                outcome: outcome
+            )
         }
         #expect(make(nil).isActive)
         #expect(!make(.claimed).isActive)

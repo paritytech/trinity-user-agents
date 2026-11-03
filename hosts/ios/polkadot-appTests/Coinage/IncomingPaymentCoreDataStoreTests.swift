@@ -15,7 +15,11 @@ struct IncomingPaymentCoreDataStoreTests {
         IncomingPaymentCoreDataStore(storageFacade: UserDataStorageTestFacade())
     }
 
-    private func payment(_ id: String, productId: ProductId = try! ProductId("prod.dot"), amount: Balance = 100) -> IncomingPayment {
+    private func payment(
+        _ id: String,
+        productId: ProductId = try! ProductId("prod.dot"),
+        amount: Balance = 100
+    ) -> IncomingPayment {
         IncomingPayment(paymentId: id, productId: productId, amount: amount, createdAt: createdAt, outcome: nil)
     }
 
