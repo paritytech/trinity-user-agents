@@ -48,8 +48,8 @@ final class DebugProductsViewModel {
 
             do {
                 let suffix = try await tldProvider.resolveTld()
-                let product = Product(
-                    id: try productIdFromName(name: UUID().uuidString, networkSuffix: suffix),
+                let product = try Product(
+                    id: productIdFromName(name: UUID().uuidString, networkSuffix: suffix),
                     name: name
                 )
                 let content = try await scriptDownloader.download(url: scriptURL)

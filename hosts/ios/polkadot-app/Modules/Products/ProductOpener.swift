@@ -33,7 +33,7 @@ struct ProductOpener: ProductOpening {
         // and a game product has to open without it.
         if tabBar != nil,
            let host = ProductHostFactory(tldProvider: DotNsTldProviderFacade.shared)
-               .host(rawString: productId.rawValue) {
+           .host(rawString: productId.rawValue) {
             navigator.openProduct(page: ProductPage(host: host))
             return true
         }
