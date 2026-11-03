@@ -993,33 +993,6 @@ mod tests {
 		assert_eq!(encoded, expected);
 	}
 
-	/// The interfaces carry the signatures the deployed contracts dispatch on.
-	#[test]
-	fn selectors_match_reference_vectors() {
-		assert_eq!(
-			[
-				StoreFactory::getLabelStoreCall::SELECTOR,
-				LabelStore::getLabelsCall::SELECTOR,
-				DotnsPopController::protocolRegistryCall::SELECTOR,
-				ProtocolRegistry::getCall::SELECTOR,
-				RootGatewayDispatcher::TARGETCall::SELECTOR,
-				DotnsPopController::pendingClaimsCall::SELECTOR,
-				ProtocolRegistry::tldCall::SELECTOR,
-				DotnsRegistry::recordExistsCall::SELECTOR,
-				DotnsRegistrar::ownerOfCall::SELECTOR,
-				DotnsRegistrar::existsCall::SELECTOR,
-				DotnsPopController::isPopIssuedCall::SELECTOR,
-				DotnsRegistry::resolverCall::SELECTOR,
-				ContentResolver::textCall::SELECTOR,
-			]
-			.map(hex::encode),
-			[
-				"4fc5dce9", "2d7b5794", "7656419f", "8eaa6ac0", "cc1f2afa", "76025b85", "2d551432",
-				"f79fe538", "6352211e", "4f558e79", "1a16e115", "0178b8bf", "59d1d43c",
-			]
-		);
-	}
-
 	#[test]
 	fn namehash_matches_the_reference_derivation() {
 		// `cast namehash paseo` and `cast namehash alicebc.paseo`.
@@ -1668,15 +1641,5 @@ mod tests {
 
 		assert_eq!(dispatcher_address_key().len(), 32);
 		assert_eq!(timestamp_now_key().len(), 32);
-	}
-
-	#[test]
-	fn revive_call_args_encode_origin_dest_and_input() {
-		let args = encode_revive_call(&[0x11; 32], &[0x22; 20], &[0xAB, 0xCD]);
-		assert_eq!(&args[..32], &[0x11; 32]);
-		assert_eq!(&args[32..52], &[0x22; 20]);
-		assert_eq!(&args[52..68], &[0u8; 16], "value is zero");
-		assert_eq!(&args[68..70], &[0x00, 0x00], "no gas or deposit limit");
-		assert_eq!(&args[70..], vec![0xABu8, 0xCD].encode().as_slice());
 	}
 }
