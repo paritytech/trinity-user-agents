@@ -29,37 +29,67 @@ struct DockletGlowProfileTests {
         #expect(zip(alphas, alphas.dropFirst()).allSatisfy { pair in pair.0 > pair.1 })
     }
 
-    @Test("The blurred profile has 17 stops running from the screen edge to the band's inner side")
-    func blurredStopsCoverBand() {
-        let stops = DockletGlowProfile.blurredStops()
-        #expect(stops.count == 17)
-        #expect(stops.first?.location == 0)
-        #expect(stops.last?.location == 1)
+    @Test("The blurred edge is about 0.194, and the peak sits inside the band, not at the edge")
+    func blurredEdgeBelowInnerPeak() {
+        let edge = DockletGlowProfile.blurredAlpha(at: 0)
+        #expect(abs(edge - 0.194) < 0.005)
+        #expect(DockletGlowProfile.blurredAlpha(at: 1.5) > edge)
+        #expect(DockletGlowProfile.blurredAlpha(at: 3) > edge)
     }
 
-    @Test("The blurred alpha falls from the edge inward, and the blur lowers the edge below 0.56")
-    func blurredAlphaFallsInward() {
-        let alphas = DockletGlowProfile.blurredStops().map(\.alpha)
+    @Test("The blurred alpha falls strictly from 3 pt in to the band's inner side")
+    func blurredAlphaFallsPastPeak() {
+        let alphas = stride(from: CGFloat(3), through: 24, by: 1.5).map { DockletGlowProfile.blurredAlpha(at: $0) }
         #expect(zip(alphas, alphas.dropFirst()).allSatisfy { pair in pair.0 > pair.1 })
-        #expect(alphas[0] < 0.56)
     }
 
-    @Test("The feather is 0 at both ends of a 200 pt glow")
-    func featherIsZeroAtEnds() {
-        #expect(DockletGlowProfile.feather(at: 0, length: 200) == 0)
-        #expect(DockletGlowProfile.feather(at: 200, length: 200) == 0)
+    @Test("In the middle of a 200 pt glow the taper leaves the distance from the edge unchanged")
+    func taperLeavesMiddleUnchanged() {
+        #expect(DockletGlowProfile.taperedDistance(inFromEdge: 5, along: 100, length: 200) == 5)
     }
 
-    @Test("The feather is 1 from 22 pt in to 22 pt before the far end")
-    func featherIsFullAwayFromEnds() {
-        #expect(DockletGlowProfile.feather(at: 22, length: 200) == 1)
-        #expect(DockletGlowProfile.feather(at: 100, length: 200) == 1)
-        #expect(DockletGlowProfile.feather(at: 178, length: 200) == 1)
+    @Test("At the tip the taper reaches the band's inner side, so the glow and the shimmer are gone")
+    func tipIsFullyTapered() {
+        let tipDistance = DockletGlowProfile.taperedDistance(inFromEdge: 0, along: 0, length: 200)
+        #expect(tipDistance == DockletGlowProfile.bandWidth)
+        #expect(DockletGlowProfile.glowAlpha(inFromEdge: 0, along: 0, length: 200) == 0)
+        #expect(DockletGlowProfile.shimmerStrength(inFromEdge: 0, along: 0, length: 200) == 0)
     }
 
-    @Test("The feather is half way at 11 pt in")
-    func featherHalfWayAtEleven() {
-        #expect(DockletGlowProfile.feather(at: 11, length: 200) == 0.5)
+    @Test("The taper mirrors between the top and the bottom of a 200 pt glow, so the glow and the shimmer do too")
+    func taperSymmetric() {
+        for position in [CGFloat(0), 5, 11, 22, 60] {
+            let distance = DockletGlowProfile.taperedDistance(inFromEdge: 3, along: position, length: 200)
+            let mirroredDistance = DockletGlowProfile.taperedDistance(inFromEdge: 3, along: 200 - position, length: 200)
+            #expect(distance == mirroredDistance)
+        }
+    }
+
+    @Test("Half way into the taper the glow reaches less far in than mid-length, and the edge stays lit")
+    func endsAreRounded() {
+        let middle = DockletGlowProfile.glowAlpha(inFromEdge: 3, along: 100, length: 200)
+        let taperedEnd = DockletGlowProfile.glowAlpha(inFromEdge: 3, along: 11, length: 200)
+        #expect(taperedEnd < middle)
+        #expect(DockletGlowProfile.glowAlpha(inFromEdge: 0, along: 11, length: 200) > 0)
+    }
+
+    @Test("The cached glow alpha matches the blurred alpha within 0.002 at the sampled distances")
+    func cachedLookupMatchesBlur() {
+        for distance in [CGFloat(0), 1.5, 3, 6, 12] {
+            let cached = DockletGlowProfile.glowAlpha(inFromEdge: distance, along: 100, length: 200)
+            #expect(abs(cached - DockletGlowProfile.blurredAlpha(at: distance)) < 0.002)
+        }
+    }
+
+    @Test("A glow shorter than twice the taper keeps a finite taper and is dark at both tips")
+    func shortGlowStaysFinite() {
+        for position in stride(from: CGFloat(0), through: 20, by: 1) {
+            for distance in [CGFloat(0), 5, 12] {
+                #expect(DockletGlowProfile.taperedDistance(inFromEdge: distance, along: position, length: 20).isFinite)
+            }
+        }
+        #expect(DockletGlowProfile.glowAlpha(inFromEdge: 0, along: 0, length: 20) == 0)
+        #expect(DockletGlowProfile.glowAlpha(inFromEdge: 0, along: 20, length: 20) == 0)
     }
 
     @Test("A tucked bar whose glow would start above 56 pt moves the glow top down to 56")

@@ -43,7 +43,7 @@ final class TabBarBottomChromeController: UIViewController {
                 self?.edgeGlowView.frame = rect
                 switch opacity {
                 case let .progress(progress):
-                    self?.edgeGlowView.setOpacity(progress)
+                    self?.edgeGlowView.setProgress(progress)
                 case .fadeOut:
                     self?.edgeGlowView.fadeOut()
                 }
