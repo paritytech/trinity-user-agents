@@ -27,6 +27,27 @@ impl ProfileRecord {
 		Self::decode_all(&mut bytes.as_slice()).ok()
 	}
 
+	/// Encodes a publishable record. `None` if it exceeds the reader's size limit.
+	pub fn to_text(&self) -> Option<String> {
+		let bytes = self.encode();
+		(bytes.len() <= MAX_RECORD_BYTES).then(|| STANDARD.encode(bytes))
+	}
+
+	/// Makes this avatar first while preserving every other entry and their relative order.
+	pub fn set_avatar(&mut self, cid: BulletinCid, format: ImageFormat) {
+		if let Some(index) = self
+			.entries
+			.iter()
+			.position(|entry| matches!(entry.try_decode(), Some(ProfileEntry::Avatar(_))))
+		{
+			self.entries.remove(index);
+		}
+		self.entries.insert(
+			0,
+			WrapperKeepOpaque::from_value(ProfileEntry::Avatar(ProfileAvatar { cid, format })),
+		);
+	}
+
 	/// The first `Avatar` entry.
 	pub fn avatar(&self) -> Option<ProfileAvatar> {
 		self.entries

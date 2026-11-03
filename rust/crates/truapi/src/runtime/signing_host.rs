@@ -36,6 +36,8 @@ use super::{
 	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure},
 	validate_vrf_transcript,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::host_logic::product_account::identity_product_id;
 use crate::{
 	host_internal::{
 		extrinsic::build_local_transaction,
@@ -298,6 +300,67 @@ impl SigningHost {
 	/// reserved identity it derives.
 	pub fn network_suffix(&self) -> &str {
 		&self.network_suffix
+	}
+
+	/// Store an avatar under the reserved identity's Bulletin allowance.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn submit_public_profile_avatar(
+		self: &Arc<Self>,
+		bytes: Vec<u8>,
+	) -> Result<[u8; 32], latest::GenericError> {
+		if bytes.len() > crate::MAX_IMAGE_BYTES {
+			return Err(latest::GenericError {
+				reason: "profile avatar exceeds 2 MiB".to_string(),
+			});
+		}
+		let accounts = super::ProductAccounts::new(
+			self.clone(),
+			ProductContext::new(identity_product_id(&self.network_suffix)),
+		);
+		let session = accounts
+			.current_session()
+			.ok_or_else(|| latest::GenericError { reason: "No active session".to_string() })?;
+		super::preimage::PreimageSubmission::new(&self.services, &accounts, &session)
+			.submit(&CallContext::default(), bytes)
+			.await
+			.map_err(|reason| latest::GenericError { reason })
+	}
+
+	/// Fund the reserved identity account for publishing its dotNS profile.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn ensure_public_profile_allowance(&self) -> Result<(), latest::GenericError> {
+		let session = self
+			.current_session()
+			.ok_or_else(|| latest::GenericError { reason: "No active session".to_string() })?;
+		#[cfg(feature = "test-host")]
+		{
+			self.resource_controls
+				.refuse_withheld(&latest::AllocatableResource::SmartContractAllowance(
+					DerivationIndex::Index(0),
+				))
+				.map_err(|error| latest::GenericError { reason: error.to_string() })?;
+			if self.grants_allowances_unchecked() {
+				return Ok(());
+			}
+		}
+		let product_id = identity_product_id(&self.network_suffix);
+		let cx = super::remote_authority_context_with_default(
+			&CallContext::default(),
+			super::RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+		);
+		super::remote_authority_call(
+			&cx,
+			allowance::allocate_smart_contract_allowance(
+				&self.services,
+				self,
+				&session,
+				&product_id,
+				DerivationIndex::Index(0),
+				OnExistingAllowancePolicy::Ignore,
+			),
+		)
+		.await
+		.map_err(|error| latest::GenericError { reason: error.to_string() })
 	}
 
 	/// Current root entropy, or [`AuthorityError::Disconnected`] when no local

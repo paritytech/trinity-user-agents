@@ -35,7 +35,12 @@ mod subxt_chain;
 mod tx_submitter;
 mod tx_validator;
 
-pub use crate::evm_contract::{EvmContractCaller, EvmContractError, PreparedEvmTransaction};
+pub use crate::{
+	chain_runtime::{
+		ChainRuntime, HostChainProvider, RuntimeChainProvider, RuntimeFailure, RuntimeFailureKind,
+	},
+	evm_contract::{EvmContractCaller, EvmContractError, PreparedEvmTransaction},
+};
 pub use account_nonces::AccountNonces;
 pub use block_backend::{BlockBackend, DispatchOutcome};
 pub use extrinsic::{

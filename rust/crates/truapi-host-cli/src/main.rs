@@ -30,6 +30,7 @@ mod network;
 mod platform;
 mod pocket;
 mod product_config;
+mod profile;
 mod qr_scanner;
 mod register_name;
 mod scanner;
@@ -92,7 +93,7 @@ use crate::{
 	},
 	signing_shell::{
 		ApprovalCommand, DeviceCommand, HELP_TEXT, PAIRING_HELP_TEXT, PairCommand, ProductCommand,
-		ScriptCommand, SessionCommand, ShellCommand, parse_command,
+		ProfileCommand, ScriptCommand, SessionCommand, ShellCommand, parse_command,
 	},
 	terminal_ui::{
 		ActiveTerminalUi, ActivityState, DriveResult, PairingImageInput, SystemEvent, TerminalUi,
@@ -1170,9 +1171,8 @@ fn approval_policy(auto_accept: bool, network: NetworkConfig) -> Result<Approval
 /// Builds the CLI's own extrinsics over `network`'s chains, with the
 /// network's V5 pipelines as the default extrinsic versions.
 fn extrinsic_service(network: &NetworkConfig) -> ExtrinsicService {
-	let provider = Arc::new(chain::CliChainProvider::new(network));
 	let versions = Arc::new(chain::PresetExtensionVersions(network.extension_versions()));
-	ExtrinsicService::from_provider(provider, tokio_spawner(), versions)
+	ExtrinsicService::over_chain(chain::chain_runtime(network), versions)
 }
 
 /// Spawner that runs runtime futures on the tokio runtime, so their WebSocket
@@ -3471,6 +3471,7 @@ async fn pairing_interactive_loop(
 			ShellCommand::Devices(_) |
 			ShellCommand::Approval(_) |
 			ShellCommand::Session(_) |
+			ShellCommand::Profile(_) |
 			ShellCommand::Renew => {
 				ui.error("command is only available on the signing host");
 			},
@@ -3889,6 +3890,9 @@ async fn execute_interactive_operation(
 			import_mnemonic_session(session, &mnemonic).await?;
 		},
 		ShellCommand::Renew => run_renew(session).await?,
+		ShellCommand::Profile(command) => {
+			ui.system(run_profile_command(session, command).await?);
+		},
 		ShellCommand::Login => bail!("/login is only available on the pairing host"),
 		ShellCommand::Logout => bail!("/logout is only available on the pairing host"),
 		ShellCommand::Product(_) | ShellCommand::Devices(_) | ShellCommand::Approval(_) => {
@@ -4029,8 +4033,37 @@ async fn execute_non_interactive_command(
 			return Ok(Some(target));
 		},
 		ShellCommand::Renew => run_renew(session).await?,
+		ShellCommand::Profile(command) => {
+			println!("{}", run_profile_command(session, command).await?);
+		},
 	}
 	Ok(None)
+}
+
+async fn run_profile_command(
+	session: &SigningHostSession,
+	command: ProfileCommand,
+) -> Result<String> {
+	match command {
+		ProfileCommand::Current => {
+			let (_, username) = profile_identity(session)?;
+			profile::read(&session.network, username).await
+		},
+		ProfileCommand::Get(username) => profile::read(&session.network, &username).await,
+		ProfileCommand::Upload(path) => {
+			let (signer, username) = profile_identity(session)?;
+			profile::upload(&session.runtime, session.network, &signer.entropy, username, &path)
+				.await
+		},
+	}
+}
+
+fn profile_identity(session: &SigningHostSession) -> Result<(&ResolvedSigner, &str)> {
+	session
+		.signer
+		.as_ref()
+		.and_then(|signer| signer.lite_username.as_deref().map(|username| (signer, username)))
+		.context("no active identity username; select an existing identity with /session <name>")
 }
 
 fn select_script_to_edit(
@@ -4191,6 +4224,45 @@ mod cli_tests {
 		}))?;
 		std::fs::write(profile.account_base_path.join("accounts.json"), &accounts)?;
 		Ok(accounts)
+	}
+
+	#[tokio::test]
+	async fn own_profile_commands_require_the_active_signer_not_a_cached_username() -> Result<()> {
+		let temporary = tempfile::tempdir()?;
+		let mut session = unfinished_session(temporary.path(), "pending").await?;
+		session.cached_user_id = Some("cached.01".to_string());
+		for command in [ProfileCommand::Current, ProfileCommand::Upload("avatar.png".into())] {
+			let error = run_profile_command(&session, command).await.unwrap_err();
+			assert_eq!(
+				error.to_string(),
+				"no active identity username; select an existing identity with /session <name>"
+			);
+		}
+		assert_eq!(
+			(
+				session.signer.is_some(),
+				accounts::has_account_store(&session.profile.as_ref().unwrap().account_base_path),
+			),
+			(false, false)
+		);
+		Ok(())
+	}
+
+	#[tokio::test]
+	async fn profile_identity_follows_the_active_signer() -> Result<()> {
+		let temporary = tempfile::tempdir()?;
+		let mut session = unfinished_session(temporary.path(), "pending").await?;
+		session.cached_user_id = Some("cached.01".to_string());
+		session.signer = Some(ResolvedSigner {
+			entropy: vec![7; 16],
+			account_name: None,
+			lite_username: Some("active.01".to_string()),
+			auto_managed: false,
+		});
+
+		let (signer, username) = profile_identity(&session)?;
+		assert_eq!((username, signer.entropy.as_slice()), ("active.01", [7; 16].as_slice()));
+		Ok(())
 	}
 
 	#[tokio::test]

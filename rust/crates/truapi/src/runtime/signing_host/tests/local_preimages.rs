@@ -94,3 +94,35 @@ fn a_signing_host_sends_preimages_to_the_chain_unless_told_or_unchecked() {
 	assert!(ProductAuthority::submits_preimages_locally(&*unchecked));
 	assert!(ProductAuthority::submits_preimages_locally(&*told));
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn profile_storage_uses_the_networks_reserved_identity_allowance() {
+	use crate::{
+		host_logic::product_account::{derive_sr25519_hard_path, identity_product_id},
+		runtime::ProductAccounts,
+	};
+
+	for (suffix, product_id) in
+		[("dot", "uid.dot"), ("paseo", "uid.paseo"), ("testnet", "uid.testnet")]
+	{
+		let (services, _) = signing_runtime();
+		let authority = SigningHostRole::new(services, suffix.to_string());
+		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+		authority.set_grant_allowances_unchecked(true);
+		let accounts = ProductAccounts::new(
+			authority.clone(),
+			ProductContext::new(identity_product_id(suffix)),
+		);
+		let session = accounts.current_session().unwrap();
+
+		let allowance = futures::executor::block_on(
+			accounts.bulletin_allowance_key(&CallContext::default(), &session),
+		)
+		.unwrap();
+		let expected =
+			derive_sr25519_hard_path(&ENTROPY, &["allowance", "bulletin", product_id]).unwrap();
+
+		assert_eq!(allowance.as_secret_bytes(), expected.secret.to_bytes().as_slice());
+	}
+}

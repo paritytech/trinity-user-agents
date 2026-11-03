@@ -962,7 +962,7 @@ pub use host_logic::worker::{WorkerLedger, WorkerTransition};
 #[cfg(feature = "runtime")]
 pub use host_rpc_client::HostRpcClient;
 #[cfg(feature = "runtime")]
-pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage};
+pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage, MAX_IMAGE_BYTES};
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{
@@ -976,6 +976,10 @@ pub use platform::{
 	CoreStorageKeyDescription, CoreStorageKeyDescriptionError, CoreStorageKeyOwner, HostIdentity,
 	PairingHostConfig, PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform,
 	ProductContext, SigningHostConfig, describe_core_storage_key,
+};
+#[cfg(feature = "runtime")]
+pub use public_profile::{
+	ProfileAvatar, ProfileEntry, ProfileRecord, ProfileRecordLocation, PublicProfileError,
 };
 #[cfg(feature = "runtime")]
 pub use runtime::StatementRenewalTarget;

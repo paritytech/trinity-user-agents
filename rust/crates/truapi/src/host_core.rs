@@ -659,6 +659,23 @@ impl SigningHostRuntime {
 		self.signing_host.set_submit_preimages_locally(local);
 	}
 
+	/// Store a public avatar on Bulletin using the active identity's allowance.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn submit_public_profile_avatar(
+		&self,
+		bytes: Vec<u8>,
+	) -> Result<[u8; 32], truapi::latest::GenericError> {
+		self.signing_host.submit_public_profile_avatar(bytes).await
+	}
+
+	/// Fund the active identity's account for its dotNS profile transaction.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn ensure_public_profile_allowance(
+		&self,
+	) -> Result<(), truapi::latest::GenericError> {
+		self.signing_host.ensure_public_profile_allowance().await
+	}
+
 	/// The product's hard-subtree public key, derived from the active session
 	/// root, or `None` while no session is active.
 	///
@@ -2541,6 +2558,109 @@ mod tests {
 		futures::executor::block_on(runtime.activate_local_session(vec![0xab; 32]))
 			.expect("activation succeeds");
 		runtime
+	}
+
+	#[cfg(all(not(target_arch = "wasm32"), feature = "test-host"))]
+	#[test]
+	fn public_profile_avatar_submission_uses_the_shared_preimage_cache() {
+		let runtime = activated_signing_runtime(Arc::new(StubPlatform::default()));
+		runtime.set_grant_allowances_unchecked(true);
+		let bytes = b"profile avatar".to_vec();
+		let key = crate::preimage_key(&bytes);
+
+		let result =
+			futures::executor::block_on(runtime.submit_public_profile_avatar(bytes.clone()));
+
+		assert_eq!((result, runtime.services.cached_preimage(&key)), (Ok(key), Some(bytes)));
+	}
+
+	#[cfg(all(not(target_arch = "wasm32"), feature = "test-host"))]
+	#[test]
+	fn public_profile_avatar_submission_does_not_keep_bytes_when_allowance_is_refused() {
+		let runtime = activated_signing_runtime(Arc::new(StubPlatform::default()));
+		runtime.set_grant_allowances_unchecked(true);
+		runtime.set_withheld_resources(vec!["BulletinAllowance".to_string()]);
+		let bytes = b"refused profile avatar".to_vec();
+		let key = crate::preimage_key(&bytes);
+
+		let result = futures::executor::block_on(runtime.submit_public_profile_avatar(bytes));
+
+		assert_eq!(
+			(result, runtime.services.cached_preimage(&key)),
+			(
+				Err(truapi::latest::GenericError {
+					reason: "Bulletin allowance allocation was rejected by the signing host"
+						.to_string(),
+				}),
+				None
+			),
+		);
+	}
+
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn public_profile_avatar_submission_needs_an_active_identity() {
+		let (runtime, _) = test_signing_runtime();
+		let bytes = b"unowned profile avatar".to_vec();
+		let key = crate::preimage_key(&bytes);
+
+		let result = futures::executor::block_on(runtime.submit_public_profile_avatar(bytes));
+
+		assert_eq!(
+			(result, runtime.services.cached_preimage(&key)),
+			(Err(truapi::latest::GenericError { reason: "No active session".to_string() }), None),
+		);
+	}
+
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn oversized_profile_avatars_do_not_allocate_bulletin_storage() {
+		let runtime = activated_signing_runtime(Arc::new(StubPlatform::default()));
+		let bytes = vec![0; crate::MAX_IMAGE_BYTES + 1];
+		let key = crate::preimage_key(&bytes);
+
+		let result = futures::executor::block_on(runtime.submit_public_profile_avatar(bytes));
+
+		assert_eq!(
+			(result, runtime.services.cached_preimage(&key)),
+			(
+				Err(truapi::latest::GenericError {
+					reason: "profile avatar exceeds 2 MiB".to_string()
+				}),
+				None
+			),
+		);
+	}
+
+	#[cfg(not(target_arch = "wasm32"))]
+	#[test]
+	fn public_profile_allowance_needs_an_active_identity() {
+		let (runtime, platform) = test_signing_runtime();
+
+		let result = futures::executor::block_on(runtime.ensure_public_profile_allowance());
+
+		assert_eq!(
+			(result, platform.sent_rpc.lock().unwrap().is_empty()),
+			(Err(truapi::latest::GenericError { reason: "No active session".to_string() }), true),
+		);
+	}
+
+	#[cfg(all(not(target_arch = "wasm32"), feature = "test-host"))]
+	#[test]
+	fn public_profile_allowance_honors_withheld_storage_without_reaching_the_chain() {
+		let platform = Arc::new(StubPlatform::default());
+		let runtime = activated_signing_runtime(platform.clone());
+		runtime.set_grant_allowances_unchecked(true);
+		runtime.set_withheld_resources(vec!["SmartContractAllowance".to_string()]);
+
+		let requests = platform.sent_rpc.lock().unwrap().clone();
+
+		let result = futures::executor::block_on(runtime.ensure_public_profile_allowance());
+
+		assert_eq!(
+			(result, platform.sent_rpc.lock().unwrap().clone()),
+			(Err(truapi::latest::GenericError { reason: "Rejected".to_string() }), requests),
+		);
 	}
 
 	/// An answer changed in settings applies at once: a product that was allowed

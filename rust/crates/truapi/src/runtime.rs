@@ -28,6 +28,7 @@ mod identity;
 pub mod login_failure;
 mod pairing_host;
 mod payment_id;
+mod preimage;
 mod product_accounts;
 mod product_consent;
 pub mod product_manifest;
@@ -147,7 +148,6 @@ use crate::subscription::Spawner;
 use crate::{
 	chain_runtime::{RuntimeFailure, RuntimeFailureKind},
 	host_internal::{
-		bulletin::preimage_key,
 		permissions::{PermissionsService, TemporaryPermissions},
 		product_manifest::Granted,
 		sso_messages::RingVrfError,
@@ -1848,16 +1848,6 @@ fn chat_create_room_field_error(
 	error: crate::platform::ChatFieldError,
 ) -> CallError<latest::HostChatCreateRoomError> {
 	CallError::Domain(latest::HostChatCreateRoomError::Unknown { reason: error.to_string() })
-}
-
-impl ProductRuntimeHost {
-	/// Cache a just-submitted preimage under its key for immediate lookups.
-	fn prime_preimage_cache(&self, key: &[u8], value: Vec<u8>) {
-		if let Ok(key_bytes) = <[u8; 32]>::try_from(key) {
-			debug_assert_eq!(key_bytes, preimage_key(&value));
-			self.connection.services.cache_preimage(key_bytes, value);
-		}
-	}
 }
 
 /// Build the product-facing `Unknown` wire error carrying `reason`.

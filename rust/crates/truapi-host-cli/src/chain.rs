@@ -18,6 +18,7 @@ use subxt_rpcs::client::RpcClient;
 use tracing::debug;
 use truapi::{
 	HostRpcClient,
+	chain::{ChainRuntime, HostChainProvider},
 	platform::{ChainProvider, JsonRpcConnection, ProviderError},
 };
 use truapi_provider::{
@@ -46,6 +47,13 @@ pub enum ChainBackend {
 	/// The embedded smoldot light client, which needs no RPC node. A chain's
 	/// first request waits for it to sync.
 	LightClient,
+}
+
+/// The chain runtime over `network`'s chains, for the CLI's own reads and
+/// extrinsics.
+pub fn chain_runtime(network: &NetworkConfig) -> ChainRuntime {
+	let provider = Arc::new(CliChainProvider::new(network));
+	ChainRuntime::new(Arc::new(HostChainProvider::new(provider)), crate::tokio_spawner())
 }
 
 /// Chain provider shared by the host runtime, dotNS reads and Bulletin

@@ -55,9 +55,13 @@ impl AssetHubReader {
 	/// Connects to the network's Asset Hub, falling back to its known
 	/// `DotnsPopController` when the chain does not name one.
 	pub async fn for_network(network: &NetworkConfig) -> Result<Self> {
-		let mut reader = Self::connect(network).await?;
-		reader.pop_controller_fallback = network.dotns_pop_controller;
-		Ok(reader)
+		Ok(Self::from_rpc(Self::connect(network).await?.rpc, network))
+	}
+
+	/// Reads over `rpc`, falling back to the network's known
+	/// `DotnsPopController` when the chain does not name one.
+	pub fn from_rpc(rpc: RpcClient, network: &NetworkConfig) -> Self {
+		Self { rpc, pop_controller: None, pop_controller_fallback: network.dotns_pop_controller }
 	}
 
 	/// Asset Hub chain time in Unix seconds. `Timestamp.Now` itself is

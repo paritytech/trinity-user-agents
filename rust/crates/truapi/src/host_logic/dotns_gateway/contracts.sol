@@ -1,5 +1,5 @@
-// Solidity interfaces of the dotNS contracts the host reads, as far as it
-// reads them. Signatures and docs mirror https://github.com/paritytech/dotns.
+// Solidity interfaces of the dotNS contracts the host uses, as far as it
+// uses them. Signatures and docs mirror https://github.com/paritytech/dotns.
 
 /// Dedicated PoP controller that issues device names and personhood names on
 /// behalf of the dotNS gateway pallet.
@@ -74,6 +74,8 @@ interface DotnsRegistrar {
 ///
 /// [`DotnsRegistry.sol`](https://github.com/paritytech/dotns/blob/94a778e0d1187ee6c0c199378cae8d916af6ad68/contracts/registry/DotnsRegistry.sol)
 interface DotnsRegistry {
+	/// Returns the owner of a node.
+	function owner(bytes32 node) external view returns (address);
 	/// Returns whether a node exists and resolves.
 	function recordExists(bytes32 node) external view returns (bool);
 	/// Returns the resolver of a node, or zero when the node does not resolve.
@@ -85,6 +87,9 @@ interface DotnsRegistry {
 ///
 /// [`DotnsContentResolver.sol`](https://github.com/paritytech/dotns/blob/94a778e0d1187ee6c0c199378cae8d916af6ad68/contracts/resolvers/DotnsContentResolver.sol)
 interface ContentResolver {
+	/// Sets a text record for a node.
+	function setText(bytes32 node, string key, string value) external;
+
 	/// Returns a text record for a node.
 	function text(bytes32 node, string key) external view returns (string);
 }

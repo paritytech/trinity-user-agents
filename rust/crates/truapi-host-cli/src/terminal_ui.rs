@@ -586,6 +586,15 @@ pub struct UiHandle {
 }
 
 impl UiHandle {
+	/// Add a command result to the transcript.
+	pub fn system(&self, text: impl Into<String>) {
+		let _ = self.sender.send(UiEvent::Notice {
+			tone: NoticeTone::Info,
+			title: text.into(),
+			detail: None,
+		});
+	}
+
 	/// Add a successful human-facing outcome to the transcript.
 	pub fn success(&self, title: impl Into<String>, detail: Option<String>) {
 		let _ = self.sender.send(UiEvent::Notice {
