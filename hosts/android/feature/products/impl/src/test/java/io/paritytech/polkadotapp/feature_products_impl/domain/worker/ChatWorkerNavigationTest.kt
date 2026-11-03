@@ -8,17 +8,17 @@ import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsNavigationType
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatWorkerNavigationTest {
-    private val game = ProductId.fromStoredValue("game.dot")
+    private val game = ProductId.parse("game.dot").getOrThrow()
     private val destination = mockk<Uri>()
     private val handled = mutableListOf<Uri>()
     private var activeChat: ChatId? = ChatId.forExtension(game.toChatExtensionId())
@@ -36,7 +36,7 @@ class ChatWorkerNavigationTest {
     // off another screen.
     @Test
     fun `a worker whose chat is not on screen navigates nowhere`() = runTest {
-        activeChat = ChatId.forExtension(ProductId.fromStoredValue("other.dot").toChatExtensionId())
+        activeChat = ChatId.forExtension(ProductId.parse("other.dot").getOrThrow().toChatExtensionId())
 
         navigation().policy(game, this).handleNavigation(DotNsNavigationType.CROSS_DOTNS_DOMAIN, destination)
         advanceUntilIdle()

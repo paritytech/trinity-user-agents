@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import os
 import FoundationExt
@@ -15,7 +16,7 @@ final class ProductContentLoaderTests {
 
     private let manifestsDirectory = FileManager.default.temporaryDirectory
         .appendingPathComponent("ProductContentLoaderTests-\(UUID().uuidString)")
-    private let productId = "shop\(UUID().uuidString.prefix(8).lowercased()).dot"
+    private let productId = try! ProductId("shop\(UUID().uuidString.prefix(8).lowercased()).dot")
     private let clock = ManualClock()
     private let contracts = StubDotNsContractApi()
     private let storage = InMemoryDotNsContentStorage()
@@ -24,12 +25,12 @@ final class ProductContentLoaderTests {
     init() throws {
         contentHash = try Data.randomOrError(of: 34)
         updatedContentHash = try Data.randomOrError(of: 34)
-        contracts.set(contentHash: contentHash, name: productId)
+        contracts.set(contentHash: contentHash, name: productId.rawValue)
     }
 
     deinit {
         try? FileManager.default.removeItem(at: manifestsDirectory)
-        contentHashCache.removeContentHash(name: productId)
+        contentHashCache.removeContentHash(name: productId.rawValue)
     }
 
     @Test func retriesAnUnreachableChainWithCappedExponentialBackoff() async throws {
@@ -78,12 +79,12 @@ final class ProductContentLoaderTests {
     }
 
     @Test func workerOpenRetriesTheWorkerDownload() async throws {
-        let workerName = "worker.\(productId)"
+        let workerName = "worker.\(productId.rawValue)"
         let workerHash = try Data.randomOrError(of: 34)
         defer { contentHashCache.removeContentHash(name: workerName) }
         contracts.set(
             text: #"{"$v":1,"displayName":"Shop","description":"","icon":{"cid":"bafyicon","format":"png"}}"#,
-            name: productId,
+            name: productId.rawValue,
             key: ProductManifestRecords.rootKey
         )
         contracts.set(
@@ -178,25 +179,26 @@ final class ProductContentLoaderTests {
         #expect(environment.fetcher.fetchCount == 1)
     }
 
-    /// A product that declares no widget serves its expanded Pocket card from its base name.
-    @Test func stagesTheBaseNameAWidgetlessCardIsServedFrom() async throws {
+    @Test func rejectsAMissingWidgetEvenWhenTheBaseArchiveExists() async throws {
+        let appId = try ProductId("app.\(productId.rawValue)")
         let appContentHash = try Data.randomOrError(of: 34)
         contracts.set(
             text: #"{"$v":1,"displayName":"Shop","description":"A shop","icon":{"cid":"bafyicon","format":"png"}}"#,
-            name: productId,
+            name: productId.rawValue,
             key: ProductManifestRecords.rootKey
         )
         contracts.set(
             text: #"{"$v":1,"kind":"app","appVersion":[1,0,0]}"#,
-            name: "app.\(productId)",
+            name: appId.rawValue,
             key: ProductManifestRecords.executableKey
         )
-        contracts.set(contentHash: appContentHash, name: "app.\(productId)")
+        contracts.set(contentHash: appContentHash, name: appId.rawValue)
         let environment = try Environment(self)
 
-        let widget = try await environment.loader.open(productId, kind: .widget, policy: .attempts(1))
-
-        #expect(widget.archive.localURL == storage.directory(for: contentHash.toHex()))
+        await #expect(throws: ProductResolutionError.self) {
+            try await environment.loader.open(self.productId, kind: .widget, policy: .attempts(1))
+        }
+        #expect(environment.fetcher.fetchCount == 0)
     }
 
     @Test func networkOpenReportsResolvingDownloadAndUnpacking() async throws {
@@ -210,6 +212,38 @@ final class ProductContentLoaderTests {
             .downloading(downloadedBytes: StubCarFetcher.downloadedBytes, totalBytes: StubCarFetcher.totalBytes),
             .unpacking
         ])
+    }
+
+    @Test func stagesAWidgetOnlyProductWithoutInventingAnAppArchive() async throws {
+        let widgetId = try ProductId("widget.\(productId.rawValue)")
+        defer { contentHashCache.removeContentHash(name: widgetId.rawValue) }
+        contracts.removeContentHash(name: productId.rawValue)
+        contracts.set(
+            text: #"""
+            {"$v":1,"displayName":"Widget","description":"Widget product",
+             "icon":{"cid":"bafyicon","format":"png"}}
+            """#,
+            name: productId.rawValue,
+            key: "manifest"
+        )
+        contracts.set(
+            text: #"{"$v":1,"kind":"widget","appVersion":[1,0,0],"dimensions":{"height":[1],"width":1}}"#,
+            name: widgetId.rawValue,
+            key: "executable"
+        )
+        contracts.set(contentHash: contentHash, name: widgetId.rawValue)
+        let environment = try Environment(self)
+
+        let content = try await environment.loader.open(productId, kind: .widget, policy: .attempts(1))
+
+        #expect(content.archive == DotNsResolvedContent(
+            contentHash: contentHash.toHex(),
+            localURL: storage.directory(for: contentHash.toHex())
+        ))
+        await #expect(throws: ProductResolutionError.self) {
+            try await environment.loader.open(self.productId, kind: .app, policy: .attempts(1))
+        }
+        #expect(environment.fetcher.fetchCount == 1)
     }
 
     @Test func networkOpenReportsWaitingForNetworkAndRetries() async throws {
@@ -267,7 +301,7 @@ final class ProductContentLoaderTests {
         _ = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
         var updates = environment.loader.updates().makeAsyncIterator()
 
-        contracts.set(contentHash: updatedContentHash, name: productId)
+        contracts.set(contentHash: updatedContentHash, name: productId.rawValue)
         let update = try #require(await environment.loader.refresh(productId).first)
 
         #expect(update.contentId == productId)
@@ -280,7 +314,7 @@ final class ProductContentLoaderTests {
         let environment = try Environment(self)
         let opened = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
 
-        contracts.set(contentHash: updatedContentHash, name: productId)
+        contracts.set(contentHash: updatedContentHash, name: productId.rawValue)
         let update = try #require(await environment.loader.refresh(productId).first)
 
         #expect(try await environment.loader.open(productId, kind: .app, policy: .untilCancelled) == opened)
@@ -308,9 +342,9 @@ final class ProductContentLoaderTests {
             contentHashCache: contentHashCache
         )
 
-        contracts.set(contentHash: updatedContentHash, name: productId)
+        contracts.set(contentHash: updatedContentHash, name: productId.rawValue)
 
-        #expect(try await resolver.resolveToLocalURL(dotNsName: productId) == opened.archive.localURL)
+        #expect(try await resolver.resolveToLocalURL(dotNsName: productId.rawValue) == opened.archive.localURL)
         #expect(await environment.loader.refresh(productId).first?.archive?.contentHash == updatedContentHash.toHex())
     }
 
@@ -318,7 +352,7 @@ final class ProductContentLoaderTests {
         let environment = try Environment(self)
         let opened = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
 
-        contracts.removeContentHash(name: productId)
+        contracts.removeContentHash(name: productId.rawValue)
         let removal = try #require(await environment.loader.refresh(productId).first)
 
         #expect(removal == ExecutableRelease(contentId: productId, archive: nil))
@@ -407,7 +441,7 @@ final class ProductContentLoaderTests {
 
     @Test func productWithNoPublishedContentIsNotReported() async throws {
         let reporter = RecordingIssueReporter()
-        contracts.removeContentHash(name: productId)
+        contracts.removeContentHash(name: productId.rawValue)
         let environment = try Environment(self, reporter: reporter)
 
         await #expect(throws: DotNsContractError.self) {
@@ -469,7 +503,7 @@ final class ProductContentLoaderTests {
 private extension ProductContentLoaderTests {
     func applyUpdatedArchive(using environment: Environment) async throws {
         _ = try await environment.loader.open(productId, kind: .app, policy: .untilCancelled)
-        contracts.set(contentHash: updatedContentHash, name: productId)
+        contracts.set(contentHash: updatedContentHash, name: productId.rawValue)
         let update = try #require(await environment.loader.refresh(productId).first)
         await environment.loader.apply(update)
     }

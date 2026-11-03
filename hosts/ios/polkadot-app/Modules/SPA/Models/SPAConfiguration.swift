@@ -1,3 +1,5 @@
+import struct TrUAPIHost.ProductId
+import enum TrUAPIHost.ExecutableKind
 import Foundation
 import Products
 

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import ChainRegistry
 import Foundation
 import os
@@ -69,7 +70,7 @@ struct WalletMainPocketTests {
         screen.presenter.showCollectibles()
 
         #expect(screen.view.showsCollectibles)
-        #expect(screen.wireframe.openedProduct == "stash.\(network)")
+        #expect(screen.wireframe.openedProduct == (try ProductId("stash.\(network)")))
     }
 
     /// The remote switch pulls the card from every installed app without a
@@ -102,7 +103,7 @@ struct WalletMainPocketTests {
 // MARK: - Fixtures
 
 private let loyalty = PocketCardEntry(
-    key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty")),
+    key: PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty")),
     title: "Loyalty",
     privileged: false
 )
@@ -216,19 +217,20 @@ private final class RecordingWalletView: UIViewController, WalletMainViewProtoco
     func didReceive(pocketCards _: [PocketCardViewModel]) {}
     func didReceive(titleViewModel _: NetworkStatusTitleView.ViewModel) {}
     func frame(of _: PocketCardKey) -> CGRect? { nil }
+    var openCard: PocketCardKey? { nil }
     func setOpenCard(_: PocketCardKey?) {}
     func moveOpenCard(by _: CGSize, clearingPocket _: Bool, animated _: Bool) {}
 }
 
 @MainActor
 private final class RecordingWireframe: WalletMainWireframeProtocol {
-    private(set) var openedProduct: String?
+    private(set) var openedProduct: ProductId?
 
     func showProduct(page: ProductPage) {
         openedProduct = page.host.toDotDomain()
     }
 
-    func showPocketCard(_: PocketCardViewModel, from _: WalletMainViewProtocol?) {}
+    func showPocketCard(_: PocketCardViewModel) {}
     func confirmPocketCardRemoval(_: PocketCardViewModel, onConfirm _: @escaping () -> Void) {}
 }
 

@@ -1,3 +1,4 @@
+import TrUAPIHost
 import Foundation
 import os
 
@@ -47,7 +48,7 @@ public final class ProductManifestFileStore: ProductManifestStoring, @unchecked 
     }
 
     public func save(_ records: [ProductManifest.RecordKey: ProductManifest.Record]) throws {
-        let recordsByProduct = Dictionary(grouping: records) { ProductManifestRecords.baseName(of: $0.key.name) }
+        let recordsByProduct = try Dictionary(grouping: records) { try productIdOwner(productId: $0.key.name) }
 
         try Self.writeLock.withLock {
             for (productId, productRecords) in recordsByProduct {
@@ -74,7 +75,7 @@ private extension ProductManifestFileStore {
     }
 
     func fileURL(for productId: ProductId) -> URL? {
-        productId
+        productId.rawValue
             .addingPercentEncoding(withAllowedCharacters: Constants.allowedFileNameCharacters)
             .map { directory.appendingPathComponent($0).appendingPathExtension(Constants.fileExtension) }
     }
@@ -82,7 +83,7 @@ private extension ProductManifestFileStore {
 
 private struct StoredManifest: Codable {
     struct Record: Codable {
-        let name: String
+        let name: ProductId
         let key: String
         let value: String?
     }
@@ -101,7 +102,7 @@ private struct StoredManifest: Codable {
                     Record(name: recordKey.name, key: recordKey.key, value: value)
                 }
             }
-            .sorted { ($0.name, $0.key) < ($1.name, $1.key) }
+            .sorted { ($0.name.rawValue, $0.key) < ($1.name.rawValue, $1.key) }
     }
 
     var manifestRecords: [ProductManifest.RecordKey: ProductManifest.Record] {

@@ -25,7 +25,7 @@ enum PocketPublishError: Error, Equatable, CustomStringConvertible {
 struct PublishedPocketCard {
     let productId: ProductId
     let productName: String
-    let workerContentId: ProductExecutable.Identifier
+    let workerContentId: ProductId
     let definition: PocketCardDefinition
 }
 

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Operation_iOS
 import Products
@@ -268,7 +269,7 @@ private extension SPANativeRuntimeInteractor {
     }
 
     func makeSchemeHandler(
-        domain: String,
+        domain: ProductId,
         contentURL: URL
     ) -> ProductScriptSchemeHandler {
         let fileProvider = DotNsFileProvider(contentURL: contentURL)
@@ -309,8 +310,8 @@ extension SPANativeRuntimeInteractor: SPAProductReloading {
 }
 
 private extension SPANativeRuntimeInteractor {
-    var servedContentId: ProductExecutable.Identifier? {
-        resolvedProduct?.contentId(for: configuration.executable)
+    var servedContentId: ProductId? {
+        try? resolvedProduct?.contentId(for: configuration.executable)
     }
 
     func phaseHandler() -> ProductLoadPhaseHandler {

@@ -1,8 +1,9 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 public struct ProductManifest: Hashable, Sendable {
     public struct RecordKey: Hashable, Sendable {
-        public let name: String
+        public let name: ProductId
         public let key: String
     }
 

@@ -9,10 +9,10 @@ use parity_scale_codec::Encode;
 use sp_crypto_hashing::blake2_256;
 use truapi::latest::{
 	NftPurseChequeId, NftPurseClearedItem, NftPurseClearingReference, NftPurseIdempotencyKey,
-	NftPurseItemKey, NftPurseStatus,
+	NftPurseItemKey, NftPurseOwner, NftPurseStatus,
 };
 
-use super::{NftPurses, PurseOwner};
+use super::NftPurses;
 use crate::{
 	durable::RegistrationError,
 	nft::{
@@ -107,8 +107,8 @@ impl NftPurses {
 
 /// Whether `caller` must confirm draining a purse `owner` holds: one owned by
 /// Root or by another product.
-pub fn drain_needs_confirmation(caller: &ProductId, owner: &PurseOwner) -> bool {
-	!matches!(owner, PurseOwner::Product(id) if id == caller)
+pub fn drain_needs_confirmation(caller: &ProductId, owner: &NftPurseOwner) -> bool {
+	!matches!(owner, NftPurseOwner::Product(id) if id == caller)
 }
 
 /// The idempotency key of the operation `domain` names for cheque `id`, as
@@ -308,7 +308,7 @@ mod tests {
 		let (_dir, db) = open_temporary_core_db();
 		let ledger = test_ledger(db.clone());
 		let purses = crate::nft_purse::test_purses(db.clone());
-		let caller: ProductId = "tickets.dot".parse().unwrap();
+		let caller = ProductId::for_test("tickets.dot");
 		let item = held_item_in_new_purses(&ledger);
 		let key = NftPurseIdempotencyKey([1; 32]);
 		let items = BTreeSet::from([item]);

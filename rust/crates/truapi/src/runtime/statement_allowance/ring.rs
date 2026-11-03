@@ -5,7 +5,7 @@
 //! current ring. Every read is scoped to one [`PersonhoodCollection`], because
 //! each collection is a separate ring with its own members and index.
 
-use parity_scale_codec::{Compact, Decode};
+use parity_scale_codec::Decode;
 use scale_decode::DecodeAsType;
 use sp_crypto_hashing::twox_128;
 use thiserror::Error;
@@ -39,16 +39,10 @@ pub enum RingError {
 		#[source]
 		source: scale_decode::Error,
 	},
-	/// Ring key page compact length failed to decode.
-	#[error("ring keys len: {0}")]
-	RingKeysLen(#[source] parity_scale_codec::Error),
-	/// Ring key page did not contain all advertised members.
-	#[error("ring keys page truncated")]
-	RingKeysPageTruncated,
-	/// Ring status did not contain the included field.
-	#[error("ring status truncated before included field")]
-	RingStatusTruncated,
-	/// Ring status included field failed to decode.
+	/// A ring key page failed to decode.
+	#[error("ring keys page: {0}")]
+	RingKeysPage(#[source] parity_scale_codec::Error),
+	/// Ring status failed to decode.
 	#[error("ring status: {0}")]
 	RingStatus(#[source] parity_scale_codec::Error),
 	/// Member has no `Members.Members` record for the collection.
@@ -65,8 +59,12 @@ pub enum RingError {
 	SubscriberExponentMissing,
 }
 
-/// Ring member public key length.
-const MEMBER_LEN: usize = 32;
+/// The leading fields of a `Members.RingKeysStatus` value.
+#[derive(Decode)]
+struct RingKeysStatus {
+	_total: u32,
+	included: u32,
+}
 
 /// Fields read from `Members.Collections`.
 #[derive(Debug, PartialEq, Eq, DecodeAsType)]
@@ -264,30 +262,19 @@ pub async fn read_ring_members_at(
 		else {
 			break;
 		};
-		let mut cursor = &bytes[..];
-		let Compact(len) = Compact::<u32>::decode(&mut cursor).map_err(RingError::RingKeysLen)?;
-		if len == 0 {
+		let page = Vec::<[u8; 32]>::decode(&mut &bytes[..]).map_err(RingError::RingKeysPage)?;
+		if page.is_empty() {
 			break;
 		}
-		for i in 0..len as usize {
-			let start = i * MEMBER_LEN;
-			let member: [u8; 32] = cursor
-				.get(start..start + MEMBER_LEN)
-				.ok_or(RingError::RingKeysPageTruncated)?
-				.try_into()
-				.expect("range end uses start + MEMBER_LEN where MEMBER_LEN is 32; qed");
-			members.push(member);
-		}
+		members.extend(page);
 	}
 
 	// 2. Slice to the baked-in `included` prefix (absent status => all included).
 	if let Some(status) =
 		rpc.get_storage_at(&ring_keys_status_key(collection, ring_index), at).await?
 	{
-		// RingStatus = { total: u32 LE, included: u32 LE, .. }.
-		let included_bytes = status.get(4..).ok_or(RingError::RingStatusTruncated)?;
-		let included = u32::decode(&mut &included_bytes[..]).map_err(RingError::RingStatus)?;
-		members.truncate(included as usize);
+		let status = RingKeysStatus::decode(&mut &status[..]).map_err(RingError::RingStatus)?;
+		members.truncate(status.included as usize);
 	}
 
 	Ok(members)
