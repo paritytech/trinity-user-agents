@@ -371,10 +371,10 @@ provider-android-jni: ## Cross-compile libtruapi_provider.so for Android ABIs in
 		-o $(PROVIDER_JNILIBS) \
 		build --release -p truapi-provider --no-default-features --features uniffi
 
-provider-android-check: provider-kotlin ## Assemble the provider AAR against freshly generated bindings (needs Gradle + Android SDK).
+provider-android-check: provider-kotlin ## Assemble the provider AAR and compile its device tests against freshly generated bindings (needs Gradle + Android SDK).
 	@test -n "$$(find $(PROVIDER_KOTLIN_OUT) -name '*.kt' -print -quit)" \
 		|| { echo "no generated Kotlin under $(PROVIDER_KOTLIN_OUT): the module would compile an empty source set and pass"; exit 1; }
-	gradle :truapi-provider:assembleRelease
+	gradle :truapi-provider:assembleRelease :truapi-provider:compileDebugAndroidTestKotlin
 
 provider-android-publish-local: provider-kotlin provider-android-jni ## Publish the self-contained provider AAR (bindings + cdylib) to ~/.m2.
 	gradle :truapi-provider:publishReleasePublicationToMavenLocal
