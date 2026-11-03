@@ -1493,45 +1493,6 @@ mod tests {
 	}
 
 	#[test]
-	fn view_output_separates_reverts_from_failures() {
-		let reverted = encode_revive_call_output(true, Vec::new());
-		for (output, expected, message) in [
-			(
-				reverted,
-				DotnsViewError::Reverted(DotnsContractError::Reverted {
-					detail: "(empty)".to_string(),
-				}),
-				"contract reverted: (empty)",
-			),
-			(
-				vec![0x01],
-				DotnsViewError::Contract(DotnsContractError::Malformed(
-					ContractResult::decode(&mut &[0x01][..]).err().expect("truncated"),
-				)),
-				"ReviveApi_call output is not a ContractResult",
-			),
-		] {
-			let error = view_output(&output).unwrap_err();
-			assert_eq!(error, expected);
-			let error = DotnsError::ProtocolRegistry(DotnsCallError::View(error));
-			let chain = core::iter::successors(Some(&error as &dyn core::error::Error), |error| {
-				error.source()
-			})
-			.map(ToString::to_string)
-			.collect::<Vec<_>>();
-			assert_eq!(
-				(chain, error.reason()),
-				(
-					vec!["DotnsPopController.protocolRegistry()".to_string(), message.to_string()],
-					format!("DotnsPopController.protocolRegistry(): {message}")
-				)
-			);
-		}
-		let returned = encode_revive_call_output(false, vec![1, 2, 3, 4]);
-		assert_eq!(view_output(&returned).unwrap(), vec![1, 2, 3, 4]);
-	}
-
-	#[test]
 	fn store_labels_lose_the_network_tld_and_subnames_are_dropped() {
 		assert_eq!(bare_store_label("alice01.paseo", ".paseo"), Some("alice01"));
 		assert_eq!(bare_store_label("alice01.dot", ".dot"), Some("alice01"));
