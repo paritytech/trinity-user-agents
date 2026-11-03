@@ -154,14 +154,14 @@ Two traps in this form:
 ```sh
 adb shell am start -n io.parity.polkadotapp.debug/io.paritytech.polkadotapp.app.root.presentation.root.RootActivity \
   -a android.intent.action.VIEW \
-  -d "'polkadotapp://myproduct.paseo/-/pocket/add?card=loyalty'"
+  -d "'polkadotapp://pocket/add?product=myproduct.paseo&card=loyalty'"
 ```
 
 Use the id the **Product bots list** shows on the row, not what you typed into the form.
 
 The URL is quoted twice on purpose. The command crosses two shells — yours, and the device's — and
-the device's reads `?` as a glob and `<`/`>` as redirects. Wrapping this in a one-line script in
-your own repo is worth it if you run it often.
+the device's reads `?` as a glob, `&` as the end of a command and `<`/`>` as redirects. Wrapping
+this in a one-line script in your own repo is worth it if you run it often.
 
 Naming the activity with `-n` makes this independent of the manifest's intent filters, so it works
 even on a TLD the app registers no filter for. Without `-n` the host must match one of `*.dot`,

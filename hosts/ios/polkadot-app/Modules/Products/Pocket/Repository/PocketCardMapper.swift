@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import CoreData
 import Operation_iOS
 import Products
@@ -53,7 +54,7 @@ extension PocketCardMapper: CoreDataMapperProtocol {
         }
 
         return StoredPocketCard(
-            key: PocketCardKey(productId: productId, cardId: PocketCardId(value: cardId)),
+            key: PocketCardKey(productId: try ProductId(productId), cardId: PocketCardId(value: cardId)),
             membership: membership,
             face: entity.face
         )
@@ -61,7 +62,7 @@ extension PocketCardMapper: CoreDataMapperProtocol {
 
     func populate(entity: CDPocketCard, from model: StoredPocketCard, using _: NSManagedObjectContext) throws {
         entity.identifier = model.identifier
-        entity.productId = model.key.productId
+        entity.productId = model.key.productId.rawValue
         entity.cardId = model.key.cardId.value
         entity.title = model.membership?.title
         entity.addedAt = model.membership?.addedAt

@@ -124,7 +124,7 @@ impl FundingPlatform for CliFundingHost {
 				FundingDirection::Out => "Out",
 			},
 			"amount": session.amount.map(|amount| amount.to_string()),
-			"product": product.map(|product| product.product_id.clone()),
+			"product": product.map(|product| product.product_id.as_str()),
 			"outcome": format!("{outcome:?}"),
 		}));
 		let Some(stage) = settled_stage(outcome) else {
@@ -148,6 +148,17 @@ impl FundingPlatform for CliFundingHost {
 			}
 		});
 		Ok(FundingPresentOutcome::Started)
+	}
+
+	// The scripted host stands in for the provider, so it has no screens of
+	// the provider's to show.
+	async fn present_provider_frame(
+		&self,
+		_provider: &ProductContext,
+		_intent: String,
+		_target: truapi::latest::FundingFrameTarget,
+	) -> Result<truapi::latest::FundingFrameOutcome, GenericError> {
+		Ok(truapi::latest::FundingFrameOutcome::Dismissed)
 	}
 
 	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {

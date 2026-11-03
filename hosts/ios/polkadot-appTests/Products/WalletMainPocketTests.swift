@@ -1,10 +1,11 @@
-import Foundation
-import AsyncExtensions
-import os
+import struct TrUAPIHost.ProductId
 import ChainRegistry
+import Foundation
+import os
 import PolkadotUI
 import Products
 import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import Testing
 import UIKit
 @testable import polkadot_app
@@ -69,7 +70,7 @@ struct WalletMainPocketTests {
         screen.presenter.showCollectibles()
 
         #expect(screen.view.showsCollectibles)
-        #expect(screen.wireframe.openedProduct == "stash.\(network)")
+        #expect(screen.wireframe.openedProduct == (try ProductId("stash.\(network)")))
     }
 
     /// The remote switch pulls the card from every installed app without a
@@ -93,7 +94,7 @@ struct WalletMainPocketTests {
         let screen = CollectiblesScreen(tld: LateTld())
 
         screen.presenter.setup()
-        try await screen.view.waitForCollectibles(within: .seconds(10))
+        try await screen.view.waitForCollectibles()
 
         #expect(screen.view.showsCollectibles)
     }
@@ -102,7 +103,7 @@ struct WalletMainPocketTests {
 // MARK: - Fixtures
 
 private let loyalty = PocketCardEntry(
-    key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty")),
+    key: PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty")),
     title: "Loyalty",
     privileged: false
 )
@@ -154,7 +155,7 @@ private final class RecordingPresenter: WalletMainInteractorOutputProtocol {
     /// Returns once the presenter has shown a card list matching `predicate`,
     /// failing rather than hanging if it never does.
     func waitForCards(where predicate: @escaping @Sendable (Set<PocketCardKey>) -> Bool) async throws {
-        try await withTimeout(.seconds(5)) { [shown] in
+        try await withTimeout(.hangGuard) { [shown] in
             for await keys in shown where predicate(keys) {
                 return
             }
@@ -204,7 +205,7 @@ private final class RecordingWalletView: UIViewController, WalletMainViewProtoco
     }
 
     /// Returns once the collectibles card has been offered, failing rather than hanging if it never is.
-    func waitForCollectibles(within limit: Duration = .seconds(5)) async throws {
+    func waitForCollectibles(within limit: Duration = .hangGuard) async throws {
         try await withTimeout(limit) { [availability] in
             for await isAvailable in availability where isAvailable {
                 return
@@ -216,18 +217,20 @@ private final class RecordingWalletView: UIViewController, WalletMainViewProtoco
     func didReceive(pocketCards _: [PocketCardViewModel]) {}
     func didReceive(titleViewModel _: NetworkStatusTitleView.ViewModel) {}
     func frame(of _: PocketCardKey) -> CGRect? { nil }
+    var openCard: PocketCardKey? { nil }
     func setOpenCard(_: PocketCardKey?) {}
+    func moveOpenCard(by _: CGSize, clearingPocket _: Bool, animated _: Bool) {}
 }
 
 @MainActor
 private final class RecordingWireframe: WalletMainWireframeProtocol {
-    private(set) var openedProduct: String?
+    private(set) var openedProduct: ProductId?
 
     func showProduct(page: ProductPage) {
         openedProduct = page.host.toDotDomain()
     }
 
-    func showPocketCard(_: PocketCardViewModel, from _: WalletMainViewProtocol?) {}
+    func showPocketCard(_: PocketCardViewModel) {}
     func confirmPocketCardRemoval(_: PocketCardViewModel, onConfirm _: @escaping () -> Void) {}
 }
 
@@ -253,6 +256,14 @@ private final class LateTld: DotNsTldProviding {
 
     func refresh() {}
     func reset() {}
+
+    func currentTldElseResolve() async throws -> String {
+        if let tld = currentTld() {
+            return tld
+        }
+
+        return try await resolveTld()
+    }
 }
 
 private final class StubNetworkStatusObserver: NetworkStatusObserving {
@@ -272,11 +283,6 @@ private final class SlowArchives: DotNsResolverProtocol, @unchecked Sendable {
         if delay > .zero { try await Task.sleep(for: delay) }
 
         return URL(fileURLWithPath: "/tmp/\(dotNsName)")
-    }
-
-    func getMetadataEntry(dotNsName _: String, key _: String) async throws -> String? { nil }
-    func progressStream(dotNsName _: String) -> AnyAsyncSequence<DotNsLoadProgress> {
-        AsyncStream<DotNsLoadProgress> { $0.finish() }.eraseToAnyAsyncSequence()
     }
 
     func clearCache() throws {}

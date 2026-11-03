@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import uniffi.truapi.NavigateDecision
+import uniffi.truapi.ProductId
 import uniffi.truapi.parseNavigate
 import javax.inject.Inject
 import uniffi.truapi.PocketDeeplinkAction as NativePocketDeeplinkAction
@@ -8,19 +9,18 @@ import uniffi.truapi.PocketDeeplinkAction as NativePocketDeeplinkAction
 enum class PocketDeeplinkAction { ADD, OPEN }
 
 /**
- * A `/-/pocket/<action>?card=<id>` ([Card]) or bare `/-/pocket` ([Collection]) deeplink as the core classifies it;
- * [productHost] is the lower-cased dotNS name.
+ * A `polkadotapp://pocket/<action>?product=<id>&card=<id>` ([Card]) or bare `polkadotapp://pocket` ([Collection])
+ * deeplink as the core classifies it; [Card.productId] is the product's lower-cased dotNS name.
  */
 sealed interface PocketDeeplink {
-    val productHost: String
-
     data class Card(
-        override val productHost: String,
+        val productId: ProductId,
         val action: PocketDeeplinkAction,
         val cardId: String,
+        val pageQuery: String,
     ) : PocketDeeplink
 
-    data class Collection(override val productHost: String) : PocketDeeplink
+    data object Collection : PocketDeeplink
 }
 
 /**
@@ -30,15 +30,16 @@ sealed interface PocketDeeplink {
 class PocketDeeplinkParser @Inject constructor() {
     fun parse(url: String): PocketDeeplink? = when (val decision = parseNavigate(url)) {
         is NavigateDecision.Pocket -> PocketDeeplink.Card(
-            productHost = decision.identifier,
+            productId = decision.identifier,
             action = when (decision.action) {
                 NativePocketDeeplinkAction.ADD -> PocketDeeplinkAction.ADD
                 NativePocketDeeplinkAction.OPEN -> PocketDeeplinkAction.OPEN
             },
             cardId = decision.cardId,
+            pageQuery = decision.pageQuery,
         )
 
-        is NavigateDecision.PocketCollection -> PocketDeeplink.Collection(productHost = decision.identifier)
+        is NavigateDecision.PocketCollection -> PocketDeeplink.Collection
 
         else -> null
     }

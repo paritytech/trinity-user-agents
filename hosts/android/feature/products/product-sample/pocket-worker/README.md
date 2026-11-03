@@ -35,7 +35,7 @@ and set that name's `executable` text record to `manifest/worker.json`. The root
 
 ## Try it on Android
 
-1. Open `polkadotapp://<name>.<tld>/-/pocket/add?card=loyalty`. The approval sheet shows
+1. Open `polkadotapp://pocket/add?product=<name>.<tld>&card=loyalty`. The approval sheet shows
    `faces/loyalty.json`; Add puts the card in the Pocket.
 2. With the card on screen the host starts this worker, opens a render for `PocketCard { loyalty }`,
    and the face switches to the live tree. Stamp increments the counter; Remove asks the host to

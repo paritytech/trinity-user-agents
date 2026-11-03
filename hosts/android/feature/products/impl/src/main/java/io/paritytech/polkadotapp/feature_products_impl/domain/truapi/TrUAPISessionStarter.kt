@@ -4,14 +4,17 @@ import android.net.Uri
 import androidx.core.net.toUri
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 
 /**
@@ -27,6 +30,7 @@ class TrUAPISessionStarter @Inject constructor(
     private val dotNsTldProvider: DotNsTldProvider,
     private val bootstrapInstaller: TrUAPIBootstrapInstaller,
     private val visibleProducts: VisibleProducts,
+    private val hostWebViewCreatedTelemetry: HostWebViewCreatedTelemetry,
 ) {
     fun start(
         provider: BrowserWebViewProvider,
@@ -57,25 +61,36 @@ class TrUAPISessionStarter @Inject constructor(
             val tld = dotNsTldProvider.getTld().getOrElse { return Result.failure(it) }
             // A page that is not a product (the debug SPA browser opening any URL) has no bridge to
             // attach, but it is still a page to show.
-            ProductId.fromUrl(productUrl.toUri(), tld).getOrNull() ?: run {
+            productIdFromUrl(productUrl.toUri(), tld).getOrNull() ?: run {
                 Timber.d("Loading %s without a TrUAPI bridge: not a product URL", productUrl)
                 return runCatching { provider.loadInitialContent() }
             }
         }
 
-        provider.addWebViewSetup { webView -> visibleProducts.track(productId.value, webView) }
+        provider.addWebViewSetup { webView -> visibleProducts.track(productId, webView) }
         val runtime = runtimeProvider.runtime().getOrElse { return Result.failure(it) }
         // The bootstrap publishes the loopback port and its bearer token, so it goes to the
         // product's own origin only. A wildcard would hand the bridge endpoint to any page the
         // WebView is ever pointed at.
+        val hostSessionId = UUID.randomUUID().toString()
         val installBootstrap = runCatching {
-            bootstrapInstaller.installerFor(setOf(productUrl.toUri().origin()))
+            bootstrapInstaller.installerFor(
+                origins = setOf(productUrl.toUri().origin()),
+                hostSessionId = hostSessionId,
+            )
         }.getOrElse { return Result.failure(it) }
 
-        val kind = if (card != null) ProductExecutionKind.WIDGET else ProductExecutionKind.APP
+        val kind = if (card != null) ExecutableKind.WIDGET else ExecutableKind.APP
+        val webViewEventReported = AtomicBoolean(false)
         return bridge
             .attach(runtime, productId, chainDirectory.resolve(), navigation, kind, card = card) { bootstrap ->
-                provider.addWebViewSetup(installBootstrap(bootstrap))
+                val setup = installBootstrap(bootstrap)
+                provider.addWebViewSetup { webView ->
+                    setup(webView)
+                    if (webViewEventReported.compareAndSet(false, true)) {
+                        hostWebViewCreatedTelemetry.report(hostSessionId)
+                    }
+                }
             }
             .mapCatching { execution ->
                 provider.useTrUAPIPermissions(productId, execution)

@@ -27,6 +27,13 @@ use truapi::Bytes32;
 #[cfg(feature = "mock")]
 pub mod mock;
 
+pub use crate::{
+	dotns_name::{DOTNS_TLDS, MAX_DNS_LABEL_LEN, has_dotns_tld, is_dns_label},
+	product_id::{
+		PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError, REMOTE_PERMISSION_TRUSTED_LABELS,
+	},
+};
+
 use truapi::{
 	latest::{
 		AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage, ChatFile,
@@ -46,8 +53,8 @@ use truapi::{
 		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
 		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
-		ProductAccountId, ProductAccountTxPayload, ProductProofContext, RemotePermission,
-		RemotePermissionRequest, RingLocation,
+		NftPurseOwner, ProductAccountId, ProductAccountTxPayload, ProductProofContext,
+		RemotePermission, RemotePermissionRequest, RingLocation,
 	},
 	v01::HostAccountSignVrfRequest,
 };
@@ -122,19 +129,16 @@ pub struct SigningHostConfig {
 /// A host may create multiple product runtimes from the same long-lived host
 /// runtime, each with its own product context.
 #[non_exhaustive]
-// `Decode` is hand-written below so decoding cannot bypass the validating
-// constructor. Not a doc comment: wire-type docs are emitted into the generated
-// host API, and this is a Rust-side implementation note.
-#[derive(Debug, Clone, PartialEq, Eq, Encode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct ProductContext {
 	/// Product identifier used for account derivation and product-scoped
 	/// storage/permission namespaces.
 	///
 	/// Host-spec C.7 defines accepted product id forms:
 	/// <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/C-account-derivation.md?plain=1#L109-L128>
-	pub product_id: String,
+	pub product_id: ProductId,
 	/// Trusted kind of executable attached to this connection by the host.
-	pub execution_kind: ProductExecutionKind,
+	pub execution_kind: ExecutableKind,
 }
 
 /// Trusted kind of product executable attached to a TrUAPI connection.
@@ -146,7 +150,7 @@ pub struct ProductContext {
 /// the only kind that may serve the Chat modality.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
-pub enum ProductExecutionKind {
+pub enum ExecutableKind {
 	/// Visible full-page entrypoint such as `app/index.html`.
 	#[default]
 	App,
@@ -155,6 +159,17 @@ pub enum ProductExecutionKind {
 	/// Headless executable the host runs while a modality holds a reference
 	/// to it; the only kind that may serve the Chat modality.
 	Worker,
+}
+
+impl ExecutableKind {
+	/// The dotNS prefix used for this kind's executable records.
+	pub fn dotns_label(self) -> &'static str {
+		match self {
+			Self::App => "app",
+			Self::Widget => "widget",
+			Self::Worker => "worker",
+		}
+	}
 }
 
 /// Host metadata.
@@ -262,217 +277,19 @@ fn validate_network_suffix(network_suffix: &str) -> Result<(), RuntimeConfigVali
 }
 
 impl ProductContext {
-	/// Build a product context, validating fields whose representation cannot
-	/// be made invalid by Rust types alone.
-	pub fn new(product_id: String) -> Result<Self, RuntimeConfigValidationError> {
-		Self::new_with_execution(product_id, ProductExecutionKind::App)
+	/// A product context for an app.
+	pub fn new(product_id: ProductId) -> Self {
+		Self::new_with_execution(product_id, ExecutableKind::App)
 	}
 
-	/// Build a product context for a host-selected executable kind.
-	pub fn new_with_execution(
-		product_id: String,
-		execution_kind: ProductExecutionKind,
-	) -> Result<Self, RuntimeConfigValidationError> {
-		Ok(Self { product_id: normalize_product_identifier(&product_id)?, execution_kind })
-	}
-
-	/// Whether this is the game product, Jollity, on any dotNS network. A
-	/// subname such as `app.dim2.dot` is a different product.
-	pub fn is_game_product(&self) -> bool {
-		dotns_product_label(&self.product_id) == Some(GAME_PRODUCT_LABEL)
+	/// A product context for a host-selected executable kind.
+	pub fn new_with_execution(product_id: ProductId, execution_kind: ExecutableKind) -> Self {
+		Self { product_id, execution_kind }
 	}
 }
-
-/// Decoding routes through [`ProductContext::new_with_execution`] so a frame
-/// off the wire cannot produce a context the constructor rejects. The runtime
-/// treats a `ProductContext` as already validated (product storage keys are
-/// built with `expect`), and derivation/storage scopes are keyed by
-/// `product_id`, so an unnormalized id would split one logical product across
-/// two scopes.
-impl Decode for ProductContext {
-	fn decode<I: parity_scale_codec::Input>(
-		input: &mut I,
-	) -> Result<Self, parity_scale_codec::Error> {
-		let product_id = String::decode(input)?;
-		let execution_kind = ProductExecutionKind::decode(input)?;
-		Self::new_with_execution(product_id, execution_kind)
-			.map_err(|_| "ProductContext.product_id is not an accepted product identifier".into())
-	}
-}
-
-/// Whether `identifier` is a product scope the core is allowed to derive for.
-pub fn is_product_identifier(identifier: &str) -> bool {
-	normalize_product_identifier(identifier).is_ok()
-}
-
-/// Top-level domains that dotNS deployments register product names under.
-/// Each network declares its own, so the set spans every network a host can
-/// be pointed at rather than just the production one.
-pub const DOTNS_TLDS: &[&str] = &["dot", "paseo", "testnet"];
-
-/// Whether `normalized` ends in one of [`DOTNS_TLDS`]. Expects an
-/// already-lowercased host with no trailing root dot.
-pub fn has_dotns_tld(normalized: &str) -> bool {
-	normalized.rsplit_once('.').is_some_and(|(_, tld)| DOTNS_TLDS.contains(&tld))
-}
-
-/// Blessed product labels across every network in [`DOTNS_TLDS`].
-///
-/// These products bypass recorded permissions and prompt only for device access.
-pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", GAME_PRODUCT_LABEL, "stash"];
-
-/// The bare label of the game product, Jollity, on every network.
-const GAME_PRODUCT_LABEL: &str = "dim2";
 
 /// Hosts available to every product unless a stored permission decision blocks them.
 pub const BLESSED_REMOTE_DOMAINS: &[&str] = &["fonts.googleapis.com", "fonts.gstatic.com"];
-
-/// Whether `product_id` holds every [`RemotePermission`] without prompting.
-///
-/// Expects the [`normalize_product_identifier`] form. Matches the whole label
-/// and nothing else: `peopl.dot` and `peopl.paseo` are trusted, while
-/// `app.peopl.dot` and any `localhost` identifier are separate products and are
-/// not. The label is only read out of an id that [`has_dotns_tld`] accepts, so a
-/// widened product-id policy cannot promote an arbitrary single-label host.
-pub fn has_trusted_remote_permissions(product_id: &str) -> bool {
-	dotns_product_label(product_id)
-		.is_some_and(|label| REMOTE_PERMISSION_TRUSTED_LABELS.contains(&label))
-}
-
-/// Everything before the TLD of a dotNS `product_id`: `dim2` for `dim2.dot`,
-/// `app.dim2` for `app.dim2.dot`. `None` when the id does not end in one of
-/// [`DOTNS_TLDS`], so a `localhost` id never yields a label.
-///
-/// Expects the [`normalize_product_identifier`] form.
-fn dotns_product_label(product_id: &str) -> Option<&str> {
-	if !has_dotns_tld(product_id) {
-		return None;
-	}
-	product_id.rsplit_once('.').map(|(label, _tld)| label)
-}
-
-/// Whether `product_id` in any accepted spelling holds every
-/// [`RemotePermission`] without prompting.
-///
-/// [`has_trusted_remote_permissions`] reads the normalized form, which is what
-/// the core always holds. A host holds whatever spelling it received, so this
-/// normalizes first and answers `false` for an id that does not normalize at
-/// all: an unrecognised spelling is never read as trusted.
-///
-/// Recorded permission decisions do not affect this policy.
-pub fn normalizes_to_trusted_remote_permissions(product_id: &str) -> bool {
-	normalize_product_identifier(product_id)
-		.is_ok_and(|normalized| has_trusted_remote_permissions(&normalized))
-}
-
-/// The label a development product identifier is served under.
-const LOCALHOST_PRODUCT_LABEL: &str = "localhost";
-
-/// Whether `product_id` is a development localhost product identifier.
-///
-/// Exactly `localhost`, or `localhost:` followed by a port and nothing else.
-/// Hosts grant these a development wildcard, so the match is the whole
-/// identifier: a prefix test would also admit `localhost:8080.evil`, and a
-/// label test would admit a published `localhost.<tld>`, which
-/// [`normalize_product_identifier`] rejects for the same reason.
-pub fn is_localhost_product_identifier(product_id: &str) -> bool {
-	if product_id == LOCALHOST_PRODUCT_LABEL {
-		return true;
-	}
-	product_id
-		.strip_prefix("localhost:")
-		.is_some_and(|port| !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()))
-}
-
-/// Largest accepted product identifier, in bytes.
-///
-/// Bounds the size of one identifier, not how many exist: a manifest miss
-/// caches its answer keyed by the target and nothing evicts those entries.
-/// Matches the cap on product-supplied chat identifiers.
-pub const PRODUCT_ID_MAX_BYTES: usize = 256;
-
-/// Normalize product identifiers before derivation and policy checks.
-pub fn normalize_product_identifier(
-	product_id: &str,
-) -> Result<String, RuntimeConfigValidationError> {
-	let trimmed = product_id.trim();
-	require_non_empty("product_id", trimmed)?;
-	let normalized = trimmed.nfc().collect::<String>().to_lowercase();
-	// After normalizing, since NFC can change the length. Reported by length
-	// rather than by value: an id that trips this can be arbitrarily large.
-	if normalized.len() > PRODUCT_ID_MAX_BYTES {
-		return Err(RuntimeConfigValidationError::ProductIdTooLong {
-			limit: PRODUCT_ID_MAX_BYTES,
-			actual: normalized.len(),
-		});
-	}
-	if !has_well_formed_labels(&normalized) {
-		return Err(RuntimeConfigValidationError::InvalidProductId {
-			product_id: product_id.to_string(),
-		});
-	}
-	if is_localhost_product_identifier(&normalized) {
-		return Ok(normalized);
-	}
-	// `localhost` is reserved as a label, not only as a bare identifier. A
-	// product published as `localhost.<tld>` would otherwise be one string
-	// comparison away from whatever a host grants the development wildcard.
-	let reserves_localhost = normalized
-		.rsplit_once('.')
-		.is_some_and(|(label, _tld)| label == LOCALHOST_PRODUCT_LABEL);
-	if has_dotns_tld(&normalized) && !reserves_localhost {
-		Ok(normalized)
-	} else {
-		Err(RuntimeConfigValidationError::InvalidProductId { product_id: product_id.to_string() })
-	}
-}
-
-/// Whether every dot-separated label of a normalized id is well formed.
-///
-/// Only the suffix after the last `.` was ever inspected, so the rest of the id
-/// could be anything the transport carried. Three consequences, all reachable
-/// because a cross-product call takes this string from the wire where it is
-/// self-asserted:
-///
-/// - An empty label. `dim2..dot` and `.dot` both reduce to `""`, so distinct ids collapse onto one
-///   grant key and one manifest cache entry.
-/// - Control and format characters. A NUL or a right-to-left override survives into
-///   [`AccountAccessReview`], which renders the id verbatim in the only consent prompt this design
-///   has, and into every log line carrying it.
-/// - Whitespace and path separators, which let one product's id render like another's anywhere the
-///   comparison is not byte-exact.
-///
-/// Deliberately not an ASCII allowlist: dotNS names are internationalized, so
-/// `tést.dot` is a real id. What is rejected is the class of characters that
-/// carries no name and only confuses a reader or a key.
-fn has_well_formed_labels(normalized: &str) -> bool {
-	/// Zero-width and bidirectional formatting characters. Invisible in every
-	/// rendering, so they make two different ids look identical to a user.
-	fn is_invisible_format(c: char) -> bool {
-		matches!(c,
-            '\u{200b}'..='\u{200f}'
-            | '\u{202a}'..='\u{202e}'
-            | '\u{2060}'..='\u{2064}'
-            | '\u{2066}'..='\u{2069}'
-            | '\u{feff}')
-	}
-	let label_ok = |label: &str| {
-		!label.is_empty() &&
-			!label.chars().any(|c| {
-				c.is_control() ||
-					c.is_whitespace() ||
-					is_invisible_format(c) ||
-					matches!(c, '/' | '\\')
-			})
-	};
-	if normalized == "localhost" {
-		return true;
-	}
-	if let Some(port) = normalized.strip_prefix("localhost:") {
-		return !port.is_empty() && port.chars().all(|c| c.is_ascii_digit());
-	}
-	normalized.split('.').all(label_ok)
-}
 
 /// Largest accepted length for a product-supplied chat identifier or display
 /// name, in bytes.
@@ -489,8 +306,7 @@ const ALLOWED_ICON_DATA_TYPES: [&str; 5] =
 
 /// Normalize a product-supplied chat room or bot identifier.
 ///
-/// Screened harder than a display name, mirroring
-/// [`normalize_product_identifier`]: an identifier is matched, not read, so it
+/// Screened harder than a display name: an identifier is matched, not read, so it
 /// also rejects the invisible characters a name legitimately needs — joiners,
 /// variation selectors, soft hyphens and non-ASCII spaces — which would
 /// otherwise let two distinct ids render identically.
@@ -930,7 +746,9 @@ fn require_non_empty(field: &'static str, value: &str) -> Result<(), RuntimeConf
 }
 
 /// Runtime config validation error.
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[derive(
+	Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error, derive_more::From,
+)]
 pub enum RuntimeConfigValidationError {
 	/// Required string field was empty or whitespace-only.
 	#[display("{field} must not be empty")]
@@ -956,27 +774,15 @@ pub enum RuntimeConfigValidationError {
 		/// Actual deeplink scheme value.
 		scheme: String,
 	},
-	/// Product id was not a dotNS or localhost product identifier.
-	#[display("product_id must be a dotNS or localhost product identifier, got {product_id:?}")]
-	InvalidProductId {
-		/// Actual product id value.
-		product_id: String,
-	},
+	/// Product id did not parse.
+	#[display("{_0}")]
+	#[from]
+	InvalidProductId(#[error(not(source))] ProductIdError),
 	/// Network suffix was not a supported dotNS TLD.
 	#[display("network_suffix must be a supported dotNS TLD, got {network_suffix:?}")]
 	InvalidNetworkSuffix {
 		/// Actual network suffix value.
 		network_suffix: String,
-	},
-	/// Product id was longer than [`PRODUCT_ID_MAX_BYTES`] after normalization.
-	///
-	/// Carries lengths rather than the id, which may be enormous.
-	#[display("product_id must be at most {limit} bytes, got {actual}")]
-	ProductIdTooLong {
-		/// Accepted maximum, in bytes.
-		limit: usize,
-		/// Normalized length, in bytes.
-		actual: usize,
 	},
 }
 
@@ -989,17 +795,14 @@ const PRODUCT_STORAGE_KEY_PREFIX: &str = "truapi:product-storage:v1:";
 /// format.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProductStorageKey {
-	product_id: String,
+	product_id: ProductId,
 	key: String,
 }
 
 impl ProductStorageKey {
-	/// Build a key with a validated, normalized product id.
-	pub fn new(
-		product_id: &str,
-		key: impl Into<String>,
-	) -> Result<Self, RuntimeConfigValidationError> {
-		Ok(Self { product_id: normalize_product_identifier(product_id)?, key: key.into() })
+	/// Build a key owned by `product_id`.
+	pub fn new(product_id: ProductId, key: impl Into<String>) -> Self {
+		Self { product_id, key: key.into() }
 	}
 
 	/// Decode the opaque key passed through [`ProductStorage`].
@@ -1027,11 +830,12 @@ impl ProductStorageKey {
 		let key = scoped
 			.get(product_length + 1..)
 			.ok_or_else(|| "product storage key splits a UTF-8 character".to_string())?;
-		Self::new(product_id, key.to_string()).map_err(|error| error.to_string())
+		let product_id = product_id.parse::<ProductId>().map_err(|error| error.to_string())?;
+		Ok(Self::new(product_id, key))
 	}
 
 	/// Product identifier owning this storage key.
-	pub fn product_id(&self) -> &str {
+	pub fn product_id(&self) -> &ProductId {
 		&self.product_id
 	}
 
@@ -1044,7 +848,7 @@ impl ProductStorageKey {
 	pub fn encode(&self) -> String {
 		format!(
 			"{PRODUCT_STORAGE_KEY_PREFIX}{}:{}:{}",
-			self.product_id.len(),
+			self.product_id.as_str().len(),
 			self.product_id,
 			self.key
 		)
@@ -1172,14 +976,14 @@ pub enum PermissionAuthorizationRequest {
 	/// Product-scoped permission to access another product's account context.
 	AccountAccess {
 		/// Product whose account context may be accessed.
-		target_product_id: String,
+		target_product_id: ProductId,
 	},
 	/// Product-scoped approval to make one kind of signature with another
 	/// product's accounts. It is held in memory only and ends when the product
 	/// execution closes.
 	CrossProductSignature {
 		/// Product whose accounts sign.
-		target_product_id: String,
+		target_product_id: ProductId,
 		/// Kind of signature the user approved.
 		kind: CrossProductSignatureKind,
 	},
@@ -1308,7 +1112,7 @@ pub trait CoreAdmin: Send + Sync {
 	/// answer with `deriveProductAccountPublicKey`.
 	async fn get_product_subtree_public_key(
 		&self,
-		product_id: String,
+		product_id: &ProductId,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<Bytes32>, GenericError>;
 }
@@ -1362,6 +1166,37 @@ pub trait Features: Send + Sync {
 	async fn supported_chains(&self) -> Result<HostChainSet, GenericError>;
 }
 
+/// A chain the host builds as V5 general transactions, and the transaction
+/// extension pipeline it uses there.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ChainExtensionVersion {
+	/// Genesis hash of the chain.
+	pub genesis_hash: Bytes32,
+	/// The pipeline's number in the chain's metadata.
+	pub extension_version: u8,
+}
+
+/// The chains a host builds as V5 general transactions. A chain not listed is
+/// built as V4.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct ExtensionVersionMap {
+	/// One entry per V5 chain.
+	pub chains: Vec<ChainExtensionVersion>,
+}
+
+/// Which chains the host builds as V5 general transactions. The core builds
+/// its own extrinsics the same way, so both agree on every chain.
+#[async_trait]
+pub trait ExtrinsicVersionHost: Send + Sync {
+	/// The chains the host builds as V5, each with its pipeline. A host that
+	/// never builds V5 lists none.
+	async fn transaction_extension_versions(&self) -> Result<ExtensionVersionMap, GenericError> {
+		Ok(ExtensionVersionMap::default())
+	}
+}
+
 /// Core-owned host-private storage slots. Products never address these slots;
 /// the host chooses the backing store for each slot.
 ///
@@ -1376,10 +1211,10 @@ pub enum CoreStorageKey {
 	PairingDeviceIdentity,
 	/// Persisted authorization for one product-scoped permission request.
 	PermissionAuthorization {
-		/// Product whose permission decision is being stored.
-		product_id: String,
-		/// Permission request whose authorization is being stored.
-		request: PermissionAuthorizationRequest,
+		/// Stored full identifier or bare manifest label.
+		scope: String,
+		/// Permission encoded under this scope.
+		request: StoredPermissionRequest,
 	},
 	/// Persisted allowance-slot keys for one paired SSO session.
 	AllowanceKeys {
@@ -1392,7 +1227,7 @@ pub enum CoreStorageKey {
 	/// slot to reject and erase pre-scoping entries.
 	AutoSigningKey {
 		/// Product whose hard subtree the legacy secret controlled.
-		product_id: String,
+		product_id: ProductId,
 	},
 	/// Wallet-bound RFC-0010 AutoSigning capabilities for the active pairing.
 	AutoSigningKeys,
@@ -1428,7 +1263,7 @@ pub enum CoreStorageKey {
 		/// Stable host-derived SSO session id.
 		session_id: String,
 		/// Product whose hard subtree this key roots.
-		product_id: String,
+		product_id: ProductId,
 	},
 	/// Signing-host request replay state for one wallet and pairing peer.
 	///
@@ -1449,36 +1284,69 @@ pub enum CoreStorageKey {
 	/// trust grant eventually take effect.
 	#[codec(index = 12)]
 	ProductManifest {
-		/// Product whose manifest was cached, normalized.
-		product_id: String,
+		/// Bare product label whose manifest was cached.
+		product_label: String,
 	},
-	/// Funding sessions: every live one plus a bounded tail of settled ones,
-	/// as one versioned SCALE blob.
-	#[codec(index = 13)]
-	FundingSessions,
-	/// Funding sessions or session pack blobs the core could not read, as a SCALE list of the
-	/// raw blobs, newest last, so a stored session is never overwritten
-	/// unread and a later bad blob does not replace an earlier one. Kept for
-	/// diagnosis only: the core never reads them back.
-	#[codec(index = 17)]
-	FundingSessionsUnreadable,
-	/// Recorded funding sessions compacted out of the funding sessions blob,
-	/// as one versioned SCALE blob. Never trimmed.
-	#[codec(index = 18)]
-	FundingSessionPack,
+}
+
+/// Permission storage payload, whose targets can be bare manifest labels.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum StoredPermissionRequest {
+	/// Device permission decision.
+	Device(HostDevicePermissionRequest),
+	/// Remote permission decision.
+	Remote(RemotePermissionRequest),
+	/// Identity disclosure decision.
+	IdentityDisclosure,
+	/// Account access decision.
+	AccountAccess {
+		/// Full identifier or bare label in the stored scope.
+		target: String,
+	},
+	/// Execution-local approval for one signature kind.
+	CrossProductSignature {
+		/// Bare label whose accounts sign.
+		target: String,
+		/// Kind of signature approved.
+		kind: CrossProductSignatureKind,
+	},
+}
+
+impl From<PermissionAuthorizationRequest> for StoredPermissionRequest {
+	fn from(request: PermissionAuthorizationRequest) -> Self {
+		match request {
+			PermissionAuthorizationRequest::Device(permission) => Self::Device(permission),
+			PermissionAuthorizationRequest::Remote(request) => Self::Remote(request),
+			PermissionAuthorizationRequest::IdentityDisclosure => Self::IdentityDisclosure,
+			PermissionAuthorizationRequest::AccountAccess { target_product_id } => {
+				Self::AccountAccess { target: target_product_id.into() }
+			},
+			PermissionAuthorizationRequest::CrossProductSignature { target_product_id, kind } => {
+				Self::CrossProductSignature { target: target_product_id.into(), kind }
+			},
+		}
+	}
 }
 
 /// Stable metadata describing one strictly decoded [`CoreStorageKey`].
 ///
 /// `kind` is the Rust variant name and is part of the host embedding contract.
-/// `product_id` is present only for keys whose storage slot is directly
-/// product-indexed.
+/// `owner` distinguishes full product identities from shared manifest labels.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreStorageKeyDescription {
 	/// Stable storage-key variant name.
 	pub kind: &'static str,
-	/// Product that owns this exact slot, when the key is product-indexed.
-	pub product_id: Option<String>,
+	/// Product or manifest label that owns this slot.
+	pub owner: Option<CoreStorageKeyOwner>,
+}
+
+/// The identity used to scope a persisted slot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CoreStorageKeyOwner {
+	/// An exact product executable.
+	Product(ProductId),
+	/// A manifest shared by the product's executable subnames.
+	ProductLabel(String),
 }
 
 /// Failure to decode exactly one [`CoreStorageKey`].
@@ -1503,50 +1371,77 @@ pub fn describe_core_storage_key(
 	if !input.is_empty() {
 		return Err(CoreStorageKeyDescriptionError::TrailingBytes);
 	}
-	let (kind, product_id) = match key {
+	let (kind, owner) = match key {
 		CoreStorageKey::AuthSession => ("AuthSession", None),
 		CoreStorageKey::PairingDeviceIdentity => ("PairingDeviceIdentity", None),
-		CoreStorageKey::PermissionAuthorization { product_id, .. } => {
-			("PermissionAuthorization", Some(product_id))
+		CoreStorageKey::PermissionAuthorization { scope, .. } => {
+			let owner = match scope.parse() {
+				Ok(product_id) => CoreStorageKeyOwner::Product(product_id),
+				Err(_) if is_dns_label(&scope) => CoreStorageKeyOwner::ProductLabel(scope),
+				Err(_) => return Err(CoreStorageKeyDescriptionError::InvalidEncoding),
+			};
+			("PermissionAuthorization", Some(owner))
 		},
 		CoreStorageKey::AllowanceKeys { .. } => ("AllowanceKeys", None),
 		CoreStorageKey::LastProcessedPairingStatement => ("LastProcessedPairingStatement", None),
-		CoreStorageKey::AutoSigningKey { product_id } => ("AutoSigningKey", Some(product_id)),
-		CoreStorageKey::ProductSubtree { product_id, .. } => ("ProductSubtree", Some(product_id)),
+		CoreStorageKey::AutoSigningKey { product_id } => {
+			("AutoSigningKey", Some(CoreStorageKeyOwner::Product(product_id)))
+		},
+		CoreStorageKey::ProductSubtree { product_id, .. } => {
+			("ProductSubtree", Some(CoreStorageKeyOwner::Product(product_id)))
+		},
 		CoreStorageKey::AutoSigningKeys => ("AutoSigningKeys", None),
 		CoreStorageKey::RingVrfRegistry { .. } => ("RingVrfRegistry", None),
 		CoreStorageKey::StatementRenewalTargets => ("StatementRenewalTargets", None),
 		CoreStorageKey::DeviceEncryptionKey => ("DeviceEncryptionKey", None),
 		CoreStorageKey::SsoResponderRequestLedger { .. } => ("SsoResponderRequestLedger", None),
-		CoreStorageKey::ProductManifest { product_id } => ("ProductManifest", Some(product_id)),
-		CoreStorageKey::FundingSessions => ("FundingSessions", None),
-		CoreStorageKey::FundingSessionsUnreadable => ("FundingSessionsUnreadable", None),
-		CoreStorageKey::FundingSessionPack => ("FundingSessionPack", None),
+		CoreStorageKey::ProductManifest { product_label } => {
+			("ProductManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
+		},
 	};
-	Ok(CoreStorageKeyDescription { kind, product_id })
+	Ok(CoreStorageKeyDescription { kind, owner })
 }
 
 impl CoreStorageKey {
+	/// Cache key for `product_id`'s root manifest.
+	///
+	/// Keyed by [`ProductId::bare_label`], which is what the lookup resolves on
+	/// the host's network, so `peopl.dot` and `app.peopl.dot` share one entry.
+	/// Keying by the full id would let a caller force a chain lookup and a
+	/// storage write for every subname it makes up. Code that seeds this cache
+	/// must use this key.
+	pub fn product_manifest(product_id: &ProductId) -> Self {
+		Self::ProductManifest { product_label: product_id.bare_label().to_string() }
+	}
+
+	/// Persist an authorization under the full product identity.
+	pub fn permission_authorization(
+		product_id: &ProductId,
+		request: PermissionAuthorizationRequest,
+	) -> Self {
+		Self::PermissionAuthorization { scope: product_id.to_string(), request: request.into() }
+	}
+
 	/// Persisted authorization key for one product-scoped device permission.
 	pub fn device_permission_authorization(
-		product_id: &str,
+		product_id: &ProductId,
 		permission: &HostDevicePermissionRequest,
 	) -> Self {
-		Self::PermissionAuthorization {
-			product_id: product_id.to_string(),
-			request: PermissionAuthorizationRequest::Device(*permission),
-		}
+		Self::permission_authorization(
+			product_id,
+			PermissionAuthorizationRequest::Device(*permission),
+		)
 	}
 
 	/// Persisted authorization key for one product-scoped remote permission.
 	pub fn remote_permission_authorization(
-		product_id: &str,
+		product_id: &ProductId,
 		request: &RemotePermissionRequest,
 	) -> Self {
-		Self::PermissionAuthorization {
-			product_id: product_id.to_string(),
-			request: PermissionAuthorizationRequest::Remote(canonical_remote_request(request)),
-		}
+		Self::permission_authorization(
+			product_id,
+			PermissionAuthorizationRequest::Remote(canonical_remote_request(request)),
+		)
 	}
 
 	/// Persisted authorization key for a single domain pattern inside a
@@ -1558,7 +1453,7 @@ impl CoreStorageKey {
 	/// a later single-host lookup. The key is a one-element
 	/// [`RemotePermission::Remote`] set, so this shares the encoding — and the
 	/// [`normalize_remote_domain`] canonicalization — of the bundle form.
-	pub fn remote_domain_authorization(product_id: &str, domain: &str) -> Self {
+	pub fn remote_domain_authorization(product_id: &ProductId, domain: &str) -> Self {
 		Self::remote_permission_authorization(
 			product_id,
 			&RemotePermissionRequest {
@@ -1568,20 +1463,50 @@ impl CoreStorageKey {
 	}
 
 	/// Persisted authorization key for product-scoped identity disclosure.
-	pub fn identity_disclosure_authorization(product_id: &str) -> Self {
+	pub fn identity_disclosure_authorization(product_id: &ProductId) -> Self {
+		Self::permission_authorization(
+			product_id,
+			PermissionAuthorizationRequest::IdentityDisclosure,
+		)
+	}
+
+	/// Persist an account decision under exact executable identities.
+	pub fn account_access_authorization(
+		product_id: &ProductId,
+		target_product_id: &ProductId,
+	) -> Self {
+		Self::permission_authorization(
+			product_id,
+			PermissionAuthorizationRequest::AccountAccess {
+				target_product_id: target_product_id.clone(),
+			},
+		)
+	}
+
+	/// Persist an account decision shared by every executable of both products.
+	pub fn product_account_access_authorization(
+		product_id: &ProductId,
+		target_product_id: &ProductId,
+	) -> Self {
 		Self::PermissionAuthorization {
-			product_id: product_id.to_string(),
-			request: PermissionAuthorizationRequest::IdentityDisclosure,
+			scope: product_id.bare_label().to_string(),
+			request: StoredPermissionRequest::AccountAccess {
+				target: target_product_id.bare_label().to_string(),
+			},
 		}
 	}
 
-	/// Persisted authorization key for one product accessing another product's
-	/// account context.
-	pub fn account_access_authorization(product_id: &str, target_product_id: &str) -> Self {
+	/// Signature approval shared by the product's executable subnames.
+	pub fn product_signature_authorization(
+		product_id: &ProductId,
+		target_product_id: &ProductId,
+		kind: CrossProductSignatureKind,
+	) -> Self {
 		Self::PermissionAuthorization {
-			product_id: product_id.to_string(),
-			request: PermissionAuthorizationRequest::AccountAccess {
-				target_product_id: target_product_id.to_string(),
+			scope: product_id.bare_label().to_string(),
+			request: StoredPermissionRequest::CrossProductSignature {
+				target: target_product_id.bare_label().to_string(),
+				kind,
 			},
 		}
 	}
@@ -2234,13 +2159,14 @@ mod tests {
 		// `product context encoding matches the Rust platform codec` in
 		// `js/packages/truapi-host/src/host-callbacks-adapter.test.ts`, which
 		// asserts the same bytes through that generated codec.
-		assert_eq!(ProductExecutionKind::App.encode(), [0]);
-		assert_eq!(ProductExecutionKind::Widget.encode(), [1]);
-		assert_eq!(ProductExecutionKind::Worker.encode(), [2]);
+		assert_eq!(ExecutableKind::App.encode(), [0]);
+		assert_eq!(ExecutableKind::Widget.encode(), [1]);
+		assert_eq!(ExecutableKind::Worker.encode(), [2]);
 
-		let context =
-			ProductContext::new_with_execution("app.dot".to_string(), ProductExecutionKind::Worker)
-				.expect("product id is valid");
+		let context = ProductContext::new_with_execution(
+			ProductId::for_test("app.dot"),
+			ExecutableKind::Worker,
+		);
 		assert_eq!(context.encode(), [28, b'a', b'p', b'p', b'.', b'd', b'o', b't', 2]);
 		assert_eq!(ProductContext::decode(&mut context.encode().as_slice()), Ok(context));
 	}
@@ -2251,7 +2177,7 @@ mod tests {
 		// apply the same product-id policy as the constructor so decoding
 		// cannot mint a context with an unscoped or empty product id.
 		for product_id in ["evil.com", "", "  "] {
-			let frame = (product_id.to_string(), ProductExecutionKind::App).encode();
+			let frame = (product_id.to_string(), ExecutableKind::App).encode();
 			assert!(
 				ProductContext::decode(&mut frame.as_slice()).is_err(),
 				"{product_id:?} must not decode into a ProductContext"
@@ -2264,183 +2190,16 @@ mod tests {
 		// Derivation and product-scoped storage are keyed by `product_id`, so
 		// a non-canonical id off the wire has to land in the same scope the
 		// constructor would produce rather than opening a second one.
-		let frame = ("App.DOT".to_string(), ProductExecutionKind::App).encode();
+		let frame = ("App.DOT".to_string(), ExecutableKind::App).encode();
 		let decoded = ProductContext::decode(&mut frame.as_slice()).expect("product id normalizes");
-		assert_eq!(decoded.product_id, "app.dot");
-		assert_eq!(
-			decoded,
-			ProductContext::new("app.dot".to_string()).expect("product id is valid")
-		);
-	}
-
-	#[test]
-	fn trusted_remote_permission_labels_match_the_bare_product_label() {
-		for product_id in [
-			"peopl.dot",
-			"peopl.paseo",
-			"peopl.testnet",
-			"dim2.dot",
-			"dim2.paseo",
-			"dim2.testnet",
-			"stash.dot",
-		] {
-			assert!(
-				has_trusted_remote_permissions(product_id),
-				"{product_id} must hold remote permissions without a prompt"
-			);
-		}
-		for product_id in [
-			"app.peopl.dot",
-			"sub.dim2.paseo",
-			"app.dim2.testnet",
-			"dim2.com",
-			"notdim2.dot",
-			"peopl",
-			"peopl.com",
-			"peoplx.dot",
-			"my-peopl.dot",
-			"localhost",
-			"localhost:3000",
-			"",
-			"dot",
-		] {
-			assert!(
-				!has_trusted_remote_permissions(product_id),
-				"{product_id} is a separate product and must prompt"
-			);
-		}
-	}
-
-	#[test]
-	fn a_published_product_cannot_take_the_localhost_label() {
-		// Hosts grant a development wildcard to a localhost product, so the
-		// label must not be reachable from dotNS.
-		for product_id in ["localhost.dot", "localhost.paseo", "LOCALHOST.DOT"] {
-			assert!(
-				normalize_product_identifier(product_id).is_err(),
-				"{product_id} must not be a valid product identifier"
-			);
-			assert!(
-				!is_localhost_product_identifier(product_id),
-				"{product_id} must not read as the development wildcard"
-			);
-		}
-		for product_id in ["localhost", "localhost:3000"] {
-			assert!(is_localhost_product_identifier(product_id), "{product_id}");
-		}
-		// A prefix test would admit these; the whole identifier has to match.
-		for product_id in ["localhost:3000.evil.dot", "localhost:", "localhost:80a"] {
-			assert!(
-				!is_localhost_product_identifier(product_id),
-				"{product_id} must not read as the development wildcard"
-			);
-		}
-		// Still a normal product, sharing only the prefix.
-		assert!(normalize_product_identifier("localhosting.dot").is_ok());
-	}
-
-	#[test]
-	fn trusted_remote_permissions_normalize_the_spellings_a_host_holds() {
-		// Both the UniFFI and wasm exports answer through this, and a host
-		// holds an id in whatever spelling it received rather than the
-		// normalized form the core passes internally.
-		for product_id in
-			["peopl.dot", "PEOPL.DOT", "  peopl.dot  ", "dim2.paseo", " DIM2.TESTNET ", "stash.dot"]
-		{
-			assert!(
-				normalizes_to_trusted_remote_permissions(product_id),
-				"{product_id} is a first-party product in any accepted spelling"
-			);
-		}
-		for product_id in ["app.peopl.dot", "peopl", "notpeopl.dot", "localhost:3000", "", "   "] {
-			assert!(
-				!normalizes_to_trusted_remote_permissions(product_id),
-				"{product_id} must not be read as trusted"
-			);
-		}
-	}
-
-	#[test]
-	fn every_trusted_remote_permission_label_is_a_product_identifier() {
-		// A label that product-id validation rejects would never reach the
-		// permission engine, so the whitelist entry would be silently inert.
-		for label in REMOTE_PERMISSION_TRUSTED_LABELS {
-			for tld in DOTNS_TLDS {
-				let product_id = format!("{label}.{tld}");
-				assert!(
-					is_product_identifier(&product_id),
-					"{product_id} must be an accepted product identifier"
-				);
-				assert!(
-					has_trusted_remote_permissions(&product_id),
-					"{product_id} must be recognized as trusted"
-				);
-			}
-		}
-	}
-
-	#[test]
-	fn trusted_remote_permission_labels_are_bare_lowercase_labels() {
-		// The predicate compares against the label of an already-normalized id,
-		// so an entry carrying a TLD or an uppercase letter can never match.
-		for label in REMOTE_PERMISSION_TRUSTED_LABELS {
-			assert!(!label.contains('.'), "{label} must not carry a TLD");
-			assert_eq!(*label, label.to_lowercase(), "{label} must be lowercase");
-		}
-	}
-
-	#[test]
-	fn an_identifier_carrying_no_name_is_rejected() {
-		// Each of these reached the manifest grant key, the cache key, the only
-		// consent prompt in this design and every log line, because only the
-		// suffix after the last dot was ever inspected.
-		for id in [
-			"dim2\u{0}.dot",        // NUL, into a prompt rendered verbatim
-			"\u{202e}dim2.dot",     // right-to-left override
-			"dim2\u{200b}.dot",     // zero width space
-			"a b c.dot",            // whitespace
-			"../../etc/passwd.dot", // path separators
-			"dim2..dot",            // empty label: collapses onto other ids
-			".dot",                 // same empty label
-		] {
-			assert!(
-				normalize_product_identifier(id).is_err(),
-				"{id:?} carries no product name and must not normalize"
-			);
-		}
-	}
-
-	#[test]
-	fn an_internationalized_identifier_is_still_an_identifier() {
-		// The rejection above is a hazard list, not an ASCII allowlist: dotNS
-		// names are internationalized and these are real ids.
-		for id in ["Tést.DOT", "münchen.dot", "dim2-two.dot", "localhost:3000"] {
-			assert!(normalize_product_identifier(id).is_ok(), "{id:?} is a legitimate product id");
-		}
-	}
-
-	#[test]
-	fn an_overlong_product_id_is_not_an_identifier() {
-		// Only the suffix after the last `.` is checked, so every length of
-		// this is otherwise a valid, distinct, wire-supplied cache key.
-		let label = "a".repeat(PRODUCT_ID_MAX_BYTES);
-		let overlong = format!("{label}.dot");
-		assert!(overlong.len() > PRODUCT_ID_MAX_BYTES);
-		assert!(
-			!is_product_identifier(&overlong),
-			"a product id past the cap must be rejected, not stored"
-		);
-
-		// A huge id alone would pass with the cap off by any amount.
-		let at_cap = format!("{}.dot", "a".repeat(PRODUCT_ID_MAX_BYTES - 4));
-		assert_eq!(at_cap.len(), PRODUCT_ID_MAX_BYTES);
-		assert!(is_product_identifier(&at_cap), "an id exactly at the cap is still valid");
+		assert_eq!(decoded.product_id.as_str(), "app.dot");
+		assert_eq!(decoded, ProductContext::new(ProductId::for_test("app.dot")));
 	}
 
 	#[test]
 	fn core_storage_key_description_is_strict_and_product_scoped() {
 		let permission = CoreStorageKey::device_permission_authorization(
-			"product.dot",
+			&ProductId::for_test("product.dot"),
 			&HostDevicePermissionRequest::Camera,
 		)
 		.encode();
@@ -2448,10 +2207,10 @@ mod tests {
 			describe_core_storage_key(&permission),
 			Ok(CoreStorageKeyDescription {
 				kind: "PermissionAuthorization",
-				product_id: Some("product.dot".to_string()),
+				owner: Some(CoreStorageKeyOwner::Product(ProductId::for_test("product.dot"))),
 			})
 		);
-		for (key, kind, product_id) in [
+		for (key, kind, owner) in [
 			(CoreStorageKey::AuthSession, "AuthSession", None),
 			(CoreStorageKey::PairingDeviceIdentity, "PairingDeviceIdentity", None),
 			(
@@ -2461,9 +2220,9 @@ mod tests {
 			),
 			(CoreStorageKey::LastProcessedPairingStatement, "LastProcessedPairingStatement", None),
 			(
-				CoreStorageKey::AutoSigningKey { product_id: "product.dot".to_string() },
+				CoreStorageKey::AutoSigningKey { product_id: ProductId::for_test("product.dot") },
 				"AutoSigningKey",
-				Some("product.dot"),
+				Some(CoreStorageKeyOwner::Product(ProductId::for_test("product.dot"))),
 			),
 			(CoreStorageKey::AutoSigningKeys, "AutoSigningKeys", None),
 			(
@@ -2482,13 +2241,9 @@ mod tests {
 				"SsoResponderRequestLedger",
 				None,
 			),
-			(CoreStorageKey::FundingSessions, "FundingSessions", None),
-			(CoreStorageKey::FundingSessionsUnreadable, "FundingSessionsUnreadable", None),
-			(CoreStorageKey::FundingSessionPack, "FundingSessionPack", None),
 		] {
 			let description = describe_core_storage_key(&key.encode()).expect("valid key");
-			assert_eq!(description.kind, kind);
-			assert_eq!(description.product_id.as_deref(), product_id);
+			assert_eq!(description, CoreStorageKeyDescription { kind, owner });
 		}
 
 		assert_eq!(
@@ -2508,24 +2263,75 @@ mod tests {
 	}
 
 	#[test]
+	fn persisted_permission_and_manifest_scopes_keep_their_string_encoding() {
+		let caller = ProductId::for_test("app.caller.dot");
+		let target = ProductId::for_test("worker.target.dot");
+		let cases = [
+			(
+				CoreStorageKey::account_access_authorization(&caller, &target),
+				(2u8, "app.caller.dot", 3u8, "worker.target.dot").encode(),
+				"PermissionAuthorization",
+				CoreStorageKeyOwner::Product(caller.clone()),
+			),
+			(
+				CoreStorageKey::product_account_access_authorization(&caller, &target),
+				(2u8, "caller", 3u8, "target").encode(),
+				"PermissionAuthorization",
+				CoreStorageKeyOwner::ProductLabel("caller".to_string()),
+			),
+			(
+				CoreStorageKey::product_signature_authorization(
+					&caller,
+					&target,
+					CrossProductSignatureKind::Raw,
+				),
+				(2u8, "caller", 4u8, "target", 2u8).encode(),
+				"PermissionAuthorization",
+				CoreStorageKeyOwner::ProductLabel("caller".to_string()),
+			),
+			(
+				CoreStorageKey::product_manifest(&target),
+				(12u8, "target").encode(),
+				"ProductManifest",
+				CoreStorageKeyOwner::ProductLabel("target".to_string()),
+			),
+		];
+		for (key, encoded, kind, owner) in cases {
+			assert_eq!(key.encode(), encoded);
+			assert_eq!(CoreStorageKey::decode(&mut encoded.as_slice()), Ok(key));
+			assert_eq!(
+				describe_core_storage_key(&encoded),
+				Ok(CoreStorageKeyDescription { kind, owner: Some(owner) })
+			);
+		}
+	}
+
+	#[test]
 	fn permission_authorization_keys_separate_product_and_request_variants() {
 		let camera = CoreStorageKey::device_permission_authorization(
-			"product.dot",
+			&ProductId::for_test("product.dot"),
 			&HostDevicePermissionRequest::Camera,
 		);
 		let other_product = CoreStorageKey::device_permission_authorization(
-			"other.dot",
+			&ProductId::for_test("other.dot"),
 			&HostDevicePermissionRequest::Camera,
 		);
 		let remote = CoreStorageKey::remote_permission_authorization(
-			"product.dot",
+			&ProductId::for_test("product.dot"),
 			&RemotePermissionRequest { permission: RemotePermission::ChainSubmit },
 		);
-		let identity = CoreStorageKey::identity_disclosure_authorization("product.dot");
-		let other_product_identity = CoreStorageKey::identity_disclosure_authorization("other.dot");
-		let account_access =
-			CoreStorageKey::account_access_authorization("product.dot", "target.dot");
-		let other_target = CoreStorageKey::account_access_authorization("product.dot", "other.dot");
+		let identity =
+			CoreStorageKey::identity_disclosure_authorization(&ProductId::for_test("product.dot"));
+		let other_product_identity =
+			CoreStorageKey::identity_disclosure_authorization(&ProductId::for_test("other.dot"));
+		let account_access = CoreStorageKey::account_access_authorization(
+			&ProductId::for_test("product.dot"),
+			&ProductId::for_test("target.dot"),
+		);
+		let other_target = CoreStorageKey::account_access_authorization(
+			&ProductId::for_test("product.dot"),
+			&ProductId::for_test("other.dot"),
+		);
 
 		assert_ne!(camera, other_product);
 		assert_ne!(camera, remote);
@@ -2610,9 +2416,12 @@ mod tests {
 		// A canonicalized bundle keys the same as the candidate list built from
 		// a live host, which is what makes the grant visible to enforcement.
 		assert_eq!(
-			CoreStorageKey::remote_domain_authorization("product.dot", "API.Example.COM."),
 			CoreStorageKey::remote_domain_authorization(
-				"product.dot",
+				&ProductId::for_test("product.dot"),
+				"API.Example.COM."
+			),
+			CoreStorageKey::remote_domain_authorization(
+				&ProductId::for_test("product.dot"),
 				&remote_domain_candidates("api.example.com.")[0]
 			)
 		);
@@ -2623,9 +2432,12 @@ mod tests {
 		// Enforcement keys a single host; a product granting that one domain
 		// must land in the same slot, or the grant is invisible to the gate.
 		assert_eq!(
-			CoreStorageKey::remote_domain_authorization("product.dot", "Example.COM"),
+			CoreStorageKey::remote_domain_authorization(
+				&ProductId::for_test("product.dot"),
+				"Example.COM"
+			),
 			CoreStorageKey::remote_permission_authorization(
-				"product.dot",
+				&ProductId::for_test("product.dot"),
 				&RemotePermissionRequest {
 					permission: RemotePermission::Remote {
 						domains: vec!["example.com".to_string()],
@@ -2634,12 +2446,24 @@ mod tests {
 			)
 		);
 		assert_ne!(
-			CoreStorageKey::remote_domain_authorization("product.dot", "example.com"),
-			CoreStorageKey::remote_domain_authorization("product.dot", "*.example.com")
+			CoreStorageKey::remote_domain_authorization(
+				&ProductId::for_test("product.dot"),
+				"example.com"
+			),
+			CoreStorageKey::remote_domain_authorization(
+				&ProductId::for_test("product.dot"),
+				"*.example.com"
+			)
 		);
 		assert_ne!(
-			CoreStorageKey::remote_domain_authorization("product.dot", "example.com"),
-			CoreStorageKey::remote_domain_authorization("other.dot", "example.com")
+			CoreStorageKey::remote_domain_authorization(
+				&ProductId::for_test("product.dot"),
+				"example.com"
+			),
+			CoreStorageKey::remote_domain_authorization(
+				&ProductId::for_test("other.dot"),
+				"example.com"
+			)
 		);
 	}
 
@@ -2656,8 +2480,14 @@ mod tests {
 			},
 		};
 		assert_eq!(
-			CoreStorageKey::remote_permission_authorization("product.dot", &unsorted),
-			CoreStorageKey::remote_permission_authorization("product.dot", &sorted)
+			CoreStorageKey::remote_permission_authorization(
+				&ProductId::for_test("product.dot"),
+				&unsorted
+			),
+			CoreStorageKey::remote_permission_authorization(
+				&ProductId::for_test("product.dot"),
+				&sorted
+			)
 		);
 
 		let mixed = RemotePermissionRequest {
@@ -2671,8 +2501,14 @@ mod tests {
 			},
 		};
 		assert_eq!(
-			CoreStorageKey::remote_permission_authorization("product.dot", &mixed),
-			CoreStorageKey::remote_permission_authorization("product.dot", &canonical)
+			CoreStorageKey::remote_permission_authorization(
+				&ProductId::for_test("product.dot"),
+				&mixed
+			),
+			CoreStorageKey::remote_permission_authorization(
+				&ProductId::for_test("product.dot"),
+				&canonical
+			)
 		);
 	}
 
@@ -2688,16 +2524,23 @@ mod tests {
 				domains: vec!["x".into(), "y".into(), "z".into()],
 			},
 		};
-		let injecting_key =
-			CoreStorageKey::remote_permission_authorization("product.dot", &injecting);
-		let benign_key =
-			CoreStorageKey::remote_permission_authorization("product.dot", &benign_same_set);
+		let injecting_key = CoreStorageKey::remote_permission_authorization(
+			&ProductId::for_test("product.dot"),
+			&injecting,
+		);
+		let benign_key = CoreStorageKey::remote_permission_authorization(
+			&ProductId::for_test("product.dot"),
+			&benign_same_set,
+		);
 		assert_ne!(injecting_key, benign_key);
 
 		let webrtc = RemotePermissionRequest { permission: RemotePermission::WebRtc };
 		assert_ne!(
 			injecting_key,
-			CoreStorageKey::remote_permission_authorization("product.dot", &webrtc)
+			CoreStorageKey::remote_permission_authorization(
+				&ProductId::for_test("product.dot"),
+				&webrtc
+			)
 		);
 
 		let injecting_reordered = RemotePermissionRequest {
@@ -2707,7 +2550,10 @@ mod tests {
 		};
 		assert_eq!(
 			injecting_key,
-			CoreStorageKey::remote_permission_authorization("product.dot", &injecting_reordered)
+			CoreStorageKey::remote_permission_authorization(
+				&ProductId::for_test("product.dot"),
+				&injecting_reordered
+			)
 		);
 	}
 
@@ -2718,11 +2564,11 @@ mod tests {
 	fn review_discriminants_do_not_move() {
 		let discriminants = [
 			UserConfirmationReview::AccountAccess(AccountAccessReview {
-				requesting_product_id: "caller.dot".to_string(),
-				target_product_id: "target.dot".to_string(),
+				requesting_product_id: ProductId::for_test("caller.dot"),
+				target_product_id: ProductId::for_test("target.dot"),
 			}),
 			UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
-				product_id: "caller.dot".to_string(),
+				product_id: ProductId::for_test("caller.dot"),
 			}),
 		]
 		.map(|review| review.encode()[0]);
@@ -2740,7 +2586,7 @@ mod tests {
 /// they accumulate for the life of the install.
 ///
 /// [`describe_core_storage_key`] names the product owning a slot:
-/// [`CoreStorageKeyDescription::product_id`] is `Some` exactly for the
+/// [`CoreStorageKeyDescription::owner`] names a full product for the
 /// product-indexed variants, which are `PermissionAuthorization`,
 /// `AutoSigningKey`, and `ProductSubtree`. Keying host storage by that value
 /// makes the sweep a prefix delete rather than a scan.
@@ -2867,7 +2713,7 @@ pub enum SignPayloadReview {
 		/// relayed request, which carries no caller identity. A caller other
 		/// than the account's own product is acting under that product's
 		/// `context` grant, and the user is the one who has to see that.
-		calling_product_id: Option<String>,
+		calling_product_id: Option<ProductId>,
 		/// Signing request.
 		request: HostSignPayloadRequest,
 	},
@@ -2885,7 +2731,7 @@ pub enum SignRawReview {
 	Product {
 		/// Product that asked, when the request carries a caller. See
 		/// [`SignPayloadReview::Product`].
-		calling_product_id: Option<String>,
+		calling_product_id: Option<ProductId>,
 		/// Raw signing request.
 		request: HostSignRawRequest,
 		/// Whether the signer applies the `<Bytes>` transaction-payload protection.
@@ -2909,7 +2755,7 @@ pub enum SignRawReview {
 pub struct StatementStoreProductSignReview {
 	/// Product that asked, when the request carries a caller. See
 	/// [`SignPayloadReview::Product`].
-	pub calling_product_id: Option<String>,
+	pub calling_product_id: Option<ProductId>,
 	/// Product account that will sign the statement payload.
 	pub account: ProductAccountId,
 	/// Exact unsigned statement payload to be signed.
@@ -2924,7 +2770,7 @@ pub enum CreateTransactionReview {
 	Product {
 		/// Product that asked, when the request carries a caller. See
 		/// [`SignPayloadReview::Product`].
-		calling_product_id: Option<String>,
+		calling_product_id: Option<ProductId>,
 		/// Transaction request.
 		payload: ProductAccountTxPayload,
 	},
@@ -2937,7 +2783,7 @@ pub enum CreateTransactionReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct AccountAliasReview {
 	/// Product requesting the alias.
-	pub calling_product_id: String,
+	pub calling_product_id: ProductId,
 	/// Product-scoped context the alias is bound to.
 	pub context: ProductProofContext,
 	/// Ring the alias is derived against.
@@ -2949,7 +2795,7 @@ pub struct AccountAliasReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct CreateProofReview {
 	/// Product requesting the proof.
-	pub calling_product_id: String,
+	pub calling_product_id: ProductId,
 	/// Product-scoped context the proof's alias is bound to.
 	pub context: ProductProofContext,
 	/// Ring the proof is generated against.
@@ -2963,7 +2809,7 @@ pub struct CreateProofReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct SignVrfReview {
 	/// Product making the request.
-	pub calling_product_id: String,
+	pub calling_product_id: ProductId,
 	/// Product account and exact ordered transcript.
 	pub request: HostAccountSignVrfRequest,
 }
@@ -2975,7 +2821,7 @@ pub struct SignVrfReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ResourceAllocationReview {
 	/// Product the allocation is requested for.
-	pub calling_product_id: String,
+	pub calling_product_id: ProductId,
 	/// Resources to allocate.
 	pub resources: Vec<AllocatableResource>,
 }
@@ -2985,9 +2831,9 @@ pub struct ResourceAllocationReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct AccountAccessReview {
 	/// Product currently handling the request.
-	pub requesting_product_id: String,
+	pub requesting_product_id: ProductId,
 	/// Product whose account is being requested.
-	pub target_product_id: String,
+	pub target_product_id: ProductId,
 }
 
 /// Review shown before a product learns the user's primary identity.
@@ -2995,7 +2841,7 @@ pub struct AccountAccessReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct IdentityDisclosureReview {
 	/// Product currently handling the request.
-	pub product_id: String,
+	pub product_id: ProductId,
 }
 
 /// Review shown before a product resolves its own account subtree over SSO,
@@ -3004,7 +2850,44 @@ pub struct IdentityDisclosureReview {
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ProductSubtreeReview {
 	/// Product resolving its own account.
-	pub product_id: String,
+	pub product_id: ProductId,
+}
+
+/// Review shown before a product moves items out of an NFT purse it does
+/// not own: Root's, or another product's.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct NftPurseDrainReview {
+	/// Product making the request.
+	pub calling_product_id: ProductId,
+	/// Purse the items leave.
+	pub from_purse: u32,
+	/// Who owns that purse.
+	pub owner: NftPurseOwner,
+	/// How many items leave it.
+	pub item_count: u32,
+	/// Where they go.
+	pub destination: NftPurseDrainDestination,
+}
+
+/// Where items drained from a purse go.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum NftPurseDrainDestination {
+	/// Fresh keys of this purse.
+	Purse {
+		/// The purse's id.
+		purse: u32,
+	},
+	/// This key, outside every purse.
+	ExternalKey {
+		/// The key's public bytes.
+		key: Bytes32,
+	},
+	/// A cheque the product delivers to its recipient.
+	Cheque,
+	/// The keys of a deposited cheque, back to its sender.
+	Refund,
 }
 
 /// Review shown before a user-confirmed core action continues.
@@ -3039,6 +2922,9 @@ pub enum UserConfirmationReview {
 	/// Resolve a product's own account subtree over SSO.
 	#[codec(index = 11)]
 	ProductSubtree(ProductSubtreeReview),
+	/// Move items out of an NFT purse the product does not own.
+	#[codec(index = 12)]
+	NftPurseDrain(NftPurseDrainReview),
 }
 
 /// Local user confirmation UI for sensitive core-owned operations.
@@ -3086,10 +2972,11 @@ pub trait LocaleHost: Send + Sync {
 /// content retrieval (P2P/IPFS lookup).
 #[async_trait]
 pub trait PreimageHost: Send + Sync {
-	/// Emits current value/miss immediately, then future updates.
+	/// Emits current value/miss immediately, then future updates. `key` is
+	/// the blake2b-256 digest of the preimage.
 	fn lookup_preimage(
 		&self,
-		key: Vec<u8>,
+		key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, GenericError>>;
 }
 
@@ -3157,48 +3044,6 @@ pub trait ChatPlatform: Send + Sync {
 		&self,
 		product: &ProductContext,
 	) -> BoxStream<'static, Result<HostChatListSubscribeItem, GenericError>>;
-}
-
-/// A funding session as the host overlay needs it to open on the right screen.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FundingPresentation {
-	/// Session id.
-	pub intent: String,
-	/// Which way value moves, which decides the screen the overlay opens on.
-	pub direction: FundingDirection,
-	/// Amount the caller asked for, or `None` to let the user choose.
-	pub amount: Option<u128>,
-}
-
-/// How the user left the funding overlay.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
-pub enum FundingPresentOutcome {
-	/// The user went ahead; the session runs on without the overlay.
-	Started,
-	/// The user closed the overlay before starting; the core discards the
-	/// session.
-	Dismissed,
-}
-
-/// Host-implemented funding surface: the native overlay a funding session
-/// runs in. Optional: a host that omits it leaves funding requests answered
-/// `Unsupported`.
-#[async_trait]
-pub trait FundingPlatform: Send + Sync {
-	/// Show the funding overlay for a session that `product` opened, or the
-	/// host itself when `product` is `None`.
-	async fn present_funding(
-		&self,
-		product: Option<&ProductContext>,
-		session: FundingPresentation,
-	) -> Result<FundingPresentOutcome, GenericError>;
-
-	/// Observe a session's status change, for host UI such as the in-flight
-	/// pill.
-	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
-		let _ = (intent, status);
-	}
 }
 
 /// Host-implemented balance view: what a payment request can spend right now,
@@ -3273,6 +3118,59 @@ pub trait PaymentPlatform: Send + Sync {
 		product: &ProductContext,
 		id: Bytes32,
 	) -> BoxStream<'static, Result<HostPaymentStatusSubscribeItem, HostPaymentStatusSubscribeError>>;
+}
+
+/// A funding session as the host overlay needs it to open on the right screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FundingPresentation {
+	/// Session id.
+	pub intent: String,
+	/// Which way value moves, which decides the screen the overlay opens on.
+	pub direction: FundingDirection,
+	/// Amount the caller asked for, or `None` to let the user choose.
+	pub amount: Option<u128>,
+}
+
+/// How the user left the funding overlay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum FundingPresentOutcome {
+	/// The user went ahead; the session runs on without the overlay.
+	Started,
+	/// The user closed the overlay before starting; the core discards the
+	/// session.
+	Dismissed,
+}
+
+/// Host-implemented funding surface: the native overlay a funding session
+/// runs in. Optional: a host that omits it leaves funding requests answered
+/// `Unsupported`.
+#[async_trait]
+pub trait FundingPlatform: Send + Sync {
+	/// Show the funding overlay for a session that `product` opened, or the
+	/// host itself when `product` is `None`.
+	async fn present_funding(
+		&self,
+		product: Option<&ProductContext>,
+		session: FundingPresentation,
+	) -> Result<FundingPresentOutcome, GenericError>;
+
+	/// Show `target` for `provider`'s session `intent` in a frame the host
+	/// owns, and answer once it closes. A page is an https URL the core has
+	/// checked: the host shows its origin, and closes the frame with
+	/// `Returned` when the page reaches its return URL.
+	async fn present_provider_frame(
+		&self,
+		provider: &ProductContext,
+		intent: String,
+		target: truapi::latest::FundingFrameTarget,
+	) -> Result<truapi::latest::FundingFrameOutcome, GenericError>;
+
+	/// Observe a session's status change, for host UI such as the in-flight
+	/// pill.
+	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
+		let _ = (intent, status);
+	}
 }
 
 /// Host-implemented adapter through which product Pocket calls reach the
@@ -3542,9 +3440,8 @@ pub enum HostScan {
 	/// The device has no camera, or the user refused the host application one.
 	/// The host has already told the user how to turn it on.
 	CameraUnavailable,
-	/// The requesting App or Widget is not the screen the user sees, so the
-	/// host opened nothing. A Worker's request was already checked by the core
-	/// and is never answered this way.
+	/// The requesting App or Widget is not the screen the user sees, or the
+	/// host application is not in front, so the host opened nothing.
 	NotVisible,
 }
 
@@ -3554,8 +3451,9 @@ pub enum HostScan {
 /// - Title the viewfinder with the product id. Show `request.hint` under it as the product's words.
 /// - Pass every code the camera reads to a `ScanFilter` built from `request`, and never follow a
 ///   scanned link.
-/// - Answer [`HostScan::NotVisible`] for an App or Widget that is not on screen. A Worker reaching
-///   the host already passed the core's tap check.
+/// - Answer [`HostScan::NotVisible`] for an App or Widget that is not on screen, or for any product
+///   while the host application is not in front. A Worker reaching the host already passed the
+///   core's tap check.
 /// - Close the viewfinder when the core drops the future, and close any still open before opening
 ///   another. A JS host is not told about a drop.
 #[async_trait]
@@ -3576,6 +3474,7 @@ pub trait Platform:
 	+ Notifications
 	+ Permissions
 	+ Features
+	+ ExtrinsicVersionHost
 	+ ProductStorage
 	+ CoreStorage
 	+ ChainProvider
@@ -3593,6 +3492,7 @@ impl<T> Platform for T where
 		+ Notifications
 		+ Permissions
 		+ Features
+		+ ExtrinsicVersionHost
 		+ ProductStorage
 		+ CoreStorage
 		+ ChainProvider

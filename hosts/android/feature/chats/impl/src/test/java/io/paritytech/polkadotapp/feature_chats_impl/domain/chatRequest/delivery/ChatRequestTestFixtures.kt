@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_chats_impl.domain.chatRequest.delivery
 import io.mockk.every
 import io.mockk.mockk
 import io.novasama.substrate_sdk_android.encrypt.keypair.substrate.Sr25519Keypair
+import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatRequest
 
 fun outgoingRequest(id: String, delivery: ChatRequest.Delivery): ChatRequest = ChatRequest(
@@ -12,6 +13,10 @@ fun outgoingRequest(id: String, delivery: ChatRequest.Delivery): ChatRequest = C
     status = ChatRequest.Status.PENDING,
     delivery = delivery,
 )
+
+fun deliverySigner(delivery: ChatRequest.Delivery, seed: Byte = 7): ChatRequestDeliverySigner {
+    return ChatRequestDeliverySigner(mockk(), ByteArray(32) { seed }.toDataByteArray(), delivery)
+}
 
 fun deliveryAccount(seed: Byte, period: UInt): ChatRequestDeliveryAccount {
     val keypair: Sr25519Keypair = mockk { every { publicKey } returns ByteArray(32) { seed } }

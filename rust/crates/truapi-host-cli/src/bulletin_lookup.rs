@@ -3,8 +3,7 @@
 //! Transaction storage serves every blob a node retains over bitswap, and the node exposes that
 //! on its JSON-RPC as `bitswap_v1_get(cid)`. The CID is fixed by the key: CIDv1, the `raw`
 //! codec, and the blake2b-256 multihash that is the preimage key itself. A lookup is therefore
-//! one round trip to the endpoint the network preset already names for the chain, and the host
-//! needs no IPFS stack of its own.
+//! one round trip to the network's Bulletin chain, and the host needs no IPFS stack of its own.
 //!
 //! A subscription emits the current answer at once. On a miss it keeps asking every
 //! [`POLL_INTERVAL`] until the blob appears, since a submission from another host lands within
@@ -29,6 +28,8 @@ use subxt_rpcs::{
 use tokio::sync::Mutex as AsyncMutex;
 use tracing::{debug, info, warn};
 use truapi::{latest as api, preimage_cid, preimage_key};
+
+use crate::chain::CliChainProvider;
 
 /// How long a miss waits before asking the node again: about one Bulletin block.
 const POLL_INTERVAL: Duration = Duration::from_secs(6);
@@ -59,17 +60,19 @@ pub trait BlobSource: Send + Sync {
 	async fn get(&self, cid: &str) -> Result<Option<Vec<u8>>, SourceError>;
 }
 
-/// `bitswap_v1_get` on a Bulletin node's JSON-RPC. The connection is opened on first use and
+/// `bitswap_v1_get` on the Bulletin chain's JSON-RPC. The connection is opened on first use and
 /// dropped after a transport failure, so the next call reconnects.
 pub struct BitswapRpc {
-	url: &'static str,
+	chains: Arc<CliChainProvider>,
+	bulletin_genesis: [u8; 32],
 	client: AsyncMutex<Option<RpcClient>>,
 }
 
 impl BitswapRpc {
-	/// A source for the Bulletin node at `url`. Nothing connects before the first lookup.
-	pub fn new(url: &'static str) -> Self {
-		Self { url, client: AsyncMutex::new(None) }
+	/// A source for the Bulletin chain `chains` routes `bulletin_genesis` to. Nothing connects
+	/// before the first lookup.
+	pub fn new(chains: Arc<CliChainProvider>, bulletin_genesis: [u8; 32]) -> Self {
+		Self { chains, bulletin_genesis, client: AsyncMutex::new(None) }
 	}
 
 	async fn client(&self) -> Result<RpcClient, SourceError> {
@@ -77,10 +80,16 @@ impl BitswapRpc {
 		if let Some(client) = slot.as_ref() {
 			return Ok(client.clone());
 		}
-		let client = tokio::time::timeout(RPC_TIMEOUT, RpcClient::from_insecure_url(self.url))
-			.await
-			.map_err(|_| SourceError::Transient(format!("connecting to {} timed out", self.url)))?
-			.map_err(|err| SourceError::Transient(format!("connecting to {}: {err}", self.url)))?;
+		let location = self.chains.location(self.bulletin_genesis);
+		let client =
+			tokio::time::timeout(RPC_TIMEOUT, self.chains.rpc_client(self.bulletin_genesis))
+				.await
+				.map_err(|_| {
+					SourceError::Transient(format!("connecting to Bulletin ({location}) timed out"))
+				})?
+				.map_err(|err| {
+					SourceError::Transient(format!("connecting to Bulletin ({location}): {err}"))
+				})?;
 		*slot = Some(client.clone());
 		Ok(client)
 	}
@@ -155,12 +164,8 @@ impl<S: BlobSource + 'static> BulletinLookup<S> {
 	/// then the value once it can be read, then the end.
 	pub fn subscribe(
 		self: &Arc<Self>,
-		key: Vec<u8>,
+		key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, api::GenericError>> {
-		let Ok(key) = <[u8; 32]>::try_from(key.as_slice()) else {
-			// Not a blake2b-256 digest, so nothing can ever hash to it.
-			return stream::once(future::ready(Ok(None))).boxed();
-		};
 		let lookup = Arc::clone(self);
 		async move {
 			let cid = preimage_cid(&key);
@@ -264,10 +269,10 @@ mod tests {
 	/// Every item of the subscription, errors by their reason.
 	async fn events(
 		lookup: &Arc<BulletinLookup<Scripted>>,
-		key: &[u8],
+		key: &[u8; 32],
 	) -> Vec<Result<Option<Vec<u8>>, String>> {
 		lookup
-			.subscribe(key.to_vec())
+			.subscribe(*key)
 			.map(|item| item.map_err(|error| error.reason))
 			.collect()
 			.await
@@ -328,12 +333,6 @@ mod tests {
 			vec![Ok(None), Err("invalid CID".to_string())]
 		);
 		assert_eq!(calls(&lookup), 2);
-	}
-
-	#[tokio::test]
-	async fn a_key_that_is_not_a_digest_is_a_miss_and_the_end() {
-		let lookup = scripted(vec![]);
-		assert_eq!(events(&lookup, &[9]).await, vec![Ok(None)]);
 	}
 
 	/// The bitswap spec makes only the code stable, and `Fail` covers data that is not held yet,

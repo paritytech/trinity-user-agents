@@ -105,7 +105,8 @@ updates it. Nothing contacts GitHub.
 ### State directory
 
 Reserved identities derive under `uid.paseo` / `peopl.paseo` on
-`paseo-next-v2`, and `uid.testnet` / `peopl.testnet` on `previewnet`.
+`paseo-next-v2`, `uid.testnet` / `peopl.testnet` on `previewnet`, and
+`uid.dot` / `peopl.dot` on `polkadot`.
 Managed host state lives under `<base-path>/v2`, including accounts,
 sessions, pairings, core and product storage, and log
 preferences. The CLI appends `v2` to both the default base path and a path set
@@ -1024,7 +1025,11 @@ HOST_CLI_SIGNER_MNEMONIC="spin battle …" truapi-host signing-host --deeplink '
 truapi-host alloc-check --mnemonic "spin battle …" --lookback 100
 ```
 
-Both hosts take `--network`, either `paseo-next-v2` (default) or `previewnet`.
+Both hosts take `--network`: `paseo-next-v2` (default), `previewnet`, or
+`polkadot` (mainnet). Mainnet identities are real, so `polkadot` signs only with
+`--mnemonic` / `HOST_CLI_SIGNER_MNEMONIC`, never stores an account, never
+auto-approves, refuses `--product-config` and `attest`, and has no identity backend unless
+`HOST_CLI_IDENTITY_BACKEND_BASE` names one (SPEC.md §14.1).
 The network preset owns the identity backend URL, the People, Bulletin and Asset
 Hub RPCs, and their genesis hashes; there is
 no public `--statement-store` flag. Pick `previewnet` when a product's runtime
@@ -1048,6 +1053,13 @@ candidate account. The automatically minted token uses that identity; and
 discovery (see SPEC.md §21). Both also accept `--frame-listen <address>`
 to opt into a TCP product-frame WebSocket; without it, the CLI creates and
 cleans up a unique temporary Unix socket.
+
+`--chain-backend light-client` (or `TRUAPI_CHAIN_BACKEND=light-client`) syncs the
+chains with the embedded light client instead of dialing the preset's RPC nodes,
+for when public nodes refuse the host, such as a rate-limited CI runner. Every
+command uses the selected backend. The light client is slower than RPC,
+supports only `paseo-next-v2` and `previewnet`, and drops PGAS claims, so
+`pgas-check --submit` refuses to run on it (SPEC.md §14.3).
 
 ## Serving a dev server (one process, no terminal)
 
@@ -1101,10 +1113,10 @@ one-shot modes.
 
 ## Scope / gaps
 
-- **Chain methods** route to real `wss://` nodes from the selected `--network`.
-  Every role the preset serves is routed unconditionally; `E2E_LIVE_CHAIN=1` only
-  widens routing to endpoints it carries without serving. A rustls crypto provider is
-  installed at startup for the TLS connections.
+- **Chain methods** route to real `wss://` nodes from the selected `--network`,
+  or to the light client (`--chain-backend`). Every role the preset serves is
+  routed unconditionally; `E2E_LIVE_CHAIN=1` only widens routing to endpoints it
+  carries without serving.
 - **Ring-VRF product-account aliases and proofs** are implemented by the
   signing host via the `verifiable` crate (`get_account_alias` and
   `create_account_proof`).

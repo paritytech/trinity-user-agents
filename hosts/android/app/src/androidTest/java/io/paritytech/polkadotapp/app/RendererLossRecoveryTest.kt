@@ -11,13 +11,13 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import dagger.hilt.android.testing.HiltAndroidTest
 import io.mockk.coEvery
 import io.mockk.mockk
 import io.parity.truapi.HostBridge
 import io.parity.truapi.LocalhostBridgeBootstrap
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.common.utils.RealCoroutineDispatchers
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.WebViewProvider
@@ -33,13 +33,15 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import kotlin.io.path.createTempDirectory
 
+@HiltAndroidTest
 @RunWith(AndroidJUnit4::class)
-class RendererLossRecoveryTest {
+class RendererLossRecoveryTest : BaseIntegrationTest() {
     // A renderer can die while the product sits in the background. Android never revives that
     // WebView, so the product only comes back if a fresh one loads the route it was on with the
     // same bootstrap and reconnects to the execution it already has.
@@ -52,14 +54,14 @@ class RendererLossRecoveryTest {
         val reports = Reports()
         val bridge = mockk<HostBridge>(relaxed = true) { coEvery { coreStorage.read(any()) } returns null }
         TrUAPIHostRuntime(bridge, CONFIG).use { runtime ->
-            runtime.openProductExecution(bridge, ProductExecutionConfig(PRODUCT, ProductExecutionKind.APP)).use { execution ->
+            runtime.openProductExecution(bridge, ProductExecutionConfig(PRODUCT, ExecutableKind.APP)).use { execution ->
                 val endpoint = execution.startWsBridge()
                 val provider = PageProvider(context, scope)
                 try {
                     val first = runBlocking {
                         provider.addWebViewSetup { it.addJavascriptInterface(reports, "report") }
                         provider.addWebViewSetup(
-                            TrUAPIBootstrapInstaller(context).installerFor(setOf(ORIGIN))(
+                            TrUAPIBootstrapInstaller(context).installerFor(setOf(ORIGIN), "renderer-loss-test")(
                                 LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token),
                             ),
                         )
@@ -86,7 +88,7 @@ class RendererLossRecoveryTest {
         private val context: Context,
         private val scope: CoroutineScope,
     ) : WebViewProvider(RealCoroutineDispatchers()) {
-        override val callingProductIdProvider = FixedProductId(ProductId.fromStoredValue(PRODUCT))
+        override val callingProductIdProvider = FixedProductId(PRODUCT)
 
         override suspend fun createWebView() = WebView(context).apply {
             settings.javaScriptEnabled = true
@@ -120,7 +122,7 @@ class RendererLossRecoveryTest {
             }
         }
 
-        private const val PRODUCT = "recovery.paseo"
+        private val PRODUCT = ProductId.parse("recovery.paseo").getOrThrow()
         private const val ORIGIN = "http://localhost"
         private const val PAGE_URL = "$ORIGIN/"
         private val CONFIG = HostRuntimeConfig(

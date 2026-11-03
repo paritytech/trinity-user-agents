@@ -67,7 +67,10 @@ struct CoinageBalanceBreakdownView: View {
                     // the top row dart upwards and come back. Held at one size there is no mapping to
                     // get wrong, and the card closes over the coins by clipping them.
                     .frame(height: drawHeight, alignment: .top)
-                    .overlay(alignment: .topLeading) { blockHeaders }
+                    // Behind the coins, not over them: the surface is clear wherever no coin is
+                    // drawn, so the headers show through the gaps the layout left for them, and a
+                    // picked coin flying across a header passes in front of it.
+                    .background(alignment: .topLeading) { blockHeaders }
                     .overlay(alignment: .topLeading) { tracePanel }
                     // What the card gives the coins, which is what animates. Expanding is deliberately
                     // not animated: it takes its full height at once, so the coins fly out into a box

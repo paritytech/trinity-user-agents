@@ -31,7 +31,7 @@ pub use crate::{
 	host_internal::sso_messages::SsoRequestOutcome,
 	host_logic::{
 		dev_server::{DevServerError, DevServerProduct},
-		dotns::{NavigateDecision, PocketDeeplinkAction},
+		dotns::{NavigateDecision, PocketDeeplinkAction, ProductLink},
 		scanner::{ScanFilter, ScanVerdict},
 	},
 };
@@ -56,15 +56,27 @@ use truapi::latest;
 
 #[cfg(doc)]
 use crate::SigningHostRuntime;
-use crate::{PairingProposal, host_logic::dotns};
+use crate::{PairingProposal, ProductId, ProductIdError, host_logic::dotns};
 
 /// Classify a navigation input exactly like the core's internal navigate host
-/// call: dotNS first, then `localhost`, then normalized external, with
-/// everything else rejected. Pure and stateless; hosts call it on every
-/// webview-internal navigation.
+/// call: the Pocket deeplink first, then dotNS, then `localhost`, then
+/// normalized external, with everything else rejected. Pure and stateless;
+/// hosts call it on every webview-internal navigation.
 #[uniffi::export]
 pub fn parse_navigate(input: String) -> NavigateDecision {
 	dotns::parse_navigate(&input)
+}
+
+/// The canonical app scheme used for deeplinks and native handoffs.
+#[uniffi::export]
+pub fn app_deeplink_scheme() -> String {
+	dotns::APP_SCHEME.to_owned()
+}
+
+/// The internal scheme under which native hosts serve product content.
+#[uniffi::export]
+pub fn product_content_scheme() -> String {
+	dotns::PRODUCT_SCHEME.to_owned()
 }
 
 /// The `@parity/truapi-host` release this core was built from, which the
@@ -72,6 +84,78 @@ pub fn parse_navigate(input: String) -> NavigateDecision {
 #[uniffi::export]
 pub fn truapi_host_version() -> String {
 	env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Validate and normalize an identifier before storing it in a native value.
+#[uniffi::export]
+pub fn parse_product_id(input: String) -> Result<ProductId, ProductIdError> {
+	input.parse()
+}
+
+/// Construct a product name on an explicitly supplied network.
+#[uniffi::export]
+pub fn product_id_from_name(
+	name: String,
+	network_suffix: String,
+) -> Result<ProductId, ProductIdError> {
+	ProductId::from_name(&name, &network_suffix)
+}
+
+/// The complete dotNS name above the network suffix, including nested labels.
+#[uniffi::export]
+pub fn product_id_name(product_id: ProductId) -> Option<String> {
+	product_id.dotns_name().map(str::to_owned)
+}
+
+/// Check a product against an explicitly supplied network suffix.
+#[uniffi::export]
+pub fn product_id_matches_network(product_id: ProductId, network_suffix: String) -> bool {
+	product_id.matches_network(&network_suffix)
+}
+
+/// Name an executable under its product's full dotNS namespace.
+#[uniffi::export]
+pub fn product_id_executable(
+	product_id: ProductId,
+	kind: crate::platform::ExecutableKind,
+) -> Result<ProductId, ProductIdError> {
+	product_id.executable(kind)
+}
+
+/// The manifest discriminator and dotNS prefix for an executable kind.
+#[uniffi::export]
+pub fn executable_kind_label(kind: crate::platform::ExecutableKind) -> String {
+	kind.dotns_label().to_owned()
+}
+
+/// Resolve an executable identity to its owning product without losing nested labels.
+#[uniffi::export]
+pub fn product_id_owner(product_id: ProductId) -> Result<ProductId, ProductIdError> {
+	product_id.executable_owner()
+}
+
+/// Normalize a product link only when its network matches the supplied suffix.
+#[uniffi::export]
+pub fn parse_product_link(input: String, network_suffix: String) -> Option<ProductLink> {
+	ProductLink::parse(&input, &network_suffix)
+}
+
+/// Recognize a supported share host without consulting host configuration.
+#[uniffi::export]
+pub fn parse_product_share_host(input: String) -> Option<ProductId> {
+	ProductId::from_share_host(&input)
+}
+
+/// The public share host for this identity, excluding local development.
+#[uniffi::export]
+pub fn product_id_share_host(product_id: ProductId) -> Option<String> {
+	product_id.to_share_host()
+}
+
+/// Share domains recognized by the canonical Rust parser.
+#[uniffi::export]
+pub fn product_share_hosts() -> Vec<String> {
+	dotns::product_share_hosts()
 }
 
 /// The development product a debug build opens for an address the developer
@@ -113,7 +197,7 @@ pub fn localhost_bridge_bootstrap_script(port: u16, token: String) -> String {
 #[uniffi::export]
 pub fn parse_pairing_deeplink(deeplink: String) -> Result<PairingProposal, NativePairingError> {
 	PairingProposal::from_deeplink(&deeplink)
-		.map_err(|reason| NativePairingError::UndecodableDeeplink { reason })
+		.map_err(|error| NativePairingError::UndecodableDeeplink { reason: error.to_string() })
 }
 
 /// Refuse a deeplink the core's decoder would refuse anyway, so the caller
@@ -122,7 +206,7 @@ pub fn parse_pairing_deeplink(deeplink: String) -> Result<PairingProposal, Nativ
 fn reject_undecodable_deeplink(deeplink: &str) -> Result<(), NativePairingError> {
 	PairingProposal::from_deeplink(deeplink)
 		.map(|_| ())
-		.map_err(|reason| NativePairingError::UndecodableDeeplink { reason })
+		.map_err(|error| NativePairingError::UndecodableDeeplink { reason: error.to_string() })
 }
 
 /// Largest nesting a face may carry, matching what the core accepts on the
@@ -285,23 +369,34 @@ pub fn screen_pocket_card_title(title: String) -> Result<String, NativeChatField
 	crate::platform::validate_chat_name("title", &title).map_err(Into::into)
 }
 
+/// Screen a product-supplied chat icon with the rules `create_room` and
+/// `register_bot` apply.
+///
+/// Hosts call this wherever they take a room icon from a product instead of
+/// screening it themselves: the rules are the core's, and a host that guesses
+/// at them draws icons the core refused. An absent icon screens to the empty
+/// string.
+#[uniffi::export]
+pub fn screen_chat_icon(icon: String) -> Result<String, NativeChatFieldError> {
+	crate::platform::validate_chat_icon("icon", &icon).map_err(Into::into)
+}
+
 /// Whether `product_id` is a first-party product the host grants every
 /// [`truapi::latest::RemotePermission`] without prompting.
 ///
-/// Blessed products bypass recorded permissions. Only device permissions require
-/// consent. Hosts mediating product network access can use this check before storage.
-///
-/// Normalizes before matching, and answers `false` for an id that does not
-/// normalize, so an unknown spelling is never read as trusted.
+/// Trusted products bypass recorded permissions and permission prompts. Device
+/// permissions still need the OS grant. Hosts mediating product network access
+/// can use this check before storage.
 #[uniffi::export]
-pub fn has_trusted_remote_permissions(product_id: String) -> bool {
-	crate::platform::normalizes_to_trusted_remote_permissions(&product_id)
+pub fn has_trusted_remote_permissions(product_id: ProductId) -> bool {
+	product_id.has_trusted_remote_permissions()
 }
 
 /// Set the live log level (`off`/`error`/`warn`/`info`/`debug`/`trace`) for
 /// the `tracing` output, which on native routes to stderr (system logs on
 /// iOS/Android). Most native diagnostics flow through `on_core_log` instead;
 /// this controls the cross-platform `tracing` events shared with wasm.
+/// Warnings and errors reach `on_core_log` as well, whatever this level.
 #[uniffi::export]
 pub fn set_log_level(level: String) {
 	crate::logging::set_level_from_str(&level);

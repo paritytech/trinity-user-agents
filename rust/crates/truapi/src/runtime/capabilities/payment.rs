@@ -5,13 +5,13 @@
 use std::sync::Arc;
 
 use futures::{StreamExt, stream::BoxStream};
+use parity_scale_codec::Encode;
 use tracing::instrument;
 use truapi::{
 	CallContext, CallError, Subscription,
 	api::{CoinPayment, Payment},
 	latest,
 	versioned::{
-		FromLatest, IntoLatest, Versioned,
 		coin_payment::{
 			HostCoinPaymentCreateChequeError, HostCoinPaymentCreateChequeRequest,
 			HostCoinPaymentCreateChequeResponse, HostCoinPaymentCreatePurseError,
@@ -38,14 +38,23 @@ use truapi::{
 	},
 };
 
-use super::from_latest_error;
 use crate::{
+	current_unix_millis,
 	host_internal::{
 		extrinsic::sr25519_secret_from_bytes,
 		permissions::{PermissionsService, TemporaryPermissions},
 	},
-	platform::{PermissionAuthorizationStatus, PermissionStatusHost, Platform, ProductContext},
-	runtime::{ProductRuntimeHost, payment_id::host_payment_id},
+	host_logic::funding::StartRecord,
+	platform::{
+		ExecutableKind, PermissionAuthorizationStatus, PermissionStatusHost, Platform,
+		ProductContext,
+	},
+	runtime::{
+		ProductRuntimeHost,
+		funding::{FundsAsked, StartGuard, engine_holds},
+		payment_id::host_payment_id,
+		versioning::version,
+	},
 };
 
 #[truapi::async_trait]
@@ -56,9 +65,7 @@ impl CoinPayment for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostCoinPaymentCreatePurseRequest,
 	) -> Result<HostCoinPaymentCreatePurseResponse, CallError<HostCoinPaymentCreatePurseError>> {
-		let version = request.version();
-		let _request = request.into_latest();
-		Err(from_latest_error(CallError::Unsupported, version))
+		version(request).exec(|_| async move { Err(CallError::Unsupported) }).await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "coin_payment.query_purse"))]
@@ -67,9 +74,7 @@ impl CoinPayment for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostCoinPaymentQueryPurseRequest,
 	) -> Result<HostCoinPaymentQueryPurseResponse, CallError<HostCoinPaymentQueryPurseError>> {
-		let version = request.version();
-		let _request = request.into_latest();
-		Err(from_latest_error(CallError::Unsupported, version))
+		version(request).exec(|_| async move { Err(CallError::Unsupported) }).await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "coin_payment.rebalance_purse"))]
@@ -81,9 +86,9 @@ impl CoinPayment for ProductRuntimeHost {
 		HostCoinPaymentRebalancePurseItem,
 		CallError<HostCoinPaymentRebalancePurseError>,
 	> {
-		let version = request.version();
-		let _request = request.into_latest();
-		Subscription::interrupted(from_latest_error(CallError::Unsupported, version))
+		version(request)
+			.exec(|_| async move { Subscription::interrupted(CallError::Unsupported) })
+			.await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "coin_payment.delete_purse"))]
@@ -92,9 +97,9 @@ impl CoinPayment for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostCoinPaymentDeletePurseRequest,
 	) -> Subscription<HostCoinPaymentDeletePurseItem, CallError<HostCoinPaymentDeletePurseError>> {
-		let version = request.version();
-		let _request = request.into_latest();
-		Subscription::interrupted(from_latest_error(CallError::Unsupported, version))
+		version(request)
+			.exec(|_| async move { Subscription::interrupted(CallError::Unsupported) })
+			.await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "coin_payment.create_receivable"))]
@@ -106,9 +111,7 @@ impl CoinPayment for ProductRuntimeHost {
 		HostCoinPaymentCreateReceivableResponse,
 		CallError<HostCoinPaymentCreateReceivableError>,
 	> {
-		let version = request.version();
-		let _request = request.into_latest();
-		Err(from_latest_error(CallError::Unsupported, version))
+		version(request).exec(|_| async move { Err(CallError::Unsupported) }).await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "coin_payment.create_cheque"))]
@@ -117,9 +120,7 @@ impl CoinPayment for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostCoinPaymentCreateChequeRequest,
 	) -> Result<HostCoinPaymentCreateChequeResponse, CallError<HostCoinPaymentCreateChequeError>> {
-		let version = request.version();
-		let _request = request.into_latest();
-		Err(from_latest_error(CallError::Unsupported, version))
+		version(request).exec(|_| async move { Err(CallError::Unsupported) }).await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "coin_payment.deposit"))]
@@ -128,9 +129,9 @@ impl CoinPayment for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostCoinPaymentDepositRequest,
 	) -> Subscription<HostCoinPaymentDepositItem, CallError<HostCoinPaymentDepositError>> {
-		let version = request.version();
-		let _request = request.into_latest();
-		Subscription::interrupted(from_latest_error(CallError::Unsupported, version))
+		version(request)
+			.exec(|_| async move { Subscription::interrupted(CallError::Unsupported) })
+			.await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "coin_payment.refund"))]
@@ -139,9 +140,9 @@ impl CoinPayment for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostCoinPaymentRefundRequest,
 	) -> Subscription<HostCoinPaymentRefundItem, CallError<HostCoinPaymentRefundError>> {
-		let version = request.version();
-		let _request = request.into_latest();
-		Subscription::interrupted(from_latest_error(CallError::Unsupported, version))
+		version(request)
+			.exec(|_| async move { Subscription::interrupted(CallError::Unsupported) })
+			.await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "coin_payment.listen_for_payment"))]
@@ -150,9 +151,129 @@ impl CoinPayment for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostCoinPaymentListenForRequest,
 	) -> Subscription<HostCoinPaymentListenForItem, CallError<HostCoinPaymentListenForError>> {
-		let version = request.version();
-		let _request = request.into_latest();
-		Subscription::interrupted(from_latest_error(CallError::Unsupported, version))
+		version(request)
+			.exec(|_| async move { Subscription::interrupted(CallError::Unsupported) })
+			.await
+	}
+}
+
+/// Funds a funding provider's worker is starting for a session it serves,
+/// recorded before the host is asked.
+struct FundingStart {
+	intent: String,
+	host_id: [u8; 32],
+	/// Whether this call recorded them, rather than a call before it.
+	fresh: bool,
+	/// Keeps a second call under the id out until this one finished.
+	_guard: StartGuard,
+}
+
+/// What the host's engine did with funds a worker started for a session.
+enum EngineAnswer {
+	/// It took them.
+	Took,
+	/// It already held funds under the id.
+	Holds,
+	/// It refused them, so nothing moves under the id.
+	Refused,
+	/// It failed without saying whether it took them.
+	Unsure,
+}
+
+impl ProductRuntimeHost {
+	/// Take `host_id` for a call that starts funds outside any funding
+	/// session. Refused with `already_exists` while a call under it is in
+	/// flight or a session holds funds under it.
+	fn begin_plain_start<E>(
+		&self,
+		host_id: [u8; 32],
+		already_exists: E,
+	) -> Result<StartGuard, CallError<E>> {
+		let registry = self.connection.services.funding();
+		let product_id = self.connection.product.product_id.as_str();
+		registry
+			.begin_start(host_id)
+			.filter(|_| !registry.holds_start(product_id, &host_id))
+			.ok_or(CallError::Domain(already_exists))
+	}
+
+	/// Record funds this product's worker starts for funding session
+	/// `intent`, before the host is asked, so its reports can name them once
+	/// the host takes them. `not_served` when the caller is no funding
+	/// provider's worker or does not serve that session in `direction`, or
+	/// the session holds as many funds as it may; `already_exists` when the
+	/// id is held with other terms, by another session, or by the host's
+	/// engine already.
+	async fn begin_funding_start<E>(
+		&self,
+		intent: String,
+		asked: FundsAsked,
+		already_exists: E,
+		not_served: E,
+	) -> Result<FundingStart, CallError<E>> {
+		let host_id = asked.host_id;
+		let registry = self.connection.services.funding();
+		if self.connection.product.execution_kind != ExecutableKind::Worker ||
+			registry.platform().is_none()
+		{
+			return Err(CallError::Domain(not_served));
+		}
+		let Some(guard) = registry.begin_start(host_id) else {
+			return Err(CallError::Domain(already_exists));
+		};
+		let provider_id = self.connection.product.product_id.as_str();
+		// A first call under the id must not take over funds the engine
+		// holds already, which this session never recorded.
+		if !registry.recorded_start(&intent, &host_id) {
+			let held = engine_holds(
+				&self.connection.services,
+				&self.connection.product,
+				asked.direction,
+				host_id,
+			)
+			.await
+			.map_err(|reason| CallError::HostFailure { reason })?;
+			if held {
+				return Err(CallError::Domain(already_exists));
+			}
+		}
+		let recorded = registry
+			.record_start(current_unix_millis(), provider_id, &intent, asked)
+			.await?;
+		match recorded {
+			None | Some(StartRecord::Full) => Err(CallError::Domain(not_served)),
+			Some(StartRecord::Conflict) => Err(CallError::Domain(already_exists)),
+			Some(kind @ (StartRecord::New | StartRecord::Repeat)) => {
+				Ok(FundingStart { intent, host_id, fresh: kind == StartRecord::New, _guard: guard })
+			},
+		}
+	}
+
+	/// Settle the record `start` made by what the engine did: kept as taken
+	/// when it took the funds, or when it holds the id from an earlier call
+	/// that recorded them; dropped when it refused them. A record the engine
+	/// left unsure, or that cannot be stored, is placed later by the
+	/// reconciler, from the engine.
+	async fn finish_funding_start(&self, start: FundingStart, answer: EngineAnswer) {
+		let taken = match answer {
+			EngineAnswer::Took => true,
+			EngineAnswer::Holds => !start.fresh,
+			EngineAnswer::Refused => false,
+			EngineAnswer::Unsure => {
+				drop(start);
+				self.connection.services.funding().wake();
+				return;
+			},
+		};
+		let finished = self
+			.connection
+			.services
+			.funding()
+			.finish_start(current_unix_millis(), &start.intent, start.host_id, taken)
+			.await;
+		if let Err(error) = finished {
+			tracing::warn!(%error, "storing what the host did with started funds failed");
+		}
 	}
 }
 
@@ -165,26 +286,31 @@ impl Payment for ProductRuntimeHost {
 		request: HostPaymentBalanceSubscribeRequest,
 	) -> Subscription<HostPaymentBalanceSubscribeItem, CallError<HostPaymentBalanceSubscribeError>>
 	{
-		let version = request.version();
-		let latest::HostPaymentBalanceSubscribeRequest { purse } = request.into_latest();
-		let Some(platform) = self.connection.services.balance_platform() else {
-			return Subscription::interrupted(CallError::Unsupported);
-		};
-		if let Err(error) = self.require_session() {
-			return Subscription::interrupted(error);
-		}
-		if let Err(error) = self
-			.connection
-			.require_remote_permission(
-				latest::RemotePermission::BalanceAccess,
-				latest::HostPaymentBalanceSubscribeError::PermissionDenied,
-			)
+		version(request)
+			.exec(|latest::HostPaymentBalanceSubscribeRequest { purse }| async move {
+				let Some(platform) = self.connection.services.balance_platform() else {
+					return Subscription::interrupted(CallError::Unsupported);
+				};
+				if let Err(error) = self.require_session() {
+					return Subscription::interrupted(error);
+				}
+				if let Err(error) = self
+					.connection
+					.require_remote_permission(
+						latest::RemotePermission::BalanceAccess,
+						latest::HostPaymentBalanceSubscribeError::PermissionDenied,
+					)
+					.await
+				{
+					return Subscription::interrupted(error);
+				}
+				let balances = platform.subscribe_balance(&self.connection.product, purse);
+				Subscription::new(
+					self.while_balance_access_holds(balances)
+						.map(|result| result.map_err(CallError::Domain)),
+				)
+			})
 			.await
-		{
-			return Subscription::interrupted(from_latest_error(error, version));
-		}
-		let balances = platform.subscribe_balance(&self.connection.product, purse);
-		versioned_subscription(self.while_balance_access_holds(balances), version)
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "payment.request"))]
@@ -193,11 +319,7 @@ impl Payment for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostPaymentRequest,
 	) -> Result<HostPaymentResponse, CallError<HostPaymentError>> {
-		let version = request.version();
-		self.request_payment(request.into_latest())
-			.await
-			.map(|()| HostPaymentResponse::from_latest((), version))
-			.map_err(|error| from_latest_error(error, version))
+		version(request).exec(|request| self.request_payment(request)).await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "payment.status_subscribe"))]
@@ -206,21 +328,24 @@ impl Payment for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostPaymentStatusSubscribeRequest,
 	) -> Subscription<HostPaymentStatusSubscribeItem, CallError<HostPaymentStatusSubscribeError>> {
-		let version = request.version();
-		let latest::HostPaymentStatusSubscribeRequest { id } = request.into_latest();
-		let Some(platform) = self.connection.services.payment_platform() else {
-			return Subscription::interrupted(CallError::Unsupported);
-		};
-		if let Err(error) = self.require_session() {
-			return Subscription::interrupted(error);
-		}
-		versioned_subscription(
-			platform.subscribe_payment_status(
-				&self.connection.product,
-				host_payment_id(&self.connection.product, id),
-			),
-			version,
-		)
+		version(request)
+			.exec(|latest::HostPaymentStatusSubscribeRequest { id }| async move {
+				let Some(platform) = self.connection.services.payment_platform() else {
+					return Subscription::interrupted(CallError::Unsupported);
+				};
+				if let Err(error) = self.require_session() {
+					return Subscription::interrupted(error);
+				}
+				Subscription::new(
+					platform
+						.subscribe_payment_status(
+							&self.connection.product,
+							host_payment_id(&self.connection.product, id),
+						)
+						.map(|result| result.map_err(CallError::Domain)),
+				)
+			})
+			.await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "payment.top_up"))]
@@ -229,11 +354,7 @@ impl Payment for ProductRuntimeHost {
 		_cx: &CallContext,
 		request: HostPaymentTopUpRequest,
 	) -> Result<HostPaymentTopUpResponse, CallError<HostPaymentTopUpError>> {
-		let version = request.version();
-		self.request_top_up(request.into_latest())
-			.await
-			.map(|()| HostPaymentTopUpResponse::from_latest((), version))
-			.map_err(|error| from_latest_error(error, version))
+		version(request).exec(|request| self.request_top_up(request)).await
 	}
 
 	#[instrument(skip_all, fields(runtime.method = "payment.top_up_status_subscribe"))]
@@ -245,21 +366,24 @@ impl Payment for ProductRuntimeHost {
 		HostPaymentTopUpStatusSubscribeItem,
 		CallError<HostPaymentTopUpStatusSubscribeError>,
 	> {
-		let version = request.version();
-		let latest::HostPaymentTopUpStatusSubscribeRequest { id } = request.into_latest();
-		let Some(platform) = self.connection.services.top_up_platform() else {
-			return Subscription::interrupted(CallError::Unsupported);
-		};
-		if let Err(error) = self.require_session() {
-			return Subscription::interrupted(error);
-		}
-		versioned_subscription(
-			platform.subscribe_top_up_status(
-				&self.connection.product,
-				host_payment_id(&self.connection.product, id),
-			),
-			version,
-		)
+		version(request)
+			.exec(|latest::HostPaymentTopUpStatusSubscribeRequest { id }| async move {
+				let Some(platform) = self.connection.services.top_up_platform() else {
+					return Subscription::interrupted(CallError::Unsupported);
+				};
+				if let Err(error) = self.require_session() {
+					return Subscription::interrupted(error);
+				}
+				Subscription::new(
+					platform
+						.subscribe_top_up_status(
+							&self.connection.product,
+							host_payment_id(&self.connection.product, id),
+						)
+						.map(|result| result.map_err(CallError::Domain)),
+				)
+			})
+			.await
 	}
 }
 
@@ -341,7 +465,42 @@ impl ProductRuntimeHost {
 			return Err(CallError::Domain(latest::HostPaymentError::InvalidAmount));
 		}
 		request.id = host_payment_id(&self.connection.product, request.id);
-		match platform.request_payment(&self.connection.product, request).await {
+		let host_id = request.id;
+		let requested = match request.funding.clone() {
+			None => {
+				let _guard =
+					self.begin_plain_start(host_id, latest::HostPaymentError::AlreadyExists)?;
+				platform.request_payment(&self.connection.product, request).await
+			},
+			Some(intent) => {
+				let terms = sp_crypto_hashing::blake2_256(
+					&(b"truapi/funding-terms", request.from, request.destination).encode(),
+				);
+				let start = self
+					.begin_funding_start(
+						intent,
+						FundsAsked {
+							direction: latest::FundingDirection::Out,
+							host_id,
+							amount: request.amount,
+							terms,
+						},
+						latest::HostPaymentError::AlreadyExists,
+						latest::HostPaymentError::FundingNotServed,
+					)
+					.await?;
+				let requested = platform.request_payment(&self.connection.product, request).await;
+				let answer = match &requested {
+					Ok(()) => EngineAnswer::Took,
+					Err(latest::HostPaymentError::AlreadyExists) => EngineAnswer::Holds,
+					Err(latest::HostPaymentError::Unknown { .. }) => EngineAnswer::Unsure,
+					Err(_) => EngineAnswer::Refused,
+				};
+				self.finish_funding_start(start, answer).await;
+				requested
+			},
+		};
+		match requested {
 			Ok(()) => Ok(()),
 			// Only a product the user lets see the balance may learn that the
 			// balance was short; to any other it reads as a refusal.
@@ -369,10 +528,41 @@ impl ProductRuntimeHost {
 			return Err(CallError::Domain(latest::HostPaymentTopUpError::InvalidSource));
 		}
 		request.id = host_payment_id(&self.connection.product, request.id);
-		platform
-			.top_up(&self.connection.product, request)
-			.await
-			.map_err(CallError::Domain)
+		let host_id = request.id;
+		let Some(intent) = request.funding.clone() else {
+			let _guard =
+				self.begin_plain_start(host_id, latest::HostPaymentTopUpError::AlreadyExists)?;
+			return platform
+				.top_up(&self.connection.product, request)
+				.await
+				.map_err(CallError::Domain);
+		};
+		// A hash, so the core keeps no source key.
+		let terms = sp_crypto_hashing::blake2_256(
+			&(b"truapi/funding-terms", request.into, &request.source).encode(),
+		);
+		let start = self
+			.begin_funding_start(
+				intent,
+				FundsAsked {
+					direction: latest::FundingDirection::In,
+					host_id,
+					amount: request.amount,
+					terms,
+				},
+				latest::HostPaymentTopUpError::AlreadyExists,
+				latest::HostPaymentTopUpError::FundingNotServed,
+			)
+			.await?;
+		let started = platform.top_up(&self.connection.product, request).await;
+		let answer = match &started {
+			Ok(()) => EngineAnswer::Took,
+			Err(latest::HostPaymentTopUpError::AlreadyExists) => EngineAnswer::Holds,
+			Err(latest::HostPaymentTopUpError::Unknown { .. }) => EngineAnswer::Unsure,
+			Err(_) => EngineAnswer::Refused,
+		};
+		self.finish_funding_start(start, answer).await;
+		started.map_err(CallError::Domain)
 	}
 }
 
@@ -399,24 +589,6 @@ impl BalanceAccessCheck {
 			Ok(PermissionAuthorizationStatus::Authorized)
 		)
 	}
-}
-
-/// A subscription over a host stream of latest items and errors, each turned
-/// into the caller's protocol version as it is polled.
-fn versioned_subscription<Item, Error>(
-	stream: BoxStream<'static, Result<Item::Latest, Error::Latest>>,
-	version: u8,
-) -> Subscription<Item, CallError<Error>>
-where
-	Item: FromLatest + 'static,
-	Error: FromLatest + 'static,
-	Item::Latest: 'static,
-	Error::Latest: 'static,
-{
-	Subscription::new(stream.map(move |next| {
-		next.map(|item| Item::from_latest(item, version))
-			.map_err(|failure| CallError::Domain(Error::from_latest(failure, version)))
-	}))
 }
 
 /// Whether the secret keys a source carries are usable sr25519 keys. A product

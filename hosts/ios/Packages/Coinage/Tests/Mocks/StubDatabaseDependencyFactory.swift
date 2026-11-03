@@ -3,9 +3,10 @@ import Foundation
 import Operation_iOS
 @testable import Coinage
 
-/// Serves only the tracked-coin snapshot streams; anything else is a loud failure.
+/// Serves only the tracked-coin and tracked-voucher snapshot streams; anything else is a loud failure.
 final class StubDatabaseDependencyFactory: DatabaseDependencyFactoring, @unchecked Sendable {
     let trackedCoins = AsyncCurrentValueSubject<[TrackedCoin]?>(nil)
+    let trackedVouchers = AsyncCurrentValueSubject<[TrackedVoucher]>([])
 
     func makeTrackedCoinSnapshotStream(publicKeys: [PublicKey]) -> AnyAsyncSequence<[TrackedCoin]> {
         guard !publicKeys.isEmpty else {
@@ -35,7 +36,10 @@ final class StubDatabaseDependencyFactory: DatabaseDependencyFactoring, @uncheck
     ) -> AnyDataProviderRepository<TrackedVoucher> { unsupported() }
 
     func makeVoucherLocationRepository() -> AnyDataProviderRepository<VoucherLocationUpdate> { unsupported() }
-    func makeTrackedVoucherSnapshotStream() -> AnyAsyncSequence<[TrackedVoucher]> { unsupported() }
+    func makeTrackedVoucherSnapshotStream() -> AnyAsyncSequence<[TrackedVoucher]> {
+        trackedVouchers.eraseToAnyAsyncSequence()
+    }
+
     func makeInstallationRepository() -> any CoinageInstallationRepositoryProtocol { unsupported() }
 
     private func unsupported(_ function: String = #function) -> Never {

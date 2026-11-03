@@ -18,6 +18,7 @@ let package = Package(
             from: "0.0.1"
         ),
         .package(path: "../ChainRegistry"),
+        .package(path: "../FoundationExt"),
     ],
     targets: [
         .target(
@@ -25,6 +26,7 @@ let package = Package(
             dependencies: [
                 .product(name: "SDKLogger", package: "logger-ios"),
                 .product(name: "ChainRegistry", package: "ChainRegistry"),
+                .product(name: "FoundationExt", package: "FoundationExt"),
             ]
         ),
         .testTarget(
@@ -32,6 +34,8 @@ let package = Package(
             dependencies: [
                 "BackgroundExecution",
                 .product(name: "ChainRegistry", package: "ChainRegistry"),
+                .product(name: "FoundationExt", package: "FoundationExt"),
+                .product(name: "FoundationExtTestSupport", package: "FoundationExt"),
             ]
         )
     ]

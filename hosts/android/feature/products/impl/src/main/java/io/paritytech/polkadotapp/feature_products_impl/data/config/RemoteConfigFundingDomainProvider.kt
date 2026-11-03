@@ -10,9 +10,10 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.FundingConfig
 import io.paritytech.polkadotapp.feature_products_api.domain.FundingDomainProvider
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
 import io.paritytech.polkadotapp.tools_remoteconfig_api.RemoteConfigService
 import io.paritytech.polkadotapp.tools_remoteconfig_api.getSyncedJsonObject
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 internal class RemoteConfigFundingDomainProvider @Inject constructor(
@@ -37,7 +38,7 @@ internal class RemoteConfigFundingDomainProvider @Inject constructor(
     }
 
     private fun String.toProductId(tld: DotNsTld): Result<ProductId> {
-        return ProductId.fromUrl(Urls.ensureHasProtocolOrHttps(this).toUri(), tld)
+        return productIdFromUrl(Urls.ensureHasProtocolOrHttps(this).toUri(), tld)
     }
 
     // Gson bypasses Kotlin nullability, so a key missing from the remote JSON arrives as null.

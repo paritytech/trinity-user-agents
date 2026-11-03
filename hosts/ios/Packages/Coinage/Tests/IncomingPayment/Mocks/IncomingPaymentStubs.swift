@@ -1,8 +1,10 @@
+import struct TrUAPIHost.ProductId
 import AsyncExtensions
 import Foundation
 import KeyDerivation
 import os
 import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 import SubstrateSdk
 @testable import Coinage
 
@@ -83,7 +85,7 @@ final class StubSourceResolver: IncomingPaymentSourceResolving, @unchecked Senda
 /// Acknowledger stub — records what it was asked to surface.
 final class StubAcknowledger: IncomingPaymentAcknowledging, @unchecked Sendable {
     struct Call: Equatable {
-        let productId: String
+        let productId: ProductId
         let paymentId: IncomingPaymentId
         let requestedAmount: Balance
         let outcome: IncomingPaymentTerminalOutcome
@@ -92,7 +94,7 @@ final class StubAcknowledger: IncomingPaymentAcknowledging, @unchecked Sendable 
     private let lock = OSAllocatedUnfairLock(initialState: [Call]())
 
     func acknowledge(
-        productId: String,
+        productId: ProductId,
         paymentId: IncomingPaymentId,
         requestedAmount: Balance,
         outcome: IncomingPaymentTerminalOutcome
@@ -200,7 +202,7 @@ final class StubGroupVerdictResolver: CoinageGroupVerdictResolving, @unchecked S
 
     /// Returns once the resolver has been asked about `groupId`, failing rather than hanging if it never is.
     func waitUntilAsked(about groupId: CoinageTxGroupId) async throws {
-        try await withTimeout(.seconds(5)) { [askedSubject] in
+        try await withTimeout(.hangGuard) { [askedSubject] in
             for await asked in askedSubject where asked.contains(groupId) {
                 return
             }

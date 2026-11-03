@@ -64,6 +64,12 @@ impl SsoSessionKey {
 	pub fn from_session(session: &SsoSessionInfo) -> Self {
 		Self { own: session.session_id_own, peer: session.session_id_peer }
 	}
+	/// Whether this channel is still selected by the canonical session.
+	pub fn matches(self, state: &crate::host_logic::session::SessionState) -> bool {
+		state.current().as_ref().is_some_and(|current| {
+			current.sso.as_ref().is_some_and(|sso| Self::from_session(sso) == self)
+		})
+	}
 }
 
 /// Unregisters a disconnect waiter when the waiting call finishes.
@@ -375,9 +381,7 @@ fn handle_sso_remote_statement_page<T>(
 	let page = parse_new_statements_result("sso-remote".to_string(), value)
 		.map_err(|err| SsoRemoteResponseError::Failure(err.to_string()))?;
 	for statement in page.statements {
-		match decode_sso_session_statement(session, &statement, statement_request_id)
-			.map_err(SsoRemoteResponseError::Failure)?
-		{
+		match decode_sso_session_statement(session, &statement, statement_request_id)? {
 			Some(SsoSessionStatement::RequestAccepted) => {
 				*request_accepted = true;
 				if let Some(response) = pending_remote_response.take() {
@@ -399,7 +403,7 @@ fn handle_sso_remote_statement_page<T>(
 					let Some(matched) = matches(message) else {
 						continue;
 					};
-					let response = matched.map_err(SsoRemoteResponseError::Failure)?;
+					let response = matched?;
 					if *request_accepted {
 						return Ok(Some(response));
 					}

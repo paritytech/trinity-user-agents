@@ -59,12 +59,12 @@ private fun CameraPermissionHint(onRetry: () -> Unit) {
         modifier = Modifier
             .fillMaxSize()
             .clickable(onClick = onRetry)
-            .padding(PolkadotTheme.spacings.medium),
+            .padding(PolkadotTheme.spacings.small),
         contentAlignment = Alignment.Center,
     ) {
         NovaText(
             text = stringResource(RCommon.string.scan_panel_camera_permission_hint),
-            style = PolkadotTheme.typography.body.medium,
+            style = PolkadotTheme.typography.body.small,
             color = PolkadotTheme.colors.fg.secondary,
             textAlign = TextAlign.Center,
         )

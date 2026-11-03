@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import BigInt
 import DurableTransactionsTestSupport
 import Foundation
@@ -5,6 +6,7 @@ import FoundationExt
 import os
 import SubstrateSdk
 import Testing
+import FoundationExtTestSupport
 @testable import Coinage
 
 /// Real `ExternalPaymentService` and state machine over an in-memory store and the stubbed lowest
@@ -74,7 +76,7 @@ enum ExternalPaymentTestFactory {
     }
 
     static func payment(
-        productId: String = "getcash.dot",
+        productId: ProductId? = try! ProductId("getcash.dot"),
         paymentId: String = "0xaa",
         amount: Balance = planks(3),
         settled: Balance = 0,
@@ -131,7 +133,7 @@ enum ExternalPaymentTestFactory {
             originFactory: StubOriginFactory(),
             quotaTracker: StubUnloadQuotaTracker(),
             blockNumberProvider: StubBlockInfoProvider(),
-            dateProvider: StubDateProvider(Date()),
+            dateProvider: FixedDateProvider(Date()),
             logger: nil
         )
     }
@@ -160,7 +162,7 @@ enum ExternalPaymentTestFactory {
             originFactory: StubOriginFactory(),
             quotaTracker: StubUnloadQuotaTracker(),
             blockNumberProvider: StubBlockInfoProvider(),
-            dateProvider: StubDateProvider(Date()),
+            dateProvider: FixedDateProvider(Date()),
             logger: nil
         )
 

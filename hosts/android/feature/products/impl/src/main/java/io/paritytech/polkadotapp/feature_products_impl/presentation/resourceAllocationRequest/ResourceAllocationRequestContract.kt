@@ -4,6 +4,7 @@ import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.utils.progressStallReport.StalenessReportDisplay
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.flow.StateFlow
+import uniffi.truapi.ProductId
 
 interface ResourceAllocationRequestContract {
     val state: StateFlow<LoadingState<ResourceAllocationRequestUiState>>
@@ -16,7 +17,7 @@ interface ResourceAllocationRequestContract {
 }
 
 data class ResourceAllocationRequestUiState(
-    val productId: String,
+    val productId: ProductId,
     val resourceLabels: ImmutableList<Int>,
     val isAllocating: Boolean,
 )

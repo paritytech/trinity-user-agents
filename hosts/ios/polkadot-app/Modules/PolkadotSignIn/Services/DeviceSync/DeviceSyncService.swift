@@ -43,7 +43,7 @@ actor DeviceSyncService {
 
     init(
         ownStatementAccountId: Data,
-        messageExchangeModeProvider: MessageExchangeModeProviding,
+        ownSignKeyIds: Set<String>,
         configFactory: WebRTCConfigMaking,
         peerConnectionFactory: RTCPeerConnectionFactory = WebRTCPeerConnectionFactoryProvider.make(),
         remoteContactResolver: RemoteContactResolving = RemoteContactOperationFactory(),
@@ -82,7 +82,7 @@ actor DeviceSyncService {
                 repositoryFactory: storageDependencies.messageRepositoryFactory,
                 logger: logger
             ),
-            messageExchangeModeProvider: messageExchangeModeProvider,
+            ownSignKeyIds: ownSignKeyIds,
             contactsStorageService: contactsStorageService,
             storageFacade: storageFacade,
             updateIdProvider: updateIdProvider

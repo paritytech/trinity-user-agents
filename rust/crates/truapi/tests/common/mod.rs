@@ -3,6 +3,7 @@ pub use spawner::test_spawner;
 
 use futures::stream::{self, BoxStream};
 use truapi::{
+	ProductId,
 	platform::{
 		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, Features, HostInfo,
 		JsonRpcConnection, LocaleHost, Navigation, Notifications, PairingHostConfig, Permissions,
@@ -29,7 +30,7 @@ pub fn test_runtime_config() -> (PairingHostConfig, ProductContext) {
 			"polkadotapp".to_string(),
 		)
 		.expect("test host runtime config is valid"),
-		ProductContext::new("dotli.dot".to_string()).expect("test product context is valid"),
+		ProductContext::new(ProductId::for_test("dotli.dot")),
 	)
 }
 
@@ -116,6 +117,8 @@ impl Permissions for WireShapePlatform {
 		Ok(truapi::platform::PermissionDecision::AllowAlways)
 	}
 }
+
+impl truapi::platform::ExtrinsicVersionHost for WireShapePlatform {}
 
 #[truapi::platform::async_trait]
 impl Features for WireShapePlatform {
@@ -208,7 +211,7 @@ impl LocaleHost for WireShapePlatform {
 impl PreimageHost for WireShapePlatform {
 	fn lookup_preimage(
 		&self,
-		_key: Vec<u8>,
+		_key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, v01::GenericError>> {
 		Box::pin(stream::empty())
 	}

@@ -91,7 +91,7 @@ mod tests {
 	use super::*;
 	use crate::durable::{
 		ladder::{RecordedCanonicity, RuleOutcome, SearchResult, evaluate_ladder},
-		model::{DurableTxStatus, FailureKind},
+		model::{VerdictFailureKind, VerdictStatus},
 		testing::{FakeView, entry},
 	};
 
@@ -144,7 +144,7 @@ mod tests {
 
 	const ID: DurableTxId = DurableTxId(1);
 
-	fn evaluate(oracle: ListMembership, finalized: u64, search: SearchResult) -> DurableTxStatus {
+	fn evaluate(oracle: ListMembership, finalized: u64, search: SearchResult) -> VerdictStatus {
 		let transactions = vec![entry(ID, BIRTH, PERIOD)];
 		let view = FakeView::new(finalized, search);
 		block_on(async {
@@ -176,7 +176,7 @@ mod tests {
 	fn a_value_present_at_finalized_finalizes() {
 		assert_eq!(
 			evaluate(ListMembership::new(&[(FINALIZED, ID)]), FINALIZED, ABSENT),
-			DurableTxStatus::FinalizedSuccess { at: None }
+			VerdictStatus::FinalizedSuccess { at: None }
 		);
 	}
 
@@ -185,7 +185,7 @@ mod tests {
 	fn a_value_present_only_at_best_is_optimistic_success() {
 		assert_eq!(
 			evaluate(ListMembership::new(&[(BEST, ID)]), FINALIZED, ABSENT),
-			DurableTxStatus::PendingSuccess { at: crate::durable::testing::block(BEST) }
+			VerdictStatus::PendingSuccess { at: crate::durable::testing::block(BEST) }
 		);
 	}
 
@@ -193,14 +193,14 @@ mod tests {
 	fn an_absent_value_after_the_era_fails() {
 		assert_eq!(
 			evaluate(ListMembership::new(&[]), DEATH + 1, ABSENT),
-			DurableTxStatus::Failure(FailureKind::Expired)
+			VerdictStatus::Failure(VerdictFailureKind::Expired)
 		);
 	}
 
 	/// The transaction can still be included until its era ends.
 	#[test]
 	fn an_absent_value_before_the_era_ends_stays_pending() {
-		assert_eq!(evaluate(ListMembership::new(&[]), BIRTH + 1, ABSENT), DurableTxStatus::Pending);
+		assert_eq!(evaluate(ListMembership::new(&[]), BIRTH + 1, ABSENT), VerdictStatus::Pending);
 	}
 
 	/// A failed read must not look like an empty list, or a network error past
@@ -212,7 +212,7 @@ mod tests {
 
 		assert_eq!(
 			evaluate(oracle, DEATH + 1, SearchResult::NotFound { read_advanced_to: None }),
-			DurableTxStatus::Pending
+			VerdictStatus::Pending
 		);
 	}
 
@@ -230,7 +230,7 @@ mod tests {
 					outcome: Some(crate::chain::DispatchOutcome::Succeeded),
 				}
 			),
-			DurableTxStatus::FinalizedSuccess { at: Some(crate::durable::testing::block(110)) }
+			VerdictStatus::FinalizedSuccess { at: Some(crate::durable::testing::block(110)) }
 		);
 	}
 

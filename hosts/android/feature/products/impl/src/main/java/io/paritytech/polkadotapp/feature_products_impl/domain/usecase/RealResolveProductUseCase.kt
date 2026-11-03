@@ -7,11 +7,9 @@ import io.paritytech.polkadotapp.common.utils.mapErrorNotInstance
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
-import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
 import io.paritytech.polkadotapp.feature_products_api.model.Executables
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.SemVer
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
@@ -25,6 +23,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -38,15 +38,15 @@ internal class RealResolveProductUseCase @Inject constructor(
 ) : ResolveProductUseCase {
     // Successful resolutions only, so a transient read failure stays retryable. Hit without the
     // lock, since the WebView's request-interception thread blocks on this for every request.
-    private val cache = ConcurrentHashMap<String, ResolvedProduct>()
+    private val cache = ConcurrentHashMap<ProductId, ResolvedProduct>()
     private val resolveMutex = Mutex()
 
     override suspend fun resolve(productId: ProductId): Result<ResolvedProduct> {
-        cache[productId.value]?.let { return Result.success(it) }
+        cache[productId]?.let { return Result.success(it) }
 
         return resolveMutex.withLock {
             // Another caller may have resolved the same product while this one waited.
-            cache[productId.value]?.let { return@withLock Result.success(it) }
+            cache[productId]?.let { return@withLock Result.success(it) }
 
             // runCatching guards the storage and coroutine machinery; the read itself fails as a Result.
             runCatching { resolveFromChain(productId) }
@@ -56,12 +56,12 @@ internal class RealResolveProductUseCase @Inject constructor(
                     Timber.e(it, "Product resolution failed")
                     ProductResolutionError.Unknown
                 }
-                .onSuccess { cache[productId.value] = it }
+                .onSuccess { cache[productId] = it }
         }
     }
 
     override suspend fun invalidate(productId: ProductId) {
-        cache.remove(productId.value)
+        cache.remove(productId)
     }
 
     private suspend fun resolveFromChain(productId: ProductId): Result<ResolvedProduct> {
@@ -74,7 +74,7 @@ internal class RealResolveProductUseCase @Inject constructor(
 
         // Legacy products have no record, so one is synthesized to keep a single code path.
         val root = if (rootText == null) {
-            RootManifest(displayName = baseName, icon = null)
+            RootManifest(displayName = baseName, description = null, icon = null)
         } else {
             manifestParser.parseRoot(rootText)
                 .logFailure("Rejected product manifest for $baseName")
@@ -94,7 +94,7 @@ internal class RealResolveProductUseCase @Inject constructor(
         // Identity only — executables are re-fetched on the next resolve.
         productRepository.upsertResolvedProduct(product)
 
-        return Result.success(ResolvedProduct(product = product, executables = executables))
+        return Result.success(ResolvedProduct(product = product, description = root.description, executables = executables))
     }
 
     // A manifest worker wins over the debug-menu `userWorkerUrl`; legacy products carry only an
@@ -153,6 +153,7 @@ internal class RealResolveProductUseCase @Inject constructor(
         kind: ExecutableKind,
     ): Result<ProductExecutable?> {
         val host = ProductManifest.hostOf(productId, kind)
+            .getOrElse { return Result.failure(it) }
 
         return dotNsResolver.getMetadataEntry(host.value, ProductManifest.EXECUTABLE_RECORD_KEY)
             .logFailure("Failed to read executable record for $host")

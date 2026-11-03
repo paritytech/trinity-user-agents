@@ -68,14 +68,14 @@ A product with **no published worker**, driven by hand.
 3. Open the add deeplink. The screen shows it, ready to copy:
 
    ```
-   polkadot://<product>/-/pocket/add?card=<id>
+   polkadotapp://pocket/add?product=<product>&card=<id>
    ```
 
    In a Debug build the scheme is the brand scheme plus the flavor suffix, so on
    the simulator:
 
    ```sh
-   xcrun simctl openurl booted 'polkadotappdev://<product>/-/pocket/add?card=<id>'
+   xcrun simctl openurl booted 'polkadotappdev://pocket/add?product=<product>&card=<id>'
    ```
 
 4. Approve it. The card joins the Pocket on the Wallet tab, drawn with the face

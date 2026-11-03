@@ -12,11 +12,12 @@ import TrUAPIHost
 // so `TrUAPIHost.ProductAccountId` cannot disambiguate from Products'.
 import struct TrUAPIHost.ProductAccountId
 import UIKitExt
+import StructuredConcurrencyTestSupport
 @testable import polkadot_app
 
 // MARK: - Helpers
 
-private let testProduct = ProductExecutionConfig(productId: "test.product", executionKind: .app)
+private let testProduct = ProductExecutionConfig(productId: try! ProductId("test.product.dot"), executionKind: .app)
 
 private func makeRegistryPool(chainRegistry: ChainRegistryProtocol) -> TrUAPIV2SpecConnectionPool {
     TrUAPIV2SpecConnectionPool(
@@ -75,7 +76,7 @@ private struct StubHostProvider: ProductHostProviding {
 
 @MainActor
 private func makeBridge(
-    productId: String = "test.product",
+    productId: ProductId = try! ProductId("test.product.dot"),
     permissionGuard: MockPermissionGuard = MockPermissionGuard(),
     osPermissionAsker: MockOSPermissionAsker = MockOSPermissionAsker(),
     notificationScheduler: MockNotificationScheduler = MockNotificationScheduler(),
@@ -87,9 +88,10 @@ private func makeBridge(
     productStorageFails: Bool = false,
     hostProvider: ProductHostProviding = StubHostProvider(),
     themeManager: MockThemeManager = MockThemeManager(),
-    cardFace: (any ExpandedCardFaceShowing)? = nil
+    cardFace: (any ExpandedCardFaceShowing)? = nil,
+    router: MockNavigationRouter? = nil
 ) -> RustProductExecutionBridge {
-    let router = MockNavigationRouter()
+    let router = router ?? MockNavigationRouter()
     let pool = makeRegistryPool(chainRegistry: chainRegistry)
     let productStorage: TrUAPILocalStoring = productStorageFails
         ? FailingProductStorage()
@@ -123,6 +125,25 @@ private func makeBridge(
 /// does not run tests on the main thread by default.
 @MainActor
 struct RustRuntimeBridgeTests {
+    // MARK: navigateTo
+
+    /// The core hands over a Pocket link as `polkadotapp://pocket/...`, which names
+    /// no product. Opened as a product page it would go nowhere, so it has to
+    /// reach the router's app-link path, which takes it to the Pocket.
+    @Test func navigateToHandsAPocketLinkToTheAppLinkPath() async throws {
+        let router = MockNavigationRouter()
+        let bridge = makeBridge(
+            hostProvider: ProductHostFactory(tldProvider: StubDotNsTldProvider(tld: "dot")),
+            router: router
+        )
+        let link = "polkadotapp://pocket/add?product=game.dot&card=loyalty"
+
+        try await bridge.navigateTo(url: link)
+
+        #expect(router.navigatedPage == nil)
+        #expect(router.openedURL == URL(string: link))
+    }
+
     // MARK: devicePermission
 
     /// `devicePermission(.camera)` routes to
@@ -131,12 +152,12 @@ struct RustRuntimeBridgeTests {
     @Test func devicePermissionRoutesToGuard() async throws {
         let guard_ = MockPermissionGuard()
         guard_.verdictToReturn = true
-        let bridge = makeBridge(productId: "cam.product", permissionGuard: guard_)
+        let bridge = makeBridge(productId: try! ProductId("cam.product.dot"), permissionGuard: guard_)
 
         let result = try await bridge.devicePermission(product: testProduct, request: .camera)
 
         #expect(result == .allowAlways)
-        #expect(guard_.requestedProductId == "cam.product")
+        #expect(guard_.requestedProductId == (try! ProductId("cam.product.dot")))
         #expect(guard_.requestedPermission == .deviceCapability(.camera))
     }
 
@@ -211,14 +232,14 @@ struct RustRuntimeBridgeTests {
         let asker = MockReminderPermissionAsker()
         asker.alarmAllowed = alarmAllowed
         asker.notificationsAllowed = notificationsAllowed
-        let bridge = makeBridge(productId: "game.dot", gameReminders: gameReminders, reminderPermissionAsker: asker)
+        let bridge = makeBridge(productId: try! ProductId("game.dot"), gameReminders: gameReminders, reminderPermissionAsker: asker)
 
         try await bridge.scheduleReminder(startsAt: 2_000_000_000_000)
 
         #expect(asker.asked == asked)
         #expect(gameReminders.scheduled == [
             .init(
-                productId: "game.dot",
+                productId: try! ProductId("game.dot"),
                 startsAt: Date(timeIntervalSince1970: 2_000_000_000),
                 ringAlarm: ringsAlarm,
                 addCalendarEvent: true
@@ -278,14 +299,14 @@ struct RustRuntimeBridgeTests {
     @Test func pushNotificationSchedules() async throws {
         let scheduler = MockNotificationScheduler()
         scheduler.notificationIdToReturn = 99
-        let bridge = makeBridge(productId: "push.product", notificationScheduler: scheduler)
+        let bridge = makeBridge(productId: try! ProductId("push.product.dot"), notificationScheduler: scheduler)
 
         let notificationId = try await bridge.pushNotification(
             request: HostPushNotificationRequest(text: "hi", deeplink: "d", scheduledAt: nil)
         )
 
         #expect(notificationId == 99)
-        #expect(scheduler.scheduledProductId == "push.product")
+        #expect(scheduler.scheduledProductId == (try! ProductId("push.product.dot")))
         #expect(scheduler.scheduledRequest?.text == "hi")
         #expect(scheduler.scheduledRequest?.deeplink == "d")
         #expect(scheduler.scheduledRequest?.scheduledAtMs == nil)
@@ -382,7 +403,7 @@ struct RustRuntimeBridgeTests {
     @Test func confirmUserActionReturnsTrueWhenConfirmed() async throws {
         let presenter = MockConfirmationPresenter()
         presenter.verdictToReturn = true
-        let bridge = makeBridge(productId: "confirm.product", confirmationPresenter: presenter)
+        let bridge = makeBridge(productId: try! ProductId("confirm.product.dot"), confirmationPresenter: presenter)
 
         let review = UserConfirmationReview.signRaw(
             .legacyAccount(
@@ -394,7 +415,7 @@ struct RustRuntimeBridgeTests {
 
         #expect(result)
         #expect(presenter.receivedReview == review)
-        #expect(presenter.receivedRequesterName == "confirm.product")
+        #expect(presenter.receivedRequesterName == "confirm.product.dot")
     }
 
     @Test func confirmUserActionReturnsFalseWhenDenied() async throws {
@@ -403,7 +424,7 @@ struct RustRuntimeBridgeTests {
         let bridge = makeBridge(confirmationPresenter: presenter)
 
         let review = UserConfirmationReview.accountAccess(
-            AccountAccessReview(requestingProductId: "a.dot", targetProductId: "b.dot")
+            AccountAccessReview(requestingProductId: try! ProductId("a.dot"), targetProductId: try! ProductId("b.dot"))
         )
         let result = try await bridge.confirmUserAction(review: review)
 
@@ -418,10 +439,10 @@ struct RustRuntimeBridgeTests {
 
         let review = UserConfirmationReview.signVrf(
             SignVrfReview(
-                callingProductId: "vrf.dot",
+                callingProductId: try! ProductId("vrf.dot"),
                 request: HostAccountSignVrfRequest(
                     account: ProductAccountId(
-                        dotNsIdentifier: "vrf.dot",
+                        dotNsIdentifier: try! ProductId("vrf.dot"),
                         derivationIndex: .index(0)
                     ),
                     transcriptLabel: Data("label".utf8),
@@ -439,9 +460,9 @@ struct RustRuntimeBridgeTests {
     func confirmPermissionPreservesLifetime(decision: TrUAPIPermissionDecision) async throws {
         let presenter = MockConfirmationPresenter()
         presenter.permissionDecisionToReturn = decision
-        let bridge = makeBridge(productId: "caller.dot", confirmationPresenter: presenter)
+        let bridge = makeBridge(productId: try! ProductId("caller.dot"), confirmationPresenter: presenter)
         let review = UserConfirmationReview.accountAccess(
-            AccountAccessReview(requestingProductId: "caller.dot", targetProductId: "target.dot")
+            AccountAccessReview(requestingProductId: try! ProductId("caller.dot"), targetProductId: try! ProductId("target.dot"))
         )
 
         let result = try await bridge.confirmPermission(review: review)
@@ -532,7 +553,7 @@ struct RustRuntimeBridgeTests {
             )
         )
         let task = Task {
-            await presenter.confirm(review: review, from: "test.product")
+            await presenter.confirm(review: review, from: "test.product.dot")
         }
         task.cancel()
         let verdict = await task.value
@@ -544,8 +565,8 @@ struct RustRuntimeBridgeTests {
             routerFacade: ProductRoutersFacade.worker()
         )
 
-        let review = UserConfirmationReview.productSubtree(ProductSubtreeReview(productId: "test.product"))
-        #expect(await presenter.confirm(review: review, from: "test.product") == false)
+        let review = UserConfirmationReview.productSubtree(ProductSubtreeReview(productId: try! ProductId("test.product.dot")))
+        #expect(await presenter.confirm(review: review, from: "test.product.dot") == false)
     }
 
     // MARK: setExpandedCardFaceShown
@@ -592,7 +613,7 @@ struct RustRuntimeBridgeTests {
         let chainRegistry = MockChainRegistry()
         let pool = makeRegistryPool(chainRegistry: chainRegistry)
         let bridge = RustProductExecutionBridge(dependencies: .init(
-            productId: "test.dot",
+            productId: try! ProductId("test.dot"),
             permissionGuard: MockPermissionGuard(),
             osPermissionAsker: MockOSPermissionAsker(),
             notificationScheduler: MockNotificationScheduler(),
@@ -602,7 +623,7 @@ struct RustRuntimeBridgeTests {
             chainRegistry: chainRegistry,
             chainConnections: pool,
             productStorage: TrUAPILocalStorage.createProductLocalStorage(
-                productId: "test.dot",
+                productId: try! ProductId("test.dot"),
                 defaults: makeTestDefaults()
             ),
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeTestDefaults()),
@@ -649,7 +670,7 @@ struct RustRuntimeBridgeTests {
         let execution = MockProductExecution()
         bridge.attach(execution)
 
-        try await withTimeout(.seconds(5)) { await execution.awaitThemeChange() }
+        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
 
         let expected = HostThemeSubscribeItem(
             name: ThemeName.custom(themeManager.theme.id),
@@ -665,10 +686,10 @@ struct RustRuntimeBridgeTests {
         let bridge = makeBridge(themeManager: themeManager)
         let execution = MockProductExecution()
         bridge.attach(execution)
-        try await withTimeout(.seconds(5)) { await execution.awaitThemeChange() }
+        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
 
         themeManager.select(.app(.berlinDay))
-        try await withTimeout(.seconds(5)) { await execution.awaitThemeChange() }
+        try await withTimeout(.hangGuard) { await execution.awaitThemeChange() }
 
         let current = try bridge.currentTheme()
         #expect(execution.themeChanges.map(\.variant) == [ThemeVariant.dark, ThemeVariant.light])

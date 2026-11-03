@@ -2,10 +2,11 @@ package io.paritytech.polkadotapp.database.model
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import uniffi.truapi.ProductId
 
 @Entity(tableName = "products")
 class ProductLocal(
-    @PrimaryKey val id: String,
+    @PrimaryKey val id: ProductId,
     // The product id until resolved, then the root-manifest displayName.
     val name: String,
     val iconCid: String?,

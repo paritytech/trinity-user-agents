@@ -7,6 +7,9 @@ import SwiftUI
 enum PocketCardSize {
     static let height: CGFloat = 234
     static let cornerRadius: CGFloat = 24
+    /// The 16 pt Android's Pocket also leaves, so a product page lines up
+    /// under an opened card on both.
+    static let sideMargin = DSSpacings.mediumIncreased
 }
 
 /// One product-backed card, drawn from the face the product supplied.
