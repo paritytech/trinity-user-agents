@@ -41,7 +41,7 @@ use futures::{
 	stream::{self, BoxStream},
 };
 
-use truapi::latest;
+use truapi::{CallError, latest};
 
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, ChatPlatform, CoreStorage, CoreStorageKey, Features,
@@ -1412,9 +1412,9 @@ impl ChatPlatform for MockPlatform {
 		_product: &ProductContext,
 		request: latest::HostChatUpdateFeedRequest,
 		persist: bool,
-	) -> Result<(), latest::HostChatUpdateFeedError> {
+	) -> Result<(), CallError<latest::HostChatUpdateFeedError>> {
 		self.declare_chat_room(request.room_id, |room| room.feed.push((request.update, persist)))
-			.map_err(|error| latest::HostChatUpdateFeedError::Unknown { reason: error.reason })
+			.map_err(|error| CallError::HostFailure { reason: error.reason })
 	}
 }
 

@@ -283,7 +283,7 @@ pub trait NativeChatCallbacks: Send + Sync {
 		room_id: String,
 		name: String,
 		icon: String,
-	) -> Result<v01::ChatRoomRegistrationStatus, HostRejection>;
+	) -> Result<truapi::latest::ChatRoomRegistrationStatus, HostRejection>;
 
 	/// Register or resolve a native product Chat bot.
 	async fn register_bot(
