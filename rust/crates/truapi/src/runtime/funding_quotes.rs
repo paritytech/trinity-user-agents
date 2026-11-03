@@ -20,6 +20,7 @@ use std::{
 use core::time::Duration;
 
 use futures::{
+	channel::oneshot,
 	future::{self, AbortHandle, AbortRegistration, Either},
 	stream::{self, Abortable, BoxStream, StreamExt},
 };
@@ -361,59 +362,67 @@ impl RuntimeServices {
 		let intent = intent.to_string();
 		let refresh_ms = refresh.as_millis() as u64;
 		let still_current = current.clone();
-		let lists = stream::unfold(None, move |round_at: Option<u64>| {
-			let current = current.clone();
-			let services = services.clone();
-			let intent = intent.clone();
-			let ask = ask.clone();
-			async move {
-				if let Some(round_at) = round_at {
-					let wait = round_at.saturating_sub(current_unix_millis());
-					futures_timer::Delay::new(Duration::from_millis(wait)).await;
+		let lists =
+			stream::unfold(None, move |next_round: Option<(u64, oneshot::Receiver<()>)>| {
+				let current = current.clone();
+				let services = services.clone();
+				let intent = intent.clone();
+				let ask = ask.clone();
+				async move {
+					if let Some((round_at, changed)) = next_round {
+						let wait = round_at.saturating_sub(current_unix_millis());
+						// The providers changing starts the next round at once, so
+						// one dotNS answered for meanwhile is asked too.
+						let wait = futures_timer::Delay::new(Duration::from_millis(wait));
+						let _ = future::select(wait, changed).await;
+					}
+					if !current() {
+						return None;
+					}
+					let changed = services.funding_providers().on_change();
+					let refresh_at_ms = current_unix_millis().saturating_add(refresh_ms);
+					let direction = services
+						.funding()
+						.get(&intent)
+						.map_or(ask.direction, |session| session.direction);
+					let pending = services
+						.funding_providers()
+						.quote_targets()
+						.into_iter()
+						.map(|provider_id| FundingQuoteRow {
+							provider_id,
+							state: FundingQuoteState::Pending,
+						})
+						.collect();
+					let rows = services.get_funding_quote_within(&intent, ask, deadline);
+					let start = FundingQuoteList {
+						request_id: watch,
+						rows: pending,
+						best: None,
+						refresh_at_ms,
+					};
+					let providers = services.clone();
+					let lists = rows
+						.scan(start, move |list, row| {
+							match list
+								.rows
+								.iter_mut()
+								.find(|kept| kept.provider_id == row.provider_id)
+							{
+								Some(kept) => *kept = row,
+								None => list.rows.push(row),
+							}
+							list.best = best_quote(direction, &list.rows, |provider_id| {
+								providers.funding_providers().is_quote_target(provider_id)
+							});
+							future::ready(Some(list.clone()))
+						})
+						.boxed();
+					Some((lists, Some((refresh_at_ms, changed))))
 				}
-				if !current() {
-					return None;
-				}
-				let refresh_at_ms = current_unix_millis().saturating_add(refresh_ms);
-				let direction = services
-					.funding()
-					.get(&intent)
-					.map_or(ask.direction, |session| session.direction);
-				let pending = services
-					.funding_providers()
-					.quote_targets()
-					.into_iter()
-					.map(|provider_id| FundingQuoteRow {
-						provider_id,
-						state: FundingQuoteState::Pending,
-					})
-					.collect();
-				let rows = services.get_funding_quote_within(&intent, ask, deadline);
-				let start = FundingQuoteList {
-					request_id: watch,
-					rows: pending,
-					best: None,
-					refresh_at_ms,
-				};
-				let providers = services.clone();
-				let lists = rows
-					.scan(start, move |list, row| {
-						match list.rows.iter_mut().find(|kept| kept.provider_id == row.provider_id)
-						{
-							Some(kept) => *kept = row,
-							None => list.rows.push(row),
-						}
-						list.best = best_quote(direction, &list.rows, |provider_id| {
-							providers.funding_providers().is_quote_target(provider_id)
-						});
-						future::ready(Some(list.clone()))
-					})
-					.boxed();
-				Some((lists, Some(refresh_at_ms)))
-			}
-		})
-		.flatten()
-		.take_while(move |_| future::ready(still_current()));
+			})
+			.flatten()
+			.take_while(move |_| future::ready(still_current()));
 		(watch, Abortable::new(lists, ended).boxed())
 	}
 
