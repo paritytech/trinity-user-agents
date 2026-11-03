@@ -406,6 +406,9 @@ enum FollowLoss {
 	/// The node ended the subscription with a `stop` event, with the
 	/// connection still up.
 	StoppedByNode,
+	/// The subscription failed on a connection that did not close: an event
+	/// that could not be read, or an error the node sent in its place.
+	Failed,
 }
 
 impl FollowLoss {
@@ -414,6 +417,7 @@ impl FollowLoss {
 		match self {
 			Self::ConnectionClosed => "ended when its connection closed",
 			Self::StoppedByNode => "was stopped by the node",
+			Self::Failed => "ended on an error with its connection still open",
 		}
 	}
 }
@@ -463,7 +467,10 @@ impl ChainRuntime {
 			transaction_operations: Arc::new(Mutex::new(HashMap::new())),
 			next_transaction_operation_id: Arc::new(AtomicU64::new(1)),
 			runtime_calls: RuntimeCallCache::default(),
-			ended_follows: Arc::new(Mutex::new(HashMap::new())),
+			ended_follows: Arc::new(Mutex::new(HashMap::from([(
+				ConnectionScope::Core,
+				VecDeque::new(),
+			)]))),
 		}
 	}
 
@@ -472,6 +479,7 @@ impl ChainRuntime {
 	pub fn for_product(&self, core_instance: u64) -> Self {
 		let scope = ConnectionScope::Product(core_instance);
 		self.connections.lock().unwrap().entry(scope).or_default();
+		self.ended_follows.lock().unwrap().entry(scope).or_default();
 		Self { scope, ..self.clone() }
 	}
 
@@ -516,6 +524,7 @@ impl ChainRuntime {
 			.flat_map(|chains| chains.into_values().flatten())
 			.collect();
 		self.transaction_operations.lock().unwrap().remove(&self.scope);
+		self.ended_follows.lock().unwrap().remove(&self.scope);
 		self.follow_starts
 			.lock()
 			.retain(|(_, follow_id), _| !released_follow_ids.contains(follow_id));
@@ -1667,14 +1676,24 @@ impl ChainConnection {
 							}
 						},
 						Err(failure) => {
-							connection.interrupt_follow(&pump_follow_id, failure);
+							connection.interrupt_follow(
+								&pump_follow_id,
+								failure,
+								FollowLoss::Failed,
+							);
 							break;
 						},
 					},
 					Err(error) => {
+						let loss = if is_transport_loss(&error) {
+							FollowLoss::ConnectionClosed
+						} else {
+							FollowLoss::Failed
+						};
 						connection.interrupt_follow(
 							&pump_follow_id,
 							rpc_failure(FOLLOW_METHOD, error).on_chain(&connection.genesis_hash),
+							loss,
 						);
 						break;
 					},
@@ -1800,23 +1819,27 @@ impl ChainConnection {
 	fn deliver_follow_event(&self, local_follow_id: &str, event: RemoteChainHeadFollowItem) {
 		let sender = self.follow_sender(local_follow_id);
 		let is_stop = matches!(event, RemoteChainHeadFollowItem::Stop);
+		// Recorded before the subscriber sees the stop, so a caller that reacts
+		// to it by calling again already finds the reason.
+		if is_stop {
+			self.remember_lost_follow(local_follow_id, FollowLoss::StoppedByNode);
+		}
 		if let Some(sender) = sender {
 			let _ = sender.unbounded_send(Ok(event));
 		}
 		if is_stop {
-			self.remember_lost_follow(local_follow_id, FollowLoss::StoppedByNode);
 			self.remove_follow_without_abort(local_follow_id);
 		}
 	}
 
 	/// End the local follow stream on an abnormal close, delivering `failure`
-	/// as its last item before tearing the follow down. Cleanup never aborts,
-	/// same as [`Self::deliver_follow_event`].
-	fn interrupt_follow(&self, local_follow_id: &str, failure: RuntimeFailure) {
+	/// as its last item before tearing the follow down, and recording `loss`
+	/// as why. Cleanup never aborts, same as [`Self::deliver_follow_event`].
+	fn interrupt_follow(&self, local_follow_id: &str, failure: RuntimeFailure, loss: FollowLoss) {
 		warn!(%failure, follow = local_follow_id, "chain follow interrupted");
 		// Recorded before the follow is forgotten, so the runtime can still
 		// tell a caller why the id it holds stopped working.
-		self.remember_lost_follow(local_follow_id, FollowLoss::ConnectionClosed);
+		self.remember_lost_follow(local_follow_id, loss);
 		if let Some(sender) = self.follow_sender(local_follow_id) {
 			let _ = sender.unbounded_send(Err(failure));
 		}
@@ -1825,8 +1848,19 @@ impl ChainConnection {
 
 	/// Record that `local_follow_id` has ended, against this connection's own
 	/// scope, so the runtime can answer for the id after the follow is gone.
+	/// The alias a product bound to it is recorded as well, since that is the
+	/// id such a product goes on calling with.
 	fn remember_lost_follow(&self, local_follow_id: &str, loss: FollowLoss) {
+		let alias = self
+			.follows
+			.lock()
+			.unwrap()
+			.get(local_follow_id)
+			.and_then(|follow| follow.client_subscription_id.clone());
 		remember_lost_follow(&self.ended_follows, self.scope, local_follow_id, loss);
+		if let Some(alias) = alias {
+			remember_lost_follow(&self.ended_follows, self.scope, &alias, loss);
+		}
 	}
 
 	/// Whether this is an id the runtime knows has ended.
@@ -2071,9 +2105,9 @@ fn follow_closed() -> RuntimeFailure {
 	RuntimeFailure::unavailable_with_reason(FOLLOW_METHOD, "follow subscription was closed")
 }
 
-/// A follow this scope opened, on a connection that has since closed. The
-/// follow went with its transport and the caller has to open a new one, so
-/// this is `Unavailable` rather than a `HostFailure` blaming the id.
+/// A follow this scope opened that has since ended, named with why. The id is
+/// spent and the caller has to open a new follow. Classed `Unavailable` for the
+/// runtime's own failure log; a product reads only the reason.
 fn follow_lost(method: &'static str, local_follow_id: &str, loss: FollowLoss) -> RuntimeFailure {
 	RuntimeFailure::unavailable_with_reason(
 		method,
@@ -2081,9 +2115,9 @@ fn follow_lost(method: &'static str, local_follow_id: &str, loss: FollowLoss) ->
 	)
 }
 
-/// Record that a scope lost a follow, dropping the oldest past the cap. An id
-/// recorded again replaces its earlier entry, so the cap counts distinct
-/// follows and the newest reason is the one reported.
+/// Record that a live scope lost a follow, dropping the oldest past the cap.
+/// An id recorded again replaces its earlier entry, so the cap counts distinct
+/// ids and the newest reason is the one reported.
 fn remember_lost_follow(
 	ended: &Mutex<HashMap<ConnectionScope, VecDeque<(String, FollowLoss)>>>,
 	scope: ConnectionScope,
@@ -2091,7 +2125,11 @@ fn remember_lost_follow(
 	loss: FollowLoss,
 ) {
 	let mut ended = ended.lock().unwrap();
-	let remembered = ended.entry(scope).or_default();
+	// A released scope has no group, and a pump finishing after the release
+	// must not create one: nothing would ever read or remove it again.
+	let Some(remembered) = ended.get_mut(&scope) else {
+		return;
+	};
 	remembered.retain(|(remembered, _)| remembered != local_follow_id);
 	remembered.push_back((local_follow_id.to_string(), loss));
 	while remembered.len() > REMEMBERED_LOST_FOLLOWS {
@@ -2110,6 +2148,13 @@ fn lookup_lost_follow(
 		.unwrap()
 		.get(&scope)
 		.and_then(|ended| ended.iter().find(|(id, _)| id == requested_id).map(|(_, loss)| *loss))
+}
+
+/// Whether a follow's stream error means its connection went away, as opposed
+/// to the node or the event itself failing on a connection still open. The
+/// same split [`rpc_failure`] makes between `Unavailable` and `HostFailure`.
+fn is_transport_loss(error: &SubxtRpcError) -> bool {
+	matches!(error, SubxtRpcError::Client(_) | SubxtRpcError::DisconnectedWillReconnect(_))
 }
 
 fn rpc_failure(method: &'static str, error: SubxtRpcError) -> RuntimeFailure {
@@ -3137,8 +3182,26 @@ mod tests {
 		futures::executor::block_on(core.connection_for("release_test", &genesis))
 			.expect("core connection");
 		assert_eq!(core.connections.lock().unwrap().values().map(HashMap::len).sum::<usize>(), 3);
+		remember_lost_follow(
+			&core.ended_follows,
+			product.scope,
+			"c1:lost",
+			FollowLoss::ConnectionClosed,
+		);
 
 		product.release_scope();
+
+		// A pump finishing after the release records into nothing.
+		remember_lost_follow(
+			&core.ended_follows,
+			product.scope,
+			"c1:late",
+			FollowLoss::ConnectionClosed,
+		);
+		assert!(
+			!core.ended_follows.lock().unwrap().contains_key(&product.scope),
+			"a released scope kept its record of lost follows",
+		);
 
 		let remaining: Vec<(ConnectionScope, String)> = core
 			.connections
@@ -3955,6 +4018,74 @@ mod tests {
 		assert_eq!(
 			failure.reason(),
 			"remote_chain_head_storage: follow subscription \"host:1\" ended when its connection closed",
+		);
+	}
+
+	/// A product that minted its own alias keeps calling with it after the
+	/// loss, so the alias has to answer with the cause, and must not bind to
+	/// whichever follow is unaliased next.
+	#[test]
+	fn a_lost_follow_is_named_under_the_alias_a_product_bound() {
+		let provider = Arc::new(ScriptedProvider::new(|request| {
+			let id = extract_id(request)?;
+			if request.contains("chainHead_v1_follow") {
+				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
+			} else if request.contains("chainHead_v1_storage") {
+				Some(format!(
+					r#"{{"jsonrpc":"2.0","id":"{id}","result":{{"result":"started","operationId":"OP"}}}}"#
+				))
+			} else {
+				None
+			}
+		}));
+		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let read = |follow_subscription_id: &str| {
+			futures::executor::block_on(runtime.remote_chain_head_storage(
+				RemoteChainHeadStorageRequest {
+					genesis_hash: vec![7u8; 32],
+					follow_subscription_id: follow_subscription_id.to_string(),
+					hash: vec![1u8; 32],
+					items: vec![StorageQueryItem {
+						key: vec![0xaa],
+						query_type: StorageQueryType::Value,
+					}],
+					child_trie: None,
+				},
+			))
+		};
+
+		let mut follow = runtime.remote_chain_head_follow(
+			"host:1".to_string(),
+			RemoteChainHeadFollowRequest { genesis_hash: vec![7u8; 32], with_runtime: false },
+		);
+		wait_for_sent(&provider, |sent| {
+			sent.iter().any(|request| request.contains("chainHead_v1_follow"))
+		});
+		notification_sender(&provider)
+			.unbounded_send(
+				r#"{"jsonrpc":"2.0","method":"chainHead_v1_followEvent","params":{"subscription":"REMOTE-FOLLOW","result":{"event":"initialized","finalizedBlockHashes":[]}}}"#
+					.to_string(),
+			)
+			.unwrap();
+		assert!(matches!(
+			futures::executor::block_on(follow.next()),
+			Some(Ok(RemoteChainHeadFollowItem::Initialized { .. }))
+		));
+		read("follow_0").expect("the alias binds to the live follow");
+
+		provider.sender.lock().unwrap().take();
+		let _ = futures::executor::block_on(
+			follow
+				.by_ref()
+				.filter_map(|item| core::future::ready(item.err()))
+				.collect::<Vec<_>>(),
+		);
+		drop(follow);
+
+		let failure = read("follow_0").expect_err("a read on the lost alias must fail");
+		assert_eq!(
+			failure.reason(),
+			"remote_chain_head_storage: follow subscription \"follow_0\" ended when its connection closed",
 		);
 	}
 
