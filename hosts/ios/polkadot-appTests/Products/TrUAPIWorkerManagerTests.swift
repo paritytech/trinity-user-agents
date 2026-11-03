@@ -116,7 +116,7 @@ struct TrUAPIWorkerManagerTests {
     @Test
     func reloadBootsAFreshWorker() async throws {
         let builder = StubWorkerBuilder()
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+        let manager = makeManager(builder: builder)
 
         manager.demandChanged(productId: gameProductId, transition: .start)
         try await execution(of: gameProductId, in: manager)
@@ -135,7 +135,7 @@ struct TrUAPIWorkerManagerTests {
     @Test
     func aStopSentDuringAReloadLeavesNoWorker() async throws {
         let builder = StubWorkerBuilder()
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+        let manager = makeManager(builder: builder)
         let disposing = AsyncStream<Void>.makeStream()
         let releaseDispose = AsyncStream<Void>.makeStream()
 
@@ -163,7 +163,7 @@ struct TrUAPIWorkerManagerTests {
     @Test
     func reloadDoesNotStartAWorkerThatIsNotRunning() async throws {
         let builder = StubWorkerBuilder()
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
+        let manager = makeManager(builder: builder)
 
         await manager.reload(productId: gameProductId)
         try await barrier(manager)
