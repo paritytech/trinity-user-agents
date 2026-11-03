@@ -18,7 +18,7 @@ use truapi::v01;
 
 use crate::{
 	chain_runtime::ChainRuntime,
-	dotns_views::{call_bytes32_string, network_tld, protocol_component, read_view, tld_node},
+	dotns_views::{network_tld, protocol_component, read_view, tld_node},
 	host_internal::{
 		permissions::authorization_status,
 		product_manifest::{Granted, RootManifest},
@@ -26,8 +26,8 @@ use crate::{
 	},
 	host_logic::{
 		dotns_gateway::{
-			DotnsCallError, DotnsError, DotnsTransport, DotnsViewError, call_bytes32, call_no_args,
-			decode_address, decode_string, discover_pop_controller, namehash_under,
+			ContentResolver, DotnsCallError, DotnsError, DotnsPopController, DotnsRegistry,
+			DotnsTransport, DotnsViewError, discover_pop_controller, namehash_under,
 		},
 		worker_manifest::WorkerManifest,
 	},
@@ -122,18 +122,17 @@ async fn fetch_text_record(
 
 	let registry = protocol_component(&mut lookup, &protocol_registry, "registry").await?;
 	let resolver =
-		read_view(&mut lookup, &registry, call_bytes32("resolver(bytes32)", &node), decode_address)
+		read_view(&mut lookup, &registry, DotnsRegistry::resolverCall { node: node.into() })
 			.await
 			.map_err(DotnsError::Resolver)?;
-	if resolver == [0u8; 20] {
+	if resolver.is_zero() {
 		return Ok(None);
 	}
 
 	let manifest = match read_view(
 		&mut lookup,
-		&resolver,
-		call_bytes32_string("text(bytes32,string)", &node, key),
-		decode_string,
+		&resolver.into_array(),
+		ContentResolver::textCall { node: node.into(), key: key.to_string() },
 	)
 	.await
 	{
@@ -158,7 +157,7 @@ async fn fetch_text_record(
 /// `protocolRegistry()` on the stored address directly reverts on a chain that
 /// still keeps its dispatcher, which would refuse every grant on that chain
 /// while username resolution kept working.
-pub async fn protocol_registry<T: DotnsTransport + ?Sized>(
+async fn protocol_registry<T: DotnsTransport + ?Sized>(
 	transport: &mut T,
 ) -> Result<Option<[u8; 20]>, DotnsError> {
 	let Some(controller) = discover_pop_controller(transport).await? else {
@@ -168,9 +167,9 @@ pub async fn protocol_registry<T: DotnsTransport + ?Sized>(
 		);
 		return Ok(None);
 	};
-	read_view(transport, &controller, call_no_args("protocolRegistry()"), decode_address)
+	read_view(transport, &controller, DotnsPopController::protocolRegistryCall {})
 		.await
-		.map(Some)
+		.map(|registry| Some(registry.into_array()))
 		.map_err(DotnsError::ProtocolRegistry)
 }
 
@@ -232,17 +231,6 @@ mod tests {
 			],
 			[namehash("worker.browse.paseo"); 2]
 		);
-	}
-
-	#[test]
-	fn a_text_call_encodes_the_key_as_a_dynamic_argument() {
-		let call = call_bytes32_string("text(bytes32,string)", &[0x11; 32], "manifest");
-		// selector, node, offset, length, one padded word for an 8-byte key.
-		assert_eq!(call.len(), 4 + 32 * 4);
-		assert_eq!(&call[4..36], &[0x11; 32]);
-		assert_eq!(call[67], 64, "key offset follows the node");
-		assert_eq!(call[99], 8, "key length precedes its bytes");
-		assert_eq!(&call[100..108], b"manifest");
 	}
 
 	/// The source each lookup with nothing cached reports, for a host with no

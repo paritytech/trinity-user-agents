@@ -83,6 +83,7 @@ use truapi::{
 
 use crate::{
 	accounts::{ResolveSignerConfig, ResolvedSigner},
+	chain::ChainBackend,
 	network::{Network, NetworkConfig},
 	platform::{ApprovalPolicy, CliPlatform, CliStoragePaths},
 	sessions::{
@@ -127,6 +128,11 @@ struct Cli {
 	/// `pairing-host`, `dev` and `signing-host` read this.
 	#[arg(long, global = true, env = "TRUAPI_DEBUGGER_URL", value_name = "URL")]
 	debugger: Option<String>,
+	/// How the hosts reach the chains: `rpc` dials the network's RPC nodes, and
+	/// `light-client` syncs them with the embedded light client (`paseo-next-v2`
+	/// and `previewnet` only).
+	#[arg(long, global = true, value_enum, default_value = "rpc", env = "TRUAPI_CHAIN_BACKEND")]
+	chain_backend: ChainBackend,
 	#[command(subcommand)]
 	command: Command,
 }
@@ -570,10 +576,6 @@ fn script_project_directory(base_path: Option<PathBuf>) -> PathBuf {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-	// Install a rustls crypto provider so `wss://` chain connections work;
-	// rustls 0.23 panics without a process-level default provider.
-	let _ = rustls::crypto::ring::default_provider().install_default();
-
 	let matches = Cli::command().get_matches();
 	let mut cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
 	let debugger = cli
@@ -624,7 +626,8 @@ async fn main() -> Result<()> {
 		tokio::spawn(update::run_background_check())
 	});
 
-	let outcome = dispatch(cli.command, log_filter, log_controller, debugger).await;
+	let outcome =
+		dispatch(cli.command, log_filter, log_controller, debugger, cli.chain_backend).await;
 
 	if let Some(check) = check {
 		update::finish_background_check(check).await;
@@ -641,6 +644,7 @@ async fn dispatch(
 	log_filter: String,
 	log_controller: LogController,
 	debugger: Option<DebuggerSwitch>,
+	chain_backend: ChainBackend,
 ) -> Result<()> {
 	// The switch is global but resolved per command, by the three arms that build
 	// a frame server and still before they bind a port. `update`,
@@ -656,7 +660,7 @@ async fn dispatch(
 				"{} must be set",
 				local_network::CONFIG_ENV
 			);
-			let config = network.cli_config().await?;
+			let config = network.cli_config(chain_backend).await?;
 			println!(
 				"{}",
 				serde_json::json!({
@@ -672,17 +676,19 @@ async fn dispatch(
 			Ok(())
 		},
 		Command::PairingHost(args) => {
-			run_pairing_host(args, log_filter, log_controller, debugger).await
+			run_pairing_host(args, log_filter, log_controller, debugger, chain_backend).await
 		},
-		Command::Dev(args) => run_dev(args, log_filter, log_controller, debugger).await,
+		Command::Dev(args) => {
+			run_dev(args, log_filter, log_controller, debugger, chain_backend).await
+		},
 		Command::SigningHost(args) => {
-			run_signing_host(args, log_filter, log_controller, None, debugger).await
+			run_signing_host(args, log_filter, log_controller, None, debugger, chain_backend).await
 		},
 		Command::IdentityCheck { mnemonic, network } => {
 			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
 				.context("invalid BIP-39 mnemonic")?
 				.to_entropy();
-			attestation::check_identity(network.cli_config().await?, &entropy).await
+			attestation::check_identity(network.cli_config(chain_backend).await?, &entropy).await
 		},
 		Command::RegisterName { mnemonic, network, label, link_lite, chat_key } => {
 			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
@@ -698,7 +704,7 @@ async fn dispatch(
 				})
 				.transpose()?;
 			register_name::register_name(&register_name::RegisterNameConfig {
-				network: network.cli_config().await?,
+				network: network.cli_config(chain_backend).await?,
 				entropy,
 				label,
 				link_lite,
@@ -707,15 +713,32 @@ async fn dispatch(
 			.await
 		},
 		Command::AllocCheck { mnemonic, network, target, lookback, submit } => {
-			run_alloc_check(mnemonic, network.cli_config().await?, target, lookback, submit).await
+			run_alloc_check(
+				mnemonic,
+				network.cli_config(chain_backend).await?,
+				target,
+				lookback,
+				submit,
+			)
+			.await
 		},
 		Command::PgasCheck { mnemonic, network, target, lookback, submit } => {
-			run_pgas_check(mnemonic, network.cli_config().await?, target, lookback, submit).await
+			run_pgas_check(
+				mnemonic,
+				network.cli_config(chain_backend).await?,
+				target,
+				lookback,
+				submit,
+			)
+			.await
 		},
 		Command::Attest { mnemonic, network, username } => {
-			let attested =
-				accounts::attest_mnemonic(network.cli_config().await?, &mnemonic, &username)
-					.await?;
+			let attested = accounts::attest_mnemonic(
+				network.cli_config(chain_backend).await?,
+				&mnemonic,
+				&username,
+			)
+			.await?;
 			println!(
 				"{}",
 				serde_json::json!({
@@ -745,6 +768,12 @@ async fn run_pgas_check(
 ) -> Result<()> {
 	use truapi::statement_allowance::pgas;
 
+	if submit && network.chain_backend == chain::ChainBackend::LightClient {
+		bail!(
+			"--submit needs --chain-backend rpc: the light client drops a PGAS claim, because \
+			 the proof Asset Hub's nodes return for its validation is missing entries"
+		);
+	}
 	let entropy = bip39::Mnemonic::parse(mnemonic.trim())
 		.context("invalid BIP-39 mnemonic")?
 		.to_entropy();
@@ -764,13 +793,22 @@ async fn run_pgas_check(
 		None => [0u8; 32],
 	};
 
-	let people_rpc = alloc::rpc::RpcClient::connect(network.people_ws)
-		.await
-		.map_err(anyhow::Error::msg)?;
+	let chains = chain::CliChainProvider::new(&network);
+	let people_location = chains.location(network.people_genesis);
+	let people_rpc = alloc::rpc::RpcClient::new(
+		chains
+			.rpc_client(network.people_genesis)
+			.await
+			.with_context(|| format!("connect to People ({people_location})"))?,
+	);
 	let people_metadata = alloc::fetch_metadata(&people_rpc).await.map_err(anyhow::Error::msg)?;
-	let asset_hub_rpc = alloc::rpc::RpcClient::connect(network.asset_hub_ws)
-		.await
-		.map_err(anyhow::Error::msg)?;
+	let asset_hub_location = chains.location(network.asset_hub_genesis);
+	let asset_hub_rpc = alloc::rpc::RpcClient::new(
+		chains
+			.rpc_client(network.asset_hub_genesis)
+			.await
+			.with_context(|| format!("connect to Asset Hub ({asset_hub_location})"))?,
+	);
 	let asset_hub_metadata =
 		alloc::fetch_metadata(&asset_hub_rpc).await.map_err(anyhow::Error::msg)?;
 	let (spec_version, transaction_version) =
@@ -927,9 +965,14 @@ async fn run_alloc_check(
 		None => [0u8; 32],
 	};
 
-	let rpc = alloc::rpc::RpcClient::connect(network.people_ws)
-		.await
-		.map_err(anyhow::Error::msg)?;
+	let chains = chain::CliChainProvider::new(&network);
+	let location = chains.location(network.people_genesis);
+	let rpc = alloc::rpc::RpcClient::new(
+		chains
+			.rpc_client(network.people_genesis)
+			.await
+			.with_context(|| format!("connect to People ({location})"))?,
+	);
 	let metadata = alloc::fetch_metadata(&rpc).await.map_err(anyhow::Error::msg)?;
 	let (spec_version, transaction_version) =
 		alloc::fetch_runtime_version(&rpc).await.map_err(anyhow::Error::msg)?;
@@ -1127,8 +1170,7 @@ fn approval_policy(auto_accept: bool, network: NetworkConfig) -> Result<Approval
 /// Builds the CLI's own extrinsics over `network`'s chains, with the
 /// network's V5 pipelines as the default extrinsic versions.
 fn extrinsic_service(network: &NetworkConfig) -> ExtrinsicService {
-	let provider =
-		Arc::new(chain::WsChainProvider::new(network.people_ws, network.live_chain_endpoints));
+	let provider = Arc::new(chain::CliChainProvider::new(network));
 	let versions = Arc::new(chain::PresetExtensionVersions(network.extension_versions()));
 	ExtrinsicService::from_provider(provider, tokio_spawner(), versions)
 }
@@ -1283,6 +1325,7 @@ async fn run_pairing_host(
 	initial_log_filter: String,
 	log_controller: LogController,
 	debugger: Option<DebuggerSwitch>,
+	chain_backend: ChainBackend,
 ) -> Result<()> {
 	let script_projects = script_project_directory(args.base_path.clone());
 	let interactive = args.script.is_none();
@@ -1291,7 +1334,7 @@ async fn run_pairing_host(
 			"interactive pairing-host requires a TTY; use pairing-host --script <path>",
 		);
 	}
-	let network = args.network.cli_config().await?;
+	let network = args.network.cli_config(chain_backend).await?;
 	let base_path = state_base_path(args.base_path);
 	let product =
 		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context());
@@ -1391,6 +1434,7 @@ async fn run_signing_host(
 	log_controller: LogController,
 	dev_command: Option<Vec<String>>,
 	debugger: Option<DebuggerSwitch>,
+	chain_backend: ChainBackend,
 ) -> Result<()> {
 	if let Err(error) = validate_signing_args(&args) {
 		invalid_invocation(error);
@@ -1409,7 +1453,7 @@ async fn run_signing_host(
 	let product =
 		frame_server::ProductSelection::new(args.product_id.clone(), args.execution_kind.context());
 	let product_id = product.current();
-	let network = args.network.cli_config().await?;
+	let network = args.network.cli_config(chain_backend).await?;
 	let base_path = state_base_path(args.base_path.clone());
 	let session_catalog = SessionCatalog::new(base_path.clone(), network.id)?;
 	let initial_session_name = initial_session_name(&args, &session_catalog)?;
@@ -2177,6 +2221,7 @@ async fn run_dev(
 	initial_log_filter: String,
 	log_controller: LogController,
 	debugger: Option<DebuggerSwitch>,
+	chain_backend: ChainBackend,
 ) -> Result<()> {
 	bootstrap::read_container(&bootstrap::container_path())?;
 	let product_id = match args.product_id {
@@ -2200,7 +2245,8 @@ async fn run_dev(
 		..Default::default()
 	};
 	let command = (!args.command.is_empty()).then_some(args.command);
-	run_signing_host(signing, initial_log_filter, log_controller, command, debugger).await
+	run_signing_host(signing, initial_log_filter, log_controller, command, debugger, chain_backend)
+		.await
 }
 
 /// Run the wrapped development command, returning the code to exit with.
@@ -4430,6 +4476,26 @@ mod cli_tests {
 				second_abort.is_finished(),
 			),
 			([[1; 32], [2; 32]].into_iter().collect(), true, false,)
+		);
+	}
+
+	/// The light client drops a PGAS claim, so a submit there would only wait
+	/// out its timeout. It is refused before a key is derived or a chain dialed.
+	#[tokio::test]
+	async fn pgas_check_refuses_to_submit_on_the_light_client() {
+		let network = NetworkConfig {
+			chain_backend: chain::ChainBackend::LightClient,
+			..Network::default().config()
+		};
+
+		let error = run_pgas_check(String::new(), network, Some("00".repeat(32)), 8, true)
+			.await
+			.expect_err("a submit on the light client is refused");
+
+		assert_eq!(
+			error.to_string(),
+			"--submit needs --chain-backend rpc: the light client drops a PGAS claim, because \
+			 the proof Asset Hub's nodes return for its validation is missing entries"
 		);
 	}
 

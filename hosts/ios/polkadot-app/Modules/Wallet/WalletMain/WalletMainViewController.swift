@@ -31,6 +31,14 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+
+        guard rootView.viewModel.expandedSection == .collectiblesDetails else { return }
+
+        collapseExpandedSection()
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .bgSurfaceMain
@@ -58,11 +66,7 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
         }
 
         rootView.viewModel.onCollectibles = { [weak self] in
-            self?.showCollectiblesOverlay()
-        }
-
-        rootView.viewModel.onViewCollectibles = { [weak presenter] in
-            presenter?.showCollectibles()
+            self?.openCollectibles()
         }
 
         rootView.viewModel.onOpenPocketCard = { [weak presenter] card in
@@ -178,11 +182,17 @@ extension WalletMainViewController: WalletMainViewProtocol {
         setTitleCenter(String(localized: .walletMainIdCard))
     }
 
-    private func showCollectiblesOverlay() {
+    private func openCollectibles() {
+        guard rootView.viewModel.expandedSection == .none else { return }
+
         rootView.viewModel.expandedSection = .collectiblesDetails
-        setOverlayCloseButton()
         resetRightButton()
         setTitleCenter(nil)
+
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(WalletView.sectionAnimationDuration))
+            self?.presenter.showCollectibles()
+        }
     }
 
     func setMainTitle() {

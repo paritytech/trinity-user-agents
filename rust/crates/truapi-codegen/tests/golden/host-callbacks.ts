@@ -247,11 +247,6 @@ export type CoreStorageKey =
    */
   | { tag: "WorkerManifest"; value: { productLabel: string } }
   /**
-   * The products published to browse on this network, as last read, and
-   * when, cached for the same lifetime as `Self::ProductManifest`.
-   */
-  | { tag: "PublishedProducts"; value?: undefined }
-  /**
    * What funding providers' quote answers showed about what they serve,
    * each record trusted for twelve hours.
    */
@@ -402,7 +397,7 @@ export interface FundingQuoteList {
    * until the user picks another: the least to pay inbound, the most to
    * receive outbound. ``undefined`` until one quotes.
    */
-  best?: string;
+  best?: ProductId;
 
   /**
    * When the core asks every provider again, in Unix milliseconds. The
@@ -418,7 +413,7 @@ export interface FundingQuoteRow {
   /**
    * The provider.
    */
-  providerId: string;
+  providerId: ProductId;
 
   /**
    * Where its quote stands.
@@ -1074,8 +1069,7 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         14,
         S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
       ] as const,
-      PublishedProducts: [15, S._void] as const,
-      FundingSupport: [16, S._void] as const,
+      FundingSupport: [15, S._void] as const,
     }),
 );
 
@@ -1193,7 +1187,7 @@ export const FundingQuoteList: S.Codec<FundingQuoteList> = S.lazy(
     S.Struct({
       requestId: S.u64,
       rows: S.Vector(FundingQuoteRow),
-      best: S.Option(S.str),
+      best: S.Option(ProductId),
       refreshAtMs: S.u64,
     }) as S.Codec<FundingQuoteList>,
 );
@@ -1204,7 +1198,7 @@ export const FundingQuoteList: S.Codec<FundingQuoteList> = S.lazy(
 export const FundingQuoteRow: S.Codec<FundingQuoteRow> = S.lazy(
   (): S.Codec<FundingQuoteRow> =>
     S.Struct({
-      providerId: S.str,
+      providerId: ProductId,
       state: FundingQuoteState,
     }) as S.Codec<FundingQuoteRow>,
 );
