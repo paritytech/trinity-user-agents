@@ -527,13 +527,19 @@ for raw bytes signed inside the `<Bytes>` watermark.
   routes the manifest did not declare and as `unsupported` entries the host
   can filter by the user's country, while the provider's current manifest
   serves Funding. Natively the rows arrive
-  through `funding_quote_changed`.
-  `select_funding_provider` hands a session to the provider the user chose,
-  which must be one of those candidates, on the quote it was chosen by, which
-  must be one core offered for the session, not yet expired and, when the
-  session has an amount, pricing that amount in balance units (what it
-  credits inbound, what it debits outbound); a session opened without an
-  amount takes the quote's. The provider receives it in `assign`, and the
+  through `funding_quote_changed`. At most eight providers are asked at
+  once, each with its own deadline. Answers are reused for 30 seconds within
+  the session that asked, never across sessions, and a newer ask for the
+  session withdraws the one before it, its late rows and the quotes it
+  offered. A quote that does not price the ask's amount, moves nothing,
+  charges more in fees than the user sends, has an unusable id or has
+  expired shows as the provider being unable to serve the ask.
+  `select_funding_provider` hands a session to the provider the user chose.
+  Chosen on a quote, the quote must be one the core offered for the session,
+  not yet expired and, when the session has an amount, pricing that amount
+  in balance units (what it credits inbound, what it debits outbound); a
+  session opened without an amount takes the quote's. Chosen without one,
+  the provider must be one of the session direction's candidates. The provider receives it in `assign`, and the
   session keeps it with the rail and asset it priced. A session's offered
   quotes are dropped once it is assigned or ends.
   A native host's `funding_session_changed` carries the session's
