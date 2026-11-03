@@ -7,9 +7,9 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import uniffi.truapi.PinnedPocketCard
+import uniffi.truapi.ProductId
 import uniffi.truapi.RendererNode
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -50,7 +50,7 @@ class AssetPinnedPocketCards @Inject constructor(
     private val bundledImages by lazy { context.assets.list("pocket").orEmpty().map { "pocket/$it" }.toSet() }
 
     override fun cards(tld: DotNsTld): List<PinnedPocketCard> = definitions.map {
-        PinnedPocketCard(it.backingProduct(tld).value, it.cardId, context.getString(it.titleRes))
+        PinnedPocketCard(it.backingProduct(tld), it.cardId, context.getString(it.titleRes))
     }
 
     override fun pinned(key: PocketCardKey): CachedPocketCard? {

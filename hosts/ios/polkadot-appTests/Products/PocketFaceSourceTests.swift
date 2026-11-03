@@ -48,7 +48,7 @@ struct PocketFaceSourceTests {
 
 // MARK: - Fixtures
 
-private let loyalty = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
+private let loyalty = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
 
 private extension RendererNode {
     var text: String? {

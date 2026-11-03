@@ -4,7 +4,6 @@ import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.CachedPocketCard
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.reopenAfterFailure
@@ -42,20 +41,20 @@ class CorePocketCardRepository @Inject constructor(
 
     override suspend fun insert(card: CachedPocketCard) {
         val key = card.card.key
-        runtime().addPocketCard(key.productId.value, key.cardId.value, card.card.title, card.face)
+        runtime().addPocketCard(key.productId, key.cardId.value, card.card.title, card.face)
     }
 
     override suspend fun remove(key: PocketCardKey) {
-        runtime().removePocketCard(key.productId.value, key.cardId.value)
+        runtime().removePocketCard(key.productId, key.cardId.value)
     }
 
     override suspend fun face(key: PocketCardKey): RendererNode? =
-        runtime().pocketCardFace(key.productId.value, key.cardId.value)
+        runtime().pocketCardFace(key.productId, key.cardId.value)
 
     private suspend fun runtime(): TrUAPIHostRuntime = runtimeProvider.runtime().getOrThrow()
 
     private fun PocketEntry.toDomain() = PocketCard(
-        key = PocketCardKey(ProductId.fromStoredValue(productId), PocketCardId(cardId)),
+        key = PocketCardKey(productId, PocketCardId(cardId)),
         title = title,
         privileged = privileged,
     )

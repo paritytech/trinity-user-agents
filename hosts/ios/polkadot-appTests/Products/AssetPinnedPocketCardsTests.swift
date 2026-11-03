@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import Testing
@@ -11,12 +12,12 @@ struct AssetPinnedPocketCardsTests {
     /// id is a function of the network the app is on.
     @Test
     func placesHumanityOnThePersonhoodProduct() async {
-        #expect(pinned.cards() == [PinnedPocketCard(productId: "peopl.paseo", cardId: "humanity", title: "Humanity")])
+        #expect(pinned.cards() == [PinnedPocketCard(productId: try! ProductId("peopl.paseo"), cardId: "humanity", title: "Humanity")])
     }
 
     @Test
     func namesAPinnedCardWithoutAwaiting() {
-        let key = PocketCardKey(productId: "peopl.paseo", cardId: PocketCardId(value: "humanity"))
+        let key = PocketCardKey(productId: try! ProductId("peopl.paseo"), cardId: PocketCardId(value: "humanity"))
 
         #expect(pinned.pinned(key)?.privileged == true)
     }
@@ -25,14 +26,14 @@ struct AssetPinnedPocketCardsTests {
     /// product cannot claim permanence by naming someone else's card.
     @Test
     func doesNotPinTheSameCardIdOnAnotherProduct() {
-        let impostor = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "humanity"))
+        let impostor = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "humanity"))
 
         #expect(pinned.pinned(impostor) == nil)
     }
 
     @Test
     func doesNotPinAnUnknownCardOnTheRightProduct() {
-        let unknown = PocketCardKey(productId: "peopl.paseo", cardId: PocketCardId(value: "loyalty"))
+        let unknown = PocketCardKey(productId: try! ProductId("peopl.paseo"), cardId: PocketCardId(value: "loyalty"))
 
         #expect(pinned.pinned(unknown) == nil)
     }

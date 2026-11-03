@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation_iOS
 import Products
 import UIKit
@@ -69,7 +70,7 @@ private extension ProductPermissionPromptViewFactory {
     }
 
     static func makeSingleContent(
-        productId: String,
+        productId: ProductId,
         permission: ProductPermission
     ) -> PromptContent {
         switch permission {
@@ -77,7 +78,7 @@ private extension ProductPermissionPromptViewFactory {
             PromptContent(
                 title: String(
                     localized: .Products.permissionTitleDeviceCapability(
-                        productId: productId,
+                        productId: productId.rawValue,
                         capability: capabilityDisplayName(capability)
                     )
                 ),
@@ -88,7 +89,7 @@ private extension ProductPermissionPromptViewFactory {
             PromptContent(
                 title: String(
                     localized: .Products.permissionTitleNetworkAccess(
-                        productId: productId
+                        productId: productId.rawValue
                     )
                 ),
                 body: String(
@@ -100,55 +101,55 @@ private extension ProductPermissionPromptViewFactory {
             PromptContent(
                 title: String(
                     localized: .Products.permissionTitleAccountAccess(
-                        productId: productId
+                        productId: productId.rawValue
                     )
                 ),
                 body: String(
                     localized: .Products.permissionBodyAccountAccess(
-                        targetProductId: targetProductId
+                        targetProductId: targetProductId.rawValue
                     )
                 ),
                 icon: makeIcon(systemName: "person.crop.circle")
             )
         case .balanceAccess:
             PromptContent(
-                title: String(localized: .Products.permissionTitleRemote(productId: productId)),
+                title: String(localized: .Products.permissionTitleRemote(productId: productId.rawValue)),
                 body: String(localized: .Products.permissionBodyBalanceAccess),
                 icon: makeIcon(systemName: "dollarsign.circle.fill")
             )
         case .webRtcAccess:
             PromptContent(
-                title: String(localized: .Products.permissionTitleRemote(productId: productId)),
+                title: String(localized: .Products.permissionTitleRemote(productId: productId.rawValue)),
                 body: String(localized: .Products.permissionBodyWebRtc),
                 icon: makeIcon(systemName: "video.fill")
             )
         case .chainSubmitAccess:
             PromptContent(
-                title: String(localized: .Products.permissionTitleRemote(productId: productId)),
+                title: String(localized: .Products.permissionTitleRemote(productId: productId.rawValue)),
                 body: String(localized: .Products.permissionBodyChainSubmit),
                 icon: makeIcon(systemName: "link")
             )
         case .preimageSubmitAccess:
             PromptContent(
-                title: String(localized: .Products.permissionTitleRemote(productId: productId)),
+                title: String(localized: .Products.permissionTitleRemote(productId: productId.rawValue)),
                 body: String(localized: .Products.permissionBodyPreimageSubmit),
                 icon: makeIcon(systemName: "doc.text")
             )
         case .statementSubmitAccess:
             PromptContent(
-                title: String(localized: .Products.permissionTitleRemote(productId: productId)),
+                title: String(localized: .Products.permissionTitleRemote(productId: productId.rawValue)),
                 body: String(localized: .Products.permissionBodyStatementSubmit),
                 icon: makeIcon(systemName: "text.bubble")
             )
         case .userIdentityAccess:
             PromptContent(
-                title: String(localized: .Products.permissionTitleRemote(productId: productId)),
+                title: String(localized: .Products.permissionTitleRemote(productId: productId.rawValue)),
                 body: String(localized: .Products.permissionBodyUserIdentityAccess),
                 icon: makeIcon(systemName: "person.text.rectangle")
             )
         case let .nftPurseRead(ownerProductId):
             PromptContent(
-                title: String(localized: .Products.permissionTitleRemote(productId: productId)),
+                title: String(localized: .Products.permissionTitleRemote(productId: productId.rawValue)),
                 body: NftPurseReadCopy.description(ownerProductId: ownerProductId),
                 icon: makeIcon(systemName: "square.stack.3d.up.fill")
             )
@@ -156,13 +157,13 @@ private extension ProductPermissionPromptViewFactory {
     }
 
     static func makeBatchedContent(
-        productId: String,
+        productId: ProductId,
         permissions: [ProductPermission]
     ) -> PromptContent {
         let descriptions = permissions.map { permissionDescription(for: $0) }
         let body = descriptions.joined(separator: "\n")
         return PromptContent(
-            title: String(localized: .Products.permissionTitleRemote(productId: productId)),
+            title: String(localized: .Products.permissionTitleRemote(productId: productId.rawValue)),
             body: body,
             icon: makeIcon(systemName: "shield.lefthalf.filled")
         )
@@ -189,7 +190,7 @@ private extension ProductPermissionPromptViewFactory {
         case let .accountAccess(targetProductId):
             "- " + String(
                 localized: .Products.permissionBodyAccountAccess(
-                    targetProductId: targetProductId
+                    targetProductId: targetProductId.rawValue
                 )
             )
         case .userIdentityAccess:
@@ -265,10 +266,10 @@ private extension ProductPermissionPromptViewFactory {
 
 /// What reading another owner's NFT purses reveals, shared by the prompt and the settings list.
 enum NftPurseReadCopy {
-    static func description(ownerProductId: String?) -> String {
+    static func description(ownerProductId: ProductId?) -> String {
         guard let ownerProductId else {
             return String(localized: .Products.permissionBodyNftPurseReadRoot)
         }
-        return String(localized: .Products.permissionBodyNftPurseReadProduct(ownerProductId: ownerProductId))
+        return String(localized: .Products.permissionBodyNftPurseReadProduct(ownerProductId: ownerProductId.rawValue))
     }
 }

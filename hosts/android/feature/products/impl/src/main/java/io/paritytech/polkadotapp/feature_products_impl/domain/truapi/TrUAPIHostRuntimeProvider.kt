@@ -20,7 +20,6 @@ import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepo
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
@@ -52,6 +51,7 @@ import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.ProductExecutionConfig
+import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.WorkerTransition
@@ -228,17 +228,19 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
         override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
 
+        private val encryptedStorage = EncryptedHostValues(encryptedPreferences)
+
         override fun onCoreLog(marker: String, detail: String) {
             logCoreLine(marker, detail)
         }
 
         // Runtime-wide demand from the core's worker ledger; the supervisor marshals it off this thread.
-        override fun requestWorkerTransition(productId: String, transition: WorkerTransition) {
+        override fun requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
             val demand = when (transition) {
                 WorkerTransition.START -> WorkerDemand.START
                 WorkerTransition.STOP -> WorkerDemand.STOP
             }
-            workerSupervisor.get().onDemandChanged(ProductId.fromStoredValue(productId), demand)
+            workerSupervisor.get().onDemandChanged(productId, demand)
         }
 
         // A run returns by itself once nothing is live, so `false` needs no action.
@@ -249,6 +251,13 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         // Item keys derived under an installation that is not registered yet could not be recovered from the seed.
         override suspend fun currentInstallation(): ByteArray =
             installations.awaitBackedUp().getOrThrow().value.value
+
+        override suspend fun encryptedStorageRead(key: ByteArray): ByteArray? = encryptedStorage.read(key)
+
+        override suspend fun encryptedStorageWrite(key: ByteArray, value: ByteArray) =
+            encryptedStorage.write(key, value)
+
+        override suspend fun encryptedStorageDelete(key: ByteArray) = encryptedStorage.delete(key)
 
         override suspend fun navigateTo(url: String) {
             throw HostNavigateToException.Unknown("navigation unavailable at host level")
@@ -267,7 +276,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             PermissionDecision.DENY
 
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
-            confirmationLauncher.decide(review, requesterFallback = HOST_REQUESTER)
+            confirmationLauncher.decide(review)
 
         override suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean =
             when (request) {
@@ -302,7 +311,6 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
     private companion object {
         const val HOST_NAME = "Polkadot"
-        const val HOST_REQUESTER = "host"
 
         /**
          * Ceiling on resolving the network's dotNS TLD while booting the runtime.

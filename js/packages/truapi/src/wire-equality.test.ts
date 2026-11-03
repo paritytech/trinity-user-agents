@@ -62,7 +62,7 @@ describe("encodeWireMessage / decodeWireMessage wire equality", () => {
         ] as const) {
             const request: HostSignPayloadRequest = {
                 account: {
-                    dotNsIdentifier: "myapp.dot",
+                    dotNsIdentifier: T.asProductId("myapp.dot"),
                     derivationIndex: { tag: "Index", value: 7 },
                 },
                 payload: {
@@ -161,7 +161,7 @@ describe("encodeWireMessage / decodeWireMessage wire equality", () => {
             tag: "V1",
             value: {
                 productAccountId: {
-                    dotNsIdentifier: "foo",
+                    dotNsIdentifier: T.asProductId("foo"),
                     derivationIndex: { tag: "Index", value: 0 },
                 },
             },

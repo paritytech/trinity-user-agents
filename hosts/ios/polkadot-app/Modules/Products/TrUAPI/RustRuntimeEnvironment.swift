@@ -158,7 +158,7 @@ private extension RustRuntimeEnvironment {
 }
 
 extension ExecutionPurpose {
-    var executionKind: ProductExecutionKind {
+    var executionKind: ExecutableKind {
         switch self {
         case let .page(cardFace): cardFace == nil ? .app : .widget
         case .worker: .worker

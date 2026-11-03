@@ -17,15 +17,15 @@ use truapi::v01;
 
 use crate::{
 	chain_runtime::ChainRuntime,
-	dotns_views::{call_bytes32_string, network_tld, protocol_component, read_view, tld_node},
+	dotns_views::{network_tld, protocol_component, read_view, tld_node},
 	host_internal::{
-		permissions::account_access_status,
+		permissions::authorization_status,
 		product_manifest::{Granted, RootManifest},
 		sso_messages::RingVrfError,
 	},
 	host_logic::dotns_gateway::{
-		DotnsCallError, DotnsError, DotnsTransport, DotnsViewError, call_bytes32, call_no_args,
-		decode_address, decode_string, discover_pop_controller, namehash_under,
+		ContentResolver, DotnsCallError, DotnsError, DotnsPopController, DotnsRegistry,
+		DotnsTransport, DotnsViewError, discover_pop_controller, namehash_under,
 	},
 	runtime::{
 		dotns_lookup::{DotnsLookup, DotnsLookupKind},
@@ -71,18 +71,17 @@ pub async fn fetch_root_manifest(
 
 	let registry = protocol_component(&mut lookup, &protocol_registry, "registry").await?;
 	let resolver =
-		read_view(&mut lookup, &registry, call_bytes32("resolver(bytes32)", &node), decode_address)
+		read_view(&mut lookup, &registry, DotnsRegistry::resolverCall { node: node.into() })
 			.await
 			.map_err(DotnsError::Resolver)?;
-	if resolver == [0u8; 20] {
+	if resolver.is_zero() {
 		return Ok(None);
 	}
 
 	let manifest = match read_view(
 		&mut lookup,
-		&resolver,
-		call_bytes32_string("text(bytes32,string)", &node, MANIFEST_RECORD_KEY),
-		decode_string,
+		&resolver.into_array(),
+		ContentResolver::textCall { node: node.into(), key: MANIFEST_RECORD_KEY.to_string() },
 	)
 	.await
 	{
@@ -117,9 +116,9 @@ async fn protocol_registry<T: DotnsTransport + ?Sized>(
 		);
 		return Ok(None);
 	};
-	read_view(transport, &controller, call_no_args("protocolRegistry()"), decode_address)
+	read_view(transport, &controller, DotnsPopController::protocolRegistryCall {})
 		.await
-		.map(Some)
+		.map(|registry| Some(registry.into_array()))
 		.map_err(DotnsError::ProtocolRegistry)
 }
 
@@ -160,17 +159,6 @@ mod tests {
 		// The other half of the same property: the network's TLD is what
 		// separates deployments, so the same id must not collide across them.
 		assert_ne!(node_on(".paseo", "dim2.dot"), node_on(".dot", "dim2.dot"));
-	}
-
-	#[test]
-	fn a_text_call_encodes_the_key_as_a_dynamic_argument() {
-		let call = call_bytes32_string("text(bytes32,string)", &[0x11; 32], "manifest");
-		// selector, node, offset, length, one padded word for an 8-byte key.
-		assert_eq!(call.len(), 4 + 32 * 4);
-		assert_eq!(&call[4..36], &[0x11; 32]);
-		assert_eq!(call[67], 64, "key offset follows the node");
-		assert_eq!(call[99], 8, "key length precedes its bytes");
-		assert_eq!(&call[100..108], b"manifest");
 	}
 
 	/// The source each lookup with nothing cached reports, for a host with no
@@ -475,10 +463,12 @@ async fn stored_account_decision(
 	// overrides is resolved by `ProductId::bare_label` for the target as well as
 	// the caller, so filing the refusal against the full target would let
 	// `app.peopl.dot` carry a grant the user refused for `peopl.dot`.
-	let candidates =
-		[(caller_id.bare_label(), target.bare_label()), (caller_id.as_str(), target.as_str())];
-	for (caller, target) in candidates {
-		match account_access_status(platform, caller, target).await {
+	let candidates = [
+		CoreStorageKey::product_account_access_authorization(caller_id, target),
+		CoreStorageKey::account_access_authorization(caller_id, target),
+	];
+	for key in candidates {
+		match authorization_status(platform, key).await {
 			Ok(PermissionAuthorizationStatus::Denied) => return StoredDecision::Denied,
 			Ok(
 				PermissionAuthorizationStatus::NotDetermined |
@@ -556,15 +546,7 @@ pub async fn require_context_access(
 	if access.caller == access.owner {
 		return Ok(());
 	}
-	// Normalized like every other identity the gate decided about. This is the
-	// one that arrives straight off the request payload, so leaving it raw would
-	// refuse a grantee for spelling its own context `DIM2.paseo`, the hazard
-	// the gate exists to remove, one layer down. A context that names no
-	// product has no manifest to consent with, so it fails closed.
-	let context_id = context
-		.product_id
-		.parse::<ProductId>()
-		.map_err(|_| RingVrfError::NotAllowlisted)?;
+	let context_id = &context.product_id;
 	// A product is all its executables, so `app.dim2.dot` is `dim2.dot`'s context
 	// and `app.peopl.dot` is the owner's. The network is not part of that: a
 	// grant published on `.dot` must not reach the pseudonym a namesake presents
@@ -584,7 +566,7 @@ pub async fn require_context_access(
 		Refusal { because: RefusedBecause::ContextOffNetwork, source: None, scopes: None }.warn(
 			&access.caller,
 			&access.owner,
-			Some(&context_id),
+			Some(context_id),
 		);
 		return Err(RingVrfError::NotAllowlisted);
 	}
@@ -592,7 +574,7 @@ pub async fn require_context_access(
 		services,
 		services.platform.as_ref(),
 		&access.caller,
-		&context_id,
+		context_id,
 		Granted::Context,
 		MANIFEST_RESOLUTION_CEILING,
 	)
@@ -611,7 +593,7 @@ pub async fn require_context_access(
 			Ok(())
 		},
 		Err(refusal) => {
-			refusal.warn(&access.caller, &access.owner, Some(&context_id));
+			refusal.warn(&access.caller, &access.owner, Some(context_id));
 			Err(RingVrfError::NotAllowlisted)
 		},
 	}

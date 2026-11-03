@@ -16,20 +16,20 @@ enum TrUAPIWorkerError: Error, CustomStringConvertible {
 /// headless engine its entry module runs in.
 struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
     private let environment: @Sendable () throws -> RustRuntimeEnvironment
-    private let products: any ProductResolving
+    private let contentLoader: any ProductContentLoading
     private let dotNsResolver: any DotNsResolverProtocol
     private let productFileProvider: any ChatProductFileProviding
     private let logger: LoggerProtocol
 
     init(
         environment: @escaping @Sendable () throws -> RustRuntimeEnvironment,
-        products: any ProductResolving,
+        contentLoader: any ProductContentLoading,
         dotNsResolver: any DotNsResolverProtocol,
         productFileProvider: any ChatProductFileProviding,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.environment = environment
-        self.products = products
+        self.contentLoader = contentLoader
         self.dotNsResolver = dotNsResolver
         self.productFileProvider = productFileProvider
         self.logger = logger
@@ -39,7 +39,8 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
         productId: ProductId,
         context: ProductWorkerContext
     ) async throws -> TrUAPIWorkerRuntime {
-        let resolved = try? await products.resolve(productId)
+        // Its 1 s and 2 s backoffs fit inside the manager's startup window.
+        let resolved = try await contentLoader.openWorker(productId, policy: .attempts(3))
         let source = try await workerSource(for: resolved, productId: productId)
 
         let engine = try ChatProductEngineFactory.makeContext(
@@ -66,16 +67,14 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
     /// to check: a holder must not take a reference on a modality the worker
     /// never declared.
     private func workerSource(
-        for resolved: ResolvedProduct?,
+        for resolved: ResolvedProduct,
         productId: ProductId
     ) async throws -> ProductWorkerSource {
-        let resolved = resolved ?? .legacy(id: productId)
-
         if let published = ProductWorkerSource.published(for: resolved) {
             // Fetched before the engine boots: the scheme handler reads the
             // archive off disk, and a page loaded before it is there fails as a
             // missing module rather than waiting.
-            _ = try await dotNsResolver.resolveToLocalURL(dotNsName: published.contentId)
+            _ = try await dotNsResolver.resolveToLocalURL(dotNsName: published.contentId.rawValue)
 
             return published
         }

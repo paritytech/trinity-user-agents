@@ -148,7 +148,7 @@ final class ProductPocketService: @unchecked Sendable {
                         logger: logger
                     )
                 },
-                products: flowState.productResolver,
+                contentLoader: flowState.contentLoader,
                 dotNsResolver: flowState.dotNsResolver,
                 productFileProvider: productFileProvider,
                 logger: logger

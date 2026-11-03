@@ -92,6 +92,7 @@ import uniffi.truapi.WsBridgeEndpoint
 import uniffi.truapi.WsBridgeStartException
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.ProductExecutionConfig
+import uniffi.truapi.ProductId
 import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
@@ -109,7 +110,7 @@ import uniffi.truapi.NativeBalanceCallbacks
 import uniffi.truapi.NativePaymentCallbacks
 import uniffi.truapi.NativeScannerCallbacks
 import uniffi.truapi.NativeTopUpCallbacks
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
 
 /** Package metadata. */
 object TrUAPIHost {
@@ -342,7 +343,7 @@ interface HostBridge {
      * re-entrantly: marshal the work off rather than blocking on another
      * thread from inside it.
      */
-    fun requestWorkerTransition(productId: String, transition: WorkerTransition) {}
+    fun requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {}
 
     /**
      * Begin a pending operation. [label] is a log/UI hint, empty when the
@@ -355,12 +356,12 @@ interface HostBridge {
      * id.
      */
     @Throws(HostRejection::class)
-    suspend fun beginOperation(productId: String, label: String): UInt =
+    suspend fun beginOperation(productId: ProductId, label: String): UInt =
         defaultOperationIds.incrementAndGet().toUInt()
 
     /** End a pending operation. Idempotent, so a retry after an ambiguous failure is safe. */
     @Throws(HostRejection::class)
-    suspend fun endOperation(productId: String, id: UInt) {}
+    suspend fun endOperation(productId: ProductId, id: UInt) {}
 
     /**
      * A device finished pairing with this signing host.
@@ -394,6 +395,35 @@ interface HostBridge {
     @Throws(HostRejection::class)
     suspend fun currentInstallation(): ByteArray =
         throw HostRejection.Rejected("this host keeps no installation id")
+
+    /**
+     * A value the host keeps encrypted at rest and out of backups, such as in
+     * encrypted preferences. Returns null when nothing is stored under [key],
+     * and throws when the store cannot be read or the value no longer
+     * decrypts. The core keeps secrets here that its database must not hold.
+     * Runtime-wide, like [durableWorkChanged]. Defaults to a rejection for a
+     * host with no such store, which turns off the features that need it.
+     */
+    @Throws(HostRejection::class)
+    suspend fun encryptedStorageRead(key: ByteArray): ByteArray? =
+        throw HostRejection.Rejected("this host keeps no encrypted storage")
+
+    /**
+     * Stores [value] under [key], encrypted at rest and excluded from backups,
+     * replacing any earlier value. Runtime-wide, like [durableWorkChanged].
+     * Defaults to a rejection.
+     */
+    @Throws(HostRejection::class)
+    suspend fun encryptedStorageWrite(key: ByteArray, value: ByteArray): Unit =
+        throw HostRejection.Rejected("this host keeps no encrypted storage")
+
+    /**
+     * Deletes the value stored under [key]. Deleting nothing succeeds.
+     * Runtime-wide, like [durableWorkChanged]. Defaults to a rejection.
+     */
+    @Throws(HostRejection::class)
+    suspend fun encryptedStorageDelete(key: ByteArray): Unit =
+        throw HostRejection.Rejected("this host keeps no encrypted storage")
 
     /** Product-scoped key-value storage for the Rust core. */
     val storage: HostStorage
@@ -502,7 +532,7 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     }
 
     // Infallible across the FFI for the same reason `onCoreLog` is.
-    override fun requestWorkerTransition(productId: String, transition: WorkerTransition) {
+    override fun requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
         runCatching { bridge.requestWorkerTransition(productId, transition) }
     }
 
@@ -518,6 +548,15 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
 
     override suspend fun currentInstallation(): ByteArray =
         withHostRejection { bridge.currentInstallation() }
+
+    override suspend fun encryptedStorageRead(key: ByteArray): ByteArray? =
+        withHostRejection { bridge.encryptedStorageRead(key) }
+
+    override suspend fun encryptedStorageWrite(key: ByteArray, value: ByteArray) =
+        withHostRejection { bridge.encryptedStorageWrite(key, value) }
+
+    override suspend fun encryptedStorageDelete(key: ByteArray) =
+        withHostRejection { bridge.encryptedStorageDelete(key) }
 
     override suspend fun navigateTo(url: String) =
         withNavigateRejection { bridge.navigateTo(url) }
@@ -612,10 +651,10 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override suspend fun localStorageClear(key: String) =
         withStorageException { bridge.storage.clear(key) }
 
-    override suspend fun beginOperation(productId: String, label: String): UInt =
+    override suspend fun beginOperation(productId: ProductId, label: String): UInt =
         withHostRejection { bridge.beginOperation(productId, label) }
 
-    override suspend fun endOperation(productId: String, id: UInt) =
+    override suspend fun endOperation(productId: ProductId, id: UInt) =
         withHostRejection { bridge.endOperation(productId, id) }
 }
 
@@ -718,14 +757,14 @@ interface ContactsHostBridge {
      * drawing an empty overlay.
      */
     @Throws(HostRejection::class)
-    suspend fun pickContact(productId: String): HostContactPick
+    suspend fun pickContact(productId: ProductId): HostContactPick
 }
 
 private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : NativeContactsCallbacks {
     override fun contacts(lookup: HostContactLookup): HostContactMatches =
         withHostRejection { bridge.contacts(lookup) }
 
-    override suspend fun pickContact(productId: String): HostContactPick =
+    override suspend fun pickContact(productId: ProductId): HostContactPick =
         withHostRejection { bridge.pickContact(productId) }
 }
 
@@ -736,16 +775,16 @@ private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : 
 interface ScannerHostBridge {
     @Throws(HostRejection::class)
     suspend fun scanCode(
-        productId: String,
-        executionKind: ProductExecutionKind,
+        productId: ProductId,
+        executionKind: ExecutableKind,
         request: HostScannerScanRequest,
     ): HostScan
 }
 
 private class ScannerCallbackAdapter(private val bridge: ScannerHostBridge) : NativeScannerCallbacks {
     override suspend fun scanCode(
-        productId: String,
-        executionKind: ProductExecutionKind,
+        productId: ProductId,
+        executionKind: ExecutableKind,
         request: HostScannerScanRequest,
     ): HostScan = withHostRejection { bridge.scanCode(productId, executionKind, request) }
 }
@@ -776,14 +815,14 @@ interface TopUpHostBridge {
      * accepted it. Its amount is a decimal string of CASH units.
      */
     @Throws(HostPaymentTopUpException::class)
-    suspend fun topUp(productId: String, request: HostPaymentTopUpRequest)
+    suspend fun topUp(productId: ProductId, request: HostPaymentTopUpRequest)
 
     /**
      * The current status of [productId]'s top-up [id], or `null` when the host
      * holds no such top-up. Runs inline on the core's thread.
      */
     @Throws(HostRejection::class)
-    fun topUpStatus(productId: String, id: ByteArray): HostPaymentTopUpStatusSubscribeItem?
+    fun topUpStatus(productId: ProductId, id: ByteArray): HostPaymentTopUpStatusSubscribeItem?
 }
 
 /**
@@ -803,14 +842,14 @@ interface PaymentHostBridge {
      * of CASH units.
      */
     @Throws(HostPaymentException::class)
-    suspend fun requestPayment(productId: String, request: HostPaymentRequest)
+    suspend fun requestPayment(productId: ProductId, request: HostPaymentRequest)
 
     /**
      * The current status of [productId]'s payment [id], or `null` when the host
      * holds no such payment. Runs inline on the core's thread.
      */
     @Throws(HostRejection::class)
-    fun paymentStatus(productId: String, id: ByteArray): HostPaymentStatusSubscribeItem?
+    fun paymentStatus(productId: ProductId, id: ByteArray): HostPaymentStatusSubscribeItem?
 }
 
 /**
@@ -826,11 +865,11 @@ interface BalanceHostBridge {
      * for every product; [productId] only names the one asking.
      */
     @Throws(HostPaymentBalanceSubscribeException::class)
-    suspend fun balance(productId: String, purse: UInt?): String
+    suspend fun balance(productId: ProductId, purse: UInt?): String
 }
 
 private class TopUpCallbackAdapter(private val bridge: TopUpHostBridge) : NativeTopUpCallbacks {
-    override suspend fun topUp(productId: String, request: HostPaymentTopUpRequest) =
+    override suspend fun topUp(productId: ProductId, request: HostPaymentTopUpRequest) =
         try {
             bridge.topUp(productId, request)
         } catch (error: HostPaymentTopUpException) {
@@ -841,12 +880,12 @@ private class TopUpCallbackAdapter(private val bridge: TopUpHostBridge) : Native
             throw HostPaymentTopUpException.Unknown(hostRejectionReason(error)).apply { initCause(error) }
         }
 
-    override fun topUpStatus(productId: String, id: ByteArray): HostPaymentTopUpStatusSubscribeItem? =
+    override fun topUpStatus(productId: ProductId, id: ByteArray): HostPaymentTopUpStatusSubscribeItem? =
         withHostRejection { bridge.topUpStatus(productId, id) }
 }
 
 private class PaymentCallbackAdapter(private val bridge: PaymentHostBridge) : NativePaymentCallbacks {
-    override suspend fun requestPayment(productId: String, request: HostPaymentRequest) =
+    override suspend fun requestPayment(productId: ProductId, request: HostPaymentRequest) =
         try {
             bridge.requestPayment(productId, request)
         } catch (error: HostPaymentException) {
@@ -857,12 +896,12 @@ private class PaymentCallbackAdapter(private val bridge: PaymentHostBridge) : Na
             throw HostPaymentException.Unknown(hostRejectionReason(error)).apply { initCause(error) }
         }
 
-    override fun paymentStatus(productId: String, id: ByteArray): HostPaymentStatusSubscribeItem? =
+    override fun paymentStatus(productId: ProductId, id: ByteArray): HostPaymentStatusSubscribeItem? =
         withHostRejection { bridge.paymentStatus(productId, id) }
 }
 
 private class BalanceCallbackAdapter(private val bridge: BalanceHostBridge) : NativeBalanceCallbacks {
-    override suspend fun balance(productId: String, purse: UInt?): String =
+    override suspend fun balance(productId: ProductId, purse: UInt?): String =
         try {
             bridge.balance(productId, purse)
         } catch (error: HostPaymentBalanceSubscribeException) {
@@ -956,7 +995,7 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     }
 
     /** Report a later status of [productId]'s top-up [id] to the products following it. */
-    fun notifyTopUpStatus(productId: String, id: ByteArray, status: HostPaymentTopUpStatusSubscribeItem) {
+    fun notifyTopUpStatus(productId: ProductId, id: ByteArray, status: HostPaymentTopUpStatusSubscribeItem) {
         inner.notifyTopUpStatus(productId, id, status)
     }
 
@@ -971,7 +1010,7 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     }
 
     /** Report a later status of [productId]'s payment [id] to the products following it. */
-    fun notifyPaymentStatus(productId: String, id: ByteArray, status: HostPaymentStatusSubscribeItem) {
+    fun notifyPaymentStatus(productId: ProductId, id: ByteArray, status: HostPaymentStatusSubscribeItem) {
         inner.notifyPaymentStatus(productId, id, status)
     }
 
@@ -1025,7 +1064,7 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      * [HostBridge.requestWorkerTransition], which is where the host starts the
      * worker. Pair every call with one [releaseWorker].
      */
-    fun acquireWorker(productId: String) {
+    fun acquireWorker(productId: ProductId) {
         inner.acquireWorker(productId)
     }
 
@@ -1033,7 +1072,7 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      * Release one reference. The last one reports a stop transition, after
      * which the host may stop the worker. Releasing with none held is a no-op.
      */
-    fun releaseWorker(productId: String) {
+    fun releaseWorker(productId: ProductId) {
         inner.releaseWorker(productId)
     }
 
@@ -1146,17 +1185,17 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      * or title a product could not use is refused with [PocketAddException].
      */
     @Throws(PocketAddException::class)
-    suspend fun addPocketCard(productId: String, cardId: String, title: String, face: RendererNode) =
+    suspend fun addPocketCard(productId: ProductId, cardId: String, title: String, face: RendererNode) =
         inner.addPocketCard(productId, cardId, title, face)
 
     /** Remove a card on the user's behalf, unless it is pinned. */
     @Throws(NativeCoreDatabaseException::class)
-    suspend fun removePocketCard(productId: String, cardId: String): PocketCardRemoval =
+    suspend fun removePocketCard(productId: ProductId, cardId: String): PocketCardRemoval =
         inner.removePocketCard(productId, cardId)
 
     /** The newest face kept for a card, if one is. */
     @Throws(NativeCoreDatabaseException::class)
-    suspend fun pocketCardFace(productId: String, cardId: String): RendererNode? =
+    suspend fun pocketCardFace(productId: ProductId, cardId: String): RendererNode? =
         inner.pocketCardFace(productId, cardId)
 
     /**

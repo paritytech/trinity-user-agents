@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Testing
 import Foundation
 @testable import polkadot_app
@@ -14,8 +15,8 @@ struct CoreDataProductOperationStoreTests {
     func saveRoundTrips() async throws {
         let store = makeStore()
 
-        let labelled = ProductOperationRecord(productId: "getcash", id: 7, label: "sync", startedAt: startedAt)
-        let unlabelled = ProductOperationRecord(productId: "getcash", id: 8, label: nil, startedAt: startedAt)
+        let labelled = ProductOperationRecord(productId: try! ProductId("getcash.dot"), id: 7, label: "sync", startedAt: startedAt)
+        let unlabelled = ProductOperationRecord(productId: try! ProductId("getcash.dot"), id: 8, label: nil, startedAt: startedAt)
 
         try await store.save(labelled)
         try await store.save(unlabelled)
@@ -28,10 +29,10 @@ struct CoreDataProductOperationStoreTests {
     func deleteRemovesOne() async throws {
         let store = makeStore()
 
-        try await store.save(ProductOperationRecord(productId: "getcash", id: 1, label: nil, startedAt: startedAt))
-        try await store.save(ProductOperationRecord(productId: "getcash", id: 2, label: nil, startedAt: startedAt))
+        try await store.save(ProductOperationRecord(productId: try! ProductId("getcash.dot"), id: 1, label: nil, startedAt: startedAt))
+        try await store.save(ProductOperationRecord(productId: try! ProductId("getcash.dot"), id: 2, label: nil, startedAt: startedAt))
 
-        try await store.delete(productId: "getcash", id: 1)
+        try await store.delete(productId: try! ProductId("getcash.dot"), id: 1)
 
         let remaining = try await store.all()
         #expect(remaining.map(\.id) == [2])
@@ -40,10 +41,10 @@ struct CoreDataProductOperationStoreTests {
     @Test("deleting an unknown operation is a no-op")
     func deleteUnknownIsNoOp() async throws {
         let store = makeStore()
-        try await store.save(ProductOperationRecord(productId: "getcash", id: 1, label: nil, startedAt: startedAt))
+        try await store.save(ProductOperationRecord(productId: try! ProductId("getcash.dot"), id: 1, label: nil, startedAt: startedAt))
 
-        try await store.delete(productId: "getcash", id: 999)
-        try await store.delete(productId: "other", id: 1)
+        try await store.delete(productId: try! ProductId("getcash.dot"), id: 999)
+        try await store.delete(productId: try! ProductId("other.dot"), id: 1)
 
         let remaining = try await store.all()
         #expect(remaining.map(\.id) == [1])
@@ -52,8 +53,8 @@ struct CoreDataProductOperationStoreTests {
     @Test("clearAll empties the table")
     func clearAllEmpties() async throws {
         let store = makeStore()
-        try await store.save(ProductOperationRecord(productId: "getcash", id: 1, label: nil, startedAt: startedAt))
-        try await store.save(ProductOperationRecord(productId: "other", id: 2, label: "x", startedAt: startedAt))
+        try await store.save(ProductOperationRecord(productId: try! ProductId("getcash.dot"), id: 1, label: nil, startedAt: startedAt))
+        try await store.save(ProductOperationRecord(productId: try! ProductId("other.dot"), id: 2, label: "x", startedAt: startedAt))
 
         try await store.clearAll()
 

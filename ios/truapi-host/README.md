@@ -34,6 +34,8 @@ The generated bindings, the container bundle and the xcframework are all **gitig
 A consumer pins the plain semver tag, not the `@parity/ios-host@<version>` one,
 which SwiftPM cannot see:
 
+Product identifiers use `ProductId`, an immutable Swift value initialized through the Rust parser. Construct one with `try ProductId("chat.dot")`; use `rawValue` only at string serialization and display boundaries. `Codable` preserves the string wire format.
+
 ```swift
 .package(url: "https://github.com/paritytech/trinity-user-agents", exact: "0.12.0")
 ```
@@ -117,7 +119,7 @@ Run the package tests in their UIKit host on an iOS simulator (the xcframework h
 ## Chat
 
 A host serving the Chat modality implements `ChatHostBridge` and opens the
-execution with `ProductExecutionKind.chat`. Hosts without it pass nothing and
+execution with `ExecutableKind.worker`. Hosts without it pass nothing and
 Chat calls answer unsupported.
 
 ```swift
@@ -172,7 +174,7 @@ try runtime.activateLocalSession(secret: secret)
 
 let execution = try runtime.openProductExecution(
     bridge: bridge,
-    configuration: ProductExecutionConfig(productId: "chat.dot", executionKind: .chat),
+    configuration: ProductExecutionConfig(productId: try ProductId("chat.dot"), executionKind: .chat),
     chat: MyChatBridge(store: store)
 )
 let endpoint = try execution.startWsBridge()
@@ -204,7 +206,7 @@ runtime.
 ```swift
 let config = HostRuntimeConfig(
     // ...
-    pinnedPocketCards: [PinnedPocketCard(productId: "peopl.paseo", cardId: "humanity", title: "Humanity")]
+    pinnedPocketCards: [PinnedPocketCard(productId: try ProductId("peopl.paseo"), cardId: "humanity", title: "Humanity")]
 )
 
 // Every card, pinned first, now and after each change.
@@ -285,6 +287,14 @@ current app installation, the one the host registers for recovery. NFT purse
 item keys are derived under it. Defaults to a rejection, which fails
 `createItems`.
 
+`encryptedStorageRead(key:)`, `encryptedStorageWrite(key:value:)` and
+`encryptedStorageDelete(key:)` on the runtime bridge keep values encrypted at
+rest and out of backups, such as Keychain items with a `ThisDeviceOnly`
+accessibility. The core stores secrets there that its database must not hold. A
+missing key reads as `nil`; throw when the store cannot be read or a value no
+longer decrypts. Deleting a missing key succeeds. Defaults to a rejection,
+which turns off the features that need it.
+
 `durableWorkChanged(pending:)` on the runtime bridge reports whether the core
 has durable transactions still awaiting a verdict, starting with the state it
 finds at launch. While it is `true`, schedule a background task (a
@@ -317,7 +327,7 @@ final class MyGameBridge: GameHostBridge, @unchecked Sendable {
 
 let execution = try runtime.openProductExecution(
     bridge: bridge,
-    configuration: ProductExecutionConfig(productId: "dim2.dot", executionKind: .worker),
+    configuration: ProductExecutionConfig(productId: try ProductId("dim2.dot"), executionKind: .worker),
     game: MyGameBridge(reminders: reminderStore)
 )
 ```
@@ -610,7 +620,7 @@ try runtime.activateLocalSession(secret: entropyBytes, liteUsername: nil)
 let execution = try runtime.openProductExecution(
     bridge: bridge,
     configuration: ProductExecutionConfig(
-        productId: "my-product.dot",
+        productId: try ProductId("my-product.dot"),
         executionKind: .app
     )
 )

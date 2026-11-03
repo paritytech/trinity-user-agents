@@ -4,15 +4,15 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCard
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.PocketCardRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import uniffi.truapi.PinnedPocketCard
+import uniffi.truapi.ProductId
 import uniffi.truapi.RendererNode
 
-internal val gameProduct = ProductId.fromStoredValue("game.dot")
-internal val personhoodProduct = ProductId.fromStoredValue("peopl.dot")
+internal val gameProduct = ProductId.parse("game.dot").getOrThrow()
+internal val personhoodProduct = ProductId.parse("peopl.dot").getOrThrow()
 
 internal fun cardKey(productId: ProductId, cardId: String) = PocketCardKey(productId, PocketCardId(cardId))
 
@@ -30,7 +30,7 @@ internal fun addedCard(productId: ProductId, cardId: String) = CachedPocketCard(
 
 internal class FakePinnedPocketCards(private val cards: List<CachedPocketCard>) : PinnedPocketCards {
     override fun cards(tld: DotNsTld): List<PinnedPocketCard> =
-        cards.map { PinnedPocketCard(it.card.key.productId.value, it.card.key.cardId.value, it.card.title) }
+        cards.map { PinnedPocketCard(it.card.key.productId, it.card.key.cardId.value, it.card.title) }
 
     override fun pinned(key: PocketCardKey): CachedPocketCard? = cards.firstOrNull { it.card.key == key }
 

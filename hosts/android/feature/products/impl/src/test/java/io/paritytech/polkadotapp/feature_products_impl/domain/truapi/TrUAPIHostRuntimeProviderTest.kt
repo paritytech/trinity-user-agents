@@ -65,7 +65,7 @@ class TrUAPIHostRuntimeProviderTest {
         provider().runtime().getOrThrow()
 
         assertEquals(
-            listOf(PinnedPocketCard(personhoodProduct.value, "humanity", "humanity")),
+            listOf(PinnedPocketCard(personhoodProduct, "humanity", "humanity")),
             runtimeConfig.captured.pinnedPocketCards,
         )
     }

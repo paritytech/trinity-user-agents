@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::{
 	platform::{
-		HostInfo, PlatformInfo, ProductContext, ProductExecutionKind, ProductId,
+		ExecutableKind, HostInfo, PlatformInfo, ProductContext, ProductId,
 		RuntimeConfigValidationError, SigningHostConfig,
 	},
 	pocket_cards::PinnedPocketCard,
@@ -67,7 +67,7 @@ pub struct ProductExecutionConfig {
 	/// Canonical product identifier used for policy, storage, and derivation.
 	pub product_id: ProductId,
 	/// Trusted executable kind selected before product code starts.
-	pub execution_kind: ProductExecutionKind,
+	pub execution_kind: ExecutableKind,
 }
 
 /// [`HostRuntimeConfig`] once validated, in the shape the runtime is built from.

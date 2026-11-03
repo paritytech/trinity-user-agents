@@ -61,7 +61,17 @@ configuration update in the embedding app's package upgrade.
 
 ## Public surface
 
-The public surface lives in [`src/main/kotlin/io/parity/truapi/TrUAPIHost.kt`](src/main/kotlin/io/parity/truapi/TrUAPIHost.kt):
+Product identities use `uniffi.truapi.ProductId`. Construct values with
+`ProductId.parse("browse.dot")` or `ProductId.fromName("browse", "dot")`.
+Both call Rust for validation and normalization and return `Result<ProductId>`.
+The instance methods `executable(kind)` and `owner()` also return
+`Result<ProductId>`. Invalid input produces a failure containing
+`ProductIdException`; callers choose recovery or propagation. Kotlin owns
+the resulting immutable string value; equality, hashing and display do not
+call Rust. Use `.value` at text or persistence boundaries. Android navigation
+uses an app-owned `Parceler<ProductId>` that restores values through `parse`.
+
+Host callbacks and lifecycle APIs live in [`src/main/kotlin/io/parity/truapi/TrUAPIHost.kt`](src/main/kotlin/io/parity/truapi/TrUAPIHost.kt):
 
 - `HostBridge` - callback bundle the embedding app implements. Splits device permissions, remote permissions, navigation, push, feature support, action and permission confirmations, and both storage backends.
 - `HostStorage` - product-scoped read/write/clear interface the host backs with its own persistence. Its methods suspend, so a backend can await disk or keystore work.
@@ -76,7 +86,7 @@ The public surface lives in [`src/main/kotlin/io/parity/truapi/TrUAPIHost.kt`](s
 
 ## Chat
 
-A host serving the Chat modality implements `ChatHostBridge` (`createRoom`, `registerBot`, `postMessage`, `setRoomFooter`, `listRooms`) and opens the execution with `ProductExecutionKind.CHAT`:
+A host serving the Chat modality implements `ChatHostBridge` (`createRoom`, `registerBot`, `postMessage`, `setRoomFooter`, `listRooms`) and opens the execution with `ExecutableKind.WORKER`:
 
 ```kotlin
 import io.parity.truapi.*
@@ -86,7 +96,11 @@ import uniffi.truapi.ChatRoom
 import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.ChatRoomParticipation
 import uniffi.truapi.ChatRoomRegistrationStatus
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.HostRejection
+import uniffi.truapi.HostRuntimeConfig
+import uniffi.truapi.ProductExecutionConfig
+import uniffi.truapi.ProductId
 
 // Called from a shared dispatch pool, so the backing store must be
 // thread-safe, and a slow call here stalls other product executions.
@@ -127,7 +141,7 @@ runtime.activateLocalSession(secret)
 
 val execution = runtime.openProductExecution(
     bridge = bridge,
-    configuration = ProductExecutionConfig("chat.dot", ProductExecutionKind.CHAT),
+    configuration = ProductExecutionConfig(ProductId.parse("chat.dot").getOrThrow(), ExecutableKind.WORKER),
     chat = MyChatBridge(store),
 )
 val endpoint = execution.startWsBridge()
@@ -159,6 +173,8 @@ The `NativeAnnouncedPairing` that `notifyPairingAllowanceAllocation` returns hol
 `devicePaired` on the runtime bridge reports a device that finished pairing with this signing host, carrying the `PairedSsoPeer` the pairing produced. The core has no chat of its own, so announcing the new device to the user's existing contacts is the host's to do. It fires at least once per pairing, so a device that pairs again reports again; a resumed pairing reports nothing, so the host keeps its own record of which devices it has already seen. It arrives on the thread answering the handshake, so marshal the work off rather than announcing it inline. Defaults to a no-op for a host that answers no pairing.
 
 `currentInstallation` on the runtime bridge returns the 32-byte id of the current app installation, the one the host registers for recovery. NFT purse item keys are derived under it. Defaults to a rejection, which fails `createItems`.
+
+`encryptedStorageRead`, `encryptedStorageWrite` and `encryptedStorageDelete` on the runtime bridge keep values encrypted at rest and out of backups, such as in encrypted preferences. The core stores secrets there that its database must not hold. A missing key reads as null; throw when the store cannot be read or a value no longer decrypts. Deleting a missing key succeeds. Defaults to a rejection, which turns off the features that need it.
 
 `durableWorkChanged` on the runtime bridge reports whether the core has durable transactions still awaiting a verdict, starting with the state it finds at launch. While it is `true`, enqueue unique background work requiring a network connection that awaits `runDurableRecovery()`, which returns once nothing is live and throws `RecoveryException` when recovery stopped early, so the work is retried. Defaults to a no-op for a host that runs no durable work.
 
@@ -293,7 +309,8 @@ import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 import io.parity.truapi.TrUAPIHostRuntime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -420,7 +437,7 @@ check(WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
 val container = ContainerScriptBundle.load(webView.context)
 val execution = runtime.openProductExecution(
     bridge = bridge,
-    configuration = ProductExecutionConfig("my-product.dot", ProductExecutionKind.APP),
+    configuration = ProductExecutionConfig(ProductId.parse("my-product.dot").getOrThrow(), ExecutableKind.APP),
 )
 val endpoint = execution.startWsBridge()
 

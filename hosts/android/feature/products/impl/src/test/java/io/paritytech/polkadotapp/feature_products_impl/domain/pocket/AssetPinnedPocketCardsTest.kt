@@ -5,7 +5,6 @@ import android.content.res.AssetManager
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.test_shared.whenever
 import org.junit.Assert.assertEquals
@@ -18,6 +17,7 @@ import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
 import uniffi.truapi.PinnedPocketCard
+import uniffi.truapi.ProductId
 import uniffi.truapi.RendererNode
 import java.io.File
 
@@ -45,7 +45,7 @@ class AssetPinnedPocketCardsTest {
     @Test
     fun `the host pins Humanity alone, on the personhood product`() {
         assertEquals(
-            listOf(PinnedPocketCard(ReservedProductIds.personhood(tld).value, "humanity", "Humanity")),
+            listOf(PinnedPocketCard(ReservedProductIds.personhood(tld), "humanity", "Humanity")),
             pinnedCards().cards(tld),
         )
     }
@@ -82,7 +82,7 @@ class AssetPinnedPocketCardsTest {
         val cards = bundledImages()
         val personhood = ReservedProductIds.personhood(tld)
 
-        assertFalse(cards.bundlesImage(ProductId.fromStoredValue("someone.testnet"), "pocket/card-mark.webp"))
+        assertFalse(cards.bundlesImage(ProductId.parse("someone.testnet").getOrThrow(), "pocket/card-mark.webp"))
         listOf("pocket/wordmark-light.png", "pocket/../pocket/card-mark.webp", "card-mark.webp").forEach {
             assertFalse(it, cards.bundlesImage(personhood, it))
         }
@@ -102,7 +102,7 @@ class AssetPinnedPocketCardsTest {
     // Listing the app's assets reads the APK, on whichever thread resolves the first image.
     @Test
     fun `another product's image does not list the app's assets`() {
-        bundledImages().bundlesImage(ProductId.fromStoredValue("someone.testnet"), "pocket/card-mark.webp")
+        bundledImages().bundlesImage(ProductId.parse("someone.testnet").getOrThrow(), "pocket/card-mark.webp")
 
         verify(assets, never()).list("pocket")
     }
@@ -113,7 +113,7 @@ class AssetPinnedPocketCardsTest {
         val cards = pinnedCards()
 
         assertEquals(humanityKey, cards.pinned(humanityKey)?.card?.key)
-        assertNull(cards.pinned(PocketCardKey(ProductId.fromStoredValue("game.testnet"), PocketCardId("humanity"))))
+        assertNull(cards.pinned(PocketCardKey(ProductId.parse("game.testnet").getOrThrow(), PocketCardId("humanity"))))
         assertNull(cards.pinned(PocketCardKey(ReservedProductIds.personhood(tld), PocketCardId("loyalty"))))
     }
 }
