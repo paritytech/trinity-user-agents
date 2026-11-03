@@ -85,7 +85,7 @@ fun RendererNode.toJsWidget(): JsWidget = when (this) {
             fit = props.fit?.toJs() ?: JsImageFit.FILL,
             modifiers = modifiers.toJsModifiers(),
         )
-    } ?: JsWidget.Spacer(modifiers = modifiers.toJsModifiers())
+    } ?: JsWidget.Box(modifiers = modifiers.toJsModifiers())
     is RendererNode.Effect -> JsWidget.Effect(
         effect = props.effect.toJs(),
         children = children.toJsChildren(),

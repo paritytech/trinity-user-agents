@@ -3188,6 +3188,7 @@ fn reads_an_inline_image_from_hex() {
 	};
 	assert_eq!(props.source, latest::ImageSource::Inline(vec![0x89, 0x50, 0x4e, 0x47]));
 	assert!(parse_renderer_node_json(image("not hex")).is_err());
+	assert!(parse_renderer_node_json(image("89504e47")).is_err());
 }
 
 /// `depth` boxes around an empty node, three brackets per box.

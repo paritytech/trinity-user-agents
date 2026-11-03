@@ -24,7 +24,7 @@ mod option_bool_json {
 }
 
 /// SCALE carries bytes as they are; JSON carries them as the generated client
-/// spells them, a hex string with an optional `0x` prefix.
+/// spells them, a hex string with a `0x` prefix.
 #[cfg(feature = "runtime")]
 mod hex_bytes_json {
 	use serde::{Deserialize, Deserializer, de::Error};
@@ -35,7 +35,10 @@ mod hex_bytes_json {
 		D: Deserializer<'de>,
 	{
 		let text = String::deserialize(deserializer)?;
-		hex::decode(text.strip_prefix("0x").unwrap_or(&text)).map_err(D::Error::custom)
+		let digits = text
+			.strip_prefix("0x")
+			.ok_or_else(|| D::Error::custom("hex bytes need a 0x prefix"))?;
+		hex::decode(digits).map_err(D::Error::custom)
 	}
 }
 
@@ -715,6 +718,8 @@ mod tests {
 			children: Vec::new(),
 		};
 		assert_eq!(effect.encode(), vec![10, 0, 0]);
+
+		assert_eq!(ImageSource::Inline(vec![1]).encode(), vec![2, 4, 1]);
 	}
 
 	#[test]
