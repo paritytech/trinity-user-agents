@@ -309,13 +309,14 @@ pub fn decode_revive_call_output(output: &[u8]) -> Result<Vec<u8>, DotnsContract
 }
 
 /// Renders a Solidity revert payload: `Error(string)` and `Panic(uint256)` by
-/// their meaning, anything else as hex.
+/// their meaning, anything else as hex. The reason is escaped because any
+/// contract, such as a name owner's resolver, chooses it.
 fn describe_revert(data: &[u8]) -> String {
 	if data.is_empty() {
 		return "(empty)".to_string();
 	}
 	GenericContractError::abi_decode(data)
-		.map(|error| error.to_string())
+		.map(|error| error.to_string().escape_debug().to_string())
 		.unwrap_or_else(|_| format!("0x{}", hex::encode(data)))
 }
 
