@@ -300,7 +300,7 @@ claims.
   - The last target request, its status, and the time of the Account Holder's answer, so that a product can see how old
     the entry is. The status is `PendingApproval` until the answer arrives. When the Account Holder accepts the target,
     both entries contain the same target, and the status is `Allocated`, or `ClaimFailure` when some claims failed.
-- `request` sends the target to the Account Holder in these cases, and otherwise returns the status of the last target
+- `request` sends the target to the Account Holder in these cases, otherwise it returns the status of the last target
   request:
   - The last target request doesn't contain the same target.
   - The status of the last target request is `NoMoreClaims` or `ClaimFailure` from an earlier People period.
