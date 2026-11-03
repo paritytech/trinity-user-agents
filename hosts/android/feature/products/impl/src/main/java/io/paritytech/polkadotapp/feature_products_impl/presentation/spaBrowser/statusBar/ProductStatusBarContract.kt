@@ -4,7 +4,7 @@ import kotlinx.coroutines.flow.StateFlow
 import uniffi.truapi.ProductId
 
 interface ProductStatusBarContract {
-    val state: StateFlow<ProductStatusBarUiState>
+    val state: StateFlow<ProductStatusBarUiState?>
 
     fun onProceedInChatClick()
 

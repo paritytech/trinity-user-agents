@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar
 
+import androidx.lifecycle.SavedStateHandle
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.coVerifyOrder
@@ -11,6 +12,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.BrowserSessionInfo
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
+import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_impl.domain.spaBrowser.statusBar.ProductStatusBarInteractor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.CompletableDeferred
@@ -72,19 +74,37 @@ class ProductStatusBarViewModelTest {
         // When / Then
         openTab(COIN_FLIP_URL, title = "Coin Flip")
         advance()
-        assertEquals("Coin Flip", model.state.value.title)
+        assertEquals("Coin Flip", model.state.value?.title)
 
         openTab(CHESS_URL, title = "Chess")
         advance()
-        assertEquals("Chess", model.state.value.title)
+        assertEquals("Chess", model.state.value?.title)
 
         openTab(CHESS_URL, title = "Chess, move 3")
         advance()
-        assertEquals("Chess, move 3", model.state.value.title)
+        assertEquals("Chess, move 3", model.state.value?.title)
 
         activeTab.value = null
         advance()
         assertEquals(ProductStatusBarUiState(title = "", menu = ProductMenu.WebPage), model.state.value)
+    }
+
+    @Test
+    fun `the previous tab's title is never shown for a newly opened product`() = runBlocking<Unit> {
+        // Given
+        withChat(chess, served = false)
+        openTab(COIN_FLIP_URL, title = "Coin Flip")
+        val model = viewModel(openedFor = SpaBrowserPayload.ByProductId(chess))
+        advance()
+        val beforeTheTabOpens = model.state.value
+
+        // When
+        openTab(CHESS_URL, title = "Chess")
+        advance()
+
+        // Then
+        assertEquals(null, beforeTheTabOpens)
+        assertEquals("Chess", model.state.value?.title)
     }
 
     @Test
@@ -111,11 +131,11 @@ class ProductStatusBarViewModelTest {
         // When / Then
         openTab(COIN_FLIP_URL, title = "Coin Flip")
         advance()
-        assertEquals(ProductMenu.Product(coinFlip, ProductChat.Served), model.state.value.menu)
+        assertEquals(ProductMenu.Product(coinFlip, ProductChat.Served), model.state.value?.menu)
 
         openTab(CHESS_URL, title = "Chess")
         advance()
-        assertEquals(ProductMenu.Product(chess, ProductChat.NotServed), model.state.value.menu)
+        assertEquals(ProductMenu.Product(chess, ProductChat.NotServed), model.state.value?.menu)
     }
 
     @Test
@@ -131,14 +151,14 @@ class ProductStatusBarViewModelTest {
         // When
         openTab(CHESS_URL, title = "Chess")
         advance()
-        val menuBeforeTheLateAnswer = model.state.value.menu
+        val menuBeforeTheLateAnswer = model.state.value?.menu
         model.onShareClick()
         coinFlipAnswer.complete(Result.success(true))
         advance()
 
         // Then
         assertEquals(ProductMenu.Product(chess, ProductChat.NotServed), menuBeforeTheLateAnswer)
-        assertEquals(ProductMenu.Product(chess, ProductChat.NotServed), model.state.value.menu)
+        assertEquals(ProductMenu.Product(chess, ProductChat.NotServed), model.state.value?.menu)
         verify(exactly = 1) { interactor.share(chess) }
         verify(exactly = 0) { interactor.share(coinFlip) }
     }
@@ -160,7 +180,7 @@ class ProductStatusBarViewModelTest {
         advance()
 
         // Then
-        assertEquals(ProductMenu.Product(chess, ProductChat.Unresolved), model.state.value.menu)
+        assertEquals(ProductMenu.Product(chess, ProductChat.Unresolved), model.state.value?.menu)
         verify(exactly = 1) { interactor.share(chess) }
         verify(exactly = 0) { interactor.share(coinFlip) }
         coVerify(exactly = 0) { interactor.installChatAndAwaitRoomCreated(any()) }
@@ -179,7 +199,7 @@ class ProductStatusBarViewModelTest {
         advance()
 
         // Then
-        assertEquals(ProductMenu.Product(coinFlip, ProductChat.Served), model.state.value.menu)
+        assertEquals(ProductMenu.Product(coinFlip, ProductChat.Served), model.state.value?.menu)
         coVerify(exactly = 1) { interactor.includesChat(coinFlip) }
     }
 
@@ -194,7 +214,7 @@ class ProductStatusBarViewModelTest {
         advance()
 
         // Then
-        assertEquals(ProductMenu.Product(coinFlip, ProductChat.Unresolved), model.state.value.menu)
+        assertEquals(ProductMenu.Product(coinFlip, ProductChat.Unresolved), model.state.value?.menu)
     }
 
     @Test
@@ -213,7 +233,7 @@ class ProductStatusBarViewModelTest {
         advance()
 
         // Then
-        assertEquals(ProductMenu.Product(coinFlip, ProductChat.Served), model.state.value.menu)
+        assertEquals(ProductMenu.Product(coinFlip, ProductChat.Served), model.state.value?.menu)
     }
 
     @Test
@@ -396,7 +416,8 @@ class ProductStatusBarViewModelTest {
 
     private fun advance() = testDispatcher.scheduler.advanceUntilIdle()
 
-    private fun viewModel() = ProductStatusBarViewModel(
+    private fun viewModel(openedFor: SpaBrowserPayload? = null) = ProductStatusBarViewModel(
+        savedStateHandle = SavedStateHandle(mapOf(SpaBrowserPayload::class.java.name to openedFor)),
         productSessionController = productSessionController,
         interactor = interactor,
         router = router,

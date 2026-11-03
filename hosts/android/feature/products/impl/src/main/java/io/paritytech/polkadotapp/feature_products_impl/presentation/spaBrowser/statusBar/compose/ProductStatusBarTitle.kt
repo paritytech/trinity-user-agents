@@ -46,13 +46,15 @@ fun ProductStatusBarTitle() {
     val viewModel = hiltViewModel<ProductStatusBarViewModel>()
     val state by viewModel.state.collectAsStateWithLifecycle()
 
-    ProductStatusBarTitleInternal(
-        state = state,
-        onProceedInChatClick = viewModel::onProceedInChatClick,
-        onReloadClick = viewModel::onReloadClick,
-        onShareClick = viewModel::onShareClick,
-        onCloseAppClick = viewModel::onCloseAppClick,
-    )
+    state?.let { shown ->
+        ProductStatusBarTitleInternal(
+            state = shown,
+            onProceedInChatClick = viewModel::onProceedInChatClick,
+            onReloadClick = viewModel::onReloadClick,
+            onShareClick = viewModel::onShareClick,
+            onCloseAppClick = viewModel::onCloseAppClick,
+        )
+    }
 }
 
 @Composable
