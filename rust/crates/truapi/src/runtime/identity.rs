@@ -208,11 +208,11 @@ mod tests {
 
 	use super::*;
 	use crate::{
+		chain::account_to_h160,
 		chain_runtime::{RuntimeChainProvider, RuntimeFailure},
 		host_logic::dotns_gateway::{
-			ContractResult, DotnsPopController, ExecReturnValue, LabelStore, ProtocolRegistry,
-			REVERT_FLAG, RootGatewayDispatcher, StorageDeposit, StoreFactory, VIEW_CALL_ORIGIN,
-			Weight, account_to_h160, dispatcher_address_key,
+			DotnsPopController, LabelStore, ProtocolRegistry, RootGatewayDispatcher, StoreFactory,
+			dispatcher_address_key,
 		},
 		platform::JsonRpcConnection,
 		subscription::thread_per_subscription_spawner,
@@ -221,7 +221,7 @@ mod tests {
 	use alloy_sol_types::{SolCall, SolInterface};
 	use async_trait::async_trait;
 	use futures::{StreamExt, channel::mpsc, stream::BoxStream};
-	use parity_scale_codec::{Decode, Encode};
+	use parity_scale_codec::{Compact, Decode, Encode};
 	use serde_json::{Value as JsonValue, json};
 	use std::sync::{Arc, Mutex};
 
@@ -311,15 +311,15 @@ mod tests {
 			SQUATTER_STORE => labels_page(input, &["squatter.paseo"]),
 			dest => panic!("unscripted view {} on 0x{}", hex::encode(input), hex::encode(dest)),
 		};
-		ContractResult {
-			weight_consumed: Weight { ref_time: 0, proof_size: 0 },
-			weight_required: Weight { ref_time: 0, proof_size: 0 },
-			storage_deposit: StorageDeposit::Charge(0),
-			max_storage_deposit: StorageDeposit::Charge(0),
-			gas_consumed: 0,
-			result: Ok(ExecReturnValue { flags: if reverted { REVERT_FLAG } else { 0 }, data }),
-		}
-		.encode()
+		(
+			(Compact(0u64), Compact(0u64)),
+			(Compact(0u64), Compact(0u64)),
+			(1u8, 0u128),
+			(1u8, 0u128),
+			0u128,
+			Result::<_, ()>::Ok((u32::from(reverted), data)),
+		)
+			.encode()
 	}
 
 	struct ScriptedAssetHub {
@@ -413,7 +413,7 @@ mod tests {
 					)
 					.unwrap();
 					// origin[32] ‖ dest[20] ‖ value u128 ‖ None ‖ None ‖ Vec(input).
-					assert_eq!(&args[..32], VIEW_CALL_ORIGIN.as_slice());
+					assert_eq!(&args[..32], &[0xEE; 32]);
 					assert_eq!(&args[52..70], &[0u8; 18], "zero value, no gas or deposit limit");
 					let dest: [u8; 20] = args[32..52].try_into().unwrap();
 					let input = Vec::<u8>::decode(&mut &args[70..]).unwrap();

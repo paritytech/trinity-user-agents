@@ -15,15 +15,17 @@
 //! and the dotNS contracts (`paritytech/dotns`).
 
 use alloy_primitives::{Address, U256};
-use alloy_sol_types::{GenericContractError, SolInterface};
-use parity_scale_codec::{Decode, Encode, Input};
+use parity_scale_codec::Encode;
 use sp_crypto_hashing::{blake2_128, blake2_256, keccak_256, twox_128};
 use subxt::{ext::scale_encode::EncodeAsType, utils::MultiSignature};
 use thiserror::Error;
 use tracing::warn;
 
 use crate::{
-	chain::{ExtensionError, InheritedImplication, SubstrateSigner, TransactionExtension},
+	chain::{
+		EvmContractError, ExtensionError, InheritedImplication, SubstrateSigner,
+		TransactionExtension, account_to_h160,
+	},
 	dotns_views::{network_tld, protocol_component, read_view, tld_node},
 	platform::{MAX_DNS_LABEL_LEN, is_dns_label},
 };
@@ -39,15 +41,6 @@ pub const DOTNS_GATEWAY_CONTEXT: [u8; 32] = *b"pop:polkadot.network/dotns      "
 /// Reservation message prefix, matching `RESERVE_MSG_PREFIX` in the gateway
 /// pallet.
 pub const RESERVE_MSG_PREFIX: &[u8] = b"pop:dotns-gateway:reserve";
-
-/// Origin for read-only `ReviveApi_call` dry-runs.
-///
-/// `pallet_revive` rejects unmapped signed origins with `AccountUnmapped`.
-/// Eth-derived accounts — trailing 12 bytes `0xEE` — are implicitly mapped.
-/// They need no on-chain state, so views work from this synthetic account on
-/// any network. The address half is non-zero: a revert is read as an answer
-/// here, and Solidity guards commonly reject `address(0)` outright.
-pub const VIEW_CALL_ORIGIN: [u8; 32] = [0xEE; 32];
 
 /// Builds the payload the candidate signs to authorize a lite-name
 /// reservation.
@@ -160,173 +153,6 @@ impl TransactionExtension for AsDotnsGatewayExtension<'_> {
 			signature: self.who.sign(&implication.hash()),
 		}))
 	}
-}
-
-/// Maps an AccountId32 to the H160 the contracts see.
-///
-/// Mirrors `pallet_revive::AccountId32Mapper::to_address`. Eth-derived
-/// accounts — trailing 12 bytes all `0xEE` — truncate. Everything else hashes.
-pub fn account_to_h160(public_key: &[u8; 32]) -> [u8; 20] {
-	if public_key[20..].iter().all(|byte| *byte == 0xEE) {
-		public_key[..20]
-			.try_into()
-			.expect("slice of first 20 bytes from a 32-byte array; qed")
-	} else {
-		keccak_256(public_key)[12..]
-			.try_into()
-			.expect("keccak_256 output is 32 bytes, tail slice is 20; qed")
-	}
-}
-
-/// Error decoding a dotNS contract round-trip.
-#[derive(Debug, Error, PartialEq)]
-pub enum DotnsContractError {
-	/// The `ReviveApi_call` output is not a `ContractResult`. The cause is
-	/// kept out of the message, which SCALE renders across several lines.
-	#[error("ReviveApi_call output is not a ContractResult")]
-	Malformed(parity_scale_codec::Error),
-	/// The runtime rejected the call before reaching the contract.
-	#[error("ReviveApi_call dispatch failed: {detail}")]
-	Dispatch {
-		/// Raw hex of the `DispatchError` payload.
-		detail: String,
-	},
-	/// The contract executed but reverted.
-	#[error("contract reverted: {detail}")]
-	Reverted {
-		/// Rendered revert reason.
-		detail: String,
-	},
-	/// ABI return data did not match the expected shape.
-	#[error(transparent)]
-	Abi(#[from] alloy_sol_types::Error),
-}
-
-/// `sp_weights::Weight`.
-#[derive(Encode, Decode)]
-pub struct Weight {
-	/// Computation time.
-	#[codec(compact)]
-	pub ref_time: u64,
-	/// Proof size in bytes.
-	#[codec(compact)]
-	pub proof_size: u64,
-}
-
-/// `pallet_revive::StorageDeposit` over a `u128` balance.
-#[derive(Decode)]
-#[cfg_attr(test, derive(Encode))]
-pub enum StorageDeposit {
-	/// Balance returned to the origin.
-	Refund(u128),
-	/// Balance charged to the origin.
-	Charge(u128),
-}
-
-/// `pallet_revive::ExecReturnValue`.
-#[derive(Decode)]
-#[cfg_attr(test, derive(Encode))]
-pub struct ExecReturnValue {
-	/// `ReturnFlags` bits; [`REVERT_FLAG`] marks a revert.
-	pub flags: u32,
-	/// The contract's return data.
-	pub data: Vec<u8>,
-}
-
-/// `ReturnFlags::REVERT`.
-pub const REVERT_FLAG: u32 = 1;
-
-/// A `DispatchError` kept as its raw bytes, since naming the error needs the
-/// runtime's metadata. It is the last field of a `ContractResult`, so it takes
-/// the rest of the input.
-pub struct RawDispatchError(Vec<u8>);
-
-impl Decode for RawDispatchError {
-	fn decode<I: Input>(input: &mut I) -> Result<Self, parity_scale_codec::Error> {
-		let len = input.remaining_len()?.ok_or("DispatchError of unknown length")?;
-		let mut bytes = vec![0; len];
-		input.read(&mut bytes)?;
-		Ok(Self(bytes))
-	}
-}
-
-#[cfg(test)]
-impl Encode for RawDispatchError {
-	fn encode_to<O: parity_scale_codec::Output + ?Sized>(&self, dest: &mut O) {
-		dest.write(&self.0);
-	}
-}
-
-/// `pallet_revive::ContractResult<ExecReturnValue, u128>`.
-#[derive(Decode)]
-#[cfg_attr(test, derive(Encode))]
-pub struct ContractResult {
-	/// Weight the call consumed.
-	pub weight_consumed: Weight,
-	/// Weight the call needs as its limit.
-	pub weight_required: Weight,
-	/// Storage deposit the call charged or refunded.
-	pub storage_deposit: StorageDeposit,
-	/// Largest storage deposit the call needed while it ran.
-	pub max_storage_deposit: StorageDeposit,
-	/// Gas the call consumed.
-	pub gas_consumed: u128,
-	/// What the contract returned, or why the runtime rejected the call.
-	pub result: Result<ExecReturnValue, RawDispatchError>,
-}
-
-/// Arguments of the `ReviveApi_call` runtime API.
-#[derive(Encode)]
-struct ReviveCallArgs<'a> {
-	origin: &'a [u8; 32],
-	dest: &'a [u8; 20],
-	value: u128,
-	gas_limit: Option<Weight>,
-	storage_deposit_limit: Option<u128>,
-	input_data: &'a [u8],
-}
-
-/// SCALE arguments for the `ReviveApi_call` runtime API.
-/// A zero-value dry-run of `input` against `dest` from `origin`, leaving the
-/// gas and deposit limits for the node to estimate.
-pub fn encode_revive_call(origin: &[u8; 32], dest: &[u8; 20], input: &[u8]) -> Vec<u8> {
-	ReviveCallArgs {
-		origin,
-		dest,
-		value: 0,
-		gas_limit: None,
-		storage_deposit_limit: None,
-		input_data: input,
-	}
-	.encode()
-}
-
-/// Extracts the contract return data from a `ReviveApi_call` output.
-/// Dispatch errors and reverts are rejected.
-pub fn decode_revive_call_output(output: &[u8]) -> Result<Vec<u8>, DotnsContractError> {
-	let contract_result =
-		ContractResult::decode(&mut &output[..]).map_err(DotnsContractError::Malformed)?;
-	match contract_result.result {
-		Ok(ExecReturnValue { flags, data }) if flags & REVERT_FLAG != 0 => {
-			Err(DotnsContractError::Reverted { detail: describe_revert(&data) })
-		},
-		Ok(ExecReturnValue { data, .. }) => Ok(data),
-		Err(RawDispatchError(error)) => {
-			Err(DotnsContractError::Dispatch { detail: format!("0x{}", hex::encode(error)) })
-		},
-	}
-}
-
-/// Renders a Solidity revert payload: `Error(string)` and `Panic(uint256)` by
-/// their meaning, anything else as hex. The reason is escaped because any
-/// contract, such as a name owner's resolver, chooses it.
-fn describe_revert(data: &[u8]) -> String {
-	if data.is_empty() {
-		return "(empty)".to_string();
-	}
-	GenericContractError::abi_decode(data)
-		.map(|error| error.to_string().escape_debug().to_string())
-		.unwrap_or_else(|_| format!("0x{}", hex::encode(data)))
 }
 
 /// Usernames of one account as recorded by the dotNS contracts. Holds at least
@@ -593,34 +419,33 @@ pub enum DotnsCallError {
 	View(DotnsViewError),
 	/// The view returned data that did not match the expected ABI shape.
 	#[error(transparent)]
-	Decode(DotnsContractError),
+	Decode(alloy_sol_types::Error),
 }
 
 /// Why a contract view returned no data.
 ///
-/// A revert is an answer from the contract (the view refused, or the address
-/// has no such function); anything else means the answer is unknown.
+/// A revert is an answer from the contract; other failures leave it unknown.
 #[derive(Debug, PartialEq, Error, derive_more::From)]
 pub enum DotnsViewError {
 	/// The contract executed and reverted.
-	#[error(transparent)]
-	Reverted(DotnsContractError),
-	/// The runtime rejected the call or returned an invalid contract result.
-	#[error(transparent)]
-	Contract(DotnsContractError),
-	/// The view could not be dry-run or its output could not be decoded.
+	#[error("contract reverted: {detail}")]
+	Reverted {
+		/// Rendered revert reason.
+		detail: String,
+	},
+	/// The view could not be executed or its response could not be decoded.
 	#[error("{0}")]
 	#[from(String)]
 	Failed(String),
 }
 
-/// Splits a `ReviveApi_call` output into return data, a revert, or a failure,
-/// for [`DotnsTransport::view`] implementations.
-pub fn view_output(output: &[u8]) -> Result<Vec<u8>, DotnsViewError> {
-	decode_revive_call_output(output).map_err(|err| match err {
-		DotnsContractError::Reverted { .. } => DotnsViewError::Reverted(err),
-		other => DotnsViewError::Contract(other),
-	})
+impl From<EvmContractError> for DotnsViewError {
+	fn from(error: EvmContractError) -> Self {
+		match error {
+			EvmContractError::Reverted { detail } => Self::Reverted { detail },
+			other => Self::Failed(other.to_string()),
+		}
+	}
 }
 
 /// How a caller reaches Asset Hub for dotNS reads.
@@ -669,10 +494,10 @@ pub async fn discover_pop_controller<T: DotnsTransport + ?Sized>(
 		Ok(_) => Ok(Some(stored)),
 		// A chain still storing its dispatcher pays this second view; a repointed one
 		// answers on the first. Both hops go once no chain stores a dispatcher.
-		Err(DotnsCallError::View(DotnsViewError::Reverted(_))) => {
+		Err(DotnsCallError::View(DotnsViewError::Reverted { .. })) => {
 			match read_view(transport, &stored, RootGatewayDispatcher::TARGETCall {}).await {
 				Ok(controller) => Ok(Some(controller.into_array())),
-				Err(DotnsCallError::View(DotnsViewError::Reverted(_))) => {
+				Err(DotnsCallError::View(DotnsViewError::Reverted { .. })) => {
 					Err(DotnsError::UnknownDispatcher { address: stored })
 				},
 				Err(error) => Err(DotnsError::DispatcherTarget(error)),
@@ -832,7 +657,7 @@ async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
 		.await
 		{
 			Ok(claims) => claims,
-			Err(DotnsCallError::View(DotnsViewError::Reverted(reason))) => {
+			Err(DotnsCallError::View(DotnsViewError::Reverted { detail: reason })) => {
 				warn!(
 					%reason,
 					retained = claims.len(),
@@ -1027,16 +852,6 @@ mod tests {
 		assert_eq!(crate::dotns_views::tld_node("paseo"), tld_node);
 	}
 
-	#[test]
-	fn account_to_h160_follows_the_revive_mapper() {
-		let mut eth_derived = [0x0Fu8; 32];
-		eth_derived[20..].fill(0xEE);
-		assert_eq!(account_to_h160(&eth_derived), [0x0F; 20]);
-
-		let hashed = account_to_h160(&[0x11; 32]);
-		assert_eq!(hashed, keccak_256(&[0x11; 32])[12..]);
-	}
-
 	/// Answers a view of `Call` with `value`.
 	fn returns<Call: SolCall>(value: Call::Return) -> Result<Vec<u8>, DotnsViewError> {
 		Ok(Call::abi_encode_returns(&value))
@@ -1048,9 +863,7 @@ mod tests {
 	}
 
 	fn view_reverted() -> Result<Vec<u8>, DotnsViewError> {
-		Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
-			detail: "(empty)".to_string(),
-		}))
+		Err(DotnsViewError::Reverted { detail: "(empty)".to_string() })
 	}
 
 	struct RevertingSecondClaimPage {
@@ -1077,9 +890,7 @@ mod tests {
 				return returns::<DotnsPopController::pendingClaimsCall>(self.first_page.clone());
 			}
 			assert_eq!(page.offset, U256::from(CLAIM_PAGE_LIMIT));
-			Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
-				detail: "offset past end".to_string(),
-			}))
+			Err(DotnsViewError::Reverted { detail: "offset past end".to_string() })
 		}
 	}
 

@@ -177,10 +177,13 @@ async fn live_asset_hub_reports_a_skipped_revision_as_pruned() {
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
-use truapi::host_logic::dotns_gateway::{
-	DotnsError, DotnsRegistrar, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, classify_labels,
-	discover_pop_controller, encode_revive_call, is_dotted_lite_username, is_pop_issued,
-	label_available, namehash_under, resolve_labels, view_output,
+use truapi::{
+	chain::{EvmContractCaller, RuntimeApi},
+	host_logic::dotns_gateway::{
+		DotnsError, DotnsRegistrar, DotnsTransport, DotnsViewError, classify_labels,
+		discover_pop_controller, is_dotted_lite_username, is_pop_issued, label_available,
+		namehash_under, resolve_labels,
+	},
 };
 
 /// The `DotnsRegistrar` (ERC721), the same CREATE3 address on every network
@@ -218,21 +221,21 @@ impl DotnsTransport for PlainRpc {
 	}
 
 	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
-		let args = encode_revive_call(&VIEW_CALL_ORIGIN, dest, &input);
+		Ok(EvmContractCaller::read(self, dest, &input).await?)
+	}
+}
+
+#[truapi::platform::async_trait]
+impl RuntimeApi for PlainRpc {
+	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, String> {
 		let output = self
 			.0
-			.call(
-				"state_call",
-				serde_json::json!(["ReviveApi_call", format!("0x{}", hex::encode(args))]),
-			)
+			.call("state_call", serde_json::json!([function, format!("0x{}", hex::encode(input))]))
 			.await
-			.map_err(|err| DotnsViewError::Failed(err.to_string()))?;
-		let output = output
-			.as_str()
-			.ok_or_else(|| DotnsViewError::Failed("state_call output is not a string".into()))?;
-		let bytes = hex::decode(output.trim_start_matches("0x"))
-			.map_err(|err| DotnsViewError::Failed(err.to_string()))?;
-		view_output(&bytes)
+			.map_err(|err| err.to_string())?;
+		let output =
+			output.as_str().ok_or_else(|| "state_call output is not a string".to_string())?;
+		hex::decode(output.trim_start_matches("0x")).map_err(|err| err.to_string())
 	}
 }
 

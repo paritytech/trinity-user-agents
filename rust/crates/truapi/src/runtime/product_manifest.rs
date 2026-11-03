@@ -88,7 +88,7 @@ pub async fn fetch_root_manifest(
 		Ok(manifest) => manifest,
 		// The dotNS-issued default resolver does not implement `text`, which is
 		// the same outcome as an unpublished manifest.
-		Err(DotnsCallError::View(DotnsViewError::Reverted(_))) => return Ok(None),
+		Err(DotnsCallError::View(DotnsViewError::Reverted { .. })) => return Ok(None),
 		Err(error) => return Err(DotnsError::ManifestText(error)),
 	};
 	if manifest.is_empty() {

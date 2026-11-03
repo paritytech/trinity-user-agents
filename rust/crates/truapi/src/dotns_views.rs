@@ -5,8 +5,8 @@ use alloy_primitives::B256;
 use alloy_sol_types::SolCall;
 
 use crate::host_logic::dotns_gateway::{
-	DotnsCallError, DotnsContractError, DotnsError, DotnsRegistry, DotnsTransport, DotnsViewError,
-	ProtocolRegistry, namehash_under,
+	DotnsCallError, DotnsError, DotnsRegistry, DotnsTransport, DotnsViewError, ProtocolRegistry,
+	namehash_under,
 };
 
 /// The TLD of networks whose `DotnsProtocolRegistry` has no `tld()` view;
@@ -20,7 +20,7 @@ pub async fn read_view<T: DotnsTransport + ?Sized, Call: SolCall>(
 	call: Call,
 ) -> Result<Call::Return, DotnsCallError> {
 	let output = transport.view(dest, call.abi_encode()).await?;
-	Ok(Call::abi_decode_returns_validate(&output).map_err(DotnsContractError::from)?)
+	Ok(Call::abi_decode_returns_validate(&output)?)
 }
 
 /// One component address out of the protocol registry's address book, so a
@@ -52,7 +52,7 @@ pub async fn network_tld<T: DotnsTransport + ?Sized>(
 ) -> Result<String, DotnsError> {
 	match read_view(transport, registry, ProtocolRegistry::tldCall {}).await {
 		Ok(tld) => return Ok(tld),
-		Err(DotnsCallError::View(DotnsViewError::Reverted(_))) => {},
+		Err(DotnsCallError::View(DotnsViewError::Reverted { .. })) => {},
 		Err(error) => return Err(DotnsError::Tld(error)),
 	}
 	let dotns_registry = protocol_component(transport, registry, "registry").await?;

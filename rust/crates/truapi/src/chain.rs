@@ -20,16 +20,20 @@ use sp_crypto_hashing::blake2_256;
 use subxt::utils::H256;
 
 mod account_nonces;
+mod address;
 mod block_backend;
 mod extrinsic;
 mod heads;
 mod mortality;
+mod revive;
+mod runtime_api;
 mod storage_watch;
 mod subxt_chain;
 mod tx_submitter;
 mod tx_validator;
 
 pub use account_nonces::AccountNonces;
+pub use address::account_to_h160;
 pub use block_backend::{BlockBackend, DispatchOutcome};
 pub use extrinsic::{
 	DEFAULT_MORTALITY_PERIOD, ExtensionError, ExtrinsicBuildError, ExtrinsicBuilder,
@@ -38,6 +42,8 @@ pub use extrinsic::{
 };
 pub use heads::{ChainHeads, HeadEvent, Heads};
 pub use mortality::{MortalExtrinsic, Mortality, MortalityError};
+pub use revive::{EvmContractCaller, EvmContractError, PreparedEvmTransaction};
+pub use runtime_api::RuntimeApi;
 pub use storage_watch::{
 	DecodableAtBlock, DecodedEntryChanges, RawStorageChanges, StorageEntryName, StorageSnapshot,
 	StorageWatchError, WatchedHead, WatchedStorage,
