@@ -142,7 +142,13 @@ struct IncomingPaymentServiceTests {
     }
 
     @Test func sameProductAccountPathIsBusy() async throws {
-        let active = IncomingPayment(paymentId: "p1", productId: try! ProductId("prod.dot"), amount: 100, createdAt: Date(), outcome: nil)
+        let active = IncomingPayment(
+            paymentId: "p1",
+            productId: try! ProductId("prod.dot"),
+            amount: 100,
+            createdAt: Date(),
+            outcome: nil
+        )
         let store = InMemoryIncomingPaymentStore(seed: [active])
         let secretStore = InMemoryIncomingPaymentSecretStore(
             seed: ["top up:prod.dot:p1": .productAccount(derivationPath: "//product//prod/0x1")]
@@ -161,7 +167,13 @@ struct IncomingPaymentServiceTests {
 
     @Test func differentProductAccountPathsAreNotBusy() async throws {
         // The path embeds the product, so another product's account at the same index is other money.
-        let active = IncomingPayment(paymentId: "p1", productId: try! ProductId("prodA.dot"), amount: 100, createdAt: Date(), outcome: nil)
+        let active = IncomingPayment(
+            paymentId: "p1",
+            productId: try! ProductId("prodA.dot"),
+            amount: 100,
+            createdAt: Date(),
+            outcome: nil
+        )
         let store = InMemoryIncomingPaymentStore(seed: [active])
         let secretStore = InMemoryIncomingPaymentSecretStore(
             seed: ["top up:proda.dot:p1": .productAccount(derivationPath: "//product//prodA/0x1")]
@@ -180,7 +192,13 @@ struct IncomingPaymentServiceTests {
     @Test func busyCheckSkipsCorruptedSecrets() async throws {
         // A payment whose secret no longer decodes can never claim, so it holds nothing busy and must
         // not block every future accept.
-        let active = IncomingPayment(paymentId: "p1", productId: try! ProductId("prod.dot"), amount: 100, createdAt: Date(), outcome: nil)
+        let active = IncomingPayment(
+            paymentId: "p1",
+            productId: try! ProductId("prod.dot"),
+            amount: 100,
+            createdAt: Date(),
+            outcome: nil
+        )
         let store = InMemoryIncomingPaymentStore(seed: [active])
         let secretStore = InMemoryIncomingPaymentSecretStore()
         secretStore.corruptedGroupIds = ["top up:prod.dot:p1"]
