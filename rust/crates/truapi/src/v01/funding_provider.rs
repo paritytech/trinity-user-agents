@@ -128,10 +128,11 @@ pub enum FundingQuoteAnswer {
 
 /// Progress a provider reports for a session it serves.
 ///
-/// Updates only move forward, each in the direction of its session. Once
-/// funds are moving the host decides the outcome: an inbound session is
-/// delivered from the claims of the top-ups it names, an outbound one is
-/// released once the user's payment completes.
+/// Steps only move forward, each in the direction of its session; `Details`
+/// and `Deposit` sit outside that order, and a session keeps a bounded
+/// number of each. Once funds are moving the host decides the outcome: an
+/// inbound session is delivered from the claims of the top-ups it names, an
+/// outbound one is released once the user's payment completes.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingUpdate {
@@ -367,6 +368,12 @@ pub enum HostFundingReportError {
 	/// it was assigned, asks a different amount, or was already named.
 	#[codec(index = 2)]
 	NotStarted,
+	/// A `Details` or `Deposit` update that breaks its limits: a text too
+	/// long, on several lines or with control or invisible characters,
+	/// deposit instructions that name nothing to pay, have expired or do not
+	/// match the quote the user chose, or more of them than a session keeps.
+	#[codec(index = 4)]
+	InvalidDetail,
 	/// Catch-all.
 	#[codec(index = 3)]
 	Unknown {
@@ -455,3 +462,13 @@ pub struct ProductFundingQuoteRequest {
 	/// What the user wants to move, by which rail, in which country.
 	pub ask: FundingQuoteAsk,
 }
+
+/// Longest text a provider's update may carry, in characters, such as a
+/// transaction id, a reference or an address.
+pub const FUNDING_DETAIL_MAX_CHARS: usize = 80;
+
+/// Longest text a provider's update may carry, in UTF-8 bytes.
+pub const FUNDING_DETAIL_MAX_BYTES: usize = 320;
+
+/// Longest payment URI deposit instructions may carry, in UTF-8 bytes.
+pub const FUNDING_DEPOSIT_URI_MAX_BYTES: usize = 512;
