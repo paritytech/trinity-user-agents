@@ -62,8 +62,6 @@ pub enum DotnsLookupKind<'a> {
 	Manifest(&'a ProductId),
 	/// A product's Worker manifest, named by the product it belongs to.
 	WorkerManifest(&'a ProductId),
-	/// The products published to browse.
-	PublishedProducts,
 }
 
 impl fmt::Display for DotnsLookupKind<'_> {
@@ -72,7 +70,6 @@ impl fmt::Display for DotnsLookupKind<'_> {
 			Self::Identity => f.write_str("identity"),
 			Self::Manifest(product_id) => write!(f, "manifest:{product_id}"),
 			Self::WorkerManifest(product_id) => write!(f, "executable:{product_id}"),
-			Self::PublishedProducts => f.write_str("browse:published"),
 		}
 	}
 }
