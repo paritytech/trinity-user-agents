@@ -70,7 +70,7 @@ struct WalletMainPocketTests {
         screen.presenter.showCollectibles()
 
         #expect(screen.view.showsCollectibles)
-        #expect(screen.wireframe.openedProduct == (try ProductId("stash.\(network)")))
+        #expect(try screen.wireframe.openedProduct == ProductId("stash.\(network)"))
     }
 
     /// The remote switch pulls the card from every installed app without a
