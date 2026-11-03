@@ -13,6 +13,12 @@ import SubstrateSdk
 /// Threading contract matches `HostBridge`: sync members run inline on the
 /// dispatcher thread and return promptly.
 final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
+    struct Storage {
+        let core: TrUAPILocalStoring
+        let encrypted: TrUAPIEncryptedStorage
+        let preimages: TrUAPIPreimageLookuping
+    }
+
     let storage: HostStorageBackend
     let coreStorage: HostCoreStorageBackend
 
@@ -22,17 +28,17 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     private let workerManager: (any TrUAPIWorkerManaging)?
     private let backedUpInstallation: TrUAPIBackedUpInstallation
     private let encryptedStorage: TrUAPIEncryptedStorage
+    private let preimageCache: TrUAPIPreimageLookuping
     private let logger: LoggerProtocol
     private weak var runtime: TrUAPIHostRuntime?
 
     init(
         chainRegistry: ChainRegistryProtocol,
-        coreStorage: TrUAPILocalStoring,
+        storage: Storage,
         chainConnections: TrUAPIChainConnecting,
         confirmationPresenter: TrUAPIConfirmationPresenting,
         workerManager: (any TrUAPIWorkerManaging)? = nil,
         backedUpInstallation: TrUAPIBackedUpInstallation,
-        encryptedStorage: TrUAPIEncryptedStorage,
         logger: LoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
@@ -40,10 +46,11 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
         self.confirmationPresenter = confirmationPresenter
         self.workerManager = workerManager
         self.backedUpInstallation = backedUpInstallation
-        self.encryptedStorage = encryptedStorage
+        encryptedStorage = storage.encrypted
+        preimageCache = storage.preimages
         self.logger = logger
-        self.coreStorage = CoreStorageBackend(storage: coreStorage)
-        storage = EmptyHostStorageBackend()
+        coreStorage = CoreStorageBackend(storage: storage.core)
+        self.storage = EmptyHostStorageBackend()
         chainConnections.eventHandler = self
     }
 
@@ -92,6 +99,10 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
 
     func chainClose(connectionId: UInt32) throws {
         chainConnections.close(connectionId: connectionId)
+    }
+
+    func lookupPreimage(key: Data) async throws -> Data? {
+        await preimageCache.lookup(key: key)
     }
 
     func confirmUserAction(review: UserConfirmationReview) async throws -> Bool {

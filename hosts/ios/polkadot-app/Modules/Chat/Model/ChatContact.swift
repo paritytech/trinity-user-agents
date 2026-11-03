@@ -222,7 +222,7 @@ extension Chat.Contact {
 
         return Chat.PeerMetadata(
             name: username,
-            icon: .image(imageData),
+            icon: imageData != nil || username.isEmpty ? .image(imageData) : .publicProfile(username: username),
             input: deriveMetadataInput(),
             moreActions: moreActions
         )

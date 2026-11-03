@@ -1,6 +1,8 @@
 import Foundation
 import os
 import StructuredConcurrency
+import BulletinChain
+import SubstrateSdk
 
 /// Awaitable preimage lookup seam consumed by the rust bridge.
 public protocol TrUAPIPreimageLookuping: Sendable {
@@ -24,6 +26,17 @@ public final class TrUAPIPreimageCache: TrUAPIPreimageLookuping, @unchecked Send
 
     public init(fetchValue: @escaping @Sendable (Data) async -> Data?) {
         self.fetchValue = fetchValue
+    }
+
+    convenience init(ipfsFetcher: IpfsFetching, logger: LoggerProtocol) {
+        self.init { key in
+            do {
+                return try await ipfsFetcher.lookupBy(rawHash: key)
+            } catch {
+                logger.error("[truapi] preimage fetch failed for \(key.toHex()): \(error)")
+                return nil
+            }
+        }
     }
 
     public func lookup(key: Data) async -> Data? {

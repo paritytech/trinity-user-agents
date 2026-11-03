@@ -442,6 +442,8 @@ reads the chain on each call.
 
 Android contacts and chat views load avatars through the shared loader.
 
+iOS contacts and chat views load avatars through the shared loader.
+
 ### Trinity stack descriptors
 
 A stack descriptor describes one deployment of chains and services, as

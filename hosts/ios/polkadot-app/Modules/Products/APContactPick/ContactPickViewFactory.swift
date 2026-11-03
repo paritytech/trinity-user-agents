@@ -7,7 +7,11 @@ import Foundation
 enum ContactPickViewFactory {
     static func createView(context: ContactPickContext) -> SearchContactViewProtocol? {
         let walletRepo: WalletManagerRepositoryProtocol = .shared
-        guard let ownAccountId = try? walletRepo.main().getRawPublicKey() else {
+        guard
+            let publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking =
+                RootDependencyLocator.getDependency(),
+            let ownAccountId = try? walletRepo.main().getRawPublicKey()
+        else {
             return nil
         }
 
@@ -21,7 +25,8 @@ enum ContactPickViewFactory {
         )
         let presenter = SearchContactPresenter(
             interactor: interactor,
-            wireframe: ContactPickWireframe(context: context)
+            wireframe: ContactPickWireframe(context: context),
+            publicProfileAvatarViewModelFactory: publicProfileAvatarViewModelFactory
         )
         let view = SearchContactViewController(presenter: presenter)
 

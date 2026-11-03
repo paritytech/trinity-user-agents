@@ -9,6 +9,7 @@ import Products
 import SubstrateSdk
 import KeyDerivation
 import Keystore_iOS
+import BulletinChain
 
 /// Runtime configuration error raised while assembling the shared host config.
 enum TrUAPIRuntimeConfigError: Error {
@@ -151,12 +152,18 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 
         let bridge = RustHostRuntimeBridge(
             chainRegistry: chainRegistry,
-            coreStorage: coreStorage,
+            storage: RustHostRuntimeBridge.Storage(
+                core: coreStorage,
+                encrypted: TrUAPIEncryptedStorage(keychain: Keychain()),
+                preimages: TrUAPIPreimageCache(
+                    ipfsFetcher: IpfsFetcher(ipfsBaseURL: AppConfig.KnownIPFS.main),
+                    logger: logger
+                )
+            ),
             chainConnections: chainConnections,
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
             workerManager: workerManager,
             backedUpInstallation: backedUpInstallation,
-            encryptedStorage: TrUAPIEncryptedStorage(keychain: Keychain()),
             logger: logger
         )
 

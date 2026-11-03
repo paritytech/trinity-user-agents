@@ -141,14 +141,7 @@ private extension RustRuntimeEnvironment {
             productStorage: TrUAPILocalStorage.createProductLocalStorage(productId: productId),
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: routers),
-            preimageCache: TrUAPIPreimageCache { [logger, ipfsFetcher] key in
-                do {
-                    return try await ipfsFetcher.lookupBy(rawHash: key)
-                } catch {
-                    logger.error("[truapi] preimage fetch failed for \(key.toHex()): \(error)")
-                    return nil
-                }
-            },
+            preimageCache: TrUAPIPreimageCache(ipfsFetcher: ipfsFetcher, logger: logger),
             hostProvider: hostProvider,
             themeManager: themeManager,
             logger: logger

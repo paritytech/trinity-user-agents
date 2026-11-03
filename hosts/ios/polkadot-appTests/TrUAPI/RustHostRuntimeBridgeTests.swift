@@ -16,7 +16,8 @@ private func makeHostDefaults() -> UserDefaults {
 
 private func makeHostBridge(
     chainRegistry: ChainRegistryProtocol = MockChainRegistry(),
-    confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter()
+    confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter(),
+    preimageCache: TrUAPIPreimageLookuping = TrUAPIPreimageCache { _ in nil }
 ) -> RustHostRuntimeBridge {
     let chainConnections = TrUAPIV2SpecConnectionPool(
         chainRegistry: chainRegistry,
@@ -26,11 +27,14 @@ private func makeHostBridge(
     )
     return RustHostRuntimeBridge(
         chainRegistry: chainRegistry,
-        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults()),
+        storage: RustHostRuntimeBridge.Storage(
+            core: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults()),
+            encrypted: TrUAPIEncryptedStorage(keychain: InMemoryKeychain()),
+            preimages: preimageCache
+        ),
         chainConnections: chainConnections,
         confirmationPresenter: confirmationPresenter,
         backedUpInstallation: TrUAPIBackedUpInstallation(),
-        encryptedStorage: TrUAPIEncryptedStorage(keychain: InMemoryKeychain()),
         logger: Logger.shared
     )
 }
@@ -38,6 +42,37 @@ private func makeHostBridge(
 // MARK: - Tests
 
 struct RustHostRuntimeBridgeTests {
+    @Test
+    func hostAvatarLookupsUseThePreimageBackendWithoutAProductExecution() async throws {
+        let key = Data(repeating: 1, count: 32)
+        let bytes = Data([2, 3, 4])
+        let fetcher = MockPreimageFetcher(result: .success(bytes))
+        let bridge: any HostBridge = makeHostBridge(
+            preimageCache: TrUAPIPreimageCache(ipfsFetcher: fetcher, logger: MockLogger())
+        )
+
+        #expect(try await bridge.lookupPreimage(key: key) == bytes)
+        #expect(await fetcher.requestedHashes == [key])
+    }
+
+    @Test
+    func aFailedHostPreimageLookupCanBeRetried() async throws {
+        let key = Data(repeating: 1, count: 32)
+        let bytes = Data([2, 3, 4])
+        let fetcher = MockPreimageFetcher(result: .failure(.offline))
+        let bridge: any HostBridge = makeHostBridge(
+            preimageCache: TrUAPIPreimageCache(ipfsFetcher: fetcher, logger: MockLogger())
+        )
+
+        let missing = try await bridge.lookupPreimage(key: key)
+        await fetcher.setResult(.success(bytes))
+        let retried = try await bridge.lookupPreimage(key: key)
+        let cached = try await bridge.lookupPreimage(key: key)
+
+        #expect([missing, retried, cached] == [nil, bytes, bytes])
+        #expect(await fetcher.requestedHashes == [key, key])
+    }
+
     /// Known genesis WITH an app-managed connection → supported (aligned with
     /// chain_connect); the host-level bridge answers this before any product.
     @Test func featureSupportedKnownChainWithConnectionReturnsTrue() async throws {
