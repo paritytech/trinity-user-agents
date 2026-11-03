@@ -128,15 +128,9 @@ pub enum ChainStateError {
 		/// Field name.
 		field: &'static str,
 	},
-	/// Bulletin authorization storage failed to decode a field.
-	#[error("authorization {field}: {source}")]
-	AuthorizationFieldDecode {
-		/// Field name.
-		field: &'static str,
-		/// SCALE decode failure.
-		#[source]
-		source: parity_scale_codec::Error,
-	},
+	/// Bulletin authorization storage failed to decode.
+	#[error("authorization: {0}")]
+	AuthorizationDecode(#[source] parity_scale_codec::Error),
 	/// `chain_getHeader` did not contain a block number string.
 	#[error("chain_getHeader returned no number")]
 	HeaderNumberMissing,
@@ -470,6 +464,25 @@ pub struct BulletinAllowanceInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 enum BulletinAuthorizationScope {
 	Account([u8; 32]),
+}
+
+/// A `TransactionStorage.Authorizations` value: what the account has used and
+/// may use, and the block the authorization expires at.
+#[derive(Decode)]
+#[cfg_attr(test, derive(Encode))]
+pub struct BulletinAuthorization {
+	/// Submissions made.
+	pub transactions: u32,
+	/// Submissions allowed.
+	pub transactions_allowance: u32,
+	/// Bytes stored.
+	pub bytes: u64,
+	/// Bytes renewed.
+	pub bytes_permanent: u64,
+	/// Bytes allowed.
+	pub bytes_allowance: u64,
+	/// Block at which the authorization expires.
+	pub expiration: u32,
 }
 
 impl BulletinAllowanceInfo {
@@ -1134,28 +1147,14 @@ fn decode_bulletin_allowance(
 	bytes: &[u8],
 	fetched_at: u32,
 ) -> Result<BulletinAllowanceInfo, StatementAllowanceError> {
-	let mut input = bytes;
-	let transactions = u32::decode(&mut input).map_err(|err| {
-		ChainStateError::AuthorizationFieldDecode { field: "transactions", source: err }
-	})?;
-	let transactions_allowance = u32::decode(&mut input).map_err(|err| {
-		ChainStateError::AuthorizationFieldDecode { field: "transactions_allowance", source: err }
-	})?;
-	let bytes_used = u64::decode(&mut input)
-		.map_err(|err| ChainStateError::AuthorizationFieldDecode { field: "bytes", source: err })?;
-	let _bytes_permanent = u64::decode(&mut input).map_err(|err| {
-		ChainStateError::AuthorizationFieldDecode { field: "bytes_permanent", source: err }
-	})?;
-	let bytes_allowance = u64::decode(&mut input).map_err(|err| {
-		ChainStateError::AuthorizationFieldDecode { field: "bytes_allowance", source: err }
-	})?;
-	let expires_in = u32::decode(&mut input).map_err(|err| {
-		ChainStateError::AuthorizationFieldDecode { field: "expiration", source: err }
-	})?;
+	let authorization = BulletinAuthorization::decode(&mut &bytes[..])
+		.map_err(ChainStateError::AuthorizationDecode)?;
 	Ok(BulletinAllowanceInfo {
-		remained_size: bytes_allowance.saturating_sub(bytes_used),
-		remained_transactions: transactions_allowance.saturating_sub(transactions),
-		expires_in,
+		remained_size: authorization.bytes_allowance.saturating_sub(authorization.bytes),
+		remained_transactions: authorization
+			.transactions_allowance
+			.saturating_sub(authorization.transactions),
+		expires_in: authorization.expiration,
 		fetched_at,
 	})
 }
@@ -1247,7 +1246,15 @@ mod tests {
 		remaining: u64,
 		size: u64,
 	) -> Result<BulletinAllowanceInfo, StatementAllowanceError> {
-		let entry = (0u32, 1u32, 0u64, 0u64, remaining, 100u32).encode();
+		let entry = BulletinAuthorization {
+			transactions: 0,
+			transactions_allowance: 1,
+			bytes: 0,
+			bytes_permanent: 0,
+			bytes_allowance: remaining,
+			expiration: 100,
+		}
+		.encode();
 		let storage = format!(r#""0x{}""#, hex::encode(entry));
 		let scripted = ScriptedRpc::new([storage.as_str(), r#"{"number":"0x1"}"#]);
 		let rpc = RpcClient::new(HostRpcClient::new(scripted));
@@ -1532,7 +1539,8 @@ mod tests {
 
 	/// A scripted slot entry that was set at `since`.
 	fn slot_entry_since(account: [u8; 32], since: u64) -> String {
-		let entry = (account, 0u32, since).encode();
+		let entry =
+			slot::StatementStoreAllowanceEntry { account_id: account, seq: 0, since }.encode();
 		format!(r#""0x{}""#, hex::encode(entry))
 	}
 
@@ -1617,7 +1625,9 @@ mod tests {
 
 	/// One occupied slot entry.
 	fn occupied(account: [u8; 32], since: u64) -> String {
-		format!(r#""0x{}""#, hex::encode((account, 0u32, since).encode()))
+		let entry =
+			slot::StatementStoreAllowanceEntry { account_id: account, seq: 0, since }.encode();
+		format!(r#""0x{}""#, hex::encode(entry))
 	}
 
 	/// Candidates matching [`pooled_memberships`], for the scan pass.

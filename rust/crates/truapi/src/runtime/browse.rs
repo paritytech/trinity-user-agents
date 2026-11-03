@@ -7,6 +7,8 @@
 //! the manifests, so a published product appears, and an unpublished one drops
 //! out, within the cache lifetime.
 
+use alloy_primitives::U256;
+use alloy_sol_types::SolCall;
 use serde_json::json;
 use sp_crypto_hashing::keccak_256;
 use tracing::instrument;
@@ -18,10 +20,8 @@ use super::{
 };
 use crate::{
 	chain_runtime::ChainRuntime,
-	dotns_views::{network_tld, protocol_component, tld_node},
-	host_logic::dotns_gateway::{
-		DotnsTransport, call_bytes32, call_u256_pair, decode_bytes32_array, decode_string,
-	},
+	dotns_views::{network_tld, protocol_component, read_view, tld_node},
+	host_logic::dotns_gateway::{DotnsRegistrar, DotnsTransport, Publisher},
 	platform::{CoreStorageKey, Platform, ProductId},
 };
 
@@ -125,19 +125,20 @@ async fn fetch_published_products(
 	let mut label_hashes: Vec<[u8; 32]> = Vec::new();
 	for publisher in publishers {
 		for offset in (0..).step_by(PAGE_LIMIT as usize) {
-			let output = lookup
-				.view(
-					publisher,
-					call_u256_pair("getPublished(uint256,uint256)", offset, PAGE_LIMIT),
-				)
-				.await
-				.map_err(|err| format!("Publisher.getPublished(): {err}"))?;
-			let page = decode_bytes32_array(&output)
-				.map_err(|err| format!("Publisher.getPublished(): {err}"))?;
+			let page = read_view(
+				&mut lookup,
+				publisher,
+				Publisher::getPublishedCall {
+					offset: U256::from(offset),
+					limit: U256::from(PAGE_LIMIT),
+				},
+			)
+			.await
+			.map_err(|err| format!("Publisher.getPublished(): {err}"))?;
 			let full = page.len() as u64 == PAGE_LIMIT;
 			for label_hash in page {
-				if !label_hashes.contains(&label_hash) {
-					label_hashes.push(label_hash);
+				if !label_hashes.contains(&label_hash.0) {
+					label_hashes.push(label_hash.0);
 				}
 			}
 			if !full {
@@ -153,12 +154,14 @@ async fn fetch_published_products(
 		let node = keccak_256(&[tld_node.as_slice(), label_hash.as_slice()].concat());
 		// A label that cannot be read fails the read rather than dropping its
 		// product, which would then stay off the list for as long as the
-		// list is cached.
+		// list is cached. One the registrar answers with something other than
+		// a string names no product.
+		let label_of = DotnsRegistrar::labelOfCall { tokenId: U256::from_be_bytes(node) };
 		let output = lookup
-			.view(&registrar, call_bytes32("labelOf(uint256)", &node))
+			.view(&registrar, label_of.abi_encode())
 			.await
 			.map_err(|err| format!("Registrar.labelOf(): {err}"))?;
-		let label = decode_string(&output).unwrap_or_default();
+		let label = DotnsRegistrar::labelOfCall::abi_decode_returns(&output).unwrap_or_default();
 		if !label.is_empty() && !label.contains('.') {
 			products.push(format!("{label}{tld}"));
 		}
