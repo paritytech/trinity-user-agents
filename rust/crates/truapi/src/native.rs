@@ -209,12 +209,13 @@ fn reject_undecodable_deeplink(deeplink: &str) -> Result<(), NativePairingError>
 		.map_err(|error| NativePairingError::UndecodableDeeplink { reason: error.to_string() })
 }
 
-/// Largest nesting a face may carry, matching what the core accepts on the
+/// Largest nesting a face may carry, counted as the core's decoder counts it:
+/// each list of children, layers or arguments is one level. It matches the
 /// renderer subscription. A host with a shallower bound would draw a live face
 /// it could not read back.
 const MAX_FACE_DEPTH: u32 = 64;
 
-/// Bracket nesting a face of [`MAX_FACE_DEPTH`] renderer levels can reach. One
+/// Bracket nesting a face of [`MAX_FACE_DEPTH`] levels can reach. One
 /// level spends a few brackets on its object, its value and its children, so
 /// this is generous on purpose: it bounds how far the reader recurses, while
 /// `MAX_FACE_DEPTH` is what actually decides whether a face is drawable.
@@ -261,7 +262,7 @@ fn read_renderer_node_json(json: &str) -> Result<latest::RendererNode, NativeRen
 	}
 
 	// With the text bounded above, the reader's own limit would only impose a
-	// second, stricter bound in JSON levels rather than in renderer levels.
+	// second, stricter bound in JSON levels rather than in decoder levels.
 	let mut reader = serde_json::Deserializer::from_str(json);
 	reader.disable_recursion_limit();
 	let node = latest::RendererNode::deserialize(&mut reader)
@@ -269,11 +270,8 @@ fn read_renderer_node_json(json: &str) -> Result<latest::RendererNode, NativeRen
 
 	// Read back the way a kept face is, so the reader accepts exactly what the
 	// store and the renderer subscription accept.
-	let kept = node.encode();
-	match latest::RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut kept.as_slice()) {
-		Ok(_) => Ok(node),
-		Err(_) => Err(NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH }),
-	}
+	latest::RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut node.encode().as_slice())
+		.map_err(|_| NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH })
 }
 
 /// Whether `json` nests deeper than `limit` braces or brackets, ignoring the
