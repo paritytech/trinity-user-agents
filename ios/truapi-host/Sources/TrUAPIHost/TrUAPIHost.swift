@@ -1291,7 +1291,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     public func selectFundingProvider(
         intent: String,
         providerId: String,
-        quoteId: String?
+        quoteId: String
     ) async throws -> Bool {
         try await inner.selectFundingProvider(intent: intent, providerId: providerId, quoteId: quoteId)
     }
