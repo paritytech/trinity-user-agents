@@ -30,7 +30,12 @@ fn chain_with_allocated_slot() -> Arc<StubPlatform> {
 	let allowance =
 		derive_sr25519_hard_path(&ENTROPY, &["allowance", "statement-store", PRODUCT_ID])
 			.expect("allowance derivation succeeds");
-	let slot_entry = (allowance.public.to_bytes(), 0u32, 0u64).encode();
+	let slot_entry = slot::StatementStoreAllowanceEntry {
+		account_id: allowance.public.to_bytes(),
+		seq: 0,
+		since: 0,
+	}
+	.encode();
 	let people_row = slot::testing::slot_row(
 		derive_full_person_ring_vrf_entropy(&ENTROPY, TEST_NETWORK_SUFFIX),
 		TEST_NETWORK_SUFFIX.as_bytes(),

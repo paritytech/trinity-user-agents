@@ -1539,7 +1539,8 @@ mod tests {
 
 	/// A scripted slot entry that was set at `since`.
 	fn slot_entry_since(account: [u8; 32], since: u64) -> String {
-		let entry = (account, 0u32, since).encode();
+		let entry =
+			slot::StatementStoreAllowanceEntry { account_id: account, seq: 0, since }.encode();
 		format!(r#""0x{}""#, hex::encode(entry))
 	}
 
@@ -1624,7 +1625,9 @@ mod tests {
 
 	/// One occupied slot entry.
 	fn occupied(account: [u8; 32], since: u64) -> String {
-		format!(r#""0x{}""#, hex::encode((account, 0u32, since).encode()))
+		let entry =
+			slot::StatementStoreAllowanceEntry { account_id: account, seq: 0, since }.encode();
+		format!(r#""0x{}""#, hex::encode(entry))
 	}
 
 	/// Candidates matching [`pooled_memberships`], for the scan pass.

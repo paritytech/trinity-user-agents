@@ -127,11 +127,15 @@ pub enum SlotError {
 	},
 }
 
+/// A `StatementStore` allowance slot value as the chain stores it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-struct StatementStoreAllowanceEntry {
-	account_id: [u8; 32],
-	seq: u32,
-	since: u64,
+pub struct StatementStoreAllowanceEntry {
+	/// Account the slot allows.
+	pub account_id: [u8; 32],
+	/// Slot index within the period.
+	pub seq: u32,
+	/// Unix seconds at which the slot was set.
+	pub since: u64,
 }
 
 /// A slot that is occupied, as observed by a scan.
@@ -685,7 +689,8 @@ mod tests {
 
 	/// A scripted slot entry that was set at `since`.
 	fn entry_with_since(account: [u8; 32], since: u64) -> String {
-		format!(r#""0x{}""#, hex::encode((account, 0u32, since).encode()))
+		let entry = StatementStoreAllowanceEntry { account_id: account, seq: 0, since }.encode();
+		format!(r#""0x{}""#, hex::encode(entry))
 	}
 
 	/// An occupied-slot candidate for the replacement rule.
