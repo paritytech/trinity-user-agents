@@ -38,6 +38,8 @@ import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.Transact
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserFragmentClass
 import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.ProductDeepLinkGate
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
+import io.paritytech.polkadotapp.feature_products_impl.data.config.FundingProvidersConfig
+import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigFundingProvidersConfig
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.PocketCardRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.RealPocketCardRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.BrowserTabRepository
@@ -392,6 +394,9 @@ internal interface ProductsModule {
 
     @Binds
     fun bindHostFunding(impl: TrUAPIHostFunding): HostFunding
+
+    @Binds
+    fun bindFundingProvidersConfig(impl: RemoteConfigFundingProvidersConfig): FundingProvidersConfig
 
     @Binds
     fun bindBundledProductFiles(impl: AssetBundledProductFiles): BundledProductFiles

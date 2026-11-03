@@ -1,10 +1,11 @@
 import Foundation
+import TrUAPIHost
 
 // Built from individual Firebase RemoteConfig keys:
 //   identity_backend_url, ipfs_gateway_url, dot_ns_config, coinage_instance_id,
 //   account_data_store_config { contractAddress }, payment_asset_config {
-//   symbol, iconSquareUrl, iconWideUrl }, app_sharing_url
-// Each field nil if the corresponding key is missing or empty.
+//   symbol, iconSquareUrl, iconWideUrl }, app_sharing_url, funding_config { providers }
+// Each field nil (or empty) if the corresponding key is missing or empty.
 struct RemoteAppConfig {
     let identityBackendUrl: URL?
     let ipfsGatewayUrl: URL?
@@ -19,6 +20,9 @@ struct RemoteAppConfig {
     /// The payment asset's symbol and logo URLs from the `payment_asset_config` remote object.
     let paymentAsset: PaymentAssetConfig?
     let appSharingUrl: URL?
+    /// The funding providers from the `funding_config` remote object, the only
+    /// published ones the overlay offers. Empty when none are configured.
+    var fundingProviders: [ProductId] = []
 }
 
 extension RemoteAppConfig {

@@ -20,6 +20,7 @@ import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepo
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
+import io.paritytech.polkadotapp.feature_products_impl.data.config.FundingProvidersConfig
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
@@ -44,6 +45,8 @@ import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
 import uniffi.truapi.ExtensionVersionMap
+import uniffi.truapi.FundingProviderEntry
+import uniffi.truapi.FundingProviderOrigin
 import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -82,6 +85,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val contactsBridge: AppContactsHostBridge,
     private val fundingBridge: AppFundingHostBridge,
     private val bundledProducts: BundledProducts,
+    private val fundingProvidersConfig: FundingProvidersConfig,
     private val paymentPlatforms: TrUAPIPaymentPlatforms,
     private val scannerBridge: TrUAPIProductScans,
     private val installations: CurrentInstallationProvider,
@@ -137,11 +141,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         runtime.setContacts(contactsBridge)
         paymentPlatforms.install(runtime)
         runtime.setFunding(fundingBridge)
-        // The core discovers the published providers; the host lists only the ones it ships itself.
-        bundledProducts.fundingProviders()
-            .takeIf { it.isNotEmpty() }
-            ?.let { providers -> runCatching { runtime.setFundingProviders(providers) } }
-            ?.logFailure("TrUAPI refused the bundled funding providers")
+        listFundingProviders(runtime)
         runtime.setScanner(scannerBridge)
         observeContactRemovals(runtime)
         chainProvider.attach(
@@ -151,6 +151,23 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         observeAppLifecycle()
         scope.closeChainSocketsOnNetworkSwitch(networkStateService, chainProvider)
         observeWalletAccount(runtime)
+    }
+
+    // The core offers only the providers listed here. The bundled ones go in at once; the
+    // configured ones wait for the Remote Config sync, then the whole list is set again.
+    private fun listFundingProviders(runtime: TrUAPIHostRuntime) {
+        val bundled = bundledProducts.fundingProviders()
+        if (bundled.isNotEmpty()) setFundingProviders(runtime, bundled)
+        scope.launch {
+            fundingProvidersConfig.getFundingProviderIds()
+                .logFailure("Funding providers unavailable from Remote Config")
+                .onSuccess { ids -> setFundingProviders(runtime, fundingProviderEntries(ids, bundled)) }
+        }
+    }
+
+    private fun setFundingProviders(runtime: TrUAPIHostRuntime, providers: List<FundingProviderEntry>) {
+        runCatching { runtime.setFundingProviders(providers) }
+            .logFailure("TrUAPI refused the funding providers")
     }
 
     private suspend fun buildRuntimeConfig(): HostRuntimeConfig {
@@ -337,6 +354,18 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
          */
         const val DATABASE_DIRECTORY = "truapi"
     }
+}
+
+/** [published] as dotNS providers, then each of [bundled] not already among them. */
+internal fun fundingProviderEntries(
+    published: List<ProductId>,
+    bundled: List<FundingProviderEntry>,
+): List<FundingProviderEntry> {
+    val listed = published.map { id ->
+        FundingProviderEntry(productId = id, workerManifest = null, origin = FundingProviderOrigin.PUBLISHED)
+    }
+    val publishedIds = published.toSet()
+    return listed + bundled.filterNot { it.productId in publishedIds }
 }
 
 private object HostLevelStorage : HostStorage {
