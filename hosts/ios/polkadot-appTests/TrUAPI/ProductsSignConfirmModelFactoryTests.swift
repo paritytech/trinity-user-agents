@@ -143,7 +143,10 @@ struct ProductsSignConfirmModelFactoryTests {
             : .product(
                 callingProductId: try! ProductId("test.product.dot"),
                 request: HostSignRawRequest(
-                    account: TrUAPIHostProductAccountId(dotNsIdentifier: try! ProductId("p.dot"), derivationIndex: .index(0)),
+                    account: TrUAPIHostProductAccountId(
+                        dotNsIdentifier: try! ProductId("p.dot"),
+                        derivationIndex: .index(0)
+                    ),
                     payload: .bytes(bytes: bytes)
                 ),
                 watermarked: false

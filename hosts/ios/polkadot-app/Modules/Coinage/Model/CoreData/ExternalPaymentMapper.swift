@@ -29,8 +29,8 @@ final class ExternalPaymentMapper: CoreDataMapperProtocol {
 
         let plannedVoucherIndices = try Self.decodeVoucherIndices(entity.plannedVoucherIndices)
 
-        return ExternalPayment(
-            productId: productId == ExternalPayment.nativePaymentMarker ? nil : try ProductId(productId),
+        return try ExternalPayment(
+            productId: productId == ExternalPayment.nativePaymentMarker ? nil : ProductId(productId),
             paymentId: paymentId,
             amountInPlanks: amount,
             destination: destination,

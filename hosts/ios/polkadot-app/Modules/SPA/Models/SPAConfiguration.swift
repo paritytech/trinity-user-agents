@@ -49,15 +49,6 @@ struct SPAConfiguration {
     let contentSource: SPAContentSource
     let presentation: SPAPresentation
     let browserTabId: UUID?
-    /// How a Pocket card's page reaches the face above it; nil for a page
-    /// shown anywhere else.
-    let cardFace: (any ExpandedCardFaceShowing)?
-
-    /// Which of the product's executables this screen serves. A Pocket card
-    /// opens the widget, everything else the app.
-    var executable: ExecutableKind {
-        cardFace == nil ? .app : .widget
-    }
 
     init(
         title: String?,
@@ -66,8 +57,7 @@ struct SPAConfiguration {
         page: ProductPage,
         contentSource: SPAContentSource = .dotNs,
         presentation: SPAPresentation = .pushed,
-        browserTabId: UUID? = nil,
-        cardFace: (any ExpandedCardFaceShowing)? = nil
+        browserTabId: UUID? = nil
     ) {
         self.title = title
         self.isRootScreen = isRootScreen
@@ -76,7 +66,6 @@ struct SPAConfiguration {
         self.contentSource = contentSource
         self.presentation = presentation
         self.browserTabId = browserTabId
-        self.cardFace = cardFace
     }
 }
 
