@@ -83,3 +83,6 @@ tmp/
 
 # Agent scratch notes (worklog, memory, tools)
 .agent/
+
+# Bundled products, built by scripts/bundle-funding-provider.sh
+feature/products/impl/bundled-assets/
