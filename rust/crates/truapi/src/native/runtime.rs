@@ -457,17 +457,14 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Hand open funding session `intent` to the provider the user chose, by
-	/// product id, on the quote it was chosen by when it was quoted.
+	/// product id, on the quote it was chosen by.
 	pub async fn select_funding_provider(
 		&self,
 		intent: String,
 		provider_id: String,
-		quote_id: Option<String>,
+		quote_id: String,
 	) -> Result<bool, HostRejection> {
-		Ok(self
-			.runtime
-			.select_funding_provider(&intent, &provider_id, quote_id.as_deref())
-			.await?)
+		Ok(self.runtime.select_funding_provider(&intent, &provider_id, &quote_id).await?)
 	}
 }
 
