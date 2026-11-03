@@ -160,6 +160,7 @@ private extension TabBarTipController {
     }
 
     func configure(_ controller: TipUIPopoverViewController, for step: TabBarTipStep, in host: UIViewController) {
+        controller.backgroundColor = .fgPrimary
         let popover = controller.popoverPresentationController
         popover?.backgroundColor = .fgPrimary
         popover?.delegate = self
