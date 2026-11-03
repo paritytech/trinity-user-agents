@@ -237,15 +237,16 @@ class FundingViewModel @Inject constructor(
         pop()
     }
 
-    /** Hands the session to the provider whose quote is on screen, then answers `Started`. */
+    /** Hands the session to the provider whose quote is on screen, then answers `Started`. A provider is only chosen on its quote. */
     fun onStart() {
         val current = flow.value ?: return
         val providerId = current.selectedProviderId ?: return
+        val quoteId = current.rows[providerId]?.quote?.quoteId ?: return
         if (start.value.isStarting || start.value.started) return
 
         start.value = FundingStartState(isStarting = true, failed = false, started = false)
         launchUnit {
-            val selected = interactor.selectProvider(intent, providerId, current.rows[providerId]?.quote?.quoteId)
+            val selected = interactor.selectProvider(intent, providerId, quoteId)
                 .logFailure("Funding provider selection failed")
                 .getOrDefault(false)
 

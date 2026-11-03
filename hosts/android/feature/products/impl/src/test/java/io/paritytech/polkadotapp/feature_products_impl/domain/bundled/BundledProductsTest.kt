@@ -54,7 +54,7 @@ class BundledProductsTest {
     @Test
     fun `lists only the products that serve funding as bundled providers`() {
         assertEquals(
-            listOf(FundingProviderEntry(productId = "provider.dot", workerManifest = manifest, origin = FundingProviderOrigin.BUNDLED)),
+            listOf(FundingProviderEntry(productId = ProductId.parse("provider.dot").getOrThrow(), workerManifest = manifest, origin = FundingProviderOrigin.BUNDLED)),
             products.fundingProviders(),
         )
     }

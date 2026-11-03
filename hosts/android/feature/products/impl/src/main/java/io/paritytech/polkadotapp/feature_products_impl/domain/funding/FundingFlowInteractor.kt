@@ -53,7 +53,7 @@ class FundingFlowInteractor @Inject constructor(
 
     suspend fun stopQuotes(intent: String) = runtime.stopQuotes(intent)
 
-    suspend fun selectProvider(intent: String, providerId: String, quoteId: String?): Result<Boolean> =
+    suspend fun selectProvider(intent: String, providerId: String, quoteId: String): Result<Boolean> =
         runtime.selectProvider(intent, providerId, quoteId)
 
     suspend fun cancel(intent: String): Result<CancelOutcome> = runtime.cancel(intent)
