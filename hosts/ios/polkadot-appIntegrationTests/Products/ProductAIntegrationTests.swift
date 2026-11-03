@@ -24,11 +24,11 @@ final class ProductAIntegrationTests: XCTestCase {
     private static let coinFlip = URL(string: "https://paritytech.github.io/coin-flip/worker/index.js")!
 
     func testProductAInitializes() async throws {
-        try await performTestProductScriptInitializes(product: try ProductId("product-a.dot"), scriptUrl: Self.productA)
+        try await performTestProductScriptInitializes(product: ProductId("product-a.dot"), scriptUrl: Self.productA)
     }
 
     func testProductARendersMessages() async throws {
-        try await performTestRenderMessage(product: try ProductId("product-a.dot"), scriptUrl: Self.productA)
+        try await performTestRenderMessage(product: ProductId("product-a.dot"), scriptUrl: Self.productA)
     }
 
     /// Tests that coinFlip initializes and responds to a user message.
@@ -41,7 +41,10 @@ final class ProductAIntegrationTests: XCTestCase {
             productScript: productScript
         )
         let nativeApi = MockProductsNativeApi(
-            localStorage: ProductsLocalStorage(productId: try! ProductId("coinFlip.dot"), settingsManager: InMemorySettingsManager())
+            localStorage: ProductsLocalStorage(
+                productId: try! ProductId("coinFlip.dot"),
+                settingsManager: InMemorySettingsManager()
+            )
         )
 
         try await executor.initializeBot(nativeApi: nativeApi)

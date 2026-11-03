@@ -68,9 +68,9 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
         }
 
         let resolved = product ?? .legacy(id: productId)
-        let archive = DotNsResolvedContent(
+        let archive = try DotNsResolvedContent(
             contentHash: contentHash,
-            localURL: contentURL.appendingPathComponent(try resolved.contentId(for: kind).rawValue)
+            localURL: contentURL.appendingPathComponent(resolved.contentId(for: kind).rawValue)
         )
 
         return ProductContent(resolved: resolved, kind: kind, archive: archive)
