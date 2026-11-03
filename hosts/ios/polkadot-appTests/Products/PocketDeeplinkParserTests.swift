@@ -15,8 +15,8 @@ struct PocketDeeplinkParserTests {
 
     @Test
     func readsAnAddLink() throws {
-        #expect(classify("polkadotapp://pocket/add?product=game.dot&card=loyalty") == .pocket(PocketDeeplink(
-            productHost: try ProductId("game.dot"),
+        #expect(try classify("polkadotapp://pocket/add?product=game.dot&card=loyalty") == .pocket(PocketDeeplink(
+            productHost: ProductId("game.dot"),
             action: .add,
             cardId: PocketCardId(value: "loyalty"),
             pageQuery: "",

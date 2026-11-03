@@ -53,8 +53,8 @@ extension PocketCardMapper: CoreDataMapperProtocol {
             membership = StoredPocketCard.Membership(title: title, addedAt: addedAt)
         }
 
-        return StoredPocketCard(
-            key: PocketCardKey(productId: try ProductId(productId), cardId: PocketCardId(value: cardId)),
+        return try StoredPocketCard(
+            key: PocketCardKey(productId: ProductId(productId), cardId: PocketCardId(value: cardId)),
             membership: membership,
             face: entity.face
         )

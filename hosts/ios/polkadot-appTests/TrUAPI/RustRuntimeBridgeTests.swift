@@ -88,7 +88,6 @@ private func makeBridge(
     productStorageFails: Bool = false,
     hostProvider: ProductHostProviding = StubHostProvider(),
     themeManager: MockThemeManager = MockThemeManager(),
-    cardFace: (any ExpandedCardFaceShowing)? = nil,
     router: MockNavigationRouter? = nil
 ) -> RustProductExecutionBridge {
     let router = router ?? MockNavigationRouter()
@@ -116,7 +115,7 @@ private func makeBridge(
         hostProvider: hostProvider,
         themeManager: themeManager,
         logger: Logger.shared
-    ), cardFace: cardFace)
+    ))
 }
 
 // MARK: - Tests
@@ -232,7 +231,11 @@ struct RustRuntimeBridgeTests {
         let asker = MockReminderPermissionAsker()
         asker.alarmAllowed = alarmAllowed
         asker.notificationsAllowed = notificationsAllowed
-        let bridge = makeBridge(productId: try! ProductId("game.dot"), gameReminders: gameReminders, reminderPermissionAsker: asker)
+        let bridge = makeBridge(
+            productId: try! ProductId("game.dot"),
+            gameReminders: gameReminders,
+            reminderPermissionAsker: asker
+        )
 
         try await bridge.scheduleReminder(startsAt: 2_000_000_000_000)
 
@@ -462,7 +465,10 @@ struct RustRuntimeBridgeTests {
         presenter.permissionDecisionToReturn = decision
         let bridge = makeBridge(productId: try! ProductId("caller.dot"), confirmationPresenter: presenter)
         let review = UserConfirmationReview.accountAccess(
-            AccountAccessReview(requestingProductId: try! ProductId("caller.dot"), targetProductId: try! ProductId("target.dot"))
+            AccountAccessReview(
+                requestingProductId: try! ProductId("caller.dot"),
+                targetProductId: try! ProductId("target.dot")
+            )
         )
 
         let result = try await bridge.confirmPermission(review: review)
@@ -565,21 +571,9 @@ struct RustRuntimeBridgeTests {
             routerFacade: ProductRoutersFacade.worker()
         )
 
-        let review = UserConfirmationReview.productSubtree(ProductSubtreeReview(productId: try! ProductId("test.product.dot")))
+        let review = UserConfirmationReview
+            .productSubtree(ProductSubtreeReview(productId: try! ProductId("test.product.dot")))
         #expect(await presenter.confirm(review: review, from: "test.product.dot") == false)
-    }
-
-    // MARK: setExpandedCardFaceShown
-
-    /// The page's request reaches the card's face and its answer comes back.
-    /// Called through `HostBridge` because the core does: an override whose
-    /// signature drifts would lose to the default and answer `.unsupported`.
-    @Test func expandedCardFaceReachesTheCardsFace() async throws {
-        let face = StubCardFace()
-        let bridge: HostBridge = makeBridge(cardFace: face)
-
-        #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .userMoving)
-        #expect(face.requests == [false])
     }
 
     // MARK: attach

@@ -26,7 +26,7 @@ extension ProductMapper: CoreDataMapperProtocol {
             )
         }
 
-        return Product(id: try ProductId(identifier), name: name)
+        return try Product(id: ProductId(identifier), name: name)
     }
 
     func populate(
