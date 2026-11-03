@@ -92,12 +92,4 @@ sealed interface JsWidget {
         val fit: JsImageFit = JsImageFit.FILL,
         val modifiers: List<JsModifier> = emptyList(),
     ) : JsWidget
-
-    /** Applies a host-drawn effect to its children. */
-    @Serializable
-    @SerialName("effect")
-    data class Effect(
-        val effect: JsEffect,
-        val children: List<JsWidget> = emptyList(),
-    ) : JsWidget
 }

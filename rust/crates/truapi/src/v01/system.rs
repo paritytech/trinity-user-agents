@@ -1,7 +1,7 @@
 use derive_more::Display;
 use parity_scale_codec::{Decode, Encode};
 
-use super::common::GenericError;
+use super::{common::GenericError, renderer::RenderSurface};
 use crate::product_id::ProductId;
 
 /// Response containing the product context bound to the current host runtime.
@@ -19,6 +19,16 @@ pub enum HostFeatureSupportedRequest {
 	Chain {
 		/// Chain genesis hash.
 		genesis_hash: Vec<u8>,
+	},
+	/// Ask whether the host draws materials of one format version, requiring
+	/// these features, on one surface.
+	Materials {
+		/// Format version, as on the `// @material` line.
+		format_version: u32,
+		/// Feature names, as on the `// @requires` line.
+		features: Vec<String>,
+		/// Surface the materials would draw on.
+		surface: RenderSurface,
 	},
 }
 

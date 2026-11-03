@@ -1152,7 +1152,7 @@ pub struct HostChainSet {
 }
 
 /// Feature-support probing. The host answers whether it can service a given
-/// capability (currently scoped to per-chain support).
+/// capability (per-chain support, and whether materials draw).
 #[async_trait]
 pub trait Features: Send + Sync {
 	/// Report whether the requested feature is supported.

@@ -213,6 +213,16 @@ describe("encodeWireMessage / decodeWireMessage wire equality", () => {
         expect(toHex(decoded.payload.value)).toBe(toHex(inner));
     });
 
+    // Rust pins the same bytes in `v01::renderer` tests. Index 10 belonged to
+    // the removed `Effect`, so neither side may fall back to position.
+    it("encodes a Materials node at the index Rust reads", () => {
+        const node: T.RendererNode = {
+            tag: "Materials",
+            value: { props: { layers: [] }, children: [] },
+        };
+        expect(toHex(T.RendererNode.enc(node))).toBe("0b0000");
+    });
+
     it("rejects an invalid outbound trait discriminant", () => {
         const result = encodeWireMessage({
             requestId: "p:1",

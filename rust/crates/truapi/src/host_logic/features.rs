@@ -14,12 +14,18 @@ use truapi::{
 	v01::{GenericError, HostFeatureSupportedRequest, HostFeatureSupportedResponse},
 };
 
-/// Forward a feature-support query to the platform implementation.
+/// Forward a feature-support query to the platform implementation. The core
+/// draws no materials yet, so it answers that question itself.
 pub async fn feature_supported<P: Features + ?Sized>(
 	platform: &P,
 	request: HostFeatureSupportedRequest,
 ) -> Result<HostFeatureSupportedResponse, GenericError> {
-	platform.feature_supported(request).await
+	match request {
+		HostFeatureSupportedRequest::Materials { .. } => {
+			Ok(HostFeatureSupportedResponse { supported: false })
+		},
+		request => platform.feature_supported(request).await,
+	}
 }
 
 /// Fetch the host's chain set from the platform implementation.
@@ -62,7 +68,7 @@ pub fn chain_info(
 mod tests {
 	use super::*;
 	use crate::platform::HostChainEntry;
-	use truapi::latest::ChainIdentifier;
+	use truapi::latest::{ChainIdentifier, RenderSurface};
 
 	fn paseo_set() -> HostChainSet {
 		HostChainSet {
@@ -122,6 +128,20 @@ mod tests {
 	fn delegates_unsupported_to_platform() {
 		let resp =
 			futures::executor::block_on(feature_supported(&AlwaysUnsupported, req())).unwrap();
+		assert!(!resp.supported);
+	}
+
+	/// No host draws materials yet, so a platform that says yes to anything is
+	/// not asked, and a product never sends a tree the host would draw plain.
+	#[test]
+	fn materials_are_not_supported_whatever_the_platform_says() {
+		let request = HostFeatureSupportedRequest::Materials {
+			format_version: 1,
+			features: Vec::new(),
+			surface: RenderSurface::PocketCard,
+		};
+		let resp =
+			futures::executor::block_on(feature_supported(&AlwaysSupported, request)).unwrap();
 		assert!(!resp.supported);
 	}
 

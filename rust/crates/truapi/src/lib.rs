@@ -81,6 +81,36 @@ uniffi::custom_type!(Bytes64, Vec<u8>, {
 	try_lift: |bytes| Ok(bytes.as_slice().try_into()?),
 });
 
+// UniFFI has no arrays, so a material argument's vector crosses FFI surfaces as
+// a list. Named only because `uniffi::custom_type!` takes an ident.
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+type U32x2 = [u32; 2];
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+type U32x3 = [u32; 3];
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+type U32x4 = [u32; 4];
+
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+uniffi::custom_type!(U32x2, Vec<u32>, {
+	remote,
+	lower: |values| values.to_vec(),
+	try_lift: |values| Ok(values.as_slice().try_into()?),
+});
+
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+uniffi::custom_type!(U32x3, Vec<u32>, {
+	remote,
+	lower: |values| values.to_vec(),
+	try_lift: |values| Ok(values.as_slice().try_into()?),
+});
+
+#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+uniffi::custom_type!(U32x4, Vec<u32>, {
+	remote,
+	lower: |values| values.to_vec(),
+	try_lift: |values| Ok(values.as_slice().try_into()?),
+});
+
 // Swift and Kotlin have no 128-bit integer, so amounts cross FFI surfaces as
 // decimal strings.
 #[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
@@ -102,24 +132,25 @@ pub mod latest {
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
 		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, FundingAssignment, FundingCancelAnswer,
-		FundingCancelDecision, FundingDirection, FundingFailure, FundingFrameOutcome,
-		FundingFrameTarget, FundingInboundUpdate, FundingOutboundUpdate, FundingUpdate,
-		GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
-		HostAccountGetAliasRequest, HostAccountGetError, HostAccountListRingVrfKeysRequest,
+		Dimensions, FundingAssignment, FundingCancelAnswer, FundingCancelDecision,
+		FundingDirection, FundingFailure, FundingFrameOutcome, FundingFrameTarget,
+		FundingInboundUpdate, FundingOutboundUpdate, FundingUpdate, GenericError,
+		HorizontalAlignment, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+		HostAccountGetError, HostAccountListRingVrfKeysRequest,
 		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
 		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
-		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
-		ImageSource, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination,
-		NftPurseChequeId, NftPurseChequeRecipient, NftPurseClearedItem, NftPurseClearingReference,
-		NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
+		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps, ImageRef,
+		ImageSource, MaterialFailure, MaterialInstance, MaterialsProps, Modifier,
+		NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId,
+		NftPurseChequeRecipient, NftPurseClearedItem, NftPurseClearingReference, NftPurseId,
+		NftPurseIdempotencyKey, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
 		NftPursePaymentTransmissionChannel, NftPursePurse, NftPurseReceiveKey, NftPurseStatus,
-		OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId,
-		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest,
-		RemotePermission, RemoteStatementStoreCreateProofError,
+		OperationStartedResult, Parameter, PaymentTopUpSource, PocketCard, ProductAccount,
+		ProductAccountId, ProductProofContext, RawPayload, RegisteredRingVrfKey,
+		RemoteChainTransactionStopRequest, RemotePermission, RemoteStatementStoreCreateProofError,
 		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
 		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
-		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
+		RenderSurface, RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
 		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
 		SignedStatement, Size, Statement, StatementProof, StatementTopic, StorageQueryItem,
 		StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
@@ -230,6 +261,9 @@ pub mod latest {
 	/// Action triggered inside a product-rendered body, delivered to the worker.
 	pub type HostRendererActionSubscribeItem =
 		LatestOf<versioned::renderer::HostRendererActionSubscribeItem>;
+	/// A `Materials` node that fell back, delivered to the worker.
+	pub type HostRendererFailureSubscribeItem =
+		LatestOf<versioned::renderer::HostRendererFailureSubscribeItem>;
 	/// Host-to-product render request for one body.
 	pub type ProductRendererRenderRequest =
 		LatestOf<versioned::renderer::ProductRendererRenderRequest>;

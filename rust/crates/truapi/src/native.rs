@@ -318,7 +318,7 @@ fn node_depth(node: &latest::RendererNode, remaining: u32) -> Option<u32> {
 		latest::RendererNode::Row { children, .. } |
 		latest::RendererNode::Text { children, .. } |
 		latest::RendererNode::Button { children, .. } |
-		latest::RendererNode::Effect { children, .. } => children,
+		latest::RendererNode::Materials { children, .. } => children,
 		_ => &[],
 	};
 

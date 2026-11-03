@@ -801,7 +801,9 @@ impl Features for CliPlatform {
 		&self,
 		request: api::HostFeatureSupportedRequest,
 	) -> Result<api::HostFeatureSupportedResponse, api::GenericError> {
-		let api::HostFeatureSupportedRequest::Chain { genesis_hash } = request;
+		let api::HostFeatureSupportedRequest::Chain { genesis_hash } = request else {
+			return Ok(api::HostFeatureSupportedResponse { supported: false });
+		};
 		let supported = self
 			.chains
 			.chains

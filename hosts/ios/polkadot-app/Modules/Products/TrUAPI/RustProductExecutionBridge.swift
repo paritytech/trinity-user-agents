@@ -189,6 +189,8 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
                 return false
             }
             return dependencies.chainRegistry.getConnection(for: chain.chainId) != nil
+        case .materials:
+            return false
         }
     }
 

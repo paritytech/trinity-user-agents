@@ -3196,6 +3196,55 @@ fn refuses_a_face_deeper_than_the_core_carries() {
 	));
 }
 
+/// `children` wrapped in a `Materials` node with one layer, in the shape the
+/// generated client writes: the ID as hex, numbers as their bit patterns.
+fn materials_around(material_hex: &str, children: &str) -> String {
+	format!(
+		r#"{{"tag":"Materials","value":{{"props":{{"layers":[{{"material":"0x{material_hex}","args":[{{"tag":"Float","value":1069547520}},{{"tag":"Vec2","value":[1,2]}},{{"tag":"SamplerFloat","value":{{"tag":"Noise"}}}}]}}]}},"children":[{children}]}}}}"#
+	)
+}
+
+#[test]
+fn reads_a_materials_node_as_the_client_writes_it() {
+	let json = materials_around(&"07".repeat(32), r#"{"tag":"Nil"}"#);
+
+	assert_eq!(
+		parse_renderer_node_json(json).expect("a materials face reads"),
+		latest::RendererNode::Materials {
+			props: v01::MaterialsProps {
+				layers: vec![v01::MaterialInstance {
+					material: [7; 32],
+					args: vec![
+						v01::Parameter::Float(1.5f32.to_bits()),
+						v01::Parameter::Vec2([1, 2]),
+						v01::Parameter::SamplerFloat(v01::ImageRef::Noise),
+					],
+				}],
+			},
+			children: vec![latest::RendererNode::Nil],
+		}
+	);
+}
+
+#[test]
+fn refuses_a_material_id_that_is_not_32_bytes() {
+	let json = materials_around(&"07".repeat(31), r#"{"tag":"Nil"}"#);
+
+	assert!(matches!(parse_renderer_node_json(json), Err(NativeRendererError::Malformed { .. })));
+}
+
+/// A `Materials` node holds children like any container, so it cannot hide a
+/// tree deeper than the core carries.
+#[test]
+fn counts_depth_through_a_materials_node() {
+	let deepest_allowed = nested_boxes(MAX_FACE_DEPTH as usize - 1);
+
+	assert!(matches!(
+		parse_renderer_node_json(materials_around(&"07".repeat(32), &deepest_allowed)),
+		Err(NativeRendererError::TooDeep { .. })
+	));
+}
+
 /// A product chooses how deep its preview nests, and a host reads it before
 /// the user approved anything, on whatever thread it happens to be on. The
 /// deepest face the bracket bound lets through is refused on a thread with

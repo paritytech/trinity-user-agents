@@ -6,7 +6,7 @@ import { WORKER_DIAGNOSIS_METHODS, ChatDiagnosis } from "../../worker/diagnosis"
 /**
  * Worker-pinned methods the playground deliberately leaves out of its
  * diagnosis. The CLI battery drives Pocket and the funding provider over the
- * real wire instead. Naming each method rather than the whole service keeps
+ * real wire instead, and no host serves the renderer's failure stream yet. Naming each method rather than the whole service keeps
  * the guard on the rest of it, so a new method fails the check below until it
  * is either diagnosed or listed here.
  */
@@ -18,6 +18,7 @@ const UNDIAGNOSED_WORKER_METHODS: ReadonlySet<string> = new Set([
   "Funding Provider/settle_cancel",
   "Funding Provider/report",
   "Funding Provider/present_frame",
+  "Renderer/failure_subscribe",
 ]);
 
 describe("ChatDiagnosis", () => {
