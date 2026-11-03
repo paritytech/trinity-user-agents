@@ -5,6 +5,7 @@ import android.app.Notification
 import android.app.PendingIntent
 import android.content.Context
 import android.net.Uri
+import android.os.Bundle
 import android.service.notification.StatusBarNotification
 import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationCompat
@@ -27,12 +28,13 @@ abstract class NotificationPublisher(
         channel: PolkadotNotificationChannel,
         notification: Notification,
         tag: String? = null,
-    ) {
-        if (notificationManager.areNotificationsEnabled().not()) return
+    ): Boolean {
+        if (notificationManager.areNotificationsEnabled().not()) return false
 
         createChannel(channel)
 
         notificationManager.notify(tag, notificationId, notification)
+        return true
     }
 
     private fun createChannel(channel: PolkadotNotificationChannel) {
@@ -61,18 +63,24 @@ abstract class NotificationPublisher(
         }
     }
 
-    protected fun NotificationCompat.Builder.setupDefaultNotification(deepLink: Uri? = null): NotificationCompat.Builder {
+    protected fun NotificationCompat.Builder.setupDefaultNotification(
+        deepLink: Uri? = null,
+        contentIntentExtras: Bundle? = null,
+    ): NotificationCompat.Builder {
         return this
             .setSmallIcon(RCommon.drawable.ic_notification_default)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setContentIntent(createPendingIntent(deepLink))
+            .setContentIntent(createPendingIntent(deepLink, contentIntentExtras))
             .setAutoCancel(true)
     }
 
-    private fun createPendingIntent(deepLink: Uri?): PendingIntent {
+    private fun createPendingIntent(deepLink: Uri?, extras: Bundle?): PendingIntent {
         val intent = intentProvider.getRootIntent().apply {
             if (deepLink != null) {
                 data = deepLink
+            }
+            if (extras != null) {
+                putExtras(extras)
             }
         }
 

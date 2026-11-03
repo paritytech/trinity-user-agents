@@ -6,6 +6,8 @@ import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
+import io.paritytech.polkadotapp.common.data.telemetry.productNotificationShown
+import io.paritytech.polkadotapp.common.data.telemetry.productNotificationTapped
 import io.paritytech.polkadotapp.test_shared.any
 import io.sentry.SentryEvent
 import kotlinx.coroutines.CoroutineScope
@@ -116,6 +118,46 @@ class HostProcessTelemetryTest {
         assertEquals("host.process.started", sentryEvent?.message?.formatted)
         assertEquals("android", sentryEvent?.getTag("host.platform"))
         assertEquals(42L, sentryEvent?.getExtra("host.app_build"))
+    }
+
+    @Test
+    fun `captures product notification fields and keeps disabled capture lazy`() {
+        val captured = mutableListOf<HostEvent>()
+        val capture = HostEventCapture { captured += it() }
+
+        capture.capture { origin.productNotificationShown(productId = "jolly.dot", deeplink = "jolly.dot/game") }
+        capture.capture { origin.productNotificationTapped(productId = "jolly.dot", deeplink = "jolly.dot/game") }
+
+        val expectedTags = mapOf(
+            "host.platform" to "android",
+            "host.app_variant" to "nightly",
+            "host.app_flavor" to "gp",
+            "host.native_app_version" to "1.2.3",
+        )
+        val expectedExtras = mapOf(
+            "host.app_build" to 42L,
+            "product_notification.product_id" to "jolly.dot",
+            "product_notification.deeplink" to "jolly.dot/game",
+        )
+        assertEquals(
+            listOf(
+                HostEvent("host.product_notification.shown", expectedTags, expectedExtras),
+                HostEvent("host.product_notification.tapped", expectedTags, expectedExtras),
+            ),
+            captured,
+        )
+
+        var eventBuilt = false
+        val disabledCapture = RealHostEventCapture(
+            enabledProvider = HostTelemetryEnabledProvider { false },
+            sentryCapture = sentryCapture,
+        )
+        disabledCapture.capture {
+            eventBuilt = true
+            origin.productNotificationShown(productId = "jolly.dot", deeplink = "jolly.dot/game")
+        }
+
+        assertFalse(eventBuilt)
     }
 
     @Test
