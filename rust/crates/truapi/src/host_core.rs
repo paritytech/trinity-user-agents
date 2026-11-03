@@ -1873,7 +1873,7 @@ impl ProductRuntimeControl {
 				Ok(Box::pin(crate::generated::dispatcher::chat_messages_query(
 					subscriptions,
 					transport,
-					truapi::versioned::chat::ProductChatMessagesQueryRequest::V1(request?),
+					truapi::versioned::chat::ProductChatMessagesQueryRequest::V2(request?),
 				)))
 			},
 			move |page| crate::platform::validate_chat_messages_page(page, page_size),
@@ -1911,7 +1911,7 @@ impl ProductRuntimeControl {
 				Ok(Box::pin(crate::generated::dispatcher::chat_user_action(
 					subscriptions,
 					transport,
-					truapi::versioned::chat::ProductChatUserActionRequest::V1(request),
+					truapi::versioned::chat::ProductChatUserActionRequest::V2(request),
 				)))
 			},
 			|answer| match answer {
@@ -1943,7 +1943,7 @@ impl ProductRuntimeControl {
 				Ok(Box::pin(crate::generated::dispatcher::chat_reactions_query(
 					subscriptions,
 					transport,
-					truapi::versioned::chat::ProductChatReactionsQueryRequest::V1(request),
+					truapi::versioned::chat::ProductChatReactionsQueryRequest::V2(request),
 				)))
 			},
 			crate::platform::validate_chat_reactions_answer,
@@ -1978,7 +1978,7 @@ impl ProductRuntimeControl {
 		let subscriptions = self.host_subscriptions.clone();
 		let transport: Arc<dyn Transport> = self.transport.clone();
 		let answer = async move {
-			let failed = |reason: String| truapi::CallError::Domain(Error::unknown(reason));
+			let failed = |reason: String| truapi::CallError::MalformedFrame { reason };
 			let room_id = match room_id {
 				Ok(room_id) => room_id,
 				Err(error) => return Err(failed(error.to_string())),
@@ -2006,31 +2006,22 @@ impl ProductRuntimeControl {
 pub type ChatQuery<Item, Error = truapi::latest::ProductChatQueryError> =
 	truapi::Subscription<Item, truapi::CallError<Error>>;
 
-/// The domain errors the core answers a chat query with itself.
+/// The domain error the core answers a chat query with itself. A request or
+/// an item that does not pass the screen fails with `MalformedFrame`.
 pub trait ChatQueryError {
 	/// The answer for a room whose configuration does not declare the handler.
 	fn not_declared() -> Self;
-	/// The answer for a request or an item that did not pass the screen.
-	fn unknown(reason: String) -> Self;
 }
 
 impl ChatQueryError for truapi::latest::ProductChatQueryError {
 	fn not_declared() -> Self {
 		Self::NotAvailable
 	}
-
-	fn unknown(reason: String) -> Self {
-		Self::Unknown { reason }
-	}
 }
 
 impl ChatQueryError for truapi::latest::ProductChatUserActionError {
 	fn not_declared() -> Self {
-		Self::Unknown { reason: "the room does not keep its messages in the product".to_string() }
-	}
-
-	fn unknown(reason: String) -> Self {
-		Self::Unknown { reason }
+		Self::NotAvailable
 	}
 }
 
@@ -4748,12 +4739,12 @@ mod tests {
 				action: truapi::latest::ChatUserAction::Seen { message_id: "m1".to_string() },
 			})
 			.expect("a Worker connection may be asked");
-		assert!(matches!(
+		assert_eq!(
 			futures::executor::block_on(action.next()),
 			Some(Err(truapi::CallError::Domain(
-				truapi::latest::ProductChatUserActionError::Unknown { .. }
+				truapi::latest::ProductChatUserActionError::NotAvailable
 			)))
-		));
+		);
 		assert!(sent_frames(&sink).is_empty());
 	}
 
@@ -4780,9 +4771,7 @@ mod tests {
 
 		assert!(matches!(
 			futures::executor::block_on(action.next()),
-			Some(Err(truapi::CallError::Domain(
-				truapi::latest::ProductChatUserActionError::Unknown { .. }
-			)))
+			Some(Err(truapi::CallError::MalformedFrame { .. }))
 		));
 		assert!(sent_frames(&sink).is_empty());
 	}
@@ -4810,7 +4799,7 @@ mod tests {
 			truapi::versioned::chat::ProductChatMessagesQueryRequest::decode(
 				&mut start.payload.value.as_slice()
 			),
-			Ok(truapi::versioned::chat::ProductChatMessagesQueryRequest::V1(messages_request(10)))
+			Ok(truapi::versioned::chat::ProductChatMessagesQueryRequest::V2(messages_request(10)))
 		);
 		let page = truapi::latest::ProductChatMessagesQueryResponse {
 			messages: vec![text_message("m1")],
@@ -4819,7 +4808,7 @@ mod tests {
 		deliver_chat_frame(
 			&runtime,
 			&start,
-			truapi::versioned::chat::ProductChatMessagesQueryResponse::V1(page.clone()).encode(),
+			truapi::versioned::chat::ProductChatMessagesQueryResponse::V2(page.clone()).encode(),
 		);
 
 		assert_eq!(futures::executor::block_on(query.next()), Some(Ok(page)));
@@ -4908,7 +4897,7 @@ mod tests {
 		deliver_chat_frame(
 			&runtime,
 			&start,
-			truapi::versioned::chat::ProductChatMessagesQueryResponse::V1(
+			truapi::versioned::chat::ProductChatMessagesQueryResponse::V2(
 				truapi::latest::ProductChatMessagesQueryResponse {
 					messages: vec![text_message("m1"), text_message("m2")],
 					next: None,
@@ -4919,9 +4908,7 @@ mod tests {
 
 		assert!(matches!(
 			futures::executor::block_on(query.next()),
-			Some(Err(truapi::CallError::Domain(
-				truapi::latest::ProductChatQueryError::Unknown { .. }
-			)))
+			Some(Err(truapi::CallError::MalformedFrame { .. }))
 		));
 	}
 
