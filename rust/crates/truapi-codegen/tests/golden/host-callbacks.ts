@@ -1592,8 +1592,9 @@ export interface ChatPlatform {
    * it the host applies the change only to an open room screen and the chat
    * list preview. The host answers `UnknownMessage`, `DuplicateMessage`
    * and, for an edit, a replacement or a deletion of a message the product
-   * did not write, `NotOwner`. A web host can answer only `Unknown`: the
-   * web bridge turns each error that a web callback throws into `Unknown`.
+   * did not write, `NotOwner`, and any failure of its own with
+   * `HostFailure`. A web host can answer only `HostFailure`: the web bridge
+   * turns each error that a web callback throws into `HostFailure`.
    */
   updateChatFeed?(
     product: ProductContext,

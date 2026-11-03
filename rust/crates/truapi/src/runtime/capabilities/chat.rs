@@ -216,7 +216,8 @@ impl Chat for ProductRuntimeHost {
 		version(request)
 			.exec(|mut request| async move {
 				let platform = self.connection.chat_platform()?;
-				request.room_id = self.hosted_room(&platform, &request.room_id).await?;
+				request.room_id =
+					self.hosted_room(&platform, &request.room_id).await.map_err(footer_refusal)?;
 				platform.set_chat_room_footer(&self.connection.product, request).await.map_err(
 					|error| {
 						CallError::Domain(latest::HostChatSetRoomFooterError::Unknown {
@@ -296,7 +297,13 @@ impl Chat for ProductRuntimeHost {
 					// A delete of a room that does not exist succeeds. Thus a
 					// product can send a delete again when it lost the answer.
 					Err(RoomRefusal::UnknownRoom) => Ok(()),
-					Err(refusal) => Err(CallError::Domain(refusal.into())),
+					Err(RoomRefusal::NotRoomHost) => {
+						Err(CallError::Domain(latest::HostChatDeleteRoomError::NotRoomHost))
+					},
+					Err(RoomRefusal::Malformed(reason)) => {
+						Err(CallError::MalformedFrame { reason })
+					},
+					Err(RoomRefusal::HostFailure(reason)) => Err(CallError::HostFailure { reason }),
 					Ok(room_id) => {
 						request.room_id = room_id.clone();
 						platform
@@ -336,11 +343,7 @@ impl Chat for ProductRuntimeHost {
 				let config = platform
 					.read_chat_room_config(&self.connection.product, request.room_id.clone())
 					.await
-					.map_err(|error| {
-						CallError::Domain(latest::HostChatUpdateFeedError::Unknown {
-							reason: error.reason,
-						})
-					})?;
+					.map_err(room_host_error)?;
 				let persist = !config.product_source;
 				// In a room that the host stores, the user writes and reacts
 				// only through the host. A product cannot write or react as the
@@ -348,10 +351,7 @@ impl Chat for ProductRuntimeHost {
 				if persist && names_the_user(&request.update) {
 					return Err(CallError::Domain(latest::HostChatUpdateFeedError::NotOwner));
 				}
-				platform
-					.update_chat_feed(&self.connection.product, request, persist)
-					.await
-					.map_err(CallError::Domain)
+				platform.update_chat_feed(&self.connection.product, request, persist).await
 			})
 			.await
 	}
@@ -364,67 +364,58 @@ enum RoomRefusal {
 	UnknownRoom,
 	/// The product takes part in the room as a bot.
 	NotRoomHost,
-	/// The id was malformed, or the host could not list the rooms.
-	Failed(String),
+	/// The room id did not pass the core's checks.
+	Malformed(String),
+	/// The host could not list the rooms.
+	HostFailure(String),
 }
 
-impl From<RoomRefusal> for latest::HostChatSetRoomMetadataError {
+/// The error of a room-changing call that names a room the product does not
+/// host.
+trait RoomCallError {
+	/// This product created no room with this id.
+	const UNKNOWN_ROOM: Self;
+	/// The product takes part in the room as a bot, not as its host.
+	const NOT_ROOM_HOST: Self;
+}
+
+impl RoomCallError for latest::HostChatSetRoomMetadataError {
+	const UNKNOWN_ROOM: Self = Self::UnknownRoom;
+	const NOT_ROOM_HOST: Self = Self::NotRoomHost;
+}
+
+impl RoomCallError for latest::HostChatSetRoomPreviewError {
+	const UNKNOWN_ROOM: Self = Self::UnknownRoom;
+	const NOT_ROOM_HOST: Self = Self::NotRoomHost;
+}
+
+impl RoomCallError for latest::HostChatUpdateFeedError {
+	const UNKNOWN_ROOM: Self = Self::UnknownRoom;
+	const NOT_ROOM_HOST: Self = Self::NotRoomHost;
+}
+
+impl<E: RoomCallError> From<RoomRefusal> for CallError<E> {
 	fn from(refusal: RoomRefusal) -> Self {
 		match refusal {
-			RoomRefusal::UnknownRoom => Self::UnknownRoom,
-			RoomRefusal::NotRoomHost => Self::NotRoomHost,
-			RoomRefusal::Failed(reason) => Self::Unknown { reason },
+			RoomRefusal::UnknownRoom => CallError::Domain(E::UNKNOWN_ROOM),
+			RoomRefusal::NotRoomHost => CallError::Domain(E::NOT_ROOM_HOST),
+			RoomRefusal::Malformed(reason) => CallError::MalformedFrame { reason },
+			RoomRefusal::HostFailure(reason) => CallError::HostFailure { reason },
 		}
 	}
 }
 
-impl From<RoomRefusal> for latest::HostChatSetRoomPreviewError {
-	fn from(refusal: RoomRefusal) -> Self {
-		match refusal {
-			RoomRefusal::UnknownRoom => Self::UnknownRoom,
-			RoomRefusal::NotRoomHost => Self::NotRoomHost,
-			RoomRefusal::Failed(reason) => Self::Unknown { reason },
-		}
-	}
-}
-
-impl From<RoomRefusal> for latest::HostChatDeleteRoomError {
-	fn from(refusal: RoomRefusal) -> Self {
-		match refusal {
-			RoomRefusal::NotRoomHost => Self::NotRoomHost,
-			// A delete of a room that does not exist succeeds, so the core does
-			// not use this arm.
-			RoomRefusal::UnknownRoom => Self::Unknown { reason: "unknown room".to_string() },
-			RoomRefusal::Failed(reason) => Self::Unknown { reason },
-		}
-	}
-}
-
-impl From<RoomRefusal> for latest::HostChatUpdateFeedError {
-	fn from(refusal: RoomRefusal) -> Self {
-		match refusal {
-			RoomRefusal::UnknownRoom => Self::UnknownRoom,
-			RoomRefusal::NotRoomHost => Self::NotRoomHost,
-			RoomRefusal::Failed(reason) => Self::Unknown { reason },
-		}
-	}
-}
-
-impl From<RoomRefusal> for latest::HostChatSetRoomFooterError {
-	fn from(refusal: RoomRefusal) -> Self {
-		match refusal {
-			// The footer error has no bot variant: a room the product does not
-			// host is, for the footer, a room it did not create.
-			RoomRefusal::UnknownRoom | RoomRefusal::NotRoomHost => Self::UnknownRoom,
-			RoomRefusal::Failed(reason) => Self::Unknown { reason },
-		}
-	}
-}
-
-impl<E: From<RoomRefusal>> From<RoomRefusal> for CallError<E> {
-	fn from(refusal: RoomRefusal) -> Self {
-		CallError::Domain(refusal.into())
-	}
+/// The footer error has no bot variant: a room the product does not host is,
+/// for the footer, a room it did not create.
+fn footer_refusal(refusal: RoomRefusal) -> CallError<latest::HostChatSetRoomFooterError> {
+	CallError::Domain(match refusal {
+		RoomRefusal::UnknownRoom | RoomRefusal::NotRoomHost => {
+			latest::HostChatSetRoomFooterError::UnknownRoom
+		},
+		RoomRefusal::Malformed(reason) | RoomRefusal::HostFailure(reason) => {
+			latest::HostChatSetRoomFooterError::Unknown { reason }
+		},
+	})
 }
 
 /// Whether `update` names the host's user as the author of a message, of the
@@ -467,24 +458,24 @@ fn preview_shows_the_user(preview: &latest::ChatRoomPreview) -> bool {
 }
 
 /// Report a rejected field of a room-changing call.
-fn room_field_error<E: From<RoomRefusal>>(error: ChatFieldError) -> CallError<E> {
-	RoomRefusal::Failed(error.to_string()).into()
+fn room_field_error<E>(error: ChatFieldError) -> CallError<E> {
+	CallError::MalformedFrame { reason: error.to_string() }
 }
 
 /// Report a host failure of a room-changing call.
-fn room_host_error<E: From<RoomRefusal>>(error: latest::GenericError) -> CallError<E> {
-	RoomRefusal::Failed(error.reason).into()
+fn room_host_error<E>(error: latest::GenericError) -> CallError<E> {
+	CallError::HostFailure { reason: error.reason }
 }
 
 /// Report a rejected feed field, a size rejection of the content as the size
 /// variant the protocol declares for it.
 fn feed_field_error(error: ChatFieldError) -> CallError<latest::HostChatUpdateFeedError> {
-	CallError::Domain(match error {
+	match error {
 		ChatFieldError::TooLong { field, .. } if CHAT_SIZED_CONTENT_FIELDS.contains(&field) => {
-			latest::HostChatUpdateFeedError::MessageTooLarge
+			CallError::Domain(latest::HostChatUpdateFeedError::MessageTooLarge)
 		},
-		error => latest::HostChatUpdateFeedError::Unknown { reason: error.to_string() },
-	})
+		error => room_field_error(error),
+	}
 }
 
 /// Report a rejected `post_message` field, a size rejection of the content as
@@ -512,11 +503,11 @@ impl ProductRuntimeHost {
 		room_id: &str,
 	) -> Result<String, RoomRefusal> {
 		let room_id = normalize_chat_identifier("roomId", room_id)
-			.map_err(|error| RoomRefusal::Failed(error.to_string()))?;
+			.map_err(|error| RoomRefusal::Malformed(error.to_string()))?;
 		let rooms = platform
 			.list_chat_rooms(&self.connection.product)
 			.await
-			.map_err(|error| RoomRefusal::Failed(error.reason))?
+			.map_err(|error| RoomRefusal::HostFailure(error.reason))?
 			.rooms;
 		match rooms.iter().find(|room| room.room_id == room_id) {
 			None => Err(RoomRefusal::UnknownRoom),
@@ -703,7 +694,7 @@ mod tests {
 			_product: &ProductContext,
 			request: latest::HostChatUpdateFeedRequest,
 			persist: bool,
-		) -> Result<(), latest::HostChatUpdateFeedError> {
+		) -> Result<(), CallError<latest::HostChatUpdateFeedError>> {
 			self.feed.lock().unwrap().push((request, persist));
 			Ok(())
 		}
@@ -763,7 +754,7 @@ mod tests {
 		block_on(Chat::update_feed(
 			runtime,
 			&CallContext::default(),
-			HostChatUpdateFeedRequest::V1(latest::HostChatUpdateFeedRequest {
+			HostChatUpdateFeedRequest::V2(latest::HostChatUpdateFeedRequest {
 				room_id: room_id.to_string(),
 				update,
 			}),
@@ -778,7 +769,7 @@ mod tests {
 		block_on(Chat::set_room_preview(
 			runtime,
 			&CallContext::default(),
-			HostChatSetRoomPreviewRequest::V1(latest::HostChatSetRoomPreviewRequest {
+			HostChatSetRoomPreviewRequest::V2(latest::HostChatSetRoomPreviewRequest {
 				room_id: room_id.to_string(),
 				preview,
 			}),
@@ -868,17 +859,17 @@ mod tests {
 
 		assert_eq!(
 			preview("missing"),
-			Err(CallError::Domain(HostChatSetRoomPreviewError::V1(
+			Err(CallError::Domain(HostChatSetRoomPreviewError::V2(
 				latest::HostChatSetRoomPreviewError::UnknownRoom
 			)))
 		);
 		assert_eq!(
 			preview("lobby"),
-			Err(CallError::Domain(HostChatSetRoomPreviewError::V1(
+			Err(CallError::Domain(HostChatSetRoomPreviewError::V2(
 				latest::HostChatSetRoomPreviewError::NotRoomHost
 			)))
 		);
-		assert_eq!(preview(" support "), Ok(HostChatSetRoomPreviewResponse::V1));
+		assert_eq!(preview(" support "), Ok(HostChatSetRoomPreviewResponse::V2));
 		assert_eq!(chat.calls(), ["preview support"]);
 	}
 
@@ -947,7 +938,7 @@ mod tests {
 		for update in updates_by("user").into_iter().chain(quotes) {
 			assert_eq!(
 				update_feed(&runtime, "stored", update),
-				Err(CallError::Domain(HostChatUpdateFeedError::V1(
+				Err(CallError::Domain(HostChatUpdateFeedError::V2(
 					latest::HostChatUpdateFeedError::NotOwner
 				)))
 			);
@@ -975,7 +966,7 @@ mod tests {
 		for preview in previews_of_the_user() {
 			assert_eq!(
 				set_preview(&runtime, "stored", preview.clone()),
-				Err(CallError::Domain(HostChatSetRoomPreviewError::V1(
+				Err(CallError::Domain(HostChatSetRoomPreviewError::V2(
 					latest::HostChatSetRoomPreviewError::NotOwner
 				)))
 			);
@@ -1035,7 +1026,7 @@ mod tests {
 
 		assert_eq!(
 			update_feed(&runtime, "stored", update),
-			Err(CallError::Domain(HostChatUpdateFeedError::V1(
+			Err(CallError::Domain(HostChatUpdateFeedError::V2(
 				latest::HostChatUpdateFeedError::MessageTooLarge
 			)))
 		);
@@ -1052,7 +1043,7 @@ mod tests {
 		}
 		assert_eq!(
 			update_feed(&runtime, "stored", text_message("product")),
-			Err(CallError::Domain(HostChatUpdateFeedError::V1(
+			Err(CallError::Domain(HostChatUpdateFeedError::V2(
 				latest::HostChatUpdateFeedError::RateLimited
 			)))
 		);
@@ -1068,7 +1059,7 @@ mod tests {
 			block_on(Chat::set_room_preview(
 				&runtime,
 				&CallContext::default(),
-				HostChatSetRoomPreviewRequest::V1(latest::HostChatSetRoomPreviewRequest {
+				HostChatSetRoomPreviewRequest::V2(latest::HostChatSetRoomPreviewRequest {
 					room_id: "support".to_string(),
 					preview: latest::ChatRoomPreview {
 						timestamp: None,
@@ -1084,11 +1075,11 @@ mod tests {
 		};
 
 		for _ in 0..CHAT_PREVIEW_UPDATES_PER_SECOND {
-			assert_eq!(set_preview(), Ok(HostChatSetRoomPreviewResponse::V1));
+			assert_eq!(set_preview(), Ok(HostChatSetRoomPreviewResponse::V2));
 		}
 		assert_eq!(
 			set_preview(),
-			Err(CallError::Domain(HostChatSetRoomPreviewError::V1(
+			Err(CallError::Domain(HostChatSetRoomPreviewError::V2(
 				latest::HostChatSetRoomPreviewError::RateLimited
 			)))
 		);
@@ -1131,14 +1122,14 @@ mod tests {
 			block_on(Chat::delete_room(
 				&runtime,
 				&CallContext::default(),
-				HostChatDeleteRoomRequest::V1(latest::HostChatDeleteRoomRequest {
+				HostChatDeleteRoomRequest::V2(latest::HostChatDeleteRoomRequest {
 					room_id: room_id.to_string(),
 				}),
 			))
 		};
 
-		assert_eq!(delete("support"), Ok(HostChatDeleteRoomResponse::V1));
-		assert_eq!(delete("support"), Ok(HostChatDeleteRoomResponse::V1));
+		assert_eq!(delete("support"), Ok(HostChatDeleteRoomResponse::V2));
+		assert_eq!(delete("support"), Ok(HostChatDeleteRoomResponse::V2));
 		assert_eq!(chat.calls(), ["delete support"]);
 	}
 
@@ -1157,20 +1148,15 @@ mod tests {
 		let deleted = block_on(Chat::delete_room(
 			&runtime,
 			&CallContext::default(),
-			HostChatDeleteRoomRequest::V1(latest::HostChatDeleteRoomRequest {
+			HostChatDeleteRoomRequest::V2(latest::HostChatDeleteRoomRequest {
 				room_id: "stored".to_string(),
 			}),
 		));
 
-		assert_eq!(
-			deleted,
-			Err(CallError::Domain(HostChatDeleteRoomError::V1(
-				latest::HostChatDeleteRoomError::Unknown { reason: "not served".to_string() }
-			)))
-		);
+		assert_eq!(deleted, Err(CallError::HostFailure { reason: "not served".to_string() }));
 		assert_eq!(
 			update_feed(&runtime, "stored", text_message("product")),
-			Err(CallError::Domain(HostChatUpdateFeedError::V1(
+			Err(CallError::Domain(HostChatUpdateFeedError::V2(
 				latest::HostChatUpdateFeedError::RateLimited
 			)))
 		);
@@ -1187,17 +1173,12 @@ mod tests {
 		let deleted = block_on(Chat::delete_room(
 			&runtime,
 			&CallContext::default(),
-			HostChatDeleteRoomRequest::V1(latest::HostChatDeleteRoomRequest {
+			HostChatDeleteRoomRequest::V2(latest::HostChatDeleteRoomRequest {
 				room_id: "support".to_string(),
 			}),
 		));
 
-		assert_eq!(
-			deleted,
-			Err(CallError::Domain(HostChatDeleteRoomError::V1(
-				latest::HostChatDeleteRoomError::Unknown { reason: "store locked".to_string() }
-			)))
-		);
+		assert_eq!(deleted, Err(CallError::HostFailure { reason: "store locked".to_string() }));
 		assert!(chat.calls().is_empty());
 	}
 
@@ -1269,7 +1250,7 @@ mod tests {
 		assert!(matches!(
 			create("javascript:alert(1)"),
 			Err(CallError::Domain(HostChatCreateRoomError::V1(
-				latest::HostChatCreateRoomError::Unknown { .. }
+				v01::HostChatCreateRoomError::Unknown { .. }
 			)))
 		));
 		assert_eq!(
