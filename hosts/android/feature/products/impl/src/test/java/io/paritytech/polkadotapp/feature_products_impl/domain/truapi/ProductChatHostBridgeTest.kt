@@ -34,6 +34,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ChatCustomBody
 import uniffi.truapi.ChatCustomMessage
 import uniffi.truapi.ChatMessageBody
 import uniffi.truapi.ChatMessageOrigin
@@ -324,7 +325,7 @@ class ProductChatHostBridgeTest {
             messageId = "m1",
             origin = ChatMessageOrigin("contact"),
             timestamp = 5uL,
-            body = ChatMessageBody.Custom(ChatCustomMessage("poll", byteArrayOf(1, 2)), alt = "A poll"),
+            body = ChatMessageBody.Custom(ChatCustomBody("poll", byteArrayOf(1, 2)), alt = "A poll"),
             status = ChatMessageStatus.DELIVERED,
             replyTo = null,
             editedAt = null,
