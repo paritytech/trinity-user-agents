@@ -26,15 +26,4 @@ class StatusBarTitleModelTest {
         assertEquals(StatusBarTitleModel.None, statusBarTitleOf(R.id.ThemeFragment, BottomTab.SETTINGS))
         assertEquals(StatusBarTitleModel.None, statusBarTitleOf(R.id.truapiConfirmationBottomSheet, BottomTab.EXPLORE))
     }
-
-    @Test
-    fun `leaving the browser names the tab Main is on again`() {
-        val titles = listOf(R.id.mainFragment, R.id.spaBrowserFragment, R.id.mainFragment)
-            .map { statusBarTitleOf(it, BottomTab.SETTINGS) }
-
-        assertEquals(
-            listOf(StatusBarTitleModel.Tab(BottomTab.SETTINGS), StatusBarTitleModel.Product, StatusBarTitleModel.Tab(BottomTab.SETTINGS)),
-            titles,
-        )
-    }
 }

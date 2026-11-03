@@ -144,6 +144,29 @@ class ProductStatusBarViewModelTest {
     }
 
     @Test
+    fun `a new product never shows the previous product's menu while its chat is looked up`() = runBlocking<Unit> {
+        // Given
+        withChat(coinFlip, served = true)
+        coEvery { interactor.includesChat(chess) } coAnswers { awaitCancellation() }
+        val model = viewModel()
+        openTab(COIN_FLIP_URL, title = "Coin Flip")
+        advance()
+
+        // When
+        openTab(CHESS_URL, title = "Chess")
+        advance()
+        model.onShareClick()
+        model.onProceedInChatClick()
+        advance()
+
+        // Then
+        assertEquals(ProductMenu.Product(chess, ProductChat.Unresolved), model.state.value.menu)
+        verify(exactly = 1) { interactor.share(chess) }
+        verify(exactly = 0) { interactor.share(coinFlip) }
+        coVerify(exactly = 0) { interactor.installChatAndAwaitRoomCreated(any()) }
+    }
+
+    @Test
     fun `moving between pages of one product keeps its menu`() = runBlocking<Unit> {
         // Given
         withChat(coinFlip, served = true)
@@ -290,6 +313,23 @@ class ProductStatusBarViewModelTest {
         }
         verify(exactly = 0) { productSessionController.closeActiveTab() }
         verify(exactly = 0) { router.leaveBrowser() }
+    }
+
+    @Test
+    fun `proceed in chat does nothing for a product whose worker serves no chat`() = runBlocking<Unit> {
+        // Given
+        withChat(coinFlip, served = false)
+        val model = viewModel()
+        openTab(COIN_FLIP_URL, title = "Coin Flip")
+        advance()
+
+        // When
+        model.onProceedInChatClick()
+        advance()
+
+        // Then
+        coVerify(exactly = 0) { interactor.installChatAndAwaitRoomCreated(any()) }
+        verify(exactly = 0) { router.openChat(any()) }
     }
 
     @Test

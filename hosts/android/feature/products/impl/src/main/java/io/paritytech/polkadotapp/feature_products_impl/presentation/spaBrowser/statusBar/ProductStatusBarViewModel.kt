@@ -61,7 +61,7 @@ class ProductStatusBarViewModel @Inject constructor(
 
     override fun onProceedInChatClick() {
         val product = state.value.menu as? ProductMenu.Product ?: return
-        if (openChatJob?.isActive == true) return
+        if (product.chat != ProductChat.Served || openChatJob?.isActive == true) return
 
         openChatJob = launch {
             interactor.installChatAndAwaitRoomCreated(product.id)
