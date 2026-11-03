@@ -123,18 +123,15 @@ fn provider_entries() -> Vec<(String, Option<PathBuf>)> {
 		.collect()
 }
 
-/// What the overlay asks to be quoted when the user takes its defaults: a
-/// card payment in EUR inbound, USDT on Polkadot outbound.
+/// What the overlay asks to be quoted when the user takes its defaults: USDT
+/// on Polkadot either way, so a provider's deposit instructions have an
+/// address to name.
 fn default_ask(direction: FundingDirection, amount: Option<u128>) -> FundingQuoteAsk {
-	let (rail, asset, network) = match direction {
-		FundingDirection::In => (FundingRail::Card, "EUR", None),
-		FundingDirection::Out => (FundingRail::Crypto, "USDT", Some("polkadot".to_string())),
-	};
 	FundingQuoteAsk {
 		direction,
-		rail,
-		asset: asset.to_string(),
-		network,
+		rail: FundingRail::Crypto,
+		asset: "USDT".to_string(),
+		network: Some("polkadot".to_string()),
 		amount: amount.unwrap_or(1_000),
 		country: None,
 	}
