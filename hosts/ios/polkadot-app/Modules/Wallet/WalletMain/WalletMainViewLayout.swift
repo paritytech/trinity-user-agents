@@ -14,6 +14,9 @@ struct WalletView: View {
     private let scrollTopAnchor = "walletScrollTop"
     @State private var overscroll: CGFloat = 0
 
+    static let sectionAnimationDuration: TimeInterval = 0.45
+    static var sectionAnimation: Animation { .spring(duration: sectionAnimationDuration, bounce: 0.15) }
+
     var body: some View {
         ZStack(alignment: .top) {
             ScrollViewReader { scrollProxy in
@@ -39,7 +42,7 @@ struct WalletView: View {
                 .modifier(OverscrollReader(overscroll: $overscroll))
                 .onChange(of: viewModel.expandedSection) { _, newValue in
                     guard newValue == .none else { return }
-                    withAnimation(.spring(duration: 0.45, bounce: 0.15)) {
+                    withAnimation(Self.sectionAnimation) {
                         scrollProxy.scrollTo(scrollTopAnchor, anchor: .top)
                     }
                 }
@@ -51,7 +54,7 @@ struct WalletView: View {
                 overlay: { collectiblesCard }
             )
         )
-        .animation(.spring(duration: 0.45, bounce: 0.15), value: viewModel.expandedSection)
+        .animation(Self.sectionAnimation, value: viewModel.expandedSection)
     }
 
     /// Product-backed cards follow the host's own, and are hidden while a
@@ -168,26 +171,23 @@ struct WalletView: View {
 private extension WalletView {
     @ViewBuilder
     var collectiblesCard: some View {
-        CollectiblesCardView(
-            isExpanded: viewModel.expandedSection == .collectiblesDetails,
-            onViewCollectibles: { viewModel.onViewCollectibles?() }
-        )
-        .padding(.horizontal, PocketCardSize.sideMargin)
-        .frame(maxHeight: viewModel.expandedSection == .collectiblesDetails ? .infinity : nil)
-        .alignmentGuide(.bottom) { dimensions in
-            switch viewModel.expandedSection {
-            case .none:
-                dimensions[.top] + collectiblesPeekHeight
-            case .collectiblesDetails:
-                dimensions[.bottom]
-            case .assetDetails,
-                 .identityDetails:
-                dimensions[.top] - offScreenOffset
+        CollectiblesCardView(isExpanded: viewModel.expandedSection == .collectiblesDetails)
+            .padding(.horizontal, PocketCardSize.sideMargin)
+            .frame(maxHeight: viewModel.expandedSection == .collectiblesDetails ? .infinity : nil)
+            .alignmentGuide(.bottom) { dimensions in
+                switch viewModel.expandedSection {
+                case .none:
+                    dimensions[.top] + collectiblesPeekHeight
+                case .collectiblesDetails:
+                    dimensions[.bottom]
+                case .assetDetails,
+                     .identityDetails:
+                    dimensions[.top] - offScreenOffset
+                }
             }
-        }
-        .opacity(viewModel.isPocketCleared ? 0 : collectiblesOpacity)
-        .onTapGesture { viewModel.onCollectibles?() }
-        .allowsHitTesting(collectiblesHitTest)
+            .opacity(viewModel.isPocketCleared ? 0 : collectiblesOpacity)
+            .onTapGesture { viewModel.onCollectibles?() }
+            .allowsHitTesting(collectiblesHitTest)
     }
 
     private var collectiblesOpacity: Double {
