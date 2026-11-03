@@ -23,20 +23,7 @@ struct TabBarBarView: View {
             third: { slot(at: 2) },
             fourth: { slot(at: 3) },
             center: {
-                DSTabBarCenterControl(
-                    progress: $model.centerProgress,
-                    contentHeight: model.centerContentHeight,
-                    accessibilityLabel: String(localized: .Products.productTabsAccessibilityScanner),
-                    openAccessibilityLabel: String(localized: .Products.productTabsAccessibilityCloseSearch),
-                    onSettled: { model.onCenterPanelOpenChanged?($0) },
-                    onCloseRequested: { model.onCenterPanelCloseRequested?($0) },
-                    onSwipeOpenBegan: model.onCenterPanelSwipeOpenBegan,
-                    onSwipeOpenLanding: model.onCenterPanelSwipeOpenLanding,
-                    glyphOpacity: model.contentOpacity,
-                    content: {
-                        TabBarScanPanelContent(makeController: model.makeCenterContent)
-                    }
-                )
+                TabBarCenterSlot(model: model)
             },
             shelf: {
                 TabBarShelfView(
@@ -67,10 +54,32 @@ struct TabBarBarView: View {
                 item: item,
                 isSelected: index == model.selectedSlot,
                 isActive: index == model.activeActionItemIndex,
-                contentOpacity: model.contentOpacity,
+                model: model,
                 action: { model.onSlotTapped?(index) }
             )
         }
+    }
+}
+
+/// The centre control, reading the content fade itself so a fade frame re-runs only this view.
+private struct TabBarCenterSlot: View {
+    @Bindable var model: TabBarBarViewModel
+
+    var body: some View {
+        DSTabBarCenterControl(
+            progress: $model.centerProgress,
+            contentHeight: model.centerContentHeight,
+            accessibilityLabel: String(localized: .Products.productTabsAccessibilityScanner),
+            openAccessibilityLabel: String(localized: .Products.productTabsAccessibilityCloseSearch),
+            onSettled: { model.onCenterPanelOpenChanged?($0) },
+            onCloseRequested: { model.onCenterPanelCloseRequested?($0) },
+            onSwipeOpenBegan: model.onCenterPanelSwipeOpenBegan,
+            onSwipeOpenLanding: model.onCenterPanelSwipeOpenLanding,
+            glyphOpacity: model.contentOpacity,
+            content: {
+                TabBarScanPanelContent(makeController: model.makeCenterContent)
+            }
+        )
     }
 }
 
@@ -80,7 +89,7 @@ private struct TabBarSlotView: View {
     let item: TabBarBarItem
     let isSelected: Bool
     let isActive: Bool
-    let contentOpacity: CGFloat
+    let model: TabBarBarViewModel
     let action: () -> Void
 
     private var isEmphasized: Bool {
@@ -102,7 +111,7 @@ private struct TabBarSlotView: View {
                         .padding(.top, 2)
                 }
             }
-            .opacity(contentOpacity)
+            .opacity(model.contentOpacity)
             .padding(.vertical, item.title == nil ? 0 : 6)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
