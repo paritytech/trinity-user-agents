@@ -22,12 +22,7 @@ use subxt::{ext::scale_encode::EncodeAsType, utils::MultiSignature};
 use thiserror::Error;
 use tracing::warn;
 
-mod contracts;
-
-pub use contracts::{
-	ContentResolver, DotnsPopController, DotnsRegistrar, DotnsRegistry, LabelStore,
-	ProtocolRegistry, RootGatewayDispatcher, StoreFactory,
-};
+alloy_sol_types::sol!("src/host_logic/dotns_gateway/contracts.sol");
 
 use crate::{
 	chain::{ExtensionError, InheritedImplication, SubstrateSigner, TransactionExtension},
