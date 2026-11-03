@@ -210,8 +210,9 @@ mod tests {
 	use crate::{
 		chain_runtime::{RuntimeChainProvider, RuntimeFailure},
 		host_logic::dotns_gateway::{
-			DotnsPopController, LabelStore, ProtocolRegistry, RootGatewayDispatcher, StoreFactory,
-			VIEW_CALL_ORIGIN, account_to_h160, dispatcher_address_key, encode_revive_call_output,
+			ContractResult, DotnsPopController, ExecReturnValue, LabelStore, ProtocolRegistry,
+			REVERT_FLAG, RootGatewayDispatcher, StorageDeposit, StoreFactory, VIEW_CALL_ORIGIN,
+			Weight, account_to_h160, dispatcher_address_key,
 		},
 		platform::JsonRpcConnection,
 		subscription::thread_per_subscription_spawner,
@@ -220,7 +221,7 @@ mod tests {
 	use alloy_sol_types::{SolCall, SolInterface};
 	use async_trait::async_trait;
 	use futures::{StreamExt, channel::mpsc, stream::BoxStream};
-	use parity_scale_codec::Decode;
+	use parity_scale_codec::{Decode, Encode};
 	use serde_json::{Value as JsonValue, json};
 	use std::sync::{Arc, Mutex};
 
@@ -260,12 +261,10 @@ mod tests {
 
 		// Discovery probes `protocolRegistry()` first and the dispatcher reverts it; that
 		// revert is how the two contracts are told apart, so the mock reproduces it.
-		if *dest == DISPATCHER &&
-			DotnsPopController::protocolRegistryCall::abi_decode(input).is_ok()
-		{
-			return encode_revive_call_output(true, Vec::new());
-		}
+		let reverted = *dest == DISPATCHER &&
+			DotnsPopController::protocolRegistryCall::abi_decode(input).is_ok();
 		let data = match *dest {
+			_ if reverted => Vec::new(),
 			DISPATCHER => {
 				RootGatewayDispatcher::TARGETCall::abi_decode(input).expect("TARGET()");
 				RootGatewayDispatcher::TARGETCall::abi_encode_returns(&CONTROLLER.into())
@@ -312,7 +311,15 @@ mod tests {
 			SQUATTER_STORE => labels_page(input, &["squatter.paseo"]),
 			dest => panic!("unscripted view {} on 0x{}", hex::encode(input), hex::encode(dest)),
 		};
-		encode_revive_call_output(false, data)
+		ContractResult {
+			weight_consumed: Weight { ref_time: 0, proof_size: 0 },
+			weight_required: Weight { ref_time: 0, proof_size: 0 },
+			storage_deposit: StorageDeposit::Charge(0),
+			max_storage_deposit: StorageDeposit::Charge(0),
+			gas_consumed: 0,
+			result: Ok(ExecReturnValue { flags: if reverted { REVERT_FLAG } else { 0 }, data }),
+		}
+		.encode()
 	}
 
 	struct ScriptedAssetHub {

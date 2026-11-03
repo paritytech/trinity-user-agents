@@ -204,36 +204,42 @@ pub enum DotnsContractError {
 
 /// `sp_weights::Weight`.
 #[derive(Encode, Decode)]
-struct Weight {
+pub struct Weight {
+	/// Computation time.
 	#[codec(compact)]
-	_ref_time: u64,
+	pub ref_time: u64,
+	/// Proof size in bytes.
 	#[codec(compact)]
-	_proof_size: u64,
+	pub proof_size: u64,
 }
 
 /// `pallet_revive::StorageDeposit` over a `u128` balance.
 #[derive(Decode)]
 #[cfg_attr(test, derive(Encode))]
-enum StorageDeposit {
-	Refund { _amount: u128 },
-	Charge { _amount: u128 },
+pub enum StorageDeposit {
+	/// Balance returned to the origin.
+	Refund(u128),
+	/// Balance charged to the origin.
+	Charge(u128),
 }
 
 /// `pallet_revive::ExecReturnValue`.
 #[derive(Decode)]
 #[cfg_attr(test, derive(Encode))]
-struct ExecReturnValue {
-	flags: u32,
-	data: Vec<u8>,
+pub struct ExecReturnValue {
+	/// `ReturnFlags` bits; [`REVERT_FLAG`] marks a revert.
+	pub flags: u32,
+	/// The contract's return data.
+	pub data: Vec<u8>,
 }
 
 /// `ReturnFlags::REVERT`.
-const REVERT_FLAG: u32 = 1;
+pub const REVERT_FLAG: u32 = 1;
 
 /// A `DispatchError` kept as its raw bytes, since naming the error needs the
 /// runtime's metadata. It is the last field of a `ContractResult`, so it takes
 /// the rest of the input.
-struct RawDispatchError(Vec<u8>);
+pub struct RawDispatchError(Vec<u8>);
 
 impl Decode for RawDispatchError {
 	fn decode<I: Input>(input: &mut I) -> Result<Self, parity_scale_codec::Error> {
@@ -244,15 +250,29 @@ impl Decode for RawDispatchError {
 	}
 }
 
+#[cfg(test)]
+impl Encode for RawDispatchError {
+	fn encode_to<O: parity_scale_codec::Output + ?Sized>(&self, dest: &mut O) {
+		dest.write(&self.0);
+	}
+}
+
 /// `pallet_revive::ContractResult<ExecReturnValue, u128>`.
 #[derive(Decode)]
-struct ContractResult {
-	_weight_consumed: Weight,
-	_weight_required: Weight,
-	_storage_deposit: StorageDeposit,
-	_max_storage_deposit: StorageDeposit,
-	_gas_consumed: u128,
-	result: Result<ExecReturnValue, RawDispatchError>,
+#[cfg_attr(test, derive(Encode))]
+pub struct ContractResult {
+	/// Weight the call consumed.
+	pub weight_consumed: Weight,
+	/// Weight the call needs as its limit.
+	pub weight_required: Weight,
+	/// Storage deposit the call charged or refunded.
+	pub storage_deposit: StorageDeposit,
+	/// Largest storage deposit the call needed while it ran.
+	pub max_storage_deposit: StorageDeposit,
+	/// Gas the call consumed.
+	pub gas_consumed: u128,
+	/// What the contract returned, or why the runtime rejected the call.
+	pub result: Result<ExecReturnValue, RawDispatchError>,
 }
 
 /// Arguments of the `ReviveApi_call` runtime API.
@@ -279,17 +299,6 @@ pub fn encode_revive_call(origin: &[u8; 32], dest: &[u8; 20], input: &[u8]) -> V
 		input_data: input,
 	}
 	.encode()
-}
-
-/// A `ReviveApi_call` output whose contract returned or reverted with `data`,
-/// for test transports.
-#[cfg(test)]
-pub fn encode_revive_call_output(reverted: bool, data: Vec<u8>) -> Vec<u8> {
-	let flags = if reverted { REVERT_FLAG } else { 0 };
-	let weight = || Weight { _ref_time: 7, _proof_size: 7 };
-	let deposit = || StorageDeposit::Charge { _amount: 0 };
-	let result: Result<_, ()> = Ok(ExecReturnValue { flags, data });
-	(weight(), weight(), deposit(), deposit(), 0u128, result).encode()
 }
 
 /// Extracts the contract return data from a `ReviveApi_call` output.
