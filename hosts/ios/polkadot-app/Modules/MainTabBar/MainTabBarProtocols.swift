@@ -68,12 +68,12 @@ enum TabBarItem: String, CaseIterable {
         return asset.withRenderingMode(.alwaysTemplate)
     }
 
-    var title: String {
+    var title: LocalizedStringResource {
         switch self {
-        case .chat: String(localized: .tabChat)
-        case .wallet: String(localized: .tabWallet)
-        case .browse: String(localized: .tabBrowse)
-        case .settings: String(localized: .tabSettings)
+        case .chat: .tabChat
+        case .wallet: .tabWallet
+        case .browse: .tabBrowse
+        case .settings: .tabSettings
         }
     }
 }

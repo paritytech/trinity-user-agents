@@ -18,13 +18,14 @@ MainTabBarViewController            container, status strip, widget and inset la
 ├── TabBarContainer                 mounts one tab or one SPA
 ├── ChainConnectionStatusBarView    20 pt strip, informational only
 └── TabBarBottomChromeController    bar, panels, fold, outside tap, bar items
+    ├── dimHost                     UIHostingController<TabBarDimView>, full-screen scrim below the surface
     ├── TabBarFoldController        visibility state, auto-hide, hide progress via DockletMotion,
     │                               CADisplayLink; sole writer of the surface transform
     └── TabBarChromePassthroughView full-bleed, hit tests only the grab zone and the outside-tap area
         ├── TabBarChromeSurfaceView fold transform target, bar layout
         │   └── TabBarBarHostView   accepts touches in the bar row and the open panel's rise
         │       └── UIHostingController<TabBarBarView>
-        │                           SwiftUI bar row, center control, shelf
+        │                           SwiftUI bar row, center control, shelf; reads TabBarBarViewModel
         └── Edge glow view          TabBarEdgeGlowView, right-edge glow of a tucked bar, outside the surface transform
 ```
 
@@ -76,6 +77,11 @@ MainTabBarViewController            container, status strip, widget and inset la
 | Onboarding tips | `polkadot-app/Modules/MainTabBar/Chrome/TabBarTipController.swift`, `polkadot-app/Modules/MainTabBar/Tips/` |
 | Floating widgets | `polkadot-app/Modules/MainTabBar/TabBarWidgetController.swift`, `MainTabBarFloatingWidgetStackView.swift` |
 | Bar, center control, shelf container | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarContainer.swift`, `DSTabBarCenterControl.swift` |
+| Centre glyph, grabber, rim | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarCenterGlyph.swift` |
+| Content fade (icons and labels opacity, read by leaf views) | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarContentFade.swift` |
+| Drag input for centre panel content (`centerPanelDrag`) | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarCenterDrag.swift` |
+| Selection pill (`dsTabBarSelectionPill`) | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarSelectionPill.swift` |
+| Full-screen dim scrim host | `polkadot-app/Modules/MainTabBar/Chrome/TabBarDimView.swift` |
 | Bar outline, morph shape, geometry | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarShape.swift`, `DSTabBarMorphShape.swift`, `DSTabBarStyle.swift` |
 | Bar material, dim layer | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarMaterial.swift`, `DSTabBarVariableBlur.swift` |
 | Colours and type | `DSTabBarStyle.Palette` (token-less values only) in `DSTabBarStyle+Palette.swift` and `DSTabBarStyle.swift`. Themed colours and type come from DesignSystem tokens |
@@ -89,7 +95,7 @@ MainTabBarViewController            container, status strip, widget and inset la
 
 ## Bar Row
 
-`DSTabBarContainer` lays out two slots left of the center hole and two right of it. The bar row takes four `TabBarSlot` values, in the order the presenter lists them.
+`DSTabBarContainer` lays out two slots left of the center hole and two right of it. The bar row takes four `TabBarSlot` values, in the order the presenter lists them. Each slot is a `TabBarSlotView(index:model:)`, and each shelf cell takes its chip and the model. They call `TabBarBarViewModel` handlers at tap time, so no closures are passed to them.
 
 
 
@@ -97,7 +103,13 @@ The bar row is an accessibility container with the tab-bar trait.
 
 **Center hole.** The notch is cut from the bar's top edge. Its bowl is sized from the center button, so the resting center button stands above the bar. The two inner slots stop at the shoulders of the bowl. `DSTabBarShape` cuts the same bowl from the bar. While the shelf is open, the part of the bowl above the row is cut as well, so the resting button keeps its ring.
 
-**Selection pill.** `DSTabBarContainer` draws the selection pill behind the slot it gets from its `selectedSlot` parameter. The pill slides between slots. It snaps under Reduce Motion. The Apps slot never takes the pill. It reads as active through its colour.
+**Outline and notch.** `DSTabBarShape` is the outline. The border is `strokeBorder` on that shape, which insets along the outline and the notch edge. The container clips its content and background with an even-odd fill of the same shape, which cuts the notch. On iOS 26 and later the glass is a rounded rect with no notch, and the clip cuts the notch from it. The reason is the Docklet drag rotation. Under that rotation, Liquid Glass evaluates its shape in an enlarged rect, so a notch in the glass shape would land in the wrong place.
+
+**Selection pill.** `DSTabBarContainer` draws the pill behind the slot at its `selectedSlot`. The pill slides between slots, and snaps under Reduce Motion. `TabBarBarViewModel.selectedSlot` takes that slot from `TabBarSelectionPlacement` (`TabBarSelectionPolicy`):
+
+- A tab: that tab's slot.
+- A mounted product with the shelf closed: the Apps slot.
+- A mounted product with the shelf open: no bar slot. The pill draws behind that product's cell in the shelf (`dsTabBarSelectionPill(isSelected:)`), so it is drawn once.
 
 - A tab slot selects a tab. Taps are plain taps. There is no drag across tabs.
 - The Apps slot opens the shelf. It shows the open-product count and reads as active while the shelf is open or a product is mounted.
@@ -110,11 +122,12 @@ The bar row is an accessibility container with the tab-bar trait.
 
 The center control, `DSTabBarCenterControl`, sits in the hole and shows the center button at rest. It draws the center panel when open. It is built from these parts:
 
-- **Morph shape** (`DSTabBarMorphShape`). One shape for the resting button and the open panel. Its body rounds into a lobe under the bottom edge. The lobe narrows while the panel is narrow.
-- **Scan frame** (`DSTabBarScanFrameShape`). The viewfinder brackets on the center button.
-- **Materials** (`DSTabBarBarMaterial`, `DSTabBarCenterMaterial`). Glass for the bar row and for the control. They are separate surfaces, so each can tune its own intensity. Dark themes add the grey wash and the open fill. Light themes (read from `colorScheme`, which the app sets from the theme) use a stronger blur with neither.
-- **Dim layer** (`DSTabBarDimLayer`). Dims the screen behind an opening center panel.
-- **Grabber.** A handle on the open panel. It shows with the content.
+- **Morph shape** (`DSTabBarMorphShape`). One outline for the resting button and the open panel. Its body rounds into a lobe under the bottom edge. Below the card width the outline eases toward a circle, so the resting button is a circle.
+- **Glyph** (`DSTabBarCenterGlyph`, in `DSTabBarCenterGlyph.swift`). The viewfinder brackets (`DSTabBarScanFrameShape`) sit in the lobe in both states. The glyph shrinks and drops as the panel opens. It applies the content fade itself (see Fold).
+- **Materials** (`DSTabBarBarMaterial`, `DSTabBarCenterMaterial`). On iOS 26 and later both are Liquid Glass: the bar in its notch-less rounded rect, the control in the morph shape. On iOS 27 the glass is untinted. On iOS 26 it is tinted with `bgSurfaceMain` at 50%. Earlier systems use the variable blur. The bar and the control are separate surfaces, so each tunes its own intensity. Dark themes add the grey wash and the open fill. Light themes (read from `colorScheme`, which the app sets from the theme) use a stronger blur with neither.
+- **Rim** (`DSTabBarCenterRim`). A hairline along the morph shape's edge.
+- **Dim layer** (`DSTabBarDimLayer`, hosted by `TabBarDimView`). Dims the whole screen behind an opening center panel. It follows `centerProgress`.
+- **Grabber** (`DSTabBarCenterGrabber`). A handle on the open panel. It shows with the content.
 
 Every width, height and radius is read from one progress value. The shape is valid at any point of a drag.
 
@@ -127,7 +140,7 @@ Every width, height and radius is read from one progress value. The shape is val
 
 Scan and Search change the layout with the same open motion. A Scan ↔ Search change while open does not close the panel.
 
-**Gestures.** A tap opens the Scan state. An upward swipe on the button opens the panel into the Search state. A downward drag or a tap closes it. A flick decides the end of a drag. Without a flick, the halfway point decides. Content drags from the open panel never open the Search state.
+**Gestures.** A tap opens the Scan state. An upward swipe on the button opens the panel into the Search state. A downward drag or a tap closes it. A flick decides the end of a drag. Without a flick, the halfway point decides. Content drags from the open panel never open the Search state. The panel's content reads `centerPanelDrag` (`DSTabBarCenterDrag`, an `@Entry` environment key) and passes its pan through it, so the same settle applies.
 
 **Settling.** The control reports open or closed to the chrome (`onSettled`) when its own settle completes. It never reports during a drag. A UIKit-driven move through `TabBarBarViewModel.setCenterPanelOpen` reports at the end of its animation. A drag past open stretches the panel. A drag past closed clamps at closed. Both commit only on release and settle. A cancelled drag settles to the nearer end. A grab during a settle starts from the on-screen progress.
 
@@ -146,17 +159,17 @@ The chrome takes the width from `DSTabBarStyle.rowWidth(inAvailableWidth:)` of i
 
 **Swipe into Search.** This flow opens the Search state from a swipe on the center button.
 
-1. `DSTabBarCenterControl` takes two optional callbacks. `onSwipeOpenBegan` fires once per drag. It fires when a drag on the button that began short of fully open moves up past the tap slop. Content drags from the open panel never fire it. The package does not know what the callback means.
-2. `TabBarBottomChromeController` forwards both callbacks from the model. It passes nil when the app sets no handler.
+1. `DSTabBarCenterControl` takes two optional swipe callbacks. `onSwipeOpenBegan` fires once per drag. It fires when a drag on the button that began short of fully open moves up past the tap slop. Content drags from the open panel never fire it. The package does not know what the callback means.
+2. `TabBarBottomChromeController` forwards both callbacks to `TabBarBarViewModel`. `onCenterPanelSwipeOpenBegan` is set to nil when the app sets no handler, and `TabBarBarView` passes the model's value through unchanged. The control branches on whether it is set, so nil keeps a swipe opening like a tap. The model observes this one property for that reason. `onSwipeOpenLanding` is always non-nil: `TabBarCenterSlot` wraps the model's optional handler in a closure that reads it at call time. The model's other handlers are `@ObservationIgnored`, and the same wrapping applies to `onSettled` and `onCloseRequested`.
 3. `MainTabBarViewController` holds `isSearchSwipePending`. The scan panel controller may not exist yet when the swipe begins. The panel declares `.fill`, so the travel runs to the filled panel's top.
 4. `ScanPanelViewController.setSearchPending(_:)` shows the Search state layout without focus and keeps the camera off. The bar keeps the Scan state look.
 5. `onSwipeOpenLanding` fires when the release settles open, partway through the settle. It fires at once under Reduce Motion. The chrome commits `.content(.scan)` first. `currentKeyboardLift` then sees the open scan panel when the keyboard frame changes. The host then calls `focusSearch()`, which runs the normal focus path.
 6. `setCenterPanelOpen(true)` returns early because the progress is already open. The release animation is not restarted.
 7. A close or a settle to closed drops the swipe and calls `setSearchPending(false)`. The panel returns to the Scan state's layout. The chrome reuses the content controller until a committed close. A swipe that never landed open never commits one.
 
-**Keyboard.** The keyboard lift has one owner, `TabBarFoldController.keyboardLift`, which the fold transform carries. `TabBarBottomChromeController` recomputes it on each keyboard frame change, using the keyboard's own duration and curve. It also recomputes on every panel open and close. While the scan panel is open, the chrome lifts until the keyboard covers the center button's foot by `keyboardButtonOverlap`. Any other keyboard, or a closed panel, leaves the chrome at rest. The lift reduces `availablePanelHeight` by the same amount.
+**Keyboard.** The lift is `TabBarBarViewModel.keyboardLift`, written only by `applyKeyboardLift` in `TabBarBottomChromeController+Layout.swift`. `TabBarBarView` applies it as bottom padding on the bar row, so the bar rises in the same SwiftUI transaction as the panel. `applyBarLiveHeight` adds it to the touch region. The chrome recomputes it on each keyboard frame change, with the keyboard's duration as a zero-bounce spring. It also recomputes on every panel open and close (`refreshKeyboardLift`). A zero duration or Reduce Motion applies it at once. While the scan panel is open, the chrome lifts until the keyboard covers the center button's foot by `keyboardButtonOverlap`. Any other keyboard, or a closed panel, leaves the chrome at rest. The lift reduces `availablePanelHeight` by the same amount. The bar host's frame does not change.
 
-**Search field and list.** The scan panel's field (`DSSearchRowView`), and its scan button share the field material, `DSTabBarFieldMaterialView`. The field switches its icon position between the Scan state and the Search state (`setSearchFocused`). The results list is shared with the full-screen Search Contact screen. Colours are DesignSystem theme tokens that follow all five themes. `DSTabBarFieldMaterialView` and `DSSearchRowView` re-apply their resolved colours when `DSThemeTrait` changes. `DSTabBarStyle.Palette` keeps only the values with no token: the glass stroke, the glass wash, the open fill and the dim wash. Search type uses DS typography tokens, so the bar has no type style of its own. `DSSearchAvatar` shows the contact's image, otherwise `DSLetterAvatar` at `.s40`. The shared `DSAvatar` stays untouched.
+**Search field and list.** The scan panel's field (`DSSearchRowView`), and its scan button share the field material, `DSTabBarFieldMaterialView`. The field switches its icon position between the Scan state and the Search state (`setSearchFocused`). The results list is shared with the full-screen Search Contact screen. Colours are DesignSystem theme tokens that follow all five themes. `DSTabBarFieldMaterialView` and `DSSearchRowView` re-apply their resolved colours when `DSThemeTrait` changes. `DSTabBarStyle.Palette` keeps only the values with no plain token: the glass stroke, the selection fill, the grabber, the glass wash, the open fill and the dim wash. Search type uses DS typography tokens, so the bar has no type style of its own. `DSSearchAvatar` shows the contact's image, otherwise `DSLetterAvatar` at `.s40`. The shared `DSAvatar` stays untouched.
 
 ## Closing and Capture
 
@@ -183,7 +196,7 @@ The chrome takes the width from `DSTabBarStyle.rowWidth(inAvailableWidth:)` of i
 
 **Haptics.** The PolkadotUI components play sensory feedback next to the gestures that trigger it. `DSTabBarCenterControl` owns the open and close feedback for the control. `DSTabBarContainer` owns the feedback for a bar-hidden change while the panel is open. The app chrome plays two impacts, and only for a tuck or restore the user starts: a heavy impact when the bar lands tucked, and a medium impact when it lands shown. `TabBarFoldController` plays them through `UIImpactFeedbackGenerator`. A settle the app starts, or one that keeps the same rest, plays nothing. An auto-hide tuck plays nothing either. A grab released back to tucked plays nothing. A grab released to shown plays the medium impact. While a drag moves the bar, `TabBarFoldController` also plays a selection tick (`UISelectionFeedbackGenerator`) when projected progress crosses 0.54 upward or 0.46 downward. The landing focus of a swipe into Search passes a flag that mutes the container's bar-hidden feedback. Each slot tap plays a selection feedback from a simultaneous gesture in the bar row, including a reselect. Reduce Motion does not change the chrome's impacts.
 
-**Accessibility.** VoiceOver sees the center control as a button. The caller passes its label. The app passes the `QR scanner` string. When the panel is open, the escape action closes it.
+**Accessibility.** VoiceOver sees the center control as a button. The caller passes its label and its open-state label, both as `LocalizedStringResource`. The app passes `.Products.productTabsAccessibilityScanner`, and `.Products.productTabsAccessibilityCloseSearch` while the panel is open. When the panel is open, the escape action closes it. Bar item titles and accessibility labels are `LocalizedStringResource` too (`TabBarBarItem`).
 
 **Tucked bar and VoiceOver.** While the bar is tucked, or settling toward tucked, the Edge glow is its one accessibility element, labelled "Show tab bar" (`Common.tabBarShowAccessibilityLabel`). Activating it restores the bar as the user's restore, with a medium haptic. The bar's own elements are hidden from VoiceOver while it is tucked. A `layoutChanged` notification moves focus to the glow on tuck and to the bar on restore. Auto-hide never runs while VoiceOver is on. Turning VoiceOver off restarts the 3 s countdown from that moment.
 
@@ -194,7 +207,7 @@ The chrome takes the width from `DSTabBarStyle.rowWidth(inAvailableWidth:)` of i
 The Apps slot opens the shelf, which grows upward from the bar row. Its height is the content height, capped at the space between the bar row and the top safe area. Beyond the cap the grid scrolls.
 
 - The top row holds a connection status icon and a settings icon. Neither is a tab. Connection status opens as a page sheet. Settings opens as a modal navigation stack. Both close the shelf first. `MainTabBarWireframe` builds that stack through the injected `TabFactoryProtocol`. Opening device details while the Settings stack is the topmost presented controller pushes onto it.
-- The grid holds one cell per open product. Tapping a cell mounts that product and closes the shelf. A long press reveals a close control. The cell's Close accessibility action does the same.
+- The grid holds one cell per open product. Tapping a cell mounts that product and closes the shelf. A long press opens a context menu with Close. The cell's Close accessibility action does the same.
 
 ## Panels
 
@@ -278,7 +291,7 @@ Blockers hold the tuck: an open panel, the keyboard, a drag or settle in progres
 
 **Quiet hide.** The auto-hide tuck uses the quiet settle, a critically damped spring with a 0.42 s period and no haptic. The first frame only starts its clock, so motion begins on the second frame.
 
-Only the content inside the glass fades: the icons, the labels and the centre glyph. Its opacity is `1 − 1.12 × progress^1.15`, floored at zero, so it is gone from about progress 0.906. The glass and its ancestors never take alpha, because alpha on a visual effect view breaks the effect. `TabBarBarView` and `DSTabBarCenterControl` (`glyphOpacity`) apply the value.
+Only the content inside the glass fades: the icons, the labels and the centre glyph. The glass never takes this alpha, because alpha on a visual effect view breaks the effect. The value is `DockletContentFade.opacity(progress:)`, `1 − 1.12 × progress^1.15` floored at zero, so it is gone from about progress 0.906. The fold controller reports it through its `contentOpacity` output each time it writes the transform. The chrome stores it in `barModel.contentFade.opacity`, a `DSTabBarContentFade` (`@Observable`). Only leaf views read it, so a fade frame re-runs only those views. The slots read it in `TabBarContentFadeModifier`. `DSTabBarCenterGlyph` reads it through the centre control's `contentFade:` parameter, and draws opaque when that is nil.
 
 The fade stays while the bar is tucked. A drag, a grab or a return to shown clears it.
 
@@ -311,6 +324,7 @@ The two change at different rates. The navigation controller is stable for the t
 - `restingBottomClearance` is `restingBarHeight` minus the bottom safe area, floored at zero.
 - Clearance is contributed only on a tab root. A pushed screen that does not set `hidesBottomBarWhenPushed` reserves no space. The bar floats over its bottom content and takes touches in its capsule. Such a screen should either set the flag or keep interactive content clear of the bottom.
 - The shelf and the center panel overlay content. They do not change clearance.
+- `TabBarChromeSurfaceView` reads both safe-area insets from its superview, not from itself. The fold transforms the surface, and a transformed view's own insets change with the transform.
 
 **Recalculation.** Three events recompute the insets from `container.selectedController`: the container's safe area changes, the chrome's safe area changes, and a tab mounts. Re-deriving from the selected controller stops a late `didShow` from a background tab pinning insets to a screen that is not on screen.
 

@@ -61,7 +61,7 @@ final class TabBarBottomChromeController: UIViewController {
                 self?.applyAccessibility(for: state)
             },
             contentOpacity: { [weak self] opacity in
-                self?.barModel.contentOpacity = opacity
+                self?.barModel.contentFade.opacity = opacity
             },
             tuckLanded: { [weak self] kind in
                 self?.dockletTipController.tuckLanded(kind)

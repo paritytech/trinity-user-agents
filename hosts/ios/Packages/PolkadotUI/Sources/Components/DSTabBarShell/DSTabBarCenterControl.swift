@@ -11,13 +11,13 @@ import SwiftUI
 public struct DSTabBarCenterControl<Content: View>: View {
     @Binding private var progress: CGFloat
     private let contentHeight: CGFloat
-    private let accessibilityLabel: String
-    private let openAccessibilityLabel: String
+    private let accessibilityLabel: LocalizedStringResource
+    private let openAccessibilityLabel: LocalizedStringResource
     private let onSettled: (Bool) -> Void
     private let onCloseRequested: ((TimeInterval?) -> Void)?
     private let onSwipeOpenBegan: (() -> Void)?
     private let onSwipeOpenLanding: (() -> Void)?
-    private let glyphOpacity: CGFloat
+    private let contentFade: DSTabBarContentFade?
     private let content: Content
 
     @State private var dragStart: CGFloat?
@@ -48,6 +48,8 @@ public struct DSTabBarCenterControl<Content: View>: View {
     @State private var mutesNextCloseFeedback = false
     /// The pending landing. A new drag cancels it.
     @State private var swipeLanding: Task<Void, Never>?
+    /// The pending close that a Reduce Motion close hands to the host. It is cancelled when the control leaves.
+    @State private var closeTask: Task<Void, Never>?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// `contentHeight` is the height `content` takes when laid out at the panel's open width. `accessibilityLabel`
@@ -57,18 +59,18 @@ public struct DSTabBarCenterControl<Content: View>: View {
     /// settle closed from open. It receives the close's duration, nil for the default, and the host closes the panel
     /// through `progress`. `onSwipeOpenBegan` is called once per drag when a drag on the button that began short
     /// of fully open moves up past the tap slop. `onSwipeOpenLanding` is called when that drag's release settles
-    /// open and the settle has run, at once under Reduce Motion. `glyphOpacity` fades the glyph in the lobe, so a host
-    /// can fade it with the rest of its content.
+    /// open and the settle has run, at once under Reduce Motion. `contentFade` fades the glyph in the lobe, so a host
+    /// can fade it with the rest of its content. Nil draws the glyph fully opaque.
     public init(
         progress: Binding<CGFloat>,
         contentHeight: CGFloat,
-        accessibilityLabel: String,
-        openAccessibilityLabel: String,
+        accessibilityLabel: LocalizedStringResource,
+        openAccessibilityLabel: LocalizedStringResource,
         onSettled: @escaping (Bool) -> Void,
         onCloseRequested: ((TimeInterval?) -> Void)? = nil,
         onSwipeOpenBegan: (() -> Void)? = nil,
         onSwipeOpenLanding: (() -> Void)? = nil,
-        glyphOpacity: CGFloat = 1,
+        contentFade: DSTabBarContentFade? = nil,
         @ViewBuilder content: () -> Content
     ) {
         _progress = progress
@@ -79,7 +81,7 @@ public struct DSTabBarCenterControl<Content: View>: View {
         self.onCloseRequested = onCloseRequested
         self.onSwipeOpenBegan = onSwipeOpenBegan
         self.onSwipeOpenLanding = onSwipeOpenLanding
-        self.glyphOpacity = glyphOpacity
+        self.contentFade = contentFade
         self.content = content()
     }
 
@@ -119,6 +121,11 @@ public struct DSTabBarCenterControl<Content: View>: View {
             }
             revealContent(open: new > old)
         }
+        .onDisappear {
+            pressRelease?.cancel()
+            swipeLanding?.cancel()
+            closeTask?.cancel()
+        }
         .sensoryFeedback(.impact(weight: .medium), trigger: mediumFeedback)
         .sensoryFeedback(.impact(weight: .light), trigger: lightFeedback)
     }
@@ -139,27 +146,6 @@ private extension DSTabBarCenterControl {
         let blendRange = DSTabBarStyle.centerBlendEnd - DSTabBarStyle.centerBlendStart
         return min(1, max(0, (progress - DSTabBarStyle.centerBlendStart) / blendRange))
     }
-
-    /// Side of the square canvas the centre glyph SVG is drawn on.
-    var glyphSize: CGFloat { 30 }
-
-    /// Side of the glyph once the panel is fully open.
-    var openGlyphSize: CGFloat { 22 }
-
-    /// Scale of the glyph once the panel is fully open, which takes it to `openGlyphSize`.
-    var openGlyphScale: CGFloat { openGlyphSize / glyphSize }
-
-    /// Distance the glyph's centre sits below the panel body's bottom edge once the panel is fully open.
-    var openGlyphCenterBelowBody: CGFloat { 8 }
-
-    /// Drop that carries the glyph from its resting centre to `openGlyphCenterBelowBody` below the body. The resting
-    /// centre is half a button above the panel's bottom edge, and the body's edge is a lobe depth above that bottom.
-    var openGlyphDrop: CGFloat {
-        openGlyphCenterBelowBody + DSTabBarStyle.centerButtonSize / 2 - DSTabBarStyle.centerLobeDepth
-    }
-
-    /// Side of the touch area once the panel is fully open. It is centred on the glyph.
-    var openTouchSize: CGFloat { 48 }
 
     /// Scale of the closed control while a finger is down on it.
     var pressScale: CGFloat { 0.96 }
@@ -281,9 +267,9 @@ private extension DSTabBarCenterControl {
         .frame(width: size.width, height: size.height, alignment: progress > 0 ? .top : .center)
         // After the frame, so the grabber lands against the panel rather than against
         // the content, which can be shorter than the panel.
-        .overlay(alignment: .top) { grabber }
-        .background(DSTabBarCenterMaterial(openBlend: openBlend))
-        .overlay(rim)
+        .overlay(alignment: .top) { DSTabBarCenterGrabber(reveal: reveal) }
+        .background { DSTabBarCenterMaterial(openBlend: openBlend) }
+        .overlay { DSTabBarCenterRim() }
         .clipShape(DSTabBarMorphShape())
         .contentShape(DSTabBarMorphShape())
         // Outside the content shape, so the glyph's touch area can hang below the lobe.
@@ -295,28 +281,12 @@ private extension DSTabBarCenterControl {
 // MARK: - Grips
 
 private extension DSTabBarCenterControl {
-    /// Sits in the lobe in both states, since the lobe is the button. The scan frame shrinks
-    /// slightly and drops a little as the panel opens. The touch area shrinks to `openTouchSize`
-    /// with it, and moves with it because the offset comes after the content shape.
+    /// The glyph with the drag and the accessibility that make it the control's button.
     var glyph: some View {
-        DSTabBarScanFrameShape()
-            .stroke(
-                .fgSecondary,
-                style: StrokeStyle(
-                    lineWidth: DSTabBarScanFrameShape.strokeWidth * glyphSize / DSTabBarScanFrameShape.gridSide,
-                    lineCap: .round,
-                    lineJoin: .round
-                )
-            )
-            .frame(width: glyphSize, height: glyphSize)
-            .scaleEffect(lerp(1, openGlyphScale))
-            .frame(width: DSTabBarStyle.centerButtonSize, height: DSTabBarStyle.centerButtonSize)
-            .contentShape(Circle().inset(by: lerp(0, (DSTabBarStyle.centerButtonSize - openTouchSize) / 2)))
-            .offset(y: lerp(0, openGlyphDrop))
-            .opacity(glyphOpacity)
+        DSTabBarCenterGlyph(progress: progress, contentFade: contentFade)
             .gesture(drag)
             .accessibilityElement()
-            .accessibilityLabel(progress > 0.5 ? openAccessibilityLabel : accessibilityLabel)
+            .accessibilityLabel(Text(progress > 0.5 ? openAccessibilityLabel : accessibilityLabel))
             .accessibilityAddTraits(.isButton)
             .accessibilityAction {
                 if progress <= 0.5 {
@@ -330,18 +300,6 @@ private extension DSTabBarCenterControl {
                 }
                 settle(to: 0)
             }
-    }
-
-    /// Marks the top of the open panel as draggable. Fades in with the content and takes no touches,
-    /// so a drag there reaches the content, which moves the panel through `centerPanelDrag`.
-    var grabber: some View {
-        Capsule()
-            .fill(DSTabBarStyle.Palette.grabber)
-            .frame(width: DSTabBarStyle.centerGrabberWidth, height: DSTabBarStyle.centerGrabberThickness)
-            .padding(.top, DSTabBarStyle.centerGrabberTopInset)
-            .frame(maxWidth: .infinity, alignment: .top)
-            .opacity(reveal)
-            .allowsHitTesting(false)
     }
 
     /// Drag up to open, down to close; a drag that barely moves is a tap.
@@ -590,7 +548,7 @@ private extension DSTabBarCenterControl {
             onCloseRequested(duration)
             return
         }
-        Task {
+        closeTask = Task {
             try? await Task.sleep(for: .seconds(DSTabBarStyle.centerReduceMotionFade))
             stretch = 0
             onCloseRequested(duration)
@@ -715,15 +673,5 @@ private struct PresentedProgressTracker: GeometryEffect {
     func effectValue(size _: CGSize) -> ProjectionTransform {
         presented.value = progress
         return ProjectionTransform()
-    }
-}
-
-// MARK: - Volume
-
-private extension DSTabBarCenterControl {
-    /// Hairline along the edge. A border stroke, so the clip leaves its full width.
-    var rim: some View {
-        DSTabBarMorphShape()
-            .strokeBorder(DSTabBarStyle.Palette.strokeGlass, lineWidth: DSTabBarStyle.strokeWidth)
     }
 }

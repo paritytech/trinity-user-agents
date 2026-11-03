@@ -78,7 +78,12 @@ public struct DSTabBarContainer<
 
     public var body: some View {
         VStack(spacing: 0) {
-            shelfPanel
+            DSTabBarShelfPanel(
+                isShelfOpen: isShelfOpen,
+                shelfContentHeight: $shelfContentHeight,
+                availableHeight: availableHeight,
+                shelf: shelf
+            )
             HStack(spacing: 0) {
                 slot(first, at: 0)
                 slot(second, at: 1)
@@ -96,9 +101,9 @@ public struct DSTabBarContainer<
             .opacity(1 - (1 - DSTabBarStyle.openItemOpacity) * openProgress)
         }
         .environment(\.dsTabBarSelectionNamespace, selectionNamespace)
-        .background(DSTabBarBarMaterial())
+        .background { DSTabBarBarMaterial() }
         .clipShape(DSTabBarShape(), style: FillStyle(eoFill: true))
-        .overlay(border)
+        .overlay { border }
         .offset(y: -DSTabBarStyle.openBarRise * openProgress)
         .opacity(isBarHidden ? 0 : 1)
         .allowsHitTesting(!isBarHidden)
@@ -117,6 +122,56 @@ private struct DSTabBarShelfHeightKey: PreferenceKey {
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())
+    }
+}
+
+/// The scroll view takes the content's height until it reaches the cap, then stays there and scrolls. Measuring the
+/// content is what keeps a short shelf short: a scroll view offered a height is otherwise greedy and would always
+/// fill the cap.
+private struct DSTabBarShelfPanel<Shelf: View>: View {
+    let isShelfOpen: Bool
+    @Binding var shelfContentHeight: CGFloat
+    let availableHeight: CGFloat
+    let shelf: Shelf
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ScrollView(.vertical) {
+            shelf
+                // Clears the hole, which reaches up into the shelf's bottom edge.
+                .padding(.bottom, DSTabBarStyle.notchOverhang)
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.preference(key: DSTabBarShelfHeightKey.self, value: proxy.size.height)
+                    }
+                }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(height: isShelfOpen ? min(shelfContentHeight, availableHeight) : 0)
+        .clipped()
+        // The measurement arrives in a later update than the open, so without the animation here the height
+        // change falls outside the isShelfOpen transaction and the shelf snaps.
+        .onPreferenceChange(DSTabBarShelfHeightKey.self) { newHeight in
+            withAnimation(shelfAnimation) {
+                shelfContentHeight = newHeight
+            }
+        }
+        .opacity(isShelfOpen ? 1 : 0)
+        .allowsHitTesting(isShelfOpen)
+        .accessibilityHidden(!isShelfOpen)
+    }
+}
+
+private extension DSTabBarShelfPanel {
+    /// Eased rather than sprung under Reduce Motion, so the shelf reveals without the overshoot
+    /// that makes the growth read as motion.
+    var shelfAnimation: Animation {
+        guard !reduceMotion else { return .easeInOut(duration: DSTabBarStyle.shelfFadeDuration) }
+        return .spring(
+            response: DSTabBarStyle.shelfSpringResponse,
+            dampingFraction: DSTabBarStyle.shelfSpringDamping
+        )
     }
 }
 
@@ -148,45 +203,6 @@ private extension DSTabBarContainer {
     var selectionAnimation: Animation? {
         guard !reduceMotion else { return nil }
         return DSTabBarStyle.selectionCurve
-    }
-
-    /// Eased rather than sprung under Reduce Motion, so the shelf reveals without the overshoot
-    /// that makes the growth read as motion.
-    var shelfAnimation: Animation {
-        guard !reduceMotion else { return .easeInOut(duration: DSTabBarStyle.shelfFadeDuration) }
-        return .spring(
-            response: DSTabBarStyle.shelfSpringResponse,
-            dampingFraction: DSTabBarStyle.shelfSpringDamping
-        )
-    }
-
-    /// The scroll view takes the content's height until it reaches the cap, then stays there and
-    /// scrolls. Measuring the content is what keeps a short shelf short: a scroll view offered a
-    /// height is otherwise greedy and would always fill the cap.
-    var shelfPanel: some View {
-        ScrollView(.vertical) {
-            shelf
-                // Clears the hole, which reaches up into the shelf's bottom edge.
-                .padding(.bottom, DSTabBarStyle.notchOverhang)
-                .background(
-                    GeometryReader { proxy in
-                        Color.clear.preference(key: DSTabBarShelfHeightKey.self, value: proxy.size.height)
-                    }
-                )
-        }
-        .scrollBounceBehavior(.basedOnSize)
-        .frame(height: isShelfOpen ? min(shelfContentHeight, availableHeight) : 0)
-        .clipped()
-        // The measurement arrives in a later update than the open, so without the animation here the height
-        // change falls outside the isShelfOpen transaction and the shelf snaps.
-        .onPreferenceChange(DSTabBarShelfHeightKey.self) { newHeight in
-            withAnimation(shelfAnimation) {
-                shelfContentHeight = newHeight
-            }
-        }
-        .opacity(isShelfOpen ? 1 : 0)
-        .allowsHitTesting(isShelfOpen)
-        .accessibilityHidden(!isShelfOpen)
     }
 
     /// Strokes the outline of the bar from inside its edges. The notch edge is stroked too.
