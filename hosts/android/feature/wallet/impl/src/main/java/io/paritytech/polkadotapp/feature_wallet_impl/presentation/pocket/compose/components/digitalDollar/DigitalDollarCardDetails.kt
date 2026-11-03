@@ -5,6 +5,9 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.updateTransition
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.rememberScrollState
@@ -18,12 +21,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.IntOffset
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.compose.TickerWordmark
@@ -45,6 +51,7 @@ import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleAlignment
 import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleSize
 import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.design.utils.blurEffect
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
@@ -62,6 +69,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketScreenState
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
+import kotlin.math.roundToInt
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val BalancedLineBreak = LineBreak(
@@ -121,6 +129,9 @@ private fun DigitalDollarCardDetailsContent(
     onBackupUpdateClick: () -> Unit,
     onBackupCloseClick: () -> Unit
 ) {
+    val windowHeightPx = LocalWindowInfo.current.containerSize.height.toFloat()
+    val closeDrag = remember(windowHeightPx) { CardCloseDragState(windowHeightPx) }
+
     Column(
         modifier = Modifier.fillMaxSize()
     ) {
@@ -139,7 +150,15 @@ private fun DigitalDollarCardDetailsContent(
                 .windowInsetsPadding(LocalAppNavigationBarInsets.current)
         ) {
             DigitalDollarCard(
-                modifier = Modifier.pocketCardSharedElement(cardIndex),
+                modifier = Modifier
+                    .offset { IntOffset(0, closeDrag.offsetPx.roundToInt()) }
+                    .pocketCardSharedElement(cardIndex)
+                    .draggable(
+                        orientation = Orientation.Vertical,
+                        state = rememberDraggableState(closeDrag::drag),
+                        onDragStarted = { closeDrag.beginDrag() },
+                        onDragStopped = { closeDrag.release(onBack) }
+                    ),
                 card = card,
                 isExpanded = true
             )
@@ -150,6 +169,11 @@ private fun DigitalDollarCardDetailsContent(
                 modifier = Modifier
                     .fillMaxWidth()
                     .pocketContentSlide()
+                    .graphicsLayer {
+                        translationY = closeDrag.offsetPx
+                        alpha = 1f - closeDrag.progress
+                        renderEffect = blurEffect(closeDrag.blurSigma, density)
+                    }
             ) {
                 AnimatedContent(
                     targetState = state.balanceRestore,
