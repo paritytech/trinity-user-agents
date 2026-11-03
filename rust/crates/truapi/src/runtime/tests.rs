@@ -9293,10 +9293,10 @@ fn only_the_assigned_provider_worker_reports() {
 	));
 }
 
-// A session goes only to a funding provider the core knows of. Its routes
-// do not narrow the choice: every provider is asked for quotes, so one whose
-// manifest declares only inbound card can still be picked for a withdrawal
-// it quoted.
+// A session goes only to a funding provider the core knows of. Chosen
+// without a quote, it must also serve the session's direction, so one whose
+// manifest declares only inbound card cannot be handed a withdrawal; one that
+// quoted the withdrawal can, since the quote was asked in that direction.
 #[test]
 fn a_session_is_handed_only_to_a_known_funding_provider() {
 	let services = funding_services();
@@ -9323,7 +9323,7 @@ fn a_session_is_handed_only_to_a_known_funding_provider() {
 			select(&outbound, "ramp.dot"),
 			select(&inbound, "ramp.dot"),
 		),
-		(false, true, true)
+		(false, false, true)
 	);
 }
 
