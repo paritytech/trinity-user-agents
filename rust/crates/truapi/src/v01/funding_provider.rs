@@ -134,10 +134,11 @@ pub enum FundingQuoteAnswer {
 
 /// Progress a provider reports for a session it serves.
 ///
-/// Updates only move forward, each in the direction of its session. Once
-/// funds are moving the host decides the outcome: an inbound session is
-/// delivered from the claims of the top-ups it names, an outbound one is
-/// released once the user's payment completes.
+/// Steps only move forward, each in the direction of its session; `Details`
+/// and `Deposit` sit outside that order, and a session keeps a bounded
+/// number of each. Once funds are moving the host decides the outcome: an
+/// inbound session is delivered from the claims of the top-ups it names, an
+/// outbound one is released once the user's payment completes.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingUpdate {
@@ -337,9 +338,10 @@ pub enum FundingFact {
 	},
 }
 
-/// Most characters a [`FundingFact::Other`] text holds.
+/// Most characters a provider's update text holds: a [`FundingFact::Other`]
+/// text, or a transaction id, reference or address.
 pub const FUNDING_DETAIL_MAX_CHARS: usize = 80;
-/// Most UTF-8 bytes a [`FundingFact::Other`] text holds.
+/// Most UTF-8 bytes a provider's update text holds.
 pub const FUNDING_DETAIL_MAX_BYTES: usize = 320;
 
 /// How a provider's payout to the user went after an outbound session was
@@ -508,9 +510,12 @@ pub enum HostFundingReportError {
 	/// it was assigned, asks a different amount, or was already named.
 	#[codec(index = 2)]
 	NotStarted,
-	/// A `Progress` fact that does not fit the session or breaks its limits:
-	/// a count past its total, a fact for another rail, or an `Other` text
-	/// too long, on several lines or with control or invisible characters.
+	/// An update that breaks its limits: a `Progress` fact that does not fit
+	/// the session, such as a count past its total or a fact for another
+	/// rail; a text too long, on several lines or with control or invisible
+	/// characters; deposit instructions that name nothing to pay, have
+	/// expired or do not match the quote the user chose; or more `Details`
+	/// or `Deposit` updates than a session keeps.
 	#[codec(index = 4)]
 	InvalidDetail,
 	/// Catch-all.
@@ -626,3 +631,6 @@ pub struct ProductFundingQuoteRequest {
 	/// What the user wants to move, by which rail, in which country.
 	pub ask: FundingQuoteAsk,
 }
+
+/// Longest payment URI deposit instructions may carry, in UTF-8 bytes.
+pub const FUNDING_DEPOSIT_URI_MAX_BYTES: usize = 512;
