@@ -20,7 +20,7 @@ struct HostPlacedProductsTests {
     /// placing it on Paseo.
     @Test("A reserved identity matches across TLDs", arguments: ["dim2.dot", "dim2.paseo", "dim2.testnet"])
     func reservedIdentityMatchesEveryTld(input: String) throws {
-        #expect(HostPlacedProducts.contains(productId: try ProductId(input)))
+        #expect(try HostPlacedProducts.contains(productId: ProductId(input)))
     }
 
     /// An exact match, so a subdomain is a separate product and a separate publisher, and a bare
@@ -31,7 +31,7 @@ struct HostPlacedProductsTests {
         arguments: ["app.dim2.dot", "dim2x.dot", "xdim2.dot", "notdim2.paseo", "localhost", "localhost:3000"]
     )
     func neighbouringIdentifiersAreNotHostPlaced(input: String) throws {
-        #expect(!HostPlacedProducts.contains(productId: try ProductId(input)))
+        #expect(try !HostPlacedProducts.contains(productId: ProductId(input)))
     }
 }
 

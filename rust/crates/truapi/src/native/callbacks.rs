@@ -417,8 +417,8 @@ pub trait NativePaymentCallbacks: Send + Sync {
 	async fn request_payment(
 		&self,
 		product_id: ProductId,
-		request: v01::HostPaymentRequest,
-	) -> Result<(), v01::HostPaymentError>;
+		request: crate::latest::HostPaymentRequest,
+	) -> Result<(), crate::latest::HostPaymentError>;
 
 	/// The current status of `product_id`'s payment `id`, or `None` when the
 	/// host holds no such payment.
@@ -444,8 +444,8 @@ pub trait NativeTopUpCallbacks: Send + Sync {
 	async fn top_up(
 		&self,
 		product_id: ProductId,
-		request: v01::HostPaymentTopUpRequest,
-	) -> Result<(), v01::HostPaymentTopUpError>;
+		request: crate::latest::HostPaymentTopUpRequest,
+	) -> Result<(), crate::latest::HostPaymentTopUpError>;
 
 	/// The current status of `product_id`'s top-up `id`, or `None` when the
 	/// host holds no such top-up.
@@ -512,6 +512,17 @@ pub trait NativeFundingCallbacks: Send + Sync {
 		direction: v01::FundingDirection,
 		amount: Option<u128>,
 	) -> Result<crate::platform::FundingPresentOutcome, HostRejection>;
+
+	/// Show `target` for provider `provider_id`'s session `intent` in a frame
+	/// the host owns, and report how it closed. A page is a checked https
+	/// URL: show its origin, and answer `Returned` when it reaches its return
+	/// URL.
+	async fn present_provider_frame(
+		&self,
+		provider_id: String,
+		intent: String,
+		target: v01::FundingFrameTarget,
+	) -> Result<v01::FundingFrameOutcome, HostRejection>;
 
 	/// A session's status changed, for host UI such as the in-flight pill.
 	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem);

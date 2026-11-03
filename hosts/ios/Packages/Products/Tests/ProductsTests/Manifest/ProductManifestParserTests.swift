@@ -158,7 +158,11 @@ struct ProductManifestParserTests {
     }
 
     @Test func rejectsWidgetWithoutHeights() {
-        #expect(parser.parseExecutable(Fixtures.widget(heights: "[]"), kind: .widget, identifier: try! ProductId("w.dot")) == nil)
+        #expect(parser.parseExecutable(
+            Fixtures.widget(heights: "[]"),
+            kind: .widget,
+            identifier: try! ProductId("w.dot")
+        ) == nil)
         #expect(parser.parseExecutable(
             #"{"$v":1,"kind":"widget","appVersion":[1,0,0]}"#,
             kind: .widget,

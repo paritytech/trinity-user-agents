@@ -31,8 +31,8 @@ extension ProductOperationMapper: CoreDataMapperProtocol {
             )
         }
 
-        return ProductOperationRecord(
-            productId: try ProductId(productId),
+        return try ProductOperationRecord(
+            productId: ProductId(productId),
             id: id,
             label: entity.label,
             startedAt: startedAt

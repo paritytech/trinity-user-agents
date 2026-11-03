@@ -38,8 +38,8 @@ extension PocketCardFaceMapper: CoreDataMapperProtocol {
             throw CoreDataMapperError.missingRequiredData(keyPath: #keyPath(CDPocketCard.face))
         }
 
-        return StoredPocketCardFace(
-            key: PocketCardKey(productId: try ProductId(productId), cardId: PocketCardId(value: cardId)),
+        return try StoredPocketCardFace(
+            key: PocketCardKey(productId: ProductId(productId), cardId: PocketCardId(value: cardId)),
             face: face
         )
     }

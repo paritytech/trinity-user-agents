@@ -4,13 +4,13 @@ import Products
 import Testing
 @testable import polkadot_app
 
-/// Pressing a card opens the product's widget, so the archive the widget is
-/// served from is fetched ahead of the press. Only for host-placed cards: they
+/// Pressing a card opens the product's app, so the archive the app is served
+/// from is fetched ahead of the press. Only for host-placed cards: they
 /// are few and fixed, where a Pocket full of added cards would turn one visit
 /// to the tab into a fetch per product.
 @MainActor
 struct PocketPrewarmerTests {
-    /// A pressed card opens the widget, so warming the app archive fetches
+    /// A pressed card opens the app, so warming the widget archive fetches
     /// something the press never loads and leaves the press slow anyway.
     @Test
     func warmsTheArchiveAPressedCardOpens() async {
@@ -19,7 +19,7 @@ struct PocketPrewarmerTests {
 
         await prewarmer.warm([humanity])
 
-        #expect(archives.warmed == ["widget.peopl.testnet"])
+        #expect(archives.warmed == ["app.peopl.testnet"])
     }
 
     /// The bound that makes this safe: a user may hold many added cards, and
@@ -44,7 +44,7 @@ struct PocketPrewarmerTests {
         await prewarmer.warm([humanity, humanity])
         await prewarmer.warm([humanity])
 
-        #expect(archives.warmed == ["widget.peopl.testnet"])
+        #expect(archives.warmed == ["app.peopl.testnet"])
     }
 
     /// A warm that failed left nothing on disk, so the next visit tries again
@@ -58,7 +58,7 @@ struct PocketPrewarmerTests {
         archives.failing = false
         await prewarmer.warm([humanity])
 
-        #expect(archives.warmed == ["widget.peopl.testnet", "widget.peopl.testnet"])
+        #expect(archives.warmed == ["app.peopl.testnet", "app.peopl.testnet"])
     }
 }
 
@@ -82,15 +82,15 @@ private let loyalty = PocketCardViewModel(
 /// makes the archive a warm reaches for something the test can name.
 private func resolverPublishingWidgets() -> StubProductResolver {
     StubProductResolver { productId in
-        ResolvedProduct(
+        try ResolvedProduct(
             id: productId,
             displayName: productId.rawValue,
             description: nil,
             icon: nil,
             executables: ProductExecutables(
-                app: ProductExecutable.App(identifier: try ProductId("app.\(productId.rawValue)"), appVersion: .zero),
+                app: ProductExecutable.App(identifier: ProductId("app.\(productId.rawValue)"), appVersion: .zero),
                 widget: ProductExecutable.Widget(
-                    identifier: try ProductId("widget.\(productId.rawValue)"),
+                    identifier: ProductId("widget.\(productId.rawValue)"),
                     appVersion: .zero,
                     description: nil,
                     heights: [2],

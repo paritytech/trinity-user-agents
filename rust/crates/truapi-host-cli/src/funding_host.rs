@@ -150,6 +150,17 @@ impl FundingPlatform for CliFundingHost {
 		Ok(FundingPresentOutcome::Started)
 	}
 
+	// The scripted host stands in for the provider, so it has no screens of
+	// the provider's to show.
+	async fn present_provider_frame(
+		&self,
+		_provider: &ProductContext,
+		_intent: String,
+		_target: truapi::latest::FundingFrameTarget,
+	) -> Result<truapi::latest::FundingFrameOutcome, GenericError> {
+		Ok(truapi::latest::FundingFrameOutcome::Dismissed)
+	}
+
 	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
 		let (tag, amount) = match status {
 			HostFundingStatusSubscribeItem::InProgress { .. } => ("InProgress", None),
