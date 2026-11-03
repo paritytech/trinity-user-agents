@@ -327,7 +327,14 @@ fn node_depth(node: &latest::RendererNode, remaining: u32) -> Option<u32> {
 		.map(|child| node_depth(child, remaining - 1))
 		.try_fold(0, |deepest: u32, depth| depth.map(|d| deepest.max(d)))?;
 
-	Some(deepest + 1)
+	// SCALE decodes a layer's arguments two levels below their node, inside
+	// `layers` and `args`, and counts them against the same limit.
+	let deepest = match node {
+		latest::RendererNode::Materials { .. } => deepest.max(2),
+		_ => deepest,
+	};
+
+	(deepest < remaining).then_some(deepest + 1)
 }
 
 /// The bytes to keep a face under, so it can be drawn again at a cold start.

@@ -1747,7 +1747,7 @@ export interface ExtrinsicVersionHost {
 
 /**
  * Feature-support probing. The host answers whether it can service a given
- * capability (per-chain support, and whether materials draw).
+ * capability (currently scoped to per-chain support).
  */
 export interface Features {
   /**

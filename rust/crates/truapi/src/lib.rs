@@ -82,34 +82,25 @@ uniffi::custom_type!(Bytes64, Vec<u8>, {
 });
 
 // UniFFI has no arrays, so a material argument's vector crosses FFI surfaces as
-// a list. Named only because `uniffi::custom_type!` takes an ident.
+// a list. The alias exists because `uniffi::custom_type!` takes an ident.
 #[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
-type U32x2 = [u32; 2];
-#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
-type U32x3 = [u32; 3];
-#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
-type U32x4 = [u32; 4];
+macro_rules! u32_array_as_list {
+	($alias:ident, $len:literal) => {
+		type $alias = [u32; $len];
+		uniffi::custom_type!($alias, Vec<u32>, {
+			remote,
+			lower: |values| values.to_vec(),
+			try_lift: |values| Ok(values.as_slice().try_into()?),
+		});
+	};
+}
 
 #[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
-uniffi::custom_type!(U32x2, Vec<u32>, {
-	remote,
-	lower: |values| values.to_vec(),
-	try_lift: |values| Ok(values.as_slice().try_into()?),
-});
-
+u32_array_as_list!(U32x2, 2);
 #[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
-uniffi::custom_type!(U32x3, Vec<u32>, {
-	remote,
-	lower: |values| values.to_vec(),
-	try_lift: |values| Ok(values.as_slice().try_into()?),
-});
-
+u32_array_as_list!(U32x3, 3);
 #[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
-uniffi::custom_type!(U32x4, Vec<u32>, {
-	remote,
-	lower: |values| values.to_vec(),
-	try_lift: |values| Ok(values.as_slice().try_into()?),
-});
+u32_array_as_list!(U32x4, 4);
 
 // Swift and Kotlin have no 128-bit integer, so amounts cross FFI surfaces as
 // decimal strings.

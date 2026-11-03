@@ -807,8 +807,9 @@ mod tests {
 		assert_eq!(materials.encode(), vec![11, 0, 0]);
 	}
 
+	/// Index 10 stays unused, so an older tree is refused rather than misread.
 	#[test]
-	fn the_index_effect_held_is_never_read() {
+	fn index_10_is_never_read() {
 		assert!(RendererNode::decode(&mut [10u8, 0, 0].as_slice()).is_err());
 	}
 

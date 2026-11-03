@@ -3200,7 +3200,7 @@ fn refuses_a_face_deeper_than_the_core_carries() {
 /// generated client writes: the ID as hex, numbers as their bit patterns.
 fn materials_around(material_hex: &str, children: &str) -> String {
 	format!(
-		r#"{{"tag":"Materials","value":{{"props":{{"layers":[{{"material":"0x{material_hex}","args":[{{"tag":"Float","value":1069547520}},{{"tag":"Vec2","value":[1,2]}},{{"tag":"SamplerFloat","value":{{"tag":"Noise"}}}}]}}]}},"children":[{children}]}}}}"#
+		r#"{{"tag":"Materials","value":{{"props":{{"layers":[{{"material":"0x{material_hex}","args":[{{"tag":"Float","value":1069547520}},{{"tag":"Vec2","value":[1,2]}},{{"tag":"SamplerFloat","value":{{"tag":"Noise"}}}},{{"tag":"SamplerVec4","value":{{"tag":"Source","value":{{"tag":"Archive","value":"mask.png"}}}}}}]}}]}},"children":[{children}]}}}}"#
 	)
 }
 
@@ -3218,6 +3218,9 @@ fn reads_a_materials_node_as_the_client_writes_it() {
 						v01::Parameter::Float(1.5f32.to_bits()),
 						v01::Parameter::Vec2([1, 2]),
 						v01::Parameter::SamplerFloat(v01::ImageRef::Noise),
+						v01::Parameter::SamplerVec4(v01::ImageRef::Source(
+							v01::ImageSource::Archive("mask.png".to_string()),
+						)),
 					],
 				}],
 			},
@@ -3241,6 +3244,31 @@ fn counts_depth_through_a_materials_node() {
 
 	assert!(matches!(
 		parse_renderer_node_json(materials_around(&"07".repeat(32), &deepest_allowed)),
+		Err(NativeRendererError::TooDeep { .. })
+	));
+}
+
+/// `boxes` boxes around a `Materials` node with one layer.
+fn materials_under_boxes(boxes: usize) -> String {
+	let open = r#"{"tag":"Box","value":{"modifiers":[],"props":{},"children":["#.repeat(boxes);
+	format!("{open}{}{}", materials_around(&"07".repeat(32), ""), "]}}".repeat(boxes))
+}
+
+/// Whatever face the reader accepts reads back after it is kept, layers
+/// included, so a host never draws a face it cannot keep.
+#[test]
+fn the_deepest_face_with_materials_reads_back_once_kept() {
+	let layer_levels = 3;
+	let deepest =
+		parse_renderer_node_json(materials_under_boxes(MAX_FACE_DEPTH as usize - layer_levels))
+			.expect("the deepest materials face reads");
+
+	assert_eq!(
+		decode_renderer_node(encode_renderer_node(deepest.clone())).expect("reads back"),
+		deepest
+	);
+	assert!(matches!(
+		parse_renderer_node_json(materials_under_boxes(MAX_FACE_DEPTH as usize - layer_levels + 1)),
 		Err(NativeRendererError::TooDeep { .. })
 	));
 }
