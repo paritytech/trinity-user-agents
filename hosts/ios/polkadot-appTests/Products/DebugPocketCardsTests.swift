@@ -23,7 +23,10 @@ struct DebugPocketCardsTests {
     ])
     func opensTheWidgetPageForTheCardItSitsUnder(typed: String, opened: String) throws {
         let store = DebugPocketCards(settingsManager: InMemorySettingsManager())
-        store.save(card(productId: try! ProductId("GAME.paseo"), widgetUrl: URL(string: "http://127.0.0.1:5173/\(typed)")))
+        store.save(card(
+            productId: try! ProductId("GAME.paseo"),
+            widgetUrl: URL(string: "http://127.0.0.1:5173/\(typed)")
+        ))
         store.save(card(cardId: "gold"))
         let gold = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "gold"))
 
@@ -58,7 +61,7 @@ struct DebugPocketCardsTests {
         settings.set(anyValue: Data(stored.utf8), for: SettingsKey.debugPocketCards.rawValue)
         let store = DebugPocketCards(settingsManager: settings)
 
-        let definition = try #require(store.cards(for: try ProductId("game.paseo")).first)
+        let definition = try #require(try store.cards(for: ProductId("game.paseo")).first)
 
         #expect(definition == PocketCardDefinition(
             id: PocketCardId(value: "loyalty"),

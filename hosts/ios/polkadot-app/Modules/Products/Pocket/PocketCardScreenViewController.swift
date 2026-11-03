@@ -118,15 +118,6 @@ final class PocketCardScreenViewController: UIViewController {
         }
     }
 
-    func setFaceShown(_ shown: Bool, animated: Bool) -> ExpandedCardFaceOutcome {
-        guard !userOwnsFace else { return .userMoving }
-
-        faceMovedSinceOpening = true
-        placeFace(shown: shown, animated: animated)
-
-        return .applied
-    }
-
     /// The face the card's product published for its opening, which no longer
     /// applies once the card is closed or the user or the page has moved the face.
     func applyOpeningFace(shown: Bool) {

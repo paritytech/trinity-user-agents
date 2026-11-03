@@ -5,9 +5,9 @@ import UIKit
 /// Opens the card's product, at the page the card names, on a screen the card
 /// itself heads.
 ///
-/// The protocol names the widget as what an expanded card runs, so that is the
-/// executable served here. The origin stays the product's base domain, so the
-/// card sees the same grants and storage its worker does.
+/// An expanded card runs the product's app, the one executable every product
+/// publishes. The origin stays the product's base domain, so the card sees the
+/// same grants and storage its worker does.
 @MainActor
 struct PocketCardOpening {
     let flowState: SPAFlowState
@@ -29,8 +29,8 @@ struct PocketCardOpening {
             return
         }
 
-        guard let product = pocket.cardHosts.product(for: card.key, pageQuery: pageQuery, make: { surface in
-            makeView(for: card, page: page, pageQuery: pageQuery, surface: surface)
+        guard let product = pocket.cardHosts.product(for: card.key, pageQuery: pageQuery, make: { _ in
+            makeView(for: card, page: page, pageQuery: pageQuery)
         }) else { return }
 
         let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
@@ -71,8 +71,7 @@ private extension PocketCardOpening {
     func makeView(
         for card: PocketCardViewModel,
         page: ProductPage,
-        pageQuery: String,
-        surface: PocketCardSurface
+        pageQuery: String
     ) -> SPAViewProtocol? {
         let widgetURL = debugWidgetURL(for: card.key, pageQuery: pageQuery)
         let configuration = SPAConfiguration(
@@ -80,8 +79,7 @@ private extension PocketCardOpening {
             isRootScreen: false,
             showMoreButton: false,
             page: page,
-            contentSource: widgetURL.map(SPAContentSource.directURL) ?? .dotNs,
-            cardFace: surface
+            contentSource: widgetURL.map(SPAContentSource.directURL) ?? .dotNs
         )
 
         // The native runtime cannot load a page by its address.
