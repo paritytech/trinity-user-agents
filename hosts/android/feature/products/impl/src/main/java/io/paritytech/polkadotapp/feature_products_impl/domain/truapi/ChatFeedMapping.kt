@@ -111,16 +111,15 @@ fun ProductChatMessagesQueryResponse.toModel(productId: ProductId) =
 /** The failure that a room screen shows for a query that has no answer. */
 fun Throwable.toQueryException(): ProductChatQueryException = when (this) {
     is ProductChatQueryException -> this
-    is ChatQueryException.Refused -> when (val error = error) {
-        ProductChatQueryError.NotAvailable -> ProductChatQueryException.NotAvailable()
-        ProductChatQueryError.UnknownRoom -> ProductChatQueryException.UnknownRoom()
-        is ProductChatQueryError.Unknown -> ProductChatQueryException.Failed(error.reason)
+    is ChatQueryException.Refused -> when (error) {
+        ProductChatQueryError.NOT_AVAILABLE -> ProductChatQueryException.NotAvailable()
+        ProductChatQueryError.UNKNOWN_ROOM -> ProductChatQueryException.UnknownRoom()
     }
     is ChatQueryException.ActionRefused -> when (val error = error) {
         ProductChatUserActionError.UnknownRoom -> ProductChatQueryException.UnknownRoom()
         ProductChatUserActionError.UnknownMessage -> ProductChatQueryException.UnknownMessage()
         is ProductChatUserActionError.Rejected -> ProductChatQueryException.Rejected(error.reason)
-        is ProductChatUserActionError.Unknown -> ProductChatQueryException.Failed(error.reason)
+        ProductChatUserActionError.NotAvailable -> ProductChatQueryException.NotAvailable()
     }
     is ChatQueryException.Failed -> ProductChatQueryException.Failed(reason)
     is ChatQueryException.NoAnswer -> ProductChatQueryException.NoAnswer()
