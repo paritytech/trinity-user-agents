@@ -16,7 +16,7 @@ use std::{
 
 use truapi::latest::{FundingDirection, FundingRail};
 
-use futures::lock::Mutex as AsyncMutex;
+use futures::{channel::oneshot, lock::Mutex as AsyncMutex};
 use parity_scale_codec::{Decode, Encode};
 
 use super::{funding::lock, product_manifest::worker_manifest, services::RuntimeServices};
@@ -62,9 +62,22 @@ pub struct FundingProviders {
 	learned_store: AsyncMutex<bool>,
 	/// What the user has picked in each open overlay, by session.
 	selections: Mutex<HashMap<String, FundingSelection>>,
+	/// Quote lists waiting for the providers to change before their next
+	/// round.
+	changed: Mutex<Vec<oneshot::Sender<()>>>,
 }
 
 impl FundingProviders {
+	/// Resolves once the providers the core goes by next change: the host
+	/// lists others, or dotNS answers for one with what it serves.
+	pub fn on_change(&self) -> oneshot::Receiver<()> {
+		let (sender, changed) = oneshot::channel();
+		let mut waiting = lock(&self.changed);
+		waiting.retain(|waiter| !waiter.is_canceled());
+		waiting.push(sender);
+		changed
+	}
+
 	/// Every provider serving `direction`, in the host's order. What their
 	/// recent quote answers showed is folded into what their manifests say.
 	pub fn candidates(&self, direction: FundingDirection) -> Vec<FundingCandidate> {
@@ -171,9 +184,13 @@ impl RuntimeServices {
 	) -> Result<(), FundingSessionError> {
 		let offered = offered_providers(entries)?;
 		let providers = &self.funding_providers();
+		let before = providers.providers();
 		lock(&providers.live)
 			.retain(|product_id, _| offered.iter().any(|entry| &entry.product_id == product_id));
 		*lock(&providers.entries) = offered;
+		if providers.providers() != before {
+			self.funding_providers_changed();
+		}
 		self.refresh_funding_providers();
 		Ok(())
 	}
@@ -359,9 +376,26 @@ impl RuntimeServices {
 		let read = worker_manifest(self, self.platform.as_ref(), product_id).await;
 		let providers = &self.funding_providers();
 		if let Ok(manifest) = read {
+			let before = providers.providers();
 			lock(&providers.live).insert(product_id.clone(), manifest);
+			if providers.providers() != before {
+				self.funding_providers_changed();
+			}
 		}
 		lock(&providers.refreshing).remove(product_id);
+	}
+
+	/// The providers the core goes by changed, often because dotNS answered
+	/// for one the host lists without a manifest: every open overlay is sent
+	/// its options again, and every watched quote list asks again at once,
+	/// so a provider read after the overlay opened still shows and quotes.
+	fn funding_providers_changed(&self) {
+		for waiter in lock(&self.funding_providers().changed).drain(..) {
+			let _ = waiter.send(());
+		}
+		for intent in self.funding().presenting() {
+			self.send_funding_options(&intent);
+		}
 	}
 }
 
