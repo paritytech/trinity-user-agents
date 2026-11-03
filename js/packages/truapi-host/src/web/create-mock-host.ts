@@ -394,7 +394,7 @@ export interface MockHostConfig {
   devicePermissions?: PermissionPolicy;
   /** Answer for `remotePermission`. Default `"allow-all"`. */
   remotePermissions?: PermissionPolicy;
-  /** Whether `featureSupported` reports support. Default `true`. */
+  /** Whether `featureSupported` reports chain support. The core answers materials questions itself. Default `true`. */
   featureSupported?: boolean;
   /** Theme emitted by `subscribeTheme`. Default `"Dark"`. */
   theme?: ThemeVariant;

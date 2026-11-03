@@ -3211,15 +3211,15 @@ fn reads_a_materials_node_as_the_client_writes_it() {
 	assert_eq!(
 		parse_renderer_node_json(json).expect("a materials face reads"),
 		latest::RendererNode::Materials {
-			props: v01::MaterialsProps {
-				layers: vec![v01::MaterialInstance {
+			props: latest::MaterialsProps {
+				layers: vec![latest::MaterialInstance {
 					material: [7; 32],
 					args: vec![
-						v01::Parameter::Float(1.5f32.to_bits()),
-						v01::Parameter::Vec2([1, 2]),
-						v01::Parameter::SamplerFloat(v01::ImageRef::Noise),
-						v01::Parameter::SamplerVec4(v01::ImageRef::Source(
-							v01::ImageSource::Archive("mask.png".to_string()),
+						latest::Parameter::Float(1.5f32.to_bits()),
+						latest::Parameter::Vec2([1, 2]),
+						latest::Parameter::SamplerFloat(latest::ImageRef::Noise),
+						latest::Parameter::SamplerVec4(latest::ImageRef::Source(
+							latest::ImageSource::Archive("mask.png".to_string()),
 						)),
 					],
 				}],

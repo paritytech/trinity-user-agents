@@ -8,7 +8,8 @@ materials by ID with their arguments and holds the content they draw over. Hosts
 refuse a tree that still carries `Effect`.
 
 `system.featureSupported` takes a `Materials` question (format version, features, surface). Products ask it before
-sending materials. Every host answers no until it draws them.
+sending materials. Every host answers no until it draws them. A host built before this release cannot read the
+question and answers with an error, which products read as no.
 
 `renderer.failureSubscribe` reports `Materials` nodes that fell back. No host serves it yet.
 
