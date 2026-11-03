@@ -366,7 +366,7 @@ pub trait Chat: Send + Sync {
 	/// const { roomId: testRoom } = created.value;
 	/// truapi.chat.onUserAction(({ roomId, action }) => {
 	///   if (roomId !== testRoom) {
-	///     return err({ tag: "Domain", value: { tag: "V1", value: { tag: "UnknownRoom" } } });
+	///     return err({ tag: "Domain", value: { tag: "V2", value: { tag: "UnknownRoom" } } });
 	///   }
 	///   if (action.tag === "NewMessage") {
 	///     return ok({
