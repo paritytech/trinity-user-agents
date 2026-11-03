@@ -45,10 +45,7 @@ use tokio::{
 	io::{AsyncReadExt, AsyncWriteExt, copy_bidirectional},
 	net::{TcpListener, TcpStream},
 };
-use tokio_rustls::{
-	TlsConnector,
-	rustls::{ClientConfig, RootCertStore, pki_types::ServerName},
-};
+use tokio_rustls::{TlsConnector, rustls::pki_types::ServerName};
 
 /// Upstream `(host, port)` to the loopback tunnel relaying to it. One tunnel per
 /// upstream, reused by every chain that names it, so the chains of a network
@@ -285,7 +282,7 @@ async fn relay(
 	let server_name = ServerName::try_from(host.to_owned())?;
 	let mut upstream = tokio::time::timeout(
 		UPSTREAM_TIMEOUT,
-		TlsConnector::from(tls_config()).connect(server_name, upstream),
+		TlsConnector::from(crate::tls::client_config()).connect(server_name, upstream),
 	)
 	.await??;
 
@@ -333,16 +330,6 @@ fn rewrite_host(upgrade: &[u8], host: &str, port: u16) -> Vec<u8> {
 		}
 	}
 	out
-}
-
-/// One shared client config; webpki roots rather than the platform verifier so
-/// the behaviour is identical on every native target.
-fn tls_config() -> Arc<ClientConfig> {
-	static CONFIG: OnceLock<Arc<ClientConfig>> = OnceLock::new();
-	Arc::clone(CONFIG.get_or_init(|| {
-		let roots = RootCertStore { roots: webpki_roots::TLS_SERVER_ROOTS.to_vec() };
-		Arc::new(ClientConfig::builder().with_root_certificates(roots).with_no_client_auth())
-	}))
 }
 
 #[cfg(test)]

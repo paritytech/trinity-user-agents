@@ -102,9 +102,11 @@ pub mod latest {
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
 		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, FundingDirection, FundingFailure, GenericError,
-		HorizontalAlignment, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
-		HostAccountGetError, HostAccountListRingVrfKeysRequest,
+		Dimensions, Effect, EffectProps, FundingAssignment, FundingCancelAnswer,
+		FundingCancelDecision, FundingDirection, FundingFailure, FundingFrameOutcome,
+		FundingFrameTarget, FundingInboundUpdate, FundingOutboundUpdate, FundingUpdate,
+		GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
+		HostAccountGetAliasRequest, HostAccountGetError, HostAccountListRingVrfKeysRequest,
 		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
 		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
 		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
@@ -308,6 +310,7 @@ pub mod latest {
 	/// Failure watching a funding session.
 	pub type HostFundingStatusSubscribeError =
 		LatestOf<versioned::funding::HostFundingStatusSubscribeError>;
+
 	/// Payment balance subscription request.
 	pub type HostPaymentBalanceSubscribeRequest =
 		LatestOf<versioned::payment::HostPaymentBalanceSubscribeRequest>;
@@ -317,6 +320,20 @@ pub mod latest {
 	/// Payment balance subscription failure.
 	pub type HostPaymentBalanceSubscribeError =
 		LatestOf<versioned::payment::HostPaymentBalanceSubscribeError>;
+	/// A provider's progress report.
+	pub type HostFundingReportRequest =
+		LatestOf<versioned::funding_provider::HostFundingReportRequest>;
+	/// Failure reporting progress.
+	pub type HostFundingReportError = LatestOf<versioned::funding_provider::HostFundingReportError>;
+	/// Request to show a provider screen.
+	pub type HostFundingPresentFrameRequest =
+		LatestOf<versioned::funding_provider::HostFundingPresentFrameRequest>;
+	/// How a provider screen closed.
+	pub type HostFundingPresentFrameResponse =
+		LatestOf<versioned::funding_provider::HostFundingPresentFrameResponse>;
+	/// Failure showing a provider screen.
+	pub type HostFundingPresentFrameError =
+		LatestOf<versioned::funding_provider::HostFundingPresentFrameError>;
 	/// Payment request.
 	pub type HostPaymentRequest = LatestOf<versioned::payment::HostPaymentRequest>;
 	/// Payment request failure.
@@ -929,6 +946,8 @@ pub use host_logic::session::{
 };
 #[cfg(feature = "runtime")]
 pub use host_logic::worker::{WorkerLedger, WorkerTransition};
+#[cfg(feature = "runtime")]
+pub use host_rpc_client::HostRpcClient;
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{
