@@ -1,6 +1,7 @@
 import UserNotifications
 import SDKLogger
 import IssueMonitoring
+import Keystore_iOS
 
 protocol UserNotificationServicing {
     func notificationAccessStatus() async -> NotificationAccessStatus
@@ -117,7 +118,7 @@ final class UserNotificationService: NSObject {
     private var canHandlePushNotifications: Bool = false
     private let logger: LoggerProtocol
     private let recorder: any HostEventRecording
-    private let defaults: UserDefaults
+    private let settings: SettingsManagerProtocol
     private let origin: HostEventOrigin
     private let monotonicMilliseconds: @Sendable () -> Int
     private let isReporting: Bool
@@ -127,14 +128,14 @@ final class UserNotificationService: NSObject {
     init(
         logger: LoggerProtocol = Logger.shared,
         recorder: any HostEventRecording = IssueMonitoringFactory.createHostEventRecorder(),
-        defaults: UserDefaults = .standard,
+        settings: SettingsManagerProtocol = SettingsManager.shared,
         origin: HostEventOrigin = .current,
         monotonicMilliseconds: @escaping @Sendable () -> Int = { HostEventClock.monotonicMilliseconds() },
         isReporting: Bool = IssueMonitoringFactory.isReportingSupported
     ) {
         self.logger = logger
         self.recorder = recorder
-        self.defaults = defaults
+        self.settings = settings
         self.origin = origin
         self.monotonicMilliseconds = monotonicMilliseconds
         self.isReporting = isReporting
@@ -172,37 +173,28 @@ final class UserNotificationService: NSObject {
 }
 
 private extension UserNotificationService {
-    static let lastScanKey = "productNotifications.lastDeliveredScan"
-    static let firstScanLookBack: TimeInterval = 24 * 60 * 60
-
     /// Reports product notifications that arrived while the app was not in the foreground.
     func reportNotificationsSeenSinceLastLaunch() {
         guard isReporting else {
             return
         }
         let center = center
-        let defaults = defaults
+        let settings = settings
         Task {
-            let delivered = await center.deliveredNotifications()
             let now = Date()
-            let scanFrom = defaults.object(forKey: Self.lastScanKey) as? Date
-                ?? now.addingTimeInterval(-Self.firstScanLookBack)
-            defaults.set(now, forKey: Self.lastScanKey)
+            let delivered = await center.deliveredNotifications()
+            let scanKey = SettingsKey.productNotificationsScannedThrough.rawValue
+            let scannedThrough = settings.anyValue(for: scanKey) as? Date
+            settings.set(anyValue: now, for: scanKey)
 
-            for notification in delivered where notification.date > scanFrom {
+            for notification in delivered where ProductNotificationEvent.isNewSinceLastScan(
+                deliveredAt: notification.date,
+                scannedThrough: scannedThrough,
+                now: now
+            ) {
                 record(notification, step: .shown, seenVia: .nextLaunch)
             }
         }
-    }
-
-    /// A notification shown in the foreground stays in Notification Center; this keeps the next launch's scan from
-    /// reporting it again.
-    func markScannedThrough(_ date: Date) {
-        guard isReporting else {
-            return
-        }
-        let scannedThrough = defaults.object(forKey: Self.lastScanKey) as? Date ?? .distantPast
-        defaults.set(max(scannedThrough, date), forKey: Self.lastScanKey)
     }
 
     func record(
@@ -323,9 +315,10 @@ extension UserNotificationService: UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        record(notification, step: .shown, seenVia: .foreground)
-        markScannedThrough(notification.date)
         let presentationOptions = foregroundPresentationDecider?.presentationOptions(for: notification) ?? []
+        if !presentationOptions.isEmpty {
+            record(notification, step: .shown, seenVia: .foreground)
+        }
         completionHandler(presentationOptions)
     }
 
