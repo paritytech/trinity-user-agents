@@ -30,7 +30,7 @@ use crate::{
 };
 
 /// The version of the envelope this host reads and writes.
-const ENVELOPE_VERSION: u8 = 0;
+pub const ENVELOPE_VERSION: u8 = 0;
 
 /// Domain of the topic a one-time payment is published under.
 const ONE_TIME_TOPIC_DOMAIN: &[u8] = b"nft-purse/payment-channel";
@@ -72,10 +72,13 @@ pub enum PaymentListenError {
 
 /// The plaintext of an envelope.
 #[derive(Encode, Decode)]
-struct EnvelopeContents {
-	version: u8,
-	topic: StatementTopic,
-	cheque: NftPurseCheque,
+pub struct EnvelopeContents {
+	/// [`ENVELOPE_VERSION`] for an envelope this host reads.
+	pub version: u8,
+	/// The topic the sender published the envelope under.
+	pub topic: StatementTopic,
+	/// The cheque the envelope carries.
+	pub cheque: NftPurseCheque,
 }
 
 /// What a listen accepts: cheques for `recipient` published under `topic`,

@@ -95,8 +95,8 @@ struct PublishedPocketCardsTests {
     /// as long as it is on screen, and never draws.
     @Test
     func refusesAProductWhoseManifestCannotBeRead() async throws {
-        let cards = PublishedPocketCards(products: StubProductResolver(
-            alwaysFailing: ProductResolutionError.malformedManifest(try ProductId("game.paseo"))
+        let cards = try PublishedPocketCards(products: StubProductResolver(
+            alwaysFailing: ProductResolutionError.malformedManifest(ProductId("game.paseo"))
         ))
 
         await #expect(throws: PocketPublishError.unreadableProduct) {

@@ -31,8 +31,14 @@ final class PGASSlotAllocatorTests: XCTestCase {
             operationManager: OperationManager(operationQueue: operationQueue)
         )
 
-        let liteVrfManager = try BandersnatchKeyManager.litePerson(for: "dot", entropyManager: setupResult.entropyManager)
-        let fullVrfManager = try BandersnatchKeyManager.fullPerson(for: "dot", entropyManager: setupResult.entropyManager)
+        let liteVrfManager = try BandersnatchKeyManager.litePerson(
+            for: "dot",
+            entropyManager: setupResult.entropyManager
+        )
+        let fullVrfManager = try BandersnatchKeyManager.fullPerson(
+            for: "dot",
+            entropyManager: setupResult.entropyManager
+        )
 
         let keyResolver = BandersnatchKeyResolver(
             liteKeyManager: liteVrfManager,
@@ -89,7 +95,8 @@ final class PGASSlotAllocatorTests: XCTestCase {
         )
 
         let accountHolder = ProductAccountHolder(entropyManager: setupResult.entropyManager)
-        let accountId = try accountHolder.deriveStatementStoreAccount(for: try ProductId("test-product1.dot")).getRawPublicKey()
+        let accountId = try accountHolder.deriveStatementStoreAccount(for: ProductId("test-product1.dot"))
+            .getRawPublicKey()
 
         try await allocator.assignSlot(accountId: accountId, priority: .normal)
     }

@@ -120,6 +120,11 @@ normal onboarding automatically. There is no state migration. Pair devices
 again; sign out first on any paired host that still uses an old identity.
 Existing `.dot` personhood membership does not transfer to the new keys.
 
+Each signing-host session keeps a core database, `core.sqlite3`. When a newer
+truapi-host wrote that file, or it is damaged, the signing host stops and prints
+the `rm -f` command that deletes it. Running that command starts the session
+with an empty core database and keeps its accounts and pairings.
+
 ### Building from source
 
 A source build resolves the product-script runner from the checkout, so it also

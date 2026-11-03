@@ -153,7 +153,7 @@ private extension SPARustRuntimeInteractor {
         case .dotNs:
             return try await contentLoader.open(
                 domain,
-                kind: configuration.executable,
+                kind: .app,
                 policy: .untilCancelled,
                 onPhase: phaseHandler()
             ).resolved
@@ -254,7 +254,7 @@ extension SPARustRuntimeInteractor: SPAProductReloading {
 
 private extension SPARustRuntimeInteractor {
     var servedContentId: ProductId? {
-        try? resolvedProduct?.contentId(for: configuration.executable)
+        try? resolvedProduct?.contentId(for: .app)
     }
 
     func phaseHandler() -> ProductLoadPhaseHandler {
