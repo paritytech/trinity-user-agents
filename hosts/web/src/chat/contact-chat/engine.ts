@@ -75,6 +75,13 @@ export const DEFAULT_PURPOSE = "Wants to chat with you in Contact Chat.";
 /** What a connected conversation's room says under its name. */
 export const CONNECTED_SUBTITLE = "Connected · messages are not encrypted";
 
+/**
+ * The line earlier versions added to a conversation as a system message when
+ * it connected. A stored copy stays in the record and is not shown.
+ */
+const RETIRED_NOTICE =
+  "Messages here are not encrypted: anyone who reads the Statement Store can read them. The network keeps only each side's last 20 messages, for a short time; this app keeps your history.";
+
 /** The id the one other person of a conversation has, in its rooms. */
 export const PEER = "peer";
 
@@ -345,18 +352,23 @@ export class ContactChat implements ConversationEngine {
   }
 
   messages(conversationId: string): ConversationMessage[] {
-    return (this.find(conversationId)?.messages ?? []).map((message) => ({
-      id: message.id,
-      author:
-        message.author === "self"
-          ? { kind: "self" }
-          : message.author === "peer"
-            ? { kind: "participant", id: PEER }
-            : { kind: "system" },
-      text: message.text,
-      at: message.at,
-      state: message.state,
-    }));
+    return (this.find(conversationId)?.messages ?? [])
+      .filter(
+        (message) =>
+          message.author !== "system" || message.text !== RETIRED_NOTICE,
+      )
+      .map((message) => ({
+        id: message.id,
+        author:
+          message.author === "self"
+            ? { kind: "self" }
+            : message.author === "peer"
+              ? { kind: "participant", id: PEER }
+              : { kind: "system" },
+        text: message.text,
+        at: message.at,
+        state: message.state,
+      }));
   }
 
   /**
@@ -787,11 +799,10 @@ export class ContactChat implements ConversationEngine {
     this.connected(conversation, "You accepted the chat request");
   }
 
-  /** `conversation` is connected: say so, and that its messages are not encrypted. */
+  /** `conversation` is connected: say so. */
   private connected(conversation: StoredConversation, line: string): void {
     conversation.status = "connected";
     this.system(conversation, line);
-    this.system(conversation, this.deps.protocol.notice);
     this.save();
     this.follow(conversation);
   }

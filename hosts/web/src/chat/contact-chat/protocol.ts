@@ -61,8 +61,6 @@ export interface SessionRoutes {
 export interface ChatProtocol<Pending = unknown, Session = unknown> {
   /** The protocol's name and version, as the developer tools show it. */
   readonly name: string;
-  /** What a connected conversation tells its user about this protocol: what others can read and what the network keeps. */
-  readonly notice: string;
   /**
    * The most a post carries, when each post publishes a batch of recent
    * messages. The developer tools show it, with the last post's batch, as a

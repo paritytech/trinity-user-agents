@@ -106,7 +106,6 @@ const encodeWindow = (messages: ChatText[]) =>
 export const simpleText: ChatProtocol<Pending, Session> = {
   name: VERSION,
   window: { messages: WINDOW_MESSAGES, bytes: WINDOW_MAX_BYTES },
-  notice: `Messages here are not encrypted: anyone who reads the Statement Store can read them. The network keeps only each side's last ${WINDOW_MESSAGES} messages, for a short time; this app keeps your history.`,
 
   invite(account, random) {
     const challenge = toHex(random(32));

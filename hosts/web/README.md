@@ -701,8 +701,8 @@ agreed API.
     loses the older ones. A message still sending when the worker stopped shows failed after a reload, with Retry.
   - **Not encrypted.** `simple-text/1` has no encryption of its own: anyone who reads the Statement Store reads the
     text, the topics, channels, both conversation accounts, sizes and times, and can link the posts of one account. A
-    connected room says "Connected · messages are not encrypted", and its first lines say so and say what the network
-    keeps. Only the setup is sealed and authenticated, by the hosts.
+    connected room says "Connected · messages are not encrypted" under its name; the Send and Accept prompts say it too.
+    Only the setup is sealed and authenticated, by the hosts.
   - **Conversation accounts and their allowance** (draft). A conversation account is Contact Chat's own product account
     at a random raw derivation index (`Raw`, 32 bytes) that the worker makes when it invites or accepts and keeps in its
     storage. The worker asks the core for its public key (`account.getAccount`) and signs each post with
