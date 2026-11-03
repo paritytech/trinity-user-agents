@@ -1841,6 +1841,14 @@ The light client drops PGAS claims on Asset Hub, whose nodes return an
 incomplete proof for the check smoldot runs before broadcasting.
 `pgas-check --submit` refuses to run on it.
 
+A statement submitted through the light client is accepted once a gossip peer
+receives it. smoldot checks only that it decodes, has not expired, fits the size
+limit and carries a proof. The allowance, the account's statement quota and the
+proof itself need the statement store and chain state, which a light client does
+not have, and the gossip protocol carries no answer from the peer. So a
+statement a full node would refuse, such as one rejected as `accountFull`, can
+still report success.
+
 `wss://` certificates are verified with the root certificates built into the
 binary, on both backends, not with certificate authorities added to the
 operating system.
