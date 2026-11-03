@@ -33,8 +33,14 @@ final class BulletinSlotAllocatorTests: XCTestCase {
             operationManager: OperationManager(operationQueue: operationQueue)
         )
 
-        let liteVrfManager = try BandersnatchKeyManager.litePerson(for: "dot", entropyManager: setupResult.entropyManager)
-        let fullVrfManager = try BandersnatchKeyManager.fullPerson(for: "dot", entropyManager: setupResult.entropyManager)
+        let liteVrfManager = try BandersnatchKeyManager.litePerson(
+            for: "dot",
+            entropyManager: setupResult.entropyManager
+        )
+        let fullVrfManager = try BandersnatchKeyManager.fullPerson(
+            for: "dot",
+            entropyManager: setupResult.entropyManager
+        )
 
         let keyResolver = BandersnatchKeyResolver(
             liteKeyManager: liteVrfManager,
@@ -95,7 +101,10 @@ final class BulletinSlotAllocatorTests: XCTestCase {
         )
 
         let holder = ProductAccountHolder(entropyManager: setupResult.entropyManager)
-        let accountId = try holder.deriveAccount(ProductAccountId(productId: try! ProductId("browse.dot"), derivationIndex: .index(0)))
+        let accountId = try holder.deriveAccount(ProductAccountId(
+            productId: try! ProductId("browse.dot"),
+            derivationIndex: .index(0)
+        ))
 
         try await allocator.assignSlot(accountId: accountId, priority: .normal)
     }

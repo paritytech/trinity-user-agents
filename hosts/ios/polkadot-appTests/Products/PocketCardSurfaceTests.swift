@@ -1,33 +1,33 @@
 import Products
 import Testing
-import TrUAPIHost
 import UIKit
 @testable import polkadot_app
 
-/// A card's page asks for the face above it to move, and the app keeps that
-/// page loaded after its card is closed. Only a card the user can see may
-/// move, and a page asking from behind a closed card must hear so at once
-/// rather than wait on a screen that is gone.
+/// A card's product outlives the screens that show it, and a card pressed
+/// again while its product is on display reloads that product rather than
+/// building a second screen. The surface must therefore name the screen the
+/// user sees, not one built and never shown, and stop naming it once it
+/// starts to close.
 @MainActor
 struct PocketCardSurfaceTests {
     /// Walks one card through its life. A screen built but never shown must
     /// not take the surface from the one the user sees, and a card that has
-    /// started to close must not move as it goes.
+    /// been popped is no longer on display.
     @Test
-    func answersForTheCardOnlyWhileItIsOnDisplay() {
+    func isOnDisplayOnlyWhileTheClaimedScreenIs() {
         let surface = PocketCardSurface()
         let neverShown = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
         let navigation = UINavigationController(rootViewController: UIViewController())
 
         surface.claim(neverShown)
-        let beforeShown = surface.setFaceShown(false)
+        let beforeShown = surface.isOnDisplay
         navigation.pushViewController(screen, animated: false)
         surface.claim(screen)
         surface.claim(neverShown)
-        let whileShown = surface.setFaceShown(false)
+        let whileShown = surface.isOnDisplay
         navigation.popViewController(animated: false)
 
-        #expect([beforeShown, whileShown, surface.setFaceShown(false)] == [.notPresented, .applied, .notPresented])
+        #expect([beforeShown, whileShown, surface.isOnDisplay] == [false, true, false])
     }
 }

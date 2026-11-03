@@ -137,8 +137,8 @@ private struct OpenScanner {
         self.answers = answers
         let window = try makeTestWindow(root: UIViewController())
         let wireframe = StubWireframe()
-        presenter = ProductScanPresenter(
-            productId: try ProductId("greenmarket.dot"),
+        presenter = try ProductScanPresenter(
+            productId: ProductId("greenmarket.dot"),
             request: HostScannerScanRequest(formats: [.qr], prefix: "https://greenmarket.example/r/", hint: nil),
             wireframe: wireframe,
             qrScanService: StubCaptureService(),
