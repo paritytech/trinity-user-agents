@@ -1,5 +1,6 @@
 import UserNotifications
 import SDKLogger
+import IssueMonitoring
 
 protocol UserNotificationServicing {
     func notificationAccessStatus() async -> NotificationAccessStatus
@@ -115,16 +116,31 @@ final class UserNotificationService: NSObject {
     private var pendingResponses: [UNNotificationResponse] = []
     private var canHandlePushNotifications: Bool = false
     private let logger: LoggerProtocol
+    private let recorder: any HostEventRecording
+    private let defaults: UserDefaults
+    private let origin: HostEventOrigin
+    private let monotonicMilliseconds: @Sendable () -> Int
 
     let center: UNUserNotificationCenter = .current()
 
-    init(logger: LoggerProtocol = Logger.shared) {
+    init(
+        logger: LoggerProtocol = Logger.shared,
+        recorder: any HostEventRecording = IssueMonitoringFactory.createHostEventRecorder(),
+        defaults: UserDefaults = .standard,
+        origin: HostEventOrigin = .current,
+        monotonicMilliseconds: @escaping @Sendable () -> Int = { HostEventClock.monotonicMilliseconds() }
+    ) {
         self.logger = logger
+        self.recorder = recorder
+        self.defaults = defaults
+        self.origin = origin
+        self.monotonicMilliseconds = monotonicMilliseconds
         super.init()
     }
 
     func startGatheringNotifications() {
         center.delegate = self
+        reportNotificationsSeenSinceLastLaunch()
     }
 
     func setupHandlers(
@@ -153,6 +169,49 @@ final class UserNotificationService: NSObject {
 }
 
 private extension UserNotificationService {
+    static let lastScanKey = "productNotifications.lastDeliveredScan"
+    static let firstScanLookBack: TimeInterval = 24 * 60 * 60
+
+    /// Reports product notifications that arrived while the app was not in the foreground.
+    func reportNotificationsSeenSinceLastLaunch() {
+        let center = center
+        let defaults = defaults
+        Task {
+            let delivered = await center.deliveredNotifications()
+            let now = Date()
+            let scanFrom = defaults.object(forKey: Self.lastScanKey) as? Date
+                ?? now.addingTimeInterval(-Self.firstScanLookBack)
+            defaults.set(now, forKey: Self.lastScanKey)
+
+            for notification in delivered where notification.date > scanFrom {
+                record(notification, step: .shown, seenVia: .nextLaunch)
+            }
+        }
+    }
+
+    func record(
+        _ notification: UNNotification,
+        step: ProductNotificationEvent.Step,
+        seenVia: ProductNotificationEvent.SeenVia? = nil
+    ) {
+        guard let event = ProductNotificationEvent(
+            identifier: notification.request.identifier,
+            userInfo: notification.request.content.userInfo,
+            deliveredAt: notification.date
+        ) else {
+            return
+        }
+
+        recorder.record(
+            event.hostEvent(
+                step: step,
+                seenVia: seenVia,
+                origin: origin,
+                monotonicMilliseconds: monotonicMilliseconds()
+            )
+        )
+    }
+
     func handlePendingNotification(_ pushTapHandler: PushNotificationTapHandling) {
         let responsesToReplay = pendingResponses
         pendingResponses.removeAll()
@@ -248,6 +307,7 @@ extension UserNotificationService: UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
+        record(notification, step: .shown, seenVia: .foreground)
         let presentationOptions = foregroundPresentationDecider?.presentationOptions(for: notification) ?? []
         completionHandler(presentationOptions)
     }
@@ -257,6 +317,7 @@ extension UserNotificationService: UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
+        record(response.notification, step: .tapped)
         guard canHandlePushNotifications, let pushTapHandler else {
             pendingResponses.append(response)
             completionHandler()
