@@ -4,6 +4,7 @@ import type {
 } from "@parity/truapi-host/web";
 import { bytesToHex, type HexString } from "@parity/truapi/scale";
 import { ask } from "../app/prompt.js";
+import type { PromptField } from "../app/reviews.js";
 import type { ChatV2ProviderOptions } from "../chat/draft/provider.js";
 import {
   CONTACT_CHAT_PATH,
@@ -430,6 +431,8 @@ function conversationAllowance(
 
 /** What a wallet's Contact Chat spends of the person's allowance, and what it exposes, for the host's prompts. */
 export interface ChatCosts {
+  /** The one muted line both prompts show, which opens the breakdown. */
+  summary: string;
   /** What sending a request spends. */
   request: string;
   /** What replying to a request spends. */
@@ -442,10 +445,9 @@ export interface ChatCosts {
 
 /** The chat's account and its allowance, the same in every delivery that gives one. */
 const CHAT_ACCOUNT_COST =
-  "On the first day it posts, and each later day it posts, the host claims one of your daily Statement Store slots for this chat's own account, with your personhood. The account is not your identity.";
+  "1 Statement Store slot each day you send, for this chat's own account.";
 
-const PLAINTEXT =
-  "Not encrypted. Anyone who reads the network's Statement Store can read them.";
+const CANCEL = "Cancel it under Sent in your Inbox.";
 
 /** What `mode` spends and exposes, or null when it spends nothing. */
 export function chatCosts(mode: WalletDelivery): ChatCosts | null {
@@ -454,30 +456,48 @@ export function chatCosts(mode: WalletDelivery): ChatCosts | null {
       return null;
     case "local-validate":
       return {
+        summary: "Uses chat slots, only validated",
         request: "Nothing: the request stays in this browser.",
         reply: "Nothing: the reply stays in this browser.",
-        chat: `${CHAT_ACCOUNT_COST} This tab only validates that claim: nothing is submitted, and no message is sent.`,
+        chat: `${CHAT_ACCOUNT_COST} Only validated: nothing is submitted or sent.`,
         messages: null,
       };
     case "validate":
       return {
-        request:
-          "One of your daily notification slots, validated only: nothing is submitted.",
-        reply:
-          "One of your daily notification slots, validated only: nothing is submitted.",
-        chat: `${CHAT_ACCOUNT_COST} This tab only validates that claim: nothing is submitted.`,
+        summary: "Uses daily slots, only validated",
+        request: "1 notification slot, only validated: nothing is submitted.",
+        reply: "1 notification slot, only validated: nothing is submitted.",
+        chat: `${CHAT_ACCOUNT_COST} Only validated: nothing is submitted.`,
         messages: null,
       };
     case "network":
       return {
+        summary: "Uses daily slots · Messages are public",
         request:
-          "One of your daily notification slots, claimed with your personhood, and one sealed statement on the network. While it waits, this host posts it again on each later day it runs, with another slot.",
+          "1 notification slot now, and 1 more each day it is pending while this host is open.",
         reply:
-          "One of your daily notification slots, claimed with your personhood, and one sealed statement on the network. If their request arrives again on a later day, the reply is posted again, with another slot.",
+          "1 notification slot now, and 1 more on any later day their request arrives again.",
         chat: CHAT_ACCOUNT_COST,
-        messages: PLAINTEXT,
+        messages: "Not encrypted: anyone can read them.",
       };
   }
+}
+
+/** The chat's costs, under the request's or reply's own line, folded under the summary. */
+function costDetails(
+  first: PromptField,
+  costs: ChatCosts,
+): { summary: string; fields: PromptField[] } {
+  return {
+    summary: costs.summary,
+    fields: [
+      first,
+      { label: "Chat", value: costs.chat },
+      ...(costs.messages === null
+        ? []
+        : [{ label: "Messages", value: costs.messages }]),
+    ],
+  };
 }
 
 /** The host's question before a product's invitation leaves. */
@@ -491,20 +511,17 @@ export function confirmSend(
     fields: [
       { label: "To", value: prompt.to.name },
       { label: "Message", value: prompt.purpose },
-      {
-        label: "Waits",
-        value: "Until they accept, or you cancel it in your Inbox",
-      },
-      ...(costs === null
-        ? []
-        : [
-            { label: "Sending uses", value: costs.request },
-            { label: "Chatting uses", value: costs.chat },
-            ...(costs.messages === null
-              ? []
-              : [{ label: "Chat messages", value: costs.messages }]),
-          ]),
     ],
+    details:
+      costs === null
+        ? {
+            summary: "Details",
+            fields: [{ label: "Invitation", value: CANCEL }],
+          }
+        : costDetails(
+            { label: "Invitation", value: `${costs.request} ${CANCEL}` },
+            costs,
+          ),
     choices: [
       { label: "Cancel", value: false, tone: "cancel" },
       { label: "Send", value: true, tone: "primary" },
@@ -524,12 +541,8 @@ function confirmAccept(
     fields: [
       { label: "From", value: prompt.from.name },
       { label: "Message", value: prompt.purpose },
-      { label: "Replying uses", value: costs.reply },
-      { label: "Chatting uses", value: costs.chat },
-      ...(costs.messages === null
-        ? []
-        : [{ label: "Chat messages", value: costs.messages }]),
     ],
+    details: costDetails({ label: "Reply", value: costs.reply }, costs),
     choices: [
       { label: "Cancel", value: false, tone: "cancel" },
       { label: "Accept", value: true, tone: "primary" },

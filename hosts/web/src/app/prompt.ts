@@ -32,6 +32,8 @@ export interface PromptRequest<T> {
   from?: string;
   subtitle?: string;
   fields: PromptField[];
+  /** More fields, folded below `fields` under a one-line summary until the user opens them. */
+  details?: { summary: string; fields: PromptField[] };
   choices: PromptChoice<T>[];
   /** The answer when the prompt is dismissed without choosing, as with Escape. */
   dismissed: T;
@@ -271,6 +273,16 @@ function searchField(
   return box;
 }
 
+function fieldList(fields: PromptField[]): HTMLElement {
+  const list = el("dl", "prompt-fields");
+  for (const field of fields) {
+    const value = el(field.mono ? "pre" : "dd", "", field.value);
+    if (field.warning) value.classList.add("warning");
+    list.append(el("dt", "", field.label), value);
+  }
+  return list;
+}
+
 function show<T>(request: PromptRequest<T>): Promise<T> {
   const dialog = el("dialog", "prompt");
   const scrim = el("div", "prompt-scrim");
@@ -295,14 +307,14 @@ function show<T>(request: PromptRequest<T>): Promise<T> {
   if (request.subtitle)
     sheet.append(el("p", "prompt-subtitle", request.subtitle));
 
-  if (request.fields.length > 0) {
-    const fields = el("dl", "prompt-fields");
-    for (const field of request.fields) {
-      const value = el(field.mono ? "pre" : "dd", "", field.value);
-      if (field.warning) value.classList.add("warning");
-      fields.append(el("dt", "", field.label), value);
-    }
-    sheet.append(fields);
+  if (request.fields.length > 0) sheet.append(fieldList(request.fields));
+  if (request.details !== undefined) {
+    const details = el("details", "prompt-details");
+    details.append(
+      el("summary", "", request.details.summary),
+      fieldList(request.details.fields),
+    );
+    sheet.append(details);
   }
 
   return new Promise<T>((resolve) => {

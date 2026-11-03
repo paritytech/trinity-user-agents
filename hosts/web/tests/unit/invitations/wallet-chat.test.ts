@@ -124,11 +124,11 @@ describe("a wallet's Contact Chat", () => {
   // The prompts are the only place a user learns what a request spends and who reads a chat.
   test("on the network, says what sending and replying spend, that a waiting request is posted again, and that messages are readable", () => {
     const costs = chatCosts("network")!;
-    expect(costs.request).toContain("posts it again on each later day");
-    expect(costs.reply).toContain("posted again");
-    expect(costs.messages).toBe(
-      "Not encrypted. Anyone who reads the network's Statement Store can read them.",
-    );
+    expect(costs.summary).toBe("Uses daily slots · Messages are public");
+    expect(costs.request).toContain("1 more each day it is pending");
+    expect(costs.reply).toContain("their request arrives again");
+    expect(costs.chat).toContain("Statement Store slot each day you send");
+    expect(costs.messages).toBe("Not encrypted: anyone can read them.");
     expect([
       chatCosts("validate")?.messages,
       chatCosts("local-validate")?.messages,

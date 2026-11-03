@@ -598,11 +598,12 @@ network's Statement Store can read. The import form and both prompts say so.
   again the wallet's own pending requests, which this browser keeps: another browser neither sees nor posts them.
   Nothing new leaves the host without the user: a request goes only after **Send invitation**, a reply only after
   **Accept chat request**.
-- **What it costs.** Both prompts say it. Sending or replying claims one of the person's daily notification slots with
-  their personhood and posts one sealed statement. A pending request is posted again on each later UTC day this host
-  runs, with another slot, until it is completed or cancelled under **Sent** in the Inbox; a reply is posted again on a
-  later day when its request arrives again. Each conversation claims one daily Statement Store slot for its own account
-  on each day it posts. A wallet with no personhood, or no slot left, cannot post: the request pauses and says why.
+- **What it costs.** Both prompts say it: one quiet line that it uses daily slots and that messages are public, which
+  opens the breakdown. Sending or replying claims one of the person's daily notification slots with their personhood and
+  posts one sealed statement. A pending request is posted again on each later UTC day this host runs, with another slot,
+  until it is completed or cancelled under **Sent** in the Inbox; a reply is posted again on a later day when its
+  request arrives again. Each conversation claims one daily Statement Store slot for its own account on each day it
+  posts. A wallet with no personhood, or no slot left, cannot post: the request pauses and says why.
 - **Who can use it.** A wallet whose identity account has a chat key on chain (registered through the Polkadot app or
   the built-in test accounts' registrations) and personhood for the slots. The Substrate development phrase is refused.
   The test accounts' phrases are public, so anyone can act as them, read their requests and use their slots.
@@ -721,9 +722,10 @@ agreed API.
       a later day it posts. Each conversation that posts takes one of the person's daily slots (50 for a full person, 10
       for a lite one, read 2026-10-30).
     - Prompts: with any delivery that gives an allowance, Send invitation and the host's Accept chat request prompt
-      (asked when the user chooses Accept, before Contact Chat hears of it) say what sending or replying uses of the
-      person's daily notification slots, and that chatting claims one daily Statement Store slot for the chat's account
-      on each day it posts. Cancel in the Accept prompt hands Contact Chat nothing and leaves the request pending.
+      (asked when the user chooses Accept, before Contact Chat hears of it) say in one line that they use daily slots,
+      and that line opens what sending or replying uses of the person's daily notification slots, and that chatting
+      claims one daily Statement Store slot for the chat's account on each day it posts. Cancel in the Accept prompt
+      hands Contact Chat nothing and leaves the request pending.
     - "Validate claims only" asks the runtime whether it would accept the claim and submits nothing, so a message there
       fails and says which slot it would take. "This browser, validate chat claims only" keeps requests between tabs of
       this browser, like the local delivery, but validates each chat account's claim in the same way; its tab, too,

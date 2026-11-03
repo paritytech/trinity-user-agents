@@ -2171,6 +2171,38 @@ body[data-loading="on"] .stage-empty {
   color: var(--sheet-warning);
 }
 
+.prompt-details {
+  margin-top: 8px;
+}
+
+.prompt-details > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--sheet-muted);
+  font-size: 13px;
+}
+
+.prompt-details > summary:hover,
+.prompt-details[open] > summary {
+  color: var(--sheet-text);
+}
+
+.prompt-details > summary::after {
+  content: "▾";
+  margin-left: 6px;
+}
+
+.prompt-details[open] > summary::after {
+  content: "▴";
+}
+
+.prompt-details > .prompt-fields {
+  margin-top: 0;
+}
+
 /* A field that filters the rows below it, like the app's "Type username" field. */
 .prompt-search {
   margin-top: 16px;
