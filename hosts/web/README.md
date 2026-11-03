@@ -1127,15 +1127,17 @@ which has no statement store, and the view says so in a line of its own. What fo
 - **Accounts, Topics, Timeline.** The Statements view's three tabs. It names no chat protocol: an account's roles say
   only which product reported or claimed it, and product reports stay out of its timeline.
 - **Accounts.** Every account claimed for, reported or seen signing, one row each under **Account | Role | Owner |
-  Allocation | Grant | Observed**, in a few words: a short role (Product account, Setup notification, Chat sender, Chat
-  peer, Chat allowance, or Observed signer), with a **reported** tag when a product said it, unchecked, and `+n` for
-  more roles; whose it is, as this tab knows it (below); the latest slot claim (`Slot 4 · claimed`, `None seen`); the
-  grant as statements · size (`No grant` when the chain stores none, `Not read` before a read); and the latest observed
-  statements · size · time (`Not observed`). On a narrow dock each value is named under the account instead. **About
-  these columns**, closed, says once that a grant is not what is left and an observation is not what the network holds.
-  A row opens to the full facts: each role, each claim with its day and collection, the grant read's block, its channels
-  and the statements seen from it, each with when this tab first and last saw it. **Read grants** reads
-  `:statement_allowance:` for them at the newest finalized People block.
+  Allocation | Grant | Observed**, in a few words: what it is used for (Chat sender or Chat peer, with a **reported**
+  tag since a product said it, unchecked; Setup notification from the host; Product account when the core or the host
+  derived it for a product and no use is known; else Observed signer), and `+n` for more uses; whose it is, as this tab
+  knows it (below); the latest slot claim (`Slot 4 · claimed`, `Chat allowance` when only the host's allowance is known,
+  `None seen`); the grant as statements · size (`No grant` when the chain stores none, `Not read` before a read); and
+  the latest observed statements · size · time (`Not observed`). On a narrow dock each value is named under the account
+  instead. **About these columns**, closed, says once that a grant is not what is left and an observation is not what
+  the network holds. A row opens to the full facts: each use, how the core derived it (**Derived as**), each claim with
+  its day and collection and the host's chat **Allowance**, the grant read's block, its channels and the statements seen
+  from it, each with when this tab first and last saw it. **Read grants** reads `:statement_allowance:` for them at the
+  newest finalized People block.
 - **Owner.** A record of where the account came from in this tab, not a signature check. **This wallet**: the core or
   this host derived it from the signed-in wallet in this session: the core's claim of a product's account, the
   delivery's notification account for one of its posts, or a chat allowance. A notification claim alone, granted or

@@ -389,13 +389,21 @@ describe("the Statements and Chat views", () => {
         );
         expect(at("Refused here")).toBe("");
         expect(at("Peer refusals")).toMatch(/\| inspector not visible\s*why ‖/);
-        expect(account.filter((entry) => entry.startsWith("Role |"))).toEqual([
-          expect.stringContaining(
-            "contact-chat.test's account at Raw(0x0101…0101)",
+        // Role says what it is used for; how it was derived and what it may
+        // spend are details of their own.
+        expect(
+          account.filter((entry) =>
+            /^(Role|Derived as|Allowance) \|/.test(entry),
           ),
-          expect.stringContaining("allowed for request 0x4444…4444"),
+        ).toEqual([
           expect.stringContaining(
-            "| reported | reported contact-chat.test says it posts as this account",
+            "Role | reported | reported contact-chat.test says it posts as this account",
+          ),
+          expect.stringContaining(
+            "Derived as | core | core contact-chat.test's account at Raw(0x0101…0101)",
+          ),
+          expect.stringContaining(
+            "Allowance | host | host contact-chat.test · allowed for request 0x4444…4444",
           ),
         ]);
         // The list says each account in a few words under named columns;
@@ -405,7 +413,7 @@ describe("the Statements and Chat views", () => {
           '#statements-inspector .si-list-row[aria-pressed="true"]',
         );
         expect(await selected.locator(".si-cell").allTextContents()).toEqual([
-          "Product account +2",
+          "Chat sender reported",
           "This wallet",
           "Slot 4 · claimed",
           "2 · 500.0 KiB",
@@ -474,7 +482,7 @@ describe("the Statements and Chat views", () => {
         expect(await columnsAbout.getAttribute("open")).toBeNull();
         await columnsAbout.locator("summary").click();
         expect(await columnsAbout.locator("li").allInnerTexts()).toEqual([
-          "Role: what the host or core recorded. Reported: what a product said, unchecked.",
+          "Role: what it is used for. Chat sender and Chat peer are what a product reported, unchecked. Product account: derived for a product, use unknown.",
           "Owner: This wallet = the core or this host derived it from the signed-in wallet, this session. Unknown here may still be this wallet's, from another origin, browser or session. Both start again with each session and on Clear.",
           "Allocation: the latest daily slot claim this tab saw.",
           "Grant: statements · size the chain grants, read at a block. Not what is left.",
@@ -483,7 +491,7 @@ describe("the Statements and Chat views", () => {
         await columnsAbout.locator("summary").click();
         // A role a product reported, unchecked, is marked so.
         expect(await rows.locator(".si-role").allInnerTexts()).toEqual([
-          "Product account +2",
+          "Chat sender reported",
           "Chat peer reported",
           "Setup notification",
           "Observed signer",
@@ -724,6 +732,40 @@ describe("the Statements and Chat views", () => {
             .locator(".si-src")
             .innerText(),
         ).toBe("reported");
+        // An account the host allowed, with no use reported, is a product
+        // account: its allowance shows under Allocation, and no use is invented.
+        const allowed = "0x" + "f6".repeat(32);
+        await page.evaluate(
+          (account) =>
+            (
+              window as unknown as {
+                __ledger: { invitations(event: object): void };
+              }
+            ).__ledger.invitations({
+              type: "chat-account",
+              product: "other.test",
+              handle: "0x" + "66".repeat(16),
+              index: "0x" + "02".repeat(32),
+              outcome: "reused",
+              account,
+            }),
+          allowed,
+        );
+        await page.evaluate(
+          (account) => (window as unknown as ViewWindow).__reveal({ account }),
+          allowed,
+        );
+        const allowedRow = page.locator(
+          '#statements-inspector .si-list-row[aria-pressed="true"]',
+        );
+        await allowedRow.waitFor();
+        expect(await allowedRow.locator(".si-cell").allTextContents()).toEqual([
+          "Product account",
+          "This wallet",
+          "Chat allowance",
+          "Not read",
+          "Not observed",
+        ]);
         // An account no one recorded opens empty, and nothing is read for it.
         const unknown = "0x" + "e5".repeat(32);
         await page.evaluate(

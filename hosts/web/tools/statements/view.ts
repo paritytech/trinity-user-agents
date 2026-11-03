@@ -111,20 +111,44 @@ function roleText(role: Role): string {
   }
 }
 
-/** A role in a few words, for the accounts list; the detail says it in full. */
-function roleLabel(role: Role): string {
+/**
+ * The roles that say what an account is used for, in the order the accounts
+ * list prefers them. A product account claim and a chat allowance say how the
+ * account was derived and what it may spend, so they show under the account's
+ * details instead.
+ */
+const USES: readonly Role["kind"][] = [
+  "conversation-account",
+  "conversation-peer",
+  "notification-account",
+];
+
+/** `account`'s roles that say what it is used for, in {@link USES} order. */
+function usesOf(account: AccountRecord): Role[] {
+  return USES.flatMap((kind) =>
+    account.roles.filter((role) => role.kind === kind),
+  );
+}
+
+/** A use in a few words, for the accounts list; the detail says it in full. */
+function useLabel(role: Role): string {
   switch (role.kind) {
-    case "product-account":
-      return "Product account";
-    case "notification-account":
-      return "Setup notification";
     case "conversation-account":
       return "Chat sender";
     case "conversation-peer":
       return "Chat peer";
-    case "chat-allowance":
-      return "Chat allowance";
+    default:
+      return "Setup notification";
   }
+}
+
+/** The Role column for an account no use is known of: what derived it, else only seen. */
+function fallbackRole(account: AccountRecord): string {
+  return account.roles.some(
+    (role) => role.kind === "product-account" || role.kind === "chat-allowance",
+  )
+    ? "Product account"
+    : "Observed signer";
 }
 
 /** The accounts list's columns. */
@@ -132,7 +156,7 @@ const COLUMNS = ["Account", "Role", "Owner", "Allocation", "Grant", "Observed"];
 
 /** What each column of the accounts list says, and what it does not. */
 const COLUMNS_ABOUT = [
-  "Role: what the host or core recorded. Reported: what a product said, unchecked.",
+  "Role: what it is used for. Chat sender and Chat peer are what a product reported, unchecked. Product account: derived for a product, use unknown.",
   "Owner: This wallet = the core or this host derived it from the signed-in wallet, this session. Unknown here may still be this wallet's, from another origin, browser or session. Both start again with each session and on Clear.",
   "Allocation: the latest daily slot claim this tab saw.",
   "Grant: statements · size the chain grants, read at a block. Not what is left.",
@@ -207,7 +231,10 @@ function claimLine(claim: AccountRecord["claims"][number]): string {
 /** An account's latest claim, in a few words; the detail has its day, collection and time. */
 function allocationLabel(account: AccountRecord): string {
   const claim = account.claims.at(-1);
-  if (claim === undefined) return "None seen";
+  if (claim === undefined)
+    return account.roles.some((role) => role.kind === "chat-allowance")
+      ? "Chat allowance"
+      : "None seen";
   const slot = claim.seq === undefined ? "Slot" : `Slot ${claim.seq}`;
   switch (claim.outcome) {
     case "registered":
@@ -679,10 +706,12 @@ export function mountStatementsView(
         "aria-pressed",
         String(account.account === selectedAccount),
       );
-      const [first, ...others] = account.roles;
+      const [first, ...others] = usesOf(account);
       const role = el("span", "si-cell si-role");
       role.dataset.label = COLUMNS[1];
-      role.append(first === undefined ? "Observed signer" : roleLabel(first));
+      role.append(
+        first === undefined ? fallbackRole(account) : useLabel(first),
+      );
       if (first !== undefined && roleSource(first) === "product")
         role.append(" ", tag("product"));
       if (others.length > 0)
@@ -743,8 +772,11 @@ export function mountStatementsView(
     const facts = el("dl", "si-facts");
     facts.append(...fact("Account", account.account, "inspector"));
     facts.append(...ownerFact(ownership(account)));
-    for (const role of account.roles)
+    for (const role of usesOf(account))
       facts.append(...fact("Role", roleText(role), roleSource(role)));
+    for (const role of account.roles)
+      if (role.kind === "product-account")
+        facts.append(...fact("Derived as", roleText(role), "core"));
     for (const claim of account.claims)
       facts.append(
         ...fact(
@@ -756,6 +788,16 @@ export function mountStatementsView(
             : `${claim.product ?? "The product"}'s own account at raw derivation index ${claim.index}, derived by the core. The slot is an allowance for one UTC day, not the person's registration.`,
         ),
       );
+    for (const role of account.roles)
+      if (role.kind === "chat-allowance")
+        facts.append(
+          ...fact(
+            "Allowance",
+            `${role.product} · ${roleText(role)}`,
+            "host",
+            "The host let this account post for the chat that request set up. It says nothing of what was sent.",
+          ),
+        );
     const grant = grantText(account);
     facts.append(
       ...fact(
