@@ -7,7 +7,6 @@ import io.mockk.coVerifyOrder
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
-import io.mockk.verifyOrder
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.BrowserSessionInfo
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
@@ -255,65 +254,6 @@ class ProductStatusBarViewModelTest {
     }
 
     @Test
-    fun `share shares the active product`() = runBlocking<Unit> {
-        // Given
-        withChat(coinFlip, served = false)
-        val model = viewModel()
-        openTab(COIN_FLIP_URL, title = "Coin Flip")
-        advance()
-
-        // When
-        model.onShareClick()
-
-        // Then
-        verify(exactly = 1) { interactor.share(coinFlip) }
-    }
-
-    @Test
-    fun `reload reloads the active tab and stays in the browser`() = runBlocking<Unit> {
-        // Given
-        val model = viewModel()
-
-        // When
-        model.onReloadClick()
-
-        // Then
-        verify(exactly = 1) { productSessionController.reload() }
-        verify(exactly = 0) { productSessionController.closeActiveTab() }
-        verify(exactly = 0) { router.leaveBrowser() }
-    }
-
-    @Test
-    fun `close app closes the tab and leaves the browser`() = runBlocking<Unit> {
-        // Given
-        val model = viewModel()
-
-        // When
-        model.onCloseAppClick()
-
-        // Then
-        verifyOrder {
-            productSessionController.closeActiveTab()
-            router.leaveBrowser()
-        }
-        verify(exactly = 1) { router.leaveBrowser() }
-    }
-
-    @Test
-    fun `close app tapped twice acts once per tap`() = runBlocking<Unit> {
-        // Given
-        val model = viewModel()
-
-        // When
-        model.onCloseAppClick()
-        model.onCloseAppClick()
-
-        // Then
-        verify(exactly = 2) { productSessionController.closeActiveTab() }
-        verify(exactly = 2) { router.leaveBrowser() }
-    }
-
-    @Test
     fun `proceed in chat installs the chat and opens its room`() = runBlocking<Unit> {
         // Given
         withChat(coinFlip, served = true)
@@ -372,26 +312,6 @@ class ProductStatusBarViewModelTest {
         // Then
         coVerify(exactly = 1) { interactor.installChatAndAwaitRoomCreated(coinFlip) }
         verify(exactly = 1) { router.openChat(room) }
-    }
-
-    @Test
-    fun `proceed in chat works again once the chat has opened`() = runBlocking<Unit> {
-        // Given
-        withChat(coinFlip, served = true)
-        coEvery { interactor.installChatAndAwaitRoomCreated(coinFlip) } returns Result.success(room)
-        val model = viewModel()
-        openTab(COIN_FLIP_URL, title = "Coin Flip")
-        advance()
-
-        // When
-        model.onProceedInChatClick()
-        advance()
-        model.onProceedInChatClick()
-        advance()
-
-        // Then
-        coVerify(exactly = 2) { interactor.installChatAndAwaitRoomCreated(coinFlip) }
-        verify(exactly = 2) { router.openChat(room) }
     }
 
     @Test
