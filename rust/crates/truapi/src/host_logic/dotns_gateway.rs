@@ -236,9 +236,9 @@ const REVERT_FLAG: u32 = 1;
 /// A `DispatchError` kept as its raw bytes, since naming the error needs the
 /// runtime's metadata. It is the last field of a `ContractResult`, so it takes
 /// the rest of the input.
-struct UndecodedDispatchError(Vec<u8>);
+struct RawDispatchError(Vec<u8>);
 
-impl Decode for UndecodedDispatchError {
+impl Decode for RawDispatchError {
 	fn decode<I: Input>(input: &mut I) -> Result<Self, parity_scale_codec::Error> {
 		let len = input.remaining_len()?.ok_or("DispatchError of unknown length")?;
 		let mut bytes = vec![0; len];
@@ -255,7 +255,7 @@ struct ContractResult {
 	_storage_deposit: StorageDeposit,
 	_max_storage_deposit: StorageDeposit,
 	_gas_consumed: u128,
-	result: Result<ExecReturnValue, UndecodedDispatchError>,
+	result: Result<ExecReturnValue, RawDispatchError>,
 }
 
 /// Arguments of the `ReviveApi_call` runtime API.
@@ -294,7 +294,7 @@ pub fn decode_revive_call_output(output: &[u8]) -> Result<Vec<u8>, DotnsContract
 			Err(DotnsContractError::Reverted { detail: describe_revert(&data) })
 		},
 		Ok(ExecReturnValue { data, .. }) => Ok(data),
-		Err(UndecodedDispatchError(error)) => {
+		Err(RawDispatchError(error)) => {
 			Err(DotnsContractError::Dispatch { detail: format!("0x{}", hex::encode(error)) })
 		},
 	}
