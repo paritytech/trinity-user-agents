@@ -47,9 +47,11 @@ import java.math.BigInteger
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
 class AppFundingHostBridgeTest {
+    private val ramp = ProductId.parse("ramp.dot").getOrThrow()
+    private val widget = ProductId.parse("widget.dot").getOrThrow()
     private val overlay = mockk<FundingOverlay>()
     private val countryDetector = mockk<DeviceCountryDetector>()
-    private val bundledProducts = mockk<BundledProducts> { every { product(any<String>()) } returns null }
+    private val bundledProducts = mockk<BundledProducts> { every { product(any<ProductId>()) } returns null }
     private val resolveProduct = mockk<ResolveProductUseCase>()
     private val bridge = AppFundingHostBridge(Lazy { overlay }, countryDetector, bundledProducts, resolveProduct)
 
@@ -95,10 +97,10 @@ class AppFundingHostBridgeTest {
     @Test
     fun `a provider frame answers how it closed`() = runBlocking {
         coEvery {
-            overlay.presentProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent", ProviderFrameTarget.App("/kyc"))
+            overlay.presentProviderFrame(ramp, "intent", ProviderFrameTarget.App("/kyc"))
         } returns ProviderFrameOutcome.Closed
 
-        assertEquals(FundingFrameOutcome.Closed, bridge.presentProviderFrame("ramp.dot", "intent", FundingFrameTarget.App("/kyc")))
+        assertEquals(FundingFrameOutcome.Closed, bridge.presentProviderFrame(ramp, "intent", FundingFrameTarget.App("/kyc")))
     }
 
     // The worker reads the onramp's result from the query of the page it returned to.
@@ -106,12 +108,12 @@ class AppFundingHostBridgeTest {
     fun `an external page hands back the URL it returned to`() = runBlocking {
         val page = ProviderFrameTarget.Page("https://ramp.example/widget", "https://ramp.dot/return")
         val returned = "https://ramp.dot/return?status=done"
-        coEvery { overlay.presentProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent", page) } returns
+        coEvery { overlay.presentProviderFrame(ramp, "intent", page) } returns
             ProviderFrameOutcome.Returned(returned)
 
         assertEquals(
             FundingFrameOutcome.Returned(returned),
-            bridge.presentProviderFrame("ramp.dot", "intent", FundingFrameTarget.Page(page.url, page.returnUrl)),
+            bridge.presentProviderFrame(ramp, "intent", FundingFrameTarget.Page(page.url, page.returnUrl)),
         )
     }
 
@@ -183,29 +185,29 @@ class AppFundingHostBridgeTest {
     fun `a provider closing its frame reaches the overlay`() {
         every { overlay.closeProviderFrame(any(), any()) } just runs
 
-        bridge.closeProviderFrame("ramp.dot", "intent")
+        bridge.closeProviderFrame(ramp, "intent")
 
-        verify { overlay.closeProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent") }
+        verify { overlay.closeProviderFrame(ramp, "intent") }
     }
 
     @Test
     fun `a provider has an App only when its product declares one`() = runBlocking {
-        coEvery { resolveProduct.resolve(ProductId.parse("ramp.dot").getOrThrow()) } returns Result.success(resolved(app = true))
-        coEvery { resolveProduct.resolve(ProductId.parse("widget.dot").getOrThrow()) } returns Result.success(resolved(app = false))
+        coEvery { resolveProduct.resolve(ramp) } returns Result.success(resolved(app = true))
+        coEvery { resolveProduct.resolve(widget) } returns Result.success(resolved(app = false))
 
-        assertEquals(true, bridge.providerHasApp("ramp.dot"))
-        assertEquals(false, bridge.providerHasApp("widget.dot"))
+        assertEquals(true, bridge.providerHasApp(ramp))
+        assertEquals(false, bridge.providerHasApp(widget))
     }
 
     // An App the app does not ship lives on dotNS, as the frame opens it.
     @Test
     fun `a bundled provider without a bundled App is looked up on dotNS`() = runBlocking {
         val bundled = mockk<BundledProduct>()
-        every { bundledProducts.product("ramp.dot") } returns bundled
+        every { bundledProducts.product(ramp) } returns bundled
         every { bundledProducts.hasApp(bundled) } returns false
-        coEvery { resolveProduct.resolve(ProductId.parse("ramp.dot").getOrThrow()) } returns Result.success(resolved(app = true))
+        coEvery { resolveProduct.resolve(ramp) } returns Result.success(resolved(app = true))
 
-        assertEquals(true, bridge.providerHasApp("ramp.dot"))
+        assertEquals(true, bridge.providerHasApp(ramp))
     }
 
     // Not knowing must not refuse a provider's screen that would open.
@@ -213,11 +215,11 @@ class AppFundingHostBridgeTest {
     fun `a provider that cannot be resolved keeps its App route`() = runBlocking {
         coEvery { resolveProduct.resolve(any()) } returns Result.failure(IllegalStateException("offline"))
 
-        assertEquals(true, bridge.providerHasApp("ramp.dot"))
+        assertEquals(true, bridge.providerHasApp(ramp))
     }
 
     private fun resolved(app: Boolean) = ResolvedProduct(
-        product = Product(id = ProductId.parse("ramp.dot").getOrThrow(), name = "Ramp", icon = null),
+        product = Product(id = ramp, name = "Ramp", icon = null),
         description = null,
         executables = Executables(
             app = if (app) ProductExecutable.App(ExecutableHost("ramp.dot"), SemVer.ZERO) else null,
@@ -242,7 +244,7 @@ class AppFundingHostBridgeTest {
         openedAtMs = 0uL,
         deadlineMs = 0uL,
         acknowledged = false,
-        providerId = "ramp.dot",
+        providerId = ramp,
         assignedAtMs = 0uL,
         cancel = null,
         updates = emptyList(),

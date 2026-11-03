@@ -111,31 +111,27 @@ class AppFundingHostBridge @Inject constructor(
         }
     }
 
-    override suspend fun presentProviderFrame(providerId: String, intent: String, target: FundingFrameTarget): FundingFrameOutcome {
+    override suspend fun presentProviderFrame(providerId: ProductId, intent: String, target: FundingFrameTarget): FundingFrameOutcome {
         val frameTarget = when (target) {
             is FundingFrameTarget.App -> ProviderFrameTarget.App(target.route)
             is FundingFrameTarget.Page -> ProviderFrameTarget.Page(target.url, target.returnUrl)
         }
-
-        // The core names providers by product id, so one that does not parse has no screen to show.
-        val provider = ProductId.parse(providerId).getOrElse { return FundingFrameOutcome.Dismissed }
-        return when (val outcome = overlay.get().presentProviderFrame(provider, intent, frameTarget)) {
+        return when (val outcome = overlay.get().presentProviderFrame(providerId, intent, frameTarget)) {
             ProviderFrameOutcome.Closed -> FundingFrameOutcome.Closed
             ProviderFrameOutcome.Dismissed -> FundingFrameOutcome.Dismissed
             is ProviderFrameOutcome.Returned -> FundingFrameOutcome.Returned(outcome.url)
         }
     }
 
-    override fun closeProviderFrame(providerId: String, intent: String) {
-        ProductId.parse(providerId).getOrNull()?.let { overlay.get().closeProviderFrame(it, intent) }
+    override fun closeProviderFrame(providerId: ProductId, intent: String) {
+        overlay.get().closeProviderFrame(providerId, intent)
     }
 
     // An App the app does not ship comes from dotNS, as the frame opens it. One that cannot be resolved in time gets
     // its App route through, so the frame fails as it did before.
-    override suspend fun providerHasApp(providerId: String): Boolean {
+    override suspend fun providerHasApp(providerId: ProductId): Boolean {
         if (bundledProducts.product(providerId)?.let(bundledProducts::hasApp) == true) return true
-        val provider = ProductId.parse(providerId).getOrElse { return true }
-        val resolved = withTimeoutOrNull(APP_LOOKUP_TIMEOUT) { resolveProduct.resolve(provider) }
+        val resolved = withTimeoutOrNull(APP_LOOKUP_TIMEOUT) { resolveProduct.resolve(providerId) }
             ?: return true
         resolved.exceptionOrNull()?.let { if (it is CancellationException) throw it }
         return resolved.map { it.executables.app != null }.getOrDefault(true)

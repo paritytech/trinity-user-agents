@@ -16,7 +16,7 @@ use crate::{
 
 /// A session as format 3 stored it.
 #[derive(Decode)]
-pub(super) struct Session {
+pub struct Session {
 	intent: String,
 	owner_product_id: Option<ProductId>,
 	direction: FundingDirection,
@@ -25,7 +25,7 @@ pub(super) struct Session {
 	opened_at_ms: u64,
 	deadline_ms: u64,
 	acknowledged: bool,
-	provider_id: Option<String>,
+	provider_id: Option<ProductId>,
 	assigned_at_ms: Option<u64>,
 	cancel: Option<FundingCancel>,
 	updates: Vec<UpdateRecord>,
@@ -35,7 +35,7 @@ pub(super) struct Session {
 /// Started funds as formats 3 and 4 stored them, before they named their
 /// direction.
 #[derive(Decode)]
-pub(super) struct Started {
+pub struct Started {
 	host_id: [u8; 32],
 	amount: u128,
 	terms: [u8; 32],
@@ -47,7 +47,7 @@ pub(super) struct Started {
 impl Started {
 	/// These funds, moving the way of the session they were started for:
 	/// before refunds, a session only started funds its own way.
-	pub(super) fn moving(self, direction: FundingDirection) -> StartedFunds {
+	pub fn moving(self, direction: FundingDirection) -> StartedFunds {
 		StartedFunds {
 			direction,
 			host_id: self.host_id,

@@ -392,7 +392,7 @@ public protocol FundingHostBridge: AnyObject, Sendable {
     /// URL: show its origin, and answer `.returned` when it reaches its
     /// return URL.
     func presentProviderFrame(
-        providerId: String,
+        providerId: ProductId,
         intent: String,
         target: FundingFrameTarget
     ) async throws -> FundingFrameOutcome
@@ -415,12 +415,12 @@ public protocol FundingHostBridge: AnyObject, Sendable {
     /// shows for provider `providerId`'s session `intent`, answering that call
     /// `.closed`, and show the session sheet in its place. Does nothing when
     /// no frame is open for it. Called inline.
-    func closeProviderFrame(providerId: String, intent: String)
+    func closeProviderFrame(providerId: ProductId, intent: String)
 
     /// Whether provider `providerId` ships an App, so an App route of its can
     /// be shown in ``presentProviderFrame(providerId:intent:target:)``. A
     /// provider without one shows only external pages.
-    func providerHasApp(providerId: String) async -> Bool
+    func providerHasApp(providerId: ProductId) async -> Bool
 
     /// Whether a provider still works on any session: once funding resumes,
     /// and again whenever it changes. A host that keeps it starts funding at
@@ -736,7 +736,7 @@ private final class FundingCallbackAdapter: NativeFundingCallbacks, @unchecked S
     }
 
     func presentProviderFrame(
-        providerId: String,
+        providerId: ProductId,
         intent: String,
         target: FundingFrameTarget
     ) async throws -> FundingFrameOutcome {
@@ -754,11 +754,11 @@ private final class FundingCallbackAdapter: NativeFundingCallbacks, @unchecked S
         bridge.fundingSessionChanged(intent: intent, status: status, session: session, progress: progress)
     }
 
-    func closeProviderFrame(providerId: String, intent: String) {
+    func closeProviderFrame(providerId: ProductId, intent: String) {
         bridge.closeProviderFrame(providerId: providerId, intent: intent)
     }
 
-    func providerHasApp(providerId: String) async -> Bool {
+    func providerHasApp(providerId: ProductId) async -> Bool {
         await bridge.providerHasApp(providerId: providerId)
     }
 
@@ -1290,7 +1290,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     @discardableResult
     public func selectFundingProvider(
         intent: String,
-        providerId: String,
+        providerId: ProductId,
         quoteId: String
     ) async throws -> Bool {
         try await inner.selectFundingProvider(intent: intent, providerId: providerId, quoteId: quoteId)

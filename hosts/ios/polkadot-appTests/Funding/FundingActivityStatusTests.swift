@@ -111,7 +111,7 @@ private extension FundingActivityStatusTests {
             openedAtMs: Self.openedAtMs,
             deadlineMs: Self.openedAtMs + 86_400_000,
             acknowledged: false,
-            providerId: "provider",
+            providerId: try! ProductId("provider.dot"),
             assignedAtMs: Self.openedAtMs,
             cancel: nil,
             updates: [],

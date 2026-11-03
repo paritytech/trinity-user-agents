@@ -15,6 +15,7 @@ import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingSelection
 import uniffi.truapi.FundingSession
+import uniffi.truapi.ProductId
 import java.math.BigDecimal
 import javax.inject.Inject
 
@@ -38,7 +39,7 @@ class FundingFlowInteractor @Inject constructor(
 
     fun countries(): List<FundingCountry> = FundingCountries.all()
 
-    suspend fun brand(providerId: String): FundingProviderBrand = branding.brand(providerId)
+    suspend fun brand(providerId: ProductId): FundingProviderBrand = branding.brand(providerId)
 
     /** What the overlay offers, as the core last pushed it: the providers, and for the selection the countries and limits. */
     fun options(intent: String): Flow<FundingOptions?> = runtime.options(intent)
@@ -53,7 +54,7 @@ class FundingFlowInteractor @Inject constructor(
 
     suspend fun stopQuotes(intent: String) = runtime.stopQuotes(intent)
 
-    suspend fun selectProvider(intent: String, providerId: String, quoteId: String): Result<Boolean> =
+    suspend fun selectProvider(intent: String, providerId: ProductId, quoteId: String): Result<Boolean> =
         runtime.selectProvider(intent, providerId, quoteId)
 
     suspend fun cancel(intent: String): Result<CancelOutcome> = runtime.cancel(intent)

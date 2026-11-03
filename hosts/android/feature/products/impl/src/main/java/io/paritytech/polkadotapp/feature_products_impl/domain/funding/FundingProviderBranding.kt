@@ -9,7 +9,7 @@ import javax.inject.Inject
 
 /** How a provider is shown: its product's display name and icon. */
 data class FundingProviderBrand(
-    val providerId: String,
+    val providerId: ProductId,
     val name: String,
     val iconUrl: String?,
 )
@@ -23,11 +23,10 @@ class FundingProviderBranding @Inject constructor(
     private val ipfsContentLookup: IpfsContentLookup,
     private val bundledProducts: BundledProducts,
 ) {
-    suspend fun brand(providerId: String): FundingProviderBrand {
+    suspend fun brand(providerId: ProductId): FundingProviderBrand {
         if (bundledProducts.product(providerId) != null) return placeholder(providerId)
 
-        val product = ProductId.parse(providerId).getOrNull()?.let { resolveProductUseCase.resolve(it).getOrNull() }?.product
-            ?: return placeholder(providerId)
+        val product = resolveProductUseCase.resolve(providerId).getOrNull()?.product ?: return placeholder(providerId)
 
         return FundingProviderBrand(
             providerId = providerId,
@@ -36,5 +35,5 @@ class FundingProviderBranding @Inject constructor(
         )
     }
 
-    fun placeholder(providerId: String) = FundingProviderBrand(providerId = providerId, name = providerId, iconUrl = null)
+    fun placeholder(providerId: ProductId) = FundingProviderBrand(providerId = providerId, name = providerId.value, iconUrl = null)
 }

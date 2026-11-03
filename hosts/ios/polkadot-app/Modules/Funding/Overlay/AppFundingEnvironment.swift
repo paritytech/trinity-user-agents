@@ -57,13 +57,13 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
         router.present(view: FundingPresentedController(controller: controller))
     }
 
-    func providerPage(providerId: String, route: String, title: String) -> UIViewController? {
-        let destination = route.hasPrefix("/") || route.hasPrefix("#") ? providerId + route : providerId + "/" + route
+    func providerPage(providerId: ProductId, route: String, title: String) -> UIViewController? {
+        let path = route.hasPrefix("/") || route.hasPrefix("#") ? route : "/" + route
+        let destination = providerId.rawValue + path
         let flowState = flowStateProvider.flowState()
 
         // A provider the app ships opens from its own files, under its own id.
-        let bundled = (try? ProductId(providerId))
-            .flatMap(bundledProducts.product)
+        let bundled = bundledProducts.product(providerId)
             .flatMap { $0.hasApp() ? $0 : nil }
         let page = bundled.flatMap { $0.page(navigationDestination: destination) }
             ?? flowState.hostProvider.page(navigationDestination: destination)
@@ -81,12 +81,11 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
 
     /// A provider's App comes from its bundle when the app ships one, and
     /// from dotNS otherwise, as `providerPage` opens it.
-    func providerHasApp(providerId: String) async -> Bool {
-        guard let provider = try? ProductId(providerId) else { return true }
-        if bundledProducts.product(provider)?.hasApp() == true {
+    func providerHasApp(providerId: ProductId) async -> Bool {
+        if bundledProducts.product(providerId)?.hasApp() == true {
             return true
         }
-        guard let product = try? await flowStateProvider.flowState().productResolver.resolve(provider) else {
+        guard let product = try? await flowStateProvider.flowState().productResolver.resolve(providerId) else {
             return true
         }
         return product.executables.app != nil
@@ -121,23 +120,23 @@ private final class FundingPresentedController: ControllerBackedProtocol {
 actor ManifestFundingProviderBranding: FundingProviderBranding {
     private let flowStateProvider: SPAFlowStateProviding
     private let bundledProducts: BundledProducts
-    private var resolved: [String: FundingProviderBrand] = [:]
+    private var resolved: [ProductId: FundingProviderBrand] = [:]
 
     init(flowStateProvider: SPAFlowStateProviding, bundledProducts: BundledProducts = .none) {
         self.flowStateProvider = flowStateProvider
         self.bundledProducts = bundledProducts
     }
 
-    func brand(for providerId: String) async -> FundingProviderBrand {
+    func brand(for providerId: ProductId) async -> FundingProviderBrand {
         if let brand = resolved[providerId] { return brand }
 
-        guard let provider = try? ProductId(providerId), bundledProducts.product(provider) == nil else {
+        guard bundledProducts.product(providerId) == nil else {
             return FundingProviderBrand.placeholder(for: providerId)
         }
 
         let resolver = flowStateProvider.flowState().productResolver
-        let name = try? await resolver.resolve(provider).displayName
-        let iconData = await ProductIconLoader(productResolver: resolver).loadIcon(for: provider)
+        let name = try? await resolver.resolve(providerId).displayName
+        let iconData = await ProductIconLoader(productResolver: resolver).loadIcon(for: providerId)
 
         let brand = FundingProviderBrand(
             name: name ?? FundingProviderBrand.placeholder(for: providerId).name,

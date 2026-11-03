@@ -15,11 +15,15 @@ import uniffi.truapi.FundingQuoteRow
 import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingRoute
+import uniffi.truapi.ProductId
 import java.util.Locale
 import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
 class FundingUiMapperTest {
+    private val providerA = ProductId.parse("a.dot").getOrThrow()
+    private val providerB = ProductId.parse("b.dot").getOrThrow()
+
     @Test
     fun `arrival times round up to the next unit`() {
         assertEquals(
@@ -95,12 +99,12 @@ class FundingUiMapperTest {
         direction = FundingDirection.IN,
         cash = FundingCash(symbol = "CASH", precision = 6),
         spendable = null,
-        candidates = listOf(candidate("a"), candidate("b")),
+        candidates = listOf(candidate(providerA), candidate(providerB)),
         amount = null,
         country = FundingCountry("DE", "Germany", "EUR", "Euro"),
     ).withAmountText("50")
 
-    private fun candidate(providerId: String) = FundingCandidate(
+    private fun candidate(providerId: ProductId) = FundingCandidate(
         providerId = providerId,
         routes = listOf(
             FundingRoute(
@@ -117,12 +121,12 @@ class FundingUiMapperTest {
 
     private fun bothQuoted() = FundingQuoteList(
         requestId = 1u,
-        rows = listOf(quoted("a", send = "5200", expiresAt = 90_000uL), quoted("b", send = "5100", expiresAt = 60_000uL)),
-        best = "b",
+        rows = listOf(quoted(providerA, send = "5200", expiresAt = 90_000uL), quoted(providerB, send = "5100", expiresAt = 60_000uL)),
+        best = providerB,
         refreshAtMs = 60_000uL,
     )
 
-    private fun quoted(providerId: String, send: String, expiresAt: ULong) = FundingQuoteRow(
+    private fun quoted(providerId: ProductId, send: String, expiresAt: ULong) = FundingQuoteRow(
         providerId = providerId,
         state = FundingQuoteState.Quoted(
             FundingQuote(

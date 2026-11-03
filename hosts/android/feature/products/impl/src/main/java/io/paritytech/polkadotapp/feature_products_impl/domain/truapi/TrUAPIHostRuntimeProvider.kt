@@ -250,7 +250,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             workerSupervisor.get().onDemandChanged(productId, demand)
         }
 
-        override fun workerCrashing(productId: String, crashes: UInt) {
+        override fun workerCrashing(productId: ProductId, crashes: UInt) {
             Timber.w("TrUAPI worker for %s crashed %d times in a row", productId, crashes.toInt())
             workerCrashNotice.onCrashing(productId)
         }

@@ -14,6 +14,7 @@ import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingSelection
 import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingSessionSummary
+import uniffi.truapi.ProductId
 
 /**
  * The part of the TrUAPI core the funding screens drive. The core owns every session and pushes what the screens
@@ -55,7 +56,7 @@ interface FundingRuntime {
 
     suspend fun stopQuotes(intent: String)
 
-    suspend fun selectProvider(intent: String, providerId: String, quoteId: String): Result<Boolean>
+    suspend fun selectProvider(intent: String, providerId: ProductId, quoteId: String): Result<Boolean>
 
     /** The user's cancel, and what it did. */
     suspend fun cancel(intent: String): Result<CancelOutcome>

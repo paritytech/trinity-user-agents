@@ -15,10 +15,12 @@ import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.FundingStage
 import uniffi.truapi.FundingStatus
+import uniffi.truapi.ProductId
 import kotlin.time.Instant
 
 /** A record from the core's summary shows the session as a live one does: the summary's status is its outcome. */
 class FundingRecordSummaryTest {
+    private val ramp = ProductId.parse("ramp.dot").getOrThrow()
     private val released = FundingStage.Released("30", settledAtMs = 2uL)
 
     @Test
@@ -69,7 +71,7 @@ class FundingRecordSummaryTest {
                 intent = "fs_1",
                 direction = FundingDirection.OUT,
                 choice = CHOICE,
-                providerId = "ramp.dot",
+                providerId = ramp,
                 requestedAmount = 50.intoBalance(),
                 settledAmount = 30.intoBalance(),
                 outcome = FundingRecordOutcome.Released,
@@ -118,7 +120,7 @@ class FundingRecordSummaryTest {
         amount = "50",
         stage = stage,
         openedAtMs = 1_000uL,
-        providerId = "ramp.dot",
+        providerId = ramp,
         choice = CHOICE,
         status = status,
         payout = payout,

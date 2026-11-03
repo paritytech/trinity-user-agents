@@ -3318,16 +3318,16 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 
 	async fn present_provider_frame(
 		&self,
-		_provider_id: String,
+		_provider_id: ProductId,
 		_intent: String,
 		_target: v01::FundingFrameTarget,
 	) -> Result<v01::FundingFrameOutcome, HostRejection> {
 		Ok(v01::FundingFrameOutcome::Closed)
 	}
 
-	fn close_provider_frame(&self, _provider_id: String, _intent: String) {}
+	fn close_provider_frame(&self, _provider_id: ProductId, _intent: String) {}
 
-	async fn provider_has_app(&self, _provider_id: String) -> bool {
+	async fn provider_has_app(&self, _provider_id: ProductId) -> bool {
 		true
 	}
 

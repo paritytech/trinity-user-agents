@@ -202,15 +202,12 @@ impl PairingHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.worker_manifest"))]
 	pub async fn worker_manifest(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 	) -> Result<Option<crate::host_logic::worker_manifest::WorkerManifest>, v01::GenericError> {
-		let product_id = product_id
-			.parse::<ProductId>()
-			.map_err(|error| v01::GenericError { reason: error.to_string() })?;
 		crate::runtime::product_manifest::worker_manifest(
 			&self.services,
 			self.services.platform.as_ref(),
-			&product_id,
+			product_id,
 		)
 		.await
 		.map_err(|reason| v01::GenericError { reason })
@@ -659,15 +656,12 @@ impl SigningHostRuntime {
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.worker_manifest"))]
 	pub async fn worker_manifest(
 		&self,
-		product_id: &str,
+		product_id: &ProductId,
 	) -> Result<Option<crate::host_logic::worker_manifest::WorkerManifest>, v01::GenericError> {
-		let product_id = product_id
-			.parse::<ProductId>()
-			.map_err(|error| v01::GenericError { reason: error.to_string() })?;
 		crate::runtime::product_manifest::worker_manifest(
 			&self.services,
 			self.services.platform.as_ref(),
-			&product_id,
+			product_id,
 		)
 		.await
 		.map_err(|reason| v01::GenericError { reason })
@@ -948,7 +942,7 @@ impl SigningHostRuntime {
 	pub async fn select_funding_provider(
 		&self,
 		intent: &str,
-		provider_id: &str,
+		provider_id: &ProductId,
 		quote_id: &str,
 	) -> Result<bool, v01::GenericError> {
 		self.services
@@ -2219,7 +2213,7 @@ impl ProductRuntime {
 				transport: transport.clone(),
 				host_subscriptions: host_subscriptions.clone(),
 			});
-			services.funding().link(product_id.as_str(), link.clone());
+			services.funding().link(&product_id, link.clone());
 			(product_id, link)
 		});
 		Self {
@@ -2389,7 +2383,7 @@ impl ProductRuntime {
 		connection.detach_renderer();
 		connection.release_open_operations();
 		if let Some((product_id, link)) = &self.funding_link {
-			connection.services().funding().unlink(product_id.as_str(), link);
+			connection.services().funding().unlink(product_id, link);
 		}
 		self.host_subscriptions.close();
 		self.core.cancel_subscriptions();

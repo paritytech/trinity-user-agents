@@ -16,6 +16,7 @@ import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingSelection
 import uniffi.truapi.FundingSessionSummary
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 class TrUAPIFundingRuntime @Inject constructor(
@@ -54,7 +55,7 @@ class TrUAPIFundingRuntime @Inject constructor(
             .logFailure("TrUAPI funding quotes could not stop")
     }
 
-    override suspend fun selectProvider(intent: String, providerId: String, quoteId: String): Result<Boolean> =
+    override suspend fun selectProvider(intent: String, providerId: ProductId, quoteId: String): Result<Boolean> =
         runtimeProvider.runtime().mapCatching { it.selectFundingProvider(intent, providerId, quoteId) }
 
     override suspend fun cancel(intent: String): Result<CancelOutcome> =

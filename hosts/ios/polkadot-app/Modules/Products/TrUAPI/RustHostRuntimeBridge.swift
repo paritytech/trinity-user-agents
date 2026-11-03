@@ -25,7 +25,7 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
     private let encryptedStorage: TrUAPIEncryptedStorage
     private let logger: LoggerProtocol
     private weak var runtime: TrUAPIHostRuntime?
-    private let crashNotice = OSAllocatedUnfairLock<(@Sendable (String) -> Void)?>(initialState: nil)
+    private let crashNotice = OSAllocatedUnfairLock<(@Sendable (ProductId) -> Void)?>(initialState: nil)
 
     init(
         chainRegistry: ChainRegistryProtocol,
@@ -68,13 +68,13 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
 
     /// Where a worker that keeps crashing is reported to the user. Set once
     /// the overlay that shows it exists.
-    func onWorkerCrashing(_ notice: @escaping @Sendable (String) -> Void) {
+    func onWorkerCrashing(_ notice: @escaping @Sendable (ProductId) -> Void) {
         crashNotice.withLock { $0 = notice }
     }
 
     func workerCrashing(productId: ProductId, crashes: UInt32) {
         logger.error("[truapi] \(productId)'s worker crashed \(crashes) times in a row")
-        crashNotice.withLock { $0 }?(productId.rawValue)
+        crashNotice.withLock { $0 }?(productId)
     }
 
     func navigateTo(url: String) async throws {

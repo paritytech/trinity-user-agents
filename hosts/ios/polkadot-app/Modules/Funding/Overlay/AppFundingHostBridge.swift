@@ -16,15 +16,15 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
         amount: U128?
     ) async -> FundingPresentOutcome
 
-    func presentProviderFrame(providerId: String, intent: String, target: FundingFrameTarget) async
+    func presentProviderFrame(providerId: ProductId, intent: String, target: FundingFrameTarget) async
         -> FundingFrameOutcome
 
     /// The provider closed its frame for session `intent`: answer it
     /// `.closed` and show the session sheet in its place.
-    func closeProviderFrame(providerId: String, intent: String)
+    func closeProviderFrame(providerId: ProductId, intent: String)
 
     /// Whether provider `providerId` ships an App its frame can show.
-    func providerHasApp(providerId: String) async -> Bool
+    func providerHasApp(providerId: ProductId) async -> Bool
 
     func fundingSessionChanged(intent: String, status: HostFundingStatusSubscribeItem)
 
@@ -34,7 +34,7 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
     func fundingQuotesChanged(intent: String, quotes: FundingQuoteList)
 
     /// Product `productId`'s worker keeps crashing while the core restarts it.
-    func workerCrashing(productId: String)
+    func workerCrashing(productId: ProductId)
 
     /// Shows session `intent` again after the user left it running.
     func reopen(intent: String)
@@ -80,18 +80,18 @@ final class AppFundingHostBridge: FundingHostBridge, @unchecked Sendable {
     }
 
     func presentProviderFrame(
-        providerId: String,
+        providerId: ProductId,
         intent: String,
         target: FundingFrameTarget
     ) async throws -> FundingFrameOutcome {
         await overlay.presentProviderFrame(providerId: providerId, intent: intent, target: target)
     }
 
-    func closeProviderFrame(providerId: String, intent: String) {
+    func closeProviderFrame(providerId: ProductId, intent: String) {
         overlay.closeProviderFrame(providerId: providerId, intent: intent)
     }
 
-    func providerHasApp(providerId: String) async -> Bool {
+    func providerHasApp(providerId: ProductId) async -> Bool {
         await overlay.providerHasApp(providerId: providerId)
     }
 

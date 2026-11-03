@@ -61,7 +61,7 @@ class BundledProductsTest {
 
     @Test
     fun `serves a request the way a published archive is served`() {
-        val app = products.product("provider.dot")!!.appRoot
+        val app = products.product(ProductId.parse("provider.dot").getOrThrow())!!.appRoot
 
         assertEquals("$app/index.html", products.assetPath(app, "/", isMainFrame = true))
         assertEquals("$app/assets/main.js", products.assetPath(app, "/assets/main.js", isMainFrame = false))

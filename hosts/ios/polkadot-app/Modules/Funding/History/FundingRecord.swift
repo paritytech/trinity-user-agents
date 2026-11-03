@@ -23,7 +23,7 @@ struct FundingRecord: Identifiable, Equatable {
     let direction: FundingDirection
     let rail: FundingRail?
     let asset: String?
-    let providerId: String?
+    let providerId: ProductId?
     let requestedAmount: U128?
     let settledAmount: U128?
     /// What the user paid for value in, or receives for value out, in

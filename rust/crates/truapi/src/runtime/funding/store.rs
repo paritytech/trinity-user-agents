@@ -269,7 +269,7 @@ pub(crate) async fn put_session_row(db: &Db, intent: &str, record: Vec<u8>) {
 
 /// Store `record` as summary `intent`'s row, as it is.
 #[cfg(test)]
-pub(crate) async fn put_summary_row(db: &Db, intent: &str, record: Vec<u8>) {
+pub async fn put_summary_row(db: &Db, intent: &str, record: Vec<u8>) {
 	let rows = vec![(intent.to_string(), record)];
 	db.write(move |tx| upsert(tx, &SUMMARIES, &rows))
 		.await
@@ -331,8 +331,10 @@ mod tests {
 		let db = open_memory_core_db();
 		block_on(write(&db, &[&session("fs_1"), &session("fs_2")], Vec::new(), &[]))
 			.expect("written");
-		let assigned =
-			FundingSession { provider_id: Some("ramp.dot".to_string()), ..session("fs_1") };
+		let assigned = FundingSession {
+			provider_id: Some(ProductId::for_test("ramp.dot")),
+			..session("fs_1")
+		};
 
 		block_on(write(&db, &[&assigned], vec!["fs_2".to_string()], &[])).expect("written");
 
@@ -366,7 +368,7 @@ mod tests {
 	fn a_session_of_format_3_is_read() {
 		let db = open_memory_core_db();
 		let before = FundingSession {
-			provider_id: Some("ramp.dot".to_string()),
+			provider_id: Some(ProductId::for_test("ramp.dot")),
 			assigned_at_ms: Some(NOW),
 			..session("fs_3")
 		};
@@ -415,7 +417,7 @@ mod tests {
 	fn a_session_of_format_4_is_read() {
 		let db = open_memory_core_db();
 		let before = FundingSession {
-			provider_id: Some("ramp.dot".to_string()),
+			provider_id: Some(ProductId::for_test("ramp.dot")),
 			assigned_at_ms: Some(NOW),
 			..session("fs_4")
 		};

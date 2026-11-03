@@ -47,10 +47,14 @@ import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingRoute
 import uniffi.truapi.FundingSelection
+import uniffi.truapi.ProductId
 import java.math.BigDecimal
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
 class FundingViewModelTest {
+    private val ramp = ProductId.parse("ramp.dot").getOrThrow()
+    private val providerA = ProductId.parse("a.dot").getOrThrow()
+    private val providerB = ProductId.parse("b.dot").getOrThrow()
     private val testDispatcher = StandardTestDispatcher()
     private val request = FundingOverlayRequest(productId = null, intent = "intent", direction = FundingDirection.IN, amount = null)
     private val context = FundingOverlayContext(request, FundingOverlayMode.New)
@@ -69,8 +73,8 @@ class FundingViewModelTest {
         coEvery { stopQuotes("intent") } returns Unit
         every { sessionChanges("intent") } returns emptyFlow()
         coEvery { requestQuote("intent", any()) } returns Result.success(1uL)
-        coEvery { brand(any()) } answers { FundingProviderBrand(firstArg(), firstArg(), null) }
-        coEvery { selectProvider("intent", "ramp.dot", "q-1") } returns Result.success(true)
+        coEvery { brand(any()) } answers { FundingProviderBrand(firstArg(), firstArg<ProductId>().value, null) }
+        coEvery { selectProvider("intent", ramp, "q-1") } returns Result.success(true)
         every { progress("intent") } returns null
         every { session("intent") } returns null
     }
@@ -126,7 +130,7 @@ class FundingViewModelTest {
         model.onPreset(BigDecimal("50"))
         advanceTimeBy(601)
         runCurrent()
-        quoteLists.emit(list(FundingQuoteRow("ramp.dot", FundingQuoteState.Quoted(quote())), best = "ramp.dot"))
+        quoteLists.emit(list(FundingQuoteRow(ramp, FundingQuoteState.Quoted(quote())), best = ramp))
         model.onContinueFromAmount()
         runCurrent()
         assertFalse(answer.isCompleted)
@@ -141,8 +145,8 @@ class FundingViewModelTest {
 
     @Test
     fun `a crypto top-up starts with the best quote once every provider answered`() = runTest(testDispatcher) {
-        pushedOptions.value = options(cryptoCandidate("a"), cryptoCandidate("b"))
-        coEvery { interactor.selectProvider("intent", "b", "q-b") } returns Result.success(true)
+        pushedOptions.value = options(cryptoCandidate(providerA), cryptoCandidate(providerB))
+        coEvery { interactor.selectProvider("intent", providerB, "q-b") } returns Result.success(true)
         val model = viewModel()
         advanceUntilIdle()
         val answer = async { context.awaitOutcome() }
@@ -152,12 +156,12 @@ class FundingViewModelTest {
         model.onNetworkChosen("ethereum")
         model.onTokenChosen("USDT")
         runCurrent()
-        val quotedA = FundingQuoteRow("a", FundingQuoteState.Quoted(quote().copy(quoteId = "q-a", sendAmount = "52000000")))
-        quoteLists.emit(list(quotedA, FundingQuoteRow("b", FundingQuoteState.Pending), best = "a"))
+        val quotedA = FundingQuoteRow(providerA, FundingQuoteState.Quoted(quote().copy(quoteId = "q-a", sendAmount = "52000000")))
+        quoteLists.emit(list(quotedA, FundingQuoteRow(providerB, FundingQuoteState.Pending), best = providerA))
         runCurrent()
         assertFalse(answer.isCompleted)
 
-        quoteLists.emit(list(quotedA, FundingQuoteRow("b", FundingQuoteState.Quoted(quote().copy(quoteId = "q-b", sendAmount = "51800000"))), best = "b"))
+        quoteLists.emit(list(quotedA, FundingQuoteRow(providerB, FundingQuoteState.Quoted(quote().copy(quoteId = "q-b", sendAmount = "51800000"))), best = providerB))
         runCurrent()
 
         assertEquals(FundingOverlayOutcome.STARTED, answer.await())
@@ -186,7 +190,7 @@ class FundingViewModelTest {
         networks = emptyList(),
     )
 
-    private fun cryptoCandidate(providerId: String) = FundingCandidate(
+    private fun cryptoCandidate(providerId: ProductId) = FundingCandidate(
         providerId = providerId,
         routes = listOf(
             FundingRoute(
@@ -222,13 +226,13 @@ class FundingViewModelTest {
         assetDecimals = 2u,
     )
 
-    private fun list(vararg rows: FundingQuoteRow, best: String?) =
+    private fun list(vararg rows: FundingQuoteRow, best: ProductId?) =
         FundingQuoteList(requestId = 1uL, rows = rows.toList(), best = best, refreshAtMs = 60_000uL)
 
     private fun viewModel() = FundingViewModel(context, contexts, interactor, router, mockk(relaxed = true))
 
     private fun cardCandidate() = FundingCandidate(
-        providerId = "ramp.dot",
+        providerId = ramp,
         routes = listOf(
             FundingRoute(
                 rail = FundingRail.CARD,

@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingPro
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 import io.paritytech.polkadotapp.common.R as RCommon
@@ -29,9 +30,9 @@ class WorkerCrashNotice @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.computation)
 
     /** May arrive on any thread; the name is resolved off it. */
-    fun onCrashing(productId: String) {
+    fun onCrashing(productId: ProductId) {
         scope.launch {
-            val name = runCatching { branding.get().brand(productId).name }.getOrDefault(productId)
+            val name = runCatching { branding.get().brand(productId).name }.getOrDefault(productId.value)
             appNotifier.error(contextManager.applicationContext.getString(RCommon.string.worker_crashing_notice, name))
         }
     }

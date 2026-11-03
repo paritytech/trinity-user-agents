@@ -1,3 +1,4 @@
+import TrUAPIHost
 import UIKit
 
 /// What a funding provider is called and looks like, from the root manifest
@@ -6,12 +7,12 @@ struct FundingProviderBrand: Equatable {
     let name: String
     let icon: UIImage?
 
-    static func placeholder(for providerId: String) -> FundingProviderBrand {
-        let label = providerId.split(separator: ".").first.map(String.init) ?? providerId
+    static func placeholder(for providerId: ProductId) -> FundingProviderBrand {
+        let label = providerId.rawValue.split(separator: ".").first.map(String.init) ?? providerId.rawValue
         return FundingProviderBrand(name: label.capitalized, icon: nil)
     }
 }
 
 protocol FundingProviderBranding: Sendable {
-    func brand(for providerId: String) async -> FundingProviderBrand
+    func brand(for providerId: ProductId) async -> FundingProviderBrand
 }

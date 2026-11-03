@@ -12,7 +12,7 @@ use crate::{
 
 /// A summary as format 1 stored it.
 #[derive(Decode)]
-pub(super) struct Summary {
+pub struct Summary {
 	intent: String,
 	owner_product_id: Option<ProductId>,
 	direction: FundingDirection,

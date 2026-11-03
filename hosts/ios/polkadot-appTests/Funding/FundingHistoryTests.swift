@@ -7,6 +7,8 @@ import TrUAPIHost
 import UIKit
 @testable import polkadot_app
 
+private let provider = try! ProductId("provider.dot")
+
 /// The history is the core's, read each time it is drawn; an ended session is
 /// acknowledged once the user has been shown it.
 struct FundingHistoryTests {
@@ -29,7 +31,7 @@ struct FundingHistoryTests {
 
         let ended = FundingEndedSession(record: record)
 
-        #expect(record.providerId == "provider")
+        #expect(record.providerId == provider)
         #expect(record.rail == .crypto)
         #expect(record.asset == "USDC")
         #expect(record.paidNetwork == "polkadot")
@@ -73,7 +75,7 @@ struct FundingHistoryTests {
         )
 
         #expect(records == [pushed])
-        #expect(records.first?.providerId == "provider")
+        #expect(records.first?.providerId == provider)
     }
 
     @Test
@@ -153,10 +155,10 @@ struct FundingCloseFrameTests {
             book: book
         )
 
-        let answer = Task { await coordinator.presentFrame(providerId: "provider", intent: "intent", route: "/") }
+        let answer = Task { await coordinator.presentFrame(providerId: provider, intent: "intent", route: "/") }
         try await environment.waitUntil { $0.presented.last is FundingProviderFrameController }
 
-        coordinator.closeFrame(providerId: "provider", intent: "intent")
+        coordinator.closeFrame(providerId: provider, intent: "intent")
 
         #expect(await answer.value == .closed)
         try await environment.waitUntil { $0.presented.last is FundingSheetController }
@@ -173,15 +175,15 @@ struct FundingCloseFrameTests {
             book: book
         )
 
-        let answer = Task { await coordinator.presentFrame(providerId: "provider", intent: "intent", route: "/") }
+        let answer = Task { await coordinator.presentFrame(providerId: provider, intent: "intent", route: "/") }
         try await environment.waitUntil { $0.presented.last is FundingProviderFrameController }
 
-        coordinator.closeFrame(providerId: "other", intent: "intent")
-        coordinator.closeFrame(providerId: "provider", intent: "elsewhere")
+        try coordinator.closeFrame(providerId: ProductId("other.dot"), intent: "intent")
+        coordinator.closeFrame(providerId: provider, intent: "elsewhere")
         let frame = try #require(environment.presented.last as? FundingProviderFrameController)
         #expect(frame.presentingViewController != nil)
 
-        coordinator.closeFrame(providerId: "provider", intent: "intent")
+        coordinator.closeFrame(providerId: provider, intent: "intent")
         #expect(await answer.value == .closed)
     }
 }
@@ -200,7 +202,7 @@ private func summary(_ intent: String, settledAtMs: UInt64) -> FundingSessionSum
         amount: "50000000",
         stage: delivered(settledAtMs),
         openedAtMs: openedAtMs,
-        providerId: "provider",
+        providerId: provider,
         choice: FundingChoice(quote: quote(send: "4600"), rail: .crypto, asset: "USDC", network: "polkadot"),
         status: .toppedUp,
         payout: nil,
@@ -218,7 +220,7 @@ private func withdrawal(status: FundingStatus, payout: FundingPayout?, refunded:
         amount: "50000000",
         stage: .released(debited: "50000000", settledAtMs: openedAtMs + 1_000),
         openedAtMs: openedAtMs,
-        providerId: "provider",
+        providerId: provider,
         choice: FundingChoice(quote: quote(send: "50000000"), rail: .bank, asset: "EUR", network: nil),
         status: status,
         payout: payout,
@@ -251,7 +253,7 @@ private func session(_ intent: String, stage: FundingStage) -> FundingSession {
         openedAtMs: openedAtMs,
         deadlineMs: openedAtMs + 86_400_000,
         acknowledged: false,
-        providerId: "provider",
+        providerId: provider,
         assignedAtMs: openedAtMs,
         cancel: nil,
         updates: [],
@@ -275,7 +277,11 @@ private final class StubFundingRuntime: FundingRuntime, @unchecked Sendable {
     func selectFundingOptions(intent _: String, selection _: FundingSelection) {}
     func getFundingQuote(intent _: String, ask _: FundingQuoteAsk) -> UInt64 { 0 }
     func stopFundingQuotes(intent _: String) {}
-    func selectFundingProvider(intent _: String, providerId _: String, quoteId _: String) async throws -> Bool { true }
+    func selectFundingProvider(
+        intent _: String,
+        providerId _: ProductId,
+        quoteId _: String
+    ) async throws -> Bool { true }
     func cancelFunding(intent _: String) async throws -> CancelOutcome { .ended }
     func confirmFundingCancel(intent _: String, terms _: CancelTerms?) async throws -> CancelConfirmation { .declined }
     func fundingHistory() -> [FundingSessionSummary] { [] }
@@ -320,11 +326,11 @@ private final class WindowEnvironment: FundingOverlayEnvironment {
         return true
     }
 
-    func providerPage(providerId _: String, route _: String, title _: String) -> UIViewController? {
+    func providerPage(providerId _: ProductId, route _: String, title _: String) -> UIViewController? {
         UIViewController()
     }
 
-    func providerHasApp(providerId _: String) async -> Bool {
+    func providerHasApp(providerId _: ProductId) async -> Bool {
         true
     }
 
@@ -346,7 +352,7 @@ private final class WindowEnvironment: FundingOverlayEnvironment {
 }
 
 private struct PlaceholderBranding: FundingProviderBranding {
-    func brand(for providerId: String) async -> FundingProviderBrand {
+    func brand(for providerId: ProductId) async -> FundingProviderBrand {
         .placeholder(for: providerId)
     }
 }
@@ -363,7 +369,7 @@ struct FundingWorkerCrashingTests {
             book: FundingSessionBook()
         )
 
-        await coordinator.workerCrashing(productId: "ramp.dot")
+        await coordinator.workerCrashing(productId: try! ProductId("ramp.dot"))
 
         #expect(environment.notices == [String(localized: .Funding.providerCrashing(provider: "Ramp"))])
     }

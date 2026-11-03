@@ -21,15 +21,15 @@ struct FundingFlowModelQuoteTests {
         model.receive(quotes: FundingQuoteList(
             requestId: runtime.lastRequestId,
             rows: [
-                FundingQuoteRow(providerId: "routed", state: .quoted(quote: quote("q1", send: "5200"))),
-                FundingQuoteRow(providerId: "unrouted", state: .quoted(quote: quote("q2", send: "5100")))
+                FundingQuoteRow(providerId: provider("routed"), state: .quoted(quote: quote("q1", send: "5200"))),
+                FundingQuoteRow(providerId: provider("unrouted"), state: .quoted(quote: quote("q2", send: "5100")))
             ],
-            best: "unrouted",
+            best: provider("unrouted"),
             refreshAtMs: 0
         ))
 
-        #expect(model.listedProviderIds == ["routed", "unrouted"])
-        #expect(model.selectedProviderId == "unrouted")
+        #expect(model.listedProviderIds == [provider("routed"), provider("unrouted")])
+        #expect(model.selectedProviderId == provider("unrouted"))
         #expect(model.selectedQuote?.quoteId == "q2")
     }
 
@@ -80,8 +80,8 @@ struct FundingFlowModelQuoteTests {
 
         model.receive(quotes: FundingQuoteList(
             requestId: earlier,
-            rows: [FundingQuoteRow(providerId: "routed", state: .quoted(quote: quote("old", send: "1")))],
-            best: "routed",
+            rows: [FundingQuoteRow(providerId: provider("routed"), state: .quoted(quote: quote("old", send: "1")))],
+            best: provider("routed"),
             refreshAtMs: 0
         ))
 
@@ -104,8 +104,12 @@ private extension FundingFlowModelQuoteTests {
         )
     }
 
-    func candidate(_ providerId: String, routes: [FundingRoute]) -> FundingCandidate {
-        FundingCandidate(providerId: providerId, routes: routes, unsupported: [], limits: [])
+    func provider(_ name: String) -> ProductId {
+        try! ProductId("\(name).dot")
+    }
+
+    func candidate(_ name: String, routes: [FundingRoute]) -> FundingCandidate {
+        FundingCandidate(providerId: provider(name), routes: routes, unsupported: [], limits: [])
     }
 
     func route(_ rail: FundingRail) -> FundingRoute {
@@ -127,7 +131,7 @@ private extension FundingFlowModelQuoteTests {
 }
 
 private struct NoBranding: FundingProviderBranding {
-    func brand(for providerId: String) async -> FundingProviderBrand {
+    func brand(for providerId: ProductId) async -> FundingProviderBrand {
         .placeholder(for: providerId)
     }
 }
@@ -159,7 +163,11 @@ private final class FakeFundingRuntime: FundingRuntime, @unchecked Sendable {
     }
 
     func stopFundingQuotes(intent _: String) {}
-    func selectFundingProvider(intent _: String, providerId _: String, quoteId _: String) async throws -> Bool { true }
+    func selectFundingProvider(
+        intent _: String,
+        providerId _: ProductId,
+        quoteId _: String
+    ) async throws -> Bool { true }
     func cancelFunding(intent _: String) async throws -> CancelOutcome { .ended }
     func confirmFundingCancel(intent _: String, terms _: CancelTerms?) async throws -> CancelConfirmation { .declined }
     func fundingHistory() -> [FundingSessionSummary] { [] }

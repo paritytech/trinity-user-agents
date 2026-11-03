@@ -14,13 +14,13 @@ import UIKit
 /// or once the host sees the provider's part done, the payment seen or the
 /// session over, and `Dismissed` only when it could not be shown at all.
 final class FundingProviderFrameController: UIViewController {
-    let providerId: String
+    let providerId: ProductId
     private let page: UIViewController
     private let showsSentFunds: Bool
     private var completion: ((FundingFrameOutcome) -> Void)?
 
     init(
-        providerId: String,
+        providerId: ProductId,
         page: UIViewController,
         showsSentFunds: Bool,
         completion: @escaping (FundingFrameOutcome) -> Void
