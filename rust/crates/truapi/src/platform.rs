@@ -35,18 +35,19 @@ pub use crate::{
 };
 
 use truapi::{
+	CallError,
 	latest::{
-		AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage,
-		ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta, ChatMessage,
-		ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatPageAnchor, ChatPreviewMessage,
-		ChatPreviewReaction, ChatReaction, ChatReactionDetail, ChatReactionSummary, ChatReply,
-		ChatReplyPreview, ChatResource, ChatRichText, ChatRoomActivity, ChatRoomBadge,
-		ChatRoomConfig, ChatRoomMetadata, ChatRoomPreview, ChatRoomRegistrationStatus,
-		ChatUserAction, CodeFormat, FundingDirection, GenericError, HostChatCreateRoomError,
-		HostChatCreateRoomRequest, HostChatDeleteRoomRequest, HostChatListSubscribeItem,
-		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
-		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
-		HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
+		AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomBody,
+		ChatCustomMessage, ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta,
+		ChatMessage, ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatPageAnchor,
+		ChatPreviewMessage, ChatPreviewReaction, ChatReaction, ChatReactionDetail,
+		ChatReactionSummary, ChatReply, ChatReplyPreview, ChatResource, ChatRichText,
+		ChatRoomActivity, ChatRoomBadge, ChatRoomConfig, ChatRoomMetadata, ChatRoomPreview,
+		ChatRoomRegistrationStatus, ChatUserAction, CodeFormat, FundingDirection, GenericError,
+		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatDeleteRoomRequest,
+		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
+		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
+		HostChatRegisterBotResponse, HostChatSetRoomFooterRequest, HostChatSetRoomMetadataRequest,
 		HostChatSetRoomPreviewRequest, HostChatUpdateFeedError, HostChatUpdateFeedRequest,
 		HostDevicePermissionRequest, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
 		HostFundingStatusSubscribeItem, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
@@ -395,24 +396,23 @@ pub fn validate_chat_message_content(
 		Content::ReactionRemoved(reaction) => {
 			Content::ReactionRemoved(validate_chat_reaction(reaction)?)
 		},
-		Content::Custom(custom) => Content::Custom(validate_chat_custom_message(custom)?),
+		Content::Custom(custom) => Content::Custom(ChatCustomMessage {
+			message_type: validate_chat_custom_type(&custom.message_type, &custom.payload)?,
+			..custom
+		}),
 	})
 }
 
-/// Validate a message that the product draws through `Renderer::render`.
-fn validate_chat_custom_message(
-	custom: ChatCustomMessage,
-) -> Result<ChatCustomMessage, ChatFieldError> {
-	if custom.payload.len() > CHAT_CUSTOM_PAYLOAD_MAX_BYTES {
+/// Validate the type and payload of a message that the product draws through
+/// `Renderer::render`, and answer the normalized type.
+fn validate_chat_custom_type(message_type: &str, payload: &[u8]) -> Result<String, ChatFieldError> {
+	if payload.len() > CHAT_CUSTOM_PAYLOAD_MAX_BYTES {
 		return Err(ChatFieldError::TooLong {
 			field: "payload",
 			limit: CHAT_CUSTOM_PAYLOAD_MAX_BYTES,
 		});
 	}
-	Ok(ChatCustomMessage {
-		message_type: normalize_chat_identifier("messageType", &custom.message_type)?,
-		payload: custom.payload,
-	})
+	normalize_chat_identifier("messageType", message_type)
 }
 
 /// Validate a product-supplied file name.
@@ -785,7 +785,10 @@ pub fn validate_chat_message_body(
 			}
 		},
 		ChatMessageBody::Custom { message, alt } => ChatMessageBody::Custom {
-			message: validate_chat_custom_message(message)?,
+			message: ChatCustomBody {
+				message_type: validate_chat_custom_type(&message.message_type, &message.payload)?,
+				..message
+			},
 			alt: alt
 				.map(|alt| validate_chat_name("alt", &alt))
 				.transpose()?
@@ -2925,7 +2928,7 @@ mod tests {
 	fn a_custom_body_is_screened_like_a_posted_custom_message() {
 		let custom =
 			|message_type: &str, payload: Vec<u8>, alt: Option<&str>| ChatMessageBody::Custom {
-				message: ChatCustomMessage { message_type: message_type.to_string(), payload },
+				message: ChatCustomBody { message_type: message_type.to_string(), payload },
 				alt: alt.map(str::to_string),
 			};
 		assert_eq!(
@@ -3875,17 +3878,16 @@ pub trait ChatPlatform: Send + Sync {
 	/// it the host applies the change only to an open room screen and the chat
 	/// list preview. The host answers `UnknownMessage`, `DuplicateMessage`
 	/// and, for an edit, a replacement or a deletion of a message the product
-	/// did not write, `NotOwner`. A web host can answer only `Unknown`: the
-	/// web bridge turns each error that a web callback throws into `Unknown`.
+	/// did not write, `NotOwner`, and any failure of its own with
+	/// `HostFailure`. A web host can answer only `HostFailure`: the web bridge
+	/// turns each error that a web callback throws into `HostFailure`.
 	async fn update_chat_feed(
 		&self,
 		_product: &ProductContext,
 		_request: HostChatUpdateFeedRequest,
 		_persist: bool,
-	) -> Result<(), HostChatUpdateFeedError> {
-		Err(HostChatUpdateFeedError::Unknown {
-			reason: chat_method_not_served("updateChatFeed").reason,
-		})
+	) -> Result<(), CallError<HostChatUpdateFeedError>> {
+		Err(CallError::HostFailure { reason: chat_method_not_served("updateChatFeed").reason })
 	}
 }
 
