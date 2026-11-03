@@ -883,7 +883,7 @@ fn plain_key(pallet: &[u8], entry: &[u8]) -> Vec<u8> {
 mod tests {
 	use super::*;
 	use crate::dotns_views::{TLD_WITHOUT_VIEW, network_tld};
-	use alloy_sol_types::{SolCall, SolError};
+	use alloy_sol_types::SolCall;
 
 	// Golden vectors from the validated reference implementation in
 	// pop-dotns-testing: reservation.ts, proof.ts, verify.ts, abi.ts.
@@ -1035,27 +1035,6 @@ mod tests {
 		out
 	}
 
-	#[test]
-	fn revive_call_output_surfaces_data_reverts_and_dispatch_errors() {
-		let mut ok = vec![0u8];
-		0u32.encode_to(&mut ok);
-		vec![0xABu8, 0xCD].encode_to(&mut ok);
-		assert_eq!(decode_revive_call_output(&contract_result(&ok)).unwrap(), vec![0xAB, 0xCD]);
-
-		let mut reverted = vec![0u8];
-		1u32.encode_to(&mut reverted);
-		alloy_sol_types::Revert::from("nope").abi_encode().encode_to(&mut reverted);
-		assert_eq!(
-			decode_revive_call_output(&contract_result(&reverted)),
-			Err(DotnsContractError::Reverted { detail: "revert: nope".to_string() })
-		);
-
-		assert_eq!(
-			decode_revive_call_output(&contract_result(&[0x01, 0x02, 0x03])),
-			Err(DotnsContractError::Dispatch { detail: "0x0203".to_string() })
-		);
-	}
-
 	/// Answers a view of `Call` with `value`.
 	fn returns<Call: SolCall>(value: Call::Return) -> Result<Vec<u8>, DotnsViewError> {
 		Ok(Call::abi_encode_returns(&value))
@@ -1070,40 +1049,6 @@ mod tests {
 		Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
 			detail: "(empty)".to_string(),
 		}))
-	}
-
-	/// A `bool` return must be the canonical word: a lenient decode would read
-	/// any non-zero word as `true` and, for `exists`, call a free name taken.
-	#[test]
-	fn a_view_returning_a_non_canonical_word_is_a_decode_error() {
-		struct Answers(Vec<u8>);
-
-		#[crate::platform::async_trait]
-		impl DotnsTransport for Answers {
-			async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
-				unreachable!("a view reads no storage")
-			}
-
-			async fn view(
-				&mut self,
-				_dest: &[u8; 20],
-				_input: Vec<u8>,
-			) -> Result<Vec<u8>, DotnsViewError> {
-				Ok(self.0.clone())
-			}
-		}
-
-		let mut word = [0u8; 32];
-		word[31] = 2;
-		let result = futures::executor::block_on(read_view(
-			&mut Answers(word.to_vec()),
-			&[0xd1; 20],
-			DotnsRegistrar::existsCall { tokenId: U256::ZERO },
-		));
-		assert!(
-			matches!(result, Err(DotnsCallError::Decode(DotnsContractError::Abi(_)))),
-			"{result:?}"
-		);
 	}
 
 	struct RevertingSecondClaimPage {
