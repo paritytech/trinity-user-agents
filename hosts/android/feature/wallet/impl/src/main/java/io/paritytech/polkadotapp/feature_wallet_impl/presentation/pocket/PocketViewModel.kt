@@ -32,6 +32,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -51,6 +52,7 @@ import timber.log.Timber
 import uniffi.truapi.ProductId
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
+import kotlin.time.Duration.Companion.milliseconds
 
 @HiltViewModel
 class PocketViewModel @Inject constructor(
@@ -69,6 +71,7 @@ class PocketViewModel @Inject constructor(
     private val expandedProduct = ExpandedProductPage(this) { scope, url -> with(scope) { spaHost.createSession(url, underCard = true) } }
     private val _openingFaceShown = MutableStateFlow<Boolean?>(null)
     private var openingFaceLookup: Job? = null
+    private var collectiblesOpening: Job? = null
     private val removalCandidate = MutableStateFlow<PocketCardUiModel.ProductCard?>(null)
 
     private val digitalDollarAmounts = interactor.observeDigitalDollarBalance()
@@ -245,12 +248,14 @@ class PocketViewModel @Inject constructor(
         }
 
         if (selectedCardId.value != null) dismissCard()
-        collectiblesShown.value = false
+        hideCollectiblesSketchbook()
         removalCandidate.value = null
         selectCard(card, request.pageQuery)
     }
 
     fun selectCard(card: PocketCardUiModel, pageQuery: String = "") {
+        if (collectiblesShown.value) return
+
         selectedCardId.value = card.id
         selectedPageQuery = pageQuery
         if (card is PocketCardUiModel.ProductCard) {
@@ -296,16 +301,24 @@ class PocketViewModel @Inject constructor(
         selectedCardId.value = null
     }
 
-    fun showCollectiblesSketchbook() {
-        collectiblesShown.value = true
-    }
-
     fun hideCollectiblesSketchbook() {
+        collectiblesOpening?.cancel()
         collectiblesShown.value = false
     }
 
     fun openCollectibles() {
-        collectiblesUrl.value?.let { router.openSpaBrowser(SpaBrowserPayload.ByUrl(it.toString())) }
+        val page = collectiblesUrl.value ?: return
+        if (selectedCardId.value != null || collectiblesShown.value) return
+
+        collectiblesShown.value = true
+        collectiblesOpening = launch {
+            delay(COLLECTIBLES_OPEN_DELAY)
+            router.openSpaBrowser(SpaBrowserPayload.ByUrl(page.toString()))
+        }
+    }
+
+    fun onShown() {
+        if (collectiblesShown.value && collectiblesOpening?.isActive == false) hideCollectiblesSketchbook()
     }
 
     /**
@@ -375,5 +388,8 @@ class PocketViewModel @Inject constructor(
     private companion object {
         // Long enough to cover a scroll away and back, or a glance at another app.
         const val WORKER_KEEP_ALIVE_MILLIS = 5_000L
+
+        // iOS WalletView.sectionAnimationDuration
+        val COLLECTIBLES_OPEN_DELAY = 450.milliseconds
     }
 }
