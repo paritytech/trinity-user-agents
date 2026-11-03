@@ -10093,6 +10093,59 @@ fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
 	);
 }
 
+// A provider the host lists after the overlay asked, or one dotNS answers
+// for meanwhile, is asked at once rather than at the next round, so it shows
+// while the user is still choosing.
+#[test]
+fn a_provider_listed_while_quotes_are_watched_is_asked_at_once() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	answer_quotes(&services, "ramp.dot", card_quote("q1"));
+	let (_, mut lists) = services.watch_funding_quotes_within(
+		&intent,
+		card_ask(None),
+		Duration::from_secs(5),
+		Duration::from_secs(600),
+	);
+	let listing = {
+		let services = services.clone();
+		std::thread::spawn(move || {
+			std::thread::sleep(Duration::from_millis(100));
+			services
+				.set_funding_providers(vec![
+					crate::host_logic::funding_providers::FundingProviderEntry {
+						product_id: ProductId::for_test("ramp.dot"),
+						worker_manifest: Some(RAMP_MANIFEST.to_string()),
+						origin:
+							crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+					},
+				])
+				.expect("providers offered");
+		})
+	};
+	let asked = std::time::Instant::now();
+	let first = futures::executor::block_on(lists.next()).expect("a list once ramp.dot is listed");
+	listing.join().expect("listing thread");
+
+	assert_eq!(
+		(
+			first.rows.iter().map(|row| row.provider_id.as_str()).collect::<Vec<_>>(),
+			asked.elapsed() < Duration::from_secs(60),
+		),
+		(vec!["ramp.dot"], true)
+	);
+}
+
 // Each request's lists carry its id, and a request the host replaced stops
 // at once, mid round too: a late answer for an amount the user already
 // changed never reaches the host.
