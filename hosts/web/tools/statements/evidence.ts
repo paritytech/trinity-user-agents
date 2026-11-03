@@ -11,7 +11,7 @@ import type { StatementLedger } from "./ledger.js";
  */
 
 /** The version of the evidence's shape. */
-export const EVIDENCE_FORMAT = "truapi-web-host/statements-evidence/1";
+export const EVIDENCE_FORMAT = "truapi-web-host/statements-evidence/2";
 
 export interface EvidenceContext {
   network: string;

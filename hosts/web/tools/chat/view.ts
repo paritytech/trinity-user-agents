@@ -20,13 +20,14 @@ import {
  * The inspector's Chat view: the conversations product workers report about
  * themselves (`src/products/diagnostics.ts`), and the host's requests that
  * set them up. The host reads no chat payload to fill it: protocol, counts
- * and window are what a product reported, and say so.
+ * and protocol details are what a product reported, and say so.
  *
  * Resource facts (claims, grants, submissions, channels, subscriptions)
- * belong to the Statements view, which knows no protocol; a conversation
- * links there for its account, topics and request. An account a product
- * names is joined with the host's facts, here a cost per message, only when
- * a claim or an allowance of that product ties them.
+ * belong to the Statements view, which knows no protocol; each account and
+ * topic here links to it, and the request to its timeline. A link only
+ * navigates. An account a product names is joined with the host's facts,
+ * here a cost per message, only when a claim or an allowance of that product
+ * ties them.
  */
 
 export interface ChatViewDeps {
@@ -52,6 +53,21 @@ const PROTOCOL_NOTE =
 const ACCOUNT_NOTE =
   "The account the product says it posts as: the product's own account at a raw derivation index, which the core holds the key of. Not the person's identity account.";
 
+const CONVERSATION_ID_NOTE =
+  "The product's own local id for this conversation. Not an account, a key or a topic.";
+
+/** A conversation's title, from the host's request when the host holds it for the same product. */
+function titleOf(request: RequestRecord | undefined): string {
+  switch (request?.role) {
+    case "sender":
+      return "Chat you started";
+    case "recipient":
+      return "Chat you were invited to";
+    default:
+      return "Chat";
+  }
+}
+
 export function mountChatView(root: HTMLElement, deps: ChatViewDeps): ChatView {
   const { ledger } = deps;
   const top = el("div", "si-top");
@@ -74,6 +90,25 @@ export function mountChatView(root: HTMLElement, deps: ChatViewDeps): ChatView {
     const chip = button("si-chip", text, `Show ${label} in Statements`);
     chip.addEventListener("click", () => deps.showStatements(target));
     return chip;
+  };
+
+  /** An account or a topic, shown short, as a link to its detail in Statements. */
+  const hexLink = (hex: string, target: StatementsTarget, what: string) => {
+    const node = button(
+      "si-link",
+      short(hex),
+      `Show ${what} ${hex} in Statements`,
+    );
+    node.addEventListener("click", () => deps.showStatements(target));
+    return node;
+  };
+
+  const links = (nodes: HTMLElement[]) => {
+    const value = el("span");
+    nodes.forEach((node, index) =>
+      value.append(...(index === 0 ? [] : [" "]), node),
+    );
+    return value;
   };
 
   /** The host's request a report names, only when the host holds it for the same product. */
@@ -102,7 +137,23 @@ export function mountChatView(root: HTMLElement, deps: ChatViewDeps): ChatView {
               ? `refused: ${request.refusal}`
               : request.account === undefined
                 ? `index ${short(request.index, 4)} bound`
-                : `allowed ${short(request.account)}${request.until === undefined ? "" : ` · until ${clock(request.until)}`}`,
+                : links([
+                    el("span", undefined, "allowed"),
+                    hexLink(
+                      request.account,
+                      { account: request.account },
+                      "account",
+                    ),
+                    ...(request.until === undefined
+                      ? []
+                      : [
+                          el(
+                            "span",
+                            undefined,
+                            `· until ${clock(request.until)}`,
+                          ),
+                        ]),
+                  ]),
             "host",
             `Raw derivation index ${request.index}.${request.account === undefined ? "" : ` Allowed account ${request.account}.`}`,
           )),
@@ -123,16 +174,18 @@ export function mountChatView(root: HTMLElement, deps: ChatViewDeps): ChatView {
     return row;
   }
 
-  function topicRow(label: string, topics: string[]): HTMLElement[] {
+  function topicRow(
+    label: string,
+    topics: string[],
+    note: string,
+  ): HTMLElement[] {
     if (topics.length === 0) return [];
-    const value = el("span");
-    value.append(
-      ...topics.flatMap((topic, index) => [
-        ...(index === 0 ? [] : [" "]),
-        link(short(topic), { topic }, `topic ${short(topic)}`),
-      ]),
+    return fact(
+      label,
+      links(topics.map((topic) => hexLink(topic, { topic }, "topic"))),
+      "product",
+      note,
     );
-    return fact(label, value, "product");
   }
 
   function conversationCard(record: ConversationRecord): HTMLElement {
@@ -152,9 +205,10 @@ export function mountChatView(root: HTMLElement, deps: ChatViewDeps): ChatView {
       `Show ${record.product}'s frames`,
     );
     traces.addEventListener("click", () => deps.showTraces(record.product));
+    const request = joinedRequest(record);
     card.append(
       head(
-        `Conversation ${short(report.id, 4)}`,
+        titleOf(request),
         [
           record.product,
           ...(report.state === undefined ? [] : [report.state]),
@@ -167,14 +221,13 @@ export function mountChatView(root: HTMLElement, deps: ChatViewDeps): ChatView {
     facts.append(
       ...fact("Protocol", report.protocol, "product", PROTOCOL_NOTE),
     );
-    const request = joinedRequest(record);
     if (request !== undefined) {
       facts.append(...requestFacts(request));
       facts.append(
         ...fact(
           "Delivery",
           link(
-            "Statements",
+            "Request timeline",
             {
               handle: request.handle,
               label: `request ${short(request.handle, 4)}`,
@@ -182,7 +235,7 @@ export function mountChatView(root: HTMLElement, deps: ChatViewDeps): ChatView {
             `request ${short(request.handle, 4)}`,
           ),
           "host",
-          "The host's request and delivery events for it, in the Statements timeline. Submissions and claims of its account are there by account.",
+          "The Statements timeline narrowed to this request: its send or reply, its delivery's notification accounts and problems, and chatAccount. The chat account's own posts are under its account.",
         ),
       );
     } else if (report.request !== undefined)
@@ -196,47 +249,56 @@ export function mountChatView(root: HTMLElement, deps: ChatViewDeps): ChatView {
       );
     if (report.account !== undefined) {
       facts.append(
-        ...fact("Account", short(report.account), "product", ACCOUNT_NOTE),
+        ...fact(
+          "Account",
+          hexLink(report.account, { account: report.account }, "account"),
+          "product",
+          ACCOUNT_NOTE,
+        ),
       );
-      if (ledger.owns(record.product, report.account)) {
-        const value = el("span");
-        value.append(
-          "tied by host ",
-          link(
-            "Statements",
-            { account: report.account },
-            `account ${short(report.account)}`,
-          ),
-        );
-        facts.append(
-          ...fact(
-            "Tie",
-            value,
-            "host",
-            `A claim or an allowance of ${record.product} names this account: its resources are in Statements.`,
-          ),
-        );
-      } else
-        facts.append(
-          ...fact(
-            "Tie",
-            "none · reported only",
-            "inspector",
-            `No claim or allowance of ${record.product} names this account, so the host joins none of its facts here.`,
-          ),
-        );
+      facts.append(
+        ...(ledger.owns(record.product, report.account)
+          ? fact(
+              "Tie",
+              `tied to ${record.product}`,
+              "host",
+              `A claim or an allowance of ${record.product} names this account. The host ties accounts to a product, not to a conversation.`,
+            )
+          : fact(
+              "Tie",
+              "none · reported only",
+              "inspector",
+              `No claim or allowance of ${record.product} names this account, so the host joins none of its facts here. Its link shows what this tab saw of it, if anything.`,
+            )),
+      );
     }
     if ((report.peers ?? []).length > 0)
       facts.append(
         ...fact(
           "Peers",
-          `${report.peers!.length} account${report.peers!.length === 1 ? "" : "s"}`,
+          links(
+            report.peers!.map((peer) =>
+              hexLink(peer, { account: peer }, "account"),
+            ),
+          ),
           "product",
-          `The accounts whose statements it reads: ${report.peers!.join(", ")}.`,
+          "The accounts whose statements it says it reads. Reported, not who they belong to.",
         ),
       );
-    facts.append(...topicRow("Read topics", report.listen ?? []));
-    facts.append(...topicRow("Post topics", report.post?.topics ?? []));
+    facts.append(
+      ...topicRow(
+        "Listens on",
+        report.listen ?? [],
+        "Topics it says it reads. Open one in Statements to see who listens there and what was seen.",
+      ),
+    );
+    facts.append(
+      ...topicRow(
+        "Publishes on",
+        report.post?.topics ?? [],
+        "Topics it says it posts on.",
+      ),
+    );
     if (report.logical !== undefined)
       facts.append(
         ...fact(
@@ -248,17 +310,6 @@ export function mountChatView(root: HTMLElement, deps: ChatViewDeps): ChatView {
           "Logical messages, as the product counts them since its worker started. Duplicates: messages read again and dropped.",
         ),
       );
-    if (report.window !== undefined) {
-      const window = report.window;
-      facts.append(
-        ...fact(
-          "Window",
-          `${window.messages}${window.maxMessages === undefined ? "" : `/${window.maxMessages}`} msgs · ${window.bytes} B${window.maxBytes === undefined ? "" : `/${window.maxBytes} B`}${window.retentionSeconds === undefined ? "" : ` · ${Math.round(window.retentionSeconds / 3600)} h`}`,
-          "product",
-          "What its last post carried, and the most a post carries, as the product reports it.",
-        ),
-      );
-    }
     const cost = ledger.cost(record);
     facts.append(
       ...(cost.known
@@ -266,13 +317,24 @@ export function mountChatView(root: HTMLElement, deps: ChatViewDeps): ChatView {
             "Per message",
             `${(cost.wentOut / cost.sent).toFixed(2)} stmts · ${Math.round(cost.wentOutDataBytes / cost.sent)} B (${cost.wentOut} broadcast · ${cost.attempts} tried · ${cost.sent} sent)`,
             "derived",
-            `Since ${clock(cost.since)}, this worker run's first report seen here: submissions answered new (broadcast, not shown stored) signed by its account, over the messages it reports sent in the same window.`,
+            `Since ${clock(cost.since)}, this worker run's first report seen here: submissions answered new (broadcast, not shown stored) signed by its account, over the messages it reports sent in the same span.`,
           )
         : fact("Per message", `not known: ${cost.why}`, "inspector")),
     );
-    for (const entry of report.facts ?? [])
-      facts.append(...fact(entry.label, entry.value, "product"));
     card.append(facts);
+    if ((report.facts ?? []).length > 0) {
+      const protocol = el("dl", "si-facts");
+      for (const entry of report.facts!)
+        protocol.append(...fact(entry.label, entry.value, "product"));
+      card.append(el("h4", "si-sub", "Protocol details"), protocol);
+    }
+    const details = el("details", "si-columns-about");
+    const idFacts = el("dl", "si-facts");
+    idFacts.append(
+      ...fact("Conversation ID", report.id, "product", CONVERSATION_ID_NOTE),
+    );
+    details.append(el("summary", undefined, "Details"), idFacts);
+    card.append(details);
     return card;
   }
 

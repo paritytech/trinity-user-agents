@@ -49,6 +49,7 @@ const VIEW_PAGE = `<!doctype html>
       import { observedConnection } from "/src/platform/statement-observer.ts";
       import { encodeSigned } from "/src/platform/statement.ts";
       import { isNoSubmitRefusal } from "/tools/demos/no-submit.ts";
+      import { inboxTopic, periodOf } from "/src/invitations/statement-delivery.ts";
 
       // As the host page builds it: the dev tools' guard says which errors it made.
       const ledger = new StatementLedger({}, Date.now, isNoSubmitRefusal);
@@ -105,17 +106,25 @@ const VIEW_PAGE = `<!doctype html>
         () => new Uint8Array(64),
       ));
 
-      // A connection whose answers the page pushes, observed as the core's.
-      const queue = []; let wake = () => {};
-      const inner = {
-        send() {},
-        async *responses() { for (;;) { if (queue.length) { yield queue.shift(); continue; } await new Promise((r) => (wake = r)); } },
-        close() {},
+      // A connection whose answers the page pushes, observed as \`source\`'s.
+      const pushed = (source) => {
+        const queue = []; let wake = () => {};
+        const inner = {
+          send() {},
+          async *responses() { for (;;) { if (queue.length) { yield queue.shift(); continue; } await new Promise((r) => (wake = r)); } },
+          close() {},
+        };
+        const connection = observedConnection(inner, source, ledger.traffic);
+        (async () => { for await (const _ of connection.responses()); })();
+        return { connection, answer: (value) => { queue.push(JSON.stringify(value)); wake(); } };
       };
-      const connection = observedConnection(inner, "core", ledger.traffic);
-      (async () => { for await (const _ of connection.responses()); })();
-      const answer = (value) => { queue.push(JSON.stringify(value)); wake(); };
+      const { connection, answer } = pushed("core");
+      const host = pushed("host");
       const settle = () => new Promise((r) => setTimeout(r, 20));
+      // The host's day inbox on this network, as its delivery reads it: today's and yesterday's.
+      const today = inboxTopic("testnet", periodOf(Date.now()));
+      const yesterday = inboxTopic("testnet", periodOf(Date.now()) - 1);
+      const notification = fill(0xd4);
 
       window.__feed = async () => {
         const index = "0x" + "01".repeat(32);
@@ -138,7 +147,10 @@ const VIEW_PAGE = `<!doctype html>
           listen: [hex(readTopic)],
           post: { topics: [hex(sendTopic)], channel: hex(channel) },
           logical: { sent, received: 1, duplicates: 0, failed: 0, posts: sent },
-          window: { messages: sent, bytes: 90, maxMessages: 20, maxBytes: 16384, retentionSeconds: 172800 },
+          facts: [
+            { label: "Published message batch", value: \`\${sent} of 20 messages · 90 of 16384 B\` },
+            { label: "Requested expiry", value: "48 h per post; peers may evict it sooner" },
+          ],
         });
         // The run's first report starts the cost window, before anything is sent.
         ledger.diagnostics({ name: "contact-chat.test", run: 1 }, { conversations: [conversation(0)] });
@@ -154,6 +166,13 @@ const VIEW_PAGE = `<!doctype html>
         answer({ jsonrpc: "2.0", id: 3, result: { status: "new" } });
         connection.send(JSON.stringify({ jsonrpc: "2.0", id: 4, method: "statement_submit", params: [statement(own, sendTopic, 7000, text([]))] }));
         answer({ jsonrpc: "2.0", id: 4, error: { code: 7001, message: "Statement store error: none of the 3 connected peers accepted the statement" } });
+        // The host reads its day inbox, and posts the request there as a notification account.
+        host.connection.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "statement_subscribeStatement", params: [{ matchAny: [hex(yesterday), hex(today)] }] }));
+        host.answer({ jsonrpc: "2.0", id: 1, result: "inbox" });
+        host.answer({ jsonrpc: "2.0", method: "statement_statement", params: { subscription: "inbox", result: { event: "newStatements", data: { statements: [], remaining: 0 } } } });
+        ledger.invitations({ type: "delivery-account", post: handle, account: hex(notification), period: periodOf(Date.now()) });
+        host.connection.send(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "statement_submit", params: [hex(encodeSigned({ expiry: BigInt(now + 86400) << 32n, channel: null, topics: [today], data: new Uint8Array(200) }, notification, () => new Uint8Array(64)))] }));
+        host.answer({ jsonrpc: "2.0", id: 2, result: { status: "new" } });
         await settle();
         ledger.diagnostics({ name: "contact-chat.test", run: 1 }, { conversations: [conversation(2)] });
         await settle();
@@ -173,6 +192,10 @@ const VIEW_PAGE = `<!doctype html>
         });
         await settle();
       };
+      window.__reveal = (target) => {
+        window.__showView("statements");
+        view.reveal(target);
+      };
       window.__shown = shown;
       window.__ledger = ledger;
     </script>
@@ -181,6 +204,7 @@ const VIEW_PAGE = `<!doctype html>
 
 interface ViewWindow {
   __feed(): Promise<{ own: string }>;
+  __reveal(target: { account: string } | { topic: string }): void;
   __borrow(): Promise<void>;
   __refuseHere(): Promise<void>;
   __showView(name: "chat" | "statements"): void;
@@ -247,8 +271,12 @@ describe("the Statements and Chat views", () => {
       const { context, page } = await openView();
       try {
         const card = page.locator("#chat-inspector .si-card").first();
-        expect(await card.locator(".si-card-title").innerText()).toContain(
-          "Conversation",
+        // The title comes from the host's request, not the product's local id.
+        expect(await card.locator(".si-card-title").innerText()).toBe(
+          "Chat you started",
+        );
+        expect(await card.locator(".si-card-head").innerText()).not.toContain(
+          "0xc0c0",
         );
         const facts = await factsOf(
           page,
@@ -267,16 +295,42 @@ describe("the Statements and Chat views", () => {
           "‖ The account the product says it posts as",
         );
         // The tie is the host's fact, on its own line with its own tag.
-        expect(line("Tie")).toContain("| host | host tied by host");
-        expect(line("Account")).not.toContain("tied by host");
-        expect(line("Delivery")).toContain(
-          "‖ The host's request and delivery events for it",
+        // The tie is to the product, never to one conversation.
+        expect(line("Tie")).toContain(
+          "| host | host tied to contact-chat.test",
         );
-        expect(line("Read topics")).toContain("| reported |");
+        expect(line("Tie")).toContain(
+          "‖ A claim or an allowance of contact-chat.test names this account. The host ties accounts to a product, not to a conversation.",
+        );
+        expect(line("Account")).not.toContain("tied to");
+        expect(line("Delivery")).toContain(
+          "‖ The Statements timeline narrowed to this request",
+        );
+        expect(line("Listens on")).toContain("| reported | reported 0x2222");
+        expect(line("Publishes on")).toContain("| reported | reported 0x1111");
+        expect(line("Peers")).toContain("| reported | reported 0xb2b2");
         expect(line("Messages")).toContain(
           "2 sent · 1 received · 0 duplicates",
         );
-        expect(line("Window")).toContain("2/20 msgs");
+        // What one post carries is the protocol's: under Protocol details, as reported.
+        expect(line("Window")).toBe("");
+        expect(
+          await card
+            .locator(".si-sub", { hasText: "Protocol details" })
+            .count(),
+        ).toBe(1);
+        expect(line("Published message batch")).toContain(
+          "| reported | reported 2 of 20 messages · 90 of 16384 B",
+        );
+        expect(line("Requested expiry")).toContain(
+          "| reported | reported 48 h per post; peers may evict it sooner",
+        );
+        // The conversation's local id is a detail, said for what it is.
+        const details = card.locator("details.si-columns-about");
+        expect(await details.getAttribute("open")).toBeNull();
+        expect(line("Conversation ID")).toContain(
+          "‖ The product's own local id for this conversation. Not an account, a key or a topic.",
+        );
         expect(line("Per message")).toMatch(
           /\| derived \| derived 1\.00 stmts · \d+ B \(2 broadcast · 3 tried · 2 sent\)/,
         );
@@ -293,12 +347,23 @@ describe("the Statements and Chat views", () => {
         expect(await card.locator(".si-why[open]").count()).toBe(0);
         await shot(page, "chat");
 
-        // The account link opens Statements on that account.
+        // The account itself is the link: it opens Statements on that account, focused.
         await card
-          .locator(".si-facts dd", { hasText: "tied by host" })
-          .locator("button")
+          .locator("dd", {
+            has: page.locator(".si-src", { hasText: "reported" }),
+          })
+          .locator(".si-link", { hasText: "0xa1a1" })
+          .first()
           .click();
         await page.locator("#statements-inspector .si-detail").waitFor();
+        expect(
+          await page.evaluate(
+            () =>
+              (document.activeElement as HTMLElement | null)?.getAttribute(
+                "aria-pressed",
+              ) ?? "",
+          ),
+        ).toBe("true");
         const account = await factsOf(page, "#statements-inspector .si-detail");
         const at = (label: string) =>
           account.find((entry) => entry.startsWith(`${label} |`)) ?? "";
@@ -404,6 +469,7 @@ describe("the Statements and Chat views", () => {
         expect(await rows.locator(".si-role").allInnerTexts()).toEqual([
           "Product account +2",
           "Chat peer reported",
+          "Setup notification",
         ]);
 
         const shown = await page.locator("#statements-inspector").innerText();
@@ -464,7 +530,7 @@ describe("the Statements and Chat views", () => {
           await page.locator("#statements-inspector .si-event-text").count(),
         ).toBe(0);
 
-        // A topic link narrows the Statements timeline to it.
+        // A topic link opens the topic's detail, not the timeline.
         await page.evaluate(() =>
           (window as unknown as ViewWindow).__showView("chat"),
         );
@@ -486,16 +552,62 @@ describe("the Statements and Chat views", () => {
         );
         await page.waitForTimeout(600);
         expect(await chatWhy.getAttribute("open")).not.toBeNull();
-        await page
-          .locator("#chat-inspector .si-facts dd", { hasText: "0x2222" })
-          .first()
-          .locator("button")
-          .first()
-          .click();
+        await card.locator(".si-link", { hasText: "0x2222" }).click();
+        const topic = page.locator("#statements-inspector .si-detail");
+        await topic.waitFor();
+        expect(
+          await page
+            .locator('#statements-inspector .si-tab[aria-selected="true"]')
+            .innerText(),
+        ).toBe("Topics");
+        const topicFacts = await factsOf(
+          page,
+          "#statements-inspector .si-detail",
+        );
+        const about = (label: string) =>
+          topicFacts.filter((entry) => entry.startsWith(`${label} |`));
+        expect(about("Name")).toEqual([
+          expect.stringContaining(
+            "| reported | reported contact-chat.test · incoming",
+          ),
+        ]);
+        expect(about("Listening")).toEqual([
+          expect.stringContaining(
+            "| light client | light client S1 · core · after its initial batch",
+          ),
+          expect.stringContaining(
+            "| reported | reported contact-chat.test says it reads it",
+          ),
+        ]);
+        expect(about("Publishing")).toEqual([
+          expect.stringContaining(
+            "| inspector | inspector no submission asked here",
+          ),
+        ]);
+        expect(about("Observed")).toEqual([
+          expect.stringMatching(
+            /\| derived \| derived 1 stmt · last \d\d:\d\d:\d\d · not current/,
+          ),
+        ]);
+        // Its statements name their signer, which links to the account.
+        await topic.locator(".si-statement summary").first().click();
+        expect(
+          await topic.locator(".si-statement .si-link").first().innerText(),
+        ).toContain("0xb2b2");
+        // Subscription counters are nested in the detail, closed.
+        expect(
+          await topic
+            .locator("details.si-columns-about > summary")
+            .allInnerTexts(),
+        ).toEqual(["Subscriptions (1)"]);
+        await shot(page, "topic-detail");
+
+        // The detail's Timeline action narrows the timeline to the topic, with no stale filter.
+        await topic.locator(".si-chip", { hasText: "Timeline" }).click();
         await page.locator("#statements-inspector .si-focus").waitFor();
         expect(
           await page.locator("#statements-inspector .si-focus").innerText(),
-        ).toContain("topic");
+        ).toContain("topic contact-chat.test · incoming");
         const texts = await page
           .locator("#statements-inspector .si-event-text")
           .allInnerTexts();
@@ -514,6 +626,21 @@ describe("the Statements and Chat views", () => {
           texts.some((text) => text.includes("reports conversation")),
         ).toBe(false);
         await shot(page, "timeline");
+
+        // Request timeline narrows it to the host's request events.
+        await page.evaluate(() =>
+          (window as unknown as ViewWindow).__showView("chat"),
+        );
+        await card.locator(".si-chip", { hasText: "Request timeline" }).click();
+        await page.locator("#statements-inspector .si-focus").waitFor();
+        expect(
+          await page.locator("#statements-inspector .si-focus").innerText(),
+        ).toContain("request 0x4444…4444");
+        const requestEvents = await page
+          .locator("#statements-inspector .si-event-text")
+          .allInnerTexts();
+        expect(requestEvents.length).toBeGreaterThan(0);
+        for (const text of requestEvents) expect(text).toMatch(/0x4444…4444/);
 
         await page.evaluate(() =>
           (window as unknown as ViewWindow).__showView("chat"),
@@ -554,6 +681,36 @@ describe("the Statements and Chat views", () => {
         expect(text).toContain(
           "not known: the host holds no claim or allowance tying its account to other.test",
         );
+        // Its account still links to what this tab saw of that account: navigation, not a tie.
+        await borrower.locator(".si-link", { hasText: "0xa1a1" }).click();
+        await page.locator("#statements-inspector .si-detail").waitFor();
+        expect(
+          await page
+            .locator("#statements-inspector .si-detail dd", {
+              hasText: "other.test says it posts as this account",
+            })
+            .locator(".si-src")
+            .innerText(),
+        ).toBe("reported");
+        // An account no one recorded opens empty, and nothing is read for it.
+        const unknown = "0x" + "e5".repeat(32);
+        await page.evaluate(
+          (account) => (window as unknown as ViewWindow).__reveal({ account }),
+          unknown,
+        );
+        const missing = page.locator("#statements-inspector .si-detail", {
+          hasText: unknown,
+        });
+        await missing.waitFor();
+        expect(await missing.innerText()).toContain("nothing in this session");
+        expect(
+          await page.evaluate(
+            () =>
+              (window as unknown as { __peopleConnections: string[][] })
+                .__peopleConnections,
+          ),
+        ).toEqual([]);
+        await shot(page, "unknown-account");
       } finally {
         await context.close();
       }
@@ -562,7 +719,7 @@ describe("the Statements and Chat views", () => {
   );
 
   test(
-    "Statements lists subscriptions and topics with no probe, captures only when asked, and copies metadata only",
+    "Statements lists topics by role with no probe, nests subscriptions, captures only when asked, and copies metadata only",
     async () => {
       const { context, page } = await openView();
       try {
@@ -573,18 +730,130 @@ describe("the Statements and Chat views", () => {
           await page.locator("#statements-inspector .si-tab").allInnerTexts(),
         ).toEqual(["Accounts", "Topics", "Timeline"]);
         await page.locator(".si-tab", { hasText: "Topics" }).click();
-        await page.waitForSelector(".si-sub-row");
-        expect(await page.locator(".si-sub-row").first().innerText()).toContain(
-          "core · open · 0 initial · 1 later",
+        const rows = page.locator(
+          "#statements-inspector .si-topics .si-list-row",
         );
+        await rows.first().waitFor();
+        // One row per topic: a name only where it is known, the role from its
+        // own sources, who holds a subscription open, and what was observed.
+        const table = await rows.evaluateAll((nodes) =>
+          nodes.map((node) =>
+            [...node.children].map((cell) =>
+              (cell as HTMLElement).innerText.replace(/\s+/g, " ").trim(),
+            ),
+          ),
+        );
+        expect(table).toEqual([
+          [
+            expect.stringMatching(
+              /^Shared setup inbox · today UTC 0x\w{4}…\w{4}$/,
+            ),
+            "Both",
+            "host · open",
+            expect.stringMatching(/^1 · \d\d:\d\d$/),
+          ],
+          [
+            expect.stringMatching(
+              /^contact-chat\.test · incoming 0x2222…2222 reported$/,
+            ),
+            "Listening",
+            "core · open",
+            expect.stringMatching(/^1 · \d\d:\d\d$/),
+          ],
+          [
+            expect.stringMatching(
+              /^Shared setup inbox · yesterday UTC 0x\w{4}…\w{4}$/,
+            ),
+            "Listening",
+            "host · open",
+            "None seen",
+          ],
+          [
+            expect.stringMatching(
+              /^contact-chat\.test · outgoing 0x1111…1111 reported$/,
+            ),
+            "Publishing",
+            "None",
+            expect.stringMatching(/^2 · \d\d:\d\d$/),
+          ],
+        ]);
+        expect(
+          await page
+            .locator("#statements-inspector .si-topics .si-list-head span")
+            .allTextContents(),
+        ).toEqual(["Topic", "Role", "Subscription", "Observed"]);
+        // On a wide dock the headings sit over their columns.
+        await page.setViewportSize({ width: 1240, height: 940 });
+        await page.locator(".devtools").evaluate((node) => {
+          (node as HTMLElement).style.width = "1200px";
+        });
+        const topicLefts = await page.evaluate(() => {
+          const left = (nodes: Iterable<Element>) =>
+            [...nodes].map((node) =>
+              Math.round(node.getBoundingClientRect().left),
+            );
+          return {
+            head: left(
+              document.querySelectorAll(
+                "#statements-inspector .si-topics .si-list-head span",
+              ),
+            ),
+            row: left(
+              document.querySelector(
+                "#statements-inspector .si-topics .si-list-row",
+              )!.children,
+            ),
+          };
+        });
+        expect(topicLefts.head).toEqual(topicLefts.row);
+        expect(new Set(topicLefts.head).size).toBe(4);
+        await shot(page, "topics-wide");
+        await page.locator(".devtools").evaluate((node) => {
+          (node as HTMLElement).style.width = "";
+        });
+        await page.setViewportSize({ width: 800, height: 940 });
         expect(
           await page
             .locator("#statements-inspector button", { hasText: /probe/i })
             .count(),
         ).toBe(0);
         expect(await page.locator(".si-no-probe").innerText()).toContain(
-          "the inspector opens no statement subscription of its own",
+          "a subscription listens on one or more topics. The inspector opens none of its own.",
         );
+        // Subscriptions, with their counters, are one closed list under the topics.
+        const all = page.locator("#statements-inspector .si-subscriptions");
+        expect(await all.getAttribute("open")).toBeNull();
+        expect(await all.locator(":scope > summary").innerText()).toBe(
+          "All subscriptions (2)",
+        );
+        await all.locator(":scope > summary").click();
+        expect(await all.locator(".si-sub-row").allInnerTexts()).toEqual([
+          expect.stringContaining("host · open · 0 initial · 0 later"),
+          expect.stringContaining("core · open · 0 initial · 1 later"),
+        ]);
+        await all.locator(":scope > summary").click();
+        // A row opens its detail from the keyboard too.
+        await rows.first().focus();
+        await page.keyboard.press("Enter");
+        const inbox = page.locator("#statements-inspector .si-detail");
+        await inbox.waitFor();
+        const inboxFacts = await factsOf(
+          page,
+          "#statements-inspector .si-detail",
+        );
+        expect(
+          inboxFacts.filter((entry) =>
+            /^(Name|Listening|Publishing) \|/.test(entry),
+          ),
+        ).toEqual([
+          expect.stringMatching(
+            /^Name \| derived \| derived Shared setup inbox · today UTC ?why ‖ The draft delivery's day inbox on testnet for UTC day \d+, worked out here from the network and the day\. Every host using this draft delivery /,
+          ),
+          expect.stringContaining("| light client | light client S2 · host ·"),
+          expect.stringContaining(
+            "| light client | light client 1 broadcast · 1 tried",
+          ),
+        ]);
         expect(
           await page.evaluate(
             () =>
@@ -616,7 +885,7 @@ describe("the Statements and Chat views", () => {
           navigator.clipboard.readText(),
         );
         expect((JSON.parse(copied) as { format: string }).format).toBe(
-          "truapi-web-host/statements-evidence/1",
+          "truapi-web-host/statements-evidence/2",
         );
         expect(copied).not.toContain("hello from the peer");
       } finally {
@@ -695,7 +964,7 @@ describe("the Statements and Chat views", () => {
         expect(at("Refused here")).toContain("no peer got them");
         expect(
           await page.locator("#statements-inspector .si-summary").innerText(),
-        ).toContain("4 submits · 2 answered · 1 errors · 1 refused here");
+        ).toContain("5 submits · 3 answered · 1 errors · 1 refused here");
         await shot(page, "refused-here-account");
 
         await page.locator(".si-tab", { hasText: "Timeline" }).click();
@@ -709,8 +978,8 @@ describe("the Statements and Chat views", () => {
             ),
           );
         expect(events.slice(-2)).toEqual([
-          expect.stringMatching(/^core \| Submit #4 asked by the core: /),
-          "host | Submit #4 refused in this tab: it submits nothing",
+          expect.stringMatching(/^core \| Submit #5 asked by the core: /),
+          "host | Submit #5 refused in this tab: it submits nothing",
         ]);
         await shot(page, "refused-here-timeline");
 
@@ -846,6 +1115,8 @@ describe("the Statements and Chat views", () => {
         const card = page.locator("#chat-inspector .si-card");
         await card.filter({ hasText: "demo/plain/1" }).waitFor();
         expect(await card.innerText()).toContain("waiting");
+        // A protocol that reports no details has no Protocol details, and no window.
+        expect(await card.innerText()).not.toMatch(/Protocol details|Window/);
         expect(await card.locator(".si-src").first().innerText()).toBe(
           "reported",
         );

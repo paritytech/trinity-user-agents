@@ -207,7 +207,7 @@ export class ContactChat implements ConversationEngine {
   /** Counts since this engine started, by conversation, for the developer tools. */
   private readonly counts = new Map<string, Required<LogicalCounts>>();
   /** What this run's last post carried, by conversation. */
-  private readonly lastWindow = new Map<
+  private readonly lastBatch = new Map<
     string,
     { messages: number; bytes: number }
   >();
@@ -256,7 +256,7 @@ export class ContactChat implements ConversationEngine {
         conversation.session === undefined
           ? undefined
           : protocol.routes(conversation.session);
-      const window = this.lastWindow.get(conversation.id);
+      const batch = this.lastBatch.get(conversation.id);
       return {
         id: conversation.id,
         protocol: protocol.name,
@@ -275,19 +275,19 @@ export class ContactChat implements ConversationEngine {
               post: routes.post,
             }),
         logical: this.countsFor(conversation.id),
-        ...(window === undefined
+        ...(batch === undefined || protocol.window === undefined
           ? {}
           : {
-              window: {
-                ...window,
-                ...(protocol.window === undefined
-                  ? {}
-                  : {
-                      maxMessages: protocol.window.messages,
-                      maxBytes: protocol.window.bytes,
-                    }),
-                retentionSeconds: RETENTION_SECONDS,
-              },
+              facts: [
+                {
+                  label: "Published message batch",
+                  value: `${batch.messages} of ${protocol.window.messages} messages · ${batch.bytes} of ${protocol.window.bytes} B`,
+                },
+                {
+                  label: "Requested expiry",
+                  value: `${RETENTION_SECONDS / 3600} h per post; peers may evict it sooner`,
+                },
+              ],
             }),
       };
     });
@@ -590,7 +590,7 @@ export class ContactChat implements ConversationEngine {
         message.state = "failed";
         failed += 1;
       }
-    this.lastWindow.set(conversation.id, {
+    this.lastBatch.set(conversation.id, {
       messages: carried.length,
       bytes: (post.data.length - 2) / 2,
     });

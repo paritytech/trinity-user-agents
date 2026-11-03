@@ -134,6 +134,30 @@ describe("the statement ledger", () => {
     });
   });
 
+  test("a topic counts the submissions asked on it apart from the statements observed on it, and when it last saw one", () => {
+    const { book, submit, subscribe, page } = ledger();
+    // Asked, but refused: a submission, never an observation.
+    submit(statement(50), { status: "rejected", reason: "dataTooLarge" });
+    expect(book.topicRecord(TOPIC)).toMatchObject({
+      submits: 1,
+      wentOut: 0,
+      statements: 0,
+    });
+    expect(book.topicRecord(TOPIC)!.lastAt).toBeUndefined();
+    subscribe(3);
+    page(3, [statement(60)], 0);
+    const delivered = book.statementList()[0].lastAt;
+    expect(book.topicRecord(TOPIC)).toMatchObject({
+      submits: 1,
+      statements: 1,
+      lastAt: delivered,
+    });
+    // Seen again: one statement, a later sighting.
+    page(3, [statement(60)]);
+    expect(book.topicRecord(TOPIC)!.statements).toBe(1);
+    expect(book.topicRecord(TOPIC)!.lastAt).toBeGreaterThan(delivered);
+  });
+
   test("a higher expiry on a channel replaces the latest; an older copy seen later does not", () => {
     const { book, submit, subscribe, page } = ledger();
     const first = statement(100);
@@ -514,7 +538,8 @@ describe("the statement ledger", () => {
       },
     );
     expect(book.conversationList()[0]).toMatchObject({ stale: false, run: 1 });
-    expect(book.topicList()[0].labels).toEqual(["chat.paseo reads"]);
+    // A topic a product names is listed; which product names it is read from its report.
+    expect(book.topicList().map((topic) => topic.topic)).toEqual([TOPIC]);
     expect(book.accountRecord("0x" + "cd".repeat(32))!.roles[0].kind).toBe(
       "conversation-peer",
     );
@@ -713,7 +738,7 @@ describe("the statement ledger", () => {
     expect(book.submitList()[0].outcome.kind).toBe("unanswered");
   });
 
-  test("keeps channels, conversations, requests, roles and topic labels within bounds", () => {
+  test("keeps channels, conversations, requests and roles within bounds", () => {
     const { book, submit } = ledger({
       channels: 2,
       conversations: 2,
@@ -750,7 +775,7 @@ describe("the statement ledger", () => {
         { name: `product-${index}.paseo`, run: 1 },
         { conversations: [{ id: "c", protocol: "p", listen: [TOPIC] }] },
       );
-    expect(book.topicList()[0].labels).toHaveLength(8);
+    expect(book.topicList()).toHaveLength(1);
     expect(book.dropped()).toMatchObject({
       channels: 2,
       requests: 3,

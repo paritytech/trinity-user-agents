@@ -63,7 +63,11 @@ export interface ChatProtocol<Pending = unknown, Session = unknown> {
   readonly name: string;
   /** What a connected conversation tells its user about this protocol: what others can read and what the network keeps. */
   readonly notice: string;
-  /** The most a post carries, when the protocol keeps a window of messages on the network. */
+  /**
+   * The most a post carries, when each post publishes a batch of recent
+   * messages. The developer tools show it, with the last post's batch, as a
+   * protocol detail.
+   */
   readonly window?: { messages: number; bytes: number };
   /** The sender's invitation payload, `0x` hex, and what it keeps until the response. */
   invite(
