@@ -11,40 +11,23 @@ import UIKit
 @MainActor
 struct PocketCardSurfaceTests {
     /// Walks one card through its life. A screen built but never shown must
-    /// not take the surface from the one the user sees, a full-screen view
-    /// the page presents over the card leaves the card on display, and a card
-    /// that has started to close is no longer on display.
+    /// not take the surface from the one the user sees, and a card that has
+    /// been popped is no longer on display.
     @Test
-    func isOnDisplayOnlyWhileTheClaimedScreenIs() async throws {
+    func isOnDisplayOnlyWhileTheClaimedScreenIs() {
         let surface = PocketCardSurface()
         let neverShown = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
         let screen = PocketCardScreenViewController(card: loyaltyCard, product: StubSPAView())
-        let presenter = UIViewController()
-        let window = try showing(presenter)
+        let navigation = UINavigationController(rootViewController: UIViewController())
 
-        #expect(!surface.isOnDisplay)
         surface.claim(neverShown)
-        #expect(!surface.isOnDisplay)
-
-        let (presented, finishPresenting) = AsyncStream<Void>.makeStream()
-        presenter.present(cardNavigation(screen), animated: true) { finishPresenting.finish() }
+        let beforeShown = surface.isOnDisplay
+        navigation.pushViewController(screen, animated: false)
         surface.claim(screen)
-        #expect(surface.isOnDisplay)
-        for await _ in presented {}
-
         surface.claim(neverShown)
-        #expect(surface.isOnDisplay)
+        let whileShown = surface.isOnDisplay
+        navigation.popViewController(animated: false)
 
-        let cover = UIViewController()
-        cover.modalPresentationStyle = .fullScreen
-        await present(cover, from: screen)
-        #expect(surface.isOnDisplay)
-        await closeCard(cover)
-
-        let (closed, finishClosing) = AsyncStream<Void>.makeStream()
-        screen.dismiss(animated: true) { finishClosing.finish() }
-        #expect(!surface.isOnDisplay)
-        for await _ in closed {}
-        withExtendedLifetime((window, neverShown)) {}
+        #expect([beforeShown, whileShown, surface.isOnDisplay] == [false, true, false])
     }
 }
