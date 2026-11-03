@@ -15,7 +15,7 @@ use crate::{
 		product_account::{derive_full_person_ring_vrf_entropy, derive_sr25519_hard_path},
 		statement_store::SUBMIT_STATEMENT_METHOD,
 	},
-	runtime::statement_allowance::slot,
+	runtime::{statement_allowance, statement_allowance::slot},
 };
 
 const PRODUCT_ID: &str = "myapp.dot";
@@ -419,7 +419,15 @@ fn sent_methods(platform: &StubPlatform) -> Vec<String> {
 
 /// A Bulletin `Authorizations` entry for one transaction with `remaining` bytes left.
 fn bulletin_authorization(remaining: u64) -> String {
-	let entry = (0u32, 1u32, 0u64, 0u64, remaining, 100u32).encode();
+	let entry = statement_allowance::BulletinAuthorization {
+		transactions: 0,
+		transactions_allowance: 1,
+		bytes: 0,
+		bytes_permanent: 0,
+		bytes_allowance: remaining,
+		expiration: 100,
+	}
+	.encode();
 	format!(r#""0x{}""#, hex::encode(entry))
 }
 
