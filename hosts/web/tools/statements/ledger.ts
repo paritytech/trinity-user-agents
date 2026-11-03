@@ -251,6 +251,58 @@ export type Role =
   | { kind: "conversation-peer"; product: string; conversation: string }
   | { kind: "chat-allowance"; product: string; handle: string };
 
+/**
+ * Whether `role` records that the core or this host derived the account from
+ * the wallet signed in now: the core's claim of a product's account, the
+ * host delivery's notification account for one of its posts, or the host's
+ * chat allowance. A notification claim alone names an account the caller
+ * chose, so it is not one. The ledger starts empty for each session, so
+ * these hold for the current wallet only.
+ */
+function derivedHere(role: Role): boolean {
+  switch (role.kind) {
+    case "product-account":
+    case "chat-allowance":
+      return true;
+    case "notification-account":
+      return role.post !== undefined;
+    default:
+      return false;
+  }
+}
+
+/**
+ * Whose an account is, as far as this tab knows in this session. A local
+ * record of where the account came from, not a signature check.
+ *
+ * - `this-wallet`: the core or this host derived it from the signed-in
+ *   wallet in this session.
+ * - `reported`: a product named it, and nothing derived it here. That says
+ *   nothing of whose it is.
+ * - `unknown`: anything else: only seen signing or claimed for, or its record
+ *   was dropped. It may still be this wallet's, from another origin, browser
+ *   or an earlier session: those derive accounts from indexes and post ids
+ *   this tab does not hold.
+ */
+export type Ownership =
+  | { kind: "this-wallet"; evidence: Role[] }
+  | { kind: "reported"; roles: Role[] }
+  | { kind: "unknown" };
+
+/** `account`'s {@link Ownership}; unknown when the ledger holds no record of it. */
+export function ownership(account: AccountRecord | undefined): Ownership {
+  const roles = account?.roles ?? [];
+  const evidence = roles.filter(derivedHere);
+  if (evidence.length > 0) return { kind: "this-wallet", evidence };
+  const reported = roles.filter(
+    (role) =>
+      role.kind === "conversation-account" || role.kind === "conversation-peer",
+  );
+  return reported.length > 0
+    ? { kind: "reported", roles: reported }
+    : { kind: "unknown" };
+}
+
 export interface ClaimRecord {
   at: number;
   kind: "product" | "notification";
@@ -1984,7 +2036,11 @@ export class StatementLedger {
       );
     }
     account.roles.push(role);
-    if (account.roles.length > ROLES_PER_ACCOUNT) account.roles.shift();
+    if (account.roles.length > ROLES_PER_ACCOUNT) {
+      // Products' reports go first, so they cannot push out what the host derived.
+      const reported = account.roles.findIndex((known) => !derivedHere(known));
+      account.roles.splice(Math.max(reported, 0), 1);
+    }
   }
 
   private topic(topic: string): TopicRecord {
