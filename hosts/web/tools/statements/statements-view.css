@@ -375,6 +375,10 @@
   color: var(--si-meta);
 }
 
+.statements-inspector .si-list-row .si-cell[data-owner="this-wallet"] {
+  color: var(--si-on);
+}
+
 /* Narrow: a topic's name takes the first line, its facts the lines under it. */
 .statements-inspector .si-topics .si-list-row {
   grid-template-columns: minmax(0, 1fr) auto;
@@ -387,7 +391,7 @@
 @container (min-width: 760px) {
   .statements-inspector .si-list-row,
   .statements-inspector .si-list-head {
-    grid-template-columns: 14ch repeat(4, minmax(0, 1fr));
+    grid-template-columns: 14ch repeat(5, minmax(0, 1fr));
   }
 
   .statements-inspector .si-list-head {

@@ -1126,16 +1126,26 @@ which has no statement store, and the view says so in a line of its own. What fo
   product worker may report its conversations (`src/products/diagnostics.ts`, below).
 - **Accounts, Topics, Timeline.** The Statements view's three tabs. It names no chat protocol: an account's roles say
   only which product reported or claimed it, and product reports stay out of its timeline.
-- **Accounts.** Every account claimed for, reported or seen signing, one row each under **Account | Role | Allocation |
-  Grant | Observed**, in a few words: a short role (Product account, Setup notification, Chat sender, Chat peer, Chat
-  allowance, or Observed signer), with a **reported** tag when a product said it, unchecked, and `+n` for more roles;
-  the latest slot claim (`Slot 4 · claimed`, `None seen`); the grant as statements · size (`No grant` when the chain
-  stores none, `Not read` before a read); and the latest observed statements · size · time (`Not observed`). On a narrow
-  dock each value is named under the account instead. **About these columns**, closed, says once that a grant is not
-  what is left and an observation is not what the network holds. A row opens to the full facts: each role, each claim
-  with its day and collection, the grant read's block, its channels and the statements seen from it, each with when this
-  tab first and last saw it. **Read grants** reads `:statement_allowance:` for them at the newest finalized People
-  block.
+- **Accounts.** Every account claimed for, reported or seen signing, one row each under **Account | Role | Owner |
+  Allocation | Grant | Observed**, in a few words: a short role (Product account, Setup notification, Chat sender, Chat
+  peer, Chat allowance, or Observed signer), with a **reported** tag when a product said it, unchecked, and `+n` for
+  more roles; whose it is, as this tab knows it (below); the latest slot claim (`Slot 4 · claimed`, `None seen`); the
+  grant as statements · size (`No grant` when the chain stores none, `Not read` before a read); and the latest observed
+  statements · size · time (`Not observed`). On a narrow dock each value is named under the account instead. **About
+  these columns**, closed, says once that a grant is not what is left and an observation is not what the network holds.
+  A row opens to the full facts: each role, each claim with its day and collection, the grant read's block, its channels
+  and the statements seen from it, each with when this tab first and last saw it. **Read grants** reads
+  `:statement_allowance:` for them at the newest finalized People block.
+- **Owner.** A record of where the account came from in this tab, not a signature check. **This wallet**: the core or
+  this host derived it from the signed-in wallet in this session: the core's claim of a product's account, the
+  delivery's notification account for one of its posts, or a chat allowance. A notification claim alone, granted or
+  failed, is not enough: it names an account the caller chose. **Reported only**: a product named it and nothing derived
+  it here, which says nothing of whose it is. **Unknown here**: anything else: only seen signing or claimed for, or its
+  record was dropped. Unknown is not "not this wallet": another origin, browser or an earlier session derives accounts
+  from conversation indexes and post ids this tab does not hold, and none is recovered from an address. A statement on a
+  topic shows its signer's owner the same way. A request the host received and opened says only that the request was for
+  this wallet, never whose its signer is; the view does not tie a received request to its statement. The labels start
+  again with each session and on **Clear**, and a product's reports cannot push out the roles the host derived.
 - **Topics.** A topic is a label statements carry; a subscription listens on one or more topics. One row per topic under
   **Topic | Role | Subscription | Observed** (`topics.ts`). The name is given only where its meaning is known: the
   host's own day inbox, worked out from the network and the UTC day as the delivery does

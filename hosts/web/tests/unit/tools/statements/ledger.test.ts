@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { bytesToHex } from "@parity/truapi/scale";
 import { encodeSigned } from "../../../../src/platform/statement.js";
 import type { StatementTraffic } from "../../../../src/platform/statement-observer.js";
-import { StatementLedger } from "../../../../tools/statements/ledger.js";
+import {
+  StatementLedger,
+  ownership,
+} from "../../../../tools/statements/ledger.js";
 import {
   observedConnection,
   subscriptionKey,
@@ -1100,6 +1103,177 @@ describe("the statement ledger", () => {
       statements: 1,
       dropped: 1,
     });
+  });
+});
+
+describe("whose an account is, as this tab knows it", () => {
+  const PRODUCT = "chat.paseo";
+  const OWN = "0x" + "a1".repeat(32);
+  const NOTIFY = "0x" + "d4".repeat(32);
+  const ALLOWED = "0x" + "c3".repeat(32);
+  const PEER = "0x" + "b2".repeat(32);
+  const kind = (book: StatementLedger, account: string) =>
+    ownership(book.accountRecord(account)).kind;
+
+  test("this wallet only where the core or this host derived the account in this session", async () => {
+    const { book } = ledger();
+    await claimFor(book, PRODUCT, OWN);
+    book.invitations({
+      type: "delivery-account",
+      post: "0x" + "44".repeat(16),
+      account: NOTIFY,
+      period: 1,
+    });
+    book.invitations({
+      type: "chat-account",
+      product: PRODUCT,
+      handle: "0x" + "44".repeat(16),
+      index: "0x" + "09".repeat(32),
+      outcome: "allowed",
+      account: ALLOWED,
+      until: 1,
+    });
+    expect(
+      [OWN, NOTIFY, ALLOWED].map((account) => kind(book, account)),
+    ).toEqual(["this-wallet", "this-wallet", "this-wallet"]);
+    expect(ownership(book.accountRecord(OWN))).toEqual({
+      kind: "this-wallet",
+      evidence: [
+        {
+          kind: "product-account",
+          product: PRODUCT,
+          index: "0x" + "09".repeat(32),
+        },
+      ],
+    });
+  });
+
+  test("a notification claim alone proves nothing, granted or failed; the delivery's account for its post does", async () => {
+    const { book } = ledger();
+    const granted = "0x" + "e1".repeat(32);
+    const failed = "0x" + "e2".repeat(32);
+    await book.claim(
+      { kind: "notification", account: granted, submit: true },
+      async () => ({ period: 1, outcome: "registered", seq: 3 }),
+    );
+    await book
+      .claim(
+        { kind: "notification", account: failed, submit: true },
+        async () => {
+          throw new Error("no free slot");
+        },
+      )
+      .catch(() => {});
+    expect([granted, failed].map((account) => kind(book, account))).toEqual([
+      "unknown",
+      "unknown",
+    ]);
+    book.invitations({
+      type: "delivery-account",
+      post: "0x" + "44".repeat(16),
+      account: granted,
+      period: 1,
+    });
+    expect(kind(book, granted)).toBe("this-wallet");
+  });
+
+  test("a product account claim that throws records no account", async () => {
+    const { book } = ledger();
+    await book
+      .claim(
+        {
+          kind: "product",
+          product: PRODUCT,
+          index: "0x" + "09".repeat(32),
+          submit: true,
+        },
+        async () => {
+          throw new Error("refused");
+        },
+      )
+      .catch(() => {});
+    expect(book.accountList()).toEqual([]);
+  });
+
+  test("an account dropped to keep the limits, and seen again, is unknown", async () => {
+    const { book, submit } = ledger({ accounts: 1 });
+    await claimFor(book, PRODUCT, OWN);
+    expect(kind(book, OWN)).toBe("this-wallet");
+    submit(statement(60), { status: "new" });
+    expect(book.accountRecord(OWN)).toBeUndefined();
+    const own = new Uint8Array(32).fill(0xa1);
+    const again = bytesToHex(
+      encodeSigned(
+        {
+          expiry: BigInt(NOW_SECONDS + 70) << 32n,
+          channel: CHANNEL,
+          topics: [new Uint8Array(32).fill(1)],
+          data: new Uint8Array(4),
+        },
+        own,
+        () => new Uint8Array(64),
+      ),
+    );
+    submit(again, { status: "new" });
+    expect(kind(book, OWN)).toBe("unknown");
+  });
+
+  test("Clear forgets whose an account was", async () => {
+    const { book } = ledger();
+    await claimFor(book, PRODUCT, OWN);
+    book.clear();
+    expect(kind(book, OWN)).toBe("unknown");
+  });
+
+  test("a product's report names an account but never makes it this wallet's, and cannot push out what the host derived", async () => {
+    const { book } = ledger();
+    await claimFor(book, PRODUCT, OWN);
+    const report = (
+      name: string,
+      id: string,
+      account: string,
+      peers: string[],
+    ) =>
+      book.diagnostics(
+        { name, run: 1 },
+        { conversations: [{ id, protocol: "p/1", account, peers }] },
+      );
+    report("other.paseo", "x", PEER, []);
+    expect(kind(book, PEER)).toBe("reported");
+    // Reports naming the wallet's own account, more than the roles it keeps.
+    for (let index = 0; index < 12; index += 1)
+      report(`spoof-${index}.paseo`, `c${index}`, OWN, []);
+    expect(kind(book, OWN)).toBe("this-wallet");
+    expect(book.accountRecord(OWN)!.roles).toHaveLength(8);
+    // A stopped worker's report changes nothing.
+    book.diagnostics({ name: "other.paseo", run: 1 }, null);
+    expect(kind(book, PEER)).toBe("reported");
+  });
+
+  test("a signer only seen, or a request addressed to this wallet, says nothing of whose the signer is", () => {
+    const { book, subscribe, page } = ledger();
+    subscribe(5);
+    // A statement on a topic this host reads, signed by an account it never derived:
+    // the same as one this wallet signed in another browser.
+    page(5, [statement(60)], 0);
+    book.invitations({
+      type: "request-received",
+      product: PRODUCT,
+      handle: "0x" + "55".repeat(16),
+    });
+    expect(kind(book, SIGNER_HEX)).toBe("unknown");
+    expect(ownership(undefined)).toEqual({ kind: "unknown" });
+  });
+
+  test("a new session forgets whose an account was: its record goes, and seen again it is unknown", async () => {
+    const { book, submit } = ledger();
+    await claimFor(book, PRODUCT, SIGNER_HEX);
+    submit(statement(60), { status: "new" });
+    expect(kind(book, SIGNER_HEX)).toBe("this-wallet");
+    book.startSession("wallet-b", "wallet B");
+    expect(book.accountRecord(SIGNER_HEX)).toBeUndefined();
+    submit(statement(61), { status: "new" });
+    expect(kind(book, SIGNER_HEX)).toBe("unknown");
   });
 });
 

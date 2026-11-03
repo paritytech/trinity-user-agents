@@ -125,6 +125,8 @@ const VIEW_PAGE = `<!doctype html>
       const today = inboxTopic("testnet", periodOf(Date.now()));
       const yesterday = inboxTopic("testnet", periodOf(Date.now()) - 1);
       const notification = fill(0xd4);
+      // Another host's request on the shared inbox: sealed to this wallet or not, its signer is not this wallet's.
+      const stranger = fill(0xe7);
 
       window.__feed = async () => {
         const index = "0x" + "01".repeat(32);
@@ -173,6 +175,8 @@ const VIEW_PAGE = `<!doctype html>
         ledger.invitations({ type: "delivery-account", post: handle, account: hex(notification), period: periodOf(Date.now()) });
         host.connection.send(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "statement_submit", params: [hex(encodeSigned({ expiry: BigInt(now + 86400) << 32n, channel: null, topics: [today], data: new Uint8Array(200) }, notification, () => new Uint8Array(64)))] }));
         host.answer({ jsonrpc: "2.0", id: 2, result: { status: "new" } });
+        host.answer({ jsonrpc: "2.0", method: "statement_statement", params: { subscription: "inbox", result: { event: "newStatements", data: { statements: [hex(encodeSigned({ expiry: BigInt(now + 86400) << 32n, channel: null, topics: [today], data: new Uint8Array(300) }, stranger, () => new Uint8Array(64)))] } } } });
+        ledger.invitations({ type: "request-received", product: "contact-chat.test", handle: "0x" + "55".repeat(16) });
         await settle();
         ledger.diagnostics({ name: "contact-chat.test", run: 1 }, { conversations: [conversation(2)] });
         await settle();
@@ -367,6 +371,9 @@ describe("the Statements and Chat views", () => {
         const account = await factsOf(page, "#statements-inspector .si-detail");
         const at = (label: string) =>
           account.find((entry) => entry.startsWith(`${label} |`)) ?? "";
+        expect(at("Owner")).toContain(
+          "| core | core This walletwhy ‖ Derived from the signed-in wallet in this session: contact-chat.test's account at Raw(0x0101…0101); allowed for request 0x4444…4444. A record of this tab, not a signature check.",
+        );
         expect(at("Claim")).toContain("| core |");
         expect(at("Claim")).toContain(
           "allowance slot 4 (People) · day 20390 · claimed now",
@@ -399,6 +406,7 @@ describe("the Statements and Chat views", () => {
         );
         expect(await selected.locator(".si-cell").allTextContents()).toEqual([
           "Product account +2",
+          "This wallet",
           "Slot 4 · claimed",
           "2 · 500.0 KiB",
           expect.stringMatching(/^1 · \d+ B · \d\d:\d\d$/),
@@ -407,7 +415,14 @@ describe("the Statements and Chat views", () => {
           await page
             .locator("#statements-inspector .si-list-head span")
             .allTextContents(),
-        ).toEqual(["Account", "Role", "Allocation", "Grant", "Observed"]);
+        ).toEqual([
+          "Account",
+          "Role",
+          "Owner",
+          "Allocation",
+          "Grant",
+          "Observed",
+        ]);
         // On a wide dock the headings sit over their columns.
         await page.setViewportSize({ width: 1240, height: 940 });
         const devtools = page.locator(".devtools");
@@ -432,7 +447,7 @@ describe("the Statements and Chat views", () => {
           };
         });
         expect(lefts.head).toEqual(lefts.row);
-        expect(new Set(lefts.head).size).toBe(5);
+        expect(new Set(lefts.head).size).toBe(6);
         await devtools.evaluate((node) => {
           (node as HTMLElement).style.width = "";
         });
@@ -460,6 +475,7 @@ describe("the Statements and Chat views", () => {
         await columnsAbout.locator("summary").click();
         expect(await columnsAbout.locator("li").allInnerTexts()).toEqual([
           "Role: what the host or core recorded. Reported: what a product said, unchecked.",
+          "Owner: This wallet = the core or this host derived it from the signed-in wallet, this session. Unknown here may still be this wallet's, from another origin, browser or session. Both start again with each session and on Clear.",
           "Allocation: the latest daily slot claim this tab saw.",
           "Grant: statements · size the chain grants, read at a block. Not what is left.",
           "Observed: statements · size · last seen in this tab. Not what the network holds now.",
@@ -470,6 +486,22 @@ describe("the Statements and Chat views", () => {
           "Product account +2",
           "Chat peer reported",
           "Setup notification",
+          "Observed signer",
+        ]);
+        // Whose each account is, only from what this tab derived: the inbox's
+        // stranger stays unknown though the host received a request this session.
+        expect(
+          await rows.evaluateAll((nodes) =>
+            nodes.map(
+              (node) =>
+                (node.querySelector("[data-owner]") as HTMLElement).innerText,
+            ),
+          ),
+        ).toEqual([
+          "This wallet",
+          "Reported only",
+          "This wallet",
+          "Unknown here",
         ]);
 
         const shown = await page.locator("#statements-inspector").innerText();
@@ -750,7 +782,7 @@ describe("the Statements and Chat views", () => {
             ),
             "Both",
             "host · open",
-            expect.stringMatching(/^1 · \d\d:\d\d$/),
+            expect.stringMatching(/^2 · \d\d:\d\d$/),
           ],
           [
             expect.stringMatching(
@@ -828,7 +860,7 @@ describe("the Statements and Chat views", () => {
         );
         await all.locator(":scope > summary").click();
         expect(await all.locator(".si-sub-row").allInnerTexts()).toEqual([
-          expect.stringContaining("host · open · 0 initial · 0 later"),
+          expect.stringContaining("host · open · 0 initial · 1 later"),
           expect.stringContaining("core · open · 0 initial · 1 later"),
         ]);
         await all.locator(":scope > summary").click();
@@ -854,6 +886,22 @@ describe("the Statements and Chat views", () => {
             "| light client | light client 1 broadcast · 1 tried",
           ),
         ]);
+        // Each statement says whose its signer is: this wallet's own post, and
+        // another host's, which stays unknown here.
+        expect(
+          (await inbox.locator(".si-statement > summary").allInnerTexts()).map(
+            (text) => /signer [a-z ]+? ·/.exec(text)?.[0],
+          ),
+        ).toEqual(["signer this wallet ·", "signer unknown here ·"]);
+        await inbox.locator(".si-statement > summary").last().click();
+        expect(
+          await inbox
+            .locator(".si-statement")
+            .last()
+            .locator("dd", { hasText: "Unknown here" })
+            .innerText(),
+        ).toContain("Unknown here");
+        await shot(page, "topic-inbox-owners");
         expect(
           await page.evaluate(
             () =>

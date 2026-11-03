@@ -9,12 +9,14 @@ import {
   expiryText,
   filterText,
   metaDetails,
+  ownership,
   short,
   type AccountRecord,
   type EventKind,
   type FactSource,
   type LedgerEvent,
   type ObservedStatement,
+  type Ownership,
   type Role,
   type StatementLedger,
   type SubscriptionRecord,
@@ -126,15 +128,51 @@ function roleLabel(role: Role): string {
 }
 
 /** The accounts list's columns. */
-const COLUMNS = ["Account", "Role", "Allocation", "Grant", "Observed"];
+const COLUMNS = ["Account", "Role", "Owner", "Allocation", "Grant", "Observed"];
 
 /** What each column of the accounts list says, and what it does not. */
 const COLUMNS_ABOUT = [
   "Role: what the host or core recorded. Reported: what a product said, unchecked.",
+  "Owner: This wallet = the core or this host derived it from the signed-in wallet, this session. Unknown here may still be this wallet's, from another origin, browser or session. Both start again with each session and on Clear.",
   "Allocation: the latest daily slot claim this tab saw.",
   "Grant: statements · size the chain grants, read at a block. Not what is left.",
   "Observed: statements · size · last seen in this tab. Not what the network holds now.",
 ];
+
+const OWNER_LABEL: Record<Ownership["kind"], string> = {
+  "this-wallet": "This wallet",
+  reported: "Reported only",
+  unknown: "Unknown here",
+};
+
+/** Where an account's {@link Ownership} comes from, and what it does not say. */
+function ownerFact(owner: Ownership): HTMLElement[] {
+  switch (owner.kind) {
+    case "this-wallet":
+      return fact(
+        "Owner",
+        OWNER_LABEL[owner.kind],
+        owner.evidence.some((role) => role.kind === "product-account")
+          ? "core"
+          : "host",
+        `Derived from the signed-in wallet in this session: ${owner.evidence.map(roleText).join("; ")}. A record of this tab, not a signature check.`,
+      );
+    case "reported":
+      return fact(
+        "Owner",
+        OWNER_LABEL[owner.kind],
+        "product",
+        "Only a product named it. The host derived it nowhere in this session, so this says nothing of whose it is.",
+      );
+    case "unknown":
+      return fact(
+        "Owner",
+        OWNER_LABEL[owner.kind],
+        "inspector",
+        "Only seen signing or claimed for, or its record was dropped. It may still be this wallet's: another origin, browser or an earlier session derives accounts from indexes and post ids this tab does not hold.",
+      );
+  }
+}
 
 function roleSource(role: Role): FactSource {
   return role.kind === "conversation-account" ||
@@ -566,12 +604,18 @@ export function mountStatementsView(
       const box = el("details", "si-statement");
       box.dataset.key = statement.meta.hash;
       const head = el("summary");
-      head.textContent = `${short(statement.meta.hash)} · ${statement.meta.dataBytes} B · ${statement.via.join(", ")} · observed ${statement.sightings}×, first ${clock(statement.firstAt)}, last ${clock(statement.lastAt)}`;
+      const signer = statement.meta.signer;
+      const owner =
+        withSigner && signer !== undefined
+          ? ownership(ledger.accountRecord(signer))
+          : null;
+      head.textContent = `${short(statement.meta.hash)} · ${statement.meta.dataBytes} B${owner === null ? "" : ` · signer ${OWNER_LABEL[owner.kind].toLowerCase()}`} · ${statement.via.join(", ")} · observed ${statement.sightings}×, first ${clock(statement.firstAt)}, last ${clock(statement.lastAt)}`;
       box.append(head);
       const facts = el("dl", "si-facts");
-      if (withSigner && statement.meta.signer !== undefined)
+      if (owner !== null && signer !== undefined)
         facts.append(
-          ...fact("Signer", accountLink(statement.meta.signer), "client"),
+          ...fact("Signer", accountLink(signer), "client"),
+          ...ownerFact(owner),
         );
       for (const [label, value] of metaDetails(statement.meta))
         facts.append(...fact(label, value, "client"));
@@ -648,12 +692,16 @@ export function mountStatementsView(
         cell.dataset.label = COLUMNS[index];
         return cell;
       };
+      const owner = ownership(account);
+      const ownerCell = column(2, OWNER_LABEL[owner.kind]);
+      ownerCell.dataset.owner = owner.kind;
       row.append(
         el("span", "si-mono", short(account.account)),
         role,
-        column(2, allocationLabel(account)),
-        column(3, grantLabel(account)),
-        column(4, observedLabel(ledger, account)),
+        ownerCell,
+        column(3, allocationLabel(account)),
+        column(4, grantLabel(account)),
+        column(5, observedLabel(ledger, account)),
       );
       row.addEventListener("click", () => {
         selectedAccount =
@@ -676,6 +724,7 @@ export function mountStatementsView(
     const facts = el("dl", "si-facts");
     facts.append(
       ...fact("Account", account, "inspector"),
+      ...ownerFact({ kind: "unknown" }),
       ...fact(
         "Observed",
         "nothing in this session",
@@ -693,6 +742,7 @@ export function mountStatementsView(
     detail.setAttribute("aria-label", `Account ${account.account}`);
     const facts = el("dl", "si-facts");
     facts.append(...fact("Account", account.account, "inspector"));
+    facts.append(...ownerFact(ownership(account)));
     for (const role of account.roles)
       facts.append(...fact("Role", roleText(role), roleSource(role)));
     for (const claim of account.claims)
