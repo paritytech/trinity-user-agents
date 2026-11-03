@@ -642,14 +642,17 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 		_product: &ProductContext,
 		room_id: String,
 		request: truapi::latest::HostChatCreateRoomRequest,
-	) -> Result<v01::ChatRoomRegistrationStatus, v01::HostChatCreateRoomError> {
-		let status: v01::ChatRoomRegistrationStatus = self
+	) -> Result<truapi::latest::ChatRoomRegistrationStatus, truapi::latest::HostChatCreateRoomError>
+	{
+		let status: truapi::latest::ChatRoomRegistrationStatus = self
 			.chat
 			.create_room(room_id, request.name, request.icon)
 			.await
-			.map_err(|error| v01::HostChatCreateRoomError::Unknown { reason: error.to_string() })?;
+			.map_err(|error| truapi::latest::HostChatCreateRoomError::Unknown {
+				reason: error.to_string(),
+			})?;
 
-		if status == v01::ChatRoomRegistrationStatus::New &&
+		if status == truapi::latest::ChatRoomRegistrationStatus::New &&
 			let Ok(rooms) = self.chat.list_rooms().await
 		{
 			self.events.notify_chat_rooms_changed(rooms);
