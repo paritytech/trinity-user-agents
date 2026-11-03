@@ -211,7 +211,7 @@ mod tests {
 		chain_runtime::{RuntimeChainProvider, RuntimeFailure},
 		host_logic::dotns_gateway::{
 			DotnsPopController, LabelStore, ProtocolRegistry, RootGatewayDispatcher, StoreFactory,
-			VIEW_CALL_ORIGIN, account_to_h160, dispatcher_address_key,
+			VIEW_CALL_ORIGIN, account_to_h160, dispatcher_address_key, encode_revive_call_output,
 		},
 		platform::JsonRpcConnection,
 		subscription::thread_per_subscription_spawner,
@@ -220,7 +220,7 @@ mod tests {
 	use alloy_sol_types::{SolCall, SolInterface};
 	use async_trait::async_trait;
 	use futures::{StreamExt, channel::mpsc, stream::BoxStream};
-	use parity_scale_codec::{Compact, Decode, Encode};
+	use parity_scale_codec::Decode;
 	use serde_json::{Value as JsonValue, json};
 	use std::sync::{Arc, Mutex};
 
@@ -235,32 +235,6 @@ mod tests {
 	/// Holds only a publicly registered label the controller never issued.
 	const SQUATTER: [u8; 32] = [0x5a; 32];
 	const SQUATTER_STORE: [u8; 20] = [0x5b; 20];
-
-	/// `ReviveApi_call` output carrying successful return `data`.
-	fn contract_result(data: &[u8]) -> Vec<u8> {
-		contract_result_with_flags(0, data)
-	}
-
-	/// `ReviveApi_call` output for a call that reverted.
-	fn reverted_contract_result() -> Vec<u8> {
-		contract_result_with_flags(1, &[])
-	}
-
-	/// `flags` is `ReturnFlags`; bit 0 marks a revert.
-	fn contract_result_with_flags(flags: u32, data: &[u8]) -> Vec<u8> {
-		let mut out = Vec::new();
-		for _ in 0..4 {
-			Compact(7u64).encode_to(&mut out);
-		}
-		for _ in 0..2 {
-			(1u8, 0u128).encode_to(&mut out);
-		}
-		0u128.encode_to(&mut out);
-		out.push(0x00);
-		flags.encode_to(&mut out);
-		data.encode_to(&mut out);
-		out
-	}
 
 	/// The scripted account whose H160 a view's `user` argument carries.
 	fn queried_account(user: Address) -> [u8; 32] {
@@ -289,7 +263,7 @@ mod tests {
 		if *dest == DISPATCHER &&
 			DotnsPopController::protocolRegistryCall::abi_decode(input).is_ok()
 		{
-			return reverted_contract_result();
+			return encode_revive_call_output(true, Vec::new());
 		}
 		let data = match *dest {
 			DISPATCHER => {
@@ -338,7 +312,7 @@ mod tests {
 			SQUATTER_STORE => labels_page(input, &["squatter.paseo"]),
 			dest => panic!("unscripted view {} on 0x{}", hex::encode(input), hex::encode(dest)),
 		};
-		contract_result(&data)
+		encode_revive_call_output(false, data)
 	}
 
 	struct ScriptedAssetHub {

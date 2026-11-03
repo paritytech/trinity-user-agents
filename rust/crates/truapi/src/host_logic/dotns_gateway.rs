@@ -218,6 +218,7 @@ struct Weight {
 
 /// `pallet_revive::StorageDeposit` over a `u128` balance.
 #[derive(Decode)]
+#[cfg_attr(test, derive(Encode))]
 enum StorageDeposit {
 	Refund { _amount: u128 },
 	Charge { _amount: u128 },
@@ -225,6 +226,7 @@ enum StorageDeposit {
 
 /// `pallet_revive::ExecReturnValue`.
 #[derive(Decode)]
+#[cfg_attr(test, derive(Encode))]
 struct ExecReturnValue {
 	flags: u32,
 	data: Vec<u8>,
@@ -282,6 +284,17 @@ pub fn encode_revive_call(origin: &[u8; 32], dest: &[u8; 20], input: &[u8]) -> V
 		input_data: input,
 	}
 	.encode()
+}
+
+/// A `ReviveApi_call` output whose contract returned or reverted with `data`,
+/// for test transports.
+#[cfg(test)]
+pub fn encode_revive_call_output(reverted: bool, data: Vec<u8>) -> Vec<u8> {
+	let flags = if reverted { REVERT_FLAG } else { 0 };
+	let weight = || Weight { _ref_time: 7, _proof_size: 7 };
+	let deposit = || StorageDeposit::Charge { _amount: 0 };
+	let result: Result<_, ()> = Ok(ExecReturnValue { flags, data });
+	(weight(), weight(), deposit(), deposit(), 0u128, result).encode()
 }
 
 /// Extracts the contract return data from a `ReviveApi_call` output.
@@ -886,7 +899,7 @@ mod tests {
 	use alloy_sol_types::SolCall;
 
 	// Golden vectors from the validated reference implementation in
-	// pop-dotns-testing: reservation.ts, proof.ts, verify.ts, abi.ts.
+	// pop-dotns-testing: reservation.ts, proof.ts, verify.ts.
 	const RESERVATION_WITH_RESERVED: &str = "64706f703a646f746e732d676174657761793a72657365727665111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222221c616c696365626305013333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333013072657365727665646e616d65035e486800000000";
 	const RESERVATION_NO_RESERVED: &str = "64706f703a646f746e732d676174657761793a72657365727665111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222221c616c69636562630501333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333300035e486800000000";
 
@@ -1017,22 +1030,6 @@ mod tests {
 
 		let hashed = account_to_h160(&[0x11; 32]);
 		assert_eq!(hashed, keccak_256(&[0x11; 32])[12..]);
-	}
-
-	/// Encodes a `ContractResult` prefix followed by `result`.
-	fn contract_result(result: &[u8]) -> Vec<u8> {
-		use parity_scale_codec::Compact;
-
-		let mut out = Vec::new();
-		for _ in 0..4 {
-			Compact(7u64).encode_to(&mut out);
-		}
-		for _ in 0..2 {
-			(1u8, 0u128).encode_to(&mut out);
-		}
-		0u128.encode_to(&mut out);
-		out.extend_from_slice(result);
-		out
 	}
 
 	/// Answers a view of `Call` with `value`.
@@ -1501,12 +1498,7 @@ mod tests {
 
 	#[test]
 	fn view_output_separates_reverts_from_failures() {
-		let reverted = contract_result(&{
-			let mut out = vec![0x00];
-			1u32.encode_to(&mut out); // ReturnFlags::REVERT
-			Vec::<u8>::new().encode_to(&mut out);
-			out
-		});
+		let reverted = encode_revive_call_output(true, Vec::new());
 		for (output, expected, message) in [
 			(
 				reverted,
@@ -1539,12 +1531,7 @@ mod tests {
 				)
 			);
 		}
-		let returned = contract_result(&{
-			let mut out = vec![0x00];
-			0u32.encode_to(&mut out);
-			vec![1u8, 2, 3, 4].encode_to(&mut out);
-			out
-		});
+		let returned = encode_revive_call_output(false, vec![1, 2, 3, 4]);
 		assert_eq!(view_output(&returned).unwrap(), vec![1, 2, 3, 4]);
 	}
 
