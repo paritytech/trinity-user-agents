@@ -218,19 +218,19 @@ struct CoreDataPocketCardStoreTests {
 // MARK: - Fixtures
 
 private let loyalty = PocketCardEntry(
-    key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty")),
+    key: PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty")),
     title: "Loyalty",
     privileged: false
 )
 
 private let streak = PocketCardEntry(
-    key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "streak")),
+    key: PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "streak")),
     title: "Streak",
     privileged: false
 )
 
 private let humanity = PocketCardEntry(
-    key: PocketCardKey(productId: "peopl.paseo", cardId: PocketCardId(value: "humanity")),
+    key: PocketCardKey(productId: try! ProductId("peopl.paseo"), cardId: PocketCardId(value: "humanity")),
     title: "Humanity",
     privileged: true
 )

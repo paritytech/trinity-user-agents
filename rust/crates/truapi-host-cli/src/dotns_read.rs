@@ -43,10 +43,12 @@ pub struct AssetHubReader {
 impl AssetHubReader {
 	/// Connects to the network's Asset Hub.
 	pub async fn connect(network: &NetworkConfig) -> Result<Self> {
-		let rpc = CliChainProvider::new(network)
+		let chains = CliChainProvider::new(network);
+		let location = chains.location(network.asset_hub_genesis);
+		let rpc = chains
 			.rpc_client(network.asset_hub_genesis)
 			.await
-			.context("connect to Asset Hub")?;
+			.with_context(|| format!("connect to Asset Hub ({location})"))?;
 		Ok(Self { rpc, pop_controller: None, pop_controller_fallback: None })
 	}
 

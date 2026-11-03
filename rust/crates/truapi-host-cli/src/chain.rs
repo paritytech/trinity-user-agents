@@ -7,25 +7,25 @@
 use std::{
 	collections::BTreeMap,
 	sync::{Arc, Mutex, PoisonError},
-	time::Duration,
 };
 
 use async_trait::async_trait;
 use clap::ValueEnum;
-use subxt_rpcs::client::{RawRpcFuture, RawRpcSubscription, RawValue, RpcClient, RpcClientT};
+use futures::{
+	Stream, StreamExt,
+	stream::{self, FusedStream},
+};
+use subxt_rpcs::client::RpcClient;
 use tracing::debug;
 use truapi::{
 	HostRpcClient,
 	platform::{ChainProvider, JsonRpcConnection, ProviderError},
 };
-use truapi_provider::{ChainSource, EmbeddedChainProvider};
+use truapi_provider::{
+	ChainHealth, ChainLifecycle, ChainPhase, ChainSource, EmbeddedChainProvider, StallReason,
+};
 
 use crate::network::{ChainEndpoint, NetworkConfig};
-
-/// How long a client from [`CliChainProvider::rpc_client`] waits for an answer,
-/// as subxt's own WebSocket client does. Provider connections have no request
-/// timeout, and keepalive pings hold open a node that never answers.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The CLI's answer to which chains build as V5, for its own extrinsics.
 pub struct PresetExtensionVersions(pub truapi::platform::ExtensionVersionMap);
@@ -106,12 +106,19 @@ impl CliChainProvider {
 	}
 
 	/// A subxt RPC client over a new connection to the chain `genesis_hash`
-	/// routes to. Each request, and each subscription's setup, fails after
-	/// [`REQUEST_TIMEOUT`] without an answer.
+	/// routes to. A request fails once the connection has been silent for
+	/// [`HostRpcClient`]'s deadline while it waits.
+	///
+	/// On the light client this first waits for the chain to sync. smoldot sends
+	/// nothing on the connection until then, so a first request sent during a
+	/// long sync would run into that deadline.
 	pub async fn rpc_client(&self, genesis_hash: [u8; 32]) -> Result<RpcClient, ProviderError> {
 		let connection = self.connect(genesis_hash).await?;
+		if let (Backend::LightClient, Some(chain)) = (&self.backend, self.chain_for(genesis_hash)) {
+			wait_until_synced(&*light_client(self.network.id)?, chain.genesis).await?;
+		}
 		let client = HostRpcClient::new(Arc::from(connection), crate::tokio_spawner());
-		Ok(RpcClient::new(Timed(client)))
+		Ok(RpcClient::new(client))
 	}
 
 	/// The routed endpoint that answers `genesis_hash`: its own, otherwise
@@ -135,12 +142,16 @@ impl CliChainProvider {
 			.is_some_and(|endpoint| endpoint.genesis == *genesis_hash)
 	}
 
-	/// The RPC URL a genesis routes to. Test-only, so a routing override can be
-	/// asserted rather than assumed: an override written to the wrong field
-	/// compiles, changes nothing, and is invisible in timings.
-	#[cfg(test)]
-	pub fn routed_url(&self, genesis_hash: &[u8; 32]) -> &'static str {
-		self.chain_for(*genesis_hash).expect("People is routed").ws
+	/// Where requests for `genesis_hash` go, for messages: the URL of the RPC
+	/// node it routes to, or the light client. A test asserts a routing override
+	/// through it, since an override written to the wrong field compiles,
+	/// changes nothing, and is invisible in timings.
+	pub fn location(&self, genesis_hash: [u8; 32]) -> &'static str {
+		match (&self.backend, self.chain_for(genesis_hash)) {
+			(_, None) => "unrouted",
+			(Backend::Rpc(_), Some(endpoint)) => endpoint.ws,
+			(Backend::LightClient, Some(_)) => "light client",
+		}
 	}
 }
 
@@ -176,40 +187,6 @@ impl ChainProvider for CliChainProvider {
 	}
 }
 
-/// `C` with [`REQUEST_TIMEOUT`] on every request and subscription setup.
-struct Timed<C>(C);
-
-impl<C: RpcClientT> RpcClientT for Timed<C> {
-	fn request_raw<'a>(
-		&'a self,
-		method: &'a str,
-		params: Option<Box<RawValue>>,
-	) -> RawRpcFuture<'a, Box<RawValue>> {
-		Box::pin(within_request_timeout(method, self.0.request_raw(method, params)))
-	}
-
-	fn subscribe_raw<'a>(
-		&'a self,
-		sub: &'a str,
-		params: Option<Box<RawValue>>,
-		unsub: &'a str,
-	) -> RawRpcFuture<'a, RawRpcSubscription> {
-		Box::pin(within_request_timeout(sub, self.0.subscribe_raw(sub, params, unsub)))
-	}
-}
-
-async fn within_request_timeout<T>(
-	method: &str,
-	call: RawRpcFuture<'_, T>,
-) -> Result<T, subxt_rpcs::Error> {
-	tokio::time::timeout(REQUEST_TIMEOUT, call).await.unwrap_or_else(|_| {
-		Err(subxt_rpcs::Error::Client(Box::new(std::io::Error::new(
-			std::io::ErrorKind::TimedOut,
-			format!("{method}: no answer within {}s", REQUEST_TIMEOUT.as_secs()),
-		))))
-	})
-}
-
 /// The process's light client for `network`, its chains kept running between
 /// uses. Shared, because each `EmbeddedChainProvider` runs its own smoldot.
 fn light_client(network: &'static str) -> Result<Arc<EmbeddedChainProvider>, ProviderError> {
@@ -225,6 +202,55 @@ fn light_client(network: &'static str) -> Result<Arc<EmbeddedChainProvider>, Pro
 	Ok(client)
 }
 
+/// Waits until `light` has synced `genesis_hash`; see [`synced_or_stalled`].
+/// Connect to the chain first, since only a running chain has a lifecycle.
+async fn wait_until_synced(
+	light: &EmbeddedChainProvider,
+	genesis_hash: [u8; 32],
+) -> Result<(), ProviderError> {
+	let relay = match light.relay_of(genesis_hash) {
+		Some(relay) => light.lifecycle(relay)?,
+		None => stream::empty().boxed(),
+	};
+	synced_or_stalled(genesis_hash, light.lifecycle(genesis_hash)?, relay.fuse()).await
+}
+
+/// Waits until the chain is synced, which smoldot reports as `Ready`. A stall of
+/// the chain or of its relay fails, since a parachain never reports its relay's.
+async fn synced_or_stalled(
+	genesis: [u8; 32],
+	chain_lifecycle: impl Stream<Item = ChainLifecycle>,
+	relay_lifecycle: impl FusedStream<Item = ChainLifecycle>,
+) -> Result<(), ProviderError> {
+	let (mut chain, mut relay) = (std::pin::pin!(chain_lifecycle), std::pin::pin!(relay_lifecycle));
+	loop {
+		tokio::select! {
+			state = chain.next() => {
+				let state = state.ok_or(ProviderError::NotRunning { genesis })?;
+				healthy(genesis, "chain", state.health)?;
+				if state.phase == ChainPhase::Ready {
+					return Ok(());
+				}
+			},
+			Some(state) = relay.next() => healthy(genesis, "the relay of chain", state.health)?,
+		}
+	}
+}
+
+/// Fails when `health` reports a stall of `which`, named with `genesis`.
+fn healthy(genesis: [u8; 32], which: &str, health: ChainHealth) -> Result<(), ProviderError> {
+	let ChainHealth::Stalled { reason } = health else {
+		return Ok(());
+	};
+	let why = match reason {
+		StallReason::NoPeers => "it has no peers",
+		StallReason::NoProgress => "its warp sync stopped advancing",
+	};
+	Err(ProviderError::Host {
+		reason: format!("the light client stalled on {which} 0x{}: {why}", hex::encode(genesis)),
+	})
+}
+
 #[cfg(test)]
 mod tests {
 	use futures_util::{SinkExt, StreamExt};
@@ -232,62 +258,6 @@ mod tests {
 
 	use super::*;
 	use crate::network::Network;
-
-	/// A node that holds every request open, as one that lost the request does.
-	struct NeverAnswers;
-
-	impl RpcClientT for NeverAnswers {
-		fn request_raw<'a>(
-			&'a self,
-			_method: &'a str,
-			_params: Option<Box<RawValue>>,
-		) -> RawRpcFuture<'a, Box<RawValue>> {
-			Box::pin(futures::future::pending())
-		}
-
-		fn subscribe_raw<'a>(
-			&'a self,
-			_sub: &'a str,
-			_params: Option<Box<RawValue>>,
-			_unsub: &'a str,
-		) -> RawRpcFuture<'a, RawRpcSubscription> {
-			Box::pin(futures::future::pending())
-		}
-	}
-
-	/// Keepalive pings hold such a connection open, so without a request timeout
-	/// a command reading the chain, or waiting for its transaction to be
-	/// watched, would wait forever rather than fail.
-	#[tokio::test(start_paused = true)]
-	async fn requests_and_subscriptions_the_node_never_answers_fail() {
-		use subxt_rpcs::client::rpc_params;
-
-		let rpc = RpcClient::new(Timed(NeverAnswers));
-		let request = rpc.request::<serde_json::Value>("state_getStorage", rpc_params![]);
-		let Err(request) =
-			tokio::time::timeout(REQUEST_TIMEOUT * 2, request).await.expect("gives up")
-		else {
-			panic!("nothing answered");
-		};
-		let subscription = rpc.subscribe::<serde_json::Value>(
-			"author_submitAndWatchExtrinsic",
-			rpc_params![],
-			"author_unwatchExtrinsic",
-		);
-		let Err(subscription) =
-			tokio::time::timeout(REQUEST_TIMEOUT * 2, subscription).await.expect("gives up")
-		else {
-			panic!("nothing answered");
-		};
-
-		assert_eq!(
-			[request.to_string(), subscription.to_string()],
-			[
-				"RPC error: client error: state_getStorage: no answer within 60s",
-				"RPC error: client error: author_submitAndWatchExtrinsic: no answer within 60s",
-			]
-		);
-	}
 
 	/// A network whose only route is People at `people_ws`.
 	fn people_only(people_ws: String) -> NetworkConfig {
@@ -373,6 +343,79 @@ mod tests {
 		);
 	}
 
+	const PARACHAIN: [u8; 32] = [0x11; 32];
+
+	fn lifecycle(phase: ChainPhase, health: ChainHealth) -> ChainLifecycle {
+		ChainLifecycle { phase, peers: 1, health }
+	}
+
+	/// `updates`, then nothing more while the chain keeps running.
+	fn then_quiet(updates: Vec<ChainLifecycle>) -> impl Stream<Item = ChainLifecycle> {
+		stream::iter(updates).chain(stream::pending())
+	}
+
+	/// What `synced_or_stalled` has decided for `PARACHAIN` once the updates are
+	/// delivered and nothing else changes, or `None` while it still waits.
+	fn decided(
+		chain: impl Stream<Item = ChainLifecycle>,
+		relay: Vec<ChainLifecycle>,
+	) -> Option<Result<(), ProviderError>> {
+		use futures::FutureExt;
+
+		synced_or_stalled(PARACHAIN, chain, then_quiet(relay).fuse()).now_or_never()
+	}
+
+	/// Only the chain's own phase lets the first request through. Its relay being
+	/// synced does not mean the parachain can answer yet.
+	#[test]
+	fn a_synced_relay_does_not_release_its_parachain() {
+		let connecting = lifecycle(ChainPhase::Connecting, ChainHealth::Ok);
+		let ready = lifecycle(ChainPhase::Ready, ChainHealth::Ok);
+
+		assert_eq!(
+			[
+				decided(then_quiet(vec![connecting]), vec![ready]),
+				decided(then_quiet(vec![connecting, ready]), vec![]),
+			],
+			[None, Some(Ok(()))]
+		);
+	}
+
+	/// A chain the light client stopped running will never be `Ready`, however
+	/// healthy its relay is.
+	#[test]
+	fn a_chain_that_stops_ends_the_wait() {
+		let decided = decided(
+			stream::iter(vec![lifecycle(ChainPhase::Connecting, ChainHealth::Ok)]),
+			vec![lifecycle(ChainPhase::Ready, ChainHealth::Ok)],
+		);
+
+		assert_eq!(decided, Some(Err(ProviderError::NotRunning { genesis: PARACHAIN })));
+	}
+
+	/// A parachain reports a stall only from its own peers, so it looks healthy
+	/// while its relay has stopped syncing, and would be waited on forever.
+	#[test]
+	fn a_stalled_relay_fails_the_wait() {
+		let stalled = ChainHealth::Stalled { reason: StallReason::NoProgress };
+
+		let decided = decided(
+			then_quiet(vec![lifecycle(ChainPhase::Connecting, ChainHealth::Ok)]),
+			vec![lifecycle(ChainPhase::Syncing { at: 1, target: 9 }, stalled)],
+		);
+
+		assert_eq!(
+			decided,
+			Some(Err(ProviderError::Host {
+				reason: format!(
+					"the light client stalled on the relay of chain 0x{}: its warp sync stopped \
+					 advancing",
+					"11".repeat(32)
+				),
+			}))
+		);
+	}
+
 	/// A chain dropped between uses would sync again from its checkpoint and
 	/// start with no peers.
 	#[tokio::test]
@@ -408,7 +451,7 @@ mod tests {
 					entry.identifier
 				);
 				assert_eq!(
-					provider.routed_url(&entry.genesis_hash),
+					provider.location(entry.genesis_hash),
 					expected,
 					"{} serves {:?} but routes it elsewhere",
 					config.id,
@@ -438,11 +481,11 @@ mod tests {
 		let widened = CliChainProvider::with_live_chain_routing(&network, true);
 
 		assert_eq!(
-			gated.routed_url(&optional.genesis),
+			gated.location(optional.genesis),
 			PEOPLE,
 			"an endpoint that is not a role is excluded without the switch"
 		);
-		assert_eq!(widened.routed_url(&optional.genesis), optional.ws, "and included with it");
+		assert_eq!(widened.location(optional.genesis), optional.ws, "and included with it");
 	}
 
 	/// The genesis check of a rerouted endpoint must ask that URL, whatever the
@@ -458,7 +501,7 @@ mod tests {
 
 		let alone = CliChainProvider::for_endpoint(&network, optional);
 
-		assert_eq!(alone.routed_url(&optional.genesis), optional.ws);
+		assert_eq!(alone.location(optional.genesis), optional.ws);
 		assert!(alone.chain_for(network.people_genesis).is_none(), "People is not this endpoint");
 	}
 
@@ -474,9 +517,27 @@ mod tests {
 		reach_paseo_next_v2(ChainBackend::Rpc).await;
 	}
 
+	/// Also checks that a client is handed out only once its chain is synced,
+	/// which a fast sync would otherwise hide.
 	#[tokio::test]
 	#[ignore = "needs network access to the preset's chains"]
 	async fn the_light_client_reaches_paseo_next_v2() {
+		let network = NetworkConfig {
+			chain_backend: ChainBackend::LightClient,
+			..Network::PaseoNextV2.config()
+		};
+		CliChainProvider::new(&network)
+			.rpc_client(network.asset_hub_genesis)
+			.await
+			.expect("connect to Asset Hub");
+		let light = light_client(network.id).expect("paseo-next-v2 is bundled");
+		let state = light
+			.lifecycle(network.asset_hub_genesis)
+			.expect("Asset Hub is running")
+			.next()
+			.await;
+		assert_eq!(state.map(|state| state.phase), Some(ChainPhase::Ready));
+
 		reach_paseo_next_v2(ChainBackend::LightClient).await;
 	}
 

@@ -107,11 +107,12 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 	// Reading the full-person member key's ring and its members from the People
 	// chain, pinned to one finalized block.
 	let chains = CliChainProvider::new(&config.network);
+	let people_location = chains.location(config.network.people_genesis);
 	let people_rpc = RpcClient::new(
 		chains
 			.rpc_client(config.network.people_genesis)
 			.await
-			.context("connect to People")?,
+			.with_context(|| format!("connect to People ({people_location})"))?,
 	);
 	let people_metadata = alloc::fetch_metadata(&people_rpc).await?;
 	let at = people_rpc.finalized_head().await?;
@@ -156,11 +157,12 @@ pub async fn register_name(config: &RegisterNameConfig) -> Result<()> {
 
 	// Reading Asset Hub metadata and the exponent the subscriber verifies
 	// proofs against.
+	let asset_hub_location = chains.location(config.network.asset_hub_genesis);
 	let ah_rpc = RpcClient::new(
 		chains
 			.rpc_client(config.network.asset_hub_genesis)
 			.await
-			.context("connect to Asset Hub")?,
+			.with_context(|| format!("connect to Asset Hub ({asset_hub_location})"))?,
 	);
 	let ah_metadata = alloc::fetch_metadata(&ah_rpc).await?;
 	let exponent =

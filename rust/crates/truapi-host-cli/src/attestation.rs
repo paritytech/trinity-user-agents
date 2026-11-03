@@ -369,15 +369,16 @@ async fn signing_context_of(
 	genesis_hash: [u8; 32],
 	pallet: &str,
 ) -> Result<Option<[u8; 32]>> {
+	let location = chains.location(genesis_hash);
 	let rpc = alloc::rpc::RpcClient::new(
 		chains
 			.rpc_client(genesis_hash)
 			.await
-			.with_context(|| format!("connect to the chain holding {pallet}"))?,
+			.with_context(|| format!("connect to the chain holding {pallet} ({location})"))?,
 	);
 	let metadata = alloc::fetch_metadata(&rpc)
 		.await
-		.with_context(|| format!("read {pallet} metadata"))?;
+		.with_context(|| format!("read {pallet} metadata from {location}"))?;
 	Ok(signing_context_from_constant(metadata.constant(pallet, SIGNING_CONTEXT_CONSTANT)))
 }
 

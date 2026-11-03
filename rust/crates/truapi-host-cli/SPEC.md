@@ -1760,9 +1760,6 @@ preset carries without serving them as a role, of which no preset has any.
 The all-zero SSO sentinel and every genesis hash not present in the active
 route map fall back to People, on either chain backend (§14.3).
 
-A rustls ring crypto provider is installed at process startup for `wss://`
-connections.
-
 ### 14.2 Product-frame WebSocket
 
 The listener uses plain `ws://`. Any `SocketAddr` accepted by the OS can be
@@ -1814,8 +1811,8 @@ Every chain connection the CLI makes goes through `CliChainProvider`
 from the bundled catalog, so the light client runs only the chains of the
 selected network. The genesis check of a rerouted endpoint (§14.1) uses a
 provider for that endpoint alone, over RPC. A request from one of the CLI's own
-commands, or the setup of a subscription, fails after 60 seconds without an
-answer.
+commands, or the setup of a subscription, fails once its connection has
+delivered nothing for 30 seconds while it waits.
 
 With `rpc`, each routed chain is registered as its endpoint's RPC node, and every
 connect opens a fresh WebSocket. [`ws.rs`](../truapi-provider/src/ws.rs) sets
@@ -1832,12 +1829,15 @@ specs `truapi-provider` bundles, which cover `paseo-next-v2` and `previewnet`. I
 cannot be combined with the `HOST_CLI_*_WS` overrides or
 `HOST_CLI_LOCAL_NETWORK_CONFIG`. One light client per network serves the process
 and keeps each chain running after its last connection closes, so a chain syncs
-once per process. A chain's first request waits for it to sync. A PGAS
-claim on Asset Hub, such as `pgas-check --submit`, is dropped: smoldot validates a
-transaction before broadcasting it, and the validation checks that the PGAS asset
-exists. Asset Hub's nodes prove that with the asset's trie entry, which holds
-only the hash of its value, but smoldot answers an existence check by reading the
-whole value and refuses the proof.
+once per process.
+
+CLI commands wait for the chain to sync before their first request, since
+smoldot sends nothing until then and the 30-second limit above would fail it.
+The wait fails if the chain or its relay stalls.
+
+The light client drops PGAS claims on Asset Hub, whose nodes return an
+incomplete proof for the check smoldot runs before broadcasting.
+`pgas-check --submit` refuses to run on it.
 
 `wss://` certificates are verified with the root certificates built into the
 binary, on both backends, not with certificate authorities added to the
