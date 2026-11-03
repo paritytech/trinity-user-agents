@@ -85,7 +85,10 @@ to repeat.
 ```
 
 - Inbound, `receiveAmount` is the CASH credited and must equal the ask's amount; outbound, `sendAmount` is the CASH
-  debited.
+  debited and must equal it.
+- Both amounts are above zero, `providerFee + networkFee` is at most `sendAmount`, `quoteId` is at most 128 characters
+  with no control characters, and `expiresAt`, when set, is still ahead. A quote that breaks any of these shows as you
+  being unavailable.
 - `etaSecs` matters: once the provider holds the payment, a session silent past it shows as delayed.
 - Refusing with `BelowMinimum` or `AboveMaximum` teaches the host your limits for 12 hours.
 
@@ -104,7 +107,9 @@ report({ tag: "Out", value: { tag: "Collecting", value: { paymentId, amount } } 
 
 **Inbound**
 
-1. `report AwaitingPayment`, and a `Deposit` with the address or bank details the host should draw.
+1. `report AwaitingPayment`, and a `Deposit` with the address or bank details the host should draw: an amount above
+   zero, by the rail and asset of the quote the user chose, not yet expired, and a payment URI (BIP21, EIP-681) rather
+   than a web, script or file one. Send a new `Deposit` until funds move, up to 8 per session.
 2. Show your screen if you need one (below), take the payment.
 3. `report PaymentReceived { finalized: false }`, then `{ finalized: true }` once it cannot be reversed.
 4. `report Converting`.
@@ -120,8 +125,11 @@ report({ tag: "Out", value: { tag: "Collecting", value: { paymentId, amount } } 
    `Payout { Failed }`.
 3. After a failed payout, give the CASH back with a `payment.topUp` and `report Refunding { topUpId, amount }`.
 
-**Any time:** `Details { transactionId, reference }` for the references the user can quote to you, and
-`Failed { reason }` to end a session before any funds move.
+**Any time:** `Details { transactionId, reference }` for the references the user can quote to you, up to 8 per
+session, and `Failed { reason }` to end a session before any funds move.
+
+Every text you report (a reference, an address, a `Progress` `Other` text) is one plain line of at most 80 characters,
+with no control or invisible characters; a report that breaks a limit fails with `InvalidDetail`.
 
 Reports only move forward; a report out of order fails with `OutOfOrder`, and one on a session you no longer serve with
 `NotFound`, which means the session is over and you can drop its state.
