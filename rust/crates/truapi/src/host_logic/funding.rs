@@ -522,7 +522,7 @@ impl FundingSession {
 			.iter()
 			.rev()
 			.map(|record| &record.update)
-			.find(|update| update_rank(update).is_some())
+			.find(|update| update.rank().is_some())
 	}
 
 	/// The session's progress for its direction and rail.
@@ -656,7 +656,7 @@ impl FundingSession {
 		if !self.detail_fits(&update, now_ms) {
 			return Err(HostFundingReportError::InvalidDetail);
 		}
-		if let Some((id, amount)) = named_funds(&update) {
+		if let Some((id, amount)) = update.named_funds() {
 			let named = host_id(id);
 			let record = self
 				.started
@@ -729,8 +729,8 @@ impl FundingSession {
 			FundingUpdate::Out(_) => self.direction == FundingDirection::Out,
 			FundingUpdate::Failed { .. } | FundingUpdate::Details { .. } => true,
 		};
-		let last = self.last_step().and_then(update_rank);
-		let rank = update_rank(update);
+		let last = self.last_step().and_then(FundingUpdate::rank);
+		let rank = update.rank();
 		let top_ups = self.top_up_ids();
 		fits_direction &&
 			match update {
@@ -817,7 +817,7 @@ impl FundingSession {
 	/// Whether funds are moving: the provider named a top-up or a payment
 	/// request it started. The named funds then decide the outcome.
 	pub fn funds_moving(&self) -> bool {
-		self.updates.iter().any(|record| named_funds(&record.update).is_some())
+		self.updates.iter().any(|record| record.update.named_funds().is_some())
 	}
 
 	/// Whether the provider started a top-up or payment request for the
@@ -1115,36 +1115,43 @@ impl FundingSession {
 	}
 }
 
-/// The provider's id and amount of the funds `update` names, if any.
-pub fn named_funds(update: &FundingUpdate) -> Option<(&[u8; 32], u128)> {
-	match update {
-		FundingUpdate::In(FundingInboundUpdate::Crediting { top_up_id, amount }) => {
-			Some((top_up_id, *amount))
-		},
-		FundingUpdate::Out(FundingOutboundUpdate::Collecting { payment_id, amount }) => {
-			Some((payment_id, *amount))
-		},
-		_ => None,
+impl FundingUpdate {
+	/// The provider's id and amount of the funds this update names, if any.
+	pub fn named_funds(&self) -> Option<(&[u8; 32], u128)> {
+		match self {
+			FundingUpdate::In(FundingInboundUpdate::Crediting { top_up_id, amount }) => {
+				Some((top_up_id, *amount))
+			},
+			FundingUpdate::Out(FundingOutboundUpdate::Collecting { payment_id, amount }) => {
+				Some((payment_id, *amount))
+			},
+			_ => None,
+		}
 	}
-}
 
-/// Order of an update within a session: a later update ranks higher, and a
-/// top-up and a payment request rank where funds start moving. `Deposit` and
-/// `Details` have no place in the order.
-fn update_rank(update: &FundingUpdate) -> Option<u8> {
-	Some(match update {
-		FundingUpdate::In(FundingInboundUpdate::AwaitingPayment) => 0,
-		FundingUpdate::In(FundingInboundUpdate::PaymentReceived { finalized: false, .. }) => 1,
-		FundingUpdate::In(FundingInboundUpdate::PaymentReceived { finalized: true, .. }) => 2,
-		FundingUpdate::In(FundingInboundUpdate::Converting) => 3,
-		FundingUpdate::In(FundingInboundUpdate::Crediting { .. }) |
-		FundingUpdate::Out(FundingOutboundUpdate::Collecting { .. }) => 4,
-		FundingUpdate::In(FundingInboundUpdate::Delivered) => 5,
-		FundingUpdate::Failed { .. } => 6,
-		FundingUpdate::In(FundingInboundUpdate::Deposit { .. }) | FundingUpdate::Details { .. } => {
-			return None;
-		},
-	})
+	/// This update's order within a session: a later update ranks higher,
+	/// and a top-up and a payment request rank where funds start moving.
+	/// `Deposit` and `Details` have no place in the order.
+	fn rank(&self) -> Option<u8> {
+		Some(match self {
+			FundingUpdate::In(FundingInboundUpdate::AwaitingPayment) => 0,
+			FundingUpdate::In(FundingInboundUpdate::PaymentReceived {
+				finalized: false, ..
+			}) => 1,
+			FundingUpdate::In(FundingInboundUpdate::PaymentReceived {
+				finalized: true, ..
+			}) => 2,
+			FundingUpdate::In(FundingInboundUpdate::Converting) => 3,
+			FundingUpdate::In(FundingInboundUpdate::Crediting { .. }) |
+			FundingUpdate::Out(FundingOutboundUpdate::Collecting { .. }) => 4,
+			FundingUpdate::In(FundingInboundUpdate::Delivered) => 5,
+			FundingUpdate::Failed { .. } => 6,
+			FundingUpdate::In(FundingInboundUpdate::Deposit { .. }) |
+			FundingUpdate::Details { .. } => {
+				return None;
+			},
+		})
+	}
 }
 
 /// Why a session operation failed.
@@ -1671,7 +1678,7 @@ mod tests {
 
 	fn reported(session: &mut FundingSession, updates: &[FundingUpdate]) {
 		for update in updates {
-			if let Some((id, amount)) = named_funds(update) {
+			if let Some((id, amount)) = update.named_funds() {
 				taken(session, *id, amount);
 			}
 			report(session, update.clone())
@@ -2297,7 +2304,7 @@ mod tests {
 	}
 
 	fn report_at(session: &mut FundingSession, update: FundingUpdate, at_ms: u64) {
-		if let Some((id, amount)) = named_funds(&update) {
+		if let Some((id, amount)) = update.named_funds() {
 			taken(session, *id, amount);
 		}
 		session.report(PROVIDER, update, |id| *id, at_ms).expect("reported");
