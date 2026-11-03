@@ -10,11 +10,26 @@ enum TabBarTips {
     @Parameter(.transient)
     static var isBarLaidOut: Bool = false
 
-    /// The tip chain: the top status strip first, then the scan action. Single source of truth:
+    /// Transient: set by the Docklet when a user tuck lands, and cleared when the bar leaves the tucked state.
+    @Parameter(.transient)
+    static var isUserTuckLanded: Bool = false
+
+    /// Transient: set by the Docklet when an auto-hide tuck lands, and cleared when the bar leaves the tucked state.
+    @Parameter(.transient)
+    static var isAutoHideLanded: Bool = false
+
+    /// The tip chain: the top status strip first, then the scan action, then the Docklet tips. Single source of truth:
     /// the chrome builds its sequence from this, and Debug Settings resets eligibility across it.
     @MainActor
     static let steps: [TabBarTipStep] = [
         TabBarTipStep(tip: ScanActionTip(), anchor: .centerButton),
-        TabBarTipStep(tip: ChainStatusStripTip(), anchor: .statusStrip)
+        TabBarTipStep(tip: ChainStatusStripTip(), anchor: .statusStrip),
+        TabBarTipStep(tip: DockletTuckedTip(), anchor: .edgeGlow, tap: .restoreDocklet),
+        TabBarTipStep(
+            tip: DockletAutoHiddenTip(),
+            anchor: .edgeGlow,
+            tap: .restoreDocklet,
+            onShow: { DockletTuckedTip().invalidate(reason: .actionPerformed) }
+        )
     ]
 }

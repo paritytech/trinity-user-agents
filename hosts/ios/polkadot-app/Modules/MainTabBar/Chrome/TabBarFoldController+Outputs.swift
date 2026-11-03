@@ -6,6 +6,12 @@ enum TabBarEdgeGlowOpacity {
     case fadeOut
 }
 
+/// How the bar came to tuck: the user's swipe, or the auto-hide.
+enum DockletTuckKind: Equatable {
+    case user
+    case autoHide
+}
+
 extension TabBarFoldController {
     /// Where the fold controller reports what the chrome must reflect.
     struct Outputs {

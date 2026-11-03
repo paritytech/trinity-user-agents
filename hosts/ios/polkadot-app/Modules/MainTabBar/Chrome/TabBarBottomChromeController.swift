@@ -4,7 +4,6 @@ import DesignSystem
 import Keystore_iOS
 import PolkadotUI
 import SnapKit
-import TipKit
 
 final class TabBarBottomChromeController: UIViewController {
     /// Room the open centre panel leaves below the top safe area.
@@ -57,31 +56,30 @@ final class TabBarBottomChromeController: UIViewController {
             },
             state: { [weak self] state in
                 self?.tipController.setBarShown(state == .shown)
-                self?.dockletTipController.barStateChanged(state)
+                if state != .tucked {
+                    self?.tipController.dockletTuckEnded()
+                }
                 self?.applyAccessibility(for: state)
             },
             contentOpacity: { [weak self] opacity in
                 self?.barModel.contentFade.opacity = opacity
             },
             tuckLanded: { [weak self] kind in
-                self?.dockletTipController.tuckLanded(kind)
+                self?.tipController.dockletTuckLanded(kind)
             }
         )
     )
 
-    private lazy var tipController = TabBarTipController(
+    lazy var tipController: TabBarTipController = .init(
         host: self,
         sequence: TabBarTipOrderedSequence(steps: TabBarTips.steps),
         centerButtonAnchor: centerButtonAnchorGuide,
-        statusStripAnchor: { [weak self] in self?.statusStripAnchorProvider?() }
-    )
-
-    /// The Docklet tips wait out the TipKit popover, which only shows while the bar is shown.
-    lazy var dockletTipController: DockletTipController = .init(
-        settingsManager: SettingsManager.shared,
-        glowFrame: { [unowned self] in edgeGlowView.frame },
-        isAnotherTipShowing: { [unowned self] in presentedViewController is TipUIPopoverViewController },
-        foldController: foldController
+        statusStripAnchor: { [weak self] in self?.statusStripAnchorProvider?() },
+        docklet: .init(
+            edgeGlowAnchor: edgeGlowView,
+            onRestoreDocklet: { [weak self] in self?.foldController.setUserOverride(.shown) },
+            onTipShown: { [weak self] isShown in self?.foldController.setAutoHideBlocked(.tipShown, isShown) }
+        )
     )
 
     lazy var panelController = TabBarPanelController(
@@ -184,7 +182,6 @@ final class TabBarBottomChromeController: UIViewController {
         installDimLayer()
         installChromeSurface()
         installEdgeGlow()
-        installTipView()
         installBar()
 
         installOutsideTapRecognizer()

@@ -2,7 +2,7 @@
   "sourceLanguage": "en",
   "strings": {
     "autoHidden.message": {
-      "comment": "Message of the Docklet tip shown when the bar first tucks itself away",
+      "comment": "Message of the Docklet tip beside the Edge glow, shown when the bar first tucks itself away",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -14,7 +14,7 @@
       }
     },
     "autoHidden.title": {
-      "comment": "Title of the Docklet tip shown when the bar first tucks itself away",
+      "comment": "Title of the Docklet tip beside the Edge glow, shown when the bar first tucks itself away",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -74,7 +74,7 @@
       }
     },
     "tucked.message": {
-      "comment": "Message of the Docklet tip shown on the first swipe tuck",
+      "comment": "Message of the Docklet tip beside the Edge glow, shown on the first swipe tuck",
       "extractionState": "manual",
       "localizations": {
         "en": {
@@ -86,7 +86,7 @@
       }
     },
     "tucked.title": {
-      "comment": "Title of the Docklet tip shown on the first swipe tuck",
+      "comment": "Title of the Docklet tip beside the Edge glow, shown on the first swipe tuck",
       "extractionState": "manual",
       "localizations": {
         "en": {

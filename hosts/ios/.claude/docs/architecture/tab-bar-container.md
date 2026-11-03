@@ -54,11 +54,8 @@ MainTabBarViewController            container, status strip, widget and inset la
 | Reduce Motion fade (0.22 s) | `polkadot-app/Modules/MainTabBar/Chrome/DockletReducedFade.swift` (pure value type) |
 | Auto-hide blockers, idle countdown, outside-touch tuck | `polkadot-app/Modules/MainTabBar/Chrome/DockletAutoHide.swift` (pure value type) |
 | Window touch observer that feeds the auto-hide | `polkadot-app/Modules/MainTabBar/Chrome/DockletTouchObserver.swift` |
-| Docklet tip rules: which tip a tuck shows, fling distance | `polkadot-app/Modules/MainTabBar/Chrome/DockletTipPolicy.swift` (pure value type) |
-| Docklet tip lifecycle: appear delay, seen flags, restore, fly-off | `polkadot-app/Modules/MainTabBar/Chrome/DockletTipController.swift` |
-| Docklet tip view: layout, slide in, drag, fly-off | `polkadot-app/Modules/MainTabBar/Chrome/DockletTipView.swift` |
 | Session nudge timing and inset | `polkadot-app/Modules/MainTabBar/Chrome/DockletNudge.swift` (pure value type) |
-| Fold controller outputs to the chrome | `polkadot-app/Modules/MainTabBar/Chrome/TabBarFoldController+Outputs.swift` |
+| Fold controller outputs to the chrome, and `DockletTuckKind` (user or auto-hide tuck) | `polkadot-app/Modules/MainTabBar/Chrome/TabBarFoldController+Outputs.swift` |
 | Delayed main-actor task | `polkadot-app/Modules/MainTabBar/Chrome/Task+Delayed.swift` |
 | Bar frame, pivot, slide, Edge glow and Grab zone rects, plain pose | `polkadot-app/Modules/MainTabBar/Chrome/DockletGeometry.swift` (pure value type) |
 | Edge glow alpha profile, blur and feather stops | `polkadot-app/Modules/MainTabBar/Chrome/DockletGlowProfile.swift` (pure value type) |
@@ -74,7 +71,10 @@ MainTabBarViewController            container, status strip, widget and inset la
 | Tab items | `TabBarItem` in `polkadot-app/Modules/MainTabBar/MainTabBarProtocols.swift` |
 | Center panel height declaration | `polkadot-app/Modules/MainTabBar/Chrome/TabBarCenterContentHeight.swift` (`.fits(CGFloat)` or `.fill`) |
 | Center panel content (scanner) | `polkadot-app/Modules/MainTabBar/ScanPanelViewController.swift` |
-| Onboarding tips | `polkadot-app/Modules/MainTabBar/Chrome/TabBarTipController.swift`, `polkadot-app/Modules/MainTabBar/Tips/` |
+| Tip presenter: one popover at a time, Docklet tuck parameters, restore, outside-tap dismissal | `polkadot-app/Modules/MainTabBar/Chrome/TabBarTipController.swift` |
+| Tip types, rules, parameters, step list | `polkadot-app/Modules/MainTabBar/Tips/TabBarTipDefinitions.swift`, `TabBarTips.swift` |
+| Tip step (anchor, tap action, `onShow`), anchors, popover body and close button | `polkadot-app/Modules/MainTabBar/Tips/TabBarTipStep.swift`, `TabBarTipAnchor.swift`, `TabBarTipViewStyle.swift` |
+| First eligible tip step | `polkadot-app/Modules/MainTabBar/Tips/TabBarTipOrderedSequence.swift`, `TabBarTipSequenceProtocol.swift` |
 | Floating widgets | `polkadot-app/Modules/MainTabBar/TabBarWidgetController.swift`, `MainTabBarFloatingWidgetStackView.swift` |
 | Bar, center control, shelf container | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarContainer.swift`, `DSTabBarCenterControl.swift` |
 | Centre glyph, grabber, rim | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarCenterGlyph.swift` |
@@ -200,7 +200,7 @@ The chrome takes the width from `DSTabBarStyle.rowWidth(inAvailableWidth:)` of i
 
 **Tucked bar and VoiceOver.** While the bar is tucked, or settling toward tucked, the Edge glow is its one accessibility element, labelled "Show tab bar" (`Common.tabBarShowAccessibilityLabel`). Activating it restores the bar as the user's restore, with a medium haptic. The bar's own elements are hidden from VoiceOver while it is tucked. A `layoutChanged` notification moves focus to the glow on tuck and to the bar on restore. Auto-hide never runs while VoiceOver is on. Turning VoiceOver off restarts the 3 s countdown from that moment.
 
-**Reduce Motion.** Read live, and observed for changes. Any tuck or restore that is not a finger drag (release, tap, grab release, tip, auto-hide, or a policy change) fades instead of swinging. The fade takes 0.22 s (`DockletReducedFade`). Only the icons, labels and center glyph fade. The glass goes straight to its end pose: a restore shows it at once, and a tuck holds it in place while the content fades, then places it tucked. The Edge glow follows the content fade. A drag still follows the finger. Turning Reduce Motion on during a settle ends that settle at its destination. The first-hide nudge does not play. A move between `shown` and `hidden` is written without animation.
+**Reduce Motion.** Read live, and observed for changes. Any tuck or restore that is not a finger drag (release, tap, grab release, tip tap, auto-hide, or a policy change) fades instead of swinging. The fade takes 0.22 s (`DockletReducedFade`). Only the icons, labels and center glyph fade. The glass goes straight to its end pose: a restore shows it at once, and a tuck holds it in place while the content fades, then places it tucked. The Edge glow follows the content fade. A drag still follows the finger. Turning Reduce Motion on during a settle ends that settle at its destination. The first-hide nudge does not play. A move between `shown` and `hidden` is written without animation.
 
 ## Shelf
 
@@ -285,7 +285,7 @@ The derived state comes from `TabBarHiddenPolicy.deriveFoldState(in:showing:)`. 
 
 The Docklet is the bar, the open panel and the Grab zone. The Edge glow strip does not count while the bar is shown. A touch on the Docklet restarts the 3 s countdown and cancels a pending outside-touch tuck. Further outside touches do not restart that tuck. The tuck is stored as the user override.
 
-Blockers hold the tuck: an open panel, the keyboard, a drag or settle in progress, a bar that is not shown, a Docklet tip on screen (`tipShown`), and VoiceOver (`voiceOver`). While a blocker holds, an outside touch starts no tuck. Clearing the last blocker restarts the 3 s countdown from that moment.
+Blockers hold the tuck: an open panel, the keyboard, a drag or settle in progress, a bar that is not shown, any TipKit tip on screen, R1 or Docklet (`tipShown`), and VoiceOver (`voiceOver`). While a blocker holds, an outside touch starts no tuck. Clearing the last blocker restarts the 3 s countdown from that moment.
 
 `DockletAutoHide` is the pure policy and reads no clock, so the caller passes in times. `DockletTouchObserver` is a window recognizer. It reports each touch that begins and never recognizes, cancels or delays one. `TabBarFoldController` feeds both and schedules one wake-up for the next deadline.
 
@@ -299,15 +299,38 @@ The fade stays while the bar is tucked. A drag, a grab or a return to shown clea
 
 ## Tips
 
-The Docklet tips are custom views beside the Edge glow, not TipKit, because a user can fling them away and TipKit does not follow a drag. Each tip shows once per device. Its seen flag is a `SettingsManager` key: `dockletTuckedTipShown` or `dockletAutoHiddenTipShown`.
+Onboarding tips are TipKit tips. `TabBarTipController` is the only presenter, and it shows one popover at a time. The R1 tips point at the center button and the status strip. The Docklet tips point at the Edge glow. R1 tips need the bar shown at a tab root. Docklet tips need the bar tucked. So the two groups are never eligible together.
 
-- **Tucked tip.** Shows 420 ms after the first swipe tuck lands.
-- **Auto-hide tip.** Shows 420 ms after the first auto-hide tuck lands. It also marks the tucked tip as seen.
-- A tip is skipped while a TipKit popover is presented. It stays unseen, so a later tuck can show it.
-- A fold drag or a grab that begins before the tip appears cancels it.
-- While a tip shows, it blocks auto-hide (`tipShown`).
-- A tap, or a release more than 56 pt from rest, restores the bar as the user's own restore, with a medium haptic. A shorter release snaps the tip back.
-- Any other way the bar leaves the tucked state flies the tip off to the right over 320 ms.
+`TabBarTips.steps` lists the steps in order. `TabBarTipOrderedSequence` shows the first step whose tip should display.
+
+### Docklet tips
+
+- `DockletTuckedTip` shows the first time a swipe tuck lands. It explains how to bring the Docklet back.
+- `DockletAutoHiddenTip` shows the first time an auto-hide tuck lands. It explains why the bar left. When it shows, it invalidates `DockletTuckedTip`, so the tucked tip never shows after the auto-hide tip.
+
+**Trigger.** `TabBarFoldController` reports a tuck when it lands tucked, through the `tuckLanded` output with its `DockletTuckKind`. The chrome passes it to `TabBarTipController.dockletTuckLanded(_:)`, which sets one of two transient parameters, `TabBarTips.isUserTuckLanded` or `isAutoHideLanded`. `dockletTuckEnded()` clears both. The chrome calls it when the bar leaves `tucked` and when a grab pan begins.
+
+**Presentation.** The popover is anchored to the Edge glow, with the arrow pointing right. Its `passthroughViews` is the chrome's root view, so the Grab zone still takes touches while the tip is up. For the same reason a tap elsewhere on the screen does not close a Docklet tip.
+
+**Tap.** The body of the tip restores the Docklet. It calls the same `setUserOverride(.shown)` as the glow's VoiceOver action, with the medium haptic. Then it invalidates the tip with `.actionPerformed`, so the tip does not return. The bar is then shown, so an unseen R1 tip may show at once.
+
+**Close.** The small close button in the top-trailing corner only invalidates the tip with `.tipClosed`. The bar stays tucked.
+
+**Return clears the tip.** Any other return of the bar from `tucked` closes a Docklet tip: a tap or drag on the Edge glow, a VoiceOver activation, or a screen whose state is not `tucked`. The chrome reports it through `dockletTuckEnded()`. The rule fails, the sequence drops the tip, and the presenter dismisses its popover.
+
+**Outside tap.** `TabBarTipController` is the popover's delegate for every tip. A tap outside an R1 tip dismisses it. `presentationControllerDidDismiss` invalidates it with `.tipClosed`, so it does not return. A Docklet tip ignores a tap elsewhere (see Presentation). The controller returns `.none` from `adaptivePresentationStyle(for:)`, so every tip stays a popover on compact width.
+
+**Other closes.** A slot tap or a center panel opening invalidates the tip on screen (`retireForUserInteraction`). A panel opening or leaving the screen closes the popover without invalidating it. Such a tip stays eligible.
+
+### R1 tips
+
+The R1 tips keep their style: a tap on the body closes the tip, and there is no close button. A tap outside the tip also closes it. Their rules are described in `TabBarTipDefinitions.swift`.
+
+### Shared rules
+
+- **Once per device.** Both Docklet tips use `MaxDisplayCount(1)`. TipKit keeps the count and invalidations, so seen state lives in its datastore.
+- **Blocks auto-hide.** Any tip on screen, R1 or Docklet, blocks Auto-hide. `TabBarTipController` calls `onTipShown(true)` after each popover appears, and `onTipShown(false)` when it goes away. That covers a dismiss, a replacement by another step, and an outside tap on an R1 tip. The chrome passes the value to `setAutoHideBlocked(.tipShown, _)`. The idle countdown restarts when the last blocker clears.
+- **Reset.** Debug Settings "Reset Tips" runs in `TESTNET_FEATURE` builds only. It sets `tipsResetPending`. On the next launch, `AppDelegate` calls `Tips.resetDatastore()` before `Tips.configure()`. The reset covers the R1 and Docklet tips.
 
 ## Clearance and Safe Area
 
@@ -384,6 +407,5 @@ A fifth slot needs `DSTabBarContainer` to take a fifth view. Items past the four
 
 ## Gotchas
 
-- **Tips on bar items do not show.** `TabBarTipController.anchorItem(for:)` returns nil for `.barItem` anchors, so only the status strip anchor can show a tip. The scan tip is anchored to `.action(.scan)`, which no bar slot uses.
 - **Size the center panel from the chrome's width.** The hosting view has zero width when the chrome first lays out. A height computed from it starts the scan panel at the wrong size. SwiftUI then routes the first taps on the embedded UIKit panel to its own host view, so the search field ignores them until the panel is reopened.
 - **Two actions have no slot.** `TabBarAction.scan` and `TabBarAction.connectionStatus` have no bar slot. The center control and the shelf open them directly, so the branches for them in `handleAction` are not reached from a slot tap.
