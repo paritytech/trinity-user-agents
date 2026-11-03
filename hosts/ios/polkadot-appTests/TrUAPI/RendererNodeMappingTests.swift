@@ -350,8 +350,6 @@ struct RendererNodeMappingTests {
         #expect(radius == 0)
     }
 
-    /// No material is drawn yet, so a `Materials` node draws its children
-    /// plain, placed at the top start as a box places them.
     @Test func materialsDrawTheirChildrenPlain() throws {
         let materials = RendererNode.materials(
             props: MaterialsProps(layers: []),
