@@ -583,6 +583,11 @@ impl FundingRegistry {
 		self.lock_presenting().contains(intent)
 	}
 
+	/// The sessions whose overlay is up.
+	pub fn presenting(&self) -> Vec<String> {
+		self.lock_presenting().iter().cloned().collect()
+	}
+
 	/// Whether a provider still works on any session: one in flight, or a
 	/// withdrawal whose payout or refund it has not reported.
 	pub fn in_progress(&self) -> bool {
