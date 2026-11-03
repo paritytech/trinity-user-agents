@@ -6,6 +6,8 @@ import io.paritytech.polkadotapp.common.BuildConfig
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
+import uniffi.truapi.FundingProviderEntry
+import uniffi.truapi.FundingProviderOrigin
 import uniffi.truapi.ProductId
 import java.io.InputStream
 import java.net.URI
@@ -113,6 +115,12 @@ class BundledProducts internal constructor(
     fun hasWorker(product: BundledProduct): Boolean = exists("${product.workerRoot}/${BundledProduct.WORKER_ENTRY}")
 
     fun hasApp(product: BundledProduct): Boolean = exists("${product.appRoot}/${BundledProduct.APP_INDEX}")
+
+    /** The bundled products that serve Funding, as the core takes them: the manifest shipped is the one it goes by. */
+    fun fundingProviders(): List<FundingProviderEntry> = all.mapNotNull { product ->
+        val manifest = workerManifest(product)?.takeIf { hasWorker(product) && includes(it, "funding") } ?: return@mapNotNull null
+        FundingProviderEntry(productId = product.id, workerManifest = manifest, origin = FundingProviderOrigin.BUNDLED)
+    }
 
     /** Whether the worker [product] ships declares the Chat modality. */
     fun includesChat(product: BundledProduct): Boolean = workerManifest(product)?.let { includes(it, "chat") } ?: false

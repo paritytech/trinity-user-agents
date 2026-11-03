@@ -92,6 +92,8 @@ import io.paritytech.polkadotapp.database.migrations.Migration63To64
 import io.paritytech.polkadotapp.database.migrations.Migration65To66
 import io.paritytech.polkadotapp.database.migrations.Migration68To69
 import io.paritytech.polkadotapp.database.migrations.Migration69To70Spec
+import io.paritytech.polkadotapp.database.migrations.Migration72To73
+import io.paritytech.polkadotapp.database.migrations.Migration73To74Spec
 import io.paritytech.polkadotapp.database.model.BrowserTabLocal
 import io.paritytech.polkadotapp.database.model.ChatAcceptanceLocal
 import io.paritytech.polkadotapp.database.model.ChatBotStateLocal
@@ -149,7 +151,7 @@ import io.paritytech.polkadotapp.database.model.chain.ChainNodeLocal
 import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
 
 @Database(
-    version = 72,
+    version = 74,
     entities = [
         ProductFundingOperationLocal::class,
         ChainLocal::class,
@@ -294,6 +296,8 @@ import io.paritytech.polkadotapp.database.model.chain.ChainRuntimeInfoLocal
         AutoMigration(from = 70, to = 71),
         // Add chat_acceptances, chat_identity_signing_consents and statement_store_slot_allocations.tag
         AutoMigration(from = 71, to = 72),
+        // Drop product_funding_records: the core keeps the funding history
+        AutoMigration(from = 73, to = 74, spec = Migration73To74Spec::class),
     ]
 )
 @TypeConverters(
@@ -349,6 +353,7 @@ abstract class AppDatabase : RoomDatabase() {
                 Migration63To64(),
                 Migration65To66(),
                 Migration68To69(),
+                Migration72To73(),
                 *chatMessageContentMigrations.toTypedArray() // 25 -> 26, 31 -> 32, 37 -> 38, 44 -> 45
             )
         }
