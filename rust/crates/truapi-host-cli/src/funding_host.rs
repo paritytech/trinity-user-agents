@@ -146,7 +146,7 @@ pub struct CliFundingHost {
 	/// Sessions whose current cancel offer the user was asked about.
 	asked: Mutex<HashSet<String>>,
 	/// The providers the core last offered each session.
-	candidates: Mutex<HashMap<String, Vec<String>>>,
+	candidates: Mutex<HashMap<String, Vec<ProductId>>>,
 }
 
 impl CliFundingHost {
@@ -244,7 +244,7 @@ impl CliFundingHost {
 		self.asked.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 	}
 
-	fn lock_candidates(&self) -> std::sync::MutexGuard<'_, HashMap<String, Vec<String>>> {
+	fn lock_candidates(&self) -> std::sync::MutexGuard<'_, HashMap<String, Vec<ProductId>>> {
 		self.candidates.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 	}
 }
