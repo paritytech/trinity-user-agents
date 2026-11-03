@@ -801,9 +801,6 @@ impl crate::platform::GamePlatform for GameCallbackPlatform {
 pub struct FundingCallbackPlatform {
 	/// Host funding overlay.
 	pub funding: Arc<dyn NativeFundingCallbacks>,
-	/// The services whose sessions the overlay draws, for the progress each
-	/// change carries. Weak, as the services hold this platform.
-	pub services: std::sync::Weak<crate::runtime::RuntimeServices>,
 }
 
 #[async_trait]
@@ -831,18 +828,17 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 		target: v01::FundingFrameTarget,
 	) -> Result<v01::FundingFrameOutcome, v01::GenericError> {
 		self.funding
-			.present_provider_frame(provider.product_id.to_string(), intent, target)
+			.present_provider_frame(provider.product_id.clone(), intent, target)
 			.await
 			.map_err(v01::GenericError::from)
 	}
 
-	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem) {
-		// Read as the session stands now, which is at least as new as `status`.
-		let progress = self
-			.services
-			.upgrade()
-			.and_then(|services| services.funding().get(&intent))
-			.map(|session| session.progress());
+	fn funding_session_changed(
+		&self,
+		intent: String,
+		status: v01::HostFundingStatusSubscribeItem,
+		progress: Option<crate::host_logic::funding::FundingProgress>,
+	) {
 		self.funding.funding_session_changed(intent, status, progress);
 	}
 

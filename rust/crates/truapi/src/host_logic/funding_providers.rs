@@ -37,7 +37,7 @@ pub const LEARNED_SUPPORT_TTL_MS: u64 = 12 * 60 * 60 * 1_000;
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct LearnedSupport {
 	/// The provider.
-	pub provider_id: String,
+	pub provider_id: ProductId,
 	/// The ask's direction.
 	pub direction: FundingDirection,
 	/// The ask's rail.
@@ -87,7 +87,7 @@ pub struct FundingUnsupported {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingCandidate {
 	/// The provider's product id.
-	pub provider_id: String,
+	pub provider_id: ProductId,
 	/// Routes serving the direction, as its manifest declares them and its
 	/// recent quote answers confirmed. Empty when it declares none and no
 	/// answer has confirmed one yet, so only its quotes say what it serves.
@@ -107,7 +107,7 @@ impl FundingCandidate {
 	/// say so, and one that serves Funding without declaring routes is a
 	/// candidate for either direction.
 	pub fn for_direction(
-		provider_id: &str,
+		provider_id: &ProductId,
 		manifest: Option<&WorkerManifest>,
 		learned: &[LearnedSupport],
 		direction: FundingDirection,
@@ -126,7 +126,7 @@ impl FundingCandidate {
 			.unwrap_or_default();
 		let mut unsupported = Vec::new();
 		let fresh = learned.iter().filter(|support| {
-			support.provider_id == provider_id &&
+			&support.provider_id == provider_id &&
 				support.direction == direction &&
 				support.is_fresh(now_ms)
 		});
@@ -142,7 +142,7 @@ impl FundingCandidate {
 			}
 		}
 		(declared.is_none() || !routes.is_empty()).then(|| Self {
-			provider_id: provider_id.to_string(),
+			provider_id: provider_id.clone(),
 			routes,
 			unsupported,
 		})
@@ -182,7 +182,7 @@ mod tests {
 
 	fn learned(supported: bool, at_ms: u64) -> LearnedSupport {
 		LearnedSupport {
-			provider_id: "ramp.dot".to_string(),
+			provider_id: ProductId::for_test("ramp.dot"),
 			direction: FundingDirection::In,
 			rail: FundingRail::Bank,
 			asset: "EUR".to_string(),
@@ -212,8 +212,14 @@ mod tests {
 		let undeclared = manifest("{}");
 		let card_in = card_in();
 		let candidate = |manifest: &WorkerManifest, direction| {
-			FundingCandidate::for_direction("ramp.dot", Some(manifest), &[], direction, NOW)
-				.map(|candidate| candidate.routes)
+			FundingCandidate::for_direction(
+				&ProductId::for_test("ramp.dot"),
+				Some(manifest),
+				&[],
+				direction,
+				NOW,
+			)
+			.map(|candidate| candidate.routes)
 		};
 
 		assert_eq!(
@@ -234,7 +240,7 @@ mod tests {
 		let card_in = card_in();
 		let candidate = |at_ms| {
 			FundingCandidate::for_direction(
-				"ramp.dot",
+				&ProductId::for_test("ramp.dot"),
 				Some(&card_in),
 				&[learned(true, at_ms)],
 				FundingDirection::In,
@@ -245,7 +251,7 @@ mod tests {
 			})
 		};
 		let bank = FundingCandidate::for_direction(
-			"ramp.dot",
+			&ProductId::for_test("ramp.dot"),
 			Some(&card_in),
 			&[learned(true, NOW)],
 			FundingDirection::In,
@@ -285,7 +291,7 @@ mod tests {
 		.expect("parses");
 		let candidate = |manifest: Option<&WorkerManifest>| {
 			FundingCandidate::for_direction(
-				"ramp.dot",
+				&ProductId::for_test("ramp.dot"),
 				manifest,
 				&[learned(true, NOW)],
 				FundingDirection::In,

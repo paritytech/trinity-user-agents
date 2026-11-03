@@ -300,8 +300,10 @@ mod tests {
 		let db = open_memory_core_db();
 		block_on(write(&db, &[&session("fs_1"), &session("fs_2")], Vec::new(), &[]))
 			.expect("written");
-		let assigned =
-			FundingSession { provider_id: Some("ramp.dot".to_string()), ..session("fs_1") };
+		let assigned = FundingSession {
+			provider_id: Some(ProductId::for_test("ramp.dot")),
+			..session("fs_1")
+		};
 
 		block_on(write(&db, &[&assigned], vec!["fs_2".to_string()], &[])).expect("written");
 
@@ -335,7 +337,7 @@ mod tests {
 	fn a_session_of_the_previous_format_is_read() {
 		let db = open_memory_core_db();
 		let before = FundingSession {
-			provider_id: Some("ramp.dot".to_string()),
+			provider_id: Some(ProductId::for_test("ramp.dot")),
 			assigned_at_ms: Some(NOW),
 			..session("fs_3")
 		};

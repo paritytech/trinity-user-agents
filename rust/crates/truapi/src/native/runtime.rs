@@ -304,10 +304,8 @@ impl NativeTrUApiHostRuntime {
 	/// Install the host's funding overlay. Set-once; answers whether this
 	/// call installed it. Call it before opening any product execution.
 	pub fn set_funding_callbacks(&self, callbacks: Arc<dyn NativeFundingCallbacks>) -> bool {
-		self.runtime.set_funding_platform(Arc::new(FundingCallbackPlatform {
-			funding: callbacks,
-			services: Arc::downgrade(self.runtime.services()),
-		}))
+		self.runtime
+			.set_funding_platform(Arc::new(FundingCallbackPlatform { funding: callbacks }))
 	}
 
 	/// Open a funding session on the host's own behalf, as the Balance
@@ -466,7 +464,7 @@ impl NativeTrUApiHostRuntime {
 	pub async fn select_funding_provider(
 		&self,
 		intent: String,
-		provider_id: String,
+		provider_id: ProductId,
 		quote_id: String,
 	) -> Result<bool, HostRejection> {
 		Ok(self.runtime.select_funding_provider(&intent, &provider_id, &quote_id).await?)
@@ -773,7 +771,7 @@ impl NativeTrUApiHostRuntime {
 	/// when the product publishes no Worker, or one the core cannot use.
 	pub async fn worker_manifest(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 	) -> Result<Option<crate::host_logic::worker_manifest::WorkerManifest>, HostRejection> {
 		Ok(self.runtime.worker_manifest(&product_id).await?)
 	}

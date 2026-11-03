@@ -150,7 +150,7 @@ pub struct FundingSession {
 	/// history. An ended session is handed to the host until it has.
 	pub acknowledged: bool,
 	/// Product id of the provider the user chose. `None` until they choose.
-	pub provider_id: Option<String>,
+	pub provider_id: Option<ProductId>,
 	/// When the provider was assigned, in Unix milliseconds.
 	pub assigned_at_ms: Option<u64>,
 	/// Where the user's cancel stands, while one is pending or answered.
@@ -485,11 +485,11 @@ impl FundingSession {
 	/// Assign the session to the provider the user chose, on the quote they
 	/// chose it by. A session without an amount takes the amount the quote
 	/// prices. Returns whether it was open and not yet assigned.
-	pub fn assign(&mut self, provider_id: &str, choice: FundingChoice, now_ms: u64) -> bool {
+	pub fn assign(&mut self, provider_id: &ProductId, choice: FundingChoice, now_ms: u64) -> bool {
 		if self.is_terminal() || self.provider_id.is_some() {
 			return false;
 		}
-		self.provider_id = Some(provider_id.to_string());
+		self.provider_id = Some(provider_id.clone());
 		self.assigned_at_ms = Some(now_ms);
 		if self.amount.is_none() {
 			self.amount = Some(choice.balance_amount(self.direction));
@@ -642,12 +642,12 @@ impl FundingSession {
 	/// report named yet.
 	pub fn report(
 		&mut self,
-		provider_id: &str,
+		provider_id: &ProductId,
 		update: FundingUpdate,
 		host_id: impl Fn(&[u8; 32]) -> [u8; 32],
 		now_ms: u64,
 	) -> Result<(), HostFundingReportError> {
-		if self.is_terminal() || self.provider_id.as_deref() != Some(provider_id) {
+		if self.is_terminal() || self.provider_id.as_ref() != Some(provider_id) {
 			return Err(HostFundingReportError::NotFound);
 		}
 		if !self.follows(&update) {
@@ -1372,7 +1372,7 @@ fn hidden(c: char) -> bool {
 
 /// A quote chosen for a USDT top-up of 100, for tests.
 #[cfg(test)]
-pub(crate) fn test_choice() -> FundingChoice {
+pub fn test_choice() -> FundingChoice {
 	FundingChoice {
 		quote: FundingQuote {
 			quote_id: "q-test".to_string(),
@@ -1393,7 +1393,9 @@ mod tests {
 	use super::*;
 
 	const NOW: u64 = 1_700_000_000_000;
-	const PROVIDER: &str = "ramp.dot";
+	fn provider() -> ProductId {
+		ProductId::for_test("ramp.dot")
+	}
 
 	// The host opens a provider page in its own frame, so only an https page
 	// it can show the origin of reaches it, never one carrying credentials
@@ -1572,7 +1574,7 @@ mod tests {
 		let heard_at = NOW + SESSION_WINDOW_MS;
 		session
 			.report(
-				PROVIDER,
+				&provider(),
 				FundingUpdate::In(FundingInboundUpdate::AwaitingPayment),
 				|id| *id,
 				heard_at,
@@ -1603,7 +1605,7 @@ mod tests {
 		let mut session = served(FundingDirection::In);
 		session
 			.report(
-				PROVIDER,
+				&provider(),
 				FundingUpdate::In(FundingInboundUpdate::PaymentReceived {
 					finalized: true,
 					mismatch: None,
@@ -1663,7 +1665,7 @@ mod tests {
 
 	fn served(direction: FundingDirection) -> FundingSession {
 		let mut session = session(direction);
-		assert!(session.assign(PROVIDER, test_choice(), NOW));
+		assert!(session.assign(&provider(), test_choice(), NOW));
 		session
 	}
 
@@ -1673,7 +1675,7 @@ mod tests {
 		session: &mut FundingSession,
 		update: FundingUpdate,
 	) -> Result<(), HostFundingReportError> {
-		session.report(PROVIDER, update, |id| *id, NOW)
+		session.report(&provider(), update, |id| *id, NOW)
 	}
 
 	fn reported(session: &mut FundingSession, updates: &[FundingUpdate]) {
@@ -2204,8 +2206,8 @@ mod tests {
 	fn a_session_is_assigned_once() {
 		let mut session = served(FundingDirection::In);
 
-		assert!(!session.assign("other.dot", test_choice(), NOW));
-		assert_eq!(session.provider_id.as_deref(), Some(PROVIDER));
+		assert!(!session.assign(&ProductId::for_test("other.dot"), test_choice(), NOW));
+		assert_eq!(session.provider_id, Some(provider()));
 	}
 
 	// Reports come only from the assigned provider and only move forward, so
@@ -2218,7 +2220,7 @@ mod tests {
 		assert_eq!(
 			(
 				session.report(
-					"other.dot",
+					&ProductId::for_test("other.dot"),
 					FundingUpdate::In(FundingInboundUpdate::Converting),
 					|id| *id,
 					NOW
@@ -2299,7 +2301,7 @@ mod tests {
 			expires_at: None,
 		};
 		let choice = FundingChoice { quote, rail, asset: "EUR".to_string() };
-		assert!(session.assign(PROVIDER, choice, NOW));
+		assert!(session.assign(&provider(), choice, NOW));
 		session
 	}
 
@@ -2307,7 +2309,7 @@ mod tests {
 		if let Some((id, amount)) = update.named_funds() {
 			taken(session, *id, amount);
 		}
-		session.report(PROVIDER, update, |id| *id, at_ms).expect("reported");
+		session.report(&provider(), update, |id| *id, at_ms).expect("reported");
 	}
 
 	fn steps(progress: &FundingProgress) -> Vec<(FundingStep, Option<u64>)> {

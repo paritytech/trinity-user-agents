@@ -161,7 +161,12 @@ impl FundingPlatform for CliFundingHost {
 		Ok(truapi::latest::FundingFrameOutcome::Dismissed)
 	}
 
-	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
+	fn funding_session_changed(
+		&self,
+		intent: String,
+		status: HostFundingStatusSubscribeItem,
+		_progress: Option<truapi::host_logic::funding::FundingProgress>,
+	) {
 		let (tag, amount) = match status {
 			HostFundingStatusSubscribeItem::InProgress { .. } => ("InProgress", None),
 			HostFundingStatusSubscribeItem::Delivered { credited } => ("Delivered", Some(credited)),

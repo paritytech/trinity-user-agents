@@ -519,7 +519,7 @@ pub trait NativeFundingCallbacks: Send + Sync {
 	/// URL.
 	async fn present_provider_frame(
 		&self,
-		provider_id: String,
+		provider_id: ProductId,
 		intent: String,
 		target: v01::FundingFrameTarget,
 	) -> Result<v01::FundingFrameOutcome, HostRejection>;

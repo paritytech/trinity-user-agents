@@ -45,7 +45,7 @@ const QUOTE_CONCURRENCY: usize = 8;
 const QUOTE_ID_LIMIT: usize = 128;
 
 /// The session, the provider and the encoded ask an answer was given for.
-type AnswerKey = (String, String, Vec<u8>);
+type AnswerKey = (String, ProductId, Vec<u8>);
 
 /// A provider's answer and when it came.
 #[derive(Clone)]
@@ -65,7 +65,7 @@ pub struct FundingQuotes {
 	asks: Mutex<HashMap<String, AbortHandle>>,
 	/// Quotes offered by session and provider, with the rail and asset each
 	/// priced, so a selection can only name one the host was shown.
-	offered: Mutex<HashMap<(String, String), Vec<FundingChoice>>>,
+	offered: Mutex<HashMap<(String, ProductId), Vec<FundingChoice>>>,
 }
 
 impl FundingQuotes {
@@ -74,12 +74,12 @@ impl FundingQuotes {
 	pub fn offered(
 		&self,
 		intent: &str,
-		provider_id: &str,
+		provider_id: &ProductId,
 		quote_id: &str,
 		now_ms: u64,
 	) -> Option<FundingChoice> {
 		lock(&self.offered)
-			.get(&(intent.to_string(), provider_id.to_string()))?
+			.get(&(intent.to_string(), provider_id.clone()))?
 			.iter()
 			.find(|choice| choice.quote.quote_id == quote_id && !expired(&choice.quote, now_ms))
 			.cloned()
@@ -87,16 +87,16 @@ impl FundingQuotes {
 
 	/// Keep `quote` as offered for session `intent`, dropping the session's
 	/// quotes from `provider_id` that expired by `now_ms`.
-	pub(crate) fn offer(
+	pub fn offer(
 		&self,
 		intent: &str,
-		provider_id: &str,
+		provider_id: &ProductId,
 		quote: FundingQuote,
 		ask: &FundingQuoteAsk,
 		now_ms: u64,
 	) {
 		let mut offered = lock(&self.offered);
-		let choices = offered.entry((intent.to_string(), provider_id.to_string())).or_default();
+		let choices = offered.entry((intent.to_string(), provider_id.clone())).or_default();
 		choices
 			.retain(|kept| kept.quote.quote_id != quote.quote_id && !expired(&kept.quote, now_ms));
 		choices.push(FundingChoice { quote, rail: ask.rail, asset: ask.asset.clone() });
@@ -131,12 +131,12 @@ impl FundingQuotes {
 	fn reusable(
 		&self,
 		intent: &str,
-		provider_id: &str,
+		provider_id: &ProductId,
 		ask: &FundingQuoteAsk,
 		now_ms: u64,
 	) -> Option<FundingQuoteAnswer> {
 		let RecentAnswer { at_ms, answer } = lock(&self.answers)
-			.get(&(intent.to_string(), provider_id.to_string(), ask.encode()))?
+			.get(&(intent.to_string(), provider_id.clone(), ask.encode()))?
 			.clone();
 		let fresh = now_ms.saturating_sub(at_ms) < ANSWER_REUSE_MS;
 		let live = match &answer {
@@ -149,7 +149,7 @@ impl FundingQuotes {
 	fn remember(
 		&self,
 		intent: &str,
-		provider_id: &str,
+		provider_id: &ProductId,
 		ask: &FundingQuoteAsk,
 		now_ms: u64,
 		answer: FundingQuoteAnswer,
@@ -157,7 +157,7 @@ impl FundingQuotes {
 		let mut answers = lock(&self.answers);
 		answers.retain(|_, recent| now_ms.saturating_sub(recent.at_ms) < ANSWER_REUSE_MS);
 		answers.insert(
-			(intent.to_string(), provider_id.to_string(), ask.encode()),
+			(intent.to_string(), provider_id.clone(), ask.encode()),
 			RecentAnswer { at_ms: now_ms, answer },
 		);
 	}
@@ -222,7 +222,7 @@ impl RuntimeServices {
 	async fn quote_one(
 		self: &Arc<Self>,
 		intent: &str,
-		provider_id: &str,
+		provider_id: &ProductId,
 		ask: FundingQuoteAsk,
 		deadline: Duration,
 	) -> FundingQuoteRow {
@@ -236,7 +236,7 @@ impl RuntimeServices {
 					let funding = self.funding().clone();
 					let asked = {
 						let ask = ask.clone();
-						let provider_id = provider_id.to_string();
+						let provider_id = provider_id.clone();
 						// A worker the host is stopping keeps its link until its
 						// connection closes, and the one started in its place
 						// connects soon after: a quote that fails on a link is
@@ -266,7 +266,7 @@ impl RuntimeServices {
 						quotes.remember(intent, provider_id, &ask, now_ms, answer.clone());
 						if let Some(supported) = shows_support(answer, ask.country.is_some()) {
 							self.learn_funding_support(LearnedSupport {
-								provider_id: provider_id.to_string(),
+								provider_id: provider_id.clone(),
 								direction: ask.direction,
 								rail: ask.rail,
 								asset: ask.asset.clone(),
@@ -296,7 +296,7 @@ impl RuntimeServices {
 				FundingQuoteState::Quoted { quote }
 			},
 		};
-		FundingQuoteRow { provider_id: provider_id.to_string(), state }
+		FundingQuoteRow { provider_id: provider_id.clone(), state }
 	}
 }
 
@@ -305,25 +305,20 @@ impl RuntimeServices {
 /// none behind.
 struct WorkerHold<'a> {
 	services: &'a RuntimeServices,
-	provider: Option<ProductId>,
+	provider: ProductId,
 }
 
 impl<'a> WorkerHold<'a> {
-	/// Hold `provider_id`'s worker, so the host runs it to answer.
-	fn acquire(services: &'a RuntimeServices, provider_id: &str) -> Self {
-		let provider = provider_id.parse::<ProductId>().ok();
-		if let Some(provider) = &provider {
-			services.worker_ledger.acquire(provider);
-		}
-		Self { services, provider }
+	/// Hold `provider`'s worker, so the host runs it to answer.
+	fn acquire(services: &'a RuntimeServices, provider: &ProductId) -> Self {
+		services.worker_ledger.acquire(provider);
+		Self { services, provider: provider.clone() }
 	}
 }
 
 impl Drop for WorkerHold<'_> {
 	fn drop(&mut self) {
-		if let Some(provider) = &self.provider {
-			self.services.worker_ledger.release(provider);
-		}
+		self.services.worker_ledger.release(&self.provider);
 	}
 }
 
@@ -417,8 +412,14 @@ mod tests {
 			amount: 1_000,
 			country: None,
 		};
-		quotes.offer("fs_1", "ramp.dot", quote("expired", Some(NOW)), &ask, NOW - 1);
-		quotes.offer("fs_1", "ramp.dot", quote("live", None), &ask, NOW);
+		quotes.offer(
+			"fs_1",
+			&ProductId::for_test("ramp.dot"),
+			quote("expired", Some(NOW)),
+			&ask,
+			NOW - 1,
+		);
+		quotes.offer("fs_1", &ProductId::for_test("ramp.dot"), quote("live", None), &ask, NOW);
 
 		let kept: Vec<String> = lock(&quotes.offered)
 			.values()

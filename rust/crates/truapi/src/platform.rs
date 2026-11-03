@@ -3164,7 +3164,7 @@ pub struct FundingPresentation {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingQuoteRow {
 	/// The provider.
-	pub provider_id: String,
+	pub provider_id: ProductId,
 	/// Where its quote stands.
 	pub state: FundingQuoteState,
 }
@@ -3237,9 +3237,15 @@ pub trait FundingPlatform: Send + Sync {
 	) -> Result<truapi::latest::FundingFrameOutcome, GenericError>;
 
 	/// Observe a session's status change, for host UI such as the in-flight
-	/// pill.
-	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
-		let _ = (intent, status);
+	/// pill, with the progress the host draws for it: `None` once the core
+	/// keeps only the session's summary.
+	fn funding_session_changed(
+		&self,
+		intent: String,
+		status: HostFundingStatusSubscribeItem,
+		progress: Option<crate::host_logic::funding::FundingProgress>,
+	) {
+		let _ = (intent, status, progress);
 	}
 
 	/// Observe one provider's row of a quote list the host requested, for the
