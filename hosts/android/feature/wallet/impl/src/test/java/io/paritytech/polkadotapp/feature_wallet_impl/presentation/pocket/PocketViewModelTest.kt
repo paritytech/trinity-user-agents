@@ -295,19 +295,29 @@ class PocketViewModelTest {
         assertEquals(PocketScreenState.List(collectiblesAvailable = true, removalCandidate = null), viewModel.state.value)
     }
 
+    @Test
+    fun `a resume or a back on the list leaves the list as it is`() = runTest(testDispatcher) {
+        withCollectiblesPage()
+        val viewModel = createViewModel()
+        advanceUntilIdle()
+
+        val list = PocketScreenState.List(collectiblesAvailable = true, removalCandidate = null)
+
+        viewModel.onShown()
+        runCurrent()
+        assertEquals(list, viewModel.state.value)
+
+        viewModel.hideCollectiblesSketchbook()
+        runCurrent()
+        assertEquals(list, viewModel.state.value)
+    }
+
     // The screen also resumes on a return from another tab or from the background, and neither may stop a pending open.
     @Test
     fun `a resume before the page has opened neither collapses the card nor stops the open`() = runTest(testDispatcher) {
         val stashUrl = withCollectiblesPage()
         val viewModel = createViewModel()
         advanceUntilIdle()
-        viewModel.onShown()
-        advanceUntilIdle()
-        assertEquals(PocketScreenState.List(collectiblesAvailable = true, removalCandidate = null), viewModel.state.value)
-
-        viewModel.hideCollectiblesSketchbook()
-        runCurrent()
-        assertEquals(PocketScreenState.List(collectiblesAvailable = true, removalCandidate = null), viewModel.state.value)
 
         viewModel.openCollectibles()
         advanceTimeBy(100)
