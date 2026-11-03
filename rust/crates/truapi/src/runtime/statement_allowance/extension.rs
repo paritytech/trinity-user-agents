@@ -62,6 +62,14 @@ pub enum MetadataError {
 		/// Call name.
 		call: String,
 	},
+	/// Named pallet error was not found.
+	#[error("error `{pallet}.{error}` not found in metadata")]
+	MissingError {
+		/// Pallet name.
+		pallet: String,
+		/// Error name.
+		error: String,
+	},
 	/// Type id did not resolve in the portable registry.
 	#[error("unknown type id {type_id}")]
 	UnknownTypeId {
@@ -133,7 +141,8 @@ pub struct EncodedExtension {
 
 /// Decoded metadata: the ordered signed-extension defs, the type registry,
 /// each storage entry's value type id (`(pallet, entry) -> type id`), pallet
-/// constants, and each pallet's `(index, call enum type id)`.
+/// constants, and each pallet's `(index, call enum type id)` and
+/// `(index, error enum type id)`.
 pub struct Metadata {
 	extensions: Vec<ExtensionDef>,
 	metadata_version: u32,
@@ -142,6 +151,7 @@ pub struct Metadata {
 	storage_values: HashMap<(String, String), u32>,
 	constants: HashMap<(String, String), Vec<u8>>,
 	calls: HashMap<String, (u8, u32)>,
+	errors: HashMap<String, (u8, u32)>,
 	view_functions: HashMap<(String, String), ViewFunctionDef>,
 	view_values: Mutex<HashMap<[u8; 32], u32>>,
 }
@@ -208,9 +218,13 @@ macro_rules! collect_pallets {
 		let mut storage_values = HashMap::new();
 		let mut constants = HashMap::new();
 		let mut calls = HashMap::new();
+		let mut errors = HashMap::new();
 		for pallet in &$m.pallets {
 			if let Some(pallet_calls) = &pallet.calls {
 				calls.insert(pallet.name.clone(), (pallet.index, pallet_calls.ty.id));
+			}
+			if let Some(pallet_errors) = &pallet.error {
+				errors.insert(pallet.name.clone(), (pallet.index, pallet_errors.ty.id));
 			}
 			for constant in &pallet.constants {
 				constants
@@ -228,7 +242,7 @@ macro_rules! collect_pallets {
 				storage_values.insert((pallet.name.clone(), entry.name.clone()), value_type);
 			}
 		}
-		(storage_values, constants, calls)
+		(storage_values, constants, calls, errors)
 	}};
 }
 
@@ -248,8 +262,8 @@ macro_rules! collect_metadata {
 				additional_signed_type: e.additional_signed.id,
 			})
 			.collect();
-		let (storage_values, constants, calls) = collect_pallets!($m, $set);
-		(extensions, 0u8, $m.types, storage_values, constants, calls, HashMap::new())
+		let (storage_values, constants, calls, errors) = collect_pallets!($m, $set);
+		(extensions, 0u8, $m.types, storage_values, constants, calls, errors, HashMap::new())
 	}};
 }
 
@@ -276,7 +290,7 @@ macro_rules! collect_metadata_v16 {
 				additional_signed_type: e.implicit.id,
 			})
 			.collect();
-		let (storage_values, constants, calls) =
+		let (storage_values, constants, calls, errors) =
 			collect_pallets!($m, frame_metadata::v16::StorageEntryType);
 		let mut view_functions = HashMap::new();
 		for pallet in &$m.pallets {
@@ -291,7 +305,16 @@ macro_rules! collect_metadata_v16 {
 				);
 			}
 		}
-		(extensions, extension_version, $m.types, storage_values, constants, calls, view_functions)
+		(
+			extensions,
+			extension_version,
+			$m.types,
+			storage_values,
+			constants,
+			calls,
+			errors,
+			view_functions,
+		)
 	}};
 }
 
@@ -310,6 +333,7 @@ impl Metadata {
 			storage_values,
 			constants,
 			calls,
+			errors,
 			view_functions,
 		) = match prefixed.1 {
 			RuntimeMetadata::V14(m) => {
@@ -331,6 +355,7 @@ impl Metadata {
 			storage_values,
 			constants,
 			calls,
+			errors,
 			view_functions,
 			view_values: Mutex::new(HashMap::new()),
 		})
@@ -385,6 +410,21 @@ impl Metadata {
 		let variant = variants.variants.iter().find(|v| v.name == call).ok_or_else(|| {
 			MetadataError::MissingCall { pallet: pallet.to_string(), call: call.to_string() }
 		})?;
+		Ok([pallet_index, variant.index])
+	}
+
+	/// Resolve `pallet::error` by name to its `[pallet_index, error_index]`, the
+	/// leading bytes of the error as a `DispatchError::Module`.
+	pub fn error_indices(
+		&self,
+		pallet: &str,
+		error: &str,
+	) -> Result<[u8; 2], StatementAllowanceError> {
+		let missing =
+			|| MetadataError::MissingError { pallet: pallet.to_string(), error: error.to_string() };
+		let (pallet_index, error_type) = self.errors.get(pallet).copied().ok_or_else(missing)?;
+		let variants = self.resolve_variant(error_type)?;
+		let variant = variants.variants.iter().find(|v| v.name == error).ok_or_else(missing)?;
 		Ok([pallet_index, variant.index])
 	}
 
@@ -708,5 +748,19 @@ mod tests {
 
 		assert!(metadata.call_indices("Resources", "no_such_call").is_err());
 		assert!(metadata.call_indices("NoSuchPallet", "transfer").is_err());
+	}
+
+	/// A dispatch error is matched by name, so the indices come from the
+	/// runtime: the pallet's index and the error's variant index.
+	#[test]
+	fn error_indices_resolve_by_name() {
+		let metadata = super::super::test_fixtures::asset_hub();
+		let [revive_index, _] = metadata.call_indices("Revive", "call").unwrap();
+		assert_eq!(
+			metadata.error_indices("Revive", "StorageDepositNotEnoughFunds").unwrap(),
+			[revive_index, 0x17]
+		);
+		assert!(metadata.error_indices("Revive", "NoSuchError").is_err());
+		assert!(metadata.error_indices("NoSuchPallet", "StorageDepositNotEnoughFunds").is_err());
 	}
 }

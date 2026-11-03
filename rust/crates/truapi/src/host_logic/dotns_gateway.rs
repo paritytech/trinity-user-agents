@@ -103,6 +103,32 @@ pub struct RegisterNameCallArgs {
 	pub link: Link,
 }
 
+/// `Revive.call` arguments.
+#[derive(Debug, Clone, PartialEq, Eq, EncodeAsType)]
+#[encode_as_type(crate_path = "subxt::ext::scale_encode")]
+pub struct ReviveCallArgs {
+	/// Contract called.
+	pub dest: [u8; 20],
+	/// Native value sent with the call.
+	pub value: u128,
+	/// Weight the call may use.
+	pub weight_limit: WeightLimit,
+	/// Storage deposit the call may charge.
+	pub storage_deposit_limit: u128,
+	/// Contract calldata.
+	pub data: Vec<u8>,
+}
+
+/// A `Weight` argument.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EncodeAsType)]
+#[encode_as_type(crate_path = "subxt::ext::scale_encode")]
+pub struct WeightLimit {
+	/// Computation time.
+	pub ref_time: u64,
+	/// Proof size.
+	pub proof_size: u64,
+}
+
 /// `AsDotnsGatewayInfo`: what an `AsDotnsGateway` value authorizes.
 #[derive(EncodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
@@ -205,6 +231,12 @@ pub fn call_address(signature: &str, address: &[u8; 20]) -> Vec<u8> {
 	data
 }
 
+/// Calldata for `DotnsPopController.expireReservation(label)`, which clears
+/// every expired or emptied reservation from the front of the name's queue.
+pub fn expire_reservation_call(label: &str) -> Vec<u8> {
+	call_string("expireReservation(string)", label)
+}
+
 /// Calldata for a view function taking one `bytes32` argument.
 pub fn call_bytes32(signature: &str, word: &[u8; 32]) -> Vec<u8> {
 	let mut data = call_no_args(signature);
@@ -287,34 +319,82 @@ pub fn encode_revive_call(origin: &[u8; 32], dest: &[u8; 20], input: &[u8]) -> V
 	args
 }
 
+/// What a `ReviveApi_call` dry-run reports.
+///
+/// The limits are reported even when the call fails, so a dry-run from an
+/// account that cannot fund the storage deposit still says what the signed
+/// `Revive.call` needs.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ReviveDryRun {
+	/// `ref_time` the call needs as its weight limit.
+	pub ref_time: u64,
+	/// `proof_size` the call needs as its weight limit.
+	pub proof_size: u64,
+	/// Storage deposit the call needs at its peak, or 0 when it only refunds.
+	pub storage_deposit: u128,
+	/// Contract return data, or why the call reverted or failed to dispatch.
+	pub result: Result<Vec<u8>, DotnsContractError>,
+}
+
+impl ReviveDryRun {
+	/// Whether the call failed to dispatch with the pallet error at
+	/// `[pallet_index, error_index]`.
+	pub fn fails_with(&self, [pallet_index, error_index]: [u8; 2]) -> bool {
+		// DispatchError::Module { index, error: [error_index, 0, 0, 0] }.
+		let module_error = [0x03, pallet_index, error_index, 0, 0, 0];
+		matches!(
+			&self.result,
+			Err(DotnsContractError::Dispatch { detail })
+				if *detail == format!("0x{}", hex::encode(module_error))
+		)
+	}
+}
+
 /// Extracts the contract return data from a `ReviveApi_call` output.
 /// The output is a `pallet_revive::ContractResult`. Dispatch errors and reverts
 /// are rejected.
 pub fn decode_revive_call_output(output: &[u8]) -> Result<Vec<u8>, DotnsContractError> {
+	decode_revive_dry_run(output)?.result
+}
+
+/// Decodes a `ReviveApi_call` output (a `pallet_revive::ContractResult`) into
+/// the limits a signed `Revive.call` needs and the call's outcome. Only a
+/// truncated output is an error here.
+pub fn decode_revive_dry_run(output: &[u8]) -> Result<ReviveDryRun, DotnsContractError> {
 	let truncated = |context| DotnsContractError::Truncated { context };
 	let input = &mut &output[..];
-	// weight_consumed + weight_required. Weight is a compact ref_time plus a
-	// compact proof_size.
-	for _ in 0..4 {
-		Compact::<u64>::decode(input).map_err(|_| truncated("weight"))?;
+	// weight_consumed, then weight_required. Weight is a compact ref_time plus
+	// a compact proof_size.
+	let mut weights = [0u64; 4];
+	for weight in &mut weights {
+		*weight = Compact::<u64>::decode(input).map_err(|_| truncated("weight"))?.0;
 	}
-	// storage_deposit + max_storage_deposit. StorageDeposit is variant ‖ u128.
+	let [_, _, ref_time, proof_size] = weights;
+	// storage_deposit + max_storage_deposit. StorageDeposit is variant ‖ u128,
+	// where variant 1 is a charge.
+	let mut storage_deposit = 0;
 	for _ in 0..2 {
-		<(u8, u128)>::decode(input).map_err(|_| truncated("storage_deposit"))?;
+		let (variant, amount) =
+			<(u8, u128)>::decode(input).map_err(|_| truncated("storage_deposit"))?;
+		if variant == 1 {
+			storage_deposit = storage_deposit.max(amount);
+		}
 	}
 	u128::decode(input).map_err(|_| truncated("gas_consumed"))?;
-	match u8::decode(input).map_err(|_| truncated("result"))? {
+	let result = match u8::decode(input).map_err(|_| truncated("result"))? {
 		0 => {
 			let flags = u32::decode(input).map_err(|_| truncated("flags"))?;
 			let data = Vec::<u8>::decode(input).map_err(|_| truncated("data"))?;
 			// ReturnFlags::REVERT.
 			if flags & 1 == 1 {
-				return Err(DotnsContractError::Reverted { detail: describe_revert(&data) });
+				Err(DotnsContractError::Reverted { detail: describe_revert(&data) })
+			} else {
+				Ok(data)
 			}
-			Ok(data)
 		},
 		_ => Err(DotnsContractError::Dispatch { detail: format!("0x{}", hex::encode(*input)) }),
-	}
+	};
+	Ok(ReviveDryRun { ref_time, proof_size, storage_deposit, result })
 }
 
 /// Renders a Solidity revert payload. Recognizes `Error(string)` and
@@ -646,6 +726,16 @@ pub enum DotnsError {
 	/// A pending-claim page could not be read.
 	#[error("DotnsPopController.pendingClaims")]
 	PendingClaims(#[source] DotnsCallError),
+	/// A personhood name's reservation queue could not be read.
+	#[error("DotnsPopController.{view} for {label:?}")]
+	ReservationQueue {
+		/// Queue view that failed.
+		view: &'static str,
+		/// Label whose queue is being read.
+		label: String,
+		/// Failure reading the view.
+		source: DotnsCallError,
+	},
 	/// The network's top-level domain could not be read.
 	#[error("ProtocolRegistry.tld()")]
 	Tld(#[source] DotnsCallError),
@@ -914,6 +1004,110 @@ pub async fn label_available<T: DotnsTransport + ?Sized>(
 		.await
 		.map(|exists| !exists)
 		.map_err(|source| DotnsError::RegistrarExists { label: label.to_string(), source })
+}
+
+/// Why a gateway claim of a personhood name would revert on the name's
+/// reservation queue in `DotnsPopController`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClaimBlocker {
+	/// Another account holds the first active reservation. Only it can claim the name.
+	HeldBy([u8; 20]),
+	/// More expired or emptied reservations stand in front of the claim than one
+	/// gateway call clears (dotNS 1.1.0 and later).
+	/// `DotnsPopController.expireReservation(label)` clears them.
+	ClearFirst {
+		/// Expired or emptied entries in front of the claim.
+		dead: u64,
+	},
+}
+
+/// Whether a gateway `register_name` of `label` by `claimant` would revert on
+/// the name's reservation queue, and why. `None` when the queue lets it through.
+///
+/// A claim first clears up to `MAX_QUEUE_STEPS_PER_CALL` expired or emptied
+/// entries from the front of the queue, and its revert discards that clearing,
+/// so a retry gets no further. A controller without that constant (dotNS 1.0.0)
+/// has no such limit and clears every one of them in the claim itself, so only
+/// another account's active reservation blocks it there. An entry is active
+/// while it has an owner and `joinedAt + reservationDuration` has not passed
+/// `now_secs`.
+pub async fn claim_blocker<T: DotnsTransport + ?Sized>(
+	transport: &mut T,
+	controller: &[u8; 20],
+	label: &str,
+	claimant: &[u8; 20],
+	now_secs: u64,
+) -> Result<Option<ClaimBlocker>, DotnsError> {
+	let queue_error = |view: &'static str, source: DotnsCallError| DotnsError::ReservationQueue {
+		view,
+		label: label.to_string(),
+		source,
+	};
+	let labelhash = keccak_256(label.as_bytes());
+	let (head, tail) = read_view(
+		transport,
+		controller,
+		call_bytes32("reservationMeta(bytes32)", &labelhash),
+		decode_u64_pair,
+	)
+	.await
+	.map_err(|source| queue_error("reservationMeta", source))?;
+	if head >= tail {
+		return Ok(None);
+	}
+	let duration =
+		read_view(transport, controller, call_no_args("reservationDuration()"), decode_u64)
+			.await
+			.map_err(|source| queue_error("reservationDuration", source))?;
+	let max_steps =
+		match transport.view(controller, call_no_args("MAX_QUEUE_STEPS_PER_CALL()")).await {
+			Ok(output) => Some(
+				decode_u64(&output)
+					.map_err(|error| queue_error("MAX_QUEUE_STEPS_PER_CALL", error.into()))?,
+			),
+			Err(DotnsViewError::Reverted(_)) => None,
+			Err(error) => return Err(queue_error("MAX_QUEUE_STEPS_PER_CALL", error.into())),
+		};
+
+	let mut dead = 0;
+	for index in head..tail {
+		let (owner, joined_at) = read_view(
+			transport,
+			controller,
+			call_bytes32_u64("reservationEntry(bytes32,uint64)", &labelhash, index),
+			decode_reservation_entry,
+		)
+		.await
+		.map_err(|source| queue_error("reservationEntry", source))?;
+		if owner != [0u8; 20] && joined_at.saturating_add(duration) >= now_secs {
+			if owner != *claimant {
+				return Ok(Some(ClaimBlocker::HeldBy(owner)));
+			}
+			break;
+		}
+		dead += 1;
+	}
+	let clears_too_few = max_steps.is_some_and(|max_steps| dead > max_steps);
+	Ok(clears_too_few.then_some(ClaimBlocker::ClearFirst { dead }))
+}
+
+/// Decodes a `(uint64, uint64)` return value (`reservationMeta`).
+fn decode_u64_pair(data: &[u8]) -> Result<(u64, u64), DotnsContractError> {
+	Ok((word_u64(data, 0)?, word_u64(data, 1)?))
+}
+
+/// Decodes an `(address, uint64)` return value (`reservationEntry`).
+fn decode_reservation_entry(data: &[u8]) -> Result<([u8; 20], u64), DotnsContractError> {
+	Ok((decode_address(data)?, word_u64(data, 1)?))
+}
+
+/// Calldata for a view function taking a `bytes32` and a `uint64`.
+fn call_bytes32_u64(signature: &str, word: &[u8; 32], value: u64) -> Vec<u8> {
+	let mut data = call_bytes32(signature, word);
+	let mut value_word = [0u8; 32];
+	value_word[24..].copy_from_slice(&value.to_be_bytes());
+	data.extend_from_slice(&value_word);
+	data
 }
 
 /// Gateway-minted labels of `user` still waiting for `claimLabelStore`, paged
@@ -1236,6 +1430,88 @@ mod tests {
 			decode_revive_call_output(&dispatch).unwrap_err(),
 			DotnsContractError::Dispatch { .. }
 		));
+	}
+
+	/// A signed `Revive.call` takes its limits from the dry-run: the required
+	/// weight, not the consumed one, and the larger storage charge, also when
+	/// the dry-run failed. A refund needs no deposit limit.
+	#[test]
+	fn revive_dry_run_reports_the_limits_a_signed_call_needs() {
+		let mut output = Vec::new();
+		for weight in [10u64, 20, 30, 40] {
+			Compact(weight).encode_to(&mut output);
+		}
+		(1u8, 500u128).encode_to(&mut output);
+		(1u8, 700u128).encode_to(&mut output);
+		0u128.encode_to(&mut output);
+		output.push(0);
+		0u32.encode_to(&mut output);
+		Vec::<u8>::new().encode_to(&mut output);
+
+		assert_eq!(
+			decode_revive_dry_run(&output).unwrap(),
+			ReviveDryRun { ref_time: 30, proof_size: 40, storage_deposit: 700, result: Ok(vec![]) }
+		);
+
+		let refunded =
+			[&output[..4], &(0u8, 500u128).encode(), &(0u8, 700u128).encode(), &output[38..]]
+				.concat();
+		assert_eq!(decode_revive_dry_run(&refunded).unwrap().storage_deposit, 0);
+
+		// An origin that cannot fund the deposit fails to dispatch, and the
+		// limits the call needs are still reported.
+		let unfunded = [&output[..54], &[0x01, 0x03, 0x3c, 0x17, 0x00, 0x00, 0x00][..]].concat();
+		assert_eq!(
+			decode_revive_dry_run(&unfunded).unwrap(),
+			ReviveDryRun {
+				ref_time: 30,
+				proof_size: 40,
+				storage_deposit: 700,
+				result: Err(DotnsContractError::Dispatch { detail: "0x033c17000000".to_string() }),
+			}
+		);
+		assert!(decode_revive_dry_run(&unfunded).unwrap().fails_with([0x3c, 0x17]));
+		assert!(!decode_revive_dry_run(&unfunded).unwrap().fails_with([0x3c, 0x18]));
+		assert!(!decode_revive_dry_run(&output).unwrap().fails_with([0x3c, 0x17]));
+	}
+
+	/// The clearing call encodes by name against Asset Hub's metadata into
+	/// `Revive.call`'s positional layout, with `expireReservation(string)`
+	/// calldata.
+	#[test]
+	fn revive_call_args_encode_an_expire_reservation_call() {
+		use subxt::{Metadata, ext::frame_decode::extrinsics::encode_call_data};
+
+		let metadata = Metadata::decode_from(
+			crate::runtime::statement_allowance::ASSET_HUB_TEST_METADATA_BYTES,
+		)
+		.unwrap();
+		let data = expire_reservation_call("george");
+		let args = ReviveCallArgs {
+			dest: [0xcc; 20],
+			value: 0,
+			weight_limit: WeightLimit { ref_time: 1_000, proof_size: 2_000 },
+			storage_deposit_limit: 0,
+			data: data.clone(),
+		};
+
+		let call = encode_call_data("Revive", "call", &args, &metadata, metadata.types()).unwrap();
+
+		let arguments = [
+			vec![0xcc; 20],
+			Compact(0u128).encode(),
+			Compact(1_000u64).encode(),
+			Compact(2_000u64).encode(),
+			Compact(0u128).encode(),
+			data.encode(),
+		]
+		.concat();
+		assert_eq!(&call[2..], &arguments[..]);
+		let string = [abi_word(32).to_vec(), abi_word(6).to_vec(), b"george".to_vec(), vec![0; 26]];
+		assert_eq!(
+			data,
+			[selector("expireReservation(string)").to_vec(), string.concat()].concat()
+		);
 	}
 
 	/// ABI word with `value` right-aligned.
@@ -1898,5 +2174,106 @@ mod tests {
 		assert_eq!(&args[52..68], &[0u8; 16], "value is zero");
 		assert_eq!(&args[68..70], &[0x00, 0x00], "no gas or deposit limit");
 		assert_eq!(&args[70..], vec![0xABu8, 0xCD].encode().as_slice());
+	}
+
+	/// A personhood name's reservation queue, scripted: the entries from the
+	/// front, the reservation duration, and `MAX_QUEUE_STEPS_PER_CALL` where the
+	/// controller has it.
+	struct ScriptedQueue {
+		entries: Vec<([u8; 20], u64)>,
+		max_steps: Option<u64>,
+	}
+
+	const QUEUE_HEAD: u64 = 7;
+	const DURATION: u64 = 1_000;
+	const NOW: u64 = 10_000;
+	const LIVE: u64 = NOW - 10;
+	const EXPIRED: u64 = NOW - DURATION - 1;
+	const CLAIMANT: [u8; 20] = [0xc1; 20];
+	const OTHER: [u8; 20] = [0x07; 20];
+	const LEFT: [u8; 20] = [0u8; 20];
+
+	#[crate::platform::async_trait]
+	impl DotnsTransport for ScriptedQueue {
+		async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
+			Ok(None)
+		}
+
+		async fn view(
+			&mut self,
+			_dest: &[u8; 20],
+			input: Vec<u8>,
+		) -> Result<Vec<u8>, DotnsViewError> {
+			let sel: [u8; 4] = input[..4].try_into().expect("selector prefix; qed");
+			if sel == selector("reservationMeta(bytes32)") {
+				assert_eq!(&input[4..36], &keccak_256(b"george"));
+				let tail = QUEUE_HEAD + self.entries.len() as u64;
+				Ok([abi_word(QUEUE_HEAD), abi_word(tail)].concat())
+			} else if sel == selector("reservationDuration()") {
+				Ok(abi_word(DURATION).to_vec())
+			} else if sel == selector("MAX_QUEUE_STEPS_PER_CALL()") {
+				self.max_steps.map(|steps| abi_word(steps).to_vec()).ok_or_else(|| {
+					DotnsViewError::Reverted(DotnsContractError::Reverted {
+						detail: "(empty)".to_string(),
+					})
+				})
+			} else if sel == selector("reservationEntry(bytes32,uint64)") {
+				let index = decode_u64(&input[36..]).expect("index word; qed");
+				let (owner, joined_at) = self.entries[(index - QUEUE_HEAD) as usize];
+				let mut owner_word = [0u8; 32];
+				owner_word[12..].copy_from_slice(&owner);
+				Ok([owner_word, abi_word(joined_at)].concat())
+			} else {
+				panic!("unscripted view {}", hex::encode(sel));
+			}
+		}
+	}
+
+	/// A claim the queue refuses reverts, and the revert discards the clearing it
+	/// did, so the caller has to know before submitting: who holds the name, or
+	/// that the queue must be cleared first. An active user behind expired entries
+	/// still holds it.
+	#[test]
+	fn claim_blocker_follows_the_controller_queue_rule() {
+		let run = |entries: Vec<([u8; 20], u64)>, max_steps: Option<u64>| {
+			futures::executor::block_on(claim_blocker(
+				&mut ScriptedQueue { entries, max_steps },
+				&[0xc0; 20],
+				"george",
+				&CLAIMANT,
+				NOW,
+			))
+		};
+		let dead = |count| vec![(OTHER, EXPIRED); count];
+
+		assert_eq!(run(vec![], Some(4)), Ok(None));
+		assert_eq!(run(vec![(CLAIMANT, LIVE)], Some(4)), Ok(None));
+		assert_eq!(run([dead(4), vec![(CLAIMANT, LIVE)]].concat(), Some(4)), Ok(None));
+		assert_eq!(
+			run([dead(5), vec![(CLAIMANT, LIVE)]].concat(), Some(4)),
+			Ok(Some(ClaimBlocker::ClearFirst { dead: 5 }))
+		);
+		assert_eq!(
+			run(vec![(OTHER, EXPIRED), (LEFT, 0), (OTHER, LIVE), (CLAIMANT, LIVE)], Some(4)),
+			Ok(Some(ClaimBlocker::HeldBy(OTHER)))
+		);
+		// An emptied entry is dead even while its `joinedAt` is live.
+		assert_eq!(
+			run([vec![(LEFT, LIVE); 5], vec![(CLAIMANT, LIVE)]].concat(), Some(4)),
+			Ok(Some(ClaimBlocker::ClearFirst { dead: 5 }))
+		);
+		// The claim stops at the claimant's own reservation, so nothing behind it counts.
+		assert_eq!(run([vec![(CLAIMANT, LIVE)], dead(5)].concat(), Some(4)), Ok(None));
+		assert_eq!(run(vec![(CLAIMANT, LIVE), (OTHER, LIVE)], Some(4)), Ok(None));
+		assert_eq!(run(dead(4), Some(4)), Ok(None));
+		assert_eq!(run(dead(5), Some(4)), Ok(Some(ClaimBlocker::ClearFirst { dead: 5 })));
+		assert_eq!(run(vec![(CLAIMANT, NOW - DURATION)], Some(4)), Ok(None));
+		// dotNS 1.0.0 has no step limit: the claim clears every dead entry itself.
+		assert_eq!(run([dead(9), vec![(CLAIMANT, LIVE)]].concat(), None), Ok(None));
+		assert_eq!(run(dead(9), None), Ok(None));
+		assert_eq!(
+			run([dead(9), vec![(OTHER, LIVE), (CLAIMANT, LIVE)]].concat(), None),
+			Ok(Some(ClaimBlocker::HeldBy(OTHER)))
+		);
 	}
 }
