@@ -221,6 +221,7 @@ private extension AssetDetailsPresenter {
             availableNowBalance: formatted(from: amounts.availableNow, as: figureInfo),
             gainingPrivacyBalance: formatted(from: amounts.gainingPrivacy, as: figureInfo),
             symbol: chainAsset.asset.digitalDollarDisplayInfo.symbol,
+            amounts: amounts,
             strip: strip,
             traces: traces
         )
