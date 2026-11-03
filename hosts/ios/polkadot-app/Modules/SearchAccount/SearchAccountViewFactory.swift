@@ -2,12 +2,14 @@ import Foundation
 import Coinage
 import ChainRegistry
 import MessageExchangeKit
+import Products
 
 @MainActor
 enum SearchAccountViewFactory {
     static func createView(
         for chainAsset: ChainAsset,
-        coinageServicing: CoinageServicing
+        coinageServicing: CoinageServicing,
+        fundingDomainProvider: FundingDomainProviding
     ) -> SearchAccountViewProtocol? {
         let walletRepo: WalletManagerRepositoryProtocol = .shared
 
@@ -56,7 +58,7 @@ enum SearchAccountViewFactory {
             chatOpenResolver: ChatOpenModelResolver(),
             chainAsset: chainAsset,
             logger: logger,
-            fundingOpener: RuntimeFundingOpener(runtimeProvider: RootDependencyLocator.getDependency())
+            fundingDomainProvider: fundingDomainProvider
         )
         let wireframe = SearchAccountWireframe(coinageServicing: coinageServicing)
         let presenter = SearchAccountPresenter(

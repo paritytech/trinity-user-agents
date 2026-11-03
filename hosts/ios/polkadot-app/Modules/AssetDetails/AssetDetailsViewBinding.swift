@@ -3,7 +3,6 @@ import PolkadotUI
 import SwiftUI
 import UIKit
 import UIKitExt
-import TrUAPIHost
 
 final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
     let viewModel: AssetDetailsViewModel
@@ -145,8 +144,7 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
         }
     }
 
-    func didReceive(fundingLoading direction: FundingDirection, isLoading: Bool) {
-        guard direction == .in else { return }
+    func didReceive(topUpLoading isLoading: Bool) {
         viewModel.isTopUpInProgress = isLoading
     }
 

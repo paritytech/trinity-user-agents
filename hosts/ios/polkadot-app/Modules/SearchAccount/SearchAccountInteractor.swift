@@ -3,6 +3,7 @@ import ChainRegistry
 import Foundation_iOS
 import os
 import AsyncExtensions
+import Products
 
 private typealias SearchAccountSections = AccountSearchSections<RecentContactModelWithUsername, ContactSearchPayload>
 
@@ -19,7 +20,7 @@ final class SearchAccountInteractor {
     private let searchRunner = SearchRunner()
     private let logger: LoggerProtocol
     private let chainAsset: ChainAsset
-    private let fundingOpener: FundingOpening
+    private let fundingDomainProvider: FundingDomainProviding
     private let stateLock: OSAllocatedUnfairLock<State>
 
     private static let maximumPrefixCount = 32
@@ -34,13 +35,13 @@ final class SearchAccountInteractor {
         chatOpenResolver: ChatOpenModelResolving,
         chainAsset: ChainAsset,
         logger: LoggerProtocol,
-        fundingOpener: FundingOpening
+        fundingDomainProvider: FundingDomainProviding
     ) {
         self.accountSearching = accountSearching
         self.chatOpenResolver = chatOpenResolver
         self.chainAsset = chainAsset
         self.logger = logger
-        self.fundingOpener = fundingOpener
+        self.fundingDomainProvider = fundingDomainProvider
         stateLock = OSAllocatedUnfairLock(initialState: State())
     }
 
@@ -98,13 +99,13 @@ extension SearchAccountInteractor: SearchAccountInteractorInputProtocol {
         }
     }
 
-    func openWithdrawal() {
-        let task = Task { [weak presenter, fundingOpener] in
+    func openWithdrawProduct() {
+        let task = Task { [weak presenter, fundingDomainProvider] in
             do {
-                let session = try await fundingOpener.openFunding(direction: .out)
-                await presenter?.didOpenWithdrawal(.success(session))
+                let page = try await RampAction.withdraw.resolvePage(using: fundingDomainProvider)
+                await presenter?.didResolveWithdrawProduct(.success(page))
             } catch {
-                await presenter?.didOpenWithdrawal(.failure(error))
+                await presenter?.didResolveWithdrawProduct(.failure(error))
             }
         }
 

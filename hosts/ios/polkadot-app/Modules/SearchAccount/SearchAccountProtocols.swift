@@ -3,6 +3,7 @@ import Foundation_iOS
 import UIKitExt
 import ChainRegistry
 import SubstrateSdk
+import Products
 
 protocol SearchAccountViewProtocol: ControllerBackedProtocol {
     var viewModel: SearchAccountViewModel { get }
@@ -28,7 +29,7 @@ protocol SearchAccountInteractorInputProtocol: AnyObject {
     func setup()
     func searchAccount(for input: String?)
     func resolveChat(for address: AccountAddress)
-    func openWithdrawal()
+    func openWithdrawProduct()
 }
 
 @MainActor
@@ -36,8 +37,7 @@ protocol SearchAccountInteractorOutputProtocol: AnyObject {
     func didReceive(searchState: SearchAccountSearchState)
     func didResolveChat(_ model: ChatOpenModel)
     func didReceiveSearchError(message: String?)
-    /// The session the user started, or `nil` when they closed the overlay.
-    func didOpenWithdrawal(_ result: Result<String?, Error>)
+    func didResolveWithdrawProduct(_ result: Result<ProductPage, Error>)
 }
 
 @MainActor
@@ -49,5 +49,6 @@ protocol SearchAccountWireframeProtocol: AnyObject, WalletQRScanPresentable, Ale
         chainAsset: ChainAsset
     )
     func showChat(_ model: ChatOpenModel)
+    func showProduct(page: ProductPage)
     func close(from view: SearchAccountViewProtocol?)
 }

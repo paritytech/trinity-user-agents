@@ -231,7 +231,6 @@ extension ServiceCoordinator {
             settingsManager: SettingsManager.shared,
             coreStorage: TrUAPILocalStorage.createCoreLocalStorage(),
             confirmationRouterFacade: ProductRoutersFacade.sso(),
-            remoteConfig: FirebaseFacade.shared,
             logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
@@ -319,17 +318,7 @@ extension ServiceCoordinator {
         let audioSessionManager = AudioSessionManager()
 
         let paymentsSupport = PaymentsSupport(coinageService: coinageServices.coinageService)
-        truapiRuntimeProvider.attach(paymentsSupport: paymentsSupport)
-
-        // The core resumes funding when it starts; start it now, with payments
-        // attached, if a provider was still working on a session when the app
-        // last ran. The core says again whether one still is, so a launch with
-        // nothing left stops starting it.
-        if FundingResumeMarker.inProgress {
-            Task.detached {
-                _ = try? truapiRuntimeProvider.sharedRuntime()
-            }
-        }
+        truapiRuntimeProvider.attach(paymentsSupport: paymentsSupport, hostProvider: spaFlowState.hostProvider)
 
         let truApiDependencies = TruApiDependenciesLocator()
         truApiDependencies.setDependency(allowanceSupport)

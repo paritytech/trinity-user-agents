@@ -71,37 +71,33 @@ struct TrUAPIWorkerManagerTests {
     }
 
     /// iOS kills a worker's content process while the app is in the background,
-    /// and the script dies with it. The core still counts the references that
-    /// wanted the worker, so it is told, and its `.start` boots a fresh one.
+    /// and the script dies with it. The core keeps counting the references that
+    /// wanted the worker, so it never sends another start: unless the manager
+    /// boots a fresh worker itself, chat and Pocket faces for the product stay
+    /// dead until the app restarts.
     @Test
-    func reportsTheExitWhenItsEngineDies() async throws {
+    func bootsAFreshWorkerWhenItsEngineDies() async throws {
         let builder = StubWorkerBuilder()
-        let references = StubWorkerReferences()
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]), references: references)
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
         manager.demandChanged(productId: gameProductId, transition: .start)
         try await execution(of: gameProductId, in: manager)
         let dead = try #require(builder.executions[gameProductId])
         try #require(builder.engines[gameProductId]).terminate()
         try await withTimeout(.hangGuard) { await dead.awaitClose() }
-        try await noExecution(of: gameProductId, in: manager)
-        try await barrier(manager)
-        #expect(references.exited == [gameProductId])
-
-        manager.demandChanged(productId: gameProductId, transition: .start)
         let rebooted = try await execution(of: gameProductId, in: manager)
 
         #expect(rebooted !== dead)
-        #expect(builder.built == [gameProductId, barrierProductId, gameProductId])
+        #expect(builder.built == [gameProductId, gameProductId])
     }
 
     /// An engine of a worker that was already stopped can still die afterwards.
-    /// The host stopped it, so it is no exit to report.
+    /// Rebooting it would run a worker nobody holds a reference to, and the core
+    /// would never send the stop that clears it.
     @Test
-    func doesNotReportTheExitOfAWorkerThatWasStopped() async throws {
+    func doesNotRebootAWorkerThatWasStopped() async throws {
         let builder = StubWorkerBuilder()
-        let references = StubWorkerReferences()
-        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]), references: references)
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]))
 
         manager.demandChanged(productId: gameProductId, transition: .start)
         try await execution(of: gameProductId, in: manager)
@@ -113,7 +109,6 @@ struct TrUAPIWorkerManagerTests {
 
         #expect(builder.built == [gameProductId, barrierProductId])
         #expect(manager.currentExecution(of: gameProductId) == nil)
-        #expect(references.exited.isEmpty)
     }
 
     /// A release of the worker's archive restarts it, so the next boot reads
@@ -177,27 +172,19 @@ struct TrUAPIWorkerManagerTests {
     }
 
     /// A worker whose engine fails once it is already in the running map must
-    /// leave nothing behind, or every later start would be swallowed by the
-    /// entry still there. The core is told, and starts it again after its
-    /// backoff.
+    /// leave nothing behind: the core keeps counting the reference the card
+    /// holds, so no further stop arrives to clear a half-started entry, and
+    /// every later start would be swallowed by the entry that is still there.
     @Test
     func leavesNothingBehindWhenTheEngineFailsToBoot() async throws {
         let logger = MockLogger()
         let builder = StubWorkerBuilder(engineFails: true)
-        let references = StubWorkerReferences()
-        let manager = makeManager(
-            builder: builder,
-            collection: collectionHolding([loyalty]),
-            references: references,
-            logger: logger
-        )
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]), logger: logger)
 
         manager.demandChanged(productId: gameProductId, transition: .start)
         try await logger.waitForError(containing: "failed to start")
-        try await barrier(manager)
 
         #expect(manager.currentExecution(of: gameProductId) == nil)
-        #expect(references.exited == [gameProductId])
 
         builder.engineFails = false
         manager.demandChanged(productId: gameProductId, transition: .start)
@@ -210,20 +197,12 @@ struct TrUAPIWorkerManagerTests {
     func leavesNothingBehindWhenTheWorkerCannotBeBuilt() async throws {
         let logger = MockLogger()
         let builder = StubWorkerBuilder(cannotBuild: true)
-        let references = StubWorkerReferences()
-        let manager = makeManager(
-            builder: builder,
-            collection: collectionHolding([loyalty]),
-            references: references,
-            logger: logger
-        )
+        let manager = makeManager(builder: builder, collection: collectionHolding([loyalty]), logger: logger)
 
         manager.demandChanged(productId: gameProductId, transition: .start)
         try await logger.waitForError(containing: "failed to start")
-        try await barrier(manager)
 
         #expect(manager.currentExecution(of: gameProductId) == nil)
-        #expect(references.exited == [gameProductId])
 
         builder.cannotBuild = false
         manager.demandChanged(productId: gameProductId, transition: .start)

@@ -4,7 +4,6 @@ import AsyncExtensions
 import Products
 import StructuredConcurrency
 import TrUAPIHost
-import UIKitExt
 
 /// Runs product workers for as long as the core's reference ledger wants them.
 ///
@@ -88,12 +87,12 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     private final class Boot: Sendable {}
 
     /// What the transition queue applies: the ledger's transitions, the
-    /// exit of a worker whose engine died, and the reload of one whose
-    /// archive changed. Exits and reloads share the queue so that neither
+    /// reboot of a worker whose engine died, and the reload of one whose
+    /// archive changed. Reboots and reloads share the queue so that neither
     /// overtakes a stop the ledger sent before it.
     private enum Command: Sendable {
         case transition(WorkerTransition)
-        case exited(Boot)
+        case reboot(Boot)
         case reload
     }
 
@@ -105,8 +104,6 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
     /// publishes no execution, so without this a handler would wait for one
     /// forever.
     private let startupWindow: Duration
-    /// Where a worker's prompts present while no chat has given it a screen.
-    private let presentationFallback: (@MainActor @Sendable () -> ControllerBackedProtocol?)?
     private let logger: LoggerProtocol
 
     private var held: [ProductId: Held] = [:]
@@ -128,14 +125,12 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         collection: any PocketCardStore,
         references: @escaping @Sendable () throws -> any TrUAPIWorkerReferencing,
         startupWindow: Duration = .seconds(30),
-        presentationFallback: (@MainActor @Sendable () -> ControllerBackedProtocol?)? = nil,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.builder = builder
         self.collection = collection
         self.references = references
         self.startupWindow = startupWindow
-        self.presentationFallback = presentationFallback
         self.logger = logger
 
         Task { await self.beginFollowing() }
@@ -175,7 +170,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         for await (productId, command) in transitions.stream {
             switch command {
             case let .transition(transition): await apply(transition, to: productId)
-            case let .exited(boot): await exited(productId, after: boot)
+            case let .reboot(boot): await reboot(productId, after: boot)
             case .reload: await restart(productId)
             }
         }
@@ -209,7 +204,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         openContexts.withLock { open in
             if let context = open[productId] { return context }
 
-            let context = ProductWorkerContext(presentationFallback: presentationFallback)
+            let context = ProductWorkerContext()
             open[productId] = context
             return context
         }
@@ -265,7 +260,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             // the script that subscribes to it comes up inside `start()`.
             await bridge.begin()
             try await runtime.start { [weak self] in
-                self?.transitions.continuation.yield((productId, .exited(boot)))
+                self?.transitions.continuation.yield((productId, .reboot(boot)))
             }
 
             guard case let .running(worker)? = held[productId], worker.boot === boot else { return }
@@ -285,11 +280,10 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             guard held[productId]?.belongsTo(boot) == true else { return }
 
             logger.error("[truapi] \(productId)'s worker failed to start: \(error)")
-            // A failed boot left in the map would swallow every later start.
-            // The core still counts the reference the holder took, so it is
-            // told, and starts the worker again after its backoff.
+            // A failed boot left in the map would swallow every later start,
+            // while the core keeps counting the reference the holder took and
+            // so never sends another stop to clear it.
             await stop(productId)
-            reportExit(of: productId)
         }
     }
 
@@ -300,22 +294,12 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
         start(productId)
     }
 
-    /// The core still counts the references that wanted the worker, so it is
-    /// told the worker is gone and sends `.start` again if any remain.
-    private func exited(_ productId: ProductId, after boot: Boot) async {
+    private func reboot(_ productId: ProductId, after boot: Boot) async {
         guard case let .running(worker)? = held[productId], worker.boot === boot else { return }
 
-        logger.error("[truapi] \(productId)'s worker engine died")
+        logger.error("[truapi] \(productId)'s worker engine died, rebooting it")
         await stop(productId)
-        reportExit(of: productId)
-    }
-
-    private func reportExit(of productId: ProductId) {
-        do {
-            try references().workerExited(productId: productId)
-        } catch {
-            logger.error("[truapi] \(productId)'s worker exit could not be reported: \(error)")
-        }
+        start(productId)
     }
 
     private func stop(_ productId: ProductId) async {
