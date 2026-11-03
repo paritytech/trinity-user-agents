@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Products
 
 struct ProductGamePillViewModel {

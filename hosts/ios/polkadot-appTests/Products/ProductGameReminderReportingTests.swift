@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Keystore_iOS
 import Testing
@@ -6,8 +7,8 @@ import Testing
 @MainActor
 @Suite("Product game reminder center reporting")
 struct ProductGameReminderReportingTests {
-    private let productId = "game.dot"
-    private let other = "other.dot"
+    private let productId = try! ProductId("game.dot")
+    private let other = try! ProductId("other.dot")
     private let startsAt = Date(timeIntervalSince1970: 2_000_000_000)
 
     private func makeSUT(

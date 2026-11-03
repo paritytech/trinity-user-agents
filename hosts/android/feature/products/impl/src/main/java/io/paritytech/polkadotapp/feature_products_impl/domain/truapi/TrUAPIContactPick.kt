@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -17,7 +18,7 @@ class ContactPickOption(
 
 /** What the contact picker shows: who is asking, and whom they may pick. */
 class ContactPickRequest(
-    val productId: String,
+    val productId: ProductId,
     val options: List<ContactPickOption>,
 )
 

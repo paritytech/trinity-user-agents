@@ -1,22 +1,23 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 @testable import polkadot_app
 
 final class MockPermissionGuard: ProductPermissionGuarding, @unchecked Sendable {
     var requestedPermission: ProductPermission?
-    var requestedProductId: String?
+    var requestedProductId: ProductId?
     var requestedBatchedPermissions: [ProductPermission]?
     var verdictToReturn: Bool = true
     var decisionToReturn: PermissionDecision?
 
-    func requestPermission(productId: String, permission: ProductPermission) async throws -> Bool {
+    func requestPermission(productId: ProductId, permission: ProductPermission) async throws -> Bool {
         requestedProductId = productId
         requestedPermission = permission
         return verdictToReturn
     }
 
     func requestPermissionsBatched(
-        productId: String,
+        productId: ProductId,
         permissions: [ProductPermission]
     ) async throws -> Bool {
         requestedProductId = productId
@@ -25,7 +26,7 @@ final class MockPermissionGuard: ProductPermissionGuarding, @unchecked Sendable 
     }
 
     func requestDevicePermissionDecision(
-        productId: String,
+        productId: ProductId,
         capability: DeviceCapabilityType
     ) async throws -> PermissionDecision {
         requestedProductId = productId
@@ -34,7 +35,7 @@ final class MockPermissionGuard: ProductPermissionGuarding, @unchecked Sendable 
     }
 
     func requestPermissionsDecision(
-        productId: String,
+        productId: ProductId,
         permissions: [ProductPermission]
     ) async throws -> PermissionDecision {
         requestedProductId = productId
@@ -42,11 +43,11 @@ final class MockPermissionGuard: ProductPermissionGuarding, @unchecked Sendable 
         return decisionToReturn ?? (verdictToReturn ? .allowAlways : .deny)
     }
 
-    func consumePermission(productId _: String, permission _: ProductPermission) async throws -> Bool {
+    func consumePermission(productId _: ProductId, permission _: ProductPermission) async throws -> Bool {
         verdictToReturn
     }
 
-    func check(productId _: String, permission _: ProductPermission) async throws -> Bool {
+    func check(productId _: ProductId, permission _: ProductPermission) async throws -> Bool {
         verdictToReturn
     }
 }
