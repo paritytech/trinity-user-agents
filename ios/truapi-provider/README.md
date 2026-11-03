@@ -49,6 +49,7 @@ No Rust toolchain is needed: the xcframework carries the compiled crate, and the
 Everything is generated from [`ffi.rs`](../../rust/crates/truapi-provider/src/ffi.rs):
 
 - `ChainProvider` — construct **one per process** and share it. Every connection runs on the single embedded light client, so they share sync, peers, and warm state while keeping their own request queue and response stream. `connect(genesisHash:listener:)` resolves the network from the bundled catalog (relay wiring and statement-store placement included), so the 32-byte genesis hash is the only argument. At most 32 connections are held at once: past that, `connect(genesisHash:listener:)` throws `.connect(reason:)` rather than adding another chain, and `disconnect()` hands the slot back. That ceiling is a backstop against connections you never close, not a budget to spend; the catalog resolves eight chains, so one reused connection per chain stays well under it.
+- `connectRpc(url:listener:)` — open the same kind of `ChainConnection` to a remote JSON-RPC node (`ws://` or `wss://`), bypassing the light client, so a host can switch a chain between a node and the light client without touching its JSON-RPC handling. The node is picked per connection, so a host that rotates between nodes passes the next URL on its next connect. It does not count towards the 32-connection ceiling. There is no reconnection: a dropped socket, or one silent for 50 seconds (the provider pings every 20), closes the connection with `.streamEnded`, and the host connects again and replays its subscriptions. A malformed URL or a node that does not answer the handshake throws `.connect(reason:)`. Like `connect(genesisHash:listener:)`, it blocks while connecting and refuses to run inside a listener callback.
 - `ChainMessageListener` — the host implements it; `onMessage(message:)` receives each JSON-RPC response and notification, `onClosed(reason:)` fires once the pump stops and names why. Both may throw: a listener that throws stops the pump for that connection rather than being called again for every response, and an error it does not declare is reported as `.listener(reason:)` instead of aborting the process.
 - `ChainConnection` — `send(request:)` queues a request, `disconnect()` tears the connection down.
 - `ChainCloseReason` — `.streamEnded` when the response stream ended, which includes your own `disconnect()` coming back to you, and `.listenerFailed(reason:)` when your listener rejected a message and the connection was closed for it. It says why the pump stopped, not whether you should reconnect; carry an `@unknown default`, since variants may be added. That is source compatibility only: adding a variant does not change the `on_closed` checksum, so bindings older than the binary pass the integrity check and then fail to decode the reason, which surfaces as `onClosed` never firing. Regenerate bindings and binary together. `reason` on `.listenerFailed` is bounded to 256 Unicode scalar values, so it can measure more than 256 in Swift's `Character` count and up to 1024 bytes. Reconnect from a *serial* queue off the pump thread: `connect(genesisHash:listener:)` refuses to run inside a listener callback and throws `.connect(reason:)` if you try. Do not re-queue work with `send(request:)` from `onClosed(reason:)`: the connection is already closed by then, and `send` on a closed connection is dropped silently, with no error and no response frame.
@@ -63,15 +64,16 @@ Everything is generated from [`ffi.rs`](../../rust/crates/truapi-provider/src/ff
 
 ```text
 host app
-  ChainProvider().connect(genesisHash:listener:)
-           |
-           v
-libtruapi_provider (embedded smoldot + bundled chain-spec catalog)
+  ChainProvider().connect(genesisHash:listener:)    ChainProvider().connectRpc(url:listener:)
+           |                                                  |
+           v                                                  v
+libtruapi_provider (embedded smoldot + bundled chain-spec catalog, WebSocket client)
   → one light client per process, one added chain per connection
+  → one WebSocket per RPC connection, on one runtime thread the crate owns
   → responses pumped on a Rust-owned thread into ChainMessageListener
 ```
 
-A connection is a raw JSON-RPC string pipe. The provider does no decoding: what smoldot answers is what the listener receives.
+A connection is a raw JSON-RPC string pipe. The provider does no decoding: what smoldot or the node answers is what the listener receives.
 
 ## Example
 
@@ -119,7 +121,7 @@ connection.disconnect()
 
 `./scripts/rebuild.sh` orchestrates everything; the underlying pieces, should you need one in isolation:
 
-- **static libraries** — `cargo build -p truapi-provider --no-default-features --features uniffi` for `aarch64-apple-ios` and `aarch64-apple-ios-sim`. The `ws` backend is off, so the build carries the light client only.
+- **static libraries** — `cargo build -p truapi-provider --no-default-features --features uniffi` for `aarch64-apple-ios` and `aarch64-apple-ios-sim`. The `uniffi` feature enables the `ws` backend, so the build carries the light client and the WebSocket client behind `connectRpc`.
 - **bindings** — the workspace `uniffi-bindgen-cli` reads the built `libtruapi_provider.a` and emits `truapi_provider.swift` plus `truapi_providerFFI.h`/`.modulemap`. The script copies them into `Sources/`, renaming the emitted `truapi_providerFFI.modulemap` to `module.modulemap` so the SwiftPM `systemLibrary` target picks it up.
 - **xcframework** — `xcodebuild -create-xcframework` bundles the slices with those same headers, and the result is copied into `Binaries/`.
 

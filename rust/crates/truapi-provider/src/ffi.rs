@@ -6,6 +6,9 @@
 //! topology, and statement-store placement come from the bundled network
 //! catalog, so the only argument a host supplies is the genesis hash.
 //!
+//! [`ChainProvider::connect_rpc`] opens the same pipe to a remote node by URL
+//! instead, bypassing the light client.
+//!
 //! Inbound responses are delivered to a foreign [`ChainMessageListener`]; a
 //! background thread pumps the response stream and invokes it until the
 //! connection closes.
