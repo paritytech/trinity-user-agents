@@ -407,7 +407,7 @@ impl crate::platform::ChatPlatform for WasmPlatform {
         _product: &crate::platform::ProductContext,
         _request: latest::HostChatUpdateFeedRequest,
         _persist: bool,
-    ) -> Result<(), latest::HostChatUpdateFeedError> {
+    ) -> Result<(), truapi::CallError<latest::HostChatUpdateFeedError>> {
         invoke_unit(
             &self.bridge.update_chat_feed,
             vec![
@@ -416,7 +416,8 @@ impl crate::platform::ChatPlatform for WasmPlatform {
                 JsValue::from_bool(_persist),
             ],
         )
-        .await?;
+        .await
+        .map_err(|reason| truapi::CallError::HostFailure { reason })?;
         Ok(())
     }
 }
