@@ -1,6 +1,28 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "bot.not.ready.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This chat could not be opened in time. Try again in a moment."
+          }
+        }
+      }
+    },
+    "bot.not.ready.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chat is still starting"
+          }
+        }
+      }
+    },
     "message.preview.image": {
       "extractionState": "manual",
       "localizations": {

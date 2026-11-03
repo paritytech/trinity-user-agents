@@ -201,7 +201,8 @@ fn publish(
 /// Replaces `path` in one step, so a web root or a build never sees half a file. The file gets the
 /// umask's permissions, so a web server running as another user can serve it.
 fn write_atomically(path: &Path, contents: &[u8]) -> Result<()> {
-	platform::atomic_write(path, contents).map_err(anyhow::Error::msg)
+	platform::atomic_write(path, contents)?;
+	Ok(())
 }
 
 /// A link (any URL with a `url` parameter) or a descriptor URL as a pointer, with `key` filling in

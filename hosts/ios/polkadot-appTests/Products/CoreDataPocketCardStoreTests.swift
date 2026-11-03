@@ -218,19 +218,19 @@ struct CoreDataPocketCardStoreTests {
 // MARK: - Fixtures
 
 private let loyalty = PocketCardEntry(
-    key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty")),
+    key: PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty")),
     title: "Loyalty",
     privileged: false
 )
 
 private let streak = PocketCardEntry(
-    key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "streak")),
+    key: PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "streak")),
     title: "Streak",
     privileged: false
 )
 
 private let humanity = PocketCardEntry(
-    key: PocketCardKey(productId: "peopl.paseo", cardId: PocketCardId(value: "humanity")),
+    key: PocketCardKey(productId: try! ProductId("peopl.paseo"), cardId: PocketCardId(value: "humanity")),
     title: "Humanity",
     privileged: true
 )
@@ -254,12 +254,5 @@ private actor Seen {
 
     func record(_ cards: [PocketCardEntry]) {
         all.append(cards)
-    }
-}
-
-private func waitUntil(_ condition: () async -> Bool) async throws {
-    for _ in 0 ..< 50 {
-        if await condition() { return }
-        try await Task.sleep(for: .milliseconds(50))
     }
 }

@@ -136,6 +136,8 @@ For a new feature that wants its **own** peer channel (rarer — only when no ex
 - **Scope-bound** — the `PeerChannel` is created with a `CoroutineScope`. When that scope cancels, the factory's `invokeOnCompletion` hook closes the WebRTC connection and frees EGL/factory resources. No explicit `dispose()` needed at consumer level beyond what the owner already does.
 - **`awaitOpen()`** — suspend until the data channel reaches `Open`. Use before the first `send(...)` to avoid lost messages.
 - **`isOpen()`** — synchronous snapshot; useful for fast-fail guards in UI handlers.
+- **Backpressure** — `send(...)` suspends while WebRTC holds more than 1 MB unsent and resumes once it drains to 256 KB. Sends from all use cases go out in FIFO order, so a use case sending in bulk doesn't hold back the others. Inbound frames are buffered without a cap: a slow subscriber delays messages but never loses them.
+- **Message size** — keep each `send(...)` below the SCTP `max-message-size` (64 KB by default). A larger message aborts the association and the channel closes; split the payload instead (device sync uses a 60 KB budget per message).
 - **Background survival** — calls survive Activity recreation because `CallService` is a foreground `Service` that holds the channel. Games rely on a session scope that lives as long as the player is on the game screen; navigating away kills the channel.
 
 ---

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import CoreData
 import Operation_iOS
 import Products
@@ -25,7 +26,7 @@ extension ProductMapper: CoreDataMapperProtocol {
             )
         }
 
-        return Product(id: identifier, name: name)
+        return Product(id: try ProductId(identifier), name: name)
     }
 
     func populate(

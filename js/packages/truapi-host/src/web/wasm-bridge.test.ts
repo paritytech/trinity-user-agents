@@ -1,6 +1,8 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 
+import { CoreStorageKey } from "../generated/host-callbacks.js";
 import { createMockHost, mockRuntimeConfig } from "./create-mock-host.js";
 import { wasmIsBuilt } from "../testing/require-wasm.js";
 
@@ -28,6 +30,47 @@ const suite = wasmIsBuilt("web/truapi_server_bg.wasm")
   : describe.skip;
 
 suite("real WASM core ↔ createMockHost bridge", () => {
+  it("constructs normalized product IDs through the existing Rust core", async () => {
+    const { initSync, parseProductId } = await import(glueUrl.href);
+    initSync({ module: readFileSync(wasmUrl) });
+    expect([
+      parseProductId(" PEOPL.DOT "),
+      parseProductId("localhost:3000"),
+      parseProductId("worker.truapi-playground.paseo"),
+    ]).toEqual([
+      "peopl.dot",
+      "localhost:3000",
+      "worker.truapi-playground.paseo",
+    ]);
+    expect(() => parseProductId("not a product")).toThrow();
+  });
+
+  it("distinguishes product IDs from shared labels in persisted storage keys", async () => {
+    const { initSync, describeCoreStorageKey } = await import(glueUrl.href);
+    initSync({ module: readFileSync(wasmUrl) });
+    const keys: CoreStorageKey[] = [
+      { tag: "ProductManifest", value: { productLabel: "peopl" } },
+      { tag: "AutoSigningKey", value: { productId: asProductId("peopl.dot") } },
+      {
+        tag: "PermissionAuthorization",
+        value: {
+          scope: "caller",
+          request: {
+            tag: "CrossProductSignature",
+            value: { target: "target", kind: "Raw" },
+          },
+        },
+      },
+    ];
+    expect(
+      keys.map((key) => describeCoreStorageKey(CoreStorageKey.enc(key))),
+    ).toEqual([
+      { kind: "ProductManifest", productLabel: "peopl" },
+      { kind: "AutoSigningKey", productId: "peopl.dot" },
+      { kind: "PermissionAuthorization", productLabel: "caller" },
+    ]);
+  });
+
   it("the core invokes createMockHost callbacks across the JS↔SCALE↔WASM boundary", async () => {
     const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
     const { createWasmRawCallbacks } =
@@ -45,12 +88,12 @@ suite("real WASM core ↔ createMockHost bridge", () => {
 
     // The pairing-host runtime takes the platform callbacks and host config;
     // the per-product core is derived from it with its own frame sink.
-    // `workerDemandChanged` is a raw bridge callback rather than a generated
+    // `requestWorkerTransition` is a raw bridge callback rather than a generated
     // host callback, so the worker runtime supplies it outside the adapter and
     // a harness has to do the same.
     const raw = {
       ...createWasmRawCallbacks(mock.callbacks),
-      workerDemandChanged: () => {},
+      requestWorkerTransition: () => {},
     };
     const { productId, ...hostConfig } = mockRuntimeConfig();
     const runtime = new WasmPairingHostRuntime(raw, hostConfig);
@@ -84,7 +127,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
       const runtime = new WasmPairingHostRuntime(
         {
           ...createWasmRawCallbacks(mock.callbacks),
-          workerDemandChanged: () => {},
+          requestWorkerTransition: () => {},
         },
         hostConfig,
       );

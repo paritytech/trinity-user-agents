@@ -47,9 +47,7 @@ extension WalletMainInteractor: WalletMainInteractorInputProtocol {
 
         followPocket()
 
-        #if FEATURE_PRODUCTS
-            showCollectibles()
-        #endif
+        showCollectibles()
     }
 
     /// Removal is the store's, not the tab's: the collection is followed, so

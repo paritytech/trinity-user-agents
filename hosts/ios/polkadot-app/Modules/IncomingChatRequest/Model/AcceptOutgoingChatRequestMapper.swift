@@ -34,6 +34,17 @@ extension AcceptOutgoingChatRequestMapper: CoreDataMapperProtocol {
         entity.touchParent()
         entity.contact?.acceptedAt = Date()
         entity.contact?.pendingDevicesFanOut = true
+
+        // One save: a crash can never leave an accepted chat without the device its session needs.
+        if let peerDevice = model.peerDevice {
+            if let contact = try entity.contact ?? contact(for: entity, using: context) {
+                try context.addPeerDevice(peerDevice, to: contact)
+            }
+
+            entity.message?.status = Chat.LocalMessage.Status.outgoing(.delivered).rawValue
+            entity.message?.touchParent()
+        }
+
         entity.contact = nil
 
         guard
@@ -60,11 +71,7 @@ extension AcceptOutgoingChatRequestMapper: CoreDataMapperProtocol {
 
             try acceptIncomingMapper.populate(
                 entity: requestEntity,
-                from: .existing(
-                    requestId: incomingRequest.requestId,
-                    messageExchangeMode: model.messageExchangeMode,
-                    acceptorDevice: acceptorDevice
-                ),
+                from: .existing(requestId: incomingRequest.requestId, acceptorDevice: acceptorDevice),
                 using: context
             )
         } else {
@@ -72,14 +79,18 @@ extension AcceptOutgoingChatRequestMapper: CoreDataMapperProtocol {
 
             try acceptIncomingMapper.populate(
                 entity: newEntity,
-                from: .new(
-                    incomingRequest,
-                    messageExchangeMode: model.messageExchangeMode,
-                    acceptorDevice: acceptorDevice
-                ),
+                from: .new(incomingRequest, acceptorDevice: acceptorDevice),
                 using: context
             )
         }
+    }
+}
+
+private extension AcceptOutgoingChatRequestMapper {
+    func contact(for request: CDChatRequest, using context: NSManagedObjectContext) throws -> CDChatContact? {
+        guard let contactAccountId = try request.contactId?.fromHex() else { return nil }
+
+        return try context.first(for: .contact(for: contactAccountId))
     }
 }
 

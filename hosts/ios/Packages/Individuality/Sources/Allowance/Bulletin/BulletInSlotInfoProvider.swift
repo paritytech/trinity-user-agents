@@ -126,7 +126,8 @@ extension BulletInSlotInfoProvider: BulletInSlotInfoProviding {
             fullVrfManager: keyResolver.fullKeyManager,
             fullCollectionId: PeoplePallet.membersIdentifier,
             connection: peopleConnection,
-            runtimeCodingService: peopleRuntimeProvider
+            runtimeCodingService: peopleRuntimeProvider,
+            noPersonStrategy: .untilIncluded
         ).pickPersonOrigin()
 
         let maxClaims = try await fetchMaxClaims()

@@ -5,20 +5,16 @@ use truapi::{
 	CallContext, CallError,
 	api::ExpandedCard,
 	latest::HostExpandedCardSetFaceShownError as FaceShownError,
-	versioned::{
-		FromLatest, IntoLatest, Versioned,
-		expanded_card::{
-			HostExpandedCardSetBackShownError, HostExpandedCardSetBackShownRequest,
-			HostExpandedCardSetBackShownResponse, HostExpandedCardSetFaceShownError,
-			HostExpandedCardSetFaceShownRequest, HostExpandedCardSetFaceShownResponse,
-		},
+	versioned::expanded_card::{
+		HostExpandedCardSetBackShownError, HostExpandedCardSetBackShownRequest,
+		HostExpandedCardSetBackShownResponse, HostExpandedCardSetFaceShownError,
+		HostExpandedCardSetFaceShownRequest, HostExpandedCardSetFaceShownResponse,
 	},
 };
 
-use super::from_latest_error;
 use crate::{
-	platform::{ExpandedCardFaceOutcome, ProductExecutionKind},
-	runtime::ProductRuntimeHost,
+	platform::{ExecutableKind, ExpandedCardFaceOutcome},
+	runtime::{ProductRuntimeHost, versioning::version},
 };
 
 #[truapi::async_trait]
@@ -30,31 +26,27 @@ impl ExpandedCard for ProductRuntimeHost {
 		request: HostExpandedCardSetFaceShownRequest,
 	) -> Result<HostExpandedCardSetFaceShownResponse, CallError<HostExpandedCardSetFaceShownError>>
 	{
-		let version = request.version();
-		let request = request.into_latest();
-		let result = async {
-			self.require_widget()?;
-			let Some(card) = &self.connection.expanded_card else {
-				return Err(CallError::Unsupported);
-			};
-			match card.set_expanded_card_face_shown(request.shown).await {
-				Ok(ExpandedCardFaceOutcome::Applied) => Ok(()),
-				Ok(ExpandedCardFaceOutcome::NotPresented) => {
-					Err(CallError::Domain(FaceShownError::NotPresented))
-				},
-				Ok(ExpandedCardFaceOutcome::UserMoving) => {
-					Err(CallError::Domain(FaceShownError::UserMoving))
-				},
-				Ok(ExpandedCardFaceOutcome::Unsupported) => Err(CallError::Unsupported),
-				Err(error) => {
-					Err(CallError::Domain(FaceShownError::Unknown { reason: error.reason }))
-				},
-			}
-		}
-		.await;
-		result
-			.map(|response| HostExpandedCardSetFaceShownResponse::from_latest(response, version))
-			.map_err(|error| from_latest_error(error, version))
+		version(request)
+			.exec(|request| async move {
+				self.require_widget()?;
+				let Some(card) = &self.connection.expanded_card else {
+					return Err(CallError::Unsupported);
+				};
+				match card.set_expanded_card_face_shown(request.shown).await {
+					Ok(ExpandedCardFaceOutcome::Applied) => Ok(()),
+					Ok(ExpandedCardFaceOutcome::NotPresented) => {
+						Err(CallError::Domain(FaceShownError::NotPresented))
+					},
+					Ok(ExpandedCardFaceOutcome::UserMoving) => {
+						Err(CallError::Domain(FaceShownError::UserMoving))
+					},
+					Ok(ExpandedCardFaceOutcome::Unsupported) => Err(CallError::Unsupported),
+					Err(error) => {
+						Err(CallError::Domain(FaceShownError::Unknown { reason: error.reason }))
+					},
+				}
+			})
+			.await
 	}
 
 	// This runtime has no way to turn a card, so a Widget reads "not supported" rather than a
@@ -63,18 +55,22 @@ impl ExpandedCard for ProductRuntimeHost {
 	async fn set_back_shown(
 		&self,
 		_cx: &CallContext,
-		_request: HostExpandedCardSetBackShownRequest,
+		request: HostExpandedCardSetBackShownRequest,
 	) -> Result<HostExpandedCardSetBackShownResponse, CallError<HostExpandedCardSetBackShownError>>
 	{
-		self.require_widget()?;
-		Err(CallError::Unsupported)
+		version(request)
+			.exec(|_request| async move {
+				self.require_widget()?;
+				Err(CallError::Unsupported)
+			})
+			.await
 	}
 }
 
 impl ProductRuntimeHost {
 	// Admin connections call the trait without the dispatcher's kind filter.
 	fn require_widget<E>(&self) -> Result<(), CallError<E>> {
-		if self.connection.product.execution_kind != ProductExecutionKind::Widget {
+		if self.connection.product.execution_kind != ExecutableKind::Widget {
 			return Err(CallError::Denied);
 		}
 		Ok(())

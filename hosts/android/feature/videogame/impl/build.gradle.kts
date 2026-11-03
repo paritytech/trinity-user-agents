@@ -11,6 +11,7 @@ android {
 }
 
 dependencies {
+    implementation(libs.sentry)
     implementation(libs.hilt.lifecycle.viewmodel.compose)
     implementation(libs.androidx.fragment.ktx)
 
@@ -46,3 +47,5 @@ dependencies {
     testImplementation(libs.mockk)
     testImplementation(project(":test-shared"))
 }
+
+apply(from = rootProject.file("gradle/truapi-unit-tests.gradle.kts"))

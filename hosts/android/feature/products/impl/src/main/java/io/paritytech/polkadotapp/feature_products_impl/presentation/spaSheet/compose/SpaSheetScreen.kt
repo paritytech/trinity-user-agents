@@ -58,7 +58,7 @@ private fun SpaSheetScreenInternal(
     webView: WebView?,
 ) {
     // No chrome at all: the product owns the sheet, so it reads as a native screen rather than a page.
-    NovaBottomSheetSurface {
+    NovaBottomSheetSurface(color = PolkadotTheme.colors.bg.surface.main) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()

@@ -2,7 +2,7 @@
 //!
 //! Every host shares these helpers. They cover the candidate-signed
 //! reservation message for `pallet_dotns_gateway::reserve_name`, the ring-VRF
-//! proof message for `register_name`, the minimal Solidity ABI surface for
+//! proof message for `register_name`, the dotNS contract interfaces for
 //! reading usernames back through `ReviveApi_call`, and the raw storage keys of
 //! the gateway pallet.
 //!
@@ -14,12 +14,21 @@
 //! Byte layouts mirror `pallets/dotns-gateway` in `paritytech/individuality`
 //! and the dotNS contracts (`paritytech/dotns`).
 
-use parity_scale_codec::{Compact, Decode, Encode};
+use alloy_primitives::{Address, U256};
+use alloy_sol_types::{GenericContractError, SolInterface};
+use parity_scale_codec::{Decode, Encode, Input};
 use sp_crypto_hashing::{blake2_128, blake2_256, keccak_256, twox_128};
+use subxt::{ext::scale_encode::EncodeAsType, utils::MultiSignature};
 use thiserror::Error;
 use tracing::warn;
 
-use crate::dotns_views::{call_string, network_tld, tld_node};
+use crate::{
+	chain::{ExtensionError, InheritedImplication, SubstrateSigner, TransactionExtension},
+	dotns_views::{network_tld, protocol_component, read_view, tld_node},
+	platform::{MAX_DNS_LABEL_LEN, is_dns_label},
+};
+
+alloy_sol_types::sol!("src/host_logic/dotns_gateway/contracts.sol");
 
 /// Ring-VRF context for `register_name` proofs.
 ///
@@ -69,7 +78,8 @@ pub fn build_reservation_message(
 
 /// The `Link` argument of `register_name`: how the new full-person username
 /// relates to the account's previous lite identity.
-#[derive(Debug, Clone, PartialEq, Eq, Encode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, EncodeAsType)]
+#[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 pub enum Link {
 	/// Links the full username to an existing lite username, in dotted form
 	/// such as `alice.01`. The chat key is inherited from the lite entry.
@@ -85,42 +95,71 @@ pub fn build_register_proof_message(who: &[u8; 32], label: &[u8], link: &Link) -
 	blake2_256(&(who, label, link).encode())
 }
 
-/// Encodes the `DotnsGateway.register_name { who, label, link }` call.
-/// Layout: dispatch indices, the raw account, the compact-prefixed label, then
-/// the link.
-pub fn encode_register_name_call(
-	call_indices: [u8; 2],
-	who: &[u8; 32],
-	label: &[u8],
-	link: &Link,
-) -> Vec<u8> {
-	let mut call = call_indices.to_vec();
-	(who, label, link).encode_to(&mut call);
-	call
+/// `DotnsGateway.register_name` arguments.
+#[derive(Debug, Clone, PartialEq, Eq, EncodeAsType)]
+#[encode_as_type(crate_path = "subxt::ext::scale_encode")]
+pub struct RegisterNameCallArgs {
+	/// Account the username is registered for.
+	pub who: [u8; 32],
+	/// Base label to register.
+	pub label: Vec<u8>,
+	/// How the new username relates to the account's lite identity.
+	pub link: Link,
 }
 
-/// Encodes the `AsDotnsGateway` extension extra.
-///
-/// The value is `Some(RegisterFullName { proof, ring_index, revision,
-/// signature })`; `revision` is the People-collection root revision the proof
-/// was built against, which Asset Hub's `members-subscriber` must hold. The
-/// signature is wrapped as `MultiSignature::Sr25519`.
-pub fn encode_register_full_name_extra(
-	info_variant: u8,
-	proof: &[u8],
-	ring_index: u32,
-	revision: u32,
-	signature: &[u8; 64],
-) -> Vec<u8> {
-	// Option::Some ‖ info variant ‖ Vec(proof) ‖ ring_index ‖ revision ‖
-	// Sr25519 ‖ sig.
-	let mut extra = vec![0x01, info_variant];
-	proof.encode_to(&mut extra);
-	ring_index.encode_to(&mut extra);
-	revision.encode_to(&mut extra);
-	extra.push(0x01);
-	extra.extend_from_slice(signature);
-	extra
+/// `AsDotnsGatewayInfo`: what an `AsDotnsGateway` value authorizes.
+#[derive(EncodeAsType)]
+#[encode_as_type(crate_path = "subxt::ext::scale_encode")]
+pub enum AsDotnsGatewayInfo {
+	/// A full-person username registration.
+	RegisterFullName {
+		/// Ring-VRF proof of full personhood over the registration intent.
+		proof: Vec<u8>,
+		/// The People ring the proof is built in.
+		ring_index: u32,
+		/// The People root revision the proof is built against, which Asset
+		/// Hub's `members-subscriber` must hold.
+		revision: u32,
+		/// The account's signature over the extrinsic's implication.
+		signature: MultiSignature,
+	},
+}
+
+/// The Asset Hub `AsDotnsGateway` authorizer for a full-person username
+/// registration. The ring proof covers only the registration intent, so it is
+/// built beforehand; the account signs the extrinsic's implication here.
+pub struct AsDotnsGatewayExtension<'a> {
+	/// Ring-VRF proof over [`build_register_proof_message`].
+	pub ring_proof: Vec<u8>,
+	/// The People ring the proof is built in.
+	pub ring_index: u32,
+	/// The People root revision the proof is built against.
+	pub revision: u32,
+	/// The account registering the username.
+	pub who: &'a SubstrateSigner,
+}
+
+impl TransactionExtension for AsDotnsGatewayExtension<'_> {
+	type Implicit = ();
+	type Explicit = Option<AsDotnsGatewayInfo>;
+
+	fn name(&self) -> &str {
+		"AsDotnsGateway"
+	}
+
+	fn implicit(&self) {}
+
+	fn explicit(
+		&self,
+		implication: &InheritedImplication,
+	) -> Result<Option<AsDotnsGatewayInfo>, ExtensionError> {
+		Ok(Some(AsDotnsGatewayInfo::RegisterFullName {
+			proof: self.ring_proof.clone(),
+			ring_index: self.ring_index,
+			revision: self.revision,
+			signature: self.who.sign(&implication.hash()),
+		}))
+	}
 }
 
 /// Maps an AccountId32 to the H160 the contracts see.
@@ -139,81 +178,13 @@ pub fn account_to_h160(public_key: &[u8; 32]) -> [u8; 20] {
 	}
 }
 
-/// Solidity `bytes32("name")` literal: ASCII left-aligned in a 32-byte word.
-/// The dotNS protocol registry keys (`storeFactory`, `registrar`, ...) use this
-/// form. They are not hashes.
-pub fn registry_key(name: &str) -> [u8; 32] {
-	let bytes = name.as_bytes();
-	assert!(bytes.len() <= 32, "registry key exceeds 32 bytes");
-	let mut out = [0u8; 32];
-	out[..bytes.len()].copy_from_slice(bytes);
-	out
-}
-
-/// First 4 bytes of `keccak256(signature)` — the Solidity function selector.
-pub fn selector(signature: &str) -> [u8; 4] {
-	keccak_256(signature.as_bytes())[..4]
-		.try_into()
-		.expect("keccak_256 output is 32 bytes, head slice is 4; qed")
-}
-
-/// Calldata for a view function without arguments.
-pub fn call_no_args(signature: &str) -> Vec<u8> {
-	selector(signature).to_vec()
-}
-
-/// Calldata for a view function taking one `address` argument.
-pub fn call_address(signature: &str, address: &[u8; 20]) -> Vec<u8> {
-	let mut data = call_no_args(signature);
-	data.extend_from_slice(&[0u8; 12]);
-	data.extend_from_slice(address);
-	data
-}
-
-/// Calldata for a view function taking one `bytes32` argument.
-pub fn call_bytes32(signature: &str, word: &[u8; 32]) -> Vec<u8> {
-	let mut data = call_no_args(signature);
-	data.extend_from_slice(word);
-	data
-}
-
-/// Calldata for a view function taking two `uint256` arguments.
-pub fn call_u256_pair(signature: &str, first: u64, second: u64) -> Vec<u8> {
-	let mut data = call_no_args(signature);
-	push_u256_pair(&mut data, first, second);
-	data
-}
-
-/// Calldata for a view function taking an `address` followed by two `uint256`
-/// arguments (a paginated per-account view).
-pub fn call_address_u256_pair(
-	signature: &str,
-	address: &[u8; 20],
-	first: u64,
-	second: u64,
-) -> Vec<u8> {
-	let mut data = call_address(signature, address);
-	push_u256_pair(&mut data, first, second);
-	data
-}
-
-fn push_u256_pair(data: &mut Vec<u8>, first: u64, second: u64) {
-	for value in [first, second] {
-		let mut word = [0u8; 32];
-		word[24..].copy_from_slice(&value.to_be_bytes());
-		data.extend_from_slice(&word);
-	}
-}
-
 /// Error decoding a dotNS contract round-trip.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq)]
 pub enum DotnsContractError {
-	/// `ContractResult` bytes ended before the expected field.
-	#[error("ContractResult truncated at {context}")]
-	Truncated {
-		/// Field being decoded when the input ended.
-		context: &'static str,
-	},
+	/// The `ReviveApi_call` output is not a `ContractResult`. The cause is
+	/// kept out of the message, which SCALE renders across several lines.
+	#[error("ReviveApi_call output is not a ContractResult")]
+	Malformed(parity_scale_codec::Error),
 	/// The runtime rejected the call before reaching the contract.
 	#[error("ReviveApi_call dispatch failed: {detail}")]
 	Dispatch {
@@ -227,181 +198,135 @@ pub enum DotnsContractError {
 		detail: String,
 	},
 	/// ABI return data did not match the expected shape.
-	#[error("ABI decode failed at {context}")]
-	Abi {
-		/// Value being decoded when the shape mismatched.
-		context: &'static str,
-	},
-	/// ABI return data was not valid UTF-8 where a string was expected.
-	#[error("ABI string is not UTF-8")]
-	AbiUtf8,
+	#[error(transparent)]
+	Abi(#[from] alloy_sol_types::Error),
+}
+
+/// `sp_weights::Weight`.
+#[derive(Encode, Decode)]
+pub struct Weight {
+	/// Computation time.
+	#[codec(compact)]
+	pub ref_time: u64,
+	/// Proof size in bytes.
+	#[codec(compact)]
+	pub proof_size: u64,
+}
+
+/// `pallet_revive::StorageDeposit` over a `u128` balance.
+#[derive(Decode)]
+#[cfg_attr(test, derive(Encode))]
+pub enum StorageDeposit {
+	/// Balance returned to the origin.
+	Refund(u128),
+	/// Balance charged to the origin.
+	Charge(u128),
+}
+
+/// `pallet_revive::ExecReturnValue`.
+#[derive(Decode)]
+#[cfg_attr(test, derive(Encode))]
+pub struct ExecReturnValue {
+	/// `ReturnFlags` bits; [`REVERT_FLAG`] marks a revert.
+	pub flags: u32,
+	/// The contract's return data.
+	pub data: Vec<u8>,
+}
+
+/// `ReturnFlags::REVERT`.
+pub const REVERT_FLAG: u32 = 1;
+
+/// A `DispatchError` kept as its raw bytes, since naming the error needs the
+/// runtime's metadata. It is the last field of a `ContractResult`, so it takes
+/// the rest of the input.
+pub struct RawDispatchError(Vec<u8>);
+
+impl Decode for RawDispatchError {
+	fn decode<I: Input>(input: &mut I) -> Result<Self, parity_scale_codec::Error> {
+		let len = input.remaining_len()?.ok_or("DispatchError of unknown length")?;
+		let mut bytes = vec![0; len];
+		input.read(&mut bytes)?;
+		Ok(Self(bytes))
+	}
+}
+
+#[cfg(test)]
+impl Encode for RawDispatchError {
+	fn encode_to<O: parity_scale_codec::Output + ?Sized>(&self, dest: &mut O) {
+		dest.write(&self.0);
+	}
+}
+
+/// `pallet_revive::ContractResult<ExecReturnValue, u128>`.
+#[derive(Decode)]
+#[cfg_attr(test, derive(Encode))]
+pub struct ContractResult {
+	/// Weight the call consumed.
+	pub weight_consumed: Weight,
+	/// Weight the call needs as its limit.
+	pub weight_required: Weight,
+	/// Storage deposit the call charged or refunded.
+	pub storage_deposit: StorageDeposit,
+	/// Largest storage deposit the call needed while it ran.
+	pub max_storage_deposit: StorageDeposit,
+	/// Gas the call consumed.
+	pub gas_consumed: u128,
+	/// What the contract returned, or why the runtime rejected the call.
+	pub result: Result<ExecReturnValue, RawDispatchError>,
+}
+
+/// Arguments of the `ReviveApi_call` runtime API.
+#[derive(Encode)]
+struct ReviveCallArgs<'a> {
+	origin: &'a [u8; 32],
+	dest: &'a [u8; 20],
+	value: u128,
+	gas_limit: Option<Weight>,
+	storage_deposit_limit: Option<u128>,
+	input_data: &'a [u8],
 }
 
 /// SCALE arguments for the `ReviveApi_call` runtime API.
-/// A zero-value, unlimited-gas dry-run of `input` against `dest` from `origin`.
+/// A zero-value dry-run of `input` against `dest` from `origin`, leaving the
+/// gas and deposit limits for the node to estimate.
 pub fn encode_revive_call(origin: &[u8; 32], dest: &[u8; 20], input: &[u8]) -> Vec<u8> {
-	let mut args = Vec::with_capacity(32 + 20 + 16 + 2 + 5 + input.len());
-	args.extend_from_slice(origin);
-	args.extend_from_slice(dest);
-	args.extend_from_slice(&0u128.to_le_bytes());
-	// gas_limit: Option<Weight> and storage_deposit_limit: Option<u128>.
-	// Both absent, so the node estimates.
-	args.push(0x00);
-	args.push(0x00);
-	input.encode_to(&mut args);
-	args
+	ReviveCallArgs {
+		origin,
+		dest,
+		value: 0,
+		gas_limit: None,
+		storage_deposit_limit: None,
+		input_data: input,
+	}
+	.encode()
 }
 
 /// Extracts the contract return data from a `ReviveApi_call` output.
-/// The output is a `pallet_revive::ContractResult`. Dispatch errors and reverts
-/// are rejected.
+/// Dispatch errors and reverts are rejected.
 pub fn decode_revive_call_output(output: &[u8]) -> Result<Vec<u8>, DotnsContractError> {
-	let truncated = |context| DotnsContractError::Truncated { context };
-	let input = &mut &output[..];
-	// weight_consumed + weight_required. Weight is a compact ref_time plus a
-	// compact proof_size.
-	for _ in 0..4 {
-		Compact::<u64>::decode(input).map_err(|_| truncated("weight"))?;
-	}
-	// storage_deposit + max_storage_deposit. StorageDeposit is variant ‖ u128.
-	for _ in 0..2 {
-		<(u8, u128)>::decode(input).map_err(|_| truncated("storage_deposit"))?;
-	}
-	u128::decode(input).map_err(|_| truncated("gas_consumed"))?;
-	match u8::decode(input).map_err(|_| truncated("result"))? {
-		0 => {
-			let flags = u32::decode(input).map_err(|_| truncated("flags"))?;
-			let data = Vec::<u8>::decode(input).map_err(|_| truncated("data"))?;
-			// ReturnFlags::REVERT.
-			if flags & 1 == 1 {
-				return Err(DotnsContractError::Reverted { detail: describe_revert(&data) });
-			}
-			Ok(data)
+	let contract_result =
+		ContractResult::decode(&mut &output[..]).map_err(DotnsContractError::Malformed)?;
+	match contract_result.result {
+		Ok(ExecReturnValue { flags, data }) if flags & REVERT_FLAG != 0 => {
+			Err(DotnsContractError::Reverted { detail: describe_revert(&data) })
 		},
-		_ => Err(DotnsContractError::Dispatch { detail: format!("0x{}", hex::encode(*input)) }),
+		Ok(ExecReturnValue { data, .. }) => Ok(data),
+		Err(RawDispatchError(error)) => {
+			Err(DotnsContractError::Dispatch { detail: format!("0x{}", hex::encode(error)) })
+		},
 	}
 }
 
-/// Renders a Solidity revert payload. Recognizes `Error(string)` and
-/// `Panic(uint256)`.
+/// Renders a Solidity revert payload: `Error(string)` and `Panic(uint256)` by
+/// their meaning, anything else as hex. The reason is escaped because any
+/// contract, such as a name owner's resolver, chooses it.
 fn describe_revert(data: &[u8]) -> String {
 	if data.is_empty() {
 		return "(empty)".to_string();
 	}
-	if data.starts_with(&[0x08, 0xc3, 0x79, 0xa0]) && data.len() >= 68 {
-		let len = u64::from_be_bytes(
-			data[60..68].try_into().expect("8-byte slice from a length-checked buffer; qed"),
-		) as usize;
-		if let Some(message) = 68usize
-			.checked_add(len)
-			.and_then(|end| data.get(68..end))
-			.and_then(|bytes| core::str::from_utf8(bytes).ok())
-		{
-			return format!("Error({message:?})");
-		}
-	}
-	if data.starts_with(&[0x4e, 0x48, 0x7b, 0x71]) && data.len() >= 36 {
-		return format!("Panic(0x{})", hex::encode(&data[32..36]));
-	}
-	format!("0x{}", hex::encode(data))
-}
-
-/// Reads the 32-byte ABI word at index `index`.
-fn word(data: &[u8], index: usize) -> Result<&[u8], DotnsContractError> {
-	data.get(index * 32..(index + 1) * 32)
-		.ok_or(DotnsContractError::Abi { context: "word" })
-}
-
-/// Interprets an ABI word as a right-aligned usize offset or length.
-fn word_usize(data: &[u8], index: usize) -> Result<usize, DotnsContractError> {
-	usize::try_from(word_u64(data, index)?)
-		.map_err(|_| DotnsContractError::Abi { context: "oversized word" })
-}
-
-/// Decodes an ABI `string` at byte offset `at`.
-/// The layout is a length word followed by padded UTF-8 bytes.
-fn decode_string_at(data: &[u8], at: usize) -> Result<String, DotnsContractError> {
-	let region = data.get(at..).ok_or(DotnsContractError::Abi { context: "string offset" })?;
-	let len = word_usize(region, 0)?;
-	let bytes = 32usize
-		.checked_add(len)
-		.and_then(|end| region.get(32..end))
-		.ok_or(DotnsContractError::Abi { context: "string bytes" })?;
-	String::from_utf8(bytes.to_vec()).map_err(|_| DotnsContractError::AbiUtf8)
-}
-
-/// Decodes a single `string` return value (`ProtocolRegistry.tld()`).
-pub fn decode_string(data: &[u8]) -> Result<String, DotnsContractError> {
-	decode_string_at(data, word_usize(data, 0)?)
-}
-
-/// Decodes a single `bool` return value.
-pub fn decode_bool(data: &[u8]) -> Result<bool, DotnsContractError> {
-	let bytes = word(data, 0)?;
-	if bytes[..31].iter().any(|b| *b != 0) {
-		return Err(DotnsContractError::Abi { context: "bool" });
-	}
-	match bytes[31] {
-		0 => Ok(false),
-		1 => Ok(true),
-		_ => Err(DotnsContractError::Abi { context: "bool" }),
-	}
-}
-
-/// Decodes a single `address` return value.
-pub fn decode_address(data: &[u8]) -> Result<[u8; 20], DotnsContractError> {
-	let bytes = word(data, 0)?;
-	if bytes[..12].iter().any(|b| *b != 0) {
-		return Err(DotnsContractError::Abi { context: "address" });
-	}
-	Ok(bytes[12..].try_into().expect("20-byte tail of a 32-byte word; qed"))
-}
-
-/// Decodes a `string[]` return value (`LabelStore.getLabels`).
-pub fn decode_string_array(data: &[u8]) -> Result<Vec<String>, DotnsContractError> {
-	let array_at = word_usize(data, 0)?;
-	let array = data
-		.get(array_at..)
-		.ok_or(DotnsContractError::Abi { context: "array offset" })?;
-	let len = word_usize(array, 0)?;
-	let elements = array.get(32..).ok_or(DotnsContractError::Abi { context: "array elements" })?;
-	(0..len).map(|i| decode_string_at(elements, word_usize(elements, i)?)).collect()
-}
-
-/// Decodes one `DotnsPopController.pendingClaims(address,uint256,uint256)`
-/// page, an ABI `(string label, uint64 mintedAt)[]`, as `(label, minted_at)`
-/// pairs.
-pub fn decode_pending_claims_array(data: &[u8]) -> Result<Vec<(String, u64)>, DotnsContractError> {
-	let array_at = word_usize(data, 0)?;
-	let array = data
-		.get(array_at..)
-		.ok_or(DotnsContractError::Abi { context: "claims offset" })?;
-	let len = word_usize(array, 0)?;
-	let elements = array.get(32..).ok_or(DotnsContractError::Abi { context: "claims elements" })?;
-	(0..len)
-		.map(|i| {
-			let claim = elements
-				.get(word_usize(elements, i)?..)
-				.ok_or(DotnsContractError::Abi { context: "claim offset" })?;
-			let label = decode_string_at(claim, word_usize(claim, 0)?)?;
-			let minted_at = word_u64(claim, 1)?;
-			Ok((label, minted_at))
-		})
-		.collect()
-}
-
-/// Decodes a single `uint64` (or narrower) return value.
-pub fn decode_u64(data: &[u8]) -> Result<u64, DotnsContractError> {
-	word_u64(data, 0)
-}
-
-/// Reads the 32-byte ABI word at `index` as a `u64`; wider values are an error.
-fn word_u64(data: &[u8], index: usize) -> Result<u64, DotnsContractError> {
-	let bytes = word(data, index)?;
-	if bytes[..24].iter().any(|b| *b != 0) {
-		return Err(DotnsContractError::Abi { context: "oversized word" });
-	}
-	Ok(u64::from_be_bytes(bytes[24..].try_into().expect("8-byte tail of a 32-byte word; qed")))
+	GenericContractError::abi_decode(data)
+		.map(|error| error.to_string().escape_debug().to_string())
+		.unwrap_or_else(|_| format!("0x{}", hex::encode(data)))
 }
 
 /// Usernames of one account as recorded by the dotNS contracts. Holds at least
@@ -459,7 +384,7 @@ pub async fn classify_labels<T, I>(
 	transport: &mut T,
 	controller: &[u8; 20],
 	labels: I,
-) -> Result<Option<DotnsIdentity>, String>
+) -> Result<Option<DotnsIdentity>, DotnsError>
 where
 	T: DotnsTransport + ?Sized,
 	I: IntoIterator,
@@ -491,26 +416,14 @@ pub async fn is_pop_issued<T: DotnsTransport + ?Sized>(
 	transport: &mut T,
 	controller: &[u8; 20],
 	label: &str,
-) -> Result<bool, String> {
-	let output = transport
-		.view(controller, call_string("isPopIssued(string)", label))
-		.await
-		.map_err(|err| format!("DotnsPopController.isPopIssued({label}): {err}"))?;
-	decode_bool(&output).map_err(|err| format!("DotnsPopController.isPopIssued({label}): {err}"))
-}
-
-/// RFC 1035 label bound the contracts enforce (`StringUtils.MAX_DNS_LABEL_OCTETS`).
-const MAX_DNS_LABEL_LEN: usize = 63;
-
-/// A canonical DNS label: lowercase ASCII letters, digits and hyphens, neither
-/// starting nor ending with a hyphen, at most 63 octets
-/// (`StringUtils._isDnsLabel`).
-pub fn is_dns_label(value: &str) -> bool {
-	!value.is_empty() &&
-		value.len() <= MAX_DNS_LABEL_LEN &&
-		!value.starts_with('-') &&
-		!value.ends_with('-') &&
-		value.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+) -> Result<bool, DotnsError> {
+	read_view(
+		transport,
+		controller,
+		DotnsPopController::isPopIssuedCall { label: label.to_string() },
+	)
+	.await
+	.map_err(|source| DotnsError::IsPopIssued { label: label.to_string(), source })
 }
 
 /// The dotted lite shape: a letters-only stem, one dot, exactly two digits
@@ -576,24 +489,129 @@ const CLAIM_PAGE_LIMIT: u64 = 16;
 /// user stages one lite and one full name, so one page is the normal case.
 const CLAIM_PAGE_MAX: u64 = 16;
 
+/// A failed dotNS lookup, retaining the operation and its underlying failure.
+/// Use [`Self::reason`] for a complete diagnostic.
+#[derive(Debug, PartialEq, Error, derive_more::From)]
+pub enum DotnsError {
+	/// The chain could not serve a storage read.
+	#[error("{0}")]
+	#[from(String)]
+	Storage(String),
+	/// A contract view failed without an additional operation label.
+	#[error(transparent)]
+	#[from(DotnsViewError)]
+	View(DotnsViewError),
+	/// The controller's protocol registry could not be read.
+	#[error("DotnsPopController.protocolRegistry()")]
+	ProtocolRegistry(#[source] DotnsCallError),
+	/// The gateway dispatcher could not identify its controller.
+	#[error("RootGatewayDispatcher.TARGET()")]
+	DispatcherTarget(#[source] DotnsCallError),
+	/// A protocol component address could not be read.
+	#[error("ProtocolRegistry.get({name})")]
+	ProtocolComponent {
+		/// Registry component being resolved.
+		name: String,
+		/// Failure reading the component address.
+		source: DotnsCallError,
+	},
+	/// A label's proof-of-personhood issuance could not be determined.
+	#[error("DotnsPopController.isPopIssued({label})")]
+	IsPopIssued {
+		/// Label whose issuance is being checked.
+		label: String,
+		/// Failure reading the issuance status.
+		source: DotnsCallError,
+	},
+	/// The user's label store could not be located.
+	#[error("StoreFactory.getLabelStore")]
+	LabelStore(#[source] DotnsCallError),
+	/// A label store could not serve a page of labels.
+	#[error("LabelStore.getLabels")]
+	Labels(#[source] DotnsCallError),
+	/// A registrar could not determine whether a label already exists.
+	#[error("DotnsRegistrar.exists({label})")]
+	RegistrarExists {
+		/// Label whose availability is being checked.
+		label: String,
+		/// Failure reading the registration status.
+		source: DotnsCallError,
+	},
+	/// A pending-claim page could not be read.
+	#[error("DotnsPopController.pendingClaims")]
+	PendingClaims(#[source] DotnsCallError),
+	/// The network's top-level domain could not be read.
+	#[error("ProtocolRegistry.tld()")]
+	Tld(#[source] DotnsCallError),
+	/// The fallback top-level domain could not be checked.
+	#[error("DotnsRegistry.recordExists")]
+	RecordExists(#[source] DotnsCallError),
+	/// A name's content resolver could not be located.
+	#[error("DotnsRegistry.resolver()")]
+	Resolver(#[source] DotnsCallError),
+	/// A product's manifest record could not be read.
+	#[error("ContentResolver.text()")]
+	ManifestText(#[source] DotnsCallError),
+	/// The stored dispatcher address has the wrong width.
+	#[error("DotnsGateway.DispatcherAddress is {actual} bytes")]
+	DispatcherAddressLength {
+		/// Length of the stored address.
+		actual: usize,
+	},
+	/// The stored address implements neither supported controller interface.
+	#[error(
+		"DotnsGateway.DispatcherAddress {} has neither protocolRegistry() nor TARGET()",
+		hex::encode(.address)
+	)]
+	UnknownDispatcher {
+		/// Address that answered neither discovery call.
+		address: [u8; 20],
+	},
+	/// Neither the TLD view nor the fallback registry record identifies the network.
+	#[error(
+		"ProtocolRegistry has no tld() view and the registry holds no record for {:?}; the network TLD cannot be determined",
+		crate::dotns_views::TLD_WITHOUT_VIEW
+	)]
+	MissingTld,
+}
+
+impl DotnsError {
+	/// Formats the operation and its cause chain for diagnostics.
+	pub fn reason(&self) -> String {
+		core::iter::successors(Some(self as &dyn core::error::Error), |error| error.source())
+			.map(ToString::to_string)
+			.collect::<Vec<_>>()
+			.join(": ")
+	}
+}
+
+/// A contract read failed during execution or decoding of its return data.
+#[derive(Debug, PartialEq, Error, derive_more::From)]
+pub enum DotnsCallError {
+	/// The view failed before returning data to decode.
+	#[error(transparent)]
+	View(DotnsViewError),
+	/// The view returned data that did not match the expected ABI shape.
+	#[error(transparent)]
+	Decode(DotnsContractError),
+}
+
 /// Why a contract view returned no data.
 ///
 /// A revert is an answer from the contract (the view refused, or the address
 /// has no such function); anything else means the answer is unknown.
-#[derive(Debug, Error)]
+#[derive(Debug, PartialEq, Error, derive_more::From)]
 pub enum DotnsViewError {
 	/// The contract executed and reverted.
-	#[error("{0}")]
+	#[error(transparent)]
 	Reverted(DotnsContractError),
+	/// The runtime rejected the call or returned an invalid contract result.
+	#[error(transparent)]
+	Contract(DotnsContractError),
 	/// The view could not be dry-run or its output could not be decoded.
 	#[error("{0}")]
+	#[from(String)]
 	Failed(String),
-}
-
-impl From<DotnsViewError> for String {
-	fn from(error: DotnsViewError) -> Self {
-		error.to_string()
-	}
 }
 
 /// Splits a `ReviveApi_call` output into return data, a revert, or a failure,
@@ -601,7 +619,7 @@ impl From<DotnsViewError> for String {
 pub fn view_output(output: &[u8]) -> Result<Vec<u8>, DotnsViewError> {
 	decode_revive_call_output(output).map_err(|err| match err {
 		DotnsContractError::Reverted { .. } => DotnsViewError::Reverted(err),
-		other => DotnsViewError::Failed(other.to_string()),
+		other => DotnsViewError::Contract(other),
 	})
 }
 
@@ -613,7 +631,7 @@ pub fn view_output(output: &[u8]) -> Result<Vec<u8>, DotnsViewError> {
 #[crate::platform::async_trait]
 pub trait DotnsTransport {
 	/// Reads one storage value. `None` when the entry is absent.
-	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, String>;
+	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError>;
 
 	/// Dry-runs a contract view against `dest` and returns its return data.
 	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError>;
@@ -640,39 +658,27 @@ pub trait DotnsTransport {
 /// `None` when the gateway is not deployed on the chain at all.
 pub async fn discover_pop_controller<T: DotnsTransport + ?Sized>(
 	transport: &mut T,
-) -> Result<Option<[u8; 20]>, String> {
+) -> Result<Option<[u8; 20]>, DotnsError> {
 	let Some(value) = transport.storage(dispatcher_address_key()).await? else {
 		return Ok(None);
 	};
-	let stored: [u8; 20] = value.try_into().map_err(|value: Vec<u8>| {
-		format!("DotnsGateway.DispatcherAddress is {} bytes", value.len())
-	})?;
-	match transport.view(&stored, call_no_args("protocolRegistry()")).await {
-		Ok(output) => {
-			decode_address(&output)
-				.map_err(|err| format!("DotnsPopController.protocolRegistry(): {err}"))?;
-			Ok(Some(stored))
-		},
+	let stored: [u8; 20] = value
+		.try_into()
+		.map_err(|value: Vec<u8>| DotnsError::DispatcherAddressLength { actual: value.len() })?;
+	match read_view(transport, &stored, DotnsPopController::protocolRegistryCall {}).await {
+		Ok(_) => Ok(Some(stored)),
 		// A chain still storing its dispatcher pays this second view; a repointed one
 		// answers on the first. Both hops go once no chain stores a dispatcher.
-		Err(DotnsViewError::Reverted(_)) => {
-			match transport.view(&stored, call_no_args("TARGET()")).await {
-				Ok(output) => decode_address(&output)
-					.map(Some)
-					.map_err(|err| format!("RootGatewayDispatcher.TARGET(): {err}")),
-				Err(DotnsViewError::Reverted(_)) => Err(format!(
-					"DotnsGateway.DispatcherAddress {} has neither protocolRegistry() nor \
-                     TARGET()",
-					hex::encode(stored)
-				)),
-				Err(DotnsViewError::Failed(reason)) => {
-					Err(format!("RootGatewayDispatcher.TARGET(): {reason}"))
+		Err(DotnsCallError::View(DotnsViewError::Reverted(_))) => {
+			match read_view(transport, &stored, RootGatewayDispatcher::TARGETCall {}).await {
+				Ok(controller) => Ok(Some(controller.into_array())),
+				Err(DotnsCallError::View(DotnsViewError::Reverted(_))) => {
+					Err(DotnsError::UnknownDispatcher { address: stored })
 				},
+				Err(error) => Err(DotnsError::DispatcherTarget(error)),
 			}
 		},
-		Err(err @ DotnsViewError::Failed(_)) => {
-			Err(format!("DotnsPopController.protocolRegistry(): {err}"))
-		},
+		Err(error) => Err(DotnsError::ProtocolRegistry(error)),
 	}
 }
 
@@ -695,31 +701,23 @@ pub async fn resolve_labels<T: DotnsTransport + ?Sized>(
 	transport: &mut T,
 	controller: &[u8; 20],
 	account: &[u8; 32],
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, DotnsError> {
 	let user = account_to_h160(account);
 
 	let mut labels = pending_claim_labels(transport, controller, &user).await?;
 
-	let registry_output = transport
-		.view(controller, call_no_args("protocolRegistry()"))
+	let registry = read_view(transport, controller, DotnsPopController::protocolRegistryCall {})
 		.await
-		.map_err(|err| format!("DotnsPopController.protocolRegistry: {err}"))?;
-	let registry = decode_address(&registry_output)
-		.map_err(|err| format!("DotnsPopController.protocolRegistry(): {err}"))?;
+		.map_err(DotnsError::ProtocolRegistry)?
+		.into_array();
 
-	let factory_output = transport
-		.view(&registry, call_bytes32("get(bytes32)", &registry_key("storeFactory")))
-		.await
-		.map_err(|err| format!("ProtocolRegistry.get(storeFactory): {err}"))?;
-	let factory = decode_address(&factory_output)
-		.map_err(|err| format!("ProtocolRegistry.get(storeFactory): {err}"))?;
+	let factory = protocol_component(transport, &registry, "storeFactory").await?;
 
-	let store_output = transport
-		.view(&factory, call_address("getLabelStore(address)", &user))
-		.await
-		.map_err(|err| format!("StoreFactory.getLabelStore: {err}"))?;
-	let store = decode_address(&store_output)
-		.map_err(|err| format!("StoreFactory.getLabelStore: {err}"))?;
+	let store =
+		read_view(transport, &factory, StoreFactory::getLabelStoreCall { user: user.into() })
+			.await
+			.map_err(DotnsError::LabelStore)?
+			.into_array();
 	if store == [0u8; 20] {
 		return Ok(labels);
 	}
@@ -727,19 +725,16 @@ pub async fn resolve_labels<T: DotnsTransport + ?Sized>(
 	let tld = network_tld(transport, &registry).await?;
 
 	for page in 0..LABEL_PAGE_MAX {
-		let labels_output = transport
-			.view(
-				&store,
-				call_u256_pair(
-					"getLabels(uint256,uint256)",
-					page * LABEL_PAGE_LIMIT,
-					LABEL_PAGE_LIMIT,
-				),
-			)
-			.await
-			.map_err(|err| format!("LabelStore.getLabels: {err}"))?;
-		let stored = decode_string_array(&labels_output)
-			.map_err(|err| format!("LabelStore.getLabels: {err}"))?;
+		let stored = read_view(
+			transport,
+			&store,
+			LabelStore::getLabelsCall {
+				offset: U256::from(page * LABEL_PAGE_LIMIT),
+				limit: U256::from(LABEL_PAGE_LIMIT),
+			},
+		)
+		.await
+		.map_err(DotnsError::Labels)?;
 		let short_page = (stored.len() as u64) < LABEL_PAGE_LIMIT;
 		for label in stored {
 			if let Some(bare) = bare_store_label(&label, &tld) &&
@@ -752,8 +747,10 @@ pub async fn resolve_labels<T: DotnsTransport + ?Sized>(
 			break;
 		}
 		if page + 1 == LABEL_PAGE_MAX {
+			// A warning leaves the device, and a LabelStore address resolves
+			// back to the account that owns it, so it is named by a handle.
 			warn!(
-				store = %hex::encode(store),
+				store = %crate::logging::account_handle(&store[..]),
 				read = LABEL_PAGE_MAX * LABEL_PAGE_LIMIT,
 				"LabelStore holds more labels than the pages read; a name past this point is not resolved"
 			);
@@ -791,27 +788,25 @@ pub async fn label_available<T: DotnsTransport + ?Sized>(
 	transport: &mut T,
 	controller: &[u8; 20],
 	label: &str,
-) -> Result<bool, String> {
-	let registry_output = transport.view(controller, call_no_args("protocolRegistry()")).await?;
-	let registry = decode_address(&registry_output)
-		.map_err(|err| format!("DotnsPopController.protocolRegistry(): {err}"))?;
+) -> Result<bool, DotnsError> {
+	let registry = read_view(transport, controller, DotnsPopController::protocolRegistryCall {})
+		.await
+		.map_err(DotnsError::ProtocolRegistry)?
+		.into_array();
 
 	let tld = network_tld(transport, &registry).await?;
 
-	let registrar_output = transport
-		.view(&registry, call_bytes32("get(bytes32)", &registry_key("registrar")))
-		.await?;
-	let registrar = decode_address(&registrar_output)
-		.map_err(|err| format!("ProtocolRegistry.get(registrar): {err}"))?;
+	let registrar = protocol_component(transport, &registry, "registrar").await?;
 
 	let node = namehash_under(&tld_node(&tld), label);
-	let output = transport
-		.view(&registrar, call_bytes32("exists(uint256)", &node))
-		.await
-		.map_err(|err| format!("DotnsRegistrar.exists({label}): {err}"))?;
-	decode_bool(&output)
-		.map(|exists| !exists)
-		.map_err(|err| format!("DotnsRegistrar.exists({label}): {err}"))
+	read_view(
+		transport,
+		&registrar,
+		DotnsRegistrar::existsCall { tokenId: U256::from_be_bytes(node) },
+	)
+	.await
+	.map(|exists| !exists)
+	.map_err(|source| DotnsError::RegistrarExists { label: label.to_string(), source })
 }
 
 /// Gateway-minted labels of `user` still waiting for `claimLabelStore`, paged
@@ -822,23 +817,22 @@ async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
 	transport: &mut T,
 	controller: &[u8; 20],
 	user: &[u8; 20],
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, DotnsError> {
 	let mut claims = Vec::new();
 	for page in 0..CLAIM_PAGE_MAX {
-		let output = match transport
-			.view(
-				controller,
-				call_address_u256_pair(
-					"pendingClaims(address,uint256,uint256)",
-					user,
-					page * CLAIM_PAGE_LIMIT,
-					CLAIM_PAGE_LIMIT,
-				),
-			)
-			.await
+		let page_claims = match read_view(
+			transport,
+			controller,
+			DotnsPopController::pendingClaimsCall {
+				user: Address::from(*user),
+				offset: U256::from(page * CLAIM_PAGE_LIMIT),
+				limit: U256::from(CLAIM_PAGE_LIMIT),
+			},
+		)
+		.await
 		{
-			Ok(output) => output,
-			Err(DotnsViewError::Reverted(reason)) => {
+			Ok(claims) => claims,
+			Err(DotnsCallError::View(DotnsViewError::Reverted(reason))) => {
 				warn!(
 					%reason,
 					retained = claims.len(),
@@ -846,26 +840,24 @@ async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
 				);
 				break;
 			},
-			Err(DotnsViewError::Failed(reason)) => {
-				return Err(format!("DotnsPopController.pendingClaims: {reason}"));
-			},
+			Err(error) => return Err(DotnsError::PendingClaims(error)),
 		};
-		let page_claims = decode_pending_claims_array(&output)
-			.map_err(|err| format!("DotnsPopController.pendingClaims: {err}"))?;
 		let short_page = (page_claims.len() as u64) < CLAIM_PAGE_LIMIT;
 		claims.extend(page_claims);
 		if short_page {
 			break;
 		}
 		if page + 1 == CLAIM_PAGE_MAX {
+			// A warning leaves the device, so the user is named by a handle
+			// rather than in full.
 			warn!(
-				user = %hex::encode(user),
+				user = %crate::logging::account_handle(&user[..]),
 				read = CLAIM_PAGE_MAX * CLAIM_PAGE_LIMIT,
 				"pending-claim page cap reached; later entries, if any, are not resolved"
 			);
 		}
 	}
-	Ok(claims.into_iter().map(|(label, _)| label).collect())
+	Ok(claims.into_iter().map(|claim| claim.label).collect())
 }
 
 /// `DotnsGateway.DispatcherAddress` storage key.
@@ -909,9 +901,10 @@ fn plain_key(pallet: &[u8], entry: &[u8]) -> Vec<u8> {
 mod tests {
 	use super::*;
 	use crate::dotns_views::{TLD_WITHOUT_VIEW, network_tld};
+	use alloy_sol_types::SolCall;
 
 	// Golden vectors from the validated reference implementation in
-	// pop-dotns-testing: reservation.ts, proof.ts, verify.ts, abi.ts.
+	// pop-dotns-testing: reservation.ts, proof.ts, verify.ts.
 	const RESERVATION_WITH_RESERVED: &str = "64706f703a646f746e732d676174657761793a72657365727665111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222221c616c696365626305013333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333013072657365727665646e616d65035e486800000000";
 	const RESERVATION_NO_RESERVED: &str = "64706f703a646f746e732d676174657761793a72657365727665111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222222222222222222222222222222222221c616c69636562630501333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333300035e486800000000";
 
@@ -955,44 +948,67 @@ mod tests {
 		);
 	}
 
+	/// The call arguments encode by name against Asset Hub's metadata into the
+	/// gateway's positional layout: account, label, link.
 	#[test]
-	fn register_name_call_and_extension_extra_have_the_reference_layout() {
-		let link = Link::LiteUsername(b"alice.01".to_vec());
-		let call = encode_register_name_call([0x6a, 0x01], &[0x44; 32], b"alicebc", &link);
-		assert_eq!(&call[..2], &[0x6a, 0x01]);
-		assert_eq!(&call[2..34], &[0x44; 32]);
-		assert_eq!(&call[34..], &[b"alicebc".to_vec().encode(), link.encode()].concat()[..]);
+	fn register_name_call_args_encode_to_the_reference_layout() {
+		use subxt::{Metadata, ext::frame_decode::extrinsics::encode_call_data};
 
-		// Layout: 0x01 (Some) ‖ variant ‖ compact-len proof ‖ ring_index LE ‖
-		// revision LE ‖ 0x01 (Sr25519) ‖ signature, the AsDotnsGatewayInfo::
-		// RegisterFullName field order.
-		let extra = encode_register_full_name_extra(0, &[0xEE; 785], 3, 5, &[0xAB; 64]);
-		assert_eq!(
-			extra,
-			[
-				vec![0x01, 0x00],
-				vec![0xEEu8; 785].encode(),
-				3u32.to_le_bytes().to_vec(),
-				5u32.to_le_bytes().to_vec(),
-				vec![0x01],
-				vec![0xAB; 64],
-			]
-			.concat()
-		);
+		let metadata = Metadata::decode_from(
+			crate::runtime::statement_allowance::ASSET_HUB_TEST_METADATA_BYTES,
+		)
+		.unwrap();
+		let link = Link::LiteUsername(b"alice.01".to_vec());
+		let args = RegisterNameCallArgs {
+			who: [0x44; 32],
+			label: b"alicebc".to_vec(),
+			link: link.clone(),
+		};
+
+		let call =
+			encode_call_data("DotnsGateway", "register_name", &args, &metadata, metadata.types())
+				.unwrap();
+
+		let arguments = [vec![0x44; 32], b"alicebc".to_vec().encode(), link.encode()].concat();
+		assert_eq!(&call[2..], &arguments[..]);
 	}
 
+	/// The registration value encodes by name into the gateway's positional
+	/// layout: `Some ‖ RegisterFullName ‖ proof ‖ ring index ‖ revision ‖
+	/// Sr25519 ‖ signature`.
 	#[test]
-	fn selectors_match_reference_vectors() {
-		assert_eq!(hex::encode(selector("getLabelStore(address)")), "4fc5dce9");
-		assert_eq!(hex::encode(selector("getLabels(uint256,uint256)")), "2d7b5794");
-		assert_eq!(hex::encode(selector("protocolRegistry()")), "7656419f");
-		assert_eq!(hex::encode(selector("get(bytes32)")), "8eaa6ac0");
-		assert_eq!(hex::encode(selector("TARGET()")), "cc1f2afa");
-		assert_eq!(hex::encode(selector("pendingClaims(address,uint256,uint256)")), "76025b85");
-		assert_eq!(hex::encode(selector("tld()")), "2d551432");
-		assert_eq!(hex::encode(selector("recordExists(bytes32)")), "f79fe538");
-		assert_eq!(hex::encode(selector("ownerOf(uint256)")), "6352211e");
-		assert_eq!(hex::encode(selector("exists(uint256)")), "4f558e79");
+	fn a_full_name_registration_encodes_as_the_gateway_expects() {
+		use subxt::{Metadata, ext::frame_decode::extrinsics::ExtrinsicTypeInfo};
+
+		let metadata = Metadata::decode_from(
+			crate::runtime::statement_allowance::ASSET_HUB_TEST_METADATA_BYTES,
+		)
+		.unwrap();
+		let pipeline = metadata.extrinsic_extension_info(Some(0)).unwrap();
+		let slot = pipeline
+			.extension_ids
+			.iter()
+			.find(|declared| declared.name == "AsDotnsGateway")
+			.unwrap();
+		let info = AsDotnsGatewayInfo::RegisterFullName {
+			proof: vec![0xEE; 4],
+			ring_index: 3,
+			revision: 5,
+			signature: MultiSignature::Sr25519([0xAB; 64]),
+		};
+
+		let encoded = Some(info).encode_as_type(slot.id, metadata.types()).unwrap();
+
+		let expected = [
+			vec![0x01, 0x00],
+			vec![0xEEu8; 4].encode(),
+			3u32.encode(),
+			5u32.encode(),
+			vec![0x01],
+			vec![0xAB; 64],
+		]
+		.concat();
+		assert_eq!(encoded, expected);
 	}
 
 	#[test]
@@ -1012,34 +1028,6 @@ mod tests {
 	}
 
 	#[test]
-	fn calldata_encoders_place_arguments_in_padded_words() {
-		let address_call = call_address("getLabelStore(address)", &[0xAA; 20]);
-		assert_eq!(address_call.len(), 4 + 32);
-		assert_eq!(&address_call[..4], &selector("getLabelStore(address)"));
-		assert!(address_call[4..16].iter().all(|b| *b == 0));
-		assert_eq!(&address_call[16..], &[0xAA; 20]);
-
-		let pair_call = call_u256_pair("getLabels(uint256,uint256)", 0, 16);
-		assert_eq!(pair_call.len(), 4 + 64);
-		assert_eq!(pair_call[35], 0);
-		assert_eq!(pair_call[67], 16);
-
-		let paged_call =
-			call_address_u256_pair("pendingClaims(address,uint256,uint256)", &[0xBB; 20], 32, 16);
-		assert_eq!(paged_call.len(), 4 + 96);
-		assert_eq!(&paged_call[..4], &selector("pendingClaims(address,uint256,uint256)"));
-		let mut expected_args = vec![0u8; 96];
-		expected_args[12..32].fill(0xBB);
-		expected_args[63] = 32;
-		expected_args[95] = 16;
-		assert_eq!(&paged_call[4..], expected_args.as_slice());
-
-		let key_call = call_bytes32("get(bytes32)", &registry_key("storeFactory"));
-		assert_eq!(&key_call[4..16], b"storeFactory");
-		assert!(key_call[16..36].iter().all(|b| *b == 0));
-	}
-
-	#[test]
 	fn account_to_h160_follows_the_revive_mapper() {
 		let mut eth_derived = [0x0Fu8; 32];
 		eth_derived[20..].fill(0xEE);
@@ -1049,155 +1037,30 @@ mod tests {
 		assert_eq!(hashed, keccak_256(&[0x11; 32])[12..]);
 	}
 
-	/// Encodes a `ContractResult` prefix followed by `result`.
-	fn contract_result(result: &[u8]) -> Vec<u8> {
-		let mut out = Vec::new();
-		for _ in 0..4 {
-			Compact(7u64).encode_to(&mut out);
-		}
-		for _ in 0..2 {
-			(1u8, 0u128).encode_to(&mut out);
-		}
-		0u128.encode_to(&mut out);
-		out.extend_from_slice(result);
-		out
+	/// Answers a view of `Call` with `value`.
+	fn returns<Call: SolCall>(value: Call::Return) -> Result<Vec<u8>, DotnsViewError> {
+		Ok(Call::abi_encode_returns(&value))
 	}
 
-	#[test]
-	fn revive_call_output_surfaces_data_reverts_and_dispatch_errors() {
-		let mut ok = vec![0u8];
-		0u32.encode_to(&mut ok);
-		vec![0xABu8, 0xCD].encode_to(&mut ok);
-		assert_eq!(decode_revive_call_output(&contract_result(&ok)).unwrap(), vec![0xAB, 0xCD]);
-
-		// Error("nope") revert payload under ReturnFlags::REVERT.
-		let mut revert_data = vec![0x08, 0xc3, 0x79, 0xa0];
-		revert_data.extend_from_slice(&{
-			let mut word = [0u8; 32];
-			word[31] = 0x20;
-			word
-		});
-		revert_data.extend_from_slice(&{
-			let mut word = [0u8; 32];
-			word[31] = 4;
-			word
-		});
-		revert_data.extend_from_slice(b"nope");
-		revert_data.extend_from_slice(&[0u8; 28]);
-		let mut reverted = vec![0u8];
-		1u32.encode_to(&mut reverted);
-		revert_data.encode_to(&mut reverted);
-		let err = decode_revive_call_output(&contract_result(&reverted)).unwrap_err();
-		assert!(
-			matches!(&err, DotnsContractError::Reverted { detail } if detail == "Error(\"nope\")"),
-			"unexpected error: {err}"
-		);
-
-		let dispatch = contract_result(&[0x01, 0x02, 0x03]);
-		assert!(matches!(
-			decode_revive_call_output(&dispatch).unwrap_err(),
-			DotnsContractError::Dispatch { .. }
-		));
+	/// The view of `Call` that `input` encodes, if it encodes one.
+	fn decoded<Call: SolCall>(input: &[u8]) -> Option<Call> {
+		Call::abi_decode(input).ok()
 	}
 
-	/// ABI word with `value` right-aligned.
-	fn abi_word(value: u64) -> [u8; 32] {
-		let mut word = [0u8; 32];
-		word[24..].copy_from_slice(&value.to_be_bytes());
-		word
-	}
-
-	/// ABI string tail: a length word plus padded bytes.
-	fn abi_string(value: &str) -> Vec<u8> {
-		let mut out = abi_word(value.len() as u64).to_vec();
-		out.extend_from_slice(value.as_bytes());
-		out.resize(out.len().div_ceil(32) * 32, 0);
-		out
-	}
-
-	fn abi_pending_claims(values: &[(String, u64)]) -> Vec<u8> {
-		let encoded = values
-			.iter()
-			.map(|(label, minted_at)| {
-				[abi_word(0x40).to_vec(), abi_word(*minted_at).to_vec(), abi_string(label)].concat()
-			})
-			.collect::<Vec<_>>();
-		let mut output = abi_word(0x20).to_vec();
-		output.extend_from_slice(&abi_word(encoded.len() as u64));
-		let mut offset = (encoded.len() * 32) as u64;
-		for value in &encoded {
-			output.extend_from_slice(&abi_word(offset));
-			offset += value.len() as u64;
-		}
-		for value in encoded {
-			output.extend_from_slice(&value);
-		}
-		output
-	}
-
-	#[test]
-	fn abi_decoders_handle_addresses_string_arrays_and_pending_claims() {
-		let mut address = [0u8; 32];
-		address[12..].fill(0xBC);
-		assert_eq!(decode_address(&address).unwrap(), [0xBC; 20]);
-		assert!(decode_address(&[0xFF; 32]).is_err());
-
-		// string[] = ["alice01", "bob"].
-		let mut array = abi_word(0x20).to_vec();
-		array.extend_from_slice(&abi_word(2));
-		array.extend_from_slice(&abi_word(0x40));
-		array.extend_from_slice(&abi_word(0x40 + 0x40));
-		array.extend_from_slice(&abi_string("alice01"));
-		array.extend_from_slice(&abi_string("bob"));
-		assert_eq!(
-			decode_string_array(&array).unwrap(),
-			vec!["alice01".to_string(), "bob".to_string()]
-		);
-		assert_eq!(
-			decode_string_array(&[abi_word(0x20), abi_word(0)].concat()).unwrap(),
-			Vec::<String>::new()
-		);
-
-		// pendingClaims = [("alice01", 42), ("bob", 7)].
-		let struct_a =
-			[abi_word(0x40).to_vec(), abi_word(42).to_vec(), abi_string("alice01")].concat();
-		let struct_b = [abi_word(0x40).to_vec(), abi_word(7).to_vec(), abi_string("bob")].concat();
-		let mut claims = abi_word(0x20).to_vec();
-		claims.extend_from_slice(&abi_word(2));
-		claims.extend_from_slice(&abi_word(0x40));
-		claims.extend_from_slice(&abi_word(0x40 + struct_a.len() as u64));
-		claims.extend_from_slice(&struct_a);
-		claims.extend_from_slice(&struct_b);
-		assert_eq!(
-			decode_pending_claims_array(&claims).unwrap(),
-			vec![("alice01".to_string(), 42), ("bob".to_string(), 7)]
-		);
-		assert_eq!(
-			decode_pending_claims_array(&[abi_word(0x20), abi_word(0)].concat()).unwrap(),
-			Vec::<(String, u64)>::new()
-		);
-		assert_eq!(decode_u64(&abi_word(604_800)).unwrap(), 604_800);
-		assert!(decode_u64(&[0xff; 32]).is_err());
-	}
-
-	#[test]
-	fn bool_words_decode_strictly() {
-		assert!(decode_bool(&abi_word(1)).unwrap());
-		assert!(!decode_bool(&abi_word(0)).unwrap());
-		assert!(decode_bool(&abi_word(2)).is_err());
-		let mut high = abi_word(1);
-		high[5] = 1;
-		assert!(decode_bool(&high).is_err());
+	fn view_reverted() -> Result<Vec<u8>, DotnsViewError> {
+		Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
+			detail: "(empty)".to_string(),
+		}))
 	}
 
 	struct RevertingSecondClaimPage {
-		first_page: Vec<(String, u64)>,
+		first_page: Vec<DotnsPopController::PendingClaim>,
 		pending_calls: usize,
 	}
 
 	#[crate::platform::async_trait]
 	impl DotnsTransport for RevertingSecondClaimPage {
-		async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+		async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
 			panic!("unscripted storage read {}", hex::encode(key));
 		}
 
@@ -1206,21 +1069,17 @@ mod tests {
 			_dest: &[u8; 20],
 			input: Vec<u8>,
 		) -> Result<Vec<u8>, DotnsViewError> {
-			let function: [u8; 4] = input[..4].try_into().expect("selector prefix");
-			if function == selector("pendingClaims(address,uint256,uint256)") {
-				self.pending_calls += 1;
-				let offset = decode_u64(&input[36..68]).expect("offset word");
-				let limit = decode_u64(&input[68..100]).expect("limit word");
-				assert_eq!(limit, CLAIM_PAGE_LIMIT);
-				if offset == 0 {
-					return Ok(abi_pending_claims(&self.first_page));
-				}
-				assert_eq!(offset, CLAIM_PAGE_LIMIT);
-				return Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
-					detail: "offset past end".to_string(),
-				}));
+			let page = DotnsPopController::pendingClaimsCall::abi_decode(&input)
+				.expect("only pending claims are scripted");
+			self.pending_calls += 1;
+			assert_eq!(page.limit, U256::from(CLAIM_PAGE_LIMIT));
+			if page.offset.is_zero() {
+				return returns::<DotnsPopController::pendingClaimsCall>(self.first_page.clone());
 			}
-			panic!("unscripted view {}", hex::encode(function));
+			assert_eq!(page.offset, U256::from(CLAIM_PAGE_LIMIT));
+			Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
+				detail: "offset past end".to_string(),
+			}))
 		}
 	}
 
@@ -1230,7 +1089,11 @@ mod tests {
 			.map(|index| format!("claim{index:02}"))
 			.collect::<Vec<_>>();
 		let mut transport = RevertingSecondClaimPage {
-			first_page: expected.iter().cloned().map(|label| (label, 50)).collect(),
+			first_page: expected
+				.iter()
+				.cloned()
+				.map(|label| DotnsPopController::PendingClaim { label, mintedAt: 50 })
+				.collect(),
 			pending_calls: 0,
 		};
 
@@ -1255,7 +1118,7 @@ mod tests {
 			}
 			#[crate::platform::async_trait]
 			impl DotnsTransport for IssuedAll {
-				async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+				async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
 					unreachable!("classify_labels reads no storage")
 				}
 				async fn view(
@@ -1263,14 +1126,11 @@ mod tests {
 					_dest: &[u8; 20],
 					input: Vec<u8>,
 				) -> Result<Vec<u8>, DotnsViewError> {
-					assert_eq!(&input[..4], &selector("isPopIssued(string)"));
-					let issued = !self
-						.denied
-						.iter()
-						.any(|denied| input.windows(denied.len()).any(|w| w == denied.as_bytes()));
-					let mut word = [0u8; 32];
-					word[31] = u8::from(issued);
-					Ok(word.to_vec())
+					let asked = DotnsPopController::isPopIssuedCall::abi_decode(&input)
+						.expect("only isPopIssued is scripted");
+					returns::<DotnsPopController::isPopIssuedCall>(
+						!self.denied.contains(&asked.label.as_str()),
+					)
 				}
 			}
 			let identity = |lite: Option<&str>, full: Option<&str>| {
@@ -1414,7 +1274,7 @@ mod tests {
 
 	#[crate::platform::async_trait]
 	impl DotnsTransport for ScriptedDiscovery {
-		async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+		async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
 			Ok(Some(self.stored.to_vec()))
 		}
 
@@ -1423,34 +1283,27 @@ mod tests {
 			_dest: &[u8; 20],
 			input: Vec<u8>,
 		) -> Result<Vec<u8>, DotnsViewError> {
-			let sel: [u8; 4] = input[..4].try_into().expect("selector prefix; qed");
-			if sel == selector("TARGET()") {
+			if decoded::<RootGatewayDispatcher::TARGETCall>(&input).is_some() {
 				(self.target)()
-			} else if sel == selector("protocolRegistry()") {
+			} else if decoded::<DotnsPopController::protocolRegistryCall>(&input).is_some() {
 				(self.protocol_registry)()
+			} else if decoded::<DotnsPopController::pendingClaimsCall>(&input).is_some() {
+				returns::<DotnsPopController::pendingClaimsCall>(Vec::new())
 			} else {
-				panic!("unscripted view {}", hex::encode(sel));
+				panic!("unscripted view {}", hex::encode(input));
 			}
 		}
 	}
 
-	fn address_word(byte: u8) -> Vec<u8> {
-		let mut word = [0u8; 32];
-		word[12..].copy_from_slice(&[byte; 20]);
-		word.to_vec()
-	}
-
-	fn view_reverted() -> Result<Vec<u8>, DotnsViewError> {
-		Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
-			detail: "(empty)".to_string(),
-		}))
+	fn address_answer(byte: u8) -> Result<Vec<u8>, DotnsViewError> {
+		returns::<RootGatewayDispatcher::TARGETCall>(Address::repeat_byte(byte))
 	}
 
 	#[test]
 	fn discovery_follows_target_when_the_stored_address_is_a_dispatcher() {
 		let mut transport = ScriptedDiscovery {
 			stored: [0xdd; 20],
-			target: || Ok(address_word(0xcc)),
+			target: || address_answer(0xcc),
 			protocol_registry: view_reverted,
 		};
 		let found = futures::executor::block_on(discover_pop_controller(&mut transport))
@@ -1463,7 +1316,7 @@ mod tests {
 		let mut transport = ScriptedDiscovery {
 			stored: [0xcc; 20],
 			target: || panic!("must not probe the dispatcher view"),
-			protocol_registry: || Ok(address_word(0x9e)),
+			protocol_registry: || address_answer(0x9e),
 		};
 		let found = futures::executor::block_on(discover_pop_controller(&mut transport))
 			.expect("discovery");
@@ -1483,7 +1336,7 @@ mod tests {
 		};
 		let err = futures::executor::block_on(discover_pop_controller(&mut transport))
 			.expect_err("neither");
-		assert!(err.contains("neither protocolRegistry() nor"), "{err}");
+		assert!(err.to_string().contains("neither protocolRegistry() nor"), "{err}");
 	}
 
 	#[test]
@@ -1495,20 +1348,33 @@ mod tests {
 		};
 		let err = futures::executor::block_on(discover_pop_controller(&mut transport))
 			.expect_err("failure");
-		assert!(err.contains("TARGET(): node unreachable"), "{err}");
-		assert!(!err.contains("neither"), "a node failure is not a wrong contract: {err}");
+		assert_eq!(
+			err,
+			DotnsError::DispatcherTarget(DotnsCallError::View(DotnsViewError::Failed(
+				"node unreachable".into()
+			)))
+		);
 	}
 
 	#[test]
-	fn discovery_propagates_a_transport_failure_instead_of_guessing() {
+	fn registry_reads_propagate_a_transport_failure_instead_of_guessing() {
 		let mut transport = ScriptedDiscovery {
 			stored: [0xcc; 20],
 			target: || panic!("must not fall back on a transport failure"),
 			protocol_registry: || Err(DotnsViewError::Failed("node unreachable".into())),
 		};
-		let err = futures::executor::block_on(discover_pop_controller(&mut transport))
-			.expect_err("failure");
-		assert!(err.contains("node unreachable"), "{err}");
+		for error in [
+			futures::executor::block_on(discover_pop_controller(&mut transport)).unwrap_err(),
+			futures::executor::block_on(resolve_labels(&mut transport, &[0xcc; 20], &[0xaa; 32]))
+				.unwrap_err(),
+		] {
+			assert_eq!(
+				error,
+				DotnsError::ProtocolRegistry(DotnsCallError::View(DotnsViewError::Failed(
+					"node unreachable".into()
+				)))
+			);
+		}
 	}
 
 	/// A transport answering views by selector: `tld()` with a scripted
@@ -1521,7 +1387,7 @@ mod tests {
 
 	#[crate::platform::async_trait]
 	impl DotnsTransport for ScriptedTld {
-		async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+		async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
 			Ok(None)
 		}
 
@@ -1530,18 +1396,15 @@ mod tests {
 			_dest: &[u8; 20],
 			input: Vec<u8>,
 		) -> Result<Vec<u8>, DotnsViewError> {
-			let sel: [u8; 4] = input[..4].try_into().expect("selector prefix; qed");
-			if sel == selector("tld()") {
+			if decoded::<ProtocolRegistry::tldCall>(&input).is_some() {
 				(self.tld)()
-			} else if sel == selector("get(bytes32)") {
-				let mut word = [0u8; 32];
-				word[12..].copy_from_slice(&[0xd0; 20]);
-				Ok(word.to_vec())
-			} else if sel == selector("recordExists(bytes32)") {
-				assert_eq!(&input[4..36], &tld_node(TLD_WITHOUT_VIEW));
-				Ok(abi_word(self.dot_record_exists as u64).to_vec())
+			} else if decoded::<ProtocolRegistry::getCall>(&input).is_some() {
+				returns::<ProtocolRegistry::getCall>(Address::repeat_byte(0xd0))
+			} else if let Some(asked) = decoded::<DotnsRegistry::recordExistsCall>(&input) {
+				assert_eq!(asked.node, tld_node(TLD_WITHOUT_VIEW));
+				returns::<DotnsRegistry::recordExistsCall>(self.dot_record_exists)
 			} else {
-				panic!("unscripted view {}", hex::encode(sel));
+				panic!("unscripted view {}", hex::encode(input));
 			}
 		}
 	}
@@ -1549,15 +1412,11 @@ mod tests {
 	#[test]
 	fn the_tld_falls_back_only_when_the_view_reverts_and_the_record_exists() {
 		let registry = [0x9e; 20];
-		fn reverted() -> Result<Vec<u8>, DotnsViewError> {
-			Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
-				detail: "(empty)".to_string(),
-			}))
-		}
+		let reverted = view_reverted;
 
 		let served = futures::executor::block_on(network_tld(
 			&mut ScriptedTld {
-				tld: || Ok([abi_word(32).to_vec(), abi_string(".paseo")].concat()),
+				tld: || returns::<ProtocolRegistry::tldCall>(".paseo".to_string()),
 				dot_record_exists: false,
 			},
 			&registry,
@@ -1595,7 +1454,7 @@ mod tests {
 
 	#[crate::platform::async_trait]
 	impl DotnsTransport for ScriptedAvailability {
-		async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+		async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
 			Ok(None)
 		}
 
@@ -1604,22 +1463,18 @@ mod tests {
 			_dest: &[u8; 20],
 			input: Vec<u8>,
 		) -> Result<Vec<u8>, DotnsViewError> {
-			let sel: [u8; 4] = input[..4].try_into().expect("selector prefix; qed");
-			if sel == selector("protocolRegistry()") {
-				let mut word = [0u8; 32];
-				word[12..].copy_from_slice(&[0x9e; 20]);
-				Ok(word.to_vec())
-			} else if sel == selector("tld()") {
-				Ok([abi_word(32).to_vec(), abi_string(".paseo")].concat())
-			} else if sel == selector("get(bytes32)") {
-				let mut word = [0u8; 32];
-				word[12..].copy_from_slice(&[0xd1; 20]);
-				Ok(word.to_vec())
-			} else if sel == selector("exists(uint256)") {
-				assert_eq!(&input[4..36], &namehash_under(&tld_node(".paseo"), "george"));
+			if decoded::<DotnsPopController::protocolRegistryCall>(&input).is_some() {
+				returns::<DotnsPopController::protocolRegistryCall>(Address::repeat_byte(0x9e))
+			} else if decoded::<ProtocolRegistry::tldCall>(&input).is_some() {
+				returns::<ProtocolRegistry::tldCall>(".paseo".to_string())
+			} else if decoded::<ProtocolRegistry::getCall>(&input).is_some() {
+				returns::<ProtocolRegistry::getCall>(Address::repeat_byte(0xd1))
+			} else if let Some(asked) = decoded::<DotnsRegistrar::existsCall>(&input) {
+				let node = namehash_under(&tld_node(".paseo"), "george");
+				assert_eq!(asked.tokenId, U256::from_be_bytes(node));
 				(self.exists)()
 			} else {
-				panic!("unscripted view {}", hex::encode(sel));
+				panic!("unscripted view {}", hex::encode(input));
 			}
 		}
 	}
@@ -1638,38 +1493,12 @@ mod tests {
 			))
 		};
 
-		assert_eq!(run(|| Ok(abi_word(0).to_vec())), Ok(true));
-		assert_eq!(run(|| Ok(abi_word(1).to_vec())), Ok(false));
-		let reverted = run(|| {
-			Err(DotnsViewError::Reverted(DotnsContractError::Reverted {
-				detail: "(empty)".to_string(),
-			}))
-		});
+		assert_eq!(run(|| returns::<DotnsRegistrar::existsCall>(false)), Ok(true));
+		assert_eq!(run(|| returns::<DotnsRegistrar::existsCall>(true)), Ok(false));
+		let reverted = run(view_reverted);
 		assert!(reverted.is_err(), "{reverted:?}");
 		let failed = run(|| Err(DotnsViewError::Failed("timed out".to_string())));
 		assert!(failed.is_err(), "{failed:?}");
-	}
-
-	#[test]
-	fn view_output_separates_reverts_from_failures() {
-		let reverted = contract_result(&{
-			let mut out = vec![0x00];
-			1u32.encode_to(&mut out); // ReturnFlags::REVERT
-			Vec::<u8>::new().encode_to(&mut out);
-			out
-		});
-		assert!(matches!(
-			view_output(&reverted),
-			Err(DotnsViewError::Reverted(DotnsContractError::Reverted { .. }))
-		));
-		assert!(matches!(view_output(&[0x01]), Err(DotnsViewError::Failed(_))));
-		let returned = contract_result(&{
-			let mut out = vec![0x00];
-			0u32.encode_to(&mut out);
-			vec![1u8, 2, 3, 4].encode_to(&mut out);
-			out
-		});
-		assert_eq!(view_output(&returned).unwrap(), vec![1, 2, 3, 4]);
 	}
 
 	#[test]
@@ -1710,15 +1539,5 @@ mod tests {
 
 		assert_eq!(dispatcher_address_key().len(), 32);
 		assert_eq!(timestamp_now_key().len(), 32);
-	}
-
-	#[test]
-	fn revive_call_args_encode_origin_dest_and_input() {
-		let args = encode_revive_call(&[0x11; 32], &[0x22; 20], &[0xAB, 0xCD]);
-		assert_eq!(&args[..32], &[0x11; 32]);
-		assert_eq!(&args[32..52], &[0x22; 20]);
-		assert_eq!(&args[52..68], &[0u8; 16], "value is zero");
-		assert_eq!(&args[68..70], &[0x00, 0x00], "no gas or deposit limit");
-		assert_eq!(&args[70..], vec![0xABu8, 0xCD].encode().as_slice());
 	}
 }

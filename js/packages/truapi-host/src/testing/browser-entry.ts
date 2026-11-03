@@ -4,6 +4,7 @@
 // the server can bundle once and serve every test: the fixture varies the
 // query string, not the bundle.
 
+import { asProductId } from "@parity/truapi";
 import { startTestHost } from "./host-page.js";
 import type { MockHostConfig } from "../web/create-mock-host.js";
 import type { DevAccount, DevAccountName } from "./dev-accounts.js";
@@ -40,7 +41,8 @@ const accounts = params
     };
   });
 const login = params.get("login");
-const productId = params.get("productId") ?? undefined;
+const rawProductId = params.get("productId");
+const productId = rawProductId === null ? undefined : asProductId(rawProductId);
 const rawRuntimeConfig = params.get("runtimeConfig");
 const topology = params.get("topology");
 const allowances = params.get("allowances");

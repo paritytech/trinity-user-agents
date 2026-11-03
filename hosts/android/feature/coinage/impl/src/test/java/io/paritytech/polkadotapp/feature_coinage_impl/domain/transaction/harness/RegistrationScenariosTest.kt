@@ -274,6 +274,52 @@ class RegistrationScenariosTest {
     }
 
     @Test
+    fun `marks nothing when a prepared handoff is not committed`() = scenario {
+        mintCoinsOnChain(COIN_A, finality = FINALIZED)
+
+        service.prepareHandoff(listOf(OwnAsset.Coin(testKey(COIN_A)))).getOrThrow()
+
+        assertFalse(assetStateOf(COIN_A).handedOff)
+    }
+
+    @Test
+    fun `keeps the mark across a relaunch when a prepared handoff is committed`() = scenario {
+        mintCoinsOnChain(COIN_A, finality = FINALIZED)
+
+        service.prepareHandoff(listOf(OwnAsset.Coin(testKey(COIN_A)))).getOrThrow().commit().getOrThrow()
+
+        relaunch()
+        assertTrue(assetStateOf(COIN_A).handedOff)
+    }
+
+    @Test
+    fun `fails the commit and keeps the first mark when the prepared asset was handed off meanwhile`() = scenario {
+        mintCoinsOnChain(COIN_A, finality = FINALIZED)
+        val prepared = service.prepareHandoff(listOf(OwnAsset.Coin(testKey(COIN_A)))).getOrThrow()
+        service.preCommitHandoff(listOf(OwnAsset.Coin(testKey(COIN_A)))).getOrThrow().commit().getOrThrow()
+
+        assertEquals(
+            CoinageRegistrationError.HandoffOfHandedOffAsset(OwnAsset.Coin(testKey(COIN_A))),
+            prepared.commit().exceptionOrNull(),
+        )
+        relaunch()
+        assertTrue(assetStateOf(COIN_A).handedOff)
+    }
+
+    @Test
+    fun `fails the commit and marks nothing when the prepared asset was claimed meanwhile`() = scenario {
+        mintCoinsOnChain(COIN_A, finality = FINALIZED)
+        val prepared = service.prepareHandoff(listOf(OwnAsset.Coin(testKey(COIN_A)))).getOrThrow()
+        givenUnwatchedEntry(inputCoin = COIN_A, outputCoin = COIN_B)
+
+        assertEquals(
+            CoinageRegistrationError.HandoffOfClaimedAsset(OwnAsset.Coin(testKey(COIN_A))),
+            prepared.commit().exceptionOrNull(),
+        )
+        assertFalse(assetStateOf(COIN_A).handedOff)
+    }
+
+    @Test
     fun `a batch registers every transaction under its group and takes ownership of each`() = scenario {
         mintCoinsOnChain(COIN_A, COIN_D, finality = FINALIZED)
 

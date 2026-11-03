@@ -217,9 +217,10 @@ impl ChatPlatform for CliChatHost {
 mod tests {
 	use super::*;
 	use std::fs::read_to_string;
+	use truapi::platform::ProductId;
 
 	fn product() -> ProductContext {
-		ProductContext::new("chat.dot".to_string()).expect("valid product id")
+		ProductContext::new(ProductId::for_test("chat.dot"))
 	}
 
 	fn text(text: &str) -> ChatMessageContent {

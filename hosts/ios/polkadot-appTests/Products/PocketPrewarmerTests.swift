@@ -1,5 +1,5 @@
+import struct TrUAPIHost.ProductId
 import Foundation
-import AsyncExtensions
 import Products
 import Testing
 @testable import polkadot_app
@@ -65,14 +65,14 @@ struct PocketPrewarmerTests {
 // MARK: - Fixtures
 
 private let humanity = PocketCardViewModel(
-    key: PocketCardKey(productId: "peopl.testnet", cardId: PocketCardId(value: "humanity")),
+    key: PocketCardKey(productId: try! ProductId("peopl.testnet"), cardId: PocketCardId(value: "humanity")),
     title: "Humanity",
     privileged: true,
     face: nil
 )
 
 private let loyalty = PocketCardViewModel(
-    key: PocketCardKey(productId: "game.testnet", cardId: PocketCardId(value: "loyalty")),
+    key: PocketCardKey(productId: try! ProductId("game.testnet"), cardId: PocketCardId(value: "loyalty")),
     title: "Loyalty",
     privileged: false,
     face: nil
@@ -84,13 +84,13 @@ private func resolverPublishingWidgets() -> StubProductResolver {
     StubProductResolver { productId in
         ResolvedProduct(
             id: productId,
-            displayName: productId,
+            displayName: productId.rawValue,
             description: nil,
             icon: nil,
             executables: ProductExecutables(
-                app: ProductExecutable.App(identifier: "app.\(productId)", appVersion: .zero),
+                app: ProductExecutable.App(identifier: try ProductId("app.\(productId.rawValue)"), appVersion: .zero),
                 widget: ProductExecutable.Widget(
-                    identifier: "widget.\(productId)",
+                    identifier: try ProductId("widget.\(productId.rawValue)"),
                     appVersion: .zero,
                     description: nil,
                     heights: [2],
@@ -115,11 +115,6 @@ private final class RecordingArchives: DotNsResolverProtocol, @unchecked Sendabl
         warmed.append(dotNsName)
         if failing { throw DotNsResolverError.resolutionFailed(dotNsName) }
         return URL(fileURLWithPath: "/tmp/\(dotNsName)")
-    }
-
-    func getMetadataEntry(dotNsName _: String, key _: String) async throws -> String? { nil }
-    func progressStream(dotNsName _: String) -> AnyAsyncSequence<DotNsLoadProgress> {
-        AsyncStream<DotNsLoadProgress> { $0.finish() }.eraseToAnyAsyncSequence()
     }
 
     func clearCache() throws {}

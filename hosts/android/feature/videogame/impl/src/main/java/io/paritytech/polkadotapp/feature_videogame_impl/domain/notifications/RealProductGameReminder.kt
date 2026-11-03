@@ -2,20 +2,24 @@ package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.ProductIdSerializer
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPublisher
 import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.VideoGameSettingsPreferences
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.seconds
 
 @Serializable
-data class ScheduledProductGame(val productId: String, val startsAtMillis: Long)
+data class ScheduledProductGame(
+    @Serializable(with = ProductIdSerializer::class) val productId: ProductId,
+    val startsAtMillis: Long,
+)
 
 private val PRODUCT_GAME_START_GRACE = 30.seconds
 
@@ -35,6 +39,7 @@ class RealProductGameReminder @Inject constructor(
     private val calendar: ProductGameCalendar,
     private val osAccess: ProductGameOsAccess,
     private val timeProvider: TimeProvider,
+    private val telemetry: GameReminderTelemetry,
 ) : ProductGameReminder {
     private val lock = Mutex()
 
@@ -47,23 +52,35 @@ class RealProductGameReminder @Inject constructor(
     fun currentlyScheduled(): List<ScheduledProductGame> = preferences.getScheduledProductGames()
 
     fun scheduledFor(productId: ProductId): ScheduledProductGame? =
-        currentlyScheduled().firstOrNull { it.productId == productId.value }
+        currentlyScheduled().firstOrNull { it.productId == productId }
+
+    override fun scheduledStartFor(productId: ProductId): Long? = scheduledFor(productId)?.startsAtMillis
 
     // An alarm needs both notifications and exact alarms; without exact alarms a notification still reminds.
     override suspend fun schedule(productId: ProductId, startsAtMillis: Long): Result<Unit> = requestLock.withLock {
         val leadMillis = startsAtMillis - now()
         osAccess.requestNotifications().map {
             osAccess.requestExactAlarms()
-            lock.withLock { add(ScheduledProductGame(productId.value, startsAtMillis)) }
+            lock.withLock { add(ScheduledProductGame(productId, startsAtMillis)) }
             if (leadMillis >= CALENDAR_MIN_LEAD.inWholeMilliseconds && osAccess.requestCalendar()) {
                 calendar.addGame(startsAtMillis)
             }
-        }
+        }.onFailure { telemetry.report(GameReminderEvent.NotScheduled(productId, startsAtMillis, GameReminderSkipReason.NOT_AUTHORIZED)) }
     }
 
     override suspend fun cancel(productId: ProductId) {
-        requestLock.withLock {
-            lock.withLock { scheduledFor(productId)?.let(::remove) }
+        cancelHeld(productId)
+    }
+
+    override suspend fun cancelByProduct(productId: ProductId) {
+        cancelHeld(productId)?.let { game ->
+            telemetry.report(GameReminderEvent.Cancelled(productId, game.startsAtMillis))
+        }
+    }
+
+    private suspend fun cancelHeld(productId: ProductId): ScheduledProductGame? = requestLock.withLock {
+        lock.withLock {
+            scheduledFor(productId)?.also(::remove)
         }
     }
 
@@ -103,4 +120,4 @@ class RealProductGameReminder @Inject constructor(
     }
 }
 
-fun ScheduledProductGame.product(): ProductId = ProductId.fromStoredValue(productId)
+fun ScheduledProductGame.product(): ProductId = productId

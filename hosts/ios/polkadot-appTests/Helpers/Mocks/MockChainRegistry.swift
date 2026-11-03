@@ -12,6 +12,7 @@ final class MockChainRegistry: ChainRegistryProtocol, @unchecked Sendable {
     private let mutex = NSLock()
 
     private var storedChainsByGenesis: [String: ChainModel] = [:]
+    private var storedChainsById: [ChainModel.Id: ChainModel] = [:]
     private var storedRuntimeProviders: [String: RuntimeProviderProtocol] = [:]
     private var storedConnectionsByChainId: [ChainModel.Id: ChainConnection] = [:]
     private var storedChainSockets: [ChainModel.Id: [ChainSocketProtocol]] = [:]
@@ -20,6 +21,11 @@ final class MockChainRegistry: ChainRegistryProtocol, @unchecked Sendable {
     var chainsByGenesis: [String: ChainModel] {
         get { mutex.withLock { storedChainsByGenesis } }
         set { mutex.withLock { storedChainsByGenesis = newValue } }
+    }
+
+    var chainsById: [ChainModel.Id: ChainModel] {
+        get { mutex.withLock { storedChainsById } }
+        set { mutex.withLock { storedChainsById = newValue } }
     }
 
     var runtimeProviders: [String: RuntimeProviderProtocol] {
@@ -58,7 +64,7 @@ final class MockChainRegistry: ChainRegistryProtocol, @unchecked Sendable {
 
     var allAvailableChains: [ChainModel] { Array(chainsByGenesis.values) }
 
-    func getChain(for _: ChainModel.Id) -> ChainModel? { nil }
+    func getChain(for chainId: ChainModel.Id) -> ChainModel? { chainsById[chainId] }
     func getChainByGenesis(for genesisHash: ChainModel.Id) -> ChainModel? { chainsByGenesis[genesisHash] }
     func getConnection(for chainId: ChainModel.Id) -> ChainConnection? { connectionsByChainId[chainId] }
     func getOneShotConnection(for _: ChainModel.Id) -> JSONRPCEngine? { nil }

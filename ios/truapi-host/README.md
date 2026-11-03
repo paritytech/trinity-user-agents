@@ -34,6 +34,8 @@ The generated bindings, the container bundle and the xcframework are all **gitig
 A consumer pins the plain semver tag, not the `@parity/ios-host@<version>` one,
 which SwiftPM cannot see:
 
+Product identifiers use `ProductId`, an immutable Swift value initialized through the Rust parser. Construct one with `try ProductId("chat.dot")`; use `rawValue` only at string serialization and display boundaries. `Codable` preserves the string wire format.
+
 ```swift
 .package(url: "https://github.com/paritytech/trinity-user-agents", exact: "0.12.0")
 ```
@@ -56,15 +58,16 @@ binding for every UniFFI-exposed type. It runs on Linux, so it never compiles
 Swift.
 
 The hand-written conformers in `TrUAPIHost.swift` and `Tests/` are covered by
-the `iOS package (Swift + WebKit)` job instead, which builds a simulator-only
-debug XCFramework from the pull request source, compiles the package tests,
-and runs the network permission suite in WKWebView. It is path-filtered to pull requests touching `ios/`, `Package.swift`, the
-`Makefile`, `js/container/`, or any of the crates the bindings are generated
-from (`truapi`, `truapi-provider`); the
-filter has to name them explicitly, since a protocol change no longer shows up
-as an `ios/` diff.
+the `TrUAPIHost package (Swift + WebKit)` job instead, which compiles the
+package tests against the iOS core the app jobs share, built from the pull
+request source or reused from main when its inputs match, and runs the network
+permission suite in WKWebView. It runs on pull requests touching any input the
+`swift` package in `.github/hosts.json` names, among them `ios/`,
+`Package.swift`, `js/container/` and every crate the bindings are generated
+from, which the list has to name explicitly, since a protocol change no longer
+shows up as an `ios/` diff.
 The Android host job compiles `TrUAPIHost.kt` against generated bindings;
-the separate iOS CI workflow builds and tests the embedding app.
+CI's `iOS app` job, `ios-app.yml`, builds and tests the embedding app.
 
 Run `rebuild.sh` after changing anything host-visible — the `NativeTrUApiHostRuntime` or `NativeProductExecution` methods, `HostCallbacks`, the native mirror types in `rust/crates/truapi/src/native*`, or `js/container/src` — to refresh your local build outputs. Nothing to commit: CI regenerates them. To publish from a release PR, add `@parity/ios-host <version>` to its `release:` title. After the release commit passes CI, the release workflow rebuilds and simulator-tests the XCFramework on macOS, uploads it, cuts the `<version>` tag, and opens the `Package.swift` follow-up pull request only after the asset is live. `publish.sh` remains available for an ad hoc manual release.
 
@@ -116,7 +119,7 @@ Run the package tests in their UIKit host on an iOS simulator (the xcframework h
 ## Chat
 
 A host serving the Chat modality implements `ChatHostBridge` and opens the
-execution with `ProductExecutionKind.chat`. Hosts without it pass nothing and
+execution with `ExecutableKind.worker`. Hosts without it pass nothing and
 Chat calls answer unsupported.
 
 ```swift
@@ -171,7 +174,7 @@ try runtime.activateLocalSession(secret: secret)
 
 let execution = try runtime.openProductExecution(
     bridge: bridge,
-    configuration: ProductExecutionConfig(productId: "chat.dot", executionKind: .chat),
+    configuration: ProductExecutionConfig(productId: try ProductId("chat.dot"), executionKind: .chat),
     chat: MyChatBridge(store: store)
 )
 let endpoint = try execution.startWsBridge()
@@ -218,7 +221,7 @@ final class MyPocketBridge: PocketHostBridge, @unchecked Sendable {
 
 let execution = try runtime.openProductExecution(
     bridge: bridge,
-    configuration: ProductExecutionConfig(productId: "game.dot", executionKind: .worker),
+    configuration: ProductExecutionConfig(productId: try ProductId("game.dot"), executionKind: .worker),
     pocket: MyPocketBridge(store: pocketStore)
 )
 
@@ -241,7 +244,7 @@ back to the product; and `sessionChatIdentityKey` reads the session's X25519
 chat identity private key, which must not be logged or persisted. An open
 render stream is one worker reference the core holds on the product's behalf;
 the transition it causes arrives on the runtime bridge's
-`workerDemandChanged`, never on the execution's. Two rules the core
+`requestWorkerTransition`, never on the execution's. Two rules the core
 cannot check are the host's to keep: send a render context only for a surface
 the product's manifest `includes`, and publish a renderer action only from the
 current tree of an open render stream.
@@ -294,6 +297,19 @@ the host keeps its own record of which devices it has already seen. It arrives
 on the thread answering the handshake, so hand the device off rather than
 announcing it inline. Defaults to a no-op for a host that answers no pairing.
 
+`currentInstallation()` on the runtime bridge returns the 32-byte id of the
+current app installation, the one the host registers for recovery. NFT purse
+item keys are derived under it. Defaults to a rejection, which fails
+`createItems`.
+
+`encryptedStorageRead(key:)`, `encryptedStorageWrite(key:value:)` and
+`encryptedStorageDelete(key:)` on the runtime bridge keep values encrypted at
+rest and out of backups, such as Keychain items with a `ThisDeviceOnly`
+accessibility. The core stores secrets there that its database must not hold. A
+missing key reads as `nil`; throw when the store cannot be read or a value no
+longer decrypts. Deleting a missing key succeeds. Defaults to a rejection,
+which turns off the features that need it.
+
 `durableWorkChanged(pending:)` on the runtime bridge reports whether the core
 has durable transactions still awaiting a verdict, starting with the state it
 finds at launch. While it is `true`, schedule a background task (a
@@ -326,7 +342,7 @@ final class MyGameBridge: GameHostBridge, @unchecked Sendable {
 
 let execution = try runtime.openProductExecution(
     bridge: bridge,
-    configuration: ProductExecutionConfig(productId: "dim2.dot", executionKind: .worker),
+    configuration: ProductExecutionConfig(productId: try ProductId("dim2.dot"), executionKind: .worker),
     game: MyGameBridge(reminders: reminderStore)
 )
 ```
@@ -619,7 +635,7 @@ try runtime.activateLocalSession(secret: entropyBytes, liteUsername: nil)
 let execution = try runtime.openProductExecution(
     bridge: bridge,
     configuration: ProductExecutionConfig(
-        productId: "my-product.dot",
+        productId: try ProductId("my-product.dot"),
         executionKind: .app
     )
 )
@@ -661,7 +677,7 @@ execution.close()
 runtime.disconnect()
 ```
 
-The updated `@parity/truapi` SDK keeps the same client across connection loss. The SDK replaces the socket; interrupted operations fail with `ConnectionResetError` and are never replayed. Recreate read/watch subscriptions in the provider that owns them. SDKs 0.16.0 and 0.18.0 can still start through the minimal `__HOST_API_PORT__` adapter, but require a page reload after a disconnect. Remove that adapter once deployed products adopt the injected client.
+The updated `@parity/truapi` SDK keeps the same client across connection loss. The SDK replaces the socket. Operations the host may have started fail with `ConnectionResetError`. A call not yet sent goes out on the replacement once its handshake completes, or fails the same way when the SDK stops redialing. Recreate read/watch subscriptions in the provider that owns them. SDKs 0.16.0 and 0.18.0 can still start through the minimal `__HOST_API_PORT__` adapter, but require a page reload after a disconnect. Remove that adapter once deployed products adopt the injected client.
 
 The shared container uses the same WebSocket as SDK calls and asks Rust to authorize each fetch or XHR before sending it, and each remote WebSocket before connecting. It parses the URL with captured browser primitives and sends its hostname to `authorize_remote_permission`; Rust normalizes and checks the domain. Swift supplies the endpoint and handles native permission prompts; it does not relay individual network permission messages. An upfront permission request and a network operation are separate, so an Allow once decision is consumed by the next permitted operation rather than persisted.
 
@@ -691,5 +707,5 @@ Build the generated JavaScript SDK before the container: from the repository roo
 `./scripts/rebuild.sh` orchestrates everything; the underlying pieces, should you need one in isolation:
 
 - **xcframework** — `make xcframework` (repo root) builds `truapi` for `aarch64-apple-ios` and `aarch64-apple-ios-sim` and bundles `target/truapi_server.xcframework`; the script copies it into `Binaries/` and strips the per-slice `module.modulemap` (module resolution comes from the `systemLibrary` target; the slice copy collides with other xcframeworks in Xcode's flat include dir).
-- **bindings** — `make uniffi` (run automatically by `make xcframework`) emits the Swift bindings into `target/uniffi-swift-out/` via the workspace `uniffi-bindgen-cli`; `scripts/sync-bindings.sh` copies them into `Sources/TrUAPIHost/truapi.swift` and `Sources/truapiFFI/include/`, renaming the emitted `truapiFFI.modulemap` to `module.modulemap` so the SwiftPM `systemLibrary` target picks it up. `rebuild.sh` calls it, and so does the `iOS package (Swift + WebKit)` job, which is what puts Swift sources into the package before `xcodebuild` runs.
+- **bindings** — `make uniffi` (run automatically by `make xcframework`) emits the Swift bindings into `target/uniffi-swift-out/` via the workspace `uniffi-bindgen-cli`; `scripts/sync-bindings.sh` copies them into `Sources/TrUAPIHost/truapi.swift` and `Sources/truapiFFI/include/`, renaming the emitted `truapiFFI.modulemap` to `module.modulemap` so the SwiftPM `systemLibrary` target picks it up. `rebuild.sh` calls it, which is what puts Swift sources into the package before `xcodebuild` runs.
 - **container** — `npm run build` in `js/container/` (repo root) bundles `src/index.ts` into `Sources/TrUAPIHost/Resources/truapi-container.js`.

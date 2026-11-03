@@ -10,9 +10,8 @@ import Products
 /// The product's own `createRoom` finds this row by `(extensionId, roomId)`, answers `exists`, and
 /// replaces this name and nil icon with the ones the product gives.
 ///
-/// It does not cover a product that never resolves: `ContactsListInteractor` draws an extension
-/// row only while a bot is registered, and `ProductBotFactory` builds none without a worker.
-/// Fixing that means letting `ChatExtensionStore.diffAndApply` swap a bot, which it cannot.
+/// `ContactsListInteractor` draws the row as soon as `ProductBotProvider` lists the product, under
+/// the product's own name and icon until its bot is built.
 struct HostPlacedRoomPlacer {
     private let chatRepository: AnyDataProviderRepository<Chat.LocalModel>
     private let tldProvider: DotNsTldProviding
@@ -50,10 +49,10 @@ private extension HostPlacedRoomPlacer {
 
     /// A failure costs the placeholder, not the room: the product's own `createRoom` still runs.
     func place(_ hostPlaced: HostPlacedProduct, tld: String) async {
-        let extensionId = hostPlaced.productId(tld)
-        let chatId = Chat.Id.chatExtension(extensionId, roomId: hostPlaced.roomId)
-
         do {
+            let extensionId = try hostPlaced.productId(tld).rawValue
+            let chatId = Chat.Id.chatExtension(extensionId, roomId: hostPlaced.roomId)
+
             let existing = try await chatRepository
                 .fetchOperation(by: { chatId.rawRepresentation }, options: RepositoryFetchOptions())
                 .asyncExecute()
@@ -72,7 +71,7 @@ private extension HostPlacedRoomPlacer {
 
             try await chatRepository.saveOperation({ [chat] }, { [] }).asyncExecute()
         } catch {
-            logger.error("Failed to place the room for \(extensionId): \(error)")
+            logger.error("Failed to place the room for \(hostPlaced.fallbackName): \(error)")
         }
     }
 }

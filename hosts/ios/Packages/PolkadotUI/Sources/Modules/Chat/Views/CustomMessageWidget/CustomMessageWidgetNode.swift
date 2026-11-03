@@ -34,7 +34,7 @@ public extension CustomMessageWidgetNode {
     struct BoxProps {
         public let alignment: Alignment
 
-        public init(alignment: Alignment = .center) {
+        public init(alignment: Alignment = .topLeading) {
             self.alignment = alignment
         }
     }
@@ -124,7 +124,7 @@ public extension CustomMessageWidgetNode {
         case archive(path: String)
     }
 
-    enum ImageFit {
+    enum ImageFit: Sendable {
         case none
         case fill
         case cover
@@ -188,15 +188,6 @@ public extension CustomMessageWidgetNode {
         case spaceBetween
         case spaceAround
         case spaceEvenly
-
-        var isSpaced: Bool {
-            switch self {
-            case .spaceBetween,
-                 .spaceAround,
-                 .spaceEvenly: true
-            default: false
-            }
-        }
     }
 
     enum ButtonVariant {
@@ -230,6 +221,15 @@ public extension CustomMessageWidgetNode {
 
         public var hasHeightConstraint: Bool {
             height != nil || minHeight != nil || fillHeight
+        }
+
+        /// A fixed or filled width; a minimum alone is not one.
+        public var hasOwnWidth: Bool {
+            width != nil || fillWidth
+        }
+
+        public var hasOwnHeight: Bool {
+            height != nil || fillHeight
         }
 
         public static let empty = Modifiers(

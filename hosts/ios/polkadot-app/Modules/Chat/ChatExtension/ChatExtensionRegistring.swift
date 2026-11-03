@@ -1,6 +1,7 @@
 import Foundation
 import AsyncExtensions
 import Keystore_iOS
+import StructuredConcurrency
 
 protocol ChatExtensionsRegistering {
     var onChangeStream: AnyAsyncSequence<ChatExtensionRegistryChange> { get }
@@ -9,12 +10,17 @@ protocol ChatExtensionsRegistering {
 
     func getExtensions(for chatId: Chat.Id) -> [ChatExtending]
     func getChatExtensionBot(for extensionId: ChatExtension.Id) -> ChatExtensionBotProtocol?
+
+    /// How the chat list draws the extension's rooms: its bot's name and icon, or the product's
+    /// own while the bot is not built. Nil for an extension the host does not know.
+    func peerListMetadata(for extensionId: ChatExtension.Id) -> Chat.PeerListMetadata?
+
     func getWidgetProviders() -> [ChatExtensionWidgetProvider]
 }
 
 extension ChatExtensionsRegistering {
     func hasChatExtension(for extensionId: ChatExtension.Id) -> Bool {
-        getChatExtensionBot(for: extensionId) != nil
+        peerListMetadata(for: extensionId) != nil
     }
 
     func getOwningExtension(for model: ChatOpenModel) -> ChatExtending? {
@@ -28,16 +34,60 @@ extension ChatExtensionsRegistering {
         return getChatExtensionBot(for: extensionId)
     }
 
-    func entryRoute(for model: ChatOpenModel) async -> ChatExtensionEntryRoute {
-        guard let chatExtension = getOwningExtension(for: model) else {
+    /// A listed product's row can be tapped before its bot is built, so the tap waits for the bot
+    /// up to ten seconds on `clock` rather than open a chat with nothing behind it, and gives up
+    /// with ``ChatExtensionBotError/notReady(_:)`` when the bot does not come, as with a broken
+    /// archive.
+    func entryRoute(
+        for model: ChatOpenModel,
+        clock: any Clock<Duration> = ContinuousClock()
+    ) async throws -> ChatExtensionEntryRoute {
+        if let chatExtension = getOwningExtension(for: model) {
+            return await chatExtension.entryRoute(for: model)
+        }
+
+        guard
+            case let .existingChat(chatId) = model,
+            case let .chatExtension(extensionId, _) = chatId,
+            hasChatExtension(for: extensionId)
+        else {
             return .chat(model)
         }
 
-        return await chatExtension.entryRoute(for: model)
+        let bot = try await awaitChatExtensionBot(for: extensionId, clock: clock)
+
+        return await bot.entryRoute(for: model)
+    }
+
+    private func awaitChatExtensionBot(
+        for extensionId: ChatExtension.Id,
+        clock: any Clock<Duration>
+    ) async throws -> ChatExtensionBotProtocol {
+        do {
+            return try await withTimeout(.seconds(10), clock: clock) {
+                // Subscribed before the lookup, so a bot built in between is not missed.
+                var changes = onChangeStream.makeAsyncIterator()
+
+                if let bot = getChatExtensionBot(for: extensionId) {
+                    return bot
+                }
+
+                while let change = try await changes.next() {
+                    if case let .enabled(ids) = change, ids.contains(extensionId),
+                       let bot = getChatExtensionBot(for: extensionId) {
+                        return bot
+                    }
+                }
+
+                throw ChatExtensionBotError.notReady(extensionId)
+            }
+        } catch is TimeoutError {
+            throw ChatExtensionBotError.notReady(extensionId)
+        }
     }
 }
 
-enum ChatExtensionRegistryChange {
+enum ChatExtensionRegistryChange: Equatable {
     case enabled(Set<ChatExtension.Id>)
     case disabled(Set<ChatExtension.Id>)
 }
@@ -127,6 +177,11 @@ extension ChatExtensionsRegistry: ChatExtensionsRegistering {
 
     func getChatExtensionBot(for extensionId: ChatExtension.Id) -> ChatExtensionBotProtocol? {
         extensionStore.getChatExtensionBot(for: extensionId)
+    }
+
+    func peerListMetadata(for extensionId: ChatExtension.Id) -> Chat.PeerListMetadata? {
+        extensionStore.getChatExtensionBot(for: extensionId)?.peerMetadata.list
+            ?? extensionStore.product(for: extensionId)?.peerListMetadata
     }
 
     func getWidgetProviders() -> [ChatExtensionWidgetProvider] {

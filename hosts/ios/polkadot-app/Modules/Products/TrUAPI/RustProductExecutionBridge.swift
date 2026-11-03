@@ -66,7 +66,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func onCoreLog(marker: String, detail: String) {
-        dependencies.logger.debug("[truapi:\(marker)] \(detail)")
+        dependencies.logger.logCoreLine(marker: marker, detail: detail)
     }
 
     func navigateTo(url: String) async throws {
@@ -142,11 +142,14 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func confirmUserAction(review: UserConfirmationReview) async throws -> Bool {
-        await dependencies.confirmationPresenter.confirm(review: review, from: dependencies.productId)
+        await dependencies.confirmationPresenter.confirm(review: review, from: dependencies.productId.rawValue)
     }
 
     func confirmPermission(review: UserConfirmationReview) async throws -> TrUAPIPermissionDecision {
-        await dependencies.confirmationPresenter.confirmPermission(review: review, from: dependencies.productId)
+        await dependencies.confirmationPresenter.confirmPermission(
+            review: review,
+            from: dependencies.productId.rawValue
+        )
     }
 
     func chainConnect(genesisHash: Data) throws -> UInt32? {
@@ -193,22 +196,12 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         TrUAPISupportedChains.make(chainRegistry: dependencies.chainRegistry)
     }
 
-    func authStateChanged(state: AuthState) {
-        let details =
-            switch state {
-            case .disconnected:
-                "disconnected"
-            case .pairing:
-                "pairing"
-            case .connected:
-                "connected"
-            case .loginFailed:
-                "loging failed"
-            case .authenticating:
-                "authenticating"
-            }
+    func transactionExtensionVersions() async throws -> ExtensionVersionMap {
+        try TrUAPIExtensionVersions.make(chainRegistry: dependencies.chainRegistry)
+    }
 
-        dependencies.logger.debug("[truapi] auth state: \(details)")
+    func authStateChanged(state: AuthState) {
+        dependencies.logger.info("[truapi.auth] \(dependencies.productId): \(state.logMarker)")
     }
 }
 
@@ -307,6 +300,17 @@ extension RemotePermission {
         case .preimageSubmit: Products.RemotePermissionRequest.preimageSubmit.toDomainPermissions()
         case .statementSubmit: Products.RemotePermissionRequest.statementSubmit.toDomainPermissions()
         case .balanceAccess: [.balanceAccess]
+        case let .nftPurseRead(owner): [.nftPurseRead(ownerProductId: owner.productId)]
+        }
+    }
+}
+
+extension NftPurseOwner {
+    /// The owning product, or `nil` for purses of the user's own account.
+    var productId: ProductId? {
+        switch self {
+        case let .product(productId): productId
+        case .root: nil
         }
     }
 }

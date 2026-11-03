@@ -65,8 +65,9 @@ impl TrUApiCore {
 			spawner.clone(),
 		);
 		let pairing_host = PairingHostRole::new(services.clone(), host_config);
-		pairing_host.clone().start_session_store_sync(spawner);
-		Self::from_runtime_parts(services, pairing_host.clone(), pairing_host, product)
+		pairing_host.session().clone().start_session_store_sync(spawner);
+		let session = pairing_host.session().clone();
+		Self::from_runtime_parts(services, pairing_host, session, product)
 	}
 
 	/// Build a product-facing core from shared services and authority.
@@ -184,6 +185,7 @@ mod tests {
 	use truapi::v01;
 
 	use crate::{
+		ProductId,
 		frame::{Payload, request_ids, subscription_ids},
 		test_support::{StubPlatform, runtime_config, test_spawner},
 	};
@@ -329,7 +331,7 @@ mod tests {
 		// manifest, which is the only thing that reaches a chain with this hash.
 		let request = truapi::versioned::local_storage::HostLocalStorageReadRequest::V2(
 			truapi::v02::HostLocalStorageReadRequest {
-				product: Some("wallet.dot".to_string()),
+				product: Some(ProductId::for_test("wallet.dot")),
 				key: "k".to_string(),
 			},
 		);

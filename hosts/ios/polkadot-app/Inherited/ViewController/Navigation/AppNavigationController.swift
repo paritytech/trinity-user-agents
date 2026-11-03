@@ -1,5 +1,6 @@
 import DesignSystem
 import UIKit
+import UIKitExt
 
 protocol HiddableBarWhenPushed: AnyObject {}
 
@@ -11,6 +12,11 @@ protocol NavigationControlling: AnyObject {
     var isNavigationBarHidden: Bool { get }
 
     func setNavigationBarHidden(_ hidden: Bool, animated: Bool)
+}
+
+/// A screen that animates its own push and pop. Nil keeps the default transition.
+protocol NavigationTransitionAnimating: AnyObject {
+    func navigationAnimator(for operation: UINavigationController.Operation) -> UIViewControllerAnimatedTransitioning?
 }
 
 protocol AppNavigationControllerTransitionObserving: AnyObject {
@@ -216,6 +222,16 @@ extension AppNavigationController: UINavigationControllerDelegate {
             animated: animated
         )
     }
+
+    func navigationController(
+        _: UINavigationController,
+        animationControllerFor operation: UINavigationController.Operation,
+        from fromViewController: UIViewController,
+        to toViewController: UIViewController
+    ) -> UIViewControllerAnimatedTransitioning? {
+        let moving = operation == .push ? toViewController : fromViewController
+        return (moving as? NavigationTransitionAnimating)?.navigationAnimator(for: operation)
+    }
 }
 
 // MARK: - NavigationControlling
@@ -252,3 +268,5 @@ private extension NavigationBarSettings {
         return appearance
     }
 }
+
+extension AppNavigationController: ControllerBackedProtocol {}

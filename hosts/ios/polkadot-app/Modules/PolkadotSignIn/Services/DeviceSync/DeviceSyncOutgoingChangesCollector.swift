@@ -12,20 +12,20 @@ struct DeviceSyncOutgoingChangesCollector {
     private let contactRepositoryFactory: ChatContactRepositoryMaking
     private let messageRepositoryFactory: ChatMessageRepositoryMaking
     private let removedChatRepositoryFactory: RemovedChatRepositoryMaking
-    private let messageExchangeModeProvider: any MessageExchangeModeProviding
+    private let ownSignKeyIds: Set<String>
 
     init(
         deviceRepositoryFactory: LocalDeviceRepositoryMaking,
         contactRepositoryFactory: ChatContactRepositoryMaking,
         messageRepositoryFactory: ChatMessageRepositoryMaking,
         removedChatRepositoryFactory: RemovedChatRepositoryMaking,
-        messageExchangeModeProvider: any MessageExchangeModeProviding
+        ownSignKeyIds: Set<String>
     ) {
         self.deviceRepositoryFactory = deviceRepositoryFactory
         self.contactRepositoryFactory = contactRepositoryFactory
         self.messageRepositoryFactory = messageRepositoryFactory
         self.removedChatRepositoryFactory = removedChatRepositoryFactory
-        self.messageExchangeModeProvider = messageExchangeModeProvider
+        self.ownSignKeyIds = ownSignKeyIds
     }
 
     func collectEntities(
@@ -75,11 +75,9 @@ private extension DeviceSyncOutgoingChangesCollector {
             .fetchAllOperation(with: .init())
             .asyncExecute()
 
-        let chatIds = contacts.compactMap { contact -> Chat.DeviceSyncChatId? in
-            let mode = messageExchangeModeProvider.mode(forSignKeyId: contact.ownKeyId.signKeyId)
-            guard mode == .multidevice else { return nil }
-            return .contact(accountId: contact.accountId)
-        }
+        let chatIds = contacts
+            .filter { ownSignKeyIds.contains($0.ownKeyId.signKeyId) }
+            .map { Chat.DeviceSyncChatId.contact(accountId: $0.accountId) }
 
         return chatIds.isEmpty ? [] : [.chatsAdded(chatIds)]
     }
@@ -96,7 +94,7 @@ private extension DeviceSyncOutgoingChangesCollector {
     }
 
     func collectMessageChanges(since checkpoint: UInt64?) async throws -> [Chat.DeviceSyncEntity] {
-        let multideviceSignKeyIds = messageExchangeModeProvider.multideviceSignKeyIds
+        let multideviceSignKeyIds = ownSignKeyIds
         guard !multideviceSignKeyIds.isEmpty else { return [] }
 
         let messageFilter = NSPredicate.syncableMessagesForAcceptedContacts(

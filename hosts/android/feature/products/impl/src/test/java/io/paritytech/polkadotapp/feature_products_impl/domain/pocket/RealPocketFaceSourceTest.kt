@@ -4,7 +4,7 @@ import android.net.Uri
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.renderer.toJsWidget
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -15,6 +15,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import uniffi.truapi.ProductId
 import uniffi.truapi.RendererNode
 
 class RealPocketFaceSourceTest {
@@ -30,7 +31,7 @@ class RealPocketFaceSourceTest {
         }
     }
 
-    private class NoImages : PocketImageResolver {
+    private class NoImages : ProductImageResolver {
         override suspend fun resolve(productId: ProductId, source: JsImageSource): Result<Uri> =
             Result.failure(IllegalStateException("unused"))
     }

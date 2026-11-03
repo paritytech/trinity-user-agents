@@ -13,6 +13,7 @@ final class StubWorkerBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
     private struct State {
         var built: [ProductId] = []
         var executions: [ProductId: MockProductExecution] = [:]
+        var engines: [ProductId: MockJSEngine] = [:]
         var cardsWhenTheEngineBooted: [PocketCard] = []
         var bridge: ProductPocketHostBridge?
         var cannotBuild: Bool
@@ -25,6 +26,8 @@ final class StubWorkerBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
     /// The executions built so far, by product, so a test can read what the core
     /// was told through them.
     var executions: [ProductId: MockProductExecution] { state.withLock { $0.executions } }
+    /// The engine each product's latest worker runs in, so a test can kill it.
+    var engines: [ProductId: MockJSEngine] { state.withLock { $0.engines } }
     /// What the bridge would have answered the moment the worker's engine came
     /// up, which is when its script subscribes to the card list.
     private(set) var cardsWhenTheEngineBooted: [PocketCard] {
@@ -51,7 +54,7 @@ final class StubWorkerBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
 
     private let buildDelay: Duration
     /// The only product whose build waits on `buildDelay`, so a barrier product never waits.
-    private let slowProduct: ProductId = "game.paseo"
+    private let slowProduct: ProductId = try! ProductId("game.paseo")
     /// How long the first worker sits inside `start()` before failing. The
     /// window a stop and a restart have to land in.
     private let firstStartFailsAfter: Duration?
@@ -117,7 +120,9 @@ final class StubWorkerBuilder: TrUAPIWorkerBuilding, @unchecked Sendable {
                 if isFirstBuild, let firstStartFailsAfter {
                     return SlowFailingJSEngine(after: firstStartFailsAfter, clock: clock)
                 }
-                return MockJSEngine()
+                let engine = MockJSEngine()
+                self?.state.withLock { $0.engines[productId] = engine }
+                return engine
             }
         )
     }

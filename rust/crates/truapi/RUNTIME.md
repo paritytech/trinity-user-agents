@@ -103,8 +103,9 @@ and tests live in `runtime/tests.rs` and `runtime/tests/`.
 Permission grants are scoped by product id and typed request, so a grant for
 one product never authorizes another product or another permission class.
 
-Blessed products in `truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS` bypass
-recorded permissions. Only device permissions require consent.
+Trusted products in `truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS` bypass
+recorded permissions and permission prompts. Device permissions still need the OS
+grant.
 Account access, username disclosure, signing with their own product accounts and
 AutoSigning proceed without approval. Legacy-account signing still asks the user,
 except for raw bytes signed inside the `<Bytes>` watermark, which cannot pass for a
@@ -126,7 +127,8 @@ ProductRuntime
         v
 PermissionsService(storage, platform, product_id)
         |
-        +-- blessed product, non-device --> allow without storage or prompt
+        +-- trusted product --> allow without storage or prompt,
+        |                       unless the OS refuses a device capability
         |
         | builds storage key:
         |
@@ -170,7 +172,7 @@ CoreStorage lookup
 
 #### Auto-granted remote permissions
 
-A valid remote permission request from a blessed product is authorized before
+A valid remote permission request from a trusted product is authorized before
 reading or writing permission storage. Empty or invalid domain bundles are denied.
 Other products resolve saved decisions and prompt when undecided.
 
@@ -228,9 +230,21 @@ own SQLite database (`store` module, bundled SQLite through `rusqlite` and
 missing or unwritable directory stops it from starting. Keep the directory out
 of device backups: it holds durable-transaction state that must not be restored
 onto another device. The required `HostRuntimeConfig.database_directory` sets
-it on iOS and Android, `SigningHostRuntime::set_core_db` on any other embedder,
-and `core_database_status()` reports the SQLite version, schema version and
-path. Web hosts do not compile the store.
+it on iOS and Android, and `SigningHostRuntime::set_core_db` on any other
+embedder. Such an embedder also sets the `InstallationIdProvider` whose id NFT
+purse item keys are derived under with `set_installation_provider`, and the
+`EncryptedStorage` that keeps NFT receive key and deposited item secrets with
+`set_encrypted_storage`, then calls `start_core_services` once, which starts the durable engine and NFT purses over
+the database. `core_database_status()` reports the SQLite version, schema
+version and path. Web hosts do not compile the store.
+
+Secrets the database must not hold go to the host's `EncryptedStorage`: the
+Keychain on iOS, encrypted preferences on Android, a plaintext file in the CLI.
+It reads, writes and deletes values by key and cannot list them, so a feature
+keeps its public rows in the database and stores each secret under a key
+derived from its row. Native hosts install it from their callbacks; any other
+embedder calls `SigningHostRuntime::set_encrypted_storage`. Web hosts do not
+compile it.
 
 ### Durable transactions
 
@@ -242,9 +256,26 @@ a submission watch. Whatever no watch owns, including everything a previous
 process left live, is decided by recovery passes: the completion ladder over
 the shared chain capabilities and the domain's `CompletionOracle`. Every
 verdict is a compare-and-set against the status and attempt it was derived
-from, and rows are never deleted. The engine reports whether work is pending
-to `HostCallbacks::durable_work_changed`; the host then runs a background task
-awaiting `run_durable_recovery()`, which returns once nothing is live.
+from, and rows are never deleted.
+
+A domain can also schedule transactions it cannot sign yet
+(`DurableRequest::scheduled`), each with a `SubmissionPlan`: the
+`SubmissionPolicy` registered in the `DurableRegistry` that builds it, and that
+policy's `PolicyParams` for it. They wait as `PENDING_SUBMISSION` rows until the
+submission executor builds them: one task per domain, policy and group asks the
+policy to `prepare` its waiting rows, starts an attempt for each `Ready` answer
+and fails each `GiveUp`, backing off after rounds that decide nothing. A
+presigned submission may carry a plan as well. When a verdict proves a
+transaction with a policy failed, the verdict writer asks the policy's
+`can_retry`, and a yes sends the row back to be built instead of failing it.
+It is built again after a cooldown that grows with the attempts the row
+records, so the wait survives a restart. The executor starts with the engine in `start_core_services` and again in every
+recovery run.
+
+The engine reports whether work is pending, including rows waiting to be
+built, to `HostCallbacks::durable_work_changed`; the host then runs a
+background task awaiting `run_durable_recovery()`, which returns once nothing
+is live.
 
 ### The two roles
 
@@ -254,10 +285,12 @@ that can't mean it:
 
 - **`PairingHost`** (seedless): the user's keys live in an external wallet, so
   signing/aliases/entropy relay over an encrypted SSO channel (statement store
-  on the People chain; the channel lives in `pairing_host/sso_channel.rs`). The
-  v2 wire protocol uses raw X25519 keys, HKDF-SHA256, and
-  ChaCha20-Poly1305. It owns pairing/login state, persisted auth-session reload,
-  and remote signing-host liveness monitoring.
+  on the People chain). The v2 wire protocol uses raw X25519 keys, HKDF-SHA256,
+  and ChaCha20-Poly1305. `PairingHost` keeps the paired session's account
+  material; [`SsoRequestService`](src/runtime/sso_request_service.rs) owns
+  pairing and login state, persisted auth-session reload, remote signing-host
+  liveness monitoring and the request channel, and reports session changes to
+  `PairingHost` through `PairedSessionOwner`.
 - **`SigningHost`** (wallet-local): signs on device from local BIP-39 entropy,
   no pairing flow. `signing_host/local_activation.rs` establishes a session
   from host-held secret material. Its public identity is the RFC-0022
@@ -273,6 +306,7 @@ that can't mean it:
   builds report them as unavailable) and do need metadata, which they take from
   the `RuntimeServices`-owned per-chain cache rather than re-reading it per
   call.
+- `ProductConsent`: one per runtime. It holds account-access decisions and review rules, and runs account-access prompts one at a time for local product calls and paired requests alike. A paired caller never skips a review. A signature with another product's account is confirmed once per kind and owning product for the rest of the product execution.
 
 `host_logic` stays pure: the orchestrators above call into it for codecs,
 session/SSO crypto, key derivation, and permission policy, while all I/O
@@ -281,8 +315,8 @@ session/SSO crypto, key derivation, and permission policy, while all I/O
 `host_logic::worker::WorkerLedger` holds the reference count per product
 worker from the Worker Lifecycle RFC, one per host in `RuntimeServices`. Both
 bindings expose it as `acquire_worker` and `release_worker`. Every `Start` or
-`Stop` the counts produce is reported on one channel, the host's
-`worker_demand_changed` callback, in the order the ledger produced it and one
+`Stop` the counts produce is requested through the host's
+`request_worker_transition` callback, in the order the ledger produced it and one
 at a time, whether the host asked for the transition or the core took the
 reference itself for an open render. The host runs the executable and the core
 keeps the count; on the web `@parity/truapi-host` pushes the wanted level to
@@ -290,10 +324,11 @@ the page.
 
 ### Inter-host SSO
 
-`PairingHost::call(request)` sends typed requests to
+`SsoRequestService::call(request)` sends typed requests to
 [`SigningHostSsoService`](src/runtime/signing_host/sso_service.rs). Handlers own
-consent and business logic; `sso_responder.rs` owns the transport loop and shared
-allowance helpers. Resource consent is bound to the request's signing session:
+consent and business logic; [`SsoResponderService`](src/runtime/sso_responder_service.rs)
+owns the transport loop: it answers pairing, serves the session and drops
+duplicate requests. Resource consent is bound to the request's signing session:
 account changes, disconnects, and reactivation invalidate pending approval before
 allocation or key return. Allocation failure details stay in local transcripts.
 Allocation requests use the canonical `truapi::latest::AllocatableResource` type.
@@ -309,7 +344,7 @@ a withdrawn request posts no response. See the
 [SSO request cancellation RFC](../../../docs/rfcs/sso-request-cancellation.md).
 
 When a device finishes pairing, the signing host reports it to the embedder's
-[`DevicePairingObserver`](src/runtime/signing_host/sso_responder.rs), installed
+[`DevicePairingObserver`](src/runtime/sso_responder_service.rs), installed
 once through `SigningHostRuntime::set_device_pairing_observer`, and on a native
 host to `HostCallbacks::device_paired`. It carries the `PairedSsoPeer` that
 pairing produced, which is also what `resume_pairing` and
@@ -376,26 +411,29 @@ flows, permission state, and auth state transitions.
 
 Most host-facing wire types are imported from `truapi::latest` by this module and
 are exposed through the trait signatures below. `ProductContext` and
-`ProductExecutionKind` are defined here instead, and codegen emits their host
+`ExecutableKind` are defined here instead, and codegen emits their host
 codecs from these definitions. Both are SCALE-encodable so they can cross the
 wasm callback boundary, where every parameter is encoded with
-`parity-scale-codec`; `ProductContext` decodes through its validating
-constructor, so a context off the wire carries a normalized product id.
+`parity-scale-codec`; `ProductContext` holds a `ProductId`, which decodes by
+parsing, so a context off the wire carries a normalized product id.
 
 ### Product Identity
 
-`normalize_product_identifier` is the single chokepoint that turns a host- or
-wire-supplied product id into the canonical form derivation, product storage and
-permission scopes are keyed by; `is_product_identifier` is its boolean form.
+Parsing a `ProductId` (its `FromStr` implementation) is the single chokepoint
+that turns a host- or wire-supplied product id into the canonical form
+derivation, product storage and permission scopes are keyed by. Nothing else
+builds a `ProductId`, so holding one means the id is normalized. Code that reads
+an id uses its methods, such as `bare_label` and `has_trusted_remote_permissions`,
+and `CoreStorageKey::product_manifest` keys its manifest cache entry.
 
-`DOTNS_TLDS` (`dot`, `paseo`, `test`) backs it: the TLDs dotNS deployments
+`DOTNS_TLDS` (`dot`, `paseo`, `testnet`) backs it: the TLDs dotNS deployments
 register product names under, one entry per network a host can be pointed at. A
 name ending in one of them is also what navigation resolves back into the host's
 own product surface, so it bypasses the outbound domain grant.
 
-`REMOTE_PERMISSION_TRUSTED_LABELS` lists the blessed product labels across
+`REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels across
 all networks in `DOTNS_TLDS`. These products bypass recorded permissions and
-prompt only for device permissions. The runtime grants
+permission prompts. Device permissions still need the OS grant. The runtime grants
 account access, username disclosure, signing with their own product accounts and
 AutoSigning without approval. Legacy-account signing still asks the user, except
 for raw bytes signed inside the `<Bytes>` watermark.
@@ -437,7 +475,9 @@ for raw bytes signed inside the `<Bytes>` watermark.
   Native hosts reach this through `NativeTrUApiHostRuntime`:
   `set_funding_callbacks` (the overlay), `open_funding`,
   `funding_session`, `funding_sessions`, `funding_history`,
-  `cancel_funding` and `acknowledge_funding_session`. Amounts cross the FFI as decimal strings.
+  `select_funding_provider`,
+  `cancel_funding`, `confirm_funding_cancel` and `acknowledge_funding_session`. Amounts cross the FFI as decimal
+  strings.
   The host owns the funding history. A session is stored only once the user
   starts it in the overlay. `funding_sessions` lists sessions in flight first,
   then ended ones the host has not recorded, each newest first. An ended
@@ -452,16 +492,54 @@ for raw bytes signed inside the `<Bytes>` watermark.
   `funding_history` lists every ended session the host recorded or the core
   compacted, as a summary newest first, so a host that lost its history
   rebuilds it from there. A product opens a session with
-  `request({ id, direction, amount? })` and watches it with
-  `statusSubscribe({ id })`; the core keeps it under the id hashed with the
-  product, so a product that reloads under the overlay still finds it, and a
-  reused id answers `AlreadyExists`. The overlay runs on a task of its own,
-  so a request that goes away cannot leave the session presenting; one the
-  user dismisses ends its watchers as `Failed { Cancelled }`. Sessions and
-  the pack are versioned blobs: a corrupt one is set aside under
-  `FundingSessionsUnreadable`, and one in a newer format is left untouched
-  while funding answers a host failure. Products see a session in flight as
+  `request({ direction, amount? })`, which answers at once with its `intent`,
+  and watches it with `statusSubscribe({ intent })`; another product's
+  session reads as `NotFound`. The overlay runs on a task of its own, so no
+  call waits on it; a session the user dismisses ends its watchers as
+  `Failed { Cancelled }`. Sessions and the pack live in the core database,
+  one versioned row per session: a row that does not decode or is of an older
+  format is skipped and left in place, and one in a newer format is left
+  untouched while funding answers a host failure. Funding
+  needs the core database: natively the configured `database_directory`,
+  otherwise `set_core_db`. Products see a session in flight as
   `InProgress`.
+  `select_funding_provider` hands a session to the provider the user chose.
+  That provider's worker runs it through the `FundingProvider` trait. The
+  core calls the worker with host-initiated calls the worker answers with one
+  item: `assign` hands it a session, `cancel` asks it to stop one, and
+  `settleCancel` passes on the user's answer to its offer. When a worker's
+  connection completes its handshake, the core assigns it every session it
+  still serves, with its last update, and repeats any cancel or decision it
+  never answered; the worker keeps its own state in its storage. The worker
+  calls the core: `report` stores each update on the session (only from the
+  assigned provider, only forward), and `presentFrame` asks the host to
+  show one of its screens through `present_provider_frame`. The core holds the
+  provider's worker while a session is assigned and open, and stores an
+  assigned session from then on, even while its overlay is up. It records each
+  top-up (inbound) or payment request (outbound) the worker starts while
+  serving a session, and a `Crediting` or `Collecting` report must name one of
+  those records at its amount, once. It ends a session as `Delivered` or
+  `Released` itself, from the recorded amounts of the named top-ups once their
+  claims are final (`Crediting`, then `Delivered`) or of the named payment once
+  it completes (`Collecting`); a partial claim counts what the host claimed.
+  Statuses are read again with backoff until the host decides, and a top-up
+  or payment the host still does not know an hour after it was named counts
+  as nothing moved. Money moved once the provider started funds for the
+  session, named or not, or saw the user's payment; from then on only the
+  provider ends the session, and it cannot fail it once funds started.
+  Before that, an unassigned session expires 24 hours after it opened and an
+  assigned one 7 days after its provider last reported. `cancel_funding`
+  answers what a cancel did: it ends an unassigned session; before money
+  moved it asks the provider and ends the session when asked again; after,
+  it asks the provider, who answers `Refused` or `Offer`, one offer per
+  cancel, and the host answers the offer with
+  `confirm_funding_cancel(intent, terms)`, passing the fee and refund it
+  showed (`None` declines), which the provider hears through `settleCancel`;
+  terms other than the offer's answer `NoOffer`, and an inbound session whose
+  credit started answers `TooLate`. A provider asked before money moved
+  answers `Stopped`, and the core ends the session as cancelled. An overlay closed after the user chose a
+  provider keeps the session as started and asks the provider to stop unless
+  money moved.
 - `BalancePlatform`: stream what a payment request can spend right now, the
   current value first and then each change. Installed with
   `set_balance_platform`; native hosts use `set_balance_callbacks` with

@@ -23,9 +23,11 @@ extension RendererNode {
             )
 
         case let .box(modifiers, props, children):
-            let alignment = props.contentAlignment.map { $0.toScale().swiftUIAlignment } ?? .center
+            let boxProps = props.contentAlignment.map {
+                CustomMessageWidgetNode.BoxProps(alignment: $0.toScale().swiftUIAlignment)
+            }
             return CustomMessageWidgetNode(
-                content: .box(.init(alignment: alignment), children: children.widgetNodes(resolver: resolver)),
+                content: .box(boxProps ?? .init(), children: children.widgetNodes(resolver: resolver)),
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
 

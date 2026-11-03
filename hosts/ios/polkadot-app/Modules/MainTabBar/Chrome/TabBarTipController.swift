@@ -5,8 +5,7 @@ import UIKitExt
 
 @MainActor
 final class TabBarTipController {
-    private unowned let barView: DSTabBarView
-    private let itemIndex: (TabBarSlot) -> Int?
+    private let centerButtonAnchor: any UIPopoverPresentationControllerSourceItem
     private let statusStripAnchor: () -> (any UIPopoverPresentationControllerSourceItem)?
     private let sequence: any TabBarTipSequenceProtocol
 
@@ -22,15 +21,13 @@ final class TabBarTipController {
 
     init(
         host: UIViewController,
-        barView: DSTabBarView,
         sequence: any TabBarTipSequenceProtocol,
-        itemIndex: @escaping (TabBarSlot) -> Int?,
+        centerButtonAnchor: any UIPopoverPresentationControllerSourceItem,
         statusStripAnchor: @escaping () -> (any UIPopoverPresentationControllerSourceItem)?
     ) {
         self.host = host
-        self.barView = barView
         self.sequence = sequence
-        self.itemIndex = itemIndex
+        self.centerButtonAnchor = centerButtonAnchor
         self.statusStripAnchor = statusStripAnchor
     }
 
@@ -115,14 +112,10 @@ private extension TabBarTipController {
 
     func anchorItem(for anchor: TabBarTipAnchor) -> (any UIPopoverPresentationControllerSourceItem)? {
         switch anchor {
-        case let .barItem(slot):
-            guard let index = itemIndex(slot) else {
-                return nil
-            }
-
-            return barView.itemAnchor(at: index)
+        case .centerButton:
+            centerButtonAnchor
         case .statusStrip:
-            return statusStripAnchor()
+            statusStripAnchor()
         }
     }
 

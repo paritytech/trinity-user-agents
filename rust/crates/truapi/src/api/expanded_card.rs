@@ -41,8 +41,8 @@ pub trait ExpandedCard: Send + Sync {
 	///
 	/// Succeeds when that side is already up. Fails with `NotPresented` when
 	/// the Widget is not shown under its card, `UserMoving` while the user turns
-	/// the card or moves its face, and `NoBack` when the card has no back to
-	/// show right now.
+	/// the card or moves its face, `NoBack` when the card has no back to show
+	/// right now, and `Unsupported` on a host that cannot turn cards.
 	///
 	/// ```ts
 	/// const result = await truapi.expandedCard.setBackShown({ shown: true });

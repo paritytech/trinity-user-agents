@@ -39,7 +39,8 @@ use tracing::{debug, warn};
 use crate::bootstrap;
 use truapi::{
 	ChannelId, DebugSink, FrameSink, PairingHostRuntime, ProductContext, ProductRuntime,
-	ProductRuntimeError, SigningHostRuntime, platform::ProductExecutionKind,
+	ProductRuntimeError, SigningHostRuntime,
+	platform::{ExecutableKind, ProductId},
 };
 
 /// Pause after a failed `accept()` before trying again.
@@ -69,35 +70,33 @@ pub struct ProductSelection {
 	/// Execution kind every selection keeps. A host serves one kind for its
 	/// lifetime: the core reads it per connection, and chat is denied to a
 	/// connection that opened as `App`.
-	execution_kind: ProductExecutionKind,
+	execution_kind: ExecutableKind,
 }
 
 impl ProductSelection {
-	/// Validate and normalize the initial product id.
-	pub fn new(product_id: String, execution_kind: ProductExecutionKind) -> Result<Arc<Self>> {
-		let product = ProductContext::new_with_execution(product_id, execution_kind)
-			.map_err(|error| anyhow::anyhow!("invalid product id: {error}"))?;
+	/// Select the initial product identity.
+	pub fn new(product_id: ProductId, execution_kind: ExecutableKind) -> Arc<Self> {
+		let product = ProductContext::new_with_execution(product_id, execution_kind);
 		let (current, _) = watch::channel(product);
-		Ok(Arc::new(Self { current, execution_kind }))
+		Arc::new(Self { current, execution_kind })
 	}
 
-	/// Return the normalized current product id.
-	pub fn current(&self) -> String {
+	/// The current product id.
+	pub fn current(&self) -> ProductId {
 		self.current.borrow().product_id.clone()
 	}
 
-	/// Select a validated product, returning whether the selection changed.
-	pub fn select(&self, product_id: String) -> Result<bool> {
-		let product = ProductContext::new_with_execution(product_id, self.execution_kind)
-			.map_err(|error| anyhow::anyhow!("invalid product id: {error}"))?;
-		Ok(self.current.send_if_modified(|current| {
+	/// Select a product, returning whether the selection changed.
+	pub fn select(&self, product_id: ProductId) -> bool {
+		let product = ProductContext::new_with_execution(product_id, self.execution_kind);
+		self.current.send_if_modified(|current| {
 			if current == &product {
 				false
 			} else {
 				*current = product;
 				true
 			}
-		}))
+		})
 	}
 
 	fn subscribe(&self) -> watch::Receiver<ProductContext> {
@@ -775,7 +774,8 @@ mod tests {
 		let listener = TcpListener::bind("127.0.0.1:0").await?;
 		let address = listener.local_addr()?;
 		let endpoint = format!("ws://{address}");
-		let product = ProductSelection::new("localhost:3000".into(), ProductExecutionKind::App)?;
+		let product =
+			ProductSelection::new(ProductId::for_test("localhost:3000"), ExecutableKind::App);
 		let container = tempfile::NamedTempFile::new()?;
 		std::fs::write(container.path(), "installSandbox();")?;
 		let server = tokio::spawn(async move {
@@ -937,7 +937,8 @@ mod tests {
 		let mut client = TcpStream::connect(address).await?;
 		let (server_stream, _) = listener.accept().await?;
 		client.write_all(b"GET /boot").await?;
-		let product = ProductSelection::new("localhost:3000".into(), ProductExecutionKind::App)?;
+		let product =
+			ProductSelection::new(ProductId::for_test("localhost:3000"), ExecutableKind::App);
 		let endpoint = format!("ws://{address}");
 
 		let client_exchange = async move {
@@ -984,7 +985,8 @@ mod tests {
 		let address = listener.local_addr()?;
 		let runtime = Arc::new(PendingRuntime::default());
 		let server_runtime = runtime.clone();
-		let product = ProductSelection::new("localhost:3000".into(), ProductExecutionKind::App)?;
+		let product =
+			ProductSelection::new(ProductId::for_test("localhost:3000"), ExecutableKind::App);
 		let product_updates = product.subscribe();
 		let server = tokio::spawn(async move {
 			let (stream, _) = listener.accept().await?;
@@ -1064,26 +1066,25 @@ mod tests {
 	}
 
 	#[test]
-	fn product_selection_validates_and_normalizes_ids() -> Result<()> {
-		let product = ProductSelection::new(" Dotli.DOT ".to_string(), ProductExecutionKind::App)?;
+	fn product_selection_compares_canonical_ids() {
+		let product =
+			ProductSelection::new(ProductId::for_test(" Dotli.DOT "), ExecutableKind::App);
 
-		assert_eq!(product.current(), "dotli.dot");
-		assert!(product.select("localhost:3000".to_string())?);
-		assert_eq!(product.current(), "localhost:3000");
-		assert!(!product.select("LOCALHOST:3000".to_string())?);
-		assert!(product.select("example.com".to_string()).is_err());
-		Ok(())
+		assert_eq!(product.current().as_str(), "dotli.dot");
+		assert!(product.select(ProductId::for_test("localhost:3000")));
+		assert_eq!(product.current().as_str(), "localhost:3000");
+		assert!(!product.select(ProductId::for_test("LOCALHOST:3000")));
 	}
 
 	#[tokio::test]
 	async fn changing_product_notifies_connections() -> Result<()> {
-		let product = ProductSelection::new("first.dot".to_string(), ProductExecutionKind::App)?;
+		let product = ProductSelection::new(ProductId::for_test("first.dot"), ExecutableKind::App);
 		let mut connection = product.subscribe();
 
-		assert!(product.select("second.dot".to_string())?);
+		assert!(product.select(ProductId::for_test("second.dot")));
 		connection.changed().await?;
-		assert_eq!(connection.borrow().product_id, "second.dot");
-		assert!(!product.select("SECOND.DOT".to_string())?);
+		assert_eq!(connection.borrow().product_id.as_str(), "second.dot");
+		assert!(!product.select(ProductId::for_test("SECOND.DOT")));
 		assert!(!connection.has_changed()?);
 		Ok(())
 	}
@@ -1257,10 +1258,8 @@ mod tests {
 		) -> Vec<u8> {
 			let ids = request_ids(method).expect("the method is in the wire table");
 			let frames = Arc::new(CapturedFrames::default());
-			let connection = runtime.product_runtime(
-				ProductContext::new(product.to_string()).expect("the product id is valid"),
-				frames.clone(),
-			);
+			let connection = runtime
+				.product_runtime(ProductContext::new(ProductId::for_test(product)), frames.clone());
 			let frame = ProtocolMessage {
 				request_id: "1".to_string(),
 				payload: Payload {
@@ -1301,7 +1300,7 @@ mod tests {
 			runtime: &SigningHostRuntime,
 		) -> Result<Option<Vec<u8>>, v02::HostLocalStorageReadError> {
 			let payload = HostLocalStorageReadRequest::V2(v02::HostLocalStorageReadRequest {
-				product: Some(OWNER.to_string()),
+				product: Some(ProductId::for_test(OWNER)),
 				key: KEY.to_string(),
 			})
 			.encode();
@@ -1447,13 +1446,12 @@ mod tests {
 		}
 	}
 
-	fn tapped_product(
-		tapped: &Arc<DebugTappedRuntime>,
-		product_id: &str,
-	) -> Result<ProductRuntime> {
-		let product =
-			ProductContext::new_with_execution(product_id.into(), ProductExecutionKind::App)?;
-		Ok(tapped.product_runtime(product, Arc::new(DiscardingFrameSink)))
+	fn tapped_product(tapped: &Arc<DebugTappedRuntime>, product_id: &str) -> ProductRuntime {
+		let product = ProductContext::new_with_execution(
+			ProductId::for_test(product_id),
+			ExecutableKind::App,
+		);
+		tapped.product_runtime(product, Arc::new(DiscardingFrameSink))
 	}
 
 	/// The decorator builds its runtime through the wrapped factory, and the
@@ -1467,7 +1465,7 @@ mod tests {
 	async fn the_debug_tap_streams_received_frames_to_the_sink() -> Result<()> {
 		let sink = Arc::new(RecordingDebugSink::default());
 		let tapped = DebugTappedRuntime::new(signing_runtime()?, sink.clone());
-		let runtime = tapped_product(&tapped, "localhost:3000")?;
+		let runtime = tapped_product(&tapped, "localhost:3000");
 
 		let frame = vec![0xde, 0xad, 0xbe, 0xef];
 		let _ = runtime.receive_frame(frame.clone()).await;
@@ -1489,8 +1487,8 @@ mod tests {
 		let sink = Arc::new(RecordingDebugSink::default());
 		let tapped = DebugTappedRuntime::new(signing_runtime()?, sink.clone());
 
-		let first = tapped_product(&tapped, "localhost:3000")?;
-		let second = tapped_product(&tapped, "localhost:3000")?;
+		let first = tapped_product(&tapped, "localhost:3000");
+		let second = tapped_product(&tapped, "localhost:3000");
 		let _ = first.receive_frame(vec![1]).await;
 		let _ = second.receive_frame(vec![2]).await;
 		first.dispose();
