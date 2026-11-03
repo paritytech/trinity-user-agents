@@ -99,16 +99,11 @@ pub mod latest {
 	pub use crate::v01::{
 		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
 		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
-		ChatActions, ChatBotRegistrationStatus, ChatCallClose, ChatCallRecord, ChatContactEvent,
-		ChatCustomMessage, ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta,
-		ChatMessage, ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatMessageStatus,
-		ChatPageAnchor, ChatPaymentRecord, ChatPreviewMessage, ChatPreviewReaction, ChatReaction,
-		ChatReactionDetail, ChatReactionSummary, ChatReply, ChatReplyPreview, ChatResource,
-		ChatRichText, ChatRoom, ChatRoomActivity, ChatRoomBadge, ChatRoomConfig, ChatRoomFooter,
-		ChatRoomMetadata, ChatRoomParticipation, ChatRoomPreview, ChatRoomRegistrationStatus,
-		ChatUserAction, CodeFormat, ColorToken, ColumnProps, ContactHandle, ContactPickOutcome,
-		ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect, EffectProps,
-		FundingDirection, FundingFailure, GenericError, HorizontalAlignment,
+		ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
+		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
+		ChatRoomParticipation, CodeFormat, ColorToken, ColumnProps, ContactHandle,
+		ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect,
+		EffectProps, FundingDirection, FundingFailure, GenericError, HorizontalAlignment,
 		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
 		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
 		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
@@ -128,6 +123,15 @@ pub mod latest {
 		SignedStatement, Size, Statement, StatementProof, StatementTopic, StorageQueryItem,
 		StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
 		TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature, X25519PublicKey,
+	};
+
+	pub use crate::v02::{
+		ChatCallClose, ChatCallRecord, ChatContactEvent, ChatCustomBody, ChatFeedUpdate,
+		ChatMediaItem, ChatMediaMeta, ChatMessage, ChatMessageBody, ChatMessageOrigin,
+		ChatMessageStatus, ChatPageAnchor, ChatPaymentRecord, ChatPreviewMessage,
+		ChatPreviewReaction, ChatReactionDetail, ChatReactionSummary, ChatReply, ChatReplyPreview,
+		ChatResource, ChatRoomActivity, ChatRoomBadge, ChatRoomConfig, ChatRoomMetadata,
+		ChatRoomPreview, ChatRoomRegistrationStatus, ChatUserAction,
 	};
 
 	/// Latest payload type of a versioned envelope.

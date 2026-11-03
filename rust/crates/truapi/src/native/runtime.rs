@@ -1083,7 +1083,7 @@ impl NativeProductExecution {
 	/// itself for a room that does not set `product_source`.
 	pub fn chat_messages_query(
 		&self,
-		request: v01::ProductChatMessagesQueryRequest,
+		request: truapi::latest::ProductChatMessagesQueryRequest,
 		observer: Box<dyn NativeChatQueryObserver>,
 	) -> Result<Arc<NativeChatQuery>, crate::ProductRuntimeError> {
 		let query = self.chat_control()?.chat_messages_query(request)?;
@@ -1101,7 +1101,7 @@ impl NativeProductExecution {
 	/// stores without asking the product.
 	pub fn chat_user_action(
 		&self,
-		request: v01::ProductChatUserActionRequest,
+		request: truapi::latest::ProductChatUserActionRequest,
 		observer: Box<dyn NativeChatQueryObserver>,
 	) -> Result<Arc<NativeChatQuery>, crate::ProductRuntimeError> {
 		let query = self.chat_control()?.chat_user_action(request)?;
@@ -1119,7 +1119,7 @@ impl NativeProductExecution {
 	/// not set `reaction_details`.
 	pub fn chat_reactions_query(
 		&self,
-		request: v01::ProductChatReactionsQueryRequest,
+		request: truapi::latest::ProductChatReactionsQueryRequest,
 		observer: Box<dyn NativeChatQueryObserver>,
 	) -> Result<Arc<NativeChatQuery>, crate::ProductRuntimeError> {
 		let query = self.chat_control()?.chat_reactions_query(request)?;

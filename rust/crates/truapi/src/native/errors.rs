@@ -34,7 +34,7 @@ pub enum NativeChatFeedRejection {
 	/// not write.
 	#[error("the product did not write this message")]
 	NotOwner,
-	/// Any other refusal.
+	/// Any other refusal. The product receives it as `HostFailure`.
 	#[error("{reason}")]
 	Rejected {
 		/// Human-readable rejection reason.
@@ -42,13 +42,18 @@ pub enum NativeChatFeedRejection {
 	},
 }
 
-impl From<NativeChatFeedRejection> for truapi::latest::HostChatUpdateFeedError {
+impl From<NativeChatFeedRejection> for truapi::CallError<truapi::latest::HostChatUpdateFeedError> {
 	fn from(rejection: NativeChatFeedRejection) -> Self {
+		use truapi::latest::HostChatUpdateFeedError;
 		match rejection {
-			NativeChatFeedRejection::UnknownMessage => Self::UnknownMessage,
-			NativeChatFeedRejection::DuplicateMessage => Self::DuplicateMessage,
-			NativeChatFeedRejection::NotOwner => Self::NotOwner,
-			NativeChatFeedRejection::Rejected { reason } => Self::Unknown { reason },
+			NativeChatFeedRejection::UnknownMessage => {
+				Self::Domain(HostChatUpdateFeedError::UnknownMessage)
+			},
+			NativeChatFeedRejection::DuplicateMessage => {
+				Self::Domain(HostChatUpdateFeedError::DuplicateMessage)
+			},
+			NativeChatFeedRejection::NotOwner => Self::Domain(HostChatUpdateFeedError::NotOwner),
+			NativeChatFeedRejection::Rejected { reason } => Self::HostFailure { reason },
 		}
 	}
 }

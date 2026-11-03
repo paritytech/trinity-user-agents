@@ -154,13 +154,26 @@ struct BridgeCtx<'a> {
 
 impl<'a> BridgeCtx<'a> {
 	fn new(definition: &'a PlatformDefinition, api: &'a ApiDefinition) -> Self {
-		let api_types =
+		let mut api_types =
 			api.types.iter().map(|ty| (ty.name.as_str(), ty)).collect::<BTreeMap<_, _>>();
-		let codec_types = api
-			.types
+		// A platform signature names the newest version of a protocol type by
+		// its plain name, and the API names each version of a type that two
+		// versions define with its version.
+		let mut newest = BTreeMap::<&str, (u32, &TypeDef)>::new();
+		for ty in &api.types {
+			if let Some((version, simple_name)) = split_versioned_type_name(&ty.name) &&
+				newest.get(simple_name).is_none_or(|(known, _)| version > *known)
+			{
+				newest.insert(simple_name, (version, ty));
+			}
+		}
+		for (simple_name, (_, ty)) in newest {
+			api_types.entry(simple_name).or_insert(ty);
+		}
+		let codec_types = api_types
 			.iter()
-			.filter(|ty| !matches!(ty.kind, TypeDefKind::Alias(_)))
-			.map(|ty| ty.name.as_str())
+			.filter(|(_, ty)| !matches!(ty.kind, TypeDefKind::Alias(_)))
+			.map(|(name, _)| *name)
 			.collect::<BTreeSet<_>>();
 		let local_types =
 			definition.types.iter().map(|ty| ty.name.as_str()).collect::<BTreeSet<_>>();
@@ -294,19 +307,29 @@ fn emit_result_method(
 	let args = js_arg_vec(method, ctx)?;
 	let ret = format!("Result<{}, {}>", rust_type(ok, ctx)?, rust_type(err, ctx)?);
 	let params = rust_params(method, ctx)?;
+	// A callback that throws is a failure of the host. A `CallError` reports it
+	// as `HostFailure`; any other error type converts the reason itself.
+	let try_op = if call_error_domain(err).is_some() {
+		".map_err(|reason| truapi::CallError::HostFailure { reason })?"
+	} else {
+		"?"
+	};
 	let body = if is_unit(ok) {
 		formatdoc! {
-			"{call}.await?;
+			"{call}.await{try_op};
 			Ok(())",
 			call = bridge_call("invoke_unit", &method.name, &args, &[]),
 		}
 	} else if is_bool(ok) {
-		format!("Ok({}.await?)", bridge_call("invoke_bool", &method.name, &args, &[]),)
+		format!("Ok({}.await{try_op})", bridge_call("invoke_bool", &method.name, &args, &[]),)
 	} else if is_bytes(ok) {
-		format!("Ok({}.await?)", bridge_call("invoke_bytes_return", &method.name, &args, &[]),)
+		format!(
+			"Ok({}.await{try_op})",
+			bridge_call("invoke_bytes_return", &method.name, &args, &[]),
+		)
 	} else if is_optional_bytes(ok) {
 		format!(
-			"Ok({}.await?)",
+			"Ok({}.await{try_op})",
 			bridge_call(
 				"invoke_optional_bytes_return",
 				&method.name,
@@ -315,7 +338,7 @@ fn emit_result_method(
 			),
 		)
 	} else if ctx.is_api_codec(ok) || ctx.is_local_codec(ok) {
-		formatdoc_decode_result(method, ok, &raw, &args, ctx)?
+		formatdoc_decode_result(method, ok, &raw, &args, try_op, ctx)?
 	} else {
 		bail!("unsupported wasm bridge result type for `{raw}`: {ok:?}");
 	};
@@ -398,16 +421,17 @@ fn formatdoc_decode_result(
 	ok: &TypeRef,
 	raw: &str,
 	args: &str,
+	try_op: &str,
 	ctx: &BridgeCtx<'_>,
 ) -> Result<String> {
 	let ty = rust_type(ok, ctx)?;
 	let call = bridge_call("invoke_bytes_return", &method.name, args, &[]);
 	Ok(formatdoc! {
-		"let bytes = {call}.await?;
+		"let bytes = {call}.await{try_op};
         Ok(decode_bytes::<{ty}>(
             bytes,
             {message:?},
-        )?)",
+        ){try_op})",
 		message = format!("{raw} response did not decode"),
 	})
 }
@@ -470,6 +494,9 @@ fn rust_type(ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
 		},
 		TypeRef::Named { name, args } if name == "Result" && args.len() == 2 => {
 			Ok(format!("Result<{}, {}>", rust_type(&args[0], ctx)?, rust_type(&args[1], ctx)?))
+		},
+		TypeRef::Named { name, args } if name == "CallError" && args.len() == 1 => {
+			Ok(format!("truapi::CallError<{}>", rust_type(&args[0], ctx)?))
 		},
 		TypeRef::Named { name, args } if ctx.api_types.contains_key(name.as_str()) => {
 			if args.is_empty() {
@@ -621,6 +648,15 @@ fn validate_errors(traits: &[&PlatformTrait], ctx: &BridgeCtx<'_>) -> Result<()>
 }
 
 fn validate_error_type(err: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<()> {
+	// A `CallError` carries host failures itself, so its domain error needs no
+	// catch-all.
+	if let Some(domain) = call_error_domain(err) {
+		let name = named_type_name(domain)?;
+		return match resolve_alias_type(name, ctx).map(|type_def| &type_def.kind) {
+			Some(TypeDefKind::Enum(_)) => Ok(()),
+			_ => bail!("platform error type `CallError<{name}>` must carry an API enum"),
+		};
+	}
 	let name = named_type_name(err)?;
 	if name == "GenericError" {
 		return Ok(());
@@ -706,6 +742,14 @@ fn named_type_name(ty: &TypeRef) -> Result<&str> {
 		bail!("expected named type, got {ty:?}");
 	};
 	Ok(name)
+}
+
+/// The domain error of a `CallError<E>` type, or `None` for any other type.
+fn call_error_domain(ty: &TypeRef) -> Option<&TypeRef> {
+	match ty {
+		TypeRef::Named { name, args } if name == "CallError" && args.len() == 1 => Some(&args[0]),
+		_ => None,
+	}
 }
 
 fn is_unit(ty: &TypeRef) -> bool {

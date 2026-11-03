@@ -56,21 +56,21 @@ fn line<T: Encode + Decode + PartialEq + Debug>(
 	format!("{name} {}", hex::encode(bytes))
 }
 
-fn message() -> v01::ChatMessage {
-	v01::ChatMessage {
+fn message() -> v02::ChatMessage {
+	v02::ChatMessage {
 		message_id: "m1".into(),
-		origin: v01::ChatMessageOrigin { participant_id: "contact".into() },
+		origin: v02::ChatMessageOrigin { participant_id: "contact".into() },
 		timestamp: 1_700_000_000_000,
-		body: v01::ChatMessageBody::RichText {
+		body: v02::ChatMessageBody::RichText {
 			text: Some("hi".into()),
-			media: vec![v01::ChatMediaItem::Image {
-				resource: v01::ChatResource::Hop {
+			media: vec![v02::ChatMediaItem::Image {
+				resource: v02::ChatResource::Hop {
 					identifier: [7; 32],
 					ticket: [8; 32],
 					node: "wss://hop.example".into(),
 					size: 3,
 				},
-				meta: v01::ChatMediaMeta {
+				meta: v02::ChatMediaMeta {
 					mime_type: "image/png".into(),
 					size_bytes: Some(3),
 					width: Some(4),
@@ -81,16 +81,16 @@ fn message() -> v01::ChatMessage {
 				},
 			}],
 		},
-		status: v01::ChatMessageStatus::Sent,
-		reply: Some(v01::ChatReply {
+		status: v02::ChatMessageStatus::Sent,
+		reply: Some(v02::ChatReply {
 			message_id: "m0".into(),
-			preview: Some(v01::ChatReplyPreview {
-				origin: v01::ChatMessageOrigin { participant_id: "user".into() },
-				body: v01::ChatMessageBody::Text { text: "yo".into() },
+			preview: Some(v02::ChatReplyPreview {
+				origin: v02::ChatMessageOrigin { participant_id: "user".into() },
+				body: v02::ChatMessageBody::Text { text: "yo".into() },
 			}),
 		}),
 		edited_at: None,
-		reactions: vec![v01::ChatReactionSummary {
+		reactions: vec![v02::ChatReactionSummary {
 			emoji: "👍".into(),
 			count: 2,
 			reacted_by_user: true,
@@ -100,17 +100,17 @@ fn message() -> v01::ChatMessage {
 	}
 }
 
-fn call() -> v01::ChatMessage {
-	v01::ChatMessage {
+fn call() -> v02::ChatMessage {
+	v02::ChatMessage {
 		message_id: "c1".into(),
-		origin: v01::ChatMessageOrigin { participant_id: "user".into() },
+		origin: v02::ChatMessageOrigin { participant_id: "user".into() },
 		timestamp: 1_700_000_000_000,
-		body: v01::ChatMessageBody::Call(v01::ChatCallRecord {
+		body: v02::ChatMessageBody::Call(v02::ChatCallRecord {
 			video: true,
 			answered_at: Some(1_700_000_001_000),
-			closed: Some(v01::ChatCallClose { at: 1_700_000_060_000, by_user: false }),
+			closed: Some(v02::ChatCallClose { at: 1_700_000_060_000, by_user: false }),
 		}),
-		status: v01::ChatMessageStatus::Delivered,
+		status: v02::ChatMessageStatus::Delivered,
 		reply: None,
 		edited_at: None,
 		reactions: Vec::new(),
@@ -118,16 +118,16 @@ fn call() -> v01::ChatMessage {
 	}
 }
 
-fn custom() -> v01::ChatMessage {
-	v01::ChatMessage {
+fn custom() -> v02::ChatMessage {
+	v02::ChatMessage {
 		message_id: "x1".into(),
-		origin: v01::ChatMessageOrigin { participant_id: "contact".into() },
+		origin: v02::ChatMessageOrigin { participant_id: "contact".into() },
 		timestamp: 1_700_000_000_000,
-		body: v01::ChatMessageBody::Custom {
-			message: v01::ChatCustomMessage { message_type: "poll".into(), payload: vec![1, 2] },
+		body: v02::ChatMessageBody::Custom {
+			message: v02::ChatCustomBody { message_type: "poll".into(), payload: vec![1, 2] },
 			alt: Some("A poll".into()),
 		},
-		status: v01::ChatMessageStatus::Sent,
+		status: v02::ChatMessageStatus::Sent,
 		reply: None,
 		edited_at: None,
 		reactions: Vec::new(),
@@ -135,34 +135,34 @@ fn custom() -> v01::ChatMessage {
 	}
 }
 
-fn config() -> v01::ChatRoomConfig {
-	v01::ChatRoomConfig { product_source: true, reaction_details: true, report_seen: true }
+fn config() -> v02::ChatRoomConfig {
+	v02::ChatRoomConfig { product_source: true, reaction_details: true, report_seen: true }
 }
 
 /// Every leg of the methods, at the versions a v2 client encodes.
 fn frames() -> Vec<String> {
 	use versioned::*;
 	let room = || "room".to_string();
-	let metadata = v01::ChatRoomMetadata {
+	let metadata = v02::ChatRoomMetadata {
 		name: "Room".into(),
 		description: Some("About".into()),
 		icon: Some("https://icons.example/renamed.png".into()),
 		placeholder: Some("No games yet".into()),
 	};
-	let preview = v01::ChatRoomPreview {
+	let preview = v02::ChatRoomPreview {
 		timestamp: Some(5),
-		badge: Some(v01::ChatRoomBadge::UnreadCount { count: 3 }),
-		last_message: Some(v01::ChatPreviewMessage {
+		badge: Some(v02::ChatRoomBadge::UnreadCount { count: 3 }),
+		last_message: Some(v02::ChatPreviewMessage {
 			message_id: "m1".into(),
-			origin: v01::ChatMessageOrigin { participant_id: "contact".into() },
+			origin: v02::ChatMessageOrigin { participant_id: "contact".into() },
 			timestamp: 1_700_000_000_000,
-			body: v01::ChatMessageBody::Text { text: "Three new answers".into() },
-			status: v01::ChatMessageStatus::Delivered,
+			body: v02::ChatMessageBody::Text { text: "Three new answers".into() },
+			status: v02::ChatMessageStatus::Delivered,
 			reply_to: Some("m0".into()),
 			edited_at: Some(1_700_000_000_500),
 			request: false,
 		}),
-		last_reaction: Some(v01::ChatPreviewReaction {
+		last_reaction: Some(v02::ChatPreviewReaction {
 			emoji: "👍".into(),
 			by_user: false,
 			message: None,
@@ -170,7 +170,7 @@ fn frames() -> Vec<String> {
 		}),
 		unseen_reactions: 2,
 		pinned: true,
-		activity: Some(v01::ChatRoomActivity { text: "Ben is typing".into(), ongoing: true }),
+		activity: Some(v02::ChatRoomActivity { text: "Ben is typing".into(), ongoing: true }),
 	};
 	vec![
 		line(
@@ -190,7 +190,7 @@ fn frames() -> Vec<String> {
 			MESSAGE_TYPE_RESPONSE,
 			Ok::<_, CallError<HostChatCreateRoomError>>(HostChatCreateRoomResponse::V2(
 				v02::HostChatCreateRoomResponse {
-					status: v01::ChatRoomRegistrationStatus::Exists,
+					status: v02::ChatRoomRegistrationStatus::Exists,
 					room_id: room(),
 				},
 			)),
@@ -322,7 +322,7 @@ fn frames() -> Vec<String> {
 			"8.set_room_metadata.request",
 			wire_table::CHAT_SET_ROOM_METADATA,
 			MESSAGE_TYPE_REQUEST,
-			HostChatSetRoomMetadataRequest::V1(v01::HostChatSetRoomMetadataRequest {
+			HostChatSetRoomMetadataRequest::V2(v02::HostChatSetRoomMetadataRequest {
 				room_id: room(),
 				metadata,
 			}),
@@ -331,21 +331,21 @@ fn frames() -> Vec<String> {
 			"8.set_room_metadata.response",
 			wire_table::CHAT_SET_ROOM_METADATA,
 			MESSAGE_TYPE_RESPONSE,
-			Ok::<_, CallError<HostChatSetRoomMetadataError>>(HostChatSetRoomMetadataResponse::V1),
+			Ok::<_, CallError<HostChatSetRoomMetadataError>>(HostChatSetRoomMetadataResponse::V2),
 		),
 		line(
 			"8.set_room_metadata.error",
 			wire_table::CHAT_SET_ROOM_METADATA,
 			MESSAGE_TYPE_RESPONSE,
 			Err::<HostChatSetRoomMetadataResponse, _>(CallError::Domain(
-				HostChatSetRoomMetadataError::V1(v01::HostChatSetRoomMetadataError::NotRoomHost),
+				HostChatSetRoomMetadataError::V2(v02::HostChatSetRoomMetadataError::NotRoomHost),
 			)),
 		),
 		line(
 			"9.set_room_preview.request",
 			wire_table::CHAT_SET_ROOM_PREVIEW,
 			MESSAGE_TYPE_REQUEST,
-			HostChatSetRoomPreviewRequest::V1(v01::HostChatSetRoomPreviewRequest {
+			HostChatSetRoomPreviewRequest::V2(v02::HostChatSetRoomPreviewRequest {
 				room_id: room(),
 				preview: preview.clone(),
 			}),
@@ -354,10 +354,10 @@ fn frames() -> Vec<String> {
 			"9.set_room_preview.image_badge",
 			wire_table::CHAT_SET_ROOM_PREVIEW,
 			MESSAGE_TYPE_REQUEST,
-			HostChatSetRoomPreviewRequest::V1(v01::HostChatSetRoomPreviewRequest {
+			HostChatSetRoomPreviewRequest::V2(v02::HostChatSetRoomPreviewRequest {
 				room_id: room(),
-				preview: v01::ChatRoomPreview {
-					badge: Some(v01::ChatRoomBadge::Image {
+				preview: v02::ChatRoomPreview {
+					badge: Some(v02::ChatRoomBadge::Image {
 						icon: "https://icons.example/live.png".into(),
 					}),
 					pinned: false,
@@ -370,77 +370,77 @@ fn frames() -> Vec<String> {
 			"9.set_room_preview.response",
 			wire_table::CHAT_SET_ROOM_PREVIEW,
 			MESSAGE_TYPE_RESPONSE,
-			Ok::<_, CallError<HostChatSetRoomPreviewError>>(HostChatSetRoomPreviewResponse::V1),
+			Ok::<_, CallError<HostChatSetRoomPreviewError>>(HostChatSetRoomPreviewResponse::V2),
 		),
 		line(
 			"10.delete_room.request",
 			wire_table::CHAT_DELETE_ROOM,
 			MESSAGE_TYPE_REQUEST,
-			HostChatDeleteRoomRequest::V1(v01::HostChatDeleteRoomRequest { room_id: room() }),
+			HostChatDeleteRoomRequest::V2(v02::HostChatDeleteRoomRequest { room_id: room() }),
 		),
 		line(
 			"10.delete_room.response",
 			wire_table::CHAT_DELETE_ROOM,
 			MESSAGE_TYPE_RESPONSE,
-			Ok::<_, CallError<HostChatDeleteRoomError>>(HostChatDeleteRoomResponse::V1),
+			Ok::<_, CallError<HostChatDeleteRoomError>>(HostChatDeleteRoomResponse::V2),
 		),
 		line(
 			"11.update_feed.request",
 			wire_table::CHAT_UPDATE_FEED,
 			MESSAGE_TYPE_REQUEST,
-			HostChatUpdateFeedRequest::V1(v01::HostChatUpdateFeedRequest {
+			HostChatUpdateFeedRequest::V2(v02::HostChatUpdateFeedRequest {
 				room_id: room(),
-				update: v01::ChatFeedUpdate::New(message()),
+				update: v02::ChatFeedUpdate::New(message()),
 			}),
 		),
 		line(
 			"11.update_feed.replaced",
 			wire_table::CHAT_UPDATE_FEED,
 			MESSAGE_TYPE_REQUEST,
-			HostChatUpdateFeedRequest::V1(v01::HostChatUpdateFeedRequest {
+			HostChatUpdateFeedRequest::V2(v02::HostChatUpdateFeedRequest {
 				room_id: room(),
-				update: v01::ChatFeedUpdate::Replaced(call()),
+				update: v02::ChatFeedUpdate::Replaced(call()),
 			}),
 		),
 		line(
 			"11.update_feed.deleted",
 			wire_table::CHAT_UPDATE_FEED,
 			MESSAGE_TYPE_REQUEST,
-			HostChatUpdateFeedRequest::V1(v01::HostChatUpdateFeedRequest {
+			HostChatUpdateFeedRequest::V2(v02::HostChatUpdateFeedRequest {
 				room_id: room(),
-				update: v01::ChatFeedUpdate::Deleted { message_id: "m1".into() },
+				update: v02::ChatFeedUpdate::Deleted { message_id: "m1".into() },
 			}),
 		),
 		line(
 			"11.update_feed.custom",
 			wire_table::CHAT_UPDATE_FEED,
 			MESSAGE_TYPE_REQUEST,
-			HostChatUpdateFeedRequest::V1(v01::HostChatUpdateFeedRequest {
+			HostChatUpdateFeedRequest::V2(v02::HostChatUpdateFeedRequest {
 				room_id: room(),
-				update: v01::ChatFeedUpdate::New(custom()),
+				update: v02::ChatFeedUpdate::New(custom()),
 			}),
 		),
 		line(
 			"11.update_feed.response",
 			wire_table::CHAT_UPDATE_FEED,
 			MESSAGE_TYPE_RESPONSE,
-			Ok::<_, CallError<HostChatUpdateFeedError>>(HostChatUpdateFeedResponse::V1),
+			Ok::<_, CallError<HostChatUpdateFeedError>>(HostChatUpdateFeedResponse::V2),
 		),
 		line(
 			"11.update_feed.error",
 			wire_table::CHAT_UPDATE_FEED,
 			MESSAGE_TYPE_RESPONSE,
-			Err::<HostChatUpdateFeedResponse, _>(CallError::Domain(HostChatUpdateFeedError::V1(
-				v01::HostChatUpdateFeedError::NotOwner,
+			Err::<HostChatUpdateFeedResponse, _>(CallError::Domain(HostChatUpdateFeedError::V2(
+				v02::HostChatUpdateFeedError::NotOwner,
 			))),
 		),
 		line(
 			"12.messages_query.start",
 			wire_table::CHAT_MESSAGES_QUERY,
 			MESSAGE_TYPE_START,
-			ProductChatMessagesQueryRequest::V1(v01::ProductChatMessagesQueryRequest {
+			ProductChatMessagesQueryRequest::V2(v02::ProductChatMessagesQueryRequest {
 				room_id: room(),
-				anchor: v01::ChatPageAnchor::Before { cursor: Some("c1".into()) },
+				anchor: v02::ChatPageAnchor::Before { cursor: Some("c1".into()) },
 				page_size: 40,
 			}),
 		),
@@ -448,7 +448,7 @@ fn frames() -> Vec<String> {
 			"12.messages_query.receive",
 			wire_table::CHAT_MESSAGES_QUERY,
 			MESSAGE_TYPE_RESPONSE,
-			ProductChatMessagesQueryResponse::V1(v01::ProductChatMessagesQueryResponse {
+			ProductChatMessagesQueryResponse::V2(v02::ProductChatMessagesQueryResponse {
 				messages: vec![message()],
 				next: Some("c0".into()),
 			}),
@@ -457,18 +457,18 @@ fn frames() -> Vec<String> {
 			"12.messages_query.error",
 			wire_table::CHAT_MESSAGES_QUERY,
 			MESSAGE_TYPE_INTERRUPT,
-			Err::<(), _>(CallError::Domain(ProductChatQueryError::V1(
-				v01::ProductChatQueryError::NotAvailable,
+			Err::<(), _>(CallError::Domain(ProductChatQueryError::V2(
+				v02::ProductChatQueryError::NotAvailable,
 			))),
 		),
 		line(
 			"13.user_action.start",
 			wire_table::CHAT_USER_ACTION,
 			MESSAGE_TYPE_START,
-			ProductChatUserActionRequest::V1(v01::ProductChatUserActionRequest {
+			ProductChatUserActionRequest::V2(v02::ProductChatUserActionRequest {
 				room_id: room(),
-				action: v01::ChatUserAction::NewMessage {
-					body: v01::ChatMessageBody::Text { text: "hi".into() },
+				action: v02::ChatUserAction::NewMessage {
+					body: v02::ChatMessageBody::Text { text: "hi".into() },
 					reply_to: None,
 					message_id: Some("m1".into()),
 					timestamp: Some(1_700_000_000_000),
@@ -479,34 +479,34 @@ fn frames() -> Vec<String> {
 			"13.user_action.accept",
 			wire_table::CHAT_USER_ACTION,
 			MESSAGE_TYPE_START,
-			ProductChatUserActionRequest::V1(v01::ProductChatUserActionRequest {
+			ProductChatUserActionRequest::V2(v02::ProductChatUserActionRequest {
 				room_id: room(),
-				action: v01::ChatUserAction::AcceptRequest,
+				action: v02::ChatUserAction::AcceptRequest,
 			}),
 		),
 		line(
 			"13.user_action.pay",
 			wire_table::CHAT_USER_ACTION,
 			MESSAGE_TYPE_START,
-			ProductChatUserActionRequest::V1(v01::ProductChatUserActionRequest {
+			ProductChatUserActionRequest::V2(v02::ProductChatUserActionRequest {
 				room_id: room(),
-				action: v01::ChatUserAction::SendPayment,
+				action: v02::ChatUserAction::SendPayment,
 			}),
 		),
 		line(
 			"13.user_action.delete",
 			wire_table::CHAT_USER_ACTION,
 			MESSAGE_TYPE_START,
-			ProductChatUserActionRequest::V1(v01::ProductChatUserActionRequest {
+			ProductChatUserActionRequest::V2(v02::ProductChatUserActionRequest {
 				room_id: room(),
-				action: v01::ChatUserAction::DeleteMessage { message_id: "m1".into() },
+				action: v02::ChatUserAction::DeleteMessage { message_id: "m1".into() },
 			}),
 		),
 		line(
 			"13.user_action.receive",
 			wire_table::CHAT_USER_ACTION,
 			MESSAGE_TYPE_RESPONSE,
-			ProductChatUserActionResponse::V1(v01::ProductChatUserActionResponse::MessageCreated(
+			ProductChatUserActionResponse::V2(v02::ProductChatUserActionResponse::MessageCreated(
 				message(),
 			)),
 		),
@@ -514,21 +514,21 @@ fn frames() -> Vec<String> {
 			"13.user_action.acknowledged",
 			wire_table::CHAT_USER_ACTION,
 			MESSAGE_TYPE_RESPONSE,
-			ProductChatUserActionResponse::V1(v01::ProductChatUserActionResponse::Acknowledged),
+			ProductChatUserActionResponse::V2(v02::ProductChatUserActionResponse::Acknowledged),
 		),
 		line(
 			"13.user_action.error",
 			wire_table::CHAT_USER_ACTION,
 			MESSAGE_TYPE_INTERRUPT,
-			Err::<(), _>(CallError::Domain(ProductChatUserActionError::V1(
-				v01::ProductChatUserActionError::Rejected { reason: "no".into() },
+			Err::<(), _>(CallError::Domain(ProductChatUserActionError::V2(
+				v02::ProductChatUserActionError::Rejected { reason: "no".into() },
 			))),
 		),
 		line(
 			"14.reactions_query.start",
 			wire_table::CHAT_REACTIONS_QUERY,
 			MESSAGE_TYPE_START,
-			ProductChatReactionsQueryRequest::V1(v01::ProductChatReactionsQueryRequest {
+			ProductChatReactionsQueryRequest::V2(v02::ProductChatReactionsQueryRequest {
 				room_id: room(),
 				message_id: "m1".into(),
 			}),
@@ -537,8 +537,8 @@ fn frames() -> Vec<String> {
 			"14.reactions_query.receive",
 			wire_table::CHAT_REACTIONS_QUERY,
 			MESSAGE_TYPE_RESPONSE,
-			ProductChatReactionsQueryResponse::V1(v01::ProductChatReactionsQueryResponse {
-				reactions: vec![v01::ChatReactionDetail {
+			ProductChatReactionsQueryResponse::V2(v02::ProductChatReactionsQueryResponse {
+				reactions: vec![v02::ChatReactionDetail {
 					participant_id: "p1".into(),
 					emoji: "👍".into(),
 					timestamp: 1_700_000_000_000,

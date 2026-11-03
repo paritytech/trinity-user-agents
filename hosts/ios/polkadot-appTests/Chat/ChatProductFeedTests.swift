@@ -428,7 +428,7 @@ struct BodyCase: CustomTestStringConvertible, Sendable {
         // The product draws a custom body, as it draws a custom message that it posts.
         BodyCase(
             testDescription: "custom",
-            body: .custom(message: ChatCustomMessage(messageType: "poll", payload: Data([1, 2])), alt: "A poll"),
+            body: .custom(message: ChatCustomBody(messageType: "poll", payload: Data([1, 2])), alt: "A poll"),
             content: .customRendered(
                 .init(
                     decoderId: MessageDecoderIdentifier.product.rawValue,

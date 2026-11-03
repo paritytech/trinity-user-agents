@@ -156,7 +156,7 @@ pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 pub struct EventCallbacks {
 	pub logs: Mutex<Vec<(String, String)>>,
 	pub face_requests: Mutex<Vec<bool>>,
-	pub chat_room_status: Mutex<v01::ChatRoomRegistrationStatus>,
+	pub chat_room_status: Mutex<truapi::latest::ChatRoomRegistrationStatus>,
 	pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
 	pub chat_bot_status: Mutex<v01::ChatBotRegistrationStatus>,
 	pub chat_registered_bots: Mutex<Vec<(String, String, String)>>,
@@ -225,7 +225,7 @@ impl EventCallbacks {
 	pub fn new() -> Self {
 		Self {
 			logs: Mutex::new(Vec::new()),
-			chat_room_status: Mutex::new(v01::ChatRoomRegistrationStatus::New),
+			chat_room_status: Mutex::new(truapi::latest::ChatRoomRegistrationStatus::New),
 			chat_created_rooms: Mutex::new(Vec::new()),
 			chat_bot_status: Mutex::new(v01::ChatBotRegistrationStatus::New),
 			chat_registered_bots: Mutex::new(Vec::new()),
@@ -512,7 +512,7 @@ impl NativeChatCallbacks for EventCallbacks {
 		room_id: String,
 		name: String,
 		icon: String,
-	) -> Result<v01::ChatRoomRegistrationStatus, HostRejection> {
+	) -> Result<truapi::latest::ChatRoomRegistrationStatus, HostRejection> {
 		self.chat_created_rooms
 			.lock()
 			.expect("created rooms mutex poisoned")
@@ -1960,7 +1960,7 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 	.unwrap();
 	let updated_rooms = ready_rooms(rooms.as_mut(), "the created room replacement");
 	*callbacks.chat_room_status.lock().expect("room status mutex poisoned") =
-		v01::ChatRoomRegistrationStatus::Exists;
+		truapi::latest::ChatRoomRegistrationStatus::Exists;
 	let existing = futures::executor::block_on(crate::platform::ChatPlatform::create_chat_room(
 		&platform,
 		&product,
@@ -1979,10 +1979,10 @@ fn native_chat_adapter_preserves_room_status_and_message_room() {
 	))
 	.unwrap();
 
-	assert_eq!(created, v01::ChatRoomRegistrationStatus::New);
+	assert_eq!(created, truapi::latest::ChatRoomRegistrationStatus::New);
 	assert_eq!(updated_rooms.rooms.len(), 1);
 	assert_eq!(updated_rooms.rooms[0].room_id, "support");
-	assert_eq!(existing, v01::ChatRoomRegistrationStatus::Exists);
+	assert_eq!(existing, truapi::latest::ChatRoomRegistrationStatus::Exists);
 	assert_eq!(posted.message_id, "message-1");
 	assert_eq!(
 		callbacks
@@ -2083,7 +2083,7 @@ fn native_chat_adapter_creates_a_room_without_declarations() {
 	))
 	.unwrap();
 	*callbacks.chat_room_status.lock().expect("room status mutex poisoned") =
-		v01::ChatRoomRegistrationStatus::Exists;
+		truapi::latest::ChatRoomRegistrationStatus::Exists;
 	futures::executor::block_on(crate::platform::ChatPlatform::create_chat_room(
 		&platform,
 		&product,
@@ -2178,16 +2178,24 @@ fn native_chat_adapter_reports_feed_rejections_by_kind() {
 		[("support".to_string(), update().update, false)]
 	);
 
-	*callbacks.chat_feed_rejection.lock().expect("feed rejection mutex poisoned") =
-		Some(NativeChatFeedRejection::UnknownMessage);
-	assert_eq!(
+	let rejected = |rejection| {
+		*callbacks.chat_feed_rejection.lock().expect("feed rejection mutex poisoned") =
+			Some(rejection);
 		futures::executor::block_on(crate::platform::ChatPlatform::update_chat_feed(
 			&platform,
 			&product,
 			update(),
 			true,
-		)),
-		Err(truapi::latest::HostChatUpdateFeedError::UnknownMessage)
+		))
+	};
+	assert_eq!(
+		rejected(NativeChatFeedRejection::UnknownMessage),
+		Err(truapi::CallError::Domain(truapi::latest::HostChatUpdateFeedError::UnknownMessage))
+	);
+	// A refusal that names no protocol error is a failure of the host.
+	assert_eq!(
+		rejected(NativeChatFeedRejection::Rejected { reason: "store locked".to_string() }),
+		Err(truapi::CallError::HostFailure { reason: "store locked".to_string() })
 	);
 }
 
