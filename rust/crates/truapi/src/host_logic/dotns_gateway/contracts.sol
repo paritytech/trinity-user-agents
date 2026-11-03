@@ -68,8 +68,6 @@ interface DotnsRegistrar {
 	function exists(uint256 tokenId) external view returns (bool);
 	/// Returns the owner of the `tokenId` token.
 	function ownerOf(uint256 tokenId) external view returns (address);
-	/// Returns the label a token id was minted for, without the TLD.
-	function labelOf(uint256 tokenId) external view returns (string);
 }
 
 /// Upgradeable on-chain registry for hierarchical name ownership and resolution.
@@ -89,11 +87,4 @@ interface DotnsRegistry {
 interface ContentResolver {
 	/// Returns a text record for a node.
 	function text(bytes32 node, string key) external view returns (string);
-}
-
-/// Browse's app directory: the label hashes of the products published to it,
-/// in publication order.
-interface Publisher {
-	/// Returns a page of published label hashes.
-	function getPublished(uint256 offset, uint256 limit) external view returns (bytes32[]);
 }

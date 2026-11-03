@@ -33,6 +33,7 @@ import {
 import type {
   FundingFrameOutcome,
   FundingFrameTarget,
+  FundingProgress,
   GenericError,
   HostChatCreateRoomRequest,
   HostChatCreateRoomResponse,
@@ -247,11 +248,6 @@ export type CoreStorageKey =
    */
   | { tag: "WorkerManifest"; value: { productLabel: string } }
   /**
-   * The products published to browse on this network, as last read, and
-   * when, cached for the same lifetime as `Self::ProductManifest`.
-   */
-  | { tag: "PublishedProducts"; value?: undefined }
-  /**
    * What funding providers' quote answers showed about what they serve,
    * each record trusted for twelve hours.
    */
@@ -387,7 +383,7 @@ export interface FundingQuoteRow {
   /**
    * The provider.
    */
-  providerId: string;
+  providerId: ProductId;
 
   /**
    * Where its quote stands.
@@ -1043,8 +1039,7 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         14,
         S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
       ] as const,
-      PublishedProducts: [15, S._void] as const,
-      FundingSupport: [16, S._void] as const,
+      FundingSupport: [15, S._void] as const,
     }),
 );
 
@@ -1160,7 +1155,7 @@ export const FundingPresentation: S.Codec<FundingPresentation> = S.lazy(
 export const FundingQuoteRow: S.Codec<FundingQuoteRow> = S.lazy(
   (): S.Codec<FundingQuoteRow> =>
     S.Struct({
-      providerId: S.str,
+      providerId: ProductId,
       state: FundingQuoteState,
     }) as S.Codec<FundingQuoteRow>,
 );
@@ -1917,11 +1912,13 @@ export interface FundingPlatform {
 
   /**
    * Observe a session's status change, for host UI such as the in-flight
-   * pill.
+   * pill, with the progress the host draws for it: ``undefined`` once the core
+   * keeps only the session's summary.
    */
   fundingSessionChanged?(
     intent: string,
     status: HostFundingStatusSubscribeItem,
+    progress: FundingProgress | undefined,
   ): void;
 
   /**
