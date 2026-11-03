@@ -17,7 +17,7 @@ import WebKit
 /// navigated to. Closing it, or the frame going off screen any other way,
 /// answers `Dismissed`.
 final class FundingWebPageController: UIViewController {
-    let providerId: String
+    let providerId: ProductId
     private let url: URL
     private let returnURL: URL?
     private let webView: WKWebView
@@ -25,7 +25,7 @@ final class FundingWebPageController: UIViewController {
     private var completion: ((FundingFrameOutcome) -> Void)?
     private var secureObservation: NSKeyValueObservation?
 
-    init(providerId: String, url: URL, returnURL: URL?, completion: @escaping (FundingFrameOutcome) -> Void) {
+    init(providerId: ProductId, url: URL, returnURL: URL?, completion: @escaping (FundingFrameOutcome) -> Void) {
         self.providerId = providerId
         self.url = url
         self.returnURL = returnURL

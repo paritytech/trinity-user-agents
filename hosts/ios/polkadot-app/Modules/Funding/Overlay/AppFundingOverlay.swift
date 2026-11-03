@@ -16,10 +16,10 @@ protocol FundingOverlayEnvironment: AnyObject {
     /// Presents over whatever is on screen; false when nothing is.
     func present(_ controller: UIViewController) -> Bool
     /// The provider product's page at `route`, as the app shows products.
-    func providerPage(providerId: String, route: String, title: String) -> UIViewController?
+    func providerPage(providerId: ProductId, route: String, title: String) -> UIViewController?
     /// Whether the provider product ships an App; true when that cannot be
     /// told, so its page is tried as before.
-    func providerHasApp(providerId: String) async -> Bool
+    func providerHasApp(providerId: ProductId) async -> Bool
     /// A session changed, for the CASH card's lists.
     func fundingActivityChanged()
     /// A passing notice over whatever is on screen.
@@ -50,18 +50,18 @@ final class AppFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
     }
 
     func presentProviderFrame(
-        providerId: String,
+        providerId: ProductId,
         intent: String,
         target: FundingFrameTarget
     ) async -> FundingFrameOutcome {
         await frame(providerId: providerId, intent: intent, target: target)
     }
 
-    func closeProviderFrame(providerId: String, intent: String) {
+    func closeProviderFrame(providerId: ProductId, intent: String) {
         Task { @MainActor in coordinator?.closeFrame(providerId: providerId, intent: intent) }
     }
 
-    func providerHasApp(providerId: String) async -> Bool {
+    func providerHasApp(providerId: ProductId) async -> Bool {
         await hasApp(providerId: providerId)
     }
 
@@ -77,7 +77,7 @@ final class AppFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
         Task { @MainActor in coordinator?.quotesChanged(intent: intent, quotes: quotes) }
     }
 
-    func workerCrashing(productId: String) {
+    func workerCrashing(productId: ProductId) {
         Task { @MainActor in await coordinator?.workerCrashing(productId: productId) }
     }
 
@@ -116,13 +116,13 @@ private extension AppFundingOverlay {
     }
 
     @MainActor
-    func hasApp(providerId: String) async -> Bool {
+    func hasApp(providerId: ProductId) async -> Bool {
         guard let coordinator else { return true }
         return await coordinator.providerHasApp(providerId: providerId)
     }
 
     @MainActor
-    func frame(providerId: String, intent: String, target: FundingFrameTarget) async -> FundingFrameOutcome {
+    func frame(providerId: ProductId, intent: String, target: FundingFrameTarget) async -> FundingFrameOutcome {
         guard let coordinator else { return .dismissed }
         switch target {
         case let .app(route):
@@ -209,14 +209,14 @@ final class FundingOverlayCoordinator {
         _ = environment.present(sheet)
     }
 
-    func providerHasApp(providerId: String) async -> Bool {
+    func providerHasApp(providerId: ProductId) async -> Bool {
         await environment.providerHasApp(providerId: providerId)
     }
 
     /// The provider closed its frame for session `intent`: the frame answers
     /// `.closed`, and the session's progress shows in its place when the frame
     /// was on screen. A hidden frame only answers.
-    func closeFrame(providerId: String, intent: String) {
+    func closeFrame(providerId: ProductId, intent: String) {
         if let frame = frames[intent], frame.providerId == providerId {
             let shown = frame.presentingViewController != nil
             frame.finish(.closed, dismissed: { [weak self] in
@@ -257,7 +257,7 @@ final class FundingOverlayCoordinator {
 
     /// Answers `.dismissed` and takes the frame down if the core stops
     /// waiting first.
-    func presentFrame(providerId: String, intent: String, route: String) async -> FundingFrameOutcome {
+    func presentFrame(providerId: ProductId, intent: String, route: String) async -> FundingFrameOutcome {
         let brand = await environment.branding.brand(for: providerId)
         guard !Task.isCancelled,
               let page = environment.providerPage(providerId: providerId, route: route, title: brand.name)
@@ -293,7 +293,7 @@ final class FundingOverlayCoordinator {
     /// Shows an external page in a frame the host owns, answering
     /// `.returned` when it reaches `returnUrl` and `.dismissed` when the user
     /// closes it.
-    func presentPage(providerId: String, intent: String, url: String, returnUrl: String?) async
+    func presentPage(providerId: ProductId, intent: String, url: String, returnUrl: String?) async
         -> FundingFrameOutcome {
         guard !Task.isCancelled, let pageURL = URL(string: url) else { return .dismissed }
 
@@ -334,7 +334,7 @@ final class FundingOverlayCoordinator {
 
     /// Says so on the open session sheets the product serves, or over
     /// whatever is on screen when none is open.
-    func workerCrashing(productId: String) async {
+    func workerCrashing(productId: ProductId) async {
         let name = await environment.branding.brand(for: productId).name
         let message = String(localized: .Funding.providerCrashing(provider: name))
         let served = flows.values.filter { $0.chosenProviderId == productId }

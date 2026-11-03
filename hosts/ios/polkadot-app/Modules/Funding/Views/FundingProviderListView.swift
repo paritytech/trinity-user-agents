@@ -59,7 +59,7 @@ private extension FundingProviderListView {
         }
     }
 
-    func row(_ providerId: String) -> some View {
+    func row(_ providerId: ProductId) -> some View {
         let state = model.rows[providerId] ?? .pending
         let brand = model.brand(for: providerId)
         let isSelected = providerId == model.selectedProviderId
@@ -88,7 +88,7 @@ private extension FundingProviderListView {
     }
 
     @ViewBuilder
-    func badge(providerId: String, state: FundingQuoteState) -> some View {
+    func badge(providerId: ProductId, state: FundingQuoteState) -> some View {
         if case let .unavailable(reason) = state {
             Text(unavailableText(reason))
                 .typography(.captionMedium)
