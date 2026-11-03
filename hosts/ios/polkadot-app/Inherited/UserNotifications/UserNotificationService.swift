@@ -120,6 +120,7 @@ final class UserNotificationService: NSObject {
     private let defaults: UserDefaults
     private let origin: HostEventOrigin
     private let monotonicMilliseconds: @Sendable () -> Int
+    private let isReporting: Bool
 
     let center: UNUserNotificationCenter = .current()
 
@@ -128,13 +129,15 @@ final class UserNotificationService: NSObject {
         recorder: any HostEventRecording = IssueMonitoringFactory.createHostEventRecorder(),
         defaults: UserDefaults = .standard,
         origin: HostEventOrigin = .current,
-        monotonicMilliseconds: @escaping @Sendable () -> Int = { HostEventClock.monotonicMilliseconds() }
+        monotonicMilliseconds: @escaping @Sendable () -> Int = { HostEventClock.monotonicMilliseconds() },
+        isReporting: Bool = IssueMonitoringFactory.isReportingSupported
     ) {
         self.logger = logger
         self.recorder = recorder
         self.defaults = defaults
         self.origin = origin
         self.monotonicMilliseconds = monotonicMilliseconds
+        self.isReporting = isReporting
         super.init()
     }
 
@@ -174,6 +177,9 @@ private extension UserNotificationService {
 
     /// Reports product notifications that arrived while the app was not in the foreground.
     func reportNotificationsSeenSinceLastLaunch() {
+        guard isReporting else {
+            return
+        }
         let center = center
         let defaults = defaults
         Task {
@@ -187,6 +193,16 @@ private extension UserNotificationService {
                 record(notification, step: .shown, seenVia: .nextLaunch)
             }
         }
+    }
+
+    /// A notification shown in the foreground stays in Notification Center; this keeps the next launch's scan from
+    /// reporting it again.
+    func markScannedThrough(_ date: Date) {
+        guard isReporting else {
+            return
+        }
+        let scannedThrough = defaults.object(forKey: Self.lastScanKey) as? Date ?? .distantPast
+        defaults.set(max(scannedThrough, date), forKey: Self.lastScanKey)
     }
 
     func record(
@@ -308,6 +324,7 @@ extension UserNotificationService: UNUserNotificationCenterDelegate {
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
         record(notification, step: .shown, seenVia: .foreground)
+        markScannedThrough(notification.date)
         let presentationOptions = foregroundPresentationDecider?.presentationOptions(for: notification) ?? []
         completionHandler(presentationOptions)
     }
