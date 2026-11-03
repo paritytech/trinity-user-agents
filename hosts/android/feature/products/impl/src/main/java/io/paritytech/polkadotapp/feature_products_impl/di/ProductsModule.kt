@@ -26,6 +26,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Me
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.DevServerAddresses
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.deriveEntropy.DeriveEntropyUseCase
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlay
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardFaceOnOpen
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFaceSource
@@ -81,6 +82,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledPro
 import io.paritytech.polkadotapp.feature_products_impl.domain.deriveEntropy.RealDeriveEntropyUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.RealExploreProductsService
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.AppFundingOverlay
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProductsWarmUp
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingProductsWarmUp
@@ -394,6 +396,9 @@ internal interface ProductsModule {
 
     @Binds
     fun bindBundledProductFiles(impl: AssetBundledProductFiles): BundledProductFiles
+
+    @Binds
+    fun bindFundingOverlay(impl: AppFundingOverlay): FundingOverlay
 
     @Binds
     fun bindFundingRuntime(impl: TrUAPIFundingRuntime): FundingRuntime
