@@ -9,7 +9,7 @@ protocol FundingRuntime: AnyObject, Sendable {
     @discardableResult
     func getFundingQuote(intent: String, ask: FundingQuoteAsk) -> UInt64
     func stopFundingQuotes(intent: String)
-    func selectFundingProvider(intent: String, providerId: String, quoteId: String) async throws -> Bool
+    func selectFundingProvider(intent: String, providerId: ProductId, quoteId: String) async throws -> Bool
     func cancelFunding(intent: String) async throws -> CancelOutcome
     func confirmFundingCancel(intent: String, terms: CancelTerms?) async throws -> CancelConfirmation
     func fundingHistory() -> [FundingSessionSummary]

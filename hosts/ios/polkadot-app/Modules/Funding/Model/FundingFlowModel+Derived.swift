@@ -9,11 +9,11 @@ enum FundingAmountIssue: Equatable {
 }
 
 extension FundingFlowModel {
-    var brandsInOrder: [String] {
+    var brandsInOrder: [ProductId] {
         candidates.map(\.providerId)
     }
 
-    func brand(for providerId: String) -> FundingProviderBrand {
+    func brand(for providerId: ProductId) -> FundingProviderBrand {
         brands[providerId] ?? .placeholder(for: providerId)
     }
 
@@ -60,7 +60,7 @@ extension FundingFlowModel {
 
     /// The providers the list shows: the core's quote list in its order once it
     /// arrived, otherwise every provider with the routed ones first.
-    var listedProviderIds: [String] {
+    var listedProviderIds: [ProductId] {
         if !quoteOrder.isEmpty { return quoteOrder }
         let routed = Set(routedCandidates.map(\.providerId))
         return candidates.filter { routed.contains($0.providerId) }.map(\.providerId)
@@ -160,11 +160,11 @@ extension FundingFlowModel {
 // MARK: - Quotes
 
 extension FundingFlowModel {
-    var quotedProviders: [(providerId: String, quote: FundingQuote)] {
+    var quotedProviders: [(providerId: ProductId, quote: FundingQuote)] {
         rows.compactMap { providerId, state in state.quote.map { (providerId, $0) } }
     }
 
-    var selectedProviderId: String? {
+    var selectedProviderId: ProductId? {
         if let chosenProviderId, rows[chosenProviderId]?.quote != nil { return chosenProviderId }
         return bestProviderId
     }

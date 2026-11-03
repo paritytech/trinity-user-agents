@@ -28,20 +28,20 @@ final class FundingFlowModel {
     var country: PaymentCountry?
     var network: String?
     var asset: String?
-    var chosenProviderId: String?
+    var chosenProviderId: ProductId?
     var toast: String?
 
     private(set) var candidates: [FundingCandidate]
-    private(set) var rows: [String: FundingQuoteState] = [:]
+    private(set) var rows: [ProductId: FundingQuoteState] = [:]
     /// The providers of the core's latest quote list, in its order.
-    private(set) var quoteOrder: [String] = []
+    private(set) var quoteOrder: [ProductId] = []
     /// The amounts the core says the reported selection takes across every
     /// provider.
     private(set) var limits = FundingAmountLimits(min: nil, max: nil)
     /// The same for each network a crypto route declares, by network id.
     private(set) var networkLimits: [String: FundingAmountLimits] = [:]
     /// The provider the core marked as quoting best for the user.
-    private(set) var bestProviderId: String?
+    private(set) var bestProviderId: ProductId?
     /// What the core knows about each country on the reported rail and
     /// asset, by code.
     private(set) var countrySupport: [String: FundingCountrySupport] = [:]
@@ -51,7 +51,7 @@ final class FundingFlowModel {
     /// The core's id for the latest quote request: lists answering an
     /// earlier one are dropped.
     private var quoteRequestId: UInt64?
-    private(set) var brands: [String: FundingProviderBrand] = [:]
+    private(set) var brands: [ProductId: FundingProviderBrand] = [:]
     private(set) var isStarting = false
     private(set) var hasStarted = false
     /// Why the chosen provider could not be handed the session.
@@ -162,7 +162,7 @@ extension FundingFlowModel {
         requestQuote()
     }
 
-    func chooseProvider(_ providerId: String) {
+    func chooseProvider(_ providerId: ProductId) {
         chosenProviderId = providerId
         toast = String(localized: .Funding.providerChanged)
         path.removeLast()
@@ -450,7 +450,7 @@ private extension FundingFlowModel {
         }
     }
 
-    func loadBrands(_ providerIds: [String]) {
+    func loadBrands(_ providerIds: [ProductId]) {
         for providerId in providerIds where brands[providerId] == nil {
             Task { [branding] in
                 let brand = await branding.brand(for: providerId)
