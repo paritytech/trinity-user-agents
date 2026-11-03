@@ -38,7 +38,6 @@ protocol WalletViewModelProtocol: AnyObject, Observation.Observable {
     /// How far the open Purse's card has shrunk into the header, 0 to 1.
     var onPurseCollapse: ((CGFloat) -> Void)? { get set }
     var onCollectibles: (() -> Void)? { get set }
-    var onViewCollectibles: (() -> Void)? { get set }
     var onOpenPocketCard: ((PocketCardViewModel) -> Void)? { get set }
     var onRemovePocketCard: ((PocketCardViewModel) -> Void)? { get set }
 }
@@ -65,7 +64,6 @@ class WalletViewModel: WalletViewModelProtocol {
     var onCollapse: (() -> Void)?
     var onPurseCollapse: ((CGFloat) -> Void)?
     var onCollectibles: (() -> Void)?
-    var onViewCollectibles: (() -> Void)?
     var onOpenPocketCard: ((PocketCardViewModel) -> Void)?
     var onRemovePocketCard: ((PocketCardViewModel) -> Void)?
 }

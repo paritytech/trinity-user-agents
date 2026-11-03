@@ -4,18 +4,14 @@
 //! The host supplies the providers it offers, each with the Worker manifest it
 //! shipped; candidates are answered from what dotNS last said about a provider,
 //! and from that snapshot until dotNS has answered, so the list renders with no
-//! chain read. Products published to browse whose Worker manifest serves
-//! Funding join after the host's own, once dotNS has answered for them. Every
-//! query re-checks both in the background through the manifest cache, so a
-//! provider whose publisher changed, withdrew or unpublished it is corrected
-//! within the cache lifetime.
+//! chain read. Only the providers the host lists are offered: the list is the
+//! host's to control. Every query re-checks them in the background through
+//! the manifest cache, so a provider whose publisher changed, withdrew or
+//! unpublished it is corrected within the cache lifetime.
 
 use std::{
 	collections::{HashMap, HashSet},
-	sync::{
-		Arc, Mutex,
-		atomic::{AtomicBool, Ordering},
-	},
+	sync::{Arc, Mutex},
 };
 
 use truapi::latest::{FundingDirection, FundingRail};
@@ -23,10 +19,7 @@ use truapi::latest::{FundingDirection, FundingRail};
 use futures::lock::Mutex as AsyncMutex;
 use parity_scale_codec::{Decode, Encode};
 
-use super::{
-	browse::published_products, funding::lock, product_manifest::worker_manifest,
-	services::RuntimeServices,
-};
+use super::{funding::lock, product_manifest::worker_manifest, services::RuntimeServices};
 use crate::{
 	host_logic::{
 		funding::FundingSessionError,
@@ -58,12 +51,8 @@ pub struct FundingProviders {
 	/// What dotNS last said each provider publishes: its Worker manifest, or
 	/// `None` for nothing usable.
 	live: Mutex<HashMap<ProductId, Option<WorkerManifest>>>,
-	/// Products published to browse, in the Publishers' order.
-	discovered: Mutex<Vec<ProductId>>,
 	/// Providers whose manifest is being read.
 	refreshing: Mutex<HashSet<ProductId>>,
-	/// Whether the browse list is being read.
-	discovering: AtomicBool,
 	/// What providers' quote answers showed about what they serve, newest
 	/// per ask, persisted under [`CoreStorageKey::FundingSupport`].
 	learned: Mutex<Vec<LearnedSupport>>,
@@ -76,8 +65,7 @@ pub struct FundingProviders {
 }
 
 impl FundingProviders {
-	/// Every provider serving `direction`: the host's in its order, then
-	/// those published to browse that the host does not list. What their
+	/// Every provider serving `direction`, in the host's order. What their
 	/// recent quote answers showed is folded into what their manifests say.
 	pub fn candidates(&self, direction: FundingDirection) -> Vec<FundingCandidate> {
 		let learned = lock(&self.learned).clone();
@@ -97,7 +85,7 @@ impl FundingProviders {
 	}
 
 	/// Every provider a quote is asked of and a session can be handed to:
-	/// each whose manifest serves Funding, the host's first, whatever routes
+	/// each whose manifest serves Funding, in the host's order, whatever routes
 	/// it declares, since a provider can serve more or less than it last
 	/// published. One with no manifest yet, or whose manifest was withdrawn,
 	/// is neither asked nor chosen.
@@ -111,20 +99,14 @@ impl FundingProviders {
 			.collect()
 	}
 
-	/// The host's providers in its order, then the browse ones it does not
-	/// list, each with the manifest the core goes by.
+	/// The host's providers in its order, each with the manifest the core
+	/// goes by.
 	fn providers(&self) -> Vec<(ProductId, Option<WorkerManifest>)> {
 		let entries = lock(&self.entries).clone();
-		let discovered = lock(&self.discovered).clone();
-		let offered = entries.iter().map(|entry| (entry.product_id.clone(), self.manifest(entry)));
-		let published = discovered
-			.into_iter()
-			.filter(|product_id| entries.iter().all(|entry| &entry.product_id != product_id))
-			.map(|product_id| {
-				let manifest = lock(&self.live).get(&product_id).cloned().flatten();
-				(product_id, manifest)
-			});
-		offered.chain(published).collect()
+		entries
+			.iter()
+			.map(|entry| (entry.product_id.clone(), self.manifest(entry)))
+			.collect()
 	}
 
 	/// Record what an answer showed, replacing what was known for the same
@@ -189,11 +171,8 @@ impl RuntimeServices {
 	) -> Result<(), FundingSessionError> {
 		let offered = offered_providers(entries)?;
 		let providers = &self.funding_providers();
-		let discovered = lock(&providers.discovered).clone();
-		lock(&providers.live).retain(|product_id, _| {
-			offered.iter().any(|entry| &entry.product_id == product_id) ||
-				discovered.contains(product_id)
-		});
+		lock(&providers.live)
+			.retain(|product_id, _| offered.iter().any(|entry| &entry.product_id == product_id));
 		*lock(&providers.entries) = offered;
 		self.refresh_funding_providers();
 		Ok(())
@@ -295,10 +274,9 @@ impl RuntimeServices {
 		lock(&self.funding_providers().selections).remove(intent);
 	}
 
-	/// Read every host provider's manifest that is not already being read,
-	/// and the browse list with the manifests of what it lists. A read that
-	/// fails keeps what the core had, since it says nothing about the
-	/// provider.
+	/// Read every host provider's manifest that is not already being read. A
+	/// read that fails keeps what the core had, since it says nothing about
+	/// the provider.
 	pub fn refresh_funding_providers(self: &Arc<Self>) {
 		let services = self.clone();
 		(self.spawner)(Box::pin(async move {
@@ -317,34 +295,6 @@ impl RuntimeServices {
 			(self.spawner)(Box::pin(async move {
 				services.read_provider_manifest(&entry.product_id).await;
 			}));
-		}
-		if self.funding_providers().discovering.swap(true, Ordering::AcqRel) {
-			return;
-		}
-		let services = self.clone();
-		(self.spawner)(Box::pin(async move {
-			services.discover_funding_providers().await;
-			services.funding_providers().discovering.store(false, Ordering::Release);
-		}));
-	}
-
-	/// Read the browse list, then the manifest of each product on it, one at
-	/// a time so a long list does not open a burst of chain reads.
-	async fn discover_funding_providers(&self) {
-		let published = match published_products(self, self.platform.as_ref()).await {
-			Ok(published) => published,
-			Err(reason) => {
-				tracing::warn!(%reason, "reading the browse list failed");
-				return;
-			},
-		};
-		tracing::debug!(count = published.len(), "products published to browse");
-		let providers = &self.funding_providers();
-		*lock(&providers.discovered) = published.clone();
-		for product_id in published {
-			if lock(&providers.refreshing).insert(product_id.clone()) {
-				self.read_provider_manifest(&product_id).await;
-			}
 		}
 	}
 
@@ -648,27 +598,6 @@ mod tests {
 		};
 
 		assert_eq!((offered(&manifest(CARD_IN)), offered("{")), (Ok(1), Err(true)));
-	}
-
-	// Published providers join after the host's own, once dotNS has said what
-	// they serve; one the host also lists appears once, in the host's place.
-	#[test]
-	fn published_providers_follow_the_hosts_own() {
-		let providers = providers(&[("card.dot", Some(manifest(CARD_IN)))]);
-		let live = |routes: &str| WorkerManifest::parse(&manifest(routes)).ok();
-		*lock(&providers.discovered) = ["unread.dot", "found.dot", "card.dot", "nothing.dot"]
-			.map(ProductId::for_test)
-			.to_vec();
-		lock(&providers.live).extend([
-			(ProductId::for_test("found.dot"), live(CARD_IN)),
-			(ProductId::for_test("card.dot"), live(CARD_IN)),
-			(ProductId::for_test("nothing.dot"), None),
-		]);
-
-		assert_eq!(
-			ids(providers.candidates(FundingDirection::In)),
-			vec![ProductId::for_test("card.dot"), ProductId::for_test("found.dot")]
-		);
 	}
 
 	// A stale snapshot is corrected by what the provider publishes now,
