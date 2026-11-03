@@ -22,13 +22,13 @@ use subxt::{ext::scale_encode::EncodeAsType, utils::MultiSignature};
 use thiserror::Error;
 use tracing::warn;
 
-alloy_sol_types::sol!("src/host_logic/dotns_gateway/contracts.sol");
-
 use crate::{
 	chain::{ExtensionError, InheritedImplication, SubstrateSigner, TransactionExtension},
 	dotns_views::{network_tld, protocol_component, read_view, tld_node},
 	platform::{MAX_DNS_LABEL_LEN, is_dns_label},
 };
+
+alloy_sol_types::sol!("src/host_logic/dotns_gateway/contracts.sol");
 
 /// Ring-VRF context for `register_name` proofs.
 ///
@@ -198,7 +198,7 @@ pub enum DotnsContractError {
 		detail: String,
 	},
 	/// ABI return data did not match the expected shape.
-	#[error("ABI decode failed: {0}")]
+	#[error(transparent)]
 	Abi(#[from] alloy_sol_types::Error),
 }
 
