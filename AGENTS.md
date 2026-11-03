@@ -88,6 +88,9 @@ docs/                      design docs, RFCs, feature proposals
 scripts/codegen.sh         regenerate the TS client from the Rust crate
 scripts/battery.sh         run the generated battery against both headless CLI host roles,
                            plus the Pocket phase a Worker execution serves
+scripts/cli-backends-e2e.ts
+                           run the CLI on both chain backends (rpc, light-client) and
+                           compare what each serves; `make e2e-cli-backends`
 scripts/bundle-size.mjs    measure the JS/WASM of the asset groups given (raw, gzip, brotli);
                            .github/actions/bundle-size takes them as `assets`, stores
                            main's snapshot and comments the comparison on PRs
