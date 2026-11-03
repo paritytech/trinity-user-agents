@@ -11,14 +11,17 @@
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::{FundingDirection, FundingRail};
 
-use crate::host_logic::worker_manifest::{FundingRoute, WorkerManifest};
+use crate::{
+	host_logic::worker_manifest::{FundingRoute, WorkerManifest},
+	platform::ProductId,
+};
 
 /// A provider the host offers, as the host supplies it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingProviderEntry {
 	/// The provider's product id.
-	pub product_id: String,
+	pub product_id: ProductId,
 	/// The Worker manifest JSON the host shipped for it, used until the core
 	/// has read the live one. `None` waits for that read: until dotNS answers,
 	/// the provider is neither asked for quotes nor offered for a session.

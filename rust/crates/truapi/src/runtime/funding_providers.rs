@@ -309,15 +309,14 @@ impl RuntimeServices {
 	}
 }
 
-/// The host's `entries` normalized and with their shipped manifests read, in
-/// its order, each product once.
+/// The host's `entries` with their shipped manifests read, in its order,
+/// each product once.
 fn offered_providers(
 	entries: Vec<FundingProviderEntry>,
 ) -> Result<Vec<OfferedProvider>, FundingSessionError> {
 	let mut offered: Vec<OfferedProvider> = Vec::with_capacity(entries.len());
 	for entry in entries {
-		let product_id = normalized_product_id(entry.product_id)
-			.map_err(|reason| FundingSessionError::InvalidProvider { reason })?;
+		let product_id = entry.product_id.to_string();
 		let snapshot = entry
 			.worker_manifest
 			.as_deref()
@@ -365,7 +364,7 @@ mod tests {
 			entries
 				.iter()
 				.map(|(product_id, worker_manifest)| FundingProviderEntry {
-					product_id: product_id.to_string(),
+					product_id: ProductId::for_test(product_id),
 					worker_manifest: worker_manifest.clone(),
 				})
 				.collect(),
@@ -414,7 +413,7 @@ mod tests {
 	fn an_unreadable_snapshot_is_refused_when_offered() {
 		let offered = |worker_manifest: &str| {
 			offered_providers(vec![FundingProviderEntry {
-				product_id: "card.dot".to_string(),
+				product_id: ProductId::for_test("card.dot"),
 				worker_manifest: Some(worker_manifest.to_string()),
 			}])
 			.map(|offered| offered.len())

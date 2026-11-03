@@ -8891,7 +8891,7 @@ const RAMP_MANIFEST: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","ent
 fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: &str) {
 	services
 		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
-			product_id: provider_id.to_string(),
+			product_id: ProductId::for_test(provider_id),
 			worker_manifest: Some(manifest.to_string()),
 		}])
 		.expect("provider offered");
@@ -9414,7 +9414,7 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 		.set_funding_providers(
 			["ramp.dot", "slow.dot"]
 				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
-					product_id: product_id.to_string(),
+					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
 				})
 				.to_vec(),
@@ -9582,11 +9582,11 @@ fn quotes_ask_every_provider_and_learn_what_it_serves() {
 		services
 			.set_funding_providers(vec![
 				crate::host_logic::funding_providers::FundingProviderEntry {
-					product_id: "ramp.dot".to_string(),
+					product_id: ProductId::for_test("ramp.dot"),
 					worker_manifest: Some(germany_only),
 				},
 				crate::host_logic::funding_providers::FundingProviderEntry {
-					product_id: "chain.dot".to_string(),
+					product_id: ProductId::for_test("chain.dot"),
 					worker_manifest: Some(crypto_only),
 				},
 			])
@@ -11469,7 +11469,7 @@ fn a_session_ended_while_workers_start_lets_its_worker_go() {
 		.set_funding_providers(
 			["ramp.dot", "other.dot"]
 				.map(|provider| crate::host_logic::funding_providers::FundingProviderEntry {
-					product_id: provider.to_string(),
+					product_id: ProductId::for_test(provider),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
 				})
 				.to_vec(),
@@ -11854,7 +11854,7 @@ fn an_ask_holds_a_bounded_number_of_workers_at_once() {
 			providers
 				.iter()
 				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
-					product_id: product_id.clone(),
+					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(RAMP_MANIFEST.to_string()),
 				})
 				.collect(),
