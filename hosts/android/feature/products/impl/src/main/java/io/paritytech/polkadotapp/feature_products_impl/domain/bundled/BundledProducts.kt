@@ -121,7 +121,7 @@ class BundledProducts internal constructor(
     /** The bundled products that serve Funding, as the core takes them: the manifest shipped is the one it goes by. */
     fun fundingProviders(): List<FundingProviderEntry> = all.mapNotNull { product ->
         val manifest = workerManifest(product)?.takeIf { hasWorker(product) && includes(it, "funding") } ?: return@mapNotNull null
-        FundingProviderEntry(productId = product.id.value, workerManifest = manifest, origin = FundingProviderOrigin.BUNDLED)
+        FundingProviderEntry(productId = product.id, workerManifest = manifest, origin = FundingProviderOrigin.BUNDLED)
     }
 
     /** Whether the worker [product] ships declares the Chat modality. */

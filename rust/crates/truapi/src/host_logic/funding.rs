@@ -812,21 +812,16 @@ impl FundingSession {
 	/// Assign the session to the provider the user chose, on the quote they
 	/// chose it by. A session without an amount takes the amount the quote
 	/// prices. Returns whether it was open and not yet assigned.
-	pub fn assign(
-		&mut self,
-		provider_id: &str,
-		choice: Option<FundingChoice>,
-		now_ms: u64,
-	) -> bool {
+	pub fn assign(&mut self, provider_id: &str, choice: FundingChoice, now_ms: u64) -> bool {
 		if self.is_terminal() || self.provider_id.is_some() {
 			return false;
 		}
 		self.provider_id = Some(provider_id.to_string());
 		self.assigned_at_ms = Some(now_ms);
 		if self.amount.is_none() {
-			self.amount = choice.as_ref().map(|choice| choice.balance_amount(self.direction));
+			self.amount = Some(choice.balance_amount(self.direction));
 		}
-		self.choice = choice;
+		self.choice = Some(choice);
 		true
 	}
 
@@ -854,7 +849,7 @@ impl FundingSession {
 			.iter()
 			.rev()
 			.map(|record| &record.update)
-			.find(|update| update_rank(update).is_some())
+			.find(|update| update.rank().is_some())
 	}
 
 	/// The session's progress for its direction and rail at `now_ms`.
@@ -1202,7 +1197,7 @@ impl FundingSession {
 		if !self.detail_fits(&update, now_ms) {
 			return Err(HostFundingReportError::InvalidDetail);
 		}
-		if let Some((id, amount)) = named_funds(&update) {
+		if let Some((id, amount)) = update.named_funds() {
 			let named = host_id(id);
 			let record = self
 				.started
@@ -1468,8 +1463,8 @@ impl FundingSession {
 			FundingUpdate::Details { .. } |
 			FundingUpdate::Progress { .. } => true,
 		};
-		let last = self.last_step().and_then(update_rank);
-		let rank = update_rank(update);
+		let last = self.last_step().and_then(FundingUpdate::rank);
+		let rank = update.rank();
 		let top_ups = self.top_up_ids();
 		fits_direction &&
 			match update {
@@ -1581,7 +1576,7 @@ impl FundingSession {
 	/// Whether funds are moving: the provider named a top-up or a payment
 	/// request it started. The named funds then decide the outcome.
 	pub fn funds_moving(&self) -> bool {
-		self.updates.iter().any(|record| named_funds(&record.update).is_some())
+		self.updates.iter().any(|record| record.update.named_funds().is_some())
 	}
 
 	/// Whether the provider started a top-up or payment request for the
@@ -1914,43 +1909,50 @@ impl FundingSession {
 	}
 }
 
-/// The provider's id and amount of the funds `update` names, if any.
-pub fn named_funds(update: &FundingUpdate) -> Option<(&[u8; 32], u128)> {
-	match update {
-		FundingUpdate::In(FundingInboundUpdate::Crediting { top_up_id, amount }) => {
-			Some((top_up_id, *amount))
-		},
-		FundingUpdate::Out(FundingOutboundUpdate::Collecting { payment_id, amount }) => {
-			Some((payment_id, *amount))
-		},
-		FundingUpdate::Out(FundingOutboundUpdate::Refunding { top_up_id, amount }) => {
-			Some((top_up_id, *amount))
-		},
-		_ => None,
+impl FundingUpdate {
+	/// The provider's id and amount of the funds this update names, if any.
+	pub fn named_funds(&self) -> Option<(&[u8; 32], u128)> {
+		match self {
+			FundingUpdate::In(FundingInboundUpdate::Crediting { top_up_id, amount }) => {
+				Some((top_up_id, *amount))
+			},
+			FundingUpdate::Out(FundingOutboundUpdate::Collecting { payment_id, amount }) => {
+				Some((payment_id, *amount))
+			},
+			FundingUpdate::Out(FundingOutboundUpdate::Refunding { top_up_id, amount }) => {
+				Some((top_up_id, *amount))
+			},
+			_ => None,
+		}
 	}
-}
 
-/// Order of an update within a session: a later update ranks higher, and a
-/// top-up and a payment request rank where funds start moving. `Deposit`,
-/// `Details` and what follows a release have no place in the order.
-fn update_rank(update: &FundingUpdate) -> Option<u8> {
-	Some(match update {
-		FundingUpdate::In(FundingInboundUpdate::AwaitingPayment) => 0,
-		FundingUpdate::In(FundingInboundUpdate::PaymentReceived { finalized: false, .. }) => 1,
-		FundingUpdate::In(FundingInboundUpdate::PaymentReceived { finalized: true, .. }) => 2,
-		FundingUpdate::In(FundingInboundUpdate::Converting) => 3,
-		FundingUpdate::In(FundingInboundUpdate::Crediting { .. }) |
-		FundingUpdate::Out(FundingOutboundUpdate::Collecting { .. }) => 4,
-		FundingUpdate::In(FundingInboundUpdate::Delivered) => 5,
-		FundingUpdate::Failed { .. } => 6,
-		FundingUpdate::In(FundingInboundUpdate::Deposit { .. }) |
-		FundingUpdate::Details { .. } |
-		FundingUpdate::Out(FundingOutboundUpdate::Payout { .. }) |
-		FundingUpdate::Out(FundingOutboundUpdate::Refunding { .. }) |
-		FundingUpdate::Out(FundingOutboundUpdate::Converting) |
-		FundingUpdate::Out(FundingOutboundUpdate::PayoutRetrying) |
-		FundingUpdate::Progress { .. } => return None,
-	})
+	/// This update's order within a session: a later update ranks higher,
+	/// and a top-up and a payment request rank where funds start moving.
+	/// `Deposit`, `Details` and what follows a release have no place in the
+	/// order.
+	fn rank(&self) -> Option<u8> {
+		Some(match self {
+			FundingUpdate::In(FundingInboundUpdate::AwaitingPayment) => 0,
+			FundingUpdate::In(FundingInboundUpdate::PaymentReceived {
+				finalized: false, ..
+			}) => 1,
+			FundingUpdate::In(FundingInboundUpdate::PaymentReceived {
+				finalized: true, ..
+			}) => 2,
+			FundingUpdate::In(FundingInboundUpdate::Converting) => 3,
+			FundingUpdate::In(FundingInboundUpdate::Crediting { .. }) |
+			FundingUpdate::Out(FundingOutboundUpdate::Collecting { .. }) => 4,
+			FundingUpdate::In(FundingInboundUpdate::Delivered) => 5,
+			FundingUpdate::Failed { .. } => 6,
+			FundingUpdate::In(FundingInboundUpdate::Deposit { .. }) |
+			FundingUpdate::Details { .. } |
+			FundingUpdate::Out(FundingOutboundUpdate::Payout { .. }) |
+			FundingUpdate::Out(FundingOutboundUpdate::Refunding { .. }) |
+			FundingUpdate::Out(FundingOutboundUpdate::Converting) |
+			FundingUpdate::Out(FundingOutboundUpdate::PayoutRetrying) |
+			FundingUpdate::Progress { .. } => return None,
+		})
+	}
 }
 
 /// Why a session operation failed.
@@ -2164,6 +2166,26 @@ fn hidden(c: char) -> bool {
 	c.is_control() ||
 		matches!(c, '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' |
 			'\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}')
+}
+
+/// A quote chosen for a USDT top-up of 100, for tests.
+#[cfg(test)]
+pub(crate) fn test_choice() -> FundingChoice {
+	FundingChoice {
+		quote: FundingQuote {
+			quote_id: "q-test".to_string(),
+			send_amount: 102,
+			receive_amount: 100,
+			provider_fee: 2,
+			network_fee: 0,
+			eta_secs: None,
+			expires_at: None,
+			asset_decimals: 6,
+		},
+		rail: FundingRail::Crypto,
+		asset: "USDT".to_string(),
+		network: Some("polkadot".to_string()),
+	}
 }
 
 #[cfg(test)]
@@ -2394,7 +2416,7 @@ mod tests {
 
 	fn served(direction: FundingDirection) -> FundingSession {
 		let mut session = session(direction);
-		assert!(session.assign(PROVIDER, None, NOW));
+		assert!(session.assign(PROVIDER, test_choice(), NOW));
 		session
 	}
 
@@ -2409,7 +2431,7 @@ mod tests {
 
 	fn reported(session: &mut FundingSession, updates: &[FundingUpdate]) {
 		for update in updates {
-			if let Some((id, amount)) = named_funds(update) {
+			if let Some((id, amount)) = update.named_funds() {
 				taken(session, *id, amount);
 			}
 			report(session, update.clone())
@@ -3203,7 +3225,7 @@ mod tests {
 	fn a_session_is_assigned_once() {
 		let mut session = served(FundingDirection::In);
 
-		assert!(!session.assign("other.dot", None, NOW));
+		assert!(!session.assign("other.dot", test_choice(), NOW));
 		assert_eq!(session.provider_id.as_deref(), Some(PROVIDER));
 	}
 
@@ -3311,8 +3333,8 @@ mod tests {
 			FundingSession::new("fs_1".to_string(), None, FundingDirection::In, None, NOW);
 		let mut asked = session(FundingDirection::In);
 
-		assert!(open.assign(PROVIDER, Some(choice.clone()), NOW));
-		assert!(asked.assign(PROVIDER, Some(choice), NOW));
+		assert!(open.assign(PROVIDER, choice.clone(), NOW));
+		assert!(asked.assign(PROVIDER, choice, NOW));
 
 		assert_eq!((open.assignment().amount, asked.assignment().amount), (Some(5_000), Some(100)));
 	}
@@ -3330,7 +3352,7 @@ mod tests {
 			asset_decimals: 2,
 		};
 		let choice = FundingChoice { quote, rail, asset: "EUR".to_string(), network: None };
-		assert!(session.assign(PROVIDER, Some(choice), NOW));
+		assert!(session.assign(PROVIDER, choice, NOW));
 		session
 	}
 
@@ -3528,7 +3550,7 @@ mod tests {
 	}
 
 	fn report_at(session: &mut FundingSession, update: FundingUpdate, at_ms: u64) {
-		if let Some((id, amount)) = named_funds(&update) {
+		if let Some((id, amount)) = update.named_funds() {
 			taken(session, *id, amount);
 		}
 		session.report(PROVIDER, update, |id| *id, at_ms).expect("reported");
@@ -4012,7 +4034,7 @@ mod tests {
 	#[test]
 	fn details_are_taken_while_a_released_withdrawal_awaits_its_payout() {
 		let mut session = session(FundingDirection::Out);
-		assert!(session.assign("ramp.dot", None, 0));
+		assert!(session.assign("ramp.dot", test_choice(), 0));
 		session.updates.push(FundingUpdateRecord {
 			update: FundingUpdate::Out(FundingOutboundUpdate::Collecting {
 				payment_id: [4; 32],

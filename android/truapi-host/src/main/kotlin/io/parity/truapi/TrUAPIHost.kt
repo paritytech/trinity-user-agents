@@ -1277,9 +1277,9 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         inner.selectFundingOptions(intent, selection)
     }
 
-    /** Hand session [intent] to provider [providerId], on [quoteId] when the user chose a quote. */
+    /** Hand session [intent] to provider [providerId], on the quote [quoteId] the user chose it by. */
     @Throws(HostRejection::class)
-    suspend fun selectFundingProvider(intent: String, providerId: String, quoteId: String?): Boolean =
+    suspend fun selectFundingProvider(intent: String, providerId: String, quoteId: String): Boolean =
         inner.selectFundingProvider(intent, providerId, quoteId)
 
     // Co-own the payment adapters for as long as the runtime holds them.

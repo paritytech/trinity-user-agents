@@ -159,7 +159,7 @@ private final class FakeFundingRuntime: FundingRuntime, @unchecked Sendable {
     }
 
     func stopFundingQuotes(intent _: String) {}
-    func selectFundingProvider(intent _: String, providerId _: String, quoteId _: String?) async throws -> Bool { true }
+    func selectFundingProvider(intent _: String, providerId _: String, quoteId _: String) async throws -> Bool { true }
     func cancelFunding(intent _: String) async throws -> CancelOutcome { .ended }
     func confirmFundingCancel(intent _: String, terms _: CancelTerms?) async throws -> CancelConfirmation { .declined }
     func fundingHistory() -> [FundingSessionSummary] { [] }

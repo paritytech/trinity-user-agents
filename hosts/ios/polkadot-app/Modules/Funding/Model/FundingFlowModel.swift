@@ -322,13 +322,14 @@ extension FundingFlowModel {
 
 extension FundingFlowModel {
     /// Hands the session to the provider whose quote the user is looking at,
-    /// then answers `Started`.
+    /// then answers `Started`. A provider is only chosen on its quote.
     func start() {
-        guard !isStarting, !hasStarted, let providerId = selectedProviderId else { return }
+        guard !isStarting, !hasStarted, let providerId = selectedProviderId,
+              let quoteId = rows[providerId]?.quote?.quoteId
+        else { return }
 
         isStarting = true
         startError = nil
-        let quoteId = rows[providerId]?.quote?.quoteId
 
         Task {
             defer { isStarting = false }
