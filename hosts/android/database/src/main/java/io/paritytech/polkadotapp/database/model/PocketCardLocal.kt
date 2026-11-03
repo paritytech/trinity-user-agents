@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.database.model
 
 import androidx.room.Entity
+import uniffi.truapi.ProductId
 
 /**
  * A Pocket card the user added. No foreign key to `products`: a card's product need not be installed
@@ -14,7 +15,7 @@ import androidx.room.Entity
     primaryKeys = ["productId", "cardId"],
 )
 class PocketCardLocal(
-    val productId: String,
+    val productId: ProductId,
     val cardId: String,
     val title: String,
 )

@@ -1,10 +1,11 @@
+import struct TrUAPIHost.ProductId
 import Products
 import Testing
 import UIKit
 @testable import polkadot_app
 
 let loyaltyCard = PocketCardViewModel(
-    key: PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty")),
+    key: PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty")),
     title: "Loyalty",
     privileged: false,
     face: nil

@@ -15,7 +15,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOp
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
@@ -49,6 +48,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import uniffi.truapi.ProductId
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
@@ -126,7 +126,9 @@ class PocketViewModel @Inject constructor(
             initialValue = persistentListOf()
         )
 
-    private val collectiblesUrl = flowOf { collectiblesUrlResolver.resolveUrl() }
+    private val collectiblesUrl = flowOf {
+        collectiblesUrlResolver.resolveUrl().logFailure("Collectibles URL is unavailable").getOrNull()
+    }
         .flowOn(dispatchers.computation)
         .stateIn(scope = this, started = SharingStarted.Eagerly, initialValue = null)
 

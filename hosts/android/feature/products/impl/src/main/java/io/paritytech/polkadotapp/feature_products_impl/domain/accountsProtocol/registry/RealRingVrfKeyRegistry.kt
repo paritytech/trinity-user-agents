@@ -8,10 +8,9 @@ import io.paritytech.polkadotapp.feature_account_api.domain.derivation.RingVrfEn
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RegisteredRingVrfKey
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RingLocation
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ringVrfPath
-import io.paritytech.polkadotapp.feature_products_api.model.productIdTyped
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.RingVrfKeyRegistrationRepository
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 class RealRingVrfKeyRegistry @Inject constructor(
@@ -24,7 +23,7 @@ class RealRingVrfKeyRegistry @Inject constructor(
         index: DerivationIndex32,
         ring: RingLocation,
     ): Result<DataByteArray> = runCatching {
-        val handle = ProductAccountId(owner.value, index)
+        val handle = ProductAccountId(owner, index)
         val publicKey = memberPublicKeyOf(handle)
 
         repository.save(RingVrfKeyRegistration(handle = handle, ring = ring, publicKey = publicKey))
@@ -78,6 +77,6 @@ class RealRingVrfKeyRegistry @Inject constructor(
     }
 
     private suspend fun memberPublicKeyOf(handle: ProductAccountId): DataByteArray {
-        return ringVrfEntropyDeriver.deriveRingVrfEntropy(ringVrfPath(handle.productIdTyped, handle.index)).memberKey()
+        return ringVrfEntropyDeriver.deriveRingVrfEntropy(ringVrfPath(handle.productId, handle.index)).memberKey()
     }
 }

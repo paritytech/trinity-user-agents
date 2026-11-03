@@ -20,7 +20,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
@@ -52,6 +51,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 class PocketViewModelTest {
     // Every flow the screen combines answers empty unless a test says otherwise, so each test names
@@ -67,7 +67,7 @@ class PocketViewModelTest {
 
     private var collectiblesPage: Uri? = null
     private val collectiblesUrlResolver = mockk<CollectiblesUrlResolver> {
-        coEvery { resolveUrl() } answers { collectiblesPage }
+        coEvery { resolveUrl() } answers { Result.success(collectiblesPage) }
     }
 
     private val spaHost: SpaHost = mockk {
@@ -133,13 +133,13 @@ class PocketViewModelTest {
     }
 
     private fun productCard(cardId: String) = PocketCard(
-        key = PocketCardKey(ProductId.fromStoredValue("game.dot"), PocketCardId(cardId)),
+        key = PocketCardKey(ProductId.parse("game.dot").getOrThrow(), PocketCardId(cardId)),
         title = cardId,
         privileged = false,
     )
 
     private fun privilegedCard(cardId: String) = PocketCard(
-        key = PocketCardKey(ProductId.fromStoredValue("peopl.dot"), PocketCardId(cardId)),
+        key = PocketCardKey(ProductId.parse("peopl.dot").getOrThrow(), PocketCardId(cardId)),
         title = cardId,
         privileged = true,
     )
@@ -168,6 +168,19 @@ class PocketViewModelTest {
             listOf("digital_dollar_card", "product_card:peopl.dot:humanity"),
             viewModel.cards.value.map { it.id },
         )
+    }
+
+    @Test
+    fun `a failed collectibles identity leaves the Pocket usable without offering the page`() = runTest(testDispatcher) {
+        coEvery { collectiblesUrlResolver.resolveUrl() } returns Result.failure(IllegalStateException("unsupported network"))
+        val viewModel = createViewModel()
+
+        assertEquals(listOf("digital_dollar_card"), settledCards(viewModel).map { it.id })
+        assertEquals(false, (viewModel.state.value as PocketScreenState.List).collectiblesAvailable)
+
+        viewModel.openCollectibles()
+
+        verify(exactly = 0) { router.openSpaBrowser(any()) }
     }
 
     // The collectibles page reads the collection over the host's chain connection, which it gets only

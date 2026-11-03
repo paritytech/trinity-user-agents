@@ -249,10 +249,6 @@ pub struct StubPlatform {
 	pub end_operation_error: Option<&'static str>,
 	/// When set, product/core storage reads fail with this reason.
 	pub local_storage_error: Option<&'static str>,
-	/// When set, core-storage writes and clears fail with this reason. Unlike
-	/// `local_storage_error` a test can set it mid-flow, after the reads it
-	/// needs have succeeded.
-	pub core_storage_write_error: Mutex<Option<&'static str>>,
 	/// When set, only `PermissionAuthorization` reads fail. Narrower than
 	/// `local_storage_error`, which fails every key: a test that needs the
 	/// manifest cache to answer while the stored permission decision is
@@ -837,7 +833,7 @@ pub fn raw_payload() -> v01::RawPayload {
 /// Product-scoped proof context fixture for `product_id`.
 pub fn product_proof_context(product_id: &str) -> v01::ProductProofContext {
 	v01::ProductProofContext {
-		product_id: product_id.to_string(),
+		product_id: ProductId::for_test(product_id),
 		suffix: v01::DerivationIndex::Index(7),
 	}
 }
@@ -1108,10 +1104,7 @@ impl PlatformCoreStorage for StubPlatform {
 			}
 			return Ok(());
 		}
-		if let Some(reason) = self
-			.local_storage_error
-			.or(*self.core_storage_write_error.lock().expect("write error mutex poisoned"))
-		{
+		if let Some(reason) = self.local_storage_error {
 			return Err(v01::GenericError { reason: reason.to_string() });
 		}
 		self.local_storage
@@ -1126,10 +1119,7 @@ impl PlatformCoreStorage for StubPlatform {
 			*self.session_clears.lock().expect("session clear counter mutex poisoned") += 1;
 			return Ok(());
 		}
-		if let Some(reason) = self
-			.local_storage_error
-			.or(*self.core_storage_write_error.lock().expect("write error mutex poisoned"))
-		{
+		if let Some(reason) = self.local_storage_error {
 			return Err(v01::GenericError { reason: reason.to_string() });
 		}
 		self.local_storage

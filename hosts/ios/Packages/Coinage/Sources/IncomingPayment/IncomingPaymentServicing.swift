@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import AsyncExtensions
 import Foundation
 import SubstrateSdk
@@ -11,14 +12,14 @@ public protocol IncomingPaymentServicing: Sendable {
         amount: Balance,
         descriptor: IncomingPaymentSourceDescriptor,
         paymentId: IncomingPaymentId,
-        productId: String
+        productId: ProductId
     ) async throws
 
     /// Observes a payment's status, scoped to `(productId, paymentId)`. Returns the live derived
     /// stream for an active payment, or the stored terminal verdict for a settled one.
     func subscribeStatus(
         for paymentId: IncomingPaymentId,
-        productId: String
+        productId: ProductId
     ) async throws -> AnyAsyncSequence<IncomingPaymentStatus>
 
     /// Subscribes to active payments and (re)starts their claim tasks, using the resolved denomination

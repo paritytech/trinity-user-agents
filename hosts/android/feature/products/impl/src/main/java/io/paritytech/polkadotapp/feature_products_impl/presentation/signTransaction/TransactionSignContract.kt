@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.signTransac
 
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import kotlinx.coroutines.flow.StateFlow
+import uniffi.truapi.ProductId
 
 interface TransactionSignContract {
     val state: StateFlow<LoadingState<TransactionSignUiState>>
@@ -22,7 +23,7 @@ sealed interface SigningContent {
 }
 
 sealed interface SigningAccountUi {
-    data class Product(val productId: String, val derivationIndex: String) : SigningAccountUi
+    data class Product(val productId: ProductId, val derivationIndex: String) : SigningAccountUi
     data object IdentityAccount : SigningAccountUi
     data class Legacy(val address: String) : SigningAccountUi
 }

@@ -1,3 +1,5 @@
+import { asProductId } from "../../../../js/packages/truapi/src/index.ts";
+
 // Statement proofs signed with another product's account, counting the
 // confirmations a signing-host CLI raises for them.
 //
@@ -16,8 +18,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { actionLines, approvalLines } from "./auto-signing-e2e.ts";
 
-const OWNER = "dim2.paseo";
-const CALLER = "dim2next.paseo";
+const OWNER = asProductId("dim2.paseo");
+const CALLER = asProductId("dim2next.paseo");
 const PROOFS_PER_PHASE = 5;
 const ACTION = "sign statement proof";
 

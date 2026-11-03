@@ -3,8 +3,8 @@ package io.paritytech.polkadotapp.feature_products_impl.data.repository
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.database.dao.ProductFundingOperationDao
 import io.paritytech.polkadotapp.database.model.ProductFundingOperationLocal
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.operation.OperationId
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 data class FundingOperationRecord(
@@ -29,7 +29,7 @@ class RealProductFundingOperationRepository @Inject constructor(
     private val dao: ProductFundingOperationDao,
 ) : ProductFundingOperationRepository {
     override suspend fun insert(productId: ProductId, label: String?): Result<OperationId> = runCancellableCatching {
-        val rowId = dao.insert(ProductFundingOperationLocal(operationId = 0, productId = productId.value, label = label))
+        val rowId = dao.insert(ProductFundingOperationLocal(operationId = 0, productId = productId, label = label))
         OperationId(rowId)
     }
 
@@ -38,6 +38,6 @@ class RealProductFundingOperationRepository @Inject constructor(
     }
 
     override suspend fun loadAll(): List<FundingOperationRecord> = dao.getAll().map {
-        FundingOperationRecord(ProductId.fromStoredValue(it.productId), OperationId(it.operationId), it.label)
+        FundingOperationRecord(it.productId, OperationId(it.operationId), it.label)
     }
 }
