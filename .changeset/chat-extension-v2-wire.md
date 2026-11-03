@@ -12,6 +12,10 @@ replies to by id. The host asks a product questions that the product answers thr
 delete a message. A message body can be `Custom`: the product draws it through `Renderer::render`, like a custom message
 it posts with `postMessage`.
 
+These methods are new in v0.2, so a v0.1 client cannot call them. Their errors name each failure and have no catch-all:
+a host failure arrives as `HostFailure`, and a request or an answer that does not pass the core's checks as
+`MalformedFrame`. A user action in a room that does not keep its messages in the product fails with `NotAvailable`.
+
 The host makes room ids. `createRoom` version 2 takes `roomIdSource`, the product's own name for the room, and `config`,
 the parts of the room the product serves (its messages, who reacted and the reports of what the user saw). It answers
 `roomId`, the blake2b-256 hash of the product and that source. Every later call names the room with that `roomId`, so a

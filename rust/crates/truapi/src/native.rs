@@ -372,7 +372,7 @@ pub fn screen_chat_icon(icon: String) -> Result<String, NativeChatFieldError> {
 /// source gets the screening of `createRoom` first.
 #[uniffi::export]
 pub fn chat_room_id(
-	product_id: latest::ProductId,
+	product_id: ProductId,
 	room_id_source: String,
 ) -> Result<String, NativeChatFieldError> {
 	let room_id_source =

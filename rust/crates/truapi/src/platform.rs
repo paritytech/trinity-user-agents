@@ -44,7 +44,7 @@ use truapi::{
 		AllocatableResource, ChatAction, ChatActions, ChatCustomMessage, ChatFile, ChatMedia,
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoomRegistrationStatus, CodeFormat,
 		FundingDirection, FundingQuote, FundingQuoteRefusal, GenericError, HostChatCreateRoomError,
-		HostChatCreateRoomRequest, HostChatCreateRoomResponse, HostChatListSubscribeItem,
+		HostChatCreateRoomRequest, HostChatListSubscribeItem,
 		HostChatPostMessageError,
 		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
 		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,

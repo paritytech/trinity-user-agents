@@ -93,7 +93,7 @@ fn a_v01_room_id_becomes_the_source_of_the_host_id() {
 #[test]
 fn only_a_v02_room_answer_names_the_room_id() {
 	let latest = v02::HostChatCreateRoomResponse {
-		status: v01::ChatRoomRegistrationStatus::New,
+		status: v02::ChatRoomRegistrationStatus::New,
 		room_id: "0x01".into(),
 	};
 

@@ -73,23 +73,17 @@ pub mod latest {
 	pub use crate::v01::{
 		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
 		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
-		ChatActions, ChatBotRegistrationStatus, ChatCallClose, ChatCallRecord, ChatContactEvent,
-		ChatCustomMessage, ChatFeedUpdate, ChatFile, ChatMedia, ChatMediaItem, ChatMediaMeta,
-		ChatMessage, ChatMessageBody, ChatMessageContent, ChatMessageOrigin, ChatMessageStatus,
-		ChatPageAnchor, ChatPaymentRecord, ChatPreviewMessage, ChatPreviewReaction, ChatReaction,
-		ChatReactionDetail,
-		ChatReactionSummary, ChatReply, ChatReplyPreview, ChatResource, ChatRichText, ChatRoom,
-		ChatRoomActivity, ChatRoomBadge, ChatRoomConfig, ChatRoomMetadata, ChatRoomParticipation,
-		ChatRoomPreview, ChatRoomRegistrationStatus, ChatUserAction, CodeFormat, ColorToken,
-		ColumnProps, ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias,
-		DerivationIndex, Dimensions, FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES,
-		FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer, FundingCancelDecision,
-		FundingDeposit, FundingDetail, FundingDirection, FundingFact, FundingFailure,
-		FundingFrameOutcome, FundingFrameTarget, FundingInboundUpdate, FundingOutboundUpdate,
-		FundingPayout, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingQuoteRefusal,
-		FundingRail, FundingReceived, FundingUpdate, GenericError, HorizontalAlignment,
-		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
-		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
+		ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
+		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
+		CodeFormat, ColorToken, ColumnProps, ContactHandle, ContactPickOutcome, ContentAlignment,
+		ContextualAlias, DerivationIndex, Dimensions, FUNDING_DEPOSIT_URI_MAX_BYTES,
+		FUNDING_DETAIL_MAX_BYTES, FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer,
+		FundingCancelDecision, FundingDeposit, FundingDetail, FundingDirection, FundingFact,
+		FundingFailure, FundingFrameOutcome, FundingFrameTarget, FundingInboundUpdate,
+		FundingOutboundUpdate, FundingPayout, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk,
+		FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate, GenericError,
+		HorizontalAlignment, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+		HostAccountGetError, HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
 		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
 		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
 		HostWorkerOperationError, ImageFit, ImageProps, ImageRef, ImageSource, MaterialFailure,
@@ -110,7 +104,14 @@ pub mod latest {
 		VrfSignature, X25519PublicKey,
 	};
 
-	pub use crate::v02::{ChatRoomFooter, RenderContext};
+	pub use crate::v02::{
+		ChatCallClose, ChatCallRecord, ChatContactEvent, ChatCustomBody, ChatFeedUpdate,
+		ChatMediaItem, ChatMediaMeta, ChatMessage, ChatMessageBody, ChatMessageOrigin,
+		ChatMessageStatus, ChatPageAnchor, ChatPaymentRecord, ChatPreviewMessage,
+		ChatPreviewReaction, ChatReactionDetail, ChatReactionSummary, ChatReply, ChatReplyPreview,
+		ChatResource, ChatRoomActivity, ChatRoomBadge, ChatRoomConfig, ChatRoomFooter,
+		ChatRoomMetadata, ChatRoomPreview, ChatRoomRegistrationStatus, ChatUserAction, RenderContext,
+	};
 
 	/// Latest payload type of a versioned envelope.
 	pub type LatestOf<T> = <T as Versioned>::Latest;

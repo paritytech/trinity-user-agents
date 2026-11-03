@@ -312,7 +312,7 @@ describe("chat extension v2 frames", () => {
                     W.CHAT_UPDATE_FEED,
                     MESSAGE_TYPE_REQUEST,
                     T.VersionedHostChatUpdateFeedRequest.enc({
-                        tag: "V1",
+                        tag: "V2",
                         value: { roomId: "room", update: { tag: "New", value: message } },
                     }),
                 ),
@@ -323,7 +323,7 @@ describe("chat extension v2 frames", () => {
                     W.CHAT_UPDATE_FEED,
                     MESSAGE_TYPE_REQUEST,
                     T.VersionedHostChatUpdateFeedRequest.enc({
-                        tag: "V1",
+                        tag: "V2",
                         value: { roomId: "room", update: { tag: "Replaced", value: call } },
                     }),
                 ),
@@ -334,7 +334,7 @@ describe("chat extension v2 frames", () => {
                     W.CHAT_UPDATE_FEED,
                     MESSAGE_TYPE_REQUEST,
                     T.VersionedHostChatUpdateFeedRequest.enc({
-                        tag: "V1",
+                        tag: "V2",
                         value: {
                             roomId: "room",
                             update: { tag: "Deleted", value: { messageId: "m1" } },
@@ -348,7 +348,7 @@ describe("chat extension v2 frames", () => {
                     W.CHAT_UPDATE_FEED,
                     MESSAGE_TYPE_REQUEST,
                     T.VersionedHostChatUpdateFeedRequest.enc({
-                        tag: "V1",
+                        tag: "V2",
                         value: { roomId: "room", update: { tag: "New", value: custom } },
                     }),
                 ),
@@ -359,7 +359,7 @@ describe("chat extension v2 frames", () => {
                     W.CHAT_SET_ROOM_PREVIEW,
                     MESSAGE_TYPE_REQUEST,
                     T.VersionedHostChatSetRoomPreviewRequest.enc({
-                        tag: "V1",
+                        tag: "V2",
                         value: { roomId: "room", preview },
                     }),
                 ),
@@ -370,7 +370,7 @@ describe("chat extension v2 frames", () => {
                     W.CHAT_SET_ROOM_PREVIEW,
                     MESSAGE_TYPE_REQUEST,
                     T.VersionedHostChatSetRoomPreviewRequest.enc({
-                        tag: "V1",
+                        tag: "V2",
                         value: {
                             roomId: "room",
                             preview: {
@@ -392,7 +392,7 @@ describe("chat extension v2 frames", () => {
                     W.CHAT_USER_ACTION,
                     MESSAGE_TYPE_START,
                     T.VersionedProductChatUserActionRequest.enc({
-                        tag: "V1",
+                        tag: "V2",
                         value: {
                             roomId: "room",
                             action: {
@@ -414,7 +414,7 @@ describe("chat extension v2 frames", () => {
                     W.CHAT_USER_ACTION,
                     MESSAGE_TYPE_START,
                     T.VersionedProductChatUserActionRequest.enc({
-                        tag: "V1",
+                        tag: "V2",
                         value: {
                             roomId: "room",
                             action: { tag: "AcceptRequest", value: undefined },
@@ -428,7 +428,7 @@ describe("chat extension v2 frames", () => {
                     W.CHAT_USER_ACTION,
                     MESSAGE_TYPE_START,
                     T.VersionedProductChatUserActionRequest.enc({
-                        tag: "V1",
+                        tag: "V2",
                         value: {
                             roomId: "room",
                             action: { tag: "SendPayment", value: undefined },
@@ -442,7 +442,7 @@ describe("chat extension v2 frames", () => {
                     W.CHAT_USER_ACTION,
                     MESSAGE_TYPE_START,
                     T.VersionedProductChatUserActionRequest.enc({
-                        tag: "V1",
+                        tag: "V2",
                         value: {
                             roomId: "room",
                             action: { tag: "DeleteMessage", value: { messageId: "m1" } },
@@ -495,11 +495,11 @@ describe("chat extension v2 frames", () => {
         };
         const notRoomHost: CallErrorValue<T.VersionedHostChatSetRoomMetadataError> = {
             tag: "Domain",
-            value: { tag: "V1", value: { tag: "NotRoomHost" } },
+            value: { tag: "V2", value: "NotRoomHost" },
         };
         const notOwner: CallErrorValue<T.VersionedHostChatUpdateFeedError> = {
             tag: "Domain",
-            value: { tag: "V1", value: { tag: "NotOwner" } },
+            value: { tag: "V2", value: "NotOwner" },
         };
 
         const set = await answered(
@@ -551,7 +551,7 @@ describe("chat extension v2 frames", () => {
                 client.chat.onMessagesQuery(() =>
                     err({
                         tag: "Domain",
-                        value: { tag: "V1", value: { tag: "NotAvailable" } },
+                        value: { tag: "V2", value: "NotAvailable" },
                     }),
                 ),
             ),
@@ -572,7 +572,7 @@ describe("chat extension v2 frames", () => {
                 client.chat.onUserAction(() =>
                     err({
                         tag: "Domain",
-                        value: { tag: "V1", value: { tag: "Rejected", value: { reason: "no" } } },
+                        value: { tag: "V2", value: { tag: "Rejected", value: { reason: "no" } } },
                     }),
                 ),
             ),

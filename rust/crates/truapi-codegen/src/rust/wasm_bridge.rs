@@ -154,13 +154,26 @@ struct BridgeCtx<'a> {
 
 impl<'a> BridgeCtx<'a> {
 	fn new(definition: &'a PlatformDefinition, api: &'a ApiDefinition) -> Self {
-		let api_types =
+		let mut api_types =
 			api.types.iter().map(|ty| (ty.name.as_str(), ty)).collect::<BTreeMap<_, _>>();
-		let codec_types = api
-			.types
+		// A platform signature names the newest version of a protocol type by
+		// its plain name, and the API names each version of a type that two
+		// versions define with its version.
+		let mut newest = BTreeMap::<&str, (u32, &TypeDef)>::new();
+		for ty in &api.types {
+			if let Some((version, simple_name)) = split_versioned_type_name(&ty.name) &&
+				newest.get(simple_name).is_none_or(|(known, _)| version > *known)
+			{
+				newest.insert(simple_name, (version, ty));
+			}
+		}
+		for (simple_name, (_, ty)) in newest {
+			api_types.entry(simple_name).or_insert(ty);
+		}
+		let codec_types = api_types
 			.iter()
-			.filter(|ty| !matches!(ty.kind, TypeDefKind::Alias(_)))
-			.map(|ty| ty.name.as_str())
+			.filter(|(_, ty)| !matches!(ty.kind, TypeDefKind::Alias(_)))
+			.map(|(name, _)| *name)
 			.collect::<BTreeSet<_>>();
 		let local_types =
 			definition.types.iter().map(|ty| ty.name.as_str()).collect::<BTreeSet<_>>();
