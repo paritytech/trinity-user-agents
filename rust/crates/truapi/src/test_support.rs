@@ -253,10 +253,6 @@ pub struct StubPlatform {
 	pub end_operation_error: Option<&'static str>,
 	/// When set, product/core storage reads fail with this reason.
 	pub local_storage_error: Option<&'static str>,
-	/// When set, core-storage writes and clears fail with this reason. Unlike
-	/// `local_storage_error` a test can set it mid-flow, after the reads it
-	/// needs have succeeded.
-	pub core_storage_write_error: Mutex<Option<&'static str>>,
 	/// When set, only `PermissionAuthorization` reads fail. Narrower than
 	/// `local_storage_error`, which fails every key: a test that needs the
 	/// manifest cache to answer while the stored permission decision is
@@ -684,24 +680,33 @@ fn statement_submit_ack_frame(request_id: &str) -> String {
 	.to_string()
 }
 
-/// JSON-RPC `newStatements` notification carrying SCALE statements.
+/// JSON-RPC `newStatements` notification carrying SCALE statements, the last
+/// page of the backlog.
 pub fn new_statements_frame(subscription_id: &str, statements: Vec<Vec<u8>>) -> String {
+	statement_page_frame(subscription_id, statements, Some(0))
+}
+
+/// JSON-RPC `newStatements` notification carrying SCALE statements, with
+/// `remaining` left out when `None`, as on a page of new statements.
+pub fn statement_page_frame(
+	subscription_id: &str,
+	statements: Vec<Vec<u8>>,
+	remaining: Option<u64>,
+) -> String {
 	let statements = statements
 		.into_iter()
 		.map(|statement| format!("0x{}", hex::encode(statement)))
 		.collect::<Vec<_>>();
+	let mut data = serde_json::json!({ "statements": statements });
+	if let Some(remaining) = remaining {
+		data["remaining"] = remaining.into();
+	}
 	serde_json::json!({
 		"jsonrpc": "2.0",
 		"method": "statement_subscribeStatement",
 		"params": {
 			"subscription": subscription_id,
-			"result": {
-				"event": "newStatements",
-				"data": {
-					"statements": statements,
-					"remaining": 0,
-				},
-			},
+			"result": { "event": "newStatements", "data": data },
 		},
 	})
 	.to_string()
@@ -855,7 +860,7 @@ pub fn raw_payload() -> v01::RawPayload {
 /// Product-scoped proof context fixture for `product_id`.
 pub fn product_proof_context(product_id: &str) -> v01::ProductProofContext {
 	v01::ProductProofContext {
-		product_id: product_id.to_string(),
+		product_id: ProductId::for_test(product_id),
 		suffix: v01::DerivationIndex::Index(7),
 	}
 }
@@ -1126,10 +1131,7 @@ impl PlatformCoreStorage for StubPlatform {
 			}
 			return Ok(());
 		}
-		if let Some(reason) = self
-			.local_storage_error
-			.or(*self.core_storage_write_error.lock().expect("write error mutex poisoned"))
-		{
+		if let Some(reason) = self.local_storage_error {
 			return Err(v01::GenericError { reason: reason.to_string() });
 		}
 		self.local_storage
@@ -1144,10 +1146,7 @@ impl PlatformCoreStorage for StubPlatform {
 			*self.session_clears.lock().expect("session clear counter mutex poisoned") += 1;
 			return Ok(());
 		}
-		if let Some(reason) = self
-			.local_storage_error
-			.or(*self.core_storage_write_error.lock().expect("write error mutex poisoned"))
-		{
+		if let Some(reason) = self.local_storage_error {
 			return Err(v01::GenericError { reason: reason.to_string() });
 		}
 		self.local_storage

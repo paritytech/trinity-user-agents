@@ -75,6 +75,7 @@ npm install @parity/truapi
 
 ```ts
 import {
+  asProductId,
   createClient,
   createMessagePortProvider,
   createTransport,
@@ -84,9 +85,35 @@ const transport = createTransport(createMessagePortProvider(port));
 const truapi = createClient(transport);
 
 const result = await truapi.accountManagement.accountGet({
-  productAccountId: { dotNsIdentifier: "my-product.dot", derivationIndex: { tag: "Index", value: 0 } },
+  productAccountId: { dotNsIdentifier: asProductId("my-product.dot"), derivationIndex: { tag: "Index", value: 0 } },
 });
 ```
+
+Product identifiers use `ProductId` throughout the protocol and host APIs.
+Rust exposes this version-independent type as `truapi::ProductId`.
+The client receives typed IDs from the host; `asProductId` brands an explicit
+string without parsing or loading WASM. Rust validates IDs at the host boundary.
+Swift's `try ProductId("my-product.dot")` and Kotlin's
+`ProductId.parse("my-product.dot")` call Rust once. Kotlin also provides
+`ProductId.fromName("my-product", "dot")`; both return `Result<ProductId>`
+so callers explicitly handle invalid input. Kotlin's `executable(kind)` and
+`owner()` methods expose their failures the same way. Both platforms
+own the resulting immutable values. Browser hosts can use their existing worker
+runtime's `parseProductId` method for the same validation and normalization.
+Native callers use Rust for product names, executable ownership, and share-link parsing and formatting.
+Both native hosts use Rust's `ExecutableKind` for executable selection and
+its label mapping for manifest discriminators.
+Product ID methods and their rule tests live in [product_id.rs](rust/crates/truapi/src/product_id.rs).
+Product links require an explicitly supplied network suffix; both direct names
+and `.li` links must match it. Share-host recognition and enumeration use one
+Rust suffix policy. Rust defines the `polkadotapp` deeplink and
+`polkadot` content schemes shared by both native hosts. Both native hosts stop
+content loading on resolution errors or missing executables. Products without
+a manifest explicitly serve their app from the base name.
+Rust's reserved identity constructors return `ProductId` directly from the
+validated network suffix.
+The Android app's fixed reserved identities also return `ProductId` directly;
+an unsupported configured network is a bug and fails the internal unwrap.
 
 The transport retries iframe bootstrap until the host channel arrives and rejects unanswered
 requests after a bounded deadline; pass `requestTimeoutMs` to `createTransport` to override it.
@@ -113,8 +140,8 @@ rust/crates/
   truapi-macros/         TrUAPI wire annotations and inter-host SSO proc macros
   truapi-provider/       Network provider backends (WebSocket RPC or smoldot light-client) and chain-access traits
   truapi-verifiable/     Ring-VRF operations over `verifiable`; a lazily loaded WASM module in the browser
-  trinity-stack/         Trinity stack descriptors: parse, verify, sign, links, reader state;
-                         conformance vectors and JSON Schema
+  trinity-stack/         Trinity stack descriptors: parse, verify, sign, links, reader state,
+                         refresh policy; conformance vectors and JSON Schema
 js/packages/
   truapi/                  @parity/truapi TypeScript client
   truapi-host/            @parity/truapi-host: WASM-backed host runtime; entries `.`
@@ -126,7 +153,8 @@ js/packages/
   truapi-provider/         @parity/truapi-provider: WASM ChainProvider backends
                           (embedded smoldot light client + remote WebSocket RPC)
   trinity-stack/           @parity/trinity-stack: the trinity-stack crate as WASM, plus
-                          reading with a store and publishing
+                          reading with a store and publishing; `/reader` keeps stacks
+                          current from build copies the `trinity-stack` CLI writes
 js/container/              TS lockdown container for the iOS host web view; bundles into
                            ios/truapi-host/Sources/TrUAPIHost/Resources/truapi-container.js
 android/truapi-host/       Kotlin host adapter package over the truapi UniFFI core;
@@ -231,11 +259,13 @@ embedded smoldot light client plus a bundled chain-spec catalog, addressed by
 genesis hash, so the host ships no chain specs and never refreshes them. The light
 client holds at most 32 connections at once and refuses a `connect` past that, so a
 consumer that leaks them fails instead of growing; closing one hands its slot back.
-Connections to a remote node, which only the WASM build compiles, are not counted
-against it. A light-client connection holds its requests until the chain first
+The limit covers only light-client connections; connections to a remote node are
+not capped. A light-client connection holds its requests until the chain first
 syncs and then forwards them in order; chain-spec queries, statement-store and
 Bitswap calls, and the `lifecycle_unstable_*` subscription that reports the sync are forwarded at
 once.
+On native targets every `wss` connection, to a remote node or a light-client bootnode, checks the
+certificate against the webpki roots compiled into the crate, not the operating system's store.
 Every artifact exposes the sync progress of a running chain (phase, peer count,
 stall verdict) as a watch.
 The crate
@@ -343,9 +373,40 @@ already moves answers `ItemsInUse`, whichever product deposits it and under
 whatever id. The item secrets go to encrypted storage after those checks and
 before the moves are registered, so each move is signed from its stored secret
 after a restart too. A move waits up to an hour for its cheque key to hold an
-NFT, so a product need not wait for the sender's mint itself. Refund, revoke
-and listening for payments answer unavailable for now. A host without a core
-database, such as the browser core, answers `Unsupported` to the served calls.
+NFT, so a product need not wait for the sender's mint itself.
+
+`revokeCheque` moves the items at the keys of a cheque the product created
+back into fresh keys of the purse they left; another product's cheque answers
+`ChequeNotFound`. Revoking again moves only the keys whose last move failed,
+and a cheque whose keys a deposit on this device already moves answers
+`ItemsInUse`.
+`refund` moves the items a product deposited from a cheque back to the
+cheque's keys, once every move of the deposit finalized or failed
+(`DepositInProgress` before that), and the sender can then revoke them.
+Whether an item can still go back comes from the core database alone: one
+spent since stays and is listed as unavailable. Each is followed by
+`observeOperationStatus` under `blake2_256("nft-purse/revoke" ‖ chequeId)` or
+`blake2_256("nft-purse/refund" ‖ chequeId)`. Refunding out of Root's or
+another product's purse asks the user through `NftPurseDrain`.
+
+Cheques arrive over the People chain's statement store. A sender publishes a
+statement under the receiver's topic whose data seals `SCALE(version, topic,
+cheque)` to the key that opens the cheque, in the same sealed box as the item
+secrets. `listenOneTimePayment` watches `blake2_256("nft-purse/payment-channel"
+‖ receiveKey)` for a key the product made, emits that channel, then the first
+cheque addressed to the key, and ends. `listenPaymentInbox` watches
+`blake2_256("nft-purse/payment-inbox" ‖ identityAccount ‖
+blake2_256(productId) ‖ inboxDomain)` for `Static` cheques, so a product opens
+only its own inboxes. It emits the channel, then everything already stored as
+one batch, possibly empty, then each batch of new cheques. Statements that do
+not open, decode or match are skipped. Both emit cheques already deposited
+again while the store holds them, and a dropped connection ends them with
+`Other`. Receiving a cheque proves nothing about its items: `deposit` checks
+them. Underneath, `StatementStoreApi` watches any topic filter as its stored
+backlog in one batch, then each live page.
+
+A host without a core database, such as the browser core, answers
+`Unsupported` to the served calls.
 
 ### Trinity stack descriptors
 
@@ -412,6 +473,10 @@ CI and `make check` enforce Rust formatting, including the runtime module tree, 
 Rust linting treats correctness and complexity diagnostics as errors, and public Rust items must have documentation.
 
 Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
+Run the crate's runtime integration tests with `cargo test -p truapi --features mock`;
+their product fixtures use `ProductId::for_test` from that feature.
+Product ID and link parsing rules are tested in Rust. Native ProductId tests
+cover serialization, persistence and host integration.
 
 Rust helpers retain typed errors for pairing, dotNS lookups, and allowance renewal. Shared `From` conversions support `?`, and dotNS diagnostics render each cause once. CLI filesystem and session errors retain concrete causes and their operation or path. Pairing failures sent to another host contain a public reason, including allowance exhaustion; local paths and detailed causes remain in the signing host's diagnostics.
 
@@ -604,17 +669,22 @@ request touching the app or the crates its bindings come from;
 `.github/hosts.json` names those inputs. A pull request that changes only those
 crates skips both when main already passed the tests against the same bindings.
 Pull requests from forks and from Dependabot skip it, since the Macs are shared
-and Dependabot runs get no secrets, and so does the merge queue. A push to main
-that touches those inputs runs the same suite through `ios-main.yml`, outside
-`CI Status`, and publishes the core pull requests reuse. `preview` is
+and Dependabot runs get no secrets, and so does the merge queue. So do drafts and
+pull requests into another pull request's branch, which run it once they are
+ready and target main or a release branch. `on-label.yml` runs it before then
+for a pull request labelled `ci:ios-tests`, outside `CI Status`. A pull request
+retargeted to main when its base merges keeps its earlier result until it is
+pushed, or closed and reopened. A push to main that touches those inputs runs
+the same suite through `ios-main.yml`, outside `CI Status`, and publishes the
+core pull requests reuse. `preview` is
 macOS time no check needs, so `on-label.yml` builds it once the pull request is
 labelled `ci:ios-simulator`. The same workflow's
 `TrUAPIHost package (Swift + WebKit)` job compiles the TrUAPIHost and
 TrUAPIProvider packages against the core the app jobs share, on a pull request
 touching their inputs, which the `swift` package in `.github/hosts.json` names,
 and runs their network permission tests. Like the rest of the iOS app it skips
-fork and Dependabot pull requests and the merge queue. The first time a
-pull request touches the iOS or Android app, `build-label-hint.yml` comments with
+fork, Dependabot, draft and stacked pull requests and the merge queue. The first
+time a pull request touches the iOS or Android app, `build-label-hint.yml` comments with
 the labels that build it: `ci:ios-simulator`, `ci:ios-device` and
 `ci:android-device`.
 

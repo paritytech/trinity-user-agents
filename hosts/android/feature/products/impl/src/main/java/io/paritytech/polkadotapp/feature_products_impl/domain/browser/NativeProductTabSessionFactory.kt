@@ -3,7 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.browser
 import android.net.Uri
 import androidx.core.net.toUri
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductsBotApiImpl
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiEnvironment
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiSession
@@ -46,7 +46,7 @@ class NativeProductTabSessionFactory @Inject constructor(
         // that publishes no worker is a no-op; the reference releases when the tab scope ends.
         scope.launch {
             val tld = dotNsTldProvider.getTld().getOrNull() ?: return@launch
-            val productId = ProductId.fromUrl(url.toUri(), tld).getOrNull() ?: return@launch
+            val productId = productIdFromUrl(url.toUri(), tld).getOrNull() ?: return@launch
             workerRefCounter.withWorkerAcquired(productId, "fullpage:${productId.value}") {
                 awaitCancellation()
             }

@@ -1,9 +1,10 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 @testable import polkadot_app
 
 final class MockNotificationScheduler: ProductNotificationScheduling, @unchecked Sendable {
-    var scheduledProductId: String?
+    var scheduledProductId: ProductId?
     var scheduledRequest: ScheduledNotificationRequest?
     var notificationIdToReturn: UInt32 = 42
     var cancelledNotificationId: UInt32?

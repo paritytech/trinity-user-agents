@@ -5457,12 +5457,8 @@ checksum = "edc5f74e248dc973e0dbb7b74c7e0d6fcc301c694ff50049504004ef4d0cdcd9"
 dependencies = [
  "futures-util",
  "log",
- "rustls",
- "rustls-pki-types",
  "tokio",
- "tokio-rustls",
  "tungstenite",
- "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -5660,7 +5656,7 @@ dependencies = [
 
 [[package]]
 name = "truapi"
-version = "0.27.0"
+version = "0.28.0"
 dependencies = [
  "async-sqlite",
  "async-trait",
@@ -5739,7 +5735,7 @@ dependencies = [
 
 [[package]]
 name = "truapi-host-cli"
-version = "0.27.0"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -5762,7 +5758,6 @@ dependencies = [
  "reqwest",
  "rqrr",
  "rustix",
- "rustls",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -5772,12 +5767,12 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
- "tokio-stream",
  "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
  "trinity-stack",
  "truapi",
+ "truapi-provider",
  "unicode-width",
  "zeroize",
 ]
@@ -5899,8 +5894,6 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.7",
- "rustls",
- "rustls-pki-types",
  "sha1",
  "thiserror 1.0.69",
  "utf-8",

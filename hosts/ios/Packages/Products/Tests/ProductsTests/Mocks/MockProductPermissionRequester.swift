@@ -1,14 +1,15 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 @testable import Products
 
 final class MockProductPermissionRequester: ProductPermissionRequesting, @unchecked Sendable {
     var decision: PermissionDecision = .allowAlways
 
-    private(set) var promptCalls: [(productId: String, permission: ProductPermission)] = []
-    private(set) var promptBatchedCalls: [(productId: String, permissions: [ProductPermission])] = []
+    private(set) var promptCalls: [(productId: ProductId, permission: ProductPermission)] = []
+    private(set) var promptBatchedCalls: [(productId: ProductId, permissions: [ProductPermission])] = []
 
     func prompt(
-        productId: String,
+        productId: ProductId,
         permission: ProductPermission
     ) async -> PermissionDecision {
         promptCalls.append((productId, permission))
@@ -16,7 +17,7 @@ final class MockProductPermissionRequester: ProductPermissionRequesting, @unchec
     }
 
     func promptBatched(
-        productId: String,
+        productId: ProductId,
         permissions: [ProductPermission]
     ) async -> PermissionDecision {
         promptBatchedCalls.append((productId, permissions))

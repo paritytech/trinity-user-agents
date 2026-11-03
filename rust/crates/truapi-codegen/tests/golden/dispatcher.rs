@@ -22,6 +22,7 @@ use truapi::api::{
     ExpandedCard,
     Funding,
     Game,
+    FundingProvider,
     LocalStorage,
     Locale,
     NftPurse,
@@ -40,7 +41,7 @@ use truapi::api::{
     Worker,
 };
 use truapi::versioned::{self, Versioned};
-use crate::platform::ProductExecutionKind;
+use crate::platform::ExecutableKind;
 
 use crate::dispatcher::Dispatcher;
 use crate::frame::downgrade_call_error;
@@ -64,6 +65,7 @@ where
     register_expanded_card(dispatcher, host.clone());
     register_funding(dispatcher, host.clone());
     register_game(dispatcher, host.clone());
+    register_funding_provider(dispatcher, host.clone());
     register_local_storage(dispatcher, host.clone());
     register_locale(dispatcher, host.clone());
     register_nft_purse(dispatcher, host.clone());
@@ -80,6 +82,45 @@ where
     register_system(dispatcher, host.clone());
     register_theme(dispatcher, host.clone());
     register_worker(dispatcher, host);
+}
+
+/// Call the product's `funding_provider_assign` handler and await its response.
+pub async fn funding_provider_assign(
+    subscriptions: &HostInitiatedSubscriptionManager,
+    transport: Arc<dyn Transport>,
+    request: versioned::funding_provider::ProductFundingAssignRequest,
+) -> Result<versioned::funding_provider::ProductFundingAssignResponse, truapi::CallError<versioned::funding_provider::ProductFundingAssignError>> {
+    subscriptions.request(
+        wire_table::FUNDING_PROVIDER_ASSIGN,
+        parity_scale_codec::Encode::encode(&request),
+        transport,
+    ).await
+}
+
+/// Call the product's `funding_provider_cancel` handler and await its response.
+pub async fn funding_provider_cancel(
+    subscriptions: &HostInitiatedSubscriptionManager,
+    transport: Arc<dyn Transport>,
+    request: versioned::funding_provider::ProductFundingCancelRequest,
+) -> Result<versioned::funding_provider::ProductFundingCancelResponse, truapi::CallError<versioned::funding_provider::ProductFundingCancelError>> {
+    subscriptions.request(
+        wire_table::FUNDING_PROVIDER_CANCEL,
+        parity_scale_codec::Encode::encode(&request),
+        transport,
+    ).await
+}
+
+/// Call the product's `funding_provider_settle_cancel` handler and await its response.
+pub async fn funding_provider_settle_cancel(
+    subscriptions: &HostInitiatedSubscriptionManager,
+    transport: Arc<dyn Transport>,
+    request: versioned::funding_provider::ProductFundingSettleCancelRequest,
+) -> Result<versioned::funding_provider::ProductFundingSettleCancelResponse, truapi::CallError<versioned::funding_provider::ProductFundingSettleCancelError>> {
+    subscriptions.request(
+        wire_table::FUNDING_PROVIDER_SETTLE_CANCEL,
+        parity_scale_codec::Encode::encode(&request),
+        transport,
+    ).await
 }
 
 /// Start the host-initiated `renderer_render` subscription.
@@ -597,7 +638,7 @@ where
     P: Chat + Send + Sync + 'static,
 {
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host.clone();
         dispatcher.on_request(wire_table::CHAT_CREATE_ROOM, move |request_id: String, request: versioned::chat::HostChatCreateRoomRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
@@ -622,7 +663,7 @@ where
         });
     }
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host.clone();
         dispatcher.on_request(wire_table::CHAT_REGISTER_BOT, move |request_id: String, request: versioned::chat::HostChatRegisterBotRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
@@ -647,7 +688,7 @@ where
         });
     }
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host.clone();
         dispatcher.on_subscription(wire_table::CHAT_LIST_SUBSCRIBE, move |request_id: String, request: versioned::chat::HostChatListSubscribeRequest| {
             let host = host.clone();
@@ -676,7 +717,7 @@ where
         });
     }
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host.clone();
         dispatcher.on_request(wire_table::CHAT_POST_MESSAGE, move |request_id: String, request: versioned::chat::HostChatPostMessageRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
@@ -701,7 +742,7 @@ where
         });
     }
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host.clone();
         dispatcher.on_subscription(wire_table::CHAT_ACTION_SUBSCRIBE, move |request_id: String, request: versioned::chat::HostChatActionSubscribeRequest| {
             let host = host.clone();
@@ -730,7 +771,7 @@ where
         });
     }
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host;
         dispatcher.on_request(wire_table::CHAT_SET_ROOM_FOOTER, move |request_id: String, request: versioned::chat::HostChatSetRoomFooterRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
@@ -1013,7 +1054,7 @@ where
     P: ExpandedCard + Send + Sync + 'static,
 {
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Widget);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Widget);
         let host = host;
         dispatcher.on_request(wire_table::EXPANDED_CARD_SET_FACE_SHOWN, move |request_id: String, request: versioned::expanded_card::HostExpandedCardSetFaceShownRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
@@ -1121,6 +1162,62 @@ where
                 let result: Result<versioned::game::HostCancelNextGameResponse, truapi::CallError<versioned::game::HostCancelNextGameError>> =
                     match host.cancel_next_game(&cx, request).await {
                         Ok(response) => Ok(<versioned::game::HostCancelNextGameResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+}
+
+fn register_funding_provider<P>(dispatcher: &mut Dispatcher, host: Arc<P>)
+where
+    P: FundingProvider + Send + Sync + 'static,
+{
+    {
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
+        let host = host.clone();
+        dispatcher.on_request(wire_table::FUNDING_PROVIDER_REPORT, move |request_id: String, request: versioned::funding_provider::HostFundingReportRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::funding_provider::HostFundingReportError> = truapi::CallError::Denied;
+                    let result: Result<versioned::funding_provider::HostFundingReportResponse, truapi::CallError<versioned::funding_provider::HostFundingReportError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::funding_provider::HostFundingReportResponse, truapi::CallError<versioned::funding_provider::HostFundingReportError>> =
+                    match host.report(&cx, request).await {
+                        Ok(response) => Ok(<versioned::funding_provider::HostFundingReportResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
+        let host = host;
+        dispatcher.on_request(wire_table::FUNDING_PROVIDER_PRESENT_FRAME, move |request_id: String, request: versioned::funding_provider::HostFundingPresentFrameRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::funding_provider::HostFundingPresentFrameError> = truapi::CallError::Denied;
+                    let result: Result<versioned::funding_provider::HostFundingPresentFrameResponse, truapi::CallError<versioned::funding_provider::HostFundingPresentFrameError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::funding_provider::HostFundingPresentFrameResponse, truapi::CallError<versioned::funding_provider::HostFundingPresentFrameError>> =
+                    match host.present_frame(&cx, request).await {
+                        Ok(response) => Ok(<versioned::funding_provider::HostFundingPresentFrameResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
                             target_version,
                         )),
@@ -1369,17 +1466,17 @@ where
     }
     {
         let host = host.clone();
-        dispatcher.on_subscription(wire_table::NFT_PURSE_LISTEN_FOR_PAYMENT, move |request_id: String, request: versioned::nft_purse::HostNftPurseListenForPaymentRequest| {
+        dispatcher.on_subscription(wire_table::NFT_PURSE_LISTEN_ONE_TIME_PAYMENT, move |request_id: String, request: versioned::nft_purse::HostNftPurseListenOneTimePaymentRequest| {
             let host = host.clone();
             Box::pin(async move {
                 let target_version = request.version();
                 let cx = CallContext::with_request_id(request_id);
-                let stream = host.listen_for_payment(&cx, request).await;
+                let stream = host.listen_one_time_payment(&cx, request).await;
                 let stream = futures::StreamExt::map(
                     stream,
-                    move |item: Result<versioned::nft_purse::HostNftPurseListenForPaymentItem, truapi::CallError<versioned::nft_purse::HostNftPurseListenForPaymentError>>| {
+                    move |item: Result<versioned::nft_purse::HostNftPurseListenOneTimePaymentItem, truapi::CallError<versioned::nft_purse::HostNftPurseListenOneTimePaymentError>>| {
                         item.map(|item| {
-                            <versioned::nft_purse::HostNftPurseListenForPaymentItem as truapi::versioned::FromLatest>::from_latest(
+                            <versioned::nft_purse::HostNftPurseListenOneTimePaymentItem as truapi::versioned::FromLatest>::from_latest(
                                 truapi::versioned::IntoLatest::into_latest(item),
                                 target_version,
                             )
@@ -1511,7 +1608,7 @@ where
         });
     }
     {
-        let host = host;
+        let host = host.clone();
         dispatcher.on_request(wire_table::NFT_PURSE_STATIC_RECEIVE_KEY, move |request_id: String, request: versioned::nft_purse::HostNftPurseStaticReceiveKeyRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
@@ -1526,6 +1623,30 @@ where
                         Err(err) => Err(downgrade_call_error(err, target_version)),
                     };
                 result.encode()
+            })
+        });
+    }
+    {
+        let host = host;
+        dispatcher.on_subscription(wire_table::NFT_PURSE_LISTEN_PAYMENT_INBOX, move |request_id: String, request: versioned::nft_purse::HostNftPurseListenPaymentInboxRequest| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_request_id(request_id);
+                let stream = host.listen_payment_inbox(&cx, request).await;
+                let stream = futures::StreamExt::map(
+                    stream,
+                    move |item: Result<versioned::nft_purse::HostNftPurseListenPaymentInboxItem, truapi::CallError<versioned::nft_purse::HostNftPurseListenPaymentInboxError>>| {
+                        item.map(|item| {
+                            <versioned::nft_purse::HostNftPurseListenPaymentInboxItem as truapi::versioned::FromLatest>::from_latest(
+                                truapi::versioned::IntoLatest::into_latest(item),
+                                target_version,
+                            )
+                        })
+                        .map_err(|error| downgrade_call_error(error, target_version))
+                    },
+                );
+                Ok(subscription_stream(stream))
             })
         });
     }
@@ -1778,7 +1899,7 @@ where
     P: Pocket + Send + Sync + 'static,
 {
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host.clone();
         dispatcher.on_subscription(wire_table::POCKET_LIST_SUBSCRIBE, move |request_id: String, request: versioned::pocket::HostPocketListSubscribeRequest| {
             let host = host.clone();
@@ -1807,7 +1928,7 @@ where
         });
     }
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host;
         dispatcher.on_request(wire_table::POCKET_REMOVE_CARD, move |request_id: String, request: versioned::pocket::HostPocketRemoveCardRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
@@ -1887,7 +2008,7 @@ where
     P: Renderer + Send + Sync + 'static,
 {
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host;
         dispatcher.on_subscription(wire_table::RENDERER_ACTION_SUBSCRIBE, move |request_id: String, request: versioned::renderer::HostRendererActionSubscribeRequest| {
             let host = host.clone();
@@ -2348,7 +2469,7 @@ where
     P: Worker + Send + Sync + 'static,
 {
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host.clone();
         dispatcher.on_request(wire_table::WORKER_BEGIN_OPERATION, move |request_id: String, request: versioned::worker::HostWorkerBeginOperationRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
@@ -2373,7 +2494,7 @@ where
         });
     }
     {
-        let execution_allowed = dispatcher.allows_execution(ProductExecutionKind::Worker);
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
         let host = host;
         dispatcher.on_request(wire_table::WORKER_END_OPERATION, move |request_id: String, request: versioned::worker::HostWorkerEndOperationRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import Testing
@@ -13,7 +14,7 @@ struct PocketAddCardInteractorTests {
     func offersThePublishedCard() async throws {
         let interactor = makeAddCardInteractor(published: [loyaltyDefinition])
 
-        let offer = try await interactor.loadOffer(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
+        let offer = try await interactor.loadOffer(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
 
         #expect(offer.title == "Loyalty")
         #expect(offer.productName == "Game")
@@ -27,7 +28,7 @@ struct PocketAddCardInteractorTests {
         let interactor = makeAddCardInteractor(published: [loyaltyDefinition], includesPocket: false)
 
         await #expect(throws: PocketPublishError.noPocket) {
-            try await interactor.loadOffer(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
+            try await interactor.loadOffer(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
         }
     }
 
@@ -37,7 +38,7 @@ struct PocketAddCardInteractorTests {
     func approvingAddsTheCardAsUnprivileged() async throws {
         let store = InMemoryPocketCardStore()
         let interactor = makeAddCardInteractor(published: [loyaltyDefinition], store: store)
-        let offer = try await interactor.loadOffer(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
+        let offer = try await interactor.loadOffer(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
 
         try await interactor.approve(offer)
 
@@ -55,7 +56,7 @@ struct PocketAddCardInteractorTests {
         let store = InMemoryPocketCardStore()
         await store.failWrites()
         let interactor = makeAddCardInteractor(published: [loyaltyDefinition], store: store)
-        let offer = try await interactor.loadOffer(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
+        let offer = try await interactor.loadOffer(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
 
         await #expect(throws: InMemoryPocketCardStore.Unavailable.self) {
             try await interactor.approve(offer)

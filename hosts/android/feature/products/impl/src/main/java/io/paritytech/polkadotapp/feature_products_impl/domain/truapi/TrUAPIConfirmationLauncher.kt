@@ -84,7 +84,7 @@ class TrUAPIConfirmationLauncher @Inject constructor(
     // same way a native one is, decoded call and all.
     private suspend fun awaitSigningDecision(confirmation: TrUAPIConfirmation.Signing): Boolean {
         val context = TrUAPISigningContext(
-            requesterName = confirmation.requesterProductId,
+            requesterName = confirmation.requesterProductId?.value ?: "host",
             signingRequestBody = confirmation.request,
             signingAccount = confirmation.request.signingAccount(),
         )

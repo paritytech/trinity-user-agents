@@ -7,7 +7,7 @@ use subxt::utils::H256;
 
 use super::{
 	chain::{ScarcityChain, ScarcityNft},
-	policy::TransferParams,
+	policy::{TransferAttempt, TransferParams},
 };
 use crate::{
 	chain::{HashAndNumber, Heads, StorageWatchError},
@@ -90,7 +90,8 @@ impl BuiltTransfer {
 	fn of(entry: &DurableTxEntry) -> Option<Self> {
 		let plan = entry.plan.as_ref()?;
 		let params = TransferParams::try_from(&plan.params).ok()?;
-		let (instance, signed_state_nonce) = params.instance.zip(params.signed_state_nonce)?;
+		let TransferAttempt { instance, state_nonce: signed_state_nonce } =
+			params.submitted_attempt?;
 		Some(Self { id: entry.id, instance, destination: params.destination, signed_state_nonce })
 	}
 
@@ -200,6 +201,8 @@ mod tests {
 	/// A transfer of [`INSTANCE`] to [`DESTINATION`] whose attempt signed
 	/// `signed_state_nonce`, or none was built yet.
 	fn transfer_entry(signed_state_nonce: Option<u64>) -> DurableTxEntry {
+		let submitted_attempt = signed_state_nonce
+			.map(|state_nonce| TransferAttempt { instance: INSTANCE, state_nonce });
 		let params = TransferParams {
 			source: SOURCE,
 			signer: TransferSigner::Derived(ItemSlot {
@@ -207,9 +210,8 @@ mod tests {
 				installation: TEST_INSTALLATION,
 				index: ItemIndex(0),
 			}),
-			instance: Some(INSTANCE),
 			destination: DESTINATION,
-			signed_state_nonce,
+			submitted_attempt,
 			give_up_after: 0,
 		};
 		DurableTxEntry {
