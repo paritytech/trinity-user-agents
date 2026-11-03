@@ -1034,7 +1034,6 @@ async fn run_alloc_check(
 				// A diagnostic that submits behaves as it did before pooling,
 				// where a full table was replaced rather than reported.
 				allow_eviction: true,
-				protected: &[],
 			},
 		)
 		.await
@@ -1092,7 +1091,7 @@ async fn report_slot_scan(
 					hex::encode(slot.account_id)
 				);
 			}
-			match alloc::slot::replaceable_slot(&occupied, target, chain_now, cooldown, &[]) {
+			match alloc::slot::replaceable_slot(&occupied, target, chain_now, cooldown) {
 				Some(seq) => println!("would replace seq={seq} (oldest replaceable)"),
 				None => println!("nothing replaceable: cooldown={cooldown}s"),
 			}
@@ -2487,7 +2486,7 @@ async fn report_pairing_failure(
 
 fn pairing_failure_reason(error: &anyhow::Error) -> &'static str {
 	if is_statement_slot_exhaustion(error) {
-		"No free StatementStore slot. Remove a paired device or wait for a new allowance period."
+		"No free StatementStore slot. The period is full until the next UTC day."
 	} else {
 		"Pairing failed. Check the signing host for details."
 	}
@@ -2550,8 +2549,8 @@ async fn prepare_pairing_response(
 			},
 			Err(err) if !existing.is_empty() && is_statement_slot_exhaustion(&err) => {
 				return Err(err).context(
-                    "cannot pair another device without replacing an existing pairing; remove a paired device or wait for a new allowance period",
-                );
+					"cannot pair another device: the allowance period is full until the next UTC day",
+				);
 			},
 			Err(err) => return Err(err),
 		}
@@ -4558,7 +4557,7 @@ mod cli_tests {
 			errors.each_ref().map(pairing_failure_reason),
 			[
 				"Pairing failed. Check the signing host for details.",
-				"No free StatementStore slot. Remove a paired device or wait for a new allowance period.",
+				"No free StatementStore slot. The period is full until the next UTC day.",
 			]
 		);
 	}
