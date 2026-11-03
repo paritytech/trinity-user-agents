@@ -23,6 +23,22 @@ mod option_bool_json {
 	}
 }
 
+/// SCALE carries bytes as they are; JSON carries them as the generated client
+/// spells them, a hex string with an optional `0x` prefix.
+#[cfg(feature = "runtime")]
+mod hex_bytes_json {
+	use serde::{Deserialize, Deserializer, de::Error};
+
+	/// Reads a hex string into bytes.
+	pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+	where
+		D: Deserializer<'de>,
+	{
+		let text = String::deserialize(deserializer)?;
+		hex::decode(text.strip_prefix("0x").unwrap_or(&text)).map_err(D::Error::custom)
+	}
+}
+
 /// A size in logical pixels, SCALE-encoded as `Compact<u64>`.
 pub type Size = Compact<u64>;
 
@@ -372,7 +388,8 @@ pub struct ButtonProps {
 	pub click_action: Option<String>,
 }
 
-/// Where image bytes come from. The host fetches them; the tree carries no URL.
+/// Where image bytes come from: a place the host fetches them from, or the
+/// tree itself. The tree carries no URL.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[cfg_attr(feature = "runtime", serde(tag = "tag", content = "value"))]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -383,6 +400,11 @@ pub enum ImageSource {
 	/// A file inside the product's executable archive, as a path relative to
 	/// the archive root.
 	Archive(String),
+	/// An image carried in the tree itself: PNG, JPEG or WebP, at most 64 KiB.
+	Inline(
+		#[cfg_attr(feature = "runtime", serde(deserialize_with = "hex_bytes_json::deserialize"))]
+		Vec<u8>,
+	),
 }
 
 /// How an image meets the box its modifiers size.
@@ -652,6 +674,10 @@ mod tests {
 						source: ImageSource::Bulletin("bafy".to_string()),
 						fit: Some(ImageFit::Cover),
 					},
+				},
+				RendererNode::Image {
+					modifiers: Vec::new(),
+					props: ImageProps { source: ImageSource::Inline(vec![0x89, 0x50]), fit: None },
 				},
 				RendererNode::Effect {
 					props: EffectProps { effect: Effect::Rainbow },

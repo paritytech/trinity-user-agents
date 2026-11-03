@@ -301,13 +301,15 @@ pub struct ButtonProps {
     pub click_action: Option<String>,
 }
 
-/// Where image bytes come from. The host fetches them; the tree carries no URL.
+/// Where image bytes come from: a place the host fetches them from, or the tree itself. The tree carries no URL.
 pub enum ImageSource {
     /// A Bulletin chain blob, addressed by its CID.
     Bulletin(String),
     /// A file inside the product's executable archive, as a path relative to
     /// the archive root.
     Archive(String),
+    /// An image carried in the tree itself: PNG, JPEG or WebP, at most 64 KiB.
+    Inline(Vec<u8>),
 }
 
 pub enum ImageFit {
@@ -410,8 +412,15 @@ pub enum RendererNode {
 
 The host draws every node from its own design system.
 
-An `ImageSource` is fetched from the Bulletin IPFS gateway or the product's executable archive. An image that cannot be
-fetched draws as empty space. A tree nested deeper than the host's bound is a decode failure of the stream.
+An `ImageSource` is fetched from the Bulletin IPFS gateway or the product's executable archive, or carried `Inline` in
+the tree, for a picture the product makes at run time. An image that cannot be fetched draws as empty space. A tree
+nested deeper than the host's bound is a decode failure of the stream.
+
+An `Inline` image is PNG, JPEG or WebP, recognised by its first bytes, and at most 64 KiB. SVG is refused: an SVG can
+load outside addresses, a network request the person never sees, and can exhaust memory through its XML. A host decodes
+an inline image at no more than 1024 pixels on its longer side, so a small file cannot claim a huge picture. An inline
+image the host refuses draws as empty space at the image's size. In JSON, such as a Pocket card's static face file, the
+bytes are a hex string with a `0x` prefix, as the generated TypeScript types spell bytes.
 
 ### Actions
 
@@ -451,11 +460,17 @@ The change is breaking for a product that renders `Custom` chat messages: its re
 tree-action handler is `renderer.actionSubscribe`, and its trees are `RendererNode`. A product that posts no `Custom`
 messages is unaffected. Hosts ship `Renderer` and the `Chat` change together.
 
+A host built before `ImageSource::Inline` cannot decode a tree that uses it and fails that render stream. A Pocket card
+keeps its cached face, and other surfaces draw as after any other render error.
+
 ## Trade-offs
 
 - Chat products that render custom messages break once.
 - A string `surface` field instead of the `RenderContext` enum would move the id set into an untyped payload and lose
   correlation by equality.
+- An inline image travels in the tree, so every redraw resends it; the 64 KiB cap bounds that. Uploading run-time images
+  to Bulletin instead would cost a chain write per image and publish it, and an archive file cannot change after the
+  product ships.
 
 ## Open questions
 

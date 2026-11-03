@@ -78,11 +78,14 @@ fun RendererNode.toJsWidget(): JsWidget = when (this) {
         enabled = props.enabled ?: true,
         modifiers = modifiers.toJsModifiers(),
     )
-    is RendererNode.Image -> JsWidget.Image(
-        source = props.source.toJs(),
-        fit = props.fit?.toJs() ?: JsImageFit.FILL,
-        modifiers = modifiers.toJsModifiers(),
-    )
+    // An image this host cannot draw keeps its space, as one that fails to load does.
+    is RendererNode.Image -> props.source.toJs()?.let { source ->
+        JsWidget.Image(
+            source = source,
+            fit = props.fit?.toJs() ?: JsImageFit.FILL,
+            modifiers = modifiers.toJsModifiers(),
+        )
+    } ?: JsWidget.Spacer(modifiers = modifiers.toJsModifiers())
     is RendererNode.Effect -> JsWidget.Effect(
         effect = props.effect.toJs(),
         children = children.toJsChildren(),
@@ -155,9 +158,10 @@ private fun Shape.toJs(): JsShape = when (this) {
     is Shape.Square -> JsShape.Square
 }
 
-private fun ImageSource.toJs(): JsImageSource = when (this) {
+private fun ImageSource.toJs(): JsImageSource? = when (this) {
     is ImageSource.Bulletin -> JsImageSource.Bulletin(v1)
     is ImageSource.Archive -> JsImageSource.Archive(v1)
+    is ImageSource.Inline -> null
 }
 
 private fun ImageFit.toJs(): JsImageFit = when (this) {
