@@ -44,9 +44,9 @@ internal const val COLLECTIBLES_PRESS_DURATION_MS = 80
 internal const val COLLECTIBLES_COLOUR_DURATION_MS = 170
 internal const val COLLECTIBLES_LIFT_DURATION_MS = 400
 
-// The screen takes about three frames to start the lift once asked, so asking halfway through the press
-// starts it when the press ends, as the design has it.
-internal const val COLLECTIBLES_LIFT_REQUEST_DELAY_MS = 40L
+// The reference's Pocket starts dimming about 140 ms after the finger lifts; the transition itself
+// needs about 75 ms of that to get going once asked.
+internal const val COLLECTIBLES_LIFT_REQUEST_DELAY_MS = 65L
 internal const val COLLECTIBLES_LIFT_TILT_DEGREES = -4f
 private const val COLLECTIBLES_POCKET_DIM_DURATION_MS = 180
 

@@ -5,12 +5,15 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Transition
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -30,7 +33,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.util.lerp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
@@ -270,8 +272,13 @@ private fun PocketList(
     val anchorIndex = cards.indexOfFirst { it.id == anchorCard?.id }
 
     val navigationBarInsets = LocalAppNavigationBarInsets.current
-    val sketchbookPress = remember { Animatable(0f) }
-    val pressScope = rememberCoroutineScope()
+    val sketchbookInteraction = remember { MutableInteractionSource() }
+    val sketchbookPressed by sketchbookInteraction.collectIsPressedAsState()
+    val sketchbookScale by animateFloatAsState(
+        targetValue = if (sketchbookPressed) COLLECTIBLES_PRESSED_SCALE else 1f,
+        animationSpec = tween(COLLECTIBLES_PRESS_DURATION_MS),
+        label = "collectibles_press"
+    )
 
     Box {
         Column(
@@ -348,14 +355,14 @@ private fun PocketList(
                 modifier = Modifier
                     .fillMaxWidth()
                     .graphicsLayer {
-                        val scale = lerp(1f, COLLECTIBLES_PRESSED_SCALE, sketchbookPress.value)
-                        scaleX = scale
-                        scaleY = scale
+                        scaleX = sketchbookScale
+                        scaleY = sketchbookScale
                     }
-                    .clickable {
-                        pressScope.launch { sketchbookPress.animateTo(1f, tween(COLLECTIBLES_PRESS_DURATION_MS)) }
-                        onCollectiblesSelected()
-                    },
+                    .clickable(
+                        interactionSource = sketchbookInteraction,
+                        indication = null,
+                        onClick = onCollectiblesSelected
+                    ),
                 saturation = sketchbookSaturation()
             )
         }

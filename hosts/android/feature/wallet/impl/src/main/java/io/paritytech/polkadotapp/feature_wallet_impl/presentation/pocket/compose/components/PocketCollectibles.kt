@@ -24,7 +24,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -77,7 +76,7 @@ private const val COVER_EDGE_ON_DEGREES = -90f
 private const val COVER_CAMERA_DISTANCE = 32f
 private const val CONTENT_FADE_DURATION_MS = 100
 private const val PAGE_EXPAND_DURATION_MS = 250
-private const val SKELETON_SWEEP_LOOP_MS = 1200
+private const val SKELETON_SWEEP_LOOP_MS = 1350
 private const val SKELETON_SWEEP_BAND_WIDTH = 0.5f
 private const val SKELETON_SWEEP_ALPHA = 0.12f
 private const val SKELETON_DOT_ALPHA = 0.25f
@@ -180,8 +179,6 @@ private fun CollectiblesPage(
     webView: WebView?,
     failed: Boolean,
 ) {
-    val skeletonShown by remember(book) { derivedStateOf { book.contentAlpha.value < 1f } }
-
     Box(
         modifier = modifier.background(PolkadotTheme.colors.bg.surface.main),
         contentAlignment = Alignment.Center
@@ -193,7 +190,7 @@ private fun CollectiblesPage(
                 color = PolkadotTheme.colors.fg.secondary
             )
         } else {
-            if (skeletonShown) CollectiblesSkeleton(modifier = Modifier.fillMaxSize())
+            CollectiblesSkeleton(modifier = Modifier.fillMaxSize())
 
             // Laid out at full size from the start and only scaled, so the page never reflows on the way up.
             ProductWebViewHost(
