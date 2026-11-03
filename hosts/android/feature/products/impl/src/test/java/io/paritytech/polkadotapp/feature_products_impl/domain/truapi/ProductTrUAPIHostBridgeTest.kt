@@ -22,15 +22,14 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
-import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.stubbing.Answer
+import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.HostRejection
-import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import uniffi.truapi.WsBridgeEndpoint
 
@@ -45,7 +44,7 @@ class ProductTrUAPIHostBridgeTest {
         hostApiInteractor: HostApiInteractor = mock(HostApiInteractor::class.java),
     ) = ProductTrUAPIHostBridge(
         hostApiInteractor = hostApiInteractor,
-        chainHttpClient = OkHttpClient(),
+        chainNodes = mockk(relaxed = true),
         encryptedPreferences = mock(EncryptedPreferences::class.java),
         confirmationLauncher = mock(TrUAPIConfirmationLauncher::class.java),
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },

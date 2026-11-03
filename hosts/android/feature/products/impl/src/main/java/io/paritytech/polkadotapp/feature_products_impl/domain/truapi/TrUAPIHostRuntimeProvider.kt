@@ -6,8 +6,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
+import io.parity.truapi.RpcChainProvider
 import io.parity.truapi.TrUAPIHostRuntime
-import io.parity.truapi.WebSocketChainProvider
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
@@ -19,7 +19,6 @@ import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepo
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
-import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
@@ -38,7 +37,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
-import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
 import uniffi.truapi.ExtensionVersionMap
@@ -53,6 +51,7 @@ import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.WorkerTransition
+import uniffi.truapi_provider.ChainProvider
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -71,7 +70,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val accountRepository: AccountRepository,
     private val dotNsTldProvider: DotNsTldProvider,
     private val encryptedPreferences: EncryptedPreferences,
-    @param:TrUAPIChainHttpClient private val chainHttpClient: OkHttpClient,
+    private val chainNodes: ChainProvider,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
     private val networkStateService: NetworkStateService,
@@ -98,9 +97,9 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     // dispatcher thread, where a suspending registry lookup is not allowed.
     private val cachedChains = AtomicReference(EMPTY_CHAINS)
 
-    private val chainProvider = WebSocketChainProvider(
+    private val chainProvider = RpcChainProvider(
         resolver = { genesisHash -> cachedChains.get().endpoints[genesisHash.hexKey()].orEmpty() },
-        client = chainHttpClient,
+        provider = chainNodes,
         onLog = { Timber.tag("truapi.chain").i("%s", it) },
     )
 

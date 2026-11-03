@@ -1,6 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
-import io.parity.truapi.WebSocketChainProvider
+import io.parity.truapi.RpcChainProvider
 import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
 import io.paritytech.polkadotapp.common.utils.network.networkSwitches
 import kotlinx.coroutines.CoroutineScope
@@ -18,7 +18,7 @@ import timber.log.Timber
  */
 internal fun CoroutineScope.closeChainSocketsOnNetworkSwitch(
     networkStateService: NetworkStateService,
-    chainProvider: WebSocketChainProvider,
+    chainProvider: RpcChainProvider,
 ): Job = launch {
     networkStateService.defaultNetwork.networkSwitches().collect {
         Timber.tag("truapi.chain").i("default network changed, closing the chain sockets")

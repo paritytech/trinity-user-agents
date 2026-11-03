@@ -7,7 +7,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
-import okhttp3.OkHttpClient
+import uniffi.truapi_provider.ChainProvider
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -69,7 +69,7 @@ class TrUAPIDiagnosticsTest {
         // any genesis to the configured node so chain-touching methods can
         // reach a backend.
         val chainNode = args.getString("truapi.chainWs")
-        val chainProvider = WebSocketChainProvider({ listOfNotNull(chainNode) }, OkHttpClient())
+        val chainProvider = RpcChainProvider({ listOfNotNull(chainNode) }, ChainProvider())
 
         val authStates = ArrayList<AuthState>()
         val logs = ArrayList<String>()

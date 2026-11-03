@@ -122,7 +122,7 @@ class TrUAPIHostRuntimeProviderTest {
             coEvery { getTld() } returns read
         },
         encryptedPreferences = mockk(relaxed = true),
-        chainHttpClient = mockk(relaxed = true),
+        chainNodes = mockk(relaxed = true),
         confirmationLauncher = mockk(relaxed = true),
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
         networkStateService = mockk { every { defaultNetwork } returns MutableStateFlow(null) },
