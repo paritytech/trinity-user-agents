@@ -78,7 +78,7 @@ fun RendererNode.toJsWidget(): JsWidget = when (this) {
         enabled = props.enabled ?: true,
         modifiers = modifiers.toJsModifiers(),
     )
-    // An image this host cannot draw keeps its space, as one that fails to load does.
+    // An image this host cannot draw keeps the size its modifiers give it.
     is RendererNode.Image -> props.source.toJs()?.let { source ->
         JsWidget.Image(
             source = source,

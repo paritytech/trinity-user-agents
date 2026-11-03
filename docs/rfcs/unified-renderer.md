@@ -425,7 +425,7 @@ load outside addresses, a network request the person never sees, and can exhaust
 an inline image at no more than 1024 pixels on its longer side, so a small file cannot claim a huge picture. An inline
 image the host refuses draws as empty space at the image's size. In JSON, such as a Pocket card's static face file, the
 bytes are a hex string with a `0x` prefix, as the generated TypeScript types spell bytes. Hex doubles the size, which
-counts against any cap on the file, such as a Pocket face file's 256 KiB.
+counts against any cap a host puts on such a file.
 
 ### Actions
 

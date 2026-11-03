@@ -65,7 +65,7 @@ private extension RendererNode {
             return nil
 
         case let .image(modifiers, props):
-            // An image this host cannot draw keeps its space, as one that fails to load does.
+            // An image this host cannot draw keeps the size its modifiers give it.
             return CustomMessageWidgetNode(
                 content: props.nodeProps.map { .image($0) } ?? .box(.init(), children: []),
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
