@@ -27,7 +27,7 @@ flowchart LR
   subgraph CORE["Core · truapi"]
     sessions["Sessions<br/>expiry · cancel · compaction"]
     db[("core.sqlite3<br/>sessions · summaries")]
-    quotes["Discovery + quotes"]
+    quotes["Providers + quotes"]
     provider["FundingProvider service<br/>report checks"]
     settle["Settlement"]
     payments["Payments by id"]

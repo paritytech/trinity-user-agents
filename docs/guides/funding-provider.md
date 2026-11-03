@@ -19,6 +19,10 @@ funds and reports progress. Pick one of three shapes for the screens the user se
 An `App` route always means your own product's App on dotNS, never another product's or an outside site; a Worker-only
 or self-hosted provider that sends one gets `NoApp`.
 
+Publishing your product does not make it a provider users see. Each host offers only the providers on its own list,
+which its operator controls: once your Worker is published, ask to be added to it. The host then reads your Worker
+manifest from dotNS and asks you for quotes on every funding request.
+
 You do not build the overlay, the provider list, the session sheet or the history: the host draws them from what your
 Worker reports, in the user's language. Your Worker never decides whether a session succeeded either: the core does,
 from the top-ups and payments it names.
