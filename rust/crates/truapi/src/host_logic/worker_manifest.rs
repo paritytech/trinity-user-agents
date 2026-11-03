@@ -16,18 +16,10 @@ const WORKER_KIND: &str = "worker";
 const SUPPORTED_SCHEMA_VERSION: u32 = 1;
 
 /// What a product's `worker.<product_id>.<tld>` subname publishes, as far as
-/// this core reads it.
+/// this core reads it: whether, and how, the worker serves Funding. The host
+/// loads the worker itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct WorkerManifest {
-	/// Module the host loads inside the worker.
-	pub entrypoint: String,
-	/// Whether the worker serves Pocket.
-	pub pocket: bool,
-	/// Whether the worker serves Chat.
-	pub chat: bool,
-	/// Whether the worker serves Input.
-	pub input: bool,
 	/// How the worker serves Funding. `None` when it does not.
 	pub funding: Option<FundingConfig>,
 }
@@ -35,7 +27,6 @@ pub struct WorkerManifest {
 /// A provider's funding configuration, with every value the core does not
 /// recognise already left out.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingConfig {
 	/// What the provider moves and how, when it declares a usable route. With
 	/// `None`, the provider's quotes say what it serves. Never empty.
@@ -66,19 +57,12 @@ struct Published {
 	#[serde(rename = "$v")]
 	schema_version: u32,
 	kind: String,
-	entrypoint: String,
 	#[serde(default)]
 	includes: PublishedIncludes,
 }
 
 #[derive(Default, Deserialize)]
 struct PublishedIncludes {
-	#[serde(default)]
-	pocket: bool,
-	#[serde(default)]
-	chat: bool,
-	#[serde(default)]
-	input: bool,
 	funding: Option<PublishedFunding>,
 }
 
@@ -111,13 +95,7 @@ impl WorkerManifest {
 				published.schema_version
 			));
 		}
-		Ok(Self {
-			entrypoint: published.entrypoint,
-			pocket: published.includes.pocket,
-			chat: published.includes.chat,
-			input: published.includes.input,
-			funding: published.includes.funding.map(PublishedFunding::usable),
-		})
+		Ok(Self { funding: published.includes.funding.map(PublishedFunding::usable) })
 	}
 }
 
@@ -198,10 +176,6 @@ mod tests {
 		assert_eq!(
 			WorkerManifest::parse(EXAMPLE),
 			Ok(WorkerManifest {
-				entrypoint: "index.js".to_string(),
-				pocket: false,
-				chat: false,
-				input: false,
 				funding: Some(FundingConfig {
 					routes: Some(vec![
 						FundingRoute {
@@ -240,35 +214,26 @@ mod tests {
 		assert_eq!(manifest.funding.map(|funding| funding.routes), Some(Some(vec![card_in()])));
 	}
 
-	// A worker that serves no Funding reads as it always did.
+	// A worker that serves other surfaces but not Funding is no provider.
 	#[test]
-	fn a_manifest_without_funding_reads_its_flags() {
+	fn a_manifest_without_funding_serves_none() {
 		let manifest = WorkerManifest::parse(
 			r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js","includes":{"pocket":true}}"#,
 		);
 
-		assert_eq!(
-			manifest,
-			Ok(WorkerManifest {
-				entrypoint: "w.js".to_string(),
-				pocket: true,
-				chat: false,
-				input: false,
-				funding: None,
-			})
-		);
+		assert_eq!(manifest, Ok(WorkerManifest { funding: None }));
 	}
 
 	// Surfaces are added to `includes` without a new `$v`, so one this core
-	// does not know must not cost the worker the surfaces it does.
+	// does not know must not cost the worker the Funding it serves.
 	#[test]
 	fn an_unrecognised_includes_key_is_ignored() {
 		let manifest = WorkerManifest::parse(
-            r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js","includes":{"chat":true,"teleport":{"anything":1}}}"#,
+            r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js","includes":{"funding":{},"teleport":{"anything":1}}}"#,
         )
         .expect("parses");
 
-		assert_eq!((manifest.chat, manifest.funding), (true, None));
+		assert_eq!(manifest.funding, Some(FundingConfig { routes: None }));
 	}
 
 	#[test]
@@ -326,11 +291,7 @@ mod tests {
 		] {
 			let manifest = WorkerManifest::parse(&with_funding(funding)).expect("parses");
 
-			assert_eq!(
-				(manifest.chat, manifest.funding),
-				(true, Some(undeclared.clone())),
-				"{funding}"
-			);
+			assert_eq!(manifest.funding, Some(undeclared.clone()), "{funding}");
 		}
 	}
 
