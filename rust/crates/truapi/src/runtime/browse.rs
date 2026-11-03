@@ -80,7 +80,9 @@ fn publishers_on(genesis_hash: [u8; 32]) -> Option<&'static [[u8; 20]]> {
 
 /// Every label published to `publishers`, as product ids under the network's
 /// TLD, as a JSON array. A label hash two Publishers both list appears once,
-/// and one the registrar cannot name is skipped.
+/// and one the registrar names as empty or dotted is skipped. A label the
+/// registrar cannot be read for fails the whole read, so a partial list is
+/// never cached.
 #[instrument(skip_all, fields(runtime.method = "browse.published_products"))]
 async fn fetch_published_products(
 	chain: &ChainRuntime,
@@ -132,13 +134,14 @@ async fn fetch_published_products(
 	for label_hash in label_hashes {
 		// The registrar's token id for a label is the label's node.
 		let node = keccak_256(&[tld_node.as_slice(), label_hash.as_slice()].concat());
-		let label = match lookup.view(&registrar, call_bytes32("labelOf(uint256)", &node)).await {
-			Ok(output) => decode_string(&output).unwrap_or_default(),
-			Err(err) => {
-				tracing::warn!(%err, "Registrar.labelOf() failed for a published label");
-				continue;
-			},
-		};
+		// A label that cannot be read fails the read rather than dropping its
+		// product, which would then stay off the list for as long as the
+		// list is cached.
+		let output = lookup
+			.view(&registrar, call_bytes32("labelOf(uint256)", &node))
+			.await
+			.map_err(|err| format!("Registrar.labelOf(): {err}"))?;
+		let label = decode_string(&output).unwrap_or_default();
 		if !label.is_empty() && !label.contains('.') {
 			products.push(format!("{label}{tld}"));
 		}
