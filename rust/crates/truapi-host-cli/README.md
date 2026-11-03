@@ -321,8 +321,8 @@ bar. It uses a quiet, command-centered transcript: submitted
 commands title full-width dividers, script stdout keeps the terminal's normal
 foreground, stderr has a small error gutter, and lifecycle work updates
 sentence-case status rows in place. A compact
-`TrUAPI <role> host · 👤 <name> · 🌐 <network> · 📦 <product>` status sits
-below the writing bar. Long product names are ellipsized, while session and log
+`TrUAPI <role> host · 👤 <name> · 🌐 <network> (<chain-backend>) · 📦 <product>`
+status sits below the writing bar, naming the `--chain-backend` in use. Long product names are ellipsized, while session and log
 level stay out of that bar. A borderless, subtly backgrounded composer anchors
 autocomplete and the `›` prompt while keeping the native cursor after the
 input. When the input is empty, command guidance appears there as a placeholder

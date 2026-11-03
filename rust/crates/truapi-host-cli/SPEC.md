@@ -738,8 +738,10 @@ scrollable transcript
 
 command completion list, when open
 › command input or idle placeholder
-TrUAPI <role> host · 👤 <state-or-name> · 🌐 <network> · 📦 <product> · log <value>
+TrUAPI <role> host · 👤 <state-or-name> · 🌐 <network> (<chain-backend>) · 📦 <product> · log <value>
 ```
+
+`<chain-backend>` is the `--chain-backend` value in use, `rpc` or `light-client`.
 
 The role label is omitted at narrow widths so user, network, and product remain
 visible. Values are ellipsized to fit, with the product consuming the remaining

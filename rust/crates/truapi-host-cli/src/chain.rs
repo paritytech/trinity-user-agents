@@ -39,13 +39,15 @@ impl truapi::platform::ExtrinsicVersionHost for PresetExtensionVersions {
 	}
 }
 
-/// How the CLI reaches the chains.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+/// How the CLI reaches the chains. Displayed as its `--chain-backend` value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, derive_more::Display)]
 pub enum ChainBackend {
 	/// WebSocket JSON-RPC to the network's nodes.
+	#[display("rpc")]
 	Rpc,
 	/// The embedded smoldot light client, which needs no RPC node. A chain's
 	/// first request waits for it to sync.
+	#[display("light-client")]
 	LightClient,
 }
 
