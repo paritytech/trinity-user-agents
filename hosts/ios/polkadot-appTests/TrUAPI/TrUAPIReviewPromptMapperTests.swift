@@ -52,7 +52,7 @@ struct TrUAPIReviewPromptMapperTests {
             fromPurse: 4,
             owner: .root,
             itemCount: 1,
-            destination: .externalKey(key: Data(repeating: 0xab, count: 32))
+            destination: .externalKey(key: Data(repeating: 0xAB, count: 32))
         ))
 
         #expect(request == .nftPurseDrain(

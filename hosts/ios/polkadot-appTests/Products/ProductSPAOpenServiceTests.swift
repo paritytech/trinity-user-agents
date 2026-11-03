@@ -48,8 +48,7 @@ private final class ProductLinkNavigator: ModuleNavigating {
     func openProduct(page: ProductPage) { onOpen(page) }
     func openChat(_: ChatOpenModel) {}
     func presentModally(_: UIViewController) {}
-    func presentFullScreen(_: UIViewController) {}
-    func presentOverFullScreen(_: UIViewController, animatedBy _: UIViewControllerTransitioningDelegate) {}
+    func openWallet(then _: @escaping @MainActor (UINavigationController, _ wasOnScreen: Bool) -> Void) {}
     func presentProduct(page _: ProductPage) {}
     func openPocket() {}
     func openScanPanel() {}

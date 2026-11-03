@@ -210,14 +210,18 @@ mod tests {
 	use crate::{
 		chain_runtime::{RuntimeChainProvider, RuntimeFailure},
 		host_logic::dotns_gateway::{
-			VIEW_CALL_ORIGIN, account_to_h160, decode_string, dispatcher_address_key, selector,
+			ContractResult, DotnsPopController, ExecReturnValue, LabelStore, ProtocolRegistry,
+			REVERT_FLAG, RootGatewayDispatcher, StorageDeposit, StoreFactory, VIEW_CALL_ORIGIN,
+			Weight, account_to_h160, dispatcher_address_key,
 		},
 		platform::JsonRpcConnection,
 		subscription::thread_per_subscription_spawner,
 	};
+	use alloy_primitives::{Address, U256};
+	use alloy_sol_types::{SolCall, SolInterface};
 	use async_trait::async_trait;
 	use futures::{StreamExt, channel::mpsc, stream::BoxStream};
-	use parity_scale_codec::{Compact, Decode, Encode};
+	use parity_scale_codec::{Decode, Encode};
 	use serde_json::{Value as JsonValue, json};
 	use std::sync::{Arc, Mutex};
 
@@ -233,147 +237,89 @@ mod tests {
 	const SQUATTER: [u8; 32] = [0x5a; 32];
 	const SQUATTER_STORE: [u8; 20] = [0x5b; 20];
 
-	fn abi_word(value: u64) -> [u8; 32] {
-		let mut word = [0u8; 32];
-		word[24..].copy_from_slice(&value.to_be_bytes());
-		word
-	}
-
-	fn abi_address(address: &[u8; 20]) -> Vec<u8> {
-		let mut word = [0u8; 32];
-		word[12..].copy_from_slice(address);
-		word.to_vec()
-	}
-
-	/// ABI string tail: a length word plus padded bytes.
-	fn abi_string_tail(value: &str) -> Vec<u8> {
-		let mut out = abi_word(value.len() as u64).to_vec();
-		out.extend_from_slice(value.as_bytes());
-		out.resize(out.len().div_ceil(32) * 32, 0);
-		out
-	}
-
-	/// A single `string` return value.
-	fn abi_string(value: &str) -> Vec<u8> {
-		[abi_word(32).to_vec(), abi_string_tail(value)].concat()
-	}
-
-	/// A `string[]` return value.
-	fn abi_string_array(values: &[&str]) -> Vec<u8> {
-		let tails: Vec<Vec<u8>> = values.iter().map(|v| abi_string_tail(v)).collect();
-		let mut out = abi_word(32).to_vec();
-		out.extend_from_slice(&abi_word(values.len() as u64));
-		let mut offset = 32 * values.len();
-		for tail in &tails {
-			out.extend_from_slice(&abi_word(offset as u64));
-			offset += tail.len();
-		}
-		for tail in tails {
-			out.extend_from_slice(&tail);
-		}
-		out
-	}
-
-	/// A `(string label, uint64 mintedAt)[]` return value.
-	fn abi_pending_claims(claims: &[(&str, u64)]) -> Vec<u8> {
-		let structs: Vec<Vec<u8>> = claims
-			.iter()
-			.map(|(label, minted_at)| {
-				[abi_word(64).to_vec(), abi_word(*minted_at).to_vec(), abi_string_tail(label)]
-					.concat()
-			})
-			.collect();
-		let mut out = abi_word(32).to_vec();
-		out.extend_from_slice(&abi_word(claims.len() as u64));
-		let mut offset = 32 * claims.len();
-		for element in &structs {
-			out.extend_from_slice(&abi_word(offset as u64));
-			offset += element.len();
-		}
-		for element in structs {
-			out.extend_from_slice(&element);
-		}
-		out
-	}
-
-	/// `ReviveApi_call` output carrying successful return `data`.
-	fn contract_result(data: &[u8]) -> Vec<u8> {
-		contract_result_with_flags(0, data)
-	}
-
-	/// `ReviveApi_call` output for a call that reverted.
-	fn reverted_contract_result() -> Vec<u8> {
-		contract_result_with_flags(1, &[])
-	}
-
-	/// `flags` is `ReturnFlags`; bit 0 marks a revert.
-	fn contract_result_with_flags(flags: u32, data: &[u8]) -> Vec<u8> {
-		let mut out = Vec::new();
-		for _ in 0..4 {
-			Compact(7u64).encode_to(&mut out);
-		}
-		for _ in 0..2 {
-			(1u8, 0u128).encode_to(&mut out);
-		}
-		0u128.encode_to(&mut out);
-		out.push(0x00);
-		flags.encode_to(&mut out);
-		data.encode_to(&mut out);
-		out
-	}
-
-	/// The scripted account whose H160 the view's first argument carries.
-	fn queried_account(input: &[u8]) -> [u8; 32] {
+	/// The scripted account whose H160 a view's `user` argument carries.
+	fn queried_account(user: Address) -> [u8; 32] {
 		[ACCOUNT, SQUATTER]
 			.into_iter()
-			.find(|account| input[4..36] == abi_address(&account_to_h160(account)))
+			.find(|account| user == Address::from(account_to_h160(account)))
 			.expect("view for an unscripted account")
 	}
 
-	/// The scripted contract side: `(dest, selector)` → return data.
+	/// A `LabelStore.getLabels` answer of `labels`, read as the first page.
+	fn labels_page(input: &[u8], labels: &[&str]) -> Vec<u8> {
+		let page = LabelStore::getLabelsCall::abi_decode(input).expect("getLabels");
+		assert_eq!((page.offset, page.limit), (U256::ZERO, U256::from(16)));
+		LabelStore::getLabelsCall::abi_encode_returns(
+			&labels.iter().map(|label| label.to_string()).collect(),
+		)
+	}
+
+	/// The scripted contract side: `(dest, view)` → return data.
 	fn view_output(dest: &[u8; 20], input: &[u8]) -> Vec<u8> {
-		let sel: [u8; 4] = input[..4].try_into().unwrap();
+		use DotnsPopController::DotnsPopControllerCalls as ControllerCall;
+		use ProtocolRegistry::ProtocolRegistryCalls as RegistryCall;
+
 		// Discovery probes `protocolRegistry()` first and the dispatcher reverts it; that
 		// revert is how the two contracts are told apart, so the mock reproduces it.
-		if *dest == DISPATCHER && sel == selector("protocolRegistry()") {
-			return reverted_contract_result();
-		}
-		let data = match (*dest, sel) {
-			(DISPATCHER, s) if s == selector("TARGET()") => abi_address(&CONTROLLER),
-			(CONTROLLER, s) if s == selector("pendingClaims(address,uint256,uint256)") => {
-				assert_eq!(&input[36..68], &abi_word(0));
-				assert_eq!(&input[68..100], &abi_word(16));
-				// Minted at the epoch: a pending claim never lapses.
-				if queried_account(input) == ACCOUNT {
-					abi_pending_claims(&[("alice.01", 1)])
-				} else {
-					abi_pending_claims(&[])
-				}
+		let reverted = *dest == DISPATCHER &&
+			DotnsPopController::protocolRegistryCall::abi_decode(input).is_ok();
+		let data = match *dest {
+			_ if reverted => Vec::new(),
+			DISPATCHER => {
+				RootGatewayDispatcher::TARGETCall::abi_decode(input).expect("TARGET()");
+				RootGatewayDispatcher::TARGETCall::abi_encode_returns(&CONTROLLER.into())
 			},
-			(CONTROLLER, s) if s == selector("isPopIssued(string)") => {
-				abi_word(u64::from(decode_string(&input[4..]).unwrap() != "squatter")).to_vec()
+			CONTROLLER => match ControllerCall::abi_decode(input).expect("controller view") {
+				ControllerCall::pendingClaims(page) => {
+					assert_eq!((page.offset, page.limit), (U256::ZERO, U256::from(16)));
+					// Minted at the epoch: a pending claim never lapses.
+					let claims = if queried_account(page.user) == ACCOUNT {
+						vec![DotnsPopController::PendingClaim {
+							label: "alice.01".to_string(),
+							mintedAt: 1,
+						}]
+					} else {
+						Vec::new()
+					};
+					DotnsPopController::pendingClaimsCall::abi_encode_returns(&claims)
+				},
+				ControllerCall::isPopIssued(asked) => {
+					DotnsPopController::isPopIssuedCall::abi_encode_returns(
+						&(asked.label != "squatter"),
+					)
+				},
+				ControllerCall::protocolRegistry(_) => {
+					DotnsPopController::protocolRegistryCall::abi_encode_returns(&REGISTRY.into())
+				},
 			},
-			(CONTROLLER, s) if s == selector("protocolRegistry()") => abi_address(&REGISTRY),
-			(REGISTRY, s) if s == selector("get(bytes32)") => abi_address(&FACTORY),
-			(REGISTRY, s) if s == selector("tld()") => abi_string(".paseo"),
-			(FACTORY, s) if s == selector("getLabelStore(address)") => {
-				if queried_account(input) == ACCOUNT {
-					abi_address(&STORE)
-				} else {
-					abi_address(&SQUATTER_STORE)
-				}
+			REGISTRY => match RegistryCall::abi_decode(input).expect("registry view") {
+				RegistryCall::get(_) => {
+					ProtocolRegistry::getCall::abi_encode_returns(&FACTORY.into())
+				},
+				RegistryCall::tld(_) => {
+					ProtocolRegistry::tldCall::abi_encode_returns(&".paseo".to_string())
+				},
 			},
-			(STORE, s) if s == selector("getLabels(uint256,uint256)") => {
-				abi_string_array(&["myproject.paseo", "app.myproject.paseo"])
+			FACTORY => {
+				let asked =
+					StoreFactory::getLabelStoreCall::abi_decode(input).expect("getLabelStore");
+				let store =
+					if queried_account(asked.user) == ACCOUNT { STORE } else { SQUATTER_STORE };
+				StoreFactory::getLabelStoreCall::abi_encode_returns(&store.into())
 			},
-			(SQUATTER_STORE, s) if s == selector("getLabels(uint256,uint256)") => {
-				abi_string_array(&["squatter.paseo"])
-			},
-			(dest, sel) => {
-				panic!("unscripted view {} on 0x{}", hex::encode(sel), hex::encode(dest))
-			},
+			STORE => labels_page(input, &["myproject.paseo", "app.myproject.paseo"]),
+			SQUATTER_STORE => labels_page(input, &["squatter.paseo"]),
+			dest => panic!("unscripted view {} on 0x{}", hex::encode(input), hex::encode(dest)),
 		};
-		contract_result(&data)
+		ContractResult {
+			weight_consumed: Weight { ref_time: 0, proof_size: 0 },
+			weight_required: Weight { ref_time: 0, proof_size: 0 },
+			storage_deposit: StorageDeposit::Charge(0),
+			max_storage_deposit: StorageDeposit::Charge(0),
+			gas_consumed: 0,
+			result: Ok(ExecReturnValue { flags: if reverted { REVERT_FLAG } else { 0 }, data }),
+		}
+		.encode()
 	}
 
 	struct ScriptedAssetHub {
