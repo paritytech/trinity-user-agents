@@ -389,7 +389,6 @@ class PocketViewModel @Inject constructor(
         // Long enough to cover a scroll away and back, or a glance at another app.
         const val WORKER_KEEP_ALIVE_MILLIS = 5_000L
 
-        // iOS WalletView.sectionAnimationDuration
         val COLLECTIBLES_OPEN_DELAY = 450.milliseconds
     }
 }
