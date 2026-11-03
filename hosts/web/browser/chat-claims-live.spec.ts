@@ -124,6 +124,7 @@ suite(
             hasText: "Accept chat request",
           });
           await acceptPrompt.waitFor();
+          await acceptPrompt.locator(".prompt-details > summary").click();
           const acceptText = await acceptPrompt.innerText();
           await acceptPrompt
             .getByRole("button", { name: "Accept", exact: true })
@@ -171,7 +172,9 @@ suite(
           ]);
           // Two chats' accounts, one per side, neither the other's.
           expect(aliceClaim![1]).not.toBe(bobClaim![1]);
-          expect(acceptText).toContain("daily Statement Store slots");
+          expect(acceptText).toContain(
+            "Statement Store slot each day you send",
+          );
           for (const guard of Object.values(guards)) {
             expect(guard.refused).toEqual([]);
             expect(
