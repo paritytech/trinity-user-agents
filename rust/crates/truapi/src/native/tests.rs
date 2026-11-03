@@ -3240,10 +3240,10 @@ fn refuses_a_material_id_that_is_not_32_bytes() {
 /// tree deeper than the core carries.
 #[test]
 fn counts_depth_through_a_materials_node() {
-	let deepest_allowed = nested_boxes(MAX_FACE_DEPTH as usize - 1);
+	let one_too_deep = nested_boxes(MAX_FACE_DEPTH as usize);
 
 	assert!(matches!(
-		parse_renderer_node_json(materials_around(&"07".repeat(32), &deepest_allowed)),
+		parse_renderer_node_json(materials_around(&"07".repeat(32), &one_too_deep)),
 		Err(NativeRendererError::TooDeep { .. })
 	));
 }
@@ -3258,7 +3258,7 @@ fn materials_under_boxes(boxes: usize) -> String {
 /// included, so a host never draws a face it cannot keep.
 #[test]
 fn the_deepest_face_with_materials_reads_back_once_kept() {
-	let layer_levels = 3;
+	let layer_levels = 2;
 	let deepest =
 		parse_renderer_node_json(materials_under_boxes(MAX_FACE_DEPTH as usize - layer_levels))
 			.expect("the deepest materials face reads");

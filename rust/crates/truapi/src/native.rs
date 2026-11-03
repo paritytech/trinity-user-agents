@@ -267,9 +267,12 @@ fn read_renderer_node_json(json: &str) -> Result<latest::RendererNode, NativeRen
 	let node = latest::RendererNode::deserialize(&mut reader)
 		.map_err(|error| NativeRendererError::Malformed { reason: error.to_string() })?;
 
-	match node_depth(&node, MAX_FACE_DEPTH) {
-		Some(_) => Ok(node),
-		None => Err(NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH }),
+	// Read back the way a kept face is, so the reader accepts exactly what the
+	// store and the renderer subscription accept.
+	let kept = node.encode();
+	match latest::RendererNode::decode_all_with_depth_limit(MAX_FACE_DEPTH, &mut kept.as_slice()) {
+		Ok(_) => Ok(node),
+		Err(_) => Err(NativeRendererError::TooDeep { limit: MAX_FACE_DEPTH }),
 	}
 }
 
@@ -303,38 +306,6 @@ fn json_nesting_exceeds(json: &str, limit: u32) -> bool {
 	}
 
 	false
-}
-
-/// Depth of `node`, or `None` once it passes `remaining`. Bounded rather than
-/// measured, so a tree built to exhaust the stack is refused before it does.
-fn node_depth(node: &latest::RendererNode, remaining: u32) -> Option<u32> {
-	if remaining == 0 {
-		return None;
-	}
-
-	let children: &[latest::RendererNode] = match node {
-		latest::RendererNode::Box { children, .. } |
-		latest::RendererNode::Column { children, .. } |
-		latest::RendererNode::Row { children, .. } |
-		latest::RendererNode::Text { children, .. } |
-		latest::RendererNode::Button { children, .. } |
-		latest::RendererNode::Materials { children, .. } => children,
-		_ => &[],
-	};
-
-	let deepest = children
-		.iter()
-		.map(|child| node_depth(child, remaining - 1))
-		.try_fold(0, |deepest: u32, depth| depth.map(|d| deepest.max(d)))?;
-
-	// SCALE decodes a layer's arguments two levels below their node, inside
-	// `layers` and `args`, and counts them against the same limit.
-	let deepest = match node {
-		latest::RendererNode::Materials { .. } => deepest.max(2),
-		_ => deepest,
-	};
-
-	(deepest < remaining).then_some(deepest + 1)
 }
 
 /// The bytes to keep a face under, so it can be drawn again at a cold start.

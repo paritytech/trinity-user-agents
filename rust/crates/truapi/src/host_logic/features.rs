@@ -1,8 +1,9 @@
 //! Feature-detection delegation.
 //!
 //! `feature_supported` and `supported_chains` are platform syscalls: each
-//! host owns the set of chains it can service. This module is a thin shim
-//! that forwards through to [`crate::platform::Features`], plus the in-core
+//! host owns the set of chains it can service. This module forwards through
+//! to [`crate::platform::Features`], except for the materials question, which
+//! the core answers itself, plus the in-core
 //! RFC-0026 resolution that answers `get_chain_info` from the host's chain
 //! set so per-request semantics (ordering, `NotSupported`) stay core-owned.
 
