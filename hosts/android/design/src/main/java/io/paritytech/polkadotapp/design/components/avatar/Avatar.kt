@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.design.components.avatar
 
+import android.content.Context
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.Composable
@@ -11,6 +12,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -21,7 +23,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toOffset
-import io.paritytech.polkadotapp.design.components.image.NovaAsyncImage
+import coil.compose.AsyncImage
+import coil.compose.AsyncImagePainter
+import coil.request.CachePolicy
+import coil.request.ImageRequest
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
@@ -35,8 +40,11 @@ import kotlin.math.roundToInt
 sealed class AvatarUiModel {
     companion object;
 
-    /** [placeholder] shows until the image at [url] has loaded, and stays if it never does. */
-    data class Image(val url: String, val placeholder: Name? = null) : AvatarUiModel()
+    /**
+     * [placeholder] shows until the image at [url] has loaded, and stays if it never does. A [refresh] reloads the image
+     * past every cache, while the cached one stays drawn.
+     */
+    data class Image(val url: String, val placeholder: Name? = null, val refresh: Boolean = false) : AvatarUiModel()
 
     data class Name(val name: String, val colorScheme: AvatarColorScheme) : AvatarUiModel()
 }
@@ -52,6 +60,7 @@ fun PolkadotAvatar(
             modifier = modifier,
             url = model.url,
             placeholder = model.placeholder,
+            refresh = model.refresh,
             onClick = onClick
         )
 
@@ -69,6 +78,7 @@ private fun ImageAvatar(
     modifier: Modifier,
     url: String,
     placeholder: AvatarUiModel.Name?,
+    refresh: Boolean,
     onClick: (() -> Unit)? = null
 ) {
     PolkadotSurface(
@@ -78,14 +88,31 @@ private fun ImageAvatar(
         onClick = onClick
     ) {
         val letter = placeholder?.let { rememberLetterAvatarPainter(it.name, it.colorScheme) }
+        val context = LocalContext.current
+        val model = remember(context, url, refresh) { if (refresh) refreshRequest(context, url) else url }
 
-        NovaAsyncImage(
-            model = url,
+        AsyncImage(
+            model = model,
+            contentDescription = "",
             contentScale = ContentScale.Crop,
-            placeholder = letter,
-            error = letter
+            transform = { state -> state.withLetter(letter) }
         )
     }
+}
+
+private fun refreshRequest(context: Context, url: String): ImageRequest = ImageRequest.Builder(context)
+    .data(url)
+    .memoryCachePolicy(CachePolicy.WRITE_ONLY)
+    .diskCachePolicy(CachePolicy.WRITE_ONLY)
+    .placeholderMemoryCacheKey(url)
+    .build()
+
+// A refresh loads with the cached image as its placeholder, so the letter fills in only where nothing else is drawn.
+private fun AsyncImagePainter.State.withLetter(letter: Painter?): AsyncImagePainter.State = when {
+    letter == null -> this
+    this is AsyncImagePainter.State.Loading && painter == null -> copy(painter = letter)
+    this is AsyncImagePainter.State.Error -> copy(painter = letter)
+    else -> this
 }
 
 @Composable
