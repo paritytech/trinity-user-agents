@@ -24,6 +24,8 @@ use truapi::latest::{
 
 pub use deposit::DepositRefusal;
 pub use operation::drain_needs_confirmation;
+#[cfg(test)]
+pub use payment::{ENVELOPE_VERSION, EnvelopeContents};
 pub use payment::{PaymentListen, PaymentListenError};
 pub use receive_key::{CreateReceiveKeyError, StaticReceiveSecret};
 
