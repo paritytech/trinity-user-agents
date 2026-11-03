@@ -461,7 +461,7 @@ impl NativeTrUApiHostRuntime {
 	pub async fn select_funding_provider(
 		&self,
 		intent: String,
-		provider_id: String,
+		provider_id: ProductId,
 		quote_id: String,
 	) -> Result<bool, HostRejection> {
 		Ok(self.runtime.select_funding_provider(&intent, &provider_id, &quote_id).await?)
@@ -776,7 +776,7 @@ impl NativeTrUApiHostRuntime {
 	/// when the product publishes no Worker, or one the core cannot use.
 	pub async fn worker_manifest(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 	) -> Result<Option<crate::host_logic::worker_manifest::WorkerManifest>, HostRejection> {
 		Ok(self.runtime.worker_manifest(&product_id).await?)
 	}

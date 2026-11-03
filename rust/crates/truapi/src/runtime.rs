@@ -1671,7 +1671,7 @@ impl FundingProvider for ProductRuntimeHost {
 					.connection
 					.services
 					.funding()
-					.is_serving(self.connection.product.product_id.as_str(), &intent)
+					.is_serving(&self.connection.product.product_id, &intent)
 				{
 					return Err(domain(latest::HostFundingPresentFrameError::NotFound));
 				}
@@ -1704,7 +1704,7 @@ impl FundingProvider for ProductRuntimeHost {
 					.connection
 					.services
 					.funding()
-					.is_serving(self.connection.product.product_id.as_str(), &intent)
+					.is_serving(&self.connection.product.product_id, &intent)
 				{
 					return Err(CallError::Domain(latest::HostFundingCloseFrameError::NotFound));
 				}

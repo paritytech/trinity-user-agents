@@ -52,7 +52,7 @@ pub const LEARNED_SUPPORT_TTL_MS: u64 = 12 * 60 * 60 * 1_000;
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct LearnedSupport {
 	/// The provider.
-	pub provider_id: String,
+	pub provider_id: ProductId,
 	/// The ask's direction.
 	pub direction: FundingDirection,
 	/// The ask's rail.
@@ -177,7 +177,7 @@ pub struct FundingLimit {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingCandidate {
 	/// The provider's product id.
-	pub provider_id: String,
+	pub provider_id: ProductId,
 	/// Routes serving the direction, as its manifest declares them and its
 	/// recent quote answers confirmed. Empty when it declares none and no
 	/// answer has confirmed one yet, so only its quotes say what it serves.
@@ -199,7 +199,7 @@ impl FundingCandidate {
 	/// say so, and one that serves Funding without declaring routes is a
 	/// candidate for either direction.
 	pub fn for_direction(
-		provider_id: &str,
+		provider_id: &ProductId,
 		manifest: Option<&WorkerManifest>,
 		learned: &[LearnedSupport],
 		direction: FundingDirection,
@@ -219,7 +219,7 @@ impl FundingCandidate {
 		let mut unsupported = Vec::new();
 		let mut limits = Vec::new();
 		let fresh = learned.iter().filter(|support| {
-			support.provider_id == provider_id &&
+			&support.provider_id == provider_id &&
 				support.direction == direction &&
 				support.is_fresh(now_ms)
 		});
@@ -249,7 +249,7 @@ impl FundingCandidate {
 			}
 		}
 		(declared.is_none() || !routes.is_empty()).then(|| Self {
-			provider_id: provider_id.to_string(),
+			provider_id: provider_id.clone(),
 			routes,
 			unsupported,
 			limits,
@@ -327,7 +327,7 @@ pub struct LimitScope<'a> {
 /// [`FundingAmountLimits`] for `scope` across `provider_ids`, from what
 /// `learned` still trusts at `now_ms`.
 pub fn amount_limits(
-	provider_ids: &[String],
+	provider_ids: &[ProductId],
 	learned: &[LearnedSupport],
 	scope: LimitScope<'_>,
 	now_ms: u64,
@@ -441,7 +441,7 @@ pub struct FundingNetworkLimits {
 /// country for `direction`, `rail` and `asset`, by country code. A country
 /// nothing names is left out, as the core knows nothing about it.
 pub fn country_support(
-	providers: &[(String, Option<WorkerManifest>)],
+	providers: &[(ProductId, Option<WorkerManifest>)],
 	learned: &[LearnedSupport],
 	direction: FundingDirection,
 	rail: FundingRail,
@@ -517,7 +517,7 @@ mod tests {
 
 	fn learned(supported: bool, at_ms: u64) -> LearnedSupport {
 		LearnedSupport {
-			provider_id: "ramp.dot".to_string(),
+			provider_id: ProductId::for_test("ramp.dot"),
 			direction: FundingDirection::In,
 			rail: FundingRail::Bank,
 			asset: "EUR".to_string(),
@@ -555,8 +555,14 @@ mod tests {
 		let undeclared = manifest("{}");
 		let card_in = card_in();
 		let candidate = |manifest: &WorkerManifest, direction| {
-			FundingCandidate::for_direction("ramp.dot", Some(manifest), &[], direction, NOW)
-				.map(|candidate| candidate.routes)
+			FundingCandidate::for_direction(
+				&ProductId::for_test("ramp.dot"),
+				Some(manifest),
+				&[],
+				direction,
+				NOW,
+			)
+			.map(|candidate| candidate.routes)
 		};
 
 		assert_eq!(
@@ -577,7 +583,7 @@ mod tests {
 		let card_in = card_in();
 		let candidate = |at_ms| {
 			FundingCandidate::for_direction(
-				"ramp.dot",
+				&ProductId::for_test("ramp.dot"),
 				Some(&card_in),
 				&[learned(true, at_ms)],
 				FundingDirection::In,
@@ -588,7 +594,7 @@ mod tests {
 			})
 		};
 		let bank = FundingCandidate::for_direction(
-			"ramp.dot",
+			&ProductId::for_test("ramp.dot"),
 			Some(&card_in),
 			&[learned(true, NOW)],
 			FundingDirection::In,
@@ -634,7 +640,7 @@ mod tests {
 
 		let undeclared = manifest("{}");
 		let candidate = FundingCandidate::for_direction(
-			"ramp.dot",
+			&ProductId::for_test("ramp.dot"),
 			Some(&undeclared),
 			&[usdt],
 			FundingDirection::In,
@@ -680,13 +686,13 @@ mod tests {
 			..learned(true, NOW)
 		};
 		let providers = [
-			("ramp.dot".to_string(), Some(declared)),
-			("other.dot".to_string(), Some(manifest("{}"))),
+			(ProductId::for_test("ramp.dot"), Some(declared)),
+			(ProductId::for_test("other.dot"), Some(manifest("{}"))),
 		];
 		let learned = [
 			in_country("DE", true, Some(2_000)),
 			LearnedSupport {
-				provider_id: "other.dot".to_string(),
+				provider_id: ProductId::for_test("other.dot"),
 				..in_country("DE", true, Some(1_500))
 			},
 			in_country("UY", false, None),
@@ -729,7 +735,7 @@ mod tests {
 		.expect("parses");
 		let candidate = |manifest: Option<&WorkerManifest>| {
 			FundingCandidate::for_direction(
-				"ramp.dot",
+				&ProductId::for_test("ramp.dot"),
 				manifest,
 				&[learned(true, NOW)],
 				FundingDirection::In,
@@ -753,12 +759,12 @@ mod tests {
 			country: Some("DE"),
 		};
 		let refused = |provider_id: &str, min: Option<u128>, max: Option<u128>| LearnedSupport {
-			provider_id: provider_id.to_string(),
+			provider_id: ProductId::for_test(provider_id),
 			min: min.and_then(limit),
 			max: max.and_then(limit),
 			..learned(true, NOW)
 		};
-		let ids = |ids: &[&str]| ids.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+		let ids = |ids: &[&str]| ids.iter().map(|id| ProductId::for_test(id)).collect::<Vec<_>>();
 		let learned = [
 			refused("a.dot", Some(20_000_000), Some(500_000_000)),
 			refused("b.dot", Some(15_000_000), None),

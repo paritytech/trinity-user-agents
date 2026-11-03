@@ -2,7 +2,9 @@ use parity_scale_codec::{Decode, Encode};
 
 /// Which way value crosses the boundary between the user's Polkadot balance
 /// and everything outside it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+///
+/// Parses from the name a Worker manifest's route `directions` use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, strum::EnumString)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingDirection {
 	/// Value moves in, credited to the user's balance.
