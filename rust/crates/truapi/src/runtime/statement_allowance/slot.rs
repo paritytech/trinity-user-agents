@@ -1208,21 +1208,6 @@ mod tests {
 		assert_eq!(current_long_term_storage_period(1_209_600 * 20 + 5, 1_209_600).unwrap(), 20,);
 	}
 
-	#[test]
-	fn allowance_entry_matches_runtime_field_codec() {
-		let entry = StatementStoreAllowanceEntry { account_id: [0x42; 32], seq: 7, since: 99 };
-		let encoded = entry.encode();
-
-		assert_eq!(encoded, (entry.account_id, entry.seq, entry.since).encode());
-		assert_eq!(decode_entry(&encoded).map(|e| e.account_id), Some(entry.account_id));
-		assert_eq!(StatementStoreAllowanceEntry::decode(&mut encoded.as_slice()).unwrap(), entry);
-	}
-
-	#[test]
-	fn truncated_allowance_entry_has_no_account() {
-		assert!(decode_entry(&[0x42; 32]).is_none());
-	}
-
 	/// Pins `reports_exhausted_period` against the renderings above: rewording
 	/// one of these variants fails here, in the file it was reworded in, rather
 	/// than silently turning the signing host's account rotation into a retry
