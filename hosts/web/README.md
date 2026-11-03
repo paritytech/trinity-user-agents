@@ -735,16 +735,19 @@ agreed API.
       reason, since the draft chat contract carries none.
   - **Diagnostics** (draft). Contact Chat reports each conversation to its host for the inspector's Chat view: its
     protocol, state, request handle, conversation account, the peer accounts and topics it reads, where it posts, and
-    counts since the worker started (messages sent, received and dropped as copies, failures, posts) with its last
-    window. The protocol gives its public routing (`routes`) for this; no report carries what anyone wrote. A report is
-    a window message from the worker's frame (`product-diagnostics/draft-1`, `src/products/diagnostics.ts`), read field
-    by field within bounds and put down to the frame that sent it; each replaces the last of that run, and a stopped
+    counts since the worker started (messages sent, received and dropped as copies, failures, posts). What only the
+    protocol defines travels as labelled protocol details: for `simple-text/1`, the **published message batch**, what
+    the last post carried against the most one post carries (20 messages, 16 KiB), and the expiry each post asks for (48
+    h; peers may evict it sooner). The protocol gives its public routing (`routes`) for this; no report carries what
+    anyone wrote. A report is a window message from the worker's frame (`product-diagnostics/draft-1`,
+    `src/products/diagnostics.ts`), read field by field within bounds and put down to the frame that sent it; a field it
+    does not read, such as an earlier report's `window`, is left out. Each replaces the last of that run, and a stopped
     worker's report is marked stale. The host shows it as reported and acts on none of it.
   - **The protocol boundary.** `src/chat/contact-chat/protocol.ts` is the seam between the engine and the chat protocol:
     the protocol owns the setup payloads, the topics and channel each side reads and posts on, and a post's bytes and
-    window; the engine owns the conversation, its account index, history and storage and never reads them. The hosts
-    carry the payloads unread. `simple-text/1` (`simple-text.ts`) is the only protocol; MLS or another library would
-    replace it there, with no change to the hosts.
+    how many messages it carries; the engine owns the conversation, its account index, history and storage and never
+    reads them. The hosts carry the payloads unread. `simple-text/1` (`simple-text.ts`) is the only protocol; MLS or
+    another library would replace it there, with no change to the hosts.
   - **Gaps it shows.** The host asks twice when a chat starts from its own **+**: once in the request form and once in
     **Send invitation**. A declined request waits silently until the sender cancels it under **Sent** in the Inbox. No
     receipts: a sent message shows sent, never delivered or read. Whether the store keeps a post once its account's
@@ -1133,10 +1136,24 @@ which has no statement store, and the view says so in a line of its own. What fo
   with its day and collection, the grant read's block, its channels and the statements seen from it, each with when this
   tab first and last saw it. **Read grants** reads `:statement_allowance:` for them at the newest finalized People
   block.
-- **Topics.** Every subscription, who opened it (core or host), its filter, where its stream stands, pages, statements
-  and repeats among its last 200 statements. Every topic seen, with what a product reported it for and how many
-  statements were recorded on it. There is no probe: the inspector opens no statement subscription of its own (see **The
-  transport**).
+- **Topics.** A topic is a label statements carry; a subscription listens on one or more topics. One row per topic under
+  **Topic | Role | Subscription | Observed** (`topics.ts`). The name is given only where its meaning is known: the
+  host's own day inbox, worked out from the network and the UTC day as the delivery does
+  (`Shared setup inbox · today UTC`, `· yesterday UTC`, tagged **derived**): every host using this draft delivery posts
+  there. Or a topic a product's report names (`contact-chat.test · incoming` or `outgoing`, tagged **reported**); else
+  short hex. No topic is reversed and no payload is read. The role comes from separate sources: **Listening** when the
+  core or the host holds a subscription open on it, or a product says it reads it; **Publishing** when the light client
+  answered a submission on it `new` (broadcast to a peer, not shown stored), or a product says it posts there; **Both**;
+  **Tried** when submissions were asked on it and none is known to have gone out (refused here, an RPC error, refused,
+  or no answer seen); else **Other observed**. A role that only a product's report gives is tagged **reported**. A
+  stopped worker's report gives no role, and a name taken only from one ends in `· worker stopped`. Then who holds a
+  subscription open (`host · open`, `None`) and the statements observed · time last seen. A row opens to the full topic
+  with **Copy topic**, its name and where it comes from, each listening and publishing fact with its source, its
+  observed statements with their signers linked to the account, the subscriptions on it with their counters, closed, and
+  a **Timeline** action that narrows the timeline to it. Every subscription, with who opened it, its filter, stream
+  position, pages and repeats, is in **All subscriptions**, closed, under the list. Opening a topic reads nothing. There
+  is no probe: the inspector opens no statement subscription of its own (see **The transport**), so an open subscription
+  does not show that peers send to it.
 - **Timeline.** Every fact in order, filtered by kind, failures, search, or the conversation or account it came from.
 
 What it does not know is said where it matters. Peers evict and refuse without saying so, and send only some of what
@@ -1168,16 +1185,23 @@ shape the view does not read is kept as its shape (types, keys, lengths and plai
 long hex replaced by its length and is cut to 200 characters. Nothing holds a key, seed or secret.
 
 **Chat.** The inspector's **Chat** tab shows the conversations product workers report about themselves (Contact Chat
-does), and the host requests with no report (`tools/chat/`). Each card is one line per fact: the **protocol** name and
-version the product reports; the host's **request** and `chatAccount` answer, joined only when the host holds that
-request for the same product; the **account** the product posts as (reported), then a **tie** line from the host: "tied
-by host" only when a claim or allowance of that product names it, else "reported only"; its peers, read and post topics,
-logical message counts (sent, received, duplicates dropped, failed, posts) and window; and **per message**, the
-broadcast statements and bytes over messages sent in one window, or why that is not known. The host reads no chat
-payload: all but the request, the tie and the per-message figure are product-reported and tagged so. Resources stay in
-Statements: the tied account, each topic and the request are links that open Statements on the account, or its timeline
-narrowed to the topic or to the host's request and delivery events, with any filter set by hand cleared. An open **why**
-stays open as the views draw again. A stopped worker's card is marked stale; with no report the tab says so.
+does), and the host requests with no report (`tools/chat/`). A card's title comes from the host's request when it holds
+one for the same product (**Chat you started**, **Chat you were invited to**), else **Chat**; the product's local
+conversation ID is under **Details**, closed, and is not an account, a key or a topic. Each card is one line per fact:
+the **protocol** name and version the product reports; the host's **request** and `chatAccount` answer, joined only when
+the host holds that request for the same product; the **account** the product posts as (reported), then a **tie** line
+from the host: "tied to" the product only when a claim or allowance of that product names it, else "reported only" (the
+host ties an account to a product, not to one conversation); its peers, the topics it listens and publishes on, logical
+message counts (sent, received, duplicates dropped, failed, posts); and **per message**, the broadcast statements and
+bytes over messages sent since the run's first report, or why that is not known. What only the protocol defines, such as
+simple-text's published message batch, is under **Protocol details**, as the product gives it; a protocol that gives
+none has no such section. The host reads no chat payload: all but the request, the tie and the per-message figure are
+product-reported and tagged so. Resources stay in Statements: every account and topic shown is a link to its detail
+there, and **Request timeline** narrows the timeline to the host's events for that request: its send or reply, its
+delivery accounts and problems, and `chatAccount`. A link only navigates: it reads nothing, and it joins no fact the tie
+does not. An account no one recorded opens with nothing in this session. A link clears any timeline filter set by hand
+and moves the focus to what it opened. An open **why** stays open as the views draw again. A stopped worker's card is
+marked stale; with no report the tab says so.
 
 **Versions.** The menu shows client, host and core, provider and debugger versions, read from the linked packages and
 the loaded `testing` bundle. A warning appears only when the core's wire schema differs from the client's. **Technical
@@ -1502,27 +1526,32 @@ keyboard details, focus kept as events arrive, the filters, search and empty sta
 clear, and that a URL's credentials do not show. `browser/statements-inspector.spec.ts` mounts the Statements and Chat
 views over one ledger, fed through the real connection observer with a synthetic Alice and Bob chat: a claim, request
 facts, a light-client subscription, broadcast and refused submissions, and a product report. It checks the Chat card's
-reported, host and derived lines and that it shows no resource fact; that its account and topic links open Statements on
-the account, or its timeline narrowed to the topic; the account's claim, grant, observed, posts and peer-refusal lines;
-that Statements names no protocol and offers no probe, opening no People connection of its own; capture, errors and
-metadata-only evidence; and, apart, that a product naming another's request and account gets no host facts. In the host
-page, offline, it finds both views empty, then runs a worker built from `fixtures/products/diagnostics-worker.ts` whose
-report shows in Chat as reported, is replaced by the next and turns stale when the worker is removed. Set
-`STATEMENTS_SCREENSHOT` to a directory to keep screenshots. `browser/chat-screen.spec.ts` mounts the Chat screen alone
-over the product room provider with a stand-in behind it, the chat product provider with the synthetic chat product on
-the other side of the bridge in the page, and a second chat product provider whose stand-in engine has one conversation,
-with a host contact, and records the chats it is asked to start. Synthetic data only, and every request outside this
-host refused. It checks one list across providers, paging on scroll, sender names and the user's own messages, status
-changes, a retried message staying one message, a product room's custom card, buttons, reaction and non-`https` file,
-the chat product answering while another room is open, unread cleared only for messages on screen, a product restart and
-a new session. It checks New chat through the host's contact picker over a test username index: Cancel changes nothing,
-a username that names another account on chain is not chosen, a contact opens their chat, anyone else opens a request
-that the provider is asked to send only on Send, once, and a choice made after the session changed is dropped. It also
-checks the user's reaction in a product room, which reaches the worker, and that the user's own messages take none; and,
-over a saved chat record through the real wallet contacts, that a host contact's conversation offers Block and a product
-room's person does not, that Cancel blocks no one, that Block takes them out of New chat's picker and tells the core,
-that Blocked lists them and Unblock offers them again, and that with no one blocked Blocked stays reachable and Block a
-contact offers the contacts only and blocks the one chosen. Set `CHAT_SCREENSHOTS` to a directory to keep screenshots.
+reported, host and derived lines, its title and closed Conversation ID, the tie to the product, the published message
+batch and requested expiry under Protocol details, and that it shows no resource fact; that its account links open the
+account, focused, its topic links the topic's detail and its Timeline action the narrowed timeline, and Request timeline
+the request's events; the account's claim, grant, observed, posts and peer-refusal lines; the topics by role, with the
+host's day inbox named and derived, product names tagged, and a submission's topic Publishing only once broadcast,
+columns aligned on a wide dock, and a row opened from the keyboard; that Statements names no protocol and offers no
+probe, opening no People connection of its own; capture, errors and metadata-only evidence; and, apart, that a product
+naming another's request and account gets no host facts, while its account link still opens what was seen of it, and an
+account no one recorded opens empty with nothing read. In the host page, offline, it finds both views empty, then runs a
+worker built from `fixtures/products/diagnostics-worker.ts` whose report shows in Chat as reported, with no Protocol
+details, is replaced by the next and turns stale when the worker is removed. Set `STATEMENTS_SCREENSHOT` to a directory
+to keep screenshots. `browser/chat-screen.spec.ts` mounts the Chat screen alone over the product room provider with a
+stand-in behind it, the chat product provider with the synthetic chat product on the other side of the bridge in the
+page, and a second chat product provider whose stand-in engine has one conversation, with a host contact, and records
+the chats it is asked to start. Synthetic data only, and every request outside this host refused. It checks one list
+across providers, paging on scroll, sender names and the user's own messages, status changes, a retried message staying
+one message, a product room's custom card, buttons, reaction and non-`https` file, the chat product answering while
+another room is open, unread cleared only for messages on screen, a product restart and a new session. It checks New
+chat through the host's contact picker over a test username index: Cancel changes nothing, a username that names another
+account on chain is not chosen, a contact opens their chat, anyone else opens a request that the provider is asked to
+send only on Send, once, and a choice made after the session changed is dropped. It also checks the user's reaction in a
+product room, which reaches the worker, and that the user's own messages take none; and, over a saved chat record
+through the real wallet contacts, that a host contact's conversation offers Block and a product room's person does not,
+that Cancel blocks no one, that Block takes them out of New chat's picker and tells the core, that Blocked lists them
+and Unblock offers them again, and that with no one blocked Blocked stays reachable and Block a contact offers the
+contacts only and blocks the one chosen. Set `CHAT_SCREENSHOTS` to a directory to keep screenshots.
 
 The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
 `dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).
@@ -1589,10 +1618,10 @@ nothing else of it.
   `activity/` is the inspector's Activity view: the bounded event list, its filters and its view. `workers/` is the
   inspector's Workers view and the workers' console lines it keeps. `chat/` is the inspector's Chat view, over the same
   ledger. `statements/` is the inspector's Statements view: the bounded ledger (`ledger.ts`), what it reads of
-  statements and answers (`decode.ts`), the grant read (`actions.ts`), the evidence it copies (`evidence.ts`), the
-  pieces both views draw with (`ui.ts`) and the view. `inspector/frame-tap.ts` feeds TrUAPI frames to the debugger. The
-  developer tools ship in every build. `demos/` holds the dev server's controls, which a build leaves out: the Developer
-  section, the local chat products' routes, and Contact Chat's host side.
+  statements and answers (`decode.ts`), topics by role (`topics.ts`), the grant read (`actions.ts`), the evidence it
+  copies (`evidence.ts`), the pieces both views draw with (`ui.ts`) and the view. `inspector/frame-tap.ts` feeds TrUAPI
+  frames to the debugger. The developer tools ship in every build. `demos/` holds the dev server's controls, which a
+  build leaves out: the Developer section, the local chat products' routes, and Contact Chat's host side.
 - `fixtures/`: synthetic data that only tests and the dev server use. `products/`: product and worker entries, the
   synthetic chat product, a worker that only reports diagnostics (`diagnostics-worker.ts`), and Contact Chat
   (`contact-chat/`: `worker.ts` the entry, `engine.ts` its conversations, `protocol.ts` the seam to its chat protocol

@@ -31,6 +31,7 @@ describe("product diagnostics reports", () => {
               listen: [TOPIC],
               post: { topics: [TOPIC], channel: "0x12" },
               logical: { sent: 3, received: -1, posts: 1.5, failed: 0 },
+              // An earlier report's window: protocol details travel as facts now.
               window: { messages: 2, bytes: 100, maxMessages: 20 },
               facts: [
                 { label: "Mode", value: "plain" },
@@ -55,7 +56,6 @@ describe("product diagnostics reports", () => {
           listen: [TOPIC],
           post: { topics: [TOPIC] },
           logical: { sent: 3, failed: 0 },
-          window: { messages: 2, bytes: 100, maxMessages: 20 },
           facts: [
             { label: "Mode", value: "plain" },
             { label: "Rounds", value: "4" },

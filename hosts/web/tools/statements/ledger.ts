@@ -302,12 +302,23 @@ export interface AccountRecord {
   lastRefusal?: { at: number; submit: number; answer: SubmitAnswer };
 }
 
+/**
+ * A topic as this tab met it: on statements it observed or was asked to
+ * submit, in a subscription's filter, or in a product's report. Which
+ * product reports name it is read from the conversations, not kept here.
+ */
 export interface TopicRecord {
   topic: string;
   firstAt: number;
+  /** Statements observed on it; one dropped from the list and seen again counts again. */
   statements: number;
+  /** When this tab last observed a statement on it. Not that any peer still holds one. */
+  lastAt?: number;
+  /** Submissions on it the core or the host asked for, whatever the answer. */
+  submits: number;
+  /** Of those, the ones the light client answered `new` or `known`: broadcast to a peer, not shown stored. */
+  wentOut: number;
   subscriptions: number[];
-  labels: string[];
 }
 
 export interface ConversationRecord {
@@ -444,7 +455,6 @@ export const HASHES_PER_SUBSCRIPTION = 200;
 const HISTORY = 8;
 const CLAIMS_PER_ACCOUNT = 8;
 const ROLES_PER_ACCOUNT = 8;
-const LABELS_PER_TOPIC = 8;
 
 export const short = (hex: string, keep = 6): string =>
   hex.length <= 2 + keep * 2
@@ -716,6 +726,7 @@ export class StatementLedger {
         this.counters.submittedEncodedBytes += read.meta.encodedBytes;
         const signer = read.meta.signer;
         if (signer !== undefined) this.account(signer).submits += 1;
+        for (const topic of read.meta.topics) this.topic(topic).submits += 1;
         if (this.capturing && read.data !== null)
           this.holdPending(record.id, read.data);
       }
@@ -915,6 +926,9 @@ export class StatementLedger {
           account.lastRefusal = { at, submit: record.id, answer };
       }
       if (record.meta !== null) {
+        if (wentOut(answer.status))
+          for (const topic of record.meta.topics)
+            this.topic(topic).wentOut += 1;
         if (wentOut(answer.status))
           this.seen(
             record.meta,
@@ -1245,6 +1259,7 @@ export class StatementLedger {
         this.channel(meta, meta.signer, meta.channel);
     }
     statement.lastAt = at;
+    for (const topic of meta.topics) this.topic(topic).lastAt = at;
     statement.sightings += 1;
     push(statement.via, via);
     if (from.submit !== undefined) push(statement.submits, from.submit);
@@ -1637,11 +1652,11 @@ export class StatementLedger {
           product: worker.name,
           conversation: conversation.id,
         });
-      const label = worker.name;
-      for (const topic of conversation.listen ?? [])
-        this.label(topic, `${label} reads`);
-      for (const topic of conversation.post?.topics ?? [])
-        this.label(topic, `${label} posts`);
+      for (const topic of [
+        ...(conversation.listen ?? []),
+        ...(conversation.post?.topics ?? []),
+      ])
+        this.topic(topic);
       if (changed)
         this.event(
           "product",
@@ -1727,13 +1742,6 @@ export class StatementLedger {
       wentOutDataBytes: account.wentOutDataBytes - baseline.wentOutDataBytes,
       sent,
     };
-  }
-
-  private label(topic: string, label: string): void {
-    const record = this.topic(topic);
-    if (record.labels.includes(label)) return;
-    record.labels.push(label);
-    if (record.labels.length > LABELS_PER_TOPIC) record.labels.shift();
   }
 
   /**
@@ -1851,6 +1859,10 @@ export class StatementLedger {
 
   topicList(): TopicRecord[] {
     return [...this.topics.values()];
+  }
+
+  topicRecord(topic: string): TopicRecord | undefined {
+    return this.topics.get(topic.toLowerCase());
   }
 
   conversationList(): ConversationRecord[] {
@@ -1983,8 +1995,9 @@ export class StatementLedger {
         topic: key,
         firstAt: this.now(),
         statements: 0,
+        submits: 0,
+        wentOut: 0,
         subscriptions: [],
-        labels: [],
       };
       this.topics.set(key, record);
       this.bound(this.topics, this.limits.topics, "topics");
@@ -2115,7 +2128,7 @@ function cleanInvitation(event: InvitationEvent): InvitationEvent {
 
 /** A report without its counts, to tell a change of state from a count going up. */
 function structural(report: ConversationDiagnostics): unknown {
-  return { ...report, logical: undefined, window: undefined, facts: undefined };
+  return { ...report, logical: undefined, facts: undefined };
 }
 
 export function filterText(filter: FilterView): string {

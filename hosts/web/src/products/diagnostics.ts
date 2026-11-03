@@ -36,17 +36,11 @@ export interface LogicalCounts {
   posts?: number;
 }
 
-/** What the product keeps on the network for this side: its window. */
-export interface WindowView {
-  messages: number;
-  bytes: number;
-  maxMessages?: number;
-  maxBytes?: number;
-  /** How long each post asks the store to keep it, in seconds. */
-  retentionSeconds?: number;
-}
-
-/** One labelled fact the product wants shown as it gives it. */
+/**
+ * One labelled fact the product wants shown as it gives it: what only its
+ * protocol defines, such as how many messages one post carries. The host
+ * shows it as text and never computes it.
+ */
 export interface DiagnosticFact {
   label: string;
   value: string;
@@ -71,7 +65,7 @@ export interface ConversationDiagnostics {
   /** Where this side posts. */
   post?: { topics: string[]; channel?: string };
   logical?: LogicalCounts;
-  window?: WindowView;
+  /** Protocol details, in the product's words. */
   facts?: DiagnosticFact[];
 }
 
@@ -171,15 +165,6 @@ function readConversation(value: unknown): ConversationDiagnostics | null {
     "posts",
   ] as const);
   if (logical !== undefined) out.logical = logical;
-  const window = counts(record.window, [
-    "messages",
-    "bytes",
-    "maxMessages",
-    "maxBytes",
-    "retentionSeconds",
-  ] as const);
-  if (window?.messages !== undefined && window.bytes !== undefined)
-    out.window = window as WindowView;
   if (Array.isArray(record.facts)) {
     const facts = record.facts
       .map((fact) => {

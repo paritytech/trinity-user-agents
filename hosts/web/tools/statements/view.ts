@@ -14,10 +14,12 @@ import {
   type EventKind,
   type FactSource,
   type LedgerEvent,
+  type ObservedStatement,
   type Role,
   type StatementLedger,
   type SubscriptionRecord,
 } from "./ledger.js";
+import { topicViews, type TopicView } from "./topics.js";
 import {
   bytes,
   button,
@@ -37,9 +39,10 @@ import {
  * chat protocol: conversations, as products report them, are the Chat
  * view's (`tools/chat/`), which links here for their accounts and topics.
  *
- * It draws the ledger (`ledger.ts`) and runs the two reads on demand
- * (`actions.ts`). It draws only while shown, at most a few times a second,
- * and keeps a row's open state and the selected account across draws.
+ * It draws the ledger (`ledger.ts`), with topics by role (`topics.ts`), and
+ * runs the two reads on demand (`actions.ts`). It draws only while shown, at
+ * most a few times a second, and keeps a row's open state and the selected
+ * account or topic across draws.
  */
 
 export interface StatementsViewDeps {
@@ -55,7 +58,7 @@ export interface StatementsViewDeps {
 
 export interface StatementsView {
   show(visible: boolean): void;
-  /** Open on `target`: an account selected, or the timeline narrowed to a topic or a request. */
+  /** Open on `target`: an account or a topic selected, or the timeline narrowed to a request. */
   reveal(target: StatementsTarget): void;
   /** The session changed: stop capturing, and drop what was selected. */
   sessionChanged(): void;
@@ -238,7 +241,26 @@ const LATEST_OBSERVED_NOTE =
 
 /** Why the view offers no probe, and what an observed subscription does not show. */
 const NO_PROBE_NOTE =
-  "In this host's light client every People connection shares one topic filter that is sent to peers, and each connection's subscriptions replace it, so a subscription made to look would take the chat's topics off it. An open subscription below is one the core or the host made; it does not show that peers send to it.";
+  "In this host's light client every People connection shares one topic filter that is sent to peers, and each connection's subscriptions replace it, so a subscription made to look would take the chat's topics off it. An open subscription here is one the core or the host made; it does not show that peers send to it.";
+
+/** The topics list's columns. */
+const TOPIC_COLUMNS = ["Topic", "Role", "Subscription", "Observed"];
+
+/** What each column of the topics list says, and what it does not. */
+const TOPIC_COLUMNS_ABOUT = [
+  "Topic: a name only where the host knows it, or a product reported it. Else hex.",
+  "Role: Listening = an open subscription here, or a product says it reads. Publishing = a submission here was broadcast (not shown stored), or a product says it posts. Tried = submissions asked, none known to have gone out. Reported: only a product said it.",
+  "Subscription: who holds one open on it. Open does not mean peers send to it.",
+  "Observed: statements · last seen in this tab. Not what the network holds now.",
+];
+
+/** What a topic's submissions do not show. */
+const TOPIC_POSTS_NOTE =
+  "Tried: submissions on this topic the core or the host asked for, whatever the answer. Broadcast: those the light client answered new: a peer took it, not that a peer stored it.";
+
+/** What the observed statements of a topic do not say. */
+const TOPIC_OBSERVED_NOTE =
+  "Statements this tab saw on it: its own broadcasts and what peers sent its subscriptions, replays included. Not what the network holds now.";
 
 /** The one thing to know before reading any fact here. */
 const TAKEAWAY = "Observed traffic, not network state";
@@ -290,6 +312,18 @@ function phaseText(record: SubscriptionRecord): string {
     case "unknown":
       return "open: no remaining count given";
   }
+}
+
+/** Who holds a subscription open on a topic, in a few words. */
+function subscriptionLabel(view: TopicView): string {
+  if (view.open.length === 0)
+    return view.subscriptions.length === 0 ? "None" : "None open";
+  const sources = [...new Set(view.open.map((entry) => entry.source))].join(
+    ", ",
+  );
+  return view.open.some((entry) => entry.state === "open")
+    ? `${sources} · open`
+    : `${sources} · opening`;
 }
 
 export function mountStatementsView(
@@ -359,6 +393,9 @@ export function mountStatementsView(
   let dirty = true;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let selectedAccount: string | null = null;
+  let selectedTopic: string | null = null;
+  /** A link opened the view: the selected row takes the focus after the draw. */
+  let revealed = false;
   const openEvents = new Set<number>();
   const timeline = {
     kinds: new Set<EventKind>(),
@@ -441,7 +478,14 @@ export function mountStatementsView(
     );
     reopenDisclosures(body, opened);
     body.scrollTop = atEnd ? body.scrollHeight : keepScroll;
-    if (focusKey !== undefined) {
+    if (revealed) {
+      revealed = false;
+      const target =
+        body.querySelector<HTMLElement>('.si-list-row[aria-pressed="true"]') ??
+        body.querySelector<HTMLElement>(".si-detail");
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: "nearest" });
+    } else if (focusKey !== undefined) {
       const again = [
         ...body.querySelectorAll<HTMLElement>("[data-focus-key]"),
       ].find((node) => node.dataset.focusKey === focusKey);
@@ -474,11 +518,78 @@ export function mountStatementsView(
       `Show only the timeline events of ${label}`,
     );
     focus.addEventListener("click", () => {
+      clearTimelineFilters();
       timeline.focus = { label, matches };
       tab = "timeline";
       now();
     });
     return focus;
+  }
+
+  /** A link shows all of its target: no earlier kind, error or search filter hides it. */
+  function clearTimelineFilters(): void {
+    timeline.kinds.clear();
+    timeline.failedOnly = false;
+    timeline.text = "";
+    timeline.focus = null;
+  }
+
+  /** Select `account` on the Accounts tab. */
+  function openAccount(account: string): void {
+    tab = "accounts";
+    selectedAccount = account.toLowerCase();
+    revealed = true;
+    now();
+  }
+
+  /** Select `topic` on the Topics tab. */
+  function openTopic(topic: string): void {
+    tab = "topics";
+    selectedTopic = topic.toLowerCase();
+    revealed = true;
+    now();
+  }
+
+  /** An account as a link to its row on the Accounts tab. */
+  function accountLink(account: string): HTMLButtonElement {
+    const link = button("si-link", short(account), `Show account ${account}`);
+    link.addEventListener("click", () => openAccount(account));
+    return link;
+  }
+
+  /** The newest observed statements, each opening to its metadata and captured data. */
+  function statementBoxes(
+    statements: ObservedStatement[],
+    withSigner: boolean,
+  ): HTMLElement[] {
+    return statements.map((statement) => {
+      const box = el("details", "si-statement");
+      box.dataset.key = statement.meta.hash;
+      const head = el("summary");
+      head.textContent = `${short(statement.meta.hash)} · ${statement.meta.dataBytes} B · ${statement.via.join(", ")} · observed ${statement.sightings}×, first ${clock(statement.firstAt)}, last ${clock(statement.lastAt)}`;
+      box.append(head);
+      const facts = el("dl", "si-facts");
+      if (withSigner && statement.meta.signer !== undefined)
+        facts.append(
+          ...fact("Signer", accountLink(statement.meta.signer), "client"),
+        );
+      for (const [label, value] of metaDetails(statement.meta))
+        facts.append(...fact(label, value, "client"));
+      if (statement.payload !== undefined) {
+        facts.append(
+          ...fact(
+            "Data",
+            dataPreview(statement.payload),
+            "inspector",
+            statement.payloadCut
+              ? " Cut to the capture limit."
+              : " Captured in this tab.",
+          ),
+        );
+      }
+      box.append(facts);
+      return box;
+    });
   }
 
   // --- accounts -----------------------------------------------------------------
@@ -505,8 +616,13 @@ export function mountStatementsView(
     aboutList.append(...COLUMNS_ABOUT.map((line) => el("li", undefined, line)));
     about.append(el("summary", undefined, "About these columns"), aboutList);
     tools.append(readAll, about);
+    const missing =
+      selectedAccount !== null &&
+      !accounts.some((account) => account.account === selectedAccount)
+        ? [missingAccount(selectedAccount)]
+        : [];
     if (accounts.length === 0)
-      return [tools, el("p", "si-empty", "No account seen yet.")];
+      return [tools, ...missing, el("p", "si-empty", "No account seen yet.")];
     const table = el("div", "si-list si-accounts");
     table.setAttribute("role", "list");
     const header = el("div", "si-list-head");
@@ -548,7 +664,27 @@ export function mountStatementsView(
       if (account.account === selectedAccount)
         table.append(accountDetail(account));
     }
-    return [tools, table];
+    return [tools, ...missing, table];
+  }
+
+  /** A linked account this session's ledger holds nothing of: said so, and nothing is read for it. */
+  function missingAccount(account: string): HTMLElement {
+    const detail = el("section", "si-detail");
+    detail.tabIndex = -1;
+    detail.dataset.key = `account:${account}`;
+    detail.setAttribute("aria-label", `Account ${account}`);
+    const facts = el("dl", "si-facts");
+    facts.append(
+      ...fact("Account", account, "inspector"),
+      ...fact(
+        "Observed",
+        "nothing in this session",
+        "inspector",
+        "This tab recorded no statement, claim, grant or role of it, or dropped them to keep its limits. A product may name an account it never used here.",
+      ),
+    );
+    detail.append(facts);
+    return detail;
   }
 
   function accountDetail(account: AccountRecord): HTMLElement {
@@ -648,33 +784,11 @@ export function mountStatementsView(
       .statementList()
       .filter((statement) => statement.meta.signer === account.account)
       .slice(-20);
-    if (statements.length > 0) {
-      detail.append(el("h4", "si-sub", "Statements observed (newest 20)"));
-      for (const statement of statements) {
-        const box = el("details", "si-statement");
-        box.dataset.key = statement.meta.hash;
-        const head = el("summary");
-        head.textContent = `${short(statement.meta.hash)} · ${statement.meta.dataBytes} B · ${statement.via.join(", ")} · observed ${statement.sightings}×, first ${clock(statement.firstAt)}, last ${clock(statement.lastAt)}`;
-        box.append(head);
-        const facts2 = el("dl", "si-facts");
-        for (const [label, value] of metaDetails(statement.meta))
-          facts2.append(...fact(label, value, "client"));
-        if (statement.payload !== undefined) {
-          facts2.append(
-            ...fact(
-              "Data",
-              dataPreview(statement.payload),
-              "inspector",
-              statement.payloadCut
-                ? " Cut to the capture limit."
-                : " Captured in this tab.",
-            ),
-          );
-        }
-        box.append(facts2);
-        detail.append(box);
-      }
-    }
+    if (statements.length > 0)
+      detail.append(
+        el("h4", "si-sub", "Statements observed (newest 20)"),
+        ...statementBoxes(statements, false),
+      );
     return detail;
   }
 
@@ -707,61 +821,232 @@ export function mountStatementsView(
   // --- topics -------------------------------------------------------------------
 
   function drawTopics(): HTMLElement[] {
-    const noProbe = el("div", "si-note si-no-probe");
-    noProbe.dataset.key = "no-probe";
-    noProbe.append(
-      "No probe: the inspector opens no statement subscription of its own. ",
+    const intro = el("div", "si-note si-no-probe");
+    intro.dataset.key = "no-probe";
+    intro.append(
+      "A topic is a label statements carry; a subscription listens on one or more topics. The inspector opens none of its own.",
       more(NO_PROBE_NOTE),
     );
-    const out: HTMLElement[] = [noProbe];
+    const about = el("details", "si-columns-about");
+    about.dataset.key = "topics-columns";
+    const aboutList = el("ul", "si-note si-about-list");
+    aboutList.append(
+      ...TOPIC_COLUMNS_ABOUT.map((line) => el("li", undefined, line)),
+    );
+    about.append(el("summary", undefined, "About these columns"), aboutList);
+    const tools = el("div", "si-row-tools");
+    tools.append(about);
+    const out: HTMLElement[] = [intro, tools];
+
+    const views = topicViews(ledger, deps.network(), Date.now());
+    if (
+      selectedTopic !== null &&
+      !views.some((view) => view.record.topic === selectedTopic)
+    )
+      out.push(missingTopic(selectedTopic));
+    if (views.length === 0) out.push(el("p", "si-empty", "No topic seen yet."));
+    else {
+      const table = el("div", "si-list si-topics");
+      table.setAttribute("role", "list");
+      const header = el("div", "si-list-head");
+      header.setAttribute("aria-hidden", "true");
+      for (const name of TOPIC_COLUMNS)
+        header.append(el("span", undefined, name));
+      table.append(header);
+      for (const view of views) {
+        table.append(topicRow(view));
+        if (view.record.topic === selectedTopic)
+          table.append(topicDetail(view));
+      }
+      out.push(table);
+    }
 
     const subscriptions = ledger.subscriptionList();
-    out.push(el("h4", "si-sub", `Subscriptions (${subscriptions.length})`));
-    if (subscriptions.length === 0)
-      out.push(el("p", "si-empty", "No subscription seen yet."));
-    const subList = el("ul", "si-plain");
-    for (const record of [...subscriptions].reverse()) {
-      const item = el("li", "si-sub-row");
-      item.dataset.key = `subscription:${record.id}`;
-      item.dataset.state = record.state;
-      item.append(
-        el("span", "si-mono", `S${record.id}`),
-        tag("client"),
-        cell(
-          `${record.source}${record.earlier ? " (earlier)" : ""} · ${record.state} · ${record.byDelivery.initial} initial · ${record.byDelivery.later} later · ${record.pages} pages`,
-          `${filterText(record.filter)}. ${phaseText(record)}. ${record.statements} statements, ${record.byDelivery.unclassified} unclassified, ${record.duplicates} repeats of its last ${HASHES_PER_SUBSCRIPTION}.${record.earlier ? " Opened before this session; counts from its start." : ""} Open does not mean peers send to it.`,
-        ),
+    if (subscriptions.length > 0) {
+      const all = el("details", "si-columns-about si-subscriptions");
+      all.dataset.key = "subscriptions";
+      const list = el("ul", "si-plain");
+      list.append(...[...subscriptions].reverse().map(subscriptionRow));
+      all.append(
+        el("summary", undefined, `All subscriptions (${subscriptions.length})`),
+        list,
       );
-      subList.append(item);
+      out.push(all);
     }
-    out.push(subList);
-
-    const topics = ledger.topicList();
-    out.push(el("h4", "si-sub", `Topics (${topics.length})`));
-    if (topics.length === 0)
-      out.push(el("p", "si-empty", "No topic seen yet."));
-    const topicList = el("ul", "si-plain");
-    for (const topic of topics) {
-      const item = el("li", "si-topic-row");
-      item.dataset.key = `topic:${topic.topic}`;
-      const open = subscriptions.filter(
-        (entry) =>
-          entry.state === "open" &&
-          "topics" in entry.filter &&
-          entry.filter.topics.includes(topic.topic),
-      ).length;
-      item.append(
-        el("span", "si-mono", short(topic.topic)),
-        cell(
-          `${topic.statements} stmts · ${open} open${topic.labels.length === 0 ? "" : ` · ${topic.labels.join("; ")}`}`,
-          "Statements recorded on it; one dropped from the list and seen again counts again. Open: subscriptions the core or host holds on it.",
-        ),
-      );
-      if (topic.labels.length > 0) item.append(tag("product"));
-      topicList.append(item);
-    }
-    out.push(topicList);
     return out;
+  }
+
+  function topicRow(view: TopicView): HTMLButtonElement {
+    const { record } = view;
+    const row = button(
+      "si-list-row",
+      "",
+      `Show topic ${view.name?.text ?? record.topic}`,
+    );
+    row.setAttribute("aria-pressed", String(record.topic === selectedTopic));
+    const name = el("span", "si-topic-name");
+    if (view.name === null)
+      name.append(el("span", "si-mono", short(record.topic)));
+    else {
+      name.append(
+        view.name.text,
+        " ",
+        el("span", "si-hex", short(record.topic, 4)),
+      );
+      if (view.name.source === "product") name.append(" ", tag("product"));
+    }
+    const role = el("span", "si-cell si-role");
+    role.dataset.label = TOPIC_COLUMNS[1];
+    role.append(view.role);
+    if (view.reportedOnly.listening || view.reportedOnly.publishing)
+      role.append(" ", tag("product"));
+    const column = (index: number, text: string) => {
+      const cell = el("span", "si-cell", text);
+      cell.dataset.label = TOPIC_COLUMNS[index];
+      return cell;
+    };
+    row.append(
+      name,
+      role,
+      column(2, subscriptionLabel(view)),
+      column(
+        3,
+        record.lastAt === undefined
+          ? "None seen"
+          : `${record.statements} · ${clock(record.lastAt).slice(0, 5)}`,
+      ),
+    );
+    row.addEventListener("click", () => {
+      selectedTopic = record.topic === selectedTopic ? null : record.topic;
+      now();
+    });
+    return row;
+  }
+
+  function topicDetail(view: TopicView): HTMLElement {
+    const { record } = view;
+    const detail = el("section", "si-detail");
+    detail.tabIndex = -1;
+    detail.dataset.key = `topic:${record.topic}`;
+    detail.setAttribute("aria-label", `Topic ${record.topic}`);
+    const copy = button("si-chip", "Copy topic", "Copy the full topic");
+    copy.addEventListener("click", () => {
+      void copyInPage(record.topic).then((copied) => {
+        copy.textContent = copied ? "Copied" : "Copy failed";
+        setTimeout(() => (copy.textContent = "Copy topic"), 1200);
+      });
+    });
+    const actionsRow = el("div", "si-row-tools");
+    actionsRow.append(
+      copy,
+      focusButton(`topic ${view.name?.text ?? short(record.topic)}`, (event) =>
+        (event.refs.topics ?? []).includes(record.topic),
+      ),
+    );
+    const facts = el("dl", "si-facts");
+    facts.append(...fact("Topic", record.topic, "inspector"));
+    if (view.name !== null)
+      facts.append(
+        ...fact("Name", view.name.text, view.name.source, view.name.detail),
+      );
+    for (const subscription of view.open)
+      facts.append(
+        ...fact(
+          "Listening",
+          `S${subscription.id} · ${subscription.source} · ${phaseText(subscription)}`,
+          "client",
+          `${filterText(subscription.filter)}. Open does not mean peers send to it.`,
+        ),
+      );
+    if (view.open.length === 0)
+      facts.append(...fact("Listening", "no open subscription", "inspector"));
+    for (const report of view.reports)
+      facts.append(
+        ...fact(
+          report.direction === "listen" ? "Listening" : "Publishing",
+          `${report.product} says it ${report.direction === "listen" ? "reads it" : "posts here"}${report.stale ? " · worker stopped" : ""}`,
+          "product",
+          `Conversation ${report.conversation}, as the product reports it.`,
+        ),
+      );
+    facts.append(
+      ...fact(
+        "Publishing",
+        record.submits === 0
+          ? "no submission asked here"
+          : `${record.wentOut} broadcast · ${record.submits} tried`,
+        record.submits === 0 ? "inspector" : "client",
+        record.submits === 0 ? undefined : TOPIC_POSTS_NOTE,
+      ),
+      ...fact(
+        "Observed",
+        record.lastAt === undefined
+          ? "none seen · not the same as none stored"
+          : `${record.statements} stmt${record.statements === 1 ? "" : "s"} · last ${clock(record.lastAt)} · not current`,
+        "derived",
+        TOPIC_OBSERVED_NOTE,
+      ),
+    );
+    detail.append(actionsRow, facts);
+    const statements = ledger
+      .statementList()
+      .filter((statement) => statement.meta.topics.includes(record.topic))
+      .slice(-20);
+    if (statements.length > 0)
+      detail.append(
+        el("h4", "si-sub", "Statements observed (newest 20)"),
+        ...statementBoxes(statements, true),
+      );
+    if (view.subscriptions.length > 0) {
+      const nested = el("details", "si-columns-about");
+      const list = el("ul", "si-plain");
+      list.append(...view.subscriptions.map(subscriptionRow));
+      nested.append(
+        el(
+          "summary",
+          undefined,
+          `Subscriptions (${view.subscriptions.length})`,
+        ),
+        list,
+      );
+      detail.append(nested);
+    }
+    return detail;
+  }
+
+  /** A linked topic this session's ledger holds nothing of. */
+  function missingTopic(topic: string): HTMLElement {
+    const detail = el("section", "si-detail");
+    detail.tabIndex = -1;
+    detail.dataset.key = `topic:${topic}`;
+    detail.setAttribute("aria-label", `Topic ${topic}`);
+    const facts = el("dl", "si-facts");
+    facts.append(
+      ...fact("Topic", topic, "inspector"),
+      ...fact(
+        "Observed",
+        "nothing in this session",
+        "inspector",
+        "This tab recorded no statement, subscription or report on it, or dropped them to keep its limits.",
+      ),
+    );
+    detail.append(facts);
+    return detail;
+  }
+
+  function subscriptionRow(record: SubscriptionRecord): HTMLElement {
+    const item = el("li", "si-sub-row");
+    item.dataset.key = `subscription:${record.id}`;
+    item.dataset.state = record.state;
+    item.append(
+      el("span", "si-mono", `S${record.id}`),
+      tag("client"),
+      cell(
+        `${record.source}${record.earlier ? " (earlier)" : ""} · ${record.state} · ${record.byDelivery.initial} initial · ${record.byDelivery.later} later · ${record.pages} pages`,
+        `${filterText(record.filter)}. ${phaseText(record)}. ${record.statements} statements, ${record.byDelivery.unclassified} unclassified, ${record.duplicates} repeats of its last ${HASHES_PER_SUBSCRIPTION}.${record.earlier ? " Opened before this session; counts from its start." : ""} Open does not mean peers send to it.`,
+      ),
+    );
+    return item;
   }
 
   // --- timeline -----------------------------------------------------------------
@@ -933,6 +1218,7 @@ export function mountStatementsView(
     ledger.clear();
     openEvents.clear();
     selectedAccount = null;
+    selectedTopic = null;
     say("Cleared.");
     now();
   });
@@ -944,34 +1230,23 @@ export function mountStatementsView(
       if (next && dirty) now();
     },
     reveal(target) {
-      // A link shows all of its target: no earlier kind, error or search filter hides it.
-      timeline.kinds.clear();
-      timeline.failedOnly = false;
-      timeline.text = "";
-      timeline.focus = null;
-      if ("account" in target) {
-        tab = "accounts";
-        selectedAccount = target.account.toLowerCase();
-      } else if ("topic" in target) {
-        const topic = target.topic.toLowerCase();
-        tab = "timeline";
-        timeline.focus = {
-          label: `topic ${short(topic)}`,
-          matches: (event) => (event.refs.topics ?? []).includes(topic),
-        };
-      } else {
+      clearTimelineFilters();
+      if ("account" in target) openAccount(target.account);
+      else if ("topic" in target) openTopic(target.topic);
+      else {
         tab = "timeline";
         timeline.focus = {
           label: target.label,
           matches: (event) => event.refs.handle === target.handle,
         };
+        now();
       }
-      now();
     },
     sessionChanged() {
       ledger.setCapture(false);
       openEvents.clear();
       selectedAccount = null;
+      selectedTopic = null;
       timeline.focus = null;
       say("");
       schedule();

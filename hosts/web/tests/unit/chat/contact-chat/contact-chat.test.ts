@@ -547,13 +547,17 @@ describe("Contact Chat between two hosts, by contact handle", () => {
         failed: 0,
         posts: report!.logical!.posts,
       },
-      window: {
-        messages: 2,
-        bytes: report!.window!.bytes,
-        maxMessages: WINDOW_MESSAGES,
-        maxBytes: 16_384,
-        retentionSeconds: 2 * 86_400,
-      },
+      // What one post carries is simple-text's own: a protocol detail, as text.
+      facts: [
+        {
+          label: "Published message batch",
+          value: `2 of ${WINDOW_MESSAGES} messages · ${(store.taken.filter((post) => post.signer === aliceSide!.account).at(-1)!.data.length - 2) / 2} of 16384 B`,
+        },
+        {
+          label: "Requested expiry",
+          value: "48 h per post; peers may evict it sooner",
+        },
+      ],
     });
     // Each post the store took is one the product counts.
     expect(report!.logical!.posts).toBe(

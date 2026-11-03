@@ -363,8 +363,9 @@
   display: none;
 }
 
-/* Narrow: each value under the account names its column. */
-.si-accounts .si-list-row .si-cell:not(.si-role)::before {
+/* Narrow: each value under the account or topic names its column. */
+.si-accounts .si-list-row .si-cell:not(.si-role)::before,
+.si-topics .si-list-row .si-cell:not(.si-role)::before {
   content: attr(data-label) " ";
   color: var(--si-meta);
   opacity: 0.7;
@@ -372,6 +373,15 @@
 
 .si-more {
   color: var(--si-meta);
+}
+
+/* Narrow: a topic's name takes the first line, its facts the lines under it. */
+.statements-inspector .si-topics .si-list-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.statements-inspector .si-topics .si-list-row .si-cell:not(:nth-child(2)) {
+  grid-column: 1 / -1;
 }
 
 @container (min-width: 760px) {
@@ -392,9 +402,48 @@
     grid-column: auto;
   }
 
-  .si-accounts .si-list-row .si-cell:not(.si-role)::before {
+  .statements-inspector .si-topics .si-list-row,
+  .statements-inspector .si-topics .si-list-head {
+    grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr));
+  }
+
+  .statements-inspector .si-topics .si-list-row .si-cell:not(:nth-child(2)) {
+    grid-column: auto;
+  }
+
+  .si-accounts .si-list-row .si-cell:not(.si-role)::before,
+  .si-topics .si-list-row .si-cell:not(.si-role)::before {
     content: none;
   }
+}
+
+.si-topic-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.si-hex {
+  color: var(--si-meta);
+  font-size: 11px;
+}
+
+.si-subscriptions {
+  margin-top: 10px;
+}
+
+.si-detail .si-columns-about {
+  margin-top: 8px;
+}
+
+.statements-inspector .si-link {
+  color: #7dd3fc;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  white-space: nowrap;
+}
+
+.statements-inspector .si-link:hover {
+  color: #f4f4f5;
 }
 
 .si-statement {
