@@ -454,8 +454,9 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_candidates(&intent)
 	}
 
-	/// Ask the candidates for funding session `intent` to price `ask`. Each
-	/// provider's row arrives through `funding_quote_changed`.
+	/// Ask every funding provider to price `ask` for funding session `intent`.
+	/// Each provider's row arrives through `funding_quote_changed`. A newer ask
+	/// for the session withdraws this one, so its late rows never arrive.
 	pub fn get_funding_quote(&self, intent: String, ask: v01::FundingQuoteAsk) {
 		self.runtime.request_funding_quotes(&intent, ask);
 	}

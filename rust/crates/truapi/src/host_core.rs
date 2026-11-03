@@ -889,8 +889,9 @@ impl SigningHostRuntime {
 	/// Live quotes for funding session `intent`: one row per funding
 	/// provider, whatever routes its manifest declares, `Pending` and then
 	/// `Quoted` or `Unavailable` as each provider answers or runs out of time.
-	/// The stream ends once every provider has, and never errors; dropping it
-	/// withdraws the asks still open.
+	/// The stream ends once every provider has, or once a newer ask for the
+	/// session starts, and never errors; dropping it withdraws the asks still
+	/// open.
 	pub fn get_funding_quote(
 		&self,
 		intent: &str,
@@ -900,7 +901,9 @@ impl SigningHostRuntime {
 	}
 
 	/// [`Self::get_funding_quote`] for hosts that take each row through
-	/// [`FundingPlatform::funding_quote_changed`] instead of a stream.
+	/// [`FundingPlatform::funding_quote_changed`] instead of a stream. A newer
+	/// request for the session withdraws this one, so the host only ever
+	/// hears rows for the last ask it made.
 	pub fn request_funding_quotes(&self, intent: &str, ask: v01::FundingQuoteAsk) {
 		let rows = self.services.get_funding_quote(intent, ask);
 		let platform = self.services.funding().platform();
