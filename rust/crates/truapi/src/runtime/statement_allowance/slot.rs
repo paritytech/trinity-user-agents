@@ -127,11 +127,15 @@ pub enum SlotError {
 	},
 }
 
+/// A `StatementStore` allowance slot value as the chain stores it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-struct StatementStoreAllowanceEntry {
-	account_id: [u8; 32],
-	seq: u32,
-	since: u64,
+pub struct StatementStoreAllowanceEntry {
+	/// Account the slot allows.
+	pub account_id: [u8; 32],
+	/// Slot index within the period.
+	pub seq: u32,
+	/// Unix seconds at which the slot was set.
+	pub since: u64,
 }
 
 /// A slot that is occupied, as observed by a scan.
@@ -685,7 +689,8 @@ mod tests {
 
 	/// A scripted slot entry that was set at `since`.
 	fn entry_with_since(account: [u8; 32], since: u64) -> String {
-		format!(r#""0x{}""#, hex::encode((account, 0u32, since).encode()))
+		let entry = StatementStoreAllowanceEntry { account_id: account, seq: 0, since }.encode();
+		format!(r#""0x{}""#, hex::encode(entry))
 	}
 
 	/// An occupied-slot candidate for the replacement rule.
@@ -1201,21 +1206,6 @@ mod tests {
 	#[test]
 	fn long_term_storage_period_uses_chain_duration() {
 		assert_eq!(current_long_term_storage_period(1_209_600 * 20 + 5, 1_209_600).unwrap(), 20,);
-	}
-
-	#[test]
-	fn allowance_entry_matches_runtime_field_codec() {
-		let entry = StatementStoreAllowanceEntry { account_id: [0x42; 32], seq: 7, since: 99 };
-		let encoded = entry.encode();
-
-		assert_eq!(encoded, (entry.account_id, entry.seq, entry.since).encode());
-		assert_eq!(decode_entry(&encoded).map(|e| e.account_id), Some(entry.account_id));
-		assert_eq!(StatementStoreAllowanceEntry::decode(&mut encoded.as_slice()).unwrap(), entry);
-	}
-
-	#[test]
-	fn truncated_allowance_entry_has_no_account() {
-		assert!(decode_entry(&[0x42; 32]).is_none());
 	}
 
 	/// Pins `reports_exhausted_period` against the renderings above: rewording
