@@ -287,7 +287,7 @@ What `set_auto_renew` returns:
 | The active authorization doesn't have enough bytes left for the first renewal | `AuthorizationExceeded` |
 | Bulletin's permanent storage is full | `ChainFull` |
 | Another account registered auto-renew for the data | `AlreadyRegistered` |
-| The product turns off a registration of another account | `NotOwner` |
+| The product tried to turn off a registration of another account | `NotOwner` |
 | Bulletin doesn't store data under the key | `NotFound` |
 
 After `NoAuthorization` or `AuthorizationExceeded`, the product raises its target, because `set_auto_renew` never
