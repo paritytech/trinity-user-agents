@@ -32,9 +32,22 @@ mod tests {
 	/// installing a default first. Taking the process default there panics in a
 	/// build with two crypto providers and none installed. With one, it installs
 	/// that one, which is what this detects.
+	///
+	/// Run in a child process: the default is process-wide, and any `ws`
+	/// connect elsewhere in this test binary installs one through jsonrpsee.
 	#[test]
 	fn building_the_config_leaves_the_process_default_alone() {
-		super::client_config();
-		assert!(CryptoProvider::get_default().is_none());
+		const CHILD: &str = "TRUAPI_TLS_DEFAULT_CHILD";
+		if std::env::var_os(CHILD).is_some() {
+			super::client_config();
+			assert!(CryptoProvider::get_default().is_none());
+			return;
+		}
+		let child = std::process::Command::new(std::env::current_exe().expect("test binary path"))
+			.args(["--exact", "tls::tests::building_the_config_leaves_the_process_default_alone"])
+			.env(CHILD, "1")
+			.output()
+			.expect("the child test runs");
+		assert!(child.status.success(), "{}", String::from_utf8_lossy(&child.stdout));
 	}
 }

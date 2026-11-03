@@ -21,7 +21,7 @@
 use core::future::Future;
 use std::{
 	fmt,
-	sync::{Arc, Weak},
+	sync::{Arc, OnceLock, Weak},
 };
 
 use crate::platform::{ChainProvider as _, JsonRpcConnection};
@@ -341,36 +341,37 @@ impl ChainProvider {
 		genesis_hash: Vec<u8>,
 		listener: Arc<dyn ChainMessageListener>,
 	) -> Result<Arc<ChainConnection>, ChainProviderError> {
-		// A listener callback runs on the pump thread, which is already inside
-		// `block_on`; blocking again there is a panic the host cannot catch,
-		// and an abort on the shipping profile. Refuse it as an error instead,
-		// since reconnecting from `on_closed` is the flow `ChainCloseReason`
-		// exists to inform.
-		if PUMPING.get() {
-			return Err(ChainProviderError::Connect {
-				reason: "connect() cannot be called from a listener callback; \
-                         call it from another thread"
-					.to_string(),
-			});
-		}
+		refuse_inside_listener("connect")?;
 		let genesis = genesis_from(genesis_hash)?;
 		let connection = block_on(self.inner.connect(genesis))
 			.map_err(|error| ChainProviderError::Connect { reason: error.to_string() })?;
-		let connection: Arc<dyn JsonRpcConnection> = Arc::from(connection);
+		start_pump(connection, listener)
+	}
 
-		let responses = connection.responses();
-		// Weak on purpose: a strong handle here would keep the connection alive
-		// forever. `Drop` is what calls `close()`, `close()` is what ends the
-		// response stream, and the pump parks on that stream -- so holding a
-		// strong reference means the drop that would release it can never run.
-		let pumped = Arc::downgrade(&connection);
-		spawn_pump("truapi-pump", pump_responses(responses, pumped, listener)).map_err(
-			|error| ChainProviderError::Connect {
-				reason: format!("could not start the response pump: {error}"),
-			},
-		)?;
-
-		Ok(Arc::new(ChainConnection { inner: connection }))
+	/// Open a JSON-RPC connection to the remote node at `url` (`ws://` or
+	/// `wss://`), bypassing the light client. Responses are delivered to
+	/// `listener` exactly as for [`connect`](Self::connect), so a host can switch
+	/// transports without touching its JSON-RPC handling.
+	///
+	/// Reconnection is not handled here: a dropped or silent socket ends the
+	/// connection with [`ChainCloseReason::StreamEnded`], and the host recovers
+	/// by connecting again and replaying its subscriptions.
+	pub fn connect_rpc(
+		&self,
+		url: String,
+		listener: Arc<dyn ChainMessageListener>,
+	) -> Result<Arc<ChainConnection>, ChainProviderError> {
+		refuse_inside_listener("connect_rpc")?;
+		// The parse error is enough on its own: echoing the url could leak a
+		// key embedded in it.
+		let url = url::Url::parse(&url).map_err(|error| ChainProviderError::Connect {
+			reason: format!("invalid url: {error}"),
+		})?;
+		let runtime = rpc_runtime()?;
+		let connection = runtime
+			.block_on(crate::ws::connect(url))
+			.map_err(|error| ChainProviderError::Connect { reason: error.to_string() })?;
+		start_pump(Box::new(InRuntime { inner: connection, runtime }), listener)
 	}
 
 	/// Watch what the light client is doing on the chain identified by
@@ -394,6 +395,99 @@ impl ChainProvider {
 			}
 		})?;
 		Ok(Arc::new(LifecycleWatch { stop }))
+	}
+}
+
+/// A listener callback runs on the pump thread, which is already inside
+/// `block_on`; blocking again there is a panic the host cannot catch, and an
+/// abort on the shipping profile. Refuse it as an error instead, since
+/// reconnecting from `on_closed` is the flow `ChainCloseReason` exists to inform.
+fn refuse_inside_listener(method: &str) -> Result<(), ChainProviderError> {
+	if PUMPING.get() {
+		return Err(ChainProviderError::Connect {
+			reason: format!(
+				"{method}() cannot be called from a listener callback; call it from another thread"
+			),
+		});
+	}
+	Ok(())
+}
+
+/// Pump `connection`'s responses into `listener` on a thread of its own and
+/// hand the host its side of the pipe.
+fn start_pump(
+	connection: Box<dyn JsonRpcConnection>,
+	listener: Arc<dyn ChainMessageListener>,
+) -> Result<Arc<ChainConnection>, ChainProviderError> {
+	let connection: Arc<dyn JsonRpcConnection> = Arc::from(connection);
+
+	let responses = connection.responses();
+	// Weak on purpose: a strong handle here would keep the connection alive
+	// forever. `Drop` is what calls `close()`, `close()` is what ends the
+	// response stream, and the pump parks on that stream -- so holding a
+	// strong reference means the drop that would release it can never run.
+	let pumped = Arc::downgrade(&connection);
+	spawn_pump("truapi-pump", pump_responses(responses, pumped, listener)).map_err(|error| {
+		ChainProviderError::Connect {
+			reason: format!("could not start the response pump: {error}"),
+		}
+	})?;
+
+	Ok(Arc::new(ChainConnection { inner: connection }))
+}
+
+/// The WebSocket backend needs an ambient tokio runtime for its handshake,
+/// writer task and keepalive timers, and a foreign host has none. One
+/// current-thread runtime is driven for the life of the process on a dedicated
+/// thread, shared by every RPC connection.
+fn rpc_runtime() -> Result<&'static tokio::runtime::Handle, ChainProviderError> {
+	static HANDLE: OnceLock<Result<tokio::runtime::Handle, String>> = OnceLock::new();
+	HANDLE
+		.get_or_init(|| {
+			let runtime = tokio::runtime::Builder::new_current_thread()
+				.enable_all()
+				.build()
+				.map_err(|error| error.to_string())?;
+			let handle = runtime.handle().clone();
+			// `Handle::block_on` cannot drive a current-thread runtime's IO and
+			// timer drivers; only this `block_on` does.
+			std::thread::Builder::new()
+				.name("truapi-rpc".to_string())
+				.spawn(move || runtime.block_on(core::future::pending::<()>()))
+				.map_err(|error| error.to_string())?;
+			Ok(handle)
+		})
+		.as_ref()
+		.map_err(|reason| ChainProviderError::Connect {
+			reason: format!("could not start the rpc runtime: {reason}"),
+		})
+}
+
+/// A WebSocket connection whose response stream is polled from a pump thread.
+/// The stream arms tokio timers (the read timeout), which need the runtime's
+/// context on whichever thread polls it, so every poll enters it.
+struct InRuntime {
+	inner: Box<dyn JsonRpcConnection>,
+	runtime: &'static tokio::runtime::Handle,
+}
+
+impl JsonRpcConnection for InRuntime {
+	fn send(&self, request: String) {
+		self.inner.send(request);
+	}
+
+	fn responses(&self) -> BoxStream<'static, String> {
+		let runtime = self.runtime;
+		let mut responses = self.inner.responses();
+		futures::stream::poll_fn(move |cx| {
+			let _context = runtime.enter();
+			responses.poll_next_unpin(cx)
+		})
+		.boxed()
+	}
+
+	fn close(&self) {
+		self.inner.close();
 	}
 }
 
@@ -960,6 +1054,212 @@ mod tests {
 			.err()
 			.expect("a 31-byte genesis must be rejected");
 		assert!(matches!(error, ChainProviderError::BadGenesis));
+	}
+
+	/// A loopback JSON-RPC node with `echo` and a three-tick `sub_ticks`
+	/// subscription. The runtime it runs on is returned with it: the tests call
+	/// `connect_rpc` from a plain thread, as a foreign host does, so nothing
+	/// ambient may stand in for the provider's own runtime.
+	fn spawn_node() -> (String, tokio::runtime::Runtime, jsonrpsee::server::ServerHandle) {
+		use jsonrpsee::{
+			core::SubscriptionResult,
+			server::{RpcModule, Server},
+		};
+
+		let runtime = tokio::runtime::Runtime::new().expect("node runtime starts");
+		let (addr, handle) = runtime.block_on(async {
+			let server = Server::builder().build("127.0.0.1:0").await.expect("loopback node binds");
+			let addr = server.local_addr().expect("node has a local address");
+			let mut module = RpcModule::new(());
+			module
+				.register_method("echo", |params, (), _extensions| {
+					params.one::<String>().unwrap_or_default()
+				})
+				.expect("echo registers");
+			module
+				.register_subscription(
+					"sub_ticks",
+					"tick",
+					"unsub_ticks",
+					|_params, pending, _context, _extensions| async move {
+						let sink = pending.accept().await?;
+						for tick in 0..3u32 {
+							sink.send(serde_json::value::to_raw_value(&tick)?).await?;
+						}
+						SubscriptionResult::Ok(())
+					},
+				)
+				.expect("sub_ticks registers");
+			(addr, server.start(module))
+		});
+		(format!("ws://{addr}"), runtime, handle)
+	}
+
+	fn recv(messages: &Receiver<String>) -> serde_json::Value {
+		let message = messages.recv_timeout(Duration::from_secs(10)).expect("a message arrives");
+		serde_json::from_str(&message).expect("messages are JSON")
+	}
+
+	#[test]
+	fn connect_rpc_answers_requests_without_an_ambient_runtime() {
+		let (url, _runtime, _node) = spawn_node();
+		let (listener, messages, _closed) = Collector::new();
+		let connection = ChainProvider::new().connect_rpc(url, listener).expect("connects");
+
+		connection.send(r#"{"jsonrpc":"2.0","id":1,"method":"echo","params":["hi"]}"#.into());
+
+		let answer = recv(&messages);
+		assert_eq!(answer["id"], 1);
+		assert_eq!(answer["result"], "hi");
+	}
+
+	#[test]
+	fn connect_rpc_delivers_subscription_notifications() {
+		let (url, _runtime, _node) = spawn_node();
+		let (listener, messages, _closed) = Collector::new();
+		let connection = ChainProvider::new().connect_rpc(url, listener).expect("connects");
+
+		connection.send(r#"{"jsonrpc":"2.0","id":1,"method":"sub_ticks","params":[]}"#.into());
+
+		let subscribed = recv(&messages);
+		let subscription = subscribed["result"].clone();
+		assert!(!subscription.is_null(), "{subscribed}");
+		let ticks: Vec<_> = (0..3)
+			.map(|_| {
+				let notification = recv(&messages);
+				assert_eq!(notification["method"], "tick");
+				assert_eq!(notification["params"]["subscription"], subscription);
+				notification["params"]["result"].clone()
+			})
+			.collect();
+		assert_eq!(ticks, [0, 1, 2]);
+	}
+
+	#[test]
+	fn connections_to_several_nodes_share_the_runtime() {
+		let (first_url, _first_runtime, _first) = spawn_node();
+		let (second_url, _second_runtime, _second) = spawn_node();
+		let provider = ChainProvider::new();
+		let (first_listener, first_messages, _) = Collector::new();
+		let (second_listener, second_messages, _) = Collector::new();
+		let first = provider.connect_rpc(first_url, first_listener).expect("first connects");
+		let second = provider.connect_rpc(second_url, second_listener).expect("second connects");
+
+		second.send(r#"{"jsonrpc":"2.0","id":2,"method":"echo","params":["two"]}"#.into());
+		first.send(r#"{"jsonrpc":"2.0","id":1,"method":"echo","params":["one"]}"#.into());
+
+		assert_eq!(recv(&first_messages)["result"], "one");
+		assert_eq!(recv(&second_messages)["result"], "two");
+	}
+
+	#[test]
+	fn disconnecting_an_rpc_connection_closes_it() {
+		let (url, _runtime, _node) = spawn_node();
+		let (listener, _messages, closed) = Collector::new();
+		let connection = ChainProvider::new().connect_rpc(url, listener).expect("connects");
+
+		connection.disconnect();
+
+		let reason = closed.recv_timeout(Duration::from_secs(10)).expect("on_closed fires");
+		assert!(matches!(reason, ChainCloseReason::StreamEnded));
+	}
+
+	/// The provider does not reconnect: a node going away has to reach the host
+	/// as a close, or a host that replays its subscriptions on reconnect would
+	/// wait forever on a dead socket.
+	#[test]
+	fn a_node_dropping_the_socket_closes_the_connection() {
+		let runtime = tokio::runtime::Runtime::new().expect("node runtime starts");
+		let tcp = runtime
+			.block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+			.expect("loopback node binds");
+		let url = format!("ws://{}", tcp.local_addr().expect("node has a local address"));
+		let (hang_up, hung_up) = tokio::sync::oneshot::channel::<()>();
+		runtime.spawn(async move {
+			let (stream, _) = tcp.accept().await.expect("the provider dials");
+			let socket = tokio_tungstenite::accept_async(stream).await.expect("handshake");
+			let _ = hung_up.await;
+			drop(socket);
+		});
+		let (listener, _messages, closed) = Collector::new();
+		let _connection = ChainProvider::new().connect_rpc(url, listener).expect("connects");
+
+		hang_up.send(()).expect("the node is waiting");
+
+		let reason = closed.recv_timeout(Duration::from_secs(10)).expect("on_closed fires");
+		assert!(matches!(reason, ChainCloseReason::StreamEnded));
+	}
+
+	#[test]
+	fn connect_rpc_to_an_unreachable_node_is_an_error() {
+		// Bound and released, so nothing listens on the port.
+		let port = std::net::TcpListener::bind("127.0.0.1:0")
+			.and_then(|tcp| tcp.local_addr())
+			.expect("a free port")
+			.port();
+		let (listener, _messages, _closed) = Collector::new();
+
+		let error = ChainProvider::new()
+			.connect_rpc(format!("ws://127.0.0.1:{port}"), listener)
+			.err()
+			.expect("nothing answers on the port");
+
+		assert!(matches!(error, ChainProviderError::Connect { .. }), "{error}");
+	}
+
+	#[test]
+	fn connect_rpc_rejects_a_malformed_url_without_echoing_it() {
+		let (listener, _messages, _closed) = Collector::new();
+
+		let error = ChainProvider::new()
+			.connect_rpc("not a url ?key=SECRET".into(), listener)
+			.err()
+			.expect("a malformed url must be rejected");
+
+		let ChainProviderError::Connect { reason } = error else {
+			panic!("expected a connect error, got {error:?}");
+		};
+		assert!(!reason.contains("SECRET"), "{reason}");
+	}
+
+	#[test]
+	fn connect_rpc_from_a_listener_callback_is_refused() {
+		struct ReconnectingListener {
+			provider: Arc<ChainProvider>,
+			result: Mutex<Option<Result<(), ChainProviderError>>>,
+		}
+
+		impl ChainMessageListener for ReconnectingListener {
+			fn on_message(&self, _message: String) -> Result<(), ChainProviderError> {
+				Ok(())
+			}
+
+			fn on_closed(&self, _reason: ChainCloseReason) -> Result<(), ChainProviderError> {
+				let (silent, _messages, _closed) = Collector::new();
+				let reconnected =
+					self.provider.connect_rpc("ws://127.0.0.1:1".into(), silent).map(|_| ());
+				*self.result.lock().expect("not poisoned") = Some(reconnected);
+				Ok(())
+			}
+		}
+
+		let listener = Arc::new(ReconnectingListener {
+			provider: ChainProvider::new(),
+			result: Mutex::new(None),
+		});
+		let connection = Arc::new(ClosingConnection { closed: Mutex::new(false) });
+
+		block_on(pump_responses(
+			Box::pin(futures::stream::empty()),
+			Arc::downgrade(&(connection as Arc<dyn JsonRpcConnection>)),
+			listener.clone(),
+		));
+
+		let result = listener.result.lock().expect("not poisoned").take();
+		let Some(Err(ChainProviderError::Connect { reason })) = result else {
+			panic!("expected a refused reconnect, got {result:?}");
+		};
+		assert!(reason.contains("connect_rpc()"), "{reason}");
 	}
 
 	/// Foreign storage stand-in. The real one lives in Swift or Kotlin, so
