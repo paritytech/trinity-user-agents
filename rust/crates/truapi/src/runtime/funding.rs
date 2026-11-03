@@ -1855,12 +1855,15 @@ impl RuntimeServices {
 		self.funding().confirm_cancel(current_unix_millis(), intent, terms).await
 	}
 
-	/// Hand open session `intent` to the provider the user chose, which must
-	/// be one of the host's providers serving its direction, on the quote the
-	/// user chose it by, which must be one the core offered for this session,
-	/// not yet expired and, when the session has an amount, pricing that
-	/// amount. Once assigned, the quotes still asked of other providers end.
-	/// Returns whether it was open and not yet assigned.
+	/// Hand open session `intent` to the provider the user chose. Chosen on a
+	/// quote, the quote must be one the core offered for this session, not
+	/// yet expired and, when the session has an amount, pricing that amount;
+	/// the core asked it in the session's direction, so the provider serves
+	/// it. Chosen without one, the provider must be a candidate for the
+	/// session's direction: its manifest's routes, or its answers since, say
+	/// it serves that direction. Once assigned, the quotes still asked of
+	/// other providers end. Returns whether it was open and not yet
+	/// assigned.
 	pub async fn select_funding_provider(
 		self: &Arc<Self>,
 		intent: &str,
@@ -1871,12 +1874,20 @@ impl RuntimeServices {
 			.parse::<ProductId>()
 			.map_err(|error| FundingSessionError::InvalidProvider { reason: error.to_string() })?;
 		let registry = self.funding();
-		if registry.get(intent).is_some() &&
-			!self.funding_providers().is_quote_target(provider.as_str())
-		{
-			return Err(FundingSessionError::InvalidProvider {
-				reason: format!("{provider} is not a funding provider"),
-			});
+		if let Some(session) = registry.get(intent) {
+			let providers = self.funding_providers();
+			let serves = match quote_id {
+				Some(_) => providers.is_quote_target(provider.as_str()),
+				None => providers
+					.candidates(session.direction)
+					.iter()
+					.any(|candidate| candidate.provider_id == provider.as_str()),
+			};
+			if !serves {
+				return Err(FundingSessionError::InvalidProvider {
+					reason: format!("{provider} does not serve this session's direction"),
+				});
+			}
 		}
 		let choice = match quote_id {
 			None => None,
