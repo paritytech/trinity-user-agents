@@ -3,15 +3,20 @@
 //! intent.
 //!
 //! Each record is a SCALE value led by its format as a `u16`. Loading fails on
-//! a row of a newer format, which a newer app left before a downgrade, and
-//! skips one of an older format or one that does not decode. A write touches
-//! only the rows of the sessions it names, so a skipped row stays in place: a
-//! session with money in flight is never lost to a format change, and a later
-//! core that can read the old format still finds it.
+//! a row of a newer format, which a newer app left before a downgrade, reads
+//! one of an older format the core still knows into the current shape, and
+//! skips one of any other older format or one that does not decode. A write
+//! touches only the rows of the sessions it names, so a skipped row stays in
+//! place: a session with money in flight is never lost to a format change, and
+//! a later core that can read the old format still finds it.
 
 use parity_scale_codec::{Decode, Encode};
 use rusqlite::{Connection, Transaction, named_params};
 use tracing::error;
+
+mod format3;
+mod format4;
+mod summary1;
 
 pub(super) use crate::store::Db;
 use crate::{
@@ -20,8 +25,9 @@ use crate::{
 };
 
 /// Format of a stored session. The stored enums pin their SCALE indexes, so
-/// variants added later decode alongside the ones a row was written with.
-const SESSION_FORMAT: u16 = 3;
+/// variants added later decode alongside the ones a row was written with; a
+/// field added to a stored struct or variant takes a new format.
+const SESSION_FORMAT: u16 = 5;
 /// Format of a stored summary.
 const SUMMARY_FORMAT: u16 = 4;
 
@@ -100,6 +106,46 @@ pub(super) async fn write(
 	Ok(())
 }
 
+/// A stored record, which may read rows of an older format.
+trait Stored: Decode {
+	/// Read a row of `format`, older than this core's, or `None` when that
+	/// format is not one the core still reads.
+	fn decode_older(
+		_format: u16,
+		_input: &mut &[u8],
+	) -> Option<Result<Self, parity_scale_codec::Error>> {
+		None
+	}
+}
+
+impl Stored for FundingSession {
+	fn decode_older(
+		format: u16,
+		input: &mut &[u8],
+	) -> Option<Result<Self, parity_scale_codec::Error>> {
+		match format {
+			3 => Some(format3::Session::decode(input).map(Into::into)),
+			4 => Some(format4::Session::decode(input).map(Into::into)),
+			_ => None,
+		}
+	}
+}
+
+impl Stored for PackedSession {
+	// Format 1 kept a bare summary and no acknowledgement. Its sessions
+	// ended before the host acknowledged endings it was handed, so each is
+	// taken as told rather than handed over again.
+	fn decode_older(
+		format: u16,
+		input: &mut &[u8],
+	) -> Option<Result<Self, parity_scale_codec::Error>> {
+		(format == 1).then(|| {
+			summary1::Summary::decode(input)
+				.map(|summary| PackedSession { summary: summary.into(), acknowledged: true })
+		})
+	}
+}
+
 /// The rows of one table, by what this core makes of them.
 struct Scanned<T> {
 	records: Vec<T>,
@@ -107,7 +153,7 @@ struct Scanned<T> {
 	newer: Option<u16>,
 }
 
-fn scan<T: Decode>(conn: &Connection, table: &Table) -> Result<Scanned<T>, DbError> {
+fn scan<T: Stored>(conn: &Connection, table: &Table) -> Result<Scanned<T>, DbError> {
 	let mut scanned = Scanned { records: Vec::new(), newer: None };
 	let mut statement = conn.prepare_cached(table.select)?;
 	let mut rows = statement.query([])?;
@@ -117,14 +163,16 @@ fn scan<T: Decode>(conn: &Connection, table: &Table) -> Result<Scanned<T>, DbErr
 		let input = &mut &record[..];
 		match u16::decode(input) {
 			Ok(stored) if stored > table.format => scanned.newer = scanned.newer.max(Some(stored)),
-			Ok(stored) if stored < table.format => {
-				error!(
+			Ok(stored) if stored < table.format => match T::decode_older(stored, input) {
+				Some(Ok(value)) if input.is_empty() => scanned.records.push(value),
+				Some(_) => unreadable(table, &intent, &record),
+				None => error!(
 					table = table.name,
 					%intent,
 					stored,
 					format = table.format,
 					"funding record of an older format; leaving it in place"
-				);
+				),
 			},
 			Ok(_) => match T::decode(input) {
 				Ok(value) if input.is_empty() => scanned.records.push(value),
@@ -219,14 +267,30 @@ pub(crate) async fn put_session_row(db: &Db, intent: &str, record: Vec<u8>) {
 		.expect("funding row written");
 }
 
+/// Store `record` as summary `intent`'s row, as it is.
+#[cfg(test)]
+pub(crate) async fn put_summary_row(db: &Db, intent: &str, record: Vec<u8>) {
+	let rows = vec![(intent.to_string(), record)];
+	db.write(move |tx| upsert(tx, &SUMMARIES, &rows))
+		.await
+		.expect("funding row written");
+}
+
 #[cfg(test)]
 mod tests {
 	use futures::executor::block_on;
 	use truapi::latest::{FundingDirection, FundingFailure};
 
 	use super::*;
+	use truapi::latest::{FundingInboundUpdate, FundingQuote, FundingRail, FundingUpdate};
+
 	use crate::{
-		host_logic::funding::FundingStage, platform::ProductId, store::open_memory_core_db,
+		host_logic::funding::{
+			FundingChoice, FundingSessionSummary, FundingStage, FundingStatus, FundingUpdateRecord,
+			StartedFunds,
+		},
+		platform::ProductId,
+		store::open_memory_core_db,
 	};
 
 	const NOW: u64 = 1_700_000_000_000;
@@ -295,12 +359,163 @@ mod tests {
 		assert_eq!(stored(&db), (vec![session("fs_1")], Vec::new()));
 	}
 
-	// A row of an older format may hold a session with money in flight, so it
-	// is skipped and kept, never deleted.
+	// A session format 3 stored is read into the current shape, so one with
+	// money in flight carries on: it had no chosen quote, and a received
+	// payment named no mismatch.
+	#[test]
+	fn a_session_of_format_3_is_read() {
+		let db = open_memory_core_db();
+		let before = FundingSession {
+			provider_id: Some("ramp.dot".to_string()),
+			assigned_at_ms: Some(NOW),
+			..session("fs_3")
+		};
+		// `In(PaymentReceived { finalized: true })` as format 3 stored it,
+		// with no mismatch.
+		let updates = vec![(0u8, 1u8, true, NOW)];
+		let row = (
+			3u16,
+			(
+				&before.intent,
+				&before.owner_product_id,
+				&before.direction,
+				&before.amount,
+				&before.stage,
+				before.opened_at_ms,
+				before.deadline_ms,
+				before.acknowledged,
+				&before.provider_id,
+				&before.assigned_at_ms,
+				&before.cancel,
+				updates,
+				&before.started,
+			),
+		)
+			.encode();
+		block_on(put_session_row(&db, "fs_3", row));
+
+		let received = FundingUpdate::In(FundingInboundUpdate::PaymentReceived {
+			finalized: true,
+			mismatch: None,
+		});
+		assert_eq!(
+			stored(&db).0,
+			vec![FundingSession {
+				updates: vec![FundingUpdateRecord { update: received, at_ms: NOW }],
+				choice: None,
+				..before
+			}]
+		);
+	}
+
+	// A session format 4 stored is read into the current shape: its chosen
+	// quote named no network or asset decimals, and its started funds moved
+	// the session's own way.
+	#[test]
+	fn a_session_of_format_4_is_read() {
+		let db = open_memory_core_db();
+		let before = FundingSession {
+			provider_id: Some("ramp.dot".to_string()),
+			assigned_at_ms: Some(NOW),
+			..session("fs_4")
+		};
+		let quote = ("q1".to_string(), 1_020u128, 100u128, 15u128, 5u128, Some(60u64), None::<u64>);
+		let choice = Some((quote, FundingRail::Card, "EUR".to_string()));
+		let started = vec![([7u8; 32], 100u128, [8u8; 32], NOW, true, None::<u64>)];
+		let row = (
+			4u16,
+			(
+				&before.intent,
+				&before.owner_product_id,
+				&before.direction,
+				&before.amount,
+				&before.stage,
+				before.opened_at_ms,
+				before.deadline_ms,
+				before.acknowledged,
+				&before.provider_id,
+				&before.assigned_at_ms,
+				&before.cancel,
+				&before.updates,
+				started,
+				choice,
+			),
+		)
+			.encode();
+		block_on(put_session_row(&db, "fs_4", row));
+
+		assert_eq!(
+			stored(&db).0,
+			vec![FundingSession {
+				started: vec![StartedFunds {
+					direction: FundingDirection::In,
+					host_id: [7; 32],
+					amount: 100,
+					terms: [8; 32],
+					recorded_at_ms: NOW,
+					accepted: true,
+					named_at_ms: None,
+				}],
+				choice: Some(FundingChoice {
+					quote: FundingQuote {
+						quote_id: "q1".to_string(),
+						send_amount: 1_020,
+						receive_amount: 100,
+						provider_fee: 15,
+						network_fee: 5,
+						eta_secs: Some(60),
+						expires_at: None,
+						asset_decimals: 0,
+					},
+					rail: FundingRail::Card,
+					asset: "EUR".to_string(),
+					network: None,
+				}),
+				..before
+			}]
+		);
+	}
+
+	// A summary format 1 stored is read with the status its ending gives,
+	// and as already told, since the host acknowledged nothing then.
+	#[test]
+	fn a_summary_of_format_1_is_read() {
+		let db = open_memory_core_db();
+		let owner = Some(ProductId::for_test("wallet.dot"));
+		let stage = FundingStage::Delivered { credited: 100, settled_at_ms: NOW };
+		let row =
+			(1u16, ("fs_1", &owner, FundingDirection::In, Some(100u128), &stage, NOW)).encode();
+		block_on(put_summary_row(&db, "fs_1", row));
+
+		assert_eq!(
+			stored(&db).1,
+			vec![PackedSession {
+				summary: FundingSessionSummary {
+					intent: "fs_1".to_string(),
+					owner_product_id: owner,
+					direction: FundingDirection::In,
+					amount: Some(100),
+					stage,
+					opened_at_ms: NOW,
+					provider_id: None,
+					choice: None,
+					status: FundingStatus::ToppedUp,
+					payout: None,
+					refunded: None,
+					transaction_id: None,
+					reference: None,
+				},
+				acknowledged: true,
+			}]
+		);
+	}
+
+	// A row of an older format the core no longer reads may hold a session
+	// with money in flight, so it is skipped and kept, never deleted.
 	#[test]
 	fn a_row_of_an_older_format_is_skipped_and_kept() {
 		let db = open_memory_core_db();
-		block_on(put_session_row(&db, "fs_old", (SESSION_FORMAT - 1, "anything").encode()));
+		block_on(put_session_row(&db, "fs_old", (2u16, "anything").encode()));
 		block_on(write(&db, &[&session("fs_1")], Vec::new(), &[])).expect("written");
 
 		assert_eq!(
@@ -316,7 +531,7 @@ mod tests {
 	fn a_row_of_a_newer_format_fails_the_load_and_nothing_is_deleted() {
 		let db = open_memory_core_db();
 		block_on(put_session_row(&db, "fs_new", (SESSION_FORMAT + 1, session("fs_new")).encode()));
-		block_on(put_session_row(&db, "fs_old", (SESSION_FORMAT - 1, "anything").encode()));
+		block_on(put_session_row(&db, "fs_old", (2u16, "anything").encode()));
 		let before = block_on(rows(&db, "funding_session"));
 
 		assert_eq!(
