@@ -58,7 +58,7 @@ struct WalletView: View {
     /// native card is expanded so they do not sit under it.
     @ViewBuilder
     private var pocketCards: some View {
-        if viewModel.expandedSection == .none {
+        if viewModel.expandedSection.showsSection(.collectiblesDetails) {
             let openIndex = viewModel.pocketCards.firstIndex { $0.key == viewModel.openPocketCard }
             ForEach(Array(viewModel.pocketCards.enumerated()), id: \.element.id) { index, card in
                 // A press takes the user into the product the card belongs
@@ -67,6 +67,8 @@ struct WalletView: View {
                 // rest is under the card above.
                 PocketCollectionCardView(card: card)
                     .pocketMotion(motion(ofCardAt: index, openAt: openIndex))
+                    .opacity(viewModel.expandedSection == .none ? 1 : 0)
+                    .allowsHitTesting(viewModel.expandedSection == .none)
                     .onGeometryChange(for: CGRect.self) { proxy in
                         proxy.frame(in: .global)
                     } action: {
@@ -109,7 +111,6 @@ struct WalletView: View {
         .matchedGeometryEffect(id: "asset", in: cardNamespace)
         .scaleEffect(assetScale)
         .opacity(assetOpacity)
-        .offset(y: assetOffsetY)
         .zIndex(assetZIndex)
         .allowsHitTesting(assetHitTest)
     }
@@ -137,17 +138,6 @@ struct WalletView: View {
         case .identityDetails,
              .collectiblesDetails:
             0
-        }
-    }
-
-    private var assetOffsetY: CGFloat {
-        switch viewModel.expandedSection {
-        case .none,
-             .assetDetails,
-             .identityDetails:
-            0
-        case .collectiblesDetails:
-            -offScreenOffset
         }
     }
 
