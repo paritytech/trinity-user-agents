@@ -138,3 +138,16 @@ make provider-kotlin
 ```
 
 That builds the crate with the `codegen` profile and runs the workspace `uniffi-bindgen-cli`. The `codegen` profile is required because uniffi-bindgen scans the cdylib's exported metadata symbols, which the `release` profile strips — a plain `--release` build produces a stripped library and no bindings. (`make uniffi-kotlin` does the same for the host package.)
+
+## Maintainers: device smoke tests
+
+`src/androidTest` holds smoke tests against previewnet People over both transports: the light client syncing the relay to `Ready` and answering from its peers, and the RPC node over `wss`, which exercises the bundled TLS roots on a device. They need a device or emulator with network access and are not run on CI.
+
+```bash
+make provider-kotlin provider-android-jni ANDROID_ABIS="arm64-v8a x86_64"
+gradle :truapi-provider:connectedDebugAndroidTest
+```
+
+Build the ABI of whatever runs them: `arm64-v8a` for a phone, `x86_64` for an emulator on an x86 machine.
+
+A cold light-client sync can take minutes, so the light-client test allows five for the relay. The androidTest manifest declares `INTERNET`: without it the light client finds no peers and `connectRpc` cannot resolve the node.
