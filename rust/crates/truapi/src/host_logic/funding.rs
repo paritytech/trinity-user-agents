@@ -1376,18 +1376,6 @@ impl FundingSession {
 				self.cancel_accepted())
 	}
 
-	/// What a refund top-up for this released withdrawal moves: the refund
-	/// of a cancel the user accepted, otherwise what was debited.
-	pub fn refund_due(&self) -> Option<u128> {
-		match (&self.cancel, &self.stage) {
-			(Some(FundingCancel::Accepted { refund, .. }), FundingStage::Released { .. }) => {
-				Some(*refund)
-			},
-			(_, FundingStage::Released { debited, .. }) => Some(*debited),
-			_ => None,
-		}
-	}
-
 	/// Whether the user accepted the provider's cancel offer.
 	fn cancel_accepted(&self) -> bool {
 		matches!(self.cancel, Some(FundingCancel::Accepted { .. }))
@@ -3083,27 +3071,6 @@ mod tests {
 			.expect("failed payout");
 
 		assert_eq!(released.cancel(NOW + 3), CancelOutcome::Refused);
-	}
-
-	// A refund top-up is sized by the refund the user accepted, not by the
-	// debit, so it is recorded on the withdrawal it pays back.
-	#[test]
-	fn the_refund_due_follows_the_accepted_terms() {
-		let mut released = served(FundingDirection::Out);
-		reported(
-			&mut released,
-			&[FundingUpdate::Out(FundingOutboundUpdate::Collecting {
-				payment_id: [3; 32],
-				amount: 100,
-			})],
-		);
-		assert!(released.settle(100, NOW + 1));
-		let before = released.refund_due();
-		released.cancel(NOW + 1);
-		assert!(released.answer_cancel(offer(5, 95, None), NOW + 2));
-		released.confirm_cancel(Some(CancelTerms { fee: 5, refund: 95 }), NOW + 2);
-
-		assert_eq!((before, released.refund_due()), (Some(100), Some(95)));
 	}
 
 	// A released withdrawal stays with its provider until it pays out, so
