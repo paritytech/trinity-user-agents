@@ -5,6 +5,7 @@ import FirebaseRemoteConfig
 import Combine
 import ChainRegistry
 import Revive
+import TrUAPIHost
 
 protocol RemoteConfigDelegate: AnyObject {
     func remoteConfig(didFinishLoading result: Result<Void, Error>)
@@ -108,7 +109,8 @@ final class FirebaseApplicationService: RemoteConfigManaging {
             offrampUrl: fundingConfigValue(.offrampUrl),
             accountDataStoreContract: accountDataStoreContractAddress(),
             paymentAsset: paymentAssetConfig(),
-            appSharingUrl: url(for: .appSharingUrl)
+            appSharingUrl: url(for: .appSharingUrl),
+            fundingProviders: fundingProviders()
         )
     }
 
@@ -191,6 +193,10 @@ private extension FirebaseApplicationService {
     func paymentAssetConfig() -> PaymentAssetConfig? {
         guard let json = remoteConfig[.paymentAssetConfig].jsonValue as? [String: String] else { return nil }
         return PaymentAssetConfig(json: json)
+    }
+
+    func fundingProviders() -> [ProductId] {
+        FundingConfig.providers(in: remoteConfig[.fundingConfig].jsonValue as? [String: Any], logger: logger)
     }
 
     func dotNsConfigEntry(_ field: String, treatingEmptyAsMissing: Bool = false) -> String? {
