@@ -933,14 +933,14 @@ impl SigningHostRuntime {
 	}
 
 	/// Hand open funding session `intent` to the provider the user chose,
-	/// by product id, on the quote they chose it by, when it was quoted.
-	/// Returns whether it was open and not yet assigned.
+	/// by product id, on the quote they chose it by. Returns whether it was
+	/// open and not yet assigned.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.select_funding_provider"))]
 	pub async fn select_funding_provider(
 		&self,
 		intent: &str,
 		provider_id: &str,
-		quote_id: Option<&str>,
+		quote_id: &str,
 	) -> Result<bool, v01::GenericError> {
 		self.services
 			.select_funding_provider(intent, provider_id, quote_id)

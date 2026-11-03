@@ -87,7 +87,7 @@ impl FundingQuotes {
 
 	/// Keep `quote` as offered for session `intent`, dropping the session's
 	/// quotes from `provider_id` that expired by `now_ms`.
-	fn offer(
+	pub(crate) fn offer(
 		&self,
 		intent: &str,
 		provider_id: &str,

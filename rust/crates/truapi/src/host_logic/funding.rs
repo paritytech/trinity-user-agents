@@ -485,21 +485,16 @@ impl FundingSession {
 	/// Assign the session to the provider the user chose, on the quote they
 	/// chose it by. A session without an amount takes the amount the quote
 	/// prices. Returns whether it was open and not yet assigned.
-	pub fn assign(
-		&mut self,
-		provider_id: &str,
-		choice: Option<FundingChoice>,
-		now_ms: u64,
-	) -> bool {
+	pub fn assign(&mut self, provider_id: &str, choice: FundingChoice, now_ms: u64) -> bool {
 		if self.is_terminal() || self.provider_id.is_some() {
 			return false;
 		}
 		self.provider_id = Some(provider_id.to_string());
 		self.assigned_at_ms = Some(now_ms);
 		if self.amount.is_none() {
-			self.amount = choice.as_ref().map(|choice| choice.balance_amount(self.direction));
+			self.amount = Some(choice.balance_amount(self.direction));
 		}
-		self.choice = choice;
+		self.choice = Some(choice);
 		true
 	}
 
@@ -1368,6 +1363,24 @@ fn hidden(c: char) -> bool {
 			'\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}')
 }
 
+/// A quote chosen for a USDT top-up of 100, for tests.
+#[cfg(test)]
+pub(crate) fn test_choice() -> FundingChoice {
+	FundingChoice {
+		quote: FundingQuote {
+			quote_id: "q-test".to_string(),
+			send_amount: 102,
+			receive_amount: 100,
+			provider_fee: 2,
+			network_fee: 0,
+			eta_secs: None,
+			expires_at: None,
+		},
+		rail: FundingRail::Crypto,
+		asset: "USDT".to_string(),
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -1643,7 +1656,7 @@ mod tests {
 
 	fn served(direction: FundingDirection) -> FundingSession {
 		let mut session = session(direction);
-		assert!(session.assign(PROVIDER, None, NOW));
+		assert!(session.assign(PROVIDER, test_choice(), NOW));
 		session
 	}
 
@@ -2184,7 +2197,7 @@ mod tests {
 	fn a_session_is_assigned_once() {
 		let mut session = served(FundingDirection::In);
 
-		assert!(!session.assign("other.dot", None, NOW));
+		assert!(!session.assign("other.dot", test_choice(), NOW));
 		assert_eq!(session.provider_id.as_deref(), Some(PROVIDER));
 	}
 
@@ -2279,7 +2292,7 @@ mod tests {
 			expires_at: None,
 		};
 		let choice = FundingChoice { quote, rail, asset: "EUR".to_string() };
-		assert!(session.assign(PROVIDER, Some(choice), NOW));
+		assert!(session.assign(PROVIDER, choice, NOW));
 		session
 	}
 

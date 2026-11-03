@@ -9086,8 +9086,12 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 	.expect("opened")
 	.intent;
 	assert!(
-		futures::executor::block_on(before.select_funding_provider(&intent, "ramp.dot", None))
-			.expect("selected")
+		futures::executor::block_on(before.select_funding_provider(
+			&intent,
+			"ramp.dot",
+			&offer_test_quote(&before, &intent, "ramp.dot")
+		))
+		.expect("selected")
 	);
 	let worker = provider_worker(&before, "ramp.dot");
 	let assigned = connect_provider(&before, "ramp.dot").calls(1).into_iter().next();
@@ -9121,7 +9125,15 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 			amount: Some(1_000),
 			expires_at,
 			last_update,
-			quote: None,
+			quote: Some(v01::FundingQuote {
+				quote_id: "q-test".to_string(),
+				send_amount: 1_002,
+				receive_amount: 1_000,
+				provider_fee: 2,
+				network_fee: 0,
+				eta_secs: None,
+				expires_at: None,
+			}),
 		})))
 	};
 	let delivered = wait_for_stage(&after, &intent);
@@ -9156,8 +9168,12 @@ fn a_session_settles_from_the_top_up_the_provider_started() {
 	.expect("opened")
 	.intent;
 	assert!(
-		futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot", None))
-			.expect("selected")
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			"ramp.dot",
+			&offer_test_quote(&services, &intent, "ramp.dot")
+		))
+		.expect("selected")
 	);
 	let worker = provider_worker(&services, "ramp.dot");
 	fund_top_up(&worker, &intent, 1_000).expect("top-up accepted");
@@ -9202,8 +9218,12 @@ fn a_provider_frame_opens_only_https_pages() {
 	.expect("opened")
 	.intent;
 	assert!(
-		futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot", None))
-			.expect("selected")
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			"ramp.dot",
+			&offer_test_quote(&services, &intent, "ramp.dot")
+		))
+		.expect("selected")
 	);
 	let worker = provider_worker(&services, "ramp.dot");
 	let present = |url: &str| {
@@ -9263,8 +9283,12 @@ fn only_the_assigned_provider_worker_reports() {
 	.expect("opened")
 	.intent;
 	assert!(
-		futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot", None))
-			.expect("selected")
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			"ramp.dot",
+			&offer_test_quote(&services, &intent, "ramp.dot")
+		))
+		.expect("selected")
 	);
 	let app = funding_host(&services, "ramp.dot", true);
 	let other = provider_worker(&services, "other.dot");
@@ -9293,10 +9317,10 @@ fn only_the_assigned_provider_worker_reports() {
 	));
 }
 
-// A session goes only to a funding provider the core knows of. Chosen
-// without a quote, it must also serve the session's direction, so one whose
-// manifest declares only inbound card cannot be handed a withdrawal; one that
-// quoted the withdrawal can, since the quote was asked in that direction.
+// A session goes only to a funding provider the core knows of, on a quote it
+// offered. Its routes do not narrow the choice: one whose manifest declares
+// only inbound card can be handed a withdrawal it quoted, since the quote was
+// asked in that direction.
 #[test]
 fn a_session_is_handed_only_to_a_known_funding_provider() {
 	let services = funding_services();
@@ -9313,8 +9337,12 @@ fn a_session_is_handed_only_to_a_known_funding_provider() {
 	};
 	let (inbound, outbound) = (open(v01::FundingDirection::In), open(v01::FundingDirection::Out));
 	let select = |intent: &str, provider| {
-		futures::executor::block_on(services.select_funding_provider(intent, provider, None))
-			.is_ok()
+		futures::executor::block_on(services.select_funding_provider(
+			intent,
+			provider,
+			&offer_test_quote(&services, intent, provider),
+		))
+		.is_ok()
 	};
 
 	assert_eq!(
@@ -9323,7 +9351,7 @@ fn a_session_is_handed_only_to_a_known_funding_provider() {
 			select(&outbound, "ramp.dot"),
 			select(&inbound, "ramp.dot"),
 		),
-		(false, false, true)
+		(false, true, true)
 	);
 }
 
@@ -9408,11 +9436,7 @@ fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
 			.collect::<Vec<_>>(),
 	);
 	let select = |quote_id| {
-		futures::executor::block_on(services.select_funding_provider(
-			&intent,
-			"ramp.dot",
-			Some(quote_id),
-		))
+		futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot", quote_id))
 	};
 	let unknown = select("q-never");
 	let chosen = select("q1");
@@ -9483,11 +9507,9 @@ fn a_quote_must_price_the_sessions_amount() {
 				.get_funding_quote_within(&intent, card_ask(None), Duration::from_secs(5))
 				.collect::<Vec<_>>(),
 		);
-		let selected = futures::executor::block_on(services.select_funding_provider(
-			&intent,
-			"ramp.dot",
-			Some("q1"),
-		));
+		let selected = futures::executor::block_on(
+			services.select_funding_provider(&intent, "ramp.dot", "q1"),
+		);
 		(selected, services.funding().get(&intent).and_then(|session| session.amount))
 	};
 
@@ -9721,8 +9743,12 @@ fn served_session(services: &Arc<RuntimeServices>, amount: u128) -> String {
 	.expect("opened")
 	.intent;
 	assert!(
-		futures::executor::block_on(services.select_funding_provider(&intent, "ramp.dot", None))
-			.expect("selected")
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			"ramp.dot",
+			&offer_test_quote(services, &intent, "ramp.dot")
+		))
+		.expect("selected")
 	);
 	intent
 }
@@ -10079,7 +10105,11 @@ impl crate::platform::FundingPlatform for SelectThenCloseFundingPlatform {
 		let services = self.services.get().and_then(std::sync::Weak::upgrade).expect("services");
 		assert!(
 			services
-				.select_funding_provider(&session.intent, "ramp.dot", None)
+				.select_funding_provider(
+					&session.intent,
+					"ramp.dot",
+					&offer_test_quote(&services, &session.intent, "ramp.dot"),
+				)
 				.await
 				.expect("selected")
 		);
@@ -11454,8 +11484,12 @@ fn a_session_ended_while_workers_start_lets_its_worker_go() {
 	.expect("opened")
 	.intent;
 	assert!(
-		futures::executor::block_on(before.select_funding_provider(&second, "other.dot", None))
-			.expect("selected")
+		futures::executor::block_on(before.select_funding_provider(
+			&second,
+			"other.dot",
+			&offer_test_quote(&before, &second, "other.dot")
+		))
+		.expect("selected")
 	);
 
 	let after = funding_services_on(&db, test_spawner());
@@ -11653,8 +11687,12 @@ fn a_worker_handshake_waits_for_a_session_before_its_sessions_are_handed_over() 
 	.expect("opened")
 	.intent;
 	assert!(
-		futures::executor::block_on(services.select_funding_provider(&intent, provider_id, None))
-			.expect("selected")
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			provider_id,
+			&offer_test_quote(&services, &intent, provider_id)
+		))
+		.expect("selected")
 	);
 	let link = Arc::new(ScriptedProviderLink::default());
 	services.funding().link(provider_id, link.clone());
@@ -11744,11 +11782,8 @@ fn a_quote_is_offered_to_the_session_that_asked_only() {
 	quote(&first);
 	quote(&first);
 	let reused = *asked.lock().expect("count mutex poisoned");
-	let chosen_elsewhere = futures::executor::block_on(services.select_funding_provider(
-		&second,
-		"ramp.dot",
-		Some("q1"),
-	));
+	let chosen_elsewhere =
+		futures::executor::block_on(services.select_funding_provider(&second, "ramp.dot", "q1"));
 	quote(&second);
 
 	assert_eq!(
@@ -11775,11 +11810,9 @@ fn a_quote_that_does_not_add_up_is_unavailable() {
 				.get_funding_quote_within(&intent, card_ask(None), Duration::from_secs(5))
 				.collect::<Vec<_>>(),
 		);
-		let chosen = futures::executor::block_on(services.select_funding_provider(
-			&intent,
-			"ramp.dot",
-			Some("q1"),
-		));
+		let chosen = futures::executor::block_on(
+			services.select_funding_provider(&intent, "ramp.dot", "q1"),
+		);
 		(rows.last().map(|row| row.state.clone()), chosen.is_ok())
 	};
 
@@ -11848,4 +11881,29 @@ fn an_ask_holds_a_bounded_number_of_workers_at_once() {
 	drop(rows);
 
 	assert_eq!((pending.len(), held), (providers.len(), 8));
+}
+
+/// Offer a quote from `provider_id` pricing open session `intent`'s amount,
+/// as a quote round would, and return its id for the session to be chosen by.
+fn offer_test_quote(services: &Arc<RuntimeServices>, intent: &str, provider_id: &str) -> String {
+	let session = services.funding().get(intent).expect("session open");
+	let amount = session.amount.unwrap_or(100);
+	let (send_amount, receive_amount) = match session.direction {
+		v01::FundingDirection::In => (amount + 2, amount),
+		v01::FundingDirection::Out => (amount, amount - 2),
+	};
+	let quote = v01::FundingQuote {
+		quote_id: "q-test".to_string(),
+		send_amount,
+		receive_amount,
+		provider_fee: 2,
+		network_fee: 0,
+		eta_secs: None,
+		expires_at: None,
+	};
+	let ask = v01::FundingQuoteAsk { direction: session.direction, amount, ..card_ask(None) };
+	services
+		.funding_quotes()
+		.offer(intent, provider_id, quote, &ask, crate::current_unix_millis());
+	"q-test".to_string()
 }

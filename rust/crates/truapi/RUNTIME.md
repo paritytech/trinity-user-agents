@@ -534,12 +534,12 @@ for raw bytes signed inside the `<Bytes>` watermark.
   offered. A quote that does not price the ask's amount, moves nothing,
   charges more in fees than the user sends, has an unusable id or has
   expired shows as the provider being unable to serve the ask.
-  `select_funding_provider` hands a session to the provider the user chose.
-  Chosen on a quote, the quote must be one the core offered for the session,
-  not yet expired and, when the session has an amount, pricing that amount
-  in balance units (what it credits inbound, what it debits outbound); a
-  session opened without an amount takes the quote's. Chosen without one,
-  the provider must be one of the session direction's candidates. The provider receives it in `assign`, and the
+  `select_funding_provider` hands a session to the provider the user chose,
+  on the quote they chose it by, which must be one the core offered for the
+  session, not yet expired and, when the session has an amount, pricing that
+  amount in balance units (what it credits inbound, what it debits outbound);
+  a session opened without an amount takes the quote's. The provider
+  receives it in `assign`, and the
   session keeps it with the rail and asset it priced. A session's offered
   quotes are dropped once it is assigned or ends.
   A native host's `funding_session_changed` carries the session's

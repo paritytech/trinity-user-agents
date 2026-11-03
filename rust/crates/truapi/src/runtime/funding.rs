@@ -256,7 +256,7 @@ impl FundingRegistry {
 		now_ms: u64,
 		intent: &str,
 		provider_id: &str,
-		choice: Option<FundingChoice>,
+		choice: FundingChoice,
 	) -> Result<bool, FundingSessionError> {
 		let intent = intent.to_string();
 		let provider = provider_id.to_string();
@@ -1617,52 +1617,35 @@ impl RuntimeServices {
 		self.funding().confirm_cancel(current_unix_millis(), intent, terms).await
 	}
 
-	/// Hand open session `intent` to the provider the user chose. Chosen on a
-	/// quote, the quote must be one the core offered for this session, not
-	/// yet expired and, when the session has an amount, pricing that amount;
-	/// the core asked it in the session's direction, so the provider serves
-	/// it. Chosen without one, the provider must be a candidate for the
-	/// session's direction: its manifest's routes, or its answers since, say
-	/// it serves that direction. Returns whether it was open and not yet
+	/// Hand open session `intent` to the provider the user chose, on the
+	/// quote they chose it by. The quote must be one the core offered for
+	/// this session, not yet expired and, when the session has an amount,
+	/// pricing that amount; the core asked it in the session's direction, so
+	/// the provider serves it. Returns whether it was open and not yet
 	/// assigned.
 	pub async fn select_funding_provider(
 		self: &Arc<Self>,
 		intent: &str,
 		provider_id: &str,
-		quote_id: Option<&str>,
+		quote_id: &str,
 	) -> Result<bool, FundingSessionError> {
 		let provider = provider_id
 			.parse::<ProductId>()
 			.map_err(|error| FundingSessionError::InvalidProvider { reason: error.to_string() })?;
 		let registry = self.funding();
-		if let Some(session) = registry.get(intent) {
-			let providers = self.funding_providers();
-			let serves = match quote_id {
-				Some(_) => providers.is_quote_target(provider.as_str()),
-				None => providers
-					.candidates(session.direction)
-					.iter()
-					.any(|candidate| candidate.provider_id == provider.as_str()),
-			};
-			if !serves {
-				return Err(FundingSessionError::InvalidProvider {
-					reason: format!("{provider} does not serve this session's direction"),
-				});
-			}
-		}
-		let choice = match quote_id {
-			None => None,
-			Some(quote_id) => Some(
-				self.funding_quotes()
-					.offered(intent, provider.as_str(), quote_id, current_unix_millis())
-					.ok_or_else(|| FundingSessionError::UnknownQuote {
-						quote_id: quote_id.to_string(),
-					})?,
-			),
+		let Some(session) = registry.get(intent) else {
+			return Ok(false);
 		};
-		if let (Some(choice), Some(session)) = (&choice, self.funding().get(intent)) &&
-			let Some(amount) = session.amount
-		{
+		if !self.funding_providers().is_quote_target(provider.as_str()) {
+			return Err(FundingSessionError::InvalidProvider {
+				reason: format!("{provider} is not a funding provider"),
+			});
+		}
+		let choice = self
+			.funding_quotes()
+			.offered(intent, provider.as_str(), quote_id, current_unix_millis())
+			.ok_or_else(|| FundingSessionError::UnknownQuote { quote_id: quote_id.to_string() })?;
+		if let Some(amount) = session.amount {
 			let priced = choice.balance_amount(session.direction);
 			if priced != amount {
 				return Err(FundingSessionError::QuoteAmountMismatch {
@@ -2333,7 +2316,7 @@ mod tests {
 				Some(amount),
 				NOW,
 			);
-			assert!(session.assign("ramp.dot", None, NOW));
+			assert!(session.assign("ramp.dot", crate::host_logic::funding::test_choice(), NOW));
 			insert(&registry, session);
 		}
 		let host_id = host_payment_id(&worker("ramp.dot"), [1; 32]);
@@ -2380,7 +2363,7 @@ mod tests {
 		let registry = registry_on(&db);
 		let served = |intent: &str, provider: &str| {
 			let mut session = session(intent, NOW);
-			assert!(session.assign(provider, None, NOW));
+			assert!(session.assign(provider, crate::host_logic::funding::test_choice(), NOW));
 			session
 		};
 		for session in
