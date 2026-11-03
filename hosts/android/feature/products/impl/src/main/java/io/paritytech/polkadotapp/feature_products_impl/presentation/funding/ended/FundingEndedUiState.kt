@@ -4,6 +4,7 @@ import androidx.annotation.StringRes
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimelineUi
 import kotlinx.collections.immutable.ImmutableList
+import uniffi.truapi.ProductId
 import kotlin.time.Instant
 
 data class FundingEndedUiState(
@@ -49,7 +50,7 @@ sealed interface FundingEndedRow {
 
     data class Value(@param:StringRes val caption: Int, val value: FundingEndedText) : FundingEndedRow
 
-    data class Provider(val providerId: String) : FundingEndedRow
+    data class Provider(val providerId: ProductId) : FundingEndedRow
 
     data class Copy(@param:StringRes val caption: Int, val value: String) : FundingEndedRow
 

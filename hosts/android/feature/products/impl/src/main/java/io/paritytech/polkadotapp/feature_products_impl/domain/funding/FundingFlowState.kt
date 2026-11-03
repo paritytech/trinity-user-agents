@@ -11,6 +11,7 @@ import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingRoute
 import uniffi.truapi.FundingSelection
+import uniffi.truapi.ProductId
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.util.Locale
@@ -46,13 +47,13 @@ data class FundingFlowState(
     val country: FundingCountry?,
     val network: String?,
     val asset: String?,
-    val chosenProviderId: String?,
-    val rows: Map<String, FundingQuoteState>,
+    val chosenProviderId: ProductId?,
+    val rows: Map<ProductId, FundingQuoteState>,
     val ask: FundingQuoteAsk?,
     /** The quotes on screen before the same ask went out again, shown greyed while the new ones arrive. */
-    val staleQuotes: Map<String, FundingQuote> = emptyMap(),
+    val staleQuotes: Map<ProductId, FundingQuote> = emptyMap(),
     /** The provider the core marks best among the quotes. */
-    val best: String? = null,
+    val best: ProductId? = null,
     /** When the core asks every provider again. */
     val refreshAt: Instant? = null,
     /** What the core knows about each country on this rail and asset, by ISO code. */
@@ -144,11 +145,11 @@ data class FundingFlowState(
     fun unitOf(quote: FundingQuote): FundingAssetUnit =
         FundingAssetUnit.of(ask?.asset ?: fiatAsset, quote.assetDecimals.toInt())
 
-    val quotedProviders: List<Pair<String, FundingQuote>>
+    val quotedProviders: List<Pair<ProductId, FundingQuote>>
         get() = rows.mapNotNull { (providerId, state) -> state.quote?.let { providerId to it } }
 
     /** The user's choice while its quote stands, otherwise the one the core marks best. */
-    val selectedProviderId: String?
+    val selectedProviderId: ProductId?
         get() = chosenProviderId?.takeIf { rows[it]?.quote != null } ?: best?.takeIf { rows[it]?.quote != null }
 
     val selectedQuote: FundingQuote?
@@ -222,7 +223,7 @@ data class FundingFlowState(
 
     fun withAsset(symbol: String): FundingFlowState = copy(asset = symbol)
 
-    fun withChosenProvider(providerId: String): FundingFlowState = copy(chosenProviderId = providerId)
+    fun withChosenProvider(providerId: ProductId): FundingFlowState = copy(chosenProviderId = providerId)
 
     fun withCandidates(newCandidates: List<FundingCandidate>): FundingFlowState = copy(candidates = newCandidates)
 

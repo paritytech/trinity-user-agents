@@ -13,6 +13,7 @@ import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.FundingStage
 import uniffi.truapi.FundingStatus
+import uniffi.truapi.ProductId
 import kotlin.time.Instant
 
 /** One ended funding session as the history shows it, from the core's summary of it. */
@@ -21,7 +22,7 @@ data class FundingRecord(
     val direction: FundingDirection,
     /** The quote the session ran on, with its rail, asset and network; `null` when none was chosen. */
     val choice: FundingChoice?,
-    val providerId: String?,
+    val providerId: ProductId?,
     val requestedAmount: Balance?,
     val settledAmount: Balance?,
     val outcome: FundingRecordOutcome,

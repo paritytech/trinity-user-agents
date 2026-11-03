@@ -27,6 +27,7 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.Fund
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingProviderLogo
 import kotlinx.coroutines.delay
+import uniffi.truapi.ProductId
 import java.util.Locale
 import kotlin.math.max
 import kotlin.time.Clock
@@ -49,7 +50,7 @@ private val TICK = 1.seconds
 fun FundingProvidersScreen(
     state: FundingProvidersUiState,
     onBack: () -> Unit,
-    onProvider: (String) -> Unit,
+    onProvider: (ProductId) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(

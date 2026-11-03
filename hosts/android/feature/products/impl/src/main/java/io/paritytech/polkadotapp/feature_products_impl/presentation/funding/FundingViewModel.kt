@@ -46,6 +46,7 @@ import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingStatus
+import uniffi.truapi.ProductId
 import java.math.BigDecimal
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.milliseconds
@@ -83,8 +84,8 @@ class FundingViewModel @Inject constructor(
     private var quoteJob: Job? = null
     private var startsWhenQuoted = false
 
-    private val brands = MutableStateFlow<Map<String, FundingProviderBrand>>(emptyMap())
-    private val brandsLoading = mutableSetOf<String>()
+    private val brands = MutableStateFlow<Map<ProductId, FundingProviderBrand>>(emptyMap())
+    private val brandsLoading = mutableSetOf<ProductId>()
     private val countryQuery = MutableStateFlow("")
     private val countries by lazy { interactor.countries() }
     private val detectedCountry = MutableStateFlow<FundingCountry?>(null)
@@ -231,7 +232,7 @@ class FundingViewModel @Inject constructor(
         requestQuote()
     }
 
-    fun onProviderChosen(providerId: String) {
+    fun onProviderChosen(providerId: ProductId) {
         flow.update { it?.withChosenProvider(providerId) }
         showMessage(RCommon.string.funding_provider_changed)
         pop()
@@ -413,7 +414,7 @@ class FundingViewModel @Inject constructor(
         loadBrands(options.candidates.map { it.providerId })
     }
 
-    private fun loadBrands(providerIds: List<String>) {
+    private fun loadBrands(providerIds: List<ProductId>) {
         providerIds.filter(brandsLoading::add).forEach { providerId ->
             launchUnit {
                 val brand = interactor.brand(providerId)

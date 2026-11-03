@@ -17,10 +17,12 @@ import uniffi.truapi.FundingChoice
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingQuote
 import uniffi.truapi.FundingRail
+import uniffi.truapi.ProductId
 import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
 class FundingEndedMapperTest {
+    private val ramp = ProductId.parse("ramp.dot").getOrThrow()
     private val mapper = FundingEndedMapper(FundingCash(symbol = "CASH", precision = 6))
 
     @Test
@@ -86,7 +88,7 @@ class FundingEndedMapperTest {
                 FundingEndedRow.Value(RCommon.string.funding_ended_paid, FundingEndedText.Plain(PAID)),
                 FundingEndedRow.Settled(RCommon.string.funding_ended_credited, "$50 CASH", requested = "$60 CASH"),
                 FundingEndedRow.Value(RCommon.string.funding_ended_method, FundingEndedText.Res(RCommon.string.funding_rail_card, emptyList())),
-                FundingEndedRow.Provider("ramp.dot"),
+                FundingEndedRow.Provider(ramp),
                 FundingEndedRow.Copy(RCommon.string.funding_ended_transaction_id, "tx-1"),
                 FundingEndedRow.Moment(RCommon.string.funding_ended_started, OPENED),
                 FundingEndedRow.Moment(RCommon.string.funding_ended_completed, SETTLED),
@@ -137,7 +139,7 @@ class FundingEndedMapperTest {
         intent = "fs_1",
         direction = direction,
         choice = choice,
-        providerId = "ramp.dot",
+        providerId = ramp,
         requestedAmount = requested.intoBalance(),
         settledAmount = 50_000_000L.intoBalance().takeIf { outcome !is FundingRecordOutcome.Failed },
         outcome = outcome,

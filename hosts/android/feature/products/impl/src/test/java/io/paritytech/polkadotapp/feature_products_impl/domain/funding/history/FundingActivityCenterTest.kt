@@ -31,8 +31,10 @@ import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.FundingStage
 import uniffi.truapi.FundingStatus
+import uniffi.truapi.ProductId
 
 class FundingActivityCenterTest {
+    private val ramp = ProductId.parse("ramp.dot").getOrThrow()
     private val sessions = MutableStateFlow<Map<String, FundingSessionEntry>>(emptyMap())
     private val inProgress = MutableStateFlow<Boolean?>(null)
     private val endedSummaries = MutableStateFlow<Set<String>>(emptySet())
@@ -164,7 +166,7 @@ class FundingActivityCenterTest {
 
         val record = center.ended("older")
 
-        assertEquals("ramp.dot" to 30.intoBalance(), record?.providerId to record?.settledAmount)
+        assertEquals(ramp to 30.intoBalance(), record?.providerId to record?.settledAmount)
         assertEquals(null, center.ended("missing"))
     }
 
@@ -278,7 +280,7 @@ class FundingActivityCenterTest {
         amount = "50",
         stage = stage,
         openedAtMs = 0uL,
-        providerId = "ramp.dot",
+        providerId = ramp,
         choice = FundingChoice(
             quote = FundingQuote("q", "5100", "50", "90", "10", null, null, 2u),
             rail = FundingRail.CARD,
@@ -332,7 +334,7 @@ class FundingActivityCenterTest {
         openedAtMs = 0uL,
         deadlineMs = 0uL,
         acknowledged = acknowledged,
-        providerId = "ramp.dot",
+        providerId = ramp,
         assignedAtMs = 0uL,
         cancel = null,
         updates = emptyList(),

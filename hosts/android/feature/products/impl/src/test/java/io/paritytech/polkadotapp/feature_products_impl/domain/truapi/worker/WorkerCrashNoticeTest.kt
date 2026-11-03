@@ -14,6 +14,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import uniffi.truapi.ProductId
 import io.paritytech.polkadotapp.common.R as RCommon
 
 class WorkerCrashNoticeTest {
@@ -25,12 +26,13 @@ class WorkerCrashNoticeTest {
         }
     }
     private val branding = mockk<FundingProviderBranding>()
+    private val ramp = ProductId.parse("ramp.dot").getOrThrow()
 
     @Test
     fun `the notice names the product as the sheet does`() = runTest {
-        coEvery { branding.brand("ramp.dot") } returns FundingProviderBrand("ramp.dot", "Ramp", iconUrl = null)
+        coEvery { branding.brand(ramp) } returns FundingProviderBrand(ramp, "Ramp", iconUrl = null)
 
-        notice().onCrashing("ramp.dot")
+        notice().onCrashing(ramp)
         advanceUntilIdle()
 
         assertEquals(listOf(AppNotification.Error("Ramp stopped working. Retrying…")), shown)
@@ -38,9 +40,9 @@ class WorkerCrashNoticeTest {
 
     @Test
     fun `a name that cannot be resolved falls back to the product id`() = runTest {
-        coEvery { branding.brand("ramp.dot") } throws IllegalStateException("no manifest")
+        coEvery { branding.brand(ramp) } throws IllegalStateException("no manifest")
 
-        notice().onCrashing("ramp.dot")
+        notice().onCrashing(ramp)
         advanceUntilIdle()
 
         assertEquals(listOf(AppNotification.Error("ramp.dot stopped working. Retrying…")), shown)

@@ -37,6 +37,7 @@ import uniffi.truapi.ProductId
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
 class AppFundingOverlayTest {
+    private val ramp = ProductId.parse("ramp.dot").getOrThrow()
     private val contexts = FundingOverlayContexts()
     private val frames = FundingFrameContexts()
     private val sessions = MutableStateFlow<Map<String, FundingSessionEntry>>(emptyMap())
@@ -53,7 +54,7 @@ class AppFundingOverlayTest {
         push(session(FundingRail.CARD, FundingStage.Open))
         contexts.put(FundingOverlayContext(FundingOverlayRequest(null, "intent", FundingDirection.IN, null), FundingOverlayMode.New))
 
-        val outcome = async { overlay.presentProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent", ProviderFrameTarget.App("/pay")) }
+        val outcome = async { overlay.presentProviderFrame(ramp, "intent", ProviderFrameTarget.App("/pay")) }
         runCurrent()
         coVerify { router.openFundingProviderFrame("intent") }
 
@@ -67,7 +68,7 @@ class AppFundingOverlayTest {
     fun `a bank transfer's provider screen offers to say the funds were sent`() = runTest {
         push(session(FundingRail.BANK, FundingStage.Open))
 
-        val outcome = async { overlay.presentProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent", ProviderFrameTarget.App("pay")) }
+        val outcome = async { overlay.presentProviderFrame(ramp, "intent", ProviderFrameTarget.App("pay")) }
         runCurrent()
 
         val frame = requireNotNull(frames.get("intent"))
@@ -83,7 +84,7 @@ class AppFundingOverlayTest {
         sheet.selection = FundingSelection(rail = FundingRail.BANK, asset = "EUR", network = null, country = null)
         contexts.put(sheet)
 
-        val outcome = async { overlay.presentProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent", ProviderFrameTarget.App("pay")) }
+        val outcome = async { overlay.presentProviderFrame(ramp, "intent", ProviderFrameTarget.App("pay")) }
         runCurrent()
 
         val frame = requireNotNull(frames.get("intent"))
@@ -97,9 +98,9 @@ class AppFundingOverlayTest {
     fun `a provider closing its screen answers it closed and shows the session's sheet in its place`() = runTest {
         push(session(FundingRail.CARD, FundingStage.Open))
 
-        val outcome = async { overlay.presentProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent", ProviderFrameTarget.App("/pay")) }
+        val outcome = async { overlay.presentProviderFrame(ramp, "intent", ProviderFrameTarget.App("/pay")) }
         runCurrent()
-        overlay.closeProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent")
+        overlay.closeProviderFrame(ramp, "intent")
 
         assertEquals(ProviderFrameOutcome.Closed, outcome.await())
         coVerifyOrder {
@@ -116,9 +117,9 @@ class AppFundingOverlayTest {
         val sheet = FundingOverlayContext(FundingOverlayRequest(null, "intent", FundingDirection.IN, null), FundingOverlayMode.New)
         contexts.put(sheet)
 
-        val outcome = async { overlay.presentProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent", ProviderFrameTarget.App("/pay")) }
+        val outcome = async { overlay.presentProviderFrame(ramp, "intent", ProviderFrameTarget.App("/pay")) }
         runCurrent()
-        overlay.closeProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent")
+        overlay.closeProviderFrame(ramp, "intent")
 
         assertEquals(ProviderFrameOutcome.Closed, outcome.await())
         assertSame(sheet, contexts.get("intent"))
@@ -127,10 +128,10 @@ class AppFundingOverlayTest {
 
     @Test
     fun `closing a screen that is not open, or another provider's, does nothing`() = runTest {
-        overlay.closeProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent")
+        overlay.closeProviderFrame(ramp, "intent")
         push(session(FundingRail.CARD, FundingStage.Open))
 
-        val outcome = async { overlay.presentProviderFrame(ProductId.parse("ramp.dot").getOrThrow(), "intent", ProviderFrameTarget.App("/pay")) }
+        val outcome = async { overlay.presentProviderFrame(ramp, "intent", ProviderFrameTarget.App("/pay")) }
         runCurrent()
         overlay.closeProviderFrame(ProductId.parse("other.dot").getOrThrow(), "intent")
         runCurrent()
@@ -201,7 +202,7 @@ class AppFundingOverlayTest {
         openedAtMs = 0uL,
         deadlineMs = 0uL,
         acknowledged = false,
-        providerId = "ramp.dot",
+        providerId = ramp,
         assignedAtMs = 0uL,
         cancel = null,
         updates = emptyList(),

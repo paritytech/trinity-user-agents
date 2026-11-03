@@ -99,8 +99,6 @@ class BundledProducts internal constructor(
 
     fun product(id: ProductId): BundledProduct? = products[id]
 
-    fun product(id: String): BundledProduct? = ProductId.parse(id).getOrNull()?.let(products::get)
-
     /** Every product shipped, ordered by id. */
     val all: List<BundledProduct>
         get() = products.values.sortedBy { it.id.value }
@@ -108,7 +106,7 @@ class BundledProducts internal constructor(
     /** The bundled product whose App [url] opens, when it ships one. */
     fun appFor(url: String): BundledProduct? {
         val host = runCatching { URI(url).host }.getOrNull()?.lowercase(Locale.ROOT) ?: return null
-        return product(host)?.takeIf(::hasApp)
+        return ProductId.parse(host).getOrNull()?.let(::product)?.takeIf(::hasApp)
     }
 
     fun workerManifest(product: BundledProduct): String? =

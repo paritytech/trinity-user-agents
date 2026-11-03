@@ -369,13 +369,6 @@ interface HostBridge {
     fun workerCrashing(productId: ProductId, crashes: UInt) {}
 
     /**
-     * The product's worker crashed [crashes] times in a row while it was needed: tell the user that product is not
-     * working. The core keeps starting it again, waiting longer each time, so this needs no answer. Runtime-wide like
-     * [requestWorkerTransition], and can arrive on any thread.
-     */
-    fun workerCrashing(productId: String, crashes: UInt) {}
-
-    /**
      * Begin a pending operation. [label] is a log/UI hint, empty when the
      * product gave none. Leave unimplemented to opt out of worker keep-alive;
      * override to run background work past the product's surface.
@@ -884,20 +877,20 @@ interface FundingHostBridge {
      * reaches its return URL.
      */
     @Throws(HostRejection::class)
-    suspend fun presentProviderFrame(providerId: String, intent: String, target: FundingFrameTarget): FundingFrameOutcome
+    suspend fun presentProviderFrame(providerId: ProductId, intent: String, target: FundingFrameTarget): FundingFrameOutcome
 
     /**
      * Close the frame [presentProviderFrame] shows for provider [providerId]'s session [intent], answering that
      * call [FundingFrameOutcome.Closed], and show the session sheet in its place. Does nothing when no frame is
      * open for it. Runs inline on the core's thread, so return promptly.
      */
-    fun closeProviderFrame(providerId: String, intent: String)
+    fun closeProviderFrame(providerId: ProductId, intent: String)
 
     /**
      * Whether provider [providerId] ships an App, so an App route of its can be shown in [presentProviderFrame]. A
      * provider without one shows only external pages.
      */
-    suspend fun providerHasApp(providerId: String): Boolean
+    suspend fun providerHasApp(providerId: ProductId): Boolean
 
     /**
      * The country the user is likely in, as an ISO 3166-1 alpha-2 code: the device's coarse location when
@@ -948,19 +941,19 @@ private class FundingCallbackAdapter(private val bridge: FundingHostBridge) : Na
     ): FundingPresentOutcome = withHostRejection { bridge.presentFunding(productId, intent, direction, amount) }
 
     override suspend fun presentProviderFrame(
-        providerId: String,
+        providerId: ProductId,
         intent: String,
         target: FundingFrameTarget,
     ): FundingFrameOutcome = withHostRejection { bridge.presentProviderFrame(providerId, intent, target) }
 
     // Infallible across the FFI, as `onCoreLog` is.
-    override fun closeProviderFrame(providerId: String, intent: String) {
+    override fun closeProviderFrame(providerId: ProductId, intent: String) {
         runCatching { bridge.closeProviderFrame(providerId, intent) }
     }
 
     // Infallible across the FFI: a host that cannot tell lets the App route through, as before. A cancelled call
     // stays cancelled.
-    override suspend fun providerHasApp(providerId: String): Boolean =
+    override suspend fun providerHasApp(providerId: ProductId): Boolean =
         try {
             bridge.providerHasApp(providerId)
         } catch (cancellation: CancellationException) {
@@ -1279,7 +1272,7 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
 
     /** Hand session [intent] to provider [providerId], on the quote [quoteId] the user chose it by. */
     @Throws(HostRejection::class)
-    suspend fun selectFundingProvider(intent: String, providerId: String, quoteId: String): Boolean =
+    suspend fun selectFundingProvider(intent: String, providerId: ProductId, quoteId: String): Boolean =
         inner.selectFundingProvider(intent, providerId, quoteId)
 
     // Co-own the payment adapters for as long as the runtime holds them.

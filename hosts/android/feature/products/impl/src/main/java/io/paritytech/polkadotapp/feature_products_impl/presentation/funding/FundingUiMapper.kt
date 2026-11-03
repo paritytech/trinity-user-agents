@@ -24,6 +24,7 @@ import uniffi.truapi.FundingQuoteRefusal
 import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingQuoteUnavailable
 import uniffi.truapi.FundingRail
+import uniffi.truapi.ProductId
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.math.RoundingMode
@@ -65,7 +66,7 @@ private const val HOURS_PER_DAY = 24
 private const val RATE_SCALE = 4
 
 fun FundingFlowState.toSummaryUiState(
-    brands: Map<String, FundingProviderBrand>,
+    brands: Map<ProductId, FundingProviderBrand>,
     start: FundingStartState,
 ): FundingSummaryUiState {
     val quote = selectedQuote
@@ -216,7 +217,7 @@ private fun FundingCountry.toUi(refused: Boolean, minimum: String?, selected: Bo
 
 /** Counts down to the core's next refresh of the prices on screen; while it runs, the countdown holds at zero. */
 fun FundingFlowState.toProvidersUiState(
-    brands: Map<String, FundingProviderBrand>,
+    brands: Map<ProductId, FundingProviderBrand>,
 ): FundingProvidersUiState {
     val selected = selectedProviderId
     val severalQuoted = quotedProviders.size > 1
@@ -276,8 +277,8 @@ private fun FundingFlowState.providerPrice(state: FundingQuoteState, stale: Fund
 private fun FundingFlowState.forAmount(quote: FundingQuote): String =
     cash.label(cash.decimal(if (direction == FundingDirection.IN) quote.receiveAmount else quote.sendAmount))
 
-private fun Map<String, FundingProviderBrand>.brandOf(providerId: String) =
-    get(providerId) ?: FundingProviderBrand(providerId = providerId, name = providerId, iconUrl = null)
+private fun Map<ProductId, FundingProviderBrand>.brandOf(providerId: ProductId) =
+    get(providerId) ?: FundingProviderBrand(providerId = providerId, name = providerId.value, iconUrl = null)
 
 private const val SHORT_ADDRESS_MIN_LENGTH = 14
 private const val SHORT_ADDRESS_HEAD = 6
