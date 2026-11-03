@@ -832,17 +832,17 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 		target: v01::FundingFrameTarget,
 	) -> Result<v01::FundingFrameOutcome, v01::GenericError> {
 		self.funding
-			.present_provider_frame(provider.product_id.to_string(), intent, target)
+			.present_provider_frame(provider.product_id.clone(), intent, target)
 			.await
 			.map_err(v01::GenericError::from)
 	}
 
 	fn close_provider_frame(&self, provider: &ProductContext, intent: String) {
-		self.funding.close_provider_frame(provider.product_id.to_string(), intent);
+		self.funding.close_provider_frame(provider.product_id.clone(), intent);
 	}
 
 	async fn provider_has_app(&self, provider: &ProductContext) -> bool {
-		self.funding.provider_has_app(provider.product_id.to_string()).await
+		self.funding.provider_has_app(provider.product_id.clone()).await
 	}
 
 	async fn detected_country(&self) -> Option<String> {

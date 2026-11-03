@@ -60,7 +60,7 @@ const DETECTED_COUNTRY_REUSE_MS: u64 = 60 * 60 * 1_000;
 const UNDETECTED_COUNTRY_RETRY_MS: u64 = 60 * 1_000;
 
 /// The session, the provider and the encoded ask an answer was given for.
-type AnswerKey = (String, String, Vec<u8>);
+type AnswerKey = (String, ProductId, Vec<u8>);
 
 /// A provider's answer and when it came.
 #[derive(Clone)]
@@ -80,7 +80,7 @@ pub struct FundingQuotes {
 	asks: Mutex<HashMap<String, AbortHandle>>,
 	/// Quotes offered by session and provider, with the rail and asset each
 	/// priced, so a selection can only name one the host was shown.
-	offered: Mutex<HashMap<(String, String), Vec<FundingChoice>>>,
+	offered: Mutex<HashMap<(String, ProductId), Vec<FundingChoice>>>,
 	/// The latest list each session's host is shown, by a number that grows
 	/// with each new ask, so an older list stops asking again, and the handle
 	/// that ends it at once, with every quote it still waits on, once a
@@ -98,12 +98,12 @@ impl FundingQuotes {
 	pub fn offered(
 		&self,
 		intent: &str,
-		provider_id: &str,
+		provider_id: &ProductId,
 		quote_id: &str,
 		now_ms: u64,
 	) -> Option<FundingChoice> {
 		lock(&self.offered)
-			.get(&(intent.to_string(), provider_id.to_string()))?
+			.get(&(intent.to_string(), provider_id.clone()))?
 			.iter()
 			.find(|choice| choice.quote.quote_id == quote_id && !expired(&choice.quote, now_ms))
 			.cloned()
@@ -111,16 +111,16 @@ impl FundingQuotes {
 
 	/// Keep `quote` as offered for session `intent`, dropping the session's
 	/// quotes from `provider_id` that expired by `now_ms`.
-	pub(crate) fn offer(
+	pub fn offer(
 		&self,
 		intent: &str,
-		provider_id: &str,
+		provider_id: &ProductId,
 		quote: FundingQuote,
 		ask: &FundingQuoteAsk,
 		now_ms: u64,
 	) {
 		let mut offered = lock(&self.offered);
-		let choices = offered.entry((intent.to_string(), provider_id.to_string())).or_default();
+		let choices = offered.entry((intent.to_string(), provider_id.clone())).or_default();
 		choices
 			.retain(|kept| kept.quote.quote_id != quote.quote_id && !expired(&kept.quote, now_ms));
 		choices.push(FundingChoice {
@@ -194,12 +194,12 @@ impl FundingQuotes {
 	fn reusable(
 		&self,
 		intent: &str,
-		provider_id: &str,
+		provider_id: &ProductId,
 		ask: &FundingQuoteAsk,
 		now_ms: u64,
 	) -> Option<FundingQuoteAnswer> {
 		let RecentAnswer { at_ms, answer } = lock(&self.answers)
-			.get(&(intent.to_string(), provider_id.to_string(), ask.encode()))?
+			.get(&(intent.to_string(), provider_id.clone(), ask.encode()))?
 			.clone();
 		let fresh = now_ms.saturating_sub(at_ms) < ANSWER_REUSE_MS;
 		let live = match &answer {
@@ -212,7 +212,7 @@ impl FundingQuotes {
 	fn remember(
 		&self,
 		intent: &str,
-		provider_id: &str,
+		provider_id: &ProductId,
 		ask: &FundingQuoteAsk,
 		now_ms: u64,
 		answer: FundingQuoteAnswer,
@@ -220,7 +220,7 @@ impl FundingQuotes {
 		let mut answers = lock(&self.answers);
 		answers.retain(|_, recent| now_ms.saturating_sub(recent.at_ms) < ANSWER_REUSE_MS);
 		answers.insert(
-			(intent.to_string(), provider_id.to_string(), ask.encode()),
+			(intent.to_string(), provider_id.clone(), ask.encode()),
 			RecentAnswer { at_ms: now_ms, answer },
 		);
 	}
@@ -431,7 +431,7 @@ impl RuntimeServices {
 	async fn quote_one(
 		self: &Arc<Self>,
 		intent: &str,
-		provider_id: &str,
+		provider_id: &ProductId,
 		ask: FundingQuoteAsk,
 		deadline: Duration,
 	) -> FundingQuoteRow {
@@ -445,7 +445,7 @@ impl RuntimeServices {
 					let funding = self.funding().clone();
 					let asked = {
 						let ask = ask.clone();
-						let provider_id = provider_id.to_string();
+						let provider_id = provider_id.clone();
 						// A worker the host is stopping keeps its link until its
 						// connection closes, and the one started in its place
 						// connects soon after: a quote that fails on a link is
@@ -477,7 +477,7 @@ impl RuntimeServices {
 							let (min, max) = limits_shown(answer);
 							let limit = |amount| LearnedLimit { amount, learned_at_ms: now_ms };
 							self.learn_funding_support(LearnedSupport {
-								provider_id: provider_id.to_string(),
+								provider_id: provider_id.clone(),
 								direction: ask.direction,
 								rail: ask.rail,
 								asset: ask.asset.clone(),
@@ -511,34 +511,29 @@ impl RuntimeServices {
 				FundingQuoteState::Quoted { quote }
 			},
 		};
-		FundingQuoteRow { provider_id: provider_id.to_string(), state }
+		FundingQuoteRow { provider_id: provider_id.clone(), state }
 	}
 }
 
 /// A reference on a provider's worker while the core needs it, such as for a
 /// quote or while a session's overlay is up, released when dropped, so a
 /// quote stream dropped while it waits leaves none behind.
-pub(crate) struct WorkerHold<'a> {
+pub struct WorkerHold<'a> {
 	services: &'a RuntimeServices,
-	provider: Option<ProductId>,
+	provider: ProductId,
 }
 
 impl<'a> WorkerHold<'a> {
-	/// Hold `provider_id`'s worker, so the host runs it to answer.
-	pub(crate) fn acquire(services: &'a RuntimeServices, provider_id: &str) -> Self {
-		let provider = provider_id.parse::<ProductId>().ok();
-		if let Some(provider) = &provider {
-			services.worker_ledger.acquire(provider);
-		}
-		Self { services, provider }
+	/// Hold `provider`'s worker, so the host runs it to answer.
+	pub fn acquire(services: &'a RuntimeServices, provider: &ProductId) -> Self {
+		services.worker_ledger.acquire(provider);
+		Self { services, provider: provider.clone() }
 	}
 }
 
 impl Drop for WorkerHold<'_> {
 	fn drop(&mut self) {
-		if let Some(provider) = &self.provider {
-			self.services.worker_ledger.release(provider);
-		}
+		self.services.worker_ledger.release(&self.provider);
 	}
 }
 
@@ -579,8 +574,8 @@ fn limits_shown(answer: &FundingQuoteAnswer) -> (Option<u128>, Option<u128>) {
 fn best_quote(
 	direction: FundingDirection,
 	rows: &[FundingQuoteRow],
-	selectable: impl Fn(&str) -> bool,
-) -> Option<String> {
+	selectable: impl Fn(&ProductId) -> bool,
+) -> Option<ProductId> {
 	let quoted = rows.iter().filter_map(|row| match &row.state {
 		FundingQuoteState::Quoted { quote } if selectable(&row.provider_id) => Some((row, quote)),
 		_ => None,
@@ -677,7 +672,7 @@ mod tests {
 
 	fn row(provider_id: &str, send_amount: u128, receive_amount: u128) -> FundingQuoteRow {
 		FundingQuoteRow {
-			provider_id: provider_id.to_string(),
+			provider_id: ProductId::for_test(provider_id),
 			state: FundingQuoteState::Quoted {
 				quote: FundingQuote { send_amount, receive_amount, ..quote("q", None) },
 			},
@@ -694,25 +689,26 @@ mod tests {
 			row("second.dot", 1_010, 990),
 			row("third.dot", 1_010, 980),
 			FundingQuoteRow {
-				provider_id: "silent.dot".to_string(),
+				provider_id: ProductId::for_test("silent.dot"),
 				state: FundingQuoteState::Pending,
 			},
 		];
 
-		let any = |_: &str| true;
+		let any = |_: &ProductId| true;
 
 		assert_eq!(
 			(
 				best_quote(FundingDirection::In, &rows, any),
 				best_quote(FundingDirection::Out, &rows, any),
 				best_quote(FundingDirection::In, &rows[3..], any),
-				best_quote(FundingDirection::In, &rows, |provider_id| provider_id != "second.dot"),
+				best_quote(FundingDirection::In, &rows, |provider_id| provider_id.as_str() !=
+					"second.dot"),
 			),
 			(
-				Some("second.dot".to_string()),
-				Some("first.dot".to_string()),
+				Some(ProductId::for_test("second.dot")),
+				Some(ProductId::for_test("first.dot")),
 				None,
-				Some("third.dot".to_string()),
+				Some(ProductId::for_test("third.dot")),
 			)
 		);
 	}
@@ -731,8 +727,14 @@ mod tests {
 			amount: 1_000,
 			country: None,
 		};
-		quotes.offer("fs_1", "ramp.dot", quote("expired", Some(NOW)), &ask, NOW - 1);
-		quotes.offer("fs_1", "ramp.dot", quote("live", None), &ask, NOW);
+		quotes.offer(
+			"fs_1",
+			&ProductId::for_test("ramp.dot"),
+			quote("expired", Some(NOW)),
+			&ask,
+			NOW - 1,
+		);
+		quotes.offer("fs_1", &ProductId::for_test("ramp.dot"), quote("live", None), &ask, NOW);
 
 		let kept: Vec<String> = lock(&quotes.offered)
 			.values()

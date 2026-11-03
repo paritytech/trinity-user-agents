@@ -190,7 +190,7 @@ impl ProductRuntimeHost {
 		already_exists: E,
 	) -> Result<StartGuard, CallError<E>> {
 		let registry = self.connection.services.funding();
-		let product_id = self.connection.product.product_id.as_str();
+		let product_id = &self.connection.product.product_id;
 		registry
 			.begin_start(host_id)
 			.filter(|_| !registry.holds_start(product_id, &host_id))
@@ -221,7 +221,7 @@ impl ProductRuntimeHost {
 		let Some(guard) = registry.begin_start(host_id) else {
 			return Err(CallError::Domain(already_exists));
 		};
-		let provider_id = self.connection.product.product_id.as_str();
+		let provider_id = &self.connection.product.product_id;
 		// A first call under the id must not take over funds the engine
 		// holds already, which this session never recorded.
 		if !registry.recorded_start(&intent, &host_id) {
