@@ -3173,7 +3173,7 @@ pub struct FundingQuoteList {
 	/// The provider whose quote is best for the user, which the host selects
 	/// until the user picks another: the least to pay inbound, the most to
 	/// receive outbound. `None` until one quotes.
-	pub best: Option<String>,
+	pub best: Option<ProductId>,
 	/// When the core asks every provider again, in Unix milliseconds. The
 	/// rows go back to `Pending` then.
 	pub refresh_at_ms: u64,
@@ -3184,7 +3184,7 @@ pub struct FundingQuoteList {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingQuoteRow {
 	/// The provider.
-	pub provider_id: String,
+	pub provider_id: ProductId,
 	/// Where its quote stands.
 	pub state: FundingQuoteState,
 }

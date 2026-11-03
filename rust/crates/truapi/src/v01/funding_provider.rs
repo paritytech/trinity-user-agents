@@ -25,8 +25,11 @@ pub struct FundingAssignment {
 }
 
 /// How the user pays or is paid.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+///
+/// Parses from the name a Worker manifest's route `mode` uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, strum::EnumString)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[strum(serialize_all = "UPPERCASE")]
 pub enum FundingRail {
 	/// A card payment.
 	#[codec(index = 0)]
