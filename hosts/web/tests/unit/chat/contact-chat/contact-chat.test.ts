@@ -455,14 +455,18 @@ describe("Contact Chat between two hosts, by contact handle", () => {
         .filter((message) => message.sender.label === "You")
         .map((message) => message.status),
     ).toEqual(["sent"]);
-    // Both say the text is not encrypted.
+    // The room's own lines say what happened, and no more.
     expect(
       texts(await alice.timeline(roomId)).filter((m) => m.from === PRODUCT.id),
     ).toEqual([
       { from: PRODUCT.id, text: "You sent a chat request: Shall we talk?" },
       { from: PRODUCT.id, text: "They accepted your chat request" },
-      { from: PRODUCT.id, text: simpleText.notice },
     ]);
+    expect(
+      texts(await bob.timeline(bobRoom.id)).filter(
+        (m) => m.from === PRODUCT.id,
+      ),
+    ).toEqual([{ from: PRODUCT.id, text: "You accepted the chat request" }]);
 
     // Each side posts as Contact Chat's own account at the index it made
     // for this conversation, on its own topic and channel; its host allowed

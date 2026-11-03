@@ -339,7 +339,7 @@ describe("Contact Chat between test users", () => {
         await card.locator(".si-badge", { hasText: "connected" }).waitFor();
         // The worker reports at most twice a second: wait for the failed send.
         await card.locator(".si-facts dd", { hasText: "1 failed" }).waitFor();
-        const facts = await card.locator(".si-facts").innerText();
+        const facts = await card.locator(".si-facts").first().innerText();
         expect(facts).toContain("sender · completed");
         expect(facts).toContain(
           "refused: This host gives conversation accounts no Statement Store allowance.",

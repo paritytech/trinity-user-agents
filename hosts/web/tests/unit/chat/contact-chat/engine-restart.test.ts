@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { hexToBytes } from "@parity/truapi/scale";
+import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
 import type {
   CallResult,
   HostMessage,
@@ -66,6 +66,62 @@ async function engine(
 }
 
 describe("Contact Chat across a restart", () => {
+  test("a conversation kept by an earlier version hides its stored encryption notice, and keeps every other line", async () => {
+    const notice =
+      "Messages here are not encrypted: anyone who reads the Statement Store can read them. The network keeps only each side's last 20 messages, for a short time; this app keeps your history.";
+    const line = (id: number, author: string, text: string) => ({
+      id: `0x${String(id).padStart(32, "0")}`,
+      author,
+      text,
+      at: id,
+      state: author === "self" ? "sent" : "received",
+    });
+    const messages = [
+      line(1, "system", "They accepted your chat request"),
+      line(2, "system", notice),
+      line(3, "self", notice),
+      line(4, "peer", "hello"),
+      line(5, "system", "Your message was not sent: no slot"),
+    ];
+    const storage = new KeptStorage();
+    storage.kept.set(
+      "record",
+      bytesToHex(
+        new TextEncoder().encode(
+          JSON.stringify({
+            version: 3,
+            conversations: [
+              {
+                id: "0x" + "c0".repeat(16),
+                contact: CONTACT,
+                role: "sender",
+                status: "connected",
+                createdAt: 1,
+                messages,
+              },
+            ],
+          }),
+        ),
+      ),
+    );
+    const chat = await engine(
+      storage,
+      host(() => ({ ok: true })),
+    );
+    expect(
+      chat
+        .messages("0x" + "c0".repeat(16))
+        .map((message) => [message.author.kind, message.text]),
+    ).toEqual([
+      ["system", "They accepted your chat request"],
+      ["self", notice],
+      ["participant", "hello"],
+      ["system", "Your message was not sent: no slot"],
+    ]);
+    // Nothing is taken out of what is kept.
+    expect(chat.stored()[0]!.messages).toHaveLength(5);
+  });
+
   test("a request the host sent while the engine had no handle for it is matched again by its contact", async () => {
     const storage = new KeptStorage();
     const silent = host(() => null);
