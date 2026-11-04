@@ -18,7 +18,11 @@ struct DockletMotionTests {
     private func release(from touchX: CGFloat, translationX: CGFloat, reduceMotion: Bool = false) -> DockletMotion {
         var motion = DockletMotion()
         motion.begin(touch: CGPoint(x: touchX, y: 816), time: 0, geometry: geometry)
-        _ = motion.move(location: CGPoint(x: touchX + translationX, y: 816), translationX: translationX, time: 0)
+        _ = motion.move(
+            location: CGPoint(x: touchX + translationX, y: 816),
+            translation: CGVector(dx: translationX, dy: 0),
+            time: 0
+        )
         motion.end(time: 0, geometry: geometry, reduceMotion: reduceMotion)
         return motion
     }
@@ -27,8 +31,8 @@ struct DockletMotionTests {
     private func flick() -> DockletMotion {
         var motion = DockletMotion()
         motion.begin(touch: CGPoint(x: 40, y: 816), time: 0, geometry: geometry)
-        _ = motion.move(location: CGPoint(x: 110, y: 816), translationX: 70, time: 0.05)
-        _ = motion.move(location: CGPoint(x: 180, y: 816), translationX: 140, time: 0.1)
+        _ = motion.move(location: CGPoint(x: 110, y: 816), translation: CGVector(dx: 70, dy: 0), time: 0.05)
+        _ = motion.move(location: CGPoint(x: 180, y: 816), translation: CGVector(dx: 140, dy: 0), time: 0.1)
         return motion
     }
 
@@ -47,10 +51,13 @@ struct DockletMotionTests {
         abs(point.x - expected.x) < 1e-6 && abs(point.y - expected.y) < 1e-6
     }
 
-    private func isNear(_ pose: DockletPose, _ expected: DockletPose) -> Bool {
-        abs(pose.angle - expected.angle) < 1e-6
-            && abs(pose.offset.dx - expected.offset.dx) < 1e-6
-            && abs(pose.offset.dy - expected.offset.dy) < 1e-6
+    private func isNear(_ transform: CGAffineTransform, _ expected: CGAffineTransform) -> Bool {
+        abs(transform.a - expected.a) < 1e-6
+            && abs(transform.b - expected.b) < 1e-6
+            && abs(transform.c - expected.c) < 1e-6
+            && abs(transform.d - expected.d) < 1e-6
+            && abs(transform.tx - expected.tx) < 1e-6
+            && abs(transform.ty - expected.ty) < 1e-6
     }
 
     /// A vector of length 100 pointing `degrees` below the horizon, with a positive y being down.
@@ -143,12 +150,12 @@ struct DockletMotionTests {
     func rubberBandSaturates() {
         var overTucked = DockletMotion()
         overTucked.begin(touch: CGPoint(x: 40, y: 816), time: 0, geometry: geometry)
-        _ = overTucked.move(location: CGPoint(x: 10_040, y: 816), translationX: 10_000, time: 0.01)
+        _ = overTucked.move(location: CGPoint(x: 10_040, y: 816), translation: CGVector(dx: 10_000, dy: 0), time: 0.01)
         #expect(overTucked.progress < 1.25)
 
         var overShown = DockletMotion()
         overShown.begin(touch: CGPoint(x: 40, y: 816), time: 0, geometry: geometry)
-        _ = overShown.move(location: CGPoint(x: -9_960, y: 816), translationX: -10_000, time: 0.01)
+        _ = overShown.move(location: CGPoint(x: -9_960, y: 816), translation: CGVector(dx: -10_000, dy: 0), time: 0.01)
         #expect(overShown.progress > -0.25)
     }
 
@@ -165,8 +172,8 @@ struct DockletMotionTests {
         #expect(released.destination == .tucked)
 
         var pausedFlick = flick()
-        _ = pausedFlick.move(location: CGPoint(x: 180, y: 816), translationX: 140, time: 0.2)
-        _ = pausedFlick.move(location: CGPoint(x: 180, y: 816), translationX: 140, time: 0.3)
+        _ = pausedFlick.move(location: CGPoint(x: 180, y: 816), translation: CGVector(dx: 140, dy: 0), time: 0.2)
+        _ = pausedFlick.move(location: CGPoint(x: 180, y: 816), translation: CGVector(dx: 140, dy: 0), time: 0.3)
         pausedFlick.end(time: 0.3, geometry: geometry)
         #expect(pausedFlick.destination == .tucked)
     }
@@ -175,8 +182,8 @@ struct DockletMotionTests {
     func turnBackReturnsToStart() {
         var motion = DockletMotion()
         motion.begin(touch: CGPoint(x: 40, y: 816), time: 0, geometry: geometry)
-        _ = motion.move(location: CGPoint(x: 269, y: 816), translationX: 229, time: 0.1)
-        _ = motion.move(location: CGPoint(x: 126, y: 816), translationX: 86, time: 0.2)
+        _ = motion.move(location: CGPoint(x: 269, y: 816), translation: CGVector(dx: 229, dy: 0), time: 0.1)
+        _ = motion.move(location: CGPoint(x: 126, y: 816), translation: CGVector(dx: 86, dy: 0), time: 0.2)
         motion.end(time: 0.2, geometry: geometry)
         #expect(motion.destination == .shown)
     }
@@ -186,9 +193,21 @@ struct DockletMotionTests {
         let travel = drawbridge.hideTravel(touchX: 40)
         var motion = DockletMotion()
         motion.begin(touch: CGPoint(x: 40, y: 816), time: 0, geometry: geometry)
-        _ = motion.move(location: CGPoint(x: 40 + 0.8 * travel, y: 816), translationX: 0.8 * travel, time: 0.1)
-        _ = motion.move(location: CGPoint(x: 40 + 0.55 * travel, y: 816), translationX: 0.55 * travel, time: 0.3)
-        _ = motion.move(location: CGPoint(x: 40 + 0.55 * travel, y: 816), translationX: 0.55 * travel, time: 0.5)
+        _ = motion.move(
+            location: CGPoint(x: 40 + 0.8 * travel, y: 816),
+            translation: CGVector(dx: 0.8 * travel, dy: 0),
+            time: 0.1
+        )
+        _ = motion.move(
+            location: CGPoint(x: 40 + 0.55 * travel, y: 816),
+            translation: CGVector(dx: 0.55 * travel, dy: 0),
+            time: 0.3
+        )
+        _ = motion.move(
+            location: CGPoint(x: 40 + 0.55 * travel, y: 816),
+            translation: CGVector(dx: 0.55 * travel, dy: 0),
+            time: 0.5
+        )
         motion.end(time: 0.5, geometry: geometry)
         #expect(motion.destination == .shown)
     }
@@ -201,7 +220,7 @@ struct DockletMotionTests {
 
         var slow = DockletMotion()
         slow.begin(touch: CGPoint(x: 40, y: 816), time: 0, geometry: geometry)
-        _ = slow.move(location: CGPoint(x: 126, y: 816), translationX: 86, time: 0.1)
+        _ = slow.move(location: CGPoint(x: 126, y: 816), translation: CGVector(dx: 86, dy: 0), time: 0.1)
         slow.end(time: 0.1, geometry: geometry)
         #expect(peakProgress(of: slow) <= 1)
     }
@@ -210,8 +229,8 @@ struct DockletMotionTests {
     func heldBarKeepsGrabbedPointUnderFinger() {
         var motion = DockletMotion()
         motion.begin(touch: CGPoint(x: 200, y: 816), time: 0, geometry: geometry)
-        _ = motion.move(location: CGPoint(x: 230, y: 800), translationX: 0, time: 0.01)
-        let grabbed = CGPoint(x: 200, y: 816).applying(drawbridge.absolute(motion.pose(geometry: geometry)))
+        _ = motion.move(location: CGPoint(x: 230, y: 800), translation: CGVector(dx: 0, dy: 0), time: 0.01)
+        let grabbed = CGPoint(x: 200, y: 816).applying(motion.transform(geometry: geometry, anchor: .zero))
         #expect(abs(grabbed.x - 230) < 0.5)
         #expect(abs(grabbed.y - 800) < 0.5)
     }
@@ -221,12 +240,12 @@ struct DockletMotionTests {
         var motion = release(from: 40, translationX: 0.6 * drawbridge.hideTravel(touchX: 40))
         _ = motion.tick(now: 0.01)
         #expect(abs(motion.progress - 0.6) < 0.05)
-        let touch = CGPoint(x: 306, y: 816).applying(drawbridge.absolute(motion.pose(geometry: geometry)))
+        let touch = CGPoint(x: 306, y: 816).applying(motion.transform(geometry: geometry, anchor: .zero))
         motion.begin(touch: touch, time: 0.01, geometry: geometry)
         let travel = drawbridge.hideTravel(touchX: touch.x)
         let finger = CGPoint(x: touch.x - 0.6 * travel, y: touch.y)
-        _ = motion.move(location: finger, translationX: -0.6 * travel, time: 0.02)
-        let grabbed = CGPoint(x: 306, y: 816).applying(drawbridge.absolute(motion.pose(geometry: geometry)))
+        _ = motion.move(location: finger, translation: CGVector(dx: -0.6 * travel, dy: 0), time: 0.02)
+        let grabbed = CGPoint(x: 306, y: 816).applying(motion.transform(geometry: geometry, anchor: .zero))
         #expect(abs(grabbed.x - finger.x) < 0.5)
         #expect(abs(grabbed.y - finger.y) < 0.5)
     }
@@ -235,18 +254,19 @@ struct DockletMotionTests {
     func heldBarStaysAboveFloor() {
         var motion = DockletMotion()
         motion.begin(touch: CGPoint(x: 200, y: 800), time: 0, geometry: geometry)
-        _ = motion.move(location: CGPoint(x: 350, y: 830), translationX: 150, time: 0.01)
-        #expect(drawbridge.lowestY(motion.pose(geometry: geometry)) <= geometry.bounds.maxY + 1e-6)
+        _ = motion.move(location: CGPoint(x: 350, y: 830), translation: CGVector(dx: 150, dy: 0), time: 0.01)
+        let mapping = motion.transform(geometry: geometry, anchor: .zero)
+        #expect(geometry.lowestY(mapping: mapping) <= geometry.bounds.maxY + 1e-6)
     }
 
     @Test("A bar caught mid-settle keeps the pose it was on screen with")
     func catchMidSettleKeepsPose() {
         var motion = release(from: 40, translationX: 200)
         _ = motion.tick(now: 0.05)
-        let before = motion.pose(geometry: geometry)
-        let touch = CGPoint(x: 306, y: 816).applying(drawbridge.absolute(before))
+        let before = motion.transform(geometry: geometry, anchor: .zero)
+        let touch = CGPoint(x: 306, y: 816).applying(before)
         motion.begin(touch: touch, time: 0.05, geometry: geometry)
-        #expect(isNear(motion.pose(geometry: geometry), before))
+        #expect(isNear(motion.transform(geometry: geometry, anchor: .zero), before))
     }
 
     @Test("A bar at rest begins a drag 40 degrees down")
@@ -268,10 +288,10 @@ struct DockletMotionTests {
     func selectionTicksOnCrossings() {
         var motion = DockletMotion()
         motion.begin(touch: CGPoint(x: 40, y: 816), time: 0, geometry: geometry)
-        _ = motion.move(location: CGPoint(x: 183, y: 816), translationX: 143.25, time: 1.0)
-        let rising = motion.move(location: CGPoint(x: 212, y: 816), translationX: 171.9, time: 1.05)
-        let staying = motion.move(location: CGPoint(x: 215, y: 816), translationX: 175, time: 1.1)
-        let falling = motion.move(location: CGPoint(x: 126, y: 816), translationX: 86, time: 1.15)
+        _ = motion.move(location: CGPoint(x: 183, y: 816), translation: CGVector(dx: 143.25, dy: 0), time: 1.0)
+        let rising = motion.move(location: CGPoint(x: 212, y: 816), translation: CGVector(dx: 171.9, dy: 0), time: 1.05)
+        let staying = motion.move(location: CGPoint(x: 215, y: 816), translation: CGVector(dx: 175, dy: 0), time: 1.1)
+        let falling = motion.move(location: CGPoint(x: 126, y: 816), translation: CGVector(dx: 86, dy: 0), time: 1.15)
         #expect(rising == .selection)
         #expect(staying == nil)
         #expect(falling == .selection)
@@ -288,28 +308,28 @@ struct DockletMotionTests {
     @Test("A grab dragged low and far in from the edge aims the bar at shown")
     func aimLowAndFarInIsShown() {
         var motion = grabbedTucked(at: CGPoint(x: 370, y: 600))
-        _ = motion.move(location: CGPoint(x: 60, y: 800), translationX: -310, time: 0.01)
+        _ = motion.move(location: CGPoint(x: 60, y: 800), translation: CGVector(dx: -310, dy: 0), time: 0.01)
         #expect(motion.progress < 0.1)
     }
 
     @Test("A grab dragged high at the edge aims the bar at tucked")
     func aimHighAtEdgeIsTucked() {
         var motion = grabbedTucked(at: CGPoint(x: 370, y: 600))
-        _ = motion.move(location: CGPoint(x: 400, y: 430), translationX: 30, time: 0.01)
+        _ = motion.move(location: CGPoint(x: 400, y: 430), translation: CGVector(dx: 30, dy: 0), time: 0.01)
         #expect(motion.progress > 0.9)
     }
 
     @Test("The first move after a grab keeps the progress the bar was grabbed with")
     func firstMoveKeepsGrabbedProgress() {
         var motion = grabbedTucked(at: CGPoint(x: 390, y: 500))
-        _ = motion.move(location: CGPoint(x: 390, y: 500), translationX: 0, time: 0.01)
+        _ = motion.move(location: CGPoint(x: 390, y: 500), translation: CGVector(dx: 0, dy: 0), time: 0.01)
         #expect(abs(motion.progress - 1) < 1e-9)
     }
 
     @Test("A grab dragged partly in and then down releases to shown")
     func grabDraggedDownReleasesShown() {
         var motion = grabbedTucked(at: CGPoint(x: 390, y: 500))
-        _ = motion.move(location: CGPoint(x: 260, y: 830), translationX: -130, time: 0.05)
+        _ = motion.move(location: CGPoint(x: 260, y: 830), translation: CGVector(dx: -130, dy: 0), time: 0.05)
         motion.end(time: 0.05, geometry: geometry)
         #expect(motion.destination == .shown)
     }
@@ -317,8 +337,8 @@ struct DockletMotionTests {
     @Test("A grab flicked left faster than 350 points a second releases to shown, though it would tuck")
     func leftwardFlickReleasesShown() {
         var motion = grabbedTucked(at: CGPoint(x: 390, y: 430))
-        _ = motion.move(location: CGPoint(x: 350, y: 430), translationX: -40, time: 0.05)
-        _ = motion.move(location: CGPoint(x: 300, y: 430), translationX: -90, time: 0.1)
+        _ = motion.move(location: CGPoint(x: 350, y: 430), translation: CGVector(dx: -40, dy: 0), time: 0.05)
+        _ = motion.move(location: CGPoint(x: 300, y: 430), translation: CGVector(dx: -90, dy: 0), time: 0.1)
         motion.end(time: 0.1, geometry: geometry)
         #expect(motion.destination == .shown)
     }
@@ -326,7 +346,7 @@ struct DockletMotionTests {
     @Test("A grab pulled 20 points and released slowly tucks again")
     func smallPullReleasesTucked() {
         var motion = grabbedTucked(at: CGPoint(x: 390, y: 500))
-        _ = motion.move(location: CGPoint(x: 370, y: 500), translationX: -20, time: 0.5)
+        _ = motion.move(location: CGPoint(x: 370, y: 500), translation: CGVector(dx: -20, dy: 0), time: 0.5)
         motion.end(time: 0.5, geometry: geometry)
         #expect(motion.destination == .tucked)
     }
@@ -337,15 +357,15 @@ struct DockletMotionTests {
         motion.settle(to: .tucked, now: 0, isUserDriven: false)
         _ = motion.tick(now: 0.125)
         #expect(abs(motion.progress - 0.7) < 0.01)
-        let before = motion.pose(geometry: geometry)
+        let before = motion.transform(geometry: geometry, anchor: .zero)
         motion.beginAim(touch: CGPoint(x: 380, y: 500), time: 0.125, geometry: geometry)
-        #expect(isNear(motion.pose(geometry: geometry), before))
+        #expect(isNear(motion.transform(geometry: geometry, anchor: .zero), before))
     }
 
     @Test("A grab released to shown lands with a medium haptic")
     func grabRestoreEmitsMedium() {
         var motion = grabbedTucked(at: CGPoint(x: 390, y: 500))
-        _ = motion.move(location: CGPoint(x: 200, y: 830), translationX: -190, time: 0.05)
+        _ = motion.move(location: CGPoint(x: 200, y: 830), translation: CGVector(dx: -190, dy: 0), time: 0.05)
         motion.end(time: 0.05, geometry: geometry)
         #expect(motion.tick(now: 2) == .medium)
     }
@@ -353,7 +373,7 @@ struct DockletMotionTests {
     @Test("A grab released back to tucked lands silently, since the bar never left")
     func grabReturnToTuckedEmitsNothing() {
         var motion = grabbedTucked(at: CGPoint(x: 390, y: 500))
-        _ = motion.move(location: CGPoint(x: 390, y: 500), translationX: 0, time: 0.5)
+        _ = motion.move(location: CGPoint(x: 390, y: 500), translation: CGVector(dx: 0, dy: 0), time: 0.5)
         motion.end(time: 0.5, geometry: geometry)
         #expect(motion.destination == .tucked)
         #expect(motion.tick(now: 2) == nil)
@@ -408,12 +428,12 @@ struct DockletMotionTests {
     @Test("A Reduce Motion tuck holds its pose, fades the content out over 0.22 s, then lands tucked")
     func reducedTuckFadesThenLands() {
         var motion = release(from: 40, translationX: 200, reduceMotion: true)
-        let heldPose = motion.pose(geometry: geometry)
+        let heldTransform = motion.transform(geometry: geometry, anchor: .zero)
         let heldProgress = motion.progress
         #expect(motion.tick(now: 0.11) == nil)
         #expect(abs(motion.contentOpacity - 0.5) < 1e-6)
         #expect(motion.progress == heldProgress)
-        #expect(isNear(motion.pose(geometry: geometry), heldPose))
+        #expect(isNear(motion.transform(geometry: geometry, anchor: .zero), heldTransform))
         #expect(motion.tick(now: 0.22) == .heavy)
         #expect(!motion.isSettling)
         #expect(motion.progress == 1)
@@ -440,7 +460,11 @@ struct DockletMotionTests {
         let travel = drawbridge.hideTravel(touchX: 40)
         var motion = DockletMotion()
         motion.begin(touch: CGPoint(x: 40, y: 816), time: 0, geometry: geometry)
-        _ = motion.move(location: CGPoint(x: 40 + 0.5 * travel, y: 816), translationX: 0.5 * travel, time: 0.1)
+        _ = motion.move(
+            location: CGPoint(x: 40 + 0.5 * travel, y: 816),
+            translation: CGVector(dx: 0.5 * travel, dy: 0),
+            time: 0.1
+        )
         #expect(abs(motion.progress - 0.5) < 1e-9)
         #expect(!motion.isSettling)
         motion.end(time: 0.1, geometry: geometry, reduceMotion: true)

@@ -45,8 +45,9 @@ struct DockletMotion {
     private static let turnBackPeak: CGFloat = 0.05
     /// Share of that peak a drag may fall back by before its rest reverses to the start rest.
     private static let turnBackShare: CGFloat = 0.3
-    /// Leftward finger speed, in points a second, that sends a grabbed bar back to shown at any drag length.
-    private static let leftwardFlickSpeed: CGFloat = 350
+    /// Finger speed, in points a second, along the Path's restore flick direction, that sends a grabbed bar back to
+    /// shown at any drag length.
+    private static let restoreFlickSpeed: CGFloat = 350
     /// Release speed, in progress per second, above which a settle is under-damped.
     private static let underDampedSpeed: CGFloat = 4
     /// Projected progress that sounds a selection tick as it rises past, and as it falls below, the marks.
@@ -61,8 +62,7 @@ struct DockletMotion {
     private var drag: Drag?
     /// The settle that is running: a spring, or a Reduce Motion fade in its place.
     private var settle: Settle?
-    /// The held pose's extra turn and offset over the plain pose at release. It fades as the settle runs.
-    private var releaseExtra: DockletPose = .zero
+    private var path: DockletPath = .drawbridge(DockletDrawbridgeState())
     private var unwindFactor: CGFloat = 0
     /// Whether the content inside the glass fades with the hide progress. A quiet hide sets it, and so does a Reduce
     /// Motion tuck once it lands. A drag and a non-quiet settle clear it.
@@ -92,9 +92,9 @@ struct DockletMotion {
 
     /// Jumps to `rest` with no motion, for changes the caller animates itself.
     mutating func snap(to rest: DockletRest) {
-        drag = nil
+        dropDrag()
         settle = nil
-        releaseExtra = .zero
+        path.resetRelease()
         unwindFactor = 0
         progress = rest.progress
         destination = rest
@@ -106,47 +106,29 @@ struct DockletMotion {
 
     /// Starts a drag at `touch`. A touch on a moving bar catches it where it is.
     mutating func begin(touch: CGPoint, time: TimeInterval, geometry: DockletGeometry) {
-        let drawbridge = DockletDrawbridge(geometry: geometry)
-        let travel = drawbridge.hideTravel(touchX: touch.x)
-        let hold = DockletHold(
-            touch: touch,
-            progress: progress,
-            travel: travel,
-            screenPose: pose(geometry: geometry),
-            drawbridge: drawbridge
-        )
-        startDrag(touch: touch, time: time, travel: travel, grip: .hold(hold))
+        let travel = path.beginHold(touch: touch, progress: progress, unwindShare: unwindFactor, geometry: geometry)
+        startDrag(touch: touch, time: time, travel: travel, isAiming: false)
     }
 
-    /// Starts a drag at a touch in the Grab zone, where the bar turns to point at the finger. A bar still settling
+    /// Starts a drag at a touch in the Grab zone, where the bar is aimed at the finger. A bar still settling
     /// toward tucked is caught where it is.
     mutating func beginAim(touch: CGPoint, time: TimeInterval, geometry: DockletGeometry) {
-        let drawbridge = DockletDrawbridge(geometry: geometry)
-        let aim = DockletAim(
-            touch: touch,
-            progress: progress,
-            screenPose: pose(geometry: geometry),
-            drawbridge: drawbridge
-        )
-        startDrag(touch: touch, time: time, travel: drawbridge.hideTravel(touchX: touch.x), grip: .aim(aim))
+        let travel = path.beginAim(touch: touch, progress: progress, unwindShare: unwindFactor, geometry: geometry)
+        startDrag(touch: touch, time: time, travel: travel, isAiming: true)
     }
 
     /// Follows the finger. Returns a selection tick when the projected rest crosses a mark.
-    mutating func move(location: CGPoint, translationX: CGFloat, time: TimeInterval) -> DockletHaptic? {
+    mutating func move(location: CGPoint, translation: CGVector, time: TimeInterval) -> DockletHaptic? {
         guard var drag else {
             return nil
         }
-        switch drag.grip {
-        case var .hold(hold):
-            progress = Self.rubberBanded(drag.startProgress + translationX / drag.travel)
-            hold.track(finger: location, progress: progress)
-            drag.grip = .hold(hold)
-        case var .aim(aim):
-            aim.track(finger: location)
-            progress = aim.progress
-            drag.grip = .aim(aim)
-        }
-        drag.samples.append(.init(time: time, progress: progress, fingerX: location.x))
+        progress = path.track(
+            finger: location,
+            translation: translation,
+            startProgress: drag.startProgress,
+            travel: drag.travel
+        )
+        drag.samples.append(.init(time: time, progress: progress, finger: location))
         drag.peak = max(drag.peak, abs(progress - drag.startProgress))
         self.drag = drag
         return selectionHaptic()
@@ -158,7 +140,6 @@ struct DockletMotion {
         guard let drag else {
             return
         }
-        let heldPose = pose(geometry: geometry)
         self.drag = nil
         let velocity = drag.samples.velocity(travel: drag.travel)
         let rest = restAfterRelease(of: drag, velocity: velocity)
@@ -170,15 +151,16 @@ struct DockletMotion {
             startSpring(to: rest, velocity: velocity, now: time, landingHaptic: haptic)
         }
         if case let .fade(fade) = settle, fade.rest == .shown {
+            path.dropGrip()
             return
         }
-        releaseExtra = heldPose.minus(DockletDrawbridge(geometry: geometry).plainPose(progress: progress))
+        path.release(progress: progress, geometry: geometry)
         unwindFactor = 1
     }
 
     /// Settles from the current progress to `rest`, with no velocity. Under Reduce Motion it fades instead.
     mutating func settle(to rest: DockletRest, now: TimeInterval, isUserDriven: Bool, reduceMotion: Bool = false) {
-        drag = nil
+        dropDrag()
         let wasTucked = progress >= Self.tuckThreshold
         let haptic = rest.landingHaptic(wasTucked: wasTucked, isUserDriven: isUserDriven)
         if reduceMotion {
@@ -191,7 +173,7 @@ struct DockletMotion {
     /// Settles to `rest` on the quiet spring, with no haptic. The first frame only starts the clock, so the bar holds
     /// still for that frame. Under Reduce Motion it fades instead.
     mutating func quietSettle(to rest: DockletRest, now: TimeInterval, reduceMotion: Bool = false) {
-        drag = nil
+        dropDrag()
         if reduceMotion {
             startFade(to: rest, now: now, landingHaptic: nil, isQuiet: true)
         } else {
@@ -207,11 +189,33 @@ struct DockletMotion {
         return tickSpring(now: now)
     }
 
-    /// The Docklet's pose now: the plain pose, or the held pose while a finger holds the bar, plus any unwinding.
-    func pose(geometry: DockletGeometry) -> DockletPose {
-        let drawbridge = DockletDrawbridge(geometry: geometry)
-        let base = drag?.grip.pose(drawbridge: drawbridge) ?? drawbridge.plainPose(progress: progress)
-        return base.plus(releaseExtra, scaledBy: unwindFactor)
+    /// The transform that poses the Docklet about `anchor`. The nudge inset moves the bar in from its edge by
+    /// `nudgeInset`.
+    func transform(geometry: DockletGeometry, anchor: CGPoint, nudgeInset: CGFloat = 0) -> CGAffineTransform {
+        path.transform(
+            progress: progress,
+            unwindShare: unwindFactor,
+            nudgeInset: nudgeInset,
+            geometry: geometry,
+            anchor: anchor
+        )
+    }
+
+    /// Whether a pan with `translation` may fold the Docklet. A bar caught mid-settle takes a wider cone.
+    func acceptsPan(translation: CGVector) -> Bool {
+        path.acceptsPan(translation: translation, isSettling: isSettling)
+    }
+
+    /// Passes a raw progress through between 0 and 1, and bends it past either end by a limited band.
+    static func rubberBanded(_ raw: CGFloat) -> CGFloat {
+        let slope = rubberBandMaximum * rubberBandRate
+        if raw > 1 {
+            return 1 + (raw - 1).rubberBanded(limit: rubberBandMaximum, slope: slope)
+        }
+        if raw < 0 {
+            return -(-raw).rubberBanded(limit: rubberBandMaximum, slope: slope)
+        }
+        return raw
     }
 
     private enum Settle {
@@ -219,37 +223,17 @@ struct DockletMotion {
         case fade(DockletReducedFade)
     }
 
-    private enum Grip {
-        case hold(DockletHold)
-        case aim(DockletAim)
-
-        func pose(drawbridge: DockletDrawbridge) -> DockletPose {
-            switch self {
-            case let .hold(hold):
-                hold.pose(drawbridge: drawbridge)
-            case let .aim(aim):
-                aim.pose()
-            }
-        }
-    }
-
     private struct Drag {
         let startProgress: CGFloat
         /// The distance a full hide takes from where the drag began.
         let travel: CGFloat
-        var grip: Grip
+        /// Whether the drag grabbed the bar from the Grab zone, which aims it at the finger.
+        let isAiming: Bool
         var samples: DockletDragSamples
         /// The furthest the drag has strayed from its start progress.
         var peak: CGFloat
         /// Whether the projected rest is past the selection mark.
         var isAboveSelection: Bool
-
-        var isAiming: Bool {
-            guard case .aim = grip else {
-                return false
-            }
-            return true
-        }
     }
 }
 
@@ -321,32 +305,27 @@ struct DockletContentFadeTarget: Equatable {
 }
 
 private extension DockletMotion {
-    static func rubberBanded(_ raw: CGFloat) -> CGFloat {
-        let slope = rubberBandMaximum * rubberBandRate
-        if raw > 1 {
-            return 1 + (raw - 1).rubberBanded(limit: rubberBandMaximum, slope: slope)
-        }
-        if raw < 0 {
-            return -(-raw).rubberBanded(limit: rubberBandMaximum, slope: slope)
-        }
-        return raw
-    }
-
     /// Stops any settle and takes the bar under the finger from its current progress.
-    private mutating func startDrag(touch: CGPoint, time: TimeInterval, travel: CGFloat, grip: Grip) {
+    private mutating func startDrag(touch: CGPoint, time: TimeInterval, travel: CGFloat, isAiming: Bool) {
         settle = nil
-        releaseExtra = .zero
+        path.resetRelease()
         unwindFactor = 0
         isQuietHide = false
         contentFadeTarget = .shown
         drag = Drag(
             startProgress: progress,
             travel: travel,
-            grip: grip,
-            samples: DockletDragSamples(first: .init(time: time, progress: progress, fingerX: touch.x)),
+            isAiming: isAiming,
+            samples: DockletDragSamples(first: .init(time: time, progress: progress, finger: touch)),
             peak: 0,
             isAboveSelection: progress >= Self.tuckThreshold
         )
+    }
+
+    /// Ends the drag and drops the Path's grip, for a change that takes the bar off the finger.
+    mutating func dropDrag() {
+        drag = nil
+        path.dropGrip()
     }
 
     mutating func selectionHaptic() -> DockletHaptic? {
@@ -366,7 +345,7 @@ private extension DockletMotion {
     }
 
     private func restAfterRelease(of drag: Drag, velocity: CGFloat) -> DockletRest {
-        if drag.isAiming, drag.samples.leftwardSpeed > Self.leftwardFlickSpeed {
+        if drag.isAiming, drag.samples.speed(along: path.restoreFlickDirection) > Self.restoreFlickSpeed {
             return .shown
         }
         let target = isTurnedBack(drag) ? drag.startProgress : progress + velocity * Self.projectionSeconds
@@ -386,7 +365,7 @@ private extension DockletMotion {
         isQuiet: Bool = false
     ) {
         destination = rest
-        releaseExtra = .zero
+        path.resetRelease()
         unwindFactor = 0
         isQuietHide = isQuiet
         contentFadeTarget = isQuiet ? .quietFadeOut : .shown
@@ -423,7 +402,7 @@ private extension DockletMotion {
         }
         progress = spring.rest.progress
         settle = nil
-        releaseExtra = .zero
+        path.resetRelease()
         unwindFactor = 0
         return spring.landingHaptic
     }
@@ -437,7 +416,7 @@ private extension DockletMotion {
             return
         }
         progress = rest.progress
-        releaseExtra = .zero
+        path.resetRelease()
         unwindFactor = 0
     }
 
@@ -449,7 +428,7 @@ private extension DockletMotion {
         guard !fade.hasLanded(at: now) else {
             progress = fade.rest.progress
             isQuietHide = fade.rest == .tucked
-            releaseExtra = .zero
+            path.resetRelease()
             unwindFactor = 0
             settle = nil
             return fade.landingHaptic

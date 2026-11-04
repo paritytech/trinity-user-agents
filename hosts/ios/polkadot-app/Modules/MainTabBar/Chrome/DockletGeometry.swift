@@ -20,4 +20,13 @@ struct DockletGeometry: Equatable {
             ty: mappedAnchor.y - anchor.y
         )
     }
+
+    /// The lowest y of the resting frame's corners once `mapping` maps them to the screen.
+    func lowestY(mapping: CGAffineTransform) -> CGFloat {
+        [dockFrame.minX, dockFrame.maxX].reduce(-CGFloat.infinity) { lowest, cornerX in
+            [dockFrame.minY, dockFrame.maxY].reduce(lowest) {
+                max($0, CGPoint(x: cornerX, y: $1).applying(mapping).y)
+            }
+        }
+    }
 }

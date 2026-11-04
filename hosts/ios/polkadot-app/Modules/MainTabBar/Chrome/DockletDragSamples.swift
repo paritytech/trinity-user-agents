@@ -6,7 +6,7 @@ struct DockletDragSamples {
     struct Sample {
         let time: TimeInterval
         let progress: CGFloat
-        let fingerX: CGFloat
+        let finger: CGPoint
     }
 
     /// Span, in seconds, of the samples whose slope gives a release's velocity.
@@ -44,12 +44,17 @@ struct DockletDragSamples {
         return (span.last.progress - span.first.progress) / CGFloat(span.last.time - span.first.time)
     }
 
-    /// Leftward speed of the finger, in points a second, over the same window the velocity uses.
-    var leftwardSpeed: CGFloat {
+    /// Speed of the finger along `direction`, in points a second, over the same window the velocity uses. It is
+    /// positive when the finger moves the way `direction` points.
+    func speed(along direction: CGVector) -> CGFloat {
         guard let span = Self.span(of: samples) else {
             return 0
         }
-        return (span.first.fingerX - span.last.fingerX) / CGFloat(span.last.time - span.first.time)
+        let first = span.first.finger
+        let last = span.last.finger
+        let length = hypot(direction.dx, direction.dy)
+        let movedAlong = ((last.x - first.x) * direction.dx + (last.y - first.y) * direction.dy) / length
+        return movedAlong / CGFloat(span.last.time - span.first.time)
     }
 }
 

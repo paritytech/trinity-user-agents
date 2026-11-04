@@ -248,9 +248,10 @@ private extension TabBarBottomChromeController {
                 foldController.foldPanBegan(location: location)
             }
         case .changed:
+            let translation = recognizer.translation(in: view)
             foldController.foldPanChanged(
                 location: recognizer.location(in: view),
-                translationX: recognizer.translation(in: view).x
+                translation: CGVector(dx: translation.x, dy: translation.y)
             )
         case .ended,
              .cancelled:
@@ -325,9 +326,6 @@ extension TabBarBottomChromeController: UIGestureRecognizerDelegate {
             return false
         }
         let translation = pan.translation(in: view)
-        return DockletDirectionLock.isSideways(
-            translation: CGVector(dx: translation.x, dy: translation.y),
-            isSettling: foldController.isSettling
-        )
+        return foldController.acceptsPan(translation: CGVector(dx: translation.x, dy: translation.y))
     }
 }

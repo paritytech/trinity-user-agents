@@ -19,10 +19,6 @@ final class TabBarFoldController {
     /// Set together with the offset, so it can lead `state` during an interactive transition.
     private(set) var isTucked = false
 
-    var isSettling: Bool {
-        motion.isSettling
-    }
-
     private var foldDerived: TabBarFoldDerived = .none
     private weak var navigationScreen: UIViewController?
     /// The user's tuck or restore. Only a tucked value carries across navigation.
@@ -138,8 +134,8 @@ final class TabBarFoldController {
         syncContentFade()
     }
 
-    func foldPanChanged(location: CGPoint, translationX: CGFloat) {
-        if let haptic = motion.move(location: location, translationX: translationX, time: CACurrentMediaTime()) {
+    func foldPanChanged(location: CGPoint, translation: CGVector) {
+        if let haptic = motion.move(location: location, translation: translation, time: CACurrentMediaTime()) {
             playHaptic(haptic)
         }
         writeTransform(dockletTransform())
@@ -161,6 +157,11 @@ final class TabBarFoldController {
         userOverride = tucks ? .tucked : .shown
         pendingTuckKind = tucks ? .user : nil
         commit(tucks ? .tucked : .shown)
+    }
+
+    /// Whether a pan with `translation` may fold the Docklet. A bar still settling takes a wider cone.
+    func acceptsPan(translation: CGVector) -> Bool {
+        motion.acceptsPan(translation: translation)
     }
 
     func refresh() {
@@ -386,13 +387,11 @@ private extension TabBarFoldController {
     /// The docklet pose about the centre of the full-bleed chrome, which is where the chrome's transform is anchored.
     func dockletTransform() -> CGAffineTransform {
         let bounds = chromeBounds()
-        let pose = motion.pose(geometry: geometry)
-        let nudgedPose = DockletPose(
-            angle: pose.angle,
-            offset: CGVector(dx: pose.offset.dx - nudge.inset(at: CACurrentMediaTime()), dy: pose.offset.dy)
+        return motion.transform(
+            geometry: geometry,
+            anchor: CGPoint(x: bounds.midX, y: bounds.midY),
+            nudgeInset: nudge.inset(at: CACurrentMediaTime())
         )
-        let drawbridge = DockletDrawbridge(geometry: geometry)
-        return drawbridge.transform(nudgedPose, anchor: CGPoint(x: bounds.midX, y: bounds.midY))
     }
 
     func hiddenTransform() -> CGAffineTransform {

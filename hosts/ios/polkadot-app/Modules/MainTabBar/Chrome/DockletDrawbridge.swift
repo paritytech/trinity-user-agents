@@ -89,12 +89,7 @@ struct DockletDrawbridge {
 
     /// The lowest y of the bar's resting corners once `pose` is applied.
     func lowestY(_ pose: DockletPose) -> CGFloat {
-        let mapping = absolute(pose)
-        return [dockFrame.minX, dockFrame.maxX].reduce(-CGFloat.infinity) { lowest, cornerX in
-            [dockFrame.minY, dockFrame.maxY].reduce(lowest) {
-                max($0, CGPoint(x: cornerX, y: $1).applying(mapping).y)
-            }
-        }
+        geometry.lowestY(mapping: absolute(pose))
     }
 
     /// The transform for a view whose anchor point is `anchor`, posed as `pose`.
