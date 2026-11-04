@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding
 
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
-import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.util.amountFromPlanks
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivity
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityItem
@@ -25,9 +24,11 @@ import java.time.format.FormatStyle
 import java.util.Locale
 import kotlin.time.Instant
 import kotlin.time.toJavaInstant
+import android.text.format.DateFormat as AndroidDateFormat
 
 /**
- * Builds the Purse's funding lists, dated against [now] in [zone], amounts in [asset] under its [symbol].
+ * Builds the CASH card's funding lists, dated against [now] in [zone], amounts in [asset] under its [symbol]. A
+ * day this year reads by [dayPattern], the locale's own month-and-day.
  *
  * In progress, a delayed session comes first, then the newest; completed ones are newest first.
  */
@@ -37,19 +38,19 @@ class FundingActivityMapper(
     private val now: Instant,
     private val zone: ZoneId = ZoneId.systemDefault(),
     private val locale: Locale = Locale.getDefault(),
+    dayPattern: String = AndroidDateFormat.getBestDateTimePattern(locale, "MMMd"),
 ) {
     private val timeFormat = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withLocale(locale)
-    private val dayFormat = DateTimeFormatter.ofPattern("MMM d", locale)
-    private val dateFormat = DateTimeFormatter.ofPattern("MMM d, yyyy", locale)
+    private val dayFormat = DateTimeFormatter.ofPattern(dayPattern, locale)
+    private val dateFormat = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(locale)
     private val today = localDate(now)
 
-    fun map(activity: FundingActivity, currentBalance: Balance?): FundingActivityUiState = FundingActivityUiState(
+    fun map(activity: FundingActivity): FundingActivityUiState = FundingActivityUiState(
         inFlight = activity.inFlight
             .sortedWith(compareByDescending<FundingActivityItem> { it.isDelayed }.thenByDescending { it.date })
             .map(::row)
             .toImmutableList(),
         completed = activity.history.map(::row).toImmutableList(),
-        currentBalance = currentBalance?.let { FundingMoney.label(asset.amountFromPlanks(it.atLeastZero()), symbol) },
     )
 
     private val FundingActivityItem.isDelayed: Boolean
@@ -77,7 +78,11 @@ class FundingActivityMapper(
             rail = item.rail,
             subtitle = when (status) {
                 is FundingActivityStatus.InProgress -> FundingRowSubtitle.Step(status.step, inbound)
-                else -> FundingRowSubtitle.Ended(outcome(status), moment(item.date))
+                FundingActivityStatus.ToppedUp, FundingActivityStatus.Sent -> ended(FundingRowOutcome.MOVED, item)
+                FundingActivityStatus.Refunded -> ended(FundingRowOutcome.REFUNDED, item)
+                is FundingActivityStatus.PayoutFailed -> ended(FundingRowOutcome.PAYOUT_FAILED, item)
+                is FundingActivityStatus.Cancelled -> ended(FundingRowOutcome.CANCELLED, item)
+                is FundingActivityStatus.Failed -> ended(failedOutcome(status.reason), item)
             },
             icon = when (status) {
                 is FundingActivityStatus.InProgress ->
@@ -93,17 +98,13 @@ class FundingActivityMapper(
         )
     }
 
-    private fun outcome(status: FundingActivityStatus): FundingRowOutcome = when (status) {
-        FundingActivityStatus.ToppedUp, FundingActivityStatus.Sent, is FundingActivityStatus.InProgress -> FundingRowOutcome.MOVED
-        FundingActivityStatus.Refunded -> FundingRowOutcome.REFUNDED
-        is FundingActivityStatus.PayoutFailed -> FundingRowOutcome.PAYOUT_FAILED
-        is FundingActivityStatus.Cancelled -> FundingRowOutcome.CANCELLED
-        is FundingActivityStatus.Failed -> when (status.reason) {
-            FundingFailureReason.Expired -> FundingRowOutcome.EXPIRED
-            FundingFailureReason.Cancelled -> FundingRowOutcome.CANCELLED
-            FundingFailureReason.Refunded -> FundingRowOutcome.REFUNDED
-            else -> FundingRowOutcome.PAYMENT_FAILED
-        }
+    private fun ended(outcome: FundingRowOutcome, item: FundingActivityItem) = FundingRowSubtitle.Ended(outcome, moment(item.date))
+
+    private fun failedOutcome(reason: FundingFailureReason): FundingRowOutcome = when (reason) {
+        FundingFailureReason.Expired -> FundingRowOutcome.EXPIRED
+        FundingFailureReason.Cancelled -> FundingRowOutcome.CANCELLED
+        FundingFailureReason.Refunded -> FundingRowOutcome.REFUNDED
+        else -> FundingRowOutcome.PAYMENT_FAILED
     }
 
     private fun moment(date: Instant): FundingMoment {

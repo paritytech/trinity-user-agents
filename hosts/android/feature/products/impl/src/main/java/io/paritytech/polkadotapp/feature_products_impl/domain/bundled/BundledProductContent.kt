@@ -39,19 +39,33 @@ class BundledProductContent(
 
     fun serves(host: String?): Boolean = host.equals(this.host, ignoreCase = true)
 
-    fun intercept(request: WebResourceRequest): WebResourceResponse? {
-        val url = request.url
-        if (!serves(url.host)) return null
+    /** What a request answers with, read off the shipped files; split from [intercept] so it can be checked off-device. */
+    sealed interface Answer {
+        data class File(val path: String, val mimeType: String, val headers: Map<String, String>) : Answer
 
-        val path = products.assetPath(root, url.path.orEmpty(), request.isForMainFrame) ?: return notFound()
-        val stream = products.open(path) ?: return notFound()
-        val mimeType = mimeType(path)
+        data object NotFound : Answer
+    }
 
-        return if (request.isForMainFrame && mainDocumentResponseHeaders.isNotEmpty()) {
-            WebResourceResponse(mimeType, "UTF-8", 200, "OK", mainDocumentResponseHeaders, stream)
-        } else {
-            WebResourceResponse(mimeType, "UTF-8", stream)
+    fun intercept(request: WebResourceRequest): WebResourceResponse? =
+        when (val answer = answer(request.url.host, request.url.path.orEmpty(), request.isForMainFrame)) {
+            null -> null
+            Answer.NotFound -> notFound()
+            is Answer.File -> products.open(answer.path)?.let { stream ->
+                if (answer.headers.isEmpty()) {
+                    WebResourceResponse(answer.mimeType, "UTF-8", stream)
+                } else {
+                    WebResourceResponse(answer.mimeType, "UTF-8", 200, "OK", answer.headers, stream)
+                }
+            } ?: notFound()
         }
+
+    /** Null for a host this product is not served under, which is left to the WebView's other clients. */
+    fun answer(host: String?, requestPath: String, isMainFrame: Boolean): Answer? {
+        if (!serves(host)) return null
+
+        val path = products.assetPath(root, requestPath, isMainFrame) ?: return Answer.NotFound
+        val headers = if (isMainFrame) mainDocumentResponseHeaders else emptyMap()
+        return Answer.File(path, mimeType(path), headers)
     }
 
     private fun mimeType(path: String): String {

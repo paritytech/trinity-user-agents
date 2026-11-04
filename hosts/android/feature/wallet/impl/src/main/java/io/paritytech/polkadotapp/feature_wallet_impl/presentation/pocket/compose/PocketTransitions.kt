@@ -6,9 +6,7 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.EaseInOut
 import androidx.compose.animation.core.Transition
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -18,9 +16,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.zIndex
 import io.paritytech.polkadotapp.design.utils.noLocalProvidedFor
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
@@ -29,7 +25,6 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 internal const val POCKET_ANIM_DURATION_MS = 500
 
 // SwiftUI's default .easeInOut, which the iOS card fades its corner balance with.
-private const val POCKET_BALANCE_FADE_DURATION_MS = 350
 
 private const val POCKET_PUSHED_SCALE = 0.9f
 
@@ -95,16 +90,6 @@ fun Modifier.pocketCollectiblesImageSharedElement(): Modifier {
 }
 
 @Composable
-fun Modifier.pocketCornerBalanceFade(): Modifier {
-    val alpha by LocalPocketScreenTransition.current.animateFloat(
-        transitionSpec = { tween(POCKET_BALANCE_FADE_DURATION_MS, easing = EaseInOut) },
-        label = "pocket_corner_balance"
-    ) { state -> if (state.isDigitalDollarExpanded()) 0f else 1f }
-
-    return graphicsLayer { this.alpha = alpha }
-}
-
-@Composable
 fun Modifier.pocketContentSlide(): Modifier {
     val visibilityScope = LocalNavAnimatedVisibilityScope.current
     return if (visibilityScope == null) {
@@ -157,6 +142,3 @@ fun Modifier.pocketListCardSharedElement(
     }
     return withSlide.zIndex(index.toFloat())
 }
-
-private fun PocketScreenState.isDigitalDollarExpanded(): Boolean =
-    this is PocketScreenState.CardDetails && selectedCard is PocketCardUiModel.DigitalDollar

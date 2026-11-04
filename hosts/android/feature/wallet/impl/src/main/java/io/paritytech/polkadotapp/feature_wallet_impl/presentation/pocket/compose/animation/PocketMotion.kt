@@ -6,10 +6,8 @@ import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
@@ -83,24 +81,33 @@ fun rememberReducedMotion(): Boolean {
     return remember(resolver) { Settings.Global.getFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
 }
 
-/** [amount], counting up from the last one over [PocketMotion.BALANCE_COUNT_UP_MILLIS] when it grows. */
+/**
+ * [amount], counting up over [PocketMotion.BALANCE_COUNT_UP_MILLIS] when it grows, from the figure on screen: the
+ * last total, or where the count stood when a newer total arrives part-way through it.
+ */
 @Composable
 fun rememberCountUp(amount: TokenAmountModel): TokenAmountModel {
     val reduced = rememberReducedMotion()
-    var from by remember { mutableStateOf(amount.amount) }
-    val fraction = remember { Animatable(1f) }
+    val shown = remember { ShownFigure(amount.amount) }
+    // Keyed on the total, so a grown one starts at the shown figure in the composition it arrives in, never drawn
+    // for a frame before its count starts.
+    val (from, fraction) = remember(amount.amount) {
+        val from = shown.value
+        from to Animatable(if (!reduced && amount.amount > from) 0f else 1f)
+    }
 
-    LaunchedEffect(amount.amount) {
-        if (!reduced && amount.amount > from) {
-            fraction.snapTo(0f)
-            fraction.animateTo(1f, tween(PocketMotion.BALANCE_COUNT_UP_MILLIS, easing = PocketMotion.EaseOutCubic))
-        }
-        from = amount.amount
+    LaunchedEffect(fraction) {
+        fraction.animateTo(1f, tween(PocketMotion.BALANCE_COUNT_UP_MILLIS, easing = PocketMotion.EaseOutCubic))
     }
 
     val progress = fraction.value
-    return if (progress >= 1f || from >= amount.amount) amount else CountedAmount(countUpValue(from, amount.amount, progress), amount.appearance)
+    val value = if (progress >= 1f) amount.amount else countUpValue(from, amount.amount, progress)
+    SideEffect { shown.value = value }
+    return if (progress >= 1f) amount else CountedAmount(value, amount.appearance)
 }
+
+/** The figure last drawn; not state, as nothing is drawn from it. */
+private class ShownFigure(var value: BigDecimal)
 
 private class CountedAmount(
     override val amount: BigDecimal,

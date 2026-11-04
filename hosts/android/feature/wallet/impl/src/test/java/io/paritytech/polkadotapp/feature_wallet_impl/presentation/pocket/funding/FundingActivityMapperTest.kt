@@ -26,13 +26,13 @@ import kotlin.time.Instant
 class FundingActivityMapperTest {
     private val asset = mockk<Chain.Asset> { every { precision } returns 6 }
     private val now = Instant.fromEpochMilliseconds(86_400_000)
-    private val mapper = FundingActivityMapper(asset, "CASH", now, ZoneOffset.UTC, Locale.US)
+    private val mapper = FundingActivityMapper(asset, "CASH", now, ZoneOffset.UTC, Locale.US, dayPattern = "MMM d")
 
     @Test
     fun `a failure reads why and when, under an unsigned amount`() {
         val failed = FundingActivityStatus.Failed(FundingFailureReason.Declined)
 
-        val row = mapper.map(history(item("in", FundingDirection.IN, failed)), currentBalance = null).completed.single()
+        val row = mapper.map(history(item("in", FundingDirection.IN, failed))).completed.single()
 
         assertEquals(FundingRowOutcome.PAYMENT_FAILED, (row.subtitle as FundingRowSubtitle.Ended).outcome)
         assertEquals("$50 CASH", row.amount)
@@ -47,7 +47,6 @@ class FundingActivityMapperTest {
                 item("payout", FundingDirection.OUT, FundingActivityStatus.PayoutFailed(45_000_000.intoBalance())),
                 item("cancel", FundingDirection.OUT, FundingActivityStatus.Cancelled(45_000_000.intoBalance())),
             ),
-            currentBalance = null,
         ).completed
 
         assertEquals(
@@ -62,7 +61,6 @@ class FundingActivityMapperTest {
     fun `signs and tones follow which way the money moved`() {
         val rows = mapper.map(
             history(item("in", FundingDirection.IN, FundingActivityStatus.ToppedUp), item("out", FundingDirection.OUT, FundingActivityStatus.Sent)),
-            currentBalance = null,
         ).completed
 
         assertEquals(listOf("+$50 CASH", "-$50 CASH"), rows.map { it.amount })
@@ -79,11 +77,22 @@ class FundingActivityMapperTest {
                 item("yesterday", FundingDirection.IN, FundingActivityStatus.ToppedUp, at = now - day.milliseconds),
                 item("older", FundingDirection.IN, FundingActivityStatus.ToppedUp, at = now - (3 * day).milliseconds),
             ),
-            currentBalance = 200_000_000.intoBalance(),
         ).completed.map { (it.subtitle as FundingRowSubtitle.Ended).moment }
 
         assertEquals(listOf(FundingMoment.TodayAt::class, FundingMoment.YesterdayAt::class, FundingMoment.Date::class), moments.map { it::class })
         assertEquals(FundingMoment.Date("Dec 30, 1969"), moments.last())
+    }
+
+    @Test
+    fun `an older day this year reads as the day and time`() {
+        val later = Instant.fromEpochMilliseconds(10 * DAY_MS)
+        val mapper = FundingActivityMapper(asset, "CASH", later, ZoneOffset.UTC, Locale.US, dayPattern = "MMM d")
+
+        val moment = mapper.map(
+            history(item("older", FundingDirection.IN, FundingActivityStatus.ToppedUp, at = later - (5 * DAY_MS).milliseconds)),
+        ).completed.map { (it.subtitle as FundingRowSubtitle.Ended).moment }.single()
+
+        assertEquals("Jan 6", (moment as FundingMoment.DayAt).day)
     }
 
     @Test
@@ -96,7 +105,6 @@ class FundingActivityMapperTest {
                 ),
                 history = emptyList(),
             ),
-            currentBalance = null,
         )
 
         assertEquals(listOf("in"), state.toppingUp.map { it.id })
@@ -115,7 +123,6 @@ class FundingActivityMapperTest {
                 ),
                 history = emptyList(),
             ),
-            currentBalance = null,
         ).inFlight
 
         assertEquals(listOf("slow", "new", "old"), inFlight.map { it.id })
@@ -127,7 +134,6 @@ class FundingActivityMapperTest {
         val refused = FundingActivityStep.CancelRefused("already converted")
         val row = mapper.map(
             FundingActivity(inFlight = listOf(item("out", FundingDirection.OUT, FundingActivityStatus.InProgress(refused))), history = emptyList()),
-            currentBalance = null,
         ).inFlight.single()
 
         assertEquals(FundingRowIcon.IN_PROGRESS_WARNING, row.icon)
@@ -138,7 +144,6 @@ class FundingActivityMapperTest {
     fun `a session taking longer than quoted is flagged`() {
         val row = mapper.map(
             FundingActivity(inFlight = listOf(item("in", FundingDirection.IN, FundingActivityStatus.InProgress(FundingActivityStep.TakingLonger))), history = emptyList()),
-            currentBalance = null,
         ).inFlight.single()
 
         assertEquals(FundingRowIcon.IN_PROGRESS_WARNING, row.icon)
@@ -155,4 +160,8 @@ class FundingActivityMapperTest {
         date = at,
         status = status,
     )
+
+    private companion object {
+        const val DAY_MS = 86_400_000L
+    }
 }

@@ -23,7 +23,6 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withTimeoutOrNull
-import timber.log.Timber
 import uniffi.truapi.FundingFrameOutcome
 import uniffi.truapi.FundingFrameTarget
 import uniffi.truapi.FundingOptions
@@ -163,7 +162,6 @@ class AppFundingHostBridge @Inject constructor(
     }
 
     override fun fundingQuotesChanged(intent: String, quotes: FundingQuoteList) {
-        Timber.tag("truapi.funding").d("quotes %s: best %s, %d rows", intent, quotes.best, quotes.rows.size)
         quoteLists.tryEmit(FundingQuoteListUpdate(intent, quotes))
     }
 
