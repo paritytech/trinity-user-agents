@@ -360,14 +360,9 @@ mod tests {
 	/// Nothing else does, not even a subname of either.
 	#[test]
 	fn game_reminders_are_held_for_the_game_and_humanity_alone() {
-		for product_id in [
-			"dim2.dot",
-			"dim2.paseo",
-			"dim2.testnet",
-			"peopl.dot",
-			"peopl.paseo",
-			"peopl.testnet",
-		] {
+		for product_id in
+			["dim2.dot", "dim2.paseo", "dim2.testnet", "peopl.dot", "peopl.paseo", "peopl.testnet"]
+		{
 			assert!(ProductId::for_test(product_id).holds_game_reminders(), "{product_id}");
 		}
 		for product_id in [

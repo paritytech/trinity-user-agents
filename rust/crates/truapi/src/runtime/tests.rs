@@ -2808,14 +2808,9 @@ fn game_host_failures_reach_the_product_with_their_reason() {
 /// different publisher, and so is every other product.
 #[test]
 fn game_is_unsupported_for_every_product_but_the_game_and_humanity() {
-	for product_id in [
-		"game.dot",
-		"app.dim2.dot",
-		"dim2x.paseo",
-		"app.peopl.paseo",
-		"peoplx.dot",
-		"stash.dot",
-	] {
+	for product_id in
+		["game.dot", "app.dim2.dot", "dim2x.paseo", "app.peopl.paseo", "peoplx.dot", "stash.dot"]
+	{
 		let game = Arc::new(RecordingGamePlatform::default());
 		let host = game_host_for(
 			product_id,
@@ -2829,14 +2824,9 @@ fn game_is_unsupported_for_every_product_but_the_game_and_humanity() {
 		assert_eq!(scheduled(&game), vec![], "{product_id}");
 	}
 
-	for product_id in [
-		"dim2.dot",
-		"dim2.paseo",
-		"dim2.testnet",
-		"peopl.dot",
-		"peopl.paseo",
-		"peopl.testnet",
-	] {
+	for product_id in
+		["dim2.dot", "dim2.paseo", "dim2.testnet", "peopl.dot", "peopl.paseo", "peopl.testnet"]
+	{
 		let game = Arc::new(RecordingGamePlatform::default());
 		let host = game_host_for(
 			product_id,
