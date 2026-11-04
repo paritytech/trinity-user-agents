@@ -69,11 +69,7 @@ private fun ChatListScreenInternal(
 
     PolkadotSurface {
         Box(modifier = Modifier.fillMaxSize()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .statusBarsPadding()
-            ) {
+            Column(modifier = Modifier.fillMaxSize()) {
                 when (loadingState) {
                     is LoadingState.Loaded -> SearchRevealContainer(
                         state = revealState,
@@ -88,7 +84,9 @@ private fun ChatListScreenInternal(
                         },
                     )
 
-                    else -> ChatListLoading()
+                    else -> Box(modifier = Modifier.statusBarsPadding()) {
+                        ChatListLoading()
+                    }
                 }
             }
 

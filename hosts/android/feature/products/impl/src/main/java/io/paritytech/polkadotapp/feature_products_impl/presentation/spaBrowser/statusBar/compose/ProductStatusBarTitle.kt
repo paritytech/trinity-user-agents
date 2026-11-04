@@ -2,9 +2,12 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -24,9 +27,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.paritytech.polkadotapp.common.presentation.statusBar.IdBarPlate
 import io.paritytech.polkadotapp.design.components.docklet.DockletGlassTheme
 import io.paritytech.polkadotapp.design.components.docklet.LocalDockletPalette
 import io.paritytech.polkadotapp.design.components.dropdown.NovaDropdownMenu
@@ -47,6 +52,7 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.s
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val LogoSize = 16.dp
+private val LogoCellWidth = 29.dp
 private val MenuWidth = 238.dp
 private val MenuIconSize = 20.dp
 private val MenuItemHeight = 40.dp
@@ -82,18 +88,31 @@ private fun ProductStatusBarTitleInternal(
         action()
     }
 
-    Box {
-        Row(
-            modifier = Modifier.clickable(role = Role.Button, onClick = { menuExpanded = true }),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            NovaIcon(
-                modifier = Modifier.size(LogoSize),
-                imageVector = NovaIcons.PolkadotMark,
-                tint = PolkadotTheme.colors.fg.primary,
-            )
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
 
-            HorizontalSpacer { smallIncreased }
+    Box {
+        IdBarPlate(
+            modifier = Modifier
+                .padding(start = PolkadotTheme.spacings.small)
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    role = Role.Button,
+                    onClick = { menuExpanded = true },
+                ),
+            highlighted = pressed || menuExpanded,
+            contentPadding = PaddingValues(start = PolkadotTheme.spacings.extraTiny, end = PolkadotTheme.spacings.smallIncreased),
+        ) {
+            Box(modifier = Modifier.width(LogoCellWidth), contentAlignment = Alignment.Center) {
+                NovaIcon(
+                    modifier = Modifier.size(LogoSize),
+                    imageVector = NovaIcons.PolkadotMark,
+                    tint = PolkadotTheme.colors.fg.primary,
+                )
+            }
+
+            HorizontalSpacer { tiny }
 
             NovaText(
                 text = state.title,
@@ -111,6 +130,7 @@ private fun ProductStatusBarTitleInternal(
                 modifier = Modifier.width(MenuWidth),
                 expanded = menuExpanded,
                 onDismissRequest = { menuExpanded = false },
+                offset = DpOffset(x = PolkadotTheme.spacings.extraSmall, y = 0.dp),
                 shape = PolkadotTheme.shapes.extraLarge,
                 color = glass.glassFill,
                 border = BorderStroke(PolkadotTheme.borders.default, glass.glassStroke),

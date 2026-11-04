@@ -1,10 +1,13 @@
 package io.paritytech.polkadotapp.feature_settings_impl.presentation.main
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -18,6 +21,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
+import io.paritytech.polkadotapp.common.presentation.statusBar.reportsScrollToStatusBar
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.BlockOutlined
 import io.paritytech.polkadotapp.design.components.icon.vectors.FileOutlined
@@ -77,21 +81,21 @@ private fun SettingsScreenInternal(
     onLegalAndSupportClick: () -> Unit,
     onDebugMenuClick: () -> Unit
 ) {
-    PolkadotSurface {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-        ) {
-            VerticalSpacer { large }
+    val scrollState = rememberScrollState()
 
+    PolkadotSurface {
+        Column(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
+                    .reportsScrollToStatusBar(scrollState)
+                    .verticalScroll(scrollState)
+                    .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
                     .windowInsetsPadding(LocalAppNavigationBarInsets.current)
                     .padding(horizontal = PolkadotTheme.spacings.large)
             ) {
+                VerticalSpacer { large }
+
                 PolkadotMenuList(
                     headerText = stringResource(RCommon.string.settings_section_general)
                 ) {

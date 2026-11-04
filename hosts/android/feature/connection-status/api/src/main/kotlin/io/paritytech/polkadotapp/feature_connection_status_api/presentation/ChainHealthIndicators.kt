@@ -119,8 +119,9 @@ object ChainHealthBarDefaults {
 }
 
 /**
- * Always-on, transparent, overlaid at the very top like the system status indicators. [title] takes the
- * width the indicators leave, so a long title ends before them.
+ * Transparent, overlaid at the very top like the system status indicators. [title] takes the
+ * width the indicators leave, so a long title ends before them, and starts near the edge: its lockup pads
+ * itself, so a plate behind it lines up with the screen.
  */
 @Composable
 fun ChainHealthBar(
@@ -134,7 +135,7 @@ fun ChainHealthBar(
             .fillMaxWidth()
             .statusBarsPadding()
             .height(ChainHealthBarDefaults.ContentHeight)
-            .padding(horizontal = PolkadotTheme.spacings.medium),
+            .padding(start = PolkadotTheme.spacings.extraSmall, end = PolkadotTheme.spacings.medium),
         horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
         verticalAlignment = Alignment.CenterVertically,
     ) {

@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.paritytech.polkadotapp.common.presentation.statusBar.ReportsWebViewScrollToStatusBar
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
@@ -44,6 +45,8 @@ fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
         viewModel.onBackPressed()
     }
 
+    ReportsWebViewScrollToStatusBar(webView)
+
     SpaBrowserScreenInternal(
         state = state,
         webView = webView,
@@ -61,9 +64,8 @@ internal fun SpaBrowserScreenInternal(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .safeDrawingPadding()
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
         ) {
-            DotNsLoadProgressBar(progress = state.loadProgress)
             PolkadotSurface(
                 modifier = Modifier.weight(1f),
                 color = PolkadotTheme.colors.bg.surface.container,
@@ -72,6 +74,14 @@ internal fun SpaBrowserScreenInternal(
                     SpaBrowserPageContent(
                         pageState = state.pageState,
                         webView = webView,
+                    )
+
+                    DotNsLoadProgressBar(
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .statusBarsPadding()
+                            .fillMaxWidth(),
+                        progress = state.loadProgress,
                     )
 
                     if (state.isDevServer) {
@@ -92,7 +102,7 @@ internal fun SpaBrowserScreenInternal(
 }
 
 /**
- * Thin progress bar shown under the top bar while the `.dot` content loads. The phases map onto
+ * Thin progress bar shown over the top of the page while the `.dot` content loads. The phases map onto
  * fixed regions of the bar so it only ever fills forward:
  * - **Resolving** animates `0 → [RESOLVE_BAND_END]` over [BAND_ANIM_MILLIS]ms,
  * - **Downloading** tracks bytes across the middle band `[RESOLVE_BAND_END, DOWNLOAD_BAND_END]`,
@@ -101,7 +111,7 @@ internal fun SpaBrowserScreenInternal(
  * Hidden when idle / completed / failed.
  */
 @Composable
-private fun DotNsLoadProgressBar(progress: DotNsLoadProgress, modifier: Modifier = Modifier) {
+private fun DotNsLoadProgressBar(modifier: Modifier = Modifier, progress: DotNsLoadProgress) {
     val target = when (progress) {
         DotNsLoadProgress.Resolving -> RESOLVE_BAND_END
         is DotNsLoadProgress.Downloading ->
@@ -129,7 +139,7 @@ private fun DotNsLoadProgressBar(progress: DotNsLoadProgress, modifier: Modifier
     if (isLoading) {
         NovaLinearProgressIndicator(
             progress = animatedFraction,
-            modifier = modifier.fillMaxWidth(),
+            modifier = modifier,
             color = PolkadotTheme.colors.fg.link
         )
     }

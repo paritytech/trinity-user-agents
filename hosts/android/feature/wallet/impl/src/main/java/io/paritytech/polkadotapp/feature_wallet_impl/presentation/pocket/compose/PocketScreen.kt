@@ -33,6 +33,7 @@ import io.paritytech.polkadotapp.common.presentation.notification.rememberAppNot
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.screens.ObserveViewModelEvents
+import io.paritytech.polkadotapp.common.presentation.statusBar.reportsScrollToStatusBar
 import io.paritytech.polkadotapp.design.components.dialog.NovaAlertDialog
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
@@ -235,12 +236,9 @@ private fun PocketList(
     val navigationBarInsets = LocalAppNavigationBarInsets.current
 
     Box {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-        ) {
+        Column(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
+                modifier = Modifier.reportsScrollToStatusBar(listState),
                 state = listState,
                 verticalArrangement = Arrangement.spacedBy(-CardSizes.OVERLAP),
                 contentPadding = WindowInsets(
@@ -248,7 +246,9 @@ private fun PocketList(
                     bottom = PolkadotTheme.spacings.mediumIncreased,
                     left = PolkadotTheme.spacings.mediumIncreased,
                     right = PolkadotTheme.spacings.mediumIncreased
-                ).add(navigationBarInsets).asPaddingValues()
+                ).add(navigationBarInsets)
+                    .add(WindowInsets.statusBars.only(WindowInsetsSides.Top))
+                    .asPaddingValues()
             ) {
                 // Keyed: a product card holds a face subscription and its resolved images, so
                 // positional identity would make every card below an insertion drop and re-subscribe.
