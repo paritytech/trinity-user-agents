@@ -1101,6 +1101,28 @@
         }
       }
     },
+    "error.openMessage" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Something went wrong. Try again."
+          }
+        }
+      }
+    },
+    "error.openTitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't open"
+          }
+        }
+      }
+    },
     "error.quoteTimeout" : {
       "extractionState" : "manual",
       "localizations" : {
