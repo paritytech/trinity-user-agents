@@ -262,38 +262,54 @@ enum DockletContentFade {
     static let quietFadeDuration: TimeInterval = 0.265
     /// Control points of the timing curve that runs the quiet fade in SwiftUI over `quietFadeDuration`. The curve
     /// matches the spring's opacity within about 0.6 %.
-    static let quietFadeFirstControl = (x: 0.25, y: 0.0)
-    static let quietFadeSecondControl = (x: 0.4, y: 0.8)
+    static let quietFadeFirstControl = CGPoint(x: 0.25, y: 0.0)
+    static let quietFadeSecondControl = CGPoint(x: 0.4, y: 0.8)
     /// Frames the quiet fade waits after its trigger. The quiet spring's first frame only starts its clock, so the
     /// bar moves one frame after the trigger.
     static let quietFadeLeadFrames = 1
 }
 
 /// Where the content inside the glass is headed, and how it gets there. A transition sets it once, when it starts.
-enum DockletContentFadeTarget: Equatable {
-    /// Full opacity at once.
-    case shown
-    /// No opacity at once.
-    case hidden
-    /// To zero on the quiet hide's timing curve.
-    case quietFadeOut
-    /// To zero, linearly, over `DockletReducedFade.duration`.
-    case reducedFadeOut
-    /// To full opacity, linearly, over `DockletReducedFade.duration`.
-    case reducedFadeIn
+struct DockletContentFadeTarget: Equatable {
+    /// How the content reaches `opacity`.
+    enum Timing: Equatable {
+        /// At once.
+        case instant
+        /// Linearly over `duration` seconds.
+        case linear(duration: TimeInterval)
+        /// On a cubic timing curve over `duration` seconds, starting `leadFrames` display frames after the trigger.
+        case curve(firstControl: CGPoint, secondControl: CGPoint, duration: TimeInterval, leadFrames: Int)
+    }
 
     /// The opacity the transition lands on.
-    var opacity: CGFloat {
-        switch self {
-        case .shown,
-             .reducedFadeIn:
-            1
-        case .hidden,
-             .quietFadeOut,
-             .reducedFadeOut:
-            0
-        }
-    }
+    let opacity: CGFloat
+    /// How the content reaches `opacity`, from the transition that set it.
+    let timing: Timing
+
+    /// Full opacity at once.
+    static let shown = DockletContentFadeTarget(opacity: 1, timing: .instant)
+    /// No opacity at once.
+    static let hidden = DockletContentFadeTarget(opacity: 0, timing: .instant)
+    /// To zero on the quiet hide's timing curve.
+    static let quietFadeOut = DockletContentFadeTarget(
+        opacity: 0,
+        timing: .curve(
+            firstControl: DockletContentFade.quietFadeFirstControl,
+            secondControl: DockletContentFade.quietFadeSecondControl,
+            duration: DockletContentFade.quietFadeDuration,
+            leadFrames: DockletContentFade.quietFadeLeadFrames
+        )
+    )
+    /// To zero, linearly, over `DockletReducedFade.duration`.
+    static let reducedFadeOut = DockletContentFadeTarget(
+        opacity: 0,
+        timing: .linear(duration: DockletReducedFade.duration)
+    )
+    /// To full opacity, linearly, over `DockletReducedFade.duration`.
+    static let reducedFadeIn = DockletContentFadeTarget(
+        opacity: 1,
+        timing: .linear(duration: DockletReducedFade.duration)
+    )
 }
 
 private extension DockletMotion {
