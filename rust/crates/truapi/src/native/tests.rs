@@ -3007,6 +3007,32 @@ fn reads_an_inline_image_from_hex() {
 	assert!(parse_renderer_node_json(image("89504e47")).is_err());
 }
 
+/// Every host refuses the same inline images, so a face draws alike
+/// everywhere: raster formats recognised by their first bytes, nothing over
+/// 64 KiB, and never SVG, which can load outside addresses.
+#[test]
+fn inline_images_are_allowed_by_format_and_size() {
+	let png = b"\x89PNG\r\n\x1a\n".to_vec();
+	let padded = |mut bytes: Vec<u8>, len: usize| {
+		bytes.resize(len, 0);
+		bytes
+	};
+	let cases = [
+		(png.clone(), true),
+		(vec![0xff, 0xd8, 0xff, 0xe0], true),
+		(b"RIFF\0\0\0\0WEBPVP8 ".to_vec(), true),
+		(padded(png.clone(), 64 * 1024), true),
+		(padded(png, 64 * 1024 + 1), false),
+		(b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>".to_vec(), false),
+		(b"not an image".to_vec(), false),
+		(Vec::new(), false),
+	];
+
+	let answers: Vec<bool> =
+		cases.iter().map(|(bytes, _)| inline_image_allowed(bytes.clone())).collect();
+	assert_eq!(answers, cases.iter().map(|(_, allowed)| *allowed).collect::<Vec<_>>());
+}
+
 /// `depth` boxes around an empty node, three brackets per box.
 fn nested_boxes(depth: usize) -> String {
 	let mut json = String::new();
