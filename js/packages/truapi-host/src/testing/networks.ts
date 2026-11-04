@@ -150,6 +150,14 @@ export function withNetworks(
   const chains =
     options.networks ?? (options.chain ? [options.chain] : undefined);
   if (!chains) {
+    if (loopbackStatements === true) {
+      throw new Error(
+        "testHost `loopbackStatements` needs a chain to carry the statement " +
+          "store, and neither `networks` nor `chain` declares one. Declare " +
+          "the chain, or set `loopbackStatements` on the proxy in " +
+          "`mock.chainProxies` yourself.",
+      );
+    }
     return { mock: options.mock, runtimeConfig: options.runtimeConfig };
   }
   const expanded = fromNetworks(chains, loopbackStatements);

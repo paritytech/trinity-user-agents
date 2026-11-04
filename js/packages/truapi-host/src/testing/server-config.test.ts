@@ -115,9 +115,25 @@ describe("createTestHostServer host configuration", () => {
       unref: true,
       loopbackStatements: false,
       networks: [],
+      allowances: "granted",
+      loginBehavior: "auto",
+      topology: "worker",
+      mock: {},
+      runtimeConfig: {},
+      productStorage: {},
     });
     expect(new URL(server.url).search).toBe("");
     await server.close();
+  });
+
+  it("refuses `loopbackStatements: true` with no chain to carry it", async () => {
+    await expect(
+      createTestHostServer({
+        unref: true,
+        productUrl: "http://localhost:5173",
+        loopbackStatements: true,
+      }),
+    ).rejects.toThrow(/`loopbackStatements` needs a chain/);
   });
 
   it("rejects a derivation-path account, and says why", async () => {

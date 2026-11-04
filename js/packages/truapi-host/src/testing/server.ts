@@ -168,24 +168,27 @@ export async function createTestHostServer(
     );
   }
   // Without a `productUrl` the server answers a bare base, so any page option
-  // asked for here would reach no page. Refused rather than dropped.
+  // asked for here would reach no page. Refused rather than dropped. A value
+  // that only restates the page's default asks for nothing, so it passes.
   if (!options.productUrl) {
-    const asked: [string, unknown][] = [
-      ["networks", options.networks?.length],
-      ["chain", options.chain],
-      ["loopbackStatements", options.loopbackStatements],
-      ["productStorage", Object.keys(options.productStorage ?? {}).length],
-      ["productId", options.productId],
-      ["mock", options.mock],
-      ["runtimeConfig", options.runtimeConfig],
-      ["accounts", options.accounts?.length],
-      ["loginBehavior", options.loginBehavior],
-      ["topology", options.topology],
-      ["allowances", options.allowances],
-      ["withheldResources", options.withheldResources?.length],
-      ["logLevel", options.logLevel],
+    const filled = (value?: object) =>
+      value !== undefined && Object.keys(value).length > 0;
+    const asked: [string, boolean][] = [
+      ["networks", Boolean(options.networks?.length)],
+      ["chain", options.chain !== undefined],
+      ["loopbackStatements", options.loopbackStatements === true],
+      ["productStorage", filled(options.productStorage)],
+      ["productId", Boolean(options.productId)],
+      ["mock", filled(options.mock)],
+      ["runtimeConfig", filled(options.runtimeConfig)],
+      ["accounts", Boolean(options.accounts?.length)],
+      ["loginBehavior", (options.loginBehavior ?? "auto") !== "auto"],
+      ["topology", (options.topology ?? "worker") !== "worker"],
+      ["allowances", (options.allowances ?? "granted") !== "granted"],
+      ["withheldResources", Boolean(options.withheldResources?.length)],
+      ["logLevel", Boolean(options.logLevel)],
     ];
-    const refused = asked.filter(([, value]) => value).map(([name]) => name);
+    const refused = asked.filter(([, asks]) => asks).map(([name]) => name);
     if (refused.length) {
       throw new Error(
         `createTestHostServer: ${refused.map((name) => `\`${name}\``).join(", ")} ` +

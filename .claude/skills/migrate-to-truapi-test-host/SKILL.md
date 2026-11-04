@@ -156,7 +156,8 @@ single declared chain when it does not -- that proxy takes every request, so it
 carries the statement traffic too. Declaring several chains with no People among
 them serves no store, since there is no request the store could attach to and
 answering statement reads on a hub would answer what a hub refuses. Asking for
-one there with `loopbackStatements: true` is refused.
+one there with `loopbackStatements: true` is refused, as is asking for one
+with no chain declared at all.
 
 What that buys is narrower than it looks. Nothing is registered anywhere, so a
 green run says the product handles a grant, not that a host would have given
@@ -237,7 +238,8 @@ createTestHostFixture({
 });
 ```
 
-It travels in the host page URL, so a reload starts from it again.
+It travels in the host page URL, so a reload starts from it again, and
+`testHost.reset()` writes it back after clearing the store.
 `testHost.seedProductStorage(key, value)` writes an entry while the product
 runs. It reaches a product that subscribes to the key or reads it later, not a
 read already made at startup. Either way the host builds the key the core

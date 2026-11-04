@@ -207,7 +207,7 @@ export interface TestHostFixtureOptions {
    * Product storage the host holds before the product loads, by the product's
    * own keys, stored as UTF-8. Use it for state a product reads once at
    * startup, which `seedProductStorage` can land too late for. A reload of
-   * the host page starts from it again.
+   * the host page and `reset()` both start from it again.
    */
   productStorage?: Record<string, string>;
   /** How long to wait for the host page to publish its control surface. */

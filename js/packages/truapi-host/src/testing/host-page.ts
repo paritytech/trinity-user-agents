@@ -377,15 +377,22 @@ export async function startTestHost(
   // Before the iframe exists, so a product that reads its storage once at
   // startup finds these entries rather than racing a seed.
   const seeded = Object.entries(options.productStorage ?? {});
+  const bootStorage: [string, Uint8Array][] = [];
   if (seeded.length) {
     const helpers = await deriveHelpers();
     for (const [key, value] of seeded) {
-      host.writeProductStorage(
+      bootStorage.push([
         helpers.productStorageKey(hostProduct, key),
         new TextEncoder().encode(value),
-      );
+      ]);
     }
   }
+  const writeBootStorage = () => {
+    for (const [storedKey, value] of bootStorage) {
+      host.writeProductStorage(storedKey, value);
+    }
+  };
+  writeBootStorage();
   const iframeHost = createIframeHost({
     iframeUrl: options.productUrl,
     container: options.container,
@@ -444,7 +451,14 @@ export async function startTestHost(
     },
   });
 
+  const resetMock = host.reset.bind(host);
   const control: TestHostControl = Object.assign(host, {
+    // The boot-time product storage is part of the state this host was
+    // constructed with, so a reset writes it back after clearing the store.
+    reset() {
+      resetMock();
+      writeBootStorage();
+    },
     getAccounts: () => roster.map((account) => account.name),
     getActiveAccount: () => active?.name,
     async seedProductStorage(
