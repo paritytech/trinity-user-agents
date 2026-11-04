@@ -1416,7 +1416,9 @@ chain connections are `wss://` from the embedded light client.
 Chains are reached through the embedded light client in `@parity/truapi-provider`, using its bundled `paseo-next-v2`
 catalog. The genesis hashes the core is configured with and the chain set reported to products come from the same
 catalog. The light client keeps no state between loads, so each tab syncs from the chain spec checkpoint when it starts.
-A name lookup uses one public RPC node instead, as described above.
+A name lookup uses one public RPC node instead, as described above. Asset Hub is served through that RPC node too
+(`assetHubRpc`), as the native hosts reach it, because the light client cannot validate a PGAS allowance claim against
+Asset Hub and drops it before broadcast. The host trusts that node's Asset Hub answers.
 
 The core opens one connection per chain and runs every product's `chainHead_v1_follow` over it, along with some follows
 of its own. One light-client connection holds two follows and refuses a third with "too many active follow
