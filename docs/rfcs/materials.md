@@ -126,13 +126,13 @@ pub enum ImageRef {
 }
 ```
 
-The base image is the host's drawing of the node's children, clipped to the node's bounds. Behind a transparent part it
-holds what the tree draws behind the node, flattened into its colour, and black where the tree draws nothing. `r_base`
-and the first `r_input` are the base image, and each layer's output is the next layer's `r_input`. The last layer's
-output is drawn in the node's place, over what is behind it, using its alpha without premultiplication. Layers have no
-blend modes: a material does its own image maths. A node drawn plain shows its children without its layers.
+The base image is the host's drawing of the node's children, clipped to the node's bounds, with what the tree draws
+behind the node as the backdrop. Layers chain over it as the renderer inputs define. The last layer's output is drawn in
+the node's place, over what is behind it, using its alpha without premultiplication. A node drawn plain shows its
+children without its layers.
 
-Any tree may carry `Materials`. A host draws them only on the surfaces it supports, and draws the nodes plain elsewhere.
+Any tree may carry `Materials`. A host draws them only on the surfaces it supports, and elsewhere draws the nodes plain
+and reports `Unsupported`.
 
 Materials amend the Closed requirement of the Unified Renderer to read:
 
@@ -202,13 +202,14 @@ pub enum MaterialFailure {
     /// The node breaks a limit.
     LimitExceeded,
     /// The host does not read the version or a required feature, cannot
-    /// compile the material, or has materials switched off.
+    /// compile the material, does not draw materials on this surface, or has
+    /// materials switched off.
     Unsupported,
 }
 ```
 
-`Unsupported` covers a material the device cannot compile and materials switched off alike, so a report does not tell a
-product which of the two happened on the device.
+`Unsupported` covers a material the device cannot compile, a surface without materials and materials switched off alike,
+so a report does not tell a product which of these happened on the device.
 
 Compiling never blocks drawing or crashes the app. A material that crashed the app is not compiled again on that device.
 Materials can be switched off remotely.
@@ -274,36 +275,20 @@ question.
 ```rust
 /// Request to query whether a feature is supported by the host.
 pub enum HostFeatureSupportedRequest {
-    /// Ask whether the host can interact with the chain identified by genesis hash.
-    Chain {
-        /// Chain genesis hash.
-        genesis_hash: Vec<u8>,
-    },
+    // Chain, as today.
     /// Ask whether the host draws materials of one format version, requiring
-    /// these features, on one surface.
+    /// these features.
     Materials {
         /// Format version, as on the `// @material` line.
         format_version: u32,
         /// Feature names, as on the `// @requires` line.
         features: Vec<String>,
-        /// Surface the materials would draw on.
-        surface: RenderSurface,
     },
-}
-
-/// A surface a product-rendered body draws on, one per `RenderContext` variant.
-pub enum RenderSurface {
-    /// A message in a chat room.
-    ChatMessage,
-    /// A candidate answered to an input query.
-    InputWidget,
-    /// A card face in the host's Pocket collection.
-    PocketCard,
 }
 ```
 
-The answer is yes only when the host reads that version and every named feature, draws materials on that surface, and
-has materials switched on. A host that answers yes serves `Renderer::failure_subscribe`.
+The answer is yes only when the host reads that version and every named feature, and has materials switched on. A host
+that answers yes serves `Renderer::failure_subscribe`.
 
 ## Compatibility
 
