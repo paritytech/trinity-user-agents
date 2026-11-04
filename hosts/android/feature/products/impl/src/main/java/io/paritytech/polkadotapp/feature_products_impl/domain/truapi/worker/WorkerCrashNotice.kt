@@ -17,7 +17,9 @@ import io.paritytech.polkadotapp.common.R as RCommon
 /**
  * Tells the user a product's worker keeps crashing, once the core says so. The core goes on restarting it with
  * backoff, so the notice is transient and asks nothing. The product is named as the funding sheet names a provider,
- * by the bare id until its manifest resolves.
+ * by the bare id until its manifest resolves: funding providers are the workers this runs today, and
+ * [FundingProviderBranding] is the lookup that already names a product from its manifest, so it is reused on purpose
+ * rather than duplicated for any worker.
  */
 @Singleton
 class WorkerCrashNotice @Inject constructor(

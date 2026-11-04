@@ -104,7 +104,7 @@ sealed interface FundingRecordOutcome {
     /** Value out, cancelled on the provider's terms after the balance was debited; the refund is the record's `refunded`. */
     data object Cancelled : FundingRecordOutcome
 
-    /** Kept with an `Other` failure's message, so a stored one reads back the same. */
+    /** Why it failed, with an `Other` failure's own message as the core holds it. */
     data class Failed(val reason: FundingFailureReason) : FundingRecordOutcome
 }
 
