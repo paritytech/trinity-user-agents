@@ -1,3 +1,4 @@
+import AsyncExtensions
 import Foundation
 import Testing
 import TrUAPIHost
@@ -67,5 +68,70 @@ struct FundingConfigTests {
             FundingProviderEntry(productId: ramp, workerManifest: nil, origin: .published),
             FundingProviderEntry(productId: fundtest, workerManifest: "{}", origin: .bundled)
         ])
+    }
+
+    @Test("A refresh is listed only when it changes the providers")
+    func listsOnlyChangedRefreshes() async throws {
+        let ramp = try ProductId("ramp.dot")
+        let other = try ProductId("other.dot")
+        let published = { (ids: [ProductId]) in
+            ids.map { FundingProviderEntry(productId: $0, workerManifest: nil, origin: .published) }
+        }
+        let refreshes = [[ramp], [ramp], [ramp, other], [ramp, other], [ramp]]
+        var listed: [[FundingProviderEntry]] = []
+
+        try await TrUAPIHostRuntimeProvider.followRefreshes(
+            of: stream(refreshes),
+            listed: published([ramp]),
+            bundled: []
+        ) { providers in
+            listed.append(providers)
+            return true
+        }
+
+        #expect(listed == [published([ramp, other]), published([ramp])])
+    }
+
+    @Test("Following stops once the runtime is gone")
+    func stopsWhenListingIsRefused() async throws {
+        let ids = try ["a.dot", "b.dot", "c.dot"].map(ProductId.init)
+        var calls = 0
+
+        try await TrUAPIHostRuntimeProvider.followRefreshes(
+            of: stream(ids.map { [$0] }),
+            listed: [],
+            bundled: []
+        ) { _ in
+            calls += 1
+            return false
+        }
+
+        #expect(calls == 1)
+    }
+
+    private func stream(_ refreshes: [[ProductId]]) -> AnyAsyncSequence<RemoteAppConfig> {
+        AsyncStream { continuation in
+            for providers in refreshes {
+                continuation.yield(config(providers: providers))
+            }
+            continuation.finish()
+        }
+        .eraseToAnyAsyncSequence()
+    }
+
+    private func config(providers: [ProductId]) -> RemoteAppConfig {
+        RemoteAppConfig(
+            identityBackendUrl: nil,
+            ipfsGatewayUrl: nil,
+            dotNsResolver: nil,
+            dotNsNameRegistry: nil,
+            coinageInstanceId: nil,
+            fundingUrl: nil,
+            offrampUrl: nil,
+            accountDataStoreContract: nil,
+            paymentAsset: nil,
+            appSharingUrl: nil,
+            fundingProviders: providers
+        )
     }
 }
