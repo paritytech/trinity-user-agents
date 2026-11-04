@@ -29,7 +29,6 @@ class ProductUpdateWorker @AssistedInject constructor(
     private val chainConnectionRefCounter: ChainConnectionRefCounter,
 ) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
-        // In the background nothing else keeps up the connection the builds are read over.
         return chainConnectionRefCounter.withConnectionEnabled(chainRegistry.knownChains.assetHub, WORK_NAME) {
             productUpdater.checkAll()
         }
@@ -42,7 +41,6 @@ class ProductUpdateWorker @AssistedInject constructor(
 
         private val INTERVAL = 4.hours
 
-        // A build can run to hundreds of megabytes, so a background download waits for Wi-Fi.
         fun schedule(context: Context) {
             val request = PeriodicWorkRequestBuilder<ProductUpdateWorker>(INTERVAL.inWholeSeconds, TimeUnit.SECONDS)
                 .setConstraints(

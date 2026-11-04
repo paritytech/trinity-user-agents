@@ -21,8 +21,6 @@ import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 
-// A product's version is its manifest records and the content of its names, checked and applied as one. It is applied
-// once nothing of the product runs, or when the user reloads its page; a running worker keeps the code it loaded.
 @Singleton
 class ProductUpdater @Inject constructor(
     private val dotNsResolver: DotNsResolver,
@@ -30,8 +28,6 @@ class ProductUpdater @Inject constructor(
     private val dotNsTldProvider: DotNsTldProvider,
     private val resolveProductUseCase: ResolveProductUseCase,
 ) {
-    // A screen start and the product coming into use check at the same moment; the second check waits for the first
-    // and finds its names just read, so it does not read them again.
     private val checkLocks = KeyedMutex<String>()
 
     fun observePending(): Flow<Set<ProductId>> {
@@ -49,15 +45,9 @@ class ProductUpdater @Inject constructor(
         return fetchUpdates(names.groupBy { productIdOf(it)?.value ?: it })
     }
 
-    suspend fun apply(productId: ProductId) {
-        val pending = observePendingNames().first()
-        val names = namesOf(productId).filter { it in pending }
-        if (names.isEmpty()) return
+    suspend fun apply(productId: ProductId) = applyNames(productId, namesOf(productId))
 
-        dotNsResolver.applyUpdates(names)
-        // The manifest may have changed with the version, and the next resolve has to read the one now served.
-        resolveProductUseCase.invalidate(productId)
-    }
+    suspend fun applyPage(productId: ProductId, pageName: String) = applyNames(productId, listOf(pageName))
 
     fun start(scope: CoroutineScope) {
         productsInUse.observe()
@@ -74,7 +64,15 @@ class ProductUpdater @Inject constructor(
             .launchIn(scope)
     }
 
-    // A product chain no longer answers for must not fail the run; a run that reached nothing did fail.
+    private suspend fun applyNames(productId: ProductId, names: List<String>) {
+        val pending = observePendingNames().first()
+        val pendingNames = names.filter { it in pending }
+        if (pendingNames.isEmpty()) return
+
+        dotNsResolver.applyUpdates(pendingNames)
+        resolveProductUseCase.invalidate(productId)
+    }
+
     private suspend fun fetchUpdates(namesByProduct: Map<String, List<String>>): Result<Unit> {
         val results = namesByProduct.entries.mapAsync { (product, names) ->
             checkLocks.withLock(product) { dotNsResolver.fetchUpdates(names) }

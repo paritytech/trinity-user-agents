@@ -17,7 +17,6 @@ class NetworkRetriesTest {
         every { isNetworkAvailable } returns online
     }
 
-    // A phone in a tunnel would otherwise burn every attempt before it is out.
     @Test
     fun `a failure while offline is not counted and the read resumes once the network is back`() = runTest {
         online.value = false

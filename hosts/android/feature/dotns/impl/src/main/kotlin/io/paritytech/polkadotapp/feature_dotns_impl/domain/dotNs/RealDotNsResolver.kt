@@ -60,16 +60,12 @@ internal class RealDotNsResolver @Inject constructor(
 ) : DotNsResolver {
     private val progressRegistry = DotNsLoadProgressRegistry()
 
-    // A name's first load downloads once however many requests wait on it.
     private val firstLoadLocks = KeyedMutex<DomainName>()
 
-    // Two names can point at one build, which must not be unpacked twice into the same directory.
     private val downloadLocks = KeyedMutex<ContentHash>()
 
-    // Every change to what the names serve goes through here, so an update lands on all of its names at once.
     private val buildsLock = Mutex()
 
-    // A name read moments ago, by its first load or by another check, is already the latest; an update check skips it.
     private val lastChainReads = ConcurrentHashMap<DomainName, TimeMark>()
 
     override suspend fun resolveToLocalUri(
@@ -82,7 +78,6 @@ internal class RealDotNsResolver @Inject constructor(
                 return@withLock Result.success(directory)
             }
 
-            // Nothing on the device yet, so chain is the only source. Once downloaded, the content is served without it.
             readContentHash(dotNsName, retryPolicy).flatMap { contentHash ->
                 contentDirectory(contentHash, reportedAs = dotNsName, retryPolicy)
                     .onSuccess { changeServed(dotNsName) { it.copy(contentHash = contentHash) } }
@@ -90,7 +85,6 @@ internal class RealDotNsResolver @Inject constructor(
         }
             .map(Uri::fromFile)
             .logFailure("failed to resolve $dotNsName")
-            // A host screen reads a failure as final, and a domain with nothing registered would otherwise leave it waiting for good.
             .onFailure { progressRegistry.markFailed(dotNsName, it) }
     }
 
@@ -110,7 +104,6 @@ internal class RealDotNsResolver @Inject constructor(
         val served = dotNsNames.filterNot(::readRecently).mapNotNull { name -> buildStorage.get(name)?.let { name to it.served } }
         if (served.isEmpty()) return@withContext Result.success(false)
 
-        // Read before taking any lock, so the round trips to chain hold up no page being served.
         served.mapAsync { (name, version) -> readLatest(name, version).map { name to it } }
             .flattenResult()
             .map { latest -> recordUpdates(latest.toMap()) }
@@ -154,7 +147,6 @@ internal class RealDotNsResolver @Inject constructor(
     }
 
     private suspend fun readLatest(dotNsName: DomainName, served: DotNsNameVersion): Result<DotNsNameChange> {
-        // Content the device never loaded stays out of the update: its first load reads the latest anyway.
         val contentHash = if (served.contentHash == null) {
             null
         } else {
@@ -173,7 +165,6 @@ internal class RealDotNsResolver @Inject constructor(
         }
     }
 
-    // What differs from the served version becomes each name's update; a pending one chain no longer points at is dropped.
     private suspend fun recordUpdates(latest: Map<DomainName, DotNsNameChange>): Boolean = buildsLock.withLock {
         latest.keys.forEach(::markReadFromChain)
         val builds = latest.mapNotNull { (name, change) ->
@@ -182,7 +173,6 @@ internal class RealDotNsResolver @Inject constructor(
         val replacedUpdates = latest.keys.mapNotNull { buildStorage.get(it)?.update?.contentHash }
 
         buildStorage.putAll(builds)
-        // A download that turned out to be no update, and an update replaced by a newer one, are left unreferenced.
         (replacedUpdates + latest.values.mapNotNull { it.contentHash }).forEach { deleteUnlessReferenced(it) }
 
         builds.values.any { it.update != null }
@@ -204,7 +194,6 @@ internal class RealDotNsResolver @Inject constructor(
         return lastChainReads[dotNsName]?.let { it.elapsedNow() < MIN_TIME_BETWEEN_CHAIN_READS } == true
     }
 
-    // Two names may share one build, as a name and its alias do.
     private suspend fun deleteUnlessReferenced(contentHash: ContentHash) {
         val referenced = buildStorage.all().values.any { it.served.contentHash == contentHash || it.update?.contentHash == contentHash }
         if (!referenced) contentStorage.deleteContent(contentHash)
@@ -230,7 +219,6 @@ internal class RealDotNsResolver @Inject constructor(
             .mapNotNull { it.toHexString() }
     }
 
-    // A node that never answers would hold the caller for good; a read cut off here is retried like a dropped one.
     private suspend fun <T> readOnChain(retryPolicy: NetworkRetryPolicy, read: suspend () -> Result<T>): Result<T> {
         return networkStateService.retrying(retryPolicy, ::isWorthRetrying) {
             withTimeoutOrNull(CHAIN_READ_TIMEOUT) { read() }
@@ -253,7 +241,6 @@ internal class RealDotNsResolver @Inject constructor(
         }
     }
 
-    // Progress goes to the name in [reportedAs]; a download for an update passes none and stays off the host screen's bar.
     private suspend fun download(contentHashHex: ContentHash, reportedAs: DomainName?, retryPolicy: NetworkRetryPolicy): Result<File> {
         Timber.d("content $contentHashHex not on the device, fetching CAR")
         reportedAs?.let(progressRegistry::markResolving)
@@ -279,7 +266,6 @@ internal class RealDotNsResolver @Inject constructor(
             .logFailure("failed to download $contentHashHex")
     }
 
-    // A contract that ran and refused, malformed data and a gateway answering "no such archive" say the same on the next attempt.
     private fun isWorthRetrying(error: Throwable): Boolean = when (error) {
         is ReviveContractReverted, is DispatchError, is IllegalArgumentException -> false
         is IpfsHttpException -> error.isTransient

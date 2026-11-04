@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import kotlinx.coroutines.flow.StateFlow
-import uniffi.truapi.ProductId
 
 interface SpaBrowserContract {
     val state: StateFlow<SpaBrowserUiState>
@@ -27,7 +26,7 @@ data class SpaBrowserUiState(
     val loadProgress: DotNsLoadProgress = DotNsLoadProgress.Idle,
     val pageState: SpaBrowserPageState = SpaBrowserPageState.Content,
     val isDevServer: Boolean = false,
-    val updateReadyFor: ProductId? = null,
+    val updateReadyProductName: String? = null,
 )
 
 /** What the content area shows. Anything still in flight is [Content] with [SpaBrowserUiState.loadProgress] running. */

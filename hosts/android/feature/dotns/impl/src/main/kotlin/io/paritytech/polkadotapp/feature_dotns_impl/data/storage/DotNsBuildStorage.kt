@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_dotns_impl.data.storage
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.Serializable
 
-// The content hash stays null until the device loads the name's content.
 @Serializable
 data class DotNsNameVersion(val contentHash: ContentHash?, val records: Map<String, String?>) {
     fun with(change: DotNsNameChange): DotNsNameVersion {
@@ -11,7 +10,6 @@ data class DotNsNameVersion(val contentHash: ContentHash?, val records: Map<Stri
     }
 }
 
-// Holds only new values: a null content hash means the content did not change.
 @Serializable
 data class DotNsNameChange(val contentHash: ContentHash?, val records: Map<String, String?>) {
     fun comparedTo(served: DotNsNameVersion): DotNsNameChange? {
@@ -31,7 +29,6 @@ data class DotNsBuild(val served: DotNsNameVersion, val update: DotNsNameChange?
 interface DotNsBuildStorage {
     fun get(dotNsName: String): DotNsBuild?
 
-    // One edit, so an update of several names is kept for all of them or for none.
     fun putAll(builds: Map<String, DotNsBuild>)
 
     fun all(): Map<String, DotNsBuild>

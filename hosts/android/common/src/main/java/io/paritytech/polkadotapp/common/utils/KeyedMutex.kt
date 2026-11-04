@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.common.utils
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-// A key's Mutex is dropped once no caller holds or waits for it.
 class KeyedMutex<K : Any> {
     private class Entry {
         val mutex = Mutex()

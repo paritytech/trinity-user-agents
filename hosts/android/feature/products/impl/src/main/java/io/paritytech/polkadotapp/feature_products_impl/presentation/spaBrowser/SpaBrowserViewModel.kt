@@ -12,6 +12,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
+import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
@@ -55,7 +56,6 @@ class SpaBrowserViewModel @Inject constructor(
 ) : BaseViewModel(), SpaBrowserContract {
     val webView: StateFlow<WebView?> = productSessionController.webView
 
-    // Updates the user put off, until the screen is next started.
     private val dismissedUpdates = MutableStateFlow<Set<ProductId>>(emptySet())
 
     private val activeProductId: Flow<ProductId?> = productSessionController.activeTab
@@ -85,18 +85,20 @@ class SpaBrowserViewModel @Inject constructor(
         }
     }
 
-    // Offered when the page itself changes; a version that changes only the worker or the widget is applied once the
-    // product is off screen. A built-in product updates like the app itself, without asking.
-    private val pagePendingUpdate: StateFlow<ProductId?> = combine(
-        pageLoad,
+    private val servedPage: StateFlow<ServedPage?> = pageLoad
+        .map { load ->
+            val resolved = (load as? PageLoad.Serving)?.resolved
+            val pageName = resolved?.executables?.app?.host?.value
+            if (resolved != null && pageName != null) ServedPage(resolved.product, pageName) else null
+        }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private val pagePendingUpdate: StateFlow<ServedPage?> = combine(
+        servedPage,
         productUpdater.observePendingNames(),
         dismissedUpdates,
-    ) { load, pending, dismissed ->
-        val serving = load as? PageLoad.Serving ?: return@combine null
-        val servedName = serving.resolved.executables.app?.host?.value ?: return@combine null
-        val productId = serving.resolved.product.id
-
-        productId.takeIf { servedName in pending && productId !in dismissed && !isBuiltIn(productId) }
+    ) { page, pending, dismissed ->
+        page?.takeIf { it.pageName in pending && it.product.id !in dismissed && !isBuiltIn(it.product.id) }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     override val state: StateFlow<SpaBrowserUiState> = combine(
@@ -110,7 +112,7 @@ class SpaBrowserViewModel @Inject constructor(
             loadProgress = load.toProgress(),
             pageState = load.toPageState(),
             isDevServer = info?.isDevServer == true,
-            updateReadyFor = pendingUpdate,
+            updateReadyProductName = pendingUpdate?.product?.name,
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, SpaBrowserUiState())
 
@@ -134,10 +136,9 @@ class SpaBrowserViewModel @Inject constructor(
         productSessionController.resetVisitHistory()
     }
 
-    // A version already downloaded is what a refresh asks for, so it is applied before the page reloads.
     override fun onRefresh() {
         launch {
-            activeProductId.first()?.let { productUpdater.apply(it) }
+            servedPage.value?.let { productUpdater.applyPage(it.product.id, it.pageName) }
             productSessionController.reload()
         }
     }
@@ -157,8 +158,6 @@ class SpaBrowserViewModel @Inject constructor(
         }
     }
 
-    // Runs when a tab is opened or restored from the tab bar and when the app returns from background: the product
-    // on screen may have published a build while the app was away.
     override fun onScreenStarted() {
         dismissedUpdates.value = emptySet()
 
@@ -169,18 +168,18 @@ class SpaBrowserViewModel @Inject constructor(
     }
 
     override fun onUpdateReloadClick() {
-        val productId = pagePendingUpdate.value ?: return
+        val page = pagePendingUpdate.value ?: return
 
         launch {
-            productUpdater.apply(productId)
+            productUpdater.applyPage(page.product.id, page.pageName)
             productSessionController.reload()
         }
     }
 
     override fun onUpdateDismissClick() {
-        val productId = pagePendingUpdate.value ?: return
+        val page = pagePendingUpdate.value ?: return
 
-        dismissedUpdates.update { it + productId }
+        dismissedUpdates.update { it + page.product.id }
     }
 
     private suspend fun isBuiltIn(productId: ProductId): Boolean {
@@ -198,6 +197,8 @@ class SpaBrowserViewModel @Inject constructor(
         }
     }
 }
+
+private data class ServedPage(val product: Product, val pageName: String)
 
 private sealed interface PageLoad {
     /** The tab is on an ordinary web page: nothing to resolve, and no archive to fetch. */

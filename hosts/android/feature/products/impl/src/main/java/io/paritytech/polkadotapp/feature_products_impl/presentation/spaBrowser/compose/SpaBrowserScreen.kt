@@ -123,7 +123,7 @@ internal fun SpaBrowserScreenInternal(
                     )
 
                     UpdateReadyNotice(
-                        product = state.updateReadyFor?.value,
+                        product = state.updateReadyProductName,
                         onReload = onUpdateReload,
                         onDismiss = onUpdateDismiss,
                         modifier = Modifier.align(Alignment.TopCenter),
@@ -166,7 +166,6 @@ private fun MinimizeButton(onClick: () -> Unit) {
     )
 }
 
-// Floats over the page like the root's notices do: the user may be in the middle of something and decides when to reload.
 @Composable
 private fun UpdateReadyNotice(
     modifier: Modifier = Modifier,
@@ -174,7 +173,6 @@ private fun UpdateReadyNotice(
     onReload: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    // The name stays on the notice while it slides out, or the text would go blank for the exit animation.
     var shownProduct by remember { mutableStateOf(product) }
     if (product != null) shownProduct = product
 
@@ -206,7 +204,6 @@ private fun UpdateReadyNoticeContent(
     PolkadotSurface(
         modifier = Modifier
             .fillMaxWidth()
-            // A tap on the notice must not reach the page under it.
             .pointerInput(Unit) {},
         color = PolkadotTheme.colors.bg.action.tertiary,
         shape = PolkadotTheme.shapes.extraMedium,

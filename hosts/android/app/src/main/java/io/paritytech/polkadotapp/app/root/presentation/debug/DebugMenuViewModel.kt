@@ -129,7 +129,6 @@ class DebugMenuViewModel @Inject constructor(
         state.update { it.copy(showDotNsCacheClearDialog = true) }
     }
 
-    // Open products keep serving their pages from the content they loaded, which the clear deletes.
     override fun onDotNsCacheClearConfirmed() = launchUnit {
         dotNsResolver.clearCache()
         restartAppUseCase()

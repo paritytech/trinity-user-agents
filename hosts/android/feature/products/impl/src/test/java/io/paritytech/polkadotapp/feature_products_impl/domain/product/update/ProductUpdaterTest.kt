@@ -47,10 +47,6 @@ class ProductUpdaterTest {
 
     private val updater = ProductUpdater(dotNsResolver, productsInUse, dotNsTldProvider, resolveProductUseCase)
 
-    // The policy runs in the test's background scope, which advanceUntilIdle leaves alone; runCurrent drives it.
-
-    // The check rides on the product being opened, so a version published since the last visit is found without a
-    // background run. Its names go in one fetch, which keeps the update for all of them or for none.
     @Test
     fun `a product coming into use is checked for a new version of all its names together`() = runTest {
         updater.start(backgroundScope)
@@ -62,7 +58,6 @@ class ProductUpdaterTest {
         coVerify { dotNsResolver.fetchUpdates(namesOf(GETCASH_APP, GETCASH_WORKER)) }
     }
 
-    // Switching the build under a running page or worker would break it mid-flow.
     @Test
     fun `a downloaded version waits until nothing of the product is running`() = runTest {
         updater.start(backgroundScope)
@@ -89,7 +84,6 @@ class ProductUpdaterTest {
         coVerify { dotNsResolver.applyUpdates(namesOf(SWAP_APP)) }
     }
 
-    // A manifest kept in memory from before would go on naming the executables of the version just replaced.
     @Test
     fun `applying a version drops the manifest read from the one it replaces`() = runTest {
         pendingNames.value = setOf(GETCASH_APP, GETCASH_WORKER)
@@ -98,6 +92,18 @@ class ProductUpdaterTest {
 
         coVerifyOrder {
             dotNsResolver.applyUpdates(namesOf(GETCASH_APP, GETCASH_WORKER))
+            resolveProductUseCase.invalidate(GETCASH)
+        }
+    }
+
+    @Test
+    fun `applying a page leaves the product's other names on their current build`() = runTest {
+        pendingNames.value = setOf(GETCASH_APP, GETCASH_WORKER)
+
+        updater.applyPage(GETCASH, GETCASH_APP)
+
+        coVerifyOrder {
+            dotNsResolver.applyUpdates(namesOf(GETCASH_APP))
             resolveProductUseCase.invalidate(GETCASH)
         }
     }
@@ -133,7 +139,6 @@ class ProductUpdaterTest {
         coVerify { dotNsResolver.fetchUpdates(namesOf(SWAP_APP)) }
     }
 
-    // A product taken off dotNS stays on the device; its names failing every run must not turn the run into retries.
     @Test
     fun `a product chain no longer answers for does not fail the run`() = runTest {
         coEvery { dotNsResolver.fetchUpdates(namesOf(SWAP_APP)) } returns Result.failure(IllegalStateException("no content"))

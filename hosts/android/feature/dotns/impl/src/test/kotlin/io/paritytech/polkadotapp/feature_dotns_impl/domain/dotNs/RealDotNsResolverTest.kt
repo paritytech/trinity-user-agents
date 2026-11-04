@@ -52,7 +52,6 @@ class RealDotNsResolverTest {
 
     private val builds = MutableStateFlow<Map<String, DotNsBuild>>(emptyMap())
     private val buildStorage: DotNsBuildStorage = mockk {
-        // The matcher scope has a `get` of its own, so the mock's is named outright.
         every { this@mockk.get(any()) } answers { builds.value[firstArg()] }
         every { putAll(any()) } answers { builds.value += firstArg<Map<String, DotNsBuild>>() }
         every { all() } answers { builds.value }
@@ -80,7 +79,6 @@ class RealDotNsResolverTest {
         unmockkStatic(Uri::class)
     }
 
-    // Serving is what a product needs offline and what must never wait on a node: the build on the device is the answer.
     @Test
     fun `a name on the device is served without chain`() = runTest {
         withOnDevice(served = releasedBuild)
@@ -125,7 +123,6 @@ class RealDotNsResolverTest {
         assertTrue(resolver.getProgressByDomain(domain).first() is DotNsLoadProgress.Failed)
     }
 
-    // A node that drops out for a moment must not leave the product broken until the app restarts.
     @Test
     fun `a failed first load is retried on the next request`() = runTest {
         withUnreachableChain()
@@ -137,7 +134,6 @@ class RealDotNsResolverTest {
         assertServes(releasedBuild, resolver.resolveToLocalUri(domain))
     }
 
-    // One dropped read on a slow network should cost a second, not a failed screen.
     @Test
     fun `a dropped chain read is tried again before the load gives up`() = runTest {
         coEvery { contractApi.resolveContentHash(domain) } returnsMany listOf(
@@ -159,7 +155,6 @@ class RealDotNsResolverTest {
         coVerify(exactly = 1) { carFetcher.fetchCarToFile(any(), any()) }
     }
 
-    // The manifest is read on every start; kept on the device, a product opens without waiting on a node.
     @Test
     fun `a record read once is answered from the device without chain, also when it is empty`() = runTest {
         coEvery { contractApi.getMetadata(domain, MANIFEST_KEY) } returns Result.success(null)
@@ -171,7 +166,6 @@ class RealDotNsResolverTest {
         coVerify(exactly = 1) { contractApi.getMetadata(domain, MANIFEST_KEY) }
     }
 
-    // A page fetches its scripts and styles one by one. Serving them from two builds would break it.
     @Test
     fun `requests keep the build served after a new one is released`() = runTest {
         withOnDevice(served = releasedBuild)
@@ -181,7 +175,6 @@ class RealDotNsResolverTest {
         assertServes(releasedBuild, resolver.resolveToLocalUri(domain))
     }
 
-    // The new build downloads beside the one in use, so the product keeps working and the switch costs nothing later.
     @Test
     fun `fetching an update downloads the new build and leaves the served one`() = runTest {
         withOnDevice(served = releasedBuild)
@@ -207,7 +200,6 @@ class RealDotNsResolverTest {
         assertEquals(emptySet<String>(), resolver.observePendingUpdates().first())
     }
 
-    // A publisher who rolls back must not have the rolled-back build offered as an update.
     @Test
     fun `a name published back to the served build drops its pending update`() = runTest {
         withOnDevice(served = releasedBuild, update = newBuild)
@@ -228,7 +220,6 @@ class RealDotNsResolverTest {
         coVerify(exactly = 0) { contractApi.resolveContentHash(any()) }
     }
 
-    // A release whose page arrived and whose worker did not would run a new page against an old worker.
     @Test
     fun `an update that fails for one of the names is kept for none of them`() = runTest {
         withOnDevice(served = releasedBuild)
@@ -242,7 +233,6 @@ class RealDotNsResolverTest {
         assertEquals(emptySet<String>(), resolver.observePendingUpdates().first())
     }
 
-    // A manifest change is part of the release: a product that adds a worker must not keep opening without it.
     @Test
     fun `a changed record is applied with the update`() = runTest {
         withOnDevice(served = releasedBuild, records = mapOf(MANIFEST_KEY to null))
@@ -258,7 +248,6 @@ class RealDotNsResolverTest {
         assertEquals(Result.success("{\"name\":\"People\"}"), resolver.getMetadataEntry(domain, MANIFEST_KEY))
     }
 
-    // A manifest product's base name carries only records; downloading content nothing serves would waste the data plan.
     @Test
     fun `content the device never loaded is left out of an update`() = runTest {
         withOnDevice(served = null, records = mapOf(MANIFEST_KEY to null))
@@ -280,7 +269,6 @@ class RealDotNsResolverTest {
         assertEquals(emptySet<String>(), resolver.observePendingUpdates().first())
     }
 
-    // A background check that waits on a node forever would hold its worker until the system kills it.
     @Test
     fun `a chain that does not answer in time fails the update fetch`() = runTest {
         withOnDevice(served = releasedBuild)
@@ -290,7 +278,6 @@ class RealDotNsResolverTest {
         assertTrue(resolver.fetchUpdates(listOf(domain)).isFailure)
     }
 
-    // The bar on the host screen tracks the page being served; a download behind it would read as the page stalling.
     @Test
     fun `an update downloads without touching the progress of the name`() = runTest {
         withOnDevice(served = releasedBuild)

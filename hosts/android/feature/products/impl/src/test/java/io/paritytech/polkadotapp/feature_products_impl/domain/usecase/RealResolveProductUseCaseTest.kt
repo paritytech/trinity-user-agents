@@ -132,7 +132,6 @@ class RealResolveProductUseCaseTest {
         verify(dotNsResolver, times(1)).getMetadataEntry(base, "manifest")
     }
 
-    // A page opening a new product waits out a chain outage; a product already on the device must open meanwhile.
     @Test
     fun `a product waiting on chain does not hold up another one`() = runTest {
         val waitingProduct = ProductId.parse("newgame.dot").getOrThrow()

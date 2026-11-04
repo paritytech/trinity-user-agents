@@ -24,7 +24,6 @@ class RealSpaBrowserInteractor @Inject constructor(
     private val chatRoomRepository: ReadOnlyChatRoomRepository,
     private val resolveProductUseCase: ResolveProductUseCase,
 ) : SpaBrowserInteractor {
-    // The screen has nothing to show without the product, so it waits out the network until the user leaves.
     override suspend fun resolveProduct(productId: ProductId): Result<ResolvedProduct> =
         resolveProductUseCase.resolve(productId, NetworkRetryPolicy.UntilCancelled)
 

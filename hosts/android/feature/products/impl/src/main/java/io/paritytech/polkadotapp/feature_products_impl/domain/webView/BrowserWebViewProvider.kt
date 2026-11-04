@@ -102,7 +102,6 @@ class BrowserWebViewProvider @AssistedInject constructor(
     private val pageUrl = MutableStateFlow<String?>(null)
 
     init {
-        // A product's new build is applied only once no page of it is running, so each page reports its product.
         if (fixedProductId != null) {
             productsInUse.hold(fixedProductId, scope)
         } else {
@@ -168,14 +167,11 @@ class BrowserWebViewProvider @AssistedInject constructor(
     }
 
     override suspend fun loadInitialContent() {
-        // Held before the first request, or an update could be applied under the document being served.
         pageUrl.value = initialUrl
         downloadPageContent()
         accessWebView { it.loadUrl(initialUrl) }
     }
 
-    // Downloaded here, retrying until the tab closes, so the WebView's request interception finds the page on disk
-    // instead of blocking on the network. A failure is left for that interception to report.
     private suspend fun downloadPageContent() {
         val host = initialUrl.toUri().host ?: return
         val tld = dotNsTldProvider.getTld().getOrNull() ?: return

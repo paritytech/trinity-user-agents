@@ -82,7 +82,6 @@ class SpaBrowserViewModelTest {
         Dispatchers.resetMain()
     }
 
-    // A player in the middle of a round would lose it, so the new build waits for their consent.
     @Test
     fun `a downloaded build is offered rather than loaded`() = runTest(testDispatcher) {
         val model = viewModel()
@@ -90,7 +89,7 @@ class SpaBrowserViewModelTest {
         pendingNames.value = setOf(PRODUCT_APP)
         advanceUntilIdle()
 
-        assertEquals(PRODUCT, model.state.value.updateReadyFor)
+        assertEquals("Name of getcash.paseo", model.state.value.updateReadyProductName)
         verifyNothingApplied()
     }
 
@@ -101,10 +100,9 @@ class SpaBrowserViewModelTest {
         pendingNames.value = setOf(OTHER_PRODUCT_APP)
         advanceUntilIdle()
 
-        assertNull(model.state.value.updateReadyFor)
+        assertNull(model.state.value.updateReadyProductName)
     }
 
-    // Reloading the page would change nothing on screen; the worker picks its build up once the product is off screen.
     @Test
     fun `a new build of the product's worker alone is not offered on its page`() = runTest(testDispatcher) {
         val model = viewModel()
@@ -112,10 +110,9 @@ class SpaBrowserViewModelTest {
         pendingNames.value = setOf(PRODUCT_WORKER)
         advanceUntilIdle()
 
-        assertNull(model.state.value.updateReadyFor)
+        assertNull(model.state.value.updateReadyProductName)
     }
 
-    // A built-in product should feel like part of the app, which updates without asking either.
     @Test
     fun `a built-in product is not asked about its new build`() = runTest(testDispatcher) {
         val game = ReservedProductIds.game(TLD)
@@ -125,12 +122,11 @@ class SpaBrowserViewModelTest {
         pendingNames.value = setOf("app.${game.value}")
         advanceUntilIdle()
 
-        assertNull(model.state.value.updateReadyFor)
+        assertNull(model.state.value.updateReadyProductName)
     }
 
-    // The whole version, so the page does not come back against the manifest and worker of the one it replaces.
     @Test
-    fun `agreeing to the new build applies the product's version and reloads the page`() = runTest(testDispatcher) {
+    fun `agreeing to the new build switches only the page and reloads it`() = runTest(testDispatcher) {
         val model = viewModel()
         pendingNames.value = setOf(PRODUCT_APP, PRODUCT_WORKER)
         advanceUntilIdle()
@@ -139,14 +135,14 @@ class SpaBrowserViewModelTest {
         advanceUntilIdle()
 
         coVerifyOrder {
-            productUpdater.apply(PRODUCT)
+            productUpdater.applyPage(PRODUCT, PRODUCT_APP)
             productSessionController.reload()
         }
+        coVerify(exactly = 0) { productUpdater.apply(any()) }
     }
 
-    // Refresh is the user asking for the latest; reloading the old build while a new one sits on the disk would not be.
     @Test
-    fun `refreshing applies a downloaded version before the page reloads`() = runTest(testDispatcher) {
+    fun `refreshing switches only the page before it reloads`() = runTest(testDispatcher) {
         val model = viewModel()
         pendingNames.value = setOf(PRODUCT_WORKER)
         advanceUntilIdle()
@@ -155,12 +151,24 @@ class SpaBrowserViewModelTest {
         advanceUntilIdle()
 
         coVerifyOrder {
-            productUpdater.apply(PRODUCT)
+            productUpdater.applyPage(PRODUCT, PRODUCT_APP)
             productSessionController.reload()
         }
+        coVerify(exactly = 0) { productUpdater.apply(any()) }
     }
 
-    // "Not now" means not on this visit; the build is still there to offer when the user comes back.
+    @Test
+    fun `refreshing a page that failed to load still reloads it`() = runTest(testDispatcher) {
+        coEvery { interactor.resolveProduct(any()) } returns Result.failure(IllegalStateException("no node"))
+        val model = viewModel()
+        advanceUntilIdle()
+
+        model.onRefresh()
+        advanceUntilIdle()
+
+        verify { productSessionController.reload() }
+    }
+
     @Test
     fun `putting the new build off hides the offer until the screen is next started`() = runTest(testDispatcher) {
         val model = viewModel()
@@ -169,15 +177,14 @@ class SpaBrowserViewModelTest {
 
         model.onUpdateDismissClick()
         advanceUntilIdle()
-        assertNull(model.state.value.updateReadyFor)
+        assertNull(model.state.value.updateReadyProductName)
         verifyNothingApplied()
 
         model.onScreenStarted()
         advanceUntilIdle()
-        assertEquals(PRODUCT, model.state.value.updateReadyFor)
+        assertEquals("Name of getcash.paseo", model.state.value.updateReadyProductName)
     }
 
-    // The app may have been away for days; the product on screen is checked without waiting for the next background run.
     @Test
     fun `starting the screen checks the product on it for a new build`() = runTest(testDispatcher) {
         val model = viewModel()
@@ -188,7 +195,6 @@ class SpaBrowserViewModelTest {
         coVerify { productUpdater.check(PRODUCT) }
     }
 
-    // Coming back to the app offline must not interrupt the product with an error.
     @Test
     fun `a check that cannot reach the chain is left unanswered`() = runTest(testDispatcher) {
         coEvery { productUpdater.check(PRODUCT) } returns Result.failure(IllegalStateException("no node"))
@@ -197,7 +203,7 @@ class SpaBrowserViewModelTest {
         model.onScreenStarted()
         advanceUntilIdle()
 
-        assertNull(model.state.value.updateReadyFor)
+        assertNull(model.state.value.updateReadyProductName)
     }
 
     // Back steps through the page history first, which in a game runs many screens deep.
@@ -232,12 +238,12 @@ class SpaBrowserViewModelTest {
     }
 
     private fun verifyNothingApplied() {
-        coVerify(exactly = 0) { productUpdater.apply(any()) }
+        coVerify(exactly = 0) { productUpdater.applyPage(any(), any()) }
         verify(exactly = 0) { productSessionController.reload() }
     }
 
     private fun resolved(productId: ProductId) = ResolvedProduct(
-        product = Product(id = productId, name = productId.value, icon = null),
+        product = Product(id = productId, name = "Name of ${productId.value}", icon = null),
         description = null,
         executables = Executables(
             app = ProductExecutable.App(host = ExecutableHost("app.${productId.value}"), appVersion = SemVer.ZERO),
@@ -260,7 +266,6 @@ class SpaBrowserViewModelTest {
         )
     }
 
-    // The product id is read off the tab's url through android.net.Uri, which a unit test has to stand in for.
     private fun stubUri(url: String, host: String) {
         val uri = mockk<Uri>()
         val builder = mockk<Uri.Builder>()
