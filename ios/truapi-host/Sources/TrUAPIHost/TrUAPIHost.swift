@@ -1163,8 +1163,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     }
 
     /// The image `reference` names, read from Bulletin by the core and checked against its
-    /// CID and the image policy. Key a disk cache on ``LoadedImage/contentKey``. Cancelling
-    /// the Swift task does not stop the load in the core, which ends at its own timeout.
+    /// CID and the image policy. Key a disk cache on ``LoadedImage/contentKey``.
     public func loadImage(reference: ImageReference) async throws -> LoadedImage {
         try await inner.loadImage(reference: reference)
     }
