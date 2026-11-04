@@ -60,7 +60,7 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
         let chainRegistryClosure = { ChainRegistryFacade.sharedRegistry }
 
         let productPrewarmer = ProductContentPrewarmer(
-            makeLabels: { createProductLabels() },
+            makeLabels: { [AppConfig.DotNs.dotNsBrowse] },
             chainRegistryClosure: chainRegistryClosure,
             flowStateProvider: flowStateProvider
         )
@@ -96,11 +96,5 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
         window.rootViewController = initViewController
 
         return presenter
-    }
-
-    private static func createProductLabels() -> [String] {
-        let staticProducts = [AppConfig.DotNs.dotNsBrowse]
-
-        return staticProducts
     }
 }
