@@ -1,7 +1,6 @@
 import UserNotifications
 import SDKLogger
 import IssueMonitoring
-import Keystore_iOS
 
 protocol UserNotificationServicing {
     func notificationAccessStatus() async -> NotificationAccessStatus
@@ -117,34 +116,26 @@ final class UserNotificationService: NSObject {
     private var pendingResponses: [UNNotificationResponse] = []
     private var canHandlePushNotifications: Bool = false
     private let logger: LoggerProtocol
-    private let recorder: any HostEventRecording
-    private let settings: SettingsManagerProtocol
-    private let origin: HostEventOrigin
-    private let monotonicMilliseconds: @Sendable () -> Int
-    private let isReporting: Bool
+    private let productNotificationDiagnostics: ProductNotificationDiagnostics
 
     let center: UNUserNotificationCenter = .current()
 
     init(
         logger: LoggerProtocol = Logger.shared,
-        recorder: any HostEventRecording = IssueMonitoringFactory.createHostEventRecorder(),
-        settings: SettingsManagerProtocol = SettingsManager.shared,
-        origin: HostEventOrigin = .current,
-        monotonicMilliseconds: @escaping @Sendable () -> Int = { HostEventClock.monotonicMilliseconds() },
-        isReporting: Bool = IssueMonitoringFactory.isReportingSupported
+        productNotificationDiagnostics: ProductNotificationDiagnostics = ProductNotificationDiagnostics(
+            recorder: IssueMonitoringFactory.createHostEventRecorder()
+        )
     ) {
         self.logger = logger
-        self.recorder = recorder
-        self.settings = settings
-        self.origin = origin
-        self.monotonicMilliseconds = monotonicMilliseconds
-        self.isReporting = isReporting
+        self.productNotificationDiagnostics = productNotificationDiagnostics
         super.init()
     }
 
     func startGatheringNotifications() {
         center.delegate = self
-        reportNotificationsSeenSinceLastLaunch()
+        productNotificationDiagnostics.reportDeliveredSinceLastLaunch { [center] in
+            await center.deliveredNotifications()
+        }
     }
 
     func setupHandlers(
@@ -173,66 +164,6 @@ final class UserNotificationService: NSObject {
 }
 
 private extension UserNotificationService {
-    /// Reports product notifications that arrived while the app was not in the foreground.
-    func reportNotificationsSeenSinceLastLaunch() {
-        guard isReporting else {
-            return
-        }
-        let center = center
-        let settings = settings
-        Task {
-            let now = Date()
-            let delivered = await center.deliveredNotifications()
-            let key = SettingsKey.productNotificationsReported.rawValue
-            let alreadyReported = (settings.anyValue(for: key) as? [String]).map(Set.init)
-            let identifiersToReport = ProductNotificationEvent.identifiersToReport(
-                delivered: delivered.map { (identifier: $0.request.identifier, deliveredAt: $0.date) },
-                alreadyReported: alreadyReported,
-                now: now
-            )
-            settings.set(anyValue: delivered.map(\.request.identifier), for: key)
-
-            for notification in delivered where identifiersToReport.contains(notification.request.identifier) {
-                record(notification, step: .shown, seenVia: .nextLaunch)
-            }
-        }
-    }
-
-    func markReported(_ identifier: String) {
-        guard isReporting else {
-            return
-        }
-        let key = SettingsKey.productNotificationsReported.rawValue
-        var identifiers = settings.anyValue(for: key) as? [String] ?? []
-        if !identifiers.contains(identifier) {
-            identifiers.append(identifier)
-        }
-        settings.set(anyValue: identifiers, for: key)
-    }
-
-    func record(
-        _ notification: UNNotification,
-        step: ProductNotificationEvent.Step,
-        seenVia: ProductNotificationEvent.SeenVia? = nil
-    ) {
-        guard let event = ProductNotificationEvent(
-            identifier: notification.request.identifier,
-            userInfo: notification.request.content.userInfo,
-            deliveredAt: notification.date
-        ) else {
-            return
-        }
-
-        recorder.record(
-            event.hostEvent(
-                step: step,
-                seenVia: seenVia,
-                origin: origin,
-                monotonicMilliseconds: monotonicMilliseconds()
-            )
-        )
-    }
-
     func handlePendingNotification(_ pushTapHandler: PushNotificationTapHandling) {
         let responsesToReplay = pendingResponses
         pendingResponses.removeAll()
@@ -330,8 +261,7 @@ extension UserNotificationService: UNUserNotificationCenterDelegate {
     ) {
         let presentationOptions = foregroundPresentationDecider?.presentationOptions(for: notification) ?? []
         if !presentationOptions.isEmpty {
-            record(notification, step: .shown, seenVia: .foreground)
-            markReported(notification.request.identifier)
+            productNotificationDiagnostics.shownInForeground(notification)
         }
         completionHandler(presentationOptions)
     }
@@ -341,7 +271,7 @@ extension UserNotificationService: UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        record(response.notification, step: .tapped)
+        productNotificationDiagnostics.tapped(response.notification)
         guard canHandlePushNotifications, let pushTapHandler else {
             pendingResponses.append(response)
             completionHandler()
