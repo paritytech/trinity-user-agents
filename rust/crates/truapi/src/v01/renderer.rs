@@ -696,7 +696,8 @@ pub enum MaterialFailure {
 	/// The node breaks a limit.
 	LimitExceeded,
 	/// The host does not read the version or a required feature, cannot
-	/// compile the material, or has materials switched off.
+	/// compile the material, does not draw materials on this surface, or has
+	/// materials switched off.
 	Unsupported,
 }
 
