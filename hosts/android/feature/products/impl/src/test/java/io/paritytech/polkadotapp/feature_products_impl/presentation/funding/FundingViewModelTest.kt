@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
+import androidx.lifecycle.ViewModelStore
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -34,6 +35,8 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Before
 import org.junit.Test
 import uniffi.truapi.FundingAmountLimits
@@ -105,6 +108,30 @@ class FundingViewModelTest {
                 FundingQuoteAsk(CoreFundingDirection.IN, FundingRail.CARD, "EUR", null, "50000000", "DE"),
             )
         }
+    }
+
+    // The sheet can open again for the session before the old one's view model is cleared, and the new sheet's
+    // context is the one the overlay answers through.
+    @Test
+    fun `clearing leaves a newer sheet's context for the session in place`() = runTest(testDispatcher) {
+        val model = viewModel()
+        advanceUntilIdle()
+        val newer = FundingOverlayContext(request, FundingOverlayMode.Resumed)
+        contexts.put(newer)
+
+        ViewModelStore().apply { put("funding", model) }.clear()
+
+        assertSame(newer, contexts.get("intent"))
+    }
+
+    @Test
+    fun `clearing drops the sheet's own context`() = runTest(testDispatcher) {
+        val model = viewModel()
+        advanceUntilIdle()
+
+        ViewModelStore().apply { put("funding", model) }.clear()
+
+        assertNull(contexts.get("intent"))
     }
 
     @Test
