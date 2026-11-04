@@ -343,15 +343,16 @@ cannot serve fails when the command resolves its network, before it starts.
 
 `--stack <descriptor URL | stack link | file>` runs a command against a Trinity
 stack instead of a built-in network (§14.1). `HOST_CLI_STACK` supplies the same
-value; clap resolves an explicit flag over it, and a blank value is unset. The
-option is global; `stack` and `update` ignore it.
+value when the flag is absent, and a blank value is unset. The option is global;
+`stack` and `update` ignore it.
 
 ### 4.5 Global network option
 
-`--network <paseo-next-v2|previewnet|polkadot>` selects the network every
-command that resolves one runs against, `paseo-next-v2` by default (§14.1). With
-`--stack`, it sets only the product namespace. The option is global, so it is
-accepted before or after the subcommand.
+`--network <paseo-next-v2|previewnet|polkadot>` selects the built-in network
+every command that resolves one runs against, `paseo-next-v2` when neither it
+nor a stack is given (§14.1). It cannot be combined with `--stack` or a
+non-blank `HOST_CLI_STACK`. The option is global, so it is accepted before or
+after the subcommand.
 
 ## 5. `pairing-host`
 
@@ -1733,8 +1734,8 @@ genesis is an error, and one that does not answer is logged and left to fail on
 first use. `--chain-backend light-client` is
 refused with `--stack`, since the light client syncs only the networks
 `truapi-provider` bundles. The product namespace (`HostChainSet.network` and the
-state directory) is `--network` when given, otherwise the descriptor's `id`
-without a trailing `-fork`, which must be a lowercase label.
+state directory) is the descriptor's `id` without a trailing `-fork`, which must
+be a lowercase label.
 
 `network-check` resolves the network as any command does, fetching only the
 descriptor, and prints as JSON `schema_version`, `network` (the product
@@ -2314,7 +2315,7 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `TRUAPI_HOST_RELEASE_BASE_URL` | Release host for the installer and the updater, for mirrors and tests. |
 | `HOST_CLI_SIGNER_MNEMONIC` | Mnemonic for `dev`, `signing-host`, `identity-check`, `register-name`, `alloc-check`, `pgas-check` and `attest` when `--mnemonic` is omitted. |
 | `HOST_CLI_IDENTITY_BACKEND_BASE` | Identity backend base URL override, including `/api/v1`, for instance a local backend. Applies with or without `--stack`. |
-| `HOST_CLI_STACK` | Default `--stack`: a descriptor URL, a stack link or a local descriptor file (§14.1). |
+| `HOST_CLI_STACK` | Default `--stack`: a descriptor URL, a stack link or a local descriptor file (§14.1). Blank is unset; combined with `--network`, it is an error. |
 | `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `uid.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
 | `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. A stack's `dotns.popController` and the polkadot network's manifest supply the fallback (§14.1). `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
 | `XDG_STATE_HOME` | Preferred default state parent. |

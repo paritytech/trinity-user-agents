@@ -35,7 +35,7 @@ fn write_model(dir: &Path, name: &str, expires_at: Option<u32>) -> String {
 		"id": "local", "name": name, "network": "local", "tld": "local", "services": [],
 		"chains": [{
 			"role": "Relay",
-			"genesisHash": "0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92",
+			"genesisHash": format!("0x{}", "01".repeat(32)),
 			"rpc": ["ws://127.0.0.1:9944"],
 		}],
 	});
@@ -326,13 +326,31 @@ fn test_network_check_polkadot_values() {
 			"0x67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008".into();
 	});
 	let dot = local_descriptor(|descriptor| descriptor["tld"] = "dot".into());
-	for descriptor in [polkadot_people, dot] {
+	let namespaced = local_descriptor(|descriptor| descriptor["id"] = "polkadot".into());
+	for descriptor in [polkadot_people, dot, namespaced] {
 		let output = network_check(&write_descriptor(dir.path(), &descriptor), &[]);
 		assert!(!output.status.success());
 	}
+}
+
+/// `--network` picks a built-in network and `--stack` any other one, so a command takes one of
+/// them, from the flag or from `HOST_CLI_STACK`.
+#[test]
+fn test_network_and_stack_conflict() {
+	let dir = tempfile::tempdir().unwrap();
 	let file = write_descriptor(dir.path(), &local_descriptor(|_| {}));
-	let namespaced = network_check(&file, &["--network", "polkadot"]);
-	assert!(!namespaced.status.success());
+	let flags = network_check(&file, &["--network", "previewnet"]);
+	assert!(!flags.status.success());
+	assert!(stderr(&flags).contains("cannot be used with"));
+
+	let variable = Command::new(env!("CARGO_BIN_EXE_truapi-host"))
+		.args(["network-check", "--network", "previewnet"])
+		.env("TRUAPI_HOST_NO_UPDATE", "1")
+		.env("HOST_CLI_STACK", &file)
+		.output()
+		.expect("truapi-host did not start");
+	assert!(!variable.status.success());
+	assert!(stderr(&variable).contains("HOST_CLI_STACK"));
 }
 
 #[test]
@@ -344,11 +362,11 @@ fn test_network_check_light_client_stack() {
 	assert!(stderr(&output).contains("--stack"));
 }
 
-/// An exported but empty `HOST_CLI_STACK` selects the built-in network, as when it is unset.
+/// An exported but empty `HOST_CLI_STACK` is unset, so `--network` selects the built-in network.
 #[test]
 fn test_blank_stack_variable() {
 	let output = Command::new(env!("CARGO_BIN_EXE_truapi-host"))
-		.arg("network-check")
+		.args(["network-check", "--network", "previewnet"])
 		.env("TRUAPI_HOST_NO_UPDATE", "1")
 		.env("HOST_CLI_STACK", "")
 		.env_remove("HOST_CLI_IDENTITY_BACKEND_BASE")
@@ -356,5 +374,5 @@ fn test_blank_stack_variable() {
 		.expect("truapi-host did not start");
 	assert!(output.status.success());
 	let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
-	assert_eq!(report["network"], "paseo-next-v2");
+	assert_eq!(report["network"], "previewnet");
 }

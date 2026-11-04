@@ -42,6 +42,9 @@ pub enum Network {
 /// `http://localhost:8080/api/v1`.
 pub const IDENTITY_BACKEND_BASE_ENV: &str = "HOST_CLI_IDENTITY_BACKEND_BASE";
 
+/// Env var supplying `--stack` when the flag is absent; a blank value is unset.
+pub const STACK_ENV: &str = "HOST_CLI_STACK";
+
 /// How long a built-in stack's published descriptor may take before the
 /// bundled copy is used instead.
 const BUILT_IN_REFRESH_TIMEOUT: Duration = Duration::from_secs(3);
@@ -70,21 +73,24 @@ const PREVIEWNET_STACK: BuiltInStack = BuiltInStack {
 	bundle: include_bytes!("../stacks/previewnet.json"),
 };
 
-/// Where a command's network comes from: `--chain-backend`, `--network` and
-/// `--stack`.
+/// Where a command's network comes from: `--chain-backend`, and `--network`
+/// or `--stack`.
 #[derive(Debug, Clone)]
 pub struct NetworkSource {
 	pub chain_backend: ChainBackend,
-	/// paseo-next-v2 when `None`. With `--stack`, sets only the product
-	/// namespace.
-	pub network: Option<Network>,
+	pub selection: NetworkSelection,
+}
+
+/// A built-in network by name, or any other stack.
+#[derive(Debug, Clone)]
+pub enum NetworkSelection {
+	BuiltIn(Network),
 	/// A descriptor URL, a stack link or a local descriptor file.
-	pub stack: Option<String>,
+	Stack(String),
 }
 
 impl NetworkSource {
-	/// The network a command runs against: the `--stack` descriptor when set,
-	/// otherwise `--network`.
+	/// The network a command runs against.
 	///
 	/// Fails when a `--stack` descriptor is unreachable, when the descriptor in
 	/// use is expired or lacks a role, when a disposable-identity network
@@ -94,7 +100,7 @@ impl NetworkSource {
 	/// published descriptor is unreachable runs on its bundled copy.
 	pub async fn cli_config(&self) -> Result<NetworkConfig> {
 		let config = self.resolve().await?;
-		if self.stack.is_some() {
+		if let NetworkSelection::Stack(_) = self.selection {
 			verify_endpoint_genesis(&config).await?;
 		}
 		Ok(config)
@@ -103,17 +109,17 @@ impl NetworkSource {
 	/// [`Self::cli_config`] without contacting any chain; only a descriptor is
 	/// fetched. An unreachable descriptor fails only for `--stack`.
 	pub async fn resolve(&self) -> Result<NetworkConfig> {
-		let config = match &self.stack {
-			Some(stack) => {
+		let (config, stack) = match &self.selection {
+			NetworkSelection::Stack(stack) => {
 				let descriptor = crate::stack::load_descriptor(stack).await?;
-				stack_network_config(&descriptor, self.network)?
+				(stack_network_config(&descriptor)?, Some(stack.as_str()))
 			},
-			None => self.network.unwrap_or_default().resolve_built_in().await?,
+			NetworkSelection::BuiltIn(network) => (network.resolve_built_in().await?, None),
 		};
 		let mut config =
 			apply_backend_override(config, std::env::var(IDENTITY_BACKEND_BASE_ENV).ok());
 		config.chain_backend = self.chain_backend;
-		refuse_light_client(&config, self.stack.as_deref())?;
+		refuse_light_client(&config, stack)?;
 		ensure_no_real_identity_values(&config)?;
 		Ok(config)
 	}
@@ -258,26 +264,16 @@ fn refresh_stack(
 	Ok(StackRefresh { descriptor, notice })
 }
 
-/// A `--stack` descriptor's network. The product namespace is `network` when
-/// set, otherwise the descriptor's `id` without a trailing `-fork`.
-fn stack_network_config(
-	descriptor: &Descriptor,
-	network: Option<Network>,
-) -> Result<NetworkConfig> {
-	let id = match network {
-		Some(network) => network.id(),
-		None => {
-			let id = descriptor.id.strip_suffix("-fork").unwrap_or(&descriptor.id);
-			ensure!(
-				truapi::platform::is_dns_label(id),
-				"the stack id {:?} is not a lowercase label to use as the product namespace; pass \
-				 --network to choose one",
-				descriptor.id
-			);
-			leak_str(id)
-		},
-	};
-	stack_config(descriptor, id)
+/// A `--stack` descriptor's network, under the product namespace of the
+/// descriptor's `id` without a trailing `-fork`.
+fn stack_network_config(descriptor: &Descriptor) -> Result<NetworkConfig> {
+	let id = descriptor.id.strip_suffix("-fork").unwrap_or(&descriptor.id);
+	ensure!(
+		truapi::platform::is_dns_label(id),
+		"the stack id {:?} is not a lowercase label to use as the product namespace",
+		descriptor.id
+	);
+	stack_config(descriptor, leak_str(id))
 }
 
 /// A stack's People, Asset Hub and Bulletin chains, identity backend, TLD and
@@ -403,8 +399,8 @@ fn ensure_no_real_identity_values(config: &NetworkConfig) -> Result<()> {
 	}
 	ensure!(
 		config.id != POLKADOT.id,
-		"a stack cannot run under the {} namespace, whose identities are real; pass another \
-		 --network",
+		"a stack cannot run under the {} namespace, whose identities are real; give the \
+		 stack another id",
 		POLKADOT.id
 	);
 	ensure!(
@@ -1048,7 +1044,7 @@ mod tests {
 			}
 		});
 
-		let config = stack_network_config(&descriptor, None).unwrap();
+		let config = stack_network_config(&descriptor).unwrap();
 
 		assert_eq!(config.id, "staging");
 		assert_eq!(config.network_suffix, "testnet");
@@ -1066,10 +1062,6 @@ mod tests {
 			(config.bulletin_ws, config.bulletin_genesis),
 			(paseo.bulletin_ws, paseo.bulletin_genesis)
 		);
-
-		let namespaced = stack_network_config(&descriptor, Some(Network::Previewnet)).unwrap();
-		assert_eq!(namespaced.id, "previewnet");
-		assert_eq!(namespaced.people_genesis, [0x11; 32]);
 	}
 
 	/// Reserved identities derive under the TLD, and navigation accepts only the
@@ -1077,7 +1069,7 @@ mod tests {
 	#[test]
 	fn test_stack_unserved_tld_error() {
 		let staging = edit_stack(|descriptor| descriptor["tld"] = "staging".into());
-		let error = stack_network_config(&staging, None).unwrap_err();
+		let error = stack_network_config(&staging).unwrap_err();
 		assert!(error.to_string().contains("staging"));
 	}
 
@@ -1088,7 +1080,7 @@ mod tests {
 		let paseo = Network::PaseoNextV2.config();
 		let shared = format!("0x{}", hex::encode(paseo.people_genesis));
 		let descriptor = edit_chain("Bulletin", |chain| chain["genesisHash"] = shared.into());
-		assert!(stack_network_config(&descriptor, None).is_err());
+		assert!(stack_network_config(&descriptor).is_err());
 	}
 
 	/// A stack id becomes a state directory name, so one that is not a plain
@@ -1096,8 +1088,7 @@ mod tests {
 	#[test]
 	fn test_stack_id_not_label() {
 		let descriptor = edit_stack(|descriptor| descriptor["id"] = "../elsewhere".into());
-		assert!(stack_network_config(&descriptor, None).is_err());
-		assert!(stack_network_config(&descriptor, Some(Network::PaseoNextV2)).is_ok());
+		assert!(stack_network_config(&descriptor).is_err());
 	}
 
 	#[test]
@@ -1108,7 +1099,7 @@ mod tests {
 				.unwrap()
 				.retain(|chain| chain["role"] != "Bulletin");
 		});
-		let error = stack_network_config(&descriptor, None).unwrap_err();
+		let error = stack_network_config(&descriptor).unwrap_err();
 		assert!(error.to_string().contains("no Bulletin chain"));
 	}
 
@@ -1122,27 +1113,23 @@ mod tests {
 
 		let polkadot_people = format!("0x{}", hex::encode(POLKADOT_PEOPLE.genesis));
 		let forked = edit_chain("People", |chain| chain["genesisHash"] = polkadot_people.into());
-		let error = ensure_no_real_identity_values(&stack_network_config(&forked, None).unwrap())
+		let error = ensure_no_real_identity_values(&stack_network_config(&forked).unwrap())
 			.expect_err("mainnet genesis accepted");
 		assert!(error.to_string().contains("polkadot"));
 
 		let dot = edit_stack(|descriptor| descriptor["tld"] = "dot".into());
-		let error = ensure_no_real_identity_values(&stack_network_config(&dot, None).unwrap())
+		let error = ensure_no_real_identity_values(&stack_network_config(&dot).unwrap())
 			.expect_err("dot TLD accepted");
 		assert!(error.to_string().contains(".dot"));
 	}
 
 	/// Polkadot's namespace contains its real-identity sessions and accounts, so
-	/// a disposable stack never runs under it, by `--network` or by its own id.
+	/// a disposable stack never runs under it.
 	#[test]
 	fn test_stack_polkadot_namespace_error() {
-		let paseo = edit_stack(|_| {});
-		let namespaced = stack_network_config(&paseo, Some(Network::Polkadot)).unwrap();
-		assert!(ensure_no_real_identity_values(&namespaced).is_err());
-
 		for id in ["polkadot", "polkadot-fork"] {
 			let descriptor = edit_stack(|descriptor| descriptor["id"] = id.into());
-			let config = stack_network_config(&descriptor, None).unwrap();
+			let config = stack_network_config(&descriptor).unwrap();
 			assert!(ensure_no_real_identity_values(&config).is_err());
 		}
 	}
@@ -1193,7 +1180,7 @@ mod tests {
 	/// is left to fail on first use.
 	#[tokio::test]
 	async fn test_stack_endpoint_unreachable() {
-		let config = stack_network_config(&stack_on_closed_ports(), None).unwrap();
+		let config = stack_network_config(&stack_on_closed_ports()).unwrap();
 		verify_endpoint_genesis(&config).await.expect("unreachable endpoint rejected");
 	}
 
@@ -1209,7 +1196,7 @@ mod tests {
 			.find(|chain| chain.role == "People")
 			.expect("People missing")
 			.rpc = vec![url.clone()];
-		let config = stack_network_config(&descriptor, None).unwrap();
+		let config = stack_network_config(&descriptor).unwrap();
 		let error = verify_endpoint_genesis(&config).await.expect_err("wrong genesis accepted");
 		assert!(error.to_string().contains(&url));
 		assert!(error.to_string().contains("reports genesis"));

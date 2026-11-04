@@ -83,7 +83,7 @@ use truapi::{
 use crate::{
 	accounts::{ResolveSignerConfig, ResolvedSigner},
 	chain::ChainBackend,
-	network::{Network, NetworkConfig, NetworkSource},
+	network::{Network, NetworkConfig, NetworkSelection, NetworkSource, STACK_ENV},
 	platform::{ApprovalPolicy, CliPlatform, CliStoragePaths},
 	sessions::{
 		CurrentSession, DEFAULT_SESSION_NAME, PairedHost, PairedHostMetadata, SessionCatalog,
@@ -132,16 +132,16 @@ struct Cli {
 	/// and `previewnet` only, without `--stack`).
 	#[arg(long, global = true, value_enum, default_value = "rpc", env = "TRUAPI_CHAIN_BACKEND")]
 	chain_backend: ChainBackend,
-	/// Network to run against; paseo-next-v2 when omitted. With `--stack`, sets
-	/// only the product namespace.
-	#[arg(long, global = true, value_enum)]
+	/// Built-in network to run against; paseo-next-v2 when neither this nor
+	/// `--stack` is given.
+	#[arg(long, global = true, value_enum, conflicts_with = "stack")]
 	network: Option<Network>,
 	/// Run against this Trinity stack instead of a built-in network: a
 	/// descriptor URL, a stack link (`polkadotapp://stack?...`) or a local
-	/// descriptor file. Its chains, identity backend and TLD replace the
-	/// network's; `--network` then sets only the product namespace, which
-	/// defaults to the descriptor's `id` without a trailing `-fork`.
-	#[arg(long, global = true, env = "HOST_CLI_STACK", value_name = "STACK")]
+	/// descriptor file. Its chains, identity backend and TLD are used, under
+	/// the product namespace of the descriptor's `id` without a trailing
+	/// `-fork`. Defaults to `HOST_CLI_STACK` when that is not blank.
+	#[arg(long, global = true, value_name = "STACK")]
 	stack: Option<String>,
 	#[command(subcommand)]
 	command: Command,
@@ -609,11 +609,17 @@ async fn main() -> Result<()> {
 		tokio::spawn(update::run_background_check())
 	});
 
-	let source = NetworkSource {
-		chain_backend: cli.chain_backend,
-		network: cli.network,
-		stack: normalized(cli.stack),
+	// Read here rather than through clap's `env`, which would count an exported
+	// blank value as a `--stack` conflicting with `--network`.
+	let stack = normalized(cli.stack.or_else(|| std::env::var(STACK_ENV).ok()));
+	let selection = match (stack, cli.network) {
+		(Some(_), Some(_)) => invalid_invocation(format_args!(
+			"--network cannot be used with {STACK_ENV}; unset one of them"
+		)),
+		(Some(stack), None) => NetworkSelection::Stack(stack),
+		(None, network) => NetworkSelection::BuiltIn(network.unwrap_or_default()),
 	};
+	let source = NetworkSource { chain_backend: cli.chain_backend, selection };
 	let outcome = dispatch(cli.command, log_filter, log_controller, debugger, source).await;
 
 	if let Some(check) = check {

@@ -49,7 +49,6 @@ jq --arg ws "ws://127.0.0.1:$(cat "$state/proxy-port")" \
 
 echo "==> following Bulletin and cutting the connection under a storage call"
 "$host" signing-host \
-  --network paseo-next-v2 \
   --stack "$state/stack.json" \
   --base-path "$state/host" \
   --auto-accept \

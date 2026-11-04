@@ -1054,13 +1054,14 @@ stack's `tld` is not used, since every account derives under it. A stack past
 its `expiresAt` is an error. `polkadot` stays pinned in the binary.
 
 `--stack <descriptor URL | stack link | file>` (or `HOST_CLI_STACK`) runs any
-command against another Trinity stack, such as a fork or a staging instance:
+command against another Trinity stack, such as a fork or a staging instance. It
+replaces `--network`, and the two cannot be combined:
 
 ```sh
 truapi-host --stack 'polkadotapp://stack?key=0x…&url=https%3A%2F%2Fstack.example%2F.well-known%2Ftrinity-stack.json' \
   signing-host --auto-accept
 truapi-host --stack https://stack.example/.well-known/trinity-stack.json network-check
-truapi-host --stack ./local-stack.json dev --network paseo-next-v2 \
+truapi-host --stack ./local-stack.json dev \
   --base-path /tmp/local-stack-host -- npm run dev
 ```
 
@@ -1075,8 +1076,8 @@ stack that lacks one of those roles, gives two of them one genesis hash, has a
 `expiresAt` is an error. Before anything runs, every endpoint is asked for its
 genesis: one that reports another genesis is an error, and one that does not
 answer is logged and left to fail on first use.
-The product namespace (`HostChainSet.network` and the state directory) is
-`--network` when passed, otherwise the descriptor's `id` without a trailing
+The product namespace (`HostChainSet.network` and the state directory) is the
+descriptor's `id` without a trailing
 `-fork`. Identities on a stack are disposable, so a stack whose chains carry
 Polkadot's genesis hashes, whose `tld` is `dot` or whose namespace is `polkadot`
 is refused. Use a separate

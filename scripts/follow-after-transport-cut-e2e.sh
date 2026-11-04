@@ -51,7 +51,6 @@ jq --arg ws "ws://127.0.0.1:$(cat "$state/proxy-port")" \
 
 echo "==> cutting the connection under a read and re-following"
 "$host" signing-host \
-  --network paseo-next-v2 \
   --stack "$state/stack.json" \
   --base-path "$state/host" \
   --auto-accept \
