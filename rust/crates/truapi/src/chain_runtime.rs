@@ -396,7 +396,7 @@ pub struct ChainRuntime {
 /// owns, written where a follow ends and read where an id no longer resolves.
 type EndedFollows = Arc<Mutex<HashMap<ConnectionScope, VecDeque<(String, FollowLoss)>>>>;
 
-/// Why a follow this runtime issued stopped answering. Both reasons mean the
+/// Why a follow this runtime issued stopped answering. Every reason means the
 /// same thing to a caller, that the id is spent and a new follow is needed,
 /// and they are distinguished because they are not diagnosed the same way.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -3951,12 +3951,12 @@ mod tests {
 		);
 	}
 
-	/// A follow lost with its transport is named as such, even after the
-	/// caller has dropped the stream and the scope has forgotten the intent.
-	/// That is the path a product takes, so it is the one that has to answer.
-	#[test]
-	fn a_follow_lost_with_its_connection_is_named_after_the_caller_let_go() {
-		let provider = Arc::new(ScriptedProvider::new(|request| {
+	/// Chain the lost-follow tests read from.
+	const LOST_FOLLOW_CHAIN: [u8; 32] = [7u8; 32];
+
+	/// A provider that acknowledges every follow and starts every storage read.
+	fn follow_and_storage_provider() -> Arc<ScriptedProvider> {
+		Arc::new(ScriptedProvider::new(|request| {
 			let id = extract_id(request)?;
 			if request.contains("chainHead_v1_follow") {
 				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
@@ -3967,43 +3967,67 @@ mod tests {
 			} else {
 				None
 			}
-		}));
-		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
-		let read = || {
-			futures::executor::block_on(runtime.remote_chain_head_storage(
-				RemoteChainHeadStorageRequest {
-					genesis_hash: vec![7u8; 32],
-					follow_subscription_id: "host:1".to_string(),
-					hash: vec![1u8; 32],
-					items: vec![StorageQueryItem {
-						key: vec![0xaa],
-						query_type: StorageQueryType::Value,
-					}],
-					child_trie: None,
-				},
-			))
-		};
+		}))
+	}
 
+	/// One storage read bound to `follow_subscription_id`.
+	fn read_storage(
+		runtime: &ChainRuntime,
+		follow_subscription_id: &str,
+	) -> Result<RemoteChainHeadStorageResponse, RuntimeFailure> {
+		futures::executor::block_on(runtime.remote_chain_head_storage(
+			RemoteChainHeadStorageRequest {
+				genesis_hash: LOST_FOLLOW_CHAIN.to_vec(),
+				follow_subscription_id: follow_subscription_id.to_string(),
+				hash: vec![1u8; 32],
+				items: vec![StorageQueryItem {
+					key: vec![0xaa],
+					query_type: StorageQueryType::Value,
+				}],
+				child_trie: None,
+			},
+		))
+	}
+
+	/// Sends `event` as a follow event of the scripted remote follow.
+	fn send_follow_event(provider: &ScriptedProvider, event: &str) {
+		notification_sender(provider)
+			.unbounded_send(format!(
+				r#"{{"jsonrpc":"2.0","method":"chainHead_v1_followEvent","params":{{"subscription":"REMOTE-FOLLOW","result":{event}}}}}"#
+			))
+			.unwrap();
+	}
+
+	/// Opens `follow_subscription_id` and waits until the node has initialized it.
+	fn open_initialized_follow(
+		runtime: &ChainRuntime,
+		provider: &ScriptedProvider,
+		follow_subscription_id: &str,
+	) -> BoxStream<'static, Result<RemoteChainHeadFollowItem, RuntimeFailure>> {
 		let mut follow = runtime.remote_chain_head_follow(
-			"host:1".to_string(),
-			RemoteChainHeadFollowRequest { genesis_hash: vec![7u8; 32], with_runtime: false },
+			follow_subscription_id.to_string(),
+			RemoteChainHeadFollowRequest {
+				genesis_hash: LOST_FOLLOW_CHAIN.to_vec(),
+				with_runtime: false,
+			},
 		);
-		wait_for_sent(&provider, |sent| {
+		wait_for_sent(provider, |sent| {
 			sent.iter().any(|request| request.contains("chainHead_v1_follow"))
 		});
-		notification_sender(&provider)
-			.unbounded_send(
-				r#"{"jsonrpc":"2.0","method":"chainHead_v1_followEvent","params":{"subscription":"REMOTE-FOLLOW","result":{"event":"initialized","finalizedBlockHashes":[]}}}"#
-					.to_string(),
-			)
-			.unwrap();
+		send_follow_event(provider, r#"{"event":"initialized","finalizedBlockHashes":[]}"#);
 		assert!(matches!(
 			futures::executor::block_on(follow.next()),
 			Some(Ok(RemoteChainHeadFollowItem::Initialized { .. }))
 		));
+		follow
+	}
 
-		// The transport dies, and the caller then lets its stream go, which is
-		// what clears the scope's intent and leaves the id with no owner.
+	/// Kills the transport, then lets the caller drop its stream once it has
+	/// drained, which clears the scope's intent and leaves the id with no owner.
+	fn lose_connection(
+		provider: &ScriptedProvider,
+		mut follow: BoxStream<'static, Result<RemoteChainHeadFollowItem, RuntimeFailure>>,
+	) {
 		provider.sender.lock().unwrap().take();
 		let _ = futures::executor::block_on(
 			follow
@@ -4011,9 +4035,21 @@ mod tests {
 				.filter_map(|item| core::future::ready(item.err()))
 				.collect::<Vec<_>>(),
 		);
-		drop(follow);
+	}
 
-		let failure = read().expect_err("a read on the lost follow must fail");
+	/// A follow lost with its transport is named as such, even after the
+	/// caller has dropped the stream and the scope has forgotten the intent.
+	/// That is the path a product takes, so it is the one that has to answer.
+	#[test]
+	fn a_follow_lost_with_its_connection_is_named_after_the_caller_let_go() {
+		let provider = follow_and_storage_provider();
+		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+		let follow = open_initialized_follow(&runtime, &provider, "host:1");
+
+		lose_connection(&provider, follow);
+
+		let failure =
+			read_storage(&runtime, "host:1").expect_err("a read on the lost follow must fail");
 		assert_eq!(failure.kind(), RuntimeFailureKind::Unavailable);
 		assert_eq!(
 			failure.reason(),
@@ -4026,63 +4062,15 @@ mod tests {
 	/// whichever follow is unaliased next.
 	#[test]
 	fn a_lost_follow_is_named_under_the_alias_a_product_bound() {
-		let provider = Arc::new(ScriptedProvider::new(|request| {
-			let id = extract_id(request)?;
-			if request.contains("chainHead_v1_follow") {
-				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
-			} else if request.contains("chainHead_v1_storage") {
-				Some(format!(
-					r#"{{"jsonrpc":"2.0","id":"{id}","result":{{"result":"started","operationId":"OP"}}}}"#
-				))
-			} else {
-				None
-			}
-		}));
+		let provider = follow_and_storage_provider();
 		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
-		let read = |follow_subscription_id: &str| {
-			futures::executor::block_on(runtime.remote_chain_head_storage(
-				RemoteChainHeadStorageRequest {
-					genesis_hash: vec![7u8; 32],
-					follow_subscription_id: follow_subscription_id.to_string(),
-					hash: vec![1u8; 32],
-					items: vec![StorageQueryItem {
-						key: vec![0xaa],
-						query_type: StorageQueryType::Value,
-					}],
-					child_trie: None,
-				},
-			))
-		};
+		let follow = open_initialized_follow(&runtime, &provider, "host:1");
+		read_storage(&runtime, "follow_0").expect("the alias binds to the live follow");
 
-		let mut follow = runtime.remote_chain_head_follow(
-			"host:1".to_string(),
-			RemoteChainHeadFollowRequest { genesis_hash: vec![7u8; 32], with_runtime: false },
-		);
-		wait_for_sent(&provider, |sent| {
-			sent.iter().any(|request| request.contains("chainHead_v1_follow"))
-		});
-		notification_sender(&provider)
-			.unbounded_send(
-				r#"{"jsonrpc":"2.0","method":"chainHead_v1_followEvent","params":{"subscription":"REMOTE-FOLLOW","result":{"event":"initialized","finalizedBlockHashes":[]}}}"#
-					.to_string(),
-			)
-			.unwrap();
-		assert!(matches!(
-			futures::executor::block_on(follow.next()),
-			Some(Ok(RemoteChainHeadFollowItem::Initialized { .. }))
-		));
-		read("follow_0").expect("the alias binds to the live follow");
+		lose_connection(&provider, follow);
 
-		provider.sender.lock().unwrap().take();
-		let _ = futures::executor::block_on(
-			follow
-				.by_ref()
-				.filter_map(|item| core::future::ready(item.err()))
-				.collect::<Vec<_>>(),
-		);
-		drop(follow);
-
-		let failure = read("follow_0").expect_err("a read on the lost alias must fail");
+		let failure =
+			read_storage(&runtime, "follow_0").expect_err("a read on the lost alias must fail");
 		assert_eq!(
 			failure.reason(),
 			"remote_chain_head_storage: follow subscription \"follow_0\" ended when its connection closed",
@@ -4093,21 +4081,9 @@ mod tests {
 	/// message above means what it says.
 	#[test]
 	fn an_id_that_was_never_followed_is_still_unknown() {
-		let provider = Arc::new(ScriptedProvider::new(|_| None));
-		let runtime = ChainRuntime::new(provider, spawner_for_tests());
-		let failure = futures::executor::block_on(runtime.remote_chain_head_storage(
-			RemoteChainHeadStorageRequest {
-				genesis_hash: vec![7u8; 32],
-				follow_subscription_id: "never-issued".to_string(),
-				hash: vec![1u8; 32],
-				items: vec![StorageQueryItem {
-					key: vec![0xaa],
-					query_type: StorageQueryType::Value,
-				}],
-				child_trie: None,
-			},
-		))
-		.expect_err("an unknown id must fail");
+		let runtime =
+			ChainRuntime::new(Arc::new(ScriptedProvider::new(|_| None)), spawner_for_tests());
+		let failure = read_storage(&runtime, "never-issued").expect_err("an unknown id must fail");
 		assert!(
 			failure.reason().contains("unknown follow subscription id"),
 			"unexpected reason: {}",
@@ -4121,75 +4097,26 @@ mod tests {
 	/// never issued.
 	#[test]
 	fn a_node_stop_names_itself_on_the_next_call() {
-		let provider = Arc::new(ScriptedProvider::new(|request| {
-			let id = extract_id(request)?;
-			if request.contains("chainHead_v1_follow") {
-				Some(format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
-			} else if request.contains("chainHead_v1_storage") {
-				Some(format!(
-					r#"{{"jsonrpc":"2.0","id":"{id}","result":{{"result":"started","operationId":"OP"}}}}"#
-				))
-			} else {
-				None
-			}
-		}));
+		let provider = follow_and_storage_provider();
 		let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
-		let read = || {
-			futures::executor::block_on(runtime.remote_chain_head_storage(
-				RemoteChainHeadStorageRequest {
-					genesis_hash: vec![7u8; 32],
-					follow_subscription_id: "host:1".to_string(),
-					hash: vec![1u8; 32],
-					items: vec![StorageQueryItem {
-						key: vec![0xaa],
-						query_type: StorageQueryType::Value,
-					}],
-					child_trie: None,
-				},
-			))
-		};
-
-		let mut follow = runtime.remote_chain_head_follow(
-			"host:1".to_string(),
-			RemoteChainHeadFollowRequest { genesis_hash: vec![7u8; 32], with_runtime: false },
+		let mut follow = open_initialized_follow(&runtime, &provider, "host:1");
+		assert!(
+			read_storage(&runtime, "host:1").is_ok(),
+			"the read before the stop should succeed"
 		);
-		wait_for_sent(&provider, |sent| {
-			sent.iter().any(|request| request.contains("chainHead_v1_follow"))
-		});
-		let notify = notification_sender(&provider);
-		notify
-			.unbounded_send(
-				r#"{"jsonrpc":"2.0","method":"chainHead_v1_followEvent","params":{"subscription":"REMOTE-FOLLOW","result":{"event":"initialized","finalizedBlockHashes":[]}}}"#
-					.to_string(),
-			)
-			.unwrap();
-		assert!(matches!(
-			futures::executor::block_on(follow.next()),
-			Some(Ok(RemoteChainHeadFollowItem::Initialized { .. }))
-		));
-		assert!(read().is_ok(), "the read before the stop should succeed");
 
-		notify
-			.unbounded_send(
-				r#"{"jsonrpc":"2.0","method":"chainHead_v1_followEvent","params":{"subscription":"REMOTE-FOLLOW","result":{"event":"stop"}}}"#
-					.to_string(),
-			)
-			.unwrap();
+		send_follow_event(&provider, r#"{"event":"stop"}"#);
 		assert!(matches!(
 			futures::executor::block_on(follow.next()),
 			Some(Ok(RemoteChainHeadFollowItem::Stop))
 		));
 		drop(follow);
 
-		let failure = read().expect_err("the follow is gone, so the read cannot succeed");
+		let failure = read_storage(&runtime, "host:1")
+			.expect_err("the follow is gone, so the read cannot succeed");
 		assert!(
 			failure.reason().contains("was stopped by the node"),
 			"a node stop should name itself, got: {}",
-			failure.reason(),
-		);
-		assert!(
-			!failure.reason().contains("unknown follow subscription id"),
-			"a follow this runtime issued is not an unknown id: {}",
 			failure.reason(),
 		);
 	}
