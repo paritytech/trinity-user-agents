@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use crate::platform::{
-	CreateTransactionReview, ProductId, ResourceAllocationReview, SignPayloadReview, SignRawReview,
-	UserConfirmationReview,
+	CreateTransactionReview, LegacySigningAccount, ProductId, ResourceAllocationReview,
+	SignPayloadReview, SignRawReview, UserConfirmationReview,
 };
 use tracing::warn;
 use truapi::latest as api;
@@ -190,6 +190,7 @@ impl SigningHostSsoService {
 		self.confirm(
 			cx,
 			UserConfirmationReview::SignRaw(SignRawReview::LegacyAccount {
+				account: LegacySigningAccount::Identity,
 				request: public_request.clone(),
 				watermarked,
 			}),
@@ -464,7 +465,10 @@ impl SigningHostSsoService {
 		let CreateTransactionLegacyPayload::V1(payload) = request.payload;
 		self.serve_create_transaction(
 			cx,
-			CreateTransactionReview::LegacyAccount(payload.clone()),
+			CreateTransactionReview::LegacyAccount {
+				account: LegacySigningAccount::Identity,
+				payload: payload.clone(),
+			},
 			CreateTransactionAuthorityRequest::IdentityAccount(payload),
 		)
 		.await
