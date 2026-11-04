@@ -14,7 +14,7 @@ struct BundledProductsTests {
 
         let id = try ProductId("provider.dot")
         let products = BundledProducts(root: root)
-        let product = try #require(try products.product(id))
+        let product = try #require(products.product(id))
 
         #expect(products.all.map(\.id.rawValue) == ["provider.dot"])
         #expect(product.workerManifest() == "{\"kind\":\"worker\"}")
