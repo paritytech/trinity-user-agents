@@ -7,7 +7,7 @@
 materials by ID with their arguments and holds the content they draw over. Hosts draw it as its children for now, and
 refuse a tree that still carries `Effect`.
 
-`system.featureSupported` takes a `Materials` question (format version, features, surface). Products ask it before
+`system.featureSupported` takes a `Materials` question (format version, features). Products ask it before
 sending materials. Every host answers no until it draws them. A host built before this release cannot read the
 question and answers with an error, which products read as no.
 

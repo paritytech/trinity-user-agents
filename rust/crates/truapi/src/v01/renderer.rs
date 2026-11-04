@@ -639,18 +639,6 @@ pub enum RenderContext {
 	},
 }
 
-/// A surface a product-rendered body draws on, one per `RenderContext` variant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
-pub enum RenderSurface {
-	/// A message in a chat room.
-	ChatMessage,
-	/// A candidate answered to an input query.
-	InputWidget,
-	/// A card face in the host's Pocket collection.
-	PocketCard,
-}
-
 /// A body the host needs drawn.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]

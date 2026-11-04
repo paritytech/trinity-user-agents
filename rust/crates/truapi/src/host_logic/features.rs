@@ -69,7 +69,7 @@ pub fn chain_info(
 mod tests {
 	use super::*;
 	use crate::platform::HostChainEntry;
-	use truapi::latest::{ChainIdentifier, RenderSurface};
+	use truapi::latest::ChainIdentifier;
 
 	fn paseo_set() -> HostChainSet {
 		HostChainSet {
@@ -136,11 +136,8 @@ mod tests {
 	/// not asked, and a product never sends a tree the host would draw plain.
 	#[test]
 	fn materials_are_not_supported_whatever_the_platform_says() {
-		let request = HostFeatureSupportedRequest::Materials {
-			format_version: 1,
-			features: Vec::new(),
-			surface: RenderSurface::PocketCard,
-		};
+		let request =
+			HostFeatureSupportedRequest::Materials { format_version: 1, features: Vec::new() };
 		let resp =
 			futures::executor::block_on(feature_supported(&AlwaysSupported, request)).unwrap();
 		assert!(!resp.supported);

@@ -141,7 +141,7 @@ pub mod latest {
 		RemoteChainTransactionStopRequest, RemotePermission, RemoteStatementStoreCreateProofError,
 		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
 		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
-		RenderSurface, RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
+		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
 		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
 		SignedStatement, Size, Statement, StatementProof, StatementTopic, StorageQueryItem,
 		StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
