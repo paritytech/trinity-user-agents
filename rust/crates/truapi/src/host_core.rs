@@ -32,7 +32,7 @@ use futures::{
 use parity_scale_codec::{Decode, Encode};
 use thiserror::Error;
 use tracing::{instrument, warn};
-use truapi::{CallContext, CancellationReason, v01};
+use truapi::{CallContext, CancellationReason, latest, v01};
 
 use crate::{
 	frame::ProtocolMessage,
@@ -842,7 +842,7 @@ impl SigningHostRuntime {
 	pub fn get_funding_quote(
 		&self,
 		intent: &str,
-		ask: v01::FundingQuoteAsk,
+		ask: latest::FundingQuoteAsk,
 	) -> futures::stream::BoxStream<'static, crate::platform::FundingQuoteRow> {
 		self.services.get_funding_quote(intent, ask)
 	}
@@ -854,7 +854,7 @@ impl SigningHostRuntime {
 	/// [`Self::stop_funding_quotes`]. Returns the request id each list
 	/// carries; once any of those happens, no list of this request arrives
 	/// any more.
-	pub fn request_funding_quotes(&self, intent: &str, ask: v01::FundingQuoteAsk) -> u64 {
+	pub fn request_funding_quotes(&self, intent: &str, ask: latest::FundingQuoteAsk) -> u64 {
 		let (request_id, lists) = self.services.watch_funding_quotes(intent, ask);
 		let platform = self.services.funding().platform();
 		let services = self.services.clone();
@@ -1991,7 +1991,7 @@ impl FundingProviderLink for WorkerFundingLink {
 
 	fn quote(
 		&self,
-		ask: v01::FundingQuoteAsk,
+		ask: latest::FundingQuoteAsk,
 	) -> BoxFuture<'static, Option<v01::FundingQuoteAnswer>> {
 		use truapi::versioned::funding_provider::{
 			ProductFundingQuoteRequest, ProductFundingQuoteResponse,
