@@ -1,0 +1,53 @@
+name: Install the pinned applesimutils
+description: >-
+  Puts one applesimutils release first on PATH for the rest of the job, so the
+  iOS host-playground run can grant the notification, camera and Face ID
+  permissions that simctl cannot.
+
+# The binary comes from the release's Homebrew bottle, the same file wix/brew
+# pours on Apple silicon. It is a universal binary that links only system
+# libraries, so it runs without Homebrew, which the self-hosted runners do not
+# have on PATH.
+#
+# The binary lives under RUNNER_TEMP rather than in Homebrew, because the
+# self-hosted runners are persistent and shared: it lasts for this job and
+# touches nothing the next one sees.
+#
+# To move the pin, change both values below together.
+
+inputs:
+  version:
+    description: applesimutils release to install.
+    required: false
+    default: "0.9.12"
+  sha256:
+    description: SHA-256 of that release's applesimutils-<version>.arm64_big_sur.bottle.tar.gz.
+    required: false
+    default: 3373d85ea6051e77865b0a22960eb0b5d63f3126c7c99232d0b6b9c83ee2c133
+
+runs:
+  using: composite
+  steps:
+    - name: Install applesimutils ${{ inputs.version }}
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        SHA256: ${{ inputs.sha256 }}
+      run: |
+        set -euo pipefail
+        dir="${RUNNER_TEMP}/applesimutils-${VERSION}"
+        bottle="applesimutils-${VERSION}.arm64_big_sur.bottle.tar.gz"
+        mkdir -p "$dir"
+        curl -fsSL --retry 3 -o "${dir}/${bottle}" \
+          "https://github.com/wix/AppleSimulatorUtils/releases/download/${VERSION}/${bottle}"
+        echo "${SHA256}  ${dir}/${bottle}" | shasum -a 256 -c -
+        tar -xzf "${dir}/${bottle}" -C "$dir" --strip-components 3 \
+          "applesimutils/${VERSION}/bin/applesimutils"
+        rm "${dir}/${bottle}"
+        actual="$("${dir}/applesimutils" --version)"
+        if [ "$actual" != "applesimutils version ${VERSION}" ]; then
+          echo "::error::Expected applesimutils ${VERSION}, the binary reports ${actual}"
+          exit 1
+        fi
+        echo "$dir" >> "$GITHUB_PATH"
+        echo "${actual} at ${dir}"
