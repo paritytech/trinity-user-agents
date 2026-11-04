@@ -20,7 +20,7 @@ struct BundledProductsTests {
         #expect(product.hasWorker())
         #expect(product.hasApp())
         #expect(ProductWorkerSource.bundled(product) == ProductWorkerSource(
-            contentId: "provider.dot",
+            contentId: ProductId("provider.dot"),
             entryRelativePath: "worker/index.js"
         ))
     }
