@@ -31,7 +31,10 @@ struct ProductNotificationDiagnostics {
     /// Remembers the notification as reported so the next launch does not report it again.
     func shownInForeground(_ notification: UNNotification) {
         record(notification, step: .shown, seenVia: .foreground)
-        markReported(notification.request.identifier)
+        let identifier = notification.request.identifier
+        Task { @MainActor in
+            markReported(identifier)
+        }
     }
 
     func tapped(_ notification: UNNotification) {
@@ -40,23 +43,26 @@ struct ProductNotificationDiagnostics {
 
     /// Reports product notifications that arrived while the app was not in the foreground.
     /// `delivered` runs only in a build that reports, so the caller may put the Notification Center query behind it.
+    /// The stored set is read and written on the main actor, like `markReported`, so they cannot clobber each other.
     func reportDeliveredSinceLastLaunch(_ delivered: @escaping @Sendable () async -> [UNNotification]) {
         guard isReporting else {
             return
         }
-        Task {
+        Task { @MainActor in
             let scanTime = now()
-            let delivered = await delivered()
-            let key = SettingsKey.productNotificationsReported.rawValue
-            let alreadyReported = (settings.anyValue(for: key) as? [String]).map(Set.init)
-            let identifiersToReport = ProductNotificationEvent.identifiersToReport(
-                delivered: delivered.map { (identifier: $0.request.identifier, deliveredAt: $0.date) },
-                alreadyReported: alreadyReported,
+            let before = reportedIdentifiers()
+            let notifications = await delivered()
+            let current = reportedIdentifiers() ?? []
+            let newlyDelivered = ProductNotificationEvent.identifiersToReport(
+                delivered: notifications.map { (identifier: $0.request.identifier, deliveredAt: $0.date) },
+                alreadyReported: before,
                 now: scanTime
             )
-            settings.set(anyValue: delivered.map(\.request.identifier), for: key)
+            let identifiersToReport = newlyDelivered.subtracting(current)
+            let deliveredIdentifiers = Set(notifications.map(\.request.identifier))
+            setReportedIdentifiers(deliveredIdentifiers.union(current.subtracting(before ?? [])))
 
-            for notification in delivered where identifiersToReport.contains(notification.request.identifier) {
+            for notification in notifications where identifiersToReport.contains(notification.request.identifier) {
                 record(notification, step: .shown, seenVia: .nextLaunch)
             }
         }
@@ -64,16 +70,22 @@ struct ProductNotificationDiagnostics {
 }
 
 private extension ProductNotificationDiagnostics {
+    @MainActor
     func markReported(_ identifier: String) {
         guard isReporting else {
             return
         }
-        let key = SettingsKey.productNotificationsReported.rawValue
-        var identifiers = settings.anyValue(for: key) as? [String] ?? []
-        if !identifiers.contains(identifier) {
-            identifiers.append(identifier)
-        }
-        settings.set(anyValue: identifiers, for: key)
+        setReportedIdentifiers((reportedIdentifiers() ?? []).union([identifier]))
+    }
+
+    /// nil means nothing has been stored yet, which is the first scan.
+    func reportedIdentifiers() -> Set<String>? {
+        let stored = settings.anyValue(for: SettingsKey.productNotificationsReported.rawValue)
+        return (stored as? [String]).map(Set.init)
+    }
+
+    func setReportedIdentifiers(_ identifiers: Set<String>) {
+        settings.set(anyValue: Array(identifiers), for: SettingsKey.productNotificationsReported.rawValue)
     }
 
     func record(
