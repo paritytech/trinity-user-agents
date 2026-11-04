@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use super::{
 	BlockBackend, DispatchOutcome, EncodedExtrinsic, ExtrinsicBuildError, ExtrinsicService,
-	HashAndNumber, RuntimeApiCaller, SubstrateSigner, TxSubmitter, WatchEvent,
+	HashAndNumber, MortalExtrinsic, RuntimeApiCaller, SubstrateSigner, TxSubmitter, WatchEvent,
 };
 use crate::chain_runtime::{ChainRuntime, RuntimeFailure};
 
@@ -21,7 +21,8 @@ const VIEW_CALL_ORIGIN: [u8; 32] = [0xEE; 32];
 /// Why a call through [`EvmContractCaller`] failed.
 #[derive(Debug, Error)]
 pub enum EvmContractError {
-	/// The chain could not be reached or failed a request.
+	/// The chain could not be reached or failed a request before anything
+	/// was submitted.
 	#[error(transparent)]
 	Chain(#[from] RuntimeFailure),
 	/// The `ReviveApi_call` request failed.
@@ -43,18 +44,39 @@ pub enum EvmContractError {
 		/// Rendered revert reason.
 		detail: String,
 	},
-	/// The signed extrinsic could not be built.
+	/// The signed extrinsic could not be built, so nothing was submitted.
 	#[error(transparent)]
 	Build(#[from] ExtrinsicBuildError),
-	/// The extrinsic ended without being finalized.
-	#[error("the extrinsic was not finalized: {0:?}")]
-	NotFinalized(WatchEvent),
+	/// The extrinsic was sent, and its watch ended before a finalized block
+	/// included it. The node may have received it, so a block can still
+	/// include it until its era ends: follow `extrinsic` through
+	/// [`Mortality::death`](super::Mortality::death) before signing the
+	/// write again.
+	#[error("the extrinsic was not finalized: {event:?}")]
+	NotFinalized {
+		/// The submitted extrinsic and its era.
+		extrinsic: MortalExtrinsic,
+		/// The event that ended the watch, [`WatchEvent::Error`] when sending
+		/// or watching failed.
+		event: WatchEvent,
+	},
+	/// A finalized block includes the extrinsic, but how it dispatched could
+	/// not be read. The write is on chain: read its outcome at `block`
+	/// instead of signing it again.
+	#[error("the outcome in finalized block {block:?} is unreadable: {reason}")]
+	OutcomeUnreadable {
+		/// The submitted extrinsic.
+		extrinsic: MortalExtrinsic,
+		/// The finalized block the watch reported.
+		block: H256,
+		/// Why the outcome could not be read.
+		reason: Box<RuntimeFailure>,
+	},
 	/// A finalized block included the extrinsic, which failed to dispatch.
+	/// The call had no effect apart from its fee, so the write may be
+	/// prepared again.
 	#[error("the extrinsic failed to dispatch")]
 	DispatchFailed,
-	/// The finalized block reports no dispatch outcome for the extrinsic.
-	#[error("the finalized block reports no outcome for the extrinsic")]
-	OutcomeMissing,
 }
 
 /// A simulated contract write bound to its signer and to the caller that
@@ -125,7 +147,10 @@ impl PreparedEvmTransaction<'_> {
 	///
 	/// The extrinsic gets a fresh nonce and mortal era and the prepared call's
 	/// limits unchanged. The signer must keep the account it had at
-	/// [`EvmContractCaller::dry_run`].
+	/// [`EvmContractCaller::dry_run`]. An error that leaves the write possibly
+	/// on chain carries the submitted extrinsic, as
+	/// [`EvmContractError::NotFinalized`] or
+	/// [`EvmContractError::OutcomeUnreadable`].
 	pub async fn execute_and_watch(self) -> Result<(), EvmContractError> {
 		let Self { caller, signer, call } = self;
 		let extrinsic = caller
@@ -135,7 +160,7 @@ impl PreparedEvmTransaction<'_> {
 			.with_signer(signer)
 			.build()
 			.await?;
-		submit_until_finalized(&caller.chain, caller.genesis, &extrinsic.extrinsic).await
+		submit_until_finalized(&caller.chain, caller.genesis, extrinsic).await
 	}
 }
 
@@ -165,29 +190,59 @@ async fn simulate(
 async fn submit_until_finalized(
 	chain: &(impl TxSubmitter + BlockBackend),
 	genesis: H256,
-	extrinsic: &EncodedExtrinsic,
+	extrinsic: MortalExtrinsic,
 ) -> Result<(), EvmContractError> {
-	let mut progress = chain.submit_and_watch(genesis, extrinsic).await?;
-	let finalized = loop {
+	let block = match finalized_inclusion(chain, genesis, &extrinsic.extrinsic).await {
+		Ok(block) => block,
+		Err(event) => return Err(EvmContractError::NotFinalized { extrinsic, event }),
+	};
+	match finalized_outcome(chain, genesis, block, extrinsic.extrinsic.hash()).await {
+		Ok(DispatchOutcome::Succeeded) => Ok(()),
+		Ok(DispatchOutcome::Failed) => Err(EvmContractError::DispatchFailed),
+		Err(reason) => {
+			Err(EvmContractError::OutcomeUnreadable { extrinsic, block, reason: Box::new(reason) })
+		},
+	}
+}
+
+/// Sends `extrinsic` and returns the finalized block that includes it, or
+/// the event that ended the watch without one.
+async fn finalized_inclusion(
+	chain: &impl TxSubmitter,
+	genesis: H256,
+	extrinsic: &EncodedExtrinsic,
+) -> Result<H256, WatchEvent> {
+	let mut progress = chain
+		.submit_and_watch(genesis, extrinsic)
+		.await
+		.map_err(|failure| WatchEvent::Error(failure.to_string()))?;
+	loop {
 		let event = progress.next().await.unwrap_or_else(|| {
 			WatchEvent::Error("the watch ended without a terminal event".to_string())
 		});
 		match event {
-			WatchEvent::InFinalizedBlock(hash) => break hash,
-			event if event.is_terminal() => return Err(EvmContractError::NotFinalized(event)),
+			WatchEvent::InFinalizedBlock(hash) => return Ok(hash),
+			event if event.is_terminal() => return Err(event),
 			_ => {},
 		}
-	};
-	let number = chain
-		.block_number(genesis, finalized)
-		.await?
-		.ok_or(EvmContractError::OutcomeMissing)?;
-	let at = HashAndNumber { hash: finalized, number };
-	match chain.dispatch_outcome(genesis, at, extrinsic.hash()).await? {
-		Some(DispatchOutcome::Succeeded) => Ok(()),
-		Some(DispatchOutcome::Failed) => Err(EvmContractError::DispatchFailed),
-		None => Err(EvmContractError::OutcomeMissing),
 	}
+}
+
+/// How the extrinsic with `extrinsic_hash` dispatched in the finalized block
+/// with `hash`.
+async fn finalized_outcome(
+	chain: &impl BlockBackend,
+	genesis: H256,
+	hash: H256,
+	extrinsic_hash: H256,
+) -> Result<DispatchOutcome, RuntimeFailure> {
+	let number = chain.block_number(genesis, hash).await?.ok_or_else(|| {
+		RuntimeFailure::host_failure("block_number", "the node does not know the finalized block")
+	})?;
+	let at = HashAndNumber { hash, number };
+	chain.dispatch_outcome(genesis, at, extrinsic_hash).await?.ok_or_else(|| {
+		RuntimeFailure::host_failure("dispatch_outcome", "the finalized block lacks the extrinsic")
+	})
 }
 
 /// `sp_weights::Weight`.
