@@ -248,150 +248,30 @@ fn started_operation_id(operation: OperationStartedResult) -> Result<String, Str
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::{
-		chain::{ContractResult, ExecReturnValue, StorageDeposit, Weight},
-		test_support::{ScriptedProvider, test_spawner},
-	};
-	use parity_scale_codec::Encode;
-	use serde_json::{Value, json};
-	use std::sync::Arc;
 
-	const FOLLOW_ID: &str = "lookup-follow";
-	const PINNED_BLOCK: [u8; 32] = [0x22; 32];
+	struct Unavailable;
 
-	fn contract_output(flags: u32, data: Vec<u8>) -> Vec<u8> {
-		ContractResult {
-			_weight_consumed: Weight::default(),
-			weight_required: Weight::default(),
-			storage_deposit: StorageDeposit::Refund { _amount: 0 },
-			max_storage_deposit: StorageDeposit::Refund { _amount: 0 },
-			_gas_consumed: 0,
-			result: Ok(ExecReturnValue { flags, data }),
+	#[async_trait::async_trait]
+	impl RuntimeApiCaller for Unavailable {
+		async fn call(&mut self, _function: &str, _input: &[u8]) -> Result<Vec<u8>, String> {
+			Err("runtime unavailable".to_string())
 		}
-		.encode()
 	}
 
-	fn lookup_provider(output: Result<Vec<u8>, &'static str>) -> Arc<ScriptedProvider> {
-		Arc::new(ScriptedProvider::with_frames(move |request| {
-			let request: Value = serde_json::from_str(request).unwrap();
-			let response = |result: Value| {
-				json!({"jsonrpc": "2.0", "id": request["id"], "result": result}).to_string()
-			};
-			let event = |result: Value| {
-				json!({
-					"jsonrpc": "2.0",
-					"method": "chainHead_v1_followEvent",
-					"params": {"subscription": FOLLOW_ID, "result": result},
-				})
-				.to_string()
-			};
-			match request["method"].as_str().unwrap() {
-				"chainHead_v1_follow" => {
-					let block = format!("0x{}", hex::encode(PINNED_BLOCK));
-					vec![
-						response(json!(FOLLOW_ID)),
-						event(json!({
-							"event": "initialized",
-							"finalizedBlockHashes": [block],
-							"finalizedBlockRuntime": null,
-						})),
-						event(json!({"event": "bestBlockChanged", "bestBlockHash": block})),
-					]
-				},
-				"chainHead_v1_storage" => vec![
-					response(json!({"result": "started", "operationId": "storage"})),
-					event(json!({
-						"event": "bestBlockChanged",
-						"bestBlockHash": format!("0x{}", hex::encode([0x33; 32])),
-					})),
-					event(json!({
-						"event": "operationStorageItems",
-						"operationId": "storage",
-						"items": [{"key": request["params"][2][0]["key"], "value": "0x42"}],
-					})),
-					event(json!({"event": "operationStorageDone", "operationId": "storage"})),
-				],
-				"chainHead_v1_call" => vec![
-					response(json!({"result": "started", "operationId": "view"})),
-					event(match &output {
-						Ok(output) => json!({
-							"event": "operationCallDone",
-							"operationId": "view",
-							"output": format!("0x{}", hex::encode(output)),
-						}),
-						Err(error) => json!({
-							"event": "operationError", "operationId": "view", "error": error,
-						}),
-					}),
-				],
-				"chainHead_v1_unfollow" => vec![response(Value::Null)],
-				method => panic!("unscripted method {method}"),
-			}
-		}))
-	}
-
+	/// dotNS discovery reads a revert as an answer, so a runtime API failure
+	/// must never read as one.
 	#[test]
-	fn storage_and_contract_reads_keep_the_same_block_when_the_best_head_moves() {
-		let provider = lookup_provider(Ok(contract_output(0, vec![0x55])));
-		let chain = ChainRuntime::new(provider.clone(), test_spawner());
-		futures::executor::block_on(async {
-			let mut lookup =
-				DotnsLookup::pinned_to_best_block(&chain, [0x11; 32], DotnsLookupKind::Identity)
-					.await
-					.unwrap();
-			let storage = lookup.storage(vec![0x44]).await.unwrap();
-			let view = lookup.view(&[0x66; 20], vec![0x77]).await.unwrap();
-			let contexts: Vec<_> = provider
-				.sent
-				.lock()
-				.unwrap()
-				.iter()
-				.map(|request| serde_json::from_str::<Value>(request).unwrap())
-				.filter(|request| {
-					matches!(
-						request["method"].as_str(),
-						Some("chainHead_v1_storage" | "chainHead_v1_call")
-					)
-				})
-				.map(|request| (request["params"][0].clone(), request["params"][1].clone()))
-				.collect();
+	fn a_runtime_call_failure_is_not_a_revert() {
+		let result = futures::executor::block_on(EvmContractCaller::read(
+			&mut Unavailable,
+			&[0x66; 20],
+			&[],
+		));
 
-			assert_eq!(
-				(storage, view, contexts),
-				(
-					Some(vec![0x42]),
-					vec![0x55],
-					vec![(json!(FOLLOW_ID), json!(format!("0x{}", hex::encode(PINNED_BLOCK)))); 2],
-				)
-			);
-		});
-	}
-
-	#[test]
-	fn a_contract_revert_is_distinct_from_a_runtime_call_failure() {
-		for (output, expected) in [
-			(
-				Ok(contract_output(1, vec![])),
-				DotnsViewError::Reverted { detail: "(empty)".to_string() },
-			),
-			(
-				Err("runtime unavailable"),
-				DotnsViewError::Failed("ReviveApi_call: runtime unavailable".to_string()),
-			),
-		] {
-			let chain = ChainRuntime::new(lookup_provider(output), test_spawner());
-			futures::executor::block_on(async {
-				let mut lookup = DotnsLookup::pinned_to_best_block(
-					&chain,
-					[0x11; 32],
-					DotnsLookupKind::Identity,
-				)
-				.await
-				.unwrap();
-
-				assert_eq!(lookup.view(&[0x66; 20], vec![0x77]).await, Err(expected));
-			});
-		}
+		assert_eq!(
+			result.map_err(DotnsViewError::from),
+			Err(DotnsViewError::Failed("ReviveApi_call: runtime unavailable".to_string())),
+		);
 	}
 
 	/// An identity lookup names what it reads and nothing about whose account

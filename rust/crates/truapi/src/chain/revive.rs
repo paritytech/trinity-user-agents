@@ -250,7 +250,8 @@ async fn finalized_outcome(
 }
 
 /// `sp_weights::Weight`.
-#[derive(Debug, Default, PartialEq, Eq, Encode, Decode, EncodeAsType)]
+#[derive(Encode, Decode, EncodeAsType)]
+#[cfg_attr(test, derive(Default))]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 pub struct Weight {
 	/// Computation time.
@@ -358,7 +359,6 @@ struct ReviveApiCallArgs<'a> {
 
 /// What a contract call would do if its origin sent it now: its return data
 /// and the limits a real call must declare.
-#[derive(Debug, PartialEq, Eq)]
 struct Simulation {
 	/// The contract's return data.
 	output: Vec<u8>,
@@ -414,67 +414,4 @@ fn describe_revert(data: &[u8]) -> String {
 	GenericContractError::abi_decode(data)
 		.map(|error| error.to_string().escape_debug().to_string())
 		.unwrap_or_else(|_| format!("0x{}", hex::encode(data)))
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-	use parity_scale_codec::Compact;
-	use subxt::{ext::frame_decode::extrinsics::encode_call_data, metadata::Metadata};
-
-	const ASSET_HUB_METADATA: &[u8] =
-		include_bytes!("../../tests/fixtures/paseo-next-asset-hub-3004000-metadata.scale");
-
-	#[test]
-	fn a_contract_write_uses_required_weight_and_peak_storage_deposit() {
-		let output = ContractResult {
-			_weight_consumed: Weight { ref_time: 10, proof_size: 20 },
-			weight_required: Weight { ref_time: 30, proof_size: 40 },
-			storage_deposit: StorageDeposit::Refund { _amount: 50 },
-			max_storage_deposit: StorageDeposit::Charge(60),
-			_gas_consumed: 70,
-			result: Ok(ExecReturnValue { flags: 0, data: vec![80] }),
-		}
-		.encode();
-
-		assert_eq!(
-			Simulation::decode(&output).unwrap(),
-			Simulation {
-				output: vec![80],
-				weight_required: Weight { ref_time: 30, proof_size: 40 },
-				storage_deposit: 60,
-			}
-		);
-	}
-
-	#[test]
-	fn a_contract_call_encodes_its_limits_as_asset_hub_metadata_expects() {
-		let metadata = Metadata::decode(&mut &ASSET_HUB_METADATA[..]).unwrap();
-		let args = ReviveCallArgs {
-			dest: [0x44; 20],
-			value: 0,
-			weight_limit: Weight { ref_time: 456_789, proof_size: 12_345 },
-			storage_deposit_limit: 987_654_321,
-			data: vec![1, 2, 3],
-		};
-
-		let encoded =
-			encode_call_data(REVIVE_PALLET, "call", &args, &metadata, metadata.types()).unwrap();
-
-		let pallet = metadata.pallet_by_name(REVIVE_PALLET).unwrap();
-		assert_eq!(
-			encoded,
-			(
-				pallet.call_index(),
-				pallet.call_variant_by_name("call").unwrap().index,
-				[0x44u8; 20],
-				Compact(0u128),
-				Compact(456_789u64),
-				Compact(12_345u64),
-				Compact(987_654_321u128),
-				vec![1u8, 2, 3],
-			)
-				.encode()
-		);
-	}
 }

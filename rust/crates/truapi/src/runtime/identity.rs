@@ -387,6 +387,10 @@ mod tests {
 				"chainHead_v1_storage" => {
 					*next_operation += 1;
 					let operation_id = format!("storage-{}", *next_operation);
+					assert_eq!(
+						[&request["params"][0], &request["params"][1]],
+						[FOLLOW_ID, BEST_HASH]
+					);
 					let key = request["params"][2][0]["key"].as_str().unwrap();
 					let key_bytes = hex::decode(key.trim_start_matches("0x")).unwrap();
 					let mut frames =
@@ -407,6 +411,10 @@ mod tests {
 				"chainHead_v1_call" => {
 					*next_operation += 1;
 					let operation_id = format!("call-{}", *next_operation);
+					assert_eq!(
+						[&request["params"][0], &request["params"][1]],
+						[FOLLOW_ID, BEST_HASH]
+					);
 					assert_eq!(request["params"][2].as_str(), Some("ReviveApi_call"));
 					let args = hex::decode(
 						request["params"][3].as_str().unwrap().trim_start_matches("0x"),

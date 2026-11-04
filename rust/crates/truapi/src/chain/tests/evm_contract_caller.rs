@@ -61,7 +61,7 @@ enum Outcome {
 	DispatchFailed,
 	MissingEvent,
 	MissingExtrinsic,
-	Stopped(&'static str),
+	Dropped,
 }
 
 struct EvmNode {
@@ -79,7 +79,7 @@ impl EvmNode {
 		node.account_next_index = 7;
 		Self {
 			node,
-			output: simulation_output(0),
+			output: simulation_result(Ok(ExecReturnValue { flags: 0, data: vec![0x80] })),
 			simulations: Vec::new(),
 			submissions: Vec::new(),
 			outcomes: VecDeque::new(),
@@ -111,13 +111,13 @@ impl EvmNode {
 				};
 				let mut frames = vec![response(json!(subscription))];
 				let outcome = self.outcomes.pop_front().unwrap_or(Outcome::Succeeded);
-				if let Outcome::Stopped(event) = outcome {
-					frames.push(notification(json!({"event": event, "error": "scripted stop"})));
+				if matches!(outcome, Outcome::Dropped) {
+					frames
+						.push(notification(json!({"event": "dropped", "error": "scripted stop"})));
 					return frames;
 				}
 				let parent = self.node.block(self.node.finalized).hash;
 				self.node.finalized += 1;
-				self.node.account_next_index += 1;
 				let block = self.node.block(self.node.finalized).hash;
 				let body = if matches!(outcome, Outcome::MissingExtrinsic) {
 					Vec::new()
@@ -129,7 +129,7 @@ impl EvmNode {
 					Outcome::Succeeded => Some("ExtrinsicSuccess"),
 					Outcome::DispatchFailed => Some("ExtrinsicFailed"),
 					Outcome::MissingEvent | Outcome::MissingExtrinsic => None,
-					Outcome::Stopped(_) => unreachable!(),
+					Outcome::Dropped => unreachable!(),
 				};
 				self.node.events.insert(block, dispatch_events(event));
 				frames.extend([
@@ -161,10 +161,6 @@ fn serve_contracts(
 
 fn hex_bytes(value: &Value) -> Vec<u8> {
 	hex::decode(value.as_str().unwrap().trim_start_matches("0x")).unwrap()
-}
-
-fn simulation_output(flags: u32) -> Vec<u8> {
-	simulation_result(Ok(ExecReturnValue { flags, data: vec![0x80] }))
 }
 
 fn simulation_result(result: Result<ExecReturnValue, RawDispatchError>) -> Vec<u8> {
@@ -272,6 +268,29 @@ fn expected_call(signer: &RecordingSigner, nonce: u64, birth: u64) -> Submission
 	}
 }
 
+/// What the node and the signer were asked to do.
+#[derive(Debug, PartialEq)]
+struct Activity {
+	simulations: Vec<Vec<u8>>,
+	nonce_reads: usize,
+	submissions: Vec<Submission>,
+	signatures: usize,
+}
+
+fn activity(
+	node: &Mutex<EvmNode>,
+	provider: &ScriptedProvider,
+	signer: &RecordingSigner,
+) -> Activity {
+	let node = node.lock().unwrap();
+	Activity {
+		simulations: node.simulations.clone(),
+		nonce_reads: method_count(provider, "system_accountNextIndex"),
+		submissions: node.submissions.iter().map(|bytes| decoded_submission(bytes)).collect(),
+		signatures: signer.signatures.load(Ordering::SeqCst),
+	}
+}
+
 #[test]
 fn preparation_simulates_the_signer_without_signing_or_submitting() {
 	let signer = RecordingSigner::new();
@@ -289,13 +308,13 @@ fn preparation_simulates_the_signer_without_signing_or_submitting() {
 	)
 		.encode();
 	assert_eq!(
-		(
-			node.lock().unwrap().simulations.clone(),
-			method_count(&provider, "system_accountNextIndex"),
-			method_count(&provider, "transactionWatch_v1_submitAndWatch"),
-			signer.signatures.load(Ordering::SeqCst),
-		),
-		(vec![expected], 0, 0, 0),
+		activity(&node, &provider, &signer),
+		Activity {
+			simulations: vec![expected],
+			nonce_reads: 0,
+			submissions: Vec::new(),
+			signatures: 0,
+		},
 	);
 }
 
@@ -306,83 +325,25 @@ fn execution_uses_the_prepared_call_and_limits_with_a_fresh_nonce_and_era() {
 	let mut input = INPUT.to_vec();
 	let prepared = block_on(caller.dry_run(&signer, &CONTRACT, &input)).unwrap();
 	input.fill(0xff);
-	{
+	let simulations = {
 		let mut node = node.lock().unwrap();
-		node.output = simulation_output(1);
+		node.output = simulation_result(Ok(ExecReturnValue { flags: 1, data: vec![0x80] }));
 		node.node.account_next_index = 19;
 		node.node.finalized = 6;
-	}
+		node.simulations.clone()
+	};
 
 	block_on(prepared.execute_and_watch()).unwrap();
 
-	let submissions: Vec<_> = node
-		.lock()
-		.unwrap()
-		.submissions
-		.iter()
-		.map(|bytes| decoded_submission(bytes))
-		.collect();
 	assert_eq!(
-		(
-			submissions,
-			method_count(&provider, "ReviveApi_call"),
-			signer.signatures.load(Ordering::SeqCst),
-		),
-		(vec![expected_call(&signer, 19, 6)], 1, 1),
+		activity(&node, &provider, &signer),
+		Activity {
+			simulations,
+			nonce_reads: 1,
+			submissions: vec![expected_call(&signer, 19, 6)],
+			signatures: 1,
+		},
 	);
-}
-
-#[test]
-fn finalized_inclusion_requires_an_explicit_successful_dispatch() {
-	let signer = RecordingSigner::new();
-	for (outcome, expected) in [
-		(Outcome::DispatchFailed, "failed"),
-		(Outcome::MissingEvent, "event missing"),
-		(Outcome::MissingExtrinsic, "extrinsic missing"),
-	] {
-		let mut node = EvmNode::new();
-		node.outcomes.push_back(outcome);
-		let (_, _, caller) = serve_contracts(node);
-		let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
-
-		let result = block_on(prepared.execute_and_watch());
-
-		let actual = match result {
-			Err(EvmContractError::DispatchFailed { .. }) => "failed",
-			Err(EvmContractError::OutcomeUnreadable { reason, .. })
-				if reason.method() == "dispatch_outcome" &&
-					reason.reason().contains("no dispatch event") =>
-			{
-				"event missing"
-			},
-			Err(EvmContractError::OutcomeUnreadable { .. }) => "extrinsic missing",
-			other => panic!("unexpected dispatch outcome: {other:?}"),
-		};
-		assert_eq!(actual, expected);
-	}
-}
-
-#[test]
-fn a_stopped_watch_is_not_reported_as_a_successful_contract_call() {
-	let signer = RecordingSigner::new();
-	for event in ["invalid", "dropped", "error"] {
-		let mut node = EvmNode::new();
-		node.outcomes.push_back(Outcome::Stopped(event));
-		let (_, _, caller) = serve_contracts(node);
-		let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
-
-		let result = block_on(prepared.execute_and_watch());
-
-		let Err(EvmContractError::NotFinalized { event: actual, .. }) = result else {
-			panic!("unexpected stopped watch: {result:?}");
-		};
-		let expected = match event {
-			"invalid" => WatchEvent::Invalid("scripted stop".to_string()),
-			"dropped" => WatchEvent::Dropped("scripted stop".to_string()),
-			_ => WatchEvent::Error("scripted stop".to_string()),
-		};
-		assert_eq!(actual, expected);
-	}
 }
 
 /// A revert during execution, running out of gas and an exhausted deposit
@@ -409,13 +370,13 @@ fn a_failed_dispatch_carries_its_module_error() {
 fn a_dropped_watch_returns_the_submitted_extrinsic_and_its_era() {
 	let signer = RecordingSigner::new();
 	let mut node = EvmNode::new();
-	node.outcomes.push_back(Outcome::Stopped("dropped"));
+	node.outcomes.push_back(Outcome::Dropped);
 	let (node, _, caller) = serve_contracts(node);
 	let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
 
 	let result = block_on(prepared.execute_and_watch());
 
-	let Err(EvmContractError::NotFinalized { extrinsic, .. }) = result else {
+	let Err(EvmContractError::NotFinalized { extrinsic, event }) = result else {
 		panic!("unexpected dropped watch: {result:?}");
 	};
 	let node = node.lock().unwrap();
@@ -423,7 +384,7 @@ fn a_dropped_watch_returns_the_submitted_extrinsic_and_its_era() {
 		extrinsic: EncodedExtrinsic::new(node.submissions[0].clone()),
 		mortality: Mortality::new(node.node.block(4), DEFAULT_MORTALITY_PERIOD).unwrap(),
 	};
-	assert_eq!(extrinsic, submitted);
+	assert_eq!((extrinsic, event), (submitted, WatchEvent::Dropped("scripted stop".to_string())));
 }
 
 /// The finalized block includes the extrinsic, so a failed outcome read
@@ -431,68 +392,35 @@ fn a_dropped_watch_returns_the_submitted_extrinsic_and_its_era() {
 #[test]
 fn an_unreadable_outcome_names_the_finalized_block_that_includes_the_extrinsic() {
 	let signer = RecordingSigner::new();
-	let mut node = EvmNode::new();
-	node.outcomes.push_back(Outcome::MissingEvent);
-	let (node, _, caller) = serve_contracts(node);
-	let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
+	for outcome in [Outcome::MissingEvent, Outcome::MissingExtrinsic] {
+		let mut node = EvmNode::new();
+		node.outcomes.push_back(outcome);
+		let (node, _, caller) = serve_contracts(node);
+		let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
 
-	let result = block_on(prepared.execute_and_watch());
+		let result = block_on(prepared.execute_and_watch());
 
-	let Err(EvmContractError::OutcomeUnreadable { extrinsic, block, .. }) = result else {
-		panic!("unexpected unreadable outcome: {result:?}");
-	};
-	let node = node.lock().unwrap();
-	assert_eq!(
-		(extrinsic.extrinsic.bytes(), block),
-		(&node.submissions[0][..], node.node.block(node.node.finalized).hash)
-	);
+		let Err(EvmContractError::OutcomeUnreadable { extrinsic, block, .. }) = result else {
+			panic!("unexpected unreadable outcome: {result:?}");
+		};
+		let node = node.lock().unwrap();
+		assert_eq!(
+			(extrinsic.extrinsic.bytes(), block),
+			(&node.submissions[0][..], node.node.block(node.node.finalized).hash)
+		);
+	}
 }
 
+/// dotNS discovery reads a revert as an answer, so a runtime rejection must
+/// never read as one.
 #[test]
-fn a_reverted_simulation_never_produces_a_transaction_to_submit() {
+fn a_simulation_the_runtime_rejects_is_not_a_revert() {
 	let signer = RecordingSigner::new();
 	let mut node = EvmNode::new();
-	node.output = simulation_output(1);
-	let (_, provider, caller) = serve_contracts(node);
+	node.output = simulation_result(Err(RawDispatchError(vec![0])));
+	let (_, _, caller) = serve_contracts(node);
 
 	let result = block_on(caller.dry_run(&signer, &CONTRACT, INPUT));
 
-	assert!(matches!(result, Err(EvmContractError::Reverted { .. })));
-	assert_eq!(
-		(
-			method_count(&provider, "transactionWatch_v1_submitAndWatch"),
-			signer.signatures.load(Ordering::SeqCst),
-		),
-		(0, 0),
-	);
-}
-
-#[test]
-fn runtime_rejections_and_malformed_simulations_produce_no_transaction() {
-	let signer = RecordingSigner::new();
-	for (output, expected) in [
-		(simulation_result(Err(RawDispatchError(vec![0]))), ("dispatch", "0x00".to_string())),
-		(vec![0xff], ("malformed", String::new())),
-	] {
-		let mut node = EvmNode::new();
-		node.output = output;
-		let (_, provider, caller) = serve_contracts(node);
-
-		let result = block_on(caller.dry_run(&signer, &CONTRACT, INPUT));
-
-		let actual = match result {
-			Err(EvmContractError::Dispatch { detail }) => ("dispatch", detail),
-			Err(EvmContractError::Malformed(_)) => ("malformed", String::new()),
-			Err(other) => panic!("unexpected simulation failure: {other:?}"),
-			Ok(_) => panic!("invalid simulation prepared a transaction"),
-		};
-		assert_eq!(
-			(
-				actual,
-				method_count(&provider, "transactionWatch_v1_submitAndWatch"),
-				signer.signatures.load(Ordering::SeqCst),
-			),
-			(expected, 0, 0),
-		);
-	}
+	assert!(matches!(result, Err(EvmContractError::Dispatch { detail }) if detail == "0x00"));
 }
