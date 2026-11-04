@@ -9,7 +9,10 @@ protocol FundingOverlayEnvironment: AnyObject {
     var cash: FundingCash { get }
     /// Calls `onChange` with what a payment can spend, for the withdraw
     /// screen's balance check, now and on every balance change, until the
-    /// calling task is cancelled.
+    /// calling task is cancelled. Returns without calling it when the
+    /// balance cannot be followed, and returns early if the balance stream
+    /// ends or fails; either way the check goes by the last value it got,
+    /// and is skipped without one.
     func followSpendable(_ onChange: @escaping @MainActor (Decimal) -> Void) async
     var branding: FundingProviderBranding { get }
 

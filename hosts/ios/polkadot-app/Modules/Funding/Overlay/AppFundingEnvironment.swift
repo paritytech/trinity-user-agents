@@ -34,7 +34,10 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
     }
 
     /// What a payment can spend, as the payment path checks it, on every
-    /// balance change.
+    /// balance change. Returns at once when payments are not assembled yet
+    /// or the balance service cannot be built; the balance stream follows
+    /// the wallet for as long as it runs, so the loop otherwise ends only
+    /// with the task's cancellation or a stream failure, which is logged.
     func followSpendable(_ onChange: @escaping @MainActor (Decimal) -> Void) async {
         guard let dependencies: TruApiDependenciesLocator = RootDependencyLocator.getDependency(),
               let support: PaymentsSupport = dependencies.getDependency(),
