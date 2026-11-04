@@ -131,7 +131,7 @@ impl WasmPlatform {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl ChainProvider for WasmPlatform {
 	async fn connect(
 		&self,

@@ -1742,7 +1742,7 @@ impl HostAdmin {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl CoreAdmin for HostAdmin {
 	async fn disconnect_session(&self) -> Result<(), v01::GenericError> {
 		HostAdmin::disconnect_session(self).await;

@@ -219,7 +219,6 @@ mod tests {
 	};
 	use alloy_primitives::{Address, U256};
 	use alloy_sol_types::{SolCall, SolInterface};
-	use async_trait::async_trait;
 	use futures::{StreamExt, channel::mpsc, stream::BoxStream};
 	use parity_scale_codec::{Decode, Encode};
 	use serde_json::{Value as JsonValue, json};
@@ -465,7 +464,7 @@ mod tests {
 		}
 	}
 
-	#[async_trait]
+	#[async_trait::async_trait]
 	impl RuntimeChainProvider for ScriptedAssetHub {
 		async fn connect(
 			&self,

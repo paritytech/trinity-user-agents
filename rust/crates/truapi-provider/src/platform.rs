@@ -1,7 +1,6 @@
 //! Chain access interfaces a host implements and the server runtime consumes.
 
 use crate::ProviderError;
-use async_trait::async_trait;
 use futures::stream::BoxStream;
 
 /// JSON-RPC provider factory for chain access.
@@ -11,7 +10,7 @@ use futures::stream::BoxStream;
 /// Host-spec N.6 requires products to access chains through host-mediated
 /// providers:
 /// <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/N-shared-infrastructure.md?plain=1#L91-L102>
-#[async_trait]
+#[async_trait::async_trait]
 pub trait ChainProvider: Send + Sync {
 	/// Open a JSON-RPC connection for the chain identified by `genesis_hash`.
 	/// Drop the returned connection to disconnect.

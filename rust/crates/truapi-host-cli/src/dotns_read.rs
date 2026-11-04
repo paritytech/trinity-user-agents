@@ -16,7 +16,6 @@ use truapi::{
 		discover_pop_controller, label_available, lite_label_owner_key, resolve_labels,
 		timestamp_now_key,
 	},
-	platform::async_trait,
 };
 
 use crate::{chain::CliChainProvider, network::NetworkConfig};
@@ -170,7 +169,7 @@ fn account_id_value(entry: &str, value: Option<Vec<u8>>) -> Result<Option<[u8; 3
 		.transpose()
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl DotnsTransport for AssetHubReader {
 	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
 		self.raw_storage(&key)
