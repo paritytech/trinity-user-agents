@@ -87,14 +87,10 @@ public struct CashCardFace: View {
 public extension AssetDetailsBalanceCard {
     struct ViewModel {
         let balance: String?
-        let readyBalance: String?
-        let logo: UIImage?
         let symbol: String?
 
-        public init(balance: String?, readyBalance: String?, logo: UIImage? = nil, symbol: String? = nil) {
+        public init(balance: String?, symbol: String? = nil) {
             self.balance = balance
-            self.readyBalance = readyBalance
-            self.logo = logo
             self.symbol = symbol
         }
     }
@@ -112,7 +108,7 @@ private extension AssetDetailsBalanceCard {
     ZStack {
         Color.gray
         AssetDetailsBalanceCard(
-            viewModel: AssetDetailsBalanceCard.ViewModel(balance: "$123", readyBalance: nil, symbol: "CASH"),
+            viewModel: AssetDetailsBalanceCard.ViewModel(balance: "$123", symbol: "CASH"),
             isUpdating: true
         )
         .padding()
@@ -123,7 +119,7 @@ private extension AssetDetailsBalanceCard {
     ZStack {
         Color.gray
         AssetDetailsBalanceCard(
-            viewModel: AssetDetailsBalanceCard.ViewModel(balance: "$424.13", readyBalance: "100", symbol: "CASH"),
+            viewModel: AssetDetailsBalanceCard.ViewModel(balance: "$424.13", symbol: "CASH"),
             isUpdating: false,
             isExpanded: true
         )
