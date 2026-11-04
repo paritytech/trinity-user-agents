@@ -7,16 +7,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
 import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleAlignment
-import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketCollectiblesImageSharedElement
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
-fun PocketCollectibles(
-    onBack: () -> Unit,
-    onViewButtonClick: () -> Unit
-) {
+fun PocketCollectibles(onBack: () -> Unit) {
     BackHandler { onBack() }
 
     Column(
@@ -26,7 +22,6 @@ fun PocketCollectibles(
     ) {
         PolkadotTopBar(
             title = stringResource(RCommon.string.pocket_collectibles_title),
-            navigationAction = rememberTopBarAction(onBack),
             titleAlignment = TopBarTitleAlignment.Center
         )
 
@@ -35,7 +30,6 @@ fun PocketCollectibles(
                 .fillMaxWidth()
                 .padding(PolkadotTheme.spacings.mediumIncreased)
                 .pocketCollectiblesImageSharedElement(),
-            onViewButtonClick = onViewButtonClick,
             expanded = true
         )
     }

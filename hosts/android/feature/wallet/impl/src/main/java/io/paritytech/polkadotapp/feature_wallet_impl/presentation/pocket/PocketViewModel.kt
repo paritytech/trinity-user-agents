@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOp
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardOpenRequests
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
+import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
@@ -31,6 +32,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -50,6 +52,7 @@ import timber.log.Timber
 import uniffi.truapi.ProductId
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
+import kotlin.time.Duration.Companion.milliseconds
 
 @HiltViewModel
 class PocketViewModel @Inject constructor(
@@ -68,6 +71,7 @@ class PocketViewModel @Inject constructor(
     private val expandedProduct = ExpandedProductPage(this) { scope, url -> with(scope) { spaHost.createSession(url, underCard = true) } }
     private val _openingFaceShown = MutableStateFlow<Boolean?>(null)
     private var openingFaceLookup: Job? = null
+    private var collectiblesOpening: Job? = null
     private val removalCandidate = MutableStateFlow<PocketCardUiModel.ProductCard?>(null)
 
     private val digitalDollarAmounts = interactor.observeDigitalDollarBalance()
@@ -92,6 +96,14 @@ class PocketViewModel @Inject constructor(
     }
 
     private val warmedPrivilegedProducts = ConcurrentHashMap.newKeySet<ProductId>()
+
+    private val bindings = ConcurrentHashMap<String, CardBinding>()
+
+    /**
+     * Kept for as long as the screen lives. A card expanding draws a second copy of itself, which
+     * would otherwise fetch the same image again and show nothing until it arrived.
+     */
+    private val resolvedFaceImages = ConcurrentHashMap<Pair<String, JsImageSource>, Uri>()
 
     // The balance card keeps its place; the product-backed collection follows, pinned cards first.
     // A collection the host cannot read costs the user their product cards, never the balance card
@@ -147,8 +159,6 @@ class PocketViewModel @Inject constructor(
         )
 
     private class CardBinding(val scope: CoroutineScope, val bindings: ProductFaceBindings)
-
-    private val bindings = ConcurrentHashMap<String, CardBinding>()
 
     /**
      * One set of bindings per card, however many copies of it are drawn: expanding a card draws a
@@ -238,12 +248,14 @@ class PocketViewModel @Inject constructor(
         }
 
         if (selectedCardId.value != null) dismissCard()
-        collectiblesShown.value = false
+        hideCollectiblesSketchbook()
         removalCandidate.value = null
         selectCard(card, request.pageQuery)
     }
 
     fun selectCard(card: PocketCardUiModel, pageQuery: String = "") {
+        if (collectiblesShown.value) return
+
         selectedCardId.value = card.id
         selectedPageQuery = pageQuery
         if (card is PocketCardUiModel.ProductCard) {
@@ -289,16 +301,24 @@ class PocketViewModel @Inject constructor(
         selectedCardId.value = null
     }
 
-    fun showCollectiblesSketchbook() {
-        collectiblesShown.value = true
-    }
-
     fun hideCollectiblesSketchbook() {
+        collectiblesOpening?.cancel()
         collectiblesShown.value = false
     }
 
     fun openCollectibles() {
-        collectiblesUrl.value?.let { router.openSpaSheet(it.toString()) }
+        val page = collectiblesUrl.value ?: return
+        if (selectedCardId.value != null || collectiblesShown.value) return
+
+        collectiblesShown.value = true
+        collectiblesOpening = launch {
+            delay(COLLECTIBLES_OPEN_DELAY)
+            router.openSpaBrowser(SpaBrowserPayload.ByUrl(page.toString()))
+        }
+    }
+
+    fun onShown() {
+        if (collectiblesShown.value && collectiblesOpening?.isActive == false) hideCollectiblesSketchbook()
     }
 
     /**
@@ -320,12 +340,6 @@ class PocketViewModel @Inject constructor(
         }
         interactor.sendFaceAction(card.key, actionId, payload)
     }
-
-    /**
-     * Kept for as long as the screen lives. A card expanding draws a second copy of itself, which
-     * would otherwise fetch the same image again and show nothing until it arrived.
-     */
-    private val resolvedFaceImages = ConcurrentHashMap<Pair<String, JsImageSource>, Uri>()
 
     private suspend fun resolveFaceImage(card: PocketCardUiModel.ProductCard, source: JsImageSource): Uri? =
         resolvedFaceImages[card.id to source]
@@ -374,5 +388,7 @@ class PocketViewModel @Inject constructor(
     private companion object {
         // Long enough to cover a scroll away and back, or a glance at another app.
         const val WORKER_KEEP_ALIVE_MILLIS = 5_000L
+
+        val COLLECTIBLES_OPEN_DELAY = 450.milliseconds
     }
 }

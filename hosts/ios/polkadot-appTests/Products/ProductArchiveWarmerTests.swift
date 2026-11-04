@@ -17,7 +17,10 @@ struct ProductArchiveWarmerTests {
             hasManifest: true
         )
         let archives = StubDotNsResolver()
-        let warmer = ProductArchiveWarmer(products: StubProductResolver(alwaysResolvingTo: resolved), dotNsResolver: archives)
+        let warmer = ProductArchiveWarmer(
+            products: StubProductResolver(alwaysResolvingTo: resolved),
+            dotNsResolver: archives
+        )
 
         await #expect(throws: ProductResolutionError.self) {
             try await warmer.warm(productId, serving: kind)
