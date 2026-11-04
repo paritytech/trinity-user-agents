@@ -1,6 +1,8 @@
 import { parseCidString } from "../archive/cid.js";
 import {
   ARCHIVE_LIMITS,
+  FETCH_CAR,
+  carBlocks,
   gatewayBlocks,
   loadArchive,
   loadSite,
@@ -79,7 +81,7 @@ async function load(): Promise<void> {
   if (mount === null)
     throw new Error("The link names no product mount of this host.");
   const { cid } = mount;
-  parseCidString(cid);
+  const root = parseCidString(cid);
   const gateway = new URL(params.get("gateway") ?? "");
   if (gateway.protocol !== "https:" && gateway.protocol !== "http:")
     throw new Error("The gateway must be http or https.");
@@ -104,7 +106,10 @@ async function load(): Promise<void> {
     location.origin,
     async () => {
       report("loading", `Fetching ${cid} from ${gateway.origin}.`);
-      const blocks = gatewayBlocks(gateway.origin, ARCHIVE_LIMITS);
+      const raw = gatewayBlocks(gateway.origin, ARCHIVE_LIMITS);
+      const blocks = FETCH_CAR
+        ? carBlocks(root, gateway.origin, ARCHIVE_LIMITS, raw)
+        : raw;
       const { files } = await (kind === "car" ? loadArchive : loadSite)(
         cid,
         blocks,

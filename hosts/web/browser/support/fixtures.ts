@@ -166,6 +166,8 @@ export interface PublishedApp {
   prefix(length: number): Uint8Array;
   /** One block of the archive file, by its CID string. */
   block(cid: string): Uint8Array | undefined;
+  /** The archive file's DAG as one CAR, as the gateway answers `?format=car`. */
+  car: Uint8Array;
   /** The contenthash record for this content. */
   contenthash: Uint8Array;
 }
@@ -183,6 +185,7 @@ export function publishApp(files: Record<string, string>): PublishedApp {
     contentCid: cidToString(outerRoot),
     prefix: (length) => archive.subarray(0, length),
     block: (cid) => blocks.get(cid),
+    car: car(outerRoot, outer),
     contenthash: Uint8Array.from([0xe3, 0x01, ...outerRoot.bytes]),
   };
 }
@@ -346,6 +349,15 @@ export async function serveNames(
           });
     }
     const app = apps.find((candidate) => candidate.contentCid === cid);
+    if (app !== undefined && url.searchParams.get("format") === "car")
+      return route.fulfill({
+        status: 200,
+        headers: {
+          ...cors,
+          "content-type": "application/vnd.ipld.car; version=1; order=dfs",
+        },
+        body: Buffer.from(app.car),
+      });
     return app !== undefined
       ? route.fulfill({
           status: 206,

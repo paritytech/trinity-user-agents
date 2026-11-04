@@ -5,7 +5,7 @@ import {
   parseCidString,
   verifyBlock,
 } from "./cid.js";
-import { type Car, type CarLimits, parseCar } from "./car.js";
+import { type Car, type CarLimits, parseCar, readCarStream } from "./car.js";
 import {
   type GetBlock,
   type UnpackLimits,
@@ -20,6 +20,22 @@ export type ArchiveLimits = CarLimits &
     deadlineMs: number;
     /** Time for one attempt at one block, from the request to the last byte. */
     blockTimeoutMs: number;
+    /**
+     * A CAR stream that brings fewer than `carWindowBytes` in a window of
+     * `carWindowMs` is dropped. The windows run back to back from the request,
+     * so the first one includes the wait for the first byte.
+     */
+    carWindowMs: number;
+    /** The least a CAR stream must bring in each `carWindowMs`. */
+    carWindowBytes: number;
+    /**
+     * Time from the CAR request after which reads stop waiting for the stream
+     * and read a block it has not brought yet one by one, while the stream
+     * keeps running. A CAR the gateway has cached was measured to send its first
+     * byte within 150 ms and 24 MB within a second; one it has not cached came
+     * at a few KB/s to 500 KB/s, too slow to wait for.
+     */
+    carHedgeMs: number;
   };
 
 /** What this host accepts from an archive. Chosen for a product's built files, not for media libraries. */
@@ -31,6 +47,9 @@ export const ARCHIVE_LIMITS: ArchiveLimits = {
   maxNodes: 100_000,
   deadlineMs: 120_000,
   blockTimeoutMs: 30_000,
+  carWindowMs: 10_000,
+  carWindowBytes: 1024 * 1024,
+  carHedgeMs: 2_000,
   maxTotalBytes: 128 * 1024 * 1024,
   maxDirectoryDepth: 32,
   maxFileTreeDepth: 8,
@@ -237,6 +256,151 @@ export async function readCapped(
     at += chunk.length;
   }
   return data;
+}
+
+/**
+ * Whether a load asks the gateway for the whole DAG as one CAR stream before
+ * it asks block by block. Set to false to read block by block only.
+ */
+export const FETCH_CAR = true;
+const CAR_TYPE = "application/vnd.ipld.car";
+
+/**
+ * Read the DAG under `root` from one `?format=car` stream, and the blocks the
+ * stream does not bring from `fallback`.
+ *
+ * The stream starts with the first read and shares its signal, so the reader
+ * belongs to one load, as {@link gatewayBlocks}'s does, and the stream stops
+ * when that read's traversal ends. Every block is checked against its
+ * identifier as it arrives and kept for the load. Until `carHedgeMs` after the
+ * request, a read waits for its block from the stream. After that, a read
+ * takes its block from the stream if it is already here and otherwise reads
+ * it through `fallback`, while the stream keeps running; a block can then
+ * arrive both ways. The stream ends at its last byte, at the first error (a
+ * failed request, a status other than 2xx, another content type, a header
+ * that names another root, a block that does not match, a limit) or when it
+ * runs slower than `carWindowBytes` per `carWindowMs`. It is not asked for
+ * again: after it ends, a block it did not bring is read through `fallback`,
+ * and one it did is not read again.
+ *
+ * The stream holds at most `maxBytes` of blocks, the size of the largest
+ * archive file, as well as `maxBlocks` and `maxBlockBytes`. A site with more
+ * block bytes than that gets the rest through `fallback`. The traversal still
+ * charges each reference to its own limits.
+ */
+export function carBlocks(
+  root: Cid,
+  gateway: string,
+  limits: Pick<
+    ArchiveLimits,
+    | "maxBytes"
+    | "maxBlocks"
+    | "maxBlockBytes"
+    | "carWindowMs"
+    | "carWindowBytes"
+    | "carHedgeMs"
+  >,
+  fallback: GetBlock,
+  fetchFn: FetchLike = fetch,
+): GetBlock {
+  const received = new Map<string, Uint8Array>();
+  const waiting = new Map<string, (() => void)[]>();
+  let streaming: Promise<void> | undefined;
+  /** Reads no longer wait: the stream ended or the hedge time passed. */
+  let unwaited = false;
+
+  function wake(key: string): void {
+    for (const resolve of waiting.get(key) ?? []) resolve();
+    waiting.delete(key);
+  }
+
+  function release(): void {
+    unwaited = true;
+    for (const key of [...waiting.keys()]) wake(key);
+  }
+
+  async function stream(signal: AbortSignal | undefined): Promise<void> {
+    const stop = new AbortController();
+    let arrived = 0;
+    let pace: ReturnType<typeof setInterval> | undefined;
+    let hedge: ReturnType<typeof setTimeout> | undefined;
+    try {
+      pace = setInterval(() => {
+        if (arrived < limits.carWindowBytes) stop.abort();
+        arrived = 0;
+      }, limits.carWindowMs);
+      hedge = setTimeout(release, limits.carHedgeMs);
+      const url = new URL(`/ipfs/${cidToString(root)}`, gateway);
+      url.searchParams.set("format", "car");
+      const body = carBody(
+        url.href,
+        fetchFn,
+        signal === undefined
+          ? stop.signal
+          : AbortSignal.any([signal, stop.signal]),
+        (bytes) => (arrived += bytes),
+      );
+      const blocks = readCarStream(body, root, limits);
+      for await (const { cid, data } of blocks) {
+        const key = cidKey(cid);
+        received.set(key, data);
+        wake(key);
+      }
+    } catch {
+      // However the stream ended, the reads it did not answer go to the fallback.
+    } finally {
+      clearInterval(pace);
+      clearTimeout(hedge);
+      stop.abort();
+      release();
+    }
+  }
+
+  return async (cid, signal) => {
+    streaming ??= stream(signal);
+    const key = cidKey(cid);
+    if (!unwaited && !received.has(key))
+      await new Promise<void>((resolve) =>
+        waiting.set(key, [...(waiting.get(key) ?? []), resolve]),
+      );
+    return received.get(key) ?? fallback(cid, signal);
+  };
+}
+
+/**
+ * The body of a CAR response, chunk by chunk, with each chunk's size told to
+ * `arrived`. Anything but a 2xx CAR is an error.
+ */
+async function* carBody(
+  url: string,
+  fetchFn: FetchLike,
+  signal: AbortSignal,
+  arrived: (bytes: number) => void,
+): AsyncGenerator<Uint8Array> {
+  const response = await fetchFn(url, {
+    signal,
+    headers: { accept: CAR_TYPE },
+  });
+  const type = response.headers
+    .get("content-type")
+    ?.split(";")[0]
+    .trim()
+    .toLowerCase();
+  if (!response.ok || type !== CAR_TYPE || response.body === null) {
+    await response.body?.cancel();
+    throw new Error("the gateway did not send a CAR");
+  }
+  const reader = response.body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      arrived(value.length);
+      yield value;
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
 }
 
 /** The files of the site archived under `contentCid`, every byte verified. */

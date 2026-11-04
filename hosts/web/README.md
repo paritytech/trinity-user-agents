@@ -168,11 +168,27 @@ IPFS gateway and checked, and it is served from a path of this host. The product
    the site's directory, stored as one chunked UnixFS file. A website is a UnixFS directory. Both open. A record that is
    neither is skipped and listed.
 3. It opens the loader, `<base>truapi-sandbox/index.html`, in the product frame. The loader registers a service worker
-   for the mount `<base>product/<wallet>/<product>/<content>/`, fetches the blocks with `?format=raw`, up to 6 at a
-   time, and asks once more for a block whose request times out, fails on the network, or gets status 408, 429, 500,
-   502, 503 or 504, checks each one against its CID, unpacks the site in memory and stores the files in Cache Storage
-   under the content id. Then it moves the frame to the start path inside the mount. The worker serves the files as they
-   are, with their type and no sniffing.
+   for the mount `<base>product/<wallet>/<product>/<content>/`, fetches the blocks, checks each one against its CID,
+   unpacks the site in memory and stores the files in Cache Storage under the content id. Then it moves the frame to the
+   start path inside the mount. The worker serves the files as they are, with their type and no sniffing.
+
+**How the loader fetches blocks.** It first asks for the whole DAG under the record's CID as one CAR stream,
+`?format=car` with `Accept: application/vnd.ipld.car`, and checks every block against its CID as it arrives. (The iOS
+app asks for a CAR with the same header. The Android app uses `?format=car` for a website's directory but reads an app
+archive's file at plain `/ipfs/<cid>`.) For 2 s from the request, a read waits for its block from the stream: in one
+client's measurements, a CAR the gateway had cached sent its first byte within 150 ms and 24 MB within 1 s, and one it
+had not cached came at a few KB/s to 500 KB/s. After that, the stream keeps running, but a read whose block it has not
+brought yet fetches the block by itself with `?format=raw`, up to 6 at a time, with one more try for a block whose
+request times out, fails on the network, or gets status 408, 429, 500, 502, 503 or 504. A block can then arrive both
+ways. The stream ends at its last byte, when the load no longer needs it, or at the first problem: a failed request, a
+status other than 2xx, a content type other than `application/vnd.ipld.car`, a header that does not name the record's
+CID as its only root, a block that does not match, the archive's limits, or less than 1 MiB in a 10 s window. The
+windows run back to back from the request, so the first one includes the wait for the first byte. The stream is not
+asked for again, and a block it brought is not fetched again. The stream holds at most 64 MiB of blocks, the archive
+limit; a website with more gets the rest block by block. The site is assembled in order whichever way its blocks came.
+The stream is tried for every load, whatever its size: the loader knows no size before the first block, and the gateway
+does not let a page read whether the CAR is cached. `FETCH_CAR` in `src/products/archive/gateway.ts` turns the stream
+off.
 
 The mount path holds a hash of the wallet id, a readable form of the product id with its hash, and the content id. A
 different wallet, product or content is a different mount, with its own worker. The same wallet opening the same content
