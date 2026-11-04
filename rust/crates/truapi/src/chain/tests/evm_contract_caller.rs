@@ -118,14 +118,8 @@ impl EvmNode {
 					.to_string()
 				};
 				let mut frames = vec![response(json!(subscription))];
-				if matches!(outcome, Outcome::Dropped) {
-					frames
-						.push(notification(json!({"event": "dropped", "error": "scripted stop"})));
-					return frames;
-				}
 				let parent = self.node.block(self.node.finalized).hash;
-				self.node.finalized += 1;
-				let block = self.node.block(self.node.finalized).hash;
+				let block = self.node.block(self.node.finalized + 1).hash;
 				let body = if matches!(outcome, Outcome::MissingExtrinsic) {
 					Vec::new()
 				} else {
@@ -133,17 +127,30 @@ impl EvmNode {
 				};
 				self.node.bodies.insert(block, body);
 				let event = match outcome {
-					Outcome::Succeeded => Some("ExtrinsicSuccess"),
+					Outcome::Succeeded | Outcome::Dropped => Some("ExtrinsicSuccess"),
 					Outcome::DispatchFailed => Some("ExtrinsicFailed"),
 					Outcome::MissingEvent | Outcome::MissingExtrinsic => None,
-					Outcome::Dropped | Outcome::SubmitError => unreachable!(),
+					Outcome::SubmitError => unreachable!(),
 				};
 				self.node.events.insert(block, dispatch_events(event));
 				frames.extend([
 					follow_event(json!({"event": "newBlock", "blockHash": block, "parentBlockHash": parent, "newRuntime": null})),
 					follow_event(json!({"event": "bestBlockChanged", "bestBlockHash": block})),
-					follow_event(json!({"event": "finalized", "finalizedBlockHashes": [block], "prunedBlockHashes": []})),
-					notification(json!({"event": "finalized", "block": {"hash": block, "index": "0"}})),
+					notification(json!({"event": "bestChainBlockIncluded", "block": {"hash": block, "index": "0"}})),
+				]);
+				if matches!(outcome, Outcome::Dropped) {
+					frames
+						.push(notification(json!({"event": "dropped", "error": "scripted stop"})));
+					return frames;
+				}
+				self.node.finalized += 1;
+				frames.extend([
+					follow_event(
+						json!({"event": "finalized", "finalizedBlockHashes": [block], "prunedBlockHashes": []}),
+					),
+					notification(
+						json!({"event": "finalized", "block": {"hash": block, "index": "0"}}),
+					),
 				]);
 				frames
 			},
@@ -373,7 +380,8 @@ fn a_failed_dispatch_carries_its_module_error() {
 
 /// A dropped extrinsic, or one whose submission returned an error, may have
 /// reached the node and can still be included until its era ends, so the
-/// caller gets it back to follow instead of signing the write again.
+/// caller gets it back to follow instead of signing the write again. A best
+/// block including the dropped one does not finalize the write.
 #[test]
 fn an_unfinalized_write_returns_the_submitted_extrinsic_and_its_era() {
 	let signer = RecordingSigner::new();
