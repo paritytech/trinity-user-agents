@@ -60,28 +60,21 @@ enum WidgetNodeRaster {
     /// without the colours a window gives them, so colour checks draw here.
     ///
     /// A window's first frame can reach the pixels before the theme override
-    /// has propagated through it, so this draws until two reads agree and the
-    /// bytes are the settled ones rather than whichever frame arrived first.
+    /// has propagated through it, so the first draw is thrown away: it is what
+    /// lands the override and the layout. The two draws after it have to
+    /// agree, which is what settled means here, and a window still changing by
+    /// then fails rather than handing back a frame caught mid-flight.
     static func pixels(of view: some View, in size: CGSize, under theme: ThemeSelection) throws -> [UInt8] {
         let window = try window(showing: view, in: size, under: theme)
         defer { window.isHidden = true }
 
-        var drawn = try pixels(of: snapshot(of: window))
-        for _ in 0 ..< settleRedraws {
-            let again = try pixels(of: snapshot(of: window))
-            if again == drawn {
-                return drawn
-            }
-            drawn = again
-        }
+        _ = try pixels(of: snapshot(of: window))
+        let settled = try pixels(of: snapshot(of: window))
+        let confirmed = try pixels(of: snapshot(of: window))
+        try #require(settled == confirmed, "the window was still changing on its third draw")
 
-        return drawn
+        return settled
     }
-
-    /// How many extra times [`pixels(of:in:under:)`] redraws while the
-    /// bytes still change. Each redraw pumps a screen update, so a window that
-    /// is going to settle does so within a few.
-    private static let settleRedraws = 10
 
     private static let backdropColour = Color(.sRGB, red: 1, green: 0, blue: 1)
 
