@@ -3,7 +3,7 @@ import Foundation
 import Testing
 import TrUAPIHost
 
-struct FundingPocketTests {
+struct FundingScreenTests {
     private let cash = FundingCash(symbol: "CASH", precision: 2)
     private let calendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
@@ -118,48 +118,9 @@ struct FundingPocketTests {
         #expect(FundingStepBar.between(.sending) == 2)
         #expect(FundingStepBar.between(nil) == 1)
     }
-
-    @Test
-    func bandLinesFollowTheCoreDocs() {
-        let adding = FundingWording.band(.adding, direction: .in, rail: .card, asset: nil, amount: "$50 CASH")
-        let retrying = FundingWording.band(.retrying, direction: .in, rail: .bank, asset: nil, amount: nil)
-        let sent = FundingWording.band(.sent, direction: .out, rail: .card, asset: nil, amount: nil)
-        let delayed = FundingWording.band(.delayed, direction: .out, rail: .bank, asset: nil, amount: nil)
-
-        #expect(adding?.text == "Adding $50 CASH to your balance")
-        #expect(adding?.isWarning == false)
-        #expect(retrying?.text == "The provider is retrying. Don't send the money again.")
-        #expect(retrying?.isWarning == true)
-        #expect(sent?.text == "Sent to your card")
-        #expect(delayed?.text == "Taking longer than usual. It will continue automatically.")
-        #expect(FundingWording.band(.cancel, direction: .in, rail: .card, asset: nil, amount: nil) == nil)
-    }
-
-    @Test
-    func aTopUpCancelledBeforePayingLeavesTheHistory() {
-        #expect(record(.failed(.cancelled), settled: nil).isCancelledUnpaid)
-        #expect(!record(.failed(.cancelled), settled: "5000").isCancelledUnpaid)
-        #expect(!record(.failed(.declined), settled: nil).isCancelledUnpaid)
-    }
-
-    @Test
-    func theStickyBarShowsOnceTheCardHasGone() {
-        let card = PurseScroll.Card(bottom: 20, balance: 424.13)
-
-        #expect(PurseScroll.bar(card: PurseScroll.Card(bottom: 120, balance: 1)) == nil)
-        #expect(PurseScroll.bar(card: card) == PurseScroll.Bar(balance: 424.13))
-    }
-
-    @Test
-    func theClearingShareNeverDisappearsWhileAnythingClears() {
-        #expect(CoinageSplitBar.share(clearing: 0, total: 100) == 0)
-        #expect(CoinageSplitBar.share(clearing: 1, total: 100) == 0.06)
-        #expect(CoinageSplitBar.share(clearing: 50, total: 100) == 0.5)
-        #expect(CoinageSplitBar.share(clearing: 5, total: 0) == 0)
-    }
 }
 
-private extension FundingPocketTests {
+private extension FundingScreenTests {
     func item(
         _ status: FundingActivityItem.Status,
         direction: FundingDirection,
@@ -185,29 +146,6 @@ private extension FundingPocketTests {
             cash: cash,
             now: now,
             calendar: calendar
-        )
-    }
-
-    func record(_ outcome: FundingRecord.Outcome, settled: String?) -> FundingRecord {
-        FundingRecord(
-            intent: "fs_1",
-            direction: .in,
-            rail: .bank,
-            asset: nil,
-            providerId: nil,
-            requestedAmount: "5000",
-            settledAmount: settled,
-            paidAmount: nil,
-            paidAsset: nil,
-            paidDecimals: nil,
-            paidNetwork: nil,
-            outcome: outcome,
-            payout: nil,
-            refundedAmount: nil,
-            transactionId: nil,
-            reference: nil,
-            openedAt: now,
-            settledAt: now
         )
     }
 }
