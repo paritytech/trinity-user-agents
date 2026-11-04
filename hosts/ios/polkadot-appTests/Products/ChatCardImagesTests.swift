@@ -1,5 +1,4 @@
 import Foundation
-import AsyncExtensions
 import PolkadotUI
 import Products
 import Testing
@@ -78,7 +77,7 @@ private struct NoWorkers: ProductWorkerManaging {
 
 private func gameProduct() -> ResolvedProduct {
     ResolvedProduct(
-        id: "game.paseo",
+        id: try! ProductId("game.paseo"),
         displayName: "Game",
         description: nil,
         icon: nil,
@@ -86,7 +85,7 @@ private func gameProduct() -> ResolvedProduct {
             app: nil,
             widget: nil,
             worker: ProductExecutable.Worker(
-                identifier: "worker.game.paseo",
+                identifier: try! ProductId("worker.game.paseo"),
                 appVersion: .zero,
                 entrypoint: "index.js",
                 modalities: [.chat]
@@ -122,11 +121,6 @@ private final class RecordingResolver: DotNsResolverProtocol, @unchecked Sendabl
     func resolveToLocalURL(dotNsName: String) async throws -> URL {
         lock.withLock { names.append(dotNsName) }
         return root
-    }
-
-    func getMetadataEntry(dotNsName _: String, key _: String) async throws -> String? { nil }
-    func progressStream(dotNsName _: String) -> AnyAsyncSequence<DotNsLoadProgress> {
-        AsyncStream<DotNsLoadProgress> { $0.finish() }.eraseToAnyAsyncSequence()
     }
 
     func clearCache() throws {}

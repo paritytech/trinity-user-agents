@@ -235,7 +235,7 @@ struct ClaimAssetServiceTests {
             ClaimRun(stream: service.claim(
                 wallet: ClaimAssetServiceTests.wallet,
                 amount: amount,
-                groupId: "top up:prod:p",
+                groupId: "top up:prod.dot:p",
                 retryUntil: retryUntil,
                 instanceId: 0,
                 context: context

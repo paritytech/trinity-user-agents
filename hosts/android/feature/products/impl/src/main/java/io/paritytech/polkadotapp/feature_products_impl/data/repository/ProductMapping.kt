@@ -4,12 +4,11 @@ import io.paritytech.polkadotapp.common.utils.enumValueOfOrNull
 import io.paritytech.polkadotapp.database.model.ProductLocal
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductIcon
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.tools_ipfs_api.Cid
 
 internal fun ProductLocal.toProduct(): Product {
     return Product(
-        id = ProductId.fromStoredValue(id),
+        id = id,
         name = name,
         icon = toIcon(),
     )
@@ -24,7 +23,7 @@ private fun ProductLocal.toIcon(): ProductIcon? {
 
 internal fun Product.toLocal(): ProductLocal {
     return ProductLocal(
-        id = id.value,
+        id = id,
         name = name,
         iconCid = icon?.cid?.toString(),
         iconFormat = icon?.format?.name,

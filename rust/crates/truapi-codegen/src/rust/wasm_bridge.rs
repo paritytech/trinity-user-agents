@@ -255,7 +255,7 @@ fn emit_trait_impl(
 ) -> Result<String> {
 	let mut out = String::new();
 	if trait_def.methods.iter().any(|method| method.return_shape.is_async) {
-		out.push_str("#[crate::platform::async_trait]\n");
+		out.push_str("#[async_trait::async_trait]\n");
 	}
 	writeln!(out, "impl crate::platform::{} for WasmPlatform {{", trait_def.name).unwrap();
 	for (idx, method) in trait_def.methods.iter().enumerate() {
@@ -539,6 +539,9 @@ fn js_arg_expr(name: &str, ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> 
 		return Ok(format!("Uint8Array::from({name}.encode().as_slice()).into()"));
 	}
 	if let Some(primitive) = ctx.alias_primitive(ty) {
+		if primitive == "str" {
+			return Ok(format!("JsValue::from_str({name}.as_str())"));
+		}
 		return numeric_js_arg(name, primitive);
 	}
 	if let TypeRef::Primitive(primitive) = ty {

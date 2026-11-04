@@ -50,8 +50,12 @@ class ChatRequestPublisher @Inject constructor(
         }
     }
 
-    suspend fun markUndeliverable(request: ChatRequest): Result<Unit> = runCancellableCatching {
+    suspend fun markUndeliverable(request: ChatRequest): Result<Unit> {
         Timber.w("Chat request ${request.id} exceeds $NOTIFICATION_STATEMENT_MAX_SIZE; marking undeliverable")
+        return markFailed(request)
+    }
+
+    suspend fun markFailed(request: ChatRequest): Result<Unit> = runCancellableCatching {
         contactsRepository.withTransaction {
             chatRequestRepository.updateDelivery(request.id, ChatRequest.Delivery.Failed)
             chatEngine.updateMessageStatus(request.id, ChatMessage.Status.DELIVERY_FAILED)

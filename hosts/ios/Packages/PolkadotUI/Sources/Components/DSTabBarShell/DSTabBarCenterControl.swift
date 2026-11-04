@@ -56,7 +56,7 @@ public struct DSTabBarCenterControl<Content: View>: View {
     /// settle closed from open. It receives the close's duration, nil for the default, and the host closes the panel
     /// through `progress`. `onSwipeOpenBegan` is called once per drag when a drag on the button that began short
     /// of fully open moves up past the tap slop. `onSwipeOpenLanding` is called when that drag's release settles
-    /// open and `swipeLandingFraction` of the settle has run, at once under Reduce Motion.
+    /// open and the settle has run, at once under Reduce Motion.
     public init(
         progress: Binding<CGFloat>,
         contentHeight: CGFloat,
@@ -184,9 +184,6 @@ private extension DSTabBarCenterControl {
 
     /// Shortest distance the finger travels to open the panel fully.
     var minimumTravel: CGFloat { 120 }
-
-    /// Share of a swipe's settle open after which the host is told it is landing.
-    var swipeLandingFraction: Double { 0.6 }
 
     /// Share of the finger's travel past fully open that the panel stretches by.
     var stretchFraction: CGFloat { 1.0 / 3 }
@@ -560,13 +557,14 @@ private extension DSTabBarCenterControl {
         }
     }
 
-    /// Tells the host a swipe is landing once `swipeLandingFraction` of its open has run, at once under Reduce Motion.
+    /// Tells the host a swipe is landing once its open has settled, at once under Reduce Motion. Landing earlier
+    /// would let the keyboard's main-thread work freeze the open motion.
     func scheduleSwipeLanding(duration: Double?) {
         guard isSwipeOpen else {
             return
         }
         isSwipeOpen = false
-        let delay = reduceMotion ? 0 : swipeLandingFraction * (duration ?? DSTabBarStyle.centerDuration)
+        let delay = reduceMotion ? 0 : duration ?? DSTabBarStyle.centerDuration
         swipeLanding = Task {
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled, progress == 1, dragStart == nil else {

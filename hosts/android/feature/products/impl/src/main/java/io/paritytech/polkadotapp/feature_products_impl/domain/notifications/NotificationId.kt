@@ -1,6 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.notifications
 
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 import java.util.Objects
 
 /**

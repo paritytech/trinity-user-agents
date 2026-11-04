@@ -50,7 +50,6 @@ use crate::platform::{
 	HostScan, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
 	Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
 	ProviderError, ScannerPlatform, ThemeHost, UserConfirmation, UserConfirmationReview,
-	async_trait,
 };
 
 /// How the mock answers a permission prompt for one capability.
@@ -96,6 +95,8 @@ pub enum ConfirmKind {
 	SignVrf,
 	/// [`UserConfirmationReview::ProductSubtree`].
 	ProductSubtree,
+	/// [`UserConfirmationReview::NftPurseDrain`].
+	NftPurseDrain,
 }
 
 impl ConfirmKind {
@@ -114,6 +115,7 @@ impl ConfirmKind {
 			},
 			UserConfirmationReview::SignVrf(_) => ConfirmKind::SignVrf,
 			UserConfirmationReview::ProductSubtree(_) => ConfirmKind::ProductSubtree,
+			UserConfirmationReview::NftPurseDrain(_) => ConfirmKind::NftPurseDrain,
 		}
 	}
 }
@@ -785,8 +787,8 @@ fn core_key(key: &CoreStorageKey) -> String {
 	match key {
 		CoreStorageKey::AuthSession => "core:auth-session".to_string(),
 		CoreStorageKey::PairingDeviceIdentity => "core:pairing-device-identity".to_string(),
-		CoreStorageKey::PermissionAuthorization { product_id, request } => {
-			format!("core:permission:{product_id}:{request:?}")
+		CoreStorageKey::PermissionAuthorization { scope, request } => {
+			format!("core:permission:{scope}:{request:?}")
 		},
 		CoreStorageKey::AutoSigningKey { product_id } => {
 			format!("core:auto-signing-key:{product_id}")
@@ -812,12 +814,13 @@ fn core_key(key: &CoreStorageKey) -> String {
 				hex_key(peer_encryption_public_key)
 			)
 		},
-		CoreStorageKey::ProductManifest { product_id } => {
-			format!("core:product-manifest:{product_id}")
+		CoreStorageKey::ProductManifest { product_label } => {
+			format!("core:product-manifest:{product_label}")
 		},
-		CoreStorageKey::FundingSessions => "core:funding-sessions".to_string(),
-		CoreStorageKey::FundingSessionsUnreadable => "core:funding-sessions-unreadable".to_string(),
-		CoreStorageKey::FundingSessionPack => "core:funding-session-pack".to_string(),
+		CoreStorageKey::WorkerManifest { product_label } => {
+			format!("core:worker-manifest:{product_label}")
+		},
+		CoreStorageKey::FundingSupport => "core:funding-support".to_string(),
 		CoreStorageKey::AllowanceKeys { session_id } => {
 			format!("core:allowance-keys:{session_id}")
 		},
@@ -837,7 +840,7 @@ fn preimage_key(value: &[u8]) -> Vec<u8> {
 	sp_crypto_hashing::blake2_256(value).to_vec()
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ProductStorage for MockPlatform {
 	async fn read(
 		&self,
@@ -901,7 +904,7 @@ impl ProductStorage for MockPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl CoreStorage for MockPlatform {
 	async fn read_core_storage(
 		&self,
@@ -934,7 +937,7 @@ impl CoreStorage for MockPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Navigation for MockPlatform {
 	async fn navigate_to(&self, url: String) -> Result<(), latest::HostNavigateToError> {
 		if let Some(reason) = &self.config.faults.navigate_error {
@@ -945,7 +948,7 @@ impl Navigation for MockPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Notifications for MockPlatform {
 	async fn push_notification(
 		&self,
@@ -1007,7 +1010,7 @@ fn decision(granted: bool) -> PermissionDecision {
 	if granted { PermissionDecision::AllowAlways } else { PermissionDecision::Deny }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Permissions for MockPlatform {
 	async fn device_permission(
 		&self,
@@ -1046,7 +1049,7 @@ impl Permissions for MockPlatform {
 
 impl crate::platform::ExtrinsicVersionHost for MockPlatform {}
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Features for MockPlatform {
 	async fn supported_chains(
 		&self,
@@ -1111,7 +1114,7 @@ impl JsonRpcConnection for MockConnection {
 	fn close(&self) {}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ChainProvider for MockPlatform {
 	async fn connect(
 		&self,
@@ -1149,7 +1152,7 @@ impl AuthPresenter for MockPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl UserConfirmation for MockPlatform {
 	async fn confirm_user_action(
 		&self,
@@ -1221,7 +1224,7 @@ impl PreimageHost for MockPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ProductOperations for MockPlatform {
 	async fn begin_operation(
 		&self,
@@ -1250,7 +1253,7 @@ impl ProductOperations for MockPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ScannerPlatform for MockPlatform {
 	async fn scan_code(
 		&self,
@@ -1261,7 +1264,7 @@ impl ScannerPlatform for MockPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ChatPlatform for MockPlatform {
 	async fn create_chat_room(
 		&self,

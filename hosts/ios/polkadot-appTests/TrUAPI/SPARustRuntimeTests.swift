@@ -8,10 +8,7 @@ import TrUAPIHost
 
 // MARK: - Helpers
 
-private func makeConfiguration(
-    contentSource: SPAContentSource,
-    cardFace: (any ExpandedCardFaceShowing)? = nil
-) throws -> SPAConfiguration {
+private func makeConfiguration(contentSource: SPAContentSource) throws -> SPAConfiguration {
     let tldProvider = StubTldProvider()
     let factory = ProductHostFactory(tldProvider: tldProvider)
     let host = try #require(factory.host(rawString: "test.dot"))
@@ -21,8 +18,7 @@ private func makeConfiguration(
         isRootScreen: false,
         showMoreButton: false,
         page: ProductPage(host: host),
-        contentSource: contentSource,
-        cardFace: cardFace
+        contentSource: contentSource
     )
 }
 
@@ -38,21 +34,27 @@ private struct StubTldProvider: DotNsTldProviding {
     func refresh() {}
 
     func reset() {}
+
+    func currentTldElseResolve() async throws -> String {
+        if let tld = currentTld() {
+            return tld
+        }
+
+        return try await resolveTld()
+    }
 }
 
 private func makeRuntime(
     execution: MockProductExecution = MockProductExecution(),
     chainConnections: MockChainConnections = MockChainConnections(),
     configuration: SPAConfiguration,
-    dotNsResolver: DotNsResolverProtocol = StubDotNsResolver(),
-    productResolver: ProductResolving = StubProductResolver(),
+    contentLoader: ProductContentLoading = StubProductContentLoader(),
     hostEventRecorder: HostEventRecording = NoopHostEventRecorder()
 ) -> SPARustRuntime {
     SPARustRuntime(
         executionModel: makeExecutionModel(execution: execution, chainConnections: chainConnections),
         configuration: configuration,
-        dotNsResolver: dotNsResolver,
-        productResolver: productResolver,
+        contentLoader: contentLoader,
         schemeHandlerProxy: SchemeHandlerProxy(),
         logger: Logger.shared,
         hostEventRecorder: hostEventRecorder
@@ -108,16 +110,16 @@ struct SPARustRuntimeTests {
         @Test func devServerLoadsItsAddressAndRunsUnderTheCoresIdentifier() async throws {
             let address = try #require(URL(string: "http://192.168.1.59:3000/app?product_id=humanity.dot"))
             let configuration = try makeConfiguration(
-                contentSource: .devServer(url: address, productId: "humanity.dot")
+                contentSource: .devServer(url: address, productId: try! ProductId("humanity.dot"))
             )
-            let resolver = StubDotNsResolver()
-            let runtime = makeRuntime(configuration: configuration, dotNsResolver: resolver)
+            let loader = StubProductContentLoader()
+            let runtime = makeRuntime(configuration: configuration, contentLoader: loader)
 
             let url = try await runtime.start(with: MockJSEngine())
 
             #expect(url == address)
-            #expect(resolver.resolvedNames.isEmpty)
-            #expect(configuration.productId == "humanity.dot")
+            #expect(loader.openedIds.isEmpty)
+            #expect(configuration.productId.rawValue == "humanity.dot")
 
             await runtime.dispose()
         }
@@ -129,19 +131,19 @@ struct SPARustRuntimeTests {
             contentSource: .directURL(#require(URL(string: "http://localhost:3000")))
         )
 
-        #expect(configuration.productId == "test.dot")
+        #expect(configuration.productId.rawValue == "test.dot")
     }
 
     @Test func startWithDotNsResolvesContentAndReturnsProductURL() async throws {
         let configuration = try makeConfiguration(contentSource: .dotNs)
-        let resolver = StubDotNsResolver()
+        let loader = StubProductContentLoader()
         let engine = MockJSEngine()
-        let runtime = makeRuntime(configuration: configuration, dotNsResolver: resolver)
+        let runtime = makeRuntime(configuration: configuration, contentLoader: loader)
 
         let url = try await runtime.start(with: engine)
 
-        #expect(resolver.resolvedNames == ["test.dot"])
-        #expect(url.scheme == ProductScriptSchemeHandler.scheme)
+        #expect(try loader.openedIds == [ProductId("test.dot")])
+        #expect(url.scheme == productContentScheme())
         #expect(url.host == "test.dot")
         #expect(url.path == "/")
         #expect(engine.initializedScripts[0]
@@ -150,35 +152,32 @@ struct SPARustRuntimeTests {
         await runtime.dispose()
     }
 
-    /// A card's page loads the product's widget rather than its app, since the
-    /// widget is what an expanded card runs.
-    @Test @MainActor func startForACardsPageLoadsTheWidget() async throws {
-        let configuration = try makeConfiguration(contentSource: .dotNs, cardFace: StubCardFace())
-        let resolver = StubDotNsResolver()
-        let widget = ProductExecutable.Widget(
-            identifier: "widget.test.dot",
-            appVersion: .zero,
-            description: nil,
-            heights: [1],
-            width: 1
-        )
-        let product = ResolvedProduct(
-            id: "test.dot",
-            displayName: "Test",
-            description: nil,
-            icon: nil,
-            executables: ProductExecutables(app: nil, widget: widget, worker: nil),
-            hasManifest: true
-        )
-        let runtime = makeRuntime(
-            configuration: configuration,
-            dotNsResolver: resolver,
-            productResolver: StubProductResolver(alwaysResolvingTo: product)
-        )
-
+    @Test func useLatestBuildServesTheAppliedBuildWhenItChanged() async throws {
+        let configuration = try makeConfiguration(contentSource: .dotNs)
+        let loader = StubProductContentLoader()
+        let runtime = makeRuntime(configuration: configuration, contentLoader: loader)
         _ = try await runtime.start(with: MockJSEngine())
 
-        #expect(resolver.resolvedNames == ["widget.test.dot"])
+        loader.simulate(appliedContentHash: "01")
+        try await runtime.useLatestBuild()
+
+        #expect(await runtime.servedBuild()?.contentHash == "01")
+
+        await runtime.dispose()
+    }
+
+    @Test func useLatestBuildKeepsTheServedBuildWhenNothingChanged() async throws {
+        let configuration = try makeConfiguration(contentSource: .dotNs)
+        let loader = StubProductContentLoader()
+        let runtime = makeRuntime(configuration: configuration, contentLoader: loader)
+        _ = try await runtime.start(with: MockJSEngine())
+        let served = await runtime.servedBuild()
+
+        try await runtime.useLatestBuild()
+
+        #expect(await runtime.servedBuild() == served)
+        #expect(loader.openedIds.count == 2)
+
         await runtime.dispose()
     }
 

@@ -31,6 +31,14 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+
+        guard rootView.viewModel.expandedSection == .collectiblesDetails else { return }
+
+        collapseExpandedSection()
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .bgSurfaceMain
@@ -58,11 +66,7 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
         }
 
         rootView.viewModel.onCollectibles = { [weak self] in
-            self?.showCollectiblesOverlay()
-        }
-
-        rootView.viewModel.onViewCollectibles = { [weak presenter] in
-            presenter?.showCollectibles()
+            self?.openCollectibles()
         }
 
         rootView.viewModel.onOpenPocketCard = { [weak presenter] card in
@@ -118,11 +122,16 @@ extension WalletMainViewController: WalletMainViewProtocol {
     func frame(of key: PocketCardKey) -> CGRect? {
         guard
             UIApplication.shared.mainTabBarController?.container.selectedController === navigationController,
-            navigationController?.topViewController === self,
+            navigationController?.viewControllers.suffix(2).first === self,
+            rootView.viewModel.expandedSection == .none,
             rootView.viewModel.pocketCards.contains(where: { $0.key == key })
         else { return nil }
 
         return rootView.viewModel.pocketCardFrames[key]
+    }
+
+    var openCard: PocketCardKey? {
+        rootView.viewModel.openPocketCard
     }
 
     func setOpenCard(_ key: PocketCardKey?) {
@@ -134,20 +143,6 @@ extension WalletMainViewController: WalletMainViewProtocol {
         withTransaction(Transaction(animation: animated ? PocketCardFlightTiming.animation : nil)) {
             viewModel.openPocketCardOffset = offset
             viewModel.isPocketCleared = clearingPocket
-        }
-
-        // The navigation bar itself must stay opaque: at no alpha it leaves the safe area and the Pocket jumps up.
-        let chromeAlpha: CGFloat = clearingPocket ? 0 : 1
-        let fadeChrome = { [weak self] in
-            self?.titleView?.alpha = chromeAlpha
-            UIApplication.shared.mainTabBarController?.setChromeAlpha(chromeAlpha)
-        }
-        if animated {
-            let animator = PocketCardFlightTiming.makeAnimator()
-            animator.addAnimations(fadeChrome)
-            animator.startAnimation()
-        } else {
-            fadeChrome()
         }
     }
 
@@ -168,7 +163,7 @@ extension WalletMainViewController: WalletMainViewProtocol {
         rootView.viewModel.expandedSection = .assetDetails
         setOverlayCloseButton()
         resetRightButton()
-        setTitleCenter(PaymentAssetBranding.shared.current.symbol)
+        setTitleCenter(String(localized: .walletMainPurse))
     }
 
     private func showIdentityDetailsOverlay() {
@@ -178,11 +173,17 @@ extension WalletMainViewController: WalletMainViewProtocol {
         setTitleCenter(String(localized: .walletMainIdCard))
     }
 
-    private func showCollectiblesOverlay() {
+    private func openCollectibles() {
+        guard rootView.viewModel.expandedSection == .none else { return }
+
         rootView.viewModel.expandedSection = .collectiblesDetails
-        setOverlayCloseButton()
         resetRightButton()
         setTitleCenter(nil)
+
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(WalletView.sectionAnimationDuration))
+            self?.presenter.showCollectibles()
+        }
     }
 
     func setMainTitle() {

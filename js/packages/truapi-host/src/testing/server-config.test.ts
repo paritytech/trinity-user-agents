@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 import { hostPageUrl } from "./host-page-url.js";
 import { createTestHostServer } from "./server.js";
@@ -11,7 +12,7 @@ describe("createTestHostServer host configuration", () => {
     const server = await createTestHostServer({
       unref: true,
       productUrl: "http://localhost:5173",
-      productId: "localhost:5173",
+      productId: asProductId("localhost:5173"),
       accounts: ["alice", "bob"],
     });
     const url = new URL(server.url);

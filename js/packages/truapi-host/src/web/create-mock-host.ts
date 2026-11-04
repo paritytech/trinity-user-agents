@@ -1,3 +1,5 @@
+import { asProductId } from "@parity/truapi";
+import type { ProductId } from "@parity/truapi";
 // A deterministic, in-memory mock host. `createMockHost` returns a complete
 // `RequiredHostCallbacks` set (the JS sibling of `truapi::platform`'s
 // `MockPlatform`) plus recordings for assertions. Hand `host.callbacks` to
@@ -273,7 +275,7 @@ function liveSubscription<T>(
 /** One operation a product began and has not ended. */
 export interface OpenOperation {
   /** Product that began it. */
-  productId: string;
+  productId: ProductId;
   /** Id the mock handed back, unique among this product's open operations. */
   id: number;
   /** Label the product gave, empty when it gave none. */
@@ -677,13 +679,13 @@ function normalizeHash(hash: string | Uint8Array): string {
  * asked for even when a real node answers it.
  *
  * One socket per lease, never shared. Production opens a fresh connection for
- * every chain connect -- `truapi-provider`'s `connect` and the CLI's
- * `WsJsonRpcConnection::connect` both do -- and JSON-RPC ids are numbered per
- * connection from 1. Two leases on one socket therefore put two id spaces on
- * the same wire, and every inbound frame reaches every reader, so a lease sees
- * traffic it never asked for. That is transport behaviour no real host has and
- * the core can observe it, which makes sharing a fidelity bug rather than an
- * optimisation. Do not reintroduce it to save connections.
+ * every chain connect -- `truapi-provider`'s `connect` does, and the CLI dials
+ * through it -- and JSON-RPC ids are numbered per connection from 1. Two leases
+ * on one socket therefore put two id spaces on the same wire, and every inbound
+ * frame reaches every reader, so a lease sees traffic it never asked for. That
+ * is transport behaviour no real host has and the core can observe it, which
+ * makes sharing a fidelity bug rather than an optimisation. Do not reintroduce
+ * it to save connections.
  *
  * This is not a multi-chain concern. Two leases on one chain are enough: they
  * would cross-talk, and releasing one would leave its listeners on a socket the
@@ -1713,7 +1715,7 @@ export function mockRuntimeConfig(
   overrides: Partial<ProductRuntimeConfig> = {},
 ): ProductRuntimeConfig {
   return {
-    productId: "mock.dot",
+    productId: asProductId("mock.dot"),
     host: {
       name: "Mock Host",
       icon: "https://example.invalid/mock.png",

@@ -115,6 +115,10 @@ private extension IncomingChatRequestCoordinationContext {
         _ contact: Chat.Contact,
         incomingRequest: ChatRequest.ValidatedRemoteModel
     ) async throws {
+        guard !contact.isBlocked else {
+            return
+        }
+
         guard let existingRequest = contact.chatRequest else {
             try await handleWhenContactWithoutRequests(
                 remoteRequest: incomingRequest,

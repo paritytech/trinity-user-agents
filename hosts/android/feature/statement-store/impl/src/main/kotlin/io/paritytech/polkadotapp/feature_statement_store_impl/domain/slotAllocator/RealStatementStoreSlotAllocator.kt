@@ -23,7 +23,9 @@ import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocato
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlot
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotAllocationError
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotAllocator
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlotTag
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.StatementStoreSlots
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.canBeEvictedBy
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.filterReplaceableSlots
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.findFreeSlot
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.slotAllocator.hasSlotFor
@@ -51,14 +53,16 @@ class RealStatementStoreSlotAllocator @Inject constructor(
     private val renewer: StatementStoreSlotRenewer,
     private val renewalLock: StatementStoreSlotRenewalLock,
     private val currentTimeContext: CurrentTimeContext,
+    private val currentPeriodProvider: CurrentPeriodProvider,
 ) : StatementStoreSlotAllocator {
     context(diagnostics: StalenessReportCollector)
     override suspend fun allocate(
         target: AccountId,
         strategy: OnExistingAllocationStrategy,
         priority: SlotPriority,
+        tag: StatementStoreSlotTag?,
     ): Result<Unit> = diagnostics.markRegion(RCommon.string.statement_store_stall_allocating_voucher) {
-        Timber.i("allocate starting; strategy=$strategy, priority=$priority")
+        Timber.i("allocate starting; strategy=$strategy, priority=$priority, tag=${tag?.value}")
 
         resolveAllocateContext()
             .flatMap { context ->
@@ -66,7 +70,7 @@ class RealStatementStoreSlotAllocator @Inject constructor(
 
                 renewalLock.withLock {
                     renewIfStale(context, target).flatMap {
-                        runAllocate(context, target, strategy, priority)
+                        runAllocate(context, target, strategy, priority, tag)
                     }
                 }
             }
@@ -80,6 +84,17 @@ class RealStatementStoreSlotAllocator @Inject constructor(
     }
         .onFailure { Timber.e(it, "deallocateAllSlots failed") }
         .mapErrorNotInstance<_, StatementStoreSlotAllocationError> { StatementStoreSlotAllocationError.Unknown(it) }
+
+    override fun currentPeriod(): UInt = currentPeriodProvider.current()
+
+    override suspend fun hasCurrentAllocation(target: AccountId): Result<Boolean> = runCatching {
+        val period = currentPeriodProvider.current()
+        allocationRepository.hasRenewedFor(knownChains.people, target, period)
+    }
+
+    override suspend fun allocatedTargets(tag: StatementStoreSlotTag): Result<Set<AccountId>> = runCatching {
+        allocationRepository.accountsWithTag(knownChains.people, tag)
+    }
 
     override suspend fun allocationsFor(target: AccountId): Result<StatementStoreSlots> = contextResolver.resolve()
         .flatMap { slotLoader.loadSlots(it) }
@@ -101,14 +116,15 @@ class RealStatementStoreSlotAllocator @Inject constructor(
 
     context(diagnostics: StalenessReportCollector)
     private suspend fun renewIfStale(context: AllocateContext, target: AccountId): Result<Unit> {
-        val hasStale = allocationRepository.hasStaleFor(
+        // Every stale row (not just target's) must reclaim its seq before target may take a free one,
+        // otherwise a fresh allocation right after a period change can squeeze out an existing Critical slot.
+        val hasStale = allocationRepository.hasAnyStale(
             chainId = context.chain.id,
-            accountId = target,
             currentPeriod = context.period,
         )
         if (!hasStale) return Result.success(Unit)
 
-        Timber.i("allocate: target has stale rows; running renewer with priorityAccount=target")
+        Timber.i("allocate: stale rows present; running renewer with priorityAccount=target")
         return diagnostics.markRegion(RCommon.string.statement_store_stall_renewing_vouchers) {
             renewer.renew(context, priorityAccount = target)
         }
@@ -120,6 +136,7 @@ class RealStatementStoreSlotAllocator @Inject constructor(
         target: AccountId,
         strategy: OnExistingAllocationStrategy,
         priority: SlotPriority,
+        tag: StatementStoreSlotTag?,
     ): Result<Unit> {
         return loadSlots(context).flatMap { slots ->
             Timber.i("allocate: ${slots.takenCount()}/${slots.totalCount()} seqs already claimed in period ${context.period}")
@@ -130,7 +147,7 @@ class RealStatementStoreSlotAllocator @Inject constructor(
             } else {
                 pickSeq(context, slots, target, priority)
                     .mapError { StatementStoreSlotAllocationError.NoAllocationAvailable(it) }
-                    .flatMap { pick -> submitAndRecord(context, pick, target, priority) }
+                    .flatMap { pick -> submitAndRecord(context, pick, target, priority, tag) }
             }
         }
     }
@@ -141,6 +158,7 @@ class RealStatementStoreSlotAllocator @Inject constructor(
         pick: SlotPick,
         target: AccountId,
         priority: SlotPriority,
+        tag: StatementStoreSlotTag?,
     ): Result<Unit> = diagnostics.markRegion(RCommon.string.stall_submitting_transaction) {
         Timber.i("allocate: picked seq=${pick.seq} in ${pick.collection}, evictedAccount=${pick.evictedAccount}; submitting")
         statementStoreOrigins.asResourcesStatementStoreSlot(context.period, pick.seq, pick.collection)
@@ -163,6 +181,7 @@ class RealStatementStoreSlotAllocator @Inject constructor(
                     latestRenewedPeriod = context.period,
                     since = currentTimeContext.currentTime(),
                     priority = priority,
+                    tag = tag,
                 )
                 Timber.i("allocate: extrinsic executed for seq=${pick.seq} in ${pick.collection}; DB delta applied")
             }
@@ -189,7 +208,7 @@ class RealStatementStoreSlotAllocator @Inject constructor(
 
             val evictableWithPriority = candidates
                 .map { it to priorityByAccount.getPriorityOrNormal(it.slot.accountId) }
-                .filter { (_, effective) -> effective.level <= callerPriority.level }
+                .filter { (_, effective) -> effective.canBeEvictedBy(callerPriority) }
 
             val victim = evictableWithPriority.minWithOrNull(evictionComparator())?.first
                 ?: error("No free slot and no evictable slot (cooldown=$cooldown, callerPriority=$callerPriority)")

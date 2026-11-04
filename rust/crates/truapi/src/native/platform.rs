@@ -1,4 +1,4 @@
-use core::time::Duration;
+use core::{iter, ops::ControlFlow, time::Duration};
 use std::sync::{
 	Arc, Mutex,
 	atomic::{AtomicBool, Ordering},
@@ -9,7 +9,6 @@ use crate::platform::{
 	ExtrinsicVersionHost, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
 	PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId, ProductOperations,
 	ProductStorage, ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
-	async_trait,
 };
 use futures::{
 	FutureExt,
@@ -19,19 +18,22 @@ use futures::{
 };
 use parity_scale_codec::Encode;
 use truapi::v01;
+use zeroize::Zeroizing;
 
 use crate::{
 	DevicePairingObserver, PairedSsoPeer,
+	encrypted_storage::EncryptedStorage,
 	host_internal::bulletin::preimage_key,
 	host_logic::worker::WorkerTransition,
 	installation::{InstallationId, InstallationIdProvider},
+	time::{RealTimer, Timer, retry},
 };
 
 use super::{
 	callbacks::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
-		NativePocketRemoval, NativeScannerCallbacks, NativeTopUpCallbacks,
+		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
+		NativeScannerCallbacks, NativeTopUpCallbacks,
 	},
 	errors::HostRejection,
 	events::NativeEventBus,
@@ -45,7 +47,7 @@ pub struct ContactsCallbackPlatform {
 	pub contacts: Arc<dyn NativeContactsCallbacks>,
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
 	async fn contacts(
 		&self,
@@ -74,7 +76,7 @@ pub struct ScannerCallbackPlatform {
 	pub scanner: Arc<dyn NativeScannerCallbacks>,
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
 	async fn scan_code(
 		&self,
@@ -119,7 +121,26 @@ impl DevicePairingObserver for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
+impl EncryptedStorage for CallbackPlatform {
+	async fn read_encrypted(
+		&self,
+		key: &[u8],
+	) -> Result<Option<Zeroizing<Vec<u8>>>, v01::GenericError> {
+		let value = self.callbacks.encrypted_storage_read(key.to_vec()).await?;
+		Ok(value.map(Zeroizing::new))
+	}
+
+	async fn write_encrypted(&self, key: &[u8], value: &[u8]) -> Result<(), v01::GenericError> {
+		Ok(self.callbacks.encrypted_storage_write(key.to_vec(), value.to_vec()).await?)
+	}
+
+	async fn delete_encrypted(&self, key: &[u8]) -> Result<(), v01::GenericError> {
+		Ok(self.callbacks.encrypted_storage_delete(key.to_vec()).await?)
+	}
+}
+
+#[async_trait::async_trait]
 impl InstallationIdProvider for CallbackPlatform {
 	async fn current_installation(&self) -> Result<InstallationId, v01::GenericError> {
 		let id = self.callbacks.current_installation().await?;
@@ -127,7 +148,7 @@ impl InstallationIdProvider for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Navigation for CallbackPlatform {
 	async fn navigate_to(&self, url: String) -> Result<(), v01::HostNavigateToError> {
 		self.callbacks
@@ -136,7 +157,7 @@ impl Navigation for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Notifications for CallbackPlatform {
 	async fn push_notification(
 		&self,
@@ -158,7 +179,7 @@ impl Notifications for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl crate::platform::PermissionStatusHost for CallbackPlatform {
 	async fn device_permission_status(
 		&self,
@@ -176,7 +197,7 @@ impl crate::platform::PermissionStatusHost for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ExpandedCardHost for CallbackPlatform {
 	async fn set_expanded_card_face_shown(
 		&self,
@@ -194,7 +215,7 @@ impl crate::platform::ExpandedCardHost for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Permissions for CallbackPlatform {
 	async fn device_permission(
 		&self,
@@ -229,7 +250,7 @@ impl Permissions for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Features for CallbackPlatform {
 	async fn feature_supported(
 		&self,
@@ -252,7 +273,7 @@ impl Features for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ExtrinsicVersionHost for CallbackPlatform {
 	async fn transaction_extension_versions(
 		&self,
@@ -268,7 +289,7 @@ impl ExtrinsicVersionHost for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ProductStorage for CallbackPlatform {
 	async fn read(&self, key: String) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
 		self.callbacks.local_storage_read(key).await
@@ -310,7 +331,7 @@ impl ProductStorage for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ProductOperations for CallbackPlatform {
 	async fn begin_operation(
 		&self,
@@ -336,7 +357,7 @@ impl ProductOperations for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl CoreStorage for CallbackPlatform {
 	async fn read_core_storage(
 		&self,
@@ -431,7 +452,7 @@ fn hex_lower(bytes: &[u8]) -> String {
 	bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ChainProvider for CallbackPlatform {
 	async fn connect(
 		&self,
@@ -479,7 +500,7 @@ impl AuthPresenter for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl UserConfirmation for CallbackPlatform {
 	async fn confirm_permission(
 		&self,
@@ -533,7 +554,7 @@ const PREIMAGE_RETRY_PAUSE_SLOW: Duration = Duration::from_secs(30);
 const PREIMAGE_RETRY_PAUSE_FAST: Duration = Duration::from_millis(1);
 #[cfg(test)]
 const PREIMAGE_RETRY_PAUSE_SLOW: Duration = Duration::from_millis(4);
-const PREIMAGE_FAST_RETRIES: u32 = 5;
+const PREIMAGE_FAST_RETRIES: usize = 5;
 
 impl PreimageHost for CallbackPlatform {
 	fn lookup_preimage(
@@ -566,32 +587,42 @@ impl PreimageHost for CallbackPlatform {
 	}
 }
 
-/// Retry the host lookup until it returns bytes that hash to `digest` or an
-/// error.
+/// Retry a host lookup that missed until it returns bytes that hash to
+/// `digest` or an error.
 async fn lookup_until_found(
 	callbacks: Arc<dyn HostCallbacks>,
 	digest: [u8; 32],
 ) -> Result<Vec<u8>, HostRejection> {
 	let key_hex = hex_lower(&digest);
 	callbacks.on_core_log("truapi.native.preimage.retrying".to_string(), key_hex.clone());
+	let mut fast_pauses = iter::repeat_n(PREIMAGE_RETRY_PAUSE_FAST, PREIMAGE_FAST_RETRIES);
+	let mut next_pause = move || fast_pauses.next().unwrap_or(PREIMAGE_RETRY_PAUSE_SLOW);
+	// The first lookup already missed, so even the first retry waits.
+	RealTimer.sleep(next_pause()).await;
 	let mut retries = 0u32;
-	loop {
-		let pause = if retries < PREIMAGE_FAST_RETRIES {
-			PREIMAGE_RETRY_PAUSE_FAST
-		} else {
-			PREIMAGE_RETRY_PAUSE_SLOW
-		};
-		futures_timer::Delay::new(pause).await;
-		retries += 1;
-		let value = callbacks.lookup_preimage(digest.to_vec()).await?;
-		if let Some(value) = value.filter(|bytes| preimage_key(bytes) == digest) {
-			callbacks.on_core_log(
-				"truapi.native.preimage.found".to_string(),
-				format!("{key_hex} on retry {retries}"),
-			);
-			return Ok(value);
-		}
+	let found = retry(
+		|| {
+			retries += 1;
+			async {
+				match callbacks.lookup_preimage(digest.to_vec()).await {
+					Ok(Some(value)) if preimage_key(&value) == digest => {
+						ControlFlow::Break(Ok(value))
+					},
+					Ok(_) => ControlFlow::Continue(()),
+					Err(rejection) => ControlFlow::Break(Err(rejection)),
+				}
+			}
+		},
+		|()| next_pause(),
+	)
+	.await;
+	if found.is_ok() {
+		callbacks.on_core_log(
+			"truapi.native.preimage.found".to_string(),
+			format!("{key_hex} on retry {retries}"),
+		);
 	}
+	found
 }
 
 /// [`crate::platform::ChatPlatform`] served by host-provided
@@ -603,7 +634,7 @@ pub struct ChatCallbackPlatform {
 	pub events: Arc<NativeEventBus>,
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 	async fn create_chat_room(
 		&self,
@@ -687,58 +718,6 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 	}
 }
 
-/// [`crate::platform::PocketPlatform`] served by host-provided
-/// [`NativePocketCallbacks`]; constructed only when the host passed one.
-pub struct PocketCallbackPlatform {
-	/// Host card collection.
-	pub pocket: Arc<dyn NativePocketCallbacks>,
-	/// Events scoped to the execution, carrying card-list changes.
-	pub events: Arc<NativeEventBus>,
-}
-
-#[async_trait]
-impl crate::platform::PocketPlatform for PocketCallbackPlatform {
-	fn subscribe_pocket_cards(
-		&self,
-		_product: &ProductContext,
-	) -> BoxStream<'static, Result<v01::HostPocketListSubscribeItem, v01::GenericError>> {
-		let pocket = self.pocket.clone();
-		Box::pin(self.events.subscribe_pocket_cards(move || {
-			pocket
-				.list_cards()
-				.map(|cards| v01::HostPocketListSubscribeItem { cards })
-				.map_err(|error| v01::GenericError { reason: error.to_string() })
-		}))
-	}
-
-	async fn remove_pocket_card(
-		&self,
-		_product: &ProductContext,
-		request: v01::HostPocketRemoveCardRequest,
-	) -> Result<(), v01::HostPocketRemoveCardError> {
-		let unknown = |error: HostRejection| v01::HostPocketRemoveCardError::Unknown {
-			reason: error.to_string(),
-		};
-		match self.pocket.remove_card(request.card_id).await.map_err(unknown)? {
-			NativePocketRemoval::Privileged => Err(v01::HostPocketRemoveCardError::Privileged),
-			// A card this host does not hold is already removed.
-			NativePocketRemoval::Absent => Ok(()),
-			NativePocketRemoval::Removed => {
-				// The removal stands either way. A host that can no longer
-				// list its cards says so on the stream rather than leaving the
-				// product on a list that still holds the removed card.
-				match self.pocket.list_cards() {
-					Ok(cards) => self.events.notify_pocket_cards_changed(cards),
-					Err(error) => self.events.notify_pocket_cards_failed(v01::GenericError {
-						reason: error.to_string(),
-					}),
-				}
-				Ok(())
-			},
-		}
-	}
-}
-
 /// [`crate::platform::GamePlatform`] served by host-provided
 /// [`NativeGameCallbacks`]; constructed only when the host passed one.
 pub struct GameCallbackPlatform {
@@ -746,7 +725,7 @@ pub struct GameCallbackPlatform {
 	pub game: Arc<dyn NativeGameCallbacks>,
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl crate::platform::GamePlatform for GameCallbackPlatform {
 	async fn schedule_game_reminder(
 		&self,
@@ -771,7 +750,7 @@ pub struct FundingCallbackPlatform {
 	pub funding: Arc<dyn NativeFundingCallbacks>,
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 	async fn present_funding(
 		&self,
@@ -789,8 +768,31 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 			.map_err(v01::GenericError::from)
 	}
 
-	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem) {
-		self.funding.funding_session_changed(intent, status);
+	async fn present_provider_frame(
+		&self,
+		provider: &ProductContext,
+		intent: String,
+		target: v01::FundingFrameTarget,
+	) -> Result<v01::FundingFrameOutcome, v01::GenericError> {
+		self.funding
+			.present_provider_frame(provider.product_id.clone(), intent, target)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	fn funding_quote_changed(&self, intent: String, row: crate::platform::FundingQuoteRow) {
+		self.funding.funding_quote_changed(intent, row);
+	}
+}
+
+impl crate::runtime::FundingFeed for FundingCallbackPlatform {
+	fn funding_session_changed(
+		&self,
+		intent: String,
+		status: v01::HostFundingStatusSubscribeItem,
+		progress: Option<crate::host_logic::funding::FundingProgress>,
+	) {
+		self.funding.funding_session_changed(intent, status, progress);
 	}
 }
 
@@ -906,13 +908,13 @@ fn top_up_rank(status: &v01::HostPaymentTopUpStatusSubscribeItem) -> u8 {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl crate::platform::TopUpPlatform for TopUpCallbackPlatform {
 	async fn top_up(
 		&self,
 		product: &ProductContext,
-		request: v01::HostPaymentTopUpRequest,
-	) -> Result<(), v01::HostPaymentTopUpError> {
+		request: crate::latest::HostPaymentTopUpRequest,
+	) -> Result<(), crate::latest::HostPaymentTopUpError> {
 		self.top_up.top_up(product.product_id.clone(), request).await
 	}
 
@@ -972,13 +974,13 @@ fn payment_rank(status: &v01::HostPaymentStatusSubscribeItem) -> u8 {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl crate::platform::PaymentPlatform for PaymentCallbackPlatform {
 	async fn request_payment(
 		&self,
 		product: &ProductContext,
-		request: v01::HostPaymentRequest,
-	) -> Result<(), v01::HostPaymentError> {
+		request: crate::latest::HostPaymentRequest,
+	) -> Result<(), crate::latest::HostPaymentError> {
 		self.payments.request_payment(product.product_id.clone(), request).await
 	}
 
@@ -1078,8 +1080,8 @@ mod status_relay_tests {
 		async fn top_up(
 			&self,
 			_product_id: ProductId,
-			_request: v01::HostPaymentTopUpRequest,
-		) -> Result<(), v01::HostPaymentTopUpError> {
+			_request: crate::latest::HostPaymentTopUpRequest,
+		) -> Result<(), crate::latest::HostPaymentTopUpError> {
 			Ok(())
 		}
 
@@ -1211,8 +1213,8 @@ mod status_relay_tests {
 		async fn request_payment(
 			&self,
 			_product_id: ProductId,
-			_request: v01::HostPaymentRequest,
-		) -> Result<(), v01::HostPaymentError> {
+			_request: crate::latest::HostPaymentRequest,
+		) -> Result<(), crate::latest::HostPaymentError> {
 			Ok(())
 		}
 

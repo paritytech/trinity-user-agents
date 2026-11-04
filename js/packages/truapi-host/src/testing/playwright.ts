@@ -9,6 +9,7 @@
 // because TrUAPI has no seam for it -- see `notModeled` in
 // `create-mock-host.ts`; those throw rather than silently pass.
 
+import type { ProductId } from "@parity/truapi";
 import type { Page, FrameLocator } from "@playwright/test";
 
 import {
@@ -124,7 +125,7 @@ export interface TestHostFixtureOptions {
    * signing request whose account is scoped to a different product, so a
    * mismatch surfaces as `PermissionDenied` rather than as a config error.
    */
-  productId?: string;
+  productId?: ProductId;
   /** Behaviour knobs forwarded to the mock host, including `chainProxies`. */
   mock?: MockHostConfig;
   /**
@@ -262,7 +263,7 @@ export interface TestHost {
   seedProductStorage(
     key: string,
     value: Uint8Array | string,
-    productId?: string,
+    productId?: ProductId,
   ): Promise<void>;
   /**
    * The SS58 address of a product account, at the prefix the core mandates.
@@ -280,7 +281,7 @@ export interface TestHost {
    * stands.
    */
   getProductAccountAddress(
-    productId?: string,
+    productId?: ProductId,
     index?: number,
   ): Promise<string | undefined>;
   /**
@@ -611,7 +612,7 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
             ]),
           );
         },
-        getProductAccountAddress: (productId?: string, index?: number) =>
+        getProductAccountAddress: (productId?: ProductId, index?: number) =>
           call("getProductAccountAddress", productId, index),
         seedProductStorage: (key, value, productId) =>
           page.evaluate(

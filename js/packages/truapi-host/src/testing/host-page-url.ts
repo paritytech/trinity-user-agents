@@ -4,6 +4,7 @@
 //
 // Keeping it here rather than inline in each means a new option cannot be
 // taught to one entry point and forgotten by the other.
+import type { ProductId } from "@parity/truapi";
 import type { MockHostConfig } from "../web/create-mock-host.js";
 
 /** Host configuration the page understands. */
@@ -11,7 +12,7 @@ export interface HostPageConfig {
   /** URL of the product under test. */
   productUrl: string;
   /** dotNS identifier the host runs the product under. */
-  productId?: string;
+  productId?: ProductId;
   /** Behaviour knobs forwarded to the mock host. */
   mock?: MockHostConfig;
   /** Overrides merged into the host's runtime config. */

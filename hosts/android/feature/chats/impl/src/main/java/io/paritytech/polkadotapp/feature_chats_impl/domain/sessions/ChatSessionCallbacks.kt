@@ -12,4 +12,7 @@ interface ChatSessionCallbacks {
         encryptedMessage: ByteArray,
         isVoIP: Boolean
     )
+
+    /** The contact sent us something on its device route, so it has processed our acceptance (chat-spec RFC-0005 §2). */
+    suspend fun onContactSeenOnDeviceRoute(contactAccountId: AccountId)
 }

@@ -1,3 +1,4 @@
+import { asProductId, type ProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 import { err, ok } from "neverthrow";
 
@@ -14,7 +15,10 @@ import {
 import { createWebWorkerPairingHostRuntime } from "./index.js";
 import { encodeStatement } from "./loopback-statements.js";
 
-const PRODUCT: ProductContext = { productId: "mock.dot", executionKind: "App" };
+const PRODUCT: ProductContext = {
+  productId: asProductId("mock.dot"),
+  executionKind: "App",
+};
 
 /** Lowercase hex without `0x`. */
 function hex(bytes: Uint8Array): string {
@@ -71,7 +75,10 @@ describe("createMockHost callbacks", () => {
     const { callbacks } = createMockHost();
     const key: CoreStorageKey = {
       tag: "PermissionAuthorization",
-      value: { productId: "p", request: { tag: "Device", value: "Camera" } },
+      value: {
+        scope: "p.dot",
+        request: { tag: "Device", value: "Camera" },
+      },
     };
     await callbacks.coreStorage.writeCoreStorage(key, new Uint8Array([9]));
     expect(await callbacks.coreStorage.readCoreStorage(key)).toEqual(
@@ -139,7 +146,7 @@ describe("createMockHost callbacks", () => {
     expect(
       await denied.callbacks.userConfirmation.confirmUserAction({
         tag: "ResourceAllocation",
-        value: { callingProductId: "mock.dot", resources: [] },
+        value: { callingProductId: asProductId("mock.dot"), resources: [] },
       }),
     ).toBe(false);
 
@@ -163,7 +170,7 @@ describe("createMockHost callbacks", () => {
     const host = createMockHost();
     await host.callbacks.userConfirmation.confirmUserAction({
       tag: "ResourceAllocation",
-      value: { callingProductId: "mock.dot", resources: [] },
+      value: { callingProductId: asProductId("mock.dot"), resources: [] },
     });
     expect(host.confirmations()).toEqual(["ResourceAllocation"]);
 
@@ -397,7 +404,7 @@ describe("createMockHost with createWebWorkerPairingHostRuntime", () => {
 });
 
 describe("createMockHost control surface", () => {
-  const review = (callingProductId: string) =>
+  const review = (callingProductId: ProductId) =>
     ({
       tag: "ResourceAllocation",
       value: { callingProductId, resources: [] },
@@ -408,10 +415,10 @@ describe("createMockHost control surface", () => {
     // recording cannot tell these apart.
     const host = createMockHost();
     await host.callbacks.userConfirmation.confirmUserAction(
-      review("first.dot"),
+      review(asProductId("first.dot")),
     );
     await host.callbacks.userConfirmation.confirmUserAction(
-      review("second.dot"),
+      review(asProductId("second.dot")),
     );
 
     expect(host.confirmations()).toEqual([
@@ -423,10 +430,10 @@ describe("createMockHost control surface", () => {
         .reviews()
         .map(
           (r) =>
-            (r as { value: { callingProductId: string } }).value
+            (r as { value: { callingProductId: ProductId } }).value
               .callingProductId,
         ),
-    ).toEqual(["first.dot", "second.dot"]);
+    ).toEqual([asProductId("first.dot"), asProductId("second.dot")]);
   });
 
   it("answers permissions per capability, overriding the policy", async () => {
@@ -497,7 +504,9 @@ describe("createMockHost control surface", () => {
   it("reset returns the mock to its constructed state", async () => {
     const host = createMockHost();
     await host.callbacks.navigation.navigateTo("https://a");
-    await host.callbacks.userConfirmation.confirmUserAction(review("mock.dot"));
+    await host.callbacks.userConfirmation.confirmUserAction(
+      review(asProductId("mock.dot")),
+    );
     host.seedPreimage(new Uint8Array([1]));
     host.setTheme("Light");
     host.setEnforcePermissions(true);
@@ -524,7 +533,7 @@ describe("createMockHost TestHostAPI parity", () => {
   } as const;
   const allocation = {
     tag: "ResourceAllocation",
-    value: { callingProductId: "mock.dot", resources: [] },
+    value: { callingProductId: asProductId("mock.dot"), resources: [] },
   } as const;
 
   it("getSigningLog reports only the reviews that gate a signature", async () => {
@@ -650,8 +659,8 @@ describe("createMockHost TestHostAPI parity", () => {
     // value instead of finding nothing.
     const host = createMockHost();
     const { coreStorage } = host.callbacks;
-    const manifest = (productId: string) =>
-      ({ tag: "ProductManifest", value: { productId } }) as const;
+    const manifest = (productLabel: string) =>
+      ({ tag: "ProductManifest", value: { productLabel } }) as const;
 
     await coreStorage.writeCoreStorage(manifest("a.dot"), new Uint8Array([1]));
     await coreStorage.writeCoreStorage(manifest("b.dot"), new Uint8Array([2]));
@@ -670,7 +679,7 @@ describe("createMockHost TestHostAPI parity", () => {
     // protocol payload, not just an assertion oracle.
     const host = createMockHost();
     const product = {
-      productId: "p",
+      productId: asProductId("p"),
       executionKind: { tag: "Unknown" } as const,
     };
     for (const roomId of ["zulu", "alpha", "mike"]) {
@@ -782,7 +791,7 @@ describe("createMockHost TestHostAPI parity", () => {
     const host = createMockHost();
     const rooms = host.callbacks.chat!.subscribeChatRooms();
     await host.callbacks.chat!.createChatRoom(
-      { productId: "p", executionKind: { tag: "Unknown" } },
+      { productId: asProductId("p"), executionKind: { tag: "Unknown" } },
       { roomId: "lobby", name: "Lobby", icon: "https://example.invalid/i.png" },
     );
 
@@ -796,7 +805,7 @@ describe("createMockHost TestHostAPI parity", () => {
     const host = createMockHost({ devicePermissions: "allow-all" });
     host.setPermissionBehavior("deny-all");
     await host.callbacks.productOperations.beginOperation(
-      { productId: "p", executionKind: { tag: "Unknown" } },
+      { productId: asProductId("p"), executionKind: { tag: "Unknown" } },
       "sync",
     );
 
@@ -901,7 +910,7 @@ describe("createMockHost TestHostAPI parity", () => {
     });
     const review = {
       tag: "ResourceAllocation",
-      value: { callingProductId: "mock.dot", resources: [] },
+      value: { callingProductId: asProductId("mock.dot"), resources: [] },
     } as const;
     await expect(
       confirmation.callbacks.userConfirmation.confirmUserAction(review),
@@ -919,7 +928,7 @@ describe("createMockHost TestHostAPI parity", () => {
     ]);
 
     const product = {
-      productId: "p",
+      productId: asProductId("p"),
       executionKind: { tag: "Unknown" } as const,
     };
     const chat = createMockHost({ faults: { chatError: "chat down" } });

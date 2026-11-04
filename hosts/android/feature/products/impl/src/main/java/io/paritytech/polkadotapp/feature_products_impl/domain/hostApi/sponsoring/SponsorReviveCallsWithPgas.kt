@@ -18,7 +18,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.On
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.requestResourceAllocation
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.TransactionSponsoring
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.ProductAccountDerivationUseCase
 import timber.log.Timber
 import javax.inject.Inject
@@ -61,7 +60,7 @@ class SponsorReviveCallsWithPgas @Inject constructor(
 
             Timber.i("balance ${balance.transferable} < threshold $threshold; allocating SmartContract(${account.index.asDisplayString()})")
             val outcome = accountsProtocol.requestResourceAllocation(
-                callingProduct = ProductId.fromStoredValue(account.productId),
+                callingProduct = account.productId,
                 resource = ApAllocatableResource.SmartContractAllowance(account.index),
                 onExisting = OnExistingAllowancePolicy.INCREASE,
             )

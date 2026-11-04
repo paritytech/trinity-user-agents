@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Dp
 import io.paritytech.polkadotapp.common.utils.rememberCurrentTimeMillisWithDelay
 import io.paritytech.polkadotapp.design.components.empty.EmptyScreenState
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
@@ -33,7 +34,8 @@ import io.paritytech.polkadotapp.common.R as RCommon
 internal fun ChatListContent(
     state: ChatListUiState,
     onChatClick: (ChatListUiState.ChatItem) -> Unit,
-    onNewRequestsClick: () -> Unit
+    onNewRequestsClick: () -> Unit,
+    bottomClearance: Dp,
 ) {
     val hasContent = state.chats.isNotEmpty() || state.hasNewRequests
 
@@ -66,7 +68,7 @@ internal fun ChatListContent(
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = WindowInsets(
-                bottom = PolkadotTheme.spacings.medium
+                bottom = PolkadotTheme.spacings.medium + bottomClearance
             ).add(LocalAppNavigationBarInsets.current).asPaddingValues()
         ) {
             if (state.hasNewRequests) {

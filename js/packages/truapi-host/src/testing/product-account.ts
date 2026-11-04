@@ -5,6 +5,7 @@
 // fund it once, in a `globalSetup`, rather than per test: funding is a property
 // of the account, not of the run.
 
+import type { ProductId } from "@parity/truapi";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
@@ -23,7 +24,7 @@ export interface ProductAccountQuery {
   /** The dev account whose session root the product account descends from. */
   account: DevAccountName | DevAccount;
   /** The product's dotNS identifier, e.g. `"tx-demo.dot"`. */
-  productId: string;
+  productId: ProductId;
   /** Index within the product's subtree. Defaults to `0`. */
   index?: number;
 }
@@ -33,7 +34,7 @@ interface Derivation {
   default: (init: { module_or_path: Uint8Array }) => Promise<unknown>;
   deriveProductSubtreePublicKey(
     rootEntropy: Uint8Array,
-    productId: string,
+    productId: ProductId,
   ): Uint8Array;
   deriveProductAccountPublicKey(
     productSubtreePublicKey: Uint8Array,
