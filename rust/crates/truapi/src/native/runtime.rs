@@ -653,6 +653,12 @@ impl NativeTrUApiHostRuntime {
 			.map_err(NativePairingError::from)
 	}
 
+	/// Clear one product's state, the secrets it kept included, as when the
+	/// user removes the product. The session and other products keep theirs.
+	pub async fn clear_product_state(&self, product_id: ProductId) -> Result<(), HostRejection> {
+		Ok(self.runtime.clear_product_state(&product_id).await?)
+	}
+
 	/// Core-owned logout for the process-wide authentication session.
 	pub fn disconnect(&self) {
 		futures::executor::block_on(self.runtime.disconnect_session());

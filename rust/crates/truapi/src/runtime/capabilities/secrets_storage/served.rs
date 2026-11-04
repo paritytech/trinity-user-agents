@@ -15,7 +15,7 @@ use truapi::{
 };
 
 use crate::{
-	host_logic::secrets_storage::{check_write, is_valid_key, secret_id},
+	host_logic::secrets_storage::{MAX_KEYS_PER_PRODUCT, check_write, is_valid_key, secret_id},
 	product_secrets::ProductSecrets,
 	runtime::{ProductRuntimeHost, versioning::version},
 };
@@ -81,9 +81,11 @@ impl SecretsStorage for ProductRuntimeHost {
 			.await
 	}
 
-	/// Dropping secrets at sign-out takes the same lock as a write, and the
-	/// session is checked again under it, so a write racing a sign-out or an
-	/// account switch cannot outlive it.
+	/// A new key is kept only while the product keeps fewer than
+	/// [`MAX_KEYS_PER_PRODUCT`]. The count and the write hold one lock, so
+	/// concurrent writes cannot pass the cap together. Dropping secrets at
+	/// sign-out takes the same lock, and the session is checked again under
+	/// it, so a write racing a sign-out or an account switch cannot outlive it.
 	#[instrument(skip_all, fields(runtime.method = "secrets_storage.write"))]
 	async fn write(
 		&self,
@@ -99,6 +101,15 @@ impl SecretsStorage for ProductRuntimeHost {
 					return Err(CallError::Denied);
 				}
 				let product_id = self.connection.product.product_id.as_str();
+				if secrets.count_others(product_id, &id).await.map_err(write_failure)? >=
+					MAX_KEYS_PER_PRODUCT
+				{
+					return Err(CallError::Domain(
+						latest::HostSecretsStorageWriteError::TooManyKeys {
+							max: MAX_KEYS_PER_PRODUCT,
+						},
+					));
+				}
 				secrets.put(&id, product_id, &value).await.map_err(write_failure)
 			})
 			.await

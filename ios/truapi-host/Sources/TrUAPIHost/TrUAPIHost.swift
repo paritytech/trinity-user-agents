@@ -1177,6 +1177,12 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.addPocketCard(productId: productId, cardId: cardId, title: title, face: face)
     }
 
+    /// Clears one product's state, the secrets it kept included, as when the
+    /// user removes the product. The session and other products keep theirs.
+    public func clearProductState(productId: ProductId) async throws {
+        try await inner.clearProductState(productId: productId)
+    }
+
     /// Removes a card on the user's behalf, unless it is pinned.
     @discardableResult
     public func removePocketCard(productId: ProductId, cardId: String) async throws -> PocketCardRemoval {

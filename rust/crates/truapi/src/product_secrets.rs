@@ -45,6 +45,9 @@ const DELETE: &str = "DELETE FROM product_secret WHERE id = :id";
 const DROP: &str = "UPDATE product_secret SET dropped = 1
 	WHERE :product_id IS NULL OR product_id = :product_id";
 
+const OTHERS: &str = "SELECT COUNT(*) FROM product_secret
+	WHERE product_id = :product_id AND dropped = 0 AND id != :id";
+
 const DROPPED: &str = "SELECT id FROM product_secret WHERE dropped = 1";
 
 /// The encrypted storage key of the secret with `id`.
@@ -77,6 +80,21 @@ impl ProductSecrets {
 			.await
 			.map_err(db_failure)?;
 		self.encrypted.write_encrypted(&storage_key(id), secret).await
+	}
+
+	/// How many keys `product_id` keeps besides `id`.
+	pub async fn count_others(&self, product_id: &str, id: &SecretId) -> Result<u32, GenericError> {
+		let product_id = product_id.to_owned();
+		let row_id = *id;
+		self.db
+			.read(move |conn| {
+				Ok(conn.prepare_cached(OTHERS)?.query_row(
+					named_params! { ":product_id": product_id, ":id": row_id },
+					|row| row.get(0),
+				)?)
+			})
+			.await
+			.map_err(db_failure)
 	}
 
 	/// The secret under `id`, or `None` when none is kept or the host lost

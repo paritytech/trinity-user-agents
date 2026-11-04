@@ -11782,6 +11782,80 @@ fn a_kept_secret_is_returned_only_to_the_account_that_wrote_it() {
 	);
 }
 
+// Secrets storage is meant for a handful of credentials, so a product keeps a
+// bounded number of keys. Replacing one it already keeps stays allowed at the
+// limit.
+#[test]
+fn a_product_keeps_a_bounded_number_of_keys() {
+	let services = payment_services();
+	services.install_memory_secrets();
+	let wallet = payment_host(&services, "wallet.dot", true);
+	let max = crate::host_logic::secrets_storage::MAX_KEYS_PER_PRODUCT;
+	for index in 0..max {
+		write_secret(&wallet, &format!("key-{index}"), onramp_secret())
+			.expect("a secret within the limit is kept");
+	}
+
+	assert_eq!(
+		(
+			write_secret(&wallet, "one-too-many", onramp_secret()),
+			write_secret(&wallet, "key-0", onramp_secret()),
+		),
+		(
+			Err(CallError::Domain(
+				truapi::versioned::secrets_storage::HostSecretsStorageWriteError::V1(
+					v01::HostSecretsStorageWriteError::TooManyKeys { max }
+				)
+			)),
+			Ok(truapi::versioned::secrets_storage::HostSecretsStorageWriteResponse::V1),
+		)
+	);
+}
+
+// Two writes of new keys racing at the last free slot must not both get in:
+// the count and the write happen under one lock, so the second sees the
+// first's secret.
+#[test]
+fn concurrent_writes_cannot_pass_the_key_cap() {
+	let services = payment_services();
+	let keeper = services.install_memory_secrets();
+	let wallet = payment_host(&services, "wallet.dot", true);
+	let max = crate::host_logic::secrets_storage::MAX_KEYS_PER_PRODUCT;
+	for index in 0..max - 1 {
+		write_secret(&wallet, &format!("key-{index}"), onramp_secret())
+			.expect("a secret within the limit is kept");
+	}
+
+	let cx = CallContext::default();
+	let write = |key: &'static str| {
+		truapi::api::SecretsStorage::write(
+			&wallet,
+			&cx,
+			truapi::versioned::secrets_storage::HostSecretsStorageWriteRequest::V1(
+				v01::HostSecretsStorageWriteRequest {
+					key: key.to_string(),
+					value: onramp_secret(),
+				},
+			),
+		)
+	};
+	let (first, second) =
+		futures::executor::block_on(futures::future::join(write("racer-one"), write("racer-two")));
+
+	assert_eq!(
+		(first.is_ok(), second, keeper.stored().len() as u32),
+		(
+			true,
+			Err(CallError::Domain(
+				truapi::versioned::secrets_storage::HostSecretsStorageWriteError::V1(
+					v01::HostSecretsStorageWriteError::TooManyKeys { max }
+				)
+			)),
+			max,
+		)
+	);
+}
+
 // A write waiting on the lock while the user signs out must not land after
 // the sign-out drops secrets: it checks the session again once it holds the
 // lock.

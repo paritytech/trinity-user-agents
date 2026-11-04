@@ -295,6 +295,10 @@ missing key reads as `nil`; throw when the store cannot be read or a value no
 longer decrypts. Deleting a missing key succeeds. Defaults to a rejection,
 which turns off the features that need it.
 
+When the user removes a product, `clearProductState(productId:)` on the
+runtime drops its grants and the secrets it kept, and leaves the session and
+other products alone.
+
 `durableWorkChanged(pending:)` on the runtime bridge reports whether the core
 has durable transactions still awaiting a verdict, starting with the state it
 finds at launch. While it is `true`, schedule a background task (a

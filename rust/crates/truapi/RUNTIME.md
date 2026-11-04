@@ -264,8 +264,7 @@ most a row whose secret reads as absent, never an unindexed secret. A clear
 marks its rows dropped before it deletes any secret, so a secret the host
 fails to delete never reads back, and the next clear deletes it. Values are opaque bytes the core
 does not interpret. It requires a session, checks the key (1 to 64 of
-`[a-z0-9._-]`) and the 8192-byte value limit, and caches nothing. Nothing yet
-bounds how many keys a product keeps. It clears every secret on logout, disconnect,
+`[a-z0-9._-]`) and the 8192-byte value limit, and caches nothing. A product keeps at most 16 keys. It clears every secret on logout, disconnect,
 session reset and an account switch, and a product's secrets when that
 product's state is cleared. Storage the host cannot read is an error, not an
 absent value. Without a core database and encrypted storage, as on the browser

@@ -1188,6 +1188,13 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     suspend fun addPocketCard(productId: ProductId, cardId: String, title: String, face: RendererNode) =
         inner.addPocketCard(productId, cardId, title, face)
 
+    /**
+     * Clear one product's state, the secrets it kept included, as when the
+     * user removes the product. The session and other products keep theirs.
+     */
+    @Throws(HostRejection::class)
+    suspend fun clearProductState(productId: ProductId) = inner.clearProductState(productId)
+
     /** Remove a card on the user's behalf, unless it is pinned. */
     @Throws(NativeCoreDatabaseException::class)
     suspend fun removePocketCard(productId: ProductId, cardId: String): PocketCardRemoval =
