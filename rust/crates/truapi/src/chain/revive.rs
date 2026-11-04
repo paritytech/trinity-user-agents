@@ -10,7 +10,7 @@ use super::{
 	BlockBackend, DispatchOutcome, EncodedExtrinsic, ExtrinsicBuildError, ExtrinsicService,
 	HashAndNumber, MortalExtrinsic, RuntimeApiCaller, SubstrateSigner, TxSubmitter, WatchEvent,
 };
-use crate::chain_runtime::{ChainRuntime, RuntimeFailure};
+use crate::chain_runtime::{ChainRuntime, RuntimeFailure, encode_hex};
 
 const REVIVE_PALLET: &str = "Revive";
 
@@ -392,9 +392,7 @@ impl Simulation {
 			},
 			Ok(ExecReturnValue { data, .. }) => data,
 			Err(RawDispatchError(error)) => {
-				return Err(EvmContractError::Dispatch {
-					detail: format!("0x{}", hex::encode(error)),
-				});
+				return Err(EvmContractError::Dispatch { detail: encode_hex(&error) });
 			},
 		};
 		Ok(Self {
@@ -425,5 +423,5 @@ fn describe_revert(data: &[u8]) -> String {
 	}
 	GenericContractError::abi_decode(data)
 		.map(|error| error.to_string().escape_debug().to_string())
-		.unwrap_or_else(|_| format!("0x{}", hex::encode(data)))
+		.unwrap_or_else(|_| encode_hex(data))
 }
