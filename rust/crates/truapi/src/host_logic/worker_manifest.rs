@@ -80,20 +80,40 @@ struct PublishedRoute {
 	countries: Option<Vec<String>>,
 }
 
+/// Why a Worker manifest is unusable.
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+pub enum WorkerManifestError {
+	/// The manifest is not the JSON a Worker manifest is.
+	#[display("worker manifest is not valid JSON: {reason}")]
+	Json {
+		/// The parser's message.
+		reason: String,
+	},
+	/// The subname holds a manifest of another executable kind.
+	#[display("manifest kind {kind:?} read from a worker subname")]
+	Kind {
+		/// The kind the manifest declares.
+		kind: String,
+	},
+	/// The manifest is of a schema version this core cannot read.
+	#[display("worker manifest schema version {version} is not supported")]
+	SchemaVersion {
+		/// The version the manifest declares.
+		version: u32,
+	},
+}
+
 impl WorkerManifest {
 	/// Parses a Worker manifest. A schema version this core cannot read, or a
 	/// `kind` other than `worker`, makes the executable unusable.
-	pub fn parse(json: &str) -> Result<Self, String> {
+	pub fn parse(json: &str) -> Result<Self, WorkerManifestError> {
 		let published: Published = serde_json::from_str(json)
-			.map_err(|err| format!("worker manifest is not valid JSON: {err}"))?;
+			.map_err(|err| WorkerManifestError::Json { reason: err.to_string() })?;
 		if published.kind != WORKER_KIND {
-			return Err(format!("manifest kind {:?} read from a worker subname", published.kind));
+			return Err(WorkerManifestError::Kind { kind: published.kind });
 		}
 		if published.schema_version != SUPPORTED_SCHEMA_VERSION {
-			return Err(format!(
-				"worker manifest schema version {} is not supported",
-				published.schema_version
-			));
+			return Err(WorkerManifestError::SchemaVersion { version: published.schema_version });
 		}
 		Ok(Self { funding: published.includes.funding.map(PublishedFunding::usable) })
 	}

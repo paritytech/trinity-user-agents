@@ -37,8 +37,7 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
 
     func makeRuntime(
         productId: ProductId,
-        context: ProductWorkerContext,
-        pocket: ProductPocketHostBridge
+        context: ProductWorkerContext
     ) async throws -> TrUAPIWorkerRuntime {
         // Its 1 s and 2 s backoffs fit inside the manager's startup window.
         let resolved = try await contentLoader.openWorker(productId, policy: .attempts(3))
@@ -55,8 +54,7 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
             executionModel: environment().makeWorkerExecution(
                 productId: productId,
                 routers: context.routers,
-                chatMessaging: context.chat,
-                pocket: pocket
+                chatMessaging: context.chat
             ),
             engineFactory: engine.engineFactory,
             logger: logger
