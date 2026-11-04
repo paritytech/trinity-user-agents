@@ -1209,7 +1209,7 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     suspend fun removePocketCard(productId: ProductId, cardId: String): PocketCardRemoval =
         inner.removePocketCard(productId, cardId)
 
-    /** The newest face kept for a card, if one is. */
+    /** The newest face kept for one side of a card, if one is. */
     @Throws(NativeCoreDatabaseException::class)
     suspend fun pocketCardFace(
         productId: ProductId,

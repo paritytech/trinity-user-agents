@@ -1199,7 +1199,7 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.removePocketCard(productId: productId, cardId: cardId)
     }
 
-    /// The newest face kept for a card, if one is.
+    /// The newest face kept for one side of a card, if one is.
     public func pocketCardFace(
         productId: ProductId,
         cardId: String,
