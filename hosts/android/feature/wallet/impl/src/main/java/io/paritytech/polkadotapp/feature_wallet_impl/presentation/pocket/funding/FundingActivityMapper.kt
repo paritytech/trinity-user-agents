@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding
 
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
+import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.util.amountFromPlanks
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivity
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityItem
@@ -46,12 +47,14 @@ class FundingActivityMapper(
     private val dateFormat = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(locale)
     private val today = localDate(now)
 
-    fun map(activity: FundingActivity): FundingActivityUiState = FundingActivityUiState(
+    /** [currentBalance] is the card's balance, for the bar the card details pin once the card has docked. */
+    fun map(activity: FundingActivity, currentBalance: Balance? = null): FundingActivityUiState = FundingActivityUiState(
         inFlight = activity.inFlight
             .sortedWith(compareByDescending<FundingActivityItem> { it.isDelayed }.thenByDescending { it.date })
             .map(::row)
             .toImmutableList(),
         completed = activity.history.map(::row).toImmutableList(),
+        currentBalance = currentBalance?.let { FundingMoney.label(asset.amountFromPlanks(it.atLeastZero()), symbol) },
     )
 
     private val FundingActivityItem.isDelayed: Boolean
