@@ -1579,6 +1579,150 @@ fn a_request_that_times_out_is_not_withdrawn_from_the_phone() {
 	assert_eq!(pairing_host.session().newest_request_for_tests(), Some(published));
 }
 
+/// The `on_existing` policy of every allocation request this host has
+/// published, oldest first.
+fn published_allocation_policies(
+	platform: &Arc<StubPlatform>,
+	session: &SessionInfo,
+) -> Vec<crate::host_internal::sso_messages::OnExistingAllowancePolicy> {
+	submitted_remote_messages(platform, session)
+		.into_iter()
+		.filter_map(|message| match message.data {
+			RemoteMessageData::V1(v1::RemoteMessage::ResourceAllocationRequest(request)) => {
+				Some(request.on_existing)
+			},
+			_ => None,
+		})
+		.collect()
+}
+
+/// A pairing host serving `myapp.dot` on `session` over `platform`.
+fn pairing_host_on(
+	platform: &Arc<StubPlatform>,
+	session: &SessionInfo,
+) -> (Arc<PairingHost>, ProductRuntimeHost) {
+	let (host_config, _) = runtime_config("myapp.dot");
+	let product = ProductContext::new(ProductId::for_test("myapp.dot"));
+	let services = RuntimeServices::new(
+		platform.clone(),
+		host_config.host.host_info.clone(),
+		host_config.people_chain_genesis_hash,
+		host_config.bulletin_chain_genesis_hash,
+		host_config.asset_hub_chain_genesis_hash,
+		test_spawner(),
+	);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session.clone());
+	(pairing_host, host)
+}
+
+fn request_allocation_until_timeout(host: &ProductRuntimeHost, request_id: &str) {
+	let mut cx = CallContext::with_request_id(request_id.to_string());
+	cx.set_timeout(std::time::Duration::from_millis(50));
+	futures::executor::block_on(ResourceAllocation::request(
+		host,
+		&cx,
+		resource_allocation_request(),
+	))
+	.expect_err("the signing host never answers");
+}
+
+/// The phone may still grant a request the product stopped waiting for, so a
+/// retry asks for that slot rather than a second one.
+#[test]
+fn a_retry_after_an_unanswered_allocation_reuses_the_slot() {
+	use crate::host_internal::sso_messages::OnExistingAllowancePolicy::{Ignore, Increase};
+	let session = sso_session_info();
+	let answers =
+		|method: &'static str, result: &str| std::iter::repeat_n((method, result.to_string()), 4);
+	let platform = Arc::new(StubPlatform {
+		resource_allocation_confirmed: true,
+		rpc_method_responses: answers("statement_subscribeStatement", r#""sub""#)
+			.chain(answers("statement_submit", r#"{"status":"new"}"#))
+			.chain(answers("statement_unsubscribeStatement", "true"))
+			.collect(),
+		..Default::default()
+	});
+	let (pairing_host, host) = pairing_host_on(&platform, &session);
+
+	request_allocation_until_timeout(&host, "allocate-first");
+	request_allocation_until_timeout(&host, "allocate-retry");
+
+	assert_eq!(
+		(
+			published_allocation_policies(&platform, &session),
+			pairing_host.has_unanswered_allocation_for_tests(&session, "myapp.dot"),
+		),
+		(vec![Increase, Ignore], true),
+		"a retry that also goes unanswered keeps the next one on the same slot",
+	);
+}
+
+/// An answer the product receives, even a refusal, clears the mark.
+#[test]
+fn an_answered_allocation_clears_the_unanswered_mark() {
+	use crate::host_internal::sso_messages::{
+		OnExistingAllowancePolicy::Ignore, SsoAllocationOutcome,
+	};
+	let session = sso_session_info();
+	let platform = Arc::new(StubPlatform {
+		resource_allocation_confirmed: true,
+		sso_response_script: Some(sso_success_response_script(
+			&session,
+			RemoteMessage {
+				message_id: "wallet-allocate".to_string(),
+				data: RemoteMessageData::V1(v1::RemoteMessage::ResourceAllocationResponse(
+					crate::host_internal::sso_messages::Response {
+						responding_to: "allocate".to_string(),
+						payload: Ok(vec![SsoAllocationOutcome::Rejected]),
+					},
+				)),
+			},
+		)),
+		..Default::default()
+	});
+	let (pairing_host, host) = pairing_host_on(&platform, &session);
+	pairing_host.remember_unanswered_allocation_for_tests(&session, "myapp.dot");
+
+	futures::executor::block_on(ResourceAllocation::request(
+		&host,
+		&CallContext::with_request_id("allocate".to_string()),
+		HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
+			resources: vec![v01::AllocatableResource::StatementStoreAllowance],
+		}),
+	))
+	.expect("the signing host answers");
+
+	assert_eq!(
+		(
+			published_allocation_policies(&platform, &session),
+			pairing_host.has_unanswered_allocation_for_tests(&session, "myapp.dot"),
+		),
+		(vec![Ignore], false),
+	);
+}
+
+/// Resetting the session drops its marks with the rest of its state.
+#[test]
+fn a_session_reset_drops_its_unanswered_allocations() {
+	let session = sso_session_info();
+	let platform = Arc::new(StubPlatform::default());
+	let (pairing_host, _host) = pairing_host_on(&platform, &session);
+	pairing_host.remember_unanswered_allocation_for_tests(&session, "myapp.dot");
+
+	futures::executor::block_on(pairing_host.session().reset_session_state());
+
+	assert!(!pairing_host.has_unanswered_allocation_for_tests(&session, "myapp.dot"));
+}
+
 /// `message_id`s every `Cancel` this host has published names, oldest first.
 fn withdrawn_requests(platform: &Arc<StubPlatform>, session: &SessionInfo) -> Vec<String> {
 	submitted_remote_messages(platform, session)
