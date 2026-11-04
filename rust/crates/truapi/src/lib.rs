@@ -917,6 +917,10 @@ pub mod encrypted_storage;
 
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
+mod image_loader;
+
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
 pub mod installation;
 
 #[cfg(feature = "runtime")]
@@ -955,6 +959,9 @@ pub use host_logic::session::{
 pub use host_logic::worker::{WorkerLedger, WorkerTransition};
 #[cfg(feature = "runtime")]
 pub use host_rpc_client::HostRpcClient;
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage};
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{
