@@ -330,7 +330,9 @@ transaction.execute_and_watch().await?;
 
 The request borrows the caller and its signer and owns its calldata. Simulation describes the state read at that time;
 execution uses its limits without repeating the simulation. Revive's wire types and resource estimates are private.
-`EvmContractError` distinguishes contract reverts from chain failures and unsuccessful execution.
+A read or simulation that reverts is `Reverted` with the decoded revert reason. The `ExtrinsicFailed` event does not
+carry that reason, so a contract that reverts on chain surfaces as `DispatchFailed` with the module error
+`Revive::ContractReverted`, which tells it apart from `Revive::OutOfGas` or `Revive::StorageDepositLimitExhausted`.
 
 ### Durable transactions
 

@@ -38,7 +38,7 @@ pub enum EvmContractError {
 		/// Raw hex of the `DispatchError` payload.
 		detail: String,
 	},
-	/// The contract executed but reverted.
+	/// The contract executed but reverted in a read or simulation.
 	#[error("contract reverted: {detail}")]
 	Reverted {
 		/// Rendered revert reason.
@@ -74,9 +74,13 @@ pub enum EvmContractError {
 	},
 	/// A finalized block included the extrinsic, which failed to dispatch.
 	/// The call had no effect apart from its fee, so the write may be
-	/// prepared again.
-	#[error("the extrinsic failed to dispatch")]
-	DispatchFailed,
+	/// prepared again. A contract that reverts during execution ends here
+	/// too, as `Revive::ContractReverted`, without its revert reason.
+	#[error("the extrinsic failed to dispatch: {detail}")]
+	DispatchFailed {
+		/// The dispatch error, named by the block's runtime metadata.
+		detail: String,
+	},
 }
 
 /// A simulated contract write bound to its signer and to the caller that
@@ -198,7 +202,7 @@ async fn submit_until_finalized(
 	};
 	match finalized_outcome(chain, genesis, block, extrinsic.extrinsic.hash()).await {
 		Ok(DispatchOutcome::Succeeded) => Ok(()),
-		Ok(DispatchOutcome::Failed) => Err(EvmContractError::DispatchFailed),
+		Ok(DispatchOutcome::Failed(detail)) => Err(EvmContractError::DispatchFailed { detail }),
 		Err(reason) => {
 			Err(EvmContractError::OutcomeUnreadable { extrinsic, block, reason: Box::new(reason) })
 		},

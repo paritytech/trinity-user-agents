@@ -5,7 +5,9 @@ use subxt::{
 	SubstrateConfig,
 	backend::Backend,
 	config::Header,
+	error::DispatchError,
 	events::{Events, Phase},
+	metadata::ArcMetadata,
 	utils::H256,
 };
 
@@ -75,8 +77,8 @@ impl BlockBackend for ChainRuntime {
 		let Some(phase) = extrinsic_phase(&legacy, at.hash, extrinsic_hash).await? else {
 			return Ok(None);
 		};
-		let events = block_events(&legacy, at).await?;
-		let outcome = dispatch_event(&events, phase)?.ok_or_else(|| {
+		let (events, metadata) = block_events(&legacy, at).await?;
+		let outcome = dispatch_event(&events, &metadata, phase)?.ok_or_else(|| {
 			RuntimeFailure::host_failure(
 				DISPATCH_OUTCOME,
 				format!("no dispatch event for {phase:?} of block {:?}", at.hash),
@@ -105,27 +107,26 @@ async fn extrinsic_phase(
 	Ok(Some(Phase::ApplyExtrinsic(index)))
 }
 
-/// `System.Events` of block `at`, decoded with the metadata of the runtime
-/// that produced the block.
+/// `System.Events` of block `at`, with the metadata of the runtime that
+/// produced the block, which decodes them.
 async fn block_events(
 	legacy: &LegacyConnection,
 	at: HashAndNumber,
-) -> Result<Events<SubstrateConfig>, RuntimeFailure> {
-	legacy
+) -> Result<(Events<SubstrateConfig>, ArcMetadata), RuntimeFailure> {
+	let block = legacy
 		.client
 		.at_block_hash_and_number(at.hash, at.number)
 		.await
-		.map_err(|error| failure(DISPATCH_OUTCOME, error))?
-		.events()
-		.fetch()
-		.await
-		.map_err(|error| failure(DISPATCH_OUTCOME, error))
+		.map_err(|error| failure(DISPATCH_OUTCOME, error))?;
+	let events = block.events().fetch().await.map_err(|error| failure(DISPATCH_OUTCOME, error))?;
+	Ok((events, block.metadata()))
 }
 
 /// The outcome the `System` dispatch event emitted in `phase` reports, or
 /// `None` when there is no such event.
 fn dispatch_event(
 	events: &Events<SubstrateConfig>,
+	metadata: &ArcMetadata,
 	phase: Phase,
 ) -> Result<Option<DispatchOutcome>, RuntimeFailure> {
 	for event in events.iter() {
@@ -135,7 +136,16 @@ fn dispatch_event(
 		}
 		match event.event_name() {
 			"ExtrinsicSuccess" => return Ok(Some(DispatchOutcome::Succeeded)),
-			"ExtrinsicFailed" => return Ok(Some(DispatchOutcome::Failed)),
+			"ExtrinsicFailed" => {
+				// The event alone proves the failure, so an error that does not
+				// decode is reported as such instead of hiding the outcome.
+				let error = DispatchError::decode_from(event.field_bytes(), metadata.clone())
+					.map_or_else(
+						|error| format!("undecodable dispatch error: {error}"),
+						|error| error.to_string(),
+					);
+				return Ok(Some(DispatchOutcome::Failed(error)));
+			},
 			_ => {},
 		}
 	}

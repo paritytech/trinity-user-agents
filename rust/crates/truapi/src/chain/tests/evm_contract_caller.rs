@@ -197,7 +197,20 @@ fn dispatch_events(event: Option<&str>) -> Vec<u8> {
 		ScaleValue::unnamed_variant("Yes", []),
 	]);
 	let values = if event_name == "ExtrinsicFailed" {
-		vec![ScaleValue::unnamed_variant("Other", []), info]
+		let revive = metadata.pallet_by_name("Revive").unwrap();
+		let reverted = revive
+			.error_variants()
+			.unwrap()
+			.iter()
+			.find(|error| error.name == "ContractReverted")
+			.unwrap();
+		let module_error = ScaleValue::unnamed_composite([
+			ScaleValue::u128(revive.error_index().into()),
+			ScaleValue::unnamed_composite(
+				[reverted.index, 0, 0, 0].map(|byte| ScaleValue::u128(byte.into())),
+			),
+		]);
+		vec![ScaleValue::unnamed_variant("Module", [module_error]), info]
 	} else {
 		vec![info]
 	};
@@ -335,7 +348,7 @@ fn finalized_inclusion_requires_an_explicit_successful_dispatch() {
 		let result = block_on(prepared.execute_and_watch());
 
 		let actual = match result {
-			Err(EvmContractError::DispatchFailed) => "failed",
+			Err(EvmContractError::DispatchFailed { .. }) => "failed",
 			Err(EvmContractError::OutcomeUnreadable { reason, .. })
 				if reason.method() == "dispatch_outcome" &&
 					reason.reason().contains("no dispatch event") =>
@@ -370,6 +383,24 @@ fn a_stopped_watch_is_not_reported_as_a_successful_contract_call() {
 		};
 		assert_eq!(actual, expected);
 	}
+}
+
+/// A revert during execution, running out of gas and an exhausted deposit
+/// limit all fail the dispatch; only the module error tells them apart.
+#[test]
+fn a_failed_dispatch_carries_its_module_error() {
+	let signer = RecordingSigner::new();
+	let mut node = EvmNode::new();
+	node.outcomes.push_back(Outcome::DispatchFailed);
+	let (_, _, caller) = serve_contracts(node);
+	let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
+
+	let result = block_on(prepared.execute_and_watch());
+
+	let Err(EvmContractError::DispatchFailed { detail }) = result else {
+		panic!("unexpected failed dispatch: {result:?}");
+	};
+	assert_eq!(detail, "Pallet error: Revive::ContractReverted");
 }
 
 /// A dropped extrinsic can still be included until its era ends, so the
