@@ -1,5 +1,93 @@
 # @parity/truapi
 
+## 0.29.0
+
+### Major Changes
+
+- e8e2c17: New `FundingProvider` trait for a provider's worker. The core calls the worker with host-initiated requests,
+  each handler returning its answer as `ok(answer)`: `onAssign` hands it a session, again with its last update when the
+  worker connects, `onCancel` asks it to stop one (`Stopped`, or `Offer`/`Refused` once money moved) and
+  `onSettleCancel` passes on the user's answer to its offer. The worker calls the core: `report` stores its progress on
+  the session, as `In` or `Out` steps by the session's direction (`{ tag: "In", value: { tag: "Delivered" } }`) or
+  `Failed`, and `presentFrame` shows one of its App's screens, or an external https page with an optional return URL, in
+  a host frame. `payment.topUp` and `payment.request` gain a v0.2 shape with an optional `funding` intent: a provider's
+  worker sets it to start funds for a session it serves, or the call fails with `FundingNotServed`. Products built
+  before this release keep calling the v0.1 shape, which names no session, and a host reads it as `funding: undefined`.
+  The core records them before the host is asked, refuses a repeat under the id with other terms or an id the host
+  already holds with `AlreadyExists`, and `Crediting` and `Collecting` must name funds of that session the host took, at
+  their amount, once, or fail with `NotStarted`. Sessions end as `Delivered` or `Released` from the recorded amounts of
+  the named top-ups once their claims are final, or of the named payment once it completes. An assigned session whose
+  provider has not seen the user's payment expires 7 days after the provider's last update
+  (`FundingAssignment.expiresAt`, `undefined` once funds move), and a second cancel ends it. Hosts assign a session with
+  `select_funding_provider`, and must implement `present_provider_frame` on `FundingPlatform` (natively
+  `NativeFundingCallbacks`). Sessions now live in the core database; funding sessions 0.26.0 kept in core storage are
+  not carried over.
+- e8e2c17: `funding.request` takes `{ direction, amount? }` and answers at once with `{ intent }` while the host shows
+  the overlay; `funding.statusSubscribe` takes `{ intent }`. A session the user dismisses ends its watchers as
+  `Failed { Cancelled }`. `HostFundingError` is `NotConnected`, `InvalidAmount` or `Unknown`.
+- e8e2c17: Funding sessions are stored in the core database, one row per session, so funding needs one: natively the
+  configured `database_directory`, otherwise `set_core_db`. The `FundingSessions`, `FundingSessionPack` and
+  `FundingSessionsUnreadable` core storage keys are gone.
+- b7b5ffe: Protocol and host APIs accept `ProductId` values for product identities. The TypeScript client exports a
+  string brand and non-validating `asProductId` helper, with no WASM dependency. Host worker runtimes expose Rust-backed
+  `parseProductId`; Swift and Kotlin construct immutable, native-owned values through the same Rust parser.
+
+  Kotlin `ProductId.parse`, `ProductId.fromName`, `productId.executable` and `productId.owner` return
+  `Result<ProductId>`, carrying a `ProductIdException` on invalid input. Callers must explicitly recover or propagate
+  the failure.
+
+  Kotlin `ProductId` is independent of Android parceling. Navigation payloads use an app-owned `Parceler<ProductId>`
+  that writes the string value and validates it through Rust when restoring.
+
+  Rust consumers import `ProductId`, `ProductIdError` and `PRODUCT_ID_MAX_BYTES` from the `truapi` crate root; these
+  version-independent items are not exported through `truapi::latest`.
+
+  Callers must pass typed IDs to product configuration, callbacks, proof contexts, registry queries, cross-product
+  storage and NFT purse ownership. Valid IDs retain string wire and storage encodings. Malformed IDs in typed protocol
+  fields fail decoding before dispatch. Persisted permission scopes and manifest labels keep their existing encodings.
+
+  Native product-link and executable-name operations use shared Rust helpers. Product links must match the host-provided
+  network suffix, including `.li` links. Both native hosts stop content loading on product-resolution failures or
+  missing executables.
+
+  The shared host execution enum is named `ExecutableKind` in Rust, Swift, Kotlin and TypeScript. Host consumers must
+  update imports from `ProductExecutionKind`; its variants and wire encoding are unchanged.
+
+### Minor Changes
+
+- 85ee8d8: Every chain connection the `truapi-host` CLI makes goes through `truapi-provider`.
+  `--chain-backend light-client` (or `TRUAPI_CHAIN_BACKEND=light-client`) syncs the chains with the embedded smoldot
+  light client instead of dialing the preset's RPC nodes, so a node that refuses a shared CI address no longer stops the
+  host. RPC stays the default. The light client supports `paseo-next-v2` and `previewnet`. A request from a CLI command
+  fails once its connection has delivered nothing for 30 seconds while it waits. On the light client a command first
+  waits for its chain to sync, and fails if the chain or its relay stalls.
+
+  Over RPC, a connection sends a ping after 20 seconds without an outgoing request, and counts as dead after 50 seconds
+  without any incoming frame, so the core opens a new connection instead of waiting on a dead one. Messages of up to 64
+  MiB pass in either direction, so the full body of a busy Bulletin block can be fetched. Chain connections verify
+  `wss://` certificates with the root certificates built into the binary, not with certificate authorities added to the
+  operating system.
+
+- d730414: Native hosts keep the Pocket collection in the core database. The core stores which cards are in the Pocket
+  and the newest face of each, and serves product Pocket calls from it. `HostRuntimeConfig.pinned_pocket_cards`
+  (`pinnedPocketCards` in Swift and Kotlin) lists the cards the host pins, in the order they are listed. `addPocketCard`
+  screens the card id and title as a product's, and refuses ones a product could not use with `PocketAddError`. The
+  runtime gains `pocketCards()`, a stream of every card, pinned first, and `addPocketCard`, `removePocketCard` and
+  `pocketCardFace`. The core keeps the newest face of a card from each Pocket card render, at most every two seconds and
+  once more when the render stops. `PocketHostBridge`, the `pocket` argument of `openProductExecution` and
+  `notifyPocketCardsChanged` are removed, `encodeRendererNode` and `decodeRendererNode` are removed, and
+  `NativeRendererSubscription` is now `NativeSubscription`.
+
+### Patch Changes
+
+- ab108f7: When `truapi-host` cannot open a session's core database, for example because a newer `truapi-host` migrated
+  it, the signing host stops with the `rm -f` command that deletes it. Running that command starts the session clean and
+  keeps its accounts and pairings.
+- aef8ba1: A chain-head call on a follow that has ended now names why it ended instead of reporting
+  `unknown follow subscription id`: `ended when its connection closed`, `was stopped by the node`, or
+  `ended on an error with its connection still open`. Only the reason text changes, not the error kind. A spent id is
+  also no longer answered by an unrelated follow.
+
 ## 0.28.0
 
 ### Minor Changes
