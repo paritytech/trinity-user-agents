@@ -12,25 +12,13 @@ import { bytesToHex, hexToBytes } from "@parity/truapi/scale";
  *
  * Shapes follow polkadot-sdk `substrate/primitives/statement-store`
  * (`Field`, `Proof`, `SubmitResult`, `RejectionReason`, `InvalidReason`),
- * master read 2026-11-01, which smoldot's light client mirrors.
+ * master read 2026-11-01, which smoldot's light client mirrors. What the
+ * answers mean depends on the People backend: see `transport.ts`.
  *
- * This host reaches the People chain through its embedded light client
- * (smoldot-light 2.1.0, `src/json_rpc_service/statement.rs` and
- * `background.rs`). It has no statement store:
- *
- * - `statement_submit` checks expiry, size and proof, then broadcasts. It
- *   answers `new` once at least one peer took the broadcast, `invalid` with
- *   a reason for a failed check, and an RPC error (code 7001) when it cannot
- *   decode the statement or no peer took it. Peers' own refusals, such as
- *   `noAllowance`, `channelPriorityTooLow` or `accountFull`, never reach it.
- * - A subscription's first page is always empty with `remaining: 0`.
- *   Statements arrive later without `remaining`, when a peer sends them,
- *   whether new or long stored.
+ * Over the light client (smoldot-light 2.1.0), `statement_submit` answers an
+ * RPC error (code 7001) when it cannot decode the statement or no peer took
+ * the broadcast; {@link clientRefusal} reads those.
  */
-
-/** What the People connection is, and what that means for every fact it gives. */
-export const TRANSPORT_NOTE =
-  "Source: this tab's embedded light client. It holds no statements. A submission answered new went to at least one peer, which may still refuse it; peers' refusals never reach this tab. A subscription's first page is always empty; later pages carry what peers send, new or long stored.";
 
 /** Which proof a statement carries. `OnChain` is the older layout the core still reads. */
 export type ProofKind = "Sr25519" | "Ed25519" | "Ecdsa" | "OnChain" | "none";
@@ -282,8 +270,9 @@ export function readSubmitAnswer(result: unknown): SubmitAnswer {
 
 /**
  * Whether the answer says the statement went out: `new` (from the light
- * client: at least one peer took the broadcast) or `known` (a full node
- * already held it). Neither says a peer stored it.
+ * client: at least one peer took the broadcast; from a node: it took it into
+ * its store) or `known` (a node already held it). Neither says other nodes
+ * keep it.
  */
 export const wentOut = (status: SubmitStatus): boolean =>
   status === "new" || status === "known";

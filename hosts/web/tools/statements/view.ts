@@ -3,7 +3,8 @@ import { copyInPage } from "../../src/app/copy.js";
 import type { PeopleAccess } from "./actions.js";
 import { readGrants } from "./actions.js";
 import { evidenceText } from "./evidence.js";
-import { TRANSPORT_NOTE, nodeText } from "./decode.js";
+import { nodeText } from "./decode.js";
+import type { PeopleTransport } from "./transport.js";
 import {
   HASHES_PER_SUBSCRIPTION,
   expiryText,
@@ -300,62 +301,39 @@ function latestObservedText(
   return `${observed.statements} stmt${observed.statements === 1 ? "" : "s"} · ${bytes(observed.dataBytes)} · seen ${clock(observed.lastObservedAt)}${extra} · not current`;
 }
 
-/** What the latest observed statements do not say. */
-const LATEST_OBSERVED_NOTE =
-  'Latest observed per channel, not known expired, this tab\'s own broadcasts included. Not what the network holds now: peers may have refused or evicted them without saying so, or hold others no one sent here. "Dropped" counts channels whose latest statement left the list.';
-
-/** Why the view offers no probe, and what an observed subscription does not show. */
-const NO_PROBE_NOTE =
-  "In this host's light client every People connection shares one topic filter that is sent to peers, and each connection's subscriptions replace it, so a subscription made to look would take the chat's topics off it. An open subscription here is one the core or the host made; it does not show that peers send to it.";
-
 /** The topics list's columns. */
 const TOPIC_COLUMNS = ["Topic", "Role", "Subscription", "Observed"];
 
 /** What each column of the topics list says, and what it does not. */
-const TOPIC_COLUMNS_ABOUT = [
-  "Topic: a name only where the host knows it, or a product reported it. Else hex.",
-  "Role: Listening = an open subscription here, or a product says it reads. Publishing = a submission here was broadcast (not shown stored), or a product says it posts. Tried = submissions asked, none known to have gone out. Reported: only a product said it.",
-  "Subscription: who holds one open on it. Open does not mean peers send to it.",
-  "Observed: statements · last seen in this tab. Not what the network holds now.",
-];
-
-/** What a topic's submissions do not show. */
-const TOPIC_POSTS_NOTE =
-  "Tried: submissions on this topic the core or the host asked for, whatever the answer. Broadcast: those the light client answered new: a peer took it, not that a peer stored it.";
-
-/** What the observed statements of a topic do not say. */
-const TOPIC_OBSERVED_NOTE =
-  "Statements this tab saw on it: its own broadcasts and what peers sent its subscriptions, replays included. Not what the network holds now.";
+function topicColumnsAbout(transport: PeopleTransport): string[] {
+  return [
+    "Topic: a name only where the host knows it, or a product reported it. Else hex.",
+    transport.roleColumn,
+    `Subscription: who holds one open on it. ${transport.openSubscription}`,
+    "Observed: statements · last seen in this tab. Not what the network holds now.",
+  ];
+}
 
 /** The one thing to know before reading any fact here. */
 const TAKEAWAY = "Observed traffic, not network state";
 
 /** What every fact depends on, one short line each; the full transport note is in the evidence. */
-const ABOUT = [
-  "Source: this tab's light client. It holds no statements.",
-  "new = broadcast to a peer, not stored. Peers' refusals never reach this tab.",
-  "Observed ≠ current: a first page is always empty; later pages carry what peers send.",
-  "Grant ≠ remaining: a grant is the allowance, not what is left.",
-  "Statement bytes are public; encrypted contents stay sealed. Contact Chat text is plaintext.",
-  "Source tags: light client, core, host, chain, reported (unchecked), derived, inspector.",
-];
+function aboutLines(transport: PeopleTransport): string[] {
+  return [
+    ...transport.about,
+    "Grant ≠ remaining: a grant is the allowance, not what is left.",
+    "Statement bytes are public; encrypted contents stay sealed. Contact Chat text is plaintext.",
+    `Source tags: ${transport.source === "node" ? "People node" : "light client"}, core, host, chain, reported (unchecked), derived, inspector.`,
+  ];
+}
 
-/** What this tab cannot see of peers' refusals. */
-const PEER_REFUSALS =
-  "Peers check allowance, account room and channel priority themselves and do not tell the light client. No refusal shown does not mean none happened.";
-
-/** What a submission the inspector saw does not show. */
-const POSTS_NOTE =
-  "Submissions signed by this account that the core or the host asked for. Asking does not mean the light client got it.";
-
-/** Why a submission refused here never reached the network. */
-const REFUSED_HERE_NOTE =
-  "This tab submits nothing: its no-submit guard answered these before the light client, so no peer got them.";
-
-/** The light client's answers to an account's submissions, and its RPC errors. */
-function answersText(account: AccountRecord): string {
+/** The People connection's answers to an account's submissions, and its RPC errors. */
+function answersText(
+  account: AccountRecord,
+  transport: PeopleTransport,
+): string {
   const parts = Object.entries(account.answers).map(
-    ([status, n]) => `${n} ${status === "new" ? "broadcast" : status}`,
+    ([status, n]) => `${n} ${status === "new" ? transport.wentOut : status}`,
   );
   if (account.rpcErrors > 0)
     parts.push(
@@ -364,7 +342,10 @@ function answersText(account: AccountRecord): string {
   return parts.length === 0 ? "none answered" : parts.join(" · ");
 }
 
-function phaseText(record: SubscriptionRecord): string {
+function phaseText(
+  record: SubscriptionRecord,
+  transport: PeopleTransport,
+): string {
   if (record.state === "refused") return `refused: ${record.error ?? ""}`;
   if (record.state === "ended") return `ended: ${record.endedHow}`;
   switch (record.phase) {
@@ -373,7 +354,7 @@ function phaseText(record: SubscriptionRecord): string {
     case "initial":
       return `in its initial batch: at least ${record.lastRemaining} more to follow`;
     case "later":
-      return "after its initial batch: peers' statements, new or long stored";
+      return `after its initial batch: ${transport.laterPages.replace("after the initial batch: ", "")}`;
     case "unknown":
       return "open: no remaining count given";
   }
@@ -396,6 +377,7 @@ export function mountStatementsView(
   deps: StatementsViewDeps,
 ): StatementsView {
   const { ledger } = deps;
+  const { transport } = ledger;
 
   const top = el("div", "si-top");
   const title = el("span", "si-title", "Statements ");
@@ -423,18 +405,20 @@ export function mountStatementsView(
   const warning = el("p", "si-warning");
   warning.setAttribute("role", "note");
   // One takeaway; the distinctions every fact depends on open below it.
-  const transport = el("details", "si-caveats");
-  transport.setAttribute("role", "note");
+  const caveatsBox = el("details", "si-caveats");
+  caveatsBox.setAttribute("role", "note");
   const caveats = el("summary");
   caveats.append(
     el("span", "si-caveat", TAKEAWAY),
     " · ",
     el("span", "si-about", "About this data"),
   );
-  caveats.title = TRANSPORT_NOTE;
-  const about = el("ul", "si-note si-about-list");
-  about.append(...ABOUT.map((line) => el("li", undefined, line)));
-  transport.append(caveats, about);
+  caveats.title = transport.note;
+  const aboutData = el("ul", "si-note si-about-list");
+  aboutData.append(
+    ...aboutLines(transport).map((line) => el("li", undefined, line)),
+  );
+  caveatsBox.append(caveats, aboutData);
   const status = el("p", "si-status");
   status.setAttribute("role", "status");
 
@@ -451,7 +435,7 @@ export function mountStatementsView(
     }),
   );
   const body = el("div", "si-body");
-  root.append(top, warning, transport, tabs, status, body);
+  root.append(top, warning, caveatsBox, tabs, status, body);
 
   let tab: Tab = "accounts";
   let visible = false;
@@ -636,16 +620,16 @@ export function mountStatementsView(
         withSigner && signer !== undefined
           ? ownership(ledger.accountRecord(signer))
           : null;
-      head.textContent = `${short(statement.meta.hash)} · ${statement.meta.dataBytes} B${owner === null ? "" : ` · signer ${OWNER_LABEL[owner.kind].toLowerCase()}`} · ${statement.via.join(", ")} · observed ${statement.sightings}×, first ${clock(statement.firstAt)}, last ${clock(statement.lastAt)}`;
+      head.textContent = `${short(statement.meta.hash)} · ${statement.meta.dataBytes} B${owner === null ? "" : ` · signer ${OWNER_LABEL[owner.kind].toLowerCase()}`} · ${statement.via.map((via) => (via === "broadcast" ? transport.wentOut : via)).join(", ")} · observed ${statement.sightings}×, first ${clock(statement.firstAt)}, last ${clock(statement.lastAt)}`;
       box.append(head);
       const facts = el("dl", "si-facts");
       if (owner !== null && signer !== undefined)
         facts.append(
-          ...fact("Signer", accountLink(signer), "client"),
+          ...fact("Signer", accountLink(signer), transport.source),
           ...ownerFact(owner),
         );
       for (const [label, value] of metaDetails(statement.meta))
-        facts.append(...fact(label, value, "client"));
+        facts.append(...fact(label, value, transport.source));
       if (statement.payload !== undefined) {
         facts.append(
           ...fact(
@@ -812,29 +796,45 @@ export function mountStatementsView(
         "Observed",
         latestObservedText(ledger, account),
         "derived",
-        LATEST_OBSERVED_NOTE,
+        transport.latestObservedNote,
       ),
     );
     facts.append(
-      ...fact("Posts", `${account.submits} tried`, "inspector", POSTS_NOTE),
+      ...fact(
+        "Posts",
+        `${account.submits} tried`,
+        "inspector",
+        transport.postsNote,
+      ),
     );
     if (account.submits > account.refusedLocally)
-      facts.append(...fact("Answers", answersText(account), "client"));
+      facts.append(
+        ...fact("Answers", answersText(account, transport), transport.source),
+      );
     if (account.refusedLocally > 0)
       facts.append(
         ...fact(
           "Refused here",
           `${account.refusedLocally} by the no-submit guard`,
           "host",
-          REFUSED_HERE_NOTE,
+          transport.refusedHereNote,
         ),
       );
     facts.append(
-      ...fact("Peer refusals", "not visible", "inspector", PEER_REFUSALS),
+      ...fact(
+        transport.refusalsLabel,
+        "not visible",
+        "inspector",
+        transport.peerRefusals,
+      ),
     );
     if (account.lastRefusal !== undefined)
       facts.append(
-        ...fact("Last refusal", account.lastRefusal.answer.shape, "client"),
+        ...fact(
+          "Last refusal",
+          account.lastRefusal.answer.shape,
+          transport.source,
+        ),
       );
     const read = button(
       "si-chip",
@@ -917,13 +917,13 @@ export function mountStatementsView(
     intro.dataset.key = "no-probe";
     intro.append(
       "A topic is a label statements carry; a subscription listens on one or more topics. The inspector opens none of its own.",
-      more(NO_PROBE_NOTE),
+      more(transport.noProbeNote),
     );
     const about = el("details", "si-columns-about");
     about.dataset.key = "topics-columns";
     const aboutList = el("ul", "si-note si-about-list");
     aboutList.append(
-      ...TOPIC_COLUMNS_ABOUT.map((line) => el("li", undefined, line)),
+      ...topicColumnsAbout(transport).map((line) => el("li", undefined, line)),
     );
     about.append(el("summary", undefined, "About these columns"), aboutList);
     const tools = el("div", "si-row-tools");
@@ -1045,9 +1045,9 @@ export function mountStatementsView(
       facts.append(
         ...fact(
           "Listening",
-          `S${subscription.id} · ${subscription.source} · ${phaseText(subscription)}`,
-          "client",
-          `${filterText(subscription.filter)}. Open does not mean peers send to it.`,
+          `S${subscription.id} · ${subscription.source} · ${phaseText(subscription, transport)}`,
+          transport.source,
+          `${filterText(subscription.filter)}. ${transport.openSubscription}`,
         ),
       );
     if (view.open.length === 0)
@@ -1066,9 +1066,9 @@ export function mountStatementsView(
         "Publishing",
         record.submits === 0
           ? "no submission asked here"
-          : `${record.wentOut} broadcast · ${record.submits} tried`,
-        record.submits === 0 ? "inspector" : "client",
-        record.submits === 0 ? undefined : TOPIC_POSTS_NOTE,
+          : `${record.wentOut} ${transport.wentOut} · ${record.submits} tried`,
+        record.submits === 0 ? "inspector" : transport.source,
+        record.submits === 0 ? undefined : transport.topicPostsNote,
       ),
       ...fact(
         "Observed",
@@ -1076,7 +1076,7 @@ export function mountStatementsView(
           ? "none seen · not the same as none stored"
           : `${record.statements} stmt${record.statements === 1 ? "" : "s"} · last ${clock(record.lastAt)} · not current`,
         "derived",
-        TOPIC_OBSERVED_NOTE,
+        transport.topicObservedNote,
       ),
     );
     detail.append(actionsRow, facts);
@@ -1132,10 +1132,10 @@ export function mountStatementsView(
     item.dataset.state = record.state;
     item.append(
       el("span", "si-mono", `S${record.id}`),
-      tag("client"),
+      tag(transport.source),
       cell(
         `${record.source}${record.earlier ? " (earlier)" : ""} · ${record.state} · ${record.byDelivery.initial} initial · ${record.byDelivery.later} later · ${record.pages} pages`,
-        `${filterText(record.filter)}. ${phaseText(record)}. ${record.statements} statements, ${record.byDelivery.unclassified} unclassified, ${record.duplicates} repeats of its last ${HASHES_PER_SUBSCRIPTION}.${record.earlier ? " Opened before this session; counts from its start." : ""} Open does not mean peers send to it.`,
+        `${filterText(record.filter)}. ${phaseText(record, transport)}. ${record.statements} statements, ${record.byDelivery.unclassified} unclassified, ${record.duplicates} repeats of its last ${HASHES_PER_SUBSCRIPTION}.${record.earlier ? " Opened before this session; counts from its start." : ""} ${transport.openSubscription}`,
       ),
     );
     return item;

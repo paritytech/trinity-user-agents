@@ -25,6 +25,7 @@ import {
   type StatementMeta,
   type SubmitAnswer,
 } from "./decode.js";
+import type { PeopleTransport } from "./transport.js";
 
 /**
  * What the inspector's Statements view knows: a bounded, in-memory ledger of
@@ -34,10 +35,9 @@ import {
  * Every fact keeps where it came from:
  *
  * - the answers and pages of this tab's People connection, as they crossed
- *   it (`src/platform/statement-observer.ts`). That connection is the
- *   embedded light client, which has no statement store: an answer `new`
- *   means a peer took the broadcast, peers' own refusals never reach it, and
- *   its pages carry what peers sent (see `decode.ts`);
+ *   it (`src/platform/statement-observer.ts`), read as People's running
+ *   backend gives them: the embedded light client, which has no statement
+ *   store, or People's RPC node, which has one (see `transport.ts`);
  * - the core's claim results, as the host received them;
  * - the host's own request service and delivery (`src/invitations/observer.ts`);
  * - grant reads at a block, made on demand;
@@ -128,7 +128,8 @@ export interface LedgerEvent {
 
 /** Where a fact comes from, as the view labels it. */
 export type FactSource =
-  | "client"
+  | "light-client"
+  | "node"
   | "core"
   | "host"
   | "product"
@@ -560,11 +561,13 @@ export class StatementLedger {
   private pendingDataBytes = 0;
 
   /**
-   * `localRefusal` tells an RPC error this tab made itself, such as a
-   * validate-only tab's refusal to submit, from one the node or the light
-   * client gave.
+   * `transport` is People's running backend, which decides what each answer
+   * and page means. `localRefusal` tells an RPC error this tab made itself,
+   * such as a validate-only tab's refusal to submit, from one the node or the
+   * light client gave.
    */
   constructor(
+    readonly transport: PeopleTransport,
     limits: Partial<LedgerLimits> = {},
     private readonly now: () => number = Date.now,
     private readonly localRefusal: (error: RpcErrorValue) => boolean = () =>
@@ -931,7 +934,10 @@ export class StatementLedger {
       if (event.error !== undefined) {
         const local = this.isLocal(event.error);
         const error = safeError(event.error);
-        const meaning = local ? null : clientRefusal(event.error.message);
+        const meaning =
+          local || this.transport.backend !== "light-client"
+            ? null
+            : clientRefusal(event.error.message);
         record.outcome = {
           kind: "rpc-error",
           at,
@@ -949,7 +955,7 @@ export class StatementLedger {
         }
         this.event(
           "submit",
-          local ? "host" : "client",
+          local ? "host" : this.transport.source,
           local
             ? `Submit #${record.id} refused in this tab: it submits nothing`
             : meaning !== null
@@ -1002,20 +1008,15 @@ export class StatementLedger {
       const failed = !wentOut(answer.status);
       this.event(
         "submit",
-        "client",
+        this.transport.source,
         answer.status === "new"
-          ? `Submit #${record.id}: broadcast (new): at least one peer took it; not shown stored`
+          ? `Submit #${record.id}: ${this.transport.newAnswer}`
           : `Submit #${record.id}: answered ${answer.status}${answer.reason === undefined ? "" : ` (${answer.reason})`}`,
         this.submitRefs(record),
         [
           ["Answer", answer.shape],
           ...(wentOut(answer.status)
-            ? ([
-                [
-                  "Note",
-                  "Peers check allowance, account room and channel priority themselves, and their refusals do not reach this tab.",
-                ],
-              ] as [string, string][])
+            ? ([["Note", this.transport.wentOutNote]] as [string, string][])
             : []),
           ...(answer.status === "knownExpired"
             ? ([
@@ -1041,7 +1042,7 @@ export class StatementLedger {
         this.counters.subscriptionsRefused += 1;
         this.event(
           "subscription",
-          "client",
+          this.transport.source,
           `Subscription S${record.id} refused: ${record.error}`,
           { subscription: record.id },
           [],
@@ -1059,7 +1060,7 @@ export class StatementLedger {
       this.remotes.set(`${event.connection}:${remote}`, record.id);
       this.event(
         "subscription",
-        "client",
+        this.transport.source,
         `Subscription S${record.id} opened`,
         { subscription: record.id },
         [["Node id", nodeText(remote, 80)]],
@@ -1139,7 +1140,7 @@ export class StatementLedger {
       record.unrecognisedPages += 1;
       this.event(
         "page",
-        "client",
+        this.transport.source,
         `Subscription S${record.id}: a notification this view does not read`,
         { subscription: record.id },
         [["Shape", page.shape]],
@@ -1191,16 +1192,18 @@ export class StatementLedger {
     const where =
       page.remaining === undefined
         ? delivery === "later"
-          ? "after the initial batch: what peers sent, new or long stored"
+          ? this.transport.laterPages
           : record.sawRemaining
             ? "before the initial batch ended, with no remaining count"
             : "no remaining count: cannot tell where in the stream"
-        : page.statements.length === 0 && page.remaining === 0
-          ? "the initial batch, empty: the light client holds no statements"
-          : `initial batch, at least ${page.remaining} more to follow`;
+        : page.remaining > 0
+          ? `initial batch, at least ${page.remaining} more to follow`
+          : page.statements.length === 0
+            ? this.transport.emptyInitialBatch
+            : "the initial batch, complete";
     this.event(
       "page",
-      "client",
+      this.transport.source,
       page.statements.length === 0
         ? `Subscription S${record.id}: an empty page (${where})`
         : `Subscription S${record.id}: ${hashes.length} statement${hashes.length === 1 ? "" : "s"} (${where})`,

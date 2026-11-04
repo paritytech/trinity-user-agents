@@ -7,6 +7,11 @@
  * run on different networks without one reload changing the other.
  */
 
+import {
+  CHAIN_ROLES,
+  type ChainBackend,
+  type ChainRole,
+} from "./network-config.js";
 import { DEFAULT_NETWORK, normalizeNetwork } from "./network-scope.js";
 
 /** One network the compact menu offers, with the id the choice is saved under. */
@@ -76,4 +81,52 @@ export function tabProductKey(network: string = DEFAULT_NETWORK): string {
   return id === DEFAULT_NETWORK
     ? TAB_PRODUCT_KEY
     : `truapi-web-signing-host:network:${id}:tab-product`;
+}
+/** The chain backends a tab chose for `network`, per tab like its network. */
+export function chainBackendsKey(network: string): string {
+  return `truapi-web-signing-host:network:${normalizeNetwork(network)}:tab-chain-backends`;
+}
+
+const BACKENDS: readonly ChainBackend[] = ["rpc", "light-client"];
+
+/**
+ * The backends this tab chose for `network`'s chains, by chain. A chain it
+ * did not choose for, or saved under a name this build does not know, is left
+ * out, so it keeps the network's default.
+ */
+export function savedChainBackends(
+  storage: Storage,
+  network: string,
+): Partial<Record<ChainRole, ChainBackend>> {
+  let saved: unknown;
+  try {
+    saved = JSON.parse(storage.getItem(chainBackendsKey(network)) ?? "{}");
+  } catch {
+    return {};
+  }
+  if (typeof saved !== "object" || saved === null) return {};
+  const record = saved as Record<string, unknown>;
+  return Object.fromEntries(
+    CHAIN_ROLES.flatMap((role) => {
+      const backend = record[role];
+      return BACKENDS.includes(backend as ChainBackend)
+        ? [[role, backend]]
+        : [];
+    }),
+  );
+}
+
+/**
+ * Save this tab's chain backends for `network`. Applied when the tab next
+ * loads, because the core and every connection are built at boot. An empty
+ * choice removes the saved one, so every chain keeps its default.
+ */
+export function saveChainBackends(
+  storage: Storage,
+  network: string,
+  backends: Partial<Record<ChainRole, ChainBackend>>,
+): void {
+  const key = chainBackendsKey(network);
+  if (Object.keys(backends).length === 0) storage.removeItem(key);
+  else storage.setItem(key, JSON.stringify(backends));
 }

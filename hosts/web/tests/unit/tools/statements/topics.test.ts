@@ -7,7 +7,10 @@ import {
   periodOf,
 } from "../../../../src/invitations/statement-delivery.js";
 import { StatementLedger } from "../../../../tools/statements/ledger.js";
+import { peopleTransport } from "../../../../tools/statements/transport.js";
 import { topicViews } from "../../../../tools/statements/topics.js";
+
+const LIGHT_CLIENT = peopleTransport("light-client");
 
 const NOW = 1_800_000_000_000;
 const NETWORK = "testnet";
@@ -45,6 +48,7 @@ const REFUSED_HERE = "refused here";
 
 function setup() {
   const book = new StatementLedger(
+    LIGHT_CLIENT,
     {},
     () => NOW,
     (error) => error.message === REFUSED_HERE,

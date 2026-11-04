@@ -512,6 +512,19 @@
           <label for="network" class="visually-hidden">Network</label>
           <select id="network"></select>
           <p class="note">Switching reloads the tab.</p>
+          <details class="fold" id="chain-backends">
+            <summary>Chain connections</summary>
+            <div id="chain-backend-rows" class="chain-backends"></div>
+            <p id="chain-backends-note" class="note" role="status"></p>
+            <div class="row">
+              <button id="chain-backends-apply" type="button" disabled>
+                Reload to apply
+              </button>
+              <button id="chain-backends-defaults" type="button">
+                Use defaults
+              </button>
+            </div>
+          </details>
         </section>
         <section class="dev-group" aria-labelledby="account-title">
           <h2 id="account-title">Account</h2>

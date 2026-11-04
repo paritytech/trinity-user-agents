@@ -35,7 +35,9 @@ import { connectNetwork, type Network } from "./platform/network.js";
 import {
   CHAIN_ROLES,
   NETWORKS,
+  chainBackends,
   networkConfig,
+  type ChainBackend,
   type ChainRole,
   type NetworkConfig,
 } from "./platform/network-config.js";
@@ -43,12 +45,14 @@ import { DEFAULT_NETWORK } from "./platform/network-scope.js";
 import {
   chosenNetwork,
   rememberNetwork,
+  savedChainBackends,
   tabProductKey,
   tabWalletKey,
   type NetworkChoice,
 } from "./platform/network-choice.js";
 import { ask, setPromptArea, setRequesterDescriber } from "./app/prompt.js";
 import { describeRequester } from "./app/requester.js";
+import { CHAIN_LABELS, bindChainBackends } from "./app/chain-backends.js";
 import { RecentProducts, type RecentEntry } from "./app/recents.js";
 import { BrowseLanding } from "./app/browse-landing.js";
 import {
@@ -127,6 +131,7 @@ import { mountTools } from "../tools/mount.js";
 import { ProductLoadLog } from "../tools/products/log.js";
 import { ActivityLog } from "../tools/activity/log.js";
 import { StatementLedger } from "../tools/statements/ledger.js";
+import { peopleTransport } from "../tools/statements/transport.js";
 import type { PeopleAccess } from "../tools/statements/actions.js";
 import {
   observeStatements,
@@ -135,25 +140,8 @@ import {
 import { WorkerConsoleLog } from "../tools/workers/console-log.js";
 import type { ActivityCategory } from "./platform/activity.js";
 
-/** How the Activity log names each chain. */
-const CHAIN_LABELS: Record<ChainRole, string> = {
-  relay: "Relay",
-  assetHub: "Asset Hub",
-  people: "People",
-  bulletin: "Bulletin",
-};
-
 /** The host's activity, which every part of the host reports to and the inspector shows. */
 const activity = new ActivityLog();
-/**
- * What the inspector's Statements view knows: Statement Store traffic, claims
- * and reports. The dev tools' no-submit guard says which errors it made.
- */
-const statements = new StatementLedger(
-  {},
-  Date.now,
-  (error): boolean => devSession?.refusedHere(error) ?? false,
-);
 /** The People chain the Statements view reads on demand, once the network is up. */
 let peopleAccess: PeopleAccess | null = null;
 /** This host's directory on its origin, from the build's base. Mounted products live under it. */
@@ -173,6 +161,27 @@ const OFFERED_NETWORKS: NetworkChoice[] = Object.values(NETWORKS).map(
  */
 const activeNetwork: NetworkConfig = networkConfig(
   chosenNetwork(sessionStorage, OFFERED_NETWORKS, DEFAULT_NETWORK),
+);
+
+/**
+ * The backend each chain runs on in this tab, chosen before the core starts
+ * and applied by reloading, like the network.
+ */
+const runningBackends: Record<ChainRole, ChainBackend> = chainBackends(
+  activeNetwork,
+  savedChainBackends(sessionStorage, activeNetwork.id),
+);
+
+/**
+ * What the inspector's Statements view knows: Statement Store traffic, claims
+ * and reports, read as People's running backend gives them. The dev tools'
+ * no-submit guard says which errors it made.
+ */
+const statements = new StatementLedger(
+  peopleTransport(runningBackends.people),
+  {},
+  Date.now,
+  (error): boolean => devSession?.refusedHere(error) ?? false,
 );
 
 function element<T extends HTMLElement>(id: string): T {
@@ -684,6 +693,17 @@ networkSelect.value = activeNetwork.id;
 networkSelect.addEventListener("change", () => {
   rememberNetwork(sessionStorage, networkSelect.value);
   window.location.reload();
+});
+
+bindChainBackends({
+  list: element("chain-backend-rows"),
+  note: element("chain-backends-note"),
+  apply: element<HTMLButtonElement>("chain-backends-apply"),
+  defaults: element<HTMLButtonElement>("chain-backends-defaults"),
+  network: activeNetwork,
+  running: runningBackends,
+  storage: sessionStorage,
+  reload: () => window.location.reload(),
 });
 
 /** A line for the Activity view from the host page itself. */
@@ -2056,7 +2076,7 @@ for (const { destination: id, button } of dockButtons)
 closeButton.addEventListener("click", closeFront);
 
 async function boot(): Promise<void> {
-  const network = await connectNetwork(activeNetwork);
+  const network = await connectNetwork(activeNetwork, runningBackends);
   const guarded = devSession?.guardNetwork(network) ?? network;
   // The core's and the host's People traffic are observed apart, labelled by who opened it.
   const observed = (source: TrafficSource): Network => ({

@@ -9,8 +9,9 @@ import type { FactSource } from "./ledger.js";
 export type ToolSource = FactSource | "derived" | "loader";
 
 export const SOURCE_TITLES: Record<ToolSource, string> = {
-  client:
+  "light-client":
     "This tab's light client: its answer, or a page of what peers sent it. Not a People node's store",
+  node: "People's RPC node: its answer, or a page of what it sent. From its own store, which the host trusts; other nodes may hold something else",
   core: "The core's answer to the host",
   host: "Held by this host",
   chain: "Read from chain state at a block",
@@ -48,9 +49,11 @@ export function tag(source: ToolSource): HTMLElement {
     "si-src",
     source === "product"
       ? "reported"
-      : source === "client"
+      : source === "light-client"
         ? "light client"
-        : source,
+        : source === "node"
+          ? "People node"
+          : source,
   );
   node.dataset.source = source;
   node.title = SOURCE_TITLES[source];

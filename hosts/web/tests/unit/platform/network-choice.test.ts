@@ -2,8 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { MemoryStorage } from "../../support/test-support.js";
 import {
   TAB_NETWORK_KEY,
+  chainBackendsKey,
   chosenNetwork,
   rememberNetwork,
+  saveChainBackends,
+  savedChainBackends,
   tabProductKey,
   tabWalletKey,
   type NetworkChoice,
@@ -75,5 +78,35 @@ describe("tab wallet and product keys", () => {
   test("gives two networks different keys", () => {
     expect(tabProductKey("paseo")).not.toBe(tabProductKey("previewnet"));
     expect(tabWalletKey("paseo")).not.toBe(tabWalletKey("previewnet"));
+  });
+});
+describe("tab chain backends", () => {
+  test("saves and reads a tab's choice per network", () => {
+    const storage = new MemoryStorage();
+    saveChainBackends(storage, "paseo", { people: "light-client" });
+    expect(savedChainBackends(storage, "paseo")).toEqual({
+      people: "light-client",
+    });
+    expect(savedChainBackends(storage, "previewnet")).toEqual({});
+  });
+
+  // A choice saved by another build, or edited by hand, must not reach the
+  // provider as an unknown backend or chain.
+  test("drops unknown chains and backends, and unreadable values", () => {
+    const storage = new MemoryStorage();
+    storage.setItem(
+      chainBackendsKey("paseo"),
+      JSON.stringify({ people: "smoldot", relay: "rpc", coretime: "rpc" }),
+    );
+    expect(savedChainBackends(storage, "paseo")).toEqual({ relay: "rpc" });
+    storage.setItem(chainBackendsKey("paseo"), "{not json");
+    expect(savedChainBackends(storage, "paseo")).toEqual({});
+  });
+
+  test("removes the saved choice when no chain differs from its default", () => {
+    const storage = new MemoryStorage();
+    saveChainBackends(storage, "paseo", { relay: "rpc" });
+    saveChainBackends(storage, "paseo", {});
+    expect(storage.getItem(chainBackendsKey("paseo"))).toBeNull();
   });
 });

@@ -1175,10 +1175,13 @@ not visible, the cost window, full hashes. The header shows the session's counte
 broadcast with peer refusals unseen, observed ≠ current, grant ≠ remaining, statement bytes are public while sealed
 contents are not, and the source tags. Capture shows a line of its own only while it is on.
 
-**The transport.** By default this host reaches the People chain through its RPC node, which keeps a real statement
-store (see [Chain access](#chain-access)). The view's texts still describe the light client backend
-(`people: "light-client"`): there the host reaches People through its embedded light client (smoldot-light 2.1.0), which
-has no statement store, and the view says so in a line of its own. What follows applies to that backend (smoldot-light
+**The transport.** The view reads every answer and page as People's running backend gives it
+(`tools/statements/transport.ts`), and tags those facts **People node** or **light client**. By default People runs on
+its RPC node, which keeps a statement store and which the host trusts: `new` means the node took the statement into its
+store, its own refusals (`rejected`, `invalid`) reach this tab with their reason, other nodes' refusals do not, and a
+subscription's first pages replay what the node holds (polkadot-sdk `store_api.rs` `SubmitResult`, read 2026-11-04). The
+evidence names the backend (`peopleBackend`). On the light client backend (smoldot-light 2.1.0), which has no statement
+store, the view says so in a line of its own, and what follows applies (smoldot-light
 `src/json_rpc_service/statement.rs` and `background.rs`):
 
 - `statement_submit` checks expiry, size and proof, then broadcasts. `new` means at least one peer took the broadcast,
@@ -1418,18 +1421,22 @@ chain connections are `wss://` from the embedded light client.
 
 Each chain is reached through its RPC node or through the embedded light client in `@parity/truapi-provider`, as
 `chains` in `src/platform/network-config.ts` sets per chain (`rpc` or `light-client`); `connectNetwork` takes an
-override per chain. By default Asset Hub, People and Bulletin use their RPC nodes, as the native hosts do, and the relay
-stays on the light client for products that ask for it; nothing in the host or the core uses the relay. The RPC nodes
-are the ones the network's signed Trinity stack descriptor lists (`paritytech/triangle-status` `environments.json`), and
-the host trusts their answers. The light client could not validate a PGAS allowance claim against Asset Hub and dropped
-it before broadcast, and it holds no statement store: on RPC, People's `statement_submit` reaches the node's store and a
-subscription replays what the node holds. The light client starts from the bundled `paseo-next-v2` catalog for every
-chain and serves those set to `light-client`. In production on public HTTPS, peer connections are restricted to secure
-`wss://` sockets; loopback and unsecure sockets stay blocked so peer-advertised private addresses cannot trigger
-Chrome's Local Network Access prompt. A dev server keeps localhost and unsecure connections enabled for local nodes. The
-genesis hashes the core is configured with and the chain set reported to products come from the same catalog. The light
-client keeps no state between loads, so each tab syncs from the chain spec checkpoint when it starts. A name lookup
-reads the Asset Hub RPC node over HTTP, as described above, whichever backend Asset Hub uses.
+override per chain. In the menu, **Account → Network → Chain connections** chooses each chain's backend for this tab:
+the choice is saved per tab and network at once and shown beside what the running connection uses, and **Reload to
+apply** starts the page again with it, which reconnects the core, signs the tab's wallet in again, restarts its workers
+and reopens the product. **Use defaults** clears the choice. By default Asset Hub, People and Bulletin use their RPC
+nodes, as the native hosts do, and the relay stays on the light client for products that ask for it; nothing in the host
+or the core uses the relay. The RPC nodes are the ones the network's signed Trinity stack descriptor lists
+(`paritytech/triangle-status` `environments.json`), and the host trusts their answers. The light client could not
+validate a PGAS allowance claim against Asset Hub and dropped it before broadcast, and it holds no statement store: on
+RPC, People's `statement_submit` reaches the node's store and a subscription replays what the node holds. The light
+client starts from the bundled `paseo-next-v2` catalog for every chain and serves those set to `light-client`. In
+production on public HTTPS, peer connections are restricted to secure `wss://` sockets; loopback and unsecure sockets
+stay blocked so peer-advertised private addresses cannot trigger Chrome's Local Network Access prompt. A dev server
+keeps localhost and unsecure connections enabled for local nodes. The genesis hashes the core is configured with and the
+chain set reported to products come from the same catalog. The light client keeps no state between loads, so each tab
+syncs from the chain spec checkpoint when it starts. A name lookup reads the Asset Hub RPC node over HTTP, as described
+above, whichever backend Asset Hub uses.
 
 The core opens one connection per chain and runs every product's `chainHead_v1_follow` over it, along with some follows
 of its own. One light-client connection holds two follows and refuses a third with "too many active follow

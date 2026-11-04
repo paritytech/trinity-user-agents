@@ -315,9 +315,9 @@ export function mountChatView(root: HTMLElement, deps: ChatViewDeps): ChatView {
       ...(cost.known
         ? fact(
             "Per message",
-            `${(cost.wentOut / cost.sent).toFixed(2)} stmts · ${Math.round(cost.wentOutDataBytes / cost.sent)} B (${cost.wentOut} broadcast · ${cost.attempts} tried · ${cost.sent} sent)`,
+            `${(cost.wentOut / cost.sent).toFixed(2)} stmts · ${Math.round(cost.wentOutDataBytes / cost.sent)} B (${cost.wentOut} ${ledger.transport.wentOut} · ${cost.attempts} tried · ${cost.sent} sent)`,
             "derived",
-            `Since ${clock(cost.since)}, this worker run's first report seen here: submissions answered new (broadcast, not shown stored) signed by its account, over the messages it reports sent in the same span.`,
+            `Since ${clock(cost.since)}, this worker run's first report seen here: ${ledger.transport.chatCost}, over the messages it reports sent in the same span.`,
           )
         : fact("Per message", `not known: ${cost.why}`, "inspector")),
     );
