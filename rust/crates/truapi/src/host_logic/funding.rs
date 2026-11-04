@@ -832,7 +832,7 @@ impl FundingSession {
 			direction: self.direction,
 			amount: self.amount,
 			expires_at: self.expires_at(),
-			last_update: self.last_step().cloned(),
+			last_update: self.last_ranked_update().cloned(),
 			quote: self.choice.as_ref().map(|choice| choice.quote.clone()),
 		}
 	}
@@ -844,7 +844,7 @@ impl FundingSession {
 
 	/// The provider's most recent update that moves the session on, which
 	/// `Deposit` and `Details` do not.
-	pub fn last_step(&self) -> Option<&FundingUpdate> {
+	pub fn last_ranked_update(&self) -> Option<&FundingUpdate> {
 		self.updates
 			.iter()
 			.rev()
@@ -1009,7 +1009,7 @@ impl FundingSession {
 				_ => FundingStatus::PreparingPayout,
 			},
 			(FundingDirection::Out, _) => FundingStatus::TransactionInitiated,
-			(FundingDirection::In, _) => match self.last_step() {
+			(FundingDirection::In, _) => match self.last_ranked_update() {
 				None | Some(FundingUpdate::In(FundingInboundUpdate::AwaitingPayment)) => match rail
 				{
 					Some(FundingRail::Bank) => FundingStatus::WaitingForTransfer,
@@ -1052,7 +1052,7 @@ impl FundingSession {
 				if converting { FundingBand::Sending } else { FundingBand::PreparingPayout }
 			},
 			(FundingDirection::Out, _) => FundingBand::Converting,
-			(FundingDirection::In, _) => match self.last_step() {
+			(FundingDirection::In, _) => match self.last_ranked_update() {
 				None | Some(FundingUpdate::In(FundingInboundUpdate::AwaitingPayment)) => {
 					FundingBand::AwaitingPayment
 				},
@@ -1337,7 +1337,7 @@ impl FundingSession {
 					rail.is_none_or(|rail| rail == FundingRail::Bank)
 			},
 			FundingFact::Attempt { n, of } => *n > 0 && of.is_none_or(|of| of >= *n),
-			FundingFact::Other { text } => plain_line(text),
+			FundingFact::Other { text } => is_plain_line(text),
 			FundingFact::Checked |
 			FundingFact::PriceChecked |
 			FundingFact::Scheduled |
@@ -1405,18 +1405,18 @@ impl FundingSession {
 					[transaction_id, reference]
 						.into_iter()
 						.flatten()
-						.all(|text| plain_line(text))
+						.all(|text| is_plain_line(text))
 			},
 			FundingUpdate::In(FundingInboundUpdate::Deposit { deposit }) => {
 				kept(|update| {
 					matches!(update, FundingUpdate::In(FundingInboundUpdate::Deposit { .. }))
 				}) < DEPOSITS_LIMIT &&
-					deposit_fits(deposit, self.choice.as_ref(), now_ms)
+					deposit.fits(self.choice.as_ref(), now_ms)
 			},
 			FundingUpdate::In(FundingInboundUpdate::PaymentReceived {
 				mismatch: Some(received),
 				..
-			}) => plain_line(&received.asset),
+			}) => is_plain_line(&received.asset),
 			_ => true,
 		}
 	}
@@ -1451,7 +1451,7 @@ impl FundingSession {
 			FundingUpdate::Details { .. } |
 			FundingUpdate::Progress { .. } => true,
 		};
-		let last = self.last_step().and_then(FundingUpdate::rank);
+		let last = self.last_ranked_update().and_then(FundingUpdate::rank);
 		let rank = update.rank();
 		let top_ups = self.top_up_ids();
 		fits_direction &&
@@ -1602,7 +1602,7 @@ impl FundingSession {
 		let mut named = self.started.iter().filter(|record| record.named_at_ms.is_some());
 		// The last step, not the last update: a detail or deposit must not
 		// hide the outcome the provider handed over.
-		match self.last_step()? {
+		match self.last_ranked_update()? {
 			FundingUpdate::In(FundingInboundUpdate::Delivered) => {
 				Some(Settlement::TopUps(named.cloned().collect()))
 			},
@@ -1943,6 +1943,60 @@ impl FundingUpdate {
 	}
 }
 
+impl FundingDeposit {
+	/// Whether the deposit names something to pay that has not expired by
+	/// `now_ms`, with plain texts, and pays by the rail and asset of `choice`,
+	/// the quote the user chose, when there was one.
+	fn fits(&self, choice: Option<&FundingChoice>, now_ms: u64) -> bool {
+		let live = |expires_at: &Option<u64>| expires_at.is_none_or(|at| at > now_ms);
+		let chosen = |rail: FundingRail, asset: &str| {
+			choice.is_none_or(|choice| {
+				choice.rail == rail && choice.asset.eq_ignore_ascii_case(asset)
+			})
+		};
+		match self {
+			FundingDeposit::Crypto {
+				address,
+				network,
+				asset,
+				amount,
+				decimals,
+				uri,
+				expires_at,
+				..
+			} => {
+				*amount > 0 &&
+					*decimals <= DECIMALS_LIMIT &&
+					[address, network, asset].into_iter().all(|text| is_plain_line(text)) &&
+					uri.as_deref().is_none_or(is_payment_uri) &&
+					live(expires_at) &&
+					chosen(FundingRail::Crypto, asset)
+			},
+			FundingDeposit::Bank {
+				amount,
+				currency,
+				decimals,
+				beneficiary,
+				account,
+				bank_code,
+				reference,
+				expires_at,
+			} => {
+				*amount > 0 &&
+					*decimals <= DECIMALS_LIMIT &&
+					is_plain_line(currency) &&
+					is_plain_line(reference) &&
+					[beneficiary, account, bank_code]
+						.into_iter()
+						.flatten()
+						.all(|text| is_plain_line(text)) &&
+					live(expires_at) &&
+					chosen(FundingRail::Bank, currency)
+			},
+		}
+	}
+}
+
 /// Why a session operation failed.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
 pub enum FundingSessionError {
@@ -2080,77 +2134,27 @@ pub fn retained(
 	})
 }
 
-/// Whether `deposit` names something to pay that has not expired by
-/// `now_ms`, with plain texts, and pays by the rail and asset of `choice`,
-/// the quote the user chose, when there was one.
-fn deposit_fits(deposit: &FundingDeposit, choice: Option<&FundingChoice>, now_ms: u64) -> bool {
-	let live = |expires_at: &Option<u64>| expires_at.is_none_or(|at| at > now_ms);
-	let chosen = |rail: FundingRail, asset: &str| {
-		choice.is_none_or(|choice| choice.rail == rail && choice.asset.eq_ignore_ascii_case(asset))
-	};
-	match deposit {
-		FundingDeposit::Crypto {
-			address,
-			network,
-			asset,
-			amount,
-			decimals,
-			uri,
-			expires_at,
-			..
-		} => {
-			*amount > 0 &&
-				*decimals <= DECIMALS_LIMIT &&
-				[address, network, asset].into_iter().all(|text| plain_line(text)) &&
-				uri.as_deref().is_none_or(payment_uri) &&
-				live(expires_at) &&
-				chosen(FundingRail::Crypto, asset)
-		},
-		FundingDeposit::Bank {
-			amount,
-			currency,
-			decimals,
-			beneficiary,
-			account,
-			bank_code,
-			reference,
-			expires_at,
-		} => {
-			*amount > 0 &&
-				*decimals <= DECIMALS_LIMIT &&
-				plain_line(currency) &&
-				plain_line(reference) &&
-				[beneficiary, account, bank_code]
-					.into_iter()
-					.flatten()
-					.all(|text| plain_line(text)) &&
-				live(expires_at) &&
-				chosen(FundingRail::Bank, currency)
-		},
-	}
-}
-
 /// Whether `uri` is a payment URI a host can put in a QR code: short, with
 /// no spaces or hidden characters, and of a scheme that is not a page, a
 /// script or a file.
-fn payment_uri(uri: &str) -> bool {
+fn is_payment_uri(uri: &str) -> bool {
 	uri.len() <= FUNDING_DEPOSIT_URI_MAX_BYTES &&
-		!uri.chars().any(|c| c.is_whitespace() || hidden(c)) &&
+		!uri.chars().any(|c| c.is_whitespace() || is_hidden(c)) &&
 		Url::parse(uri).is_ok_and(|url| !NOT_PAYMENT_SCHEMES.contains(&url.scheme()))
 }
 
 /// Whether `text` is a non-empty line of plain text within the limits a
 /// provider's update text keeps to: no line breaks, control characters,
 /// invisible characters or characters that change the text's direction.
-fn plain_line(text: &str) -> bool {
+fn is_plain_line(text: &str) -> bool {
 	!text.trim().is_empty() &&
 		text.len() <= FUNDING_DETAIL_MAX_BYTES &&
 		text.chars().count() <= FUNDING_DETAIL_MAX_CHARS &&
-		!text.chars().any(hidden)
+		!text.chars().any(is_hidden)
 }
 
 /// Whether `c` breaks a line, is invisible, or changes the text's direction.
-fn hidden(c: char) -> bool {
+fn is_hidden(c: char) -> bool {
 	c.is_control() ||
 		matches!(c, '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' |
 			'\u{2028}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}')
