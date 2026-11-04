@@ -49,14 +49,8 @@ struct FundingCash: Equatable {
 
 private extension FundingCash {
     static func figureFormatter(for value: Decimal) -> NumberFormatter {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.locale = Locale(identifier: "en_US")
-        formatter.usesGroupingSeparator = true
         let hasCents = value != value.fundingRounded(scale: 0)
-        formatter.minimumFractionDigits = hasCents ? 2 : 0
-        formatter.maximumFractionDigits = 2
-        return formatter
+        return FundingNumberFormatters.decimal(minimumDigits: hasCents ? 2 : 0, maximumDigits: 2)
     }
 }
 
