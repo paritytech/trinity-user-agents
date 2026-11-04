@@ -69,21 +69,19 @@ enum Outcome {
 struct EvmNode {
 	node: Node,
 	output: Vec<u8>,
-	mapping: Option<[u8; 32]>,
 	simulations: Vec<Vec<u8>>,
 	submissions: Vec<Vec<u8>>,
 	outcomes: VecDeque<Outcome>,
 }
 
 impl EvmNode {
-	fn new(mapping: Option<[u8; 32]>) -> Self {
+	fn new() -> Self {
 		let mut node = Node::new(4, 12);
 		node.metadata = ASSET_HUB_METADATA;
 		node.account_next_index = 7;
 		Self {
 			node,
 			output: simulation_output(0),
-			mapping,
 			simulations: Vec::new(),
 			submissions: Vec::new(),
 			outcomes: VecDeque::new(),
@@ -100,31 +98,6 @@ impl EvmNode {
 			"state_call" if params[0] == "ReviveApi_call" => {
 				self.simulations.push(hex_bytes(&params[1]));
 				vec![response(json!(format!("0x{}", hex::encode(&self.output))))]
-			},
-			"chainHead_v1_storage" => {
-				self.node.next_operation += 1;
-				let operation_id = format!("mapping-{}", self.node.next_operation);
-				let items: Vec<_> = params[2]
-					.as_array()
-					.unwrap()
-					.iter()
-					.filter_map(|query| {
-						self.mapping.map(
-							|account| json!({"key": query["key"], "value": format!("0x{}", hex::encode(account))}),
-						)
-					})
-					.collect();
-				vec![
-					response(
-						json!({"result": "started", "operationId": operation_id, "discardedItems": 0}),
-					),
-					follow_event(
-						json!({"event": "operationStorageItems", "operationId": operation_id, "items": items}),
-					),
-					follow_event(
-						json!({"event": "operationStorageDone", "operationId": operation_id}),
-					),
-				]
 			},
 			"transactionWatch_v1_submitAndWatch" => {
 				let bytes = hex_bytes(&params[0]);
@@ -161,10 +134,6 @@ impl EvmNode {
 					Outcome::Stopped(_) => unreachable!(),
 				};
 				self.node.events.insert(block, dispatch_events(event));
-				let submitted = decoded_submission(&bytes);
-				if event == Some("ExtrinsicSuccess") && submitted.call == "map_account" {
-					self.mapping = Some(submitted.account);
-				}
 				frames.extend([
 					follow_event(json!({"event": "newBlock", "blockHash": block, "parentBlockHash": parent, "newRuntime": null})),
 					follow_event(json!({"event": "bestBlockChanged", "bestBlockHash": block})),
@@ -296,7 +265,7 @@ fn expected_call(signer: &RecordingSigner, nonce: u64, birth: u64) -> Submission
 #[test]
 fn preparation_simulates_the_signer_without_signing_or_submitting() {
 	let signer = RecordingSigner::new();
-	let (node, provider, caller) = serve_contracts(EvmNode::new(None), GENESIS);
+	let (node, provider, caller) = serve_contracts(EvmNode::new(), GENESIS);
 
 	let _prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
 
@@ -313,19 +282,17 @@ fn preparation_simulates_the_signer_without_signing_or_submitting() {
 		(
 			node.lock().unwrap().simulations.clone(),
 			method_count(&provider, "system_accountNextIndex"),
-			method_count(&provider, "chainHead_v1_storage"),
 			method_count(&provider, "transactionWatch_v1_submitAndWatch"),
 			signer.signatures.load(Ordering::SeqCst),
 		),
-		(vec![expected], 0, 0, 0, 0),
+		(vec![expected], 0, 0, 0),
 	);
 }
 
 #[test]
 fn execution_uses_the_prepared_call_and_limits_with_a_fresh_nonce_and_era() {
 	let signer = RecordingSigner::new();
-	let (node, provider, caller) =
-		serve_contracts(EvmNode::new(Some(signer.account_id().0)), GENESIS);
+	let (node, provider, caller) = serve_contracts(EvmNode::new(), GENESIS);
 	let mut input = INPUT.to_vec();
 	let prepared = block_on(caller.dry_run(&signer, &CONTRACT, &input)).unwrap();
 	input.fill(0xff);
@@ -356,74 +323,11 @@ fn execution_uses_the_prepared_call_and_limits_with_a_fresh_nonce_and_era() {
 }
 
 #[test]
-fn mapping_finishes_before_the_contract_transaction_gets_its_nonce() {
-	let signer = RecordingSigner::new();
-	let (node, provider, caller) = serve_contracts(EvmNode::new(None), GENESIS);
-	let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
-
-	block_on(caller.execute_and_watch(prepared)).unwrap();
-
-	let submissions: Vec<_> = node
-		.lock()
-		.unwrap()
-		.submissions
-		.iter()
-		.map(|bytes| decoded_submission(bytes))
-		.collect();
-	assert_eq!(
-		(
-			submissions,
-			method_count(&provider, "ReviveApi_call"),
-			method_count(&provider, "system_accountNextIndex"),
-			signer.signatures.load(Ordering::SeqCst),
-		),
-		(
-			vec![
-				Submission {
-					account: signer.account_id().0,
-					nonce: 7,
-					era: Era::mortal(64, 4),
-					pallet: "Revive".to_string(),
-					call: "map_account".to_string(),
-					arguments: Vec::new(),
-				},
-				expected_call(&signer, 8, 5),
-			],
-			1,
-			2,
-			2,
-		),
-	);
-}
-
-#[test]
-fn an_eth_derived_signer_needs_no_account_mapping_transaction() {
-	let signer = RecordingSigner::new();
-	*signer.account.lock().unwrap() = AccountId32([0xEE; 32]);
-	let (node, provider, caller) = serve_contracts(EvmNode::new(None), GENESIS);
-	let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
-
-	block_on(caller.execute_and_watch(prepared)).unwrap();
-
-	let submissions: Vec<_> = node
-		.lock()
-		.unwrap()
-		.submissions
-		.iter()
-		.map(|bytes| decoded_submission(bytes))
-		.collect();
-	assert_eq!(
-		(submissions, method_count(&provider, "chainHead_v1_storage")),
-		(vec![expected_call(&signer, 7, 4)], 0),
-	);
-}
-
-#[test]
 fn a_prepared_transaction_cannot_be_sent_to_another_chain() {
 	let signer = RecordingSigner::new();
-	let (_, _, origin) = serve_contracts(EvmNode::new(None), GENESIS);
+	let (_, _, origin) = serve_contracts(EvmNode::new(), GENESIS);
 	let wrong_genesis = H256([0xcd; 32]);
-	let (_, provider, wrong_chain) = serve_contracts(EvmNode::new(None), wrong_genesis);
+	let (_, provider, wrong_chain) = serve_contracts(EvmNode::new(), wrong_genesis);
 	let prepared = block_on(origin.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
 
 	let result = block_on(wrong_chain.execute_and_watch(prepared));
@@ -441,7 +345,7 @@ fn a_prepared_transaction_cannot_be_sent_to_another_chain() {
 #[test]
 fn changing_the_signer_account_invalidates_the_prepared_transaction() {
 	let signer = RecordingSigner::new();
-	let (_, provider, caller) = serve_contracts(EvmNode::new(None), GENESIS);
+	let (_, provider, caller) = serve_contracts(EvmNode::new(), GENESIS);
 	let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
 	*signer.account.lock().unwrap() = AccountId32([0x55; 32]);
 
@@ -450,52 +354,11 @@ fn changing_the_signer_account_invalidates_the_prepared_transaction() {
 	assert!(matches!(result, Err(EvmContractError::SignerChanged)), "{result:?}");
 	assert_eq!(
 		(
-			method_count(&provider, "chainHead_v1_storage"),
 			method_count(&provider, "system_accountNextIndex"),
 			method_count(&provider, "transactionWatch_v1_submitAndWatch"),
 			signer.signatures.load(Ordering::SeqCst),
 		),
-		(0, 0, 0, 0),
-	);
-}
-
-#[test]
-fn another_accounts_mapping_prevents_signing_and_submission() {
-	let signer = RecordingSigner::new();
-	let (_, provider, caller) = serve_contracts(EvmNode::new(Some([0x55; 32])), GENESIS);
-	let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
-
-	let result = block_on(caller.execute_and_watch(prepared));
-
-	assert!(matches!(result, Err(EvmContractError::MappedToAnotherAccount)), "{result:?}");
-	assert_eq!(
-		(
-			method_count(&provider, "transactionWatch_v1_submitAndWatch"),
-			signer.signatures.load(Ordering::SeqCst),
-		),
-		(0, 0),
-	);
-}
-
-#[test]
-fn a_failed_mapping_does_not_submit_the_contract_call() {
-	let signer = RecordingSigner::new();
-	let mut node = EvmNode::new(None);
-	node.outcomes.push_back(Outcome::DispatchFailed);
-	let (node, _, caller) = serve_contracts(node, GENESIS);
-	let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
-
-	let result = block_on(caller.execute_and_watch(prepared));
-
-	assert!(matches!(result, Err(EvmContractError::DispatchFailed)), "{result:?}");
-	assert_eq!(
-		node.lock()
-			.unwrap()
-			.submissions
-			.iter()
-			.map(|bytes| decoded_submission(bytes).call)
-			.collect::<Vec<_>>(),
-		vec!["map_account"],
+		(0, 0, 0),
 	);
 }
 
@@ -507,7 +370,7 @@ fn finalized_inclusion_requires_an_explicit_successful_dispatch() {
 		(Outcome::MissingEvent, "event missing"),
 		(Outcome::MissingExtrinsic, "extrinsic missing"),
 	] {
-		let mut node = EvmNode::new(Some(signer.account_id().0));
+		let mut node = EvmNode::new();
 		node.outcomes.push_back(outcome);
 		let (_, _, caller) = serve_contracts(node, GENESIS);
 		let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
@@ -533,7 +396,7 @@ fn finalized_inclusion_requires_an_explicit_successful_dispatch() {
 fn a_stopped_watch_is_not_reported_as_a_successful_contract_call() {
 	let signer = RecordingSigner::new();
 	for event in ["invalid", "dropped", "error"] {
-		let mut node = EvmNode::new(Some(signer.account_id().0));
+		let mut node = EvmNode::new();
 		node.outcomes.push_back(Outcome::Stopped(event));
 		let (_, _, caller) = serve_contracts(node, GENESIS);
 		let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
@@ -555,7 +418,7 @@ fn a_stopped_watch_is_not_reported_as_a_successful_contract_call() {
 #[test]
 fn a_reverted_simulation_never_produces_a_transaction_to_submit() {
 	let signer = RecordingSigner::new();
-	let mut node = EvmNode::new(None);
+	let mut node = EvmNode::new();
 	node.output = simulation_output(1);
 	let (_, provider, caller) = serve_contracts(node, GENESIS);
 
@@ -578,7 +441,7 @@ fn runtime_rejections_and_malformed_simulations_produce_no_transaction() {
 		(simulation_result(Err(RawDispatchError(vec![0]))), ("dispatch", "0x00".to_string())),
 		(vec![0xff], ("malformed", String::new())),
 	] {
-		let mut node = EvmNode::new(None);
+		let mut node = EvmNode::new();
 		node.output = output;
 		let (_, provider, caller) = serve_contracts(node, GENESIS);
 

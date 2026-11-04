@@ -4,7 +4,6 @@ use alloy_sol_types::{GenericContractError, SolInterface};
 use futures::StreamExt;
 use parity_scale_codec::{Decode, Encode, Input};
 use subxt::{
-	dynamic,
 	ext::scale_encode::EncodeAsType,
 	utils::{AccountId32, H256},
 };
@@ -12,7 +11,7 @@ use thiserror::Error;
 
 use super::{
 	BlockBackend, DispatchOutcome, EncodedExtrinsic, ExtrinsicBuildError, ExtrinsicService,
-	HashAndNumber, RuntimeApi, SubstrateSigner, TxSubmitter, WatchEvent, account_to_h160,
+	HashAndNumber, RuntimeApi, SubstrateSigner, TxSubmitter, WatchEvent,
 };
 use crate::chain_runtime::{ChainRuntime, RuntimeFailure};
 
@@ -50,12 +49,6 @@ pub enum EvmContractError {
 	/// The signed extrinsic could not be built.
 	#[error(transparent)]
 	Build(#[from] ExtrinsicBuildError),
-	/// `Revive.OriginalAccount` could not be read.
-	#[error("Revive.OriginalAccount: {0}")]
-	Mapping(String),
-	/// The signer's contract address belongs to another account.
-	#[error("the signer's contract address is mapped to another account")]
-	MappedToAnotherAccount,
 	/// A prepared transaction belongs to another chain.
 	#[error("prepared transaction belongs to {actual}, expected {expected}")]
 	WrongChain {
@@ -81,7 +74,7 @@ pub enum EvmContractError {
 /// A simulated contract write bound to its signer and chain.
 ///
 /// The request owns the calldata and limits. Its nonce, mortal era and
-/// signature are selected when it is executed, after any account mapping.
+/// signature are selected when it is executed.
 #[derive(derive_more::Debug)]
 pub struct PreparedEvmTransaction<'signer> {
 	#[debug(skip)]
@@ -145,9 +138,9 @@ impl EvmContractCaller {
 
 	/// Consumes the prepared call and waits for successful finalized dispatch.
 	///
-	/// Account mapping completes before the contract extrinsic's nonce and
-	/// mortal era are chosen. The prepared call's limits are used unchanged.
-	/// The signer must keep its account fixed while execution runs.
+	/// The extrinsic gets a fresh nonce and mortal era and the prepared call's
+	/// limits unchanged. The signer must keep its account fixed while execution
+	/// runs.
 	pub async fn execute_and_watch(
 		&self,
 		transaction: PreparedEvmTransaction<'_>,
@@ -159,7 +152,6 @@ impl EvmContractCaller {
 		if signer.account_id() != account {
 			return Err(EvmContractError::SignerChanged);
 		}
-		self.ensure_account_mapped(signer).await?;
 		let extrinsic = self
 			.extrinsics
 			.build_mortal_extrinsic(self.genesis)
@@ -168,56 +160,6 @@ impl EvmContractCaller {
 			.build()
 			.await?;
 		submit_until_finalized(&self.chain, self.genesis, &extrinsic.extrinsic).await
-	}
-
-	/// Maps the signer's account to its contract address unless it already
-	/// is. The pallet rejects every call from an unmapped origin, and a dry run
-	/// cannot tell: it maps the origin for the length of the simulation.
-	async fn ensure_account_mapped(
-		&self,
-		signer: &SubstrateSigner,
-	) -> Result<(), EvmContractError> {
-		let account = signer.account_id().0;
-		if account[20..].iter().all(|byte| *byte == 0xEE) {
-			return Ok(());
-		}
-		match self.mapped_account(account_to_h160(&account)).await? {
-			Some(mapped) if mapped == account => return Ok(()),
-			Some(_) => return Err(EvmContractError::MappedToAnotherAccount),
-			None => {},
-		}
-		let extrinsic = self
-			.extrinsics
-			.build_mortal_extrinsic(self.genesis)
-			.with_call_args(REVIVE_PALLET, "map_account", ())
-			.with_signer(signer)
-			.build()
-			.await?;
-		submit_until_finalized(&self.chain, self.genesis, &extrinsic.extrinsic).await
-	}
-
-	/// The account `address` is mapped to, if any.
-	async fn mapped_account(
-		&self,
-		address: [u8; 20],
-	) -> Result<Option<[u8; 32]>, EvmContractError> {
-		let client = self.chain.online_client(&self.genesis.0).await?;
-		let at = client
-			.at_current_block()
-			.await
-			.map_err(|error| EvmContractError::Mapping(error.to_string()))?;
-		let entry = at
-			.storage()
-			.entry(dynamic::storage::<([u8; 20],), [u8; 32]>(REVIVE_PALLET, "OriginalAccount"))
-			.map_err(|error| EvmContractError::Mapping(error.to_string()))?;
-		let Some(value) = entry
-			.try_fetch((address,))
-			.await
-			.map_err(|error| EvmContractError::Mapping(error.to_string()))?
-		else {
-			return Ok(None);
-		};
-		Ok(Some(value.decode().map_err(|error| EvmContractError::Mapping(error.to_string()))?))
 	}
 }
 
@@ -496,18 +438,6 @@ mod tests {
 				vec![1u8, 2, 3],
 			)
 				.encode()
-		);
-	}
-
-	#[test]
-	fn mapping_an_account_takes_no_arguments() {
-		let metadata = Metadata::decode(&mut &ASSET_HUB_METADATA[..]).unwrap();
-		let pallet = metadata.pallet_by_name(REVIVE_PALLET).unwrap();
-
-		assert_eq!(
-			encode_call_data(REVIVE_PALLET, "map_account", &(), &metadata, metadata.types())
-				.unwrap(),
-			vec![pallet.call_index(), pallet.call_variant_by_name("map_account").unwrap().index],
 		);
 	}
 }

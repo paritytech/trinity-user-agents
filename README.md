@@ -317,8 +317,8 @@ or extrinsic builder.
 
 For writes, `dry_run` simulates as the signer and returns an opaque `PreparedEvmTransaction` that binds the signer,
 chain, contract, calldata and required limits. It signs and submits nothing. `execute_and_watch` consumes that request,
-maps the account when needed, then builds and signs with a fresh nonce and mortal era using the prepared limits. It
-completes only after a finalized block reports successful dispatch.
+then builds and signs with a fresh nonce and mortal era using the prepared limits. It completes only after a finalized
+block reports successful dispatch.
 
 ```rust
 let transaction = contracts.dry_run(&signer, &contract, &input).await?;
@@ -326,7 +326,7 @@ contracts.execute_and_watch(transaction).await?;
 ```
 
 The request borrows its signer and owns its calldata. Simulation describes the state read at that time; execution uses
-its limits without repeating the simulation. Revive's wire types, resource estimates and mapping helpers are private.
+its limits without repeating the simulation. Revive's wire types and resource estimates are private.
 `EvmContractError` distinguishes contract reverts from chain failures and unsuccessful execution.
 
 ### Durable transactions
