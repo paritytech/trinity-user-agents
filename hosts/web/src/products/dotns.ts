@@ -6,6 +6,7 @@ import {
   type DotnsEndpoints,
   type NetworkConfig,
 } from "../platform/network-config.js";
+import { seededKind } from "./seed.js";
 
 /**
  * The DotNS endpoints of Paseo Next v2, the default network.
@@ -509,7 +510,10 @@ export async function chooseSource(
   return { source: null, skipped };
 }
 
-/** Look `name` up on `network`'s Asset Hub and pick what to open. */
+/**
+ * Look `name` up on `network`'s Asset Hub and pick what to open. Content this
+ * build ships is known already, so it is not classified at the gateway.
+ */
 export async function resolveSource(
   name: string,
   network: NetworkConfig = DEFAULT_NETWORK_CONFIG,
@@ -517,7 +521,8 @@ export async function resolveSource(
   const rpc = httpRpc(network.dotns.assetHubRpc);
   return chooseSource(name, {
     readCid: (record) => resolveContentCid(record, rpc, network.dotns),
-    classify: (cid) =>
+    classify: async (cid) =>
+      seededKind(cid) ??
       classifyContent(cid, fetch, network.dotns.contentGateway),
   });
 }
