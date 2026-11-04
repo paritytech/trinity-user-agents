@@ -62,6 +62,7 @@ enum Outcome {
 	MissingEvent,
 	MissingExtrinsic,
 	Dropped,
+	SubmitError,
 }
 
 struct EvmNode {
@@ -100,6 +101,13 @@ impl EvmNode {
 			"transactionWatch_v1_submitAndWatch" => {
 				let bytes = hex_bytes(&params[0]);
 				self.submissions.push(bytes.clone());
+				let outcome = self.outcomes.pop_front().unwrap_or(Outcome::Succeeded);
+				if matches!(outcome, Outcome::SubmitError) {
+					let error = json!({"code": -32603, "message": "scripted submit error"});
+					return vec![
+						json!({"jsonrpc": "2.0", "id": parsed["id"], "error": error}).to_string(),
+					];
+				}
 				let subscription = format!("contract-{}", self.submissions.len());
 				let notification = |result: Value| {
 					json!({
@@ -110,7 +118,6 @@ impl EvmNode {
 					.to_string()
 				};
 				let mut frames = vec![response(json!(subscription))];
-				let outcome = self.outcomes.pop_front().unwrap_or(Outcome::Succeeded);
 				if matches!(outcome, Outcome::Dropped) {
 					frames
 						.push(notification(json!({"event": "dropped", "error": "scripted stop"})));
@@ -129,7 +136,7 @@ impl EvmNode {
 					Outcome::Succeeded => Some("ExtrinsicSuccess"),
 					Outcome::DispatchFailed => Some("ExtrinsicFailed"),
 					Outcome::MissingEvent | Outcome::MissingExtrinsic => None,
-					Outcome::Dropped => unreachable!(),
+					Outcome::Dropped | Outcome::SubmitError => unreachable!(),
 				};
 				self.node.events.insert(block, dispatch_events(event));
 				frames.extend([
@@ -364,35 +371,18 @@ fn a_failed_dispatch_carries_its_module_error() {
 	assert_eq!(detail, "Pallet error: Revive::ContractReverted");
 }
 
-/// A dropped extrinsic can still be included until its era ends, so the
+/// A dropped extrinsic, or one whose submission returned an error, may have
+/// reached the node and can still be included until its era ends, so the
 /// caller gets it back to follow instead of signing the write again.
 #[test]
-fn a_dropped_watch_returns_the_submitted_extrinsic_and_its_era() {
+fn an_unfinalized_write_returns_the_submitted_extrinsic_and_its_era() {
 	let signer = RecordingSigner::new();
-	let mut node = EvmNode::new();
-	node.outcomes.push_back(Outcome::Dropped);
-	let (node, _, caller) = serve_contracts(node);
-	let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
-
-	let result = block_on(prepared.execute_and_watch());
-
-	let Err(EvmContractError::NotFinalized { extrinsic, event }) = result else {
-		panic!("unexpected dropped watch: {result:?}");
-	};
-	let node = node.lock().unwrap();
-	let submitted = MortalExtrinsic {
-		extrinsic: EncodedExtrinsic::new(node.submissions[0].clone()),
-		mortality: Mortality::new(node.node.block(4), DEFAULT_MORTALITY_PERIOD).unwrap(),
-	};
-	assert_eq!((extrinsic, event), (submitted, WatchEvent::Dropped("scripted stop".to_string())));
-}
-
-/// The finalized block includes the extrinsic, so a failed outcome read
-/// names that block instead of reading like a write that can be signed again.
-#[test]
-fn an_unreadable_outcome_names_the_finalized_block_that_includes_the_extrinsic() {
-	let signer = RecordingSigner::new();
-	for outcome in [Outcome::MissingEvent, Outcome::MissingExtrinsic] {
+	let submit_error = "submit_and_watch: Cannot submit extrinsic: Backend error: RPC error: RPC \
+		error: User error: scripted submit error (-32603)";
+	for (outcome, expected) in [
+		(Outcome::Dropped, WatchEvent::Dropped("scripted stop".to_string())),
+		(Outcome::SubmitError, WatchEvent::Error(submit_error.to_string())),
+	] {
 		let mut node = EvmNode::new();
 		node.outcomes.push_back(outcome);
 		let (node, _, caller) = serve_contracts(node);
@@ -400,14 +390,49 @@ fn an_unreadable_outcome_names_the_finalized_block_that_includes_the_extrinsic()
 
 		let result = block_on(prepared.execute_and_watch());
 
-		let Err(EvmContractError::OutcomeUnreadable { extrinsic, block, .. }) = result else {
-			panic!("unexpected unreadable outcome: {result:?}");
+		let Err(EvmContractError::NotFinalized { extrinsic, event }) = result else {
+			panic!("unexpected unfinalized write: {result:?}");
 		};
 		let node = node.lock().unwrap();
-		assert_eq!(
-			(extrinsic.extrinsic.bytes(), block),
-			(&node.submissions[0][..], node.node.block(node.node.finalized).hash)
-		);
+		let submitted = MortalExtrinsic {
+			extrinsic: EncodedExtrinsic::new(node.submissions[0].clone()),
+			mortality: Mortality::new(node.node.block(4), DEFAULT_MORTALITY_PERIOD).unwrap(),
+		};
+		assert_eq!((extrinsic, event), (submitted, expected));
+	}
+}
+
+/// The watch reported the extrinsic finalized, so an outcome that cannot be
+/// read in that block returns the block and the extrinsic to follow instead
+/// of reading like a write that can be signed again.
+#[test]
+fn an_unreadable_outcome_names_the_finalized_block_the_watch_reported() {
+	let signer = RecordingSigner::new();
+	for (outcome, cause) in [
+		(Outcome::MissingEvent, "no dispatch event"),
+		(Outcome::MissingExtrinsic, "the finalized block lacks the extrinsic"),
+	] {
+		let mut node = EvmNode::new();
+		node.outcomes.push_back(outcome);
+		let (node, _, caller) = serve_contracts(node);
+		let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
+
+		let result = block_on(prepared.execute_and_watch());
+
+		let (extrinsic, block) = match result {
+			Err(EvmContractError::OutcomeUnreadable { extrinsic, block, reason })
+				if reason.reason().contains(cause) =>
+			{
+				(extrinsic, block)
+			},
+			other => panic!("unexpected unreadable outcome: {other:?}"),
+		};
+		let node = node.lock().unwrap();
+		let submitted = MortalExtrinsic {
+			extrinsic: EncodedExtrinsic::new(node.submissions[0].clone()),
+			mortality: Mortality::new(node.node.block(4), DEFAULT_MORTALITY_PERIOD).unwrap(),
+		};
+		assert_eq!((extrinsic, block), (submitted, node.node.block(node.node.finalized).hash));
 	}
 }
 
