@@ -104,6 +104,8 @@ impl SecretsStorage for ProductRuntimeHost {
 			.await
 	}
 
+	/// Takes the write lock, so a write of the same key cannot interleave and
+	/// leave its secret without a row.
 	#[instrument(skip_all, fields(runtime.method = "secrets_storage.clear"))]
 	async fn clear(
 		&self,
@@ -118,6 +120,7 @@ impl SecretsStorage for ProductRuntimeHost {
 						latest::HostSecretsStorageLookupError::InvalidKey,
 					));
 				}
+				let _writes = self.connection.services.secrets_storage_writes().await;
 				secrets.delete(&id).await.map_err(lookup_failure)
 			})
 			.await

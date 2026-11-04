@@ -7,6 +7,10 @@
 //! and deleted before it, so a crash in between leaves at most a row whose
 //! secret is missing, which reads as absent and the next clear removes. A
 //! secret is never left behind without a row.
+//!
+//! A clear marks its rows dropped in one database write before it deletes any
+//! secret, so a secret the host fails to delete never reads back, and the next
+//! clear deletes it.
 
 use std::sync::Arc;
 
@@ -32,14 +36,16 @@ pub struct ProductSecrets {
 }
 
 const UPSERT: &str = "INSERT INTO product_secret (id, product_id) VALUES (:id, :product_id)
-	ON CONFLICT (id) DO UPDATE SET product_id = :product_id";
+	ON CONFLICT (id) DO UPDATE SET product_id = :product_id, dropped = 0";
 
-const EXISTS: &str = "SELECT 1 FROM product_secret WHERE id = :id";
+const EXISTS: &str = "SELECT 1 FROM product_secret WHERE id = :id AND dropped = 0";
 
 const DELETE: &str = "DELETE FROM product_secret WHERE id = :id";
 
-const IDS: &str = "SELECT id FROM product_secret
+const DROP: &str = "UPDATE product_secret SET dropped = 1
 	WHERE :product_id IS NULL OR product_id = :product_id";
+
+const DROPPED: &str = "SELECT id FROM product_secret WHERE dropped = 1";
 
 /// The encrypted storage key of the secret with `id`.
 fn storage_key(id: &SecretId) -> Vec<u8> {
@@ -108,17 +114,17 @@ impl ProductSecrets {
 	}
 
 	/// Deletes every secret `product_id` owns, or every product's when it is
-	/// `None`. Stops at the first failure; what is left is still indexed, so
-	/// calling it again finishes the job.
+	/// `None`, along with any an earlier clear left behind. None of them reads
+	/// back once this returns, even on failure. Stops at the first secret the
+	/// host fails to delete, which the next clear deletes.
 	pub async fn clear(&self, product_id: Option<&str>) -> Result<(), GenericError> {
 		let product_id = product_id.map(str::to_owned);
 		let ids: Vec<SecretId> = self
 			.db
-			.read(move |conn| {
-				let mut statement = conn.prepare_cached(IDS)?;
-				let ids = statement
-					.query_map(named_params! { ":product_id": product_id }, |row| row.get(0))?
-					.collect::<Result<_, _>>()?;
+			.write(move |tx| {
+				tx.prepare_cached(DROP)?.execute(named_params! { ":product_id": product_id })?;
+				let mut statement = tx.prepare_cached(DROPPED)?;
+				let ids = statement.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
 				Ok(ids)
 			})
 			.await
@@ -214,6 +220,53 @@ mod tests {
 		let read = block_on(locked.get(&id(1)));
 
 		assert_eq!(read, Err(GenericError { reason: "locked".to_owned() }));
+	}
+
+	/// Encrypted storage whose next delete fails.
+	#[derive(Default)]
+	struct FailingDelete {
+		inner: MemoryEncryptedStorage,
+		fail: std::sync::atomic::AtomicBool,
+	}
+
+	#[async_trait::async_trait]
+	impl EncryptedStorage for FailingDelete {
+		async fn read_encrypted(
+			&self,
+			key: &[u8],
+		) -> Result<Option<Zeroizing<Vec<u8>>>, GenericError> {
+			self.inner.read_encrypted(key).await
+		}
+
+		async fn write_encrypted(&self, key: &[u8], value: &[u8]) -> Result<(), GenericError> {
+			self.inner.write_encrypted(key, value).await
+		}
+
+		async fn delete_encrypted(&self, key: &[u8]) -> Result<(), GenericError> {
+			if self.fail.swap(false, std::sync::atomic::Ordering::SeqCst) {
+				return Err(GenericError { reason: "busy".to_owned() });
+			}
+			self.inner.delete_encrypted(key).await
+		}
+	}
+
+	// A sign-out whose clear fails must not hand the same account its old
+	// secret back when it signs in again, and the next clear deletes it.
+	#[test]
+	fn a_secret_a_failed_clear_left_never_reads_back_and_the_next_clear_deletes_it() {
+		let (working, _) = secrets();
+		let storage = Arc::new(FailingDelete::default());
+		let secrets = ProductSecrets::new(working.db.clone(), storage.clone());
+		block_on(secrets.put(&id(1), "a.dot", b"s")).unwrap();
+		storage.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+
+		let failed = block_on(secrets.clear(None));
+		let read = block_on(secrets.get(&id(1))).unwrap();
+		block_on(secrets.clear(Some("b.dot"))).unwrap();
+
+		assert!(failed.is_err());
+		assert_eq!(read, None);
+		assert!(storage.inner.stored().is_empty());
 	}
 
 	// A row whose secret the host lost, as a crash between the two writes

@@ -260,7 +260,9 @@ from its own services. The product names a key; the core hashes the signed-in
 account, the product and that key into the id, so no product or account can
 name another's. The `product_secret` table records each id with its product, and the secret goes to `EncryptedStorage` under `product-secret/<id>`.
 A secret is written after its row and deleted before it, so a crash leaves at
-most a row whose secret reads as absent, never an unindexed secret. Values are opaque bytes the core
+most a row whose secret reads as absent, never an unindexed secret. A clear
+marks its rows dropped before it deletes any secret, so a secret the host
+fails to delete never reads back, and the next clear deletes it. Values are opaque bytes the core
 does not interpret. It requires a session, checks the key (1 to 64 of
 `[a-z0-9._-]`) and the 8192-byte value limit, and caches nothing. Nothing yet
 bounds how many keys a product keeps. It clears every secret on logout, disconnect,

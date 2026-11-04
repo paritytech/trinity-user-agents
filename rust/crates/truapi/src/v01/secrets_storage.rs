@@ -3,8 +3,7 @@ use parity_scale_codec::{Decode, Encode};
 /// Request to keep a secret under one of the product's keys.
 ///
 /// `key` is 1 to 64 characters of `a-z`, `0-9`, `.`, `_` and `-`. `value` is
-/// 1 to 8192 bytes. A value already kept under `key` is replaced. A product
-/// keeps at most 16 keys per account.
+/// 1 to 8192 bytes. A value already kept under `key` is replaced.
 #[derive(Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostSecretsStorageWriteRequest {
 	/// The product's name for the secret.
