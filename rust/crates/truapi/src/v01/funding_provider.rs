@@ -20,14 +20,122 @@ pub struct FundingAssignment {
 	/// The last update the provider reported, so a restarted worker resumes
 	/// where it stopped.
 	pub last_update: Option<FundingUpdate>,
+	/// The quote the user chose this provider on, when it was quoted.
+	pub quote: Option<FundingQuote>,
+}
+
+/// How the user pays or is paid.
+///
+/// Parses from the name a Worker manifest's route `mode` uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, strum::EnumString)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[strum(serialize_all = "UPPERCASE")]
+pub enum FundingRail {
+	/// A card payment.
+	#[codec(index = 0)]
+	Card,
+	/// A bank transfer.
+	#[codec(index = 1)]
+	Bank,
+	/// A crypto transfer.
+	#[codec(index = 2)]
+	Crypto,
+}
+
+/// What the host asks a provider to price.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingQuoteAsk {
+	/// Which way value moves.
+	pub direction: FundingDirection,
+	/// How the user pays or is paid.
+	pub rail: FundingRail,
+	/// Symbol the user pays with (In) or receives (Out), as the provider's
+	/// manifest names it.
+	pub asset: String,
+	/// Amount in the user's payment balance units: credited for In, debited
+	/// for Out.
+	pub amount: u128,
+	/// ISO 3166-1 alpha-2 code of the user's country, when the host knows it.
+	pub country: Option<String>,
+}
+
+/// A provider's price for an ask.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingQuote {
+	/// The provider's id for this quote, handed back when the user picks it.
+	pub quote_id: String,
+	/// What the user pays, in the smallest unit of the ask's asset for In and
+	/// in balance units for Out.
+	pub send_amount: u128,
+	/// What the user receives, in balance units for In and in the smallest
+	/// unit of the ask's asset for Out.
+	pub receive_amount: u128,
+	/// The provider's fee, in the unit of `send_amount`.
+	pub provider_fee: u128,
+	/// Network fees, in the unit of `send_amount`.
+	pub network_fee: u128,
+	/// Expected seconds until the funds arrive, when the provider says.
+	pub eta_secs: Option<u64>,
+	/// When the provider stops honouring the quote, in Unix milliseconds.
+	pub expires_at: Option<u64>,
+}
+
+/// Why a provider will not price an ask.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingQuoteRefusal {
+	/// Not offered in the user's country.
+	#[codec(index = 0)]
+	CountryUnsupported,
+	/// Below the provider's minimum, in the ask's balance units.
+	#[codec(index = 1)]
+	BelowMinimum {
+		/// The smallest amount the provider takes.
+		min: u128,
+	},
+	/// Above the provider's maximum, in the ask's balance units.
+	#[codec(index = 2)]
+	AboveMaximum {
+		/// The largest amount the provider takes.
+		max: u128,
+	},
+	/// The provider cannot serve the ask right now.
+	#[codec(index = 3)]
+	Unavailable,
+	/// Outcome not covered above.
+	#[codec(index = 4)]
+	Other {
+		/// Human-readable reason.
+		message: String,
+	},
+}
+
+/// A provider's answer to an ask.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum FundingQuoteAnswer {
+	/// The provider's price.
+	#[codec(index = 0)]
+	Quoted {
+		/// The quote.
+		quote: FundingQuote,
+	},
+	/// The provider will not price it.
+	#[codec(index = 1)]
+	Refused {
+		/// Why.
+		reason: FundingQuoteRefusal,
+	},
 }
 
 /// Progress a provider reports for a session it serves.
 ///
-/// Updates only move forward, each in the direction of its session. Once
-/// funds are moving the host decides the outcome: an inbound session is
-/// delivered from the claims of the top-ups it names, an outbound one is
-/// released once the user's payment completes.
+/// Steps only move forward, each in the direction of its session; `Details`
+/// and `Deposit` sit outside that order, and a session keeps a bounded
+/// number of each. Once funds are moving the host decides the outcome: an
+/// inbound session is delivered from the claims of the top-ups it names, an
+/// outbound one is released once the user's payment completes.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingUpdate {
@@ -42,6 +150,17 @@ pub enum FundingUpdate {
 	Failed {
 		/// Why it ended.
 		reason: FundingFailure,
+	},
+	/// The provider's own references for the session, which the user can
+	/// quote to it. Allowed at any point while the session is open, outside
+	/// the order of the others; the latest value of each is shown.
+	#[codec(index = 3)]
+	Details {
+		/// The provider's transaction id.
+		transaction_id: Option<String>,
+		/// A reference the user pays with or quotes, such as a bank
+		/// transfer reference.
+		reference: Option<String>,
 	},
 }
 
@@ -58,6 +177,9 @@ pub enum FundingInboundUpdate {
 	PaymentReceived {
 		/// Whether the payment can no longer be reversed.
 		finalized: bool,
+		/// What arrived, when it differs from what the user was asked to
+		/// send: less, or another asset.
+		mismatch: Option<FundingReceived>,
 	},
 	/// The provider is converting the payment to the user's balance asset.
 	#[codec(index = 2)]
@@ -75,6 +197,14 @@ pub enum FundingInboundUpdate {
 	/// with what they claimed.
 	#[codec(index = 4)]
 	Delivered,
+	/// Where and what the user pays, for the host to draw. Allowed until
+	/// funds move, outside the order of the others, so a provider can ask
+	/// for the rest of a short payment; the latest is shown.
+	#[codec(index = 5)]
+	Deposit {
+		/// The instructions.
+		deposit: FundingDeposit,
+	},
 }
 
 /// A step of an outbound session: the provider collects the user's balance
@@ -91,6 +221,63 @@ pub enum FundingOutboundUpdate {
 		/// Amount the payment asks for.
 		amount: u128,
 	},
+}
+
+/// Where and what the user pays a provider.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingDeposit {
+	/// A transfer to an address on a chain.
+	#[codec(index = 0)]
+	Crypto {
+		/// The address to send to.
+		address: String,
+		/// The network it is on, as the user should see it.
+		network: String,
+		/// Symbol of the asset to send.
+		asset: String,
+		/// Amount in the asset's smallest unit.
+		amount: u128,
+		/// Decimals of the asset.
+		decimals: u8,
+		/// Whether `amount` is exact, rather than an estimate or a minimum.
+		exact: bool,
+		/// A payment URI for the QR code, such as BIP21 or EIP-681. The host
+		/// shows the bare address when there is none.
+		uri: Option<String>,
+		/// When the address stops accepting payment, in Unix milliseconds.
+		expires_at: Option<u64>,
+	},
+	/// A bank transfer.
+	#[codec(index = 1)]
+	Bank {
+		/// Amount in the currency's minor unit, fees included.
+		amount: u128,
+		/// ISO 4217 currency code.
+		currency: String,
+		/// Decimals of the currency.
+		decimals: u8,
+		/// The account holder to pay.
+		beneficiary: Option<String>,
+		/// The account to pay, such as an IBAN.
+		account: Option<String>,
+		/// The bank's code, such as a BIC or sort code.
+		bank_code: Option<String>,
+		/// The reference the transfer must carry.
+		reference: String,
+		/// When the details stop being valid, in Unix milliseconds.
+		expires_at: Option<u64>,
+	},
+}
+
+/// What arrived for a payment that differs from what was asked.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingReceived {
+	/// Symbol of the asset that arrived.
+	pub asset: String,
+	/// Amount in that asset's smallest unit.
+	pub amount: u128,
 }
 
 /// A session the core hands to the provider the user chose.
@@ -184,6 +371,12 @@ pub enum HostFundingReportError {
 	/// it was assigned, asks a different amount, or was already named.
 	#[codec(index = 2)]
 	NotStarted,
+	/// A `Details` or `Deposit` update that breaks its limits: a text too
+	/// long, on several lines or with control or invisible characters,
+	/// deposit instructions that name nothing to pay, have expired or do not
+	/// match the quote the user chose, or more of them than a session keeps.
+	#[codec(index = 4)]
+	InvalidDetail,
 	/// Catch-all.
 	#[codec(index = 3)]
 	Unknown {
@@ -265,3 +458,20 @@ pub enum HostFundingPresentFrameError {
 		reason: String,
 	},
 }
+
+/// An ask for the provider to price.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct ProductFundingQuoteRequest {
+	/// What the user wants to move, by which rail, in which country.
+	pub ask: FundingQuoteAsk,
+}
+
+/// Longest text a provider's update may carry, in characters, such as a
+/// transaction id, a reference or an address.
+pub const FUNDING_DETAIL_MAX_CHARS: usize = 80;
+
+/// Longest text a provider's update may carry, in UTF-8 bytes.
+pub const FUNDING_DETAIL_MAX_BYTES: usize = 320;
+
+/// Longest payment URI deposit instructions may carry, in UTF-8 bytes.
+pub const FUNDING_DEPOSIT_URI_MAX_BYTES: usize = 512;

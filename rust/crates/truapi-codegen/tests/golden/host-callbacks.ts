@@ -12,6 +12,8 @@ import {
   ChainIdentifier,
   CodeFormat,
   FundingDirection,
+  FundingQuote,
+  FundingQuoteRefusal,
   HostAccountSignVrfRequest,
   HostDevicePermissionRequest,
   HostSignPayloadRequest,
@@ -238,7 +240,17 @@ export type CoreStorageKey =
    * core honours it for a bounded lifetime, which is what makes a revoked
    * trust grant eventually take effect.
    */
-  | { tag: "ProductManifest"; value: { productLabel: string } };
+  | { tag: "ProductManifest"; value: { productLabel: string } }
+  /**
+   * A product's Worker executable manifest as last read from dotNS, and when,
+   * cached for the same lifetime as `Self::ProductManifest`.
+   */
+  | { tag: "WorkerManifest"; value: { productLabel: string } }
+  /**
+   * What funding providers' quote answers showed about what they serve,
+   * each record trusted for twelve hours.
+   */
+  | { tag: "FundingSupport"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -362,6 +374,52 @@ export interface FundingPresentation {
    */
   amount?: bigint;
 }
+
+/**
+ * One provider's place in the list a quote request fills in.
+ */
+export interface FundingQuoteRow {
+  /**
+   * The provider.
+   */
+  providerId: ProductId;
+
+  /**
+   * Where its quote stands.
+   */
+  state: FundingQuoteState;
+}
+
+/**
+ * Where a provider's quote stands.
+ */
+export type FundingQuoteState =
+  /**
+   * Asked, not answered yet.
+   */
+  | { tag: "Pending"; value?: undefined }
+  /**
+   * The provider's price.
+   */
+  | { tag: "Quoted"; value: { quote: FundingQuote } }
+  /**
+   * The provider cannot be offered for this ask; the host shows it
+   * disabled.
+   */
+  | { tag: "Unavailable"; value: { reason: FundingQuoteUnavailable } };
+
+/**
+ * Why a provider cannot be offered for an ask.
+ */
+export type FundingQuoteUnavailable =
+  /**
+   * The provider refused to price it.
+   */
+  | { tag: "Refused"; value: { reason: FundingQuoteRefusal } }
+  /**
+   * The provider did not answer in time.
+   */
+  | { tag: "Timeout"; value?: undefined };
 
 /**
  * One chain a host serves: a protocol chain role mapped to the concrete
@@ -925,42 +983,62 @@ export const ChainExtensionVersion: S.Codec<ChainExtensionVersion> = S.lazy(
  */
 export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
   (): S.Codec<CoreStorageKey> =>
-    S.TaggedUnion({
-      AuthSession: S._void,
-      PairingDeviceIdentity: S._void,
-      PermissionAuthorization: S.Struct({
-        scope: S.str,
-        request: StoredPermissionRequest,
-      }) as S.Codec<{ scope: string; request: StoredPermissionRequest }>,
-      AllowanceKeys: S.Struct({ sessionId: S.str }) as S.Codec<{
-        sessionId: string;
-      }>,
-      LastProcessedPairingStatement: S._void,
-      AutoSigningKey: S.Struct({ productId: ProductId }) as S.Codec<{
-        productId: ProductId;
-      }>,
-      AutoSigningKeys: S._void,
-      RingVrfRegistry: S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
-        rootPublicKey: Uint8Array;
-      }>,
-      StatementRenewalTargets: S._void,
-      DeviceEncryptionKey: S._void,
-      ProductSubtree: S.Struct({
-        sessionId: S.str,
-        productId: ProductId,
-      }) as S.Codec<{ sessionId: string; productId: ProductId }>,
-      SsoResponderRequestLedger: S.Struct({
-        rootPublicKey: S.Bytes(32),
-        peerStatementAccountId: S.Bytes(32),
-        peerEncryptionPublicKey: S.Bytes(32),
-      }) as S.Codec<{
-        rootPublicKey: Uint8Array;
-        peerStatementAccountId: Uint8Array;
-        peerEncryptionPublicKey: Uint8Array;
-      }>,
-      ProductManifest: S.Struct({ productLabel: S.str }) as S.Codec<{
-        productLabel: string;
-      }>,
+    S.indexedTaggedUnion({
+      AuthSession: [0, S._void] as const,
+      PairingDeviceIdentity: [1, S._void] as const,
+      PermissionAuthorization: [
+        2,
+        S.Struct({
+          scope: S.str,
+          request: StoredPermissionRequest,
+        }) as S.Codec<{ scope: string; request: StoredPermissionRequest }>,
+      ] as const,
+      AllowanceKeys: [
+        3,
+        S.Struct({ sessionId: S.str }) as S.Codec<{ sessionId: string }>,
+      ] as const,
+      LastProcessedPairingStatement: [4, S._void] as const,
+      AutoSigningKey: [
+        5,
+        S.Struct({ productId: ProductId }) as S.Codec<{ productId: ProductId }>,
+      ] as const,
+      AutoSigningKeys: [6, S._void] as const,
+      RingVrfRegistry: [
+        7,
+        S.Struct({ rootPublicKey: S.Bytes(32) }) as S.Codec<{
+          rootPublicKey: Uint8Array;
+        }>,
+      ] as const,
+      StatementRenewalTargets: [8, S._void] as const,
+      DeviceEncryptionKey: [9, S._void] as const,
+      ProductSubtree: [
+        10,
+        S.Struct({ sessionId: S.str, productId: ProductId }) as S.Codec<{
+          sessionId: string;
+          productId: ProductId;
+        }>,
+      ] as const,
+      SsoResponderRequestLedger: [
+        11,
+        S.Struct({
+          rootPublicKey: S.Bytes(32),
+          peerStatementAccountId: S.Bytes(32),
+          peerEncryptionPublicKey: S.Bytes(32),
+        }) as S.Codec<{
+          rootPublicKey: Uint8Array;
+          peerStatementAccountId: Uint8Array;
+          peerEncryptionPublicKey: Uint8Array;
+        }>,
+      ] as const,
+      ProductManifest: [
+        12,
+        S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
+      ] as const,
+      WorkerManifest: [
+        14,
+        S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
+      ] as const,
+      FundingSupport: [15, S._void] as const,
     }),
 );
 
@@ -1068,6 +1146,46 @@ export const FundingPresentation: S.Codec<FundingPresentation> = S.lazy(
       direction: FundingDirection,
       amount: S.Option(S.u128),
     }) as S.Codec<FundingPresentation>,
+);
+
+/**
+ * One provider's place in the list a quote request fills in.
+ */
+export const FundingQuoteRow: S.Codec<FundingQuoteRow> = S.lazy(
+  (): S.Codec<FundingQuoteRow> =>
+    S.Struct({
+      providerId: ProductId,
+      state: FundingQuoteState,
+    }) as S.Codec<FundingQuoteRow>,
+);
+
+/**
+ * Where a provider's quote stands.
+ */
+export const FundingQuoteState: S.Codec<FundingQuoteState> = S.lazy(
+  (): S.Codec<FundingQuoteState> =>
+    S.TaggedUnion({
+      Pending: S._void,
+      Quoted: S.Struct({ quote: FundingQuote }) as S.Codec<{
+        quote: FundingQuote;
+      }>,
+      Unavailable: S.Struct({ reason: FundingQuoteUnavailable }) as S.Codec<{
+        reason: FundingQuoteUnavailable;
+      }>,
+    }),
+);
+
+/**
+ * Why a provider cannot be offered for an ask.
+ */
+export const FundingQuoteUnavailable: S.Codec<FundingQuoteUnavailable> = S.lazy(
+  (): S.Codec<FundingQuoteUnavailable> =>
+    S.TaggedUnion({
+      Refused: S.Struct({ reason: FundingQuoteRefusal }) as S.Codec<{
+        reason: FundingQuoteRefusal;
+      }>,
+      Timeout: S._void,
+    }),
 );
 
 /**
@@ -1799,6 +1917,13 @@ export interface FundingPlatform {
     intent: string,
     status: HostFundingStatusSubscribeItem,
   ): void;
+
+  /**
+   * Observe one provider's row of a quote list the host requested, for the
+   * provider list. Each provider's row arrives `Pending`, then once more
+   * with its quote or why it is unavailable.
+   */
+  fundingQuoteChanged?(intent: string, row: FundingQuoteRow): void;
 }
 
 /**
@@ -1995,12 +2120,10 @@ export interface Permissions {
 }
 
 /**
- * Host-implemented adapter through which product Pocket calls reach the
- * host's card collection. Optional: a host that omits it leaves Pocket
- * requests answered `Unsupported`. See `OptionalPlatform`.
- *
- * The host owns the collection: it decides which cards are privileged and
- * keeps each card's newest face. A face does not cross this boundary.
+ * Adapter through which product Pocket calls reach the card collection.
+ * Optional: a host that omits it leaves Pocket requests answered
+ * `Unsupported`. See `OptionalPlatform`. Native hosts are served by the
+ * core's own collection in its database.
  */
 export interface PocketPlatform {
   /**
