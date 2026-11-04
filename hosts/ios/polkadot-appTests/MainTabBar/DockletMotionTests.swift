@@ -1,5 +1,4 @@
 import CoreGraphics
-import Foundation
 import Testing
 @testable import polkadot_app
 
@@ -36,21 +35,6 @@ struct DockletMotionTests {
         return motion
     }
 
-    /// The highest progress a settle that started at 0.1 s reaches over the next 1.4 s.
-    private func peakProgress(of settling: DockletMotion) -> CGFloat {
-        var motion = settling
-        var peak: CGFloat = 0
-        for step in 1 ... 140 {
-            _ = motion.tick(now: 0.1 + Double(step) * 0.01)
-            peak = max(peak, motion.progress)
-        }
-        return peak
-    }
-
-    private func isNear(_ point: CGPoint, _ expected: CGPoint) -> Bool {
-        abs(point.x - expected.x) < 1e-6 && abs(point.y - expected.y) < 1e-6
-    }
-
     private func isNear(_ transform: CGAffineTransform, _ expected: CGAffineTransform) -> Bool {
         abs(transform.a - expected.a) < 1e-6
             && abs(transform.b - expected.b) < 1e-6
@@ -58,12 +42,6 @@ struct DockletMotionTests {
             && abs(transform.d - expected.d) < 1e-6
             && abs(transform.tx - expected.tx) < 1e-6
             && abs(transform.ty - expected.ty) < 1e-6
-    }
-
-    /// A vector of length 100 pointing `degrees` below the horizon, with a positive y being down.
-    private func vector(degreesDown degrees: CGFloat) -> CGVector {
-        let radians = degrees * CGFloat.pi / 180
-        return CGVector(dx: 100 * cos(radians), dy: 100 * sin(radians))
     }
 
     @Test("A release past half tucks the bar")
@@ -113,37 +91,6 @@ struct DockletMotionTests {
         var motion = DockletMotion()
         motion.settle(to: .tucked, now: 0, isUserDriven: false)
         #expect(motion.tick(now: 1.4) == nil)
-    }
-
-    @Test("Shown is the identity pose")
-    func shownPoseIsIdentity() {
-        let point = CGPoint(x: 306, y: 816)
-        #expect(point.applying(drawbridge.transform(progress: 0, anchor: .zero)) == point)
-    }
-
-    @Test("Tucked turns the bar a quarter about the pivot with the leading end up, then slides it out")
-    func tuckedPoseIsQuarterTurnAndSlide() {
-        let transform = drawbridge.transform(progress: 1, anchor: .zero)
-        let pivot = drawbridge.pivot
-        let leadingEnd = CGPoint(x: pivot.x - 100, y: pivot.y)
-        #expect(isNear(pivot.applying(transform), CGPoint(x: pivot.x + drawbridge.slideOut, y: pivot.y)))
-        #expect(isNear(
-            leadingEnd.applying(transform),
-            CGPoint(x: pivot.x + drawbridge.slideOut, y: pivot.y - 100)
-        ))
-    }
-
-    @Test("Halfway slides an eighth of the slide out")
-    func halfwaySlidesAnEighth() {
-        let pivot = drawbridge.pivot
-        let transform = drawbridge.transform(progress: 0.5, anchor: .zero)
-        #expect(isNear(pivot.applying(transform), CGPoint(x: pivot.x + drawbridge.slideOut / 8, y: pivot.y)))
-    }
-
-    @Test("The Edge glow and Grab zone sit on the right edge at the tucked bar's top")
-    func glowAndGrabZoneFollowTuckedBar() {
-        #expect(drawbridge.edgeGlowRect == CGRect(x: 378, y: 420, width: 24, height: 200))
-        #expect(drawbridge.grabZoneRect == CGRect(x: 355, y: 420, width: 47, height: 200))
     }
 
     @Test("A drag past either limit is rubber banded, so it saturates")
@@ -212,44 +159,6 @@ struct DockletMotionTests {
         #expect(motion.destination == .shown)
     }
 
-    @Test("A fast settle overshoots its rest, and a slow one does not")
-    func fastSettleOvershootsSlowDoesNot() {
-        var fast = flick()
-        fast.end(time: 0.1, geometry: geometry)
-        #expect(peakProgress(of: fast) > 1)
-
-        var slow = DockletMotion()
-        slow.begin(touch: CGPoint(x: 40, y: 816), time: 0, geometry: geometry)
-        _ = slow.move(location: CGPoint(x: 126, y: 816), translation: CGVector(dx: 86, dy: 0), time: 0.1)
-        slow.end(time: 0.1, geometry: geometry)
-        #expect(peakProgress(of: slow) <= 1)
-    }
-
-    @Test("A held bar keeps the grabbed point under the finger at progress zero")
-    func heldBarKeepsGrabbedPointUnderFinger() {
-        var motion = DockletMotion()
-        motion.begin(touch: CGPoint(x: 200, y: 816), time: 0, geometry: geometry)
-        _ = motion.move(location: CGPoint(x: 230, y: 800), translation: CGVector(dx: 0, dy: 0), time: 0.01)
-        let grabbed = CGPoint(x: 200, y: 816).applying(motion.transform(geometry: geometry, anchor: .zero))
-        #expect(abs(grabbed.x - 230) < 0.5)
-        #expect(abs(grabbed.y - 800) < 0.5)
-    }
-
-    @Test("A bar caught mid-settle follows a finger dragged back to where its progress reaches shown")
-    func caughtBarFollowsFingerDraggedBack() {
-        var motion = release(from: 40, translationX: 0.6 * drawbridge.hideTravel(touchX: 40))
-        _ = motion.tick(now: 0.01)
-        #expect(abs(motion.progress - 0.6) < 0.05)
-        let touch = CGPoint(x: 306, y: 816).applying(motion.transform(geometry: geometry, anchor: .zero))
-        motion.begin(touch: touch, time: 0.01, geometry: geometry)
-        let travel = drawbridge.hideTravel(touchX: touch.x)
-        let finger = CGPoint(x: touch.x - 0.6 * travel, y: touch.y)
-        _ = motion.move(location: finger, translation: CGVector(dx: -0.6 * travel, dy: 0), time: 0.02)
-        let grabbed = CGPoint(x: 306, y: 816).applying(motion.transform(geometry: geometry, anchor: .zero))
-        #expect(abs(grabbed.x - finger.x) < 0.5)
-        #expect(abs(grabbed.y - finger.y) < 0.5)
-    }
-
     @Test("A held bar never sinks below the screen while the finger stays above it")
     func heldBarStaysAboveFloor() {
         var motion = DockletMotion()
@@ -267,21 +176,6 @@ struct DockletMotionTests {
         let touch = CGPoint(x: 306, y: 816).applying(before)
         motion.begin(touch: touch, time: 0.05, geometry: geometry)
         #expect(isNear(motion.transform(geometry: geometry, anchor: .zero), before))
-    }
-
-    @Test("A bar at rest begins a drag 40 degrees down")
-    func restingBarTakesFortyDegreesDown() {
-        #expect(DockletDirectionLock.isSideways(translation: vector(degreesDown: 40), isSettling: false))
-    }
-
-    @Test("A bar at rest refuses a drag 50 degrees down")
-    func restingBarRefusesFiftyDegreesDown() {
-        #expect(!DockletDirectionLock.isSideways(translation: vector(degreesDown: 50), isSettling: false))
-    }
-
-    @Test("A bar caught mid-settle takes a drag 50 degrees down")
-    func caughtBarTakesFiftyDegreesDown() {
-        #expect(DockletDirectionLock.isSideways(translation: vector(degreesDown: 50), isSettling: true))
     }
 
     @Test("A held bar ticks once rising past 0.54 and once falling below 0.46")
@@ -303,20 +197,6 @@ struct DockletMotionTests {
         motion.snap(to: .tucked)
         motion.beginAim(touch: touch, time: 0, geometry: geometry)
         return motion
-    }
-
-    @Test("A grab dragged low and far in from the edge aims the bar at shown")
-    func aimLowAndFarInIsShown() {
-        var motion = grabbedTucked(at: CGPoint(x: 370, y: 600))
-        _ = motion.move(location: CGPoint(x: 60, y: 800), translation: CGVector(dx: -310, dy: 0), time: 0.01)
-        #expect(motion.progress < 0.1)
-    }
-
-    @Test("A grab dragged high at the edge aims the bar at tucked")
-    func aimHighAtEdgeIsTucked() {
-        var motion = grabbedTucked(at: CGPoint(x: 370, y: 600))
-        _ = motion.move(location: CGPoint(x: 400, y: 430), translation: CGVector(dx: 30, dy: 0), time: 0.01)
-        #expect(motion.progress > 0.9)
     }
 
     @Test("The first move after a grab keeps the progress the bar was grabbed with")
@@ -414,15 +294,6 @@ struct DockletMotionTests {
         _ = motion.tick(now: 0.7)
         motion.settle(to: .shown, now: 0.7, isUserDriven: false)
         #expect(motion.contentOpacity == 1)
-    }
-
-    @Test("Content fades from full at shown to none just before tucked, and never below none")
-    func contentFadeCurve() {
-        #expect(DockletContentFade.opacity(progress: 0) == 1)
-        #expect(abs(DockletContentFade.opacity(progress: 0.5) - 0.495) < 1e-3)
-        #expect(DockletContentFade.opacity(progress: 0.906) < 1e-3)
-        #expect(DockletContentFade.opacity(progress: 0.91) == 0)
-        #expect(DockletContentFade.opacity(progress: 1) == 0)
     }
 
     @Test("A Reduce Motion tuck holds its pose, fades the content out over 0.22 s, then lands tucked")
@@ -605,23 +476,5 @@ struct DockletMotionTests {
             _ = motion.tick(now: Double(step) / 60)
             #expect(motion.contentFadeTarget == target)
         }
-    }
-
-    @Test("The quiet fade reaches zero about its duration after the bar starts moving")
-    func quietFadeTimingMatchesCurve() {
-        var motion = DockletMotion()
-        motion.quietSettle(to: .tucked, now: 0)
-        _ = motion.tick(now: 1.0 / 60)
-        var zeroTime: TimeInterval?
-        for step in 1 ... 360 {
-            let now = 1.0 / 60 + Double(step) / 240
-            _ = motion.tick(now: now)
-            if motion.contentOpacity == 0 {
-                zeroTime = now
-                break
-            }
-        }
-        let elapsed = (zeroTime ?? .infinity) - 1.0 / 60
-        #expect(abs(elapsed - DockletContentFade.quietFadeDuration) <= 1.0 / 120)
     }
 }

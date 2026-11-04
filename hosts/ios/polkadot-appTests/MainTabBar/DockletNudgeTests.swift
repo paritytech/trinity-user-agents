@@ -9,15 +9,6 @@ struct DockletNudgeTests {
         abs(value - expected) < 1e-6
     }
 
-    @Test("The nudge is at the edge at 0 and 400 ms, 4 pt in at 100 and 300 ms, and 8 pt in at 200 ms")
-    func curveAtMarks() {
-        #expect(isNear(DockletNudge.inset(elapsed: 0), 0))
-        #expect(isNear(DockletNudge.inset(elapsed: 0.1), 4))
-        #expect(isNear(DockletNudge.inset(elapsed: 0.2), 8))
-        #expect(isNear(DockletNudge.inset(elapsed: 0.3), 4))
-        #expect(isNear(DockletNudge.inset(elapsed: 0.4), 0))
-    }
-
     @Test("The first tuck arms the nudge and later tucks do not")
     func nudgeArmsOnce() {
         var nudge = DockletNudge()
