@@ -1837,9 +1837,11 @@ CLI commands wait for the chain to sync before their first request, since
 smoldot sends nothing until then and the 30-second limit above would fail it.
 The wait fails if the chain or its relay stalls.
 
-The light client drops PGAS claims on Asset Hub, whose nodes return an
-incomplete proof for the check smoldot runs before broadcasting.
-`pgas-check --submit` refuses to run on it.
+The light client drops PGAS claims on Asset Hub. Before broadcasting, smoldot
+validates the claim, which checks that the PGAS asset exists. Asset Hub's nodes
+prove that with the asset's trie entry, which holds only the hash of its value,
+but smoldot reads the whole value for the check and refuses the proof.
+`pgas-check --submit` refuses to run on the light client.
 
 A statement submitted through the light client is accepted once a gossip peer
 receives it. smoldot checks only that it decodes, has not expired, fits the size

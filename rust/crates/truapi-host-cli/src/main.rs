@@ -771,7 +771,7 @@ async fn run_pgas_check(
 	if submit && network.chain_backend == chain::ChainBackend::LightClient {
 		bail!(
 			"--submit needs --chain-backend rpc: the light client drops a PGAS claim, because \
-			 the proof Asset Hub's nodes return for its validation is missing entries"
+			 smoldot refuses the proof Asset Hub's nodes return for its validation"
 		);
 	}
 	let entropy = bip39::Mnemonic::parse(mnemonic.trim())
@@ -4548,7 +4548,7 @@ mod cli_tests {
 		assert_eq!(
 			error.to_string(),
 			"--submit needs --chain-backend rpc: the light client drops a PGAS claim, because \
-			 the proof Asset Hub's nodes return for its validation is missing entries"
+			 smoldot refuses the proof Asset Hub's nodes return for its validation"
 		);
 	}
 
