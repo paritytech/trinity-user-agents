@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.common.presentation.statusBar
 
-import android.webkit.WebView
 import androidx.compose.foundation.gestures.ScrollableState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -21,9 +20,6 @@ import javax.inject.Singleton
 private const val HIDE_AFTER_OFFSET_DP = 40f
 private const val HIDE_AFTER_SCROLL_DP = 16f
 private const val SHOW_AFTER_SCROLL_DP = 10f
-
-// At least the ID bar's height: a page that grows by the bar once content is under it must not clamp back to the top.
-private const val UNDER_BAR_AFTER_OFFSET_DP = 20f
 
 @Immutable
 data class StatusBarScrollState(
@@ -51,13 +47,13 @@ class StatusBarScrollHolder @Inject constructor() {
             offsetDp = (offsetDp + downwardDp).coerceAtLeast(0f)
             runDp = if (runDp * downwardDp > 0f) runDp + downwardDp else downwardDp
 
-            val current = state.value
+            val hidden = state.value.idBarHidden
             state.value = StatusBarScrollState(
                 idBarHidden = when {
-                    !current.idBarHidden -> offsetDp > HIDE_AFTER_OFFSET_DP && runDp >= HIDE_AFTER_SCROLL_DP
+                    !hidden -> offsetDp > HIDE_AFTER_OFFSET_DP && runDp >= HIDE_AFTER_SCROLL_DP
                     else -> -runDp < SHOW_AFTER_SCROLL_DP
                 },
-                contentUnderBar = current.contentUnderBar || offsetDp > UNDER_BAR_AFTER_OFFSET_DP,
+                contentUnderBar = true,
             )
         }
     }
@@ -92,21 +88,4 @@ fun Modifier.reportsScrollToStatusBar(state: ScrollableState): Modifier {
     }
 
     return nestedScroll(connection)
-}
-
-@Composable
-fun ReportsWebViewScrollToStatusBar(webView: WebView?) {
-    val holder = LocalStatusBarScroll.current
-    val density = LocalDensity.current.density
-
-    DisposableEffect(holder, webView) {
-        holder?.reset()
-        webView?.setOnScrollChangeListener { _, _, scrollY, _, oldScrollY ->
-            holder?.onScroll(downwardDp = (scrollY - oldScrollY) / density, atTop = scrollY == 0)
-        }
-        onDispose {
-            webView?.setOnScrollChangeListener(null)
-            holder?.reset()
-        }
-    }
 }

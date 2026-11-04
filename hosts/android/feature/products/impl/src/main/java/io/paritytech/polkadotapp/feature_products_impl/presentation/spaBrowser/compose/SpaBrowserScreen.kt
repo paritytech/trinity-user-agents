@@ -17,7 +17,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import io.paritytech.polkadotapp.common.presentation.statusBar.ReportsWebViewScrollToStatusBar
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
@@ -30,7 +29,6 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.ProductWebViewHost
-import io.paritytech.polkadotapp.feature_products_impl.presentation.compose.idBarInsetsPadding
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserPageState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserViewModel
@@ -45,8 +43,6 @@ fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
     BackHandler {
         viewModel.onBackPressed()
     }
-
-    ReportsWebViewScrollToStatusBar(webView)
 
     SpaBrowserScreenInternal(
         state = state,
@@ -65,7 +61,7 @@ internal fun SpaBrowserScreenInternal(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .idBarInsetsPadding(WindowInsets.safeDrawing)
+                .safeDrawingPadding()
         ) {
             DotNsLoadProgressBar(progress = state.loadProgress)
             PolkadotSurface(
