@@ -323,7 +323,10 @@ const secondProvider = await runtime.createProvider({
 ```
 
 `@parity/truapi-host/web` also exports `createIframeHost` for the
-protocol-iframe MessageChannel handshake. Host code creates one worker runtime
+protocol-iframe MessageChannel handshake. A product that navigates its whole document
+connects again: `onPort` is called with a fresh port once the new document
+sends a frame, and the function `onPort` returned for the previous port runs
+then. Host code creates one worker runtime
 and then opens one provider per product ID. `runtime.parseProductId(input)` validates and normalizes through the already loaded Rust worker. It returns the same `ProductId` branded string exported by `@parity/truapi`, so IDs remain ordinary strings in memory and across worker messages.
 
 ## Session lifecycle

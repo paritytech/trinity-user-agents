@@ -371,7 +371,6 @@ export async function startTestHost(
   // The two topologies expose the core differently -- a worker hands back a
   // wire provider, the main thread hands back a product core -- so each is
   // normalised to the same "pipe this port" step.
-  let detach: (() => void) | undefined;
   // Set when the product connects, by whichever topology is running.
   let publishChatAction: ((action: unknown) => Promise<void>) | undefined;
   // Before the iframe exists, so a product that reads its storage once at
@@ -396,12 +395,20 @@ export async function startTestHost(
   const iframeHost = createIframeHost({
     iframeUrl: options.productUrl,
     container: options.container,
+    // Called again when the product navigates its whole document. The new
+    // document gets a core of its own, and the old one's is torn down.
     onPort(port) {
+      let retired = false;
+      let detach: (() => void) | undefined;
       void (async () => {
         if (workerRuntime) {
           const provider = await workerRuntime.createProvider({
             productId: hostProduct,
           });
+          if (retired) {
+            provider.dispose();
+            return;
+          }
           const unsubscribe = provider.subscribe((frame) => {
             port.postMessage(frame);
           });
@@ -409,12 +416,13 @@ export async function startTestHost(
             const frame = event.data;
             if (frame instanceof Uint8Array) provider.postMessage(frame);
           };
-          publishChatAction = provider.publishChatAction
-            ? (action) => provider.publishChatAction!(action)
+          const publish = provider.publishChatAction
+            ? (action: unknown) => provider.publishChatAction!(action)
             : undefined;
+          publishChatAction = publish;
           detach = () => {
             unsubscribe();
-            publishChatAction = undefined;
+            if (publishChatAction === publish) publishChatAction = undefined;
             provider.dispose();
           };
         } else {
@@ -432,8 +440,8 @@ export async function startTestHost(
           };
           // The direct core takes bytes, so the value is encoded here rather
           // than inside the provider.
-          publishChatAction = core.publishChatAction
-            ? async (action) => {
+          const publish = core.publishChatAction
+            ? async (action: unknown) => {
                 const { HostChatActionSubscribeItem } =
                   await import("@parity/truapi");
                 core.publishChatAction!(
@@ -441,13 +449,18 @@ export async function startTestHost(
                 );
               }
             : undefined;
+          publishChatAction = publish;
           detach = () => {
-            publishChatAction = undefined;
+            if (publishChatAction === publish) publishChatAction = undefined;
             core.dispose();
           };
         }
         port.start();
       })();
+      return () => {
+        retired = true;
+        detach?.();
+      };
     },
   });
 
@@ -534,7 +547,6 @@ export async function startTestHost(
     iframe: iframeHost.iframe,
     dispose() {
       unpublish();
-      detach?.();
       iframeHost.dispose();
       worker?.terminate();
       host.dispose();
