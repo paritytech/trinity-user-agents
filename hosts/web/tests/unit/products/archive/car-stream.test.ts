@@ -12,10 +12,14 @@ import {
   ARCHIVE_LIMITS,
   type ArchiveLimits,
   carBlocks,
+  carCounts,
+  carSkip,
   gatewayBlocks,
   loadArchive,
   loadSite,
+  rawCounts,
 } from "../../../../src/products/archive/gateway.js";
+import { transportOf } from "../../../../src/products/load-observer.js";
 
 const CAR_TYPE = "application/vnd.ipld.car; version=1; order=dfs; dups=n";
 
@@ -131,6 +135,27 @@ function reader(
     gatewayBlocks("https://gateway.test", limits, fetchFn),
     fetchFn,
   );
+}
+
+/** As {@link reader}, with what the stream and the block reads did counted. */
+function countedReader(
+  root: Cid,
+  fetchFn: (url: string, init?: RequestInit) => Promise<Response>,
+  limits: ArchiveLimits = ARCHIVE_LIMITS,
+) {
+  const raw = rawCounts();
+  const car = carCounts();
+  const getBlock = carBlocks(
+    root,
+    "https://gateway.test",
+    limits,
+    gatewayBlocks("https://gateway.test", limits, fetchFn, raw),
+    fetchFn,
+    car,
+  );
+  const transport = () =>
+    transportOf({ outcome: "fetched", totalMs: 0, raw, car });
+  return { getBlock, raw, car, transport };
 }
 
 const sorted = (keys: string[]) => [...keys].sort();
@@ -411,6 +436,198 @@ describe("reading content from one CAR stream", () => {
     await after(5);
     expect(gateway.cars[0].aborted).toBe(true);
     expect(gateway.raw).toEqual([]);
+  });
+});
+
+describe("counting what a load did", () => {
+  test("counts a load the stream answered alone as CAR", async () => {
+    const { blocks, root, bytes } = site();
+    const gateway = fakeGateway(blocks, bytes);
+    const counted = countedReader(root, gateway.fetchFn);
+    await loadSite(cidToString(root), counted.getBlock);
+    expect(counted.car).toMatchObject({
+      requested: true,
+      status: 200,
+      bytes: bytes.length,
+      blocks: blocks.all.size,
+      end: "complete",
+      hedged: false,
+      fromCar: blocks.all.size,
+      fallback: 0,
+    });
+    expect(counted.car.firstByteMs).toBeGreaterThanOrEqual(0);
+    expect(counted.car.ms).toBeGreaterThanOrEqual(counted.car.firstByteMs!);
+    expect(counted.raw).toEqual(rawCounts());
+    expect(counted.transport()).toBe("car");
+  });
+
+  test("counts the reads the hedge sent block by block as CAR+raw, while the stream still runs", async () => {
+    const { blocks, root, bytes } = site();
+    // As above: the root's read stops waiting at 20 ms and is fetched alone;
+    // the stream brings every block at 100 ms.
+    const gateway = fakeGateway(
+      blocks,
+      bytes,
+      { startMs: 100, chunk: bytes.length, hang: true },
+      200,
+    );
+    const counted = countedReader(root, gateway.fetchFn, {
+      ...ARCHIVE_LIMITS,
+      carHedgeMs: 20,
+    });
+    const load = new AbortController();
+    await loadSite(
+      cidToString(root),
+      counted.getBlock,
+      ARCHIVE_LIMITS,
+      load.signal,
+    );
+    // The root arrived both ways: the stream brought every block, and the
+    // root's read had fetched it alone too.
+    expect(counted.car).toMatchObject({
+      hedged: true,
+      blocks: blocks.all.size,
+      fromCar: blocks.all.size - 1,
+      fallback: 1,
+    });
+    expect(counted.car.end).toBeUndefined();
+    expect(counted.raw).toEqual({
+      ...rawCounts(),
+      requests: 1,
+      blocks: 1,
+      bytes: blocks.all.get(cidKey(root))!.data.length,
+    });
+    expect(counted.transport()).toBe("car+raw");
+    load.abort();
+  });
+
+  test("counts a refused stream and a load read block by block as raw", async () => {
+    const { blocks, root, bytes } = site();
+    const gateway = fakeGateway(blocks, bytes, { status: 404 });
+    const counted = countedReader(root, gateway.fetchFn);
+    await loadSite(cidToString(root), counted.getBlock);
+    expect(counted.car).toMatchObject({
+      requested: true,
+      status: 404,
+      end: "refused",
+      bytes: 0,
+      blocks: 0,
+      fromCar: 0,
+      fallback: blocks.all.size,
+    });
+    expect(counted.car.reason).toContain("404");
+    expect(counted.raw).toMatchObject({
+      requests: blocks.all.size,
+      blocks: blocks.all.size,
+      retries: 0,
+    });
+    expect(counted.transport()).toBe("raw");
+  });
+
+  test("says why a stream ended early", async () => {
+    const { blocks, root, bytes } = site();
+    const tampered = bytes.slice();
+    tampered[sectionEnd(root, blocks, 4) - 1] ^= 1;
+    const forged = countedReader(root, fakeGateway(blocks, tampered).fetchFn);
+    await loadSite(cidToString(root), forged.getBlock);
+    expect(forged.car.end).toBe("failed");
+    expect(forged.car.reason).toContain("does not match");
+
+    const stalled = countedReader(
+      root,
+      fakeGateway(blocks, bytes, {
+        cut: sectionEnd(root, blocks, 2),
+        hang: true,
+      }).fetchFn,
+      {
+        ...ARCHIVE_LIMITS,
+        carWindowMs: 30,
+        carWindowBytes: 1,
+        carHedgeMs: 60_000,
+      },
+    );
+    await loadSite(cidToString(root), stalled.getBlock);
+    expect(stalled.car.end).toBe("slow");
+    expect(stalled.car.reason).toBeUndefined();
+
+    const cancelled = countedReader(
+      root,
+      fakeGateway(blocks, bytes, {
+        cut: sectionEnd(root, blocks, 2) + 1,
+        hang: true,
+      }).fetchFn,
+    );
+    const controller = new AbortController();
+    const loading = loadSite(
+      cidToString(root),
+      cancelled.getBlock,
+      ARCHIVE_LIMITS,
+      controller.signal,
+    );
+    await after(20);
+    controller.abort();
+    await expect(loading).rejects.toThrow("cancelled");
+    await after(5);
+    expect(cancelled.car.end).toBe("cancelled");
+  });
+
+  test("keeps what a failed load counted", async () => {
+    const { blocks, root, bytes } = site();
+    const missing = order(blocks)[2];
+    const gateway = fakeGateway(blocks, bytes, { status: 404 });
+    const counted = countedReader(root, async (url, init) => {
+      const key = new URL(url).pathname.slice("/ipfs/".length);
+      if (cidKey(parseCidString(key)) === missing)
+        return new Response("", { status: 404 });
+      return gateway.fetchFn(url, init);
+    });
+    await expect(loadSite(cidToString(root), counted.getBlock)).rejects.toThrow(
+      "404",
+    );
+    expect(counted.car.end).toBe("refused");
+    expect(counted.raw.requests).toBeGreaterThan(0);
+    expect(counted.raw.blocks).toBeLessThan(blocks.all.size);
+  });
+});
+
+describe("whether a load asks for a CAR stream", () => {
+  // The host's own origin is a static server: a CAR request there gets a raw
+  // block back and is refused, one wasted request per load.
+  test("asks a gateway, never the host's own origin, and nothing when it is off", () => {
+    const origin = "https://host.test";
+    expect([
+      carSkip("https://gateway.test", origin),
+      carSkip(origin, origin),
+      carSkip("https://gateway.test", origin, false),
+    ]).toEqual([null, "host-origin", "off"]);
+  });
+});
+
+describe("counting block-by-block reads", () => {
+  test("counts a retry, a read that joins an open request, and one kept in memory", async () => {
+    const { blocks, root } = site();
+    let calls = 0;
+    const counts = rawCounts();
+    const getBlock = gatewayBlocks(
+      "https://gateway.test",
+      ARCHIVE_LIMITS,
+      async () => {
+        calls += 1;
+        if (calls === 1) return new Response("", { status: 502 });
+        return new Response(blocks.all.get(cidKey(root))!.data as BodyInit);
+      },
+      counts,
+    );
+    await Promise.all([getBlock(root), getBlock(root)]);
+    await getBlock(root);
+    expect(counts).toEqual({
+      requests: 2,
+      blocks: 1,
+      bytes: blocks.all.get(cidKey(root))!.data.length,
+      retries: 1,
+      cacheHits: 1,
+      joined: 1,
+    });
   });
 });
 

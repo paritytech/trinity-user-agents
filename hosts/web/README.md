@@ -172,6 +172,16 @@ IPFS gateway and checked, and it is served from a path of this host. The product
    unpacks the site in memory and stores the files in Cache Storage under the content id. Then it moves the frame to the
    start path inside the mount. The worker serves the files as they are, with their type and no sniffing.
 
+While it works, the loader posts `{type: "truapi-sandbox", state, detail}` status lines to the host page. Once per load,
+just before it moves the frame on or when it gives up, it also posts `{type: "truapi-sandbox-load", summary}`
+(`src/products/load-observer.ts`) for the inspector's [Products](#developer-tools) view: the outcome (fetched, cached or
+failed, with the error), its times (service worker start, fetch, verify and unpack or the wait on blocks, store, total),
+the files' count, bytes and largest file, and what the CAR stream and the block-by-block reads did. It holds metadata
+only, never block bytes, and goes to this origin only. The host reads it field by field within bounds, puts it down to
+the frame that posted it, never to a name inside it, and keeps the first one per frame: the product the frame then runs
+is on the same origin and could post one too. The marker that completes an archive's cache holds the files' count, bytes
+and largest file, so a load from the verified copy can say what it holds without reading it.
+
 **How the loader fetches blocks.** It first asks for the whole DAG under the record's CID as one CAR stream,
 `?format=car` with `Accept: application/vnd.ipld.car`, and checks every block against its CID as it arrives. (The iOS
 app asks for a CAR with the same header. The Android app uses `?format=car` for a website's directory but reads an app
@@ -188,7 +198,9 @@ asked for again, and a block it brought is not fetched again. The stream holds a
 limit; a website with more gets the rest block by block. The site is assembled in order whichever way its blocks came.
 The stream is tried for every load, whatever its size: the loader knows no size before the first block, and the gateway
 does not let a page read whether the CAR is cached. `FETCH_CAR` in `src/products/archive/gateway.ts` turns the stream
-off.
+off. A load whose blocks come from this host's own origin, such as Contact Chat's worker archive, does not ask for the
+stream and reads block by block: a static server there has no CAR to send, and the Products view says the stream was not
+tried.
 
 The mount path holds a hash of the wallet id, a readable form of the product id with its hash, and the content id. A
 different wallet, product or content is a different mount, with its own worker. The same wallet opening the same content
@@ -1016,7 +1028,8 @@ it are five tabs:
 - **Product:** Open a product (a name or URL, recent products, and the product id folded under them), Open now (its
   state, Close, Reset its data, What it may use, Details), and Workers.
 - **Preview:** the app's size and its frame, described below.
-- **Inspector:** the Activity view, the TrUAPI traces, the Workers view, the Statements view and the Chat view.
+- **Inspector:** the Activity view, the TrUAPI traces, the Workers view, the Statements view, the Chat view and the
+  Products view.
 - **More:** Versions, and the dev server's own controls (the invitation demo, Contact Chat delivery, the reply key for
   new requests and sample Inbox items).
 
@@ -1258,6 +1271,26 @@ does not. An account no one recorded opens with nothing in this session. A link 
 and moves the focus to what it opened. An open **why** stays open as the views draw again. A stopped worker's card is
 marked stale; with no report the tab says so.
 
+**Products.** The inspector's **Products** tab (`tools/products/`) has one row per mounted load, newest first: a product
+opened by name, a Pocket card's widget, and each product worker, Contact Chat's among them, marked **served by this
+host**. A name whose blocks are read from this host's origin is marked **seed (host origin)**. A row shows the files'
+size and count, the blocks that arrived (by the CAR stream and block by block together, so a block that came both ways
+after the hedge counts twice), the load's time, the transport (CAR, CAR+raw, raw or cache, with `· host` or `· seed`
+when the blocks were read from this host's origin, a shipped seed or the Contact Chat worker) and the outcome. The
+loader asks the host origin for no CAR stream, so such a load reads block by block and its stream shows as not tried
+(host origin). Where the blocks come from (`gateway`, `host` or `seed`) is the host's fact, set when it opens the mount.
+Opening a row shows where it came from, from the host: the DotNS record that answered (`app.<name>` or `<name>`), the
+content id, whether it is an archive or a site, the gateway and the time the lookup and content check took. Under it is
+what the loader counted: the phases, the files and the largest, the CAR stream's status, first byte, bytes, blocks, how
+long it ran, how it ended, whether the hedge fired and how many reads it answered, and the block-by-block requests,
+retries and reuse. Each fact is tagged host, loader or derived, and **About this data**, closed, says what the numbers
+do not. It reads nothing from logs. A load whose frame closes before its loader reports shows as closed, and one whose
+frame never opened as failed, with the error. Each load has its own id, so a report from an earlier frame of the same
+mount never lands on a later one. It holds at most 50 loads, in memory, and opening the same mount again replaces its
+row. A new session drops the loads whose frames are closed; a frame still open keeps its row until it closes, since the
+host reopens the product in front around a session change and restores its last product at boot in no fixed order with
+the session's start.
+
 **Versions.** The menu shows client, host and core, provider and debugger versions, read from the linked packages and
 the loaded `testing` bundle. A warning appears only when the core's wire schema differs from the client's. **Technical
 details** holds the SHA-256 of the served `.wasm` files, the wire schema, and the source commit with whether the tree
@@ -1388,6 +1421,11 @@ CI runs `npm run typecheck` and `npm test` in the `host-web` job of `.github/wor
 packages this host links. It does not run `npm run build` or `npm run test:browser`, which need the signing core's WASM
 bundle: run them by hand when the host or the core changes. These are best-effort gates for a development tool: they
 catch a broken host, not a hostile product.
+
+The loader's load summary has unit tests for its counts (a load the CAR stream answered alone, one the hedge finished
+block by block, one read block by block only, one that failed), the cache marker's counts, the summary's bounds, and a
+summary heard only from its own frame, once. `browser/build.spec.ts` checks that the built loader posts it and that the
+built host's Products view shows Contact Chat's load.
 
 `npm run test:browser` is a headless-Chrome smoke test of the host page. It needs the linked packages and both WASM
 bundles built (see [Run it](#run-it)) and a Chromium: install one with `npx playwright-core install chromium`, or set
@@ -1561,22 +1599,27 @@ apart, lists a contact once, does not look up text that cannot be a username, gi
 found, the same each time and without making them a contact, and never asks the username index; and with no session the
 core refuses the pick with NotConnected and no picker is drawn.
 
-Four narrower browser tests use no wallet, or only a public test phrase offline. `browser/inspector-dock.spec.ts` loads
+Five narrower browser tests use no wallet, or only a public test phrase offline. `browser/inspector-dock.spec.ts` loads
 the host page with every request outside loopback refused, and checks that on a wide window the developer tools open on
 the right by default and move to the bottom across the window, the Phone-sized app keeping its size and its device
-frame; that the inspector's five views, Activity, TrUAPI, Workers, Statements and Chat, fill the tools one at a time and
-the arrow keys move between them, that their top edge sets their height at the bottom, that on the right their left edge
-sets their width by drag and keys within its bounds, apart from the height, kept after a reload and without reloading
-the product, and that the side is kept after a reload; that Focus gives the app the whole window and brings the tools
-back at the same view; that the side switch is a segmented control of two 36 × 26 px pills, each inside its track, and
-Hide a 28 px circle, icons centred, on either side, in either colour scheme and on hover and focus; that a narrow window
-keeps them a sheet over the app; and that the Pill opens the search card with focus in the field, shows why an address
-cannot open, and on `Escape` closes and gives focus back. `browser/workers-inspector.spec.ts` runs two synthetic workers
-through the loader, offline, and checks that the Workers view shows their state, the first line and the bounded,
-circular, binary, error, rejection and flood lines, that the worker's own console and code are unchanged, that a line is
-put down to the frame that sent it, the filters and Copy, that Traces narrows the TrUAPI view to the worker, that
-Restart keeps the earlier run's lines labelled, and that a removed worker, signing out and another wallet leave none of
-it. `browser/activity-log.spec.ts` mounts the Activity view alone on made-up events and checks the rows and their
+frame; that the inspector's six views, Activity, TrUAPI, Workers, Statements, Chat and Products, fill the tools one at a
+time and the arrow keys move between them, that their top edge sets their height at the bottom, that on the right their
+left edge sets their width by drag and keys within its bounds, apart from the height, kept after a reload and without
+reloading the product, and that the side is kept after a reload; that Focus gives the app the whole window and brings
+the tools back at the same view; that the side switch is a segmented control of two 36 × 26 px pills, each inside its
+track, and Hide a 28 px circle, icons centred, on either side, in either colour scheme and on hover and focus; that a
+narrow window keeps them a sheet over the app; and that the Pill opens the search card with focus in the field, shows
+why an address cannot open, and on `Escape` closes and gives focus back. `browser/workers-inspector.spec.ts` runs two
+synthetic workers through the loader, offline, and checks that the Workers view shows their state, the first line and
+the bounded, circular, binary, error, rejection and flood lines, that the worker's own console and code are unchanged,
+that a line is put down to the frame that sent it, the filters and Copy, that Traces narrows the TrUAPI view to the
+worker, that Restart keeps the earlier run's lines labelled, and that a removed worker, signing out and another wallet
+leave none of it. `browser/products-inspector.spec.ts` opens a synthetic product by a made-up name, offline, with
+Contact Chat running, and checks that the Products view shows the product's real size, file count, blocks, CAR transport
+and fetched outcome, its record, content id, ended stream and largest file; that a summary the product posts after it
+starts does not replace the loader's; that Contact Chat's row is marked served by this host; that opening it again shows
+the verified copy, with nothing fetched and the same files; and that on a phone the rows fit and the view tabs scroll to
+Products. `browser/activity-log.spec.ts` mounts the Activity view alone on made-up events and checks the rows and their
 keyboard details, focus kept as events arrive, the filters, search and empty states, pause and the event limit, copy,
 clear, and that a URL's credentials do not show. `browser/statements-inspector.spec.ts` mounts the Statements and Chat
 views over one ledger, fed through the real connection observer with a synthetic Alice and Bob chat: a claim, request
@@ -1656,8 +1699,9 @@ nothing else of it.
   (`username-directory.ts`, `username-search.ts`) and the Docklet's people (`search-people.ts`).
 - `src/products/`: embedding a product and relaying its frames (`product.ts`, `tap.ts`), product workers
   (`worker-manifest.ts`, `product-workers.ts`, `workers-menu.ts`), a worker's console lines (`worker-console.ts`) and
-  diagnostics reports (`diagnostics.ts`, draft), name lookup (`dotns.ts`), preimage lookups (`preimage.ts`), the stage's
-  loading and status lines (`loading.ts`, `status.ts`) and the cards a worker draws (`render.ts`).
+  diagnostics reports (`diagnostics.ts`, draft), what each mounted load resolved and its loader counted, for the
+  Products view (`load-observer.ts`), name lookup (`dotns.ts`), preimage lookups (`preimage.ts`), the stage's loading
+  and status lines (`loading.ts`, `status.ts`) and the cards a worker draws (`render.ts`).
   - `archive/`: CAR, UnixFS and CID verification and unpacking.
   - `loader/`, with `sandbox-plugin.ts`: the loader, the service worker, the mount paths, the archive cache, and a
     worker's console capture (`console.ts`, `describe.ts`). The plugin bundles them as static files, which the build
@@ -1672,11 +1716,12 @@ nothing else of it.
 - `tools/`: the developer tools. `mount.ts` mounts the inspector and the Preview tab (`viewport.ts`, `dock-resize.ts`).
   `activity/` is the inspector's Activity view: the bounded event list, its filters and its view. `workers/` is the
   inspector's Workers view and the workers' console lines it keeps. `chat/` is the inspector's Chat view, over the same
-  ledger. `statements/` is the inspector's Statements view: the bounded ledger (`ledger.ts`), what it reads of
-  statements and answers (`decode.ts`), topics by role (`topics.ts`), the grant read (`actions.ts`), the evidence it
-  copies (`evidence.ts`), the pieces both views draw with (`ui.ts`) and the view. `inspector/frame-tap.ts` feeds TrUAPI
-  frames to the debugger. The developer tools ship in every build. `demos/` holds the dev server's controls, which a
-  build leaves out: the Developer section, the local chat products' routes, and Contact Chat's host side.
+  ledger. `products/` is the inspector's Products view and the bounded log of loads it draws (`log.ts`). `statements/`
+  is the inspector's Statements view: the bounded ledger (`ledger.ts`), what it reads of statements and answers
+  (`decode.ts`), topics by role (`topics.ts`), the grant read (`actions.ts`), the evidence it copies (`evidence.ts`),
+  the pieces both views draw with (`ui.ts`) and the view. `inspector/frame-tap.ts` feeds TrUAPI frames to the debugger.
+  The developer tools ship in every build. `demos/` holds the dev server's controls, which a build leaves out: the
+  Developer section, the local chat products' routes, and Contact Chat's host side.
 - `fixtures/`: synthetic data that only tests and the dev server use. `products/`: product and worker entries, the
   synthetic chat product, a worker that only reports diagnostics (`diagnostics-worker.ts`), and Contact Chat
   (`contact-chat/`: `worker.ts` the entry, `engine.ts` its conversations, `protocol.ts` the seam to its chat protocol

@@ -29,6 +29,11 @@ import {
   requireSecureHost,
 } from "../products/loader/mount.js";
 import { openProduct, type OpenProduct } from "../products/product.js";
+import {
+  openingEvent,
+  type ProductLoadObserver,
+  type ProductLoadSummary,
+} from "../products/load-observer.js";
 import { notOpenableText, type Opened } from "../products/status.js";
 import type { FrameTap } from "../products/tap.js";
 import type { ActivityDetail, ActivitySink } from "../platform/activity.js";
@@ -56,6 +61,8 @@ interface Held {
 /** Where a navigation ends up and how it got there. */
 interface Target extends Opened {
   url: URL;
+  /** How long the DotNS lookup and content check took, when this open made them. */
+  resolveMs?: number;
 }
 
 /** A product this tab opened itself, kept so a reload brings it back. */
@@ -98,6 +105,8 @@ export interface NavigationDeps {
     entered: boolean;
   }): void;
   activity: ActivitySink;
+  /** Told what each mounted load resolved and what its loader reported. */
+  loads?: ProductLoadObserver;
 }
 
 /** Where an app that belongs to no destination is held. */
@@ -678,6 +687,7 @@ export class ProductNavigation {
     requireSecureHost(window.isSecureContext, window.location.origin);
     this.deps.statusLine.textContent = `Resolving ${address.name} on ${network.displayName} Asset Hub…`;
     let choice: Awaited<ReturnType<typeof resolveSource>>;
+    const resolveStart = performance.now();
     try {
       choice = await resolveSource(address.name, network);
     } catch (error) {
@@ -702,6 +712,7 @@ export class ProductNavigation {
       mount: scope,
       record: source.record,
       skipped,
+      resolveMs: performance.now() - resolveStart,
       url: loaderUrl({
         base: this.deps.base,
         origin: window.location.origin,
@@ -733,6 +744,11 @@ export class ProductNavigation {
     // A product sent behind the dock while it loads must not write to the screen.
     let handle: OpenProduct | null = null;
     const inFront = (): boolean => handle === null || handle === this.front;
+    const opening =
+      this.deps.loads === undefined
+        ? null
+        : openingEvent(target, executionKind, window.location.origin);
+    if (opening !== null) this.deps.loads?.(opening);
     try {
       handle = this.front = await openProduct(
         runtime,
@@ -750,6 +766,23 @@ export class ProductNavigation {
             this.sandbox = "";
             this.deps.render();
           },
+          ...(opening === null
+            ? {}
+            : {
+                onLoadSummary: (summary: ProductLoadSummary) =>
+                  this.deps.loads?.({
+                    type: "loaded",
+                    load: opening.load,
+                    mount: opening.mount,
+                    summary,
+                  }),
+                onClose: () =>
+                  this.deps.loads?.({
+                    type: "closed",
+                    load: opening.load,
+                    mount: opening.mount,
+                  }),
+              }),
           onSandboxStatus: (state, detail) => {
             if (state === "error") {
               this.deps.loading.finish(op);
@@ -811,6 +844,13 @@ export class ProductNavigation {
       });
     } catch (error) {
       this.deps.loading.finish(op);
+      if (opening !== null && handle === null)
+        this.deps.loads?.({
+          type: "closed",
+          load: opening.load,
+          mount: opening.mount,
+          reason: errorText(error),
+        });
       this.report(
         `Could not open ${target.url.href} as ${productId}: ${errorText(error)}`,
         target.via === "name" ? target.address : productId,
@@ -836,6 +876,7 @@ export class ProductNavigation {
     return this.deps.serial(async (runtime) => {
       status.textContent = `Looking up ${key.productId}'s widget…`;
       let widget: Awaited<ReturnType<typeof resolveWidget>>;
+      const resolveStart = performance.now();
       try {
         requireSecureHost(window.isSecureContext, window.location.origin);
         widget = await resolveWidget(key.productId, network);
@@ -883,6 +924,7 @@ export class ProductNavigation {
           mount: scope,
           record: widget.record,
           skipped: [],
+          resolveMs: performance.now() - resolveStart,
           url: loaderUrl({
             base: this.deps.base,
             origin: window.location.origin,

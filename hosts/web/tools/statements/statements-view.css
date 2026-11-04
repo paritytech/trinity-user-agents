@@ -216,6 +216,10 @@
   color: #f9a8d4;
 }
 
+.si-src[data-source="loader"] {
+  color: #fdba74;
+}
+
 .si-card,
 .si-detail {
   margin: 0 0 10px;

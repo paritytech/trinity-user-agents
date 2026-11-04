@@ -9,6 +9,8 @@ import type { PeopleAccess } from "./statements/actions.js";
 import type { StatementLedger } from "./statements/ledger.js";
 import { mountStatementsView } from "./statements/view.js";
 import { mountChatView } from "./chat/view.js";
+import type { ProductLoadLog } from "./products/log.js";
+import { mountProductsView } from "./products/view.js";
 import { bindViewport } from "./viewport.js";
 import type { WorkerConsoleLog } from "./workers/console-log.js";
 import { mountWorkersView, type WorkerSource } from "./workers/view.js";
@@ -29,6 +31,8 @@ export interface ToolsPage {
   people(): PeopleAccess | null;
   /** The network's id, for the Statements view's evidence. */
   network(): string;
+  /** What the Products view draws. */
+  productLoads: ProductLoadLog;
 }
 
 /** The developer tools mounted in the page. */
@@ -37,7 +41,7 @@ export interface Tools {
   tap(productId: string, coreWireSchemaHash: string | undefined): FrameTap;
   /** Show `name`'s worker in the inspector's Workers view. */
   inspectWorker(name: string): void;
-  /** The signed-in session is `key` now: the Statements view starts again for a new one. */
+  /** The signed-in session is `key` now: the Statements and Products views start again for a new one. */
   statementsSession(key: string, label: string): void;
 }
 
@@ -50,13 +54,15 @@ const INSPECTOR_NOTES = {
   statements:
     "Statement Store traffic, claims and grants, in memory for this session.",
   chat: "Conversations product workers report about themselves.",
+  products:
+    "What the loader fetched, checked and stored for each product it loaded, in memory for this session.",
 } as const;
 
 type InspectorView = keyof typeof INSPECTOR_NOTES;
 
 /**
  * Mount the developer tools' inspector, with its Activity, TrUAPI, Workers,
- * Statements and Chat views, the dock's resize handle and the Preview tab's
+ * Statements, Chat and Products views, the dock's resize handle and the Preview tab's
  * sizes.
  */
 export function mountTools(page: ToolsPage): Tools {
@@ -121,6 +127,10 @@ export function mountTools(page: ToolsPage): Tools {
       workersView.select(name);
     },
   });
+  const productsView = mountProductsView(
+    element("products-inspector"),
+    page.productLoads,
+  );
   /** Show one of the inspector's views. */
   function showInspectorView(view: InspectorView): void {
     for (const button of inspectorViewButtons) {
@@ -133,6 +143,7 @@ export function mountTools(page: ToolsPage): Tools {
     workersView.show(view === "workers");
     statementsView.show(view === "statements");
     chatView.show(view === "chat");
+    productsView.show(view === "products");
     inspectorNote.textContent = INSPECTOR_NOTES[view];
   }
   function viewOf(button: HTMLButtonElement): InspectorView {
@@ -202,6 +213,7 @@ export function mountTools(page: ToolsPage): Tools {
     statementsSession(key, label) {
       if (page.statements.startSession(key, label))
         statementsView.sessionChanged();
+      page.productLoads.startSession(key);
     },
   };
 }

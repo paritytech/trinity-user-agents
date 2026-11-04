@@ -47,7 +47,12 @@ function serialLocks(): Locks {
   };
 }
 
-const files = () => new Map([["index.html", new Uint8Array([1])]]);
+const files = () =>
+  new Map([
+    ["index.html", new Uint8Array([1])],
+    ["app.js", new Uint8Array([1, 2, 3])],
+  ]);
+const STATS = { count: 2, bytes: 4, largest: { path: "app.js", bytes: 3 } };
 
 describe("storeArchive", () => {
   // Two tabs opening the same content, for two wallets, must not each fetch
@@ -66,7 +71,32 @@ describe("storeArchive", () => {
       storeArchive("bafy-a", ORIGIN, load, { caches, locks }),
     ]);
     expect(loads).toBe(1);
-    expect(results.map((result) => result.reused)).toEqual([false, true]);
+    // The tab that reuses the copy reads its counts from the marker, not the files.
+    expect(results.map(({ reused, files }) => ({ reused, files }))).toEqual([
+      { reused: false, files: STATS },
+      { reused: true, files: STATS },
+    ]);
+  });
+
+  test("reports no counts for a copy whose marker holds none", async () => {
+    const caches = fakeCaches();
+    const earlier = await caches.open(archiveCacheName("bafy-a"));
+    await earlier.put(`${ORIGIN}/__files/index.html`, new Response("x"));
+    await earlier.put(completeKey(ORIGIN), new Response(""));
+    let loads = 0;
+    const result = await storeArchive(
+      "bafy-a",
+      ORIGIN,
+      async () => {
+        loads += 1;
+        return files();
+      },
+      { caches, locks: serialLocks() },
+    );
+    expect({ loads, result }).toEqual({
+      loads: 0,
+      result: { reused: true, files: null },
+    });
   });
 
   test("keeps each content in a cache of its own", async () => {
@@ -96,7 +126,9 @@ describe("storeArchive", () => {
     });
     expect(result.reused).toBe(false);
     const stored = await caches.open(archiveCacheName("bafy-a"));
-    expect(await (await stored.match(completeKey(ORIGIN)))?.text()).toBe("");
+    expect(await (await stored.match(completeKey(ORIGIN)))?.json()).toEqual(
+      STATS,
+    );
   });
 
   test("leaves no complete marker when loading fails", async () => {

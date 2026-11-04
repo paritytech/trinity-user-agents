@@ -19,6 +19,7 @@ import {
   type ContactChatWorkerAnswer,
 } from "../src/chat/contact-chat/route.js";
 import { parseCidString, verifyBlock } from "../src/products/archive/cid.js";
+import { PRODUCT_LOAD } from "../src/products/load-observer.js";
 import {
   closeTools,
   freePort,
@@ -107,6 +108,11 @@ describe("the production build", () => {
         ),
       }).toEqual({ cid, verified: true });
 
+    // The loader reports each load to the Products view in a build too.
+    expect(
+      readFileSync(join(outDir, "truapi-sandbox/page.js"), "utf8"),
+    ).toContain(PRODUCT_LOAD);
+
     const text = builtText();
     for (const absent of [
       "invitation-demo",
@@ -155,6 +161,16 @@ describe("the production build", () => {
           "Contact Chat's requests go on the network's day inbox: each post claims a notification slot.",
         );
         await workerRunning(page);
+        // The Products view holds the loader's summary of Contact Chat's load.
+        await openTools(page, "inspector");
+        await page.click('[data-inspector-view="products"]');
+        await page
+          .locator(
+            '#products-inspector .pi-row[data-outcome="fetched"], #products-inspector .pi-row[data-outcome="cached"]',
+            { hasText: "served by this host" },
+          )
+          .waitFor();
+        await closeTools(page);
         await page.click('#dock [data-destination="chat"]');
         expect(await page.locator('[aria-label="New chat"]').count()).toBe(1);
         expect(

@@ -5,7 +5,10 @@ import type { FactSource } from "./ledger.js";
  * source tags, one-line facts and the "why" that opens to their detail.
  */
 
-export const SOURCE_TITLES: Record<FactSource | "derived", string> = {
+/** Where a fact came from: a ledger source, worked out here, or the product loader. */
+export type ToolSource = FactSource | "derived" | "loader";
+
+export const SOURCE_TITLES: Record<ToolSource, string> = {
   client:
     "This tab's light client: its answer, or a page of what peers sent it. Not a People node's store",
   core: "The core's answer to the host",
@@ -15,6 +18,8 @@ export const SOURCE_TITLES: Record<FactSource | "derived", string> = {
   inspector: "Seen by the inspector",
   derived:
     "Worked out here from what this tab saw and when: not what the network holds now",
+  loader:
+    "Counted by this host's product loader in the product's frame, before the product started",
 };
 
 export function el<K extends keyof HTMLElementTagNameMap>(
@@ -37,7 +42,7 @@ export function button(className: string, text: string, title: string) {
 }
 
 /** A source tag: where the fact beside it came from. */
-export function tag(source: FactSource | "derived"): HTMLElement {
+export function tag(source: ToolSource): HTMLElement {
   const node = el(
     "span",
     "si-src",
@@ -66,7 +71,7 @@ export function bytes(count: number): string {
 export function fact(
   label: string,
   value: string | Node,
-  source: FactSource | "derived",
+  source: ToolSource,
   note?: string,
 ): HTMLElement[] {
   const dt = el("dt", undefined, label);

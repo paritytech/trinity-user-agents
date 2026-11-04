@@ -10,6 +10,11 @@ import { WORKER_SHELL, archivePath, contentTypeOf } from "./loader/serve.js";
 import type { ResolvedWorker, WorkerManifest } from "./worker-manifest.js";
 import type { WorkerConsoleEntry } from "./worker-console.js";
 import type { DiagnosticsReport } from "./diagnostics.js";
+import {
+  nextLoadId,
+  type ProductLoadObserver,
+  type ProductLoadSummary,
+} from "./load-observer.js";
 
 /**
  * The product workers the user added, run while their wallet is signed in.
@@ -127,6 +132,8 @@ export interface ProductWorkersDeps {
     worker: { name: string; run: number },
     report: DiagnosticsReport | null,
   ): void;
+  /** Told what each worker's load resolved and what its loader reported. */
+  loads?: ProductLoadObserver;
 }
 
 interface Running {
@@ -405,8 +412,13 @@ export class ProductWorkers {
     const current = () =>
       this.workers.get(name) === running &&
       running.generation === this.generation;
+    const loads = this.deps.loads;
+    /** This run's load, once the host reported opening it, until its frame exists. */
+    let unframed: { load: number; mount: string } | null = null;
     try {
+      const resolveStart = performance.now();
       const worker = await this.deps.resolve(name, session.network);
+      const resolveMs = performance.now() - resolveStart;
       if (!current()) return;
       running.refusals = this.refusals(name, worker.record, worker.manifest);
       const wanted = this.wanted(name);
@@ -420,11 +432,27 @@ export class ProductWorkers {
         cid: worker.cid,
         network: session.network.id,
       });
+      const gateway = worker.gateway ?? session.network.dotns.contentGateway;
+      const load = nextLoadId();
+      if (loads !== undefined) unframed = { load, mount: scope };
+      loads?.({
+        type: "opening",
+        load,
+        mount: scope,
+        product: name,
+        execution: "Worker",
+        record: worker.record,
+        cid: worker.cid,
+        kind: worker.kind,
+        gateway,
+        source: worker.gateway === undefined ? "gateway" : "host",
+        resolveMs,
+      });
       const url = loaderUrl({
         base: this.deps.base,
         origin: window.location.origin,
         scope,
-        gateway: worker.gateway ?? session.network.dotns.contentGateway,
+        gateway,
         kind: worker.kind,
         start: `/${WORKER_SHELL}?entry=${encodeURIComponent(worker.manifest.entrypoint)}`,
         entry: worker.manifest.entrypoint,
@@ -472,6 +500,13 @@ export class ProductWorkers {
                   if (current()) this.diagnose(name, running.run, report);
                 },
               }),
+          ...(loads === undefined
+            ? {}
+            : {
+                onLoadSummary: (summary: ProductLoadSummary) =>
+                  loads({ type: "loaded", load, mount: scope, summary }),
+                onClose: () => loads({ type: "closed", load, mount: scope }),
+              }),
           onSandboxStatus: (state, detail) => {
             if (state === "error" && current()) {
               this.setState(running, { state: "failed", reason: detail });
@@ -481,6 +516,7 @@ export class ProductWorkers {
           },
         },
       );
+      unframed = null;
       if (!current()) {
         handle.dispose();
         return;
@@ -507,6 +543,8 @@ export class ProductWorkers {
         ],
       });
     } catch (error) {
+      if (unframed !== null)
+        loads?.({ type: "closed", ...unframed, reason: errorText(error) });
       if (!current()) return;
       running.refusals = new Map();
       this.setState(running, { state: "failed", reason: errorText(error) });
