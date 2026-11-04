@@ -14,7 +14,7 @@ use subxt::{
 use super::{failure, finalized_block};
 use crate::{
 	chain::{BlockBackend, DispatchOutcome, HashAndNumber},
-	chain_runtime::{ChainRuntime, LegacyConnection, RuntimeFailure},
+	chain_runtime::{ChainRuntime, LegacyConnection, RuntimeFailure, encode_hex},
 };
 
 const DISPATCH_OUTCOME: &str = "dispatch_outcome";
@@ -107,8 +107,8 @@ async fn extrinsic_phase(
 	Ok(Some(Phase::ApplyExtrinsic(index)))
 }
 
-/// `System.Events` of block `at`, with the metadata of the runtime that
-/// produced the block, which decodes them.
+/// `System.Events` of block `at`, and the metadata their fields decode
+/// against: that of the runtime that produced the block.
 async fn block_events(
 	legacy: &LegacyConnection,
 	at: HashAndNumber,
@@ -139,11 +139,11 @@ fn dispatch_event(
 			"ExtrinsicFailed" => {
 				// The event alone proves the failure, so an error that does not
 				// decode is reported as such instead of hiding the outcome.
-				let error = DispatchError::decode_from(event.field_bytes(), metadata.clone())
-					.map_or_else(
-						|error| format!("undecodable dispatch error: {error}"),
-						|error| error.to_string(),
-					);
+				let fields = event.field_bytes();
+				let error = DispatchError::decode_from(fields, metadata.clone()).map_or_else(
+					|error| format!("undecodable dispatch error {}: {error}", encode_hex(fields)),
+					|error| error.to_string(),
+				);
 				return Ok(Some(DispatchOutcome::Failed(error)));
 			},
 			_ => {},

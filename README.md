@@ -319,9 +319,11 @@ For writes, `dry_run` simulates as the signer and returns an opaque `PreparedEvm
 chain, contract, calldata and required limits. It signs and submits nothing. `PreparedEvmTransaction::execute_and_watch`
 consumes the request, then builds and signs with a fresh nonce and mortal era using the prepared limits. It completes
 only after a finalized block reports successful dispatch. An error that leaves the write possibly on chain carries the
-submitted extrinsic and its era: `NotFinalized` when the watch ended before finality, so a block can still include it
-until the era ends, and `OutcomeUnreadable` when a finalized block includes it but its dispatch could not be read.
-Signing the write again before following that extrinsic can run it twice.
+submitted extrinsic and its era: `NotFinalized` when sending failed or the watch ended before finality, so a block can
+still include it until the era ends, and `OutcomeUnreadable` when the watch reported it finalized in a block but its
+dispatch could not be read there. Read the outcome at that block, or, when the block does not contain the extrinsic,
+follow it until its era ends as for `NotFinalized`. Resubmitting the same extrinsic is safe; signing the write again
+before following it can run it twice.
 
 ```rust
 let transaction = contracts.dry_run(&signer, &contract, &input).await?;

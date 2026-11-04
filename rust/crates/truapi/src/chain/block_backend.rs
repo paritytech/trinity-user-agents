@@ -11,7 +11,10 @@ pub enum DispatchOutcome {
 	/// `System.ExtrinsicSuccess` was emitted for it.
 	Succeeded,
 	/// `System.ExtrinsicFailed` was emitted for it, with this dispatch error
-	/// as named by the metadata of the runtime that produced the block.
+	/// as named by the metadata of the runtime that produced the block. An
+	/// error that does not decode reads
+	/// `undecodable dispatch error 0x<fields>: <cause>`, where `<fields>` is
+	/// the hex of the event's encoded fields, the dispatch error first.
 	Failed(String),
 }
 
