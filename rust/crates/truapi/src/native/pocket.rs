@@ -1,7 +1,10 @@
 //! The Pocket collection as a native host follows it, and the faces kept from
 //! Pocket card renders.
 
-use std::sync::Arc;
+use std::{
+	collections::HashSet,
+	sync::{Arc, Mutex},
+};
 
 use futures::{
 	StreamExt,
@@ -64,6 +67,60 @@ pub fn keeping_faces(
 	Arc::new(FaceKeepingObserver { observer, faces, cards })
 }
 
+/// The cards whose back the current product connection has drawn. A press on
+/// a back reaches the product only for these: a product whose SDK predates
+/// `PocketCardBack` cannot decode one and would lose its whole action stream,
+/// and a product that drew a back has shown it can.
+#[derive(Clone, Default)]
+pub struct LiveBacks(Arc<Mutex<HashSet<String>>>);
+
+impl LiveBacks {
+	/// Records that `card_id`'s back has been drawn on this connection.
+	pub fn mark(&self, card_id: &str) {
+		self.0.lock().expect("live backs mutex poisoned").insert(card_id.to_owned());
+	}
+
+	/// Whether `card_id`'s back has been drawn on this connection.
+	pub fn contains(&self, card_id: &str) -> bool {
+		self.0.lock().expect("live backs mutex poisoned").contains(card_id)
+	}
+
+	/// Forgets every card, for a new product connection.
+	pub fn reset(&self) {
+		self.0.lock().expect("live backs mutex poisoned").clear();
+	}
+
+	/// Wraps a back render's observer so the first tree it draws marks the card.
+	pub fn marking(
+		&self,
+		card_id: String,
+		observer: Arc<dyn NativeRendererObserver>,
+	) -> Arc<dyn NativeRendererObserver> {
+		Arc::new(MarkingObserver { live: self.clone(), card_id, observer })
+	}
+}
+
+struct MarkingObserver {
+	live: LiveBacks,
+	card_id: String,
+	observer: Arc<dyn NativeRendererObserver>,
+}
+
+impl NativeRendererObserver for MarkingObserver {
+	fn on_update(&self, node: ProductRendererRenderItem) {
+		self.live.mark(&self.card_id);
+		self.observer.on_update(node);
+	}
+
+	fn on_complete(&self) {
+		self.observer.on_complete();
+	}
+
+	fn on_error(&self, reason: String) {
+		self.observer.on_error(reason);
+	}
+}
+
 struct FaceKeepingObserver {
 	observer: Arc<dyn NativeRendererObserver>,
 	faces: UnboundedSender<(ProductRendererRenderItem, u64)>,
@@ -109,6 +166,21 @@ mod tests {
 		fn on_complete(&self) {}
 
 		fn on_error(&self, _reason: String) {}
+	}
+
+	#[test]
+	fn a_drawn_back_marks_its_card_until_the_connection_resets() {
+		// Only a back the product has drawn may receive presses, and a new
+		// product connection has drawn none yet.
+		let live = LiveBacks::default();
+		let drawn = Arc::new(Drawn::default());
+
+		live.marking("stamps".into(), drawn.clone()).on_update(RendererNode::Nil);
+		let marked = (live.contains("stamps"), live.contains("other"));
+		live.reset();
+
+		assert_eq!((marked, live.contains("stamps")), ((true, false), false));
+		assert_eq!(*drawn.0.lock().unwrap(), vec![RendererNode::Nil]);
 	}
 
 	#[test]
