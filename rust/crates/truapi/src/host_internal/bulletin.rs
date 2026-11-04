@@ -1,4 +1,4 @@
-//! Bulletin store transaction construction and signing.
+//! Bulletin store transactions, and reading stored blobs back by CID.
 
 #[cfg(not(target_arch = "wasm32"))]
 mod read;

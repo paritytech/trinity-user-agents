@@ -1,4 +1,5 @@
 ---
+"@parity/truapi": minor
 "@parity/truapi-host": minor
 ---
 

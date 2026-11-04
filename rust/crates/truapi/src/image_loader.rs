@@ -137,7 +137,7 @@ where
 					ControlFlow::Break(Err(ImageError::Unavailable { reason }))
 				},
 				Err(error) => {
-					warn!(cid, %error, "Bulletin read failed, asking again");
+					debug!(cid, %error, "Bulletin read failed, asking again");
 					ControlFlow::Continue(FAILURE_PAUSE)
 				},
 			}
@@ -189,7 +189,9 @@ mod tests {
 		let mut load = core::pin::pin!(read_verified(&timer, "cid", preimage_key(&image()), read));
 
 		assert_eq!(futures::poll!(&mut load), Poll::Pending);
-		timer.advance(MISS_PAUSE);
+		timer.advance(FAILURE_PAUSE);
+		assert_eq!(futures::poll!(&mut load), Poll::Pending, "a miss waits for the next block");
+		timer.advance(MISS_PAUSE - FAILURE_PAUSE);
 		assert_eq!(futures::poll!(&mut load), Poll::Ready(Ok(image())));
 	}
 
@@ -239,10 +241,12 @@ mod tests {
 		timer.advance(LOAD_TIMEOUT - Duration::from_secs(1));
 		assert_eq!(futures::poll!(&mut load), Poll::Pending);
 		timer.advance(Duration::from_secs(1));
-		assert!(matches!(
+		assert_eq!(
 			futures::poll!(&mut load),
-			Poll::Ready(Err(ImageError::Unavailable { .. }))
-		));
+			Poll::Ready(Err(ImageError::Unavailable {
+				reason: "no verified bytes within 30 s".into()
+			}))
+		);
 	}
 
 	fn services(platform: StubPlatform) -> (Arc<StubPlatform>, Arc<RuntimeServices>) {
@@ -292,15 +296,22 @@ mod tests {
 	#[tokio::test]
 	async fn a_cid_that_is_not_a_bulletin_preimage_is_unsupported() {
 		let (platform, services) = services(StubPlatform::default());
-		let cid = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku".to_string();
+		let cid = "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku";
 
 		let loaded = load_image(
 			&services,
 			&ManualTimer::default(),
-			ImageReference::Bulletin { cid, declared_format: None },
+			ImageReference::Bulletin { cid: cid.into(), declared_format: None },
 		)
 		.await;
-		assert!(matches!(loaded, Err(ImageError::Unsupported { .. })));
-		assert!(platform.chain_connects.lock().unwrap().is_empty());
+		assert_eq!(
+			(loaded, platform.chain_connects.lock().unwrap().clone()),
+			(
+				Err(ImageError::Unsupported {
+					reason: format!("{cid} is not a raw blake2b-256 Bulletin CID")
+				}),
+				vec![]
+			)
+		);
 	}
 }

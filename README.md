@@ -422,10 +422,10 @@ A host without a core database, such as the browser core, answers
 
 ### Images
 
-Native hosts draw images with `loadImage(reference)`, as the
-[image loader RFC](https://github.com/paritytech/trinity-user-agents/pull/1800)
-defines it. A reference is a Bulletin CID, with the format its source declares
-if it declares one. The core reads the blob with `bitswap_v1_get` over its own
+Native hosts draw images with `loadImage(reference)`, the Bulletin part of the
+[image loader RFC](https://github.com/paritytech/trinity-user-agents/pull/1800).
+A reference is a Bulletin CID, with the format its source declares if it
+declares one. The core reads the blob with `bitswap_v1_get` over its own
 Bulletin connection, the call the CLI host's preimage lookup also makes, and
 returns the bytes only once they hash to the CID. It passes on PNG, JPEG, GIF
 and WebP, read from the file header, up to 2 MiB and 4096 pixels per side, and
