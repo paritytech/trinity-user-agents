@@ -74,8 +74,10 @@ class ConfirmationReviewMappingTest {
     /** The core exposes this method, so refusing the variant denied it silently. */
     @Test
     fun `sign payload legacy hex signer maps to transaction legacy`() {
-        val body = legacySignPayload(signer = "0x0102") as SigningRequestBody.TransactionLegacy
+        val review = legacySignPayload(signer = "0x0102")
+        val body = review.signingRequest() as SigningRequestBody.TransactionLegacy
 
+        assertEquals(SigningAccount.Product(demoAccount()), review.signingAccount())
         assertArrayEquals(byteArrayOf(1, 2), body.payload.account.value)
         assertArrayEquals(byteArrayOf(0xde.toByte(), 0xad.toByte()), body.payload.method)
         assertEquals(listOf("CheckNonce", "CheckWeight"), body.payload.signedExtensions)
@@ -85,23 +87,25 @@ class ConfirmationReviewMappingTest {
     /** The wire carries "SS58 or hex"; UTF-8 bytes of an SS58 string match nothing. */
     @Test
     fun `sign payload legacy ss58 signer decodes to an account id`() {
-        val body = legacySignPayload(signer = ALICE_SS58) as SigningRequestBody.TransactionLegacy
+        val body = legacySignPayload(signer = ALICE_SS58).signingRequest() as SigningRequestBody.TransactionLegacy
 
         assertArrayEquals(aliceAccountId(), body.payload.account.value)
     }
 
     @Test
     fun `a legacy signer that is neither hex nor ss58 is unsupported`() {
-        assertThrows(UnsupportedReviewException::class.java) { legacySignPayload(signer = "not-an-address") }
+        assertThrows(UnsupportedReviewException::class.java) {
+            legacySignPayload(signer = "not-an-address").signingRequest()
+        }
     }
 
-    private fun legacySignPayload(signer: String): SigningRequestBody =
+    private fun legacySignPayload(signer: String) =
         UserConfirmationReview.SignPayload(
             SignPayloadReview.LegacyAccount(
                 account = nativeAccount(),
                 request = HostSignPayloadWithLegacyAccountRequest(signer = signer, payload = signPayloadData()),
             ),
-        ).signingRequest()
+        )
 
     @Test
     fun `sign raw product bytes maps to raw`() {
