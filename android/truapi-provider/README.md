@@ -26,7 +26,7 @@ dependencies {
 }
 ```
 
-The consuming app must declare `android.permission.INTERNET` — the light client dials peers over TCP and WebSocket, and `connectRpc` dials the node.
+The consuming app must declare `android.permission.INTERNET` — the light client dials peers over TCP and WebSocket, and an RPC provider dials its nodes.
 
 Chain specs are compiled into the cdylib, so the app ships no spec files of its own and never refreshes them. Picking up a spec refresh means taking a newer version of this artifact.
 
@@ -43,7 +43,7 @@ Regenerate the bindings and the `.so` together. The generated Kotlin declares a 
 Everything is generated from [`ffi.rs`](../../rust/crates/truapi-provider/src/ffi.rs) into `uniffi.truapi_provider.*`:
 
 - `ChainProvider` - construct **one per process** and share it. Every connection runs on the single embedded light client, so they share sync, peers, and warm state while keeping their own request queue and response stream. `connect(genesisHash, listener)` resolves the network from the bundled catalog (relay wiring and statement-store placement included), so the 32-byte genesis hash is the only argument. At most 32 connections are held at once: past that, `connect(genesisHash, listener)` throws `ChainProviderException.Connect` rather than adding another chain, and `disconnect()` hands the slot back. That ceiling is a backstop against connections you never close, not a budget to spend; the catalog resolves eight chains, so one reused connection per chain stays well under it.
-- `connectRpc(url, listener)` - open the same kind of `ChainConnection` to a remote JSON-RPC node (`ws://` or `wss://`), bypassing the light client, so a host can switch a chain between a node and the light client without touching its JSON-RPC handling. The node is picked per connection, so a host that rotates between nodes passes the next URL on its next connect. It does not count towards the 32-connection ceiling. There is no reconnection: a dropped socket, or one silent for 50 seconds (the provider pings every 20), closes the connection with `StreamEnded`, and the host connects again and replays its subscriptions. A malformed URL or a node that does not answer the handshake throws `ChainProviderException.Connect`. Like `connect`, it blocks while connecting and refuses to run inside a listener callback.
+- `ChainProvider.withRpcNodes(nodes)` - build a provider that serves each `RpcNode(genesisHash, url)` from that remote JSON-RPC node (`ws://` or `wss://`) instead of the light client, and refuses any other chain rather than starting the light client for it. You connect with the same `connect(genesisHash, listener)`, so a host can move a chain between a node and the light client without touching its JSON-RPC handling. It never starts the light client, so it is cheap to build: a host that rotates between nodes builds one per node. It does not count towards the 32-connection ceiling. There is no reconnection: a dropped socket, or one silent for 50 seconds (the provider pings every 20), closes the connection with `StreamEnded`, and the host connects again and replays its subscriptions. A malformed URL throws `ChainProviderException.Connect` and a hash that is not 32 bytes `ChainProviderException.BadGenesis` when building; a chain it was not given, or a node that does not answer the handshake, throws `ChainProviderException.Connect` from `connect`.
 - `ChainMessageListener` - the host implements it; `onMessage(message)` receives each JSON-RPC response and notification, `onClosed(reason)` fires once the pump stops and names why. Both may throw: a listener that throws stops the pump for that connection rather than being called again for every response, and an exception it does not declare is reported as `ChainProviderException.Listener` instead of aborting the process.
 - `ChainCloseReason` - `StreamEnded` when the response stream ended, which includes your own `disconnect()` coming back to you, and `ListenerFailed` when your listener rejected a message and the connection was closed for it. It says why the pump stopped, not whether you should reconnect; keep an `else` branch, since variants may be added. That is source compatibility only: adding a variant does not change the `onClosed` checksum, so bindings older than the `.so` pass the integrity check and then fail to decode the reason, which surfaces as `onClosed` never firing. `reason` on `ListenerFailed` is bounded to 256 Unicode scalar values, which is up to 512 in Kotlin's `String.length` (UTF-16 code units) and up to 1024 bytes. Reconnect from a *serial* executor off the pump thread: `connect(genesisHash, listener)` refuses to run inside a listener callback and throws `ChainProviderException.Connect` if you try. Do not re-queue work with `send(request)` from `onClosed`: the connection is already closed by then, and `send` on a closed connection is dropped silently, with no exception and no response frame.
 - `ChainConnection` - `send(request)` queues a request, `disconnect()` tears the connection down. It is not called `close`, because uniffi's generated Kotlin object already has `AutoCloseable.close()` for handle disposal.
@@ -58,7 +58,7 @@ Everything is generated from [`ffi.rs`](../../rust/crates/truapi-provider/src/ff
 
 ```text
 host app
-  ChainProvider().connect(genesisHash, listener)    ChainProvider().connectRpc(url, listener)
+  ChainProvider().connect(genesisHash, listener)    ChainProvider.withRpcNodes(nodes).connect(genesisHash, listener)
            |                                                  |
            v                                                  v
 libtruapi_provider.so (embedded smoldot + bundled chain-spec catalog, WebSocket client)
@@ -150,4 +150,4 @@ gradle :truapi-provider:connectedDebugAndroidTest
 
 Build the ABI of whatever runs them: `arm64-v8a` for a phone, `x86_64` for an emulator on an x86 machine.
 
-A cold light-client sync can take minutes, so the light-client test allows five for the relay. The androidTest manifest declares `INTERNET`: without it the light client finds no peers and `connectRpc` cannot resolve the node.
+A cold light-client sync can take minutes, so the light-client test allows five for the relay. The androidTest manifest declares `INTERNET`: without it the light client finds no peers and the RPC provider cannot resolve the node.

@@ -14,6 +14,7 @@ import uniffi.truapi_provider.ChainLifecycleListener
 import uniffi.truapi_provider.ChainMessageListener
 import uniffi.truapi_provider.ChainPhase
 import uniffi.truapi_provider.ChainProvider
+import uniffi.truapi_provider.RpcNode
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -66,10 +67,10 @@ class PreviewnetSmokeTest {
 
     @Test
     fun rpcNodeAnswersOverWss() {
-        ChainProvider().use { provider ->
+        peopleRpcProvider().use { provider ->
             val listener = Collector("rpc")
 
-            provider.connectRpc(PEOPLE_RPC, listener).use { connection ->
+            provider.connect(PEOPLE.hexToBytes(), listener).use { connection ->
                 connection.send(GET_GENESIS)
 
                 assertEquals("0x$PEOPLE", listener.awaitResponse(1, 30, TimeUnit.SECONDS).getString("result"))
@@ -82,10 +83,10 @@ class PreviewnetSmokeTest {
 
     @Test
     fun rpcNodeDeliversSubscriptionNotifications() {
-        ChainProvider().use { provider ->
+        peopleRpcProvider().use { provider ->
             val listener = Collector("rpc-sub")
 
-            provider.connectRpc(PEOPLE_RPC, listener).use { connection ->
+            provider.connect(PEOPLE.hexToBytes(), listener).use { connection ->
                 connection.send("""{"jsonrpc":"2.0","id":1,"method":"chain_subscribeNewHeads","params":[]}""")
                 val subscription = listener.awaitResponse(1, 30, TimeUnit.SECONDS).getString("result")
 
@@ -138,3 +139,5 @@ class PreviewnetSmokeTest {
 }
 
 private fun String.hexToBytes(): ByteArray = chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+
+private fun peopleRpcProvider(): ChainProvider = ChainProvider.withRpcNodes(listOf(RpcNode(PEOPLE.hexToBytes(), PEOPLE_RPC)))
