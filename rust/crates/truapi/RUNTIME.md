@@ -247,8 +247,8 @@ it. The core keeps the newest face of a card from every
 `RenderContext::PocketCard` render, and of its back from every `PocketCardBack`
 render, at most every two seconds and once more when the render stops, so a
 card has both sides offline and at cold start. `pocket_card_face` reads a side.
-A press on a back reaches the product only once the current product connection
-has drawn that back: a product whose SDK predates `PocketCardBack` cannot
+A product connection's renderer actions leave out a press on a back that
+connection has not drawn: a product whose SDK predates `PocketCardBack` cannot
 decode one and would lose its whole action stream.
 
 Secrets the database must not hold go to the host's `EncryptedStorage`: the

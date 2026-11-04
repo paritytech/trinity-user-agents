@@ -1925,6 +1925,12 @@ impl ProductRuntimeControl {
 	> {
 		self.connection()?.renderer_access()?;
 		let reference = WorkerReference::acquire(self.connection.clone());
+		let back = match &request.context {
+			v01::RenderContext::PocketCardBack { card_id } => {
+				Some((self.connection.clone(), card_id.clone()))
+			},
+			_ => None,
+		};
 		let request = truapi::versioned::renderer::ProductRendererRenderRequest::V1(request);
 		let transport: Arc<dyn Transport> = self.transport.clone();
 		let stream = crate::generated::dispatcher::renderer_render(
@@ -1937,15 +1943,18 @@ impl ProductRuntimeControl {
 		// and is not polled past, so it releases there rather than waiting for
 		// the caller to drop the handle.
 		let stream = futures::stream::unfold(
-			(stream, Some(reference)),
-			|(mut stream, reference)| async move {
+			(stream, Some(reference), back),
+			|(mut stream, reference, mut back)| async move {
 				match stream.next().await? {
 					Ok(truapi::versioned::renderer::ProductRendererRenderItem::V1(node)) => {
-						Some((Ok(node), (stream, reference)))
+						if let Some((connection, card_id)) = back.take() {
+							connection.mark_back_drawn(card_id);
+						}
+						Some((Ok(node), (stream, reference, back)))
 					},
 					Err(interrupt) => Some((
 						Err(crate::interrupt::interrupt_into_latest(interrupt)),
-						(stream, None),
+						(stream, None, None),
 					)),
 				}
 			},
@@ -3550,6 +3559,65 @@ mod tests {
 	{
 		let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
 		render.poll_next_unpin(&mut cx)
+	}
+
+	#[test]
+	fn a_back_press_reaches_only_a_connection_that_drew_that_back() {
+		// A product whose SDK cannot decode a back press would lose every later
+		// press, so a connection gets one only for a back it has drawn.
+		let (runtime, sink) = render_runtime();
+		let host = runtime.admin.product_runtime().clone();
+		let mut actions = futures::executor::block_on(truapi::api::Renderer::action_subscribe(
+			host.as_ref(),
+			&CallContext::with_request_id("renderer:1".to_string()),
+			truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1,
+		));
+		let press = |card_id: &str| v01::HostRendererActionSubscribeItem {
+			context: v01::RenderContext::PocketCardBack { card_id: card_id.to_string() },
+			action_id: "stamp".into(),
+			payload: vec![],
+		};
+		let publish = |card_id: &str| {
+			runtime
+				.control()
+				.publish_renderer_action(press(card_id))
+				.expect("a Worker may publish");
+		};
+		let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
+
+		publish("stamps");
+		assert!(
+			actions.poll_next_unpin(&mut cx).is_pending(),
+			"a back not yet drawn takes no press"
+		);
+
+		let mut back = runtime
+			.control()
+			.render(v01::ProductRendererRenderRequest {
+				context: v01::RenderContext::PocketCardBack { card_id: "stamps".into() },
+				payload: vec![],
+			})
+			.expect("a Worker connection may render");
+		let item =
+			truapi::versioned::renderer::ProductRendererRenderItem::V1(v01::RendererNode::Nil);
+		deliver_render_frame(
+			&runtime,
+			&render_request_id(&sink, 0),
+			crate::frame::MESSAGE_TYPE_RECEIVE,
+			item.encode(),
+		);
+		assert!(matches!(poll_render(&mut back), core::task::Poll::Ready(Some(Ok(_)))));
+		publish("other");
+		publish("stamps");
+
+		let delivered = match actions.poll_next_unpin(&mut cx) {
+			core::task::Poll::Ready(Some(Ok(
+				truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(item),
+			))) => item,
+			other => panic!("the press on the drawn back must be ready, got {other:?}"),
+		};
+		assert_eq!(delivered, press("stamps"));
+		assert!(actions.poll_next_unpin(&mut cx).is_pending(), "a back never drawn takes no press");
 	}
 
 	#[test]

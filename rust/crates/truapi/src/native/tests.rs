@@ -170,10 +170,12 @@ impl EventCallbacks {
 		}
 	}
 
+	/// The face visibilities this execution's card was asked for, in order.
 	pub fn face_requests(&self) -> Vec<bool> {
 		self.face_requests.lock().expect("face requests mutex poisoned").clone()
 	}
 
+	/// The sides this execution's card was asked to turn to, in order.
 	pub fn back_requests(&self) -> Vec<bool> {
 		self.back_requests.lock().expect("back requests mutex poisoned").clone()
 	}
