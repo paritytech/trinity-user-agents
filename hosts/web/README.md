@@ -4,166 +4,1780 @@ A TrUAPI host that runs in a browser tab and holds its own wallet. It embeds a p
 this repository in a Web Worker, and signs locally. There is no companion app and no QR pairing.
 
 It is a tool for developers, run on a development machine or a private network, to try a product against the current
-core. It is not a production host. The production web host is dotli (`hosts/dotli/`): it pairs with the Polkadot app,
-which holds the keys, so the production browser core (`@parity/truapi-host/wasm/web`) has no signing host. This host
-loads the `testing` core, built with `wasm-signing-host`, and keeps the recovery phrases it signs with in the browser.
+core. It is not a production host. The dotli host at `hosts/dotli/` is the production web host: it pairs with the
+Polkadot app, which holds the keys, and the production browser core (`@parity/truapi-host/wasm/web`) has no signing host
+in it for that reason. This host loads the `testing` core, the bundle built with `wasm-signing-host`, and keeps the
+recovery phrases it signs with in the browser.
 
 ## Trust model
 
-The host trusts its user and the products the user opens. It is not a sandbox and makes no promise against a hostile
-product.
+This is a development tool. It trusts its user and the products the user chooses to open. It does not sandbox a product,
+and it makes no security promise against a hostile one. Its separations are for keeping development data tidy.
 
-- Wallets are disposable: recovery phrases are saved unencrypted in `localStorage`. Never import one that holds value.
-- A product opened by name runs on the host's origin and can read the saved wallets through `window.parent`. Open only
-  products you wrote or would open in a browser tab. A product opened by URL stays on its own origin.
-- Separation by wallet is by storage name, not browser isolation. Permission prompts are a development aid, not custody.
-- A product's own `fetch`, XHR, WebSocket, WebRTC and media follow the browser, not the core.
-- Anyone who can reach a served host can use it. Serve it on loopback, or treat the page as public.
-
-Details, prompts and differences from the native hosts: [docs/trust-model.md](docs/trust-model.md).
+- **Wallets are disposable.** Recovery phrases are saved unencrypted in `localStorage` on the host's origin. Any script
+  on that origin can read them. Import a phrase you can lose, never one that holds value.
+- **A product opened by name runs on the host's origin.** The host is one static site on one origin, such as GitHub
+  Pages, so there is no second origin to give a product. The product's frame can reach the host page through
+  `window.parent` and read the saved wallets. Open only products you wrote or would open in a browser tab. A product
+  opened by URL stays on its own origin, and the host refuses to open its own origin that way.
+- **Separation by wallet is by name, not by browser isolation.** The core's storage and the product's TrUAPI storage are
+  kept under the active wallet and product id. See [Wallets and sessions](#wallets-and-sessions) for what the browser
+  keeps apart and what it does not.
+- **The permission prompts are a development aid.** They show what a product asks for and let you answer. They are not
+  custody. Every host prompt (permissions, confirmations, the contact picker, the invitation prompt, chat controls) is
+  drawn as the Polkadot app's bottom sheet, over the app's rectangle only and at its scale, so the developer tools stay
+  visible beside it. It names the product that asks once, under its title, as "Requested by" and the product id the core
+  holds, in full: a local URL's id keeps its port, and an id the user entered is shown as entered. Under it the host
+  adds, from what it opened itself, where the product came from (`App opened from http://localhost:5173/`) when the id
+  does not already say; when two open products share one id, the core cannot tell them apart and neither can the host,
+  and the sheet says so. Nothing a product sends changes either line. A prompt about a host action, such as clearing the
+  demo's invitations, names no product. Escape or a tap outside the sheet gives the safe answer (deny, reject, cancel),
+  and focus returns where it was.
+- **A product's own requests follow the browser.** The host does not intercept a product's `fetch`, XHR, WebSocket,
+  WebRTC or media. They follow the browser's rules and the target's CORS headers, and camera and microphone also need
+  the browser's and the operating system's permission. Calls a product makes through TrUAPI, such as signing or a
+  permission request, reach the core, which raises the host's prompts.
+- **Anyone who can reach a served host can use it.** Serve it on loopback, or accept that the page is public and use a
+  disposable wallet. The wallets are in each visitor's own browser, so a public copy exposes no one else's.
 
 ## Run it
 
-Build the linked packages from the repository root, then start the dev server:
+The host links `@parity/truapi`, `@parity/truapi-debugger`, `@parity/truapi-host` and `@parity/truapi-provider` from
+this tree, so it runs against the core at this commit. Build them first, from the repository root:
 
 ```bash
-make codegen                                   # also builds @parity/truapi
+make codegen
 npm run build --prefix js/packages/truapi-host
 npm run build --prefix js/packages/truapi-debugger
-make wasm                                      # both truapi-host bundles and truapi-provider
-cd hosts/web && npm ci && npm run dev
+make wasm
 ```
 
-Open <http://localhost:5180>, sign in, open the search card with the Docklet's middle button, type a product name or URL
-and press Enter. The dev server answers `localhost` only; set `WEB_SIGNING_ALLOWED_HOSTS=name.example` (a comma list)
-for another host name. `?product=<url>&productId=<id>` fills the address and product id but does not open them.
-
-## Build and deploy
-
-`npm run build` writes `dist/`, a plain static folder for any file server, such as GitHub Pages. Build for the path it
-is served from:
+`make codegen` also builds `@parity/truapi`. `make wasm` builds both `truapi-host` WASM bundles and the
+`truapi-provider` bundle. Then:
 
 ```bash
-npm run build -- --base /<repo>/   # https://<owner>.github.io/<repo>/
-npm run build                      # served from the root
+cd hosts/web
+npm ci
+npm run dev
 ```
 
-- A build made for `/repo/` and served at `/` loads no assets. Try one with `npx vite preview --base /<repo>/`.
-- A build served from the root ships the Browse app's blocks as a seed. It reads Paseo Next v2 while it builds and fails
-  if it cannot. `WEB_SIGNING_SEED_BROWSE=0` builds offline without the seed.
-- Opening a name needs a secure context: `https` or `http://localhost`. A phone on `http://<LAN address>` opens URLs
-  only.
+Open <http://localhost:5180>, import a wallet, open the address card with the Docklet's middle button, type a product
+URL and press Enter. To try it with the playground, run `yarn dev` in `playground/` and open `http://localhost:3000`.
 
-More, including the dev server's username search route and phone setup: [docs/running.md](docs/running.md).
+The dev server answers `localhost` only. To reach it by another host name, such as a tunnel, start it with
+`WEB_SIGNING_ALLOWED_HOSTS=name.example npm run dev` (a comma list). A static build needs no such setting.
+
+The dev server also answers the identity backend's public username search on its own origin, because the backend sends
+no CORS headers: `GET /__username-search?network=<id>&prefix=<text>[&limit=<n>][&cursor=<c>]`.
+`username-search-plugin.ts` sends `prefix`, `limit` and `cursor` only to `/api/v1/usernames/search` on the
+`identityBackend` of the network named, with no headers from the page, and passes the backend's answer and its errors on
+as they are. Other parameters, other methods and requests from another machine are refused. A static build has no such
+route.
+
+`http://localhost:5180/?product=<url>&productId=<id>` fills in the address bar and product id. The product opens only
+when you press Enter or choose **Open**.
 
 ## Networks
 
-Account → **Network** picks the tab's network before the core starts; a switch reloads the tab.
+Account's **Network** control picks the network this tab runs on. It is chosen before the core starts and applied by
+reloading the tab, so the core, the session and any open product are always built for one network; there is no switch
+under a live page. The choice is kept per tab, so two tabs can run on different networks.
 
-- **Paseo Next v2** (`.paseo`), the default.
-- **PreviewNet** (`.testnet`), the product preview network.
+- **Paseo Next v2** (`.paseo`, the default) is where products are published for the current testnet.
+- **PreviewNet** (`.testnet`) is the product preview network. Its DotNS names and content endpoints differ from Paseo's,
+  so a name opened on one network is not found on the other.
 
-Storage, history and the open product are kept per network. Chains are reached through the embedded light client; name
-lookups and Asset Hub go through one public RPC node. See [docs/networks.md](docs/networks.md).
+A tab with no saved choice runs on Paseo, so tabs from before this control keep working. Storage, history, the username
+learned for a wallet and the tab's own wallet and open product are all kept per network, so nothing from one network is
+read on another. The recovery phrases are not per network, so the same wallet can be signed in on either. Switching
+network reloads the tab, which then restores the wallet and product it had open on the newly chosen network, if any.
 
-## How a product opens
+## Static build and GitHub Pages
 
-A URL opens on its own origin. A name, such as `myapp.paseo`, opens like this:
+`npm run build` writes `dist/`, a plain static folder. Any file server can serve it: no server code, no request-header
+rules, and no extra host names or certificates. Opening a product by name needs a secure context, which is `https` or
+`http://localhost`, and GitHub Pages is https.
 
-1. The host reads the DotNS `contenthash` of `app.<name>`, then `<name>`, from Asset Hub over the network's RPC node.
-2. The loader fetches the content from the network's Bulletin gateway or, for Browse when the record matches, from the
-   build's seed on this origin.
-3. From a gateway it asks for one CAR stream first. After 2 s, a block the stream has not brought yet is fetched by
-   itself.
-4. Every block is checked against its CID, the site is unpacked, and a service worker serves it from a mount under this
-   host's path. The verified files are cached by content id.
+The build is made for the path it is served from, given with Vite's `--base`:
 
-The gateway is not trusted; the RPC node is. Limits, the seed, links and failures:
-[docs/opening-a-product.md](docs/opening-a-product.md). The dock, Apps shelf and Pocket:
-[docs/dock-and-pocket.md](docs/dock-and-pocket.md).
+```bash
+# https://<owner>.github.io/<repo>/  (a GitHub Pages project site)
+npm run build -- --base /<repo>/
 
-## Wallets and sessions
+# a custom domain, or a user site, served from the root
+npm run build
+```
 
-A wallet is imported from its BIP-39 phrase; the host creates none. The picker also lists three shared test accounts,
-Alice, Bob and Carol, whose phrases are public. A session belongs to the tab, so two tabs can use two wallets. Core and
-product storage are kept per wallet and product. See [docs/wallets-and-sessions.md](docs/wallets-and-sessions.md).
+Publish the contents of `dist/`. The build adds `.nojekyll`, so GitHub Pages serves every path.
 
-## Chat
+`dist/` holds the host page and its assets, `sw.js`, the service worker for mounted products, and `truapi-sandbox/`, the
+loader page and its script. They are ordinary files beside the host page, under the same base. To try the build locally
+under a path, run `npx vite preview --base /<repo>/` and open `http://localhost:5180/<repo>/`.
 
-The Chat screen shows product rooms (TrUAPI Chat from product workers) and chat products over the Chat Extension v2
-draft bridge ([docs/chat.md](docs/chat.md)). Contacts and blocking: [docs/contacts.md](docs/contacts.md).
+The one thing the base must match is where the files are served. A build made for `/repo/` served at `/` loads no
+assets.
 
-**Contact Chat** is the host's own chat worker, a prototype. It runs for every signed-in wallet
-([docs/contact-chat.md](docs/contact-chat.md)):
+A build served from the root also ships the Browse app, as described in [The Browse seed](#the-browse-seed). It reads
+Paseo Next v2 and its gateway while it builds, and fails if it cannot; `WEB_SIGNING_SEED_BROWSE=0 npm run build` builds
+offline without it.
 
-- The network delivery is the default. Find a person by username in Chat's **+** (a build matches full usernames only),
-  send a request, and they accept it in the Inbox.
-- Messages are plain text on the Statement Store. They are NOT ENCRYPTED; only the setup is sealed.
-- New requests use an X-Wing reply key by default; a dev server can choose X25519 instead.
-- **Start over**, in a room's **Chat options**, sends a new request when a connection no longer gets through.
+## Opening a product
 
-The **Inbox** ([docs/inbox.md](docs/inbox.md)) lists requests that wait for an answer. The invitation demo runs Contact
-Chat as fixture users in tabs ([docs/invitations.md](docs/invitations.md)).
+The address bar takes a web address or a product name.
+
+| Opened as                     | Where the page runs                                            |
+| ----------------------------- | -------------------------------------------------------------- |
+| A name, such as `myapp.paseo` | A mount under this host's own path, served by a service worker |
+| A URL                         | The URL's own origin                                           |
+
+In both cases the product reaches the core through the public channel of `createIframeHost`. The frame keeps that
+function's default `sandbox` of `allow-forms allow-same-origin allow-scripts`, so a product cannot open popups, use
+`alert` or download files. The host adds `allow="camera; microphone"`, which lets the browser ask the user and grants
+nothing by itself.
+
+**Web addresses.** An address without a scheme gets `http://`. Only `http` and `https` are accepted. `localhost`, LAN
+addresses and ordinary sites keep their meaning.
+
+**Product names.** `myapp.paseo` opens the product published under that DotNS name. `http://myapp.paseo/` and
+`polkadot://myapp.paseo` mean the same name, and a path, query and hash after the name are kept. A name is one label and
+the TLD of the connected network, `paseo`. The core recognises `dot`, `paseo` and `testnet` as DotNS TLDs, so `.dot` and
+`.testnet` names are refused with a message saying they belong to another network, and so are names with a port or
+credentials or with more than one label. `https://myapp.paseo.li` is refused too: that public gateway serves the
+Polkadot browser shell for every name and refuses to be embedded, so the message says to type the name.
+
+**Bare names and recents.** A lone label such as `myapp`, alone or with a path, query or hash, opens as `myapp.paseo`,
+and the field shows `.paseo` dimmed after it. Typing a dot, a port, a scheme or brackets means the text is complete as
+written, so `localhost`, `localhost:3000`, `devbox:3000` and full URLs keep their meaning. A single-label LAN host
+without a port needs `http://`. The completion applies when the address is opened, never to the field while you type.
+Focusing the field lists the products this wallet opened, filtered as you type. An entry brings its own product id, or
+none, and opens when chosen, never on focus. History is kept per wallet in this browser, holds addresses and ids only,
+and skips addresses with credentials or secret-looking parameters (`token`, `key`, `code`, `session` and similar), which
+still open as typed.
+
+**Reset app data** in the Product section clears what the core stored for the open product under the signed-in wallet,
+after a confirmation that names both. It closes the product, clears, and opens it again. It does not touch grants,
+allowances, signing state, other products, other wallets or the page's own browser storage, and it cannot reach another
+tab's memory, so close other tabs that use the same wallet and product first.
+
+### How a name opens
+
+On Open the name is looked up on the selected network's Asset Hub, its content is fetched from that network's Bulletin
+IPFS gateway and checked, and it is served from a path of this host. The product id defaults to the name.
+
+1. The host namehashes a record name and reads the DotNS content resolver's `contenthash` from Asset Hub over the
+   network's Asset Hub RPC (for Paseo Next v2, `wss://paseo-asset-hub-next-rpc.polkadot.io`). It tries `app.<name>`
+   first, then `<name>`. `app.<name>` is where `dotkit deploy` publishes the product's app executable, and the Polkadot
+   browser reads it first too.
+2. It fetches the first bytes of each CID from the gateway to see what it is. An app executable is a CARv1 archive of
+   the site's directory, stored as one chunked UnixFS file. A website is a UnixFS directory. Both open. A record that is
+   neither is skipped and listed.
+3. It opens the loader, `<base>truapi-sandbox/index.html`, in the product frame. The loader registers a service worker
+   for the mount `<base>product/<wallet>/<product>/<content>/`, fetches the blocks, checks each one against its CID,
+   unpacks the site in memory and stores the files in Cache Storage under the content id. Then it moves the frame to the
+   start path inside the mount. The worker serves the files as they are, with their type and no sniffing.
+
+While it works, the loader posts `{type: "truapi-sandbox", state, detail}` status lines to the host page. Once per load,
+just before it moves the frame on or when it gives up, it also posts `{type: "truapi-sandbox-load", summary}`
+(`src/products/load-observer.ts`) for the inspector's [Products](#developer-tools) view: the outcome (fetched, cached or
+failed, with the error), its times (service worker start, fetch, verify and unpack or the wait on blocks, store, total),
+the files' count, bytes and largest file, and what the CAR stream and the block-by-block reads did. It holds metadata
+only, never block bytes, and goes to this origin only. The host reads it field by field within bounds, puts it down to
+the frame that posted it, never to a name inside it, and keeps the first one per frame: the product the frame then runs
+is on the same origin and could post one too. The marker that completes an archive's cache holds the files' count, bytes
+and largest file, so a load from the verified copy can say what it holds without reading it.
+
+**How the loader fetches blocks.** It first asks for the whole DAG under the record's CID as one CAR stream,
+`?format=car` with `Accept: application/vnd.ipld.car`, and checks every block against its CID as it arrives. (The iOS
+app asks for a CAR with the same header. The Android app uses `?format=car` for a website's directory but reads an app
+archive's file at plain `/ipfs/<cid>`.) For 2 s from the request, a read waits for its block from the stream: in one
+client's measurements, a CAR the gateway had cached sent its first byte within 150 ms and 24 MB within 1 s, and one it
+had not cached came at a few KB/s to 500 KB/s. After that, the stream keeps running, but a read whose block it has not
+brought yet fetches the block by itself with `?format=raw`, up to 6 at a time, with one more try for a block whose
+request times out, fails on the network, or gets status 408, 429, 500, 502, 503 or 504. A block can then arrive both
+ways. The stream ends at its last byte, when the load no longer needs it, or at the first problem: a failed request, a
+status other than 2xx, a content type other than `application/vnd.ipld.car`, a header that does not name the record's
+CID as its only root, a block that does not match, the archive's limits, or less than 1 MiB in a 10 s window. The
+windows run back to back from the request, so the first one includes the wait for the first byte. The stream is not
+asked for again, and a block it brought is not fetched again. The stream holds at most 64 MiB of blocks, the archive
+limit; a website with more gets the rest block by block. The site is assembled in order whichever way its blocks came.
+The stream is tried for every load, whatever its size: the loader knows no size before the first block, and the gateway
+does not let a page read whether the CAR is cached. `FETCH_CAR` in `src/products/archive/gateway.ts` turns the stream
+off. A load whose blocks come from this host's own origin, such as Contact Chat's worker archive, does not ask for the
+stream and reads block by block: a static server there has no CAR to send, and the Products view says the stream was not
+tried.
+
+#### The Browse seed
+
+A build ships the Browse app (`browse.paseo`, the dock's Browse address on the default network) beside the page, so a
+first open does not wait on the gateway. `browse-seed-plugin.ts` resolves the name on Asset Hub as the host does, reads
+its content from the gateway block by block, checks every block against its CID, unpacks the whole archive, and writes
+the blocks at `/ipfs/<cid>` on the origin, as Contact Chat's are. `browse-seed.json` beside the page names the record,
+the CID, the network, when it was fetched, its size and its blocks. The seed may add at most 16 MiB; the Browse archive
+was 5.8 MB in 10 blocks when this was set.
+
+The seed is a cache filled ahead of time, not a source. Opening Browse still resolves the name on chain. Only when the
+record points at the seeded CID does the host skip the gateway's content check and give the loader its own origin as the
+gateway, and the loader checks each block against its CID as it does any gateway's. When the record points elsewhere,
+the content comes from the gateway as for any name, and when the chain cannot be read, the open fails as it would
+without a seed. The inspector's Products view shows a seeded load as **seed (host origin)**.
+
+`WEB_SIGNING_SEED_BROWSE` controls it. A build seeds unless it is `0`, and fails if the seed cannot be fetched, so a
+deploy does not go out without it unnoticed; set `0` for an offline or repeatable build. The dev server seeds only when
+it is `1`, and then answers the blocks itself. The blocks are read at the origin's root, so a build under another base
+path, such as a GitHub Pages project site, has no seed, and `1` with such a base fails the build.
+
+The mount path holds a hash of the wallet id, a readable form of the product id with its hash, and the content id. A
+different wallet, product or content is a different mount, with its own worker. The same wallet opening the same content
+again lands on the same mount.
+
+**Links in the product.** A product built for the site root links `/assets/app.js`. On a project path that is outside
+the mount, and a static server would answer 404. The worker answers every request its page makes, whatever the path, so
+a root-relative link is read as a path in the archive. A relative link resolves under the mount. A request to another
+origin goes to the network as it is. This does not reach a navigation the product starts to a root-relative document
+(`<a href="/about">`, `location.assign("/x")`) or a reload of a page that moved there with `history.pushState`: the
+frame leaves the mount. The page's `location.pathname` is the mount path, so a router that expects `/` needs hash
+routing or a base path taken from the location.
+
+Integrity, in two steps that should not be confused:
+
+- **Bytes.** For an app archive, every chunk of the archive file is checked against the CID the record names, and every
+  block inside the archive against its own CID. For a website, every block from the record's CID down. A gateway that
+  sends anything else is refused, so the gateway is not trusted. An archive's inner root is not on chain, so the second
+  check proves only that the site is consistent. The first is what ties it to the name. The cache is named by the
+  content id and is written only after this check. The worker serves it without checking again.
+- **The record.** The CID comes from one public RPC node, which is trusted as the source of what the name points at. It
+  is not a light-client-verified read. Nothing proves that the CID is what the name's owner meant to publish.
+
+The unpacker is written from the CARv1, dag-pb and UnixFS specifications. It refuses names that climb out of the site,
+duplicate names, sharded directories, symlinks, files whose recorded sizes disagree, and content over these limits: 64
+MiB of archive, 128 MiB of files counted once per reference, 10 000 files, 50 000 blocks, 4 MiB per block, 32 directory
+levels and paths of 1 KiB. Loading also stops after a deadline.
+
+While a product loads, one thin line runs along the top of the app, in the app's accent and under a device's top inset.
+It moves without a percentage: the host knows the phase, not how much is done. The phase ("Looking up name…",
+"Loading…") is announced to assistive technology, and the app's frame is `aria-busy`. The sandbox loader shows nothing
+of its own, on the app's dark colour, so no white page and no address or CID show in the app; its steps are in the
+Product tab and the log. A product page with no background of its own is white, as in a browser, once it loads. When the
+loader fails, the app says **This app could not open** once, with **Details**, which opens the Product tab and its
+reason, and **Close**. Closing or leaving a product ends its loading.
+
+A failed lookup, or an address that cannot be opened, is shown in the address card and the Product tab and leaves the
+open product as it is. The product is closed once the lookup succeeds and it is being opened, so a failure while the
+archive is fetched, checked or unpacked is shown in the address card and the Product tab and leaves no product open.
+
+The endpoints, TLD and content resolver address are the `paseo-next-v2` values in dotkit's `assets/envs.toml`, and they
+match dotli's `packages/config/src/network.ts`.
+
+A name needs a service worker, so it opens only from a secure page: `https`, or `http://localhost`. On another address,
+such as `http://<LAN address>:5180` on a phone, it is refused before any lookup, with the reason in the address card. A
+URL product opens on any address. The product frame is a secure context only when every page above it is.
+
+A browser that does not offer service workers in the frame, or Web Locks, cannot open a name. An embedded web view often
+lacks them: open the host in the system browser.
+
+### The dock
+
+A dock inside the product rectangle holds **Chat**, **Pocket**, **Browse** and **Apps**, as a phone host's tab bar does.
+A tab starts in Chat, unless it reopens the product it had in front before a reload. Chat and Pocket are screens the
+host draws itself. Browse with nothing in front shows its landing, also drawn by the host: **Browse apps**, and
+**Recent**, the last five products this wallet opened on this network, from the same history as the search card's
+suggestions. Browse opens nothing until one of them is chosen; choosing Browse again changes nothing. The Docklet's
+search opens anything else. Chat also holds the [Inbox](#inbox-prototype) prototype.
+
+- **The Docklet.** As the Polkadot app's R1 Docklet: a glass dock at most 440 px wide with a round cutout, the app's 28
+  px tab icons only, Chat and Pocket left of the Pill, Browse and Apps right of it, and a lens under the current one.
+  The labels stay for screen readers. Apps shows the open count inside its glyph. It floats over the app, as in the app.
+  Host screens and a product's frame end above it, the Pill included, so nothing of a product is under its glass: a
+  product in a frame gets no inset it could use to keep clear by itself. The Pill opens the address card (see
+  [Developer tools](#developer-tools)); while the card shows, the other icons step back. On a phone, a keyboard that
+  leaves the layout viewport at full height and only shrinks the visible area (iOS Safari) would cover the Docklet and
+  the card, so the page follows `visualViewport` (`src/app/keyboard-viewport.ts`) and fills only what shows; a browser
+  that resizes the layout itself, and a pinch-zoomed page, are left as they are.
+- **Apps.** Its count is the products open in this tab, in front or running behind. It opens the Apps shelf, as the
+  app's TabBarShelfView draws it: the bar's glass grows upward, with a row of icons on the right (the Inbox, when the
+  host offers it, the core's state for this network, and **Settings**, which opens the developer tools' Account tab),
+  and the open products under it as a grid of round icons. The one in front is marked. Choosing a product brings it in
+  front; a long press, or its **×** on hover or focus, closes it. Each product shows how many Inbox items it sent that
+  are not seen yet. The state icon is a grey ring whose dot is green when the core is ready and red when it failed, with
+  the status line from Account as its label; there is no per-chain status. While the shelf is open the bar keeps its
+  place, the Pill and the lens on the current tab; Apps gets no lens of its own. Escape or a tap outside closes the
+  shelf.
+- **An open product.** Two glass circles sit in a band over it, as in the iOS browser tab (`SPAViewLayout`): the
+  product's frame starts below the band, which is the top inset (a device's 54 px, or the page's own
+  `env(safe-area-inset-top)`), a 12 px gap, the 44 px circles and a 12 px gap. Nothing of the product is under the
+  circles or a device's island, and the product is told of no inset, so it adds none of its own. The band does not fold
+  away on scroll as the iOS one does: the host cannot see a product's scrolling. At the bottom the frame ends above the
+  Docklet. Whether the iOS web view also ends above its tab bar was not settled from the vendored iOS source. On the
+  left, **Minimize** for a product that can run behind, which every App can: it keeps running in the Apps shelf. A
+  product in Browse leaves Browse's landing in front; any other goes back to the last host screen. The shelf, or the
+  landing's own row for it, brings the same frame back. A Pocket card's Widget cannot run behind and gets **Close**
+  there instead. On the right, **More** opens a menu with **Product details** (the developer tools' Product tab) and
+  **Close**.
+
+- **What each opens.** **Browse apps** opens Browse's address, the published Browse app, which lists the apps on the
+  network: `browse.paseo` on Paseo Next v2, and none on a network that publishes none, where the row is not shown and
+  the landing lists only Recent. On a dev server, a developer or a test can point it elsewhere for one browser under
+  `truapi-web-signing-host:dock:v2` (per network); a build does not read it, and the host never writes it. The `v1` key,
+  which earlier builds wrote with the last product opened in Browse, is not read and is left in place. A product opened
+  while Browse is selected, from the landing or the search card, opens in Browse, and **Close** brings the landing back.
+  An address typed over Chat or Pocket opens as a product of its own and leaves the screen. The Chat SPA is still a
+  product: open `chat-spa-verbosity.paseo` in the address bar.
+- **Products keep running behind.** Choosing another destination hides the product in front and keeps its frame, its
+  channel to the core and its page state. The dock marks a destination with a green dot while its product runs. A hidden
+  product can still raise a permission prompt, which names the product that asks. A reload, and any change of session
+  (sign-in, sign-out, a wallet switch, the first username sync for a wallet), ends every held product, because a product
+  belongs to the session that opened it. Only the one in front is opened again.
+- **Opening one product from another.** A product's `navigateTo` for a name of this network, as `https://name.tld`,
+  `polkadot://name.tld` or `polkadotapp://name.tld`, opens that product in front of the destination it came from. The
+  destination keeps running, and so does the product opened this way: it joins the Apps shelf, in the order products
+  were opened, and runs behind other screens until it is closed from the shelf or More. An address typed in the search
+  field over a host screen or such an app opens an app of its own the same way. A name that is already a destination's
+  product resumes that destination, and one already open as an app comes in front as it was left, as the iOS host does:
+  no second copy starts, and its page does not change. Any other `http` or `https` address goes to the browser, and
+  anything else is refused.
+- **The Pocket screen.** The host draws it, laid out as the native Pocket is (the Android `PocketScreen`): a large title
+  over two stacked cards, the digital dollar and then Humanity. The host itself reads nothing and signs nothing for it.
+  - **Humanity:** the card the native host pins, backed by the personhood product `peopl.<tld>` (`peopl.paseo` on
+    Paseo). See [Humanity](#humanity).
+  - **Digital dollar:** the native card shows the balance of the wallet's Coinage coins. This host has no Coinage engine
+    yet, so the amount slot reads "Unavailable" and says why on hover. No amount is shown, and nothing stands in for
+    one. It takes no press.
+  - **Not here:** tilt shine, the collectibles strip, adding a card, and removing one.
+  - The artwork and texture are the native drawables, and the fonts are bundled, so nothing is fetched. The two
+    drawables come from the GPL-3.0 Polkadot Android app and keep that licence, not this repository's MIT licence; the
+    Inter and Manrope subsets are under the SIL Open Font License 1.1. The notices sit beside the files in `src/assets/`
+    and are served with the build under `licenses/`.
+  - `payment.balanceSubscribe` still answers `Unsupported`, so a product sees no balance either. See
+    [Not supported](#not-supported).
+- **The Chat screen.** See [Chat providers](#chat-providers).
+
+### Humanity
+
+The Humanity card follows the Pocket RFC (`docs/rfcs/pocket-modality.md`) and the native hosts. Its face is whatever the
+personhood product draws. It is not a check of the wallet's personhood, and this host adds nothing to it.
+
+- **The face.** The card shows the face bundled with the host, a title and "Proof of personhood", until a face arrives.
+  The first time Pocket is shown in a session, the host reads `worker.peopl.<tld>`. When that worker serves Pocket
+  (`includes.pocket`) and lists the `humanity` card in `pocket.cards`, the host runs it as described in
+  [Product chats](#product-chats), and asks it to render `RenderContext::PocketCard { cardId: "humanity" }`. Each tree
+  replaces the face. A press or an edit inside the face goes back to the worker as a renderer action on the same
+  context. A worker that does not offer the card is not started for it, and the card keeps its face.
+- **Retries.** The host asks a worker that has just started again every 250 ms for 10 seconds, while it boots. A stream
+  that ends after that is opened again after 1 second, doubling up to 30 seconds. A worker that restarts gets a new
+  stream.
+- **The kept face.** The newest face is kept per network and wallet in `localStorage`
+  (`truapi-web-signing-host:network:<id>:pocket-faces:<wallet>:v1`), at most every 2 seconds and once more when the
+  session ends. The next session shows it at once, before the worker answers. A face over 256 KiB is drawn but not kept.
+- **Lifetime.** The worker runs from the first time Pocket is shown in a session until the session ends: sign-out, a
+  wallet or network switch, or a reload. The native hosts start it with the session; this host waits until the user
+  looks at Pocket. If Chat lists the same product, one worker serves both.
+- **Pressing the card** opens the product's Widget, in front of Pocket, at `/?card=humanity`. Which content runs as the
+  Widget follows the iOS host (`ProductResolver` and `ResolvedProduct.contentId(for: .widget)`):
+  - The base name's `manifest` text record is read first. When it is present and not a valid root manifest (`$v` 1, a
+    `displayName`, a `description`, and an icon with a `cid` and a `format`), nothing opens and Pocket says why.
+  - With a valid root manifest, `widget.peopl.<tld>` is read. A valid widget manifest (`$v` 1, `kind` `widget`, at least
+    one `dimensions.height`) serves its own `contenthash`.
+  - A product that publishes no widget manifest, or no root manifest, has its base name's `contenthash` run as the
+    Widget. `app.peopl.<tld>` is never read. On Paseo, `peopl.paseo` publishes no widget, so its base name's content
+    runs.
+  - When that record has no content, nothing opens and Pocket says why.
+  - Stricter than iOS: a `widget.<name>` manifest that is present but not valid is refused with the reason. iOS skips it
+    and serves the base name.
+
+  The content is fetched and verified like a product opened by name. The frame runs as the product's `Widget` execution
+  under the product id `peopl.<tld>`, so it shares the worker's and the app's storage, accounts and grants. Choosing
+  Pocket in the dock ends the Widget. A session change, such as the first username sync, opens it again as the Widget. A
+  reload does not open it again, and it is not added to the address history.
+
+- **The core's Pocket calls.** A product's `pocket.listSubscribe` lists the pinned cards it backs, so `peopl.<tld>` sees
+  `humanity` as privileged and every other product sees none. `pocket.removeCard` refuses a pinned card; the core's web
+  bridge reports that refusal as `Unknown` with the reason, not as `Privileged`.
+- **Not here yet.** The native hosts draw the face above an opened Widget, and the Widget can move it with
+  `expandedCard.setFaceShown`. This host draws no face there, so that call answers `Unsupported`. The opened Widget is
+  not kept loaded after it closes.
+- **Trust.** The worker and the Widget run on this host's origin, as any product opened by name does (see
+  [Trust model](#trust-model)).
+
+### Chat providers
+
+The Chat screen draws one list of conversations and one conversation view, and reads every chat through one small
+interface, `ChatProvider` in `src/chat/provider.ts`. A provider owns its protocol, storage, delivery, retries and read
+receipts; the screen only says what the user did and draws what the provider reports. The interface is this host's own,
+not TrUAPI, and is meant to show the boundary a native host could copy.
+
+- **What a provider gives.** Its conversations as a list kept in memory (title, preview, last activity, and an unread
+  count when it keeps one), a conversation's history a page at a time (newest page first, oldest message first in a
+  page, with an opaque cursor for the page before), what goes below the messages (a text input, nothing, or why the user
+  cannot write), and events that say what changed. A message has a stable id, a sender with an id, a label and whether
+  it is the user's, a status, reactions, and `Text`, `System`, `Custom` or `Attachments` content, among others.
+- **What the screen gives back.** `send(conversation, text)`, `retry` of a failed message, and
+  `markRead(conversation, message)` for the newest message whose end was actually on screen while the page was visible.
+  Opening a conversation is not reading it. A provider without read state gets no `markRead` calls.
+- **Optional parts.** Starting a conversation, drawing `Custom` messages, the user's reactions (`react`, on messages
+  marked `reactable`), files (`files`) and calls (`calls`). The screen shows each only for the providers that have it,
+  and a disabled control says why.
+- **Lifetime and stale replies.** `src/chat/inbox.ts` builds the providers when a session (a wallet or a demo user, on a
+  network) starts, and disposes all of them when it ends or changes. They run whichever screen or conversation is in
+  front. The conversation view tags each read with its own token and the provider's epoch, and drops a reply that comes
+  back after either changed: leaving the conversation, a new session, or a restarted source.
+- **The providers.** The host runs no person-to-person chat of its own. `src/chat/product-room-provider.ts` reads the
+  rooms product workers keep through TrUAPI Chat ([Product chats](#product-chats)), one provider per product.
+  `src/chat/draft/provider.ts` reads the rooms a chat product keeps itself over the
+  [Chat Extension v2 draft bridge](#chat-products-chat-extension-v2-draft-bridge), one provider per listed worker.
+
+### Wallet contacts
+
+The host keeps no chat of its own. What it keeps of a wallet's people is the wallet's saved chat record, one per network
+and wallet in this browser's `localStorage` (`truapi-web-signing-host:network:<id>:chat:<wallet>:v1`), which
+`src/contacts/wallet-contacts.ts` reads. It writes the record only to block or unblock one of its contacts, as the
+host's earlier chat wrote it (`blocked: true` on that contact, or no `blocked`), and changes nothing else in it. Records
+an earlier host wrote keep working, and nothing in them is deleted.
+
+- **Contacts.** The accepted people in the record who are not blocked, in the record's order: the people the
+  [contact picker](#contacts) offers, and so the only people a picked handle resolves to for a transaction. A request
+  either side has not accepted is not a contact, and nor is anyone the user left. They are offered only once the keys
+  the host derives from the wallet match the identity account and chat key the core reports for the session, and never
+  for the Substrate development phrase (`src/invitations/gate.ts`); the test accounts are not refused. While the
+  wallet's Contact Chat requests use the network delivery, they are not offered, so they are not payable there either.
+  The list is the record's: no one becomes a contact by connecting in Contact Chat, and nothing here adds one.
+- **Blocked people.** The record's blocked people are never offered, picked or resolved, and Contact Chat refuses them.
+  A conversation whose person is one of the record's contacts, as a chat product's provider finds it by account, has
+  **Chat options** → **Block**, which asks first: the person is not told, leaves the picker, and the core is told, so a
+  handle a product holds for them stops resolving. Their room stays, and the host no longer names its person.
+  **Blocked** under the chat list, with the count when someone is blocked, lists the blocked, with **Unblock**, which
+  clears that person's block, so an accepted contact is offered again, and **Block a contact**, which opens the host's
+  picker over the record's contacts only, no username search, and blocks the one chosen. Only a contact of the record
+  can be blocked: no one is added to the record, so no stranger becomes payable by being unblocked. Both show only while
+  the contacts are offered.
+- **Names.** The record's names for its contacts, the people the user left and the people who asked to chat name those
+  people in Chat and in Contact Chat's rooms (`src/contacts/host-names.ts`), after the name chosen in the picker this
+  session and before the username the chain holds.
+
+### Product chats
+
+A product can chat through its worker executable, as a game product's weekly bot does. The Chat screen lists the rooms
+workers keep in the same list as the person-to-person conversations above. These rooms are TrUAPI Chat: the worker's
+calls reach the core as frames, which the inspector's **TrUAPI** view decodes.
+
+- **Adding a worker.** Product → **Workers** takes a product name, such as `myapp.paseo`, and lists the signed-in
+  wallet's workers with their state, **Inspect**, which opens the Inspector's Workers view at the worker, and
+  **Remove**. The host reads `worker.<name>`: its `executable` text record must be a worker manifest (`$v` 1, `kind`
+  `worker`, an `entrypoint` module inside the directory) whose `includes.chat` is true, and its `contenthash` locates
+  the files. The archive is fetched and verified like a product opened by name, and the entry module is loaded in a
+  hidden frame under the product's mount, connected to the core as the product's `Worker` execution. The product id is
+  the name, the one its app opens under, so the two share the product's storage and accounts.
+- **Lifetime.** The list of workers is kept per network and wallet. A worker runs while its wallet is signed in and the
+  tab is open, whichever screen is in front. Signing out, switching wallet or network, or a reload stops every worker
+  and ends its frames and render streams; signing in starts the saved ones. **Remove** stops a worker and takes it off
+  the list; the rooms it made stay.
+- **Default workers.** `ProductWorkers` takes a `defaults` list per network: workers the host adds for every wallet,
+  before any the user adds, as the native app places a game's room by default. They run like any other worker and have
+  no **Remove**. This host lists none, so no live worker starts without the user adding it.
+- **Rooms and messages.** The host serves TrUAPI Chat (`src/chat/product-chat.ts`): a worker creates rooms, posts every
+  message kind the contract has, and sets each room's footer. `registerBot` is refused, as the iOS host refuses it.
+  Rooms and the last 200 messages of each are kept per network and wallet in `localStorage`
+  (`truapi-web-signing-host:network:<id>:product-chat:<wallet>:v1`). The core screens what a worker sends before it
+  reaches the host; the host only stores and draws it. The iOS and Android hosts refuse every kind other than `Text` and
+  `Custom`.
+- **Game reminder.** The host serves `game.remindNextGame` and `game.cancelNextGame`, which the core allows only for the
+  game product (DotNS label `dim2`), so its worker's Register is not held back. A reminder is kept in memory, one per
+  product, and the Activity view logs it when it is set, cancelled and due. It rings no alarm, posts no notification and
+  adds no calendar entry, and a reload or a closed tab loses it.
+- **Rich text, files and buttons.** Rich text is its text and its media, each shown as an image when it is an `https`
+  URL or an inline raster image. A file is its name, type, size and caption as the product gave them, unchecked, and a
+  link that opens in a new tab with no referrer; only an `https` file is a link, and the host fetches none of it. An
+  `Actions` message shows its buttons, in a column or a grid as it asks, and a press goes to the worker as an
+  `ActionTriggered` chat action naming the message and the button, from the peer `native`.
+- **Reactions.** A `Reaction` places the product's emoji on one of the room's messages and `ReactionRemoved` takes it
+  off; it is not a message of its own. The product learns only its own messages' ids, so those are the ones it can react
+  to, and a reaction naming any other id is refused. The user reacts to the product's messages with the same picker: the
+  host sends `MessagePosted(Reaction)` from the peer `native`, naming the id `post_message` returned, and
+  `MessagePosted(ReactionRemoved)` for the emoji it replaces. The user keeps one emoji per message. The user's own
+  messages take none, because the product does not know their ids. Neither native host does this yet: both refuse
+  reactions in product rooms.
+- **Custom messages.** A custom message is drawn by asking the worker to render it (`RenderContext::ChatMessage`); each
+  tree the worker sends replaces the card. `src/products/render.ts` draws the tree as DOM: text as text, never markup,
+  sizes clamped, colors and type from the host's `--pr-*` tokens, which Chat and Pocket set to the same dark values.
+  Images are shown from the worker's verified archive or from the network's Bulletin gateway by CID, and from no other
+  address. An archive image is read from the copy in the worker frame's own storage: that frame is `credentialless` in
+  Chrome, so the page's storage does not hold it, and the worker can write that copy too. A button press and a text
+  field change go back to the worker as renderer actions. A tree deeper than 48 or larger than 2000 nodes is not drawn.
+  A text field loses focus when the worker sends a new tree.
+- **The room's text input.** A room whose footer is `TextInput` shows a composer. What the user types is kept in the
+  room and sent to the worker as a `MessagePosted` chat action from the peer `native`, as the iOS host names the user.
+- **Trust.** A worker runs on this host's origin, as a product opened by name does, and is trusted like one: it can
+  reach the page and the saved wallets. Its own requests follow the browser. Its notifications, permission requests and
+  navigation go through the same callbacks as an app's.
+- **Not served yet.** Input surfaces of a worker, worker demand from the core (a worker runs whenever its wallet is
+  signed in), bot registration, and the core's `beginOperation` lifetime hints. TrUAPI Chat has no operation to block a
+  room, leave or delete it, upload a file, or place a call, so product rooms offer none of them. Pocket is served for
+  the pinned Humanity card only; see [Humanity](#humanity).
+
+### Chat products (Chat Extension v2 draft bridge)
+
+**Draft, not TrUAPI.** A page-local bridge that lets a product's worker speak the Chat Extension v2 HOST–PRODUCT
+contract to this host, to try that contract before TrUAPI carries it. It is the next step of product rooms: the product
+runs the same way, as a worker the ordinary loader runs, like any product worker, but it keeps its own history and the
+host asks it for pages, where a TrUAPI Chat room has the host store what the product posts. The contract is the one on
+`paritytech/trinity-user-agents` branch `lc/chat-product` at commit `3b2316285`: `rust/crates/truapi/src/api/chat.rs`,
+`src/v01/chat.rs`, `api/call_media.rs`, `truapi-host/src/chat-queries.ts`, and the RFCs `chat-extension-v2.md`,
+`chat-extension-v2-additions.md` and `call-media.md`. `src/chat/draft/contract.ts` copies its types in the shape the
+TrUAPI codegen gives them. Nothing in this repository's Rust crates, codegen or packages changes.
+
+- **How a product connects.** Only a product `Worker` whose manifest includes chat, run by the ordinary worker loader.
+  Its frame posts `{ type: "truapi-chat-v2-draft", protocol: "truapi-chat-v2-draft/1" }` to the host page with one
+  `MessagePort`; the host takes it only from that worker's own frame and origin, binds it to that product id, and ends
+  it when the worker stops or the session changes. A product uses `connectChatV2()` from `src/chat/draft/product.ts`,
+  whose methods carry the contract's names (`createRoom`, `updateFeed`, `setRoomPreview`, `setRoomFeatures`,
+  `setRoomCall`, `deleteRoom`, `capabilities`, `roomEventsSubscribe`, `actionSubscribe`, `onMessagesQuery`,
+  `onUserAction`, `onParticipantsQuery`, `callMedia.start/signal/stop`).
+- **Scoping.** The host, not the core, scopes the bridge: a product reaches only the rooms it declared through its own
+  link, and its rooms are not TrUAPI Chat rooms. The core runs the worker as a `Worker` execution but sees none of the
+  bridge's messages and grants nothing for them. The bridge carries no keys, entropy or grants.
+- **A provider of its own.** `src/chat/draft/provider.ts` is one more `ChatProvider` per listed worker (id
+  `chat-v2:<product>`), registered by `src/chat/inbox.ts`. It implements the provider interface as it is and leaves the
+  product rooms of TrUAPI Chat and the shared screen unchanged.
+- **What the provider does with it.** A room that sets `productSource` takes its pages from `messages_query` (`Before`
+  with the product's cursor as the user scrolls up). A sent message shows as pending under a local id, and the
+  `MessageCreated` answer of `user_action` is drawn under the same id. Any refusal, `Rejected` included, leaves it
+  failed with the reason and a retry. `Seen` goes out only when `reportSeen` is set. `update_feed` changes (`New`,
+  `Edited`, reactions, `StatusChanged`) are drawn as changed messages; a `Deleted` makes the screen read the newest page
+  again. `"user"` is the user and `"product"` the product; other participant ids are named through `participants_query`
+  `ByIds`. `Notice` is a system row. The list draws the room's metadata, preview and unread badge. A user's file goes
+  inline as a `RichText` media item up to 1 MiB; inline media opens from its bytes, and preimage, sealed and HOP media
+  say this host does not fetch them. Queries use the RFC's time limits, a stopped or stale query is cancelled, and a
+  worker restart is a new epoch that reloads the open room.
+- **Calls.** A room that declares no `features.calls` has its call buttons disabled with the reason, and a button for a
+  kind the room does not declare says so when pressed. A press sends `CallRequested`; Accept and Decline on a `Ringing`
+  call send `CallAnswered`; Hang up on an `Active` call sends `CallEnded`. The call is the product's: it rings, places
+  and ends it through `setRoomCall` and its own signaling. The media is the host's: `callMedia.start` runs only within
+  180 s of a press or an accept in that room, and the host's signals reach the product as `CallSignal` room events,
+  which it carries to the other side. This host has no call engine for v2 rooms: `start` answers `Unsupported`. The unit
+  tests run the bridge's call media against a stand-in engine.
+- **Capabilities** lists `product_source_rooms`, `participants`, `inline_attachments` and `call_buttons`, nothing else.
+- **Where it departs from the reference**, because the provider interface stays as it is: a `Rejected` message stays
+  failed instead of being removed; a `Deleted` message outside the newest page goes only when the room is opened again;
+  the call buttons of a room without calls are disabled, not hidden. Each would need one optional addition to
+  `src/chat/provider.ts` (a removed message id on the `messages` event, and an `offered` check on `CallSupport` and
+  `FileTransfer`), which is not made. `Actions` buttons draw disabled and `Custom` bodies show their preview text.
+- **Room menu entries** (draft, in no proposal). `setRoomActions { roomId, actions }` puts up to four of the product's
+  entries (`actionId`, `label`, `destructive`, the shape of the reference's `ChatProductAction` with a `Callback`
+  handler and no icon) in the room's **Chat options** menu, above the host's own **Block**; an empty list removes them.
+  Choosing one sends `RoomActionTriggered { actionId }` from the peer `user` on the product's `actionSubscribe` stream,
+  the reference's `action_subscribe`, whose payload has no room entry. Only an entry the room offers now is sent, and
+  only once the product subscribed; a choice is not queued, and one the host refuses shows its reason under the
+  conversation. A label that reads as one of the host's own entries (**Block**, **Unblock**, **Cancel**, in any case) is
+  refused. Entries belong to the running worker: they go when it stops, and a worker declares its own, an empty list
+  too, for every room it serves, including one that already exists. What an entry does is the product's; the host draws
+  it and passes the choice on.
+- **Not covered.** Host-store v2 rooms (their composer says the draft host keeps no messages), `reactions_query`,
+  `message_actions_query`, `search_query`, `open_link`, `room_calls` and the Media service, preimage and sealed
+  attachments, bots, mute and archive, wakes, replies and edits by the user, `allowedReactions`, pinned ordering, rate
+  limits and most field bounds. Declarations live in memory for the session and are lost on reload, where the RFC keeps
+  them across restarts. When a worker stops, its rooms' calls and call media end. The bridge is not TrUAPI, so the
+  inspector does not show it.
+- **What runs it today.** No published product speaks the bridge. Contact Chat, the invitation demo's chat worker
+  ([Contact Chat](#invitation-demo-prototype)), runs over it on the dev server.
+  `fixtures/products/synthetic-chat-product.ts` is a synthetic chat product, with made-up people and messages and no
+  network or peer protocol, that the Chat screen's browser tests run on the other side of the bridge in the page; it is
+  not the Verbosity chat product.
+
+#### Contact rooms and starting a chat
+
+Draft additions to the v2 bridge, beside a contact rooms proposal (`setRoomContact` in `paritytech/trinity-user-agents`
+`lc/product-only-chat` at `081dc4e43`, unmerged). `src/chat/draft/conversations.ts` defines `ConversationEngine`
+(conversations, pages of text, send, retry, start, change events) and shows any such engine over the bridge; Contact
+Chat's engine is the one that runs here.
+
+- `setRoomContact { roomId, contact: { handle, state } }` and a `Contact { handle }` participant: the product says whom
+  a room is with by the core's contact handle, the one `contacts.pick` gives, and the state (`Outgoing`, `Incoming`,
+  `Established`, `PeerLeft`, `Invite`). An `{ account, state }` form also exists; it carries no username either. The
+  host names and draws the person only from its own contacts (`ChatV2ProviderOptions.contacts`), through the handles the
+  core mints for the people it knows (`HostContacts`, `contactHandles`), and never tells the product; a handle that
+  names no one there is drawn as **Contact**, whatever the product put in the room's metadata. Only a product the host
+  lets set contacts (here, Contact Chat) may set one, so no other product can make a room look like someone the host
+  knows. `Invite` means no request is open: the composer asks for a new chat, and **+** offers the request form again.
+- `startConversation { handle, welcome? }`, a host query: **+** opens the host's picker, offering the people of the
+  product's rooms and username search. Choosing someone already in a room opens it; anyone else gets the request form,
+  and only **Send request** asks the product. The contract also has a `{ contact, welcome? }` form, an opaque single-use
+  reference for a host service that resolves it; no host service here makes or resolves one.
+- A TrUAPI contact handle names a person to the core, which resolves it to an account only for a transaction. The host
+  can name a handle (`contactHandles`), but a product cannot. A chat engine in a product that must address a peer by
+  account needs a resolve-for-chat capability that does not exist; Contact Chat reaches people only through its host's
+  request service, by handle.
+- The people of a product's rooms are offered in the host's own **+** only. They are not `ChatProvider.contacts`, so no
+  product's `contacts.pick` offers them and none becomes a payment recipient.
+
+### Inbox (prototype)
+
+**Prototype.** The **Inbox** lists requests that products send and that wait for the user's answer: a persistent list,
+not a passing toast, and separate from the operating system's notification permission. Chat's **Chats | Inbox** tabs
+open it in place of the conversation list, and the Apps shelf's **Inbox** opens the same view: Chat, at its Inbox tab.
+Both read one list, so an item seen, dismissed or accepted in one shows so in the other. It holds chat invitations and
+profile sharing requests, not every chat message. Its requests come from [Contact Chat](#contact-chat), from sample data
+or from the [invitation demo](#invitation-demo-prototype).
+
+- **Where it shows.** In every build. On a dev server reached as `localhost`, `127.0.0.1` or `[::1]`, Developer tools →
+  **More** → **Add sample notifications** fills the list of the signed-in wallet or demo user, and **Clear samples**
+  removes them.
+- **The look.** The native apps have no Inbox, so this one is built from native parts: one list whose rows follow the
+  iOS Chat Requests list (avatar, name and time, the message on two lines, a dot while unseen, and the kind, the product
+  it came through and expiry under it). There is no detail page, and an item is never drawn as a conversation.
+- **Seen.** A row is seen once at least 60% of it shows on screen, while the Inbox and the page are visible. Opening the
+  tab does not mark rows below the fold, and a page in a background tab marks nothing. The Inbox tab and the shelf's
+  Inbox count listed rows not seen yet, whatever their state, and a dot on Apps shows while any are. A product in the
+  shelf counts its own. Every count reads the same items.
+- **Actions.** A request that waits has **Dismiss**, and **Accept** when the feature that owns it can accept it. Sample
+  requests have no owner, so they have Dismiss only. Seen is not answered: a request with no action stays waiting until
+  it expires, if it has an expiry, and then it has no actions. Invitations have none: they wait until answered.
+- **Sent.** The user's own pending requests are listed under **Sent**, by the host's name for the recipient, with
+  **Cancel**. Cancel is local: it stops posting the request and drops a later reply, and nothing goes to the recipient.
+  A request the host cannot keep posted shows **Paused** with why, and stays pending.
+  - **Dismiss** takes the request off this list on this device. It is not an answer: nothing is sent, the stored item
+    keeps its state and its `dismissedAt`, it still expires, and a repeat delivery does not bring it back.
+  - **Accept** is the user's intent, handed to the product that owns the request. The row shows **Accepting…** until the
+    product answers: it accepts, and the row shows Accepted, or it refuses, does not answer within 30 seconds, or is
+    closed, and the reason shows under the row with the request still waiting. The host shows the product only when the
+    product asks; tapping an accepted row asks the product again. For a demo user's invitation the product is Contact
+    Chat, which checks the invitation, replies through the host and keeps the conversation in Chat. Accepted on the row
+    means the recipient's product replied; it is not the sender's connection.
+- **Storage.** Per network and wallet, under `truapi-web-signing-host:network:<id>:notifications:<wallet>:v1`, or per
+  network and demo user. Written only once used and removed when empty. Waiting requests and history survive a reload.
+  `src/notifications/notifications.ts` holds the list, which does not know where a request came from, and
+  `src/notifications/screen.ts` the screen. The sample requests, from senders and products ending in `.example`, are in
+  `fixtures/notifications/sample-notifications.ts`, which adds and removes them by id.
+
+### Contact Chat
+
+**Prototype, on the network, NOT ENCRYPTED.** Contact Chat (`src/chat/contact-chat/`) is the host's own chat product: a
+worker that knows people only by the contact handles its host gives it. It runs for every wallet signed in from the
+Account picker, imported or a test account, in every build; nothing turns it on. Two people who open the host, each
+signed in to a registered wallet, can find each other in Chat's **+** by typing the other's full username (a build reads
+the chain by exact username: no prefix search), send a request, accept it in the Inbox and write text. The host is a
+development tool: wallets are kept unencrypted in the browser, and the messages are plain text that anyone reading the
+network's Statement Store can read. The import form and both prompts say so.
+
+- **What runs at sign-in.** The host starts Contact Chat's worker and its request service
+  (`src/invitations/wallet-chat.ts`, `src/invitations/contact-chat-host.ts`). The service starts once the wallet's
+  identity account and chat key are the ones the core reports and the chain publishes; until then, or when they are not,
+  New chat says why when a person is chosen, and the log says why: with no chat key on chain, register a username for
+  the wallet in the Polkadot app, which publishes it, and sign in again. It then reads the network's day inbox and posts
+  again the wallet's own pending requests, which this browser keeps: another browser neither sees nor posts them.
+  Nothing new leaves the host without the user: a request goes only after **Send invitation**, a reply only after
+  **Accept chat request**.
+- **What it costs.** Both prompts say it: one quiet line that it uses daily slots and that messages are public, which
+  opens the breakdown. Sending or replying claims one of the person's daily notification slots with their personhood and
+  posts one sealed statement. A pending request is posted again on each later UTC day this host runs, with another slot,
+  until it is completed or cancelled under **Sent** in the Inbox; a reply is posted again on a later day when its
+  request arrives again. Each conversation claims one daily Statement Store slot for its own account on each day it
+  posts. A wallet with no personhood, or no slot left, cannot post: the request pauses and says why.
+- **Who can use it.** A wallet whose identity account has a chat key on chain (registered through the Polkadot app or
+  the built-in test accounts' registrations) and personhood for the slots. The Substrate development phrase is refused.
+  The test accounts' phrases are public, so anyone can act as them, read their requests and use their slots.
+- **Where its worker comes from.** The host builds the worker into an app archive and serves it itself: described at
+  `contact-chat/worker.json` under the host's base, with its blocks at `/ipfs/<cid>` on the origin, which the loader
+  checks against their CIDs as it checks any worker's (`contact-chat-plugin.ts`). A build served under another base path
+  finds no blocks. Nothing is published to DotNS or Bulletin for it.
+- **Saved contacts.** While requests reach people the network names, the wallet's saved contacts are not offered in the
+  picker, and so are not payable, and blocks cannot be edited, though existing ones still hold.
+- **On a dev server.** Developer tools → **More** → **Contact Chat delivery** chooses, for the tab, the network (the
+  default), the network with every claim only validated, requests kept between tabs of this browser, either with chat
+  claims validated, or no Contact Chat at all. **Reply key for new requests** chooses X-Wing (the default) or X25519. A
+  build has neither.
+
+The rest of Contact Chat, its protocol and its delivery are described under the invitation demo below, which runs the
+same product with fixture identities.
+
+### Test accounts
+
+The Account picker lists three shared test accounts, **Alice**, **Bob** and **Carol (test account)**, under **Shared
+test accounts**, below saved wallets under **Your wallets**, in a build as well as on a dev server. Each is a wallet
+built into the host from a public BIP-39 test vector (`src/platform/dev-accounts.ts`), under a storage scope of its own
+(`test-account:<id>`). Visiting the host signs in to none of them and chooses none: until an account is chosen the
+picker reads **Choose an account** and Sign in is off. Pick one and choose **Sign in**. It signs in, signs out and runs
+as an imported wallet does: Chat, product workers, Pocket, the username sync and **Account status** follow the same path
+and read what the core and the chain report for its account. It has no **Forget**, and the picker names it alone until
+it has signed in once. **Shared test account: anyone can act as it**, a closed fold, shows while the picker points at
+one.
+
+The phrases are public, and so are in every build: anyone can sign as these accounts, read the chat requests sent to
+them and use their daily slots, so keep nothing of value on them. They run Contact Chat as any wallet does. The host
+registers and funds nothing for them; an account is registered elsewhere, and once it is, the chain says so here as for
+any wallet. The host's checks of a wallet's keys still refuse the Substrate development phrase
+(`src/invitations/gate.ts`), which is not one of these.
+
+### Invitation demo (prototype)
+
+**Prototype, with FIXTURE IDENTITIES and LOCAL SIMULATED DELIVERY.** A tab can act as a made-up user, Alice, Bob or
+Carol, instead of an account, to try features that need more than one person. Open the host in one tab per user and
+choose a different user in each, in **More** → **Invitation demo**. The core signs the demo user in with the same public
+test vector as the test account of that name, but under the demo's own storage scope (`test-user:<id>`), so products get
+a real session: `contacts.pick` opens the host's own picker over that user's made-up contacts and returns the core's
+handle. The first feature that uses two users is a chat invitation over a proposed host request/reply service, after the
+v3 "Establish Connection" design: the product gives an opaque payload, the hosts own the request, its return route and
+keys, and authenticate both directions, and the products see only payloads and opaque handles. Nothing in it is an
+agreed API.
+
+- **Try it.** In one tab: Developer tools → **More** → **Invitation demo** → **Alice**. The tab reloads with
+  **Invitation demo · Alice** over the app and "Signed in as Alice (invitation demo)" in Account, and opens nothing:
+  open any product with the search button to try it as Alice. In a second tab choose **Bob**.
+  - Chat's **+** → Bob → **Send request to Bob** starts a chat in Contact Chat, the demo's product (below). The host's
+    **Send invitation** prompt names the person before anything leaves.
+  - Bob's **Inbox** badge, on Chat's Inbox tab and in the Apps shelf, shows 1 until the row shows in his list.
+    **Accept** hands Bob's Contact Chat the invitation payload; it checks it, makes both conversation topics and its
+    response, and replies through its host. Bob's host seals the reply for Alice and posts it on the request's return
+    route. Alice's host authenticates it and hands the payload to Alice's Contact Chat, which checks it and only then
+    completes: **Connected**. **Dismiss** takes the row off Bob's list and sends nothing. Alice can **Cancel** a waiting
+    request under **Sent** in her Inbox, and Contact Chat can cancel its own; otherwise it waits. Inspector → Activity
+    shows each step.
+- **Leaving it.** **Sign out** in Account, or **Off** in More, leaves the tab signed out. Signing in to an account in
+  the picker, or importing one, reloads the tab signed in to it. The choice is kept for the tab, so a reload keeps it.
+  Starting the demo ends the tab's wallet session and leaves saved wallets and their data alone.
+- **Clear invitations.** **More** → **Clear Alice's invitations** asks first, then removes that demo user's sent and
+  received invitations and their Inbox items on this network, in this browser. It is not a sign-out: wallets, the other
+  demo users and Contact Chat's own records stay.
+- **Contact Chat.** The demo's chat worker (`src/chat/contact-chat/`), a product that knows people only by the contact
+  handles its host gives it. It runs for the demo user through the ordinary worker loader, as a worker the host adds,
+  and Chat shows its conversations over the v2 draft bridge. **+** in Chat → Bob → **Send request to Bob**: the host
+  hands the worker Bob's handle (`startConversation { handle }`), the worker makes its invitation payload and asks its
+  own request service to send it, and the host's **Send invitation** prompt asks first. Bob's **Accept** in the Inbox
+  goes straight to his running worker, which answers the invitation, makes both topics, starts reading `T_AB` and
+  replies; Alice's host authenticates the reply, her worker checks it, starts reading `T_BA` and only then calls
+  `complete`: **Connected**. Both workers keep their session in their own storage before their host replies or
+  completes. The conversation and names survive a reload. Each host names and draws the other person from the handle;
+  neither worker gets a name, username, account, identity key, request id or route. Contact Chat can also ask
+  `contacts.pick` itself and send its request to the handle it gets, and cancel its own request through its host; only
+  the browser test drives these, as the v2 draft has no action for them.
+  - **Start over.** A connected room offers **Start over** in its **Chat options** menu (**⋯**), a room menu entry of
+    Contact Chat's own. It is for a connection whose messages no longer get through, such as after the other side
+    accepted another request from this person. Choosing it sends a new request on a new conversation account, through
+    the host's usual **Send invitation** prompt and costs, with a purpose that asks the other side to accept it. Until
+    the host holds the request, nothing changes: Cancel in the prompt, or a request the host refuses, leaves the
+    connection as it was. Once the host holds it, the room keeps its history, marks where the earlier connection ended,
+    stops reading it, and waits; the other side must accept exactly this new request, which replaces their connection
+    too. While the prompt is open the menu does not offer Start over again; a choice from a menu drawn earlier sends
+    nothing, and the room says why. Any new connection, from Start over or from an Accept that replaces one, starts
+    after the history: this side's messages still sending in the earlier one show failed, and earlier messages are kept
+    but neither posted nor retried in the new one. Nothing tells the earlier connection, and nothing is cancelled or
+    synced on the other side.
+  - **Text.** Once connected, both sides write and read plain text (`simple-text/1`), through the product's own TrUAPI
+    `statementStore`. Each side keeps one statement up, on its own topic and channel (Alice on `T_AB`, Bob on `T_BA`,
+    with channels Bob's response names), signed by its conversation account. Each post holds that side's last 20
+    messages, fewer past 16 KiB, and replaces its last post: the store replaces a statement on the same channel of the
+    same account only with a strictly higher expiry, so each expiry is two days ahead in its high 32 bits and above the
+    last. The node refuses only a statement already expired and sets no upper bound (polkadot-sdk `06ccd162f`,
+    `substrate/client/statement-store/src/lib.rs` and `substrate/primitives/statement-store/src/lib.rs`, read
+    2026-10-31). A general allowance keeps two statements and 512,000 bytes per account (People chain, read 2026-10-30),
+    so the network keeps a short window, not a history; each worker keeps its whole history in its own storage. Each
+    side reads only posts its peer's account signed on its own topic, and keeps each message once by its id. Statements
+    reach the core through People's RPC node by default, which replays what it holds. With People on the light client
+    backend they reach it through this host's embedded light client, which has no statement store: a subscription's
+    first page is always empty, and a post made earlier, such as what Bob writes right after he accepts, is read when
+    Alice's worker connects later only if a peer sends it to her light client then. Whether and when a peer does is not
+    guaranteed. A delayed read that worked shows that a peer sent the post at that moment, not that the network keeps or
+    replays it. A `new` answer to a post means at least one peer took the broadcast, not that a peer stored it: peers
+    check allowance and channel priority themselves and do not report a refusal. The unit tests' in-memory store replays
+    what it holds like a full node; the browser does not. A peer away for more than 20 messages, or past the expiry,
+    loses the older ones. A message still sending when the worker stopped shows failed after a reload, with Retry.
+  - **Not encrypted.** `simple-text/1` has no encryption of its own: anyone who reads the Statement Store reads the
+    text, the topics, channels, both conversation accounts, sizes and times, and can link the posts of one account. A
+    connected room says "Connected · messages are not encrypted" under its name; the Send and Accept prompts say it too.
+    Only the setup is sealed and authenticated, by the hosts.
+  - **Conversation accounts and their allowance** (draft). A conversation account is Contact Chat's own product account
+    at a random raw derivation index (`Raw`, 32 bytes) that the worker makes when it invites or accepts and keeps in its
+    storage. The worker asks the core for its public key (`account.getAccount`) and signs each post with
+    `statementStore.createProof`; the core holds the key and asks nothing for a product's own account. Before a side
+    posts, its worker asks its host to allow that index with the request service's `chatAccount` call (request handle,
+    index).
+    - Consent: the user's Send of that request, once an authenticated reply arrived and while it is not cancelled, or
+      their Accept of it. The first index named is bound to the request; another is refused, so one Send or Accept funds
+      one account. The host names the product from its own context, so a product funds only its own accounts.
+    - Allowance: a wallet on the network delivery has the core derive the account and give it a general Statement Store
+      slot of the wallet's personhood for the UTC day (`claimProductStatementAccount`), never the identity account, a
+      notification slot or the product-wide allowance account. It reads every collection first and reuses a slot the
+      account holds in any of them, with no ring looked up. It never replaces a live slot and submits at most once: a
+      failed submission is settled by reading every collection again, and a target still absent is reported uncertain,
+      since a general slot can change hands, so another occupant does not show the claim cannot land.
+    - Rollover: one slot per account per UTC day. The host keeps the answer until the day ends; the worker asks again on
+      a later day it posts. Each conversation that posts takes one of the person's daily slots (50 for a full person, 10
+      for a lite one, read 2026-10-30).
+    - Prompts: with any delivery that gives an allowance, Send invitation and the host's Accept chat request prompt
+      (asked when the user chooses Accept, before Contact Chat hears of it) say in one line that they use daily slots,
+      and that line opens what sending or replying uses of the person's daily notification slots, and that chatting
+      claims one daily Statement Store slot for the chat's account on each day it posts. Cancel in the Accept prompt
+      hands Contact Chat nothing and leaves the request pending.
+    - "Validate claims only" asks the runtime whether it would accept the claim and submits nothing, so a message there
+      fails and says which slot it would take. "This browser, validate chat claims only" keeps requests between tabs of
+      this browser, like the local delivery, but validates each chat account's claim in the same way; its tab, too,
+      refuses every submission. The local delivery and the demo users give no allowance: a message fails and says the
+      host gives none. A post the core reports failed, refused by this tab's guard or by the light client, fails its
+      messages, and Contact Chat adds a line with the reason the core gave; the message's own "Not sent" line names no
+      reason, since the draft chat contract carries none.
+  - **Diagnostics** (draft). Contact Chat reports each conversation to its host for the inspector's Chat view: its
+    protocol, state, request handle, conversation account, the peer accounts and topics it reads, where it posts, and
+    counts since the worker started (messages sent, received and dropped as copies, failures, posts). What only the
+    protocol defines travels as labelled protocol details: for `simple-text/1`, the **published message batch**, what
+    the last post carried against the most one post carries (20 messages, 16 KiB), and the expiry each post asks for (48
+    h; peers may evict it sooner). The protocol gives its public routing (`routes`) for this; no report carries what
+    anyone wrote. A report is a window message from the worker's frame (`product-diagnostics/draft-1`,
+    `src/products/diagnostics.ts`), read field by field within bounds and put down to the frame that sent it; a field it
+    does not read, such as an earlier report's `window`, is left out. Each replaces the last of that run, and a stopped
+    worker's report is marked stale. The host shows it as reported and acts on none of it.
+  - **The protocol boundary.** `src/chat/contact-chat/protocol.ts` is the seam between the engine and the chat protocol:
+    the protocol owns the setup payloads, the topics and channel each side reads and posts on, and a post's bytes and
+    how many messages it carries; the engine owns the conversation, its account index, history and storage and never
+    reads them. The hosts carry the payloads unread. `simple-text/1` (`simple-text.ts`) is the only protocol; MLS or
+    another library would replace it there, with no change to the hosts.
+  - **Gaps it shows.** The host asks twice when a chat starts from its own **+**: once in the request form and once in
+    **Send invitation**. A declined request waits silently until the sender cancels it under **Sent** in the Inbox. No
+    receipts: a sent message shows sent, never delivered or read. Whether the store keeps a post once its account's
+    allowance lapses is the node's. Text over the network has not been tried between two hosts yet.
+  - **With a wallet.** Contact Chat runs for every wallet signed in from the Account picker
+    ([Contact Chat](#contact-chat)). Its requests are proved with the wallet's own identity account and chat key, once
+    they match the core's session and the chain publishes that chat key for that account; otherwise they stay off and
+    the log says why. A person is any identity account with a chat key the chain publishes, but the blocked: whoever the
+    user writes to, found by username, and whoever writes to them, named by the host from its records and the chain
+    username. The built-in test accounts are registered on Paseo Next v2 with their chat keys (`testalice.10`,
+    `testbob.10`, `testcarol.10`).
+- **What the demo keeps apart.** Its contacts and handle (`alice.example`) are fixtures. The contacts name each demo
+  user by the identity account their own phrase derives on the network, as chat names people, so the core mints the same
+  handles for them as `contacts.pick` gives. Its host proofs are made with the wallet keys of the user's phrase (see
+  **What is real here**). None of a wallet session's services start: no saved contacts, wallet worker or Pocket, so
+  fixture contacts never reach a wallet's contacts or a transaction it signs. The session runs only the products' side:
+  the workers the host adds for the demo (Contact Chat) and their chat providers (`InboxSession` in
+  `src/chat/inbox.ts`). The host's invitation inbox starts with the session, so requests from other tabs arrive.
+  **Account status** reads the People chain for the account the phrase derives only when its fold opens. The core looks
+  up the account's DotNS name on Asset Hub once, as it does at every sign-in. Contacts
+  (`fixtures/invitations/test-users.ts`): Alice has Bob and Carol, Bob and Carol have Alice. Lists are kept per network
+  and demo user, under `truapi-web-signing-host:network:<id>:test-user:<user>:notifications:v2`, and Contact Chat's sent
+  and received requests, with the sealed reply, under `...:contact-chat-outbox:v2` and `...:contact-chat-received:v2`.
+  Earlier lists, `...:outbox` and `...:received` among them, are left in place and no longer read, and **Clear
+  invitations** removes them too. Contact Chat conversations kept before the change hold handles of root accounts, so
+  the host draws their person as **Contact**.
+- **The proposed API** (`host-requests/1`, `src/invitations/contract.ts`), over a `MessagePort` the product hands over.
+  It names a contact by the `ContactHandle` TrUAPI's `contacts.pick` gives; it has no picker of its own. Each call has
+  an `id` and one `result`.
+  - Sender: `request` (contact handle, purpose, payload; answers a request handle), `complete` (only after an
+    authenticated reply reached the product; stops the reposts; sends nothing) and `cancel`. The host pushes `outgoing`
+    (status) and `response` (an authenticated reply's payload).
+  - Recipient, only after the user chose Accept: the host pushes `acceptIntent` (request handle, sender handle,
+    payload), and the product calls `reply` (request handle, payload), `refuse` or `open`.
+  - Either side, once the user sent the request and a reply was authenticated, or accepted it: `chatAccount` (request
+    handle, a 32-byte raw derivation index) asks the host to allow the product's own account at that index to post to
+    the Statement Store for the current period, and answers the account and when the period ends. One index per request.
+  - Statuses are `waiting`, `paused`, `completed` and `cancelled`. A request has no deadline: it is pending (`waiting`,
+    or `paused` while the host cannot keep it posted) until completed or cancelled. There is no delivered, declined,
+    accepted or expired status for the sender.
+- **Who owns what.** The sender's host makes the request id and a per-request reply key pair, keeps the reply key's
+  secret in its storage before it first posts the request, and drops it when the request is completed or cancelled,
+  after which no reply opens. Dropping it from browser storage is not a secure erase. Each tab takes in the other tabs'
+  closes and new requests before it writes the list, but writes are not atomic across tabs, so a write that has not
+  reached a tab's storage yet can still be undone. Its delivery (the `HostDelivery` port) chooses both routes: it
+  reaches the recipient by their identity, and it gives the sender a return route for each request, which the sender's
+  host watches before it posts and binds into the authenticated request. The recipient's host keeps a request only when
+  its own delivery can reach the sender on that route, and posts its reply there, never on a route from the payload. The
+  sender's host tries a reply that arrives on a route against each of its requests on that route, and keeps it for the
+  one whose reply key opens it; a post that opens for none is someone else's and is dropped without a log line. The
+  request service does not read a route. Products never see a request id, route, reply key, evidence or anyone's
+  identity; the recipient's product does not get the purpose.
+- **What is real here.** Sealing with HKDF-SHA256 and ChaCha20-Poly1305 (`src/invitations/sealing.ts`). A request is
+  sealed with X25519, classical. A reply is sealed to the reply key the request carries, and the key's exact length says
+  how (`src/invitations/binding.ts`): 1,216 bytes, the X-Wing KEM (X25519 with ML-KEM-768, draft-11, from
+  `@noble/post-quantum`), hybrid post-quantum, which new requests use by default; 32 bytes, X25519, classical, which a
+  developer may choose for new requests under More → **Reply key for new requests**. A key of any other length is
+  refused. The recipient needs no published post-quantum key, and the request and the host proof stay classical with
+  either suite. The reply key is in the request's authenticated context and kept with it, so the recipient's host seals
+  the reply with that key's suite, the sender's host opens it only with that suite, and changing the choice changes no
+  request already sent. The KEM is checked against the draft's test vectors. Payloads travel as hex, so each payload
+  byte takes two. With the test fixture's context, a sealed request takes 3,153 bytes (X-Wing) or 785 (X25519) plus
+  twice the payload, and a reply 1,772 or 683, so within one 10,240-byte notification a request with a short purpose
+  carries at most 3,543 or 4,727 payload bytes, and a reply 4,234 or 4,778. There is also the host proof of the
+  Establish Connection design, v3's `AuthEvidence` (`kind`, a 32-byte `identityMac`, a 64-byte sr25519
+  `messageSignature`), made with the user's wallet keys (`src/invitations/wallet-auth.ts`). As the design asks, it
+  adapts native chat's identity authentication: the MAC is BLAKE2b-256 keyed with the X25519 secret of the two chat
+  keys, and the identity account signs, as the native app's UID account does. A request is sealed to the recipient's
+  published chat key, the design's inbox key. Before it proves anything, the host checks the keys its phrase derives
+  against the identity account and chat key the core reports for the session, and that the directory publishes that chat
+  key for that account (in the demo, the fixture directory below); otherwise the request service stays off and says why.
+  The sender identity is checked against the chat key published for it, never a key a request names. A request's
+  evidence covers the version, both identities, the product, the purpose, the request id, the times, the return route,
+  the public reply key and the exact payload. A reply's covers the version, both identities, the product, the request
+  id, the digest of the exact request and the exact payload. Kind and identity order keep one direction's evidence from
+  checking as the other's. The sender's host checks a reply against the contact it chose, not a key the reply names. A
+  refused reply does not use up the request. Contact Chat's own check is `simple-text/1`'s: the response repeats the
+  invitation's random challenge.
+- **What is simulated, and not the design's answer.**
+  - The contact handle is the core's, but whom it names to the host comes from the fixture directory: the host mints
+    handles (`contactHandles`) for every other demo user's session account and names a handle by that index. A name is
+    not permission: a transaction resolves a handle only for someone in the picker's contacts, so a demo user known only
+    to the directory, such as Carol to Bob, is drawn by name and never paid. The core writes no cache for a minted
+    handle.
+  - The host proof is a pilot. The bytes the MAC and the signature cover are this repository's reference profile,
+    unchanged; the design leaves the exact preimage, encoding and labels open. It is classical, shows one identity to
+    every contact, and has had no security review: the tests show it binds what it covers, not that the profile is
+    sound. The demo users' phrases are public, so a proof from one shows only that the derivation and checks work, not
+    who a person is.
+  - The identity account's signature is only the inner proof, inside the sealed envelope. It never signs a post anyone
+    else sees: on the network delivery below a notification account signs each post; the local delivery signs none.
+  - A wallet signed in from the Account picker runs Contact Chat's request service. Its contacts' chat keys are read
+    from the chain (`chainDirectory`); nothing here registers one. The request service starts once the chain shows the
+    wallet's own chat key; until then New chat says the check is running, and is drawn again when it ends. A check the
+    chain could not answer is tried again every 30 s and says why meanwhile; a published key that is not the wallet's
+    keeps requests off, with the reason.
+  - The chat keys a host reads for its contacts come from a fixture directory (`testUserDirectory`), which answers as
+    the People chain would if each demo user had registered the key its phrase derives; the demo users have no chain
+    records. A real host reads `chainDirectory`; the lookups and refusals (no record, another key type, Asset Hub and
+    the People chain disagree) are the same code. The directory that says a key is a person is the fixture, and it holds
+    every other test account, so a host takes a request from any of them, not only from the contacts its picker lists.
+  - Delivery (`fixtures/invitations/local-delivery.ts`) keeps sealed posts in this origin's `localStorage`. Each host
+    has an inbox, labelled from its agreement key, and requests go there. A return route is the sender's inbox and a
+    random tag, so a reply lands in the sender's inbox and the tag names its request; a recipient's host posts a reply
+    only to the inbox of the person who sent the request. The delivery can instead make a random topic per request (the
+    tests run both). Each side posts again every minute while it runs and each post lapses after five minutes; these are
+    dev choices for network retention, not whether a request may be answered. A post the store will not take pauses the
+    request, which the host shows, and is tried again. No notification account signs a post and no allowance is checked.
+    Inbox labels are linkable, a reply's tag is in the clear, and any script of this origin can read or post.
+  - Network delivery (`src/invitations/statement-delivery.ts`), a DRAFT route, for a wallet only, and its default. Every
+    request and reply of every host on a network goes to one Statement Store topic per UTC day, with no recipient or
+    request named in the clear; each host reads today's and yesterday's topic and tries to open everything. Each post is
+    one statement signed by a notification account: a fresh sr25519 account per post and day, hard-derived from the
+    wallet's entropy, which the core registers for the day with the user's personhood proof
+    (`Resources.set_notification_statement_account_for_sequence`, through `claimNotificationAccount`). The runtime
+    grants such an account one statement of at most 10,240 bytes of data (`NotificationAllowance`, read 2026-10-30), and
+    the node checks it. The sealed envelope, not only the payload, must fit: a sealed Contact Chat request measures
+    about 1.2 to 1.5 KB and a reply about 1.4 KB. A request or reply that seals larger than the delivery carries is
+    refused at once (`Invalid`, with its sealed size and the limit), before the user is asked or anything is kept: the
+    payload is hex inside the envelope, so one above about 4.5 KB does not fit. While the tab runs, a pending request is
+    posted again each UTC day with a new account; a failed claim or submission pauses it, keeps it, and is tried again
+    every 15 minutes. The same post on the same day derives the same account, so a restart claims nothing new. "Validate
+    claims only" builds every claim and asks the runtime whether it would accept it, and submits nothing; each request
+    then shows paused with the claim it would have made. In that mode the tab's network also refuses every JSON-RPC
+    submission and broadcast before it reaches the light client (`tools/demos/no-submit.ts`). Its own lists keep its
+    requests apart from the local delivery's. Not interop-tested with the apps, and not the design's Backhaul.
+  - "Network: claim and post" claims and posts for real. How many posts a person makes a day is the chain's limit: each
+    post takes one of the person's daily notification slots, and a claim with none left fails, pausing the request until
+    a later try finds one.
+  - While the network delivery is chosen, the wallet's saved contacts are not offered in the picker, and so are not
+    payable, and Chat's New chat starts Contact Chat. Someone chosen there by username gets their contact handle minted
+    for the request; the host names them, and as with a sender, naming them does not make them payable.
+  - When the recipient resends its reply is open in the design. Here a reply has no deadline: the recipient's host posts
+    it when it replies, and posts the same sealed reply again whenever the request arrives again, as it does while the
+    sender's host still waits and reposts it, after a restart too. The delivery keeps trying to post each reply for an
+    hour (`REPLY_POSTING_MS`), to ride out a failed post; that is how long it retries, not how long the reply counts. A
+    request carries the time it was made only to show it; no time refuses it.
+  - A pending request whose contact's chat key cannot be read now, as after a restart with the chain unreachable, is
+    paused with why, kept, and tried again every minute. A read that failed is read again when next asked for; a
+    definite answer (no key, another key type, a conflict) is kept until the keys are read again.
+  - Contact Chat saves its conversation, and waits until the host's storage confirms it kept the write, before it sends
+    a request, replies or completes; a save that fails sends nothing and says so.
+- **Code.** `src/invitations/` is the feature and holds no fixture: `contract.ts` what a product and its host say,
+  `ports.ts` what the host needs (contacts, an identity credential, delivery), `binding.ts` the envelopes and the
+  transcripts their evidence covers, `sealing.ts` the sealing, `wallet-auth.ts` the host proof with wallet keys,
+  `published-keys.ts` the chat keys read from chain records, `directory-contacts.ts` the people over them,
+  `statement-delivery.ts` the network delivery, `invitation-service.ts` one user's host side, and `outbox.ts` and
+  `received.ts` what it keeps, `contact-chat-host.ts` Contact Chat's host side and `wallet-chat.ts` Contact Chat for the
+  signed-in wallet. `src/chat/contact-chat/` is Contact Chat itself. What only tests and the dev server use lives
+  outside: `fixtures/invitations/` holds the fixture contacts and chat-key directory, the local delivery and the demo
+  users, `fixtures/notifications/` the sample notifications, and `tools/demos/dev-tools.ts` the Developer section.
+  `tests/unit/invitations/invitation-flow.test.ts` runs two and three users end to end,
+  `tests/unit/invitations/statement-delivery.test.ts` the network delivery over an in-memory store and chain, and
+  `tests/unit/chat/contact-chat/contact-chat.test.ts` Contact Chat between two hosts. Only a dev server on this machine
+  loads the Developer section, so a build has none of it; the host's contact picker reads the demo user's contacts in
+  place of the chat contacts.
+
+### Contacts
+
+The host serves TrUAPI Contacts (`src/contacts/contacts.ts`): `contacts.pick` opens a picker the host draws, and the
+core turns the person the user chose into a contact handle, as `docs/design/contacts-pick-end-to-end.md` describes. A
+product gets the handle only, never the list, a name or an account, and decides itself what to do with it: a chat
+product might open an invitation, a payment product a transfer. Choosing someone only answers the pick. No permission is
+asked: choosing someone is the consent.
+
+- **Who is offered.** The wallet's saved contacts ([Wallet contacts](#wallet-contacts)): accepted people, not requests
+  either side has not accepted yet, as on the native hosts, and not people the record holds as blocked. A demo user's
+  are its fixture contacts. Product rooms and chat products offer none, because their peers are what a product says they
+  are, and a contact can become a payment recipient.
+- **Outcomes.** The picker names the requesting product and lists each contact by the name the host knows them by, those
+  chatted with most recently first (by their last message, where the provider keeps one), then the rest. A search field
+  filters the list by name, ignoring case; a name no contact has shows "No contact by that name." Choosing one answers
+  `Picked`; Cancel, Escape or a tap outside answers `Dismissed`. A session with no contacts still gets the picker, to
+  find someone by username, so the host never answers `NoContacts`. A contact that leaves while the picker is open is
+  not an answer.
+- **Finding people by username.** What is typed is also looked up by username (`src/contacts/username-directory.ts`),
+  once typing pauses. On a dev server on this machine it searches by prefix, a page of 20 at a time, through the dev
+  server's [username search route](#run-it) for the tab's network. Elsewhere, as in a build, there is no index, and what
+  is typed is read on chain as a whole username (Asset Hub and People), so a person is found only by their exact
+  username. A demo user searches the other demo users instead, so neither is asked. People found who are neither
+  contacts nor blocked show under **Not in your contacts**, by username, with Show more for the next page. Choosing one
+  from the index checks first that the username names the same account on chain, since the index is a listing and not a
+  proof; if it does not, the sheet says so and nothing is picked. Then the pick answers `Picked` as for a contact. The
+  person is not saved anywhere and does not become a contact. Text that cannot be a username is not sent, a newer query
+  cancels the one in flight, closing the picker cancels it, and after the index asks to wait nothing is sent until the
+  wait is over. A failure says why and keeps what was found.
+- **Resolving handles.** When a transaction names a handle, the core asks the host which contact it hashes to
+  (BLAKE2b-256 keyed with the session's handle key over the account) and checks the answer itself. The host tells the
+  core when a contact leaves, including when the session ends, so a handle it cached stops resolving. A person picked by
+  username is remembered in this page only, so their handle keeps resolving after the core forgets its cache; it names
+  nobody after a reload or a session change, and a transaction naming it then fails with `UnknownContact` until the
+  product asks for a pick again. A blocked person is never picked.
+- **Not served.** A contact list a product can read, labels for a picked handle, saving a person found by username,
+  sending a request to a picked handle (demo users use a fixture handle instead), and contacts from a worker's own chat.
+  Paying a picked contact goes through the core's transaction path, which the browser test does not reach.
+
+### Differences from the native hosts
+
+These are accepted for a development host.
+
+- The native hosts load `js/container`, which asks the core before a page's own `fetch`, XHR, WebSocket, WebRTC or media
+  request. This host does not load it: those requests follow the browser and the target's CORS rules, and only explicit
+  TrUAPI calls reach the core.
+- Secure-context APIs are unavailable on plain HTTP, and native-only APIs are not emulated. Camera and microphone need a
+  secure context, so on `http://<LAN address>` a product's capture call throws before any prompt. Elsewhere the
+  browser's and the operating system's prompts apply.
+- A product opened by name shares the host's origin, so the browser APIs that are global to an origin are shared with
+  the host and its other products: see [Wallets and sessions](#wallets-and-sessions).
 
 ## Developer tools
 
-The tools have five tabs: Account, Product, Preview, Inspector and More. The Focus capsule at the top of the app shows
-or hides them ([docs/developer-tools.md](docs/developer-tools.md)). The Inspector has six views
-([docs/inspector.md](docs/inspector.md)):
+The window has two zones: the app, on black, and the developer tools, a dark glass panel beside or under it. The only
+developer control over the app is the **Focus capsule**, Dotli's 120 × 8 status capsule at the top centre. Its colour is
+the core's state: grey while it starts, green signed in, amber signed out, red when it failed. It shows or hides the
+tools at the tab they last showed; hidden, they give the app the whole window: Focus. A demo user's marker sits at the
+app's top left.
 
-- **Activity:** what the host did, one row per event.
-- **TrUAPI:** the frames between product and core, decoded.
-- **Workers:** each product worker's state and console.
-- **Statements:** the Statement Store traffic this tab saw, with a source for each fact.
-- **Chat:** the conversations product workers report about themselves.
-- **Products:** each mounted load: where it came from, transport, size and outcome.
+The tools' header holds the brand mark, **Developer**, a **Dev wallets** tag, the Right / Bottom switch and Hide. Under
+it are five tabs:
+
+- **Account:** the core's state, the network, the wallet (sign in, sign out, forget), Import a wallet and Account
+  status. Its picker also lists the test accounts.
+- **Product:** Open a product (a name or URL, recent products, and the product id folded under them), Open now (its
+  state, Close, Reset its data, What it may use, Details), and Workers.
+- **Preview:** the app's size and its frame, described below.
+- **Inspector:** the Activity view, the TrUAPI traces, the Workers view, the Statements view, the Chat view and the
+  Products view.
+- **More:** Versions, and the dev server's own controls (the invitation demo, Contact Chat delivery, the reply key for
+  new requests and sample Inbox items).
+
+**Search field.** The Docklet's middle button, the Pill, opens a card with one field, **Find a person or app**
+(`src/app/search-card.ts`, `src/app/address-recents.ts`). Typing only edits the text and lists suggestions; it opens
+nothing and picks no one. The field shows a dashed outline and a go button while it holds an address that is not open.
+
+- **Apps.** The recent products that match. Enter with no suggestion chosen, the go button, or **Open** in the Product
+  tab opens what is typed as a product, as before. When people show too, the Apps group starts with **Open** and the
+  name or URL Enter would open, so a name that could be either reads as two choices.
+- **People** (`src/contacts/search-people.ts`), while a wallet is signed in (not for a demo user, and not signed out),
+  and only for text that can be a username, so a URL looks no one up. First the session's contacts whose names match,
+  then people found by username in the contact picker's own directory: the dev server's username index on this machine,
+  else the chain by exact username. Blocked people are never listed. A person found by username is checked on chain
+  first, as in the picker; until the check passes nothing is chosen, and typing again lets it go.
+- **Choosing a person** opens Chat as New chat does (`ChatScreen.startWith`): a contact's conversation, or a request to
+  someone new that the provider sends only on **Send request**, with focus in the message field. Nothing is given to a
+  product. A choice made before the session changed is dropped. When Chat cannot start a conversation, such as for the
+  public development phrase, people are still listed, and choosing one shows why under them instead, with no check on
+  chain.
+
+`Escape` closes the suggestions, then restores the address that is open and closes the card. When an address typed there
+does not open, the card opens again with the reason. The chip inside the field shows the product id the open page runs
+under. Scanning a code is not available in this host.
+
+**Product id.** The Product tab's **Product id** field sets the id the core takes the page for. Leave it empty to derive
+one from the address: `localhost:<port>` for a local server, the name itself for a product name, or the host name for a
+named site. A bare IP address, such as a phone-reachable LAN URL, derives an id the core refuses, so enter one there. A
+line under the field says which id the next Open will use and whether it was entered or derived. The override stays when
+the address changes, until **Reset** clears it. Nothing reloads on edit or Reset; the id applies on Enter, the go button
+or **Open**.
+
+The id picks which product's accounts, grants, storage and privileges the page gets, including any privilege the core
+gives that product, such as signing without a prompt. It is your choice and not a check that the page owns that id.
+Enter only ids of products you are developing.
+
+**Folds.** Import a wallet, Account status, Host permissions, product Details and Technical versions are collapsed.
+Details holds what was read for a name: record, CID, origin, and what is and is not checked.
+
+**Layout.**
+
+- **Wide screens (over 900 px).** The tools open on the right (480 px wide) or at the bottom; the choice is kept in this
+  browser. Their inner edge sets their size (`tools/dock-resize.ts`): the left edge their width on the right, from 320
+  px to all but 360 px of the window, and the top edge their height at the bottom, from 160 px to all but 120 px. Drag
+  it, or focus it and use the arrow keys (24 px a step), `Home` and `End`. Each size is kept in this browser apart from
+  the other (`truapi-web-signing-host:devtools-width`, `...:devtools-height`), and a window that shrinks keeps the app
+  its room. Resizing only refits the preview; the product is not reloaded. At the bottom the tabs sit in the header and
+  a tab's groups sit side by side. Docked on the right, the inspector stacks its list over the detail.
+- **Narrow screens.** The tools cover the app with a scrim: a 380 px panel on the right up to 900 px, and a bottom sheet
+  with a handle on a phone. They start hidden. The app behind them is inert, `Escape` or the scrim closes them, and
+  focus goes back to the capsule. **Open** closes them. The app fills the window, and the Preview tab says so.
+
+Showing, hiding or moving the tools changes classes and sizes around the product frame. It does not move or re-create
+the frame, so the product is not reloaded and the session is untouched.
+
+**Preview.** The Preview tab sizes only the app's rectangle: **Auto** (Desktop while the app has 760 px or more, else
+Phone), **Desktop**, which fills the app's zone, and **Phone**; **All sizes** adds Tablet, Desktop 1280 × 800 and
+Custom. The choice stays when another tab shows. Two lines under it say what the app gets, at what scale, and the size
+of the window and the tools; a set size also has a caption under it. The app lays out at exactly the chosen CSS size
+(393 × 852 for Phone) and the rectangle is shrunk to fit; the window and the tools keep their own size. A set size has a
+**Frame**: **Device** draws a bezel outside the size, **Round** rounds its corners and **No frame** leaves a plain
+rectangle. On a phone size the device also draws the island and the home indicator over the screen. Host screens, the
+Docklet and a product's frame keep clear of the island. The size is the screen's: a product in front gets less, and a
+third line under the size controls says how much (`Product frame 393 × …`, and what the host keeps). No frame draws a
+clock or status icons. A new tab starts on **Phone** with the device frame; the size and frame chosen are kept for the
+tab. On a narrow screen the app fills the screen, whatever the choice, and the tab holds only a note.
+
+**Inspector.** It is `createInAppDebugger` from `@parity/truapi-debugger`. The page taps the frames it relays between
+the product and the core, in both directions, and the debugger groups and decodes them. Decoding is gated on the core's
+own wire schema: if it differs from the page bundle's, the inspector lists operations without decoding them and the log
+says so. Frames stay in the tab, may carry sensitive payloads, and are held in memory only.
+
+**Workers.** The inspector's **Workers** tab lists the product workers the session wants or runs, the ones the host adds
+and those only Pocket holds included, each with the state the worker manager holds: not started, starting, running or
+failed with its reason. The selected worker shows how long it has been in that state, what it runs for, who added it,
+its run number, and, while it runs, its record, content, version and entry. **Traces** opens the TrUAPI view at the
+worker's channel, narrowed through the TrUAPI view's own channel chips; when the worker has sent no frame yet, the note
+says so. **Restart** is offered only for a worker the user added that runs for Chat alone, where a new frame changes
+nothing else the host relies on; the host's own workers, Contact Chat among them, and a worker Pocket holds, have none,
+and **Remove** stays in Product → Workers.
+
+The worker's **Console** shows what it wrote to its console, its uncaught errors and its unhandled rejections. The
+worker shell loads `truapi-sandbox/console.js` (`src/products/loader/console.ts`) as a classic script before the entry
+module, so the first statement's line is seen. Each console method calls the original first and returns what it returns,
+and errors are only listened to, so the worker and the browser's own console see no difference. Each argument is
+described within fixed budgets (`describe.ts`): three levels deep, 20 entries, 500 characters a string, 4,000 a line, no
+getter run, binary data by size only, and a loop marked `[Circular]`. At most 50 lines a second are forwarded, and as
+many errors, and the rest are counted. The host takes a line only from a worker frame it runs, puts it down to that
+frame whatever the line says, bounds it again and strips credentials from its URLs (`src/products/worker-console.ts`).
+It keeps the last 200 lines of each worker in memory, across a restart with each line labelled by its run, and forgets
+them when the worker is removed or the session changes. Console lines are the worker's own text and can hold whatever it
+logs; the host does not promise to clean them. Lines filter by level, and **Copy** and **Clear** act on the selected
+worker's.
+
+**Activity.** The inspector's **Activity** tab, the first of Activity, TrUAPI, Workers and Statements, lists what the
+host did, oldest first, one short row each: the time, a category (Session, Products, Workers, Network or Host), what
+happened and to what, such as `Products Opened browse.paseo` or `Workers Started people.paseo`, and a reason in red when
+it failed. A row with more opens, by click or Enter, to its details: the product id, the execution kind, the record and
+content, or the loader URL. The chips show one category, **Errors** shows only failures and refusals, and the field
+searches every text, details included. **Pause** stops following new events but not logging them, and counts what
+arrives; **Follow** or the count shows them again. **Copy** copies the rows shown, with their details, and **Clear**
+forgets every event. Parts of the host report facts to the log (`src/platform/activity.ts`) instead of sentences; the
+log (`tools/activity/`) keeps the last 500 events in memory in this tab, and nothing is stored or sent. Events carry
+names, product ids, addresses and reasons, never keys, recovery phrases or what a product shows the user, and a URL
+loses any user name, password and secret-looking query parameter. Network events are the host's own: the light client
+starting and the answers to a product's network permissions, not the traffic itself, which the TrUAPI view shows.
+
+**Statements.** The inspector's **Statements** tab shows what this tab saw of the People chain's Statement Store, to
+demonstrate and debug a chat protocol and the scarce resources it spends (`tools/statements/`). Every fact carries a tag
+for where it came from: **light client** (an answer, or a page of what peers sent, as it crossed the connection),
+**core** (a claim result), **host** (the request service's own records), **chain** (a read at a block), **reported**
+(what a product said about itself, unchecked), **derived** (worked out here) or **inspector**.
+
+**Layout.** Each fact is one short line: its label, a source tag and the numbers. A **why** after a line opens, by click
+or tap, to what the line does not say: block and time of a grant read, what "observed" leaves out, why peer refusals are
+not visible, the cost window, full hashes. The header shows the session's counters on one line, and one closed line,
+"Observed traffic, not network state · About this data", that opens to six short lines: the light client source, new =
+broadcast with peer refusals unseen, observed ≠ current, grant ≠ remaining, statement bytes are public while sealed
+contents are not, and the source tags. Capture shows a line of its own only while it is on.
+
+**The transport.** By default this host reaches the People chain through its RPC node, which keeps a real statement
+store (see [Chain access](#chain-access)). The view's texts still describe the light client backend
+(`people: "light-client"`): there the host reaches People through its embedded light client (smoldot-light 2.1.0), which
+has no statement store, and the view says so in a line of its own. What follows applies to that backend (smoldot-light
+`src/json_rpc_service/statement.rs` and `background.rs`):
+
+- `statement_submit` checks expiry, size and proof, then broadcasts. `new` means at least one peer took the broadcast,
+  not that a peer stored it; the view counts it as **broadcast**. A failed check answers `invalid` with its reason; a
+  statement it cannot decode, or that no peer took, answers an RPC error 7001, which the view names: could not decode,
+  no connected peer, or none of N peers took it. It never answers `known`.
+- Peers check allowance, account room and channel priority themselves, and their refusals never reach this tab. So the
+  view shows **Peer refusals: not visible** beside each account's posts: no refusal shown does not mean none happened,
+  and no available byte count or priority refusal will appear.
+- A subscription's first page is always empty with `remaining: 0`. What arrives later is what peers send, new or long
+  stored, and the view counts it as **later** (after the initial batch), never "live" or "new". A page that carries
+  `remaining` and statements, as a full node's replay would, counts as **initial**.
+- Every People connection of this tab shares one network service in the light client, and each connection's statement
+  subscriptions replace the one topic filter it sends to peers (`json_rpc_service/background.rs:922-929`,
+  `network_service.rs:2314-2334`). So the inspector opens no statement subscription of its own: one made to look would
+  take the chat's topics off the filter while it ran, and perhaps after. It says so on the Topics tab. For the same
+  reason an open subscription the view lists is one the core or the host made, and does not show that peers send to it:
+  the core's and the host's own connections replace each other's filter too. A grant read opens a connection that only
+  follows the chain and reads storage; a connection changes the filter only when it subscribes or unsubscribes
+  (`background.rs:3146`, `3178`), and closing it drops the filter only when it was the chain's last connection
+  (`lib.rs:1010-1020`), which the core's is not.
+
+- **Sources.** `src/platform/statement-observer.ts` wraps every People chain connection the core and the host open, and
+  reads only `statement_*` requests, their answers and the notifications of the subscriptions they opened. It hands on
+  every message unchanged and in order, never consumes or delays one, keeps reading only as the caller reads, and
+  ignores its own failures, so a connection behaves the same with it as without. The host's claim calls report what the
+  core answered; the request service and the network delivery report their facts (`src/invitations/observer.ts`); a
+  product worker may report its conversations (`src/products/diagnostics.ts`, below).
+- **Accounts, Topics, Timeline.** The Statements view's three tabs. It names no chat protocol: an account's roles say
+  only which product reported or claimed it, and product reports stay out of its timeline.
+- **Accounts.** Every account claimed for, reported or seen signing, one row each under **Account | Role | Owner |
+  Allocation | Grant | Observed**, in a few words: what it is used for (Chat sender or Chat peer, with a **reported**
+  tag since a product said it, unchecked; Setup notification from the host; Product account when the core or the host
+  derived it for a product and no use is known; else Observed signer), and `+n` for more uses; whose it is, as this tab
+  knows it (below); the latest slot claim (`Slot 4 · claimed`, `Chat allowance` when only the host's allowance is known,
+  `None seen`); the grant as statements · size (`No grant` when the chain stores none, `Not read` before a read); and
+  the latest observed statements · size · time (`Not observed`). On a narrow dock each value is named under the account
+  instead. **About these columns**, closed, says once that a grant is not what is left and an observation is not what
+  the network holds. A row opens to the full facts: each use, how the core derived it (**Derived as**), each claim with
+  its day and collection and the host's chat **Allowance**, the grant read's block, its channels and the statements seen
+  from it, each with when this tab first and last saw it. **Read grants** reads `:statement_allowance:` for them at the
+  newest finalized People block.
+- **Owner.** A record of where the account came from in this tab, not a signature check. **This wallet**: the core or
+  this host derived it from the signed-in wallet in this session: the core's claim of a product's account, the
+  delivery's notification account for one of its posts, or a chat allowance. A notification claim alone, granted or
+  failed, is not enough: it names an account the caller chose. **Reported only**: a product named it and nothing derived
+  it here, which says nothing of whose it is. **Unknown here**: anything else: only seen signing or claimed for, or its
+  record was dropped. Unknown is not "not this wallet": another origin, browser or an earlier session derives accounts
+  from conversation indexes and post ids this tab does not hold, and none is recovered from an address. A statement on a
+  topic shows its signer's owner the same way. A request the host received and opened says only that the request was for
+  this wallet, never whose its signer is; the view does not tie a received request to its statement. The labels start
+  again with each session and on **Clear**, and a product's reports cannot push out the roles the host derived.
+- **Topics.** A topic is a label statements carry; a subscription listens on one or more topics. One row per topic under
+  **Topic | Role | Subscription | Observed** (`topics.ts`). The name is given only where its meaning is known: the
+  host's own day inbox, worked out from the network and the UTC day as the delivery does
+  (`Shared setup inbox · today UTC`, `· yesterday UTC`, tagged **derived**): every host using this draft delivery posts
+  there. Or a topic a product's report names (`contact-chat.test · incoming` or `outgoing`, tagged **reported**); else
+  short hex. No topic is reversed and no payload is read. The role comes from separate sources: **Listening** when the
+  core or the host holds a subscription open on it, or a product says it reads it; **Publishing** when the light client
+  answered a submission on it `new` (broadcast to a peer, not shown stored), or a product says it posts there; **Both**;
+  **Tried** when submissions were asked on it and none is known to have gone out (refused here, an RPC error, refused,
+  or no answer seen); else **Other observed**. A role that only a product's report gives is tagged **reported**. A
+  stopped worker's report gives no role, and a name taken only from one ends in `· worker stopped`. Then who holds a
+  subscription open (`host · open`, `None`) and the statements observed · time last seen. A row opens to the full topic
+  with **Copy topic**, its name and where it comes from, each listening and publishing fact with its source, its
+  observed statements with their signers linked to the account, the subscriptions on it with their counters, closed, and
+  a **Timeline** action that narrows the timeline to it. Every subscription, with who opened it, its filter, stream
+  position, pages and repeats, is in **All subscriptions**, closed, under the list. Opening a topic reads nothing. There
+  is no probe: the inspector opens no statement subscription of its own (see **The transport**), so an open subscription
+  does not show that peers send to it.
+- **Timeline.** Every fact in order, filtered by kind, failures, search, or the conversation or account it came from.
+
+What it does not know is said where it matters. Peers evict and refuse without saying so, and send only some of what
+they hold. So **Observed** for an account is an observation, not occupancy: the latest statement seen per channel, plus
+statements without a channel, not known expired, this tab's own broadcasts included, with when this tab last saw them.
+It is neither a lower nor an upper bound of what the network holds now, and the view never sets it against the grant as
+room used or left. None observed does not mean none stored. `knownExpired`, a full node's answer, would show as given:
+the core counts it a failure and the network delivery counts it posted. A claim validated only allocated nothing. A
+refusal by this tab's no-submit guard shows as refused in this tab, apart from an RPC error: the submission counts as
+tried, never as the light client's, and the account says how many were refused here. Remaining daily slots of a person
+are not shown: no read gives them to the host.
+
+The ledger keeps the last 800 events, 1,000 statements, 400 submissions and waiting requests, 200 subscriptions, 300
+accounts and topics, 600 channels, 64 conversations and 200 requests in memory, and says how many it dropped, a channel
+whose latest statement left the list included. Ended and refused subscriptions are dropped before open ones; a page of
+an open one that was dropped says its filter and earlier counts are gone. A long subscription id the node chose is kept
+as its hash. Request problems and refusal reasons are bounded and redacted like other text. A submission whose wait the
+ledger drops, or whose connection closes first, shows as unanswered, with why. The observer itself remembers at most 256
+unanswered requests and subscriptions per connection.
+
+It starts empty for each session and on **Clear**, and its counters count from then. A claim or grant read that ends
+after that is not recorded. The core's and the host's People connections can outlive a session, so their source and
+their open subscriptions stay, marked as opened before the session, with counts from its start.
+
+**Capture data** keeps statement data too, at most 16 KiB each and 512 KiB in all, those waiting for an answer included,
+shown as text when it reads as text; turning it off, or a session change, forgets it. **Copy evidence** copies the
+ledger as JSON, metadata only, with the transport note: never statement data. An answer, page, filter or error data in a
+shape the view does not read is kept as its shape (types, keys, lengths and plain words); light-client and core text has
+long hex replaced by its length and is cut to 200 characters. Nothing holds a key, seed or secret.
+
+**Chat.** The inspector's **Chat** tab shows the conversations product workers report about themselves (Contact Chat
+does), and the host requests with no report (`tools/chat/`). A card's title comes from the host's request when it holds
+one for the same product (**Chat you started**, **Chat you were invited to**), else **Chat**; the product's local
+conversation ID is under **Details**, closed, and is not an account, a key or a topic. Each card is one line per fact:
+the **protocol** name and version the product reports; the host's **request** and `chatAccount` answer, joined only when
+the host holds that request for the same product; the **account** the product posts as (reported), then a **tie** line
+from the host: "tied to" the product only when a claim or allowance of that product names it, else "reported only" (the
+host ties an account to a product, not to one conversation); its peers, the topics it listens and publishes on, logical
+message counts (sent, received, duplicates dropped, failed, posts); and **per message**, the broadcast statements and
+bytes over messages sent since the run's first report, or why that is not known. What only the protocol defines, such as
+simple-text's published message batch, is under **Protocol details**, as the product gives it; a protocol that gives
+none has no such section. The host reads no chat payload: all but the request, the tie and the per-message figure are
+product-reported and tagged so. Resources stay in Statements: every account and topic shown is a link to its detail
+there, and **Request timeline** narrows the timeline to the host's events for that request: its send or reply, its
+delivery accounts and problems, and `chatAccount`. A link only navigates: it reads nothing, and it joins no fact the tie
+does not. An account no one recorded opens with nothing in this session. A link clears any timeline filter set by hand
+and moves the focus to what it opened. An open **why** stays open as the views draw again. A stopped worker's card is
+marked stale; with no report the tab says so.
+
+**Products.** The inspector's **Products** tab (`tools/products/`) has one row per mounted load, newest first: a product
+opened by name, a Pocket card's widget, and each product worker, Contact Chat's among them, marked **served by this
+host**. A name whose blocks are read from this host's origin is marked **seed (host origin)**. A row shows the files'
+size and count, the blocks that arrived (by the CAR stream and block by block together, so a block that came both ways
+after the hedge counts twice), the load's time, the transport (CAR, CAR+raw, raw or cache, with `· host` or `· seed`
+when the blocks were read from this host's origin, a shipped seed or the Contact Chat worker) and the outcome. The
+loader asks the host origin for no CAR stream, so such a load reads block by block and its stream shows as not tried
+(host origin). Where the blocks come from (`gateway`, `host` or `seed`) is the host's fact, set when it opens the mount.
+Opening a row shows where it came from, from the host: the DotNS record that answered (`app.<name>` or `<name>`), the
+content id, whether it is an archive or a site, the gateway and the time the lookup and content check took. Under it is
+what the loader counted: the phases, the files and the largest, the CAR stream's status, first byte, bytes, blocks, how
+long it ran, how it ended, whether the hedge fired and how many reads it answered, and the block-by-block requests,
+retries and reuse. Each fact is tagged host, loader or derived, and **About this data**, closed, says what the numbers
+do not. It reads nothing from logs. A load whose frame closes before its loader reports shows as closed, and one whose
+frame never opened as failed, with the error. Each load has its own id, so a report from an earlier frame of the same
+mount never lands on a later one. It holds at most 50 loads, in memory, and opening the same mount again replaces its
+row. A new session drops the loads whose frames are closed; a frame still open keeps its row until it closes, since the
+host reopens the product in front around a session change and restores its last product at boot in no fixed order with
+the session's start.
+
+**Versions.** The menu shows client, host and core, provider and debugger versions, read from the linked packages and
+the loaded `testing` bundle. A warning appears only when the core's wire schema differs from the client's. **Technical
+details** holds the SHA-256 of the served `.wasm` files, the wire schema, and the source commit with whether the tree
+has uncommitted changes. Facts that cannot be read show as `unknown`. Build-time values are measured when the dev server
+starts or the build runs, so restart the dev server after rebuilding a WASM bundle.
+
+A tab that opens a product opens it again after a reload, once its wallet is restored. A `?product=` link only fills the
+form.
+
+## Wallets and sessions
+
+A wallet is **imported** from its BIP-39 recovery phrase. This host does not create wallets, and it has no built-in dev
+accounts. Making an account, registering it and attesting it is done by the account-creation project; import the
+resulting phrase here. Importing gives the host the keys and nothing else: it does not register or attest the account,
+and one phrase is one wallet, however often it is imported. A saved entry that is malformed or holds an invalid phrase
+is left out of the picker and stays in storage untouched, and the log says how many. If the whole
+`truapi-web-signing-host:wallets:v1` value is not a list, saving and forgetting are refused until you fix or delete it
+in DevTools.
+
+**Account status** in the Account tab has two groups. Everything in it is read-only and nothing polls.
+
+- **Account** shows the keys and reads the signed-in wallet's standing from the People chain when you open the fold or
+  press Refresh. It reads `Resources.Consumers` and `PeopleLite.LitePeople` for the identity account and for the root
+  key, at the finalized block, through the host's light client. It shows the username and the Lite or Person
+  credibility. "Not found" means only that no record exists for that account. The layouts follow the product SDK's
+  committed People chain metadata, so a runtime that changed them shows "Unreadable". **Ring** rows show where
+  `Members.Members` holds the ring key that the account's own `PeopleLite.LitePeople` record (lite), or
+  `People.AccountToPersonalId` and `People.People` records (full), name: Onboarding, Included with its ring index, or
+  Suspended, read on the same finalized block. "No Members entry" means a key is named and unlisted. "No ring key on
+  record" means no record names one, which is not a finding that the person is outside the rings. The key is the
+  chain's, not derived here, so the rows are a diagnostic and do not by themselves explain a signing failure.
+- **Current product** shows, for the open product, the core's local renewal ledger and two rows read on Refresh.
+  **Allocation recorded** is the ledger: it lists a product only after an allocation reached the chain, so it is
+  history, not a check of the chain, and not remaining quota.
+  - **Account 0** is the public key of the product's account at `DerivationIndex::Index(0)`. The page asks the core
+    through the product API, `account.getAccount`, using the typed `@parity/truapi` client over a provider the runtime
+    makes for that product (`createProvider`), which is disposed after the call. The core derives the key from the
+    wallet's entropy and returns the public key only; the page derives nothing. A product asking for its own account is
+    not reviewed and a signing host derives locally, so the call opens no prompt. That is read from the source, not
+    observed.
+  - **Asset Hub balance** reads `System.Account` of account 0 at the finalized block through this host's light client.
+    "No account entry" is a chain fact and is not shown as zero; a failed read shows "Unavailable". Decimals and symbol
+    come from the chain's `chainSpec_v1_properties`; when it does not answer, the amount is shown in its smallest unit.
+    It is the native balance only. A product may use other accounts.
+
+  Not shown: Statement Store and Bulletin state, and PGAS. Their allowance accounts are `//allowance//…` derivations,
+  not product accounts, so `getAccount` does not return them, and no exported call does. PGAS needs its asset id and
+  decimals from the runtime's metadata, which this page cannot decode without a new dependency.
+
+The core gives a local session only the lite username it is activated with and never looks one up, so this host supplies
+it. After sign-in it reads `Resources.Consumers` for the identity account, then the root key, once per account, and on
+Refresh. When the record's lite username differs from the session's, the host activates the session again with it, which
+closes and reopens the open product, and `account.getUserId` then answers with that name. The name is kept with the
+wallet's public facts, so the next sign-in starts the session with it. A full username is not passed on: local
+activation takes a lite one only. With no record the session has no username, and `account.getUserId` answers `Unknown`
+("No primary username for this session"). A record that cannot be decoded leaves the session as it is.
+
+A failed read changes nothing about the session.
+
+A session belongs to the tab. Each tab runs its own core, so two tabs can be signed in with different wallets at the
+same time. A reload restores the tab's wallet from `sessionStorage`.
+
+**Storage is per wallet.** Open the same product with another wallet, in this tab or another, and it starts with that
+wallet's own data. The same wallet gets its own data back.
+
+- _Kept apart by this host, by name._ Core storage (grants, AutoSigning keys) and the product's TrUAPI storage live in
+  `localStorage` under the active wallet's id and the product id. The mount path, its service worker and the product's
+  frame are per wallet, product and content too, so two tabs never serve each other's pages. The device encryption key
+  is the exception: the core requires it to outlive logout and per-user namespacing, so it is stored once per browser
+  profile.
+- _Shared on purpose._ Verified archive bytes are cached by content id and are the same for every wallet.
+- _Not kept apart._ The browser does not separate a path from its neighbours on one origin, and this host does not wrap
+  its storage APIs. In Chrome the product frame is `credentialless`, which gives the page its own temporary storage: its
+  `localStorage`, Cache Storage and workers start empty on each open and are gone when the frame closes, so they neither
+  reach other wallets nor outlive the open. A browser without `credentialless` gives the product the host's origin
+  storage, shared by every wallet and product. Keep a product's lasting data in TrUAPI storage. Anything global to an
+  origin, such as cookies, is shared in any browser, and the product can reach the host page's own storage through
+  `window.parent`.
+
+Switching wallets closes the product and opens it again under the new session, because a product runtime must not
+outlive the session it was opened under.
+
+## Opening it from a phone
+
+Open the deployed https page on the phone (see [Static build](#static-build-and-github-pages)): a name needs a secure
+context, and that works with no other setup.
+
+For a local copy, `npm run dev -- --host` serves the host on every interface, and
+`http://<this machine's LAN address>:5180` opens on a phone on the same network. A URL product opens there, served on
+its own port with the same option, for example `yarn dev -H 0.0.0.0` in `playground/`, with its LAN URL as the product
+URL. A name is refused on that address, because plain http over a LAN address is not a secure context. Camera and
+microphone need a secure context too.
+
+Web Workers, WebAssembly and `getRandomValues` work outside a secure context, and the host uses nothing else there. The
+chain connections are `wss://` from the embedded light client.
+
+## Chain access
+
+Each chain is reached through its RPC node or through the embedded light client in `@parity/truapi-provider`, as
+`chains` in `src/platform/network-config.ts` sets per chain (`rpc` or `light-client`); `connectNetwork` takes an
+override per chain. By default Asset Hub, People and Bulletin use their RPC nodes, as the native hosts do, and the relay
+stays on the light client for products that ask for it; nothing in the host or the core uses the relay. The RPC nodes
+are the ones the network's signed Trinity stack descriptor lists (`paritytech/triangle-status` `environments.json`), and
+the host trusts their answers. The light client could not validate a PGAS allowance claim against Asset Hub and dropped
+it before broadcast, and it holds no statement store: on RPC, People's `statement_submit` reaches the node's store and a
+subscription replays what the node holds. The light client starts from the bundled `paseo-next-v2` catalog for every
+chain and serves those set to `light-client`. In production on public HTTPS, peer connections are restricted to secure
+`wss://` sockets; loopback and unsecure sockets stay blocked so peer-advertised private addresses cannot trigger
+Chrome's Local Network Access prompt. A dev server keeps localhost and unsecure connections enabled for local nodes. The
+genesis hashes the core is configured with and the chain set reported to products come from the same catalog. The light
+client keeps no state between loads, so each tab syncs from the chain spec checkpoint when it starts. A name lookup
+reads the Asset Hub RPC node over HTTP, as described above, whichever backend Asset Hub uses.
+
+The core opens one connection per chain and runs every product's `chainHead_v1_follow` over it, along with some follows
+of its own. One light-client connection holds two follows and refuses a third with "too many active follow
+subscriptions", so with a worker running, an opened card's Widget could not follow the People chain and its reads never
+started. `src/platform/follow-spread.ts` gives the core one connection that opens each follow on a light-client
+connection with a free slot, a new one when none has, and sends every `chainHead_v1_*` call that names a follow to the
+connection that holds it. The connections share the light client's sync.
+
+A product's preimage lookups, such as Browse's catalog and app icons, are read from the network's Bulletin gateway, as
+the native hosts read them. `src/products/preimage.ts` fetches `/ipfs/<cid>` for the raw blake2b-256 CID of the key, and
+the core checks the bytes against the key. A gateway that does not have it, or does not answer within 30 s, gives a
+miss.
 
 ## Tests
 
+From `hosts/web`:
+
 ```bash
-npm run typecheck      # tsc --noEmit
-npm test               # unit tests under tests/unit/ (bun test)
-npm run build          # tsc --noEmit && vite build
-npm run test:browser   # headless Chrome, needs both WASM bundles and a Chromium
+npm run typecheck   # tsc --noEmit
+npm test            # unit tests under tests/unit/ (bun test)
+npm run build       # tsc --noEmit && vite build
+npm run test:browser
 ```
 
-CI runs `typecheck` and `npm test` only. Run the build and browser tests by hand when the host or the core changes.
-Install a Chromium with `npx playwright-core install chromium`, or set `CHROMIUM_PATH`. Browser specs in `browser/`:
+CI runs `npm run typecheck` and `npm test` in the `host-web` job of `.github/workflows/ci.yml`, after building the
+packages this host links. It does not run `npm run build` or `npm run test:browser`, which need the signing core's WASM
+bundle: run them by hand when the host or the core changes. These are best-effort gates for a development tool: they
+catch a broken host, not a hostile product.
 
-- `smoke.spec.ts`: names, URLs, loading, the dock, product workers, contacts, chat products, Humanity.
-- `build.spec.ts`: the static build, its Browse seed and Contact Chat archive.
-- `mobile.spec.ts`: an emulated phone browser: gestures, zoom lock, full screen.
-- `notifications.spec.ts`: the Inbox.
-- `prompts.spec.ts`: the host's prompts.
-- `app-area.spec.ts`: where a product in front sits.
-- `docklet-search.spec.ts`: the Docklet's search.
-- `keyboard.spec.ts`: an on-screen keyboard's visual viewport.
-- `open-apps.spec.ts`: Browse, the Apps shelf and `navigateTo`.
-- `preimage-image.spec.ts`: preimage lookups through the gateway.
-- `workers-menu.spec.ts`: Product → Workers.
-- `invitations.spec.ts`: demo users, test accounts and invitations.
-- `contact-chat.spec.ts`: Contact Chat between two demo users.
-- `contacts-pick.spec.ts`: `contacts.pick` for demo users.
-- `chat-screen.spec.ts`: the Chat screen over its providers.
-- `inspector-dock.spec.ts`, `workers-inspector.spec.ts`, `products-inspector.spec.ts`, `activity-log.spec.ts`,
-  `statements-inspector.spec.ts`: the developer tools and inspector views.
-- `wallet-delivery-live.spec.ts`, `chat-claims-live.spec.ts`: Paseo Next v2, only with `TRUAPI_LIVE=1`; they validate
-  claims and submit nothing.
+The loader's load summary has unit tests for its counts (a load the CAR stream answered alone, one the hedge finished
+block by block, one read block by block only, one that failed), the cache marker's counts, the summary's bounds, and a
+summary heard only from its own frame, once. `browser/build.spec.ts` checks that the built loader posts it and that the
+built host's Products view shows Contact Chat's load.
 
-What each spec checks, and what is tried by hand: [docs/tests.md](docs/tests.md).
+`browser/build.spec.ts` builds the host, so it fetches the [Browse seed](#the-browse-seed) and checks that its blocks
+load as the archive its CID names. With `WEB_SIGNING_SEED_BROWSE=0` it builds offline and checks that no seed was
+written. The unit tests use a fake gateway and reach no network.
+
+`npm run test:browser` is a headless-Chrome smoke test of the host page. It needs the linked packages and both WASM
+bundles built (see [Run it](#run-it)) and a Chromium: install one with `npx playwright-core install chromium`, or set
+`CHROMIUM_PATH`. It starts the host with Vite on loopback, a counting target server and product fixtures, stands in for
+Asset Hub and the Bulletin gateway inside the browser context, and signs in with a public test phrase. It uses no real
+wallet and writes to no chain. The Chat check signs in with a synthetic phrase and closes every WebSocket the page
+opens, so the light client reaches no chain. It checks that:
+
+- a name opens from an archive under the host's own path, in a frame whose storage does not hold the host's wallets, and
+  a root-relative script link in the product is answered from the archive;
+- a product's own requests reach the target, counted there, because the host does not gate them;
+- a URL product opens on its own origin, and the host refuses its own origin;
+- a name held at the gateway shows only the line at the app's top, under its circles, on a dark loader with no address
+  or CID, and the product when the gateway answers; a refused gateway shows the one failure with Details and Close; and
+  closing the product while it loads ends the loading;
+- opening, moving or hiding the developer tools, or resizing the product, does not reload it;
+- an entered product id is shown as entered;
+- the Activity view names a product by its name when it opens and closes, with the loader URL only in its details, and a
+  worker when it starts and when signing out stops it;
+- the dock keeps Browse's product running while a host screen is in front, resumes it with its page state, and ends the
+  held product when the wallet changes;
+- the public development phrase runs no wallet chat and stores nothing;
+- with nothing turned on, a wallet's Contact Chat worker starts at sign-in, on the network delivery, while another
+  screen is in front, with no chain connection, Chat offers New chat and has no on or off controls, and signing out ends
+  the worker and writes no chat record;
+- Pocket is drawn by the host as the native two cards, and gives the digital dollar no amount;
+- a product built from `fixtures/products/contacts-product.ts`, with a synthetic wallet whose saved chat record holds
+  two accepted contacts and one waiting request, and every socket closed: `contacts.pick` opens the host's picker naming
+  the product and offering only the two accepted contacts; choosing one gives the product a 32-byte handle that is
+  neither the account nor the name, the same handle again for the same person and another for the other; Cancel and
+  Escape answer `Dismissed`; and a wallet with no contacts still gets the picker, with no one listed, and Escape answers
+  `Dismissed`;
+- a chat product's worker, built from `fixtures/products/chat-product-worker.ts`, with a synthetic wallet and every
+  socket closed, runs through the same loader and core and records where TrUAPI stops it: its conversations show as
+  rooms in the one list, but it has to push all its history and the host keeps the last 200 of 210 messages and never
+  asks for a page; every message it posts shows as the product's, even those its own model says Ada, Grace or the user
+  sent; what the user types reaches it with no message id, so the bubble stays `sent`; and it can open the contact
+  picker and get a handle, which nothing turns into someone it can chat with;
+- a product worker, built from `fixtures/products/chat-worker.ts` and served from a stood-in Asset Hub and gateway, runs
+  from its manifest, creates a room, posts text and a custom card, draws an image from its archive in the card, redraws
+  the card when its button is pressed, posts rich text with an inline image, a file link and buttons that all pass the
+  core's screening, shows the text as text, the file as a link with no referrer, its own reaction and not the one it
+  removed, receives the user's reaction through the core as `MessagePosted(Reaction)`, answers a press on its button for
+  that message, answers what the user types, makes no request outside this host, shows in the inspector, stops at
+  sign-out, is not seen by another wallet, and starts again when its wallet signs back in;
+- the Humanity card, with every socket closed and every request outside this host, the stood-in Asset Hub and the
+  gateway refused: a worker built from `fixtures/products/pocket-worker.ts` starts only once Pocket is shown, draws the
+  face after it boots, and gets the face's button press; a press on the card opens the Widget built from
+  `fixtures/products/pocket-widget.ts`, not the app, at `?card=humanity`, as a `Widget` execution with the worker's
+  account and storage; choosing Pocket ends it; the face is kept for that wallet only and drawn at once on its next
+  sign-in; and a worker that does not offer the card is not started; a product with no widget runs its base name's
+  content as the Widget, not its app, and opens it again as the Widget after a wallet switch; and one with neither opens
+  nothing and says why.
+
+`browser/notifications.spec.ts` checks the Inbox prototype with synthetic phrases, every socket closed and every request
+outside this host refused: nothing is stored until sample data is asked for, from the developer tools; the badge counts
+unseen rows; a page in a background tab marks nothing seen; once visible, only the rows on screen are seen, a jump past
+rows leaves them unseen, and scrolled into view they are seen; seen is not answered; sample requests offer Dismiss only
+and no row opens; Dismiss takes a row off the list and keeps it stored, waiting, with its `dismissedAt`; a request
+expires on the clock and loses its actions; Clear removes the demo's requests and their stored list; a reload keeps what
+was seen and dismissed; another wallet sees none of it; signing out empties the screen and the badge; Chat's Inbox tab
+and the Apps shelf's Inbox open the same list, the tab, the shelf, the dot on Apps and a product's own count clear
+together once its rows are seen, while Apps keeps counting open products; the shelf takes focus when it opens and gives
+it back to Apps on Escape, brings a product running behind to the front and closes it; and on a phone the four dock
+entries fit, long rows wrap, Dismiss is a full tap target, and nothing scrolls sideways.
+
+`browser/prompts.spec.ts` checks the host's prompts with a demo user and a fixture product: in a phone preview the
+dialog covers the app's rectangle only, with a dark sheet inside it, the developer tools outside it and no page-wide
+backdrop; the picker names the product once and lists contacts by name only, with Cancel below; a permission names the
+product by its full id, adds where the host opened it from when an entered id does not say, and wraps a long id inside
+the sheet; focus starts on the title; a row, Escape and a tap on the scrim each answer; a camera permission keeps its
+detail and is denied; focus returns where it was; a scaled preview draws the sheet at the app's scale; and on a phone
+browser nothing scrolls sideways and the buttons are 44px or taller.
+
+`browser/app-area.spec.ts` checks where a product in front sits, with a synthetic product on loopback that has a field
+at its very top and a button fixed to its bottom, no wallet, every socket closed and every request outside this host and
+the product refused: in the Phone preview with each frame, drawn at full size and shrunk, and in a phone-sized window,
+the field starts below both circles and, in the device frame, below the island, and the button fixed to its bottom ends
+above the Docklet and its Pill; the product reads no safe-area inset of its own; the Preview tab states the product's
+frame and what the host keeps; More opens its menu from the keyboard, clear of the island and inside the app, Escape
+gives focus back; and Minimize keeps the same product running until the Apps shelf brings it back.
+
+`browser/docklet-search.spec.ts` checks the Docklet's search with a synthetic wallet whose saved chat record holds one
+contact and Contact Chat's delivery kept in this browser, so saved contacts are offered, every socket closed, a
+synthetic answer on the dev server's username route and every other request outside this host and a loopback product
+refused: the field reads **Find a person or app** with no scanning note; a name lists **Apps** (Open and the name) apart
+from **People** (found by username, marked as not a contact), and typing opens and picks nothing; the list stays inside
+the app above the field; a person found by username is checked first and, offline, is not chosen; a contact chosen with
+the keyboard opens a request to them, sent only when asked, with focus in it; `Escape` gives focus back to the Pill; a
+URL looks no one up and Enter opens it; with the public development phrase, for which Contact Chat stays off, people are
+still listed and choosing one says why; and signed out no people are offered. `browser/chat-screen.spec.ts` also checks
+that a person chosen outside Chat opens a contact's chat or a request to someone new, sent only when asked.
+
+`browser/keyboard.spec.ts` gives the page a visual viewport it controls, as iOS Safari reports one, and checks that with
+a keyboard covering part of it the Docklet, the search card, its field and its suggestions stay above the keyboard; that
+a panned area is followed and a pinch zoom is not; and that a window whose layout already shrank, and the desktop tools,
+are as they were. A real keyboard is not proven by it.
+
+`browser/open-apps.spec.ts` checks the products open in a tab, with three names served from one synthetic archive on a
+fake Asset Hub and every socket closed: a tab starts in Chat; Browse shows its landing with no field of its own and
+loads nothing, the second time too; Browse apps opens Browse's product once; Minimize leaves the landing, with the
+product running in the shelf and under Recent; the shelf, Browse apps and the Recent row each bring the same frame back;
+Close ends it and brings the landing back; a product found by the Docklet's search opens in Browse and joins Recent; the
+landing fits a phone; and PreviewNet offers no Browse app. Browse's product opens another with `navigateTo`, and the
+shelf lists both with the new one in front; going back to Browse keeps both and Browse's document; a third app keeps the
+other two; the shelf brings an app back without a reload; opening an app that is already open brings it in front with no
+second frame; Minimize keeps it in the shelf; Close in More ends only it; and signing out ends every app.
+
+`browser/preimage-image.spec.ts` checks preimage lookups, with a synthetic archive on a fake Asset Hub, a stood-in
+gateway and every socket closed: an image a product looks up by its preimage key, as Browse looks up an app's icon, is
+read once from the gateway's `/ipfs/<cid>` path and drawn.
+
+`browser/workers-menu.spec.ts` checks Product → Workers, with a synthetic phrase, every socket closed and every request
+outside this host refused: signed out, nothing can be added or started; the Chat screen has no Workers page; a typed
+name survives hiding the developer tools, and an empty one is refused until edited; on a phone the sheet holds the
+section, keeps a typed name across Escape, and nothing scrolls sideways; and a demo user tab runs none of the wallet's
+workers, only Contact Chat, added by the host, with Inspect and no Remove, which opening and closing the developer tools
+does not restart.
+
+`browser/invitations.spec.ts` checks demo users in tabs of the normal host, with no wallet, Playwright's clock, every
+socket closed and every request outside this host refused, with requests sent from Chat's **+** through Contact Chat: a
+demo user tab is marked and signed in to the core as that user, with its choice in More and nothing opened; Cancel on
+the host's Send invitation prompt sends nothing and the product says so; a request shows a badge of 1 in the chosen
+recipient's tab only, and showing in the list is seen, not answered; Accept reaches the recipient's product, whose reply
+the sender's host authenticates and the sender's product checks before the request completes; Dismiss sends no answer
+and the sender's request waits until the sender cancels it under Sent in the host's Inbox; an accepted row hands the
+recipient's product an open intent, which it answers; a reload keeps the demo user and the lists; and another network
+shows none of it, Contact Chat there included. It also checks that a test account signs in from the picker as a wallet
+does, with Chat and workers running, Sign out and no Forget, and survives a reload; that the same phrase imported is the
+same account on the same path; that the invitation demo is chosen in More, is not listed in the picker, offers no saved
+contacts and runs no wallet worker, only Contact Chat, and shows none of the wallet's Inbox; that Clear invitations asks
+first and removes only that demo user's lists; that Sign out leaves the demo signed out; and that the saved wallet and
+its notifications are as they were; and that on a phone nothing scrolls sideways and the banner's buttons fit.
+
+`browser/contact-chat.spec.ts` checks Contact Chat between two demo users in tabs of the normal host, with every socket
+closed and every request outside this host refused: the dev server's archive of the worker runs through the ordinary
+loader in each tab; Alice starts a chat from Chat's **+** and the host's **Send invitation** prompt names Bob; Bob's
+Inbox names Alice and Accept goes to his running worker; Alice's worker connects only after the reply; a message is then
+sent and fails, because the local delivery gives the conversation's account no allowance, and the room says why; a
+reload keeps the conversation and the names; both workers keep their session and conversation account index; neither
+worker heard or kept a demo user's name or account; each tab's core reports the identity account the other user's
+contacts name the demo user by, and each host proved and checked with the keys of its user's phrase; and the handle each
+worker holds is the one `contacts.pick` gives another product, `fixtures/products/contacts-product.ts` opened by URL, in
+the same tab, for the same person. It also checks that Contact Chat can ask `contacts.pick` itself, with the host's
+picker naming it, and send its request to the handle it gets: the host names the person in Send invitation, the
+recipient's Inbox names the sender, and the handle is the one the other product gets; and that its own `cancel` stops
+the request, which leaves the sender's Sent list while the recipient's row still waits. Set `CHAT_SCREENSHOTS` to a
+directory to keep screenshots.
+
+`browser/wallet-delivery-live.spec.ts` runs only with `TRUAPI_LIVE=1`, against Paseo Next v2: Alice's public test
+account, signed in as a wallet, chooses the network delivery that validates claims only, then starts a chat with
+`testbob.10` from Chat's New chat through the picker's username search and the Send prompt. It checks that the request
+shows paused with the claim the live runtime would accept, and that the tab's no-submit guard refused nothing and passed
+no submission or broadcast method.
+
+`browser/chat-claims-live.spec.ts` runs only with `TRUAPI_LIVE=1`, against Paseo Next v2: Alice's and Bob's public test
+accounts, each signed in as a wallet in a tab of one browser, with "This browser, validate chat claims only". Alice
+starts a chat with `testbob.10`; Bob's Accept prompt says what chatting uses, and he accepts; each writes one message.
+It checks that each message fails with the slot the live runtime would give that side's chat account, that the two
+accounts differ, and that neither tab's no-submit guard refused anything or passed a submission or broadcast method.
+
+A failed live run keeps each tab's guard record, Activity lines and a screenshot under `TRUAPI_LIVE_EVIDENCE`, or the
+temporary directory. No browser test claims or posts.
+
+`browser/contacts-pick.spec.ts` checks `contacts.pick` for demo users, from `fixtures/products/contacts-product.ts`
+opened by URL: the host's picker names the product and lists the user's two contacts; a pick gives the core's handle,
+the same for the same person and another for another; Cancel and Escape give Dismissed; the product gets no name or
+account; a second product, the same module on another port, gets the same handle for the same person; another demo user
+gets another handle for the same contact; the username search finds a demo user who is not a contact and shows them
+apart, lists a contact once, does not look up text that cannot be a username, gives the product a handle for the person
+found, the same each time and without making them a contact, and never asks the username index; and with no session the
+core refuses the pick with NotConnected and no picker is drawn.
+
+Five narrower browser tests use no wallet, or only a public test phrase offline. `browser/inspector-dock.spec.ts` loads
+the host page with every request outside loopback refused, and checks that on a wide window the developer tools open on
+the right by default and move to the bottom across the window, the Phone-sized app keeping its size and its device
+frame; that the inspector's six views, Activity, TrUAPI, Workers, Statements, Chat and Products, fill the tools one at a
+time and the arrow keys move between them, that their top edge sets their height at the bottom, that on the right their
+left edge sets their width by drag and keys within its bounds, apart from the height, kept after a reload and without
+reloading the product, and that the side is kept after a reload; that Focus gives the app the whole window and brings
+the tools back at the same view; that the side switch is a segmented control of two 36 × 26 px pills, each inside its
+track, and Hide a 28 px circle, icons centred, on either side, in either colour scheme and on hover and focus; that a
+narrow window keeps them a sheet over the app; and that the Pill opens the search card with focus in the field, shows
+why an address cannot open, and on `Escape` closes and gives focus back. `browser/workers-inspector.spec.ts` runs two
+synthetic workers through the loader, offline, and checks that the Workers view shows their state, the first line and
+the bounded, circular, binary, error, rejection and flood lines, that the worker's own console and code are unchanged,
+that a line is put down to the frame that sent it, the filters and Copy, that Traces narrows the TrUAPI view to the
+worker, that Restart keeps the earlier run's lines labelled, and that a removed worker, signing out and another wallet
+leave none of it. `browser/products-inspector.spec.ts` opens a synthetic product by a made-up name, offline, with
+Contact Chat running, and checks that the Products view shows the product's real size, file count, blocks, CAR transport
+and fetched outcome, its record, content id, ended stream and largest file; that a summary the product posts after it
+starts does not replace the loader's; that Contact Chat's row is marked served by this host; that opening it again shows
+the verified copy, with nothing fetched and the same files; and that on a phone the rows fit and the view tabs scroll to
+Products. `browser/activity-log.spec.ts` mounts the Activity view alone on made-up events and checks the rows and their
+keyboard details, focus kept as events arrive, the filters, search and empty states, pause and the event limit, copy,
+clear, and that a URL's credentials do not show. `browser/statements-inspector.spec.ts` mounts the Statements and Chat
+views over one ledger, fed through the real connection observer with a synthetic Alice and Bob chat: a claim, request
+facts, a light-client subscription, broadcast and refused submissions, and a product report. It checks the Chat card's
+reported, host and derived lines, its title and closed Conversation ID, the tie to the product, the published message
+batch and requested expiry under Protocol details, and that it shows no resource fact; that its account links open the
+account, focused, its topic links the topic's detail and its Timeline action the narrowed timeline, and Request timeline
+the request's events; the account's claim, grant, observed, posts and peer-refusal lines; the topics by role, with the
+host's day inbox named and derived, product names tagged, and a submission's topic Publishing only once broadcast,
+columns aligned on a wide dock, and a row opened from the keyboard; that Statements names no protocol and offers no
+probe, opening no People connection of its own; capture, errors and metadata-only evidence; and, apart, that a product
+naming another's request and account gets no host facts, while its account link still opens what was seen of it, and an
+account no one recorded opens empty with nothing read. In the host page, offline, it finds both views empty, then runs a
+worker built from `fixtures/products/diagnostics-worker.ts` whose report shows in Chat as reported, with no Protocol
+details, is replaced by the next and turns stale when the worker is removed. Set `STATEMENTS_SCREENSHOT` to a directory
+to keep screenshots. `browser/chat-screen.spec.ts` mounts the Chat screen alone over the product room provider with a
+stand-in behind it, the chat product provider with the synthetic chat product on the other side of the bridge in the
+page, and a second chat product provider whose stand-in engine has one conversation, with a host contact, and records
+the chats it is asked to start. Synthetic data only, and every request outside this host refused. It checks one list
+across providers, paging on scroll, sender names and the user's own messages, status changes, a retried message staying
+one message, a product room's custom card, buttons, reaction and non-`https` file, the chat product answering while
+another room is open, unread cleared only for messages on screen, a product restart and a new session. It checks New
+chat through the host's contact picker over a test username index: Cancel changes nothing, a username that names another
+account on chain is not chosen, a contact opens their chat, anyone else opens a request that the provider is asked to
+send only on Send, once, and a choice made after the session changed is dropped. It also checks the user's reaction in a
+product room, which reaches the worker, and that the user's own messages take none; and, over a saved chat record
+through the real wallet contacts, that a host contact's conversation offers Block and a product room's person does not,
+that Cancel blocks no one, that Block takes them out of New chat's picker and tells the core, that Blocked lists them
+and Unblock offers them again, and that with no one blocked Blocked stays reachable and Block a contact offers the
+contacts only and blocks the one chosen. Set `CHAT_SCREENSHOTS` to a directory to keep screenshots.
+
+The smoke test runs against the Vite dev server. It does not show that a static host serves the build: open the built
+`dist/` from the host you will use, as described in [Static build](#static-build-and-github-pages).
+
+Not covered by automated checks, and tried by hand in Chrome when the behavior changes: real camera and microphone
+capture, a call or file transfer with a Polkadot app, the phone setup, two tabs with different wallets, the build under
+a project path, the inspector's rendering, and layout on narrow screens.
 
 ## Layout
 
-Code lives with the feature that owns it. Tools, fixtures and tests sit outside the features. Per-file map:
-[docs/layout.md](docs/layout.md).
+Code lives with the feature that owns its behavior. Developer tools, fixtures and tests sit outside the features, and no
+feature imports them; only the page's composition (`src/main.ts` and `src/app/`) mounts the tools. Features use two of
+the app's shared pieces, the host's prompts (`src/app/prompt.ts`) and avatar colours (`src/app/avatar-color.ts`), and
+nothing else of it.
 
-- `src/main.ts`: composition root. `src/app/`: the shell (navigation, session, dock, search card, prompts, callbacks).
-- `src/platform/`: network, storage, wallets, the core's Web Worker, Statement Store access, activity events.
-- `src/chat/`, `src/contacts/`, `src/products/`, `src/pocket/`, `src/notifications/`, `src/invitations/`: features.
-- `tools/`: developer tools; `tools/demos/` is dev-server only.
-- `fixtures/`: synthetic data for tests and the dev server.
-- `tests/unit/`, `tests/support/`: unit tests and helpers. `browser/`: browser tests.
-- `*-plugin.ts`: Vite plugins for the loader, Contact Chat's archive, the Browse seed and username search.
+- `src/main.ts`: the page's composition root. It builds the features, connects their callbacks and boots the core.
+- `src/app/`: the shell around the features.
+  - `navigation.ts`: the product in front, the ones held behind it, the dock destinations, and opening a name, a URL, a
+    Pocket card or a product's `navigateTo`. `session.ts`: the signed-in wallet, how a change closes and reopens
+    products, and the order a session reaches everything that belongs to it.
+  - `shell.ts`, `dock-defaults.ts`, `address.ts`, `address-recents.ts`, `recents.ts`, `search-card.ts`, `apps-shelf.ts`,
+    `chrome.ts`, `layout.ts`, `device-mode.ts`, `keyboard-viewport.ts`: the dock, the address bar and its grammar, the
+    Pill's card, the Apps shelf, the developer tools' zone, the phone browser mode and the area an on-screen keyboard
+    leaves.
+  - `callbacks.ts`, `prompt.ts`, `reviews.ts`: the host callbacks the core calls, and the prompts it asks through.
+  - `wallet-label.ts`, `wallet-panel.ts`, `account-status.ts`, `permissions-status.ts`, `product-chain.ts`,
+    `versions.ts`: the Account and Product tabs' wallet controls and status rows, and the build's versions.
+- `src/platform/`: the browser and chain facilities. `network.ts`, `network-config.ts`, `network-scope.ts`,
+  `network-choice.ts` and `follow-spread.ts`: the light client, the networks, the per-tab choice and spreading the
+  core's follows. `storage.ts`, `wallets.ts`, `allowance-ledger.ts`: per-wallet, per-network storage, saved wallets and
+  the core's renewal ledger. `people-chain.ts`, `scale-reader.ts`, `subscription.ts`; `core-worker.ts`, the Web Worker
+  the core runs in. `activity.ts`: what the host reports to the inspector's Activity view. `statement-observer.ts`: the
+  passive observer of Statement Store traffic on People chain connections, for the Statements view. `codec.ts` and
+  `crypto.ts`: byte encoding, hashes, X25519 and sr25519 verification. `chain-directory.ts`: chat keys, usernames and
+  owners read from Asset Hub and the People chain. `statement.ts` and `statement-store.ts`: signed statements and the
+  People chain's Statement Store over JSON-RPC.
+- `src/chat/`: Chat. `provider.ts` is the interface between the Chat screen and its chats, `inbox.ts` the session's
+  providers, `screen.ts`, `tabs.ts`, `conversation-view.ts` and `call-view.ts` draw it.
+  - `worker/`: `product-storage.ts`, a `Storage` a chat product worker keeps in its own TrUAPI storage.
+  - `product-chat.ts`, `product-room-provider.ts`: the host side of TrUAPI Chat, the official product rooms.
+  - `draft/`: the Chat Extension v2 draft bridge, which is not TrUAPI. `contract.ts` holds the bridge's types and
+    messages, `host.ts` the host end, `provider.ts` and `calls.ts` the chat provider over it, `product.ts` a product's
+    end, and `conversations.ts` the engine-independent seam.
+  - `contact-chat/`: Contact Chat, the host's own chat product worker (`worker.ts`, `engine.ts`, its protocol seam and
+    `simple-text/1`), and where the host serves it (`route.ts`).
+- `src/contacts/`: the contact picker and handle lookup (`contacts.ts`), the wallet's saved contacts and blocked people
+  (`wallet-contacts.ts`), the host's names for people (`host-names.ts`), finding people by username
+  (`username-directory.ts`, `username-search.ts`) and the Docklet's people (`search-people.ts`).
+- `src/products/`: embedding a product and relaying its frames (`product.ts`, `tap.ts`), product workers
+  (`worker-manifest.ts`, `product-workers.ts`, `workers-menu.ts`), a worker's console lines (`worker-console.ts`) and
+  diagnostics reports (`diagnostics.ts`, draft), what each mounted load resolved and its loader counted, for the
+  Products view (`load-observer.ts`), name lookup (`dotns.ts`), preimage lookups (`preimage.ts`), the stage's loading
+  and status lines (`loading.ts`, `status.ts`) and the cards a worker draws (`render.ts`).
+  - `archive/`: CAR, UnixFS and CID verification and unpacking.
+  - `loader/`, with `sandbox-plugin.ts`: the loader, the service worker, the mount paths, the archive cache, and a
+    worker's console capture (`console.ts`, `describe.ts`). The plugin bundles them as static files, which the build
+    emits and the dev server also answers.
+- `src/pocket/`: the Pocket cards and the Pocket the core's calls see (`pocket.ts`), the screen (`screen.ts`), a card's
+  faces (`faces.ts`, `card-view.ts`) and the Widget an opened card runs (`widget.ts`).
+- `src/notifications/`: the Inbox's store and screen.
+- `src/invitations/`: invitations between users' hosts, the wallet keys that prove them (`chat-keys.ts`, with `gate.ts`,
+  which refuses the public development phrase), the draft network delivery over the Statement Store
+  (`statement-delivery.ts`), Contact Chat's host side (`contact-chat-host.ts`) and its run for the signed-in wallet
+  (`wallet-chat.ts`), and the facts both report to the Statements view (`observer.ts`).
+- `tools/`: the developer tools. `mount.ts` mounts the inspector and the Preview tab (`viewport.ts`, `dock-resize.ts`).
+  `activity/` is the inspector's Activity view: the bounded event list, its filters and its view. `workers/` is the
+  inspector's Workers view and the workers' console lines it keeps. `chat/` is the inspector's Chat view, over the same
+  ledger. `products/` is the inspector's Products view and the bounded log of loads it draws (`log.ts`). `statements/`
+  is the inspector's Statements view: the bounded ledger (`ledger.ts`), what it reads of statements and answers
+  (`decode.ts`), topics by role (`topics.ts`), the grant read (`actions.ts`), the evidence it copies (`evidence.ts`),
+  the pieces both views draw with (`ui.ts`) and the view. `inspector/frame-tap.ts` feeds TrUAPI frames to the debugger.
+  The developer tools ship in every build. `demos/` holds the dev server's controls, which a build leaves out: the
+  Developer section, the local chat products' routes, and Contact Chat's host side.
+- `fixtures/`: synthetic data that only tests and the dev server use. `products/`: product and worker entries, the
+  synthetic chat product, a worker that only reports diagnostics (`diagnostics-worker.ts`), and Contact Chat
+  (`contact-chat/`: `worker.ts` the entry, `engine.ts` its conversations, `protocol.ts` the seam to its chat protocol
+  and `simple-text.ts` the one it runs, `transport.ts` its Statement Store posts through TrUAPI, `requests.ts` its end
+  of the request service). `invitations/`, `notifications/`: demo users, local delivery, and sample notifications.
+  `archive/`: archive builders.
+- `tests/unit/`: unit tests, in folders that follow the code they cover; `tests/support/`: their shared helpers, among
+  them statement stores in memory (`statement-memory.ts`, `statement-rpc-memory.ts`, and `chat-statements.ts` as Contact
+  Chat reaches one through TrUAPI).
+- `browser/`: the browser tests, with their Playwright setup and page harnesses under `browser/support/`.
+- `contact-chat-plugin.ts`: Contact Chat's worker archive, served by the dev server and written beside a build.
+- `browse-seed-plugin.ts`: the [Browse seed](#the-browse-seed), fetched and checked when the host is built and written
+  beside the build. `src/products/seed.ts` is what the host reads of it.
+- `username-search-plugin.ts`: the dev server's username route.
 
 ## Not supported
 
