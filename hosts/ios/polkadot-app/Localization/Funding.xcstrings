@@ -792,6 +792,39 @@
           }
         }
       }
+    },
+    "live.seconds" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(count)@s"
+          }
+        }
+      }
+    },
+    "live.minutes" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(count)@ min"
+          }
+        }
+      }
+    },
+    "live.hours" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(count)@ h"
+          }
+        }
+      }
     }
   },
   "version" : "1.1"
