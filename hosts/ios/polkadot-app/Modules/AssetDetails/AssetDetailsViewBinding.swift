@@ -12,8 +12,6 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
 
     private var cardCreateModel: WalletCardCreateViewModel?
     private var amount: String?
-    private var readyAmountString: String?
-    private var assetLogo: UIImage?
     private var assetSymbol: String?
     private var paymentAssetViewModel: PaymentAssetViewModelProtocol?
 
@@ -84,19 +82,6 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
         emitCardUpdate()
     }
 
-    func didReceive(readyAmount: BalanceViewModelProtocol?) {
-        defer {
-            emitCardUpdate()
-        }
-
-        guard let readyAmount else {
-            readyAmountString = nil
-            return
-        }
-
-        readyAmountString = readyAmount.amount
-    }
-
     func didReceive(paymentAsset: PaymentAssetViewModelProtocol) {
         paymentAssetViewModel?.cancel()
         paymentAssetViewModel = paymentAsset
@@ -107,7 +92,6 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
     }
 
     private func apply(_ brand: PaymentAssetBrand) {
-        assetLogo = brand.squareIcon
         assetSymbol = brand.symbol
 
         guard viewModel.balanceCardModel != nil else { return }
@@ -153,8 +137,6 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
     private func emitCardUpdate() {
         viewModel.balanceCardModel = .init(
             balance: amount,
-            readyBalance: readyAmountString,
-            logo: assetLogo,
             symbol: assetSymbol
         )
     }

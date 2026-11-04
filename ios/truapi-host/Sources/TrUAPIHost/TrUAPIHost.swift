@@ -1175,8 +1175,9 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     @discardableResult
     public func setFunding(_ funding: FundingHostBridge) -> Bool {
         let adapter = FundingCallbackAdapter(bridge: funding)
+        guard inner.setFundingCallbacks(callbacks: adapter) else { return false }
         fundingRetainer = adapter
-        return inner.setFundingCallbacks(callbacks: adapter)
+        return true
     }
 
     /// Open a funding session on the host's own behalf, as the Balance card

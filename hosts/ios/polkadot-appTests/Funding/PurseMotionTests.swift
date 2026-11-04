@@ -2,9 +2,10 @@ import CoreGraphics
 import Foundation
 @testable import polkadot_app
 import Testing
-import TrUAPIHost
 
-struct FundingPocketMotionTests {
+/// The Purse's card collapsing into the header, its sticky bar, and the
+/// Total panel's split bar.
+struct PurseMotionTests {
     @Test
     func theCardCollapsesOverOneHundredFiftyPointsOfScroll() {
         #expect(PurseMotion.Collapse.progress(scrollOffset: -40) == 0)
@@ -80,38 +81,19 @@ struct FundingPocketMotionTests {
     }
 
     @Test
-    func theCountHintsEveryTenSecondsForAboutTwo() {
-        #expect(!PurseMotion.showsHint(elapsed: 0))
-        #expect(!PurseMotion.showsHint(elapsed: 7.1))
-        #expect(PurseMotion.showsHint(elapsed: 7.2))
-        #expect(PurseMotion.showsHint(elapsed: 9.3))
-        #expect(!PurseMotion.showsHint(elapsed: 9.4))
-        #expect(PurseMotion.showsHint(elapsed: 18))
+    func theStickyBarShowsOnceTheCardHasGone() {
+        let card = PurseScroll.Card(bottom: 20, balance: 424.13)
+
+        #expect(PurseScroll.bar(card: PurseScroll.Card(bottom: 120, balance: 1)) == nil)
+        #expect(PurseScroll.bar(card: card) == PurseScroll.Bar(balance: 424.13))
     }
 
     @Test
-    func aSessionLeavingInProgressArrivesForAWhile() {
-        let now = Date(timeIntervalSince1970: 1_000_000)
-        let finished = FundingActivityCenter.finished(
-            before: ["a", "b", "c"],
-            after: ["c"],
-            known: ["old": now - 10, "recent": now - 1],
-            now: now
-        )
-
-        #expect(finished == ["a": now, "b": now, "recent": now - 1])
-    }
-
-    @Test
-    func theArrowPointsIntoTheCardForValueComingIn() {
-        let box = CGRect(x: 0, y: 0, width: 22, height: 22)
-        let incoming = FundingArrowGeometry.ends(in: box, direction: .in)
-        let outgoing = FundingArrowGeometry.ends(in: box, direction: .out)
-
-        #expect(incoming.tip.x < incoming.from.x)
-        #expect(incoming.tip.y > incoming.from.y)
-        #expect(outgoing.tip == incoming.from)
-        #expect(outgoing.from == incoming.tip)
+    func theClearingShareNeverDisappearsWhileAnythingClears() {
+        #expect(CoinageSplitBar.share(clearing: 0, total: 100) == 0)
+        #expect(CoinageSplitBar.share(clearing: 1, total: 100) == 0.06)
+        #expect(CoinageSplitBar.share(clearing: 50, total: 100) == 0.5)
+        #expect(CoinageSplitBar.share(clearing: 5, total: 0) == 0)
     }
 
     @Test

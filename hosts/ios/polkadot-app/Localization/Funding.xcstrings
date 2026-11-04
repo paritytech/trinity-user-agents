@@ -1101,28 +1101,6 @@
         }
       }
     },
-    "error.openMessage" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Something went wrong. Try again."
-          }
-        }
-      }
-    },
-    "error.openTitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Couldn't open"
-          }
-        }
-      }
-    },
     "error.quoteTimeout" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2608,17 +2586,6 @@
         }
       }
     },
-    "country.payoutRefused" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Payouts here aren't supported"
-          }
-        }
-      }
-    },
     "ended.payoutFailedCard" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2659,6 +2626,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Refunded %1$(amount)@"
+          }
+        }
+      }
+    },
+    "live.seconds" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(count)@s"
+          }
+        }
+      }
+    },
+    "live.minutes" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(count)@ min"
+          }
+        }
+      }
+    },
+    "live.hours" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(count)@ h"
+          }
+        }
+      }
+    },
+    "fees.rateValue" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(cash)@ ≈ %2$(value)@"
           }
         }
       }

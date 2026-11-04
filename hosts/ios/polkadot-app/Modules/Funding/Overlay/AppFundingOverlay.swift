@@ -9,7 +9,10 @@ protocol FundingOverlayEnvironment: AnyObject {
     var cash: FundingCash { get }
     /// Calls `onChange` with what a payment can spend, for the withdraw
     /// screen's balance check, now and on every balance change, until the
-    /// calling task is cancelled.
+    /// calling task is cancelled. Returns without calling it when the
+    /// balance cannot be followed, and returns early if the balance stream
+    /// ends or fails; either way the check goes by the last value it got,
+    /// and is skipped without one.
     func followSpendable(_ onChange: @escaping @MainActor (Decimal) -> Void) async
     var branding: FundingProviderBranding { get }
 
@@ -183,11 +186,13 @@ final class FundingOverlayCoordinator {
         else { return }
 
         model.resume(session)
-        presentSheet(for: model) { [weak self] in
+        let presented = presentSheet(for: model) { [weak self] in
             guard let frame = self?.frames[intent], frame.presentingViewController == nil else { return }
             _ = self?.environment.present(frame)
         }
-        acknowledgeShown(intent: intent)
+        if presented {
+            acknowledgeShown(intent: intent)
+        }
     }
 
     /// An ended session the core did not push this run is drawn from its
@@ -332,17 +337,12 @@ final class FundingOverlayCoordinator {
         environment.fundingActivityChanged()
     }
 
-    /// Says so on the open session sheets the product serves, or over
-    /// whatever is on screen when none is open.
+    /// Says so as an error notice over whatever is on screen, a session
+    /// sheet the product serves included. The sheet's own toast is for
+    /// confirmations.
     func workerCrashing(productId: ProductId) async {
         let name = await environment.branding.brand(for: productId).name
-        let message = String(localized: .Funding.providerCrashing(provider: name))
-        let served = flows.values.filter { $0.chosenProviderId == productId }
-        if served.isEmpty {
-            environment.showNotice(message)
-        } else {
-            served.forEach { $0.toast = message }
-        }
+        environment.showNotice(String(localized: .Funding.providerCrashing(provider: name)))
     }
 
     func optionsChanged(intent: String) {
@@ -377,7 +377,10 @@ private extension FundingOverlayCoordinator {
         return model
     }
 
-    func presentSheet(for model: FundingFlowModel, onAppear: (() -> Void)? = nil) {
+    /// Whether the sheet went on screen; when nothing could present it the
+    /// session's model is closed.
+    @discardableResult
+    func presentSheet(for model: FundingFlowModel, onAppear: (() -> Void)? = nil) -> Bool {
         let intent = model.intent
         let sheet = FundingSheetController(model: model, onAppear: onAppear)
         model.onClose = { [weak self, weak sheet] in
@@ -394,9 +397,11 @@ private extension FundingOverlayCoordinator {
         }
         flows[intent] = model
 
-        if !environment.present(sheet) {
+        guard environment.present(sheet) else {
             model.close()
+            return false
         }
+        return true
     }
 
     /// The session sheet's progress screen for `intent`: the open sheet, or

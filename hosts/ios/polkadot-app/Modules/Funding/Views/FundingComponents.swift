@@ -91,11 +91,14 @@ struct FundingCopyRow: View {
     @Binding var copied: String?
     /// One line, cut in the middle, for an id only support reads in full.
     var truncatesMiddle = false
+    /// What is drawn in place of `text`, such as a shortened address; the
+    /// copy is still the whole `text`.
+    var shown: String?
 
     var body: some View {
         FundingValueRow(title: title) {
             HStack(spacing: DSSpacings.small) {
-                Text(verbatim: text)
+                Text(verbatim: shown ?? text)
                     .typography(.bodyLargeEmphasized)
                     .foregroundStyle(.fgPrimary)
                     .multilineTextAlignment(.trailing)

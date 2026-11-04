@@ -349,9 +349,10 @@ Balance card reach the same overlay: the card opens a session with
 `openFunding(direction:amount:)`, a product with its own Funding request, and
 either way the core calls `presentFunding`.
 
-The core owns the sessions and pushes what the host draws; the host reads
-nothing back. Before `presentFunding` is called, `fundingOptionsChanged` carries
-the session's providers. While `presentFunding` waits, the session is live:
+The core owns the sessions and pushes what the host draws; the one thing the
+host reads back is `fundingHistory`, to rebuild a history it lost. Before
+`presentFunding` is called, `fundingOptionsChanged` carries the session's
+providers. While `presentFunding` waits, the session is live:
 report the user's rail, asset, network and country with
 `selectFundingOptions(intent:selection:)` whenever one changes (the countries
 and amount range for it come back through `fundingOptionsChanged`), price it
@@ -361,7 +362,8 @@ first, and again at each refresh), hand it to the chosen provider with
 `selectFundingProvider(intent:providerId:quoteId:)`, and only then answer
 `.started`. Answering `.dismissed` discards the session. A provider that needs
 one of its own screens asks through `presentProviderFrame`, answered `.closed`
-when the screen closed itself and `.dismissed` when the user closed it.
+when the screen closed itself, `.dismissed` when the user closed it and
+`.returned(url:)` when the page navigated to the request's `return_url`.
 
 `fundingSessionChanged` carries each started session's status, the session as
 the core holds it and its progress, so the host keeps the latest of each for

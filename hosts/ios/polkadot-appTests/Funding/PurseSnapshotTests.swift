@@ -42,7 +42,6 @@ private extension PurseSnapshotTests {
         let assets = AssetDetailsViewModel()
         assets.balanceCardModel = AssetDetailsBalanceCard.ViewModel(
             balance: "$424.13",
-            readyBalance: "$300",
             symbol: "CASH"
         )
         assets.coinageBreakdown = CoinageBalanceBreakdownViewModel(

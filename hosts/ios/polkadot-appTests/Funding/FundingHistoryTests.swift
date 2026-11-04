@@ -9,8 +9,7 @@ import UIKit
 
 private let provider = try! ProductId("provider.dot")
 
-/// The history is the core's, read each time it is drawn; an ended session is
-/// acknowledged once the user has been shown it.
+/// The history is the core's, read each time it is drawn.
 struct FundingHistoryTests {
     @Test
     func aSummaryAloneIsListedFromTheCoresHistory() throws {
@@ -88,55 +87,6 @@ struct FundingHistoryTests {
         )
 
         #expect(records.map(\.intent) == ["new", "old"])
-    }
-
-    @Test
-    func anEndedSessionIsAcknowledgedOnce() async {
-        let book = FundingSessionBook()
-        let runtime = StubFundingRuntime()
-        book.record(intent: "intent", session: session("intent", stage: delivered(2_000)), progress: nil, ended: false)
-
-        await book.acknowledgeShown(intent: "intent", runtime: runtime)
-        await book.acknowledgeShown(intent: "intent", runtime: runtime)
-
-        #expect(runtime.acknowledged == ["intent"])
-    }
-
-    // The core hands over an ending it has compacted as its summary only;
-    // the user is told of it in history, and it is acknowledged once.
-    @Test
-    func anEndingHandedOverAsItsSummaryIsAcknowledgedOnce() async {
-        let book = FundingSessionBook()
-        let runtime = StubFundingRuntime()
-        book.record(intent: "intent", session: nil, progress: nil, ended: true)
-
-        await book.acknowledgeShown(intent: "intent", runtime: runtime)
-        await book.acknowledgeShown(intent: "intent", runtime: runtime)
-
-        #expect(runtime.acknowledged == ["intent"])
-    }
-
-    @Test
-    func aSessionInFlightIsNotAcknowledged() async {
-        let book = FundingSessionBook()
-        let runtime = StubFundingRuntime()
-        book.record(intent: "intent", session: session("intent", stage: .open), progress: nil, ended: false)
-
-        await book.acknowledgeShown(intent: "intent", runtime: runtime)
-
-        #expect(runtime.acknowledged.isEmpty)
-    }
-
-    @Test
-    func aFailedAcknowledgementIsTriedAgain() async {
-        let book = FundingSessionBook()
-        let runtime = StubFundingRuntime(failsFirstAcknowledgement: true)
-        book.record(intent: "intent", session: session("intent", stage: delivered(2_000)), progress: nil, ended: false)
-
-        await book.acknowledgeShown(intent: "intent", runtime: runtime)
-        await book.acknowledgeShown(intent: "intent", runtime: runtime)
-
-        #expect(runtime.acknowledged == ["intent", "intent"])
     }
 }
 
@@ -304,6 +254,8 @@ private final class StubFundingRuntime: FundingRuntime, @unchecked Sendable {
 private final class WindowEnvironment: FundingOverlayEnvironment {
     private let window: UIWindow
     private(set) var presented: [UIViewController] = []
+    /// Whether anything is on screen to present over.
+    var presents = true
 
     init() {
         window = UIWindow(frame: UIScreen.main.bounds)
@@ -317,7 +269,7 @@ private final class WindowEnvironment: FundingOverlayEnvironment {
     func followSpendable(_: @escaping @MainActor (Decimal) -> Void) async {}
 
     func present(_ controller: UIViewController) -> Bool {
-        guard var top = window.rootViewController else { return false }
+        guard presents, var top = window.rootViewController else { return false }
         while let next = top.presentedViewController, !next.isBeingDismissed {
             top = next
         }
@@ -354,6 +306,43 @@ private final class WindowEnvironment: FundingOverlayEnvironment {
 private struct PlaceholderBranding: FundingProviderBranding {
     func brand(for providerId: ProductId) async -> FundingProviderBrand {
         .placeholder(for: providerId)
+    }
+}
+
+/// An ended session shown again is acknowledged once its sheet is on screen,
+/// and not when nothing could present it.
+@MainActor
+struct FundingReopenTests {
+    @Test
+    func anEndedSessionIsAcknowledgedOnceItsSheetIsShown() async throws {
+        let environment = WindowEnvironment()
+        let runtime = StubFundingRuntime()
+        let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment, book: endedBook())
+
+        coordinator.reopen(intent: "intent")
+
+        #expect(environment.presented.last is FundingSheetController)
+        try await environment.waitUntil { _ in runtime.acknowledged == ["intent"] }
+    }
+
+    @Test
+    func aSheetThatCannotBePresentedLeavesTheSessionUnacknowledged() async throws {
+        let environment = WindowEnvironment()
+        environment.presents = false
+        let runtime = StubFundingRuntime()
+        let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment, book: endedBook())
+
+        coordinator.reopen(intent: "intent")
+        try await Task.sleep(for: .milliseconds(200))
+
+        #expect(environment.presented.isEmpty)
+        #expect(runtime.acknowledged.isEmpty)
+    }
+
+    private func endedBook() -> FundingSessionBook {
+        let book = FundingSessionBook()
+        book.record(intent: "intent", session: session("intent", stage: delivered(2_000)), progress: nil, ended: false)
+        return book
     }
 }
 

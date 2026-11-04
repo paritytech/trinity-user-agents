@@ -1290,17 +1290,6 @@
         }
       }
     },
-    "wallet.card.ready" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ready"
-          }
-        }
-      }
-    },
     "wallet.card.title" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1308,17 +1297,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "CASH"
-          }
-        }
-      }
-    },
-    "wallet.card.total.balance" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Total"
           }
         }
       }

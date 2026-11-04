@@ -318,8 +318,6 @@ private extension FundingProgressView {
     }
 }
 
-/// When the provider was last heard from, kept current while on screen:
-/// "just now", then seconds, minutes and hours.
 /// The line under a session's status: the provider's latest fact for the
 /// current step, worded here, or when the provider was last heard. One line,
 /// cut short with "…" when it does not fit.
@@ -402,9 +400,9 @@ struct FundingLiveLine: View {
     /// "12s", "3 min" or "2 h".
     static func duration(_ seconds: Int) -> String {
         switch seconds {
-        case ..<60: "\(seconds)s"
-        case ..<3_600: "\(seconds / 60) min"
-        default: "\(seconds / 3_600) h"
+        case ..<60: String(localized: .Funding.liveSeconds(count: "\(seconds)"))
+        case ..<3_600: String(localized: .Funding.liveMinutes(count: "\(seconds / 60)"))
+        default: String(localized: .Funding.liveHours(count: "\(seconds / 3_600)"))
         }
     }
 
