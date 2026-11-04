@@ -23,6 +23,27 @@ enum FundingOpeningError: Error, ErrorContentConvertible {
     }
 }
 
+/// How opening the overlay went, for the screen it was opened from.
+enum FundingOpened {
+    /// A session started.
+    case started
+    /// The user closed the overlay, or was shown the sessions in flight.
+    case notStarted
+    /// The opening task was cancelled, as when the user left the screen;
+    /// there is nothing to tell them.
+    case cancelled
+    /// It could not open, which the user is told.
+    case failed(Error)
+
+    init(_ result: Result<String?, Error>) {
+        switch result {
+        case .success(.some): self = .started
+        case .success(.none): self = .notStarted
+        case let .failure(error): self = error is CancellationError ? .cancelled : .failed(error)
+        }
+    }
+}
+
 struct RuntimeFundingOpener: FundingOpening {
     let runtimeProvider: TrUAPIHostRuntimeProviding?
     /// Shows the sessions in flight in a direction, answering false when

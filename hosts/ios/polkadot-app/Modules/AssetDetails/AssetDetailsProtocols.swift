@@ -57,7 +57,8 @@ protocol AssetDetailsInteractorOutputProtocol: AnyObject {
     func didReceive(isRecoveryInProgress: Bool)
     func didReceive(showsRecoveredBalance: Bool)
 
-    func didCompleteFunding(_ direction: FundingDirection, result: Result<Void, Error>)
+    /// The session the user started, or `nil` when they closed the overlay.
+    func didCompleteFunding(_ direction: FundingDirection, result: Result<String?, Error>)
 
     /// One call, because the presenter rebuilds the whole breakdown on receipt: delivering the
     /// figures and the holdings separately would render the new totals beside the previous

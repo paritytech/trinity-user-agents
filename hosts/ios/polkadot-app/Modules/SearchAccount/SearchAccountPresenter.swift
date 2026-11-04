@@ -174,14 +174,13 @@ extension SearchAccountPresenter: SearchAccountInteractorOutputProtocol {
     func didOpenWithdrawal(_ result: Result<String?, Error>) {
         view?.didReceive(selfTransferLoading: false)
 
-        switch result {
-        case .success(.some):
+        switch FundingOpened(result) {
+        case .started:
             wireframe.close(from: view)
-        case .success(.none):
+        case .notStarted,
+             .cancelled:
             break
-        case let .failure(error):
-            guard !(error is CancellationError) else { return }
-
+        case let .failed(error):
             wireframe.present(error: error, from: view)
         }
     }

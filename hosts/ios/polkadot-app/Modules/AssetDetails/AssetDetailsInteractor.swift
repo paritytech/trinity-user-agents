@@ -83,8 +83,8 @@ extension AssetDetailsInteractor: AssetDetailsInteractorInputProtocol {
         fundingTask?.cancel()
         fundingTask = Task { [weak presenter, fundingOpener] in
             do {
-                _ = try await fundingOpener.openFunding(direction: direction)
-                await presenter?.didCompleteFunding(direction, result: .success(()))
+                let session = try await fundingOpener.openFunding(direction: direction)
+                await presenter?.didCompleteFunding(direction, result: .success(session))
             } catch {
                 await presenter?.didCompleteFunding(direction, result: .failure(error))
             }

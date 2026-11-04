@@ -115,10 +115,12 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
 }
 
 extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
-    func didCompleteFunding(_ direction: FundingDirection, result: Result<Void, Error>) {
+    func didCompleteFunding(_ direction: FundingDirection, result: Result<String?, Error>) {
         view?.didReceive(fundingLoading: direction, isLoading: false)
 
-        guard case let .failure(error) = result, !(error is CancellationError) else { return }
+        // The Purse stays on screen whether or not a session started: it
+        // shows the session's progress itself.
+        guard case let .failed(error) = FundingOpened(result) else { return }
 
         wireframe.present(error: error, from: view)
     }
