@@ -333,16 +333,15 @@ const CLAIM_PAGE_MAX: u64 = 16;
 
 /// A failed dotNS lookup, retaining the operation and its underlying failure.
 /// Use [`Self::reason`] for a complete diagnostic.
-#[derive(Debug, PartialEq, Error, derive_more::From)]
+#[derive(Debug, Error, derive_more::From)]
 pub enum DotnsError {
 	/// The chain could not serve a storage read.
 	#[error("{0}")]
 	#[from(String)]
 	Storage(String),
-	/// A contract view failed without an additional operation label.
-	#[error(transparent)]
-	#[from(DotnsViewError)]
-	View(DotnsViewError),
+	/// The chain follow the lookup reads through gave no best block to pin.
+	#[error("{0}")]
+	Follow(String),
 	/// The controller's protocol registry could not be read.
 	#[error("DotnsPopController.protocolRegistry()")]
 	ProtocolRegistry(#[source] DotnsCallError),
@@ -428,40 +427,14 @@ impl DotnsError {
 }
 
 /// A contract read failed during execution or decoding of its return data.
-#[derive(Debug, PartialEq, Error, derive_more::From)]
+#[derive(Debug, Error, derive_more::From)]
 pub enum DotnsCallError {
 	/// The view failed before returning data to decode.
 	#[error(transparent)]
-	View(DotnsViewError),
+	View(EvmContractError),
 	/// The view returned data that did not match the expected ABI shape.
 	#[error(transparent)]
 	Decode(alloy_sol_types::Error),
-}
-
-/// Why a contract view returned no data.
-///
-/// A revert is an answer from the contract; other failures leave it unknown.
-#[derive(Debug, PartialEq, Error, derive_more::From)]
-pub enum DotnsViewError {
-	/// The contract executed and reverted.
-	#[error("contract reverted: {detail}")]
-	Reverted {
-		/// Rendered revert reason.
-		detail: String,
-	},
-	/// The view could not be executed or its response could not be decoded.
-	#[error("{0}")]
-	#[from(String)]
-	Failed(String),
-}
-
-impl From<EvmContractError> for DotnsViewError {
-	fn from(error: EvmContractError) -> Self {
-		match error {
-			EvmContractError::Reverted { detail } => Self::Reverted { detail },
-			other => Self::Failed(other.to_string()),
-		}
-	}
 }
 
 /// How a caller reaches Asset Hub for dotNS reads.
@@ -475,7 +448,10 @@ pub trait DotnsTransport {
 	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError>;
 
 	/// Dry-runs a contract view against `dest` and returns its return data.
-	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError>;
+	///
+	/// [`EvmContractError::Reverted`] is an answer from the contract; any other
+	/// error leaves the view's result unknown.
+	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError>;
 }
 
 /// Resolves the `DotnsPopController` address from `DotnsGateway.DispatcherAddress`.
@@ -510,10 +486,10 @@ pub async fn discover_pop_controller<T: DotnsTransport + ?Sized>(
 		Ok(_) => Ok(Some(stored)),
 		// A chain still storing its dispatcher pays this second view; a repointed one
 		// answers on the first. Both hops go once no chain stores a dispatcher.
-		Err(DotnsCallError::View(DotnsViewError::Reverted { .. })) => {
+		Err(DotnsCallError::View(EvmContractError::Reverted { .. })) => {
 			match read_view(transport, &stored, RootGatewayDispatcher::TARGETCall {}).await {
 				Ok(controller) => Ok(Some(controller.into_array())),
-				Err(DotnsCallError::View(DotnsViewError::Reverted { .. })) => {
+				Err(DotnsCallError::View(EvmContractError::Reverted { .. })) => {
 					Err(DotnsError::UnknownDispatcher { address: stored })
 				},
 				Err(error) => Err(DotnsError::DispatcherTarget(error)),
@@ -673,7 +649,7 @@ async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
 		.await
 		{
 			Ok(claims) => claims,
-			Err(DotnsCallError::View(DotnsViewError::Reverted { detail: reason })) => {
+			Err(DotnsCallError::View(EvmContractError::Reverted { detail: reason })) => {
 				warn!(
 					%reason,
 					retained = claims.len(),
@@ -879,7 +855,7 @@ mod tests {
 	}
 
 	/// Answers a view of `Call` with `value`.
-	fn returns<Call: SolCall>(value: Call::Return) -> Result<Vec<u8>, DotnsViewError> {
+	fn returns<Call: SolCall>(value: Call::Return) -> Result<Vec<u8>, EvmContractError> {
 		Ok(Call::abi_encode_returns(&value))
 	}
 
@@ -888,8 +864,8 @@ mod tests {
 		Call::abi_decode(input).ok()
 	}
 
-	fn view_reverted() -> Result<Vec<u8>, DotnsViewError> {
-		Err(DotnsViewError::Reverted { detail: "(empty)".to_string() })
+	fn view_reverted() -> Result<Vec<u8>, EvmContractError> {
+		Err(EvmContractError::Reverted { detail: "(empty)".to_string() })
 	}
 
 	struct RevertingSecondClaimPage {
@@ -907,7 +883,7 @@ mod tests {
 			&mut self,
 			_dest: &[u8; 20],
 			input: Vec<u8>,
-		) -> Result<Vec<u8>, DotnsViewError> {
+		) -> Result<Vec<u8>, EvmContractError> {
 			let page = DotnsPopController::pendingClaimsCall::abi_decode(&input)
 				.expect("only pending claims are scripted");
 			self.pending_calls += 1;
@@ -916,7 +892,7 @@ mod tests {
 				return returns::<DotnsPopController::pendingClaimsCall>(self.first_page.clone());
 			}
 			assert_eq!(page.offset, U256::from(CLAIM_PAGE_LIMIT));
-			Err(DotnsViewError::Reverted { detail: "offset past end".to_string() })
+			Err(EvmContractError::Reverted { detail: "offset past end".to_string() })
 		}
 	}
 
@@ -962,7 +938,7 @@ mod tests {
 					&mut self,
 					_dest: &[u8; 20],
 					input: Vec<u8>,
-				) -> Result<Vec<u8>, DotnsViewError> {
+				) -> Result<Vec<u8>, EvmContractError> {
 					let asked = DotnsPopController::isPopIssuedCall::abi_decode(&input)
 						.expect("only isPopIssued is scripted");
 					returns::<DotnsPopController::isPopIssuedCall>(
@@ -1105,8 +1081,8 @@ mod tests {
 	/// and `TARGET()` / `protocolRegistry()` answer with scripted results.
 	struct ScriptedDiscovery {
 		stored: [u8; 20],
-		target: fn() -> Result<Vec<u8>, DotnsViewError>,
-		protocol_registry: fn() -> Result<Vec<u8>, DotnsViewError>,
+		target: fn() -> Result<Vec<u8>, EvmContractError>,
+		protocol_registry: fn() -> Result<Vec<u8>, EvmContractError>,
 	}
 
 	#[crate::platform::async_trait]
@@ -1119,7 +1095,7 @@ mod tests {
 			&mut self,
 			_dest: &[u8; 20],
 			input: Vec<u8>,
-		) -> Result<Vec<u8>, DotnsViewError> {
+		) -> Result<Vec<u8>, EvmContractError> {
 			if decoded::<RootGatewayDispatcher::TARGETCall>(&input).is_some() {
 				(self.target)()
 			} else if decoded::<DotnsPopController::protocolRegistryCall>(&input).is_some() {
@@ -1132,7 +1108,7 @@ mod tests {
 		}
 	}
 
-	fn address_answer(byte: u8) -> Result<Vec<u8>, DotnsViewError> {
+	fn address_answer(byte: u8) -> Result<Vec<u8>, EvmContractError> {
 		returns::<RootGatewayDispatcher::TARGETCall>(Address::repeat_byte(byte))
 	}
 
@@ -1180,17 +1156,16 @@ mod tests {
 	fn discovery_separates_a_failed_confirmation_from_a_wrong_contract() {
 		let mut transport = ScriptedDiscovery {
 			stored: [0xdd; 20],
-			target: || Err(DotnsViewError::Failed("node unreachable".into())),
+			target: || Err(EvmContractError::Simulation("node unreachable".into())),
 			protocol_registry: view_reverted,
 		};
 		let err = futures::executor::block_on(discover_pop_controller(&mut transport))
 			.expect_err("failure");
-		assert_eq!(
+		assert!(matches!(
 			err,
-			DotnsError::DispatcherTarget(DotnsCallError::View(DotnsViewError::Failed(
-				"node unreachable".into()
-			)))
-		);
+			DotnsError::DispatcherTarget(DotnsCallError::View(EvmContractError::Simulation(reason)))
+				if reason == "node unreachable"
+		));
 	}
 
 	#[test]
@@ -1198,19 +1173,18 @@ mod tests {
 		let mut transport = ScriptedDiscovery {
 			stored: [0xcc; 20],
 			target: || panic!("must not fall back on a transport failure"),
-			protocol_registry: || Err(DotnsViewError::Failed("node unreachable".into())),
+			protocol_registry: || Err(EvmContractError::Simulation("node unreachable".into())),
 		};
 		for error in [
 			futures::executor::block_on(discover_pop_controller(&mut transport)).unwrap_err(),
 			futures::executor::block_on(resolve_labels(&mut transport, &[0xcc; 20], &[0xaa; 32]))
 				.unwrap_err(),
 		] {
-			assert_eq!(
+			assert!(matches!(
 				error,
-				DotnsError::ProtocolRegistry(DotnsCallError::View(DotnsViewError::Failed(
-					"node unreachable".into()
-				)))
-			);
+				DotnsError::ProtocolRegistry(DotnsCallError::View(EvmContractError::Simulation(reason)))
+					if reason == "node unreachable"
+			));
 		}
 	}
 
@@ -1218,7 +1192,7 @@ mod tests {
 	/// result, `get(bytes32)` with a registry address, `recordExists(bytes32)`
 	/// with a scripted bool.
 	struct ScriptedTld {
-		tld: fn() -> Result<Vec<u8>, DotnsViewError>,
+		tld: fn() -> Result<Vec<u8>, EvmContractError>,
 		dot_record_exists: bool,
 	}
 
@@ -1232,7 +1206,7 @@ mod tests {
 			&mut self,
 			_dest: &[u8; 20],
 			input: Vec<u8>,
-		) -> Result<Vec<u8>, DotnsViewError> {
+		) -> Result<Vec<u8>, EvmContractError> {
 			if decoded::<ProtocolRegistry::tldCall>(&input).is_some() {
 				(self.tld)()
 			} else if decoded::<ProtocolRegistry::getCall>(&input).is_some() {
@@ -1258,14 +1232,14 @@ mod tests {
 			},
 			&registry,
 		));
-		assert_eq!(served.as_deref(), Ok(".paseo"));
+		assert_eq!(served.unwrap(), ".paseo");
 
 		// The fallback is verified: the registry must hold the ".dot" record.
 		let verified = futures::executor::block_on(network_tld(
 			&mut ScriptedTld { tld: reverted, dot_record_exists: true },
 			&registry,
 		));
-		assert_eq!(verified.as_deref(), Ok(TLD_WITHOUT_VIEW));
+		assert_eq!(verified.unwrap(), TLD_WITHOUT_VIEW);
 
 		let unverified = futures::executor::block_on(network_tld(
 			&mut ScriptedTld { tld: reverted, dot_record_exists: false },
@@ -1276,7 +1250,7 @@ mod tests {
 		// A transport failure is not an answer: no guessing.
 		let failed = futures::executor::block_on(network_tld(
 			&mut ScriptedTld {
-				tld: || Err(DotnsViewError::Failed("timed out".to_string())),
+				tld: || Err(EvmContractError::Simulation("timed out".to_string())),
 				dot_record_exists: true,
 			},
 			&registry,
@@ -1286,7 +1260,7 @@ mod tests {
 
 	/// The full availability walk, scripted: tld → get(registrar) → exists.
 	struct ScriptedAvailability {
-		exists: fn() -> Result<Vec<u8>, DotnsViewError>,
+		exists: fn() -> Result<Vec<u8>, EvmContractError>,
 	}
 
 	#[crate::platform::async_trait]
@@ -1299,7 +1273,7 @@ mod tests {
 			&mut self,
 			_dest: &[u8; 20],
 			input: Vec<u8>,
-		) -> Result<Vec<u8>, DotnsViewError> {
+		) -> Result<Vec<u8>, EvmContractError> {
 			if decoded::<DotnsPopController::protocolRegistryCall>(&input).is_some() {
 				returns::<DotnsPopController::protocolRegistryCall>(Address::repeat_byte(0x9e))
 			} else if decoded::<ProtocolRegistry::tldCall>(&input).is_some() {
@@ -1322,7 +1296,7 @@ mod tests {
 	#[test]
 	fn availability_fails_closed_when_the_registrar_does_not_answer() {
 		let controller = [0xc0; 20];
-		let run = |exists: fn() -> Result<Vec<u8>, DotnsViewError>| {
+		let run = |exists: fn() -> Result<Vec<u8>, EvmContractError>| {
 			futures::executor::block_on(label_available(
 				&mut ScriptedAvailability { exists },
 				&controller,
@@ -1330,11 +1304,11 @@ mod tests {
 			))
 		};
 
-		assert_eq!(run(|| returns::<DotnsRegistrar::existsCall>(false)), Ok(true));
-		assert_eq!(run(|| returns::<DotnsRegistrar::existsCall>(true)), Ok(false));
+		assert!(run(|| returns::<DotnsRegistrar::existsCall>(false)).unwrap());
+		assert!(!run(|| returns::<DotnsRegistrar::existsCall>(true)).unwrap());
 		let reverted = run(view_reverted);
 		assert!(reverted.is_err(), "{reverted:?}");
-		let failed = run(|| Err(DotnsViewError::Failed("timed out".to_string())));
+		let failed = run(|| Err(EvmContractError::Simulation("timed out".to_string())));
 		assert!(failed.is_err(), "{failed:?}");
 	}
 

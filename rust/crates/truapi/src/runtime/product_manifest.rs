@@ -16,6 +16,7 @@ use tracing::{info, instrument, warn};
 use truapi::v01;
 
 use crate::{
+	chain::EvmContractError,
 	chain_runtime::ChainRuntime,
 	dotns_views::{network_tld, protocol_component, read_view, tld_node},
 	host_internal::{
@@ -25,7 +26,7 @@ use crate::{
 	},
 	host_logic::dotns_gateway::{
 		ContentResolver, DotnsCallError, DotnsError, DotnsPopController, DotnsRegistry,
-		DotnsTransport, DotnsViewError, discover_pop_controller, namehash_under,
+		DotnsTransport, discover_pop_controller, namehash_under,
 	},
 	runtime::{
 		dotns_lookup::{DotnsLookup, DotnsLookupKind},
@@ -88,7 +89,7 @@ pub async fn fetch_root_manifest(
 		Ok(manifest) => manifest,
 		// The dotNS-issued default resolver does not implement `text`, which is
 		// the same outcome as an unpublished manifest.
-		Err(DotnsCallError::View(DotnsViewError::Reverted { .. })) => return Ok(None),
+		Err(DotnsCallError::View(EvmContractError::Reverted { .. })) => return Ok(None),
 		Err(error) => return Err(DotnsError::ManifestText(error)),
 	};
 	if manifest.is_empty() {

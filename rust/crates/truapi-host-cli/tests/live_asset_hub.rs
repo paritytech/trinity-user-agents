@@ -178,11 +178,10 @@ async fn live_asset_hub_reports_a_skipped_revision_as_pruned() {
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use truapi::{
-	chain::{EvmContractCaller, RuntimeApiCaller},
+	chain::{EvmContractCaller, EvmContractError, RuntimeApiCaller},
 	host_logic::dotns_gateway::{
-		DotnsError, DotnsRegistrar, DotnsTransport, DotnsViewError, classify_labels,
-		discover_pop_controller, is_dotted_lite_username, is_pop_issued, label_available,
-		namehash_under, resolve_labels,
+		DotnsError, DotnsRegistrar, DotnsTransport, classify_labels, discover_pop_controller,
+		is_dotted_lite_username, is_pop_issued, label_available, namehash_under, resolve_labels,
 	},
 };
 
@@ -220,8 +219,8 @@ impl DotnsTransport for PlainRpc {
 			.map_err(|err| DotnsError::Storage(err.to_string()))
 	}
 
-	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
-		Ok(EvmContractCaller::read(self, dest, &input).await?)
+	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError> {
+		EvmContractCaller::read(self, dest, &input).await
 	}
 }
 

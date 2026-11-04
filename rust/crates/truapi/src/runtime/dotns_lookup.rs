@@ -28,8 +28,8 @@ use crate::chain_runtime::{
 use tracing::{debug, info};
 
 use crate::{
-	chain::{EvmContractCaller, RuntimeApiCaller},
-	host_logic::dotns_gateway::{DotnsError, DotnsTransport, DotnsViewError},
+	chain::{EvmContractCaller, EvmContractError, RuntimeApiCaller},
+	host_logic::dotns_gateway::{DotnsError, DotnsTransport},
 	platform::ProductId,
 };
 
@@ -88,7 +88,7 @@ impl<'a> DotnsLookup<'a> {
 		chain: &'a ChainRuntime,
 		asset_hub_chain_genesis_hash: [u8; 32],
 		kind: DotnsLookupKind<'_>,
-	) -> Result<Self, DotnsViewError> {
+	) -> Result<Self, DotnsError> {
 		let genesis_hash = asset_hub_chain_genesis_hash.to_vec();
 		let lookup_id = DOTNS_LOOKUP_COUNTER.fetch_add(1, Ordering::Relaxed);
 		let follow_id = format!("truapi:dotns:{lookup_id}:{kind}");
@@ -119,7 +119,8 @@ impl<'a> DotnsLookup<'a> {
 				"the Asset Hub follow never initialized; every grant behind \
 				 this lookup is refused"
 			);
-		})?;
+		})
+		.map_err(DotnsError::Follow)?;
 		Ok(Self { chain, follow, genesis_hash, follow_id, hash })
 	}
 }
@@ -193,9 +194,8 @@ impl DotnsTransport for DotnsLookup<'_> {
 	///
 	/// Views originate from the synthetic always-mapped account. They work
 	/// regardless of the queried account's revive mapping.
-	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
-		let result =
-			EvmContractCaller::read(self, dest, &input).await.map_err(DotnsViewError::from);
+	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError> {
+		let result = EvmContractCaller::read(self, dest, &input).await;
 		debug!(
 			target: "truapi::dotns",
 			follow_id = %self.follow_id,
@@ -248,31 +248,6 @@ fn started_operation_id(operation: OperationStartedResult) -> Result<String, Str
 #[cfg(test)]
 mod tests {
 	use super::*;
-
-	struct Unavailable;
-
-	#[async_trait::async_trait]
-	impl RuntimeApiCaller for Unavailable {
-		async fn call(&mut self, _function: &str, _input: &[u8]) -> Result<Vec<u8>, String> {
-			Err("runtime unavailable".to_string())
-		}
-	}
-
-	/// dotNS discovery reads a revert as an answer, so a runtime API failure
-	/// must never read as one.
-	#[test]
-	fn a_runtime_call_failure_is_not_a_revert() {
-		let result = futures::executor::block_on(EvmContractCaller::read(
-			&mut Unavailable,
-			&[0x66; 20],
-			&[],
-		));
-
-		assert_eq!(
-			result.map_err(DotnsViewError::from),
-			Err(DotnsViewError::Failed("ReviveApi_call: runtime unavailable".to_string())),
-		);
-	}
 
 	/// An identity lookup names what it reads and nothing about whose account
 	/// it reads, so the follow id built from it carries no user identifier

@@ -21,7 +21,7 @@ use crate::{
 	chain::{
 		ContractResult, DEFAULT_MORTALITY_PERIOD, EvmContractCaller, EvmContractError,
 		ExecReturnValue, ExtrinsicService, MortalExtrinsic, Mortality, RawDispatchError,
-		StorageDeposit, Weight,
+		RuntimeApiCaller, StorageDeposit, Weight,
 	},
 	host_internal::extrinsic::{Sr25519Signer, tests::split_v4},
 };
@@ -465,16 +465,36 @@ fn an_unreadable_outcome_names_the_finalized_block_the_watch_reported() {
 	}
 }
 
-/// dotNS discovery reads a revert as an answer, so a runtime rejection must
-/// never read as one.
+/// Answers every runtime API call with the same result.
+struct ScriptedRuntimeApi(Result<Vec<u8>, String>);
+
+#[async_trait::async_trait]
+impl RuntimeApiCaller for ScriptedRuntimeApi {
+	async fn call(&mut self, _function: &str, _input: &[u8]) -> Result<Vec<u8>, String> {
+		self.0.clone()
+	}
+}
+
+/// dotNS takes a revert as the contract's answer, so a failed runtime API
+/// call, a call the runtime rejects and an output that does not decode must
+/// each read as something else.
 #[test]
-fn a_simulation_the_runtime_rejects_is_not_a_revert() {
-	let signer = RecordingSigner::new();
-	let mut node = EvmNode::new();
-	node.output = simulation_result(Err(RawDispatchError(vec![0])));
-	let (_, _, caller) = serve_contracts(node);
+fn only_a_contract_revert_reads_as_reverted() {
+	for (answer, expected) in [
+		(
+			Ok(simulation_result(Ok(ExecReturnValue { flags: 1, data: Vec::new() }))),
+			"contract reverted: (empty)",
+		),
+		(Err("runtime unavailable".to_string()), "ReviveApi_call: runtime unavailable"),
+		(
+			Ok(simulation_result(Err(RawDispatchError(vec![0])))),
+			"ReviveApi_call dispatch failed: 0x00",
+		),
+		(Ok(vec![0xff]), "ReviveApi_call output is not a ContractResult"),
+	] {
+		let result =
+			block_on(EvmContractCaller::read(&mut ScriptedRuntimeApi(answer), &CONTRACT, INPUT));
 
-	let result = block_on(caller.dry_run(&signer, &CONTRACT, INPUT));
-
-	assert!(matches!(result, Err(EvmContractError::Dispatch { detail }) if detail == "0x00"));
+		assert_eq!(result.map_err(|error| error.to_string()), Err(expected.to_string()));
+	}
 }

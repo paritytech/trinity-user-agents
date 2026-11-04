@@ -10,11 +10,11 @@ use anyhow::{Context, Result};
 use serde_json::Value;
 use subxt_rpcs::client::{RpcClient, rpc_params};
 use truapi::{
-	chain::EvmContractCaller,
+	chain::{EvmContractCaller, EvmContractError},
 	host_logic::dotns_gateway::{
-		DotnsError, DotnsIdentity, DotnsTransport, DotnsViewError, account_alias_key,
-		classify_labels, discover_pop_controller, label_available, lite_label_owner_key,
-		resolve_labels, timestamp_now_key,
+		DotnsError, DotnsIdentity, DotnsTransport, account_alias_key, classify_labels,
+		discover_pop_controller, label_available, lite_label_owner_key, resolve_labels,
+		timestamp_now_key,
 	},
 	platform::async_trait,
 };
@@ -178,7 +178,7 @@ impl DotnsTransport for AssetHubReader {
 			.map_err(|err| DotnsError::Storage(format!("{err:#}")))
 	}
 
-	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
-		Ok(EvmContractCaller::read(&mut self.rpc, dest, &input).await?)
+	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError> {
+		EvmContractCaller::read(&mut self.rpc, dest, &input).await
 	}
 }
