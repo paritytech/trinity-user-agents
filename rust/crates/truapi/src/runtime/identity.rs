@@ -208,11 +208,11 @@ mod tests {
 
 	use super::*;
 	use crate::{
-		chain::{ContractResult, ExecReturnValue, StorageDeposit, Weight, account_to_h160},
+		chain::{ContractResult, ExecReturnValue, StorageDeposit, Weight},
 		chain_runtime::{RuntimeChainProvider, RuntimeFailure},
 		host_logic::dotns_gateway::{
 			DotnsPopController, LabelStore, ProtocolRegistry, RootGatewayDispatcher, StoreFactory,
-			dispatcher_address_key,
+			account_to_h160, dispatcher_address_key,
 		},
 		platform::JsonRpcConnection,
 		subscription::thread_per_subscription_spawner,

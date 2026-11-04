@@ -25,7 +25,6 @@ use sp_crypto_hashing::blake2_256;
 use subxt::utils::H256;
 
 mod account_nonces;
-mod address;
 mod block_backend;
 mod extrinsic;
 mod heads;
@@ -38,7 +37,6 @@ mod tx_submitter;
 mod tx_validator;
 
 pub use account_nonces::AccountNonces;
-pub use address::account_to_h160;
 pub use block_backend::{BlockBackend, DispatchOutcome};
 pub use extrinsic::{
 	DEFAULT_MORTALITY_PERIOD, ExtensionError, ExtrinsicBuildError, ExtrinsicBuilder,
