@@ -196,7 +196,10 @@ extension WalletMainViewController: WalletMainViewProtocol {
     func setMainTitle() {
         navigationItem.style = .browser
         if #unavailable(iOS 26.0) {
+            // Below iOS 26 the status view sits on the left, so the Purse's
+            // title view would stay in the centre.
             navigationItem.title = nil
+            navigationItem.titleView = nil
         }
         setTitleView(statusTitleView)
     }
@@ -204,6 +207,7 @@ extension WalletMainViewController: WalletMainViewProtocol {
     func setTitleCenter(_ title: String?) {
         navigationItem.style = .navigator
         guard #available(iOS 26, *) else {
+            navigationItem.titleView = nil
             navigationItem.title = title
             return
         }
