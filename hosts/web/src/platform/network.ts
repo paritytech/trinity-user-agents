@@ -1,4 +1,7 @@
-import initProvider, { ChainProviderBuilder } from "@parity/truapi-provider";
+import initProvider, {
+  ChainProviderBuilder,
+  type ConnectionTypes,
+} from "@parity/truapi-provider";
 import providerWasmUrl from "@parity/truapi-provider/truapi_provider_bg.wasm?url";
 import { bytesToHex } from "@parity/truapi/scale";
 import type { HexString } from "@parity/truapi/scale";
@@ -9,6 +12,22 @@ import type {
 } from "@parity/truapi-host";
 import { spreadFollows } from "./follow-spread.js";
 import { type NetworkConfig } from "./network-config.js";
+
+/**
+ * Peer connection kinds the browser light client dials.
+ *
+ * In production on public HTTPS, restrict to secure WebSockets so peers
+ * advertising private or loopback addresses cannot trigger Chrome's Local
+ * Network Access permission prompt. A dev server keeps loopback and unsecure
+ * sockets allowed so local nodes still work.
+ */
+export function hostConnectionTypes(
+  dev: boolean = import.meta.env.DEV,
+): ConnectionTypes {
+  return dev
+    ? { secure: true, localhost: true, unsecure: true }
+    : { secure: true, localhost: false, unsecure: false };
+}
 
 /** Genesis hashes of the chains this host serves. */
 export interface NetworkGenesis {
@@ -43,6 +62,7 @@ export interface Network {
 export async function connectNetwork(config: NetworkConfig): Promise<Network> {
   await initProvider({ module_or_path: providerWasmUrl });
   const builder = new ChainProviderBuilder();
+  builder.setConnectionTypes(hostConnectionTypes());
   const chains = builder.addNetwork(config.catalogNetwork);
   const genesis: NetworkGenesis = {
     relay: chains.relay as HexString,

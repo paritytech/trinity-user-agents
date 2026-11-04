@@ -5,6 +5,7 @@ import {
   NETWORKS,
   networkConfig,
 } from "../../../src/platform/network-config.js";
+import { hostConnectionTypes } from "../../../src/platform/network.js";
 
 describe("NETWORKS", () => {
   test("paseo is Paseo Next v2 on the paseo TLD", () => {
@@ -107,5 +108,23 @@ describe("networkConfig", () => {
   test("throws for an unknown id instead of falling back", () => {
     expect(() => networkConfig("preview")).toThrow("Unknown network");
     expect(() => networkConfig("toString")).toThrow("Unknown network");
+  });
+});
+
+describe("hostConnectionTypes", () => {
+  test("restricts to secure connections only in production", () => {
+    expect(hostConnectionTypes(false)).toEqual({
+      secure: true,
+      localhost: false,
+      unsecure: false,
+    });
+  });
+
+  test("allows localhost and unsecure connections on dev servers", () => {
+    expect(hostConnectionTypes(true)).toEqual({
+      secure: true,
+      localhost: true,
+      unsecure: true,
+    });
   });
 });
