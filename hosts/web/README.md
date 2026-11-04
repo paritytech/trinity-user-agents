@@ -426,6 +426,10 @@ calls reach the core as frames, which the inspector's **TrUAPI** view decodes.
   (`truapi-web-signing-host:network:<id>:product-chat:<wallet>:v1`). The core screens what a worker sends before it
   reaches the host; the host only stores and draws it. The iOS and Android hosts refuse every kind other than `Text` and
   `Custom`.
+- **Game reminder.** The host serves `game.remindNextGame` and `game.cancelNextGame`, which the core allows only for the
+  game product (DotNS label `dim2`), so its worker's Register is not held back. A reminder is kept in memory, one per
+  product, and the Activity view logs it when it is set, cancelled and due. It rings no alarm, posts no notification and
+  adds no calendar entry, and a reload or a closed tab loses it.
 - **Rich text, files and buttons.** Rich text is its text and its media, each shown as an image when it is an `https`
   URL or an inline raster image. A file is its name, type, size and caption as the product gave them, unchecked, and a
   link that opens in a new tab with no referrer; only an `https` file is a link, and the host fetches none of it. An

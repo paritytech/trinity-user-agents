@@ -2,6 +2,7 @@ import type {
   AuthState,
   ChatPlatform,
   ContactsPlatform,
+  GamePlatform,
   PermissionDecision,
   PocketPlatform,
   PreimageHost,
@@ -66,7 +67,7 @@ const DECISIONS: PromptChoice<PermissionDecision>[] = [
  *
  * Live OS permission status is left out, so the core answers it
  * `Unsupported`. Chat, Pocket and Contacts are served when `chat`, `pocket`
- * and `contacts` are given.
+ * and `contacts` are given. The game reminder is always served, best effort.
  */
 export function createHostCallbacks(
   options: HostCallbackOptions,
@@ -240,9 +241,76 @@ export function createHostCallbacks(
       beginOperation: () => Promise.resolve({ id: nextOperationId++ }),
       endOperation: () => Promise.resolve(),
     },
+    game: createGameReminders(activity),
     ...(chat ? { chat } : {}),
     ...(pocket ? { pocket } : {}),
     ...(contacts ? { contacts } : {}),
+  };
+}
+
+/** The longest delay `setTimeout` keeps; a longer one fires at once. */
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
+/**
+ * The next-game reminder of each product. The core calls it for the game
+ * product only, and only for a start in the future.
+ *
+ * Best effort: a reminder lives in this tab and is lost when the tab closes or
+ * reloads. The host keeps one per product, logs it, and logs it again and
+ * drops it when the game starts.
+ */
+export function createGameReminders(
+  activity: ActivitySink,
+): Required<GamePlatform> {
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  const drop = (productId: string) => {
+    clearTimeout(timers.get(productId));
+    return timers.delete(productId);
+  };
+
+  const arm = (productId: string, startsAt: number) => {
+    const delay = startsAt - Date.now();
+    if (delay <= 0) {
+      timers.delete(productId);
+      activity({
+        category: "products",
+        action: "Game starting",
+        subject: productId,
+      });
+      return;
+    }
+    timers.set(
+      productId,
+      setTimeout(
+        () => arm(productId, startsAt),
+        Math.min(delay, MAX_TIMER_DELAY_MS),
+      ),
+    );
+  };
+
+  return {
+    scheduleGameReminder(product, startsAt) {
+      const start = Number(startsAt);
+      drop(product.productId);
+      activity({
+        category: "products",
+        action: "Game reminder set",
+        subject: product.productId,
+        details: [{ label: "Starts", value: new Date(start).toISOString() }],
+      });
+      arm(product.productId, start);
+      return Promise.resolve();
+    },
+    cancelGameReminder(product) {
+      if (drop(product.productId))
+        activity({
+          category: "products",
+          action: "Game reminder cancelled",
+          subject: product.productId,
+        });
+      return Promise.resolve();
+    },
   };
 }
 
