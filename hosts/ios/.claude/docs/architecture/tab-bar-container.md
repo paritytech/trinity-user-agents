@@ -95,7 +95,7 @@ The bar row is an accessibility container with the tab-bar trait.
 
 **Center hole.** The notch is cut from the bar's top edge. Its bowl is sized from the center button, so the resting center button stands above the bar. The two inner slots stop at the shoulders of the bowl. `DSTabBarShape` cuts the same bowl from the bar. While the shelf is open, the part of the bowl above the row is cut as well, so the resting button keeps its ring.
 
-**Outline and notch.** `DSTabBarShape` is the outline. The border is `strokeBorder` on that shape, which insets along the outline and the notch edge. The container clips its content and background with an even-odd fill of the same shape, which cuts the notch. On iOS 26 and later the glass is a rounded rect with no notch, and the clip cuts the notch from it. The reason is the Docklet drag rotation. Under that rotation, Liquid Glass evaluates its shape in an enlarged rect, so a notch in the glass shape would land in the wrong place.
+**Outline and notch.** `DSTabBarShape` is the outline, the border and the clip that cuts the notch. On iOS 26 and later the glass is a plain rounded rect and the clip cuts the notch, because Liquid Glass puts a notch in the wrong place while the Docklet is rotated.
 
 **Selection pill.** `DSTabBarContainer` draws the pill behind the slot at its `selectedSlot`. The pill slides between slots, and snaps under Reduce Motion. `TabBarBarViewModel.selectedSlot` takes that slot from `TabBarSelectionPlacement`:
 
@@ -186,11 +186,11 @@ The chrome takes the width from `DSTabBarStyle.rowWidth(inAvailableWidth:)` of i
 
 ## Haptics and Accessibility
 
-**Haptics.** The PolkadotUI components play sensory feedback next to the gestures that trigger it. `DSTabBarCenterControl` owns the open and close feedback for the control. `DSTabBarContainer` owns the feedback for a bar-hidden change while the panel is open. The app chrome plays a heavy impact on a user tuck and a medium impact on a user restore. Selection ticks play while a drag moves the bar. Auto-hide plays no haptic. Reduce Motion does not change the chrome's impacts. The landing focus of a swipe into Search passes a flag that mutes the container's bar-hidden feedback. Each slot tap plays a selection feedback from a simultaneous gesture in the bar row, including a reselect.
+**Haptics.** Each component plays feedback next to the gesture that triggers it: the center control on open and close, a slot on every tap. The chrome plays a heavy impact on a user tuck, a medium impact on a user restore, and selection ticks while a drag moves the bar. Auto-hide plays no haptic.
 
-**Accessibility.** VoiceOver sees the center control as a button. The caller passes its label and its open-state label, both as `LocalizedStringResource`. The app passes `.Products.productTabsAccessibilityScanner`, and `.Products.productTabsAccessibilityCloseSearch` while the panel is open. When the panel is open, the escape action closes it. Bar item titles and accessibility labels are `LocalizedStringResource` too (`TabBarBarItem`).
+**Accessibility.** The center control is a button whose label changes while the panel is open, and the escape action closes the panel. All labels are `LocalizedStringResource`.
 
-**Tucked bar and VoiceOver.** While the bar is tucked, or settling toward tucked, the Edge glow is its one accessibility element, labelled "Show tab bar" (`Common.tabBarShowAccessibilityLabel`). Activating it restores the bar as the user's restore, with a medium haptic. The bar's own elements are hidden from VoiceOver while it is tucked. A `layoutChanged` notification moves focus to the glow on tuck and to the bar on restore. Auto-hide never runs while VoiceOver is on. Turning VoiceOver off restarts the 3 s countdown from that moment.
+**Tucked bar and VoiceOver.** While the bar is tucked, the Edge glow is its only accessibility element, and activating it restores the bar. Focus moves to the glow on tuck and back to the bar on restore. Auto-hide never runs while VoiceOver is on.
 
 **Reduce Motion.** Read live, and observed for changes. Moves that are not a drag fade (`DockletReducedFade`). A drag still follows the finger. Only the icons, labels and center glyph fade, and the Edge glow follows that fade. Turning Reduce Motion on during a settle ends that settle at its destination. The first-hide nudge does not play. A move between `shown` and `hidden` is written without animation.
 
@@ -226,15 +226,13 @@ The rise is the taller of two values:
 
 The rise is set when the panel state commits and is not animated. The live region is set as soon as the bar is installed. The SwiftUI springs animate what is drawn inside it.
 
-`TabBarChromePassthroughView` claims a touch in only two cases: the grab zone, and the dismiss area while a panel is open. The grab zone is the rect `DockletDrawbridge` gives for the tucked bar. It is set only while the bar is tucked or settling toward tucked. A tap in it does not restore the bar. The root reports when a touch that began in the grab zone starts, and releases the Edge glow's held look only when that touch ends or is cancelled. Other touches do not release it. Every other touch goes to the content behind the chrome. `TabBarChromeSurfaceView` returns nil for hits on its own empty area. `TabBarBarHostView` accepts touches in its live region.
+`TabBarChromePassthroughView` claims only the Grab zone and, while a panel is open, the dismiss area. Every other touch goes to the content behind the chrome.
 
 The fold pan recognizer starts on any part of the bar row, the center button and the center hole included, for a drag that the Path accepts as sideways. It does not start while the bar is `hidden` or a panel is open. It refuses touches in the Grab zone.
 
-A second pan sits on the chrome root view (`installGrabRecognizer`, `isGrabPan`). It receives only touches inside the Grab zone, in any direction, with no direction lock. The two pans never share a touch. The grab pan does not cancel the root view's touches. A tap with no movement in the Grab zone does nothing.
+A second pan takes only touches in the Grab zone, in any direction. The two pans never share a touch.
 
 ## Fold
-
-Docklet vocabulary is in [CONTEXT.md](../../../CONTEXT.md). The decision that the motion runs on a display link is in [ADR 0001](../../../docs/adr/0001-docklet-motion-display-link.md).
 
 The Docklet's motion has a shared core and a Path. `DockletMotion` is the core. It owns the hide progress, the settle, the drag samples, the release rules, the selection ticks, the haptics, the rubber band and the content fade target. `DockletPath` is an enum that holds the route. Its one case is the Drawbridge, and that case's state (`DockletDrawbridgeState`) holds the grip and the release residual. The core reads Path-specific behavior only through `DockletPath`'s members. Each Path keeps its measurements in its own type, such as `DockletDrawbridge`.
 
@@ -260,17 +258,17 @@ The derived state comes from `TabBarHiddenPolicy.deriveFoldState(in:showing:)`. 
 
 **Tucked and hidden.** Moving between `tucked` and `hidden` writes the end pose without animation, because the bar is off screen at both ends.
 
-**Interactive pops.** The transition coordinator drives the fold. `resolvedState(for:)` gives the incoming screen's state, using the carried override. `setInteractiveTarget` moves the bar toward it inside `animate(alongsideTransition:)`. When the interaction ends, the chrome commits the incoming screen's state. If the pop was cancelled, the staying screen's state is rebuilt with `TabBarHiddenPolicy.stackAfterCancelledPop`.
+**Interactive pops.** The fold follows the transition. When it ends, the chrome commits the incoming screen's state, or rebuilds the staying screen's state if the pop was cancelled.
 
-**Drag.** A horizontal pan that starts on the bar follows the finger live. The Path's `acceptsPan` decides the pan's direction. On the Drawbridge, `DockletDirectionLock` makes that call once the pan has moved. At rest, a pan counts as sideways only within a shallow angle of horizontal. A bar caught mid-settle accepts a wider angle. A touch on a moving bar catches it where it is. On the Drawbridge, a drag that starts near the right edge needs less travel to hide the bar. A release that changes the rest records the user override.
+**Drag.** A horizontal pan that starts on the bar follows the finger live. The Path decides which pans it accepts (`acceptsPan`). A touch catches a moving bar where it is. A release that changes the rest records the user override.
 
 **Held pose.** While a finger holds the bar, `DockletHold` (`DockletHeldPose.swift`) sets the pose.
 
 **Release.** `DockletMotion` applies these rules to every Path. Velocity comes from the recent samples, and a final pause is ignored. The bar tucks when projected progress is at least 0.5. A drag that came back more than 30% of its furthest travel returns to the rest it started from, but only if the drag peaked above 0.05 progress.
 
-**Bringing it back.** A drag that starts in the Grab zone catches a tucked bar, or one still settling toward tucked, and turns it to point at the finger. `DockletMotion.beginAim` starts the drag. Progress is the finger's angle from the pivot (`DockletAim`). Low and far in gives shown. High at the edge gives tucked. The grab blends in over the first stretch of finger travel, so catching the bar does not make it jump. Release uses the same rules as a tuck drag, plus one: a fast flick inward from the Path's edge (leftward on the Drawbridge) restores the bar, however short the drag. The flick applies only to a grab from the Grab zone.
+**Bringing it back.** A drag from the Grab zone catches a tucked bar and aims it at the finger (`DockletAim`). Release uses the tuck rules, plus a fast flick inward from the Path's edge, which restores the bar however short the drag.
 
-**Animation.** A release starts a spring (`DockletSpring`) that takes the release velocity as its initial velocity. A fast release is under-damped, and a slow one is critically damped. A `CADisplayLink` in `TabBarFoldController` drives it. The held offset unwinds on the same clock. The settle lands once it is near rest, with a hard deadline. Under Reduce Motion, a settle fades instead (see Reduce Motion under Haptics and Accessibility). `TabBarFoldController` is the only writer of the chrome surface transform. Outside Reduce Motion, a move between `shown` and `hidden` uses a plain UIKit spring animator, because the display link drives only the shown and tucked poses. Under Reduce Motion that move is written without animation. A swap between `tucked` and `hidden` writes the end pose without animation.
+**Animation.** A release starts a spring (`DockletSpring`) with the release velocity, driven by a `CADisplayLink`. `TabBarFoldController` is the only writer of the chrome surface transform.
 
 **Auto-hide.** A shown bar tucks itself without a drag, in two cases:
 
@@ -281,7 +279,7 @@ The Docklet is the bar, the open panel and the Grab zone. The Edge glow strip do
 
 Blockers hold the tuck: an open panel, the keyboard, a drag or settle in progress, a bar that is not shown, any TipKit tip on screen, R1 or Docklet (`tipShown`), and VoiceOver (`voiceOver`). While a blocker holds, an outside touch starts no tuck. Clearing the last blocker restarts the 3 s countdown from that moment.
 
-`DockletAutoHide` is the pure policy and reads no clock, so the caller passes in times. `DockletTouchObserver` is a window recognizer. It reports each touch that begins and never recognizes, cancels or delays one. The chrome owns `DockletTouchObserver` and forwards its touches to `TabBarFoldController`. The fold controller feeds `DockletAutoHide` and schedules one wake-up for the next deadline.
+`DockletAutoHide` is the pure policy, and `DockletTouchObserver` feeds it the touches.
 
 **Quiet hide.** The auto-hide tuck settles quietly, with no haptic. Only the content inside the glass fades (icons, labels and center glyph), because alpha on a visual effect view breaks the effect. The fade target is set once per transition, and it stays while the bar is tucked.
 
@@ -306,13 +304,13 @@ Onboarding tips are TipKit tips. `TabBarTipController` is the only presenter, an
 
 **Trigger.** A landed tuck shows the tip for its `DockletTuckKind`, user or auto-hide. The chrome clears the tip when the bar leaves `tucked` and when any pan begins.
 
-**Presentation.** The popover is anchored to the Edge glow. Its arrow points from the Path's edge: the chrome passes `DockletHooks.edgeGlowArrowDirection`, derived from `foldController.edge`. The Drawbridge rests on the right edge, so the arrow points right. Its `passthroughViews` is the chrome's root view, so the Grab zone still takes touches while the tip is up. For the same reason a tap elsewhere on the screen does not close a Docklet tip.
+**Presentation.** The popover points at the Edge glow from the Path's edge. The Grab zone still takes touches while the tip is up, so a tap elsewhere does not close a Docklet tip.
 
 **Tap.** A tap on the body of the tip closes it with `.tipClosed`, as on an R1 tip, so it does not return. The bar stays tucked. The Docklet tips have no close button.
 
-**Return clears the tip.** Any return of the bar from `tucked` closes a Docklet tip: a drag from the Grab zone, a VoiceOver activation, opening the Scan panel from a screen (`openPanelShowingDocklet`), or a screen whose state is not `tucked`. The chrome reports it through `dockletTuckEnded()`. The rule fails, the sequence drops the tip, and the presenter dismisses its popover.
+**Return clears the tip.** Any return of the bar from `tucked` closes a Docklet tip: a drag from the Grab zone, a VoiceOver activation, opening the Scan panel from a screen (`openPanelShowingDocklet`), or a screen whose state is not `tucked`.
 
-**Outside tap.** `TabBarTipController` is the popover's delegate for every tip. A tap outside an R1 tip dismisses it. `presentationControllerDidDismiss` invalidates it with `.tipClosed`, so it does not return. A Docklet tip ignores a tap elsewhere (see Presentation). The controller returns `.none` from `adaptivePresentationStyle(for:)`, so every tip stays a popover on compact width.
+**Outside tap.** An outside tap closes an R1 tip for good. A Docklet tip ignores it (see Presentation). Every tip stays a popover on compact width.
 
 **Other closes.** A slot tap or a center panel opening invalidates the tip on screen (`retireForUserInteraction`). A panel opening or leaving the screen closes the popover without invalidating it. Such a tip stays eligible.
 
@@ -323,8 +321,8 @@ The R1 tips keep their style: a tap on the body closes the tip, and there is no 
 ### Shared rules
 
 - **Once per device.** Both Docklet tips use `MaxDisplayCount(1)`. TipKit keeps the count and invalidations, so seen state lives in its datastore.
-- **Blocks auto-hide.** Any tip on screen, R1 or Docklet, blocks Auto-hide. `TabBarTipController` calls `onTipShown(true)` when the popover presentation starts, and `onTipShown(false)` when the popover goes away. That covers a dismiss, a replacement by another step, and an outside tap on an R1 tip. The idle countdown restarts when the last blocker clears.
-- **Reset.** Debug Settings "Reset Tips" runs in `TESTNET_FEATURE` builds only. It sets `tipsResetPending`. On the next launch, `AppDelegate` calls `Tips.resetDatastore()` before `Tips.configure()`. The reset covers the R1 and Docklet tips.
+- **Blocks auto-hide.** Any tip on screen, R1 or Docklet, blocks Auto-hide.
+- **Reset.** Debug Settings "Reset Tips" (`TESTNET_FEATURE` builds) resets the TipKit datastore on the next launch.
 
 ## Clearance and Safe Area
 
