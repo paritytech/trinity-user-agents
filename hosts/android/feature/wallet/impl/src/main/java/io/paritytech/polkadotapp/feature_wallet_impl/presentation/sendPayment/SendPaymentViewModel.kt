@@ -28,6 +28,7 @@ import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.Sen
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.TransferMethodPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.FundingEntryPoints
+import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.activityOrNone
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.WithdrawUnavailablePresentationError
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMapper
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingSheets
@@ -69,7 +70,7 @@ class SendPaymentViewModel @Inject constructor(
 
     private val sheets = FundingSheets()
 
-    private val funding = combine(interactor.observeFundingActivity(), paymentAssetBrandProvider.brand) { activity, brand ->
+    private val funding = combine(fundingEntryPoints.activityOrNone(interactor::observeFundingActivity), paymentAssetBrandProvider.brand) { activity, brand ->
         FundingActivityMapper(interactor.asset(), brand.symbol, Clock.System.now()).map(activity, currentBalance = null)
     }.onStart { emit(EMPTY_FUNDING) }
 
