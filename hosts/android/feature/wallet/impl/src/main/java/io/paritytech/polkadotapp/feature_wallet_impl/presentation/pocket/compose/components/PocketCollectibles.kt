@@ -6,9 +6,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseIn
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -29,6 +27,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -74,13 +73,17 @@ private const val COVER_OPEN_DEGREES = -160f
 private const val COVER_OPEN_DURATION_MS = 220
 private const val COVER_EDGE_ON_DEGREES = -90f
 private const val COVER_CAMERA_DISTANCE = 32f
-private const val CONTENT_FADE_DURATION_MS = 100
+private const val ATTACH_STALL_FRAME_MS = 120
+private const val ATTACH_STALL_PATIENCE_MS = 600
+
 private const val PAGE_EXPAND_DURATION_MS = 250
 private const val SKELETON_SWEEP_LOOP_MS = 1350
 private const val SKELETON_SWEEP_BAND_WIDTH = 0.5f
 private const val SKELETON_SWEEP_ALPHA = 0.12f
 private const val SKELETON_DOT_ALPHA = 0.25f
 private const val SKELETON_DOT_COLUMNS = 12
+
+private const val NANOS_PER_MILLI = 1_000_000L
 
 private val PageCornerRadius = 20.dp
 private val SkeletonTitleSize = DpSize(136.dp, 16.dp)
@@ -112,14 +115,21 @@ fun PocketCollectibles(
     val book = remember { CollectiblesBookMotion() }
     var failed by remember { mutableStateOf(false) }
     var webViewAttached by remember { mutableStateOf(false) }
+    var sweeping by remember { mutableStateOf(false) }
 
     LaunchedEffect(book) {
         launch { book.lift() }
         delay(COLLECTIBLES_LIFT_DURATION_MS.toLong())
         book.openCover()
-        webViewAttached = true
 
         val outcome = withTimeoutOrNull(ReadyTimeout) {
+            snapshotFlow { loadProgress is DotNsLoadProgress.Failed || webView != null }.first { it }
+            if (loadProgress !is DotNsLoadProgress.Failed) {
+                // Attaching the WebView blocks the UI thread for 100-300 ms, so the sweep starts only after it.
+                webViewAttached = true
+                awaitAttachStall()
+                sweeping = true
+            }
             snapshotFlow { loadProgress }.first { it is DotNsLoadProgress.Completed || it is DotNsLoadProgress.Failed }
         }
         if (outcome is DotNsLoadProgress.Completed) book.handOff() else failed = true
@@ -147,6 +157,7 @@ fun PocketCollectibles(
                     .collectiblesPageLayer(book, inset = PolkadotTheme.spacings.mediumIncreased),
                 book = book,
                 webView = webView.takeIf { webViewAttached },
+                sweeping = sweeping,
                 failed = failed
             )
 
@@ -172,11 +183,27 @@ fun PocketCollectibles(
     }
 }
 
+private suspend fun awaitAttachStall() {
+    var last = withFrameNanos { it }
+    val deadline = last + ATTACH_STALL_PATIENCE_MS * NANOS_PER_MILLI
+    while (true) {
+        val now = withFrameNanos { it }
+        val stalled = now - last > ATTACH_STALL_FRAME_MS * NANOS_PER_MILLI
+        last = now
+        if (stalled) {
+            withFrameNanos { }
+            return
+        }
+        if (now >= deadline) return
+    }
+}
+
 @Composable
 private fun CollectiblesPage(
     modifier: Modifier,
     book: CollectiblesBookMotion,
     webView: WebView?,
+    sweeping: Boolean,
     failed: Boolean,
 ) {
     Box(
@@ -190,13 +217,11 @@ private fun CollectiblesPage(
                 color = PolkadotTheme.colors.fg.secondary
             )
         } else {
-            CollectiblesSkeleton(modifier = Modifier.fillMaxSize())
+            CollectiblesSkeleton(modifier = Modifier.fillMaxSize(), sweeping = sweeping)
 
             // Laid out at full size from the start and only scaled, so the page never reflows on the way up.
             ProductWebViewHost(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer { alpha = book.contentAlpha.value },
+                modifier = Modifier.fillMaxSize(),
                 webView = webView
             )
         }
@@ -204,10 +229,10 @@ private fun CollectiblesPage(
 }
 
 @Composable
-private fun CollectiblesSkeleton(modifier: Modifier) {
+private fun CollectiblesSkeleton(modifier: Modifier, sweeping: Boolean) {
     Column(
         modifier = modifier
-            .skeletonSweep()
+            .skeletonSweep(sweeping)
             .padding(PolkadotTheme.spacings.mediumIncreased)
     ) {
         VerticalSpacer { small }
@@ -284,14 +309,12 @@ private fun DrawScope.drawDotGrid(color: Color) {
 }
 
 @Composable
-private fun Modifier.skeletonSweep(): Modifier {
+private fun Modifier.skeletonSweep(running: Boolean): Modifier {
     val highlight = PolkadotTheme.colors.fg.primary.copy(alpha = SKELETON_SWEEP_ALPHA)
-    val progress by rememberInfiniteTransition(label = "collectibles_skeleton_sweep").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(SKELETON_SWEEP_LOOP_MS, easing = LinearEasing)),
-        label = "collectibles_skeleton_sweep_progress"
-    )
+    val progress = remember { Animatable(0f) }
+    LaunchedEffect(running) {
+        if (running) progress.animateTo(1f, infiniteRepeatable(tween(SKELETON_SWEEP_LOOP_MS, easing = LinearEasing)))
+    }
 
     return drawWithCache {
         val band = size.width * SKELETON_SWEEP_BAND_WIDTH
@@ -300,7 +323,7 @@ private fun Modifier.skeletonSweep(): Modifier {
 
         onDrawWithContent {
             drawContent()
-            translate(left = -band + (size.width + band) * progress) { drawRect(brush, size = bandSize) }
+            translate(left = -band + (size.width + band) * progress.value) { drawRect(brush, size = bandSize) }
         }
     }
 }
@@ -326,7 +349,6 @@ private class CollectiblesBookMotion {
     val tilt = Animatable(0f)
     val coverAngle = Animatable(0f)
     val pageAlpha = Animatable(0f)
-    val contentAlpha = Animatable(0f)
     val expansion = Animatable(0f)
 
     suspend fun lift() {
@@ -341,7 +363,6 @@ private class CollectiblesBookMotion {
     }
 
     suspend fun handOff() {
-        contentAlpha.animateTo(1f, tween(CONTENT_FADE_DURATION_MS))
         expansion.animateTo(1f, tween(PAGE_EXPAND_DURATION_MS, easing = EaseOut))
     }
 }
