@@ -10,10 +10,12 @@
  *   (`rust/crates/truapi-provider/src/networks.rs`) names each network and
  *   supplies its chains' genesis hashes and specs, so none are copied into
  *   this host;
- * - dotkit's `assets/envs.toml` holds the dotNS TLD, resolver contract, RPC
- *   endpoints and gateways, verified against the chain by its authors;
+ * - dotkit's `assets/envs.toml` holds the dotNS TLD, resolver contract and
+ *   gateways, verified against the chain by its authors;
  * - `paritytech/triangle-status` `environments.json` names each
- *   environment's identity backend (`backend`).
+ *   environment's identity backend (`backend`) and its signed Trinity stack
+ *   descriptor, whose `chains[].rpc` lists each chain's RPC nodes (read
+ *   2026-11-04).
  *
  * `PreviewNet` is the product preview network. Its dotNS TLD is `.testnet`,
  * which is also the identity suffix the core derives product accounts under.
@@ -24,13 +26,48 @@ import { DEFAULT_NETWORK as DEFAULT_NETWORK_ID } from "./network-scope.js";
 /** Stable id of a network this host can be configured for. */
 export type NetworkId = "paseo" | "previewnet";
 
+/** A chain of a network that this host connects to. */
+export type ChainRole = "relay" | "assetHub" | "people" | "bulletin";
+
+/** Every chain a network has, in the order the host connects them. */
+export const CHAIN_ROLES: readonly ChainRole[] = [
+  "relay",
+  "assetHub",
+  "people",
+  "bulletin",
+];
+
+/**
+ * How the host reaches one chain: through the chain's RPC node, which it
+ * trusts, or through the embedded light client, which checks what it reads.
+ */
+export type ChainBackend = "rpc" | "light-client";
+
+/** One chain's RPC node and the backend the host uses for it unless told otherwise. */
+export interface ChainAccess {
+  /** The chain's RPC node (`wss`), from the network's Trinity stack descriptor. */
+  rpc: string;
+  backend: ChainBackend;
+}
+
+/**
+ * The backend each chain of `config` is reached through: its default, unless
+ * `overrides` names another.
+ */
+export function chainBackends(
+  config: NetworkConfig,
+  overrides: Partial<Record<ChainRole, ChainBackend>> = {},
+): Record<ChainRole, ChainBackend> {
+  return Object.fromEntries(
+    CHAIN_ROLES.map((role) => [
+      role,
+      overrides[role] ?? config.chains[role].backend,
+    ]),
+  ) as Record<ChainRole, ChainBackend>;
+}
+
 /** Where this host reads a network's DotNS records and fetches product content. */
 export interface DotnsEndpoints {
-  /**
-   * Asset Hub RPC as dotkit lists it (`ws`/`wss`). Reads go over the `https`
-   * form of this URL.
-   */
-  assetHubRpc: string;
   /**
    * The `DotnsContentResolver` contract on Asset Hub, as a bare lower-case
    * H160 without `0x`. A wrong value reads as "name not found" rather than
@@ -74,6 +111,11 @@ export interface NetworkConfig {
    * opened as a product.
    */
   webGateway: string;
+  /**
+   * Each chain's RPC node and default backend. DotNS reads always go to the
+   * Asset Hub node, over the `https` form of its URL.
+   */
+  chains: Record<ChainRole, ChainAccess>;
   /** Read-only DotNS and content endpoints on this network. */
   dotns: DotnsEndpoints;
   /**
@@ -91,8 +133,22 @@ export const NETWORKS: Record<NetworkId, NetworkConfig> = {
     catalogNetwork: "paseo-next-v2",
     networkSuffix: "paseo",
     webGateway: "paseo.li",
+    chains: {
+      relay: { rpc: "wss://paseo-rpc.n.dwellir.com", backend: "light-client" },
+      assetHub: {
+        rpc: "wss://paseo-asset-hub-next-rpc.polkadot.io",
+        backend: "rpc",
+      },
+      people: {
+        rpc: "wss://paseo-people-next-system-rpc.polkadot.io",
+        backend: "rpc",
+      },
+      bulletin: {
+        rpc: "wss://paseo-bulletin-next-rpc.polkadot.io",
+        backend: "rpc",
+      },
+    },
     dotns: {
-      assetHubRpc: "wss://paseo-asset-hub-next-rpc.polkadot.io",
       contentResolver: "7f74d7cd50f5a834270e2ad395a01b01891ab37d",
       contenthashSlot: 0,
       textSlot: 1,
@@ -106,8 +162,22 @@ export const NETWORKS: Record<NetworkId, NetworkConfig> = {
     catalogNetwork: "previewnet",
     networkSuffix: "testnet",
     webGateway: "testnet.li",
+    chains: {
+      relay: {
+        rpc: "wss://previewnet.substrate.dev/relay/alice",
+        backend: "light-client",
+      },
+      assetHub: {
+        rpc: "wss://previewnet.substrate.dev/asset-hub",
+        backend: "rpc",
+      },
+      people: { rpc: "wss://previewnet.substrate.dev/people", backend: "rpc" },
+      bulletin: {
+        rpc: "wss://previewnet.substrate.dev/bulletin",
+        backend: "rpc",
+      },
+    },
     dotns: {
-      assetHubRpc: "wss://previewnet.substrate.dev/asset-hub",
       contentResolver: "7f74d7cd50f5a834270e2ad395a01b01891ab37d",
       contenthashSlot: 0,
       textSlot: 1,

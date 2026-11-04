@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import {
   DEFAULT_NETWORK_CONFIG,
   NETWORKS,
+  chainBackends,
   networkConfig,
 } from "../../../src/platform/network-config.js";
 import { hostConnectionTypes } from "../../../src/platform/network.js";
@@ -15,8 +16,25 @@ describe("NETWORKS", () => {
       catalogNetwork: "paseo-next-v2",
       networkSuffix: "paseo",
       webGateway: "paseo.li",
+      chains: {
+        relay: {
+          rpc: "wss://paseo-rpc.n.dwellir.com",
+          backend: "light-client",
+        },
+        assetHub: {
+          rpc: "wss://paseo-asset-hub-next-rpc.polkadot.io",
+          backend: "rpc",
+        },
+        people: {
+          rpc: "wss://paseo-people-next-system-rpc.polkadot.io",
+          backend: "rpc",
+        },
+        bulletin: {
+          rpc: "wss://paseo-bulletin-next-rpc.polkadot.io",
+          backend: "rpc",
+        },
+      },
       dotns: {
-        assetHubRpc: "wss://paseo-asset-hub-next-rpc.polkadot.io",
         contentResolver: "7f74d7cd50f5a834270e2ad395a01b01891ab37d",
         contenthashSlot: 0,
         textSlot: 1,
@@ -33,8 +51,25 @@ describe("NETWORKS", () => {
       catalogNetwork: "previewnet",
       networkSuffix: "testnet",
       webGateway: "testnet.li",
+      chains: {
+        relay: {
+          rpc: "wss://previewnet.substrate.dev/relay/alice",
+          backend: "light-client",
+        },
+        assetHub: {
+          rpc: "wss://previewnet.substrate.dev/asset-hub",
+          backend: "rpc",
+        },
+        people: {
+          rpc: "wss://previewnet.substrate.dev/people",
+          backend: "rpc",
+        },
+        bulletin: {
+          rpc: "wss://previewnet.substrate.dev/bulletin",
+          backend: "rpc",
+        },
+      },
       dotns: {
-        assetHubRpc: "wss://previewnet.substrate.dev/asset-hub",
         contentResolver: "7f74d7cd50f5a834270e2ad395a01b01891ab37d",
         contenthashSlot: 0,
         textSlot: 1,
@@ -125,6 +160,32 @@ describe("hostConnectionTypes", () => {
       secure: true,
       localhost: true,
       unsecure: true,
+    });
+  });
+});
+
+describe("chainBackends", () => {
+  // The relay stays on the light client for products that ask for it; the
+  // parachains go to their RPC nodes, which the light client could not use
+  // for every call (Asset Hub PGAS claims) and which hold the real statement
+  // store on People.
+  test("defaults the parachains to RPC and the relay to the light client", () => {
+    expect(chainBackends(NETWORKS.paseo)).toEqual({
+      relay: "light-client",
+      assetHub: "rpc",
+      people: "rpc",
+      bulletin: "rpc",
+    });
+  });
+
+  test("lets an override choose a chain's backend", () => {
+    expect(
+      chainBackends(NETWORKS.paseo, { people: "light-client", relay: "rpc" }),
+    ).toEqual({
+      relay: "rpc",
+      assetHub: "rpc",
+      people: "light-client",
+      bulletin: "rpc",
     });
   });
 });
