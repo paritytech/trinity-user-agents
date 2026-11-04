@@ -16,8 +16,11 @@ use crate::{
 
 /// How long a load waits for Bulletin to return verified bytes.
 const LOAD_TIMEOUT: Duration = Duration::from_secs(30);
-/// Pause before asking Bulletin again: about one Bulletin block, in which a new blob can land.
-const RETRY_PAUSE: Duration = Duration::from_secs(6);
+/// Pause before asking again for a blob Bulletin does not hold: about one Bulletin block, in
+/// which a new blob can land.
+const MISS_PAUSE: Duration = Duration::from_secs(6);
+/// Pause after a failed request.
+const FAILURE_PAUSE: Duration = Duration::from_secs(1);
 
 /// An image format the core passes on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
@@ -124,24 +127,24 @@ where
 				Ok(Some(bytes)) if preimage_key(&bytes) == key => ControlFlow::Break(Ok(bytes)),
 				Ok(Some(_)) => {
 					warn!(cid, "Bulletin returned bytes that do not hash to the CID");
-					ControlFlow::Continue(())
+					ControlFlow::Continue(MISS_PAUSE)
 				},
 				Ok(None) => {
 					debug!(cid, "Bulletin does not hold the image yet");
-					ControlFlow::Continue(())
+					ControlFlow::Continue(MISS_PAUSE)
 				},
 				Err(BitswapError::Unanswerable(reason) | BitswapError::MethodMissing(reason)) => {
 					ControlFlow::Break(Err(ImageError::Unavailable { reason }))
 				},
 				Err(error) => {
 					warn!(cid, %error, "Bulletin read failed, asking again");
-					ControlFlow::Continue(())
+					ControlFlow::Continue(FAILURE_PAUSE)
 				},
 			}
 		}
 	};
 	futures::select_biased! {
-		result = retry_on(timer, attempt, |()| RETRY_PAUSE).fuse() => result,
+		result = retry_on(timer, attempt, |pause| pause).fuse() => result,
 		() = timer.sleep(LOAD_TIMEOUT).fuse() => Err(ImageError::Unavailable {
 			reason: format!("no verified bytes within {} s", LOAD_TIMEOUT.as_secs()),
 		}),
@@ -182,14 +185,25 @@ mod tests {
 	#[tokio::test]
 	async fn a_blob_is_read_once_bulletin_holds_it() {
 		let timer = ManualTimer::default();
-		let read =
-			node(vec![Ok(None), Err(BitswapError::Failed("busy".into())), Ok(Some(image()))]);
+		let read = node(vec![Ok(None), Ok(Some(image()))]);
 		let mut load = core::pin::pin!(read_verified(&timer, "cid", preimage_key(&image()), read));
 
 		assert_eq!(futures::poll!(&mut load), Poll::Pending);
-		timer.advance(RETRY_PAUSE);
+		timer.advance(MISS_PAUSE);
+		assert_eq!(futures::poll!(&mut load), Poll::Ready(Ok(image())));
+	}
+
+	/// A light client answers with an error until its first Bitswap peer connects, about half a
+	/// second after start, so images drawn at launch must not wait a whole block.
+	#[tokio::test]
+	async fn a_failed_request_is_retried_sooner_than_a_miss() {
+		let timer = ManualTimer::default();
+		let no_peers = BitswapError::Failed("No Bitswap peers connected (-32812)".into());
+		let read = node(vec![Err(no_peers), Ok(Some(image()))]);
+		let mut load = core::pin::pin!(read_verified(&timer, "cid", preimage_key(&image()), read));
+
 		assert_eq!(futures::poll!(&mut load), Poll::Pending);
-		timer.advance(RETRY_PAUSE);
+		timer.advance(FAILURE_PAUSE);
 		assert_eq!(futures::poll!(&mut load), Poll::Ready(Ok(image())));
 	}
 
@@ -200,7 +214,7 @@ mod tests {
 		let mut load = core::pin::pin!(read_verified(&timer, "cid", preimage_key(&image()), read));
 
 		assert_eq!(futures::poll!(&mut load), Poll::Pending);
-		timer.advance(RETRY_PAUSE);
+		timer.advance(MISS_PAUSE);
 		assert_eq!(futures::poll!(&mut load), Poll::Ready(Ok(image())));
 	}
 
