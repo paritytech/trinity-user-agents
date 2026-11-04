@@ -32,7 +32,6 @@ const INPUT: &[u8] = &[1, 2, 3, 4];
 
 struct RecordingSigner {
 	inner: Sr25519Signer,
-	account: Mutex<AccountId32>,
 	signatures: AtomicUsize,
 }
 
@@ -41,15 +40,13 @@ impl RecordingSigner {
 		let keypair = schnorrkel::MiniSecretKey::from_bytes(&[3; 32])
 			.unwrap()
 			.expand_to_keypair(schnorrkel::ExpansionMode::Ed25519);
-		let inner = Sr25519Signer::from_keypair(&keypair);
-		let account = Mutex::new(inner.account_id());
-		Self { inner, account, signatures: AtomicUsize::new(0) }
+		Self { inner: Sr25519Signer::from_keypair(&keypair), signatures: AtomicUsize::new(0) }
 	}
 }
 
 impl Signer<SubstrateConfig> for RecordingSigner {
 	fn account_id(&self) -> AccountId32 {
-		*self.account.lock().unwrap()
+		self.inner.account_id()
 	}
 
 	fn sign(&self, payload: &[u8]) -> MultiSignature {
@@ -149,7 +146,6 @@ impl EvmNode {
 
 fn serve_contracts(
 	node: EvmNode,
-	genesis: H256,
 ) -> (Arc<Mutex<EvmNode>>, Arc<ScriptedProvider>, EvmContractCaller) {
 	let node = Arc::new(Mutex::new(node));
 	let scripted = node.clone();
@@ -158,7 +154,7 @@ fn serve_contracts(
 	}));
 	let chain = ChainRuntime::new(provider.clone(), test_spawner());
 	let extrinsics = ExtrinsicService::over_chain(chain.clone(), Arc::new(V4OnlyHost));
-	let caller = EvmContractCaller::new(chain, extrinsics, genesis);
+	let caller = EvmContractCaller::new(chain, extrinsics, GENESIS);
 	(node, provider, caller)
 }
 
@@ -265,7 +261,7 @@ fn expected_call(signer: &RecordingSigner, nonce: u64, birth: u64) -> Submission
 #[test]
 fn preparation_simulates_the_signer_without_signing_or_submitting() {
 	let signer = RecordingSigner::new();
-	let (node, provider, caller) = serve_contracts(EvmNode::new(), GENESIS);
+	let (node, provider, caller) = serve_contracts(EvmNode::new());
 
 	let _prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
 
@@ -292,7 +288,7 @@ fn preparation_simulates_the_signer_without_signing_or_submitting() {
 #[test]
 fn execution_uses_the_prepared_call_and_limits_with_a_fresh_nonce_and_era() {
 	let signer = RecordingSigner::new();
-	let (node, provider, caller) = serve_contracts(EvmNode::new(), GENESIS);
+	let (node, provider, caller) = serve_contracts(EvmNode::new());
 	let mut input = INPUT.to_vec();
 	let prepared = block_on(caller.dry_run(&signer, &CONTRACT, &input)).unwrap();
 	input.fill(0xff);
@@ -303,7 +299,7 @@ fn execution_uses_the_prepared_call_and_limits_with_a_fresh_nonce_and_era() {
 		node.node.finalized = 6;
 	}
 
-	block_on(caller.execute_and_watch(prepared)).unwrap();
+	block_on(prepared.execute_and_watch()).unwrap();
 
 	let submissions: Vec<_> = node
 		.lock()
@@ -323,46 +319,6 @@ fn execution_uses_the_prepared_call_and_limits_with_a_fresh_nonce_and_era() {
 }
 
 #[test]
-fn a_prepared_transaction_cannot_be_sent_to_another_chain() {
-	let signer = RecordingSigner::new();
-	let (_, _, origin) = serve_contracts(EvmNode::new(), GENESIS);
-	let wrong_genesis = H256([0xcd; 32]);
-	let (_, provider, wrong_chain) = serve_contracts(EvmNode::new(), wrong_genesis);
-	let prepared = block_on(origin.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
-
-	let result = block_on(wrong_chain.execute_and_watch(prepared));
-
-	assert!(
-		matches!(result, Err(EvmContractError::WrongChain { expected, actual }) if expected == wrong_genesis && actual == GENESIS),
-		"{result:?}",
-	);
-	assert_eq!(
-		(provider.sent.lock().unwrap().clone(), signer.signatures.load(Ordering::SeqCst)),
-		(Vec::<String>::new(), 0),
-	);
-}
-
-#[test]
-fn changing_the_signer_account_invalidates_the_prepared_transaction() {
-	let signer = RecordingSigner::new();
-	let (_, provider, caller) = serve_contracts(EvmNode::new(), GENESIS);
-	let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
-	*signer.account.lock().unwrap() = AccountId32([0x55; 32]);
-
-	let result = block_on(caller.execute_and_watch(prepared));
-
-	assert!(matches!(result, Err(EvmContractError::SignerChanged)), "{result:?}");
-	assert_eq!(
-		(
-			method_count(&provider, "system_accountNextIndex"),
-			method_count(&provider, "transactionWatch_v1_submitAndWatch"),
-			signer.signatures.load(Ordering::SeqCst),
-		),
-		(0, 0, 0),
-	);
-}
-
-#[test]
 fn finalized_inclusion_requires_an_explicit_successful_dispatch() {
 	let signer = RecordingSigner::new();
 	for (outcome, expected) in [
@@ -372,10 +328,10 @@ fn finalized_inclusion_requires_an_explicit_successful_dispatch() {
 	] {
 		let mut node = EvmNode::new();
 		node.outcomes.push_back(outcome);
-		let (_, _, caller) = serve_contracts(node, GENESIS);
+		let (_, _, caller) = serve_contracts(node);
 		let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
 
-		let result = block_on(caller.execute_and_watch(prepared));
+		let result = block_on(prepared.execute_and_watch());
 
 		let actual = match result {
 			Err(EvmContractError::DispatchFailed) => "failed",
@@ -398,10 +354,10 @@ fn a_stopped_watch_is_not_reported_as_a_successful_contract_call() {
 	for event in ["invalid", "dropped", "error"] {
 		let mut node = EvmNode::new();
 		node.outcomes.push_back(Outcome::Stopped(event));
-		let (_, _, caller) = serve_contracts(node, GENESIS);
+		let (_, _, caller) = serve_contracts(node);
 		let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
 
-		let result = block_on(caller.execute_and_watch(prepared));
+		let result = block_on(prepared.execute_and_watch());
 
 		let Err(EvmContractError::NotFinalized(actual)) = result else {
 			panic!("unexpected stopped watch: {result:?}");
@@ -420,7 +376,7 @@ fn a_reverted_simulation_never_produces_a_transaction_to_submit() {
 	let signer = RecordingSigner::new();
 	let mut node = EvmNode::new();
 	node.output = simulation_output(1);
-	let (_, provider, caller) = serve_contracts(node, GENESIS);
+	let (_, provider, caller) = serve_contracts(node);
 
 	let result = block_on(caller.dry_run(&signer, &CONTRACT, INPUT));
 
@@ -443,7 +399,7 @@ fn runtime_rejections_and_malformed_simulations_produce_no_transaction() {
 	] {
 		let mut node = EvmNode::new();
 		node.output = output;
-		let (_, provider, caller) = serve_contracts(node, GENESIS);
+		let (_, provider, caller) = serve_contracts(node);
 
 		let result = block_on(caller.dry_run(&signer, &CONTRACT, INPUT));
 

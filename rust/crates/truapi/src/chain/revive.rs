@@ -3,10 +3,7 @@
 use alloy_sol_types::{GenericContractError, SolInterface};
 use futures::StreamExt;
 use parity_scale_codec::{Decode, Encode, Input};
-use subxt::{
-	ext::scale_encode::EncodeAsType,
-	utils::{AccountId32, H256},
-};
+use subxt::{ext::scale_encode::EncodeAsType, utils::H256};
 use thiserror::Error;
 
 use super::{
@@ -49,17 +46,6 @@ pub enum EvmContractError {
 	/// The signed extrinsic could not be built.
 	#[error(transparent)]
 	Build(#[from] ExtrinsicBuildError),
-	/// A prepared transaction belongs to another chain.
-	#[error("prepared transaction belongs to {actual}, expected {expected}")]
-	WrongChain {
-		/// Chain this caller submits to.
-		expected: H256,
-		/// Chain used for simulation.
-		actual: H256,
-	},
-	/// The signer no longer represents the account used for simulation.
-	#[error("the signer's account changed after simulation")]
-	SignerChanged,
 	/// The extrinsic ended without being finalized.
 	#[error("the extrinsic was not finalized: {0:?}")]
 	NotFinalized(WatchEvent),
@@ -71,20 +57,21 @@ pub enum EvmContractError {
 	OutcomeMissing,
 }
 
-/// A simulated contract write bound to its signer and chain.
+/// A simulated contract write bound to its signer and to the caller that
+/// simulated it.
 ///
 /// The request owns the calldata and limits. Its nonce, mortal era and
 /// signature are selected when it is executed.
 #[derive(derive_more::Debug)]
-pub struct PreparedEvmTransaction<'signer> {
+pub struct PreparedEvmTransaction<'a> {
 	#[debug(skip)]
-	signer: &'signer SubstrateSigner,
-	account: AccountId32,
-	genesis: H256,
+	caller: &'a EvmContractCaller,
+	#[debug(skip)]
+	signer: &'a SubstrateSigner,
 	call: ReviveCallArgs,
 }
 
-/// Reads contracts and submits prepared writes on one chain.
+/// Reads contracts and prepares writes on one chain.
 pub struct EvmContractCaller {
 	chain: ChainRuntime,
 	extrinsics: ExtrinsicService,
@@ -112,20 +99,19 @@ impl EvmContractCaller {
 	/// Simulates as the signer and retains the exact call and required limits.
 	///
 	/// Nothing is signed or submitted. Chain state can change before execution.
-	pub async fn dry_run<'signer>(
-		&self,
-		signer: &'signer SubstrateSigner,
+	pub async fn dry_run<'a>(
+		&'a self,
+		signer: &'a SubstrateSigner,
 		contract: &[u8; 20],
 		input: &[u8],
-	) -> Result<PreparedEvmTransaction<'signer>, EvmContractError> {
+	) -> Result<PreparedEvmTransaction<'a>, EvmContractError> {
 		let account = signer.account_id();
 		let connection = self.chain.legacy_connection(&self.genesis.0).await?;
 		let mut rpc = connection.raw_rpc_client;
 		let simulation = simulate(&mut rpc, &account.0, contract, input).await?;
 		Ok(PreparedEvmTransaction {
+			caller: self,
 			signer,
-			account,
-			genesis: self.genesis,
 			call: ReviveCallArgs {
 				dest: *contract,
 				weight_limit: simulation.weight_required,
@@ -135,31 +121,24 @@ impl EvmContractCaller {
 			},
 		})
 	}
+}
 
+impl PreparedEvmTransaction<'_> {
 	/// Consumes the prepared call and waits for successful finalized dispatch.
 	///
 	/// The extrinsic gets a fresh nonce and mortal era and the prepared call's
-	/// limits unchanged. The signer must keep its account fixed while execution
-	/// runs.
-	pub async fn execute_and_watch(
-		&self,
-		transaction: PreparedEvmTransaction<'_>,
-	) -> Result<(), EvmContractError> {
-		let PreparedEvmTransaction { signer, account, genesis, call } = transaction;
-		if genesis != self.genesis {
-			return Err(EvmContractError::WrongChain { expected: self.genesis, actual: genesis });
-		}
-		if signer.account_id() != account {
-			return Err(EvmContractError::SignerChanged);
-		}
-		let extrinsic = self
+	/// limits unchanged. The signer must keep the account it had at
+	/// [`EvmContractCaller::dry_run`].
+	pub async fn execute_and_watch(self) -> Result<(), EvmContractError> {
+		let Self { caller, signer, call } = self;
+		let extrinsic = caller
 			.extrinsics
-			.build_mortal_extrinsic(self.genesis)
+			.build_mortal_extrinsic(caller.genesis)
 			.with_call_args(REVIVE_PALLET, "call", call)
 			.with_signer(signer)
 			.build()
 			.await?;
-		submit_until_finalized(&self.chain, self.genesis, &extrinsic.extrinsic).await
+		submit_until_finalized(&caller.chain, caller.genesis, &extrinsic.extrinsic).await
 	}
 }
 

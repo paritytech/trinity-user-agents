@@ -310,23 +310,23 @@ runtime's type by name.
 
 ### Contract calls
 
-`EvmContractCaller` in the `chain` module reads pallet-revive contracts and executes prepared writes.
+`EvmContractCaller` in the `chain` module reads pallet-revive contracts and prepares writes.
 `EvmContractCaller::read` takes a `RuntimeApi` transport and returns ABI data. A pinned transport keeps contract and
 storage reads at the same block; a plain RPC transport reads the node's current state. Read-only callers need no signer
 or extrinsic builder.
 
 For writes, `dry_run` simulates as the signer and returns an opaque `PreparedEvmTransaction` that binds the signer,
-chain, contract, calldata and required limits. It signs and submits nothing. `execute_and_watch` consumes that request,
-then builds and signs with a fresh nonce and mortal era using the prepared limits. It completes only after a finalized
-block reports successful dispatch.
+chain, contract, calldata and required limits. It signs and submits nothing. `PreparedEvmTransaction::execute_and_watch`
+consumes the request, then builds and signs with a fresh nonce and mortal era using the prepared limits. It completes
+only after a finalized block reports successful dispatch.
 
 ```rust
 let transaction = contracts.dry_run(&signer, &contract, &input).await?;
-contracts.execute_and_watch(transaction).await?;
+transaction.execute_and_watch().await?;
 ```
 
-The request borrows its signer and owns its calldata. Simulation describes the state read at that time; execution uses
-its limits without repeating the simulation. Revive's wire types and resource estimates are private.
+The request borrows the caller and its signer and owns its calldata. Simulation describes the state read at that time;
+execution uses its limits without repeating the simulation. Revive's wire types and resource estimates are private.
 `EvmContractError` distinguishes contract reverts from chain failures and unsuccessful execution.
 
 ### Durable transactions
