@@ -44,6 +44,7 @@ const VIEW_PAGE = `<!doctype html>
     </aside>
     <script type="module">
       import { StatementLedger } from "/tools/statements/ledger.ts";
+      import { peopleTransport } from "/tools/statements/transport.ts";
       import { mountStatementsView } from "/tools/statements/view.ts";
       import { mountChatView } from "/tools/chat/view.ts";
       import { observedConnection } from "/src/platform/statement-observer.ts";
@@ -51,8 +52,14 @@ const VIEW_PAGE = `<!doctype html>
       import { isNoSubmitRefusal } from "/tools/demos/no-submit.ts";
       import { inboxTopic, periodOf } from "/src/invitations/statement-delivery.ts";
 
-      // As the host page builds it: the dev tools' guard says which errors it made.
-      const ledger = new StatementLedger({}, Date.now, isNoSubmitRefusal);
+      // As the host page builds it with People on the light client: the dev
+      // tools' guard says which errors it made.
+      const ledger = new StatementLedger(
+        peopleTransport("light-client"),
+        {},
+        Date.now,
+        isNoSubmitRefusal,
+      );
       ledger.startSession("demo", "demo wallet, signed in");
       const shown = [];
       const peopleConnections = [];
@@ -975,7 +982,7 @@ describe("the Statements and Chat views", () => {
           navigator.clipboard.readText(),
         );
         expect((JSON.parse(copied) as { format: string }).format).toBe(
-          "truapi-web-host/statements-evidence/2",
+          "truapi-web-host/statements-evidence/3",
         );
         expect(copied).not.toContain("hello from the peer");
       } finally {

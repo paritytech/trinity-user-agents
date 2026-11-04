@@ -581,6 +581,34 @@ textarea {
   margin-top: 0;
 }
 
+.chain-backends {
+  display: grid;
+  gap: 8px;
+}
+
+.chain-backends .chain-backend {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, 32%) minmax(0, 1fr);
+  gap: 2px 10px;
+  align-items: center;
+}
+
+.chain-backends label {
+  margin: 0 4px;
+}
+
+.chain-backends .note {
+  grid-column: 2;
+  margin: 0 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.chain-backends .chain-backend[data-pending] .note {
+  color: var(--warning);
+}
+
 .versions {
   margin: 0;
   display: grid;

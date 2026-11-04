@@ -6,11 +6,14 @@ import {
   StatementLedger,
   ownership,
 } from "../../../../tools/statements/ledger.js";
+import { peopleTransport } from "../../../../tools/statements/transport.js";
 import {
   observedConnection,
   subscriptionKey,
 } from "../../../../src/platform/statement-observer.js";
 import { LightClientStatements } from "../../../support/light-client-statements.js";
+
+const LIGHT_CLIENT = peopleTransport("light-client");
 
 const NOW_SECONDS = 1_800_000_000;
 const SIGNER = new Uint8Array(32).fill(7);
@@ -47,9 +50,10 @@ const claimFor = (book: StatementLedger, product: string, account: string) =>
     async () => ({ account, period: 1, outcome: "validated", seq: 1 }),
   );
 
-function ledger(limits = {}) {
+function ledger(limits = {}, transport = LIGHT_CLIENT) {
   let now = NOW_SECONDS * 1000;
   const book = new StatementLedger(
+    transport,
     limits,
     () => (now += 1),
     (error) => error.message === REFUSED_HERE,
@@ -324,7 +328,7 @@ describe("the statement ledger", () => {
         "core",
         "Submit #2 asked by the core: 8 data bytes, signer 0x070707…0707",
       ],
-      ["client", "Submit #2: RPC error internal"],
+      ["light-client", "Submit #2: RPC error internal"],
       [
         "core",
         "Submit #3 asked by the core: 8 data bytes, signer 0x070707…0707",
@@ -1282,7 +1286,11 @@ describe("the statement ledger over the light client", () => {
   async function overLightClient() {
     const client = new LightClientStatements();
     client.nowSeconds = NOW_SECONDS;
-    const book = new StatementLedger({}, () => NOW_SECONDS * 1000);
+    const book = new StatementLedger(
+      LIGHT_CLIENT,
+      {},
+      () => NOW_SECONDS * 1000,
+    );
     book.startSession("s", "session");
     const connection = observedConnection(
       client.connect(),
@@ -1351,7 +1359,9 @@ describe("the statement ledger over the light client", () => {
     });
     const event = book
       .eventList()
-      .find((entry) => entry.refs.submit === 1 && entry.source === "client")!;
+      .find(
+        (entry) => entry.refs.submit === 1 && entry.source === "light-client",
+      )!;
     expect(event.text).toBe(
       "Submit #1: broadcast (new): at least one peer took it; not shown stored",
     );
@@ -1396,5 +1406,71 @@ describe("the statement ledger over the light client", () => {
       rpcErrors: 3,
       answers: { invalid: 1 },
     });
+  });
+});
+
+describe("the statement ledger over People's RPC node", () => {
+  const NODE = peopleTransport("rpc");
+
+  // A node keeps a store: its "new" means it took the statement in, not that
+  // a peer took a broadcast, and its facts carry the node's source tag.
+  test("reads a node's answers as the node's, not as a light client broadcast", () => {
+    const { book, submit } = ledger({}, NODE);
+    submit(statement(100, 20), { status: "new" });
+    const event = book
+      .eventList()
+      .find((entry) => entry.kind === "submit" && entry.source !== "core")!;
+    expect([event.source, event.text]).toEqual([
+      "node",
+      "Submit #1: accepted (new): in the node's store; other nodes may still refuse it",
+    ]);
+    expect(event.details).toContainEqual(["Note", NODE.wentOutNote]);
+  });
+
+  // The light client's error messages mean nothing coming from a node, so a
+  // node's RPC error keeps its own message.
+  test("does not read a node's RPC error as a light client refusal", () => {
+    const { book, feed } = ledger({}, NODE);
+    feed(
+      {
+        type: "request",
+        connection: 1,
+        id: "1",
+        method: "statement_submit",
+        params: [statement(100)],
+      },
+      {
+        type: "response",
+        connection: 1,
+        id: "1",
+        method: "statement_submit",
+        error: { code: 7001, message: "No connected peers to broadcast" },
+      },
+    );
+    expect(book.submitList()[0].outcome).toEqual(
+      expect.not.objectContaining({ meaning: expect.anything() }),
+    );
+  });
+
+  // A node replays what it holds, so a first batch that ends with
+  // statements in it is complete, not empty.
+  test("says where a node's replay ends, and when it held nothing", () => {
+    const { book, subscribe, page } = ledger({}, NODE);
+    subscribe(9);
+    page(9, [statement(100)], 0);
+    subscribe(10);
+    page(10, [], 0);
+    expect(
+      book
+        .eventList()
+        .filter((event) => event.kind === "page")
+        .map((event) => [event.source, event.text]),
+    ).toEqual([
+      ["node", "Subscription S1: 1 statement (the initial batch, complete)"],
+      [
+        "node",
+        "Subscription S2: an empty page (the initial batch, empty: the node holds none on this filter)",
+      ],
+    ]);
   });
 });

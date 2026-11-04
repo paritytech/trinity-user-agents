@@ -7,8 +7,11 @@ import {
   readGrants,
 } from "../../../../tools/statements/actions.js";
 import { StatementLedger } from "../../../../tools/statements/ledger.js";
+import { peopleTransport } from "../../../../tools/statements/transport.js";
 import { evidence } from "../../../../tools/statements/evidence.js";
 import { encodeSigned } from "../../../../src/platform/statement.js";
+
+const LIGHT_CLIENT = peopleTransport("light-client");
 
 describe("the Statements view's reads", () => {
   test("decodes a StatementAllowance, and refuses bytes that are not one", () => {
@@ -111,8 +114,28 @@ describe("the Statements view's reads", () => {
 });
 
 describe("the Statements view's evidence", () => {
+  // A report must say which People backend its facts came from: the same
+  // answer means a broadcast over the light client and a stored statement
+  // on a node.
+  test("names People's backend and describes it", () => {
+    for (const backend of ["light-client", "rpc"] as const) {
+      const transport = peopleTransport(backend);
+      const report = evidence(new StatementLedger(transport), {
+        network: "testnet",
+        exportedAt: 0,
+      });
+      expect(report).toMatchObject({
+        peopleBackend: backend,
+        transport: transport.note,
+      });
+      expect(report.notes).toEqual(
+        expect.arrayContaining(transport.evidenceNotes),
+      );
+    }
+  });
+
   test("holds metadata only: no statement data even while capture is on", () => {
-    const ledger = new StatementLedger();
+    const ledger = new StatementLedger(LIGHT_CLIENT);
     ledger.startSession("s", "session");
     ledger.setCapture(true);
     const data = new TextEncoder().encode("a private-looking message");
@@ -154,7 +177,7 @@ describe("the Statements view's evidence", () => {
   });
 
   test("holds no statement bytes from answers, pages or errors in shapes it does not know", () => {
-    const ledger = new StatementLedger();
+    const ledger = new StatementLedger(LIGHT_CLIENT);
     ledger.startSession("s", "session");
     const secret = "0x" + "a7".repeat(200);
     const feed = (event: StatementTraffic) => ledger.traffic(event);

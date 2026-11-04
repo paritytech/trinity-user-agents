@@ -1,4 +1,3 @@
-import { TRANSPORT_NOTE } from "./decode.js";
 import type { StatementLedger } from "./ledger.js";
 
 /**
@@ -11,7 +10,7 @@ import type { StatementLedger } from "./ledger.js";
  */
 
 /** The version of the evidence's shape. */
-export const EVIDENCE_FORMAT = "truapi-web-host/statements-evidence/2";
+export const EVIDENCE_FORMAT = "truapi-web-host/statements-evidence/3";
 
 export interface EvidenceContext {
   network: string;
@@ -33,14 +32,14 @@ export function evidence(ledger: StatementLedger, context: EvidenceContext) {
     network: context.network,
     exportedAt: new Date(context.exportedAt).toISOString(),
     sessionStartedAt: new Date(ledger.sessionStart()).toISOString(),
-    transport: TRANSPORT_NOTE,
+    peopleBackend: ledger.transport.backend,
+    transport: ledger.transport.note,
     notes: [
       "Metadata only: statement data is never exported, captured or not.",
       "Counters count since the session started in this tab; lists keep their newest entries within bounds, and `dropped` says how many went.",
       "`latestObserved` per account counts the statements this tab last saw (latest per channel, not known expired, its own broadcasts included), with when it last saw them. It is an observation, not what the network holds now and not a bound on it: peers refuse and evict without saying so, and send only some of what they hold.",
       "A statement's `firstAt` and `lastAt` say when this tab observed it, not that any peer still holds it.",
-      "No refusal recorded does not mean none happened: peers' allowance, account-room and priority refusals do not reach the light client.",
-      "Each fact keeps its source: light-client answers and pages, core claim results, host request facts, chain reads at a block, and product reports as the product gave them.",
+      ...ledger.transport.evidenceNotes,
     ],
     counters: ledger.counts(),
     dropped: ledger.dropped(),
