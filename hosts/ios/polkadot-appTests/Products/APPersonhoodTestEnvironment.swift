@@ -38,7 +38,8 @@ final class APPersonhoodTestEnvironment {
         )
     }
 
-    func makeCreateProofHandler(callingProductId: ProductId? = try! ProductId("caller.product.dot")) -> APCreateProofHandler {
+    func makeCreateProofHandler(callingProductId: ProductId? = try! ProductId("caller.product.dot"))
+        -> APCreateProofHandler {
         APCreateProofHandler(
             callingProductId: callingProductId,
             options: makeOptions(),

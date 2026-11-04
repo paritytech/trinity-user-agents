@@ -25,6 +25,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.notification.rememberAppNotifier
@@ -75,6 +77,7 @@ fun PocketScreen() {
     val openingFaceShown by viewModel.openingFaceShown.collectAsStateWithLifecycle()
 
     ObserveViewModelEvents(viewModel, rememberAppNotifier())
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.onShown() }
 
     PocketScreenInternal(
         screenState = screenState,
@@ -84,9 +87,8 @@ fun PocketScreen() {
         bindingsOf = viewModel::bindingsOf,
         onCardSelected = viewModel::selectCard,
         onCardDismissed = viewModel::dismissCard,
-        onSketchbookSelected = viewModel::showCollectiblesSketchbook,
+        onSketchbookSelected = viewModel::openCollectibles,
         onSketchbookDismissed = viewModel::hideCollectiblesSketchbook,
-        onOpenCollectibles = viewModel::openCollectibles,
         onExpandedCardSettled = viewModel::hostExpandedProduct,
         onProductCardRemovalRequested = viewModel::requestRemoval,
         onRemovalConfirmed = viewModel::confirmRemoval,
@@ -105,7 +107,6 @@ private fun PocketScreenInternal(
     onCardDismissed: () -> Unit,
     onSketchbookSelected: () -> Unit,
     onSketchbookDismissed: () -> Unit,
-    onOpenCollectibles: () -> Unit,
     onExpandedCardSettled: (PocketCardUiModel.ProductCard) -> Unit,
     onProductCardRemovalRequested: (PocketCardUiModel.ProductCard) -> Unit,
     onRemovalConfirmed: () -> Unit,
@@ -162,10 +163,7 @@ private fun PocketScreenInternal(
                             }
 
                             is PocketScreenState.Collectibles -> {
-                                PocketCollectibles(
-                                    onBack = onSketchbookDismissed,
-                                    onViewButtonClick = onOpenCollectibles
-                                )
+                                PocketCollectibles(onBack = onSketchbookDismissed)
                             }
                         }
                     }
@@ -313,8 +311,7 @@ private fun PocketList(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable(onClick = onCollectiblesSelected),
-                blackAndWhite = true,
-                onViewButtonClick = {}
+                blackAndWhite = true
             )
         }
     }
@@ -361,7 +358,6 @@ private fun PocketScreenPreview() {
                 onCardDismissed = {},
                 onSketchbookSelected = {},
                 onSketchbookDismissed = {},
-                onOpenCollectibles = {},
                 onProductCardRemovalRequested = {},
                 onRemovalConfirmed = {},
                 onRemovalDismissed = {}

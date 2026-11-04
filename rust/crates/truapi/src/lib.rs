@@ -102,9 +102,11 @@ pub mod latest {
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
 		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, FundingAssignment, FundingCancelAnswer,
-		FundingCancelDecision, FundingDirection, FundingFailure, FundingFrameOutcome,
-		FundingFrameTarget, FundingInboundUpdate, FundingOutboundUpdate, FundingUpdate,
+		Dimensions, Effect, EffectProps, FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES,
+		FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer, FundingCancelDecision,
+		FundingDeposit, FundingDirection, FundingFailure, FundingFrameOutcome, FundingFrameTarget,
+		FundingInboundUpdate, FundingOutboundUpdate, FundingQuote, FundingQuoteAnswer,
+		FundingQuoteAsk, FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate,
 		GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
 		HostAccountGetAliasRequest, HostAccountGetError, HostAccountListRingVrfKeysRequest,
 		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
@@ -934,6 +936,10 @@ mod nft;
 mod nft_purse;
 
 #[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+mod pocket_cards;
+
+#[cfg(feature = "runtime")]
 pub use truapi_core::TrUApiCore;
 
 #[cfg(feature = "runtime")]
@@ -957,7 +963,7 @@ pub use host_rpc_client::HostRpcClient;
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{
-	NativeRendererObserver, NativeRendererSubscription, WsBridgeEndpoint, WsBridgeStartError,
+	NativeRendererObserver, NativeSubscription, WsBridgeEndpoint, WsBridgeStartError,
 };
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
@@ -975,7 +981,7 @@ pub use runtime::contacts::contact_handle;
 #[cfg(feature = "runtime")]
 pub use runtime::login_failure::reports_exhausted_period;
 #[cfg(feature = "runtime")]
-pub use runtime::product_manifest::encode_cached_root_manifest;
+pub use runtime::product_manifest::{encode_cached_root_manifest, worker_manifest_cache_key};
 #[cfg(feature = "runtime")]
 pub use runtime::statement_allowance;
 #[cfg(feature = "runtime")]

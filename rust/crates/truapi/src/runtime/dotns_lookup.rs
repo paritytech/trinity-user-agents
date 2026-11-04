@@ -60,6 +60,8 @@ pub enum DotnsLookupKind<'a> {
 	Identity,
 	/// A product's root manifest, named by the product it belongs to.
 	Manifest(&'a ProductId),
+	/// A product's Worker manifest, named by the product it belongs to.
+	WorkerManifest(&'a ProductId),
 }
 
 impl fmt::Display for DotnsLookupKind<'_> {
@@ -67,6 +69,7 @@ impl fmt::Display for DotnsLookupKind<'_> {
 		match self {
 			Self::Identity => f.write_str("identity"),
 			Self::Manifest(product_id) => write!(f, "manifest:{product_id}"),
+			Self::WorkerManifest(product_id) => write!(f, "executable:{product_id}"),
 		}
 	}
 }
