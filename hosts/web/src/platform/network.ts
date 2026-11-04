@@ -11,7 +11,13 @@ import type {
   JsonRpcConnection,
 } from "@parity/truapi-host";
 import { spreadFollows } from "./follow-spread.js";
-import { type NetworkConfig } from "./network-config.js";
+import {
+  CHAIN_ROLES,
+  type ChainBackend,
+  type ChainRole,
+  chainBackends,
+  type NetworkConfig,
+} from "./network-config.js";
 
 /**
  * Peer connection kinds the browser light client dials.
@@ -44,6 +50,8 @@ export interface Network {
   genesis: NetworkGenesis;
   supportedChains: HostChainSet;
   chain: ChainProvider;
+  /** The backend each chain is reached through. */
+  backends: Record<ChainRole, ChainBackend>;
   /**
    * Release the light client and close every connection handed out. The
    * provider handle is a WASM resource; without this a page that boots more
@@ -53,13 +61,18 @@ export interface Network {
 }
 
 /**
- * Start the embedded light client for `config`'s network.
+ * Connect `config`'s network, each chain through the backend `backends` names.
  *
  * Genesis hashes come from the provider's bundled catalog rather than from
  * constants kept here, so the core config, the chain set reported to products
- * and the chains the light client syncs cannot disagree.
+ * and the chains the light client syncs cannot disagree. Every chain starts
+ * on the light client; a chain on `rpc` is then served by its RPC node
+ * instead, and its answers are trusted from that node.
  */
-export async function connectNetwork(config: NetworkConfig): Promise<Network> {
+export async function connectNetwork(
+  config: NetworkConfig,
+  backends: Record<ChainRole, ChainBackend> = chainBackends(config),
+): Promise<Network> {
   await initProvider({ module_or_path: providerWasmUrl });
   const builder = new ChainProviderBuilder();
   builder.setConnectionTypes(hostConnectionTypes());
@@ -71,17 +84,16 @@ export async function connectNetwork(config: NetworkConfig): Promise<Network> {
     bulletin: chains.bulletin as HexString,
   };
   chains.free();
-  // Asset Hub goes through its RPC node, as the native hosts reach it: the
-  // light client cannot validate the PGAS claim against Asset Hub (its call
-  // proof misses entries), so it drops the claim before broadcast. Asset Hub
-  // answers are then trusted from that node, not checked by the light client.
-  builder.addRpcChain(genesis.assetHub, config.dotns.assetHubRpc);
+  for (const role of CHAIN_ROLES)
+    if (backends[role] === "rpc")
+      builder.addRpcChain(genesis[role], config.chains[role].rpc);
   const provider = builder.build();
 
   const open = new Set<JsonRpcConnection>();
   return {
     networkSuffix: config.networkSuffix,
     genesis,
+    backends,
     supportedChains: {
       network: config.id,
       chains: [

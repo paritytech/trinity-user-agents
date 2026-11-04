@@ -21,6 +21,7 @@ import { seededKind } from "./seed.js";
 export const PASEO_DOTNS = {
   /** The one dotNS TLD of the network this host is connected to. */
   tld: NETWORKS.paseo.networkSuffix,
+  assetHubRpc: NETWORKS.paseo.chains.assetHub.rpc,
   ...NETWORKS.paseo.dotns,
 };
 
@@ -518,7 +519,7 @@ export async function resolveSource(
   name: string,
   network: NetworkConfig = DEFAULT_NETWORK_CONFIG,
 ): Promise<SourceChoice> {
-  const rpc = httpRpc(network.dotns.assetHubRpc);
+  const rpc = httpRpc(network.chains.assetHub.rpc);
   return chooseSource(name, {
     readCid: (record) => resolveContentCid(record, rpc, network.dotns),
     classify: async (cid) =>

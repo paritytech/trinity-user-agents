@@ -65,7 +65,7 @@ export function productDetailsText(
     ...skipped,
     `Served from: ${how.mount ?? open.url.pathname} on this host's origin, for this wallet and product only`,
     `Blocks: each checked against its CID. Gateway: ${network.dotns.contentGateway} (not trusted).`,
-    `Name: read from ${network.dotns.assetHubRpc} (trusted, unverified).`,
+    `Name: read from ${network.chains.assetHub.rpc} (trusted, unverified).`,
   ].join("\n");
 }
 

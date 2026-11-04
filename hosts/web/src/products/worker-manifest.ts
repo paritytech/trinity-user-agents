@@ -172,7 +172,7 @@ export async function findWorker(
 export function resolveWorker(
   name: string,
   network: NetworkConfig,
-  rpc: RpcCall = httpRpc(network.dotns.assetHubRpc),
+  rpc: RpcCall = httpRpc(network.chains.assetHub.rpc),
 ): Promise<ResolvedWorker> {
   return findWorker(name, {
     readCid: (record) => resolveContentCid(record, rpc, network.dotns),

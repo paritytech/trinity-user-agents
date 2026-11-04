@@ -33,8 +33,10 @@ import { createHostCallbacks } from "./app/callbacks.js";
 import { gatewayPreimages } from "./products/preimage.js";
 import { connectNetwork, type Network } from "./platform/network.js";
 import {
+  CHAIN_ROLES,
   NETWORKS,
   networkConfig,
+  type ChainRole,
   type NetworkConfig,
 } from "./platform/network-config.js";
 import { DEFAULT_NETWORK } from "./platform/network-scope.js";
@@ -132,6 +134,14 @@ import {
 } from "./platform/statement-observer.js";
 import { WorkerConsoleLog } from "../tools/workers/console-log.js";
 import type { ActivityCategory } from "./platform/activity.js";
+
+/** How the Activity log names each chain. */
+const CHAIN_LABELS: Record<ChainRole, string> = {
+  relay: "Relay",
+  assetHub: "Asset Hub",
+  people: "People",
+  bulletin: "Bulletin",
+};
 
 /** The host's activity, which every part of the host reports to and the inspector shows. */
 const activity = new ActivityLog();
@@ -2063,9 +2073,18 @@ async function boot(): Promise<void> {
   peopleAccess = { chain: guarded.chain, genesis: guarded.genesis.people };
   activity.record({
     category: "network",
-    action: "Light client started",
+    action: "Chains connected",
     subject: activeNetwork.displayName,
-    details: [{ label: "Name suffix", value: connection.networkSuffix }],
+    details: [
+      { label: "Name suffix", value: connection.networkSuffix },
+      ...CHAIN_ROLES.map((role) => ({
+        label: CHAIN_LABELS[role],
+        value:
+          network.backends[role] === "rpc"
+            ? `RPC ${activeNetwork.chains[role].rpc}`
+            : "light client",
+      })),
+    ],
   });
   renderAccountStatus();
   const callbacks = createHostCallbacks({

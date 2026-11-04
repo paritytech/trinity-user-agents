@@ -137,7 +137,7 @@ export async function findWidget(
 export function resolveWidget(
   name: string,
   network: NetworkConfig,
-  rpc: RpcCall = httpRpc(network.dotns.assetHubRpc),
+  rpc: RpcCall = httpRpc(network.chains.assetHub.rpc),
 ): Promise<ResolvedWidget> {
   return findWidget(name, {
     readCid: (record) => resolveContentCid(record, rpc, network.dotns),
