@@ -30,7 +30,9 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
     private var recoveredBalanceTask: Task<Void, Error>?
 
     private let fundingOpener: FundingOpening
-    private var fundingTasks: [FundingDirection: Task<Void, Never>] = [:]
+    /// The one funding session being opened: the card opens top-ups only,
+    /// and a second tap replaces the first.
+    private var fundingTask: Task<Void, Never>?
 
     #if TESTNET_FEATURE
         var backgroundExecutor: BackgroundExecuting?
@@ -57,7 +59,7 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
         recoveryStateTask?.cancel()
         recoveredBalanceTask?.cancel()
         priceSubscriptionTask?.cancel()
-        fundingTasks.values.forEach { $0.cancel() }
+        fundingTask?.cancel()
     }
 }
 
@@ -78,8 +80,8 @@ extension AssetDetailsInteractor: AssetDetailsInteractorInputProtocol {
     }
 
     func openFunding(_ direction: FundingDirection) {
-        fundingTasks[direction]?.cancel()
-        fundingTasks[direction] = Task { [weak presenter, fundingOpener] in
+        fundingTask?.cancel()
+        fundingTask = Task { [weak presenter, fundingOpener] in
             do {
                 _ = try await fundingOpener.openFunding(direction: direction)
                 await presenter?.didCompleteFunding(direction, result: .success(()))
