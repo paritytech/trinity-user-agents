@@ -23,6 +23,17 @@
         }
       }
     },
+    "activity.currentBalance" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Current balance"
+          }
+        }
+      }
+    },
     "activity.delayed" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -360,6 +371,50 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Preparing your payout"
+          }
+        }
+      }
+    },
+    "card.get" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Get"
+          }
+        }
+      }
+    },
+    "card.getSubtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add %1$(symbol)@ via bank, crypto or credit card"
+          }
+        }
+      }
+    },
+    "card.send" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send"
+          }
+        }
+      }
+    },
+    "card.sendSubtitle" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Move %1$(symbol)@ to your bank, crypto wallet or contacts"
           }
         }
       }
