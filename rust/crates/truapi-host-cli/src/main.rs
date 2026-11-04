@@ -84,7 +84,7 @@ use truapi::{
 use crate::{
 	accounts::{ResolveSignerConfig, ResolvedSigner},
 	chain::ChainBackend,
-	network::{Network, NetworkConfig, NetworkSelection, NetworkSource, STACK_ENV},
+	network::{Network, NetworkConfig, NetworkSource, STACK_ENV, StackArg},
 	platform::{ApprovalPolicy, CliPlatform, CliStoragePaths},
 	sessions::{
 		CurrentSession, DEFAULT_SESSION_NAME, PairedHost, PairedHostMetadata, SessionCatalog,
@@ -134,8 +134,8 @@ struct Cli {
 	#[arg(long, global = true, value_enum, default_value = "rpc", env = "TRUAPI_CHAIN_BACKEND")]
 	chain_backend: ChainBackend,
 	/// Built-in network to run against; paseo-next-v2 when neither this nor
-	/// `--stack` is given.
-	#[arg(long, global = true, value_enum, conflicts_with = "stack")]
+	/// `--stack` is set.
+	#[arg(long, global = true, value_enum)]
 	network: Option<Network>,
 	/// Run against this Trinity stack instead of a built-in network: a
 	/// descriptor URL, a stack link (`polkadotapp://stack?...`) or a local
@@ -251,8 +251,11 @@ enum Command {
 	/// Resolve the network, with any `HOST_CLI_*_WS` or
 	/// `HOST_CLI_LOCAL_NETWORK_CONFIG` routing, and print it as JSON without
 	/// contacting any chain.
-	#[command(alias = "local-network-check")]
 	NetworkCheck,
+	/// Resolve the `HOST_CLI_LOCAL_NETWORK_CONFIG` network, ask every node for
+	/// its genesis, and print the routing as `network-check` does.
+	#[command(hide = true)]
+	LocalNetworkCheck,
 	/// Run a seedless pairing host for product scripts or interactive pairing.
 	///
 	/// With `--script`, exits with the script's status. Without it, stays in an
@@ -612,17 +615,14 @@ async fn main() -> Result<()> {
 		tokio::spawn(update::run_background_check())
 	});
 
-	// Read here rather than through clap's `env`, which would count an exported
-	// blank value as a `--stack` conflicting with `--network`.
-	let stack = normalized(cli.stack.or_else(|| std::env::var(STACK_ENV).ok()));
-	let selection = match (stack, cli.network) {
-		(Some(_), Some(_)) => invalid_invocation(format_args!(
-			"--network cannot be used with {STACK_ENV}; unset one of them"
-		)),
-		(Some(stack), None) => NetworkSelection::Stack(stack),
-		(None, network) => NetworkSelection::BuiltIn(network.unwrap_or_default()),
+	// Read here rather than through clap's `env`, so an exported blank value is
+	// unset rather than a `--stack` next to `--network`.
+	let stack = match normalized(cli.stack) {
+		Some(value) => Some(StackArg { value, source: "--stack" }),
+		None => normalized(std::env::var(STACK_ENV).ok())
+			.map(|value| StackArg { value, source: STACK_ENV }),
 	};
-	let source = NetworkSource { chain_backend: cli.chain_backend, selection };
+	let source = NetworkSource { chain_backend: cli.chain_backend, network: cli.network, stack };
 	let outcome = dispatch(cli.command, log_filter, log_controller, debugger, source).await;
 
 	if let Some(check) = check {
@@ -651,19 +651,16 @@ async fn dispatch(
 	match command {
 		Command::Update => update::run_update_command().await,
 		Command::NetworkCheck => {
-			let config = source.resolve().await?;
-			println!(
-				"{}",
-				serde_json::json!({
-					"schema_version": 1,
-					"network": config.id,
-					"namespace": config.network_suffix,
-					"identity_backend_base": config.identity_backend_base,
-					"people": { "ws": config.people_ws, "genesis": format!("0x{}", hex::encode(config.people_genesis)) },
-					"asset_hub": { "ws": config.asset_hub_ws, "genesis": format!("0x{}", hex::encode(config.asset_hub_genesis)) },
-					"bulletin": { "ws": config.bulletin_ws, "genesis": format!("0x{}", hex::encode(config.bulletin_genesis)) },
-				})
+			print_network(&source.resolve().await?);
+			Ok(())
+		},
+		Command::LocalNetworkCheck => {
+			anyhow::ensure!(
+				local_network::config_path().is_some(),
+				"{} must be set",
+				local_network::CONFIG_ENV
 			);
+			print_network(&source.cli_config().await?);
 			Ok(())
 		},
 		Command::PairingHost(args) => {
@@ -722,6 +719,23 @@ async fn dispatch(
 		},
 		Command::Stack { command } => stack::run(command).await,
 	}
+}
+
+/// Prints `config`'s routing as the one JSON line `network-check` writes.
+fn print_network(config: &NetworkConfig) {
+	let chain = |ws: &str, genesis: [u8; 32]| serde_json::json!({ "ws": ws, "genesis": format!("0x{}", hex::encode(genesis)) });
+	println!(
+		"{}",
+		serde_json::json!({
+			"schema_version": 1,
+			"network": config.id,
+			"namespace": config.network_suffix,
+			"identity_backend_base": config.identity_backend_base,
+			"people": chain(config.people_ws, config.people_genesis),
+			"asset_hub": chain(config.asset_hub_ws, config.asset_hub_genesis),
+			"bulletin": chain(config.bulletin_ws, config.bulletin_genesis),
+		})
+	);
 }
 
 /// Diagnose an Asset Hub PGAS claim, and optionally submit it.

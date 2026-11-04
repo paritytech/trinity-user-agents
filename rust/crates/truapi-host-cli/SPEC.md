@@ -289,7 +289,7 @@ Commands:
 | `alloc-check` | Inspect or submit Statement Store allowance registration. |
 | `pgas-check` | Inspect or submit an Asset Hub PGAS allowance claim. |
 | `attest` | Attest a given mnemonic's identity, wait for its ring membership, and print it as JSON. Disposable-identity networks only. |
-| `network-check` | Resolve the network, with any override, and print its routing as JSON, without contacting a chain. `local-network-check` is an alias. |
+| `network-check` | Resolve the network, with any override, and print its routing as JSON, without contacting a chain. |
 | `stack` | Create, publish, check and bundle Trinity stack descriptors (section 6.7). |
 
 ### 4.1 Global logging option
@@ -1749,21 +1749,26 @@ genesis hashes. Each must be a `ws://` or `wss://` URL; blank is unset.
 identity backend of the built-in network `--network` selects (paseo-next-v2 by
 default) to loopback endpoints with their own genesis hashes, under that
 network's product namespace (`docs/local-network.md`). Its `network` must match
-`--network`, every field is required, and an invalid file is an error; blank is
-unset. It cannot be combined with `--stack` or with a `HOST_CLI_*_WS` override:
-the command fails with an error naming both.
+`--network`, which must be a disposable-identity network, every field is required,
+and an invalid file is an error; blank is unset. It cannot be combined with
+`--stack` or with a `HOST_CLI_*_WS` override: the command fails with an error
+naming both.
 
 Neither override can be combined with `--chain-backend light-client`. Before a
-command runs, every endpoint an override reroutes is asked for its genesis, as a
-`--stack` endpoint is: one that reports a genesis other than the one it is routed
-as is an error, and one that does not answer is logged and left to fail on first
-use. The disposable-identity checks above apply to the result.
+command runs, every endpoint an override reroutes is asked for its genesis and
+must answer with the genesis it is routed as; an endpoint that does not answer or
+reports another genesis stops the command. (A `--stack` endpoint that does not
+answer is only logged, as above.) An error about a stack names where it came
+from, `--stack` or `HOST_CLI_STACK`. The disposable-identity checks above apply to
+the result.
 
-`network-check` (alias `local-network-check`) resolves the network as any
-command does, overrides included, fetching only the descriptor, and prints as
-JSON `schema_version`, `network` (the product namespace), `namespace` (the
-network's TLD), `identity_backend_base`, and `ws` and `genesis` for `people`,
-`asset_hub` and `bulletin`.
+`network-check` resolves the network as any command does, overrides included,
+fetching only the descriptor, and prints as JSON `schema_version`, `network` (the
+product namespace), `namespace` (the network's TLD), `identity_backend_base`, and
+`ws` and `genesis` for `people`, `asset_hub` and `bulletin`. The hidden
+`local-network-check` fails unless `HOST_CLI_LOCAL_NETWORK_CONFIG` is set, then
+resolves the network and asks every node for its genesis before printing the
+same JSON.
 
 #### `polkadot`
 
@@ -2340,8 +2345,8 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `HOST_CLI_SIGNER_MNEMONIC` | Mnemonic for `dev`, `signing-host`, `identity-check`, `register-name`, `alloc-check`, `pgas-check` and `attest` when `--mnemonic` is omitted. |
 | `HOST_CLI_IDENTITY_BACKEND_BASE` | Identity backend base URL override, including `/api/v1`, for instance a local backend. Applies to a built-in network or a `--stack`; `HOST_CLI_LOCAL_NETWORK_CONFIG` takes precedence. |
 | `HOST_CLI_STACK` | Default `--stack`: a descriptor URL, a stack link or a local descriptor file (§14.1). Blank is unset; combined with `--network`, it is an error. |
-| `HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS`, `HOST_CLI_BULLETIN_WS` | A chain's `ws://` or `wss://` URL override on a built-in network or a `--stack`, for a fork with the same genesis hashes; each rerouted endpoint must report that genesis before a command runs (§14.1). Blank is unset. Cannot be set together with `HOST_CLI_LOCAL_NETWORK_CONFIG` or `--chain-backend light-client`. |
-| `HOST_CLI_LOCAL_NETWORK_CONFIG` | Path of a JSON file that routes every chain role (People, Asset Hub, Bulletin) and the identity backend of the `--network` built-in network to loopback endpoints with their own genesis hashes, under that network's product namespace; see `docs/local-network.md`. Blank is unset; an invalid file is an error, and so is setting it together with `--stack`, a `HOST_CLI_*_WS` override or `--chain-backend light-client`. |
+| `HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS`, `HOST_CLI_BULLETIN_WS` | A chain's `ws://` or `wss://` URL override on a built-in network or a `--stack`, for a fork with the same genesis hashes; each rerouted endpoint must answer with that genesis before a command runs, and one that does not answer is an error (§14.1). Blank is unset. Cannot be set together with `HOST_CLI_LOCAL_NETWORK_CONFIG` or `--chain-backend light-client`. |
+| `HOST_CLI_LOCAL_NETWORK_CONFIG` | Path of a JSON file that routes every chain role (People, Asset Hub, Bulletin) and the identity backend of the `--network` built-in network, which must have disposable identities, to loopback endpoints with their own genesis hashes, under that network's product namespace; see `docs/local-network.md`. Each endpoint must answer with its genesis before a command runs. Blank is unset; an invalid file is an error, and so is setting it together with `--stack`, a `HOST_CLI_*_WS` override or `--chain-backend light-client`. `truapi-host local-network-check` validates it and asks each node for its genesis. |
 | `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `uid.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
 | `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. A stack's `dotns.popController` and the polkadot network's manifest supply the fallback (§14.1). `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
 | `XDG_STATE_HOME` | Preferred default state parent. |

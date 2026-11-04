@@ -2,14 +2,14 @@
 //! Runs under the network's product namespace while replacing every host chain
 //! route.
 
+use std::ffi::{OsStr, OsString};
+
 use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 
-use crate::{
-	chain::ChainBackend,
-	network::{ChainEndpoint, NetworkConfig},
-};
+use crate::network::{ChainEndpoint, NetworkConfig, leak_str, route_roles};
 
+/// Env var naming the local-network JSON file; a blank value is unset.
 pub const CONFIG_ENV: &str = "HOST_CLI_LOCAL_NETWORK_CONFIG";
 
 #[derive(Deserialize)]
@@ -29,51 +29,27 @@ struct LocalChain {
 	genesis: String,
 }
 
-/// The network `base` routed by the local-network file when one is set, and
-/// `base` unchanged otherwise. An invalid file is an error; it never falls
-/// back to a live chain.
-pub fn resolve(base: NetworkConfig, chain_overrides: &[&str]) -> Result<NetworkConfig> {
-	resolve_from(base, config_path(), chain_overrides)
+/// The local-network file's path, or `None` when the variable is unset or blank.
+pub fn config_path() -> Option<OsString> {
+	std::env::var_os(CONFIG_ENV).filter(|path| !path.to_string_lossy().trim().is_empty())
 }
 
-/// The local-network file's path. A blank value is unset, like the other overrides.
-pub fn config_path() -> Option<std::ffi::OsString> {
-	non_blank(std::env::var_os(CONFIG_ENV))
-}
-
-fn non_blank(path: Option<std::ffi::OsString>) -> Option<std::ffi::OsString> {
-	path.filter(|path| !path.to_string_lossy().trim().is_empty())
-}
-
-fn resolve_from(
-	base: NetworkConfig,
-	path: Option<std::ffi::OsString>,
-	chain_overrides: &[&str],
-) -> Result<NetworkConfig> {
-	let Some(path) = path else {
-		return Ok(base);
-	};
+/// `base` routed by the local-network file at `path`. Fails when `base` has
+/// real identities, when the file cannot be read or breaks a rule; it never
+/// falls back to a live chain.
+pub fn resolve(base: NetworkConfig, path: &OsStr) -> Result<NetworkConfig> {
 	ensure!(
-		base.chain_backend != ChainBackend::LightClient,
-		"{CONFIG_ENV} and --chain-backend light-client cannot be used together: the light \
-         client resolves chains by genesis hash from its bundled catalog, which has no local \
-         network; unset one of them"
+		base.disposable_identities,
+		"{CONFIG_ENV} routes a disposable local network, but {} has real identities; pass \
+		 --network paseo-next-v2 or previewnet",
+		base.id
 	);
-	// The chain URL overrides point a network at a fork with the same genesis;
-	// the local-network file replaces the genesis too. Applying one over the
-	// other would route some roles to one network and some to another.
-	ensure!(
-		chain_overrides.is_empty(),
-		"{CONFIG_ENV} and {} cannot be used together: the file routes every chain \
-         itself; unset one of them",
-		chain_overrides.join(", ")
-	);
-	let json = std::fs::read_to_string(&path)
+	let json = std::fs::read_to_string(path)
 		.with_context(|| format!("cannot read {CONFIG_ENV} file {path:?}"))?;
 	parse(base, &json)
 }
 
-fn local_url(value: &str, schemes: &[&str]) -> Result<()> {
+fn ensure_local_url(value: &str, schemes: &[&str]) -> Result<()> {
 	let url = reqwest::Url::parse(value).context("invalid local endpoint URL")?;
 	ensure!(schemes.contains(&url.scheme()), "wrong local endpoint scheme");
 	let host = url.host_str().unwrap_or_default();
@@ -89,7 +65,7 @@ fn local_url(value: &str, schemes: &[&str]) -> Result<()> {
 	Ok(())
 }
 
-fn genesis(value: &str) -> Result<[u8; 32]> {
+fn parse_genesis(value: &str) -> Result<[u8; 32]> {
 	let hex = value.strip_prefix("0x").context("genesis must start with 0x")?;
 	let bytes = hex::decode(hex).context("genesis must contain hexadecimal bytes")?;
 	bytes
@@ -100,36 +76,15 @@ fn genesis(value: &str) -> Result<[u8; 32]> {
 fn parse(mut base: NetworkConfig, json: &str) -> Result<NetworkConfig> {
 	let local: LocalNetwork = serde_json::from_str(json).context("invalid local-network config")?;
 	ensure!(local.network == base.id, "local-network config must match --network {}", base.id);
-	local_url(&local.identity_backend_base, &["http", "https"])?;
-	let chains = [&local.people, &local.asset_hub, &local.bulletin];
-	let mut hashes = Vec::with_capacity(chains.len());
-	for chain in chains {
-		local_url(&chain.ws, &["ws", "wss"])?;
-		let hash = genesis(&chain.genesis)?;
-		ensure!(!hashes.contains(&hash), "each chain must have a distinct genesis hash");
-		hashes.push(hash);
-	}
-
-	// NetworkConfig is Copy with process-lifetime references. Match the existing
-	// backend override's ownership model; validate everything before retaining it.
-	base.identity_backend_base = Some(Box::leak(
-		local.identity_backend_base.trim_end_matches('/').to_owned().into_boxed_str(),
-	));
-	base.people_ws = Box::leak(local.people.ws.into_boxed_str());
-	base.asset_hub_ws = Box::leak(local.asset_hub.ws.into_boxed_str());
-	base.bulletin_ws = Box::leak(local.bulletin.ws.into_boxed_str());
-	base.people_genesis = hashes[0];
-	base.asset_hub_genesis = hashes[1];
-	base.bulletin_genesis = hashes[2];
-	base.live_chain_endpoints = Box::leak(
-		vec![
-			ChainEndpoint { genesis: hashes[0], ws: base.people_ws, required_for_host: true },
-			ChainEndpoint { genesis: hashes[1], ws: base.asset_hub_ws, required_for_host: true },
-			ChainEndpoint { genesis: hashes[2], ws: base.bulletin_ws, required_for_host: true },
-		]
-		.into_boxed_slice(),
-	);
-	Ok(base)
+	ensure_local_url(&local.identity_backend_base, &["http", "https"])?;
+	let endpoint = |chain: &LocalChain| -> Result<ChainEndpoint> {
+		ensure_local_url(&chain.ws, &["ws", "wss"])?;
+		let genesis = parse_genesis(&chain.genesis)?;
+		Ok(ChainEndpoint { genesis, ws: leak_str(&chain.ws), required_for_host: true })
+	};
+	let roles = [endpoint(&local.people)?, endpoint(&local.asset_hub)?, endpoint(&local.bulletin)?];
+	base.identity_backend_base = Some(leak_str(local.identity_backend_base.trim_end_matches('/')));
+	route_roles(base, roles)
 }
 
 #[cfg(test)]
@@ -148,7 +103,7 @@ mod tests {
 	}
 
 	#[test]
-	fn local_routes_cover_every_advertised_chain_for_both_presets() {
+	fn test_local_routes_presets() {
 		for network in [Network::Previewnet, Network::PaseoNextV2] {
 			let base = network.config();
 			let resolved = parse(base, &config(base.id).to_string()).unwrap();
@@ -170,7 +125,7 @@ mod tests {
 	}
 
 	#[test]
-	fn cannot_mix_namespaces_or_leave_a_chain_on_the_live_preset() {
+	fn test_namespace_mismatch_or_missing_chain_error() {
 		let base = Network::PaseoNextV2.config();
 		assert!(parse(base, &config("previewnet").to_string()).is_err());
 		let mut incomplete = config(base.id);
@@ -179,7 +134,7 @@ mod tests {
 	}
 
 	#[test]
-	fn malformed_and_duplicate_genesis_hashes_are_rejected() {
+	fn test_genesis_malformed_or_duplicate_error() {
 		let base = Network::PaseoNextV2.config();
 		for value in ["0x01".to_string(), "0xzz".repeat(32), "11".repeat(32)] {
 			let mut document = config(base.id);
@@ -192,74 +147,32 @@ mod tests {
 	}
 
 	#[test]
-	fn endpoints_must_be_local_and_use_the_right_protocol() {
-		assert!(local_url("ws://[::1]:10010", &["ws", "wss"]).is_ok());
-		assert!(local_url("ws://localhost:10010", &["ws", "wss"]).is_ok());
+	fn test_endpoint_loopback_scheme() {
+		assert!(ensure_local_url("ws://[::1]:10010", &["ws", "wss"]).is_ok());
+		assert!(ensure_local_url("ws://localhost:10010", &["ws", "wss"]).is_ok());
 		for bad in [
 			"wss://people.example/people",
 			"http://localhost:10010",
 			"ws://alice:secret@localhost:10010",
 		] {
-			assert!(local_url(bad, &["ws", "wss"]).is_err());
+			assert!(ensure_local_url(bad, &["ws", "wss"]).is_err());
 		}
 		let mut document = config("previewnet");
 		document["identity_backend_base"] = "https://identity.example/api/v1".into();
 		assert!(parse(Network::Previewnet.config(), &document.to_string()).is_err());
 	}
 
+	/// A local copy runs on disposable identities, so a network whose
+	/// identities are real cannot be routed to one.
 	#[test]
-	fn the_light_client_is_refused_with_a_local_network() {
-		let rpc = Network::PaseoNextV2.config();
-		let light = NetworkConfig { chain_backend: ChainBackend::LightClient, ..rpc };
+	fn test_real_identity_network_error() {
 		let dir = tempfile::tempdir().unwrap();
 		let path = dir.path().join("local-network.json");
-		std::fs::write(&path, config(rpc.id).to_string()).unwrap();
-		let resolve =
-			|base: NetworkConfig| resolve_from(base, Some(path.clone().into_os_string()), &[]);
-
-		let error = resolve(light).expect_err("the light client cannot route a local network");
-		let message = error.to_string();
-		assert!(
-			message.contains(CONFIG_ENV) && message.contains("--chain-backend light-client"),
-			"{message}"
-		);
-		let resolved = resolve(rpc).unwrap();
-		assert!(resolved.people_ws.starts_with("ws://127.0.0.1:"));
-		// Without the local config the light client's own network is untouched.
-		let live = resolve_from(light, None, &[]).unwrap();
-		assert_eq!(live.people_ws, light.people_ws);
-	}
-
-	#[test]
-	fn a_blank_path_is_unset() {
-		for value in ["", "  "] {
-			assert!(non_blank(Some(value.into())).is_none());
-		}
-		assert!(non_blank(Some("/tmp/local-network.json".into())).is_some());
-	}
-
-	#[test]
-	fn chain_url_overrides_are_refused_with_a_local_network() {
-		let base = Network::Previewnet.config();
-		let dir = tempfile::tempdir().unwrap();
-		let path = dir.path().join("local-network.json");
-		std::fs::write(&path, config(base.id).to_string()).unwrap();
-
-		let error = resolve_from(
-			base,
-			Some(path.clone().into_os_string()),
-			&[crate::network::PEOPLE_WS_ENV, crate::network::BULLETIN_WS_ENV],
-		)
-		.expect_err("a fork override and a local network cannot both route the chains");
-		let message = error.to_string();
-		assert!(
-			message.contains(CONFIG_ENV) &&
-				message.contains(crate::network::PEOPLE_WS_ENV) &&
-				message.contains(crate::network::BULLETIN_WS_ENV),
-			"{message}"
-		);
-		// With no override set, the file routes the chains.
-		let local = resolve_from(base, Some(path.into_os_string()), &[]).unwrap();
-		assert_eq!(local.people_ws, "ws://127.0.0.1:10010");
+		std::fs::write(&path, config("polkadot").to_string()).unwrap();
+		let error = resolve(Network::Polkadot.config(), path.as_os_str())
+			.expect_err("local network accepted on polkadot");
+		assert!(error.to_string().contains("real identities"));
+		std::fs::write(&path, config("previewnet").to_string()).unwrap();
+		assert!(resolve(Network::Previewnet.config(), path.as_os_str()).is_ok());
 	}
 }

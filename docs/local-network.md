@@ -4,8 +4,9 @@
 built-in test network. It runs under the product namespace of `--network paseo-next-v2`
 (the default) or `--network previewnet`, and replaces all chain endpoints, genesis routing
 keys and the identity backend together. With the variable unset, the built-in network is
-unchanged. For a local network described by a Trinity stack descriptor, pass the
-descriptor with `--stack` instead (see the CLI README).
+unchanged. `--network polkadot`, whose identities are real, is refused. For a local network
+described by a Trinity stack descriptor, pass the descriptor with `--stack` instead (see the
+CLI README).
 
 Set the variable to the JSON file's path. A blank value is the same as unset. Every field is required; misspelled
 fields, a different network name, non-loopback endpoints, and malformed or duplicate
@@ -32,11 +33,12 @@ not copy hashes from another run.
 }
 ```
 
-`truapi-host network-check` (or its alias `local-network-check`) validates the file and
-prints the resolved routing as JSON without contacting any chain, so a harness can check it
-before starting a session. Before any other command runs, each local endpoint is asked for
-its genesis and must report the file's; one that does not answer is logged and left to fail
-on first use.
+`truapi-host local-network-check --network <network>` validates the file, asks each local
+node for its genesis, and prints the resolved routing as JSON, so a harness can check it
+before starting a session; it fails when the variable is unset. `truapi-host network-check`
+prints the same routing without contacting any chain. Before any other command runs, each
+local endpoint is asked for its genesis and must answer with the file's; one that does not
+answer, or reports another genesis, stops the command.
 
 Use a separate host state directory and a disposable identity for the local run:
 

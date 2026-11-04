@@ -236,15 +236,11 @@ fn bundle_refuses_an_unsigned_stack() {
 	assert!(stderr(&output).contains("signed stack"), "{}", stderr(&output));
 }
 
-/// Runs `truapi-host --stack <stack> network-check [args]` with no inherited backend override.
+/// Runs `truapi-host --stack <stack> network-check [args]` with no routing variable inherited.
 fn network_check(stack: &str, args: &[&str]) -> Output {
-	Command::new(env!("CARGO_BIN_EXE_truapi-host"))
-		.args(["--stack", stack, "network-check"])
-		.args(args)
-		.env("TRUAPI_HOST_NO_UPDATE", "1")
-		.env_remove("HOST_CLI_IDENTITY_BACKEND_BASE")
-		.output()
-		.expect("truapi-host did not start")
+	let mut command = vec!["--stack", stack, "network-check"];
+	command.extend_from_slice(args);
+	host_with_env(&command, &[])
 }
 
 /// A plain descriptor whose roles all point at loopback ports nothing listens on.
@@ -333,24 +329,33 @@ fn test_network_check_polkadot_values() {
 	}
 }
 
-/// `--network` picks a built-in network and `--stack` any other one, so a command takes one of
-/// them, from the flag or from `HOST_CLI_STACK`.
+/// `--network` picks a built-in network and a stack any other one, and the error names where
+/// the stack came from, whichever side of the subcommand the flags are on.
 #[test]
 fn test_network_and_stack_conflict() {
 	let dir = tempfile::tempdir().unwrap();
 	let file = write_descriptor(dir.path(), &local_descriptor(|_| {}));
-	let flags = network_check(&file, &["--network", "previewnet"]);
-	assert!(!flags.status.success());
-	assert!(stderr(&flags).contains("cannot be used with"));
-
-	let variable = Command::new(env!("CARGO_BIN_EXE_truapi-host"))
-		.args(["network-check", "--network", "previewnet"])
-		.env("TRUAPI_HOST_NO_UPDATE", "1")
-		.env("HOST_CLI_STACK", &file)
-		.output()
-		.expect("truapi-host did not start");
-	assert!(!variable.status.success());
-	assert!(stderr(&variable).contains("HOST_CLI_STACK"));
+	let assert_conflict = |args: &[&str], env: &[(&str, &str)], source: &str| {
+		let output = host_with_env(args, env);
+		assert!(!output.status.success());
+		let message = stderr(&output);
+		assert!(message.contains("--network cannot be used with") && message.contains(source));
+	};
+	assert_conflict(
+		&["--network", "previewnet", "--stack", &file, "network-check"],
+		&[],
+		"--stack",
+	);
+	assert_conflict(
+		&["network-check", "--network", "previewnet", "--stack", &file],
+		&[],
+		"--stack",
+	);
+	assert_conflict(
+		&["network-check", "--network", "previewnet"],
+		&[("HOST_CLI_STACK", &file)],
+		"HOST_CLI_STACK",
+	);
 }
 
 #[test]
@@ -362,19 +367,18 @@ fn test_network_check_light_client_stack() {
 	assert!(stderr(&output).contains("--stack"));
 }
 
-/// An exported but empty `HOST_CLI_STACK` is unset, so `--network` selects the built-in network.
+/// Exported but empty `HOST_CLI_STACK` and `HOST_CLI_LOCAL_NETWORK_CONFIG` are unset, so
+/// `--network` selects the built-in network as it is.
 #[test]
-fn test_blank_stack_variable() {
-	let output = Command::new(env!("CARGO_BIN_EXE_truapi-host"))
-		.args(["network-check", "--network", "previewnet"])
-		.env("TRUAPI_HOST_NO_UPDATE", "1")
-		.env("HOST_CLI_STACK", "")
-		.env_remove("HOST_CLI_IDENTITY_BACKEND_BASE")
-		.output()
-		.expect("truapi-host did not start");
+fn test_blank_routing_variables() {
+	let output = host_with_env(
+		&["network-check", "--network", "previewnet"],
+		&[("HOST_CLI_STACK", ""), ("HOST_CLI_LOCAL_NETWORK_CONFIG", " ")],
+	);
 	assert!(output.status.success());
 	let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
 	assert_eq!(report["network"], "previewnet");
+	assert!(!report["people"]["ws"].as_str().unwrap().starts_with("ws://127.0.0.1"));
 }
 
 /// Runs `truapi-host <args>` with `env` set and no other routing variable inherited.
@@ -394,7 +398,7 @@ fn host_with_env(args: &[&str], env: &[(&str, &str)]) -> Output {
 	command.envs(env.iter().copied()).output().expect("truapi-host did not start")
 }
 
-/// A chain URL override reroutes one role of a stack and keeps the stack's genesis.
+/// A chain URL override reroutes one role of a stack, which has the stack's genesis.
 #[test]
 fn test_network_check_chain_override_on_stack() {
 	let dir = tempfile::tempdir().unwrap();
@@ -410,8 +414,10 @@ fn test_network_check_chain_override_on_stack() {
 	assert_eq!(report["people"]["ws"], "ws://127.0.0.1:2");
 }
 
-/// The local-network file routes every chain of the built-in network it names, under that
-/// network's namespace, and `local-network-check` still prints it.
+/// The local-network file routes every chain of the built-in network in its `network` field,
+/// under that network's namespace. `network-check` prints the routing without contacting a
+/// chain; `local-network-check` asks every node for its genesis first, so a local node that does
+/// not answer is an error.
 #[test]
 fn test_local_network_check() {
 	let dir = tempfile::tempdir().unwrap();
@@ -420,27 +426,30 @@ fn test_local_network_check() {
 	let local = serde_json::json!({
 		"network": "previewnet",
 		"identity_backend_base": "http://127.0.0.1:8092/api/v1",
-		"people": chain(10010, "11"),
-		"asset_hub": chain(10020, "22"),
-		"bulletin": chain(10030, "33"),
+		"people": chain(1, "11"),
+		"asset_hub": chain(2, "22"),
+		"bulletin": chain(3, "33"),
 	});
 	fs::write(&path, local.to_string()).unwrap();
 	let path = path.to_str().unwrap();
-	let output = host_with_env(
-		&["--network", "previewnet", "local-network-check"],
-		&[("HOST_CLI_LOCAL_NETWORK_CONFIG", path)],
-	);
+	let local_env = [("HOST_CLI_LOCAL_NETWORK_CONFIG", path)];
+	let output = host_with_env(&["--network", "previewnet", "network-check"], &local_env);
 	assert!(output.status.success());
 	let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
 	assert_eq!(report["network"], "previewnet");
-	assert_eq!(report["people"], chain(10010, "11"));
+	assert_eq!(report["people"], chain(1, "11"));
 	assert_eq!(report["identity_backend_base"], "http://127.0.0.1:8092/api/v1");
 
+	let checked = host_with_env(&["--network", "previewnet", "local-network-check"], &local_env);
+	assert!(!checked.status.success());
+	assert!(stderr(&checked).contains("cannot check the genesis of ws://127.0.0.1:"));
+
+	let unset = host_with_env(&["local-network-check"], &[]);
+	assert!(!unset.status.success());
+	assert!(stderr(&unset).contains("HOST_CLI_LOCAL_NETWORK_CONFIG must be set"));
+
 	let stack = write_descriptor(dir.path(), &local_descriptor(|_| {}));
-	let with_stack = host_with_env(
-		&["--stack", &stack, "network-check"],
-		&[("HOST_CLI_LOCAL_NETWORK_CONFIG", path)],
-	);
+	let with_stack = host_with_env(&["--stack", &stack, "network-check"], &local_env);
 	assert!(!with_stack.status.success());
 	let message = stderr(&with_stack);
 	assert!(message.contains("HOST_CLI_LOCAL_NETWORK_CONFIG") && message.contains("--stack"));

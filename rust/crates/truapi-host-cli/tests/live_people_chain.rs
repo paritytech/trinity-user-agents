@@ -63,9 +63,8 @@ async fn network_suffix_matches_the_preset() {
 		.await
 		.expect("read the live network suffix");
 	assert_eq!(
-		String::from_utf8(live).expect("network suffix is UTF-8"),
-		common::paseo_next_v2().tld,
-		"the paseo-next-v2 stack's tld must match the chain"
+		String::from_utf8(live).expect("network suffix is not UTF-8"),
+		common::paseo_next_v2().tld
 	);
 }
 

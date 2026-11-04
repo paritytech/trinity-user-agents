@@ -27,7 +27,7 @@ One binary, `truapi-host`:
 | `alloc-check` | Diagnose (or `--submit`) on-chain statement-store allowance: ring membership, chosen slot, and the `set_statement_store_account` extrinsic. On a full period it prints each occupied slot's age and which one would be replaced. |
 | `pgas-check` | Diagnose (or `--submit`) an Asset Hub PGAS allowance claim: ring membership on People, whether Asset Hub has imported that ring revision, the day's first unclaimed slot, and the `Pgas.claim_pgas` extrinsic. |
 | `attest` | Attest a given mnemonic's `uid.<tld>` identity for a lite username, wait for its ring membership, and print `{address, publicKey, liteUsername}` as JSON. For e2e suites that hold their own mnemonics. |
-| `network-check` | Resolve the network (`--network` or `--stack`, with any `HOST_CLI_*_WS` or `HOST_CLI_LOCAL_NETWORK_CONFIG` routing) and print it as JSON, without contacting a chain. `local-network-check` is an alias. |
+| `network-check` | Resolve the network (`--network` or `--stack`, with any `HOST_CLI_*_WS` or `HOST_CLI_LOCAL_NETWORK_CONFIG` routing) and print it as JSON, without contacting a chain. |
 | `stack` | Trinity stack descriptors: `keygen`, `publish` a model to `.well-known/trinity-stack.json`, `verify` a link, URL or file, `bundle` the signed copy a host build ships, and print a pointer's `link` and QR code. The rules come from the [`trinity-stack`](../trinity-stack) crate. |
 
 The repository's `make e2e-dotli` target builds this binary and runs the
@@ -1062,7 +1062,8 @@ A command reaches its chains in one of three ways:
   (`HOST_CLI_LOCAL_NETWORK_CONFIG`, a JSON file with every chain's loopback URL and
   genesis hash and the identity backend; see
   [`docs/local-network.md`](../../../docs/local-network.md)). It runs under the
-  product namespace of `--network` and cannot be combined with `--stack`.
+  product namespace of `--network`, which must be a disposable-identity network,
+  and cannot be combined with `--stack`.
 
 On top of a built-in network or a stack, `HOST_CLI_PEOPLE_WS`,
 `HOST_CLI_ASSET_HUB_WS` and `HOST_CLI_BULLETIN_WS` swap one chain's URL for a fork
@@ -1072,8 +1073,9 @@ light client. `attest` against a fork also needs `HOST_CLI_IDENTITY_BACKEND_BASE
 pointing at a backend that serves the fork.
 
 Before anything runs, every endpoint a `--stack` or an override supplies is asked
-for its genesis: one that reports a genesis other than the one it is routed as is an
-error, and one that does not answer is logged and left to fail on first use.
+for its genesis, and one that reports a genesis other than the one it is routed as
+is an error. An endpoint an override or the local file reroutes must answer; one of
+a `--stack` that does not answer is logged and left to fail on first use.
 Identities on a stack or a local copy are disposable, so one whose chains carry
 Polkadot's genesis hashes, whose `tld` is `dot` or whose namespace is `polkadot` is
 refused.
