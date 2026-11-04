@@ -427,7 +427,7 @@ fn an_unfinalized_write_returns_the_submitted_extrinsic_and_its_era() {
 			extrinsic: EncodedExtrinsic::new(node.submissions[0].clone()),
 			mortality: Mortality::new(node.node.block(4), DEFAULT_MORTALITY_PERIOD).unwrap(),
 		};
-		assert_eq!((extrinsic, event), (submitted, expected));
+		assert_eq!((*extrinsic, event), (submitted, expected));
 	}
 }
 
@@ -461,7 +461,7 @@ fn an_unreadable_outcome_names_the_finalized_block_the_watch_reported() {
 			extrinsic: EncodedExtrinsic::new(node.submissions[0].clone()),
 			mortality: Mortality::new(node.node.block(4), DEFAULT_MORTALITY_PERIOD).unwrap(),
 		};
-		assert_eq!((extrinsic, block), (submitted, node.node.block(node.node.finalized).hash));
+		assert_eq!((*extrinsic, block), (submitted, node.node.block(node.node.finalized).hash));
 	}
 }
 

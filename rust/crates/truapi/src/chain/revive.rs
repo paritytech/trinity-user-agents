@@ -57,7 +57,7 @@ pub enum EvmContractError {
 	#[error("extrinsic {hash:?} was not finalized: {event:?}", hash = .extrinsic.extrinsic.hash())]
 	NotFinalized {
 		/// The submitted extrinsic and its era.
-		extrinsic: MortalExtrinsic,
+		extrinsic: Box<MortalExtrinsic>,
 		/// The event that ended the watch, [`WatchEvent::Error`] when sending
 		/// or watching failed.
 		event: WatchEvent,
@@ -73,7 +73,7 @@ pub enum EvmContractError {
 	)]
 	OutcomeUnreadable {
 		/// The submitted extrinsic.
-		extrinsic: MortalExtrinsic,
+		extrinsic: Box<MortalExtrinsic>,
 		/// The finalized block the watch reported.
 		block: H256,
 		/// Why the outcome could not be read.
@@ -209,6 +209,7 @@ async fn submit_until_finalized(
 	genesis: H256,
 	extrinsic: MortalExtrinsic,
 ) -> Result<(), EvmContractError> {
+	let extrinsic = Box::new(extrinsic);
 	let block = match finalized_inclusion(chain, genesis, &extrinsic.extrinsic).await {
 		Ok(block) => block,
 		Err(event) => return Err(EvmContractError::NotFinalized { extrinsic, event }),
