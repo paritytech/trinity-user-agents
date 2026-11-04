@@ -414,6 +414,31 @@ describe("the chat v2 draft provider", () => {
     await expect(provider.timeline("ada")).rejects.toThrow("not running");
   });
 
+  test("a room's menu entries show on its summary, and a choice goes to the product as it is", async () => {
+    const { provider, product, seen } = await setup();
+    expect(provider.conversations()[0]!.actions).toBeUndefined();
+    seen.length = 0;
+    await product.setRoomActions({
+      roomId: "ada",
+      actions: [{ actionId: "again", label: "Start over", destructive: false }],
+    });
+    expect(provider.conversations()[0]!.actions).toEqual([
+      { id: "again", label: "Start over", destructive: false },
+    ]);
+    // The screen is told, so an open room draws its menu again.
+    expect(seen.map((event) => event.type)).toContain("conversations");
+    const chosen: string[] = [];
+    await product.actionSubscribe(({ payload }) =>
+      chosen.push(payload.value.actionId),
+    );
+    await provider.triggerRoomAction("ada", "again");
+    await expect(provider.triggerRoomAction("ada", "other")).rejects.toThrow(
+      "This option is not offered any more.",
+    );
+    await settle();
+    expect(chosen).toEqual(["again"]);
+  });
+
   test("delete_room takes the room off the list", async () => {
     const { provider, product } = await setup();
     await product.deleteRoom({ roomId: "ada" });

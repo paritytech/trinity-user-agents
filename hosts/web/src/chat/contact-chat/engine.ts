@@ -59,6 +59,10 @@ import {
  * Decline is silent: a request nobody answers stays pending until the
  * user cancels it in the host.
  *
+ * Start over replaces a connected conversation's connection with a new one,
+ * through a new request the other side must accept; it keeps the history and
+ * tells the earlier connection nothing (`startOver`).
+ *
  * Restarts: the conversation is saved, and the save confirmed kept, before
  * each call to the host that acts on it (request, reply, complete); a save
  * that fails makes no call. So a restart between the two finds it. A sent request the host knows but this
@@ -71,6 +75,13 @@ import {
 
 /** What the recipient's host shows beside an invitation with no first message. */
 export const DEFAULT_PURPOSE = "Wants to chat with you in Contact Chat.";
+
+/** What the other side's host shows beside a Start over request. */
+export const START_OVER_PURPOSE =
+  "Started your chat over. Accept this new request to reconnect.";
+
+/** The id of Start over, an entry of a connected conversation's options menu. */
+export const START_OVER = "start-over";
 
 /** What a connected conversation's room says under its name. */
 export const CONNECTED_SUBTITLE = "Connected · messages are not encrypted";
@@ -140,6 +151,14 @@ interface StoredConversation {
   session?: unknown;
   /** Until when the host said the account may post. */
   allowedUntil?: number;
+  /** Where this connection's own messages start in `messages`: earlier ones were posted in an earlier connection. */
+  windowStart?: number;
+  /**
+   * A Start over the user chose, kept until the host holds its request:
+   * the new account and invitation, and when it was made. The connection it
+   * replaces stays as it is until then.
+   */
+  restart?: { at: number; index: string; account: string; pending: unknown };
   messages: StoredMessage[];
 }
 
@@ -205,9 +224,11 @@ export class ContactChat implements ConversationEngine {
   private readonly checking = new Set<string>();
   /** Conversations whose invitation this run handed the host and has no answer for yet. */
   private readonly inviting = new Set<string>();
+  /** Conversations whose Start over this run is making, until the host answers. */
+  private readonly restarting = new Set<string>();
   /** The topics followed, by conversation: how to stop. */
   private readonly following = new Map<string, () => void>();
-  /** An allowance being asked for, by conversation, so concurrent sends ask once. */
+  /** An allowance being asked for, by account index, so concurrent sends ask once. */
   private readonly allowing = new Map<string, Promise<string | null>>();
   /** The post in flight, by conversation: the next one waits for it, so expiries rise in order. */
   private readonly posting = new Map<string, Promise<void>>();
@@ -336,6 +357,10 @@ export class ContactChat implements ConversationEngine {
         subtitle: SUBTITLE[conversation.status],
         participants: [{ id: PEER, name: "Contact", handle }],
         contact: { handle, state: CONTACT_STATE[conversation.status] },
+        ...(conversation.status === "connected" &&
+        !this.restarting.has(conversation.id)
+          ? { actions: [{ id: START_OVER, label: "Start over" }] }
+          : {}),
         composer:
           conversation.status === "connected"
             ? { allowed: true }
@@ -371,6 +396,158 @@ export class ContactChat implements ConversationEngine {
       }));
   }
 
+  /** The user chose an entry the conversation's menu offers: only Start over, while connected. */
+  async act(conversationId: string, actionId: string): Promise<void> {
+    const conversation = this.find(conversationId);
+    const offered = this.conversations()
+      .find((entry) => entry.id === conversationId)
+      ?.actions?.some((action) => action.id === actionId);
+    if (offered === true && actionId === START_OVER)
+      return this.startOver(conversationId);
+    // A Start over chosen from a menu drawn before the chat changed: the room says why nothing happened.
+    if (conversation !== undefined && actionId === START_OVER) {
+      this.system(
+        conversation,
+        this.restarting.has(conversation.id)
+          ? "Start over is already waiting for your answer."
+          : "Start over is offered only while the chat is connected.",
+      );
+      this.save();
+      return;
+    }
+    throw new Error("This option is not offered any more.");
+  }
+
+  /**
+   * The user chose Start over in a connected conversation: a new
+   * conversation account and invitation go to the host, which asks the user
+   * before the request leaves. Until the host holds it, the connection stays
+   * as it was; a request the user dismisses or the host refuses changes
+   * nothing. Once the host holds it, the earlier connection ends here: this
+   * side stops reading it, keeps its history, and waits for the other side to
+   * accept the new request. The other side is not told anything else.
+   */
+  async startOver(conversationId: string): Promise<void> {
+    const conversation = this.find(conversationId);
+    if (conversation?.status !== "connected")
+      throw new Error("Only a connected chat can start over.");
+    if (this.restarting.has(conversation.id))
+      throw new Error("Start over is already waiting for your answer.");
+    // The menu drops Start over while this one is being made, so it is not chosen twice.
+    this.restarting.add(conversation.id);
+    this.changed();
+    try {
+      await this.restart(conversation);
+    } finally {
+      this.restarting.delete(conversation.id);
+      this.changed();
+    }
+  }
+
+  private async restart(conversation: StoredConversation): Promise<void> {
+    const session = conversation.session;
+    const notRestarted = (why: string) => {
+      delete conversation.restart;
+      this.system(
+        conversation,
+        `Start over did not happen: ${why}. This chat is as it was.`,
+      );
+      this.save();
+    };
+    const index = toHex(this.deps.random(32));
+    let account: string;
+    try {
+      account = await this.deps.statements.account(index);
+    } catch (error) {
+      this.deps.report?.(`account: ${errorText(error)}`);
+      return notRestarted(
+        "Contact Chat could not get an account for the new chat",
+      );
+    }
+    if (conversation.status !== "connected" || conversation.session !== session)
+      return;
+    const { payload, pending } = this.deps.protocol.invite(
+      account,
+      this.deps.random,
+    );
+    const candidate = { at: this.deps.now(), index, account, pending };
+    conversation.restart = candidate;
+    if (!(await this.persist()))
+      return notRestarted("Contact Chat could not save it");
+    // Accepting their request while the save waited replaced this Start over: nothing is sent.
+    if (conversation.restart !== candidate) return;
+    const result = await this.deps.requests.call({
+      call: "request",
+      request: {
+        contact: { bytes: conversation.contact },
+        purpose: START_OVER_PURPOSE,
+        payload,
+      },
+    });
+    if (conversation.restart !== candidate) {
+      // Accepting their request replaced the conversation meanwhile: nothing waits for this one.
+      if (
+        result.ok &&
+        result.request !== undefined &&
+        conversation.request !== result.request.handle
+      )
+        await this.deps.requests.call({
+          call: "cancel",
+          handle: result.request.handle,
+        });
+      return;
+    }
+    if (result.ok && result.request !== undefined)
+      return this.restarted(conversation, result.request.handle);
+    if (!result.ok && result.reason === "Dismissed") {
+      delete conversation.restart;
+      this.save();
+      return;
+    }
+    notRestarted(result.ok ? "the host gave no request" : result.detail);
+  }
+
+  /**
+   * The host holds the Start over request `handle`: the earlier connection
+   * ends here, and the conversation waits for its new request to be accepted.
+   * A message of the earlier connection still sending is failed, and is not
+   * sent again in the new one.
+   */
+  private restarted(conversation: StoredConversation, handle: string): void {
+    const candidate = conversation.restart!;
+    this.endConnection(conversation);
+    conversation.role = "sender";
+    conversation.status = "waiting";
+    conversation.request = handle;
+    conversation.index = candidate.index;
+    conversation.account = candidate.account;
+    conversation.pending = candidate.pending;
+    delete conversation.restart;
+    delete conversation.session;
+    this.system(
+      conversation,
+      "You started over. Your earlier connection ended here; they must accept your new chat request.",
+    );
+    this.save();
+  }
+
+  /**
+   * The connection `conversation` had ends here: this side stops reading it,
+   * its own messages still sending in it are failed, and a new window starts
+   * after the history. A message before that window is kept, but neither
+   * posted nor retried again in a later connection.
+   */
+  private endConnection(conversation: StoredConversation): void {
+    this.unfollow(conversation);
+    for (const message of conversation.messages)
+      if (message.author === "self" && message.state === "sending")
+        message.state = "failed";
+    conversation.windowStart = conversation.messages.length;
+    this.lastBatch.delete(conversation.id);
+    delete conversation.allowedUntil;
+    delete conversation.lastExpiry;
+  }
+
   /**
    * The user chose someone in the host's New chat. A conversation with them
    * that is open is opened; otherwise a new invitation goes to the host,
@@ -398,14 +575,13 @@ export class ContactChat implements ConversationEngine {
       messages: [],
     };
     if (known === undefined) this.record.conversations.push(conversation);
-    this.unfollow(conversation);
+    this.endConnection(conversation);
     conversation.role = "sender";
     conversation.status = "sending";
     delete conversation.request;
     delete conversation.session;
-    delete conversation.allowedUntil;
-    delete conversation.lastExpiry;
     delete conversation.account;
+    delete conversation.restart;
     // A new invitation is a new conversation: it gets an account of its own.
     conversation.index = toHex(this.deps.random(32));
     delete conversation.pending;
@@ -524,6 +700,10 @@ export class ContactChat implements ConversationEngine {
       throw new Error("Only a message that failed is sent again.");
     if (conversation.status !== "connected")
       throw new Error("The chat is not connected.");
+    if (
+      conversation.messages.indexOf(message) < (conversation.windowStart ?? 0)
+    )
+      throw new Error("This message was written in an earlier connection.");
     message.state = "sending";
     this.save();
     void this.deliver(conversation);
@@ -547,9 +727,11 @@ export class ContactChat implements ConversationEngine {
   }
 
   private async postWindow(conversation: StoredConversation): Promise<void> {
-    const own = conversation.messages.filter(
-      (message) => message.author === "self",
-    );
+    // A Start over may replace the connection while this post waits: it ends on the one it began with.
+    const { session, index } = conversation;
+    const own = conversation.messages
+      .slice(conversation.windowStart ?? 0)
+      .filter((message) => message.author === "self");
     if (!own.some((message) => message.state === "sending")) return;
     const fail = (problem: string) => {
       this.deps.report?.(`send: ${problem}`);
@@ -562,7 +744,7 @@ export class ContactChat implements ConversationEngine {
       this.count(conversation.id, "failed", failed);
       this.save();
     };
-    if (conversation.index === undefined)
+    if (index === undefined)
       return fail("This chat has no account to post with.");
     const refused = await this.allow(conversation);
     if (refused !== null) {
@@ -573,25 +755,26 @@ export class ContactChat implements ConversationEngine {
       return fail(refused);
     }
     const { post, carried } = this.deps.protocol.post(
-      conversation.session,
+      session,
       own.map(({ id, text, at }) => ({ id, text, at })),
     );
+    const current = () => conversation.index === index;
     const expiry = messageExpiry(
-      conversation.lastExpiry === undefined
+      !current() || conversation.lastExpiry === undefined
         ? null
         : BigInt(conversation.lastExpiry),
       this.deps.now(),
     );
     try {
-      await this.deps.statements.post(conversation.index, post, expiry);
+      await this.deps.statements.post(index, post, expiry);
     } catch (error) {
       // The allowance may have lapsed: the next send asks the host again.
-      delete conversation.allowedUntil;
+      if (current()) delete conversation.allowedUntil;
       const reason = errorText(error);
       this.system(conversation, `Your message was not sent: ${reason}`);
       return fail(reason);
     }
-    conversation.lastExpiry = expiry.toString();
+    if (current()) conversation.lastExpiry = expiry.toString();
     let sent = 0;
     let failed = 0;
     for (const message of own)
@@ -602,11 +785,13 @@ export class ContactChat implements ConversationEngine {
         message.state = "failed";
         failed += 1;
       }
-    this.lastBatch.set(conversation.id, {
-      messages: carried.length,
-      bytes: (post.data.length - 2) / 2,
-    });
-    this.count(conversation.id, "posts", 1);
+    if (current()) {
+      this.lastBatch.set(conversation.id, {
+        messages: carried.length,
+        bytes: (post.data.length - 2) / 2,
+      });
+      this.count(conversation.id, "posts", 1);
+    }
     this.count(conversation.id, "sent", sent);
     this.count(conversation.id, "failed", failed);
     this.save();
@@ -616,26 +801,26 @@ export class ContactChat implements ConversationEngine {
   private allow(conversation: StoredConversation): Promise<string | null> {
     if ((conversation.allowedUntil ?? 0) > this.deps.now())
       return Promise.resolve(null);
-    const asking = this.allowing.get(conversation.id);
+    const { request, index } = conversation;
+    if (request === undefined || index === undefined)
+      return Promise.resolve("This chat has no request to post under.");
+    const asking = this.allowing.get(index);
     if (asking !== undefined) return asking;
     const ask = (async (): Promise<string | null> => {
-      if (
-        conversation.request === undefined ||
-        conversation.index === undefined
-      )
-        return "This chat has no request to post under.";
       const result = await this.deps.requests.call({
         call: "chatAccount",
-        handle: conversation.request,
-        index: conversation.index,
+        handle: request,
+        index,
       });
       if (!result.ok) return result.detail;
       if (result.allowance === undefined) return "The host gave no allowance.";
-      conversation.allowedUntil = result.allowance.until;
-      this.save();
+      if (conversation.index === index) {
+        conversation.allowedUntil = result.allowance.until;
+        this.save();
+      }
       return null;
-    })().finally(() => this.allowing.delete(conversation.id));
-    this.allowing.set(conversation.id, ask);
+    })().finally(() => this.allowing.delete(index));
+    this.allowing.set(index, ask);
     return ask;
   }
 
@@ -767,10 +952,26 @@ export class ContactChat implements ConversationEngine {
     this.save();
   }
 
-  /** The conversation still sending to `view`'s contact, given the handle the host gave it. */
+  /**
+   * The conversation that asked the host for `view`, a request it holds,
+   * when this engine stopped before it kept the handle: one still sending to
+   * that contact, or one connected whose Start over the host took. A Start
+   * over is matched only by a request made after it.
+   */
   private adopt(view: OutgoingView): StoredConversation | undefined {
     if (view.status !== "waiting" && view.status !== "paused") return;
     const contact = view.contact.bytes.toLowerCase();
+    const restarted = this.record.conversations.find(
+      (entry) =>
+        entry.contact === contact &&
+        entry.status === "connected" &&
+        entry.restart !== undefined &&
+        view.createdAt >= entry.restart.at,
+    );
+    if (restarted !== undefined) {
+      this.restarted(restarted, view.handle);
+      return restarted;
+    }
     const conversation = this.record.conversations.find(
       (entry) =>
         entry.role === "sender" &&
@@ -896,7 +1097,7 @@ export class ContactChat implements ConversationEngine {
       messages: [],
     };
     if (known === undefined) this.record.conversations.push(conversation);
-    this.unfollow(conversation);
+    this.endConnection(conversation);
     conversation.role = "recipient";
     conversation.status = "accepting";
     conversation.request = request.handle;
@@ -904,8 +1105,7 @@ export class ContactChat implements ConversationEngine {
     conversation.account = account;
     conversation.session = made.session;
     delete conversation.pending;
-    delete conversation.allowedUntil;
-    delete conversation.lastExpiry;
+    delete conversation.restart;
     // Kept before the reply leaves, so a restart in between still has it.
     this.save();
     if (!(await this.persist())) {
@@ -972,6 +1172,11 @@ export class ContactChat implements ConversationEngine {
 
   private save(): void {
     this.deps.storage.setItem(this.deps.recordKey, JSON.stringify(this.record));
+    this.changed();
+  }
+
+  /** Tell the listeners what the engine answers may have changed. */
+  private changed(): void {
     for (const listener of [...this.listeners]) listener();
     for (const listener of [...this.diagnosticsListeners]) listener();
   }

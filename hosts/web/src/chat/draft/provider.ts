@@ -44,6 +44,9 @@ import type { ChatV2Change, ChatV2Host, V2Room } from "./host.js";
  *   screen read the newest page again, which drops what the page no longer
  *   holds;
  * - `Seen` goes out only for a room that sets `reportSeen`;
+ * - DRAFT: entries a room declares for its options menu (`set_room_actions`)
+ *   show there, and a choice goes to the product as `RoomActionTriggered` on
+ *   its `action_subscribe` stream;
  * - `"user"` is the user, `"product"` the product, and other participant ids
  *   are named through `participants_query` `ByIds`.
  *
@@ -514,6 +517,15 @@ export class ChatV2Provider implements ChatProvider {
           : badge?.tag === "Hidden"
             ? { unread: 0 }
             : {}),
+        ...(room.actions === undefined || room.actions.length === 0
+          ? {}
+          : {
+              actions: room.actions.map(({ actionId, label, destructive }) => ({
+                id: actionId,
+                label,
+                destructive,
+              })),
+            }),
       };
     });
   }
@@ -709,6 +721,16 @@ export class ChatV2Provider implements ChatProvider {
       },
     });
     if (answer.isErr()) throw new Error(refusalText(answer.error));
+  }
+
+  /** The user chose `actionId` in the room's options menu. What it does is the product's. */
+  async triggerRoomAction(roomId: string, actionId: string): Promise<void> {
+    const refused = this.host.triggerRoomAction(
+      this.productId,
+      roomId,
+      actionId,
+    );
+    if (refused !== null) throw new Error(refused);
   }
 
   /** Tell the product the user saw this message, when the room asks for it. */

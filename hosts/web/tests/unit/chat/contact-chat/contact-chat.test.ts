@@ -20,7 +20,12 @@ import {
   type ProductPort,
   type SendPrompt,
 } from "../../../../src/invitations/invitation-service.js";
-import { cryptoRandom, toHex } from "../../../../src/invitations/sealing.js";
+import {
+  cryptoRandom,
+  fromHex,
+  fromUtf8,
+  toHex,
+} from "../../../../src/invitations/sealing.js";
 import { NotificationStore } from "../../../../src/notifications/notifications.js";
 import type { InvitationEvent } from "../../../../src/invitations/observer.js";
 import { MemoryStorage } from "../../../support/test-support.js";
@@ -45,6 +50,8 @@ import {
 import {
   CONNECTED_SUBTITLE,
   ContactChat,
+  START_OVER,
+  START_OVER_PURPOSE,
 } from "../../../../src/chat/contact-chat/engine.js";
 import type { HostRequests } from "../../../../src/chat/contact-chat/requests.js";
 import {
@@ -324,6 +331,17 @@ class User {
     await settle();
   }
 
+  /** The entries the room's options menu shows. */
+  menu(roomId: string): string[] {
+    return (this.room(roomId).actions ?? []).map((action) => action.label);
+  }
+
+  /** The user chooses Start over in the room's options menu. */
+  async startOver(roomId: string): Promise<void> {
+    await this.provider.triggerRoomAction(roomId, START_OVER);
+    await settle();
+  }
+
   /** Every product-visible thing: what it heard and what it stored. */
   visible(): string {
     const kept = Array.from(
@@ -396,6 +414,7 @@ describe("Contact Chat between two hosts, by contact handle", () => {
     // The host asked Alice before the request left, and named Bob there.
     expect(alice.prompts.map((prompt) => prompt.to.name)).toEqual(["Bob"]);
     expect(alice.room(roomId).title).toBe("Bob");
+    expect(alice.menu(roomId)).toEqual([]);
     expect(alice.provider.composer(roomId)).toEqual({
       kind: "blocked",
       reason: "Waiting for them to accept your request",
@@ -436,6 +455,11 @@ describe("Contact Chat between two hosts, by contact handle", () => {
       alice.room(roomId).subtitle,
       bob.room(bobRoom.id).subtitle,
     ]).toEqual([CONNECTED_SUBTITLE, CONNECTED_SUBTITLE]);
+    // A connected room offers Start over in its options menu, not in its feed.
+    expect([alice.menu(roomId), bob.menu(bobRoom.id)]).toEqual([
+      ["Start over"],
+      ["Start over"],
+    ]);
 
     await alice.provider.send(roomId, "Hello Bob");
     await settle();
@@ -1060,5 +1084,215 @@ describe("Contact Chat between two hosts, by contact handle", () => {
       before.session,
       before.account,
     ]);
+  });
+});
+
+describe("Start over in a connected Contact Chat conversation", () => {
+  /** Alice and Bob connected, with one message each way. */
+  async function connected() {
+    const parts = world();
+    const { alice, bob } = parts;
+    await alice.start();
+    await bob.start();
+    const roomId = await alice.startWith(BOB, "");
+    await bob.acceptNewest();
+    await settle();
+    const bobRoomId = bob.only().id;
+    await alice.provider.send(roomId, "Hello Bob");
+    await settle();
+    await bob.provider.send(bobRoomId, "Hello Alice");
+    await settle();
+    return { ...parts, roomId, bobRoomId };
+  }
+
+  /** The texts one post of `signer` carries. */
+  const carried = (store: MemoryChatStatements, signer: string) =>
+    (
+      JSON.parse(
+        fromUtf8(
+          fromHex(
+            store.taken.filter((post) => post.signer === signer).at(-1)!.data,
+          ),
+        ),
+      ) as { messages: { text: string }[] }
+    ).messages.map((message) => message.text);
+
+  test("sends a new request on a new account and stops reading the old one; their Accept connects both on new accounts and topics, and each reads what the other wrote while away", async () => {
+    const { alice, bob, carol, clock, store, roomId, bobRoomId } =
+      await connected();
+    // Another conversation of Alice's, which Start over must not touch.
+    await carol.start();
+    await alice.startWith(CAROL, "");
+    await carol.acceptNewest();
+    await settle();
+    const withCarol = structuredClone(alice.engine.stored()[1]!);
+    expect(withCarol.status).toBe("connected");
+    const before = structuredClone(alice.engine.stored()[0]!);
+    const bobBefore = structuredClone(bob.engine.stored()[0]!);
+    const oldListen = (before.session as Session).listen;
+    expect(store.followersOf(oldListen)).toBe(1);
+
+    clock.advance(60_000);
+    await alice.startOver(roomId);
+
+    // The host asked Alice before the new request left, with what Bob sees.
+    expect(
+      alice.prompts.map((prompt) => [prompt.to.name, prompt.purpose]),
+    ).toEqual([
+      ["Bob", "Wants to chat with you in Contact Chat."],
+      ["Carol", "Wants to chat with you in Contact Chat."],
+      ["Bob", START_OVER_PURPOSE],
+    ]);
+    const after = alice.engine.stored()[0]!;
+    expect({
+      status: after.status,
+      session: after.session,
+      newIndex: after.index !== before.index,
+      newRequest: after.request !== before.request,
+    }).toEqual({
+      status: "waiting",
+      session: undefined,
+      newIndex: true,
+      newRequest: true,
+    });
+    expect(store.followersOf(oldListen)).toBe(0);
+    // The developer tools no longer report the earlier connection's last post.
+    expect(alice.engine.diagnostics()[0]!.facts).toBeUndefined();
+    expect(alice.provider.composer(roomId)).toEqual({
+      kind: "blocked",
+      reason: "Waiting for them to accept your request",
+    });
+    // Start over leaves the menu until they accept; a second choice is refused.
+    expect(alice.menu(roomId)).toEqual([]);
+    await expect(
+      alice.provider.triggerRoomAction(roomId, START_OVER),
+    ).rejects.toThrow("This option is not offered any more.");
+    // The history stays and the break is marked.
+    expect(texts(await alice.timeline(roomId))).toEqual([
+      { from: PRODUCT.id, text: "You sent a chat request" },
+      { from: PRODUCT.id, text: "They accepted your chat request" },
+      { from: "You", text: "Hello Bob" },
+      { from: "Bob", text: "Hello Alice" },
+      {
+        from: PRODUCT.id,
+        text: "You started over. Your earlier connection ended here; they must accept your new chat request.",
+      },
+    ]);
+
+    // Bob's host holds a second request with its own id; his chat is not told anything.
+    expect(bob.notifications.list().map((item) => item.purpose)).toEqual([
+      START_OVER_PURPOSE,
+      "Wants to chat with you in Contact Chat.",
+    ]);
+    expect(
+      new Set(bob.service.received.list().map((item) => item.context.requestId))
+        .size,
+    ).toBe(2);
+    expect(bob.engine.stored()[0]!.session).toEqual(bobBefore.session);
+    expect(alice.engine.stored()[1]).toEqual(withCarol);
+
+    await bob.acceptNewest();
+    await settle();
+    const aliceSide = alice.engine.stored()[0]!;
+    const bobSide = bob.engine.stored()[0]!;
+    const aliceSession = aliceSide.session as Session;
+    const bobSession = bobSide.session as Session;
+    expect([aliceSide.status, bobSide.status]).toEqual([
+      "connected",
+      "connected",
+    ]);
+    expect([aliceSession.listen, aliceSession.send]).toEqual([
+      bobSession.send,
+      bobSession.listen,
+    ]);
+    expect([aliceSession.peer, bobSession.peer]).toEqual([
+      MemoryChatStatements.account(PRODUCT.id, bobSide.index!),
+      MemoryChatStatements.account(PRODUCT.id, aliceSide.index!),
+    ]);
+    expect([
+      bobSide.index === bobBefore.index,
+      aliceSession.listen === oldListen,
+      bobSession.listen === (bobBefore.session as Session).listen,
+    ]).toEqual([false, false, false]);
+
+    // Each side reads what the other wrote while it was away.
+    bob.stop();
+    await alice.provider.send(roomId, "Again, Bob");
+    await settle();
+    await bob.start();
+    alice.stop();
+    await bob.provider.send(bobRoomId, "Again, Alice");
+    await settle();
+    await alice.start();
+    expect((await said(bob, bobRoomId)).map((m) => m.text)).toEqual([
+      "Hello Bob",
+      "Hello Alice",
+      "Again, Bob",
+      "Again, Alice",
+    ]);
+    expect((await said(alice, roomId)).map((m) => m.text)).toEqual([
+      "Hello Bob",
+      "Hello Alice",
+      "Again, Bob",
+      "Again, Alice",
+    ]);
+    // Both rooms offer Start over again, in the menu; neither feed holds a button.
+    expect([alice.menu(roomId), bob.menu(bobRoomId)]).toEqual([
+      ["Start over"],
+      ["Start over"],
+    ]);
+    for (const [side, id] of [
+      [alice, roomId],
+      [bob, bobRoomId],
+    ] as const)
+      expect(
+        (await side.timeline(id)).filter(
+          (message) => message.content.tag === "Actions",
+        ),
+      ).toEqual([]);
+    // The new connection posts only what was written in it.
+    expect([
+      carried(store, aliceSide.account!),
+      carried(store, bobSide.account!),
+    ]).toEqual([["Again, Bob"], ["Again, Alice"]]);
+  });
+
+  test("a Start over the user does not send changes nothing, and the old connection still carries messages", async () => {
+    const { alice, bob, roomId, bobRoomId } = await connected();
+    const before = structuredClone(alice.engine.stored()[0]!);
+    alice.confirm = false;
+    await alice.startOver(roomId);
+    expect(alice.prompts.map((prompt) => prompt.purpose).at(-1)).toBe(
+      START_OVER_PURPOSE,
+    );
+    expect(alice.engine.stored()[0]).toEqual(before);
+    expect(bob.notifications.list()).toHaveLength(1);
+    expect(alice.menu(roomId)).toEqual(["Start over"]);
+
+    await alice.provider.send(roomId, "Still here");
+    await settle();
+    expect((await said(bob, bobRoomId)).map((m) => m.text)).toEqual([
+      "Hello Bob",
+      "Hello Alice",
+      "Still here",
+    ]);
+  });
+
+  test("after Start over, what the peer posts on the earlier connection is not read", async () => {
+    const { alice, bob, roomId, bobRoomId } = await connected();
+    await alice.startOver(roomId);
+    // Bob has not accepted the new request: he still writes on the old connection.
+    await bob.provider.send(bobRoomId, "Anyone there?");
+    await settle();
+    expect((await said(alice, roomId)).map((m) => m.text)).toEqual([
+      "Hello Bob",
+      "Hello Alice",
+    ]);
+    // The first request is completed: nothing Bob's host posts for it reaches Alice's chat.
+    expect(alice.service.outbox.list().map((item) => item.state.tag)).toEqual([
+      "completed",
+      "waiting",
+    ]);
+    expect(alice.engine.stored()[0]!.status).toBe("waiting");
   });
 });

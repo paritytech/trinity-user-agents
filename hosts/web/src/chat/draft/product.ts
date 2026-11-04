@@ -5,6 +5,7 @@ import {
   CHAT_V2_DRAFT,
   messagePortBridge,
   type BridgePort,
+  type ChatV2ActionItem,
   type ChatV2Connect,
   type ChatV2Envelope,
   type HostChatRoomEventsSubscribeItem,
@@ -59,6 +60,14 @@ export interface ChatV2Product {
   roomEventsSubscribe(
     listener: (item: HostChatRoomEventsSubscribeItem) => void,
   ): Answer<"roomEventsSubscribe">;
+  /** DRAFT: the product's entries of a room's options menu. */
+  setRoomActions(
+    request: ProductCalls["setRoomActions"][0],
+  ): Answer<"setRoomActions">;
+  /** Follow `action_subscribe`: what the user chose in the menus of the product's rooms. A second subscription replaces the first. */
+  actionSubscribe(
+    listener: (item: ChatV2ActionItem) => void,
+  ): Answer<"actionSubscribe">;
   onMessagesQuery(handler: QueryHandler<"messagesQuery">): void;
   onUserAction(handler: QueryHandler<"userAction">): void;
   onParticipantsQuery(handler: QueryHandler<"participantsQuery">): void;
@@ -84,6 +93,7 @@ export function chatV2Over(port: BridgePort): ChatV2Product {
   const handlers = new Map<QueryMethod, QueryHandler<QueryMethod>>();
   const open = new Set<number>();
   let events: ((item: HostChatRoomEventsSubscribeItem) => void) | null = null;
+  let actions: ((item: ChatV2ActionItem) => void) | null = null;
   let closed = false;
 
   const call = <M extends ProductMethod>(
@@ -162,6 +172,9 @@ export function chatV2Over(port: BridgePort): ChatV2Product {
       case "roomEvent":
         events?.(message.item);
         return;
+      case "action":
+        actions?.(message.item);
+        return;
     }
   });
 
@@ -172,12 +185,17 @@ export function chatV2Over(port: BridgePort): ChatV2Product {
     setRoomFeatures: (request) => call("setRoomFeatures", request),
     setRoomCall: (request) => call("setRoomCall", request),
     setRoomContact: (request) => call("setRoomContact", request),
+    setRoomActions: (request) => call("setRoomActions", request),
     deleteRoom: (request) => call("deleteRoom", request),
     updateFeed: (request) => call("updateFeed", request),
     capabilities: () => call("capabilities", {}),
     roomEventsSubscribe(listener) {
       events = listener;
       return call("roomEventsSubscribe", {});
+    },
+    actionSubscribe(listener) {
+      actions = listener;
+      return call("actionSubscribe", {});
     },
     onMessagesQuery: (handler) =>
       void handlers.set("messagesQuery", handler as QueryHandler<QueryMethod>),

@@ -2,6 +2,7 @@ import type { ContactHandle } from "@parity/truapi";
 import type { HexString } from "@parity/truapi/scale";
 import type {
   ChatParticipantEntry,
+  ChatRoomAction,
   ChatRoomContact,
   ChatMessage,
   ChatMessageBody,
@@ -17,8 +18,8 @@ import type { ChatV2Product } from "./product.js";
  * and its state; it answers in conversations and text messages. The worker
  * hands any such engine to {@link serveConversations}, which shows it through
  * the Chat Extension v2 draft bridge (`product.ts`): one room per
- * conversation, pages of history on request, and the user's sends, retries
- * and reads back to the engine.
+ * conversation, pages of history on request, and the user's sends, retries,
+ * reads and room menu choices back to the engine.
  *
  * Contact Chat's engine (`src/chat/contact-chat/engine.ts`) is one
  * implementation. An engine over libsignal or OpenMLS would be another, with
@@ -74,12 +75,26 @@ export interface Conversation {
   /** Whether the user can write here now, and why not. */
   composer: { allowed: true } | { allowed: false; reason: string };
   /**
+   * Entries the host adds to the conversation's options menu now. Choosing
+   * one reaches {@link ConversationEngine.act}. Absent or empty: none.
+   */
+  actions?: readonly ConversationAction[];
+  /**
    * The one person a conversation is with, for an engine that has
    * person-to-person conversations. The host names and draws them from the
    * account or the contact handle; the engine's title is then only a
    * fallback.
    */
   contact?: ConversationContact;
+}
+
+/** One entry of a conversation's options menu. */
+export interface ConversationAction {
+  /** Unique in its conversation. */
+  id: string;
+  label: string;
+  /** The host draws it as destructive. */
+  destructive?: boolean;
 }
 
 export type ConversationContact =
@@ -106,6 +121,12 @@ export interface ConversationEngine {
    * Absent: the engine starts no conversations.
    */
   start?(target: StartTarget, welcome: string): Promise<string>;
+  /**
+   * The user chose `actionId` in the conversation's options menu. The engine
+   * checks it still offers it; resolves once it did what it means. Absent:
+   * no conversation offers entries.
+   */
+  act?(conversationId: string, actionId: string): Promise<void>;
   onChange(listener: () => void): () => void;
 }
 
@@ -169,11 +190,19 @@ const json = (value: unknown) =>
     typeof entry === "bigint" ? String(entry) : entry,
   );
 
+const actionsOf = (conversation: Conversation): ChatRoomAction[] =>
+  (conversation.actions ?? []).map(({ id, label, destructive }) => ({
+    actionId: id,
+    label,
+    destructive: destructive ?? false,
+  }));
+
 /** What was last declared of a room, to send only what changed. */
 interface Declared {
   metadata: string;
   preview: string;
   contact: string;
+  actions: string;
   states: Map<string, MessageState>;
 }
 
@@ -282,10 +311,17 @@ export function serveConversations(
               contact: contactOf(conversation.contact),
             }),
           );
+        // Always, an empty list too: a room this link finds `Exists` may hold an earlier link's entries.
+        const actions = actionsOf(conversation);
+        failed(
+          `setRoomActions ${roomId}`,
+          await chat.setRoomActions({ roomId, actions }),
+        );
         room = {
           metadata: json(metadata),
           preview: json(preview),
           contact: json(conversation.contact),
+          actions: json(actions),
           states: new Map(
             engine
               .messages(roomId)
@@ -313,6 +349,14 @@ export function serveConversations(
             roomId,
             contact: contactOf(conversation.contact),
           }),
+        );
+      }
+      const actions = actionsOf(conversation);
+      if (json(actions) !== room.actions) {
+        room.actions = json(actions);
+        failed(
+          `setRoomActions ${roomId}`,
+          await chat.setRoomActions({ roomId, actions }),
         );
       }
       const messages = engine.messages(roomId);
@@ -525,6 +569,20 @@ export function serveConversations(
         return interrupt(rejected("This chat does not support that yet."));
     }
   });
+
+  if (engine.act !== undefined)
+    void chat
+      .actionSubscribe(({ roomId, payload }) => {
+        if (find(roomId) === undefined) return;
+        const { actionId } = payload.value;
+        engine.act!(roomId, actionId).catch((error: unknown) =>
+          options.onError?.(
+            `action ${actionId}`,
+            error instanceof Error ? error.message : String(error),
+          ),
+        );
+      })
+      .then((result) => failed("actionSubscribe", result));
 
   const unsubscribe = engine.onChange(() => void schedule());
   return {

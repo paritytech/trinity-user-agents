@@ -4,6 +4,7 @@ import type {
   ConversationSummary,
   MessageFile,
   ProviderEvent,
+  RoomAction,
 } from "./provider.js";
 import { renderTree } from "../products/render.js";
 import { avatarColor } from "../app/avatar-color.js";
@@ -522,9 +523,13 @@ export class ConversationView {
       }
     }
     const person = this.blocking?.person() ?? null;
-    if (person !== null) {
+    const actions =
+      this.provider.triggerRoomAction === undefined
+        ? []
+        : (summary?.actions ?? []);
+    if (person !== null || actions.length > 0) {
       const open = button("chat-icon-button chat-more", "⋯", () => {
-        void this.openControls(person);
+        void this.openControls(summary?.title ?? "", person, actions);
       });
       open.setAttribute("aria-label", "Chat options");
       open.dataset.action = "chat-options";
@@ -538,22 +543,54 @@ export class ConversationView {
     );
   }
 
-  /** The conversation's options: blocking its person, after the user confirms. */
-  private async openControls(person: {
-    account: string;
-    name: string;
-  }): Promise<void> {
-    const choice = await ask<"block" | null>({
-      title: person.name,
+  /**
+   * The conversation's options: the entries its source offers, which go to
+   * the source as they are, then blocking its person, after the user
+   * confirms.
+   */
+  private async openControls(
+    title: string,
+    person: { account: string; name: string } | null,
+    actions: readonly RoomAction[],
+  ): Promise<void> {
+    const choice = await ask<{ action: string } | "block" | null>({
+      title: person?.name ?? title,
       fields: [],
       layout: "list",
       choices: [
-        { label: "Block", value: "block", tone: "destructive" },
+        ...actions.map((action) => ({
+          label: action.label,
+          value: { action: action.id },
+          ...(action.destructive ? { tone: "destructive" as const } : {}),
+        })),
+        ...(person === null
+          ? []
+          : [
+              {
+                label: "Block",
+                value: "block" as const,
+                tone: "destructive" as const,
+              },
+            ]),
         { label: "Cancel", value: null, tone: "cancel" },
       ],
       dismissed: null,
     });
     if (choice === null) return;
+    if (choice !== "block") {
+      this.error = null;
+      try {
+        await this.provider.triggerRoomAction!(
+          this.conversationId,
+          choice.action,
+        );
+      } catch (error) {
+        this.error = errorText(error);
+      }
+      this.drawFooter();
+      return;
+    }
+    if (person === null) return;
     const confirmed = await ask<boolean>({
       title: `Block ${person.name}?`,
       subtitle:

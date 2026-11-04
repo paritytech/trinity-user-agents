@@ -3,6 +3,7 @@ import { bytesToHex } from "@parity/truapi/scale";
 import {
   messagePortBridge,
   type ChatMessage,
+  type ChatV2ActionItem,
   type HostChatRoomEventsSubscribeItem,
 } from "../../../../src/chat/draft/contract.js";
 import {
@@ -15,6 +16,10 @@ import {
   chatV2Over,
   type ChatV2Product,
 } from "../../../../src/chat/draft/product.js";
+import {
+  serveConversations,
+  type ConversationEngine,
+} from "../../../../src/chat/draft/conversations.js";
 
 const PRODUCT = "chat.paseo";
 const OTHER = "other.paseo";
@@ -384,6 +389,122 @@ describe("chat v2 draft bridge", () => {
       "CallRequested",
       "CallEnded",
     ]);
+  });
+
+  test("a room's menu entries are the product's; a choice reaches it only for an entry offered now, once it subscribed", async () => {
+    const { host, product, connect } = setup();
+    await room(product);
+    const offer = [
+      { actionId: "go", label: "Go", destructive: false },
+      { actionId: "leave", label: "Leave", destructive: true },
+    ];
+    expect(
+      (await product.setRoomActions({ roomId: "ada", actions: offer })).isOk(),
+    ).toBe(true);
+    expect(host.room(PRODUCT, "ada")?.actions).toEqual(offer);
+    // Entries without an id, a label, or with one id twice are refused.
+    for (const actions of [
+      [{ actionId: "", label: "Go", destructive: false }],
+      [{ actionId: "go", label: " ", destructive: false }],
+      [offer[0]!, offer[0]!],
+    ])
+      expect(
+        (await product.setRoomActions({ roomId: "ada", actions })).isErr(),
+      ).toBe(true);
+    expect(
+      (
+        await product.setRoomActions({ roomId: "elsewhere", actions: offer })
+      )._unsafeUnwrapErr(),
+    ).toEqual({ tag: "Domain", value: { tag: "UnknownRoom" } });
+
+    // Nothing is queued for a product that takes no choices.
+    expect(host.triggerRoomAction(PRODUCT, "ada", "go")).toBe(
+      "The product takes no menu choices.",
+    );
+    const seen: ChatV2ActionItem[] = [];
+    await product.actionSubscribe((item) => seen.push(item));
+    const other = connect(OTHER);
+    await other.actionSubscribe(() => {
+      throw new Error("another product heard a choice");
+    });
+    expect([
+      host.triggerRoomAction(PRODUCT, "ada", "stop"),
+      host.triggerRoomAction(PRODUCT, "elsewhere", "go"),
+      host.triggerRoomAction(OTHER, "ada", "go"),
+      host.triggerRoomAction(PRODUCT, "ada", "go"),
+    ]).toEqual([
+      "This option is not offered any more.",
+      "This option is not offered any more.",
+      "This option is not offered any more.",
+      null,
+    ]);
+    await Bun.sleep(5);
+    expect(seen).toEqual([
+      {
+        roomId: "ada",
+        peer: "user",
+        payload: { tag: "RoomActionTriggered", value: { actionId: "go" } },
+      },
+    ]);
+    // An empty list takes the entries away.
+    await product.setRoomActions({ roomId: "ada", actions: [] });
+    expect(host.triggerRoomAction(PRODUCT, "ada", "go")).toBe(
+      "This option is not offered any more.",
+    );
+  });
+
+  test("a product entry cannot read as one of the host's own menu entries", async () => {
+    const { host, product } = setup();
+    await room(product);
+    for (const label of ["Block", " cancel ", "UNBLOCK"])
+      expect(
+        (
+          await product.setRoomActions({
+            roomId: "ada",
+            actions: [{ actionId: "x", label, destructive: true }],
+          })
+        ).isErr(),
+      ).toBe(true);
+    expect(host.room(PRODUCT, "ada")?.actions).toBeUndefined();
+  });
+
+  test("a worker that stops takes its menu entries with it; a new one that declares none leaves none", async () => {
+    const { host, product, connect } = setup();
+    await room(product);
+    await product.setRoomActions({
+      roomId: "ada",
+      actions: [{ actionId: "go", label: "Go", destructive: false }],
+    });
+    host.disconnect(PRODUCT);
+    expect(host.room(PRODUCT, "ada")?.actions).toBeUndefined();
+
+    // A new worker finds the room `Exists` and serves a conversation with no entries.
+    const again = connect(PRODUCT);
+    const engine: ConversationEngine = {
+      conversations: () => [
+        {
+          id: "ada",
+          title: "Ada",
+          participants: [],
+          composer: { allowed: true },
+        },
+      ],
+      messages: () => [],
+      send: async () => "",
+      retry: async () => {},
+      act: async () => {},
+      onChange: () => () => {},
+    };
+    const served = serveConversations(again, engine, {
+      reads: { get: () => null, set: () => {} },
+    });
+    await served.ready;
+    // It declares its entries, none, even for a room that exists.
+    expect(host.room(PRODUCT, "ada")?.actions).toEqual([]);
+    expect(host.triggerRoomAction(PRODUCT, "ada", "go")).toBe(
+      "This option is not offered any more.",
+    );
+    served.stop();
   });
 
   test("call state is the product's, media is the host's, and media needs a press", async () => {

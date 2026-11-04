@@ -137,6 +137,38 @@ export interface HostChatSetRoomPreviewRequest {
   preview: ChatRoomPreview;
 }
 
+/**
+ * DRAFT, in no proposal: an entry a product adds to the options menu of one
+ * of its rooms, beside the host's own. It has the shape of the reference's
+ * `ChatProductAction` (a message menu entry) with a `Callback` handler and no
+ * icon. Choosing it sends `RoomActionTriggered` on `action_subscribe`.
+ */
+export interface ChatRoomAction {
+  /** Unique in the room's menu. */
+  actionId: string;
+  label: string;
+  /** The host draws the entry as destructive. */
+  destructive: boolean;
+}
+
+/** DRAFT: the product's entries of a room's options menu. An empty list removes them. */
+export interface HostChatSetRoomActionsRequest {
+  roomId: string;
+  actions: ChatRoomAction[];
+}
+
+/**
+ * DRAFT: one item of `action_subscribe` on this bridge. The reference's
+ * `HostChatActionSubscribeItem` has the same fields; its payload has no
+ * room menu entry, so this bridge carries only `RoomActionTriggered`.
+ */
+export interface ChatV2ActionItem {
+  roomId: string;
+  /** Who chose it: `user`, the host's user. */
+  peer: string;
+  payload: { tag: "RoomActionTriggered"; value: { actionId: string } };
+}
+
 export interface HostChatDeleteRoomRequest {
   roomId: string;
 }
@@ -511,7 +543,7 @@ export const QUERY_TIMEOUTS_MS = {
 // --- The draft bridge -------------------------------------------------------
 
 /** Version of the page-local bridge. Bumped on any change to its messages. */
-export const CHAT_V2_DRAFT = "truapi-chat-v2-draft/0";
+export const CHAT_V2_DRAFT = "truapi-chat-v2-draft/1";
 /** `type` of the window message a product frame sends to hand the host its port. */
 export const CHAT_V2_CONNECT = "truapi-chat-v2-draft";
 
@@ -576,6 +608,21 @@ export interface ProductCalls {
   ];
   /** Start the product's `room_events_subscribe` stream. A second one replaces the first. */
   roomEventsSubscribe: [
+    Record<string, never>,
+    Record<string, never>,
+    { reason: string },
+  ];
+  /** DRAFT: set the product's entries of a room's options menu. */
+  setRoomActions: [
+    HostChatSetRoomActionsRequest,
+    Record<string, never>,
+    HostChatRoomError,
+  ];
+  /**
+   * Start the product's `action_subscribe` stream of {@link ChatV2ActionItem}.
+   * A second one replaces the first.
+   */
+  actionSubscribe: [
     Record<string, never>,
     Record<string, never>,
     { reason: string },
@@ -651,7 +698,8 @@ export type ChatV2Envelope =
       };
     }[QueryMethod]
   | { kind: "cancel"; id: number }
-  | { kind: "roomEvent"; item: HostChatRoomEventsSubscribeItem };
+  | { kind: "roomEvent"; item: HostChatRoomEventsSubscribeItem }
+  | { kind: "action"; item: ChatV2ActionItem };
 
 /** One end of the bridge. */
 export interface BridgePort {

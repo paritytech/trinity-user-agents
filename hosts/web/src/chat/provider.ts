@@ -44,6 +44,8 @@ export interface ChatProvider {
   composer(conversationId: string): Composer;
   /** Send text. The provider delivers it and reports the message through an event. */
   send(conversationId: string, text: string): Promise<void>;
+  /** The user chose one of the conversation's {@link ConversationSummary.actions}. */
+  triggerRoomAction?(conversationId: string, actionId: string): Promise<void>;
   /** The user pressed one of an `Actions` message's buttons. */
   triggerAction?(
     conversationId: string,
@@ -169,6 +171,15 @@ export interface ConversationSummary {
   updatedAt: number;
   /** Messages the user has not seen. Absent when the provider does not count them. */
   unread?: number;
+  /** Entries the conversation's options menu shows, the source's own. A choice goes to {@link ChatProvider.triggerRoomAction}. */
+  actions?: readonly RoomAction[];
+}
+
+/** One entry a source adds to a conversation's options menu. */
+export interface RoomAction {
+  id: string;
+  label: string;
+  destructive: boolean;
 }
 
 export interface ChatSender {
