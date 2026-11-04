@@ -1,5 +1,8 @@
 //! Bulletin store transaction construction and signing.
 
+#[cfg(not(target_arch = "wasm32"))]
+mod read;
+
 use subxt::{ext::scale_encode::EncodeAsType, utils::H256};
 
 use crate::{
@@ -8,10 +11,19 @@ use crate::{
 	runtime::BulletinAllowanceKey,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use read::{BitswapError, bitswap_get, preimage_key_from_cid};
+
 /// Pallet the store transaction targets.
 pub const STORE_PALLET_NAME: &str = "TransactionStorage";
 /// Call name within [`STORE_PALLET_NAME`].
 pub const STORE_CALL_NAME: &str = "store";
+
+/// CIDv1, the `raw` codec, then the multihash header: blake2b-256 (0xb220 as a
+/// varint) of 32 bytes.
+const PREIMAGE_CID_PREFIX: [u8; 6] = [0x01, 0x55, 0xa0, 0xe4, 0x02, 0x20];
+/// Lower-case RFC 4648 base32, the multibase `b` alphabet.
+const BASE32_ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
 
 /// Preimage key: blake2b-256 of the raw preimage bytes.
 pub fn preimage_key(value: &[u8]) -> [u8; 32] {
@@ -23,9 +35,7 @@ pub fn preimage_key(value: &[u8]) -> [u8; 32] {
 /// content, which is the preimage key itself, in lower-case base32 with the multibase `b`
 /// prefix.
 pub fn preimage_cid(key: &[u8; 32]) -> String {
-	const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
-	// CIDv1, raw, then the multihash: blake2b-256 (0xb220 as a varint) of 32 bytes.
-	let mut bytes = vec![0x01, 0x55, 0xa0, 0xe4, 0x02, 0x20];
+	let mut bytes = PREIMAGE_CID_PREFIX.to_vec();
 	bytes.extend_from_slice(key);
 	let mut cid = String::from("b");
 	let (mut buffer, mut bits) = (0u32, 0u32);
@@ -33,12 +43,12 @@ pub fn preimage_cid(key: &[u8; 32]) -> String {
 		buffer = (buffer << 8) | u32::from(byte);
 		bits += 8;
 		while bits >= 5 {
-			cid.push(char::from(ALPHABET[((buffer >> (bits - 5)) & 31) as usize]));
+			cid.push(char::from(BASE32_ALPHABET[((buffer >> (bits - 5)) & 31) as usize]));
 			bits -= 5;
 		}
 	}
 	if bits > 0 {
-		cid.push(char::from(ALPHABET[((buffer << (5 - bits)) & 31) as usize]));
+		cid.push(char::from(BASE32_ALPHABET[((buffer << (5 - bits)) & 31) as usize]));
 	}
 	cid
 }
