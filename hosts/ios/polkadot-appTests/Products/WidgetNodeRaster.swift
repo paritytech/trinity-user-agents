@@ -58,12 +58,30 @@ enum WidgetNodeRaster {
     /// The view drawn on screen in the app's own window under the picked
     /// theme, as RGBA bytes row by row. Offscreen rendering leaves text fields
     /// without the colours a window gives them, so colour checks draw here.
+    ///
+    /// A window's first frame can reach the pixels before the theme override
+    /// has propagated through it, so this draws until two reads agree and the
+    /// bytes are the settled ones rather than whichever frame arrived first.
     static func pixels(of view: some View, in size: CGSize, under theme: ThemeSelection) throws -> [UInt8] {
         let window = try window(showing: view, in: size, under: theme)
         defer { window.isHidden = true }
 
-        return try pixels(of: snapshot(of: window))
+        var drawn = try pixels(of: snapshot(of: window))
+        for _ in 0 ..< settleRedraws {
+            let again = try pixels(of: snapshot(of: window))
+            if again == drawn {
+                return drawn
+            }
+            drawn = again
+        }
+
+        return drawn
     }
+
+    /// How many extra times [`pixels(of:in:under:)`] redraws while the
+    /// bytes still change. Each redraw pumps a screen update, so a window that
+    /// is going to settle does so within a few.
+    private static let settleRedraws = 10
 
     private static let backdropColour = Color(.sRGB, red: 1, green: 0, blue: 1)
 
@@ -84,6 +102,7 @@ enum WidgetNodeRaster {
         host.view.backgroundColor = .black
         window.rootViewController = host
         window.isHidden = false
+        window.layoutIfNeeded()
         return window
     }
 
