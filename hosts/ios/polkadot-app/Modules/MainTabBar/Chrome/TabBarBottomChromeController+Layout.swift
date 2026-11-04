@@ -183,7 +183,6 @@ private extension TabBarBottomChromeController {
 
     @objc func handleOutsideTap() {
         guard !foldController.isTucked else {
-            foldController.setUserOverride(.shown)
             return
         }
         panelController.setPanel(nil)

@@ -24,11 +24,10 @@ enum TabBarTips {
     static let steps: [TabBarTipStep] = [
         TabBarTipStep(tip: ScanActionTip(), anchor: .centerButton),
         TabBarTipStep(tip: ChainStatusStripTip(), anchor: .statusStrip),
-        TabBarTipStep(tip: DockletTuckedTip(), anchor: .edgeGlow, tap: .restoreDocklet),
+        TabBarTipStep(tip: DockletTuckedTip(), anchor: .edgeGlow),
         TabBarTipStep(
             tip: DockletAutoHiddenTip(),
             anchor: .edgeGlow,
-            tap: .restoreDocklet,
             onShow: { DockletTuckedTip().invalidate(reason: .actionPerformed) }
         )
     ]

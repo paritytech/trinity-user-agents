@@ -101,8 +101,6 @@ extension TabBarTipController {
         let edgeGlowAnchor: UIView
         /// The arrow side the Docklet tips point from, toward the Edge glow.
         let edgeGlowArrowDirection: UIPopoverArrowDirection
-        /// Brings the tucked Docklet back when a Docklet tip's body is tapped.
-        let onRestoreDocklet: () -> Void
         /// Reports whether any tip is on screen.
         let onTipShown: (Bool) -> Void
     }
@@ -176,14 +174,7 @@ private extension TabBarTipController {
             popover?.passthroughViews = [host.view]
         }
 
-        controller.viewStyle = TabBarTipViewStyle(onTap: tapHandler(for: step))
-    }
-
-    func tapHandler(for step: TabBarTipStep) -> (@MainActor () -> Void)? {
-        guard step.tap == .restoreDocklet else {
-            return nil
-        }
-        return { [weak self] in self?.docklet.onRestoreDocklet() }
+        controller.viewStyle = TabBarTipViewStyle()
     }
 
     func anchorItem(for anchor: TabBarTipAnchor) -> (any UIPopoverPresentationControllerSourceItem)? {

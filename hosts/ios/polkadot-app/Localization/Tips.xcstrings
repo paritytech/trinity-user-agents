@@ -8,7 +8,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "It hides when you're not using it. Drag it in from the glow, or tap here"
+            "value": "It hides when you're not using it. Drag it in from the glow"
           }
         }
       }
@@ -80,7 +80,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Drag in from the right edge, or tap here"
+            "value": "Drag in from the right edge"
           }
         }
       }

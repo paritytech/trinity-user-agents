@@ -84,7 +84,6 @@ final class TabBarBottomChromeController: UIViewController {
         docklet: .init(
             edgeGlowAnchor: edgeGlowView,
             edgeGlowArrowDirection: foldController.edge.popoverArrowDirection,
-            onRestoreDocklet: { [weak self] in self?.foldController.setUserOverride(.shown) },
             onTipShown: { [weak self] isShown in self?.foldController.setAutoHideBlocked(.tipShown, isShown) }
         )
     )
@@ -452,7 +451,6 @@ extension TabBarBottomChromeController {
         tipController.retireForUserInteraction()
 
         guard !foldController.isTucked else {
-            foldController.setUserOverride(.shown)
             return
         }
 
