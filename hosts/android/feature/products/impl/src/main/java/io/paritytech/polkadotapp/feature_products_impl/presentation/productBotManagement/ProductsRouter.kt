@@ -36,7 +36,10 @@ interface ProductsRouter : ReturnableRouter, SigningRouter, TabRouter {
     /** The funding sheet for the session [intent] the core is waiting on. */
     suspend fun openFundingOverlay(intent: String)
 
-    /** Takes down the funding sheet for [intent], when it is the screen on top. */
+    /**
+     * Takes down the funding sheet for [intent], with its provider screen when that sits on top of it; anything else on
+     * top is left alone, and so is the sheet under it.
+     */
     suspend fun closeFundingOverlay(intent: String)
 
     suspend fun openFundingEnded(intent: String)
