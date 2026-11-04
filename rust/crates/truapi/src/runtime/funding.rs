@@ -167,7 +167,7 @@ struct Announcements {
 	pending: VecDeque<(String, HostFundingStatusSubscribeItem)>,
 	/// Whether a caller is delivering them.
 	delivering: bool,
-	/// The [`FundingRegistry::in_progress`] the host was last told.
+	/// The [`FundingRegistry::is_in_progress`] the host was last told.
 	in_progress: Option<bool>,
 }
 
@@ -265,12 +265,6 @@ pub struct FundingRegistry {
 	/// The services the registry belongs to, for worker references and
 	/// following top-ups and payments. Empty in a registry built on its own.
 	services: Weak<RuntimeServices>,
-}
-
-/// Whether a provider still works on `session`: it serves it, or still owes
-/// the user for it.
-fn provider_works_on(session: &FundingSession) -> bool {
-	session.provider_id.is_some() && session.serves_provider()
 }
 
 impl FundingRegistry {
@@ -590,8 +584,8 @@ impl FundingRegistry {
 
 	/// Whether a provider still works on any session: one in flight, or a
 	/// withdrawal whose payout or refund it has not reported.
-	pub fn in_progress(&self) -> bool {
-		self.lock_sessions().values().any(provider_works_on)
+	pub fn is_in_progress(&self) -> bool {
+		self.lock_sessions().values().any(FundingSession::has_working_provider)
 	}
 
 	/// Every ended session, held in full or compacted into the pack, as
@@ -1457,7 +1451,7 @@ impl FundingRegistry {
 			return;
 		}
 		loop {
-			let in_progress = self.in_progress();
+			let in_progress = self.is_in_progress();
 			let next = {
 				let mut announcements = self.lock_announcements();
 				let next = match announcements.pending.pop_front() {
