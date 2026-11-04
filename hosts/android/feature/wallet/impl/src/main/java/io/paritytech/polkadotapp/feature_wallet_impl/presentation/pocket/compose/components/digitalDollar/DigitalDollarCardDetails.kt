@@ -162,10 +162,7 @@ private fun DigitalDollarCardDetailsContent(
     val collapseRangePx = with(density) { PocketMotion.COLLAPSE_RANGE.toPx() }
     // The card is drawn over the list and docks into the header as the list scrolls under it.
     val collapse by remember(collapseRangePx) {
-        derivedStateOf {
-            val scrolled = if (listState.firstVisibleItemIndex > 0) Float.MAX_VALUE else listState.firstVisibleItemScrollOffset.toFloat()
-            PocketCollapse.progress(scrolled, collapseRangePx)
-        }
+        derivedStateOf { PocketCollapse.progress(listState.scrolledPx(), collapseRangePx) }
     }
     var topBarBounds by remember { mutableStateOf(Rect.Zero) }
     var cardRest by remember { mutableStateOf(Rect.Zero) }
@@ -189,7 +186,7 @@ private fun DigitalDollarCardDetailsContent(
                 )
                 NovaText(
                     modifier = Modifier.graphicsLayer { alpha = PocketCollapse.titleAlpha(collapse) },
-                    text = stringResource(RCommon.string.pocket_purse_title),
+                    text = stringResource(RCommon.string.pocket_digital_dollar_title),
                     style = PolkadotTheme.typography.title.medium,
                     color = PolkadotTheme.colors.fg.primary
                 )

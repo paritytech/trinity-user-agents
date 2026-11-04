@@ -20,14 +20,17 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import kotlinx.collections.immutable.toImmutableList
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.chrono.IsoChronology
 import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeFormatterBuilder
 import java.time.format.FormatStyle
 import java.util.Locale
 import kotlin.time.Instant
 import kotlin.time.toJavaInstant
 
 /**
- * Builds the Purse's funding lists, dated against [now] in [zone], amounts in [asset] under its [symbol].
+ * Builds the CASH card's funding lists, dated against [now] in [zone], amounts in [asset] under its [symbol]. A
+ * day this year reads by [dayPattern], the locale's medium date without its year.
  *
  * In progress, a delayed session comes first, then the newest; completed ones are newest first.
  */
@@ -37,13 +40,15 @@ class FundingActivityMapper(
     private val now: Instant,
     private val zone: ZoneId = ZoneId.systemDefault(),
     private val locale: Locale = Locale.getDefault(),
+    dayPattern: String = dayPattern(locale),
 ) {
     private val timeFormat = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withLocale(locale)
-    private val dayFormat = DateTimeFormatter.ofPattern("MMM d", locale)
-    private val dateFormat = DateTimeFormatter.ofPattern("MMM d, yyyy", locale)
+    private val dayFormat = DateTimeFormatter.ofPattern(dayPattern, locale)
+    private val dateFormat = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withLocale(locale)
     private val today = localDate(now)
 
-    fun map(activity: FundingActivity, currentBalance: Balance?): FundingActivityUiState = FundingActivityUiState(
+    /** [currentBalance] is the card's balance, for the bar the card details pin once the card has docked. */
+    fun map(activity: FundingActivity, currentBalance: Balance? = null): FundingActivityUiState = FundingActivityUiState(
         inFlight = activity.inFlight
             .sortedWith(compareByDescending<FundingActivityItem> { it.isDelayed }.thenByDescending { it.date })
             .map(::row)
@@ -77,7 +82,11 @@ class FundingActivityMapper(
             rail = item.rail,
             subtitle = when (status) {
                 is FundingActivityStatus.InProgress -> FundingRowSubtitle.Step(status.step, inbound)
-                else -> FundingRowSubtitle.Ended(outcome(status), moment(item.date))
+                FundingActivityStatus.ToppedUp, FundingActivityStatus.Sent -> ended(FundingRowOutcome.MOVED, item)
+                FundingActivityStatus.Refunded -> ended(FundingRowOutcome.REFUNDED, item)
+                is FundingActivityStatus.PayoutFailed -> ended(FundingRowOutcome.PAYOUT_FAILED, item)
+                is FundingActivityStatus.Cancelled -> ended(FundingRowOutcome.CANCELLED, item)
+                is FundingActivityStatus.Failed -> ended(failedOutcome(status.reason), item)
             },
             icon = when (status) {
                 is FundingActivityStatus.InProgress ->
@@ -93,17 +102,13 @@ class FundingActivityMapper(
         )
     }
 
-    private fun outcome(status: FundingActivityStatus): FundingRowOutcome = when (status) {
-        FundingActivityStatus.ToppedUp, FundingActivityStatus.Sent, is FundingActivityStatus.InProgress -> FundingRowOutcome.MOVED
-        FundingActivityStatus.Refunded -> FundingRowOutcome.REFUNDED
-        is FundingActivityStatus.PayoutFailed -> FundingRowOutcome.PAYOUT_FAILED
-        is FundingActivityStatus.Cancelled -> FundingRowOutcome.CANCELLED
-        is FundingActivityStatus.Failed -> when (status.reason) {
-            FundingFailureReason.Expired -> FundingRowOutcome.EXPIRED
-            FundingFailureReason.Cancelled -> FundingRowOutcome.CANCELLED
-            FundingFailureReason.Refunded -> FundingRowOutcome.REFUNDED
-            else -> FundingRowOutcome.PAYMENT_FAILED
-        }
+    private fun ended(outcome: FundingRowOutcome, item: FundingActivityItem) = FundingRowSubtitle.Ended(outcome, moment(item.date))
+
+    private fun failedOutcome(reason: FundingFailureReason): FundingRowOutcome = when (reason) {
+        FundingFailureReason.Expired -> FundingRowOutcome.EXPIRED
+        FundingFailureReason.Cancelled -> FundingRowOutcome.CANCELLED
+        FundingFailureReason.Refunded -> FundingRowOutcome.REFUNDED
+        else -> FundingRowOutcome.PAYMENT_FAILED
     }
 
     private fun moment(date: Instant): FundingMoment {
@@ -126,3 +131,13 @@ class FundingActivityMapper(
 
     private fun localDate(instant: Instant): LocalDate = instant.toJavaInstant().atZone(zone).toLocalDate()
 }
+
+// The year with what ties it on: ", y" in "MMM d, y", ".y" in "dd.MM.y", "y年" in "y年M月d日", " y 'г'." in Russian and
+// " 'de' y" in Portuguese. Separators may be non-breaking spaces, which `\s` leaves out.
+private val YEAR_FIELD = Regex("""[\s\h]*(?:'[^']*'[\s\h]*)?[,./-]?[\s\h]*y+[年년]?(?:[\s\h]*'[^']*'\.?)?[\s\h]*[,./-]?[\s\h]*""")
+
+/** The locale's medium date with the year left out: "MMM d" in English, "d MMM" in British English. */
+internal fun dayPattern(locale: Locale): String =
+    DateTimeFormatterBuilder.getLocalizedDateTimePattern(FormatStyle.MEDIUM, null, IsoChronology.INSTANCE, locale)
+        .replace(YEAR_FIELD, " ")
+        .trim()

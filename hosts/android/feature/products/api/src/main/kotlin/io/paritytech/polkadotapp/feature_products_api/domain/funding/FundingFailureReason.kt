@@ -3,47 +3,34 @@ package io.paritytech.polkadotapp.feature_products_api.domain.funding
 import androidx.annotation.StringRes
 import io.paritytech.polkadotapp.common.R as RCommon
 
-/** Why a funding session ended without moving value, by a stable [code] a stored one reads back as. */
-sealed class FundingFailureReason(val code: String) {
-    data object RegionUnavailable : FundingFailureReason("regionUnavailable")
+/** Why a funding session ended without moving value. */
+sealed interface FundingFailureReason {
+    data object RegionUnavailable : FundingFailureReason
 
-    data object VerificationRequired : FundingFailureReason("verificationRequired")
+    data object VerificationRequired : FundingFailureReason
 
-    data object VerificationRefused : FundingFailureReason("verificationRefused")
+    data object VerificationRefused : FundingFailureReason
 
-    data object BelowMinimum : FundingFailureReason("belowMinimum")
+    data object BelowMinimum : FundingFailureReason
 
-    data object AboveMaximum : FundingFailureReason("aboveMaximum")
+    data object AboveMaximum : FundingFailureReason
 
-    data object InsufficientBalance : FundingFailureReason("insufficientBalance")
+    data object InsufficientBalance : FundingFailureReason
 
-    data object Expired : FundingFailureReason("expired")
+    data object Expired : FundingFailureReason
 
-    data object WrongAssetOrChain : FundingFailureReason("wrongAssetOrChain")
+    data object WrongAssetOrChain : FundingFailureReason
 
-    data object ProviderTimeout : FundingFailureReason("providerTimeout")
+    data object ProviderTimeout : FundingFailureReason
 
-    data object Cancelled : FundingFailureReason("cancelled")
+    data object Cancelled : FundingFailureReason
 
-    data object Refunded : FundingFailureReason("refunded")
+    data object Refunded : FundingFailureReason
 
-    data object Declined : FundingFailureReason("declined")
+    data object Declined : FundingFailureReason
 
-    /** A provider's own failure, with what it said. */
-    data class Other(val otherCode: String, val message: String) : FundingFailureReason(otherCode)
-
-    companion object {
-        private val NAMED by lazy {
-            listOf(
-                RegionUnavailable, VerificationRequired, VerificationRefused, BelowMinimum, AboveMaximum,
-                InsufficientBalance, Expired, WrongAssetOrChain, ProviderTimeout, Cancelled, Refunded, Declined,
-            )
-        }
-
-        /** The failure a stored [code] names, with the [message] an [Other] failure was stored with. */
-        fun of(code: String, message: String?): FundingFailureReason =
-            NAMED.firstOrNull { it.code == code } ?: Other(code, message.orEmpty())
-    }
+    /** A provider's own failure: its [code] and what it said. */
+    data class Other(val code: String, val message: String) : FundingFailureReason
 }
 
 /** Why the session ended, in a few words: the provider's own message when it gave one. */

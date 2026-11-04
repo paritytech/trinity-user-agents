@@ -4,6 +4,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
@@ -38,6 +39,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import kotlin.time.Instant
@@ -168,6 +170,18 @@ class DigitalDollarCardDetailsViewModelTest {
 
         fundingVisible = false
         assertEquals(BalanceRestoreUiState.SendCash(canGetCash = false), balanceRestore(createViewModel()))
+    }
+
+    // Observing the activity starts the core, which a build without funding has no reason to start.
+    @Test
+    fun `a build without funding never observes the funding activity`() = runBlocking<Unit> {
+        fundingVisible = false
+        val viewModel = createViewModel()
+
+        val activity = withTimeout(EVENT_TIMEOUT_MS) { viewModel.fundingActivity.first() }
+
+        assertTrue(activity.inFlight.isEmpty() && activity.completed.isEmpty())
+        verify(exactly = 0) { hostFunding.observeActivity() }
     }
 
     private suspend fun balanceRestore(viewModel: DigitalDollarCardDetailsViewModel): BalanceRestoreUiState =

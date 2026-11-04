@@ -4,6 +4,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
+import io.mockk.verify
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
@@ -117,6 +118,18 @@ class SendPaymentViewModelTest {
     @After
     fun tearDown() {
         Dispatchers.resetMain()
+    }
+
+    // Observing the activity starts the core, which a build without funding has no reason to start.
+    @Test
+    fun `a build without funding never observes the funding activity`() = runBlocking<Unit> {
+        fundingVisible = false
+        val viewModel = createViewModel()
+
+        withRecentsListed(query = "")
+        viewModel.awaitState { it.results is PaymentSearchResults.Sections }
+
+        verify(exactly = 0) { hostFunding.observeActivity() }
     }
 
     /** A build that cannot run a funding provider, such as release, has no Send to yourself. */

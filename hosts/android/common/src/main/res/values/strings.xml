@@ -937,10 +937,10 @@
     <string name="pocket_deeplink_no_pocket">This product has no Pocket cards.</string>
     <string name="pocket_deeplink_malformed">That Pocket link is incomplete.</string>
     <string name="pocket_coinage_balance_title">Total</string>
-    <string name="pocket_purse_title">Purse</string>
     <string name="pocket_current_balance">Current balance</string>
     <string name="pocket_coinage_ready">Ready</string>
     <string name="pocket_coinage_clearing">Clearing</string>
+    <string name="pocket_coinage_split_label">%1$s %2$s</string>
     <string name="pocket_coinage_total_balance">Total</string>
     <string name="pocket_coinage_share_logs">Share Coinage Logs</string>
     <string name="pocket_debug_features_title">Debug features</string>
@@ -1051,7 +1051,6 @@
     <string name="debug_report_capture_failed">Could not capture the app screen. Please try another screenshot.</string>
     <string name="debug_report_unavailable">Issue reporting is not configured for this build yet.</string>
     <string name="debug_report_too_large">The screenshot or logs are too large to send.</string>
-
     <string name="funding_activity_cancel_offered">Cancel offer waiting for you</string>
     <string name="funding_activity_cancel_refused">The provider can\'t cancel</string>
     <string name="funding_activity_cancel_requested">Cancel requested, waiting for the provider</string>
@@ -1079,7 +1078,7 @@
     <string name="funding_activity_payment_failed">Payment failed</string>
     <string name="funding_activity_completed">Completed</string>
     <string name="funding_history_title">History</string>
-    <string name="funding_history_empty">Nothing here yet. Your top-ups will appear as you make them.</string>
+    <string name="funding_history_empty">Nothing here yet. Your top-ups and withdrawals will appear here.</string>
     <string name="funding_new_top_up">New top-up</string>
     <string name="funding_send_money_out">Send money out</string>
     <string name="funding_step_sent">Sent</string>
@@ -1274,6 +1273,7 @@
     <string name="funding_error_cancel_failed">Couldn\'t cancel. Try again.</string>
     <string name="funding_error_cancel_refused">This can\'t be cancelled right now</string>
     <string name="funding_error_quote_timeout">No provider answered in time</string>
+
     <string name="funding_failure_above_maximum">Above the maximum</string>
     <string name="funding_failure_below_minimum">Below the minimum</string>
     <string name="funding_failure_cancelled">Cancelled</string>

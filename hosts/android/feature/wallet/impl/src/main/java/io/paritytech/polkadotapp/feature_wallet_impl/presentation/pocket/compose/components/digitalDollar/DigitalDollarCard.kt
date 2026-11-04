@@ -59,10 +59,11 @@ fun DigitalDollarCard(
     onSelected: ((PocketCardUiModel.DigitalDollar) -> Unit)? = null,
     isExpanded: Boolean,
 ) {
+    // The face paints its own fallback, as it does where it is laid out on its own; the surface only shapes the touch.
     PolkadotSurface(
         modifier = modifier,
         shape = CardShape,
-        color = WalletFallback,
+        color = Color.Transparent,
         onClick = { onSelected?.invoke(card) },
         enabled = onSelected != null
     ) {

@@ -7,7 +7,6 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -123,14 +122,19 @@ private fun Stripes(modifier: Modifier, stripe: Color, track: Color) {
 @Composable
 private fun SplitLabel(label: String, amount: TokenAmountModel) {
     val value = LocalTokenAmountFormatter.current.formatFiatSigned(amount)
-    Box {
-        NovaText(
-            text = buildAnnotatedString {
-                withStyle(SpanStyle(color = PolkadotTheme.colors.fg.secondary)) { append("$label ") }
-                withStyle(SpanStyle(color = PolkadotTheme.colors.fg.primary, fontWeight = FontWeight.Medium)) { append(value) }
-            },
-            style = PolkadotTheme.typography.body.medium,
-            maxLines = 1,
-        )
-    }
+    // The order of label and figure is the translation's; the figure is set apart wherever it lands.
+    val text = stringResource(RCommon.string.pocket_coinage_split_label, label, value)
+    val valueStart = text.lastIndexOf(value)
+    val secondary = PolkadotTheme.colors.fg.secondary
+    val primary = PolkadotTheme.colors.fg.primary
+    NovaText(
+        text = buildAnnotatedString {
+            withStyle(SpanStyle(color = secondary)) { append(text) }
+            if (valueStart >= 0) {
+                addStyle(SpanStyle(color = primary, fontWeight = FontWeight.Medium), valueStart, valueStart + value.length)
+            }
+        },
+        style = PolkadotTheme.typography.body.medium,
+        maxLines = 1,
+    )
 }

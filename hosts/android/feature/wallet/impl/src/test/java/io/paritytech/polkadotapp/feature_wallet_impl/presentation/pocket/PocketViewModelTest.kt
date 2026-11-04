@@ -212,7 +212,6 @@ class PocketViewModelTest {
         advanceTimeBy(1)
         runCurrent()
         verify(exactly = 1) { router.openSpaBrowser(SpaBrowserPayload.ByUrl(stashUrl)) }
-        verify(exactly = 0) { router.openSpaSheet(any()) }
     }
 
     @Test

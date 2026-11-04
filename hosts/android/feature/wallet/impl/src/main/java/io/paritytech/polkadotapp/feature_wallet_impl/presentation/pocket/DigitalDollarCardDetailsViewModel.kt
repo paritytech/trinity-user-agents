@@ -19,6 +19,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDire
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.FundingEntryPoints
+import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.activityOrNone
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.DigitalDollarCardDetailsInteractor
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.CoinageHoldingsInfo
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageBreakdownFactory
@@ -132,7 +133,7 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
         )
 
     val fundingActivity: StateFlow<FundingActivityUiState> = combine(
-        interactor.observeFundingActivity(),
+        fundingEntryPoints.activityOrNone(interactor::observeFundingActivity),
         paymentAssetBrandProvider.brand,
         holdingsFlow.map { it.getOrNull()?.balance?.total }.onStart { emit(null) }
     ) { activity, brand, balance ->

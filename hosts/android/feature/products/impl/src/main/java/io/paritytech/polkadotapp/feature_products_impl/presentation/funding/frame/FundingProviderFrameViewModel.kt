@@ -3,6 +3,9 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.fra
 import android.net.Uri
 import android.webkit.WebChromeClient.FileChooserParams
 import android.webkit.WebView
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.data.storage.file.FileProvider
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
@@ -22,7 +25,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
-import javax.inject.Inject
 
 data class FundingProviderFrameUiState(
     val showsSentFunds: Boolean,
@@ -44,9 +46,10 @@ data class FundingExternalPage(
  * page reaching its return URL answers `Returned`; the overlay answers `Closed` too once the payment is seen or the
  * session is over.
  */
-@HiltViewModel
-class FundingProviderFrameViewModel @Inject constructor(
-    private val context: FundingFrameContext,
+@HiltViewModel(assistedFactory = FundingProviderFrameViewModel.Factory::class)
+class FundingProviderFrameViewModel @AssistedInject constructor(
+    /** The frame its sheet found when it opened, which the overlay may have dropped since. */
+    @Assisted private val context: FundingFrameContext,
     private val router: ProductsRouter,
     private val contextManager: ContextManager,
     private val fileProvider: FileProvider,
@@ -136,5 +139,10 @@ class FundingProviderFrameViewModel @Inject constructor(
         val uri = Uri.parse(url)
         val port = uri.port.takeIf { it != -1 }?.let { ":$it" }.orEmpty()
         return "${uri.host.orEmpty()}$port"
+    }
+
+    @AssistedFactory
+    interface Factory {
+        fun create(context: FundingFrameContext): FundingProviderFrameViewModel
     }
 }

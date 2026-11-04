@@ -16,7 +16,7 @@ class RemoteConfigFundingProvidersConfigTest {
 
     @Test
     fun `lists the configured providers in order`() = runTest {
-        remoteConfigReturns("""{ "onrampUrl": "getcash.dot", "providers": ["ramp.dot", "other.dot"] }""")
+        remoteConfigReturns("""{ "onrampUrl": "legacy.dot", "providers": ["ramp.dot", "other.dot"] }""")
 
         assertEquals(ids("ramp.dot", "other.dot"), config.getFundingProviderIds().getOrThrow())
     }
@@ -37,7 +37,7 @@ class RemoteConfigFundingProvidersConfigTest {
 
     @Test
     fun `lists none when the config carries no providers`() = runTest {
-        remoteConfigReturns("""{ "onrampUrl": "getcash.dot", "offrampUrl": "https://getcash.dot/offramp" }""")
+        remoteConfigReturns("""{ "onrampUrl": "legacy.dot", "offrampUrl": "https://legacy.dot/offramp" }""")
 
         assertEquals(emptyList<ProductId>(), config.getFundingProviderIds().getOrThrow())
     }

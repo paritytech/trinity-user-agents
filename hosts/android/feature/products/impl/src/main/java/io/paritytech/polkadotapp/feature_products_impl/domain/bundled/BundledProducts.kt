@@ -5,6 +5,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.BuildConfig
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonObject
 import uniffi.truapi.FundingProviderEntry
 import uniffi.truapi.FundingProviderOrigin
@@ -71,7 +73,7 @@ data class BundledProduct(
     }
 }
 
-/** The products this build ships. Testnet builds only; a build made without the bundle ships none. */
+/** The products this build ships. Debug, nightly and safetynet builds only; a build made without the bundle ships none. */
 @Singleton
 class BundledProducts internal constructor(
     private val files: BundledProductFiles,
@@ -87,21 +89,22 @@ class BundledProducts internal constructor(
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    private val products: Map<ProductId, BundledProduct> by lazy {
-        if (!enabled) return@lazy emptyMap()
+    private class Shipped(val products: Map<ProductId, BundledProduct>, val files: Set<String>)
 
-        files.list(ROOT)
+    // Listed once, on first use, so serving a request looks a path up instead of opening the asset to see
+    // whether it is there.
+    private val shipped: Shipped by lazy {
+        if (!enabled) return@lazy Shipped(emptyMap(), emptySet())
+
+        val products = files.list(ROOT)
             .filterNot { it.startsWith(".") }
             .filter { name -> files.list("$ROOT/$name").isNotEmpty() }
             .mapNotNull { name -> ProductId.parse(name).getOrNull()?.let { id -> id to BundledProduct(id, "$ROOT/$name") } }
             .toMap()
+        Shipped(products, products.values.flatMapTo(mutableSetOf()) { filesUnder(it.root) })
     }
 
-    fun product(id: ProductId): BundledProduct? = products[id]
-
-    /** Every product shipped, ordered by id. */
-    val all: List<BundledProduct>
-        get() = products.values.sortedBy { it.id.value }
+    fun product(id: ProductId): BundledProduct? = shipped.products[id]
 
     /** The bundled product whose App [url] opens, when it ships one. */
     fun appFor(url: String): BundledProduct? {
@@ -117,7 +120,7 @@ class BundledProducts internal constructor(
     fun hasApp(product: BundledProduct): Boolean = exists("${product.appRoot}/${BundledProduct.APP_INDEX}")
 
     /** The bundled products that serve Funding, as the core takes them: the manifest shipped is the one it goes by. */
-    fun fundingProviders(): List<FundingProviderEntry> = all.mapNotNull { product ->
+    fun fundingProviders(): List<FundingProviderEntry> = shipped.products.values.sortedBy { it.id.value }.mapNotNull { product ->
         val manifest = workerManifest(product)?.takeIf { hasWorker(product) && includes(it, "funding") } ?: return@mapNotNull null
         FundingProviderEntry(productId = product.id, workerManifest = manifest, origin = FundingProviderOrigin.BUNDLED)
     }
@@ -150,10 +153,22 @@ class BundledProducts internal constructor(
 
     fun open(path: String): InputStream? = files.open(path)
 
-    private fun exists(path: String): Boolean = files.open(path)?.use { true } ?: false
+    private fun exists(path: String): Boolean = path in shipped.files
 
+    // The asset manager lists a directory's children and nothing under a file.
+    private fun filesUnder(path: String): List<String> {
+        val children = files.list(path)
+        return if (children.isEmpty()) listOf(path) else children.flatMap { filesUnder("$path/$it") }
+    }
+
+    // A modality is included by its section, as `funding` is, or by a flag, as `chat` is, which the manifest
+    // parser reads the same way: `false` does not include it.
     private fun includes(manifest: String, modality: String): Boolean = runCatching {
         val includes = json.parseToJsonElement(manifest).jsonObject["includes"] as? JsonObject
-        includes?.get(modality) != null
+        when (val entry = includes?.get(modality)) {
+            is JsonObject -> true
+            is JsonPrimitive -> entry.booleanOrNull == true
+            else -> false
+        }
     }.getOrDefault(false)
 }

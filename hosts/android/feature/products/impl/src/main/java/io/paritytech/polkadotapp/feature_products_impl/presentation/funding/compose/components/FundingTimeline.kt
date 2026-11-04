@@ -28,16 +28,15 @@ import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingDotState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingLivePart
-import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.fundingLiveParts
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimelineUi
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.fundingLiveParts
 import kotlinx.coroutines.delay
 import uniffi.truapi.FundingDetail
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import io.paritytech.polkadotapp.common.R as RCommon
 
 private val MILESTONE_SIZE = 20.dp
 private val MILESTONE_ICON_SIZE = 12.dp
