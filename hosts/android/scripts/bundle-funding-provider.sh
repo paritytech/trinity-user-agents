@@ -112,9 +112,11 @@ mkdir -p "$STAGING/worker"
 cp "$SOURCE/worker-manifest.json" "$STAGING/worker-manifest.json"
 cp "$SOURCE/dist/worker/index.js" "$STAGING/worker/index.js"
 cp -R "$SOURCE/dist/app" "$STAGING/app"
-echo "$SHA" > "$STAGING/SOURCE_COMMIT"
 
 rm -rf "$DEST"
 mv "$STAGING" "$DEST"
+# The commit it was built from sits beside the product, not in it, so it never ships: a dot name is
+# skipped by the app and left out of the package like the staging directory.
+echo "$SHA" > "$DEST_ROOT/.$PRODUCT_ID.source-commit"
 
 echo "bundle-funding-provider: $PRODUCT_ID bundled into $DEST"
