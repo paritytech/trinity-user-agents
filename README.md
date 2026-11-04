@@ -310,33 +310,15 @@ runtime's type by name.
 
 ### Contract calls
 
-`EvmContractCaller` in the `chain` module reads pallet-revive contracts and prepares writes.
-`EvmContractCaller::read` takes a `RuntimeApiCaller` transport and returns ABI data. A pinned transport keeps contract
-and storage reads at the same block; a plain RPC transport reads the node's current state. Read-only callers need no
-signer or extrinsic builder.
-
-For writes, `dry_run` simulates as the signer and returns an opaque `PreparedEvmTransaction` that binds the signer,
-chain, contract, calldata and required limits. It signs and submits nothing. `PreparedEvmTransaction::execute_until_finalized`
-consumes the request, then builds and signs with a fresh nonce and mortal era using the prepared limits. It completes
-only after a finalized block reports successful dispatch. An error that leaves the write possibly on chain carries the
-submitted extrinsic and its era: `NotFinalized` when sending failed or the watch ended before finality, so a block can
-still include it until the era ends, and `OutcomeUnreadable` when the watch reported it finalized in a block but its
-dispatch could not be read there. Read the outcome at that block, or, when the block does not contain the extrinsic,
-follow it until its era ends as for `NotFinalized`. Resubmitting the same extrinsic is safe; signing the write again
-before following it can run it twice.
+`chain::EvmContractCaller` reads pallet-revive contracts and prepares writes.
+`read` returns ABI data through a `RuntimeApiCaller` transport. For writes,
+`dry_run` simulates as the signer and returns a prepared transaction;
+`execute_until_finalized` submits it and waits for successful finalized dispatch.
 
 ```rust
 let transaction = contracts.dry_run(&signer, &contract, &input).await?;
 transaction.execute_until_finalized().await?;
 ```
-
-The request borrows the caller and the signer and owns its calldata. Simulation describes the state read at that time;
-execution uses its limits without repeating the simulation. Writes rely on the runtime's `Revive.AutoMap`: the dry run
-maps its origin while it simulates, so it cannot detect an unmapped signer on a runtime without `AutoMap`. Revive's
-wire types and resource estimates are private.
-A read or simulation that reverts is `Reverted` with the decoded revert reason. The `ExtrinsicFailed` event does not
-carry that reason, so a contract that reverts on chain surfaces as `DispatchFailed` with the module error
-`Revive::ContractReverted`, which tells it apart from `Revive::OutOfGas` or `Revive::StorageDepositLimitExhausted`.
 
 ### Durable transactions
 

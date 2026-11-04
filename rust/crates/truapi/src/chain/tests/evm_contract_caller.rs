@@ -465,13 +465,49 @@ fn an_unreadable_outcome_names_the_finalized_block_the_watch_reported() {
 	}
 }
 
-/// Answers every runtime API call with the same result.
-struct ScriptedRuntimeApi(Result<Vec<u8>, String>);
+#[test]
+fn a_runtime_call_failure_preserves_the_rpc_error() {
+	let provider = Arc::new(ScriptedProvider::with_frames(|request| {
+		let request: Value = serde_json::from_str(request).unwrap();
+		assert_eq!(request["method"], "state_call");
+		vec![
+			json!({
+				"jsonrpc": "2.0",
+				"id": request["id"],
+				"error": {
+					"code": -32603,
+					"message": "runtime unavailable",
+					"data": {"retry": true},
+				},
+			})
+			.to_string(),
+		]
+	}));
+	let chain = ChainRuntime::new(provider, test_spawner());
+	let client = block_on(chain.rpc_client("contract_read", &GENESIS.0)).unwrap();
+	let mut rpc = subxt_rpcs::RpcClient::new(client);
+
+	let error = block_on(EvmContractCaller::read(&mut rpc, &CONTRACT, INPUT)).unwrap_err();
+
+	let source = std::error::Error::source(&error)
+		.and_then(|source| source.downcast_ref::<Box<subxt::Error>>())
+		.map(Box::as_ref);
+	let Some(subxt::Error::OtherRpcClientError(subxt_rpcs::Error::User(error))) = source else {
+		panic!("RPC error was not preserved: {error:?}");
+	};
+	assert_eq!(
+		(error.code, error.message.as_str(), error.data.as_deref().map(|data| data.get())),
+		(-32603, "runtime unavailable", Some(r#"{"retry":true}"#)),
+	);
+}
+
+/// Answers one runtime API call with its scripted result.
+struct ScriptedRuntimeApi(Option<Result<Vec<u8>, subxt::Error>>);
 
 #[async_trait::async_trait]
 impl RuntimeApiCaller for ScriptedRuntimeApi {
-	async fn call(&mut self, _function: &str, _input: &[u8]) -> Result<Vec<u8>, String> {
-		self.0.clone()
+	async fn call(&mut self, _function: &str, _input: &[u8]) -> Result<Vec<u8>, subxt::Error> {
+		self.0.take().expect("unexpected runtime API call")
 	}
 }
 
@@ -485,15 +521,21 @@ fn only_a_contract_revert_reads_as_reverted() {
 			Ok(simulation_result(Ok(ExecReturnValue { flags: 1, data: Vec::new() }))),
 			"contract reverted: (empty)",
 		),
-		(Err("runtime unavailable".to_string()), "ReviveApi_call: runtime unavailable"),
+		(
+			Err(subxt::Error::other_str("runtime unavailable")),
+			"ReviveApi_call: Other error: runtime unavailable",
+		),
 		(
 			Ok(simulation_result(Err(RawDispatchError(vec![0])))),
 			"ReviveApi_call dispatch failed: 0x00",
 		),
 		(Ok(vec![0xff]), "ReviveApi_call output is not a ContractResult"),
 	] {
-		let result =
-			block_on(EvmContractCaller::read(&mut ScriptedRuntimeApi(answer), &CONTRACT, INPUT));
+		let result = block_on(EvmContractCaller::read(
+			&mut ScriptedRuntimeApi(Some(answer)),
+			&CONTRACT,
+			INPUT,
+		));
 
 		assert_eq!(result.map_err(|error| error.to_string()), Err(expected.to_string()));
 	}

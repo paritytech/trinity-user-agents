@@ -1156,7 +1156,11 @@ mod tests {
 	fn discovery_separates_a_failed_confirmation_from_a_wrong_contract() {
 		let mut transport = ScriptedDiscovery {
 			stored: [0xdd; 20],
-			target: || Err(EvmContractError::Simulation("node unreachable".into())),
+			target: || {
+				Err(EvmContractError::Simulation(
+					subxt::Error::other_str("node unreachable").into(),
+				))
+			},
 			protocol_registry: view_reverted,
 		};
 		let err = futures::executor::block_on(discover_pop_controller(&mut transport))
@@ -1164,7 +1168,7 @@ mod tests {
 		assert!(matches!(
 			err,
 			DotnsError::DispatcherTarget(DotnsCallError::View(EvmContractError::Simulation(reason)))
-				if reason == "node unreachable"
+				if reason.to_string() == "Other error: node unreachable"
 		));
 	}
 
@@ -1173,7 +1177,11 @@ mod tests {
 		let mut transport = ScriptedDiscovery {
 			stored: [0xcc; 20],
 			target: || panic!("must not fall back on a transport failure"),
-			protocol_registry: || Err(EvmContractError::Simulation("node unreachable".into())),
+			protocol_registry: || {
+				Err(EvmContractError::Simulation(
+					subxt::Error::other_str("node unreachable").into(),
+				))
+			},
 		};
 		for error in [
 			futures::executor::block_on(discover_pop_controller(&mut transport)).unwrap_err(),
@@ -1183,7 +1191,7 @@ mod tests {
 			assert!(matches!(
 				error,
 				DotnsError::ProtocolRegistry(DotnsCallError::View(EvmContractError::Simulation(reason)))
-					if reason == "node unreachable"
+					if reason.to_string() == "Other error: node unreachable"
 			));
 		}
 	}
@@ -1250,7 +1258,9 @@ mod tests {
 		// A transport failure is not an answer: no guessing.
 		let failed = futures::executor::block_on(network_tld(
 			&mut ScriptedTld {
-				tld: || Err(EvmContractError::Simulation("timed out".to_string())),
+				tld: || {
+					Err(EvmContractError::Simulation(subxt::Error::other_str("timed out").into()))
+				},
 				dot_record_exists: true,
 			},
 			&registry,
@@ -1308,7 +1318,8 @@ mod tests {
 		assert!(!run(|| returns::<DotnsRegistrar::existsCall>(true)).unwrap());
 		let reverted = run(view_reverted);
 		assert!(reverted.is_err(), "{reverted:?}");
-		let failed = run(|| Err(EvmContractError::Simulation("timed out".to_string())));
+		let failed =
+			run(|| Err(EvmContractError::Simulation(subxt::Error::other_str("timed out").into())));
 		assert!(failed.is_err(), "{failed:?}");
 	}
 

@@ -10,15 +10,15 @@ use subxt_rpcs::{LegacyRpcMethods, RpcClient};
 #[async_trait::async_trait]
 pub trait RuntimeApiCaller: Send {
 	/// Returns the runtime's encoded result without interpreting its shape.
-	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, String>;
+	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, subxt::Error>;
 }
 
 #[async_trait::async_trait]
 impl RuntimeApiCaller for RpcClient {
-	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, String> {
+	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, subxt::Error> {
 		LegacyRpcMethods::<RpcConfigFor<SubstrateConfig>>::new(self.clone())
 			.state_call(function, Some(input), None)
 			.await
-			.map_err(|error| error.to_string())
+			.map_err(Into::into)
 	}
 }

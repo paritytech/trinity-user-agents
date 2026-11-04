@@ -226,15 +226,16 @@ impl DotnsTransport for PlainRpc {
 
 #[truapi::platform::async_trait]
 impl RuntimeApiCaller for PlainRpc {
-	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, String> {
+	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, subxt::Error> {
 		let output = self
 			.0
 			.call("state_call", serde_json::json!([function, format!("0x{}", hex::encode(input))]))
 			.await
-			.map_err(|err| err.to_string())?;
-		let output =
-			output.as_str().ok_or_else(|| "state_call output is not a string".to_string())?;
-		hex::decode(output.trim_start_matches("0x")).map_err(|err| err.to_string())
+			.map_err(subxt::Error::other)?;
+		let output = output
+			.as_str()
+			.ok_or_else(|| subxt::Error::other_str("state_call output is not a string"))?;
+		hex::decode(output.trim_start_matches("0x")).map_err(subxt::Error::other)
 	}
 }
 

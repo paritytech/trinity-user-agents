@@ -27,7 +27,7 @@ pub enum EvmContractError {
 	Chain(#[from] RuntimeFailure),
 	/// The `ReviveApi_call` request failed.
 	#[error("ReviveApi_call: {0}")]
-	Simulation(String),
+	Simulation(#[source] Box<subxt::Error>),
 	/// The `ReviveApi_call` output is not a `ContractResult`. The cause is
 	/// kept out of the message, which SCALE renders across several lines.
 	#[error("ReviveApi_call output is not a ContractResult")]
@@ -198,7 +198,7 @@ async fn simulate(
 	let output = runtime
 		.call("ReviveApi_call", &args.encode())
 		.await
-		.map_err(EvmContractError::Simulation)?;
+		.map_err(|error| EvmContractError::Simulation(error.into()))?;
 	Simulation::decode(&output)
 }
 

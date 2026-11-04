@@ -215,7 +215,7 @@ impl DotnsTransport for DotnsLookup<'_> {
 
 #[async_trait::async_trait]
 impl RuntimeApiCaller for DotnsLookup<'_> {
-	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, String> {
+	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, subxt::Error> {
 		let response = self
 			.chain
 			.remote_chain_head_call(RemoteChainHeadCallRequest {
@@ -226,8 +226,9 @@ impl RuntimeApiCaller for DotnsLookup<'_> {
 				call_parameters: input.to_vec(),
 			})
 			.await
-			.map_err(|failure| failure.reason())?;
-		let operation_id = started_operation_id(response.operation)?;
+			.map_err(subxt::Error::other)?;
+		let operation_id =
+			started_operation_id(response.operation).map_err(subxt::Error::other_str)?;
 		wait_for_chain_head_call_output(
 			&mut self.follow,
 			&operation_id,
@@ -235,6 +236,7 @@ impl RuntimeApiCaller for DotnsLookup<'_> {
 			OPERATION_TIMEOUT,
 		)
 		.await
+		.map_err(subxt::Error::other_str)
 	}
 }
 
