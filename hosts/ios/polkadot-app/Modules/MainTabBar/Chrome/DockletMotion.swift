@@ -45,7 +45,7 @@ struct DockletMotion {
     private static let turnBackPeak: CGFloat = 0.05
     /// Share of that peak a drag may fall back by before its rest reverses to the start rest.
     private static let turnBackShare: CGFloat = 0.3
-    /// Finger speed, in points a second, along the Path's restore flick direction, that sends a grabbed bar back to
+    /// Finger speed, in points a second, measured inward from the Path's edge, that sends a grabbed bar back to
     /// shown at any drag length.
     private static let restoreFlickSpeed: CGFloat = 350
     /// Release speed, in progress per second, above which a settle is under-damped.
@@ -206,6 +206,21 @@ struct DockletMotion {
         path.acceptsPan(translation: translation, isSettling: isSettling)
     }
 
+    /// The screen edge the Docklet rests past when tucked.
+    var edge: DockletEdge {
+        path.edge
+    }
+
+    /// The Edge glow strip on the edge the Docklet rests past.
+    func edgeGlowRect(geometry: DockletGeometry) -> CGRect {
+        path.edgeGlowRect(geometry: geometry)
+    }
+
+    /// The Grab zone on the edge the Docklet rests past.
+    func grabZoneRect(geometry: DockletGeometry) -> CGRect {
+        path.grabZoneRect(geometry: geometry)
+    }
+
     /// Passes a raw progress through between 0 and 1, and bends it past either end by a limited band.
     static func rubberBanded(_ raw: CGFloat) -> CGFloat {
         let slope = rubberBandMaximum * rubberBandRate
@@ -345,7 +360,7 @@ private extension DockletMotion {
     }
 
     private func restAfterRelease(of drag: Drag, velocity: CGFloat) -> DockletRest {
-        if drag.isAiming, drag.samples.speed(along: path.restoreFlickDirection) > Self.restoreFlickSpeed {
+        if drag.isAiming, drag.samples.speed(along: path.edge.inward) > Self.restoreFlickSpeed {
             return .shown
         }
         let target = isTurnedBack(drag) ? drag.startProgress : progress + velocity * Self.projectionSeconds

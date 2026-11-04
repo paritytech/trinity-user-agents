@@ -164,6 +164,11 @@ final class TabBarFoldController {
         motion.acceptsPan(translation: translation)
     }
 
+    /// The screen edge the Docklet rests past when tucked.
+    var edge: DockletEdge {
+        motion.edge
+    }
+
     func refresh() {
         apply(state: policyState)
     }
@@ -359,10 +364,9 @@ private extension TabBarFoldController {
 
     /// The only writer of the chrome's transform. The Edge glow and Grab zone follow the same progress.
     func writeTransform(_ transform: CGAffineTransform) {
-        let drawbridge = DockletDrawbridge(geometry: geometry)
         foldSurface.transform = transform
-        outputs.glow(drawbridge.edgeGlowRect, glowOpacity)
-        outputs.grabZone(motion.destination == .tucked ? drawbridge.grabZoneRect : .zero)
+        outputs.glow(motion.edgeGlowRect(geometry: geometry), glowOpacity)
+        outputs.grabZone(motion.destination == .tucked ? motion.grabZoneRect(geometry: geometry) : .zero)
     }
 
     /// Sends the content fade target to the chrome when a transition has changed it. Called only from the transition

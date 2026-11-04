@@ -83,6 +83,7 @@ final class TabBarBottomChromeController: UIViewController {
         statusStripAnchor: { [weak self] in self?.statusStripAnchorProvider?() },
         docklet: .init(
             edgeGlowAnchor: edgeGlowView,
+            edgeGlowArrowDirection: foldController.edge.popoverArrowDirection,
             onRestoreDocklet: { [weak self] in self?.foldController.setUserOverride(.shown) },
             onTipShown: { [weak self] isShown in self?.foldController.setAutoHideBlocked(.tipShown, isShown) }
         )
@@ -525,6 +526,16 @@ private extension TabBarBottomChromeController {
             withAnimation(curve) {
                 barModel.contentFade.opacity = target.opacity
             }
+        }
+    }
+}
+
+private extension DockletEdge {
+    /// The tip arrow side that points from the Docklet tip toward this edge.
+    var popoverArrowDirection: UIPopoverArrowDirection {
+        switch self {
+        case .right:
+            .right
         }
     }
 }

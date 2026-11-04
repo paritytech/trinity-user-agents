@@ -99,6 +99,8 @@ extension TabBarTipController {
     struct DockletHooks {
         /// The Edge glow the Docklet tips point at.
         let edgeGlowAnchor: UIView
+        /// The arrow side the Docklet tips point from, toward the Edge glow.
+        let edgeGlowArrowDirection: UIPopoverArrowDirection
         /// Brings the tucked Docklet back when a Docklet tip's body is tapped.
         let onRestoreDocklet: () -> Void
         /// Reports whether any tip is on screen.
@@ -170,7 +172,7 @@ private extension TabBarTipController {
              .statusStrip:
             popover?.permittedArrowDirections = [.up, .down]
         case .edgeGlow:
-            popover?.permittedArrowDirections = [.right]
+            popover?.permittedArrowDirections = [docklet.edgeGlowArrowDirection]
             popover?.passthroughViews = [host.view]
         }
 

@@ -96,7 +96,7 @@ struct DockletDrawbridgeState {
         releaseResidual = .zero
     }
 
-    /// The transform for a view anchored at `anchor`. The nudge inset moves the bar left after its pose is found.
+    /// The transform for a view anchored at `anchor`. The nudge inset moves the bar inward after its pose is found.
     func transform(
         progress: CGFloat,
         unwindShare: CGFloat,
@@ -105,7 +105,9 @@ struct DockletDrawbridgeState {
         anchor: CGPoint
     ) -> CGAffineTransform {
         var pose = currentPose(progress: progress, unwindShare: unwindShare, geometry: geometry)
-        pose.offset.dx -= nudgeInset
+        let inward = DockletDrawbridge.edge.inward
+        pose.offset.dx += inward.dx * nudgeInset
+        pose.offset.dy += inward.dy * nudgeInset
         return DockletDrawbridge(geometry: geometry).transform(pose, anchor: anchor)
     }
 

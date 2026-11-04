@@ -26,6 +26,8 @@ struct DockletDrawbridge {
     private static let zoneTopClearance: CGFloat = 56
     /// Least distance the Edge glow and Grab zone keep above the bottom of the screen.
     private static let zoneBottomClearance: CGFloat = 8
+    /// The screen edge the Drawbridge rests past, where its Edge glow and Grab zone sit.
+    static let edge: DockletEdge = .right
     /// Rotation of the bar about the pivot when fully tucked, with the leading end going up.
     static let quarterTurn: CGFloat = .pi / 2
     /// Exponent of the cubic ease that drives the slide out.

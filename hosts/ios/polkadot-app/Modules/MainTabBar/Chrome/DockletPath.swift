@@ -105,10 +105,40 @@ enum DockletPath {
         }
     }
 
-    /// The direction a flick that restores a grabbed bar to shown runs in.
-    var restoreFlickDirection: CGVector {
+    /// The screen edge the Path's Docklet rests past.
+    var edge: DockletEdge {
         switch self {
         case .drawbridge:
+            DockletDrawbridge.edge
+        }
+    }
+
+    /// The Edge glow strip that the Path leaves on its edge when the Docklet is tucked.
+    func edgeGlowRect(geometry: DockletGeometry) -> CGRect {
+        switch self {
+        case .drawbridge:
+            DockletDrawbridge(geometry: geometry).edgeGlowRect
+        }
+    }
+
+    /// The Grab zone that the Path leaves on its edge when the Docklet is tucked.
+    func grabZoneRect(geometry: DockletGeometry) -> CGRect {
+        switch self {
+        case .drawbridge:
+            DockletDrawbridge(geometry: geometry).grabZoneRect
+        }
+    }
+}
+
+/// The screen edge a Tucked Docklet rests past.
+enum DockletEdge {
+    /// The trailing edge of the screen.
+    case right
+
+    /// The unit direction from this edge into the screen.
+    var inward: CGVector {
+        switch self {
+        case .right:
             CGVector(dx: -1, dy: 0)
         }
     }
