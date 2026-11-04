@@ -1,9 +1,9 @@
 name: Refresh Chain Specs
 
-# Refresh the smoldot chain specs bundled in truapi-provider (fresh relay
-# lightSyncState checkpoints and genesis stateRootHash). The refresh only
-# reaches consumers after a new @parity/truapi-provider is published, so this
-# runs weekly rather than hourly.
+# Refresh the smoldot chain specs bundled in truapi-provider and the stack descriptors bundled in
+# truapi-host (how the CLI uses them: rust/crates/truapi-host-cli/SPEC.md §14.1). Consumers get a
+# refresh only after a new @parity/truapi-provider or truapi-host is published, so this runs
+# weekly rather than hourly.
 on:
   schedule:
     # Mondays at 00:00 UTC.
@@ -39,22 +39,40 @@ jobs:
           # The weekly refresh keeps its own bootnodes. A dispatch decides.
           SKIP_BOOTNODE_CHECK: ${{ github.event_name == 'schedule' && 'true' || inputs.skip_bootnode_check }}
 
+      - name: Install truapi-host
+        id: install
+        if: ${{ !cancelled() }}
+        run: |
+          bash scripts/truapi-host-installer.sh
+          echo "TRUAPI_HOST=$TRUAPI_HOST_BIN_DIR/truapi-host" >> "$GITHUB_ENV"
+        env:
+          TRUAPI_HOST_BIN_DIR: ${{ runner.temp }}/bin
+
+      - name: Refresh stack descriptors
+        id: stacks
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: bash scripts/update-stacks.sh
+
+      # A failed install or stack refresh still opens the PR with what did refresh,
+      # and leaves the run red.
       - name: Check for changes
         id: diff
+        if: ${{ !cancelled() }}
         run: |
-          if git diff --quiet rust/crates/truapi-provider/networks/; then
+          if git diff --quiet rust/crates/truapi-provider/networks/ rust/crates/truapi-host-cli/stacks/; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create Pull Request
-        if: steps.diff.outputs.changed == 'true'
+        if: ${{ !cancelled() && steps.diff.outputs.changed == 'true' }}
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
-          title: "chore(truapi-provider): refresh bundled chain specs"
+          title: "chore: refresh bundled chain specs and stack descriptors"
           body: |
-            Automated refresh of the smoldot chain specs bundled in truapi-provider.
+            Automated refresh of the smoldot chain specs bundled in truapi-provider and the
+            stack descriptors bundled in truapi-host (`rust/crates/truapi-host-cli/stacks`).
 
             This branch is force-pushed on every run, so the newest head can end up with no
             checks attached even though earlier ones had them. If none are shown below, push an
@@ -70,7 +88,14 @@ jobs:
             Merging this publishes a dev snapshot of `@parity/truapi-provider` automatically
             (dev-publish.yml triggers on chain-spec changes landing on main). Consumers still
             need to bump to the new snapshot to pick up the refresh.
+
+            Users get a refreshed stack descriptor with the next truapi-host release. If
+            `test_light_client_catalog_match` fails, the stack restarted its chains: update the
+            `genesis_hex` values in `rust/crates/truapi-provider/src/networks.rs` and the chain
+            specs in the same PR. If `test_disposable_network_hosts` fails, the stack moved an
+            endpoint: confirm the new host is a test network before adding it to
+            `TEST_NETWORK_HOSTS` in `rust/crates/truapi-host-cli/src/network.rs`.
           branch: auto/chain-spec-update
-          commit-message: "chore(truapi-provider): refresh bundled chain specs"
+          commit-message: "chore: refresh bundled chain specs and stack descriptors"
           delete-branch: true
           labels: dependencies
