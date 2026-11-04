@@ -51,6 +51,9 @@ pub enum RpcError {
 	/// `chain_getFinalizedHead` did not return a hash string.
 	#[error("chain_getFinalizedHead returned non-string")]
 	FinalizedHeadNotString,
+	/// `chain_getBlockHash` for the best block did not return a hash string.
+	#[error("chain_getBlockHash returned non-string")]
+	BestHeadNotString,
 	/// Extrinsic status subscription ended before inclusion.
 	#[error("author_submitAndWatchExtrinsic subscription ended")]
 	SubmitSubscriptionEnded,
@@ -192,6 +195,15 @@ impl RpcClient {
 			.as_str()
 			.map(str::to_owned)
 			.ok_or_else(|| RpcError::FinalizedHeadNotString.into())
+	}
+
+	/// `chain_getBlockHash` with no number -> hash of the current best block.
+	pub async fn best_head(&self) -> Result<String, StatementAllowanceError> {
+		let value = self.call("chain_getBlockHash", json!([])).await?;
+		value
+			.as_str()
+			.map(str::to_owned)
+			.ok_or_else(|| RpcError::BestHeadNotString.into())
 	}
 
 	/// Submit an extrinsic and wait for `inBlock` or `finalized`; returns the block hash.
@@ -485,5 +497,16 @@ mod tests {
 			scripted.calls(),
 			vec![("chain_getFinalizedHead".to_string(), "[]".to_string())],
 		);
+	}
+
+	#[test]
+	fn best_head_asks_for_the_unnumbered_block_hash() {
+		let scripted = ScriptedRpc::new([r#""0xbeef""#]);
+		let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
+
+		let head = futures::executor::block_on(rpc.best_head()).unwrap();
+
+		assert_eq!(head, "0xbeef");
+		assert_eq!(scripted.calls(), vec![("chain_getBlockHash".to_string(), "[]".to_string())]);
 	}
 }

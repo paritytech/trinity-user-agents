@@ -871,6 +871,7 @@ async fn run_pgas_check(
 		ring.collection,
 		ring.ring_index,
 		revision,
+		pgas::RING_REVISION_WAIT,
 	)
 	.await
 	{
@@ -918,6 +919,7 @@ async fn run_pgas_check(
 		network_suffix: &network_suffix,
 		target: &target,
 		ring,
+		revision_wait: pgas::RING_REVISION_WAIT,
 	})
 	.await
 	.map_err(|err| anyhow::anyhow!("claim failed: {err}"))?;

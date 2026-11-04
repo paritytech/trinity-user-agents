@@ -11,6 +11,7 @@ import AsyncExtensions
 
 public enum PGasOriginError: Error {
     case revisionPruned(UInt32)
+    case revisionTimeout(UInt32)
 }
 
 public protocol PGasOriginCreating {
@@ -24,7 +25,9 @@ public protocol PGasOriginCreating {
 }
 
 public final class PGasOriginFactory {
-    private static let revisionWaitTimeout: Duration = .seconds(60)
+    /// Retries of first claims that missed the revision succeeded 10 to 80 s later,
+    /// so this covers the slowest import seen.
+    private static let revisionWaitTimeout: Duration = .seconds(90)
 
     private let keyResolver: BandersnatchKeyResolving
     private let chainRegistry: ChainResourceProtocol
@@ -64,8 +67,8 @@ extension PGasOriginFactory: PGasOriginCreating {
             .pgasClaim(day: day, slot: slotIndex)
             .context(networkSuffix: networkSuffix)
 
-        let revision = try await fetchRevision(
-            for: personDeps.origin,
+        let proofParams = try await fetchProofParams(
+            personDeps: personDeps,
             chain: peopleChainId
         )
 
@@ -73,7 +76,7 @@ extension PGasOriginFactory: PGasOriginCreating {
             submissionChainId: submissionChainId,
             collectionId: personDeps.origin.collectionIdentifier,
             ringIndex: personDeps.origin.ringIndex,
-            revision: revision
+            revision: proofParams.revision
         )
 
         let pgasOrigin = AsPgasOriginDefinition(
@@ -81,7 +84,7 @@ extension PGasOriginFactory: PGasOriginCreating {
                 personDeps: personDeps,
                 proofContext: proofContext,
                 day: day,
-                revision: revision
+                proofParams: proofParams
             )
         )
 
@@ -118,23 +121,22 @@ private extension PGasOriginFactory {
         )
     }
 
-    func fetchRevision(
-        for origin: PersonOrigin,
+    /// Ring members and revision read at one People block, so the proof covers
+    /// exactly the members of the revision it names.
+    func fetchProofParams(
+        personDeps: PersonProofDependency,
         chain: ChainId
-    ) async throws -> UInt32 {
+    ) async throws -> MembersProofParams {
         let connection = try chainRegistry.getRpcConnectionOrError(for: chain)
-        let runtimeProvider = try chainRegistry.getRuntimeCodingServiceOrError(for: chain)
-        let proofParamsFetcher = MembershipProofParamsFetcher(
-            connection: connection,
-            runtimeCodingService: runtimeProvider
+        let blockHash = try await JSONRPCListOperation<String>(
+            engine: connection,
+            method: RPCMethod.getBlockHash
         )
-        let revisionValue = try await proofParamsFetcher.fetchCurrentRevision(
-            for: origin.ringIndex,
-            collectionId: origin.collectionIdentifier,
-            blockHash: nil
-        )
+        .asyncExecute()
 
-        return revisionValue ?? 0
+        return try await personDeps.proofParamsFetcher.fetchParams(
+            blockHash: Data(hexString: blockHash)
+        )
     }
 
     func fetchCurrentGeneration(
@@ -201,14 +203,14 @@ private extension PGasOriginFactory {
                         return
                     }
 
-                    if let lowest = records.min(by: { $0.revision < $1.revision })?.revision,
-                       lowest > revision {
+                    // A newer root means this revision was evicted or skipped.
+                    if let newest = records.map(\.revision).max(), newest > revision {
                         throw PGasOriginError.revisionPruned(revision)
                     }
                 }
             }
         } catch is TimeoutError {
-            throw PGasOriginError.revisionPruned(revision)
+            throw PGasOriginError.revisionTimeout(revision)
         }
     }
 }
