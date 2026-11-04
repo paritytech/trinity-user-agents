@@ -6,7 +6,7 @@ import Foundation
 /// threads safe.
 enum FundingNumberFormatters {
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var cache: [String: NumberFormatter] = [:]
+    private nonisolated(unsafe) static var cache: [String: NumberFormatter] = [:]
 
     /// A decimal figure in US style, with between `minimumDigits` and
     /// `maximumDigits` fraction digits.
