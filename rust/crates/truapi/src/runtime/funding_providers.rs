@@ -266,7 +266,7 @@ impl RuntimeServices {
 									country: selection.country.as_deref(),
 								})
 							})
-							.reduce(widest)
+							.reduce(FundingAmountLimits::widest)
 							.unwrap_or(FundingAmountLimits {
 								min: Some(FUNDING_MIN_AMOUNT),
 								max: None,
@@ -462,15 +462,6 @@ fn declared_networks(
 	}
 	networks.retain(|(_, assets)| !assets.is_empty());
 	networks
-}
-
-/// The range that admits an amount either `a` or `b` admits: the smaller
-/// bound on each side, or none when either has none.
-fn widest(a: FundingAmountLimits, b: FundingAmountLimits) -> FundingAmountLimits {
-	FundingAmountLimits {
-		min: a.min.zip(b.min).map(|(a, b)| a.min(b)),
-		max: a.max.zip(b.max).map(|(a, b)| a.max(b)),
-	}
 }
 
 #[cfg(test)]
