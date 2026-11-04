@@ -4,11 +4,10 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActi
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
 import kotlinx.collections.immutable.ImmutableList
 
-/** The Purse's funding lists: what is in progress, delayed first, then what completed, newest first. */
+/** The CASH card's funding lists: what is in progress, delayed first, then what completed, newest first. */
 data class FundingActivityUiState(
     val inFlight: ImmutableList<FundingActivityRowUi>,
     val completed: ImmutableList<FundingActivityRowUi>,
-    val currentBalance: String?,
 ) {
     /** Top-ups in progress, for the Topping up sheet. */
     val toppingUp: List<FundingActivityRowUi>

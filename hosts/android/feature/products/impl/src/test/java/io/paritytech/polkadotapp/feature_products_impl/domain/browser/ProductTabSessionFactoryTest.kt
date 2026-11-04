@@ -4,6 +4,8 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.InMemoryBundledProductFiles
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPISessionStarter
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
 import kotlinx.coroutines.test.TestScope
@@ -28,12 +30,22 @@ class ProductTabSessionFactoryTest {
     private val runtimeSettings = mockk<ProductRuntimeSettings> { every { isTrUAPIRuntimeEnabled() } returns false }
     private val devServers = mockk<DevServers> { every { productAt(any()) } returns null }
     private val scope = TestScope()
+    private val bundledProducts = BundledProducts(
+        InMemoryBundledProductFiles(
+            mapOf(
+                "bundled-products/provider.dot/worker/index.js" to "export {}",
+                "bundled-products/provider.dot/app/index.html" to "<html></html>",
+            ),
+        ),
+        enabled = true,
+    )
 
     private val factory = ProductTabSessionFactory(
         native,
-        TrUAPIProductTabSessionFactory(webViewProviders, sessionStarter, mockk(relaxed = true)),
+        TrUAPIProductTabSessionFactory(webViewProviders, sessionStarter, mockk(relaxed = true), bundledProducts),
         runtimeSettings,
         devServers,
+        bundledProducts,
     )
 
     @Test
@@ -57,6 +69,31 @@ class ProductTabSessionFactoryTest {
                 servedExecutable = any(),
             )
             sessionStarter.start(provider, devServer.url, scope, any(), null, productId)
+        }
+        verify(exactly = 0) { native.create(any(), any(), any()) }
+    }
+
+    // A tab opened on a product the app ships serves it from its own files, as a sheet does, and only
+    // TrUAPI serves it, so the runtime toggle does not apply.
+    @Test
+    fun `a bundled product's page runs on TrUAPI from its own files under its own id`() {
+        val url = "https://provider.dot/card"
+        val product = bundledProducts.product(ProductId.parse("provider.dot").getOrThrow())
+
+        factory.create(url, scope) {}
+
+        verify {
+            webViewProviders.create(
+                url,
+                any(),
+                true,
+                scope,
+                bundledProduct = product,
+                fixedProductId = null,
+                firstPartyOrigin = null,
+                servedExecutable = any(),
+            )
+            sessionStarter.start(provider, url, scope, any(), null, product!!.id)
         }
         verify(exactly = 0) { native.create(any(), any(), any()) }
     }

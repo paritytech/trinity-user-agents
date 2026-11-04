@@ -15,6 +15,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -71,11 +76,16 @@ fun FundingActivitySheet(
     onRowClick: (id: String) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // The sheet slides away after it is closed, so it keeps drawing what it last showed instead of going blank.
+    var lastSheet by remember { mutableStateOf(sheet) }
+    SideEffect { if (sheet != null) lastSheet = sheet }
+    val shown = sheet ?: lastSheet
+
     NovaModalBottomSheet(isVisible = sheet != null, onDismissRequest = onDismiss) {
-        when (sheet) {
+        when (shown) {
             FundingSheet.HISTORY -> FundingHistorySheetContent(state = state, onBack = onBack, onRowClick = onRowClick)
             FundingSheet.TOPPING_UP, FundingSheet.SENDING -> FundingInProgressSheetContent(
-                sheet = sheet,
+                sheet = shown,
                 state = state,
                 onHistory = onHistory,
                 onStartNew = onStartNew,

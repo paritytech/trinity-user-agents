@@ -1,5 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
+import dagger.assisted.Assisted
+import dagger.assisted.AssistedFactory
+import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
@@ -48,7 +51,6 @@ import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingStatus
 import uniffi.truapi.ProductId
 import java.math.BigDecimal
-import javax.inject.Inject
 import kotlin.time.Duration.Companion.milliseconds
 import io.paritytech.polkadotapp.common.R as RCommon
 import uniffi.truapi.FundingDirection as CoreFundingDirection
@@ -64,9 +66,10 @@ data class FundingStartState(
     val cancel: FundingCancel? = null,
 )
 
-@HiltViewModel
-class FundingViewModel @Inject constructor(
-    private val context: FundingOverlayContext,
+/** Built for the overlay [context] its sheet found when it opened, which the overlay may have dropped since. */
+@HiltViewModel(assistedFactory = FundingViewModel.Factory::class)
+class FundingViewModel @AssistedInject constructor(
+    @Assisted private val context: FundingOverlayContext,
     private val contexts: FundingOverlayContexts,
     private val interactor: FundingFlowInteractor,
     private val router: ProductsRouter,
@@ -272,8 +275,8 @@ class FundingViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         context.answer(FundingOverlayOutcome.DISMISSED)
-        context.markClosed()
-        contexts.remove(intent)
+        // A sheet opened for the same session since then has put its own context in; that one stays.
+        contexts.remove(context)
     }
 
     private fun closeSheet() = launchUnit { router.closeFundingOverlay(intent) }
@@ -455,5 +458,10 @@ class FundingViewModel @Inject constructor(
                 .logFailure("Funding quote request failed")
                 .onSuccess { id -> flow.update { it?.requested(id) } }
         }
+    }
+
+    @AssistedFactory
+    interface Factory {
+        fun create(context: FundingOverlayContext): FundingViewModel
     }
 }

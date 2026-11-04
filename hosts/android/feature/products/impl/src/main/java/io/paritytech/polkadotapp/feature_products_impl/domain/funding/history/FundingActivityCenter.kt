@@ -52,7 +52,11 @@ class FundingActivityCenter @Inject constructor(
     /** Ended sessions handed over as their summary only and acknowledged in this process. Under [reloadMutex]. */
     private val acknowledgedSummaries = mutableSetOf<String>()
 
-    /** Built again whenever the core pushes a session or resumes funding. Starts the core, which then pushes them. */
+    /**
+     * Built again whenever the core pushes a session or resumes funding; never completes, so the collector stops it.
+     * Collecting it starts the core, which then pushes them, and acknowledges each ended session once its row is
+     * built, so the core stops pushing it on resume.
+     */
     fun observe(): Flow<FundingActivity> =
         combine(runtime.sessions, runtime.endedSummaries, runtime.inProgress) { sessions, summaries, _ -> sessions.values to summaries }
             .onStart { runtime.start().logFailure("Failed to start the core for funding activity") }
