@@ -93,18 +93,26 @@ function readCbor(
   }
 }
 
+function checkHeaderSize(size: number): void {
+  if (size === 0 || size > MAX_HEADER_BYTES)
+    throw new Error("CAR header has an unreasonable size");
+}
+
 function readHeader(bytes: Uint8Array): { roots: Cid[]; next: number } {
   const size = readVarint(bytes, 0);
-  if (size.value === 0 || size.value > MAX_HEADER_BYTES)
-    throw new Error("CAR header has an unreasonable size");
+  checkHeaderSize(size.value);
   const end = size.next + size.value;
   if (end > bytes.length) throw new Error("truncated CAR header");
-  const header = readCbor(bytes.subarray(size.next, end), 0, 0).value;
+  return { roots: decodeHeader(bytes.subarray(size.next, end)), next: end };
+}
+
+function decodeHeader(bytes: Uint8Array): Cid[] {
+  const header = readCbor(bytes, 0, 0).value;
   if (!(header instanceof Map) || header.get("version") !== 1)
     throw new Error("not a CARv1 archive");
   const listed = header.get("roots");
   if (!Array.isArray(listed)) throw new Error("CAR header has no roots");
-  const roots = listed.map((root) => {
+  return listed.map((root) => {
     const tagged = root as { tag?: number; value?: unknown };
     if (
       tagged.tag !== 42 ||
@@ -114,7 +122,23 @@ function readHeader(bytes: Uint8Array): { roots: Cid[]; next: number } {
       throw new Error("CAR root is not a CID link");
     return readCid(tagged.value, 1).cid;
   });
-  return { roots, next: end };
+}
+
+/** A block of an archive, checked against its identifier. */
+export interface CarBlock {
+  cid: Cid;
+  data: Uint8Array;
+}
+
+/** Read one section's identifier and block, and check the block against it. */
+function readSection(section: Uint8Array, limits: CarLimits): CarBlock {
+  const { cid, next } = readCid(section, 0);
+  const data = section.subarray(next);
+  if (data.length > limits.maxBlockBytes)
+    throw new Error("the archive holds a block larger than this host accepts");
+  if (!verifyBlock(cid, data))
+    throw new Error("a block in the archive does not match its identifier");
+  return { cid, data };
 }
 
 /**
@@ -137,16 +161,150 @@ export function parseCar(bytes: Uint8Array, limits: CarLimits): Car {
     count += 1;
     if (count > limits.maxBlocks)
       throw new Error("the archive holds more blocks than this host accepts");
-    const { cid, next } = readCid(bytes.subarray(0, end), section.next);
-    const data = bytes.subarray(next, end);
-    if (data.length > limits.maxBlockBytes)
-      throw new Error(
-        "the archive holds a block larger than this host accepts",
-      );
-    if (!verifyBlock(cid, data))
-      throw new Error("a block in the archive does not match its identifier");
+    const { cid, data } = readSection(
+      bytes.subarray(section.next, end),
+      limits,
+    );
     blocks.set(cidKey(cid), data);
     at = end;
   }
   return { roots: header.roots, blocks };
+}
+
+/** Room for a section's identifier on top of its block. Real CIDs are under 40 bytes. */
+const MAX_CID_BYTES = 128;
+/** Bytes enough for any varint `readVarint` accepts. */
+const MAX_VARINT_PEEK = 8;
+
+/**
+ * Read a CARv1 stream of the DAG under `root` section by section, checking
+ * every block against its identifier as it arrives. A header that does not
+ * name `root` as its only root, a section that does not match, or one that
+ * takes the stream past `limits`, ends the read with an error; the blocks
+ * yielded before it stand. `maxBytes` bounds the block bytes it yields; a
+ * section is checked against `maxBlockBytes` before it is buffered.
+ */
+export async function* readCarStream(
+  chunks: AsyncIterable<Uint8Array>,
+  root: Cid,
+  limits: CarLimits,
+): AsyncGenerator<CarBlock> {
+  const source = chunks[Symbol.asyncIterator]();
+  const queue = new ByteQueue();
+  /** Buffer at least `length` bytes; false when the stream ends first. */
+  async function fill(length: number): Promise<boolean> {
+    while (queue.length < length) {
+      const next = await source.next();
+      if (next.done) return false;
+      queue.push(next.value);
+    }
+    return true;
+  }
+  async function varint(): Promise<number> {
+    for (;;) {
+      const head = queue.peek(MAX_VARINT_PEEK);
+      try {
+        const { value, next } = readVarint(head, 0);
+        queue.take(next);
+        return value;
+      } catch (error) {
+        if (head.length >= MAX_VARINT_PEEK || !(await fill(head.length + 1)))
+          throw error;
+      }
+    }
+  }
+  async function take(length: number, what: string): Promise<Uint8Array> {
+    if (!(await fill(length))) throw new Error(`truncated CAR ${what}`);
+    return queue.take(length);
+  }
+
+  try {
+    if (!(await fill(1))) throw new Error("truncated CAR header");
+    const headerSize = await varint();
+    checkHeaderSize(headerSize);
+    const roots = decodeHeader(await take(headerSize, "header"));
+    if (roots.length !== 1 || cidKey(roots[0]) !== cidKey(root))
+      throw new Error("the archive is not of the content asked for");
+    let count = 0;
+    let bytes = 0;
+    while (await fill(1)) {
+      const length = await varint();
+      if (length === 0) throw new Error("truncated CAR section");
+      if (length > limits.maxBlockBytes + MAX_CID_BYTES)
+        throw new Error(
+          "the archive holds a block larger than this host accepts",
+        );
+      count += 1;
+      if (count > limits.maxBlocks)
+        throw new Error("the archive holds more blocks than this host accepts");
+      const block = readSection(await take(length, "section"), limits);
+      bytes += block.data.length;
+      if (bytes > limits.maxBytes)
+        throw new Error("the archive is larger than this host accepts");
+      yield block;
+    }
+  } finally {
+    await source.return?.();
+  }
+}
+
+/** Bytes from a stream, taken from the front in pieces of a known length. */
+class ByteQueue {
+  private chunks: Uint8Array[] = [];
+  /** Bytes of `chunks[0]` already taken. */
+  private offset = 0;
+  length = 0;
+
+  push(chunk: Uint8Array): void {
+    if (chunk.length === 0) return;
+    this.chunks.push(chunk);
+    this.length += chunk.length;
+  }
+
+  /** Up to `count` bytes from the front, left in place. */
+  peek(count: number): Uint8Array {
+    const out = new Uint8Array(Math.min(count, this.length));
+    let at = 0;
+    let offset = this.offset;
+    for (const chunk of this.chunks) {
+      if (at === out.length) break;
+      const piece = chunk.subarray(offset, offset + out.length - at);
+      out.set(piece, at);
+      at += piece.length;
+      offset = 0;
+    }
+    return out;
+  }
+
+  /** Exactly `count` bytes from the front; the caller has checked they are here. */
+  take(count: number): Uint8Array {
+    const first = this.chunks[0];
+    if (first !== undefined && first.length - this.offset >= count) {
+      const out = first.subarray(this.offset, this.offset + count);
+      this.advance(count);
+      return out;
+    }
+    const out = new Uint8Array(count);
+    let at = 0;
+    while (at < count) {
+      const chunk = this.chunks[0];
+      const piece = chunk.subarray(
+        this.offset,
+        this.offset + Math.min(count - at, chunk.length - this.offset),
+      );
+      out.set(piece, at);
+      at += piece.length;
+      this.advance(piece.length);
+    }
+    return out;
+  }
+
+  private advance(count: number): void {
+    this.length -= count;
+    this.offset += count;
+    if (this.offset === this.chunks[0].length) {
+      this.chunks.shift();
+      this.offset = 0;
+    }
+  }
 }

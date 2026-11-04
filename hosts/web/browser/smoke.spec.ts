@@ -528,7 +528,7 @@ describe("the loading indicator", () => {
 });
 
 describe("a product loading", () => {
-  /** Hold the gateway's blocks until `release`, or refuse them. */
+  /** Hold the gateway's blocks and CAR until `release`, or refuse them. */
   async function gateBlocks(
     context: BrowserContext,
     mode: "hold" | "refuse",
@@ -536,8 +536,8 @@ describe("a product loading", () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
     await context.route(`${PASEO_DOTNS.contentGateway}/**`, async (route) => {
-      if (new URL(route.request().url()).searchParams.get("format") !== "raw")
-        return route.fallback();
+      const format = new URL(route.request().url()).searchParams.get("format");
+      if (format !== "raw" && format !== "car") return route.fallback();
       if (mode === "refuse") return route.abort();
       await gate;
       return route.fallback();
