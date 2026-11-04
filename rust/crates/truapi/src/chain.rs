@@ -1,5 +1,5 @@
 //! Chain capabilities shared by host services: heads, block data, storage
-//! watches, and transaction validation and submission.
+//! watches, transaction validation and submission, and contract calls.
 //!
 //! Each capability is its own trait, and a consumer takes only the ones it
 //! uses as `Arc<dyn …>`. Every method names the chain by its genesis hash, so
@@ -8,6 +8,10 @@
 //! watches and validation go through the legacy JSON-RPC methods, which
 //! reach any block the node still keeps, and submission goes through the
 //! shared chainHead client.
+//!
+//! Contract calls are the exception: a [`RuntimeApiCaller`] is taken as
+//! `&mut impl` and its transport selects the chain and block, and an
+//! [`EvmContractCaller`] serves the one chain it was built for.
 //!
 //! `Ok(None)` means the node knows the block, or the extrinsic in it, does
 //! not exist. A read the node cannot serve, such as the body or events of a
@@ -43,7 +47,7 @@ pub use extrinsic::{
 pub use heads::{ChainHeads, HeadEvent, Heads};
 pub use mortality::{MortalExtrinsic, Mortality, MortalityError};
 pub use revive::{EvmContractCaller, EvmContractError, PreparedEvmTransaction};
-pub use runtime_api::RuntimeApi;
+pub use runtime_api::RuntimeApiCaller;
 pub use storage_watch::{
 	DecodableAtBlock, DecodedEntryChanges, RawStorageChanges, StorageEntryName, StorageSnapshot,
 	StorageWatchError, WatchedHead, WatchedStorage,

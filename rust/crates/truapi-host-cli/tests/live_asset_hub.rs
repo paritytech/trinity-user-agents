@@ -178,7 +178,7 @@ async fn live_asset_hub_reports_a_skipped_revision_as_pruned() {
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use truapi::{
-	chain::{EvmContractCaller, RuntimeApi},
+	chain::{EvmContractCaller, RuntimeApiCaller},
 	host_logic::dotns_gateway::{
 		DotnsError, DotnsRegistrar, DotnsTransport, DotnsViewError, classify_labels,
 		discover_pop_controller, is_dotted_lite_username, is_pop_issued, label_available,
@@ -226,7 +226,7 @@ impl DotnsTransport for PlainRpc {
 }
 
 #[truapi::platform::async_trait]
-impl RuntimeApi for PlainRpc {
+impl RuntimeApiCaller for PlainRpc {
 	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, String> {
 		let output = self
 			.0

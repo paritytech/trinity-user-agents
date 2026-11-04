@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use super::{
 	BlockBackend, DispatchOutcome, EncodedExtrinsic, ExtrinsicBuildError, ExtrinsicService,
-	HashAndNumber, RuntimeApi, SubstrateSigner, TxSubmitter, WatchEvent,
+	HashAndNumber, RuntimeApiCaller, SubstrateSigner, TxSubmitter, WatchEvent,
 };
 use crate::chain_runtime::{ChainRuntime, RuntimeFailure};
 
@@ -89,7 +89,7 @@ impl EvmContractCaller {
 	/// Pinned readers retain their block and follow; plain RPC readers use
 	/// the node's current state. No signing dependencies are needed.
 	pub async fn read(
-		runtime: &mut impl RuntimeApi,
+		runtime: &mut impl RuntimeApiCaller,
 		contract: &[u8; 20],
 		input: &[u8],
 	) -> Result<Vec<u8>, EvmContractError> {
@@ -143,7 +143,7 @@ impl PreparedEvmTransaction<'_> {
 }
 
 async fn simulate(
-	runtime: &mut impl RuntimeApi,
+	runtime: &mut impl RuntimeApiCaller,
 	origin: &[u8; 32],
 	contract: &[u8; 20],
 	input: &[u8],

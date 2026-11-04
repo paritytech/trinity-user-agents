@@ -28,7 +28,7 @@ use crate::chain_runtime::{
 use tracing::{debug, info};
 
 use crate::{
-	chain::{EvmContractCaller, RuntimeApi},
+	chain::{EvmContractCaller, RuntimeApiCaller},
 	host_logic::dotns_gateway::{DotnsError, DotnsTransport, DotnsViewError},
 	platform::ProductId,
 };
@@ -211,7 +211,7 @@ impl DotnsTransport for DotnsLookup<'_> {
 }
 
 #[async_trait::async_trait]
-impl RuntimeApi for DotnsLookup<'_> {
+impl RuntimeApiCaller for DotnsLookup<'_> {
 	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, String> {
 		let response = self
 			.chain

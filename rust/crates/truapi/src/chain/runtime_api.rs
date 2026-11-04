@@ -8,13 +8,13 @@ use subxt_rpcs::{LegacyRpcMethods, RpcClient};
 /// A pinned transport keeps related calls at one block. A plain RPC client
 /// uses the best block at the time of each request.
 #[async_trait::async_trait]
-pub trait RuntimeApi: Send {
+pub trait RuntimeApiCaller: Send {
 	/// Returns the runtime's encoded result without interpreting its shape.
 	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, String>;
 }
 
 #[async_trait::async_trait]
-impl RuntimeApi for RpcClient {
+impl RuntimeApiCaller for RpcClient {
 	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, String> {
 		LegacyRpcMethods::<RpcConfigFor<SubstrateConfig>>::new(self.clone())
 			.state_call(function, Some(input), None)

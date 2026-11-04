@@ -311,9 +311,9 @@ runtime's type by name.
 ### Contract calls
 
 `EvmContractCaller` in the `chain` module reads pallet-revive contracts and prepares writes.
-`EvmContractCaller::read` takes a `RuntimeApi` transport and returns ABI data. A pinned transport keeps contract and
-storage reads at the same block; a plain RPC transport reads the node's current state. Read-only callers need no signer
-or extrinsic builder.
+`EvmContractCaller::read` takes a `RuntimeApiCaller` transport and returns ABI data. A pinned transport keeps contract
+and storage reads at the same block; a plain RPC transport reads the node's current state. Read-only callers need no
+signer or extrinsic builder.
 
 For writes, `dry_run` simulates as the signer and returns an opaque `PreparedEvmTransaction` that binds the signer,
 chain, contract, calldata and required limits. It signs and submits nothing. `PreparedEvmTransaction::execute_and_watch`
