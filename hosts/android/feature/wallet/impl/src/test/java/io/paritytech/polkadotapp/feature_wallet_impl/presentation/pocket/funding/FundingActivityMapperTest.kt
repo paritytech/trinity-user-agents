@@ -96,6 +96,15 @@ class FundingActivityMapperTest {
     }
 
     @Test
+    fun `a day this year reads in the locale's own order, without the year`() {
+        assertEquals("MMM d", dayPattern(Locale.US))
+        assertEquals("d MMM", dayPattern(Locale.UK))
+        assertEquals("dd.MM", dayPattern(Locale.GERMANY))
+        assertEquals("d MMM", dayPattern(Locale.forLanguageTag("ru")))
+        assertEquals("M月d日", dayPattern(Locale.CHINA))
+    }
+
+    @Test
     fun `top-ups and withdrawals in progress split for their sheets, an outbound one signed`() {
         val state = mapper.map(
             FundingActivity(
