@@ -283,7 +283,6 @@
     <string name="product_bot_management_face_away_label">Open with the face away</string>
     <string name="product_bot_management_name_hint">product%1$s</string>
     <string name="product_bot_management_confirm">Save</string>
-    <string name="spa_browser_minimize">Minimize</string>
     <string name="spa_browser_menu_proceed_in_chat">Proceed in Chat</string>
     <string name="spa_browser_menu_reload">Reload</string>
     <string name="spa_browser_menu_share">Share</string>
