@@ -48,262 +48,208 @@ pub struct Marker {
 	pub class: MarkerClass,
 }
 
-/// Builds a [`Marker`] whose detail never leaves the device.
-const fn local(target: &'static str) -> Marker {
-	Marker { target, class: MarkerClass::Local }
-}
-
-/// Builds a [`Marker`] whose detail may be exported at `severity`.
-const fn export(target: &'static str, severity: Severity) -> Marker {
-	Marker { target, class: MarkerClass::Export(severity) }
-}
-
-// ---------------------------------------------------------------- core
-
-/// The core finished starting. Detail carries its version string.
-pub const CORE_STARTED: Marker = export("truapi.core.started", Severity::Info);
-
-/// A chain refused another follow because the node's budget is spent. Detail
-/// names the chain and the budget, never an account or a call.
-pub const CHAIN_FOLLOW_BUDGET_REACHED: Marker =
-	export("truapi.chain.follow_budget_reached", Severity::Warn);
-
-/// A `tracing` warning raised anywhere in the crate. Detail is the event's own
-/// message, which is written for operators and names no person.
-pub const TRACING_WARN: Marker = export("truapi.tracing.warn", Severity::Warn);
-
-/// A `tracing` error raised anywhere in the crate. Detail is the event's own
-/// message, which is written for operators and names no person.
-pub const TRACING_ERROR: Marker = export("truapi.tracing.error", Severity::Error);
-
-// ------------------------------------------------- native host callbacks
-//
-// These stay on the device. Their details describe what the person is doing
-// right now: the page they are opening, the notification they are being shown,
-// the permission they are being asked for.
-
-/// The host was asked to open a URL. Detail carries that URL.
-pub const NATIVE_NAVIGATE_TO: Marker = local("truapi.native.callback.navigate_to");
-
-/// The host was asked to raise a notification. Detail carries its body.
-pub const NATIVE_PUSH_NOTIFICATION: Marker = local("truapi.native.callback.push_notification");
-
-/// The host was asked to withdraw a notification. Detail carries its id.
-pub const NATIVE_CANCEL_NOTIFICATION: Marker = local("truapi.native.callback.cancel_notification");
-
-/// The host was asked to confirm a permission with the person.
-pub const NATIVE_CONFIRM_PERMISSION: Marker = local("truapi.native.callback.confirm_permission");
-
-/// The host was asked to confirm an action with the person.
-pub const NATIVE_CONFIRM_USER_ACTION: Marker = local("truapi.native.callback.confirm_user_action");
-
-/// The host was asked for a device permission. Detail names which.
-pub const NATIVE_DEVICE_PERMISSION: Marker = local("truapi.native.callback.device_permission");
-
-/// The host reported a device permission's current state.
-pub const NATIVE_DEVICE_PERMISSION_STATUS: Marker =
-	local("truapi.native.callback.device_permission_status");
-
-/// The host was asked to confirm a remote permission with the person.
-pub const NATIVE_REMOTE_PERMISSION: Marker = local("truapi.native.callback.remote_permission");
-
-/// The host was asked whether it supports a feature. Detail names it.
-pub const NATIVE_FEATURE_SUPPORTED: Marker = local("truapi.native.callback.feature_supported");
-
-/// The host was asked which chains it supports.
-pub const NATIVE_SUPPORTED_CHAINS: Marker = local("truapi.native.callback.supported_chains");
-
-/// The host was asked for a chain's transaction extension versions.
-pub const NATIVE_TRANSACTION_EXTENSION_VERSIONS: Marker =
-	local("truapi.native.callback.transaction_extension_versions");
-
-/// The host reported that auth state changed for the person signed in.
-pub const NATIVE_AUTH_STATE_CHANGED: Marker = local("truapi.native.callback.auth_state_changed");
-
-/// A card face was expanded or collapsed. Detail names the card.
-pub const NATIVE_SET_EXPANDED_CARD_FACE_SHOWN: Marker =
-	local("truapi.native.callback.set_expanded_card_face_shown");
-
-/// The host's chain socket connected. Detail names the chain.
-pub const NATIVE_CHAIN_CONNECTED: Marker = local("truapi.native.callback.chain_connected");
-
-/// The host's chain socket is closing. Detail names the chain.
-pub const NATIVE_CHAIN_CLOSING: Marker = local("truapi.native.callback.chain_closing");
-
-/// The host could not close a chain socket. Detail carries the host's reason.
-pub const NATIVE_CHAIN_CLOSE_FAILED: Marker = local("truapi.native.callback.chain_close_failed");
-
-/// The host could not send on a chain socket. Detail carries the host's reason.
-pub const NATIVE_CHAIN_SEND_FAILED: Marker = local("truapi.native.callback.chain_send_failed");
-
-/// Responses already held were served again rather than re-requested.
-pub const NATIVE_CHAIN_RESPONSES_REUSED: Marker = local("truapi.native.chain.responses_reused");
-
-/// The host runtime booted. Detail carries its configuration.
-pub const NATIVE_HOST_RUNTIME_BOOT: Marker = local("truapi.native.host_runtime.boot");
-
-/// A preimage was found in the store. Detail carries its key.
-pub const NATIVE_PREIMAGE_FOUND: Marker = local("truapi.native.preimage.found");
-
-/// A preimage lookup is being retried. Detail carries its key.
-pub const NATIVE_PREIMAGE_RETRYING: Marker = local("truapi.native.preimage.retrying");
-
-// ------------------------------------------------------------ ws bridge
-//
-// The local WebSocket bridge a product's web view talks to. Details carry
-// ports, counts and socket errors, never product payloads. None of these is
-// an error: the bridge recovers from every one of them, by rebinding, by
-// retrying, or by dropping the one connection that failed.
-
-/// The bridge's listener came up. Detail carries the port and runtime id.
-pub const WS_BRIDGE_STARTED: Marker = export("truapi.ws_bridge.started", Severity::Info);
-
-/// The bridge's accept loop is exiting.
-pub const WS_BRIDGE_SHUTDOWN: Marker = export("truapi.ws_bridge.shutdown", Severity::Info);
-
-/// A connection was accepted. Detail carries the count against the limit.
-pub const WS_BRIDGE_CONNECTION_OPEN: Marker =
-	export("truapi.ws_bridge.connection_open", Severity::Info);
-
-/// A connection closed. Detail carries the count against the limit.
-pub const WS_BRIDGE_CONNECTION_CLOSED: Marker =
-	export("truapi.ws_bridge.connection_closed", Severity::Info);
-
-/// The listener was rebound after being lost. Detail carries the new port.
-pub const WS_BRIDGE_RELISTENED: Marker = export("truapi.ws_bridge.relistened", Severity::Info);
-
-/// A requested bind port was ignored because the listener was already up.
-pub const WS_BRIDGE_BIND_PORT_IGNORED: Marker =
-	export("truapi.ws_bridge.bind_port_ignored", Severity::Warn);
-
-/// A text frame was dropped because the bridge speaks binary.
-pub const WS_BRIDGE_TEXT_FRAME_IGNORED: Marker =
-	export("truapi.ws_bridge.text_frame_ignored", Severity::Warn);
-
-/// One execution reached its connection limit.
-pub const WS_BRIDGE_CONNECTION_LIMIT_EXECUTION: Marker =
-	export("truapi.ws_bridge.connection_limit_execution", Severity::Warn);
-
-/// The bridge reached its total connection limit across executions.
-pub const WS_BRIDGE_CONNECTION_LIMIT_TOTAL: Marker =
-	export("truapi.ws_bridge.connection_limit_total", Severity::Warn);
-
-/// A half-finished handshake was evicted to make room.
-pub const WS_BRIDGE_HANDSHAKE_BACKLOG_EVICTED: Marker =
-	export("truapi.ws_bridge.handshake_backlog_evicted", Severity::Warn);
-
-/// A handshake ran out of time.
-pub const WS_BRIDGE_HANDSHAKE_TIMEOUT: Marker =
-	export("truapi.ws_bridge.handshake_timeout", Severity::Warn);
-
-/// A connection was refused because its token did not match.
-pub const WS_BRIDGE_REJECT_UNAUTHORIZED: Marker =
-	export("truapi.ws_bridge.reject_unauthorized", Severity::Warn);
-
-/// An execution was revoked while one of its connections was still setting up.
-pub const WS_BRIDGE_CONNECTION_REVOKED_DURING_SETUP: Marker =
-	export("truapi.ws_bridge.connection_revoked_during_setup", Severity::Warn);
-
-/// The listener could not accept. Detail carries the socket error.
-pub const WS_BRIDGE_ACCEPT_ERROR: Marker = export("truapi.ws_bridge.accept_error", Severity::Warn);
-
-/// A frame could not be decoded. Detail carries the protocol error.
-pub const WS_BRIDGE_FRAME_ERROR: Marker = export("truapi.ws_bridge.frame_error", Severity::Warn);
-
-/// A handshake failed. Detail carries the reason.
-pub const WS_BRIDGE_HANDSHAKE_ERROR: Marker =
-	export("truapi.ws_bridge.handshake_error", Severity::Warn);
-
-/// A read failed. Detail carries the socket error.
-pub const WS_BRIDGE_READ_ERROR: Marker = export("truapi.ws_bridge.read_error", Severity::Warn);
-
-/// A send failed. Detail carries the socket error.
-pub const WS_BRIDGE_SEND_ERROR: Marker = export("truapi.ws_bridge.send_error", Severity::Warn);
-
-/// The listener was lost and the socket was dropped to free its port.
-pub const WS_BRIDGE_LISTENER_LOST: Marker =
-	export("truapi.ws_bridge.listener_lost", Severity::Warn);
-
-/// The listener could not be rebound. Detail carries the reason.
-pub const WS_BRIDGE_RELISTEN_FAILED: Marker =
-	export("truapi.ws_bridge.relisten_failed", Severity::Warn);
-
-/// Every marker the core addresses to a host, ordered by target.
+/// Declares every marker once.
 ///
-/// A host reads this once and matches a target exactly. Anything missing is
-/// [`MarkerClass::Local`], so a marker added later stays on the device until
-/// it is listed here. The order is what lets [`class_of`] bisect, which it is
-/// asked to do once per event this crate raises.
-pub const MARKERS: &[Marker] = &[
-	CHAIN_FOLLOW_BUDGET_REACHED,
-	CORE_STARTED,
-	NATIVE_AUTH_STATE_CHANGED,
-	NATIVE_CANCEL_NOTIFICATION,
-	NATIVE_CHAIN_CLOSE_FAILED,
-	NATIVE_CHAIN_CLOSING,
-	NATIVE_CHAIN_CONNECTED,
-	NATIVE_CHAIN_SEND_FAILED,
-	NATIVE_CONFIRM_PERMISSION,
-	NATIVE_CONFIRM_USER_ACTION,
-	NATIVE_DEVICE_PERMISSION,
-	NATIVE_DEVICE_PERMISSION_STATUS,
-	NATIVE_FEATURE_SUPPORTED,
-	NATIVE_NAVIGATE_TO,
-	NATIVE_PUSH_NOTIFICATION,
-	NATIVE_REMOTE_PERMISSION,
-	NATIVE_SET_EXPANDED_CARD_FACE_SHOWN,
-	NATIVE_SUPPORTED_CHAINS,
-	NATIVE_TRANSACTION_EXTENSION_VERSIONS,
-	NATIVE_CHAIN_RESPONSES_REUSED,
-	NATIVE_HOST_RUNTIME_BOOT,
-	NATIVE_PREIMAGE_FOUND,
-	NATIVE_PREIMAGE_RETRYING,
-	TRACING_ERROR,
-	TRACING_WARN,
-	WS_BRIDGE_ACCEPT_ERROR,
-	WS_BRIDGE_BIND_PORT_IGNORED,
-	WS_BRIDGE_CONNECTION_CLOSED,
-	WS_BRIDGE_CONNECTION_LIMIT_EXECUTION,
-	WS_BRIDGE_CONNECTION_LIMIT_TOTAL,
-	WS_BRIDGE_CONNECTION_OPEN,
-	WS_BRIDGE_CONNECTION_REVOKED_DURING_SETUP,
-	WS_BRIDGE_FRAME_ERROR,
-	WS_BRIDGE_HANDSHAKE_BACKLOG_EVICTED,
-	WS_BRIDGE_HANDSHAKE_ERROR,
-	WS_BRIDGE_HANDSHAKE_TIMEOUT,
-	WS_BRIDGE_LISTENER_LOST,
-	WS_BRIDGE_READ_ERROR,
-	WS_BRIDGE_REJECT_UNAUTHORIZED,
-	WS_BRIDGE_RELISTEN_FAILED,
-	WS_BRIDGE_RELISTENED,
-	WS_BRIDGE_SEND_ERROR,
-	WS_BRIDGE_SHUTDOWN,
-	WS_BRIDGE_STARTED,
-	WS_BRIDGE_TEXT_FRAME_IGNORED,
-];
+/// Each entry gives a constant, the dotted target it carries, and its class:
+/// `Local`, or `Export(Info)`, `Export(Warn)`, `Export(Error)`. From that one
+/// list this emits the constant, its entry in [`MARKERS`], and its arm in
+/// [`class_of`], so a marker cannot be declared without being listed.
+macro_rules! markers {
+	($(
+		$(#[$entry:meta])*
+		$name:ident = $target:literal => $class:ident $(($severity:ident))?;
+	)*) => {
+		$(
+			$(#[$entry])*
+			pub const $name: Marker = Marker {
+				target: $target,
+				class: MarkerClass::$class $((Severity::$severity))?,
+			};
+		)*
 
-/// The class of `target`, or `None` when the table does not list it.
-pub fn class_of(target: &str) -> Option<MarkerClass> {
-	MARKERS
-		.binary_search_by_key(&target, |marker| marker.target)
-		.ok()
-		.map(|at| MARKERS[at].class)
+		/// Every marker the core addresses to a host, grouped by subsystem.
+		///
+		/// A host reads this once and matches a target exactly. Anything missing
+		/// is [`MarkerClass::Local`], so a marker added later stays on the device
+		/// until it is listed here.
+		pub const MARKERS: &[Marker] = &[$($name,)*];
+
+		/// The class of `target`, or `None` when the table does not list it.
+		///
+		/// Two entries sharing a target leave the second arm unreachable, which
+		/// the compiler rejects.
+		pub fn class_of(target: &str) -> Option<MarkerClass> {
+			match target {
+				$($target => Some(MarkerClass::$class $((Severity::$severity))?),)*
+				_ => None,
+			}
+		}
+	};
+}
+
+markers! {
+	// ---------------------------------------------------------------- core
+
+	/// The core finished starting. Detail carries its version string.
+	CORE_STARTED = "truapi.core.started" => Export(Info);
+
+	/// A chain refused another follow because the node's budget is spent. Detail
+	/// names the chain and the budget, never an account or a call.
+	CHAIN_FOLLOW_BUDGET_REACHED = "truapi.chain.follow_budget_reached" => Export(Warn);
+
+	/// A `tracing` warning raised anywhere in the crate. Detail is the event's own
+	/// message, which is written for operators and names no person.
+	TRACING_WARN = "truapi.tracing.warn" => Export(Warn);
+
+	/// A `tracing` error raised anywhere in the crate. Detail is the event's own
+	/// message, which is written for operators and names no person.
+	TRACING_ERROR = "truapi.tracing.error" => Export(Error);
+
+	// ------------------------------------------------- native host callbacks
+	//
+	// These stay on the device. Their details describe what the person is doing
+	// right now: the page they are opening, the notification they are being shown,
+	// the permission they are being asked for.
+
+	/// The host was asked to open a URL. Detail carries that URL.
+	NATIVE_NAVIGATE_TO = "truapi.native.callback.navigate_to" => Local;
+
+	/// The host was asked to raise a notification. Detail carries its body.
+	NATIVE_PUSH_NOTIFICATION = "truapi.native.callback.push_notification" => Local;
+
+	/// The host was asked to withdraw a notification. Detail carries its id.
+	NATIVE_CANCEL_NOTIFICATION = "truapi.native.callback.cancel_notification" => Local;
+
+	/// The host was asked to confirm a permission with the person.
+	NATIVE_CONFIRM_PERMISSION = "truapi.native.callback.confirm_permission" => Local;
+
+	/// The host was asked to confirm an action with the person.
+	NATIVE_CONFIRM_USER_ACTION = "truapi.native.callback.confirm_user_action" => Local;
+
+	/// The host was asked for a device permission. Detail names which.
+	NATIVE_DEVICE_PERMISSION = "truapi.native.callback.device_permission" => Local;
+
+	/// The host reported a device permission's current state.
+	NATIVE_DEVICE_PERMISSION_STATUS = "truapi.native.callback.device_permission_status" => Local;
+
+	/// The host was asked to confirm a remote permission with the person.
+	NATIVE_REMOTE_PERMISSION = "truapi.native.callback.remote_permission" => Local;
+
+	/// The host was asked whether it supports a feature. Detail names it.
+	NATIVE_FEATURE_SUPPORTED = "truapi.native.callback.feature_supported" => Local;
+
+	/// The host was asked which chains it supports.
+	NATIVE_SUPPORTED_CHAINS = "truapi.native.callback.supported_chains" => Local;
+
+	/// The host was asked for a chain's transaction extension versions.
+	NATIVE_TRANSACTION_EXTENSION_VERSIONS = "truapi.native.callback.transaction_extension_versions" => Local;
+
+	/// The host reported that auth state changed for the person signed in.
+	NATIVE_AUTH_STATE_CHANGED = "truapi.native.callback.auth_state_changed" => Local;
+
+	/// A card face was expanded or collapsed. Detail names the card.
+	NATIVE_SET_EXPANDED_CARD_FACE_SHOWN = "truapi.native.callback.set_expanded_card_face_shown" => Local;
+
+	/// The host's chain socket connected. Detail names the chain.
+	NATIVE_CHAIN_CONNECTED = "truapi.native.callback.chain_connected" => Local;
+
+	/// The host's chain socket is closing. Detail names the chain.
+	NATIVE_CHAIN_CLOSING = "truapi.native.callback.chain_closing" => Local;
+
+	/// The host could not close a chain socket. Detail carries the host's reason.
+	NATIVE_CHAIN_CLOSE_FAILED = "truapi.native.callback.chain_close_failed" => Local;
+
+	/// The host could not send on a chain socket. Detail carries the host's reason.
+	NATIVE_CHAIN_SEND_FAILED = "truapi.native.callback.chain_send_failed" => Local;
+
+	/// Responses already held were served again rather than re-requested.
+	NATIVE_CHAIN_RESPONSES_REUSED = "truapi.native.chain.responses_reused" => Local;
+
+	/// The host runtime booted. Detail carries its configuration.
+	NATIVE_HOST_RUNTIME_BOOT = "truapi.native.host_runtime.boot" => Local;
+
+	/// A preimage was found in the store. Detail carries its key.
+	NATIVE_PREIMAGE_FOUND = "truapi.native.preimage.found" => Local;
+
+	/// A preimage lookup is being retried. Detail carries its key.
+	NATIVE_PREIMAGE_RETRYING = "truapi.native.preimage.retrying" => Local;
+
+	// ------------------------------------------------------------ ws bridge
+	//
+	// The local WebSocket bridge a product's web view talks to. Details carry
+	// ports, counts and socket errors, never product payloads. None of these is
+	// an error: the bridge recovers from every one of them, by rebinding, by
+	// retrying, or by dropping the one connection that failed.
+
+	/// The bridge's listener came up. Detail carries the port and runtime id.
+	WS_BRIDGE_STARTED = "truapi.ws_bridge.started" => Export(Info);
+
+	/// The bridge's accept loop is exiting.
+	WS_BRIDGE_SHUTDOWN = "truapi.ws_bridge.shutdown" => Export(Info);
+
+	/// A connection was accepted. Detail carries the count against the limit.
+	WS_BRIDGE_CONNECTION_OPEN = "truapi.ws_bridge.connection_open" => Export(Info);
+
+	/// A connection closed. Detail carries the count against the limit.
+	WS_BRIDGE_CONNECTION_CLOSED = "truapi.ws_bridge.connection_closed" => Export(Info);
+
+	/// The listener was rebound after being lost. Detail carries the new port.
+	WS_BRIDGE_RELISTENED = "truapi.ws_bridge.relistened" => Export(Info);
+
+	/// A requested bind port was ignored because the listener was already up.
+	WS_BRIDGE_BIND_PORT_IGNORED = "truapi.ws_bridge.bind_port_ignored" => Export(Warn);
+
+	/// A text frame was dropped because the bridge speaks binary.
+	WS_BRIDGE_TEXT_FRAME_IGNORED = "truapi.ws_bridge.text_frame_ignored" => Export(Warn);
+
+	/// One execution reached its connection limit.
+	WS_BRIDGE_CONNECTION_LIMIT_EXECUTION = "truapi.ws_bridge.connection_limit_execution" => Export(Warn);
+
+	/// The bridge reached its total connection limit across executions.
+	WS_BRIDGE_CONNECTION_LIMIT_TOTAL = "truapi.ws_bridge.connection_limit_total" => Export(Warn);
+
+	/// A half-finished handshake was evicted to make room.
+	WS_BRIDGE_HANDSHAKE_BACKLOG_EVICTED = "truapi.ws_bridge.handshake_backlog_evicted" => Export(Warn);
+
+	/// A handshake ran out of time.
+	WS_BRIDGE_HANDSHAKE_TIMEOUT = "truapi.ws_bridge.handshake_timeout" => Export(Warn);
+
+	/// A connection was refused because its token did not match.
+	WS_BRIDGE_REJECT_UNAUTHORIZED = "truapi.ws_bridge.reject_unauthorized" => Export(Warn);
+
+	/// An execution was revoked while one of its connections was still setting up.
+	WS_BRIDGE_CONNECTION_REVOKED_DURING_SETUP = "truapi.ws_bridge.connection_revoked_during_setup" => Export(Warn);
+
+	/// The listener could not accept. Detail carries the socket error.
+	WS_BRIDGE_ACCEPT_ERROR = "truapi.ws_bridge.accept_error" => Export(Warn);
+
+	/// A frame could not be decoded. Detail carries the protocol error.
+	WS_BRIDGE_FRAME_ERROR = "truapi.ws_bridge.frame_error" => Export(Warn);
+
+	/// A handshake failed. Detail carries the reason.
+	WS_BRIDGE_HANDSHAKE_ERROR = "truapi.ws_bridge.handshake_error" => Export(Warn);
+
+	/// A read failed. Detail carries the socket error.
+	WS_BRIDGE_READ_ERROR = "truapi.ws_bridge.read_error" => Export(Warn);
+
+	/// A send failed. Detail carries the socket error.
+	WS_BRIDGE_SEND_ERROR = "truapi.ws_bridge.send_error" => Export(Warn);
+
+	/// The listener was lost and the socket was dropped to free its port.
+	WS_BRIDGE_LISTENER_LOST = "truapi.ws_bridge.listener_lost" => Export(Warn);
+
+	/// The listener could not be rebound. Detail carries the reason.
+	WS_BRIDGE_RELISTEN_FAILED = "truapi.ws_bridge.relisten_failed" => Export(Warn);
 }
 
 #[cfg(test)]
 mod tests {
 	use super::*;
 
+	/// The table and the lookup are two outputs of one list, so this holds
+	/// unless the macro itself is wrong.
 	#[test]
-	fn the_table_is_ordered_so_the_lookup_can_bisect() {
-		let targets: Vec<_> = MARKERS.iter().map(|marker| marker.target).collect();
-		let mut sorted = targets.clone();
-		sorted.sort_unstable();
-		assert_eq!(targets, sorted, "MARKERS is out of order, so class_of would miss entries");
-	}
-
-	#[test]
-	fn every_entry_is_reachable_through_the_lookup() {
+	fn the_table_and_the_lookup_agree() {
 		for marker in MARKERS {
 			assert_eq!(
 				class_of(marker.target),
@@ -334,15 +280,6 @@ mod tests {
 		assert_eq!(exported.get(TRACING_ERROR.target), Some(&MarkerClass::Export(Severity::Error)));
 		assert_eq!(exported.get(TRACING_WARN.target), Some(&MarkerClass::Export(Severity::Warn)));
 		assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
-	}
-
-	#[test]
-	fn every_target_is_listed_once() {
-		let mut targets: Vec<_> = MARKERS.iter().map(|marker| marker.target).collect();
-		let total = targets.len();
-		targets.sort_unstable();
-		targets.dedup();
-		assert_eq!(targets.len(), total, "a target is listed twice");
 	}
 
 	#[test]
