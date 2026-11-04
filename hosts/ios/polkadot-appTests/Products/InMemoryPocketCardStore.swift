@@ -4,11 +4,11 @@ import Products
 import TrUAPIHost
 @testable import polkadot_app
 
-/// The collection held in memory, standing in for the CoreData one.
+/// The collection held in memory, standing in for the one the core keeps.
 ///
-/// Snapshots are seeded with what is held and sent on every write, the way a
-/// CoreData snapshot subscription behaves, so a test can assert that a surface
-/// followed a write nobody announced.
+/// Snapshots are seeded with what is held and sent on every write, the way the
+/// core's card stream behaves, so a test can assert that a surface followed a
+/// write nobody announced.
 actor InMemoryPocketCardStore: PocketCardStore {
     struct Unavailable: Error {}
 
@@ -40,7 +40,7 @@ actor InMemoryPocketCardStore: PocketCardStore {
     func cards() async throws -> [PocketCardEntry] {
         if readsFail { throw Unavailable() }
 
-        return await settle(stored)
+        return settle(stored)
     }
 
     nonisolated func observeCards() -> AnyAsyncSequence<[PocketCardEntry]> {
@@ -48,7 +48,7 @@ actor InMemoryPocketCardStore: PocketCardStore {
 
         return snapshots
             .map { [pinned] added in
-                let placed = await pinned.cards()
+                let placed = Self.placed(by: pinned)
                 let placedKeys = Set(placed.map(\.key))
 
                 return placed + added.filter { !placedKeys.contains($0.key) }
@@ -56,16 +56,13 @@ actor InMemoryPocketCardStore: PocketCardStore {
             .eraseToAnyAsyncSequence()
     }
 
-    func removeCard(_ key: PocketCardKey) async throws -> PocketRemoval {
-        guard pinned.pinned(key) == nil else { throw PocketRemoveError.privileged }
+    func removeCard(_ key: PocketCardKey) async throws {
+        guard pinned.pinned(key) == nil else { return }
         if writesFail { throw Unavailable() }
 
-        let before = stored.count
         stored.removeAll { $0.key == key }
         faces[key] = nil
         snapshots.send(stored)
-
-        return stored.count != before ? .removed : .absent
     }
 
     func add(_ card: PocketCardEntry, face: RendererNode) async throws {
@@ -84,15 +81,21 @@ actor InMemoryPocketCardStore: PocketCardStore {
         return await pinned.face(for: key.cardId)
     }
 
-    func cacheFace(_ face: RendererNode, for key: PocketCardKey) async {
-        faces[key] = face
-    }
-
-    private func settle(_ added: [PocketCardEntry]) async -> [PocketCardEntry] {
-        let placed = await pinned.cards()
+    private func settle(_ added: [PocketCardEntry]) -> [PocketCardEntry] {
+        let placed = Self.placed(by: pinned)
         let placedKeys = Set(placed.map(\.key))
 
         return placed + added.filter { !placedKeys.contains($0.key) }
+    }
+
+    private static func placed(by pinned: any PinnedPocketCards) -> [PocketCardEntry] {
+        pinned.cards().map {
+            PocketCardEntry(
+                key: PocketCardKey(productId: $0.productId, cardId: PocketCardId(value: $0.cardId)),
+                title: $0.title,
+                privileged: true
+            )
+        }
     }
 }
 
@@ -106,7 +109,9 @@ struct InMemoryPinnedCards: PinnedPocketCards {
         bundledFace = face
     }
 
-    func cards() async -> [PocketCardEntry] { cardsHeld }
+    func cards() -> [PinnedPocketCard] {
+        cardsHeld.map { PinnedPocketCard(productId: $0.key.productId, cardId: $0.key.cardId.value, title: $0.title) }
+    }
 
     func pinned(_ key: PocketCardKey) -> PocketCardEntry? {
         cardsHeld.first { $0.key == key }

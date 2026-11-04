@@ -41,8 +41,8 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHo
 import io.paritytech.polkadotapp.feature_products_impl.data.config.FundingProvidersConfig
 import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigFundingDomainProvider
 import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigFundingProvidersConfig
+import io.paritytech.polkadotapp.feature_products_impl.data.pocket.CorePocketCardRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.PocketCardRepository
-import io.paritytech.polkadotapp.feature_products_impl.data.pocket.RealPocketCardRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.BrowserTabRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductFundingOperationRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIntegrationRepository
@@ -212,7 +212,7 @@ internal interface ProductsModule {
 
     @Binds
     @Singleton
-    fun bindPocketCardRepository(impl: RealPocketCardRepository): PocketCardRepository
+    fun bindPocketCardRepository(impl: CorePocketCardRepository): PocketCardRepository
 
     @Binds
     @Singleton

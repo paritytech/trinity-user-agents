@@ -11,6 +11,9 @@ import io.mockk.unmockkObject
 import io.mockk.verify
 import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.FakePinnedPocketCards
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.personhoodProduct
+import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.pinnedCard
 import io.paritytech.polkadotapp.test_shared.testDispatchers
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +31,7 @@ import uniffi.truapi.FundingProviderEntry
 import uniffi.truapi.FundingProviderOrigin
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.NativeTrUApiHostRuntime
+import uniffi.truapi.PinnedPocketCard
 import uniffi.truapi.ProductId
 
 class TrUAPIHostRuntimeProviderTest {
@@ -38,6 +42,7 @@ class TrUAPIHostRuntimeProviderTest {
     private val nativeRuntime = mockk<NativeTrUApiHostRuntime>(relaxed = true)
     private val configuredProviders = CompletableDeferred<Result<List<ProductId>>>()
     private var bundledProviders = emptyList<FundingProviderEntry>()
+    private val paseo = requireNotNull(DotNsTld.parse("paseo"))
 
     @Before
     fun captureRuntimeConfig() {
@@ -107,14 +112,39 @@ class TrUAPIHostRuntimeProviderTest {
     private fun bundled(name: String) =
         FundingProviderEntry(productId = id(name), workerManifest = "{}", origin = FundingProviderOrigin.BUNDLED)
 
-    private fun TestScope.provider() = TrUAPIHostRuntimeProvider(
+    // The Pocket is read from the runtime, so a runtime that waits on the chain for the network's
+    // name shows no cards offline. The name an earlier run read is the one this build's network has.
+    @Test
+    fun `boots offline on the network name an earlier run saved`() = runTest {
+        provider(saved = paseo, read = Result.failure(IllegalStateException("offline"))).runtime().getOrThrow()
+
+        assertEquals("paseo", runtimeConfig.captured.networkSuffix)
+    }
+
+    @Test
+    fun `starts the core with the cards the host pins`() = runTest {
+        provider().runtime().getOrThrow()
+
+        assertEquals(
+            listOf(PinnedPocketCard(personhoodProduct, "humanity", "humanity")),
+            runtimeConfig.captured.pinnedPocketCards,
+        )
+    }
+
+    private fun TestScope.provider(
+        saved: DotNsTld? = null,
+        read: Result<DotNsTld> = Result.success(paseo),
+    ) = TrUAPIHostRuntimeProvider(
         context = context(),
         chainRegistry = mockk(relaxed = true),
         knownChains = KnownChains(people = "people", assetHub = "asset-hub", bulletIn = "bullet-in", hydration = null),
         chainDirectory = mockk(relaxed = true),
         localSessionSource = mockk { coEvery { resolve() } returns Result.failure(IllegalStateException()) },
         accountRepository = mockk { every { walletAccountFlow() } returns emptyFlow() },
-        dotNsTldProvider = mockk { coEvery { getTld() } returns Result.success(DotNsTld.parse("paseo")!!) },
+        dotNsTldProvider = mockk {
+            every { currentTldOrNull() } returns saved
+            coEvery { getTld() } returns read
+        },
         encryptedPreferences = mockk(relaxed = true),
         chainHttpClient = mockk(relaxed = true),
         confirmationLauncher = mockk(relaxed = true),
@@ -127,6 +157,7 @@ class TrUAPIHostRuntimeProviderTest {
         scannerBridge = mockk(),
         installations = mockk(),
         extensionVersions = mockk(),
+        pinnedPocketCards = FakePinnedPocketCards(listOf(pinnedCard(personhoodProduct, "humanity"))),
         workerSupervisor = { mockk(relaxed = true) },
         workerCrashNotice = mockk(relaxed = true),
         dispatchers = testDispatchers(),
