@@ -161,17 +161,28 @@ private extension FundingDepositView {
     }
 }
 
-/// A QR code for `payload`, drawn sharp at any size.
+/// A QR code for `payload`, drawn sharp at any size. Each payload's image is
+/// built once, not on every redraw of the deposit screen.
 struct FundingQRCode: View {
     let payload: String
 
+    private static let images = NSCache<NSString, UIImage>()
+
     var body: some View {
-        if let image = Self.image(for: payload) {
+        if let image = Self.cachedImage(for: payload) {
             Image(uiImage: image)
                 .interpolation(.none)
                 .resizable()
                 .scaledToFit()
         }
+    }
+
+    static func cachedImage(for payload: String) -> UIImage? {
+        if let image = images.object(forKey: payload as NSString) { return image }
+        guard let image = image(for: payload) else { return nil }
+
+        images.setObject(image, forKey: payload as NSString)
+        return image
     }
 
     static func image(for payload: String) -> UIImage? {
