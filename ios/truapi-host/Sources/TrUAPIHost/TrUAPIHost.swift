@@ -1200,8 +1200,12 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     }
 
     /// The newest face kept for a card, if one is.
-    public func pocketCardFace(productId: ProductId, cardId: String) async throws -> RendererNode? {
-        try await inner.pocketCardFace(productId: productId, cardId: cardId)
+    public func pocketCardFace(
+        productId: ProductId,
+        cardId: String,
+        side: PocketCardSide = .front
+    ) async throws -> RendererNode? {
+        try await inner.pocketCardFace(productId: productId, cardId: cardId, side: side)
     }
 
     /// Decides durable transactions from the chain until none is live, then

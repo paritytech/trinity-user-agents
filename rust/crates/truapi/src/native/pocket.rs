@@ -12,7 +12,7 @@ use truapi::latest::ProductRendererRenderItem;
 use super::renderer::{NativeRendererObserver, NativeSubscription, spawn_observation};
 use crate::{
 	platform::ProductId,
-	pocket_cards::{PocketCards, PocketEntry},
+	pocket_cards::{PocketCardSide, PocketCards, PocketEntry},
 	subscription::Spawner,
 	time::RealTimer,
 };
@@ -46,19 +46,20 @@ pub fn observe_pocket_cards(
 }
 
 /// Wraps the observer of one card's render so every face it draws is also
-/// kept as the card's newest. Keeping stops once the render's observer is
+/// kept as the newest on `side`. Keeping stops once the render's observer is
 /// dropped, after writing the last face.
 pub fn keeping_faces(
 	cards: PocketCards,
 	product_id: ProductId,
 	card_id: String,
+	side: PocketCardSide,
 	observer: Arc<dyn NativeRendererObserver>,
 	spawner: &Spawner,
 ) -> Arc<dyn NativeRendererObserver> {
 	let (faces, drawn) = unbounded();
 	let keeper = cards.clone();
 	(spawner)(Box::pin(async move {
-		keeper.keep_faces(product_id, card_id, drawn, Arc::new(RealTimer)).await;
+		keeper.keep_faces(product_id, card_id, side, drawn, Arc::new(RealTimer)).await;
 	}));
 	Arc::new(FaceKeepingObserver { observer, faces, cards })
 }
@@ -111,25 +112,39 @@ mod tests {
 	}
 
 	#[test]
-	fn a_pocket_card_render_draws_each_face_and_keeps_it() {
+	fn a_pocket_card_render_draws_each_face_and_keeps_it_on_its_side() {
 		// The host draws what the product drew, and the card keeps it to show
-		// offline and at the next start.
+		// offline and at the next start, on the side the render was for.
 		let (_dir, db) = open_temporary_core_db();
 		let cards = block_on(PocketCards::open(db, Vec::new())).unwrap();
 		let product = ProductId::for_test("loyalty.dot");
 		let card = || "stamps".to_string();
 		block_on(cards.add(product.clone(), card(), "Stamps".into(), RendererNode::Nil)).unwrap();
 		let drawn = Arc::new(Drawn::default());
-		let observer =
-			keeping_faces(cards.clone(), product.clone(), card(), drawn.clone(), &test_spawner());
-		let face = RendererNode::String { text: "Stamps: 3".into() };
+		let render = |side| {
+			keeping_faces(
+				cards.clone(),
+				product.clone(),
+				card(),
+				side,
+				drawn.clone(),
+				&test_spawner(),
+			)
+		};
+		let front = RendererNode::String { text: "Stamps: 3".into() };
+		let back = RendererNode::String { text: "Code".into() };
 
-		observer.on_update(face.clone());
+		render(PocketCardSide::Front).on_update(front.clone());
+		render(PocketCardSide::Back).on_update(back.clone());
 
-		assert_eq!(*drawn.0.lock().unwrap(), vec![face.clone()]);
+		assert_eq!(*drawn.0.lock().unwrap(), vec![front.clone(), back.clone()]);
+		let kept = |side| block_on(cards.face(product.clone(), card(), side)).unwrap();
 		wait_until(
-			|| block_on(cards.face(product.clone(), card())).unwrap() == Some(face.clone()),
-			"the drawn face is kept",
+			|| {
+				(kept(PocketCardSide::Front), kept(PocketCardSide::Back)) ==
+					(Some(front.clone()), Some(back.clone()))
+			},
+			"each drawn face is kept on its side",
 		);
 	}
 }
