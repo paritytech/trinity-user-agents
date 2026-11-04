@@ -16,7 +16,7 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.fram
 import javax.inject.Inject
 
 /**
- * The provider product's page, over the whole screen, hosted the way the SPA sheet hosts a product.
+ * The provider product's page, over the whole screen, hosted on the SPA host as any product page is.
  *
  * Brought back after process death, the frame has lost the call that opened it, so it closes at once; the core asks
  * for it again once the provider's worker is back.

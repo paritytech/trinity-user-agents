@@ -18,7 +18,5 @@ interface PocketRouter : ReturnableRouter {
 
     fun openScanAddressQr()
 
-    fun openSpaSheet(url: String)
-
     fun openSpaBrowser(payload: SpaBrowserPayload)
 }
