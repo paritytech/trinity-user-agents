@@ -13,7 +13,6 @@ import io.paritytech.polkadotapp.common.data.storage.file.FileProvider
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.CallingProductIdProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.getProductIdOrNull
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionGuard
@@ -23,6 +22,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import uniffi.truapi.ProductId
 
 class ProductWebChromeClient @AssistedInject constructor(
     private val permissionGuard: ProductPermissionGuard,

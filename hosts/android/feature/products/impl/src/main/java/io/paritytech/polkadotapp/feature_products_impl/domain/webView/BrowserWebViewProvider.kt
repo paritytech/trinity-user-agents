@@ -22,11 +22,9 @@ import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsContentLoader
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
-import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.CallingProductIdProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.PageLifecycleSource
@@ -38,6 +36,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
+import uniffi.truapi.parseProductLink
 
 /**
  * Visible WebView provider for SPA browser and Explore environments.
@@ -176,17 +177,18 @@ class BrowserWebViewProvider @AssistedInject constructor(
     // Downloaded here, retrying until the tab closes, so the WebView's request interception finds the page on disk
     // instead of blocking on the network. A failure is left for that interception to report.
     private suspend fun downloadPageContent() {
-        val uri = initialUrl.toUri()
-        val host = uri.host ?: return
+        val host = initialUrl.toUri().host ?: return
         val tld = dotNsTldProvider.getTld().getOrNull() ?: return
-        if (!DotNsUtils.isDotDomain(uri, tld)) return
+        val productHost = parseProductLink(host, tld.value)?.identifier?.value ?: return
 
-        val servingHost = servingHostResolver.servingHostFor(host, servedExecutable, NetworkRetryPolicy.UntilCancelled)
+        val servingHost = servingHostResolver
+            .servingHostFor(productHost, servedExecutable, NetworkRetryPolicy.UntilCancelled)
+            .getOrNull() ?: return
         contentLoader.resolveToLocalUri(servingHost, NetworkRetryPolicy.UntilCancelled)
     }
 
     private suspend fun productIdOf(url: String): ProductId? {
-        return dotNsTldProvider.getTld().getOrNull()?.let { tld -> ProductId.fromUrl(url.toUri(), tld).getOrNull() }
+        return dotNsTldProvider.getTld().getOrNull()?.let { tld -> productIdFromUrl(url.toUri(), tld).getOrNull() }
     }
 
     override fun onInitialThemeDelivered() {

@@ -11,17 +11,18 @@ import UIKitExt
 @Suite(.timeLimit(.minutes(1)))
 @MainActor
 struct AppScannerHostBridgeTests {
+    private let productId = try! ProductId("shop.dot")
     private let request = HostScannerScanRequest(formats: [.qr], prefix: nil, hint: nil)
 
     @Test("A product the user cannot see gets NotVisible and no scanner opens")
     func hiddenProductOpensNothing() async throws {
-        let page = StubProductPage(productId: "shop.dot")
+        let page = StubProductPage(productId: productId)
         let window = try makeTestWindow(root: page)
         let application = StubApplication()
         let bridge = makeBridge(page: page, application: application, window: window)
 
         application.applicationState = .background
-        let answer = try await bridge.scanCode(productId: "shop.dot", executionKind: .worker, request: request)
+        let answer = try await bridge.scanCode(productId: productId, executionKind: .worker, request: request)
 
         #expect(answer == .notVisible)
         #expect(page.presentedViewController == nil)
@@ -29,32 +30,35 @@ struct AppScannerHostBridgeTests {
 
     @Test("A scanner with nowhere to open answers NotVisible, not a Dismissed the user never chose")
     func unpresentableScannerAnswersNotVisible() async throws {
-        let page = StubProductPage(productId: "shop.dot")
+        let page = StubProductPage(productId: productId)
         let window = try makeTestWindow(root: page)
         let bridge = AppScannerHostBridge(
-            routerFacade: ProductRoutersFacade(productsRouter: ProductsRouter(), navigationRouter: MockNavigationRouter()),
+            routerFacade: ProductRoutersFacade(
+                productsRouter: ProductsRouter(),
+                navigationRouter: MockNavigationRouter()
+            ),
             visibility: ProductVisibility(application: StubApplication(), window: { window }),
             makeScanner: { _, _, answer in StubScanner(answer: answer) }
         )
 
-        let answer = try await bridge.scanCode(productId: "shop.dot", executionKind: .worker, request: request)
+        let answer = try await bridge.scanCode(productId: productId, executionKind: .worker, request: request)
 
         #expect(answer == .notVisible)
     }
 
     @Test("A cancelled scan closes its scanner, and the next scan opens straight after")
     func cancelledScanClosesAndNextOpens() async throws {
-        let page = StubProductPage(productId: "shop.dot")
+        let page = StubProductPage(productId: productId)
         let window = try makeTestWindow(root: page)
         let bridge = makeBridge(page: page, application: StubApplication(), window: window)
 
-        let first = Task { try await bridge.scanCode(productId: "shop.dot", executionKind: .worker, request: request) }
+        let first = Task { try await bridge.scanCode(productId: productId, executionKind: .worker, request: request) }
         try await waitUntil { page.presentedViewController is StubScanner }
         weak var firstScanner = page.presentedViewController
         first.cancel()
         let firstAnswer = try await first.value
 
-        let second = Task { try await bridge.scanCode(productId: "shop.dot", executionKind: .worker, request: request) }
+        let second = Task { try await bridge.scanCode(productId: productId, executionKind: .worker, request: request) }
         try await waitUntil {
             page.presentedViewController is StubScanner && page.presentedViewController !== firstScanner
         }
@@ -66,11 +70,11 @@ struct AppScannerHostBridgeTests {
 
     @Test("A cancelled scan also closes what its scanner opened, such as the Settings alert")
     func cancelledScanClosesWhatItOpened() async throws {
-        let page = StubProductPage(productId: "shop.dot")
+        let page = StubProductPage(productId: productId)
         let window = try makeTestWindow(root: page)
         let bridge = makeBridge(page: page, application: StubApplication(), window: window)
 
-        let scan = Task { try await bridge.scanCode(productId: "shop.dot", executionKind: .worker, request: request) }
+        let scan = Task { try await bridge.scanCode(productId: productId, executionKind: .worker, request: request) }
         try await waitUntil { page.presentedViewController is StubScanner }
         let scanner = try #require(page.presentedViewController)
         try await waitUntil { !scanner.isBeingPresented }
@@ -83,11 +87,11 @@ struct AppScannerHostBridgeTests {
 
     @Test("A cancelled scan leaves another request's prompt over its scanner up, so that request still gets its answer")
     func cancelledScanKeepsPromptOverIt() async throws {
-        let page = StubProductPage(productId: "shop.dot")
+        let page = StubProductPage(productId: productId)
         let window = try makeTestWindow(root: page)
         let bridge = makeBridge(page: page, application: StubApplication(), window: window)
 
-        let scan = Task { try await bridge.scanCode(productId: "shop.dot", executionKind: .worker, request: request) }
+        let scan = Task { try await bridge.scanCode(productId: productId, executionKind: .worker, request: request) }
         try await waitUntil { page.presentedViewController is StubScanner }
         let scanner = try #require(page.presentedViewController)
         try await waitUntil { !scanner.isBeingPresented }
@@ -103,13 +107,13 @@ struct AppScannerHostBridgeTests {
 
     @Test("A scan cancelled while waiting for its page opens nothing")
     func scanCancelledWhileWaitingOpensNothing() async throws {
-        let page = StubProductPage(productId: "shop.dot")
+        let page = StubProductPage(productId: productId)
         let window = try makeTestWindow(root: page)
         let bridge = makeBridge(page: page, application: StubApplication(), window: window)
         await present(UIViewController(), over: page)
         page.dismiss(animated: true)
 
-        let scan = Task { try await bridge.scanCode(productId: "shop.dot", executionKind: .app, request: request) }
+        let scan = Task { try await bridge.scanCode(productId: productId, executionKind: .app, request: request) }
         try await Task.sleep(for: .milliseconds(50))
         scan.cancel()
         _ = try await scan.value

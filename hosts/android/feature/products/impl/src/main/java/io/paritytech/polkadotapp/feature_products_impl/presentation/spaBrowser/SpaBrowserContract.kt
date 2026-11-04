@@ -2,13 +2,15 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser
 
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import kotlinx.coroutines.flow.StateFlow
+import uniffi.truapi.ProductId
 
 interface SpaBrowserContract {
     val state: StateFlow<SpaBrowserUiState>
 
     fun onBackPressed()
+
+    fun onMinimizeClick()
 
     fun onRefresh()
 

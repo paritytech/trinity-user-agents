@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.product.update
 
 import io.paritytech.polkadotapp.common.utils.invokeOnCompletion
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -11,6 +10,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 

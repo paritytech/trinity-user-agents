@@ -19,9 +19,11 @@ use futures::{
 };
 use parity_scale_codec::Encode;
 use truapi::v01;
+use zeroize::Zeroizing;
 
 use crate::{
 	DevicePairingObserver, PairedSsoPeer,
+	encrypted_storage::EncryptedStorage,
 	host_internal::bulletin::preimage_key,
 	host_logic::worker::WorkerTransition,
 	installation::{InstallationId, InstallationIdProvider},
@@ -31,8 +33,8 @@ use crate::{
 use super::{
 	callbacks::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
-		NativePocketRemoval, NativeScannerCallbacks, NativeTopUpCallbacks,
+		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
+		NativeScannerCallbacks, NativeTopUpCallbacks,
 	},
 	errors::HostRejection,
 	events::NativeEventBus,
@@ -117,6 +119,25 @@ impl crate::durable::DurableWorkObserver for CallbackPlatform {
 impl DevicePairingObserver for CallbackPlatform {
 	fn device_paired(&self, device: PairedSsoPeer) {
 		self.callbacks.device_paired(device);
+	}
+}
+
+#[async_trait]
+impl EncryptedStorage for CallbackPlatform {
+	async fn read_encrypted(
+		&self,
+		key: &[u8],
+	) -> Result<Option<Zeroizing<Vec<u8>>>, v01::GenericError> {
+		let value = self.callbacks.encrypted_storage_read(key.to_vec()).await?;
+		Ok(value.map(Zeroizing::new))
+	}
+
+	async fn write_encrypted(&self, key: &[u8], value: &[u8]) -> Result<(), v01::GenericError> {
+		Ok(self.callbacks.encrypted_storage_write(key.to_vec(), value.to_vec()).await?)
+	}
+
+	async fn delete_encrypted(&self, key: &[u8]) -> Result<(), v01::GenericError> {
+		Ok(self.callbacks.encrypted_storage_delete(key.to_vec()).await?)
 	}
 }
 
@@ -698,58 +719,6 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 	}
 }
 
-/// [`crate::platform::PocketPlatform`] served by host-provided
-/// [`NativePocketCallbacks`]; constructed only when the host passed one.
-pub struct PocketCallbackPlatform {
-	/// Host card collection.
-	pub pocket: Arc<dyn NativePocketCallbacks>,
-	/// Events scoped to the execution, carrying card-list changes.
-	pub events: Arc<NativeEventBus>,
-}
-
-#[async_trait]
-impl crate::platform::PocketPlatform for PocketCallbackPlatform {
-	fn subscribe_pocket_cards(
-		&self,
-		_product: &ProductContext,
-	) -> BoxStream<'static, Result<v01::HostPocketListSubscribeItem, v01::GenericError>> {
-		let pocket = self.pocket.clone();
-		Box::pin(self.events.subscribe_pocket_cards(move || {
-			pocket
-				.list_cards()
-				.map(|cards| v01::HostPocketListSubscribeItem { cards })
-				.map_err(|error| v01::GenericError { reason: error.to_string() })
-		}))
-	}
-
-	async fn remove_pocket_card(
-		&self,
-		_product: &ProductContext,
-		request: v01::HostPocketRemoveCardRequest,
-	) -> Result<(), v01::HostPocketRemoveCardError> {
-		let unknown = |error: HostRejection| v01::HostPocketRemoveCardError::Unknown {
-			reason: error.to_string(),
-		};
-		match self.pocket.remove_card(request.card_id).await.map_err(unknown)? {
-			NativePocketRemoval::Privileged => Err(v01::HostPocketRemoveCardError::Privileged),
-			// A card this host does not hold is already removed.
-			NativePocketRemoval::Absent => Ok(()),
-			NativePocketRemoval::Removed => {
-				// The removal stands either way. A host that can no longer
-				// list its cards says so on the stream rather than leaving the
-				// product on a list that still holds the removed card.
-				match self.pocket.list_cards() {
-					Ok(cards) => self.events.notify_pocket_cards_changed(cards),
-					Err(error) => self.events.notify_pocket_cards_failed(v01::GenericError {
-						reason: error.to_string(),
-					}),
-				}
-				Ok(())
-			},
-		}
-	}
-}
-
 /// [`crate::platform::GamePlatform`] served by host-provided
 /// [`NativeGameCallbacks`]; constructed only when the host passed one.
 pub struct GameCallbackPlatform {
@@ -796,6 +765,18 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 				session.direction,
 				session.amount,
 			)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn present_provider_frame(
+		&self,
+		provider: &ProductContext,
+		intent: String,
+		target: v01::FundingFrameTarget,
+	) -> Result<v01::FundingFrameOutcome, v01::GenericError> {
+		self.funding
+			.present_provider_frame(provider.product_id.to_string(), intent, target)
 			.await
 			.map_err(v01::GenericError::from)
 	}
@@ -922,8 +903,8 @@ impl crate::platform::TopUpPlatform for TopUpCallbackPlatform {
 	async fn top_up(
 		&self,
 		product: &ProductContext,
-		request: v01::HostPaymentTopUpRequest,
-	) -> Result<(), v01::HostPaymentTopUpError> {
+		request: crate::latest::HostPaymentTopUpRequest,
+	) -> Result<(), crate::latest::HostPaymentTopUpError> {
 		self.top_up.top_up(product.product_id.clone(), request).await
 	}
 
@@ -988,8 +969,8 @@ impl crate::platform::PaymentPlatform for PaymentCallbackPlatform {
 	async fn request_payment(
 		&self,
 		product: &ProductContext,
-		request: v01::HostPaymentRequest,
-	) -> Result<(), v01::HostPaymentError> {
+		request: crate::latest::HostPaymentRequest,
+	) -> Result<(), crate::latest::HostPaymentError> {
 		self.payments.request_payment(product.product_id.clone(), request).await
 	}
 
@@ -1089,8 +1070,8 @@ mod status_relay_tests {
 		async fn top_up(
 			&self,
 			_product_id: ProductId,
-			_request: v01::HostPaymentTopUpRequest,
-		) -> Result<(), v01::HostPaymentTopUpError> {
+			_request: crate::latest::HostPaymentTopUpRequest,
+		) -> Result<(), crate::latest::HostPaymentTopUpError> {
 			Ok(())
 		}
 
@@ -1222,8 +1203,8 @@ mod status_relay_tests {
 		async fn request_payment(
 			&self,
 			_product_id: ProductId,
-			_request: v01::HostPaymentRequest,
-		) -> Result<(), v01::HostPaymentError> {
+			_request: crate::latest::HostPaymentRequest,
+		) -> Result<(), crate::latest::HostPaymentError> {
 			Ok(())
 		}
 

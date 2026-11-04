@@ -91,7 +91,7 @@ pub struct Dispatcher {
 	subscriptions: SubscriptionManager,
 	/// Trusted executable kind bound to this connection; `None` leaves the
 	/// surface unrestricted for direct dispatcher embeddings.
-	execution: Option<crate::platform::ProductExecutionKind>,
+	execution: Option<crate::platform::ExecutableKind>,
 	/// `(trait, method)` pairs already reported on this connection. A peer
 	/// whose wire table disagrees with ours is exactly what these reports are
 	/// for, and exactly what would repeat them once per frame, so each pair is
@@ -185,10 +185,7 @@ impl Dispatcher {
 	}
 
 	/// Construct a dispatcher bound to a trusted executable kind.
-	pub fn for_execution(
-		spawner: Spawner,
-		execution: crate::platform::ProductExecutionKind,
-	) -> Self {
+	pub fn for_execution(spawner: Spawner, execution: crate::platform::ExecutableKind) -> Self {
 		Self { execution: Some(execution), ..Self::new(spawner) }
 	}
 
@@ -238,7 +235,7 @@ impl Dispatcher {
 	}
 
 	/// Return whether this connection may access a service execution kind.
-	pub fn allows_execution(&self, required: crate::platform::ProductExecutionKind) -> bool {
+	pub fn allows_execution(&self, required: crate::platform::ExecutableKind) -> bool {
 		self.execution.is_none_or(|actual| actual == required)
 	}
 
@@ -1446,22 +1443,17 @@ mod tests {
 
 	#[test]
 	fn execution_filter_is_bound_to_the_connection() {
-		let app =
-			Dispatcher::for_execution(test_spawner(), crate::platform::ProductExecutionKind::App);
-		let widget = Dispatcher::for_execution(
-			test_spawner(),
-			crate::platform::ProductExecutionKind::Widget,
-		);
-		let worker = Dispatcher::for_execution(
-			test_spawner(),
-			crate::platform::ProductExecutionKind::Worker,
-		);
+		let app = Dispatcher::for_execution(test_spawner(), crate::platform::ExecutableKind::App);
+		let widget =
+			Dispatcher::for_execution(test_spawner(), crate::platform::ExecutableKind::Widget);
+		let worker =
+			Dispatcher::for_execution(test_spawner(), crate::platform::ExecutableKind::Worker);
 
-		assert!(!app.allows_execution(crate::platform::ProductExecutionKind::Worker));
-		assert!(!widget.allows_execution(crate::platform::ProductExecutionKind::Worker));
-		assert!(worker.allows_execution(crate::platform::ProductExecutionKind::Worker));
-		assert!(widget.allows_execution(crate::platform::ProductExecutionKind::Widget));
-		assert!(!app.allows_execution(crate::platform::ProductExecutionKind::Widget));
-		assert!(!worker.allows_execution(crate::platform::ProductExecutionKind::Widget));
+		assert!(!app.allows_execution(crate::platform::ExecutableKind::Worker));
+		assert!(!widget.allows_execution(crate::platform::ExecutableKind::Worker));
+		assert!(worker.allows_execution(crate::platform::ExecutableKind::Worker));
+		assert!(widget.allows_execution(crate::platform::ExecutableKind::Widget));
+		assert!(!app.allows_execution(crate::platform::ExecutableKind::Widget));
+		assert!(!worker.allows_execution(crate::platform::ExecutableKind::Widget));
 	}
 }

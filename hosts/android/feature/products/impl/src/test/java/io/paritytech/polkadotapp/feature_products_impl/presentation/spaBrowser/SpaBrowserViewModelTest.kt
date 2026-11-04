@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser
 
 import android.net.Uri
+import android.webkit.WebView
 import androidx.lifecycle.SavedStateHandle
 import io.mockk.coEvery
 import io.mockk.coVerify
@@ -19,7 +20,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
 import io.paritytech.polkadotapp.feature_products_api.model.Executables
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.SemVer
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
@@ -38,10 +38,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 private val TLD = DotNsTld.parse("paseo")!!
-private val PRODUCT = ProductId.fromStoredValue("getcash.paseo")
-private val OTHER_PRODUCT = ProductId.fromStoredValue("swap.paseo")
+private val PRODUCT = ProductId.parse("getcash.paseo").getOrThrow()
+private val OTHER_PRODUCT = ProductId.parse("swap.paseo").getOrThrow()
 
 private const val PRODUCT_APP = "app.getcash.paseo"
 private const val PRODUCT_WORKER = "worker.getcash.paseo"
@@ -53,6 +54,7 @@ class SpaBrowserViewModelTest {
     private val activeTab = MutableStateFlow<BrowserSessionInfo?>(null)
     private val pendingNames = MutableStateFlow<Set<String>>(emptySet())
 
+    private val webView: WebView = mockk(relaxUnitFun = true)
     private val productSessionController: ProductSessionController = mockk(relaxUnitFun = true)
     private val productUpdater: ProductUpdater = mockk(relaxUnitFun = true)
     private val interactor: SpaBrowserInteractor = mockk()
@@ -66,7 +68,7 @@ class SpaBrowserViewModelTest {
         activeTab.value = tabOn(PRODUCT)
         every { productSessionController.activeTab } returns activeTab
         every { productSessionController.openTabs } returns MutableStateFlow(emptyList())
-        every { productSessionController.webView } returns MutableStateFlow(null)
+        every { productSessionController.webView } returns MutableStateFlow<WebView?>(webView)
         every { productSessionController.loadProgress } returns MutableStateFlow(DotNsLoadProgress.Idle)
         every { productUpdater.observePendingNames() } returns pendingNames
         coEvery { productUpdater.check(any()) } returns Result.success(Unit)
@@ -196,6 +198,37 @@ class SpaBrowserViewModelTest {
         advanceUntilIdle()
 
         assertNull(model.state.value.updateReadyFor)
+    }
+
+    // Back steps through the page history first, which in a game runs many screens deep.
+    @Test
+    fun `minimize leaves at once and keeps the tab open, even when the page can go back`() {
+        // Given
+        every { webView.canGoBack() } returns true
+        val model = viewModel()
+
+        // When
+        model.onMinimizeClick()
+
+        // Then
+        verify { router.leaveBrowser() }
+        verify(exactly = 0) { webView.goBack() }
+        verify(exactly = 0) { productSessionController.closeActiveTab() }
+        verify(exactly = 0) { productSessionController.closeTab(any()) }
+    }
+
+    @Test
+    fun `back walks the page history before leaving`() {
+        // Given
+        every { webView.canGoBack() } returns true
+        val model = viewModel()
+
+        // When
+        model.onBackPressed()
+
+        // Then
+        verify { webView.goBack() }
+        verify(exactly = 0) { router.leaveBrowser() }
     }
 
     private fun verifyNothingApplied() {

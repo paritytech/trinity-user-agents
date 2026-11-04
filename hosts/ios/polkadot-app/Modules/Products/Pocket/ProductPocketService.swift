@@ -53,6 +53,7 @@ final class ProductPocketService: @unchecked Sendable {
     /// anything the Pocket is reachable from exists, which is why this is not
     /// waited on here.
     static func make(
+        runtimeProvider: any TrUAPIHostRuntimeProviding,
         tld: any DotNsTldProviding = DotNsTldProviderFacade.shared,
         logger: LoggerProtocol = Logger.shared
     ) -> ProductPocketService? {
@@ -62,7 +63,10 @@ final class ProductPocketService: @unchecked Sendable {
         }
 
         return ProductPocketService(
-            collection: CoreDataPocketCardStore(pinned: AssetPinnedPocketCards(tld: suffix)),
+            collection: CorePocketCardStore(
+                runtimeProvider: runtimeProvider,
+                pinned: AssetPinnedPocketCards(tld: suffix)
+            ),
             logger: logger
         )
     }
@@ -144,12 +148,11 @@ final class ProductPocketService: @unchecked Sendable {
                         logger: logger
                     )
                 },
-                products: flowState.productResolver,
+                contentLoader: flowState.contentLoader,
                 dotNsResolver: flowState.dotNsResolver,
                 productFileProvider: productFileProvider,
                 logger: logger
             ),
-            collection: collection,
             references: { [weak runtimeProvider] in
                 guard let runtimeProvider else { throw PocketServiceError.gone }
 

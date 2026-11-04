@@ -17,12 +17,16 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -30,6 +34,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonShape
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotButtonSize
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
@@ -40,6 +45,7 @@ import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.Close
 import io.paritytech.polkadotapp.design.components.icon.vectors.Info
+import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowDropdown
 import io.paritytech.polkadotapp.design.components.icon.vectors.Refreshing
 import io.paritytech.polkadotapp.design.components.progress.NovaLinearProgressIndicator
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
@@ -72,6 +78,7 @@ fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
     SpaBrowserScreenInternal(
         state = state,
         webView = webView,
+        onMinimize = viewModel::onMinimizeClick,
         onRefresh = viewModel::onRefresh,
         onUpdateReload = viewModel::onUpdateReloadClick,
         onUpdateDismiss = viewModel::onUpdateDismissClick,
@@ -82,12 +89,15 @@ fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
 internal fun SpaBrowserScreenInternal(
     state: SpaBrowserUiState,
     webView: WebView?,
+    onMinimize: () -> Unit,
     onRefresh: () -> Unit,
     onUpdateReload: () -> Unit,
     onUpdateDismiss: () -> Unit,
 ) {
-    // No chrome: the product fills the screen. There is no in-screen way to close it — the only exit is
-    // the global tab bar (pull it out to switch or manage apps).
+    var minimizePanelHeight by remember { mutableIntStateOf(0) }
+    var reloadCount by remember { mutableIntStateOf(0) }
+    val chromeCollapse = rememberBrowserChromeCollapse(webView, minimizePanelHeight, reloadCount)
+
     PolkadotSurface(color = PolkadotTheme.colors.bg.surface.main) {
         Column(
             modifier = Modifier
@@ -95,11 +105,18 @@ internal fun SpaBrowserScreenInternal(
                 .safeDrawingPadding()
         ) {
             DotNsLoadProgressBar(progress = state.loadProgress)
+            Box(
+                modifier = Modifier
+                    .collapsedBy { chromeCollapse.fraction }
+                    .onSizeChanged { minimizePanelHeight = it.height }
+            ) {
+                MinimizeButton(onClick = onMinimize)
+            }
             PolkadotSurface(
                 modifier = Modifier.weight(1f),
                 color = PolkadotTheme.colors.bg.surface.container,
             ) {
-                Box(modifier = Modifier.fillMaxSize()) {
+                Box(modifier = Modifier.fillMaxSize().then(chromeCollapse.touchTracking)) {
                     SpaBrowserPageContent(
                         pageState = state.pageState,
                         webView = webView,
@@ -115,7 +132,10 @@ internal fun SpaBrowserScreenInternal(
                     if (state.isDevServer) {
                         PolkadotIconButton(
                             icon = NovaIcons.Refreshing,
-                            onClick = onRefresh,
+                            onClick = {
+                                reloadCount++
+                                onRefresh()
+                            },
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
                                 .padding(PolkadotTheme.spacings.mediumIncreased),
@@ -127,6 +147,23 @@ internal fun SpaBrowserScreenInternal(
             }
         }
     }
+}
+
+// The tab bar exists only on Main, so without this button the product would have no exit on screen.
+@Composable
+private fun MinimizeButton(onClick: () -> Unit) {
+    val description = stringResource(RCommon.string.spa_browser_minimize)
+
+    PolkadotIconButton(
+        icon = NovaIcons.ArrowDropdown,
+        onClick = onClick,
+        modifier = Modifier
+            .padding(horizontal = PolkadotTheme.spacings.mediumIncreased, vertical = PolkadotTheme.spacings.small)
+            .semantics { contentDescription = description },
+        style = PolkadotButtonStyle.secondary(),
+        size = PolkadotIconButtonSize.medium(),
+        shape = PolkadotButtonShape.pill,
+    )
 }
 
 // Floats over the page like the root's notices do: the user may be in the middle of something and decides when to reload.
@@ -305,6 +342,7 @@ private fun SpaBrowserScreenPreview() {
                 loadProgress = DotNsLoadProgress.Downloading(0.4f),
             ),
             webView = null,
+            onMinimize = {},
             onUpdateReload = {},
             onUpdateDismiss = {},
             onRefresh = {},

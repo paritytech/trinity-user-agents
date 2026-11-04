@@ -5,7 +5,7 @@ import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.mapAsync
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromHost
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.launch
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -88,6 +89,6 @@ class ProductUpdater @Inject constructor(
     }
 
     private suspend fun productIdOf(dotNsName: String): ProductId? {
-        return dotNsTldProvider.getTld().getOrNull()?.let { tld -> ProductId.fromString(dotNsName, tld).getOrNull() }
+        return dotNsTldProvider.getTld().getOrNull()?.let { tld -> productIdFromHost(dotNsName, tld).getOrNull() }
     }
 }

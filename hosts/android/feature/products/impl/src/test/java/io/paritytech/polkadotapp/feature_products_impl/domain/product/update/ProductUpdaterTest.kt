@@ -10,7 +10,6 @@ import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -22,10 +21,11 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 private val TLD = DotNsTld.parse("paseo")!!
-private val GETCASH = ProductId.fromStoredValue("getcash.paseo")
-private val SWAP = ProductId.fromStoredValue("swap.paseo")
+private val GETCASH = ProductId.parse("getcash.paseo").getOrThrow()
+private val SWAP = ProductId.parse("swap.paseo").getOrThrow()
 
 private const val GETCASH_APP = "app.getcash.paseo"
 private const val GETCASH_WORKER = "worker.getcash.paseo"

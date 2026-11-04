@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.spaBrowser
 import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
 import io.paritytech.polkadotapp.feature_chats_api.domain.ReadOnlyChatRoomRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIntegrationRepository
@@ -11,6 +10,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.product.Integratio
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 interface SpaBrowserInteractor {

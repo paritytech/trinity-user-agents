@@ -212,6 +212,32 @@ pub trait HostCallbacks: Send + Sync {
 	/// with.
 	async fn current_installation(&self) -> Result<Vec<u8>, HostRejection>;
 
+	/// Read a value the host keeps encrypted at rest: the Keychain on iOS,
+	/// encrypted preferences on Android. Return `None` when nothing is stored
+	/// under `key`, and an error when the store cannot be read or the value
+	/// no longer decrypts.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with.
+	async fn encrypted_storage_read(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection>;
+
+	/// Store `value` under `key`, encrypted at rest and excluded from backups,
+	/// replacing any earlier value.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with.
+	async fn encrypted_storage_write(
+		&self,
+		key: Vec<u8>,
+		value: Vec<u8>,
+	) -> Result<(), HostRejection>;
+
+	/// Delete the value stored under `key`. Deleting nothing succeeds.
+	///
+	/// Runtime-wide, so invoked only on the callbacks the runtime was built
+	/// with.
+	async fn encrypted_storage_delete(&self, key: Vec<u8>) -> Result<(), HostRejection>;
+
 	/// Read a value from the host's scoped key-value store.
 	async fn local_storage_read(
 		&self,
@@ -293,38 +319,6 @@ pub trait NativeChatCallbacks: Send + Sync {
 	async fn list_rooms(&self) -> Result<Vec<v01::ChatRoom>, HostRejection>;
 }
 
-/// Native Pocket collection adapter. Hosts with a Pocket surface pass an
-/// implementation to [`NativeTrUApiHostRuntime::open_product_execution`]; hosts
-/// without one pass `None`. `list_cards` runs inline on the core runtime
-/// shared by every product execution, so it must return promptly;
-/// `remove_card` is awaited and may suspend while the host's storage works.
-///
-/// The host decides a removal and reports what it did, so the check and the
-/// removal happen together under whatever lock it holds. A card cannot be
-/// pinned between the two.
-#[uniffi::export(rust, foreign)]
-#[async_trait::async_trait]
-pub trait NativePocketCallbacks: Send + Sync {
-	/// Return the product's cards as this host currently holds them, each with
-	/// the flag saying whether the host pinned it.
-	fn list_cards(&self) -> Result<Vec<v01::PocketCard>, HostRejection>;
-
-	/// Remove one of the product's cards, reporting whether the card was
-	/// taken out, was already gone, or is pinned and stays.
-	async fn remove_card(&self, card_id: String) -> Result<NativePocketRemoval, HostRejection>;
-}
-
-/// What a host did with a removal request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum NativePocketRemoval {
-	/// The card was present and not pinned, and the host took it out.
-	Removed,
-	/// The host does not hold the card, so it is already gone.
-	Absent,
-	/// The host pins the card and keeps it.
-	Privileged,
-}
-
 /// Native game-reminder adapter. Hosts that can hold reminders pass an
 /// implementation to [`NativeTrUApiHostRuntime::open_product_execution`];
 /// hosts without one pass `None`. Both callbacks are async, so a host may hop
@@ -391,8 +385,8 @@ pub trait NativePaymentCallbacks: Send + Sync {
 	async fn request_payment(
 		&self,
 		product_id: ProductId,
-		request: v01::HostPaymentRequest,
-	) -> Result<(), v01::HostPaymentError>;
+		request: crate::latest::HostPaymentRequest,
+	) -> Result<(), crate::latest::HostPaymentError>;
 
 	/// The current status of `product_id`'s payment `id`, or `None` when the
 	/// host holds no such payment.
@@ -418,8 +412,8 @@ pub trait NativeTopUpCallbacks: Send + Sync {
 	async fn top_up(
 		&self,
 		product_id: ProductId,
-		request: v01::HostPaymentTopUpRequest,
-	) -> Result<(), v01::HostPaymentTopUpError>;
+		request: crate::latest::HostPaymentTopUpRequest,
+	) -> Result<(), crate::latest::HostPaymentTopUpError>;
 
 	/// The current status of `product_id`'s top-up `id`, or `None` when the
 	/// host holds no such top-up.
@@ -462,7 +456,7 @@ pub trait NativeScannerCallbacks: Send + Sync {
 	async fn scan_code(
 		&self,
 		product_id: ProductId,
-		execution_kind: crate::platform::ProductExecutionKind,
+		execution_kind: crate::platform::ExecutableKind,
 		request: truapi::latest::HostScannerScanRequest,
 	) -> Result<crate::platform::HostScan, HostRejection>;
 }
@@ -486,6 +480,17 @@ pub trait NativeFundingCallbacks: Send + Sync {
 		direction: v01::FundingDirection,
 		amount: Option<u128>,
 	) -> Result<crate::platform::FundingPresentOutcome, HostRejection>;
+
+	/// Show `target` for provider `provider_id`'s session `intent` in a frame
+	/// the host owns, and report how it closed. A page is a checked https
+	/// URL: show its origin, and answer `Returned` when it reaches its return
+	/// URL.
+	async fn present_provider_frame(
+		&self,
+		provider_id: String,
+		intent: String,
+		target: v01::FundingFrameTarget,
+	) -> Result<v01::FundingFrameOutcome, HostRejection>;
 
 	/// A session's status changed, for host UI such as the in-flight pill.
 	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem);

@@ -1,7 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_api.model.derivation
 
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 
 /**
  * RFC-0022 governance-reserved dotNS identities for built-in app features.
@@ -11,19 +11,15 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
  * network-specific product providers (individuality#1300).
  */
 object ReservedProductIds {
-    fun game(tld: DotNsTld): ProductId = reserved("dim2", tld)
+    fun game(tld: DotNsTld): ProductId = ProductId.fromName("dim2", tld.value).getOrThrow()
 
-    fun funding(tld: DotNsTld): ProductId = reserved("fund", tld)
+    fun funding(tld: DotNsTld): ProductId = ProductId.fromName("fund", tld.value).getOrThrow()
 
-    fun lightPersonIdentity(tld: DotNsTld): ProductId = reserved("uid", tld)
+    fun lightPersonIdentity(tld: DotNsTld): ProductId = ProductId.fromName("uid", tld.value).getOrThrow()
 
-    fun personhood(tld: DotNsTld): ProductId = reserved("peopl", tld)
+    fun personhood(tld: DotNsTld): ProductId = ProductId.fromName("peopl", tld.value).getOrThrow()
 
-    fun chat(tld: DotNsTld): ProductId = reserved("chat", tld)
+    fun chat(tld: DotNsTld): ProductId = ProductId.fromName("chat", tld.value).getOrThrow()
 
     fun all(tld: DotNsTld): Set<ProductId> = setOf(game(tld), funding(tld), lightPersonIdentity(tld), personhood(tld))
-
-    private fun reserved(label: String, tld: DotNsTld): ProductId {
-        return ProductId.fromStoredValue(label + tld.suffix)
-    }
 }

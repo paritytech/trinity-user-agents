@@ -1,8 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.usecase
 
 import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
+import uniffi.truapi.ProductId
 
 /**
  * Resolves a product from its dotNS identity. Manifest and debug-menu products share one shape, so
