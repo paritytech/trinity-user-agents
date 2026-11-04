@@ -125,26 +125,9 @@ private extension FundingDepositView {
     }
 
     func copyRow(_ title: String, _ value: String, shown: String? = nil) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: title)
-                    .typography(.captionSmall)
-                    .foregroundStyle(.fgSecondary)
-                Text(verbatim: shown ?? value)
-                    .typography(.bodyMedium)
-                    .foregroundStyle(.fgPrimary)
-            }
-            Spacer()
-            Button {
-                UIPasteboard.general.string = value
-                copied = String(localized: .Funding.depositCopied)
-            } label: {
-                Image(systemName: "doc.on.doc")
-                    .foregroundStyle(.fgPrimary)
-            }
-        }
-        .padding(.vertical, DSSpacings.small)
-        .overlay(alignment: .bottom) { Divider().overlay(Color.strokePrimary) }
+        FundingCopyRow(title: title, text: value, copied: $copied, shown: shown)
+            .padding(.vertical, DSSpacings.small)
+            .overlay(alignment: .bottom) { Divider().overlay(Color.strokePrimary) }
     }
 
     /// Opens the progress screen the deposit sits over.
