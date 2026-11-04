@@ -64,7 +64,7 @@ impl ProductConnection {
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Chain for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "chain.follow_head_subscribe"))]
 	async fn follow_head_subscribe(

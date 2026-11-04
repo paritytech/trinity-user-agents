@@ -13,7 +13,7 @@
 //! [`versioned`].
 //! Async API traits use the `async_trait` macro so their concise `async fn` methods
 //! still guarantee `Send` futures. Implementations must annotate their impl
-//! blocks with `#[truapi::async_trait]`.
+//! blocks with `#[async_trait::async_trait]`.
 //!
 //! The runtime: hosts instantiate a role runtime around a `platform::Platform`
 //! implementation, then create product-scoped `ProductRuntime` endpoints that
@@ -43,8 +43,6 @@ use std::sync::{Arc, Mutex};
 
 use futures::Stream;
 use parity_scale_codec::{Decode, Encode};
-
-pub use async_trait::async_trait;
 
 pub mod api;
 mod dotns_name;
