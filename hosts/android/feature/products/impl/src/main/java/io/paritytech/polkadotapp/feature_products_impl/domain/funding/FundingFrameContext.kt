@@ -59,10 +59,6 @@ class FundingFrameContexts @Inject constructor() {
 
     fun get(intent: String): FundingFrameContext? = contexts[intent]
 
-    fun remove(intent: String) {
-        contexts.remove(intent)
-    }
-
     /** Removes [context] only while it is still the frame on screen for its session. */
     fun remove(context: FundingFrameContext) {
         contexts.remove(context.intent, context)

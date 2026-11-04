@@ -23,7 +23,6 @@ class FundingOverlayContext(
     val mode: FundingOverlayMode,
 ) {
     private val outcome = CompletableDeferred<FundingOverlayOutcome>()
-    private val closed = CompletableDeferred<Unit>()
 
     /** What the user picked on the sheet, as last reported to the core. */
     @Volatile
@@ -34,12 +33,6 @@ class FundingOverlayContext(
     }
 
     suspend fun awaitOutcome(): FundingOverlayOutcome = outcome.await()
-
-    fun markClosed() {
-        closed.complete(Unit)
-    }
-
-    suspend fun awaitClosed() = closed.await()
 }
 
 /** The overlays on screen, keyed by session, so a sheet finds the one it was opened for. */
@@ -52,10 +45,6 @@ class FundingOverlayContexts @Inject constructor() {
     }
 
     fun get(intent: String): FundingOverlayContext? = contexts[intent]
-
-    fun remove(intent: String) {
-        contexts.remove(intent)
-    }
 
     /** Removes [context] only while it is still the one on screen for its session. */
     fun remove(context: FundingOverlayContext) {
