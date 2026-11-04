@@ -360,9 +360,7 @@ impl FundingPlatform for CliFundingHost {
 		let Some((provider, quote_id)) = chosen else {
 			return Ok(FundingPresentOutcome::Dismissed);
 		};
-		runtime
-			.select_funding_provider(&session.intent, &provider, &quote_id)
-			.await?;
+		runtime.select_funding_provider(&session.intent, &provider, &quote_id).await?;
 		Ok(FundingPresentOutcome::Started)
 	}
 
