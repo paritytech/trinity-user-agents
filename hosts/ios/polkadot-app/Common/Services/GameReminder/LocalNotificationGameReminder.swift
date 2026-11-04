@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import UserNotifications
 import Keystore_iOS
@@ -93,7 +94,7 @@ private extension LocalNotificationGameReminder {
         // PushRouteBuilder opens a scheme-less product deeplink as https://<productId>.
         content.userInfo = [
             PushNotificationKeys.pushSource: PushNotificationSource.products.rawValue,
-            PushNotificationKeys.deeplink: productId
+            PushNotificationKeys.deeplink: productId.rawValue
         ]
         return content
     }

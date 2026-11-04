@@ -9,7 +9,7 @@
     /// Debug-only assembly for the truapi playground (interactive API
     /// explorer). Presentation belongs to ``DebugSettingsWireframe``.
     enum TrUAPIPlaygroundViewFactory {
-        static let playgroundName: ProductId = "truapi-playground"
+        static let playgroundName: String = "truapi-playground"
         static let playgroundURL = URL(string: "http://localhost:3000")
 
         /// The playground as a direct-URL rust-runtime SPA. Forces rust mode

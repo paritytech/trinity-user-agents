@@ -384,7 +384,7 @@ mod tests {
 			FixedPersonhoodSigner, proof,
 			ring::RingParams,
 			rpc::{RpcClient, testing::ScriptedRpc},
-			slot::testing::lite_people,
+			slot::{StatementStoreAllowanceEntry, testing::lite_people},
 			test_fixtures,
 		};
 
@@ -392,7 +392,9 @@ mod tests {
 
 		/// One occupied slot entry, oldest first by `seq`.
 		fn entry(account: [u8; 32], since: u64) -> String {
-			format!(r#""0x{}""#, hex::encode((account, 0u32, since).encode()))
+			let entry =
+				StatementStoreAllowanceEntry { account_id: account, seq: 0, since }.encode();
+			format!(r#""0x{}""#, hex::encode(entry))
 		}
 		fn clock() -> String {
 			format!(r#""0x{}""#, hex::encode((NOW * 1_000).encode()))
@@ -474,14 +476,16 @@ mod tests {
 			FixedPersonhoodSigner, proof,
 			ring::RingParams,
 			rpc::{RpcClient, testing::ScriptedRpc},
-			slot::testing::lite_people,
+			slot::{StatementStoreAllowanceEntry, testing::lite_people},
 			test_fixtures,
 		};
 
 		const NOW: u64 = 10_000_000;
 
 		fn entry(account: [u8; 32]) -> String {
-			format!(r#""0x{}""#, hex::encode((account, 0u32, NOW).encode()))
+			let entry =
+				StatementStoreAllowanceEntry { account_id: account, seq: 0, since: NOW }.encode();
+			format!(r#""0x{}""#, hex::encode(entry))
 		}
 
 		let metadata = test_fixtures::people();
@@ -559,14 +563,16 @@ mod tests {
 			FixedPersonhoodSigner, proof,
 			ring::RingParams,
 			rpc::{RpcClient, testing::ScriptedRpc},
-			slot::testing::lite_people,
+			slot::{StatementStoreAllowanceEntry, testing::lite_people},
 			test_fixtures,
 		};
 
 		const NOW: u64 = 10_000_000;
 
 		fn entry(account: [u8; 32], since: u64) -> String {
-			format!(r#""0x{}""#, hex::encode((account, 0u32, since).encode()))
+			let entry =
+				StatementStoreAllowanceEntry { account_id: account, seq: 0, since }.encode();
+			format!(r#""0x{}""#, hex::encode(entry))
 		}
 		fn clock() -> String {
 			format!(r#""0x{}""#, hex::encode((NOW * 1_000).encode()))

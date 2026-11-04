@@ -19,15 +19,14 @@ use std::{
 };
 
 use crate::platform::{
-	BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin, ExpandedCardHost, FundingPlatform,
-	GamePlatform, PairingHostAdmin, PairingHostConfig, PaymentPlatform,
+	BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin, ExecutableKind, ExpandedCardHost,
+	FundingPlatform, GamePlatform, PairingHostAdmin, PairingHostConfig, PaymentPlatform,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionStatusHost, Platform,
-	PocketPlatform, ProductContext, ProductExecutionKind, ProductId, ScannerPlatform,
-	SigningHostConfig, TopUpPlatform,
+	PocketPlatform, ProductContext, ProductId, ScannerPlatform, SigningHostConfig, TopUpPlatform,
 };
 use futures::{
 	FutureExt, StreamExt,
-	future::{AbortHandle, Abortable},
+	future::{AbortHandle, Abortable, BoxFuture},
 	pin_mut,
 };
 use parity_scale_codec::{Decode, Encode};
@@ -41,9 +40,9 @@ use crate::{
 	host_logic::worker::WorkerLedger,
 	runtime::{
 		ActionChannel, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver,
-		HostSession, LocalActivation, PairedSsoPeer, PairingHostRole, ProductAuthority,
-		ProductConnection, ProductRuntimeHost, ResponderExit, RuntimeServices, SigningHostRole,
-		SigningHostSsoService, SsoResponderService, sso_service::Dispatch,
+		FundingProviderLink, HostSession, LocalActivation, PairedSsoPeer, PairingHostRole,
+		ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit, RuntimeServices,
+		SigningHostRole, SigningHostSsoService, SsoResponderService, sso_service::Dispatch,
 	},
 	subscription::{HostInitiatedSubscriptionManager, Spawner},
 	transport::Transport,
@@ -175,7 +174,7 @@ pub enum ProductRuntimeError {
 }
 
 fn product_context(product_id: &ProductId) -> ProductContext {
-	ProductContext::new_with_execution(product_id.clone(), ProductExecutionKind::App)
+	ProductContext::new_with_execution(product_id.clone(), ExecutableKind::App)
 }
 
 /// A seedless pairing host: the user's keys live in an external wallet reached
@@ -787,6 +786,13 @@ impl SigningHostRuntime {
 		self.services.install_funding_platform(platform)
 	}
 
+	/// Install the feed a native host draws its funding screens from. Install
+	/// it before [`Self::set_funding_platform`], which resumes funding.
+	/// Set-once; returns whether this call installed it.
+	pub fn set_funding_feed(&self, feed: Arc<dyn crate::runtime::FundingFeed>) -> bool {
+		self.services.funding().install_feed(feed)
+	}
+
 	/// Every funding session the core keeps, in flight first, then ended,
 	/// each newest first.
 	pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
@@ -813,11 +819,104 @@ impl SigningHostRuntime {
 		Ok(self.services.acknowledge_funding_session(intent).await?)
 	}
 
-	/// Cancel open funding session `intent`. Returns whether it was still
-	/// open.
+	/// Cancel funding session `intent` at the user's request, and say what
+	/// that did: it ended, its provider was asked, a cancel is already with
+	/// the provider, or it is too late because the balance was credited.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.cancel_funding"))]
-	pub async fn cancel_funding(&self, intent: &str) -> Result<bool, v01::GenericError> {
+	pub async fn cancel_funding(
+		&self,
+		intent: &str,
+	) -> Result<crate::host_logic::funding::CancelOutcome, v01::GenericError> {
 		Ok(self.services.cancel_funding(intent).await?)
+	}
+
+	/// Replace the funding providers this host offers, each with the Worker
+	/// manifest it ships for it. The core re-reads each one from dotNS in the
+	/// background, and that answer wins once it has one.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_providers"))]
+	pub fn set_funding_providers(
+		&self,
+		providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
+	) -> Result<(), v01::GenericError> {
+		self.services
+			.set_funding_providers(providers)
+			.map_err(|err| v01::GenericError { reason: err.to_string() })
+	}
+
+	/// The providers funding session `intent` can be handed to, with the
+	/// routes that serve its direction, in the host's order. Empty for a
+	/// session the core does not know.
+	pub fn funding_candidates(
+		&self,
+		intent: &str,
+	) -> Vec<crate::host_logic::funding_providers::FundingCandidate> {
+		self.services
+			.funding()
+			.get(intent)
+			.map(|session| self.services.funding_candidates(session.direction))
+			.unwrap_or_default()
+	}
+
+	/// Live quotes for funding session `intent`: one row per funding
+	/// provider, whatever routes its manifest declares, `Pending` and then
+	/// `Quoted` or `Unavailable` as each provider answers or runs out of time.
+	/// The stream ends once every provider has, or once a newer ask for the
+	/// session starts, and never errors; dropping it withdraws the asks still
+	/// open.
+	pub fn get_funding_quote(
+		&self,
+		intent: &str,
+		ask: v01::FundingQuoteAsk,
+	) -> futures::stream::BoxStream<'static, crate::platform::FundingQuoteRow> {
+		self.services.get_funding_quote(intent, ask)
+	}
+
+	/// [`Self::get_funding_quote`] for hosts that take each row through
+	/// [`FundingPlatform::funding_quote_changed`] instead of a stream. A newer
+	/// request for the session withdraws this one, so the host only ever
+	/// hears rows for the last ask it made.
+	pub fn request_funding_quotes(&self, intent: &str, ask: v01::FundingQuoteAsk) {
+		let rows = self.services.get_funding_quote(intent, ask);
+		let platform = self.services.funding().platform();
+		let intent = intent.to_string();
+		(self.services.spawner)(Box::pin(async move {
+			let Some(platform) = platform else {
+				return;
+			};
+			futures::pin_mut!(rows);
+			while let Some(row) = futures::StreamExt::next(&mut rows).await {
+				platform.funding_quote_changed(intent.clone(), row);
+			}
+		}));
+	}
+
+	/// Answer the provider's cancel offer on funding session `intent`:
+	/// accept it on `terms`, the fee and refund the host showed, so the
+	/// provider settles the cancel, or decline it with `None`, so the session
+	/// carries on. An offer whose terms changed answers `Changed`.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.confirm_funding_cancel"))]
+	pub async fn confirm_funding_cancel(
+		&self,
+		intent: &str,
+		terms: Option<crate::host_logic::funding::CancelTerms>,
+	) -> Result<crate::host_logic::funding::CancelConfirmation, v01::GenericError> {
+		Ok(self.services.confirm_funding_cancel(intent, terms).await?)
+	}
+
+	/// Hand open funding session `intent` to the provider the user chose,
+	/// by product id, on the quote they chose it by. Returns whether it was
+	/// open and not yet assigned.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.select_funding_provider"))]
+	pub async fn select_funding_provider(
+		&self,
+		intent: &str,
+		provider_id: &ProductId,
+		quote_id: &str,
+	) -> Result<bool, v01::GenericError> {
+		self.services
+			.select_funding_provider(intent, provider_id, quote_id)
+			.await
+			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
 	/// One funding session as the core holds it, for the host's own status
@@ -948,8 +1047,9 @@ impl SigningHostRuntime {
 	/// engine, then NFT purses with the tracker of their holdings. Call it
 	/// once the setters it reads have run: [`Self::set_core_db`],
 	/// [`Self::set_installation_provider`], [`Self::set_encrypted_storage`]
-	/// and [`Self::set_durable_work_observer`]. A part whose inputs are
-	/// missing is skipped and logged. A second call does nothing.
+	/// and [`Self::set_durable_work_observer`]. NFT transfers and purses need
+	/// the encrypted storage. A part whose inputs are missing
+	/// is skipped and logged. A second call does nothing.
 	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.start_core_services"))]
 	pub fn start_core_services(&self) {
@@ -964,29 +1064,47 @@ impl SigningHostRuntime {
 		self.start_nft_purses(db, engine);
 	}
 
-	/// Installs the NFT ledger over `db` and `durable` and starts tracking
-	/// its holdings, when an installation provider is set.
+	/// Installs the NFT ledger over `db` and `durable`, with the static receive
+	/// secret NFT purses open cheques with, and starts tracking its holdings,
+	/// when an installation provider and encrypted storage are set.
 	#[cfg(not(target_arch = "wasm32"))]
 	fn start_nft_purses(
 		&self,
 		db: crate::store::Db,
 		durable: Arc<crate::durable::DurableTxEngine>,
 	) {
-		let Some(installation) = self.services.installation_provider() else {
-			tracing::warn!("no installation provider set, NFT purses are off");
+		let Some(ledger) = self.nft_ledger(db, durable) else {
 			return;
 		};
-		if self.services.encrypted_storage().is_none() {
-			tracing::warn!("no encrypted storage set, NFT purses are off");
-		}
+		let static_secret = Arc::new(Arc::downgrade(&self.signing_host));
+		self.services.install_static_receive_secret(static_secret);
+		self.services.install_nft_ledger(ledger.clone());
+		start_holding_tracker(&self.services, ledger);
+	}
 
+	/// The NFT ledger over `db` and `durable`, deriving item keys from the
+	/// signing host, or `None`, logged, without an installation provider or
+	/// encrypted storage.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn nft_ledger(
+		&self,
+		db: crate::store::Db,
+		durable: Arc<crate::durable::DurableTxEngine>,
+	) -> Option<crate::nft::NftLedger> {
+		let Some(installation) = self.services.installation_provider() else {
+			tracing::warn!("no installation provider set, NFT purses are off");
+			return None;
+		};
+		let Some(encrypted) = self.services.encrypted_storage() else {
+			tracing::warn!("no encrypted storage set, NFT purses are off");
+			return None;
+		};
 		let signing_host = Arc::downgrade(&self.signing_host);
 		let keys = Arc::new(signing_host.clone());
 		let secrets = Arc::new(signing_host);
-		let deps = crate::nft::NftLedgerDeps { db, installation, keys, durable, secrets };
-		let ledger = crate::nft::NftLedger::new(deps);
-		self.services.install_nft_ledger(ledger.clone());
-		start_holding_tracker(&self.services, ledger);
+		let imported = crate::nft::ImportedSecretStore::new(encrypted);
+		let deps = crate::nft::NftLedgerDeps { db, installation, keys, durable, secrets, imported };
+		Some(crate::nft::NftLedger::new(deps))
 	}
 
 	/// Install the host observer told whether durable transactions are
@@ -1368,17 +1486,22 @@ fn durable_engine(
 }
 
 /// The domains and policies the durable engine serves: NFT transfers, on the
-/// Asset Hub that runs the Scarcity pallet.
+/// Asset Hub that runs the Scarcity pallet. They need encrypted storage, which
+/// keeps the secrets of imported item keys.
 #[cfg(not(target_arch = "wasm32"))]
 fn durable_registry(
 	services: &RuntimeServices,
 	signer: Arc<dyn crate::nft::ItemSigner>,
 ) -> crate::durable::DurableRegistry {
-	use crate::nft::{ScarcityTransfersDeps, with_scarcity_transfers};
+	use crate::nft::{ImportedSecretStore, ScarcityTransfersDeps, with_scarcity_transfers};
 
 	let registry = crate::durable::DurableRegistry::new();
 	let Some(genesis) = services.asset_hub_chain_genesis_hash() else {
 		tracing::warn!("no Asset Hub genesis configured, NFT transfers are off");
+		return registry;
+	};
+	let Some(encrypted) = services.encrypted_storage() else {
+		tracing::warn!("no encrypted storage set, NFT transfers are off");
 		return registry;
 	};
 	let chain = Arc::new(services.chain.clone());
@@ -1387,6 +1510,7 @@ fn durable_registry(
 		heads: chain,
 		genesis: genesis.into(),
 		signer,
+		imported: ImportedSecretStore::new(encrypted),
 		extrinsics: services.extrinsics.clone(),
 	};
 	with_scarcity_transfers(registry, deps)
@@ -1766,6 +1890,9 @@ pub struct ProductRuntime {
 	admin: HostAdmin,
 	transport: Arc<SinkTransport>,
 	host_subscriptions: Arc<HostInitiatedSubscriptionManager>,
+	/// How the funding registry calls this connection, when it is a worker's,
+	/// with the product it calls.
+	funding_link: Option<(ProductId, Arc<dyn FundingProviderLink>)>,
 	disposed: Arc<AtomicBool>,
 	in_flight: Mutex<HashMap<u64, AbortHandle>>,
 	next_dispatch_id: AtomicU64,
@@ -1853,6 +1980,99 @@ impl ProductRuntimeControl {
 			},
 		);
 		Ok(truapi::Subscription::new(stream))
+	}
+}
+
+/// Calls a funding provider's worker through its product connection, each
+/// call awaiting the worker's one answer.
+struct WorkerFundingLink {
+	transport: Arc<SinkTransport>,
+	host_subscriptions: Arc<HostInitiatedSubscriptionManager>,
+}
+
+impl WorkerFundingLink {
+	fn transport(&self) -> Arc<dyn Transport> {
+		self.transport.clone()
+	}
+}
+
+impl FundingProviderLink for WorkerFundingLink {
+	fn assign(&self, session: v01::FundingAssignment) -> BoxFuture<'static, bool> {
+		use truapi::versioned::funding_provider::ProductFundingAssignRequest;
+		let subscriptions = self.host_subscriptions.clone();
+		let transport = self.transport();
+		Box::pin(async move {
+			crate::generated::dispatcher::funding_provider_assign(
+				&subscriptions,
+				transport,
+				ProductFundingAssignRequest::V1(v01::ProductFundingAssignRequest { session }),
+			)
+			.await
+			.is_ok()
+		})
+	}
+
+	fn quote(
+		&self,
+		ask: v01::FundingQuoteAsk,
+	) -> BoxFuture<'static, Option<v01::FundingQuoteAnswer>> {
+		use truapi::versioned::funding_provider::{
+			ProductFundingQuoteRequest, ProductFundingQuoteResponse,
+		};
+		let subscriptions = self.host_subscriptions.clone();
+		let transport = self.transport();
+		Box::pin(async move {
+			let ProductFundingQuoteResponse::V1(answer) =
+				crate::generated::dispatcher::funding_provider_quote(
+					&subscriptions,
+					transport,
+					ProductFundingQuoteRequest::V1(v01::ProductFundingQuoteRequest { ask }),
+				)
+				.await
+				.ok()?;
+			Some(answer)
+		})
+	}
+
+	fn cancel(&self, intent: String) -> BoxFuture<'static, Option<v01::FundingCancelAnswer>> {
+		use truapi::versioned::funding_provider::{
+			ProductFundingCancelRequest, ProductFundingCancelResponse,
+		};
+		let subscriptions = self.host_subscriptions.clone();
+		let transport = self.transport();
+		Box::pin(async move {
+			let ProductFundingCancelResponse::V1(answer) =
+				crate::generated::dispatcher::funding_provider_cancel(
+					&subscriptions,
+					transport,
+					ProductFundingCancelRequest::V1(v01::ProductFundingCancelRequest { intent }),
+				)
+				.await
+				.ok()?;
+			Some(answer)
+		})
+	}
+
+	fn settle_cancel(
+		&self,
+		intent: String,
+		decision: v01::FundingCancelDecision,
+	) -> BoxFuture<'static, bool> {
+		use truapi::versioned::funding_provider::ProductFundingSettleCancelRequest;
+		let subscriptions = self.host_subscriptions.clone();
+		let transport = self.transport();
+		Box::pin(async move {
+			crate::generated::dispatcher::funding_provider_settle_cancel(
+				&subscriptions,
+				transport,
+				ProductFundingSettleCancelRequest::V1(v01::ProductFundingSettleCancelRequest {
+					intent,
+					decision,
+				}),
+			)
+			.await
+			.is_ok()
+		})
 	}
 }
 
@@ -1966,6 +2186,8 @@ impl ProductRuntime {
 		sink: Arc<dyn FrameSink>,
 	) -> Self {
 		let session_state = host_session.session_state();
+		let worker =
+			(product.execution_kind == ExecutableKind::Worker).then(|| product.product_id.clone());
 		let admin = HostAdmin::new(services.clone(), authority, host_session, product, adapters);
 		let disposed = Arc::new(AtomicBool::new(false));
 		let transport = Arc::new(SinkTransport {
@@ -1975,6 +2197,14 @@ impl ProductRuntime {
 			debug: Mutex::new(None),
 		});
 		let host_subscriptions = Arc::new(HostInitiatedSubscriptionManager::new());
+		let funding_link = worker.map(|product_id| {
+			let link: Arc<dyn FundingProviderLink> = Arc::new(WorkerFundingLink {
+				transport: transport.clone(),
+				host_subscriptions: host_subscriptions.clone(),
+			});
+			services.funding().link(&product_id, link.clone());
+			(product_id, link)
+		});
 		Self {
 			core: TrUApiCore::from_product_runtime(
 				admin.product_runtime.clone(),
@@ -1984,6 +2214,7 @@ impl ProductRuntime {
 			admin,
 			transport,
 			host_subscriptions,
+			funding_link,
 			disposed,
 			in_flight: Mutex::new(HashMap::new()),
 			next_dispatch_id: AtomicU64::new(0),
@@ -2140,6 +2371,9 @@ impl ProductRuntime {
 		connection.detach_chat();
 		connection.detach_renderer();
 		connection.release_open_operations();
+		if let Some((product_id, link)) = &self.funding_link {
+			connection.services().funding().unlink(product_id, link);
+		}
 		self.host_subscriptions.close();
 		self.core.cancel_subscriptions();
 	}
@@ -2336,7 +2570,7 @@ mod tests {
 		futures::executor::block_on(runtime.set_permission_authorization_status(
 			&requester,
 			PermissionAuthorizationRequest::AccountAccess {
-				target_product_id: "peopl.dot".to_string(),
+				target_product_id: ProductId::for_test("peopl.dot"),
 			},
 			PermissionAuthorizationStatus::NotDetermined,
 		))
@@ -3171,7 +3405,7 @@ mod tests {
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
 			ProductId::for_test("worker.dot"),
-			crate::platform::ProductExecutionKind::Worker,
+			crate::platform::ExecutableKind::Worker,
 		);
 		let runtime = ProductRuntime::from_platform_with_config(
 			Arc::new(StubPlatform::default()),
@@ -3246,7 +3480,7 @@ mod tests {
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
 			ProductId::for_test("worker.dot"),
-			crate::platform::ProductExecutionKind::Worker,
+			crate::platform::ExecutableKind::Worker,
 		);
 		let runtime = ProductRuntime::from_platform_with_config(
 			Arc::new(StubPlatform::default()),
@@ -3289,7 +3523,7 @@ mod tests {
 		let (host_config, _) = runtime_config("worker.dot");
 		let product = ProductContext::new_with_execution(
 			ProductId::for_test("worker.dot"),
-			crate::platform::ProductExecutionKind::Worker,
+			crate::platform::ExecutableKind::Worker,
 		);
 		let sink = Arc::new(RecordingSink::default());
 		let runtime = ProductRuntime::from_platform_with_config(
@@ -3958,28 +4192,15 @@ mod tests {
 		(SigningHostRuntime::new(platform.clone(), config, test_spawner()), platform)
 	}
 
-	/// An empty database in memory.
-	#[cfg(not(target_arch = "wasm32"))]
-	fn memory_db() -> crate::store::Db {
-		use crate::store::{Db, DbConfig, DbLocation};
-
-		let config = DbConfig {
-			location: DbLocation::Memory,
-			migrations: crate::store::core_migrations,
-			readers: 1,
-		};
-		futures::executor::block_on(Db::open(config)).expect("database opens")
-	}
-
 	/// Every durable consumer shares one core database: a second installer
 	/// must not swap it.
 	#[cfg(not(target_arch = "wasm32"))]
 	#[test]
 	fn the_core_database_is_installed_once() {
 		let (runtime, _platform) = test_signing_runtime();
-		runtime.set_core_db(memory_db());
+		runtime.set_core_db(crate::store::open_memory_core_db());
 
-		assert!(!runtime.set_core_db(memory_db()));
+		assert!(!runtime.set_core_db(crate::store::open_memory_core_db()));
 	}
 
 	/// A host that configured no database gets a clear error rather than a
@@ -3998,7 +4219,7 @@ mod tests {
 	#[test]
 	fn nft_purses_stay_off_without_an_installation_provider() {
 		let (runtime, _platform) = test_signing_runtime();
-		runtime.set_core_db(memory_db());
+		runtime.set_core_db(crate::store::open_memory_core_db());
 
 		runtime.start_core_services();
 
@@ -4011,7 +4232,7 @@ mod tests {
 	#[test]
 	fn nft_purses_stay_off_without_encrypted_storage() {
 		let (runtime, platform) = test_signing_runtime();
-		runtime.set_core_db(memory_db());
+		runtime.set_core_db(crate::store::open_memory_core_db());
 		runtime.set_installation_provider(platform);
 
 		runtime.start_core_services();
@@ -4025,7 +4246,7 @@ mod tests {
 	#[test]
 	fn nft_purses_are_served_once_core_services_start() {
 		let (runtime, platform) = test_signing_runtime();
-		runtime.set_core_db(memory_db());
+		runtime.set_core_db(crate::store::open_memory_core_db());
 		runtime.set_installation_provider(platform);
 		runtime.set_encrypted_storage(Arc::new(
 			crate::encrypted_storage::MemoryEncryptedStorage::default(),
@@ -4043,7 +4264,7 @@ mod tests {
 	#[test]
 	fn dropping_the_runtime_releases_nft_purse_services() {
 		let (runtime, platform) = test_signing_runtime();
-		runtime.set_core_db(memory_db());
+		runtime.set_core_db(crate::store::open_memory_core_db());
 		runtime.set_installation_provider(platform);
 		runtime.set_encrypted_storage(Arc::new(
 			crate::encrypted_storage::MemoryEncryptedStorage::default(),
@@ -4062,7 +4283,7 @@ mod tests {
 	#[test]
 	fn the_durable_engine_starts_without_an_installation_provider() {
 		let (runtime, _platform) = test_signing_runtime();
-		runtime.set_core_db(memory_db());
+		runtime.set_core_db(crate::store::open_memory_core_db());
 
 		runtime.start_core_services();
 
@@ -4396,7 +4617,7 @@ mod tests {
 			&host,
 			&truapi::CallContext::default(),
 			HostLocalStorageReadRequest::V2(truapi::v02::HostLocalStorageReadRequest {
-				product: Some("wallet.dot".to_string()),
+				product: Some(ProductId::for_test("wallet.dot")),
 				key: "k".to_string(),
 			}),
 		));

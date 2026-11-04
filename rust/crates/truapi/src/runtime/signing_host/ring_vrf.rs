@@ -213,9 +213,9 @@ impl RingResolver for ChainRingResolver {
 
 pub fn context_bytes(context: &ProductProofContext) -> [u8; 32] {
 	let suffix = derivation_index_bytes(&context.suffix);
-	let mut input = Vec::with_capacity(9 + context.product_id.len() + suffix.len());
+	let mut input = Vec::with_capacity(9 + context.product_id.as_str().len() + suffix.len());
 	input.extend_from_slice(b"product/");
-	input.extend_from_slice(context.product_id.as_bytes());
+	input.extend_from_slice(context.product_id.as_str().as_bytes());
 	input.push(b'/');
 	input.extend_from_slice(&suffix);
 	blake2b_256(&input, None)
@@ -321,7 +321,7 @@ struct RingRoot {
 mod tests {
 	use parity_scale_codec::Encode;
 	use scale_info::TypeInfo;
-	use truapi::v01::DerivationIndex;
+	use truapi::{ProductId, v01::DerivationIndex};
 
 	use super::*;
 	use crate::host_logic::product_account::index_bytes;
@@ -343,7 +343,7 @@ mod tests {
 	#[test]
 	fn context_bytes_pins_derivation_index_preimage() {
 		let context = ProductProofContext {
-			product_id: "voting.dot".to_string(),
+			product_id: ProductId::for_test("voting.dot"),
 			suffix: DerivationIndex::Index(0),
 		};
 
@@ -358,11 +358,11 @@ mod tests {
 	#[test]
 	fn context_bytes_distinguishes_selector_forms() {
 		let indexed = ProductProofContext {
-			product_id: "voting.dot".to_string(),
+			product_id: ProductId::for_test("voting.dot"),
 			suffix: DerivationIndex::Index(0),
 		};
 		let raw = ProductProofContext {
-			product_id: "voting.dot".to_string(),
+			product_id: ProductId::for_test("voting.dot"),
 			suffix: DerivationIndex::Raw([0; 32]),
 		};
 

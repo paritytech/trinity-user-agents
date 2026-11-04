@@ -19,6 +19,7 @@ import uniffi.truapi.DerivationIndex
 import uniffi.truapi.HostSignPayloadData
 import uniffi.truapi.NftPurseDrainDestination
 import uniffi.truapi.NftPurseOwner
+import uniffi.truapi.ProductId
 import uniffi.truapi.RawPayload
 import uniffi.truapi.RingLocation
 import uniffi.truapi.SignPayloadReview
@@ -35,7 +36,7 @@ import uniffi.truapi.ProductAccountId as NativeProductAccountId
  * this compile rather than silently become a denial, which is how seven of the
  * eleven variants were being refused.
  */
-fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfirmation = when (this) {
+fun UserConfirmationReview.toConfirmation(callingProductId: ProductId?): TrUAPIConfirmation = when (this) {
     is UserConfirmationReview.SignPayload ->
         TrUAPIConfirmation.Signing(callingProductId, v1.toSigningRequestBody())
     is UserConfirmationReview.SignRaw ->
@@ -99,6 +100,7 @@ private fun NftPurseDrainDestination.toDomain(): TrUAPIConfirmation.NftPurseDrai
     is NftPurseDrainDestination.Purse -> TrUAPIConfirmation.NftPurseDrain.Destination.Purse(purse)
     is NftPurseDrainDestination.ExternalKey -> TrUAPIConfirmation.NftPurseDrain.Destination.ExternalKey(key.toHexString())
     NftPurseDrainDestination.Cheque -> TrUAPIConfirmation.NftPurseDrain.Destination.Cheque
+    NftPurseDrainDestination.Refund -> TrUAPIConfirmation.NftPurseDrain.Destination.Refund
 }
 
 @OptIn(ExperimentalStdlibApi::class)

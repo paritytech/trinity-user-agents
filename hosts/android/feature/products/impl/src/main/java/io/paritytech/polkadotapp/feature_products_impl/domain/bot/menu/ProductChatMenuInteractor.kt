@@ -2,9 +2,9 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot.menu
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.DeleteRoomUseCase
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIntegrationRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.IntegrationType
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 interface ProductChatMenuInteractor {

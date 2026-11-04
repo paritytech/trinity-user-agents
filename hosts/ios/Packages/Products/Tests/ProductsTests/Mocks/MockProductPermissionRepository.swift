@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 @testable import Products
 
@@ -9,14 +10,14 @@ final class MockProductPermissionRepository: ProductPermissionRepositoryProtocol
 
     // MARK: - Call tracking
 
-    private(set) var grantCalls: [(productId: String, permission: ProductPermission)] = []
-    private(set) var denyCalls: [(productId: String, permission: ProductPermission)] = []
-    private(set) var grantOneTimeCalls: [(productId: String, permission: ProductPermission)] = []
+    private(set) var grantCalls: [(productId: ProductId, permission: ProductPermission)] = []
+    private(set) var denyCalls: [(productId: ProductId, permission: ProductPermission)] = []
+    private(set) var grantOneTimeCalls: [(productId: ProductId, permission: ProductPermission)] = []
 
     // MARK: - Stubbing
 
     func stubState(
-        productId: String,
+        productId: ProductId,
         permission: ProductPermission,
         state: ProductPermissionState
     ) {
@@ -46,7 +47,7 @@ final class MockProductPermissionRepository: ProductPermissionRepositoryProtocol
     // MARK: - Protocol
 
     func getPermissionState(
-        productId: String,
+        productId: ProductId,
         permission: ProductPermission
     ) async throws -> ProductPermissionState {
         let id = key(productId, permission)
@@ -63,7 +64,7 @@ final class MockProductPermissionRepository: ProductPermissionRepositoryProtocol
     }
 
     func isAnyAlwaysGranted(
-        productId: String,
+        productId: ProductId,
         typeName: String,
         keys: [String]
     ) async throws -> Bool {
@@ -76,7 +77,7 @@ final class MockProductPermissionRepository: ProductPermissionRepositoryProtocol
         }
     }
 
-    func grant(productId: String, permission: ProductPermission) async throws {
+    func grant(productId: ProductId, permission: ProductPermission) async throws {
         grantCalls.append((productId, permission))
         grants[key(productId, permission)] = ProductPermissionGrant(
             productId: productId,
@@ -86,7 +87,7 @@ final class MockProductPermissionRepository: ProductPermissionRepositoryProtocol
         )
     }
 
-    func deny(productId: String, permission: ProductPermission) async throws {
+    func deny(productId: ProductId, permission: ProductPermission) async throws {
         denyCalls.append((productId, permission))
         let id = key(productId, permission)
         oneTimeGrants.remove(id)
@@ -98,22 +99,22 @@ final class MockProductPermissionRepository: ProductPermissionRepositoryProtocol
         )
     }
 
-    func grantOneTime(productId: String, permission: ProductPermission) {
+    func grantOneTime(productId: ProductId, permission: ProductPermission) {
         grantOneTimeCalls.append((productId, permission))
         oneTimeGrants.insert(key(productId, permission))
     }
 
-    func consumeOneTimeGrant(productId: String, permission: ProductPermission) -> Bool {
+    func consumeOneTimeGrant(productId: ProductId, permission: ProductPermission) -> Bool {
         oneTimeGrants.remove(key(productId, permission)) != nil
     }
 
-    func revoke(productId: String, permission: ProductPermission) async throws {
+    func revoke(productId: ProductId, permission: ProductPermission) async throws {
         let id = key(productId, permission)
         grants.removeValue(forKey: id)
         oneTimeGrants.remove(id)
     }
 
-    func revoke(productId: String, permissions: [ProductPermission]) async throws {
+    func revoke(productId: ProductId, permissions: [ProductPermission]) async throws {
         for permission in permissions {
             let id = key(productId, permission)
             grants.removeValue(forKey: id)
@@ -121,18 +122,18 @@ final class MockProductPermissionRepository: ProductPermissionRepositoryProtocol
         }
     }
 
-    func revokeAllByProduct(productId: String) async throws {
+    func revokeAllByProduct(productId: ProductId) async throws {
         grants = grants.filter { $0.value.productId != productId }
         oneTimeGrants = oneTimeGrants.filter { !$0.hasPrefix("\(productId):") }
     }
 
-    func getAllByProduct(productId: String) async throws -> [ProductPermissionGrant] {
+    func getAllByProduct(productId: ProductId) async throws -> [ProductPermissionGrant] {
         grants.values.filter { $0.productId == productId }
     }
 }
 
 private extension MockProductPermissionRepository {
-    func key(_ productId: String, _ permission: ProductPermission) -> String {
+    func key(_ productId: ProductId, _ permission: ProductPermission) -> String {
         ProductPermissionGrant.makeIdentifier(productId: productId, permission: permission)
     }
 }

@@ -52,15 +52,18 @@ struct TrUAPIReviewPromptMapper: TrUAPIReviewPromptMapping {
     }
 
     func makeActionRequest(from review: NftPurseDrainReview) -> TrUAPIActionConfirmationRequest {
-        let ownerProductId: ProductId? = switch review.owner {
-        case .root: nil
-        case let .product(productId): productId
-        }
-        let destination: NftPurseDrainTarget = switch review.destination {
-        case let .purse(purse): .purse(purse)
-        case let .externalKey(key): .key(hex: key.map { String(format: "%02x", $0) }.joined())
-        case .cheque: .cheque
-        }
+        let ownerProductId: ProductId? =
+            switch review.owner {
+            case .root: nil
+            case let .product(productId): productId
+            }
+        let destination: NftPurseDrainTarget =
+            switch review.destination {
+            case let .purse(purse): .purse(purse)
+            case let .externalKey(key): .key(hex: key.map { String(format: "%02x", $0) }.joined())
+            case .cheque: .cheque
+            case .refund: .refund
+            }
         return .nftPurseDrain(
             productId: review.callingProductId,
             fromPurse: review.fromPurse,

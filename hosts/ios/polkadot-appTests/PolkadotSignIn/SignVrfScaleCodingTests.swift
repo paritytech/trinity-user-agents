@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import KeyDerivation
 import Products
@@ -9,9 +10,9 @@ import Testing
 @Suite("SignVrf SCALE Coding Tests")
 struct SignVrfScaleCodingTests {
     let request = PolkadotHostRemoteMessage.SignVrfRequest(
-        callingProductId: "caller.product",
+        callingProductId: try! ProductId("caller.product.dot"),
         payload: SignVrfPayload(
-            account: ProductAccountId(productId: "target.product", derivationIndex: .index(3)),
+            account: ProductAccountId(productId: try! ProductId("target.product.dot"), derivationIndex: .index(3)),
             transcriptLabel: Data("test:label".utf8),
             items: [
                 VrfTranscriptItem(label: Data("domain".utf8), value: Data.random(of: 16)!),
