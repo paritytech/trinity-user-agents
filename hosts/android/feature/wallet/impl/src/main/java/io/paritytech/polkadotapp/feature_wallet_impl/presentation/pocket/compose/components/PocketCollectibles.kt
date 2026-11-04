@@ -27,7 +27,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -73,8 +72,6 @@ private const val COVER_OPEN_DEGREES = -160f
 private const val COVER_OPEN_DURATION_MS = 220
 private const val COVER_EDGE_ON_DEGREES = -90f
 private const val COVER_CAMERA_DISTANCE = 32f
-private const val ATTACH_STALL_FRAME_MS = 120
-private const val ATTACH_STALL_PATIENCE_MS = 600
 
 private const val PAGE_EXPAND_DURATION_MS = 250
 private const val SKELETON_SWEEP_LOOP_MS = 1350
@@ -82,8 +79,6 @@ private const val SKELETON_SWEEP_BAND_WIDTH = 0.5f
 private const val SKELETON_SWEEP_ALPHA = 0.12f
 private const val SKELETON_DOT_ALPHA = 0.25f
 private const val SKELETON_DOT_COLUMNS = 12
-
-private const val NANOS_PER_MILLI = 1_000_000L
 
 private val PageCornerRadius = 20.dp
 private val SkeletonTitleSize = DpSize(136.dp, 16.dp)
@@ -114,22 +109,17 @@ fun PocketCollectibles(
 
     val book = remember { CollectiblesBookMotion() }
     var failed by remember { mutableStateOf(false) }
-    var webViewAttached by remember { mutableStateOf(false) }
+    var webViewExpanded by remember { mutableStateOf(false) }
     var sweeping by remember { mutableStateOf(false) }
 
     LaunchedEffect(book) {
         launch { book.lift() }
         delay(COLLECTIBLES_LIFT_DURATION_MS.toLong())
+        sweeping = true
         book.openCover()
+        webViewExpanded = true
 
         val outcome = withTimeoutOrNull(ReadyTimeout) {
-            snapshotFlow { loadProgress is DotNsLoadProgress.Failed || webView != null }.first { it }
-            if (loadProgress !is DotNsLoadProgress.Failed) {
-                // Attaching the WebView blocks the UI thread for 100-300 ms, so the sweep starts only after it.
-                webViewAttached = true
-                awaitAttachStall()
-                sweeping = true
-            }
             snapshotFlow { loadProgress }.first { it is DotNsLoadProgress.Completed || it is DotNsLoadProgress.Failed }
         }
         if (outcome is DotNsLoadProgress.Completed) book.handOff() else failed = true
@@ -156,7 +146,8 @@ fun PocketCollectibles(
                     .fillMaxSize()
                     .collectiblesPageLayer(book, inset = PolkadotTheme.spacings.mediumIncreased),
                 book = book,
-                webView = webView.takeIf { webViewAttached },
+                webView = webView,
+                webViewExpanded = webViewExpanded,
                 sweeping = sweeping,
                 failed = failed
             )
@@ -183,26 +174,12 @@ fun PocketCollectibles(
     }
 }
 
-private suspend fun awaitAttachStall() {
-    var last = withFrameNanos { it }
-    val deadline = last + ATTACH_STALL_PATIENCE_MS * NANOS_PER_MILLI
-    while (true) {
-        val now = withFrameNanos { it }
-        val stalled = now - last > ATTACH_STALL_FRAME_MS * NANOS_PER_MILLI
-        last = now
-        if (stalled) {
-            withFrameNanos { }
-            return
-        }
-        if (now >= deadline) return
-    }
-}
-
 @Composable
 private fun CollectiblesPage(
     modifier: Modifier,
     book: CollectiblesBookMotion,
     webView: WebView?,
+    webViewExpanded: Boolean,
     sweeping: Boolean,
     failed: Boolean,
 ) {
@@ -220,8 +197,10 @@ private fun CollectiblesPage(
             CollectiblesSkeleton(modifier = Modifier.fillMaxSize(), sweeping = sweeping)
 
             // Laid out at full size from the start and only scaled, so the page never reflows on the way up.
+            // The page's first paint at full size blocks the UI thread for about 300 ms, which freezes the
+            // sweep; attached at 1 dp from the start it paints for free, and is only enlarged once the cover is open.
             ProductWebViewHost(
-                modifier = Modifier.fillMaxSize(),
+                modifier = if (webViewExpanded) Modifier.fillMaxSize() else Modifier.size(1.dp),
                 webView = webView
             )
         }
