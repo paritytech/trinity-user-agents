@@ -235,3 +235,126 @@ fn bundle_refuses_an_unsigned_stack() {
 	assert!(!output.status.success());
 	assert!(stderr(&output).contains("signed stack"), "{}", stderr(&output));
 }
+
+/// Runs `truapi-host --stack <stack> network-check [args]` with no inherited backend override.
+fn network_check(stack: &str, args: &[&str]) -> Output {
+	Command::new(env!("CARGO_BIN_EXE_truapi-host"))
+		.args(["--stack", stack, "network-check"])
+		.args(args)
+		.env("TRUAPI_HOST_NO_UPDATE", "1")
+		.env_remove("HOST_CLI_IDENTITY_BACKEND_BASE")
+		.output()
+		.expect("truapi-host did not start")
+}
+
+/// A plain descriptor whose roles all point at loopback ports nothing listens on.
+fn local_descriptor(edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
+	let genesis = |byte: &str| format!("0x{}", byte.repeat(32));
+	let mut descriptor = serde_json::json!({
+		"$v": 1, "sequence": 1, "generation": "g1",
+		"id": "staging-fork", "name": "Staging", "network": "staging", "tld": "paseo",
+		"services": [{ "kind": "dub", "urls": ["https://dub.example/"] }],
+		"chains": [
+			{ "role": "Relay", "genesisHash": genesis("01"), "rpc": ["ws://127.0.0.1:1"] },
+			{ "role": "People", "genesisHash": genesis("02"), "paraId": 1004, "rpc": ["ws://127.0.0.1:2"] },
+			{ "role": "AssetHub", "genesisHash": genesis("03"), "paraId": 1000, "rpc": ["ws://127.0.0.1:3"] },
+			{ "role": "Bulletin", "genesisHash": genesis("04"), "paraId": 1010, "rpc": ["ws://127.0.0.1:4"] },
+		],
+	});
+	edit(&mut descriptor);
+	descriptor.to_string().into_bytes()
+}
+
+fn write_descriptor(dir: &Path, descriptor: &[u8]) -> String {
+	let path = dir.join("stack.json");
+	fs::write(&path, descriptor).unwrap();
+	path.to_str().unwrap().to_owned()
+}
+
+/// A local stack resolves from the file alone: exit 0 without any node on the loopback ports
+/// shows no chain was contacted.
+#[test]
+fn test_network_check_local_stack() {
+	let dir = tempfile::tempdir().unwrap();
+	let file = write_descriptor(dir.path(), &local_descriptor(|_| {}));
+	let output = network_check(&file, &[]);
+	assert!(output.status.success());
+	let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+	let genesis = |byte: &str| format!("0x{}", byte.repeat(32));
+	assert_eq!(
+		report,
+		serde_json::json!({
+			"schema_version": 1,
+			"network": "staging",
+			"namespace": "paseo",
+			"identity_backend_base": "https://dub.example/api/v1",
+			"people": { "ws": "ws://127.0.0.1:2", "genesis": genesis("02") },
+			"asset_hub": { "ws": "ws://127.0.0.1:3", "genesis": genesis("03") },
+			"bulletin": { "ws": "ws://127.0.0.1:4", "genesis": genesis("04") },
+		})
+	);
+}
+
+#[test]
+fn test_network_check_url_and_link() {
+	let plain = local_descriptor(|_| {});
+	let served = network_check(&serve_once(plain.clone()), &[]);
+	assert!(served.status.success());
+
+	let secret = [7; 32];
+	let signed = trinity_stack::sign(&plain, &secret).unwrap();
+	let link_with = |secret: &[u8; 32], url: &str| {
+		let key = format!("0x{}", hex::encode(trinity_stack::public_key(secret)));
+		trinity_stack::Pointer::new(url, Some(&key))
+			.unwrap()
+			.to_link(trinity_stack::DEFAULT_LINK_BASE)
+	};
+	let linked = network_check(&link_with(&secret, &serve_once(signed.clone())), &[]);
+	assert!(linked.status.success());
+
+	let wrong_key = network_check(&link_with(&[9; 32], &serve_once(signed)), &[]);
+	assert!(!wrong_key.status.success());
+	assert!(stderr(&wrong_key).contains("bad-signature"));
+}
+
+/// A stack's identities are disposable, so it never runs on Polkadot's chains, TLD or namespace.
+#[test]
+fn test_network_check_polkadot_values() {
+	let dir = tempfile::tempdir().unwrap();
+	let polkadot_people = local_descriptor(|descriptor| {
+		descriptor["chains"][1]["genesisHash"] =
+			"0x67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008".into();
+	});
+	let dot = local_descriptor(|descriptor| descriptor["tld"] = "dot".into());
+	for descriptor in [polkadot_people, dot] {
+		let output = network_check(&write_descriptor(dir.path(), &descriptor), &[]);
+		assert!(!output.status.success());
+	}
+	let file = write_descriptor(dir.path(), &local_descriptor(|_| {}));
+	let namespaced = network_check(&file, &["--network", "polkadot"]);
+	assert!(!namespaced.status.success());
+}
+
+#[test]
+fn test_network_check_light_client_stack() {
+	let dir = tempfile::tempdir().unwrap();
+	let file = write_descriptor(dir.path(), &local_descriptor(|_| {}));
+	let output = network_check(&file, &["--chain-backend", "light-client"]);
+	assert!(!output.status.success());
+	assert!(stderr(&output).contains("--stack"));
+}
+
+/// An exported but empty `HOST_CLI_STACK` selects the built-in network, as when it is unset.
+#[test]
+fn test_blank_stack_variable() {
+	let output = Command::new(env!("CARGO_BIN_EXE_truapi-host"))
+		.arg("network-check")
+		.env("TRUAPI_HOST_NO_UPDATE", "1")
+		.env("HOST_CLI_STACK", "")
+		.env_remove("HOST_CLI_IDENTITY_BACKEND_BASE")
+		.output()
+		.expect("truapi-host did not start");
+	assert!(output.status.success());
+	let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+	assert_eq!(report["network"], "paseo-next-v2");
+}

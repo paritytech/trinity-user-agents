@@ -8,7 +8,7 @@
 //! ```
 //!
 //! `TRUAPI_LIVE_PEOPLE_WS` overrides the endpoint. The default is the
-//! `paseo-next-v2` People chain, matching `network.rs`.
+//! `paseo-next-v2` People chain, matching `stacks/paseo-next-v2.json`.
 //!
 //! These read chain state only; nothing here submits an extrinsic.
 
@@ -21,10 +21,10 @@ use truapi::statement_allowance::{
 	self as alloc, ChainContextCache, collection::PersonhoodCollection,
 };
 
-/// Default People-chain endpoint, kept in step with `network.rs`.
+/// Default People-chain endpoint, kept in step with `stacks/paseo-next-v2.json`.
 const DEFAULT_PEOPLE_WS: &str = "wss://paseo-people-next-system-rpc.polkadot.io";
 
-/// The `paseo-next-v2` preset's `network_suffix`, kept in step with `network.rs`
+/// The `paseo-next-v2` stack's `tld`, kept in step with `stacks/paseo-next-v2.json`
 /// (the binary crate exposes no library for tests to read it from).
 const DEFAULT_NETWORK_SUFFIX: &str = "paseo";
 

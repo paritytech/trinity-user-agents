@@ -13,7 +13,8 @@ use clap::Subcommand;
 use crossterm::style::Stylize;
 use reqwest::Url;
 use trinity_stack::{
-	DEFAULT_LINK_BASE, Document, Fetched, Pointer, PublishState, Rendered, Status, accept, render,
+	DEFAULT_LINK_BASE, Descriptor, Document, Fetched, Pointer, PublishState, Rendered, Status,
+	accept, render,
 };
 use zeroize::Zeroizing;
 
@@ -221,20 +222,26 @@ fn pointer_of(stack: &str, key: Option<&str>) -> Result<Option<Pointer>> {
 	Ok(Some(keyed))
 }
 
-async fn verify(stack: &str, key: Option<&str>) -> Result<()> {
-	let (pointer, fetched) = match pointer_of(stack, key)? {
+/// The pointer a stack value carries and the bytes it serves: a link or a URL, fetched, or a local
+/// file, read under a pointer with no URL of its own and `key`. Fails when it is unreachable.
+async fn read_stack(stack: &str, key: Option<&str>) -> Result<(Pointer, Vec<u8>)> {
+	match pointer_of(stack, key)? {
 		Some(pointer) => {
-			let fetched = fetch(pointer.url().as_str()).await;
-			(pointer, fetched)
+			let bytes = fetch(pointer.url().as_str(), FETCH_TIMEOUT)
+				.await
+				.map_err(|cause| anyhow!("{stack} is unreachable: {cause}"))?;
+			Ok((pointer, bytes))
 		},
-		None => (
+		None => Ok((
 			Pointer::new(LOCAL_FILE_URL, key).map_err(refused)?,
-			Ok(fs::read(stack).with_context(|| format!("read {stack}"))?),
-		),
-	};
-	let bytes = fetched
-		.as_deref()
-		.map_err(|cause| anyhow!("{} is unreachable: {cause}", pointer.url()))?;
+			fs::read(stack).with_context(|| format!("cannot read {stack}"))?,
+		)),
+	}
+}
+
+async fn verify(stack: &str, key: Option<&str>) -> Result<()> {
+	let (pointer, bytes) = read_stack(stack, key).await?;
+	let bytes = bytes.as_slice();
 	let accepted =
 		accept(&pointer, None, Fetched::Document(bytes), unix_now() as i64).map_err(refused)?;
 	// `signed` means a signature was checked against a key; `envelope` says the file carries one,
@@ -263,7 +270,7 @@ async fn bundle(stack: &str, key: Option<&str>, out: &Path) -> Result<()> {
 		Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
 		Err(error) => return Err(error).with_context(|| format!("read {}", out.display())),
 	};
-	let fetched = fetch(pointer.url().as_str())
+	let fetched = fetch(pointer.url().as_str(), FETCH_TIMEOUT)
 		.await
 		.map_err(|cause| anyhow!("not bundled: {} is unreachable: {cause}", pointer.url()))?;
 	let accepted =
@@ -288,16 +295,32 @@ async fn bundle(stack: &str, key: Option<&str>, out: &Path) -> Result<()> {
 	Ok(())
 }
 
+/// The descriptor a `--stack` value points to: a link or a URL, fetched and checked against the
+/// key a link carries, or a local descriptor file, signed or not. Fails when it is unreachable,
+/// breaks a rule or is past `expiresAt`; warns when it is past `validUntil`.
+pub async fn load_descriptor(stack: &str) -> Result<Descriptor> {
+	let (pointer, bytes) = read_stack(stack, None).await?;
+	let accepted = accept(&pointer, None, Fetched::Document(&bytes), unix_now() as i64)
+		.map_err(|error| anyhow!("stack {stack} is {}", refused(error)))?;
+	if accepted.expired {
+		bail!("stack {stack} is past expiresAt");
+	}
+	if accepted.stale {
+		tracing::warn!("stack {stack} is past validUntil; its operator should republish");
+	}
+	Ok(accepted.stack.descriptor)
+}
+
 /// The bytes a descriptor URL serves, or why it is unreachable. Redirects are refused: the URL
 /// rules hold for the URL the pointer names, and a redirect could lead to plain http.
-async fn fetch(url: &str) -> Result<Vec<u8>, String> {
+pub async fn fetch(url: &str, timeout: Duration) -> Result<Vec<u8>, String> {
 	let client = reqwest::Client::builder()
-		.timeout(FETCH_TIMEOUT)
+		.timeout(timeout)
 		.redirect(reqwest::redirect::Policy::none())
 		.build()
 		.map_err(|error| error.to_string())?;
 	let response = client.get(url).send().await.map_err(|error| match error.is_timeout() {
-		true => format!("no answer within {}s", FETCH_TIMEOUT.as_secs()),
+		true => format!("no answer within {}s", timeout.as_secs()),
 		false => error.to_string(),
 	})?;
 	let status = response.status();
@@ -327,7 +350,8 @@ async fn fetch(url: &str) -> Result<Vec<u8>, String> {
 	Ok(body)
 }
 
-fn unix_now() -> u64 {
+/// Seconds since the Unix epoch, or 0 when the clock is before it.
+pub fn unix_now() -> u64 {
 	SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_secs())
 }
 
