@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import SDKLogger
 
@@ -8,13 +9,13 @@ public enum ProductUpdateFetchError: Error, Equatable {
 public protocol ProductUpdateFetching: Sendable {
     func fetchManifest(_ productId: ProductId) async throws -> ProductManifest
     func stage(
-        _ contentId: ProductExecutable.Identifier,
+        _ contentId: ProductId,
         onPhase: @escaping ProductLoadPhaseHandler
     ) async throws -> DotNsResolvedContent
 }
 
 public extension ProductUpdateFetching {
-    func stage(_ contentId: ProductExecutable.Identifier) async throws -> DotNsResolvedContent {
+    func stage(_ contentId: ProductId) async throws -> DotNsResolvedContent {
         try await stage(contentId, onPhase: { _ in })
     }
 }
@@ -44,7 +45,9 @@ public actor ProductUpdateFetcher {
 extension ProductUpdateFetcher: ProductUpdateFetching {
     public func fetchManifest(_ productId: ProductId) async throws -> ProductManifest {
         do {
-            _ = try await hostProvider.resolveHost(rawString: productId.lowercased())
+            _ = try await hostProvider.resolveHost(rawString: productId.rawValue)
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw ProductUpdateFetchError.tldUnavailable
         }
@@ -56,7 +59,7 @@ extension ProductUpdateFetcher: ProductUpdateFetching {
     }
 
     public func stage(
-        _ contentId: ProductExecutable.Identifier,
+        _ contentId: ProductId,
         onPhase: @escaping ProductLoadPhaseHandler
     ) async throws -> DotNsResolvedContent {
         try await DotNsResolver(
@@ -64,6 +67,6 @@ extension ProductUpdateFetcher: ProductUpdateFetching {
             carFetcher: carFetcher,
             contentStorage: storage.content,
             contentHashCache: storage.contentHashes
-        ).stageContent(dotNsName: contentId, onPhase: onPhase)
+        ).stageContent(dotNsName: contentId.rawValue, onPhase: onPhase)
     }
 }

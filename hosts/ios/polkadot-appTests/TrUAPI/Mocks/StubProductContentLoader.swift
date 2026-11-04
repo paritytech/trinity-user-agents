@@ -1,3 +1,5 @@
+import struct TrUAPIHost.ProductId
+import enum TrUAPIHost.ExecutableKind
 import AsyncExtensions
 import Foundation
 import os
@@ -66,9 +68,9 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
         }
 
         let resolved = product ?? .legacy(id: productId)
-        let archive = DotNsResolvedContent(
+        let archive = try DotNsResolvedContent(
             contentHash: contentHash,
-            localURL: contentURL.appendingPathComponent(resolved.contentId(for: kind))
+            localURL: contentURL.appendingPathComponent(resolved.contentId(for: kind).rawValue)
         )
 
         return ProductContent(resolved: resolved, kind: kind, archive: archive)

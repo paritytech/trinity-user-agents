@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import AsyncExtensions
 import Foundation
 import Operation_iOS
@@ -195,7 +196,7 @@ private extension TransferAmountInteractor {
 private extension TransferAmountInteractor {
     /// Reaches here only after the presenter's privacy confirmation when the plan requires one.
     func confirmExternalPayment(amount: BigUInt) async throws {
-        let productId = ExternalPayment.nativeProductId
+        let productId: ProductId? = nil
         let paymentId = try Data.randomOrError(of: 32).toHex(includePrefix: true)
 
         try await coinageService.initiateExternalPayment(

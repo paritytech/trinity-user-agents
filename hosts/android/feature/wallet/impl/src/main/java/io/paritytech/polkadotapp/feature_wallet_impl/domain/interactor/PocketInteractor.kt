@@ -62,8 +62,7 @@ class PocketInteractor @Inject constructor(
     /** Collect only while the face is on screen: collecting keeps the backing product's worker running. */
     fun observeFace(key: PocketCardKey): Flow<JsWidget> = pocketFaceSource.observeFace(key)
 
-    // Whether the card was there to remove is the core's concern, not the screen's.
-    suspend fun removeProductCard(key: PocketCardKey): Result<Unit> = pocketCollection.removeCard(key).map {}
+    suspend fun removeProductCard(key: PocketCardKey): Result<Unit> = pocketCollection.removeCard(key)
 
     fun sendFaceAction(key: PocketCardKey, actionId: String, payload: ByteArray) =
         pocketFaceSource.sendAction(key, actionId, payload)

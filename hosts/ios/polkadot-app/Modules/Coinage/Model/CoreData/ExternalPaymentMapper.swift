@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import BigInt
 import Coinage
 import CoreData
@@ -28,8 +29,8 @@ final class ExternalPaymentMapper: CoreDataMapperProtocol {
 
         let plannedVoucherIndices = try Self.decodeVoucherIndices(entity.plannedVoucherIndices)
 
-        return ExternalPayment(
-            productId: productId,
+        return try ExternalPayment(
+            productId: productId == ExternalPayment.nativePaymentMarker ? nil : ProductId(productId),
             paymentId: paymentId,
             amountInPlanks: amount,
             destination: destination,
@@ -49,7 +50,7 @@ final class ExternalPaymentMapper: CoreDataMapperProtocol {
         using _: NSManagedObjectContext
     ) throws {
         entity.identifier = model.identifier
-        entity.productId = model.productId
+        entity.productId = model.productId?.rawValue ?? ExternalPayment.nativePaymentMarker
         entity.paymentId = model.paymentId
         entity.amountInPlanks = String(model.amountInPlanks)
         entity.destination = model.destination

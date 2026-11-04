@@ -7,15 +7,16 @@ use std::{
 };
 
 use crate::platform::{
-	CoreAdmin, PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductContext,
-	ProductExecutionKind, ProductId,
+	CoreAdmin, ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
+	ProductContext, ProductId,
 };
 use parity_scale_codec::Encode;
 use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
 
 use super::{
+	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},
 	reject_undecodable_deeplink,
-	renderer::{NativeRendererObserver, NativeRendererSubscription, observe_renderer},
+	renderer::{NativeRendererObserver, NativeSubscription, observe_renderer},
 	ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError},
 };
 use crate::{
@@ -27,6 +28,7 @@ use crate::{
 			RemoteMessage, RemoteMessageData, SsoRequestOutcome, decode_remote_message, v1,
 		},
 	},
+	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCards},
 	runtime::{AnnouncedPairing, sso_remote::sso_message_id},
 	store::{Db, core_db_config},
 	subscription::Spawner,
@@ -37,7 +39,7 @@ use super::parse_pairing_deeplink;
 use super::{
 	callbacks::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
-		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativePocketCallbacks,
+		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
 		NativeScannerCallbacks, NativeTopUpCallbacks,
 	},
 	config::{
@@ -50,7 +52,7 @@ use super::{
 	platform::{
 		BalanceCallbackPlatform, CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform,
 		FundingCallbackPlatform, GameCallbackPlatform, PaymentCallbackPlatform,
-		PocketCallbackPlatform, ScannerCallbackPlatform, TopUpCallbackPlatform,
+		ScannerCallbackPlatform, TopUpCallbackPlatform,
 	},
 };
 #[cfg(doc)]
@@ -72,6 +74,8 @@ pub struct NativeTrUApiHostRuntime {
 	payments: OnceLock<Arc<PaymentCallbackPlatform>>,
 	/// The balance view changes are pushed to, once installed.
 	balance: OnceLock<Arc<BalanceCallbackPlatform>>,
+	/// The Pocket collection, shared with every product execution.
+	pocket: PocketCards,
 	/// Forwards core warnings to the host of this runtime until the runtime drops.
 	_host_sink: crate::logging::HostSinkRegistration,
 }
@@ -114,12 +118,17 @@ impl NativeTrUApiHostRuntime {
 			NativeRuntimeConfigError::RuntimeUnavailable { reason: err.to_string() }
 		})?;
 		let directory = &runtime_config.database_directory;
-		let core_db =
-			futures::executor::block_on(Db::open(core_db_config(directory))).map_err(|err| {
-				NativeRuntimeConfigError::DatabaseUnavailable {
-					reason: format!("{}: {err}", directory.display()),
-				}
-			})?;
+		let unavailable =
+			|err: crate::store::DbError| NativeRuntimeConfigError::DatabaseUnavailable {
+				reason: format!("{}: {err}", directory.display()),
+			};
+		let core_db = futures::executor::block_on(Db::open(core_db_config(directory)))
+			.map_err(unavailable)?;
+		let pocket = futures::executor::block_on(PocketCards::open(
+			core_db.clone(),
+			runtime_config.pinned_pocket_cards,
+		))
+		.map_err(unavailable)?;
 		let events = Arc::new(NativeEventBus::default());
 		let platform = Arc::new(CallbackPlatform {
 			callbacks: callbacks.clone(),
@@ -177,6 +186,7 @@ impl NativeTrUApiHostRuntime {
 			top_up: OnceLock::new(),
 			payments: OnceLock::new(),
 			balance: OnceLock::new(),
+			pocket,
 			_host_sink: host_sink,
 		}))
 	}
@@ -185,7 +195,6 @@ impl NativeTrUApiHostRuntime {
 		&self,
 		callbacks: Arc<dyn HostCallbacks>,
 		chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
-		pocket_callbacks: Option<Arc<dyn NativePocketCallbacks>>,
 		game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
 		product: ProductContext,
 	) -> Arc<NativeProductExecution> {
@@ -203,10 +212,6 @@ impl NativeTrUApiHostRuntime {
 			chat_callbacks.map(|chat| -> Arc<dyn crate::platform::ChatPlatform> {
 				Arc::new(ChatCallbackPlatform { chat, events: events.clone() })
 			});
-		let pocket: Option<Arc<dyn crate::platform::PocketPlatform>> =
-			pocket_callbacks.map(|pocket| -> Arc<dyn crate::platform::PocketPlatform> {
-				Arc::new(PocketCallbackPlatform { pocket, events: events.clone() })
-			});
 		let game: Option<Arc<dyn crate::platform::GamePlatform>> =
 			game_callbacks.map(|game| -> Arc<dyn crate::platform::GamePlatform> {
 				Arc::new(GameCallbackPlatform { game })
@@ -216,7 +221,7 @@ impl NativeTrUApiHostRuntime {
 			product: product.clone(),
 			platform,
 			chat,
-			pocket,
+			pocket: self.pocket.clone(),
 			game,
 			permission_status,
 			expanded_card,
@@ -233,7 +238,7 @@ impl NativeTrUApiHostRuntime {
 			product_control: Arc::new(Mutex::new(None)),
 		});
 
-		if product.execution_kind == ProductExecutionKind::Worker {
+		if product.execution_kind == ExecutableKind::Worker {
 			let previous = self
 				.worker_executions
 				.lock()
@@ -304,8 +309,9 @@ impl NativeTrUApiHostRuntime {
 	/// Install the host's funding overlay. Set-once; answers whether this
 	/// call installed it. Call it before opening any product execution.
 	pub fn set_funding_callbacks(&self, callbacks: Arc<dyn NativeFundingCallbacks>) -> bool {
-		self.runtime
-			.set_funding_platform(Arc::new(FundingCallbackPlatform { funding: callbacks }))
+		let platform = Arc::new(FundingCallbackPlatform { funding: callbacks });
+		self.runtime.set_funding_feed(platform.clone()) &&
+			self.runtime.set_funding_platform(platform)
 	}
 
 	/// Open a funding session on the host's own behalf, as the Balance
@@ -347,9 +353,25 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.runtime.acknowledge_funding_session(&intent).await?)
 	}
 
-	/// Cancel open funding session `intent`.
-	pub async fn cancel_funding(&self, intent: String) -> Result<bool, HostRejection> {
+	/// Cancel funding session `intent` at the user's request, and say what
+	/// that did. `TooLate` asks the host to tell the user the balance was
+	/// already credited.
+	pub async fn cancel_funding(
+		&self,
+		intent: String,
+	) -> Result<crate::host_logic::funding::CancelOutcome, HostRejection> {
 		Ok(self.runtime.cancel_funding(&intent).await?)
+	}
+
+	/// Answer the provider's cancel offer on funding session `intent`, which
+	/// the host showed from the session's `cancel`: accept it on `terms`, the
+	/// fee and refund shown, or decline it with `None`.
+	pub async fn confirm_funding_cancel(
+		&self,
+		intent: String,
+		terms: Option<crate::host_logic::funding::CancelTerms>,
+	) -> Result<crate::host_logic::funding::CancelConfirmation, HostRejection> {
+		Ok(self.runtime.confirm_funding_cancel(&intent, terms).await?)
 	}
 
 	/// Install the host's top-up engine. Set-once; answers whether this call
@@ -418,6 +440,41 @@ impl NativeTrUApiHostRuntime {
 			platform.notify_balance(purse, available);
 		}
 	}
+
+	/// Replace the funding providers this host offers, each with the Worker
+	/// manifest JSON it ships for it.
+	pub fn set_funding_providers(
+		&self,
+		providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
+	) -> Result<(), HostRejection> {
+		Ok(self.runtime.set_funding_providers(providers)?)
+	}
+
+	/// The providers funding session `intent` can be handed to.
+	pub fn funding_candidates(
+		&self,
+		intent: String,
+	) -> Vec<crate::host_logic::funding_providers::FundingCandidate> {
+		self.runtime.funding_candidates(&intent)
+	}
+
+	/// Ask every funding provider to price `ask` for funding session `intent`.
+	/// Each provider's row arrives through `funding_quote_changed`. A newer ask
+	/// for the session withdraws this one, so its late rows never arrive.
+	pub fn get_funding_quote(&self, intent: String, ask: v01::FundingQuoteAsk) {
+		self.runtime.request_funding_quotes(&intent, ask);
+	}
+
+	/// Hand open funding session `intent` to the provider the user chose, by
+	/// product id, on the quote it was chosen by.
+	pub async fn select_funding_provider(
+		&self,
+		intent: String,
+		provider_id: ProductId,
+		quote_id: String,
+	) -> Result<bool, HostRejection> {
+		Ok(self.runtime.select_funding_provider(&intent, &provider_id, &quote_id).await?)
+	}
 }
 
 #[uniffi::export]
@@ -464,8 +521,8 @@ impl NativeTrUApiHostRuntime {
 
 	/// Open a connection-scoped execution with immutable trusted context.
 	/// `chat_callbacks` installs the host's Chat adapter; hosts without the
-	/// Chat modality pass `None`. `pocket_callbacks` does the same for the
-	/// card collection. `game_callbacks` does the same for game reminders.
+	/// Chat modality pass `None`. `game_callbacks` does the same for game
+	/// reminders.
 	///
 	/// Returns a `Result` so an `execution_config.product_id` UniFFI cannot
 	/// parse throws in Swift and Kotlin.
@@ -473,44 +530,28 @@ impl NativeTrUApiHostRuntime {
 		&self,
 		callbacks: Arc<dyn HostCallbacks>,
 		chat_callbacks: Option<Arc<dyn NativeChatCallbacks>>,
-		pocket_callbacks: Option<Arc<dyn NativePocketCallbacks>>,
 		game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
 		execution_config: ProductExecutionConfig,
 	) -> Result<Arc<NativeProductExecution>, NativeRuntimeConfigError> {
 		Ok(self.open_product_execution_with_callbacks(
 			callbacks,
 			chat_callbacks,
-			pocket_callbacks,
 			game_callbacks,
 			execution_config.into(),
 		))
 	}
 
 	/// Take one reference on the product's worker for a modality holder. The
-	/// first one reports [`WorkerTransition::Start`] to the runtime's
-	/// [`HostCallbacks::request_worker_transition`]; pair every call with one
-	/// [`Self::release_worker`]. An id that is not a product id is logged and
-	/// dropped.
-	pub fn acquire_worker(&self, product_id: String) {
-		match product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
-			Err(error) => {
-				tracing::warn!(%error, "worker reference for an id that is not a product id")
-			},
-		}
+	/// first one requests [`WorkerTransition::Start`]; pair every call with
+	/// one [`Self::release_worker`].
+	pub fn acquire_worker(&self, product_id: ProductId) {
+		self.runtime.worker_ledger().acquire(&product_id);
 	}
 
-	/// Release one reference. The last one reports
-	/// [`WorkerTransition::Stop`], after which the host may stop the worker;
-	/// releasing with none held is a no-op, and so is an id that is not a
-	/// product id.
-	pub fn release_worker(&self, product_id: String) {
-		match product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().release(&product_id),
-			Err(error) => {
-				tracing::warn!(%error, "worker reference for an id that is not a product id")
-			},
-		}
+	/// Release one reference. The last one requests [`WorkerTransition::Stop`].
+	/// Releasing with none held is a no-op.
+	pub fn release_worker(&self, product_id: ProductId) {
+		self.runtime.worker_ledger().release(&product_id);
 	}
 
 	/// Tell the pairing host behind `deeplink` that allowance allocation is
@@ -738,6 +779,45 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.core_database_status().await.map_err(Into::into)
 	}
 
+	/// Follow the Pocket collection: `observer` gets every card now and
+	/// after each change, until the subscription is cancelled.
+	pub fn observe_pocket_cards(
+		&self,
+		observer: Box<dyn NativePocketObserver>,
+	) -> Arc<NativeSubscription> {
+		observe_pocket_cards(&self.pocket, observer.into(), &self.spawner)
+	}
+
+	/// Add a card the user approved, with the face they approved it by. An id
+	/// or title a product could not use is refused.
+	pub async fn add_pocket_card(
+		&self,
+		product_id: ProductId,
+		card_id: String,
+		title: String,
+		face: truapi::latest::RendererNode,
+	) -> Result<(), PocketAddError> {
+		self.pocket.add(product_id, card_id, title, face).await
+	}
+
+	/// Remove a card on the user's behalf, unless it is pinned.
+	pub async fn remove_pocket_card(
+		&self,
+		product_id: ProductId,
+		card_id: String,
+	) -> Result<PocketCardRemoval, NativeCoreDatabaseError> {
+		Ok(self.pocket.remove(product_id, card_id).await?)
+	}
+
+	/// The newest face kept for a card, if one is.
+	pub async fn pocket_card_face(
+		&self,
+		product_id: ProductId,
+		card_id: String,
+	) -> Result<Option<truapi::latest::RendererNode>, NativeCoreDatabaseError> {
+		Ok(self.pocket.face(product_id, card_id).await?)
+	}
+
 	/// Decides durable transactions from the chain until none is live, then
 	/// returns. Await it from the background task
 	/// [`HostCallbacks::durable_work_changed`] asks for; an error means
@@ -801,7 +881,7 @@ pub struct NativeProductExecution {
 	product: ProductContext,
 	platform: Arc<dyn crate::platform::Platform>,
 	chat: Option<Arc<dyn crate::platform::ChatPlatform>>,
-	pocket: Option<Arc<dyn crate::platform::PocketPlatform>>,
+	pocket: PocketCards,
 	game: Option<Arc<dyn crate::platform::GamePlatform>>,
 	/// The same `CallbackPlatform` as `platform`, kept separately because
 	/// `Arc<dyn Platform>` cannot be downcast to the optional capability.
@@ -841,7 +921,7 @@ impl NativeProductExecution {
 			permission_grants: self.permission_grants.clone(),
 			chat: self.chat_connection.clone(),
 			renderer: self.renderer_connection.clone(),
-			pocket_platform: self.pocket.clone(),
+			pocket_platform: Some(Arc::new(self.pocket.clone())),
 			expanded_card: Some(self.expanded_card.clone()),
 			game_platform: self.game.clone(),
 		}
@@ -975,12 +1055,9 @@ impl NativeProductExecution {
 	/// an error; `None` means no active session.
 	pub fn product_subtree_public_key(
 		&self,
-		product_id: String,
+		product_id: ProductId,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<Bytes32>, HostRejection> {
-		let product_id = product_id
-			.parse::<ProductId>()
-			.map_err(|error| v01::GenericError { reason: error.to_string() })?;
 		Ok(futures::executor::block_on(
 			self.admin().get_product_subtree_public_key(&product_id, timeout_ms),
 		)?)
@@ -1046,12 +1123,13 @@ impl NativeProductExecution {
 	}
 
 	/// Ask the product to draw one body, delivering each replacement tree to
-	/// `observer` until the returned subscription is cancelled.
+	/// `observer` until the returned subscription is cancelled. A Pocket
+	/// card's newest face is also kept, so the card has it offline.
 	pub fn render(
 		&self,
 		request: v01::ProductRendererRenderRequest,
 		observer: Box<dyn NativeRendererObserver>,
-	) -> Result<Arc<NativeRendererSubscription>, crate::ProductRuntimeError> {
+	) -> Result<Arc<NativeSubscription>, crate::ProductRuntimeError> {
 		self.require_renderer()?;
 		let control = self
 			.product_control
@@ -1059,8 +1137,21 @@ impl NativeProductExecution {
 			.expect("native product control mutex poisoned")
 			.clone()
 			.ok_or(crate::ProductRuntimeError::NotConnected)?;
+		let card_id = match &request.context {
+			truapi::latest::RenderContext::PocketCard { card_id } => Some(card_id.clone()),
+			_ => None,
+		};
 		let stream = control.render(request)?;
-		let observer: Arc<dyn NativeRendererObserver> = observer.into();
+		let observer: Arc<dyn NativeRendererObserver> = match card_id {
+			Some(card_id) => keeping_faces(
+				self.pocket.clone(),
+				self.product.product_id.clone(),
+				card_id,
+				observer.into(),
+				&self.spawner,
+			),
+			None => observer.into(),
+		};
 		Ok(observe_renderer(stream, observer, self.spawner.clone()))
 	}
 
@@ -1072,11 +1163,6 @@ impl NativeProductExecution {
 	) -> Result<(), crate::ProductRuntimeError> {
 		self.require_renderer()?;
 		self.renderer_connection.publish(item.into())
-	}
-
-	/// Push a complete native Pocket card-list replacement to this execution.
-	pub fn notify_pocket_cards_changed(&self, cards: Vec<v01::PocketCard>) {
-		self.events.notify_pocket_cards_changed(cards);
 	}
 
 	/// Permanently shut down this executable and all of its connection state.
@@ -1158,8 +1244,8 @@ mod tests {
 		PairedSsoPeer,
 		native::tests::*,
 		platform::{
-			PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-			ProductExecutionKind,
+			ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
+			PermissionDecision,
 		},
 	};
 	use futures::stream::StreamExt;
@@ -1202,8 +1288,7 @@ mod tests {
 				callbacks.clone(),
 				None,
 				None,
-				None,
-				native_execution_config("myapp.dot", ProductExecutionKind::App),
+				native_execution_config("myapp.dot", ExecutableKind::App),
 			)
 			.expect("open app execution");
 		let worker = host
@@ -1211,8 +1296,7 @@ mod tests {
 				callbacks.clone(),
 				None,
 				None,
-				None,
-				native_execution_config("myapp.dot", ProductExecutionKind::Worker),
+				native_execution_config("myapp.dot", ExecutableKind::Worker),
 			)
 			.expect("open worker execution");
 
@@ -1247,8 +1331,7 @@ mod tests {
 				callbacks.clone(),
 				None,
 				None,
-				None,
-				native_execution_config("myapp.dot", ProductExecutionKind::App),
+				native_execution_config("myapp.dot", ExecutableKind::App),
 			)
 			.expect("open app execution");
 
@@ -1299,8 +1382,7 @@ mod tests {
 				Arc::new(EventCallbacks::new()),
 				None,
 				None,
-				None,
-				native_execution_config("shared.dot", ProductExecutionKind::App),
+				native_execution_config("shared.dot", ExecutableKind::App),
 			)
 			.expect("App execution should open");
 		let chat_host = Arc::new(EventCallbacks::new());
@@ -1309,8 +1391,7 @@ mod tests {
 				chat_host.clone(),
 				Some(chat_host.clone()),
 				None,
-				None,
-				native_execution_config("shared.dot", ProductExecutionKind::Worker),
+				native_execution_config("shared.dot", ExecutableKind::Worker),
 			)
 			.expect("Chat execution should open");
 
@@ -1327,8 +1408,7 @@ mod tests {
 				chat_host.clone(),
 				Some(chat_host.clone()),
 				None,
-				None,
-				native_execution_config("shared.dot", ProductExecutionKind::Worker),
+				native_execution_config("shared.dot", ExecutableKind::Worker),
 			)
 			.expect("replacement Chat execution should open");
 		assert!(matches!(
@@ -1353,8 +1433,7 @@ mod tests {
 				Arc::new(EventCallbacks::new()),
 				None,
 				None,
-				None,
-				native_execution_config("chat.dot", ProductExecutionKind::Worker),
+				native_execution_config("chat.dot", ExecutableKind::Worker),
 			)
 			.expect("Worker execution should open");
 
@@ -1403,8 +1482,7 @@ mod tests {
 					callbacks.clone(),
 					None,
 					None,
-					None,
-					native_execution_config(product_id, ProductExecutionKind::Widget),
+					native_execution_config(product_id, ExecutableKind::Widget),
 				)
 				.expect("Widget execution should open");
 			(execution, callbacks)
@@ -1439,8 +1517,7 @@ mod tests {
 				Arc::new(EventCallbacks::new()),
 				None,
 				None,
-				None,
-				native_execution_config("chain.dot", ProductExecutionKind::App),
+				native_execution_config("chain.dot", ExecutableKind::App),
 			)
 			.expect("App execution should open");
 		let mut shared_responses = host.events.register_chain(41, 0).unwrap();
@@ -1473,8 +1550,7 @@ mod tests {
 				Arc::new(EventCallbacks::new()),
 				None,
 				None,
-				None,
-				native_execution_config("chain.dot", ProductExecutionKind::App),
+				native_execution_config("chain.dot", ExecutableKind::App),
 			)
 			.expect("App execution should open");
 
@@ -1509,8 +1585,7 @@ mod tests {
 				Arc::new(EventCallbacks::new()),
 				None,
 				None,
-				None,
-				native_execution_config("chain.dot", ProductExecutionKind::App),
+				native_execution_config("chain.dot", ExecutableKind::App),
 			)
 			.expect("App execution should open");
 
@@ -1536,8 +1611,7 @@ mod tests {
 				callbacks.clone(),
 				None,
 				None,
-				None,
-				native_execution_config("motion.dot", ProductExecutionKind::App),
+				native_execution_config("motion.dot", ExecutableKind::App),
 			)
 			.unwrap();
 		let motion = truapi::latest::HostDevicePermissionRequest::Motion;
@@ -1578,8 +1652,7 @@ mod tests {
 				callbacks.clone(),
 				None,
 				None,
-				None,
-				native_execution_config("fetch.dot", ProductExecutionKind::App),
+				native_execution_config("fetch.dot", ExecutableKind::App),
 			)
 			.unwrap()
 		};

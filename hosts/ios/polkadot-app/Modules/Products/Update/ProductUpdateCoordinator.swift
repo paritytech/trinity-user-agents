@@ -1,6 +1,7 @@
 import Foundation
 import FoundationExt
 import Products
+import TrUAPIHost
 
 @MainActor
 protocol SPAProductReloading: AnyObject {
@@ -17,13 +18,13 @@ protocol ProductWorkerReloading {
 protocol ProductPresenceRegistering: AnyObject {
     func register(
         productId: ProductId,
-        contentId: ProductExecutable.Identifier,
+        contentId: ProductId,
         displayName: String,
         reloader: SPAProductReloading
     ) -> UUID
     func unregister(_ presenceId: UUID)
     func requestRefresh(of productId: ProductId)
-    func applyPendingUpdate(of contentId: ProductExecutable.Identifier) -> Bool
+    func applyPendingUpdate(of contentId: ProductId) -> Bool
 }
 
 @MainActor
@@ -36,7 +37,7 @@ final class ProductUpdateCoordinator {
 
     private struct Presence {
         let productId: ProductId
-        let contentId: ProductExecutable.Identifier
+        let contentId: ProductId
         let displayName: String
         weak var reloader: SPAProductReloading?
     }
@@ -48,9 +49,9 @@ final class ProductUpdateCoordinator {
     private let logger: LoggerProtocol
 
     private var presences: [UUID: Presence] = [:]
-    private var pendingUpdates: [ProductExecutable.Identifier: ExecutableRelease] = [:]
-    private var dismissedContentIds: Set<ProductExecutable.Identifier> = []
-    private var noticeContentId: ProductExecutable.Identifier?
+    private var pendingUpdates: [ProductId: ExecutableRelease] = [:]
+    private var dismissedContentIds: Set<ProductId> = []
+    private var noticeContentId: ProductId?
     private var updatesTask: Task<Void, Never>?
     private var foregroundTask: Task<Void, Never>?
 
@@ -101,7 +102,7 @@ final class ProductUpdateCoordinator {
 extension ProductUpdateCoordinator: ProductPresenceRegistering {
     func register(
         productId: ProductId,
-        contentId: ProductExecutable.Identifier,
+        contentId: ProductId,
         displayName: String,
         reloader: SPAProductReloading
     ) -> UUID {
@@ -133,7 +134,7 @@ extension ProductUpdateCoordinator: ProductPresenceRegistering {
         }
     }
 
-    func applyPendingUpdate(of contentId: ProductExecutable.Identifier) -> Bool {
+    func applyPendingUpdate(of contentId: ProductId) -> Bool {
         guard let update = pendingUpdates.removeValue(forKey: contentId) else {
             return false
         }
@@ -181,18 +182,24 @@ private extension ProductUpdateCoordinator {
     }
 
     /// A legacy product runs its worker from its base name, so a base-name release reloads it too.
-    static func productIdOfWorker(servedFrom contentId: ProductExecutable.Identifier) -> ProductId? {
-        let productId = ProductManifestRecords.baseName(of: contentId)
-        let workerContentId = ProductManifestRecords.subname(base: productId, kind: .worker)
+    static func productIdOfWorker(servedFrom contentId: ProductId) -> ProductId? {
+        guard let productId = try? productIdOwner(productId: contentId) else {
+            return nil
+        }
 
-        return contentId == workerContentId || contentId == productId ? productId : nil
+        if contentId == productId {
+            return productId
+        }
+
+        let workerContentId = try? productIdExecutable(productId: productId, kind: .worker)
+        return contentId == workerContentId ? productId : nil
     }
 
-    func isPresented(_ contentId: ProductExecutable.Identifier) -> Bool {
+    func isPresented(_ contentId: ProductId) -> Bool {
         !reloaders(of: contentId).isEmpty
     }
 
-    func reloaders(of contentId: ProductExecutable.Identifier) -> [SPAProductReloading] {
+    func reloaders(of contentId: ProductId) -> [SPAProductReloading] {
         presences.values.filter { $0.contentId == contentId }.compactMap(\.reloader)
     }
 
@@ -213,14 +220,14 @@ private extension ProductUpdateCoordinator {
         )
     }
 
-    func dismissNotice(of contentId: ProductExecutable.Identifier) {
+    func dismissNotice(of contentId: ProductId) {
         logger.debug("Product update dismissed for \(contentId)")
         dismissedContentIds.insert(contentId)
         hideNotice(of: contentId)
         showNextNotice()
     }
 
-    func hideNotice(of contentId: ProductExecutable.Identifier) {
+    func hideNotice(of contentId: ProductId) {
         guard noticeContentId == contentId else { return }
 
         noticeContentId = nil

@@ -20,6 +20,8 @@ If you experience problems with any product or service that was built on or depl
 
 </div>
 
+The app uses the in-tree TrUAPIHost SDK in this repository. A standalone host checkout requires a published SDK with `ProductId` support. Its version is pinned in `AppDependencies`, `Products`, `KeyDerivation`, and `Coinage`; update all four pins together.
+
 ## Features
 
 - **Identity** — On-chain username with an allowance for free transactions, verified by Proof-of-Unique-Device.

@@ -46,6 +46,8 @@ extension ProductResolutionError: ReportableError {
     public var reportCode: String {
         switch self {
         case .malformedManifest: "malformedManifest"
+        case .productNotOnNetwork: "productNotOnNetwork"
+        case .missingExecutable: "missingExecutable"
         }
     }
 }

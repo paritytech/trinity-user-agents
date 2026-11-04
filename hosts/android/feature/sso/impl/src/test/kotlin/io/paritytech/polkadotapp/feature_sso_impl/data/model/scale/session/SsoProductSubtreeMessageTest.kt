@@ -4,7 +4,6 @@ import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.Bina
 import io.novasama.substrate_sdk_android.koltinx_serialization_scale.binary.types.BSResult
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessionId
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessionRequest
 import io.paritytech.polkadotapp.feature_sso_impl.domain.session.model.SsoSessionResponse
@@ -14,6 +13,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 private val SESSION_ID = SsoSessionId("session")
 private const val REQUEST_ID = "request"
@@ -53,7 +53,7 @@ class SsoProductSubtreeMessageTest {
      */
     @Test
     fun `product subtree variants sit at wire indices 16 and 17`() {
-        assertEquals(16, variantIndexOf(SsoMessageContent.ProductSubtreeRequest("browse.dot")))
+        assertEquals(16, variantIndexOf(SsoMessageContent.ProductSubtreeRequest(ProductId.parse("browse.dot").getOrThrow())))
 
         val response = SsoMessageContent.ProductSubtreeResponse(REQUEST_ID, BSResult.Err("e"))
         assertEquals(17, variantIndexOf(response))
@@ -62,7 +62,7 @@ class SsoProductSubtreeMessageTest {
     private fun productSubtreeRequest() = SsoSessionRequest(
         sessionId = SESSION_ID,
         requestId = REQUEST_ID,
-        content = SsoSessionRequest.Content.ProductSubtreeRequest(ProductId.fromStoredValue("browse.dot")),
+        content = SsoSessionRequest.Content.ProductSubtreeRequest(ProductId.parse("browse.dot").getOrThrow()),
     )
 
     private fun decodeResponseContent(content: SsoSessionResponse.Content): SsoMessageContent.ProductSubtreeResponse {

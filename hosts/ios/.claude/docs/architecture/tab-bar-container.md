@@ -252,6 +252,8 @@ A tab root follows the same order and can be tucked by a user override. Tab-root
 
 The derived state comes from `TabBarHiddenPolicy.deriveFoldState(in:showing:)`. It is `hidden` when the target opts out. It is `tucked` when any controller above the root, up to the target, sets `hidesBottomBarWhenPushed`. The root is excluded, so a tab root that sets the flag does not tuck. A mounted product also derives `tucked`. The grab zone can bring the bar back over it.
 
+A screen that conforms to `TabBarRootStandIn` counts as a tab root (`TabBarHiddenPolicy.isTabRoot`), wherever it sits in the stack. It keeps the root's clearance and ignores a tap on the selected tab. The only conformer is `PocketCardScreenViewController`, an open Pocket card pushed over the Wallet.
+
 `TabBarFoldController` holds one user override, not one per screen: `none`, `shown` or `tucked`. A user tuck or restore sets it, and so does an auto-hide tuck. The value lives in memory, so a relaunch starts with the bar shown. The fold controller ignores override requests while the bar is `hidden`.
 
 **Navigation.** When the screen changes (push, back, tab switch, or an interactive transition resolving), the new screen starts with `tucked` if the bar was tucked. Otherwise it starts with no override, so its derived state decides. A tucked bar therefore stays tucked across navigation, including when the user leaves a product. Leaving a chat shows the bar. A mounted product or a `hidesBottomBarWhenPushed` screen still tucks.
@@ -337,7 +339,7 @@ The two change at different rates. The navigation controller is stable for the t
 
 - `restingBarHeight` is the bar's resting height on a tab root (`DSTabBarStyle.restingHeight`). Elsewhere it is the raw bottom safe area.
 - `restingBottomClearance` is `restingBarHeight` minus the bottom safe area, floored at zero.
-- Clearance is contributed only on a tab root. A pushed screen that does not set `hidesBottomBarWhenPushed` reserves no space. The bar floats over its bottom content and takes touches in its capsule. Such a screen should either set the flag or keep interactive content clear of the bottom.
+- Clearance is contributed only on a tab root, or on a screen that stands in for one. A pushed screen that does not set `hidesBottomBarWhenPushed` reserves no space. The bar floats over its bottom content and takes touches in its capsule. Such a screen should either set the flag or keep interactive content clear of the bottom.
 - The shelf and the center panel overlay content. They do not change clearance.
 - `TabBarChromeSurfaceView` reads both safe-area insets from its superview, not from itself. The fold transforms the surface, and a transformed view's own insets change with the transform.
 
@@ -361,7 +363,7 @@ A fixed-height strip sits at the top of the container. It shows one ring per con
 
 A tap on the selected tab is a re-tap. `TabBarReselectionPolicy.action(for:)` checks these cases in order:
 
-1. A modal is presented from the target: ignore.
+1. A modal is presented from the target, or the target is a `TabBarRootStandIn`: ignore.
 2. The navigation stack is deeper than its root: pop to root.
 3. Otherwise: scroll to top.
 

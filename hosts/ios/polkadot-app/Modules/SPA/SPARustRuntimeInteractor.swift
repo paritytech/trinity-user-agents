@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Operation_iOS
 import Products
@@ -152,7 +153,7 @@ private extension SPARustRuntimeInteractor {
         case .dotNs:
             return try await contentLoader.open(
                 domain,
-                kind: configuration.executable,
+                kind: .app,
                 policy: .untilCancelled,
                 onPhase: phaseHandler()
             ).resolved
@@ -252,8 +253,8 @@ extension SPARustRuntimeInteractor: SPAProductReloading {
 }
 
 private extension SPARustRuntimeInteractor {
-    var servedContentId: ProductExecutable.Identifier? {
-        resolvedProduct?.contentId(for: configuration.executable)
+    var servedContentId: ProductId? {
+        try? resolvedProduct?.contentId(for: .app)
     }
 
     func phaseHandler() -> ProductLoadPhaseHandler {

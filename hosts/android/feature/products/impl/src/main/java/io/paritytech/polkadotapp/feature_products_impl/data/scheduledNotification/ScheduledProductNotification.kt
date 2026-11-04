@@ -2,8 +2,8 @@
 
 package io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotification
 
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.NotificationId
+import uniffi.truapi.ProductId
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
 

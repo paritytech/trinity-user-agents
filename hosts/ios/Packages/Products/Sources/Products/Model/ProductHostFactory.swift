@@ -39,7 +39,7 @@ public final class ProductHostFactory: ProductHostProviding {
     }
 
     public func host(navigationDestination: String) -> ProductHost? {
-        tldProvider.currentTld().flatMap { ProductHost.fromNavigationDestination(navigationDestination, tld: $0) }
+        tldProvider.currentTld().flatMap { ProductHost.parse(navigationDestination, tld: $0) }
     }
 
     public func page(url: URL) -> ProductPage? {

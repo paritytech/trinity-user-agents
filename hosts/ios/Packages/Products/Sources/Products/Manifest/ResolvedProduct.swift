@@ -1,3 +1,5 @@
+import struct TrUAPIHost.ProductId
+import enum TrUAPIHost.ExecutableKind
 import Foundation
 
 /// Manifest products and legacy ones share this shape, so callers branch on `executables`
@@ -28,15 +30,14 @@ public struct ResolvedProduct: Hashable, Sendable {
         self.hasManifest = hasManifest
     }
 
-    /// A product with no manifest: one app rooted at the base name, named after its domain. Also
-    /// the degraded shape when the chain cannot be reached, which keeps cached content usable.
+    /// A product with no manifest: one app rooted at the base name, named after its domain.
     ///
     /// Never the shape for a product whose manifest is published but broken — that one declared
     /// something, and serving the base name's archive instead would not be what it declared.
     public static func legacy(id: ProductId, displayName: String? = nil) -> ResolvedProduct {
         ResolvedProduct(
             id: id,
-            displayName: displayName ?? id,
+            displayName: displayName ?? id.rawValue,
             description: nil,
             icon: nil,
             executables: ProductExecutables(
@@ -52,22 +53,16 @@ public struct ResolvedProduct: Hashable, Sendable {
         Product(id: id, name: displayName)
     }
 
-    /// Name the app's content archive resolves under; the base name for legacy products.
-    public var appContentId: ProductExecutable.Identifier {
-        executables.app?.identifier ?? id
-    }
-
     /// The archive `kind` is served from.
-    ///
-    /// A product that publishes no executable of that kind is served from its
-    /// base name, which is where a legacy product and a script installed by
-    /// hand through debug settings both live. Everything that asks which
-    /// archive backs a surface asks here, so no two callers can disagree.
-    public func contentId(for kind: ExecutableKind) -> ProductExecutable.Identifier {
-        switch kind {
-        case .app: appContentId
-        case .widget: executables.widget?.identifier ?? id
-        case .worker: executables.worker?.identifier ?? id
-        }
+    public func contentId(for kind: ExecutableKind) throws -> ProductId {
+        let identifier =
+            switch kind {
+            case .app: executables.app?.identifier
+            case .widget: executables.widget?.identifier
+            case .worker: executables.worker?.identifier
+            }
+
+        guard let identifier else { throw ProductResolutionError.missingExecutable(id, kind) }
+        return identifier
     }
 }

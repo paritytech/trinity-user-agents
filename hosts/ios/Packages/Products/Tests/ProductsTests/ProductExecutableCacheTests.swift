@@ -1,3 +1,4 @@
+import TrUAPIHost
 import Foundation
 import SubstrateSdk
 import Testing
@@ -13,7 +14,7 @@ final class ProductExecutableCacheTests {
 
     private let manifestsDirectory = FileManager.default.temporaryDirectory
         .appendingPathComponent("ProductExecutableCacheTests-\(UUID().uuidString)")
-    private let baseName = "shop\(UUID().uuidString.prefix(8).lowercased()).dot"
+    private let baseName = try! ProductId("shop\(UUID().uuidString.prefix(8).lowercased()).dot")
     private let contracts = StubDotNsContractApi()
     private let fetcher = StubCarFetcher()
     private let storage = InMemoryDotNsContentStorage()
@@ -21,7 +22,7 @@ final class ProductExecutableCacheTests {
 
     deinit {
         try? FileManager.default.removeItem(at: manifestsDirectory)
-        [baseName, appName, workerName].forEach(contentHashCache.removeContentHash(name:))
+        [baseName, appName, workerName].forEach { contentHashCache.removeContentHash(name: $0.rawValue) }
     }
 
     @Test func savedManifestResolvesWithoutTheChain() async throws {
@@ -37,7 +38,7 @@ final class ProductExecutableCacheTests {
     }
 
     @Test func legacyProductResolvesFromItsSavedManifest() async throws {
-        contracts.set(contentHash: Self.appHash, name: baseName)
+        contracts.set(contentHash: Self.appHash, name: baseName.rawValue)
         let fetched = try await makeFetcher().fetchManifest(baseName)
         await makeCache().adopt(fetched)
 
@@ -71,7 +72,7 @@ final class ProductExecutableCacheTests {
 
         let opened = try await makeLoader().open(baseName, kind: .app, policy: .attempts(1))
 
-        #expect(opened.contentId == appName)
+        #expect(try opened.contentId == appName)
         #expect(storage.contentExists(contentHash: Self.appHash.toHex()))
         #expect(!storage.contentExists(contentHash: Self.workerHash.toHex()))
     }
@@ -87,12 +88,13 @@ final class ProductExecutableCacheTests {
         #expect(fetcher.fetchCount == 1)
     }
 
-    @Test func undeclaredKindFailsToOpenWhenTheBaseNamePublishesNothing() async throws {
+    @Test func undeclaredKindFailsToOpenWithoutDownloadingAnArchive() async throws {
         publishManifestProduct()
 
-        await #expect(throws: DotNsContractError.self) {
+        await #expect(throws: ProductResolutionError.self) {
             try await self.makeLoader().open(self.baseName, kind: .widget, policy: .attempts(1))
         }
+        #expect(fetcher.fetchCount == 0)
     }
 
     @Test func archiveMissingFromDiskIsNotServedFromTheCache() async throws {
@@ -109,7 +111,7 @@ final class ProductExecutableCacheTests {
         let loader = makeLoader()
         let opened = try await loader.open(baseName, kind: .app, policy: .attempts(1))
 
-        contracts.set(contentHash: Self.updatedAppHash, name: appName)
+        contracts.set(contentHash: Self.updatedAppHash, name: appName.rawValue)
         let update = try #require(await loader.refresh(baseName).first)
 
         #expect(try await loader.open(baseName, kind: .app, policy: .attempts(1)) == opened)
@@ -124,7 +126,7 @@ final class ProductExecutableCacheTests {
         _ = try await makeLoader().open(baseName, kind: .app, policy: .attempts(1))
         _ = try await makeLoader().openWorker(baseName, policy: .attempts(1))
 
-        contracts.set(contentHash: Self.updatedWorkerHash, name: workerName)
+        contracts.set(contentHash: Self.updatedWorkerHash, name: workerName.rawValue)
 
         #expect(await makeLoader().refresh(baseName).map(\.contentId) == [workerName])
     }
@@ -134,7 +136,7 @@ final class ProductExecutableCacheTests {
         let loader = makeLoader()
         _ = try await loader.open(baseName, kind: .app, policy: .attempts(1))
 
-        contracts.set(contentHash: Self.updatedWorkerHash, name: workerName)
+        contracts.set(contentHash: Self.updatedWorkerHash, name: workerName.rawValue)
 
         #expect(await loader.refresh(baseName).isEmpty)
         #expect(!storage.contentExists(contentHash: Self.workerHash.toHex()))
@@ -160,7 +162,7 @@ final class ProductExecutableCacheTests {
         #expect(resolved.executables.worker?.identifier == workerName)
         #expect(storage.contentExists(contentHash: Self.workerHash.toHex()))
         #expect(!storage.contentExists(contentHash: Self.appHash.toHex()))
-        #expect(contentHashCache.getContentHash(name: workerName) == Self.workerHash.toHex())
+        #expect(contentHashCache.getContentHash(name: workerName.rawValue) == Self.workerHash.toHex())
     }
 
     @Test func workerOpenKeepsTheManifestWorkerWhenItsArchiveFails() async throws {
@@ -170,7 +172,7 @@ final class ProductExecutableCacheTests {
             .openWorker(baseName, policy: .attempts(1))
 
         #expect(resolved.executables.worker?.identifier == workerName)
-        #expect(contentHashCache.getContentHash(name: workerName) == nil)
+        #expect(contentHashCache.getContentHash(name: workerName.rawValue) == nil)
     }
 
     @Test func workerOpenFailsWhenTheManifestCannotBeRead() async throws {
@@ -199,7 +201,7 @@ final class ProductExecutableCacheTests {
         let loader = makeLoader()
         var updates = loader.updates().makeAsyncIterator()
 
-        contracts.set(contentHash: Self.updatedWorkerHash, name: workerName)
+        contracts.set(contentHash: Self.updatedWorkerHash, name: workerName.rawValue)
         _ = try await loader.openWorker(baseName, policy: .attempts(1))
 
         let update = try await updates.next()
@@ -220,7 +222,7 @@ final class ProductExecutableCacheTests {
 
         _ = try await makeLoader().openWorker(baseName, policy: .attempts(1))
 
-        #expect(contentHashCache.getContentHash(name: workerName) == Self.workerHash.toHex())
+        #expect(contentHashCache.getContentHash(name: workerName.rawValue) == Self.workerHash.toHex())
     }
 
     @Test func releaseWhoseRecordCannotBeStoredLeavesTheAppliedArchive() async throws {
@@ -236,7 +238,7 @@ final class ProductExecutableCacheTests {
             record: .value("{}")
         ))
 
-        #expect(contentHashCache.getContentHash(name: workerName) == Self.workerHash.toHex())
+        #expect(contentHashCache.getContentHash(name: workerName.rawValue) == Self.workerHash.toHex())
     }
 
     @Test func servedExecutableRecordChangesOnlyWithItsArchive() async throws {
@@ -245,7 +247,7 @@ final class ProductExecutableCacheTests {
         _ = try await loader.openWorker(baseName, policy: .attempts(1))
 
         publishWorker(entrypoint: "worker-v2.js")
-        contracts.set(contentHash: Self.updatedWorkerHash, name: workerName)
+        contracts.set(contentHash: Self.updatedWorkerHash, name: workerName.rawValue)
         let update = try #require(await loader.refresh(baseName).first)
 
         #expect(try await makeCache().manifest(baseName).product.executables.worker?.entrypoint == "worker.js")
@@ -265,7 +267,7 @@ final class ProductExecutableCacheTests {
             contentHashCache: contentHashCache
         )
 
-        contracts.set(contentHash: Self.updatedWorkerHash, name: workerName)
+        contracts.set(contentHash: Self.updatedWorkerHash, name: workerName.rawValue)
         let update = try #require(await loader.refresh(baseName).first)
 
         #expect(workerFiles.load(for: workerName, relativePath: "worker.js") == Data(Self.workerHash.toHex().utf8))
@@ -278,8 +280,8 @@ final class ProductExecutableCacheTests {
 }
 
 private extension ProductExecutableCacheTests {
-    var appName: String { ProductManifestRecords.subname(base: baseName, kind: .app) }
-    var workerName: String { ProductManifestRecords.subname(base: baseName, kind: .worker) }
+    var appName: ProductId { try! productIdExecutable(productId: baseName, kind: .app) }
+    var workerName: ProductId { try! productIdExecutable(productId: baseName, kind: .worker) }
     var workerRecordKey: ProductManifest.RecordKey {
         ProductManifest.RecordKey(name: workerName, key: ProductManifestRecords.executableKey)
     }
@@ -287,17 +289,17 @@ private extension ProductExecutableCacheTests {
     func publishManifestProduct(displayName: String = "Shop") {
         contracts.set(
             text: #"{"$v":1,"displayName":"\#(displayName)","description":"","icon":{"cid":"bafyicon","format":"png"}}"#,
-            name: baseName,
+            name: baseName.rawValue,
             key: ProductManifestRecords.rootKey
         )
         contracts.set(
             text: #"{"$v":1,"kind":"app","appVersion":[1,0,0]}"#,
-            name: appName,
+            name: appName.rawValue,
             key: ProductManifestRecords.executableKey
         )
         publishWorker(entrypoint: "worker.js")
-        contracts.set(contentHash: Self.appHash, name: appName)
-        contracts.set(contentHash: Self.workerHash, name: workerName)
+        contracts.set(contentHash: Self.appHash, name: appName.rawValue)
+        contracts.set(contentHash: Self.workerHash, name: workerName.rawValue)
     }
 
     func publishWorker(entrypoint: String, servesChat: Bool = true) {
@@ -306,7 +308,7 @@ private extension ProductExecutableCacheTests {
             {"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"\#(entrypoint)",
              "includes":{"chat":\#(servesChat),"pocket":\#(!servesChat)}}
             """#,
-            name: workerName,
+            name: workerName.rawValue,
             key: ProductManifestRecords.executableKey
         )
     }

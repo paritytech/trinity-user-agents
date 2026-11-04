@@ -49,6 +49,7 @@ pub use async_trait::async_trait;
 pub mod api;
 mod dotns_name;
 mod product_id;
+pub use product_id::{PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
 pub mod v01;
 pub mod v02;
 pub mod versioned;
@@ -94,8 +95,6 @@ uniffi::custom_type!(u128, String, {
 pub mod latest {
 	use crate::versioned::{self, Versioned};
 
-	pub use crate::product_id::{PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
-
 	pub use crate::v01::{
 		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
 		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
@@ -103,9 +102,13 @@ pub mod latest {
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
 		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, FundingDirection, FundingFailure, GenericError,
-		HorizontalAlignment, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
-		HostAccountGetError, HostAccountListRingVrfKeysRequest,
+		Dimensions, Effect, EffectProps, FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES,
+		FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer, FundingCancelDecision,
+		FundingDeposit, FundingDirection, FundingFailure, FundingFrameOutcome, FundingFrameTarget,
+		FundingInboundUpdate, FundingOutboundUpdate, FundingQuote, FundingQuoteAnswer,
+		FundingQuoteAsk, FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate,
+		GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
+		HostAccountGetAliasRequest, HostAccountGetError, HostAccountListRingVrfKeysRequest,
 		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
 		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
 		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
@@ -309,6 +312,7 @@ pub mod latest {
 	/// Failure watching a funding session.
 	pub type HostFundingStatusSubscribeError =
 		LatestOf<versioned::funding::HostFundingStatusSubscribeError>;
+
 	/// Payment balance subscription request.
 	pub type HostPaymentBalanceSubscribeRequest =
 		LatestOf<versioned::payment::HostPaymentBalanceSubscribeRequest>;
@@ -318,6 +322,20 @@ pub mod latest {
 	/// Payment balance subscription failure.
 	pub type HostPaymentBalanceSubscribeError =
 		LatestOf<versioned::payment::HostPaymentBalanceSubscribeError>;
+	/// A provider's progress report.
+	pub type HostFundingReportRequest =
+		LatestOf<versioned::funding_provider::HostFundingReportRequest>;
+	/// Failure reporting progress.
+	pub type HostFundingReportError = LatestOf<versioned::funding_provider::HostFundingReportError>;
+	/// Request to show a provider screen.
+	pub type HostFundingPresentFrameRequest =
+		LatestOf<versioned::funding_provider::HostFundingPresentFrameRequest>;
+	/// How a provider screen closed.
+	pub type HostFundingPresentFrameResponse =
+		LatestOf<versioned::funding_provider::HostFundingPresentFrameResponse>;
+	/// Failure showing a provider screen.
+	pub type HostFundingPresentFrameError =
+		LatestOf<versioned::funding_provider::HostFundingPresentFrameError>;
 	/// Payment request.
 	pub type HostPaymentRequest = LatestOf<versioned::payment::HostPaymentRequest>;
 	/// Payment request failure.
@@ -912,6 +930,10 @@ mod nft;
 mod nft_purse;
 
 #[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
+mod pocket_cards;
+
+#[cfg(feature = "runtime")]
 pub use truapi_core::TrUApiCore;
 
 #[cfg(feature = "runtime")]
@@ -931,18 +953,20 @@ pub use host_logic::session::{
 #[cfg(feature = "runtime")]
 pub use host_logic::worker::{WorkerLedger, WorkerTransition};
 #[cfg(feature = "runtime")]
+pub use host_rpc_client::HostRpcClient;
+#[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{
-	NativeRendererObserver, NativeRendererSubscription, WsBridgeEndpoint, WsBridgeStartError,
+	NativeRendererObserver, NativeSubscription, WsBridgeEndpoint, WsBridgeStartError,
 };
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use native_debug::{DebugSinkError, WsDebugSink};
 #[cfg(feature = "runtime")]
 pub use platform::{
-	CoreStorageKeyDescription, CoreStorageKeyDescriptionError, HostIdentity, PairingHostConfig,
-	PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform, ProductContext,
-	SigningHostConfig, describe_core_storage_key,
+	CoreStorageKeyDescription, CoreStorageKeyDescriptionError, CoreStorageKeyOwner, HostIdentity,
+	PairingHostConfig, PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform,
+	ProductContext, SigningHostConfig, describe_core_storage_key,
 };
 #[cfg(feature = "runtime")]
 pub use runtime::StatementRenewalTarget;
@@ -951,7 +975,7 @@ pub use runtime::contacts::contact_handle;
 #[cfg(feature = "runtime")]
 pub use runtime::login_failure::reports_exhausted_period;
 #[cfg(feature = "runtime")]
-pub use runtime::product_manifest::encode_cached_root_manifest;
+pub use runtime::product_manifest::{encode_cached_root_manifest, worker_manifest_cache_key};
 #[cfg(feature = "runtime")]
 pub use runtime::statement_allowance;
 #[cfg(feature = "runtime")]

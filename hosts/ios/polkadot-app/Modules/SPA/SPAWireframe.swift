@@ -14,10 +14,13 @@ final class SPAWireframe: SPAWireframeProtocol, ChatNavigating {
         from view: ControllerBackedProtocol?,
         chatId: Chat.Id
     ) {
-        if let presentingController = view?.controller.navigationController?.presentingViewController {
+        let controller = view?.controller
+        let navigation = controller?.navigationController
+        // A page inside an open Pocket card is not on the stack itself, so the card stays open.
+        if let presentingController = navigation?.presentingViewController {
             presentingController.dismiss(animated: true)
-        } else {
-            view?.controller.navigationController?.popToRootViewController(animated: true)
+        } else if let controller, navigation?.viewControllers.contains(controller) == true {
+            navigation?.popToRootViewController(animated: true)
         }
 
         navigateToChat(with: chatId, force: false)

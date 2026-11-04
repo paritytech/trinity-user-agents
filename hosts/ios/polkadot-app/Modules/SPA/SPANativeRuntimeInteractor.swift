@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Operation_iOS
 import Products
@@ -211,7 +212,7 @@ private extension SPANativeRuntimeInteractor {
             // is what permission grants and web storage are keyed by.
             let content = try await contentLoader.open(
                 domain,
-                kind: configuration.executable,
+                kind: .app,
                 policy: .untilCancelled,
                 onPhase: phaseHandler()
             )
@@ -268,7 +269,7 @@ private extension SPANativeRuntimeInteractor {
     }
 
     func makeSchemeHandler(
-        domain: String,
+        domain: ProductId,
         contentURL: URL
     ) -> ProductScriptSchemeHandler {
         let fileProvider = DotNsFileProvider(contentURL: contentURL)
@@ -288,12 +289,11 @@ extension SPANativeRuntimeInteractor: SPAProductReloading {
 
     func serveAppliedBuild() {
         let domain = configuration.productDomain
-        let kind = configuration.executable
 
         reloadTask?.cancel()
         reloadTask = Task { [weak self, contentLoader] in
             do {
-                let served = try await contentLoader.open(domain, kind: kind, policy: .untilCancelled).archive
+                let served = try await contentLoader.open(domain, kind: .app, policy: .untilCancelled).archive
 
                 guard !Task.isCancelled else { return }
 
@@ -309,8 +309,8 @@ extension SPANativeRuntimeInteractor: SPAProductReloading {
 }
 
 private extension SPANativeRuntimeInteractor {
-    var servedContentId: ProductExecutable.Identifier? {
-        resolvedProduct?.contentId(for: configuration.executable)
+    var servedContentId: ProductId? {
+        try? resolvedProduct?.contentId(for: .app)
     }
 
     func phaseHandler() -> ProductLoadPhaseHandler {

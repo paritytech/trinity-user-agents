@@ -261,7 +261,7 @@ describe("generated client transport", () => {
 
         const request = {
             productAccountId: {
-                dotNsIdentifier: "foo",
+                dotNsIdentifier: T.asProductId("foo"),
                 derivationIndex: { tag: "Index", value: 0 },
             },
         };
@@ -336,14 +336,14 @@ describe("generated client transport", () => {
                 success: true,
                 value: {
                     tag: "V1",
-                    value: { productId: "truapi-playground.paseo" },
+                    value: { productId: T.asProductId("truapi-playground.paseo") },
                 },
             }),
         );
         fixture.receive(frame);
 
         expect((await response)._unsafeUnwrap()).toEqual({
-            productId: "truapi-playground.paseo",
+            productId: T.asProductId("truapi-playground.paseo"),
         });
     });
 
@@ -354,7 +354,7 @@ describe("generated client transport", () => {
 
         const response = client.account.getAccount({
             productAccountId: {
-                dotNsIdentifier: "foo",
+                dotNsIdentifier: T.asProductId("foo"),
                 derivationIndex: { tag: "Index", value: 0 },
             },
         });
@@ -852,7 +852,7 @@ describe("generated client transport", () => {
         const pending = client.account.getAccount(
             {
                 productAccountId: {
-                    dotNsIdentifier: "foo",
+                    dotNsIdentifier: T.asProductId("foo"),
                     derivationIndex: { tag: "Index", value: 0 },
                 },
             },
@@ -984,7 +984,7 @@ describe("generated client transport", () => {
         // problem, not grounds for tearing down every pending call.
         void client.account.getAccount({
             productAccountId: {
-                dotNsIdentifier: "foo",
+                dotNsIdentifier: T.asProductId("foo"),
                 derivationIndex: { tag: "Index", value: 0 },
             },
         });
@@ -1035,7 +1035,7 @@ describe("generated client transport", () => {
 
         const response = client.account.getAccount({
             productAccountId: {
-                dotNsIdentifier: "foo",
+                dotNsIdentifier: T.asProductId("foo"),
                 derivationIndex: { tag: "Index", value: 0 },
             },
         });
