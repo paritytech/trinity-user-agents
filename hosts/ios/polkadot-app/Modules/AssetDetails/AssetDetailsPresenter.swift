@@ -4,7 +4,6 @@ import SubstrateSdk
 import PolkadotUI
 import Coinage
 import ChainRegistry
-import Products
 import TrUAPIHost
 
 @MainActor

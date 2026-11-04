@@ -2,7 +2,6 @@ import UIKit
 import Foundation_iOS
 import UIKitExt
 import ChainRegistry
-import Products
 
 @MainActor
 final class AssetDetailsWireframe: AssetDetailsWireframeProtocol {

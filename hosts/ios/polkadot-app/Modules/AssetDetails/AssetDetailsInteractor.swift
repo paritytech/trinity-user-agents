@@ -11,7 +11,6 @@ import AsyncExtensions
 import AsyncAlgorithms
 import ChainRegistry
 import BackgroundExecution
-import Products
 import UIKitExt
 import TrUAPIHost
 

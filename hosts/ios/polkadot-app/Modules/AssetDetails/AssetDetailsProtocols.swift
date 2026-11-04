@@ -4,7 +4,6 @@ import UIKit
 import Coinage
 import UIKitExt
 import ChainRegistry
-import Products
 import TrUAPIHost
 
 protocol AssetDetailsViewProtocol: ControllerBackedProtocol {
