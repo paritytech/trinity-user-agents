@@ -6,8 +6,10 @@
 //! topology, and statement-store placement come from the bundled network
 //! catalog, so the only argument a host supplies is the genesis hash.
 //!
-//! [`ChainProvider::connect_rpc`] opens the same pipe to a remote node by URL
-//! instead, bypassing the light client.
+//! [`ChainProvider::with_rpc_nodes`] builds a provider that serves the chains
+//! it is given from remote nodes instead, bypassing the light client. Either
+//! way the host connects by genesis hash alone, and the provider picks the
+//! route.
 //!
 //! Inbound responses are delivered to a foreign [`ChainMessageListener`]; a
 //! background thread pumps the response stream and invokes it until the
@@ -123,10 +125,10 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for ChainProviderError {
 pub enum ChainCloseReason {
 	/// The response stream ended.
 	///
-	/// Every connection this crate hands a host runs on the embedded light
-	/// client, and that stream ends only when the connection is closed, so in
-	/// practice this is your own teardown arriving back: `disconnect()`, or
-	/// dropping the handle. It is not a report that the peer went away.
+	/// On the light client that stream ends only when the connection is
+	/// closed, so there it is your own teardown arriving back: `disconnect()`,
+	/// or dropping the handle. On a remote node it also ends when the node
+	/// drops the socket or goes silent, and the provider does not reconnect.
 	StreamEnded,
 	/// This listener returned an error from `on_message`, so the connection was
 	/// closed under it.
@@ -255,11 +257,32 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for StorageClientError {
 	}
 }
 
-/// Embedded-smoldot chain provider. Construct one per process and share it;
-/// every connection runs on the single embedded light client.
+/// A chain served by a remote JSON-RPC node.
+#[derive(uniffi::Record)]
+pub struct RpcNode {
+	/// The chain's 32-byte genesis hash.
+	pub genesis_hash: Vec<u8>,
+	/// The node's `ws://` or `wss://` endpoint.
+	pub url: String,
+}
+
+/// Chain provider. One built with [`new`](ChainProvider::new) or
+/// [`with_storage`](ChainProvider::with_storage) runs every connection on the
+/// single embedded light client, so construct one per process and share it.
+/// One built with [`with_rpc_nodes`](ChainProvider::with_rpc_nodes) serves
+/// only the chains it was given, each from its node.
 #[derive(uniffi::Object)]
 pub struct ChainProvider {
 	inner: EmbeddedChainProvider,
+	routes: Routes,
+}
+
+/// Where a provider sends a connection for a genesis hash.
+enum Routes {
+	/// The bundled catalog, on the embedded light client.
+	LightClient,
+	/// The registered remote nodes, and nothing else.
+	RpcNodes,
 }
 
 #[uniffi::export]
@@ -273,7 +296,10 @@ impl ChainProvider {
 	/// keeps for it.
 	#[uniffi::constructor]
 	pub fn new() -> Arc<Self> {
-		Arc::new(Self { inner: EmbeddedChainProvider::builder().build() })
+		Arc::new(Self {
+			inner: EmbeddedChainProvider::builder().build(),
+			routes: Routes::LightClient,
+		})
 	}
 
 	/// Create a provider that reads and writes database blobs through `client`.
@@ -284,7 +310,34 @@ impl ChainProvider {
 	/// are backed up, encrypted, or excluded from cloud sync.
 	#[uniffi::constructor(name = "with_storage")]
 	pub fn with_storage(client: Arc<dyn StorageClient>) -> Arc<Self> {
-		Arc::new(Self { inner: EmbeddedChainProvider::builder().storage(client).build() })
+		Arc::new(Self {
+			inner: EmbeddedChainProvider::builder().storage(client).build(),
+			routes: Routes::LightClient,
+		})
+	}
+
+	/// Create a provider that serves each of `nodes`' chains from its node and
+	/// refuses any other chain, rather than starting the light client for it. A
+	/// later node for the same genesis hash replaces the earlier one.
+	///
+	/// The light client starts only on a light-client connect, so this provider
+	/// never starts it and is cheap to build. A host that rotates between nodes
+	/// builds one per node.
+	#[uniffi::constructor(name = "with_rpc_nodes")]
+	pub fn with_rpc_nodes(nodes: Vec<RpcNode>) -> Result<Arc<Self>, ChainProviderError> {
+		let builder =
+			nodes.into_iter().try_fold(EmbeddedChainProvider::builder(), |builder, node| {
+				// The parse error is enough on its own: echoing the url could leak
+				// a key embedded in it.
+				let url = url::Url::parse(&node.url).map_err(|error| {
+					ChainProviderError::Connect { reason: format!("invalid url: {error}") }
+				})?;
+				Ok::<_, ChainProviderError>(
+					builder
+						.chain(genesis_from(node.genesis_hash)?, crate::ChainSource::rpc_node(url)),
+				)
+			})?;
+		Ok(Arc::new(Self { inner: builder.build(), routes: Routes::RpcNodes }))
 	}
 
 	/// Read the stored blob for `genesis_hash` into this provider, so the next
@@ -336,9 +389,13 @@ impl ChainProvider {
 			})
 	}
 
-	/// Open a connection to the chain identified by `genesis_hash` (32 bytes).
-	/// The network is resolved from the catalog; responses are delivered to
-	/// `listener` until the connection closes.
+	/// Open a connection to the chain identified by `genesis_hash` (32 bytes);
+	/// responses are delivered to `listener` until the connection closes.
+	///
+	/// On the light client the network is resolved from the catalog. On a
+	/// remote node, a dropped or silent socket ends the connection with
+	/// [`ChainCloseReason::StreamEnded`] and nothing reconnects: the host
+	/// connects again and replays its subscriptions.
 	pub fn connect(
 		&self,
 		genesis_hash: Vec<u8>,
@@ -346,35 +403,21 @@ impl ChainProvider {
 	) -> Result<Arc<ChainConnection>, ChainProviderError> {
 		refuse_inside_listener("connect")?;
 		let genesis = genesis_from(genesis_hash)?;
-		let connection = block_on(self.inner.connect(genesis))
-			.map_err(|error| ChainProviderError::Connect { reason: error.to_string() })?;
+		let connect_error =
+			|error: crate::ProviderError| ChainProviderError::Connect { reason: error.to_string() };
+		let connection = match self.routes {
+			Routes::LightClient => block_on(self.inner.connect(genesis)).map_err(connect_error)?,
+			Routes::RpcNodes => {
+				if !self.inner.is_registered(genesis) {
+					return Err(connect_error(crate::ProviderError::UnknownGenesis { genesis }));
+				}
+				let runtime = rpc_runtime()?;
+				let connection =
+					runtime.block_on(self.inner.connect(genesis)).map_err(connect_error)?;
+				Box::new(InRuntime { inner: connection, runtime })
+			},
+		};
 		start_pump(connection, listener)
-	}
-
-	/// Open a JSON-RPC connection to the remote node at `url` (`ws://` or
-	/// `wss://`), bypassing the light client. Responses are delivered to
-	/// `listener` exactly as for [`connect`](Self::connect), so a host can switch
-	/// transports without touching its JSON-RPC handling.
-	///
-	/// Reconnection is not handled here: a dropped or silent socket ends the
-	/// connection with [`ChainCloseReason::StreamEnded`], and the host recovers
-	/// by connecting again and replaying its subscriptions.
-	pub fn connect_rpc(
-		&self,
-		url: String,
-		listener: Arc<dyn ChainMessageListener>,
-	) -> Result<Arc<ChainConnection>, ChainProviderError> {
-		refuse_inside_listener("connect_rpc")?;
-		// The parse error is enough on its own: echoing the url could leak a
-		// key embedded in it.
-		let url = url::Url::parse(&url).map_err(|error| ChainProviderError::Connect {
-			reason: format!("invalid url: {error}"),
-		})?;
-		let runtime = rpc_runtime()?;
-		let connection = runtime
-			.block_on(crate::ws::connect(url))
-			.map_err(|error| ChainProviderError::Connect { reason: error.to_string() })?;
-		start_pump(Box::new(InRuntime { inner: connection, runtime }), listener)
 	}
 
 	/// Watch what the light client is doing on the chain identified by
@@ -1060,8 +1103,8 @@ mod tests {
 	}
 
 	/// A loopback JSON-RPC node with `echo` and a three-tick `sub_ticks`
-	/// subscription. The runtime it runs on is returned with it: the tests call
-	/// `connect_rpc` from a plain thread, as a foreign host does, so nothing
+	/// subscription. The runtime it runs on is returned with it: the tests
+	/// connect from a plain thread, as a foreign host does, so nothing
 	/// ambient may stand in for the provider's own runtime.
 	fn spawn_node() -> (String, tokio::runtime::Runtime, jsonrpsee::server::ServerHandle) {
 		use jsonrpsee::{
@@ -1103,11 +1146,21 @@ mod tests {
 		serde_json::from_str(&message).expect("messages are JSON")
 	}
 
+	/// Any genesis outside the catalog: an RPC provider serves whatever hash it
+	/// is given.
+	const NODE_CHAIN: [u8; 32] = [7; 32];
+
+	fn rpc_provider(url: String) -> Arc<ChainProvider> {
+		ChainProvider::with_rpc_nodes(vec![RpcNode { genesis_hash: NODE_CHAIN.to_vec(), url }])
+			.expect("a valid node")
+	}
+
 	#[test]
-	fn connect_rpc_answers_requests_without_an_ambient_runtime() {
+	fn an_rpc_node_answers_requests_without_an_ambient_runtime() {
 		let (url, _runtime, _node) = spawn_node();
 		let (listener, messages, _closed) = Collector::new();
-		let connection = ChainProvider::new().connect_rpc(url, listener).expect("connects");
+		let connection =
+			rpc_provider(url).connect(NODE_CHAIN.to_vec(), listener).expect("connects");
 
 		connection.send(r#"{"jsonrpc":"2.0","id":1,"method":"echo","params":["hi"]}"#.into());
 
@@ -1117,10 +1170,11 @@ mod tests {
 	}
 
 	#[test]
-	fn connect_rpc_delivers_subscription_notifications() {
+	fn an_rpc_node_delivers_subscription_notifications() {
 		let (url, _runtime, _node) = spawn_node();
 		let (listener, messages, _closed) = Collector::new();
-		let connection = ChainProvider::new().connect_rpc(url, listener).expect("connects");
+		let connection =
+			rpc_provider(url).connect(NODE_CHAIN.to_vec(), listener).expect("connects");
 
 		connection.send(r#"{"jsonrpc":"2.0","id":1,"method":"sub_ticks","params":[]}"#.into());
 
@@ -1138,15 +1192,20 @@ mod tests {
 		assert_eq!(ticks, [0, 1, 2]);
 	}
 
+	/// A host that rotates between nodes builds one provider per node, so
+	/// those providers must not each need a runtime of their own.
 	#[test]
-	fn connections_to_several_nodes_share_the_runtime() {
+	fn providers_for_several_nodes_share_the_runtime() {
 		let (first_url, _first_runtime, _first) = spawn_node();
 		let (second_url, _second_runtime, _second) = spawn_node();
-		let provider = ChainProvider::new();
 		let (first_listener, first_messages, _) = Collector::new();
 		let (second_listener, second_messages, _) = Collector::new();
-		let first = provider.connect_rpc(first_url, first_listener).expect("first connects");
-		let second = provider.connect_rpc(second_url, second_listener).expect("second connects");
+		let first = rpc_provider(first_url)
+			.connect(NODE_CHAIN.to_vec(), first_listener)
+			.expect("first connects");
+		let second = rpc_provider(second_url)
+			.connect(NODE_CHAIN.to_vec(), second_listener)
+			.expect("second connects");
 
 		second.send(r#"{"jsonrpc":"2.0","id":2,"method":"echo","params":["two"]}"#.into());
 		first.send(r#"{"jsonrpc":"2.0","id":1,"method":"echo","params":["one"]}"#.into());
@@ -1159,7 +1218,8 @@ mod tests {
 	fn disconnecting_an_rpc_connection_closes_it() {
 		let (url, _runtime, _node) = spawn_node();
 		let (listener, _messages, closed) = Collector::new();
-		let connection = ChainProvider::new().connect_rpc(url, listener).expect("connects");
+		let connection =
+			rpc_provider(url).connect(NODE_CHAIN.to_vec(), listener).expect("connects");
 
 		connection.disconnect();
 
@@ -1185,7 +1245,8 @@ mod tests {
 			drop(socket);
 		});
 		let (listener, _messages, closed) = Collector::new();
-		let _connection = ChainProvider::new().connect_rpc(url, listener).expect("connects");
+		let _connection =
+			rpc_provider(url).connect(NODE_CHAIN.to_vec(), listener).expect("connects");
 
 		hang_up.send(()).expect("the node is waiting");
 
@@ -1194,7 +1255,7 @@ mod tests {
 	}
 
 	#[test]
-	fn connect_rpc_to_an_unreachable_node_is_an_error() {
+	fn an_unreachable_node_is_a_connect_error() {
 		// Bound and released, so nothing listens on the port.
 		let port = std::net::TcpListener::bind("127.0.0.1:0")
 			.and_then(|tcp| tcp.local_addr())
@@ -1202,8 +1263,8 @@ mod tests {
 			.port();
 		let (listener, _messages, _closed) = Collector::new();
 
-		let error = ChainProvider::new()
-			.connect_rpc(format!("ws://127.0.0.1:{port}"), listener)
+		let error = rpc_provider(format!("ws://127.0.0.1:{port}"))
+			.connect(NODE_CHAIN.to_vec(), listener)
 			.err()
 			.expect("nothing answers on the port");
 
@@ -1211,13 +1272,13 @@ mod tests {
 	}
 
 	#[test]
-	fn connect_rpc_rejects_a_malformed_url_without_echoing_it() {
-		let (listener, _messages, _closed) = Collector::new();
-
-		let error = ChainProvider::new()
-			.connect_rpc("not a url ?key=SECRET".into(), listener)
-			.err()
-			.expect("a malformed url must be rejected");
+	fn a_malformed_node_url_is_rejected_without_echoing_it() {
+		let error = ChainProvider::with_rpc_nodes(vec![RpcNode {
+			genesis_hash: NODE_CHAIN.to_vec(),
+			url: "not a url ?key=SECRET".into(),
+		}])
+		.err()
+		.expect("a malformed url must be rejected");
 
 		let ChainProviderError::Connect { reason } = error else {
 			panic!("expected a connect error, got {error:?}");
@@ -1226,43 +1287,31 @@ mod tests {
 	}
 
 	#[test]
-	fn connect_rpc_from_a_listener_callback_is_refused() {
-		struct ReconnectingListener {
-			provider: Arc<ChainProvider>,
-			result: Mutex<Option<Result<(), ChainProviderError>>>,
-		}
+	fn a_node_with_a_genesis_hash_of_the_wrong_length_is_rejected() {
+		let error = ChainProvider::with_rpc_nodes(vec![RpcNode {
+			genesis_hash: vec![0; 31],
+			url: "ws://127.0.0.1:1".into(),
+		}])
+		.err()
+		.expect("a 31-byte genesis must be rejected");
 
-		impl ChainMessageListener for ReconnectingListener {
-			fn on_message(&self, _message: String) -> Result<(), ChainProviderError> {
-				Ok(())
-			}
+		assert!(matches!(error, ChainProviderError::BadGenesis), "{error}");
+	}
 
-			fn on_closed(&self, _reason: ChainCloseReason) -> Result<(), ChainProviderError> {
-				let (silent, _messages, _closed) = Collector::new();
-				let reconnected =
-					self.provider.connect_rpc("ws://127.0.0.1:1".into(), silent).map(|_| ());
-				*self.result.lock().expect("not poisoned") = Some(reconnected);
-				Ok(())
-			}
-		}
+	/// A host that chose RPC must never find itself syncing a chain on the light
+	/// client because it asked for one it did not register.
+	#[test]
+	fn an_rpc_provider_refuses_a_catalog_chain_it_was_not_given() {
+		let provider = rpc_provider("ws://127.0.0.1:1".into());
+		let (listener, _messages, _closed) = Collector::new();
 
-		let listener = Arc::new(ReconnectingListener {
-			provider: ChainProvider::new(),
-			result: Mutex::new(None),
-		});
-		let connection = Arc::new(ClosingConnection { closed: Mutex::new(false) });
+		let error = provider
+			.connect(CATALOG_RELAY.to_vec(), listener)
+			.err()
+			.expect("an unregistered chain must be refused");
 
-		block_on(pump_responses(
-			Box::pin(futures::stream::empty()),
-			Arc::downgrade(&(connection as Arc<dyn JsonRpcConnection>)),
-			listener.clone(),
-		));
-
-		let result = listener.result.lock().expect("not poisoned").take();
-		let Some(Err(ChainProviderError::Connect { reason })) = result else {
-			panic!("expected a refused reconnect, got {result:?}");
-		};
-		assert!(reason.contains("connect_rpc()"), "{reason}");
+		assert!(matches!(error, ChainProviderError::Connect { .. }), "{error}");
+		assert!(!provider.inner.is_connected(CATALOG_RELAY));
 	}
 
 	/// Foreign storage stand-in. The real one lives in Swift or Kotlin, so

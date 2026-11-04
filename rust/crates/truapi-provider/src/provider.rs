@@ -171,6 +171,13 @@ impl EmbeddedChainProvider {
 		EmbeddedChainProviderBuilder::new()
 	}
 
+	/// Whether `genesis_hash` was registered on the builder. A chain that was
+	/// not is resolved from the bundled catalog on connect, which starts the
+	/// light client.
+	pub fn is_registered(&self, genesis_hash: [u8; 32]) -> bool {
+		self.chains.contains_key(&genesis_hash)
+	}
+
 	/// Open a connection for `source`; for a parachain, `relay`/`chains` give
 	/// the light backend the relay to sync it through.
 	///
