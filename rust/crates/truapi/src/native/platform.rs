@@ -9,7 +9,6 @@ use crate::platform::{
 	ExtrinsicVersionHost, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
 	PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId, ProductOperations,
 	ProductStorage, ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
-	async_trait,
 };
 use futures::{
 	FutureExt,
@@ -48,7 +47,7 @@ pub struct ContactsCallbackPlatform {
 	pub contacts: Arc<dyn NativeContactsCallbacks>,
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ContactsPlatform for ContactsCallbackPlatform {
 	async fn contacts(
 		&self,
@@ -77,7 +76,7 @@ pub struct ScannerCallbackPlatform {
 	pub scanner: Arc<dyn NativeScannerCallbacks>,
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
 	async fn scan_code(
 		&self,
@@ -122,7 +121,7 @@ impl DevicePairingObserver for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl EncryptedStorage for CallbackPlatform {
 	async fn read_encrypted(
 		&self,
@@ -141,7 +140,7 @@ impl EncryptedStorage for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl InstallationIdProvider for CallbackPlatform {
 	async fn current_installation(&self) -> Result<InstallationId, v01::GenericError> {
 		let id = self.callbacks.current_installation().await?;
@@ -149,7 +148,7 @@ impl InstallationIdProvider for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Navigation for CallbackPlatform {
 	async fn navigate_to(&self, url: String) -> Result<(), v01::HostNavigateToError> {
 		self.callbacks
@@ -158,7 +157,7 @@ impl Navigation for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Notifications for CallbackPlatform {
 	async fn push_notification(
 		&self,
@@ -180,7 +179,7 @@ impl Notifications for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl crate::platform::PermissionStatusHost for CallbackPlatform {
 	async fn device_permission_status(
 		&self,
@@ -198,7 +197,7 @@ impl crate::platform::PermissionStatusHost for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ExpandedCardHost for CallbackPlatform {
 	async fn set_expanded_card_face_shown(
 		&self,
@@ -216,7 +215,7 @@ impl crate::platform::ExpandedCardHost for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Permissions for CallbackPlatform {
 	async fn device_permission(
 		&self,
@@ -251,7 +250,7 @@ impl Permissions for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl Features for CallbackPlatform {
 	async fn feature_supported(
 		&self,
@@ -274,7 +273,7 @@ impl Features for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ExtrinsicVersionHost for CallbackPlatform {
 	async fn transaction_extension_versions(
 		&self,
@@ -290,7 +289,7 @@ impl ExtrinsicVersionHost for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ProductStorage for CallbackPlatform {
 	async fn read(&self, key: String) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
 		self.callbacks.local_storage_read(key).await
@@ -332,7 +331,7 @@ impl ProductStorage for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ProductOperations for CallbackPlatform {
 	async fn begin_operation(
 		&self,
@@ -358,7 +357,7 @@ impl ProductOperations for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl CoreStorage for CallbackPlatform {
 	async fn read_core_storage(
 		&self,
@@ -453,7 +452,7 @@ fn hex_lower(bytes: &[u8]) -> String {
 	bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ChainProvider for CallbackPlatform {
 	async fn connect(
 		&self,
@@ -501,7 +500,7 @@ impl AuthPresenter for CallbackPlatform {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl UserConfirmation for CallbackPlatform {
 	async fn confirm_permission(
 		&self,
@@ -635,7 +634,7 @@ pub struct ChatCallbackPlatform {
 	pub events: Arc<NativeEventBus>,
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 	async fn create_chat_room(
 		&self,
@@ -726,7 +725,7 @@ pub struct GameCallbackPlatform {
 	pub game: Arc<dyn NativeGameCallbacks>,
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl crate::platform::GamePlatform for GameCallbackPlatform {
 	async fn schedule_game_reminder(
 		&self,
@@ -751,7 +750,7 @@ pub struct FundingCallbackPlatform {
 	pub funding: Arc<dyn NativeFundingCallbacks>,
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 	async fn present_funding(
 		&self,
@@ -909,7 +908,7 @@ fn top_up_rank(status: &v01::HostPaymentTopUpStatusSubscribeItem) -> u8 {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl crate::platform::TopUpPlatform for TopUpCallbackPlatform {
 	async fn top_up(
 		&self,
@@ -975,7 +974,7 @@ fn payment_rank(status: &v01::HostPaymentStatusSubscribeItem) -> u8 {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl crate::platform::PaymentPlatform for PaymentCallbackPlatform {
 	async fn request_payment(
 		&self,

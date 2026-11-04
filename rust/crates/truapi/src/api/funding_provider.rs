@@ -27,7 +27,7 @@ use crate::{
 /// its storage under the session's `intent`.
 #[wire_trait(id = 24)]
 #[crate::service(required_execution = Worker)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait FundingProvider: Send + Sync {
 	/// Price an ask for the host's quote list, or say why the provider will
 	/// not. The core asks every provider and drops a call that has not
