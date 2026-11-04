@@ -326,7 +326,8 @@ const secondProvider = await runtime.createProvider({
 protocol-iframe MessageChannel handshake. A product that navigates its whole document
 connects again: `onPort` is called with a fresh port once the new document
 sends a frame, and the function `onPort` returned for the previous port runs
-then. Host code creates one worker runtime
+then. Each port is a new product session, so give it a core connection of its
+own. With an opaque sandbox only the first document is connected. Host code creates one worker runtime
 and then opens one provider per product ID. `runtime.parseProductId(input)` validates and normalizes through the already loaded Rust worker. It returns the same `ProductId` branded string exported by `@parity/truapi`, so IDs remain ordinary strings in memory and across worker messages.
 
 ## Session lifecycle

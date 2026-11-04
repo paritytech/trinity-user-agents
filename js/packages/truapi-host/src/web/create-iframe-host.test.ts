@@ -247,15 +247,61 @@ describe("createIframeHost", () => {
         },
       });
       for (let i = 0; i < 40; i++) ready(dom);
-      // The newest offer still connects, so the cap drops only stale ones.
+      // Before any offer is used: only the cap can have closed this one.
+      offered(dom, 1).postMessage("stale");
+      await Bun.sleep(20);
+      expect(ports.length).toBe(1);
+      // The newest offer still connects.
       offered(dom, 39).postMessage("late document");
       expect(await nextMessage(await waitForPort(ports, 2))).toBe(
         "late document",
       );
-      // An offer past the cap is closed, so its frames reach nobody.
-      offered(dom, 1).postMessage("stale");
-      await Bun.sleep(10);
-      expect(ports.length).toBe(2);
+    });
+
+    it("connects only the first document in an opaque sandbox", () => {
+      createIframeHost({
+        iframeUrl: "http://localhost:5174/",
+        container: { appendChild: () => {} } as unknown as HTMLElement,
+        sandbox: "allow-forms allow-scripts",
+        onPort: () => {},
+      });
+      const opaqueReady = () =>
+        dom.windowListeners.get("message")!({
+          source: dom.contentWindow,
+          origin: "null",
+          data: { type: "truapi-ready" },
+        });
+      opaqueReady();
+      // Any page the frame navigates to reports "null" as well, so a later
+      // ready is not answered.
+      opaqueReady();
+      expect(dom.contentPostMessage.mock.calls.length).toBe(1);
+    });
+
+    it("moves on even when the previous teardown throws", async () => {
+      const ports: MessagePort[] = [];
+      const error = console.error;
+      console.error = () => {};
+      try {
+        createIframeHost({
+          iframeUrl: "http://localhost:5174/",
+          container: { appendChild: () => {} } as unknown as HTMLElement,
+          onPort: (port) => {
+            ports.push(port);
+            return () => {
+              throw new Error("teardown failed");
+            };
+          },
+        });
+        ready(dom);
+        ready(dom);
+        offered(dom, 1).postMessage("first frame");
+        expect(await nextMessage(await waitForPort(ports, 2))).toBe(
+          "first frame",
+        );
+      } finally {
+        console.error = error;
+      }
     });
 
     it("moves to the new document's port once a frame arrives on it", async () => {
@@ -275,9 +321,7 @@ describe("createIframeHost", () => {
       ready(dom);
       const next = offered(dom, 1);
       next.postMessage("first frame");
-      await Bun.sleep(0);
-
-      expect(ports.length).toBe(2);
+      await waitForPort(ports, 2);
       expect(retired[0]!.mock.calls.length).toBe(1);
       // The frame that revealed the new document reaches the new port, even
       // though the caller attaches to it only now.

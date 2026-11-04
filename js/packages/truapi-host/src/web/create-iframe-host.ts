@@ -14,9 +14,15 @@ export interface IframeHostOptions {
    * The first call happens immediately, before the iframe loads. A product
    * that navigates its whole document connects again, and the host gets a
    * fresh port once the new document sends its first frame. The function it
-   * returned for the previous port is then called, and that port is closed.
+   * returned for the previous port is then called, and that port is closed;
+   * any other return value is ignored. Each port is a new product session,
+   * so it needs a connection of its own.
+   *
+   * With an opaque sandbox (no `allow-same-origin`) every document reports
+   * the origin `"null"`, so a page the frame navigates to cannot be told
+   * from the product, and only the first document is connected.
    */
-  onPort: (port: MessagePort) => (() => void) | void;
+  onPort: (port: MessagePort) => (() => void) | void | Promise<void>;
   /**
    * Optional explicit allow-list origin. Defaults to the origin of
    * `iframeUrl`. Throws if it disagrees with the iframe URL's origin.
@@ -99,7 +105,7 @@ export function createIframeHost(options: IframeHostOptions): IframeHost {
   // Hand the host-side port to the caller immediately so it can wire up
   // a provider before the iframe finishes loading. Queued postMessage
   // calls are delivered once the channel is started by the provider.
-  current.retire = onPort(first.port1) ?? undefined;
+  current.retire = teardownOf(onPort(first.port1));
   let firstProductPort: MessagePort | undefined = first.port2;
   // Ports offered to a document after the first, not yet used by it.
   const offers = new Set<Offer>();
@@ -179,7 +185,7 @@ export function createIframeHost(options: IframeHostOptions): IframeHost {
       port: relay.port1,
       relay: { productSide, hostSide: relay.port2 },
     };
-    current.retire = onPort(relay.port1) ?? undefined;
+    current.retire = teardownOf(onPort(relay.port1));
   };
 
   const onWindowMessage = (event: MessageEvent): void => {
@@ -194,7 +200,7 @@ export function createIframeHost(options: IframeHostOptions): IframeHost {
     if (firstProductPort) {
       sendInit(firstProductPort);
       firstProductPort = undefined;
-    } else {
+    } else if (!acceptsOpaqueOrigin) {
       offer();
     }
   };
@@ -228,9 +234,20 @@ interface Connection {
   relay?: { productSide: MessagePort; hostSide: MessagePort };
 }
 
+/** What `onPort` returned, if it is a teardown to run later. */
+function teardownOf(value: unknown): (() => void) | undefined {
+  return typeof value === "function" ? (value as () => void) : undefined;
+}
+
 /** Run a connection's teardown and close every port it holds. */
 function retire(connection: Connection): void {
-  connection.retire?.();
+  try {
+    connection.retire?.();
+  } catch (error) {
+    // The ports still close, so a caller's failure cannot keep the
+    // replaced document's connection open.
+    console.error("createIframeHost: onPort teardown threw", error);
+  }
   for (const port of [
     connection.port,
     connection.relay?.productSide,
