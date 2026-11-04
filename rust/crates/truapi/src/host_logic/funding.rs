@@ -938,7 +938,7 @@ impl FundingSession {
 					_ => None,
 				})
 				.flatten(),
-			retrying: self.progress_retrying(),
+			retrying: self.is_progress_retrying(),
 			payout: self.payout().cloned(),
 			refunded: self.refund.as_ref().and_then(|refund| refund.refunded),
 			status: self.status(now_ms),
@@ -958,7 +958,7 @@ impl FundingSession {
 			FundingStage::Failed { reason, .. } => {
 				return FundingStatus::Failed { reason: reason.clone() };
 			},
-			FundingStage::Released { .. } if self.cancel_accepted() => {
+			FundingStage::Released { .. } if self.is_cancel_accepted() => {
 				let refunded = self.refund.as_ref().and_then(|refund| refund.refunded);
 				return match refunded {
 					Some(_) => FundingStatus::Cancelled { refunded },
@@ -992,10 +992,10 @@ impl FundingSession {
 			Some(FundingCancel::Accepted { .. }) => return FundingStatus::Cancelling,
 			Some(FundingCancel::Declined | FundingCancel::Overtaken { .. }) | None => {},
 		}
-		if self.progress_retrying() {
+		if self.is_progress_retrying() {
 			return FundingStatus::Retrying;
 		}
-		if self.payout_retrying() {
+		if self.is_payout_retrying() {
 			return FundingStatus::RetryingPayout;
 		}
 		if self.longer_at_ms().is_some_and(|at_ms| now_ms >= at_ms) {
@@ -1091,13 +1091,13 @@ impl FundingSession {
 
 	/// Whether the provider is retrying: it named another top-up after a
 	/// first one claimed only part of the amount.
-	fn progress_retrying(&self) -> bool {
+	fn is_progress_retrying(&self) -> bool {
 		!self.is_terminal() && self.top_up_ids().len() > 1
 	}
 
 	/// Whether the provider's latest word on a released withdrawal's payout,
 	/// with none reported yet, is that it is retrying it.
-	fn payout_retrying(&self) -> bool {
+	fn is_payout_retrying(&self) -> bool {
 		matches!(self.stage, FundingStage::Released { .. }) &&
 			self.payout().is_none() &&
 			self.updates.iter().rev().find_map(|record| match record.update {
@@ -1266,7 +1266,7 @@ impl FundingSession {
 			// a payout is refused once the cancel was accepted.
 			let lands = matches!(update, FundingUpdate::Out(FundingOutboundUpdate::Payout { .. }));
 			if self.payout().is_some() ||
-				(self.cancel_accepted() && !lands) ||
+				(self.is_cancel_accepted() && !lands) ||
 				(matches!(update, FundingUpdate::Out(FundingOutboundUpdate::Converting)) &&
 					converting)
 			{
@@ -1352,6 +1352,11 @@ impl FundingSession {
 		!self.is_terminal() || self.awaits_provider()
 	}
 
+	/// Whether a provider is assigned and still has work on the session.
+	pub fn has_working_provider(&self) -> bool {
+		self.provider_id.is_some() && self.serves_provider()
+	}
+
 	/// Whether the session ended but its provider still owes the user: a
 	/// released withdrawal whose payout outcome it has not reported, or
 	/// whose refund, after a failed payout or a cancel the user accepted, is
@@ -1373,11 +1378,11 @@ impl FundingSession {
 		matches!(self.stage, FundingStage::Released { .. }) &&
 			self.refund.is_none() &&
 			(matches!(self.payout(), Some(FundingPayout::Failed { .. })) ||
-				self.cancel_accepted())
+				self.is_cancel_accepted())
 	}
 
 	/// Whether the user accepted the provider's cancel offer.
-	fn cancel_accepted(&self) -> bool {
+	fn is_cancel_accepted(&self) -> bool {
 		matches!(self.cancel, Some(FundingCancel::Accepted { .. }))
 	}
 
