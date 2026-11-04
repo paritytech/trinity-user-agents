@@ -31,7 +31,7 @@ struct DockletAim {
     mutating func track(finger location: CGPoint) {
         finger = location
         let aimed = Self.aimedProgress(at: location, progress: progress, geometry: geometry)
-        progress = min(max(aimed + (startProgress - startAim) * blend, 0), 1)
+        progress = (aimed + (startProgress - startAim) * blend).clampedToUnit
     }
 
     /// The plain pose at the progress, plus the grab's residual while the finger is near the grab point.

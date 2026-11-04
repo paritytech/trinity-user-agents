@@ -27,12 +27,13 @@ struct DockletSpring {
     /// Set on a quiet settle, whose first frame only starts the clock.
     var isAwaitingFirstFrame: Bool
 
-    /// Whether a settle `elapsed` seconds in, with this offset and unwind share left, has landed.
-    static func hasLanded(after elapsed: TimeInterval, offset: CGFloat, unwindShare: CGFloat) -> Bool {
-        elapsed > hardStopSeconds
-            || (elapsed > minimumSettleSeconds
-                && abs(offset) < landingTolerance
-                && unwindShare < landingTolerance)
+    /// Whether the settle has landed `elapsed` seconds in: its offset and unwind share are within tolerance, or it
+    /// has run out of time.
+    func hasLanded(after elapsed: TimeInterval) -> Bool {
+        elapsed > Self.hardStopSeconds
+            || (elapsed > Self.minimumSettleSeconds
+                && abs(offset(after: elapsed)) < Self.landingTolerance
+                && unwindShare(after: elapsed) < Self.landingTolerance)
     }
 
     /// Distance from the rest after `elapsed` seconds.

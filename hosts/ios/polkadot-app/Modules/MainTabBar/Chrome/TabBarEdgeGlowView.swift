@@ -92,7 +92,7 @@ final class TabBarEdgeGlowView: UIView {
     func setProgress(_ progress: CGFloat) {
         layer.removeAnimation(forKey: Self.fadeKey)
         alpha = progress
-        let clampedProgress = min(max(progress, 0), 1)
+        let clampedProgress = progress.clampedToUnit
         let widthScale = Self.minWidthFraction + (1 - Self.minWidthFraction) * clampedProgress
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -271,7 +271,7 @@ private extension TabBarEdgeGlowView {
             let along = (CGFloat(row) + 0.5) / scale
             for column in 0 ..< width {
                 let inFromEdge = bounds.width - (CGFloat(column) + 0.5) / scale
-                let coverage = min(max(alpha(inFromEdge, along), 0), 1)
+                let coverage = alpha(inFromEdge, along).clampedToUnit
                 pixels[row * context.bytesPerRow + column * 4 + 3] = UInt8((coverage * 255).rounded())
             }
         }

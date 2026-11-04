@@ -154,7 +154,7 @@ final class TabBarBottomChromeController: UIViewController {
     /// Height the bar occupies at the bottom edge once it has settled. Folding and panel
     /// animations move the chrome without changing it, so the host can lay out against it.
     var restingBarHeight: CGFloat {
-        guard TabBarVisibilityPolicy.contributesClearance(isTabRoot: foldController.isTabRoot) else {
+        guard foldController.isTabRoot else {
             return view.safeAreaInsets.bottom
         }
         return DSTabBarStyle.restingHeight(bottomSafeAreaInset: view.safeAreaInsets.bottom)

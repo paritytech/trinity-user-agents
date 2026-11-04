@@ -63,12 +63,8 @@ struct DockletNudge {
             return 0
         }
         let eased = progress < peakProgress
-            ? smoothstep(progress / peakProgress)
-            : smoothstep((1 - progress) / (1 - peakProgress))
+            ? (progress / peakProgress).smoothstepped
+            : ((1 - progress) / (1 - peakProgress)).smoothstepped
         return peakInset * eased
-    }
-
-    private static func smoothstep(_ fraction: CGFloat) -> CGFloat {
-        fraction * fraction * (3 - 2 * fraction)
     }
 }

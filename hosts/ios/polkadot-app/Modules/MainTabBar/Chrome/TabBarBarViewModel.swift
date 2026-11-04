@@ -41,7 +41,7 @@ final class TabBarBarViewModel {
     @ObservationIgnored var onShelfConnectionStatusTapped: (() -> Void)?
 
     var selectionPlacement: TabBarSelectionPlacement {
-        TabBarSelectionPolicy.placement(
+        TabBarSelectionPlacement(
             tabItemIndex: selectedItemIndex,
             mountedProductId: mountedChipId,
             isShelfOpen: isShelfOpen

@@ -1,5 +1,4 @@
 import CoreGraphics
-import Foundation
 
 /// The Docklet's pose: a turn about its pivot, then an offset. `DockletGeometry.absolute(_:)` turns it into a screen
 /// transform.
@@ -73,7 +72,7 @@ struct DockletHold {
         guard let grabbed else {
             return geometry.plainPose(progress: progress)
         }
-        let floor = geometry.bounds.maxY + Self.eased(max(0, finger.y - geometry.bounds.maxY), limit: Self.floorLimit)
+        let floor = geometry.bounds.maxY + max(0, finger.y - geometry.bounds.maxY).rubberBanded(limit: Self.floorLimit)
         let share = fittingTurnShare(grabbed: grabbed, allowedBottom: floor, geometry: geometry)
         var pose = heldPose(grabbed: grabbed, turnShare: share, geometry: geometry)
         let sink = geometry.lowestY(pose) - floor
@@ -85,16 +84,6 @@ struct DockletHold {
 }
 
 private extension DockletHold {
-    /// Follows `over` one-for-one at first, then saturates at `limit`.
-    static func eased(_ over: CGFloat, limit: CGFloat) -> CGFloat {
-        limit * (1 - 1 / (1 + over / limit))
-    }
-
-    static func smoothstep(_ value: CGFloat) -> CGFloat {
-        let clamped = min(max(value, 0), 1)
-        return clamped * clamped * (3 - 2 * clamped)
-    }
-
     func fittingTurnShare(grabbed: CGPoint, allowedBottom: CGFloat, geometry: DockletGeometry) -> CGFloat {
         let fullShare = Self.turnShare
         let fullPose = heldPose(grabbed: grabbed, turnShare: fullShare, geometry: geometry)
@@ -131,9 +120,9 @@ private extension DockletHold {
         let glowTop = geometry.glowTop
         let fingerX = finger.x >= zeroX
             ? finger.x
-            : zeroX - Self.eased(zeroX - finger.x, limit: Self.wrongWayLimit)
+            : zeroX - (zeroX - finger.x).rubberBanded(limit: Self.wrongWayLimit)
         let fingerY = finger.y < glowTop
-            ? glowTop - Self.eased(glowTop - finger.y, limit: Self.ceilingLimit)
+            ? glowTop - (glowTop - finger.y).rubberBanded(limit: Self.ceilingLimit)
             : finger.y
         return CGPoint(x: fingerX + lead(grabbed: grabbed, geometry: geometry), y: fingerY)
     }
@@ -141,26 +130,8 @@ private extension DockletHold {
     /// How far the bar leads the finger towards the right edge. The lead builds from the progress made since the
     /// grab, and the finger stays inside the bar's leading end.
     func lead(grabbed: CGPoint, geometry: DockletGeometry) -> CGFloat {
-        let cue = Self.leadDistance * (Self.smoothstep(progress) - Self.smoothstep(startProgress))
+        let cue = Self.leadDistance * (progress.smoothstepped - startProgress.smoothstepped)
         let cap = grabbed.x - geometry.dockFrame.minX - Self.leadInset
         return max(0, min(cue, cap))
-    }
-}
-
-/// Decides whether a pan folds the Docklet sideways. A bar at rest takes a wider cone than one caught mid-settle.
-enum DockletDirectionLock {
-    /// Translation length at which the angle decides the pan. Shorter drags use the horizontal-versus-vertical test.
-    private static let decisionDistance: CGFloat = 10
-    /// Angles, in degrees above the horizon, that a resting bar accepts as sideways. Negative angles point down.
-    private static let restingCone: ClosedRange<CGFloat> = -45 ... 30
-    /// Half-width, in degrees, of the cone that a bar caught mid-settle accepts.
-    private static let caughtHalfCone: CGFloat = 60
-
-    static func isSideways(translation: CGVector, isSettling: Bool) -> Bool {
-        guard hypot(translation.dx, translation.dy) >= decisionDistance else {
-            return abs(translation.dx) > abs(translation.dy)
-        }
-        let angle = atan2(-translation.dy, abs(translation.dx)) * 180 / .pi
-        return isSettling ? abs(angle) <= caughtHalfCone : restingCone.contains(angle)
     }
 }

@@ -28,6 +28,13 @@ public enum DSTabBarStyle {
         min(max(0, availableWidth - horizontalMargin * 2), maxWidth)
     }
 
+    /// Trailing edge of the bar row in a host `availableWidth` wide: the row is centred, so this is its x offset
+    /// plus its width.
+    public static func rowMaxX(inAvailableWidth availableWidth: CGFloat) -> CGFloat {
+        let width = rowWidth(inAvailableWidth: availableWidth)
+        return ((availableWidth - width) / 2).rounded() + width
+    }
+
     /// Height the bar occupies once it has settled, which is what a host publishes as bottom
     /// clearance for its content.
     public static func restingHeight(bottomSafeAreaInset: CGFloat) -> CGFloat {

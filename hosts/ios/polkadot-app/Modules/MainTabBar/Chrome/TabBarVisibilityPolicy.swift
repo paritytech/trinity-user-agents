@@ -29,29 +29,28 @@ enum TabBarVisibilityPolicy {
         case .shown:
             return .shown
         case .none:
-            return state(for: derived)
+            return derived.defaultState
         }
-    }
-
-    static func contributesClearance(isTabRoot: Bool) -> Bool {
-        isTabRoot
-    }
-
-    /// The override a new screen starts with when the bar comes from `previous`. Only a tucked bar carries over,
-    /// so the new screen's derived state decides otherwise.
-    static func carriedOverride(from previous: TabBarVisibilityState) -> TabBarFoldOverride {
-        previous == .tucked ? .tucked : .none
-    }
-
-    /// A swap between tucked and hidden keeps the bar off screen at both ends, so it is written without animation.
-    static func isOffScreenSwap(from previous: TabBarVisibilityState, to resolved: TabBarVisibilityState) -> Bool {
-        (previous == .tucked && resolved == .hidden) || (previous == .hidden && resolved == .tucked)
     }
 }
 
-private extension TabBarVisibilityPolicy {
-    static func state(for derived: TabBarFoldDerived) -> TabBarVisibilityState {
-        switch derived {
+extension TabBarVisibilityState {
+    /// The override a new screen starts with when the bar comes from this state. Only a tucked bar carries over,
+    /// so the new screen's derived state decides otherwise.
+    var carriedOverride: TabBarFoldOverride {
+        self == .tucked ? .tucked : .none
+    }
+
+    /// A swap between tucked and hidden keeps the bar off screen at both ends, so it is written without animation.
+    func isOffScreenSwap(to other: TabBarVisibilityState) -> Bool {
+        (self == .tucked && other == .hidden) || (self == .hidden && other == .tucked)
+    }
+}
+
+extension TabBarFoldDerived {
+    /// The state a derived fold shows when the user has not overridden it.
+    var defaultState: TabBarVisibilityState {
+        switch self {
         case .none:
             .shown
         case .tucked:

@@ -29,7 +29,13 @@ struct DockletDragSamples {
     func velocity(travel: CGFloat) -> CGFloat {
         let slowestSpeed = Self.trailingSpeedPoints / travel
         var moving = samples
-        while moving.count >= 2, Self.isSlow(moving[moving.count - 2], moving[moving.count - 1], slowestSpeed) {
+        while moving.count >= 2 {
+            let later = moving[moving.count - 1]
+            let earlier = moving[moving.count - 2]
+            let isSlow = abs(later.progress - earlier.progress) < slowestSpeed * CGFloat(later.time - earlier.time)
+            guard isSlow else {
+                break
+            }
             moving.removeLast()
         }
         guard let span = Self.span(of: moving) else {
@@ -58,9 +64,5 @@ private extension DockletDragSamples {
             return nil
         }
         return (first, last)
-    }
-
-    static func isSlow(_ earlier: Sample, _ later: Sample, _ speed: CGFloat) -> Bool {
-        abs(later.progress - earlier.progress) < speed * CGFloat(later.time - earlier.time)
     }
 }

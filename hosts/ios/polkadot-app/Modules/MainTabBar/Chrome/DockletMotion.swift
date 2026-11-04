@@ -23,6 +23,17 @@ enum DockletHaptic: Equatable {
     case selection
 }
 
+extension DockletRest {
+    /// The haptic a settle to this rest lands with: heavy on a user tuck, medium on a user restore, else none.
+    func landingHaptic(wasTucked: Bool, isUserDriven: Bool) -> DockletHaptic? {
+        let landsTucked = self == .tucked
+        guard isUserDriven, landsTucked != wasTucked else {
+            return nil
+        }
+        return landsTucked ? .heavy : .medium
+    }
+}
+
 /// The Docklet's hide progress. A drag moves it, and a spring settles it. Time is passed in by the caller, so the
 /// type reads no clock and imports no UIKit.
 struct DockletMotion {
@@ -145,7 +156,7 @@ struct DockletMotion {
         let velocity = drag.samples.velocity(travel: drag.travel)
         let rest = restAfterRelease(of: drag, velocity: velocity)
         let wasTucked = drag.isAiming || drag.startProgress >= Self.tuckThreshold
-        let haptic = Self.landingHaptic(to: rest, wasTucked: wasTucked, isUserDriven: true)
+        let haptic = rest.landingHaptic(wasTucked: wasTucked, isUserDriven: true)
         if reduceMotion {
             startFade(to: rest, now: time, landingHaptic: haptic, isQuiet: false)
         } else {
@@ -162,7 +173,7 @@ struct DockletMotion {
     mutating func settle(to rest: DockletRest, now: TimeInterval, isUserDriven: Bool, reduceMotion: Bool = false) {
         drag = nil
         let wasTucked = progress >= Self.tuckThreshold
-        let haptic = Self.landingHaptic(to: rest, wasTucked: wasTucked, isUserDriven: isUserDriven)
+        let haptic = rest.landingHaptic(wasTucked: wasTucked, isUserDriven: isUserDriven)
         if reduceMotion {
             startFade(to: rest, now: now, landingHaptic: haptic, isQuiet: false)
         } else {
@@ -282,17 +293,14 @@ enum DockletContentFadeTarget: Equatable {
 
 private extension DockletMotion {
     static func rubberBanded(_ raw: CGFloat) -> CGFloat {
+        let slope = rubberBandMaximum * rubberBandRate
         if raw > 1 {
-            return 1 + rubber(raw - 1)
+            return 1 + (raw - 1).rubberBanded(limit: rubberBandMaximum, slope: slope)
         }
         if raw < 0 {
-            return -rubber(-raw)
+            return -(-raw).rubberBanded(limit: rubberBandMaximum, slope: slope)
         }
         return raw
-    }
-
-    static func rubber(_ overdrag: CGFloat) -> CGFloat {
-        rubberBandMaximum * (1 - 1 / (1 + rubberBandRate * overdrag))
     }
 
     /// Stops any settle and takes the bar under the finger from its current progress.
@@ -380,7 +388,7 @@ private extension DockletMotion {
         let elapsed = now - spring.start
         let offset = spring.offset(after: elapsed)
         unwindFactor = spring.unwindShare(after: elapsed)
-        guard DockletSpring.hasLanded(after: elapsed, offset: offset, unwindShare: unwindFactor) else {
+        guard spring.hasLanded(after: elapsed) else {
             progress = spring.rest.progress + offset
             return nil
         }
@@ -389,15 +397,6 @@ private extension DockletMotion {
         releaseExtra = .zero
         unwindFactor = 0
         return spring.landingHaptic
-    }
-
-    /// The haptic a settle lands with: heavy on a user tuck, medium on a user restore, and none otherwise.
-    static func landingHaptic(to rest: DockletRest, wasTucked: Bool, isUserDriven: Bool) -> DockletHaptic? {
-        let landsTucked = rest == .tucked
-        guard isUserDriven, landsTucked != wasTucked else {
-            return nil
-        }
-        return landsTucked ? .heavy : .medium
     }
 
     /// Starts a Reduce Motion settle. A restore puts the bar at shown at once, so the glass never animates.

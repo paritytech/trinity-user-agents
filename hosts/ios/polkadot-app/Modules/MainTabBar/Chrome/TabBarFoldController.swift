@@ -73,7 +73,7 @@ final class TabBarFoldController {
 
     func update(context: TabBarChromeContext) {
         if context.screen !== navigationScreen {
-            userOverride = TabBarVisibilityPolicy.carriedOverride(from: state)
+            userOverride = state.carriedOverride
         }
         isTabRoot = context.isTabRoot
         foldDerived = context.foldDerived
@@ -98,7 +98,7 @@ final class TabBarFoldController {
     func resolvedState(for context: TabBarChromeContext) -> TabBarVisibilityState {
         let override = context.screen === navigationScreen
             ? userOverride
-            : TabBarVisibilityPolicy.carriedOverride(from: state)
+            : state.carriedOverride
         return TabBarVisibilityPolicy.state(derived: context.foldDerived, override: override)
     }
 
@@ -210,7 +210,7 @@ private extension TabBarFoldController {
         let rowWidth = DSTabBarStyle.rowWidth(inAvailableWidth: bounds.width)
         let bottomGap = DSTabBarStyle.bottomGap(bottomSafeAreaInset: bottomSafeAreaInset())
         let dockFrame = CGRect(
-            x: Self.barMaxX(availableWidth: bounds.width) - rowWidth,
+            x: DSTabBarStyle.rowMaxX(inAvailableWidth: bounds.width) - rowWidth,
             y: bounds.height - bottomGap - DSTabBarStyle.height,
             width: rowWidth,
             height: DSTabBarStyle.height
@@ -254,7 +254,7 @@ private extension TabBarFoldController {
         defer { syncContentFade() }
 
         let rest: DockletRest = state == .tucked ? .tucked : .shown
-        guard animated, !TabBarVisibilityPolicy.isOffScreenSwap(from: previous, to: state) else {
+        guard animated, !previous.isOffScreenSwap(to: state) else {
             motion.snap(to: rest)
             writeTransform(pose(for: state))
             return
@@ -395,7 +395,7 @@ private extension TabBarFoldController {
     }
 
     func hiddenTransform() -> CGAffineTransform {
-        CGAffineTransform(translationX: Self.hiddenTranslationX(availableWidth: chromeBounds().width), y: 0)
+        CGAffineTransform(translationX: -DSTabBarStyle.rowMaxX(inAvailableWidth: chromeBounds().width), y: 0)
     }
 
     func pose(for state: TabBarVisibilityState) -> CGAffineTransform {
@@ -474,16 +474,6 @@ private extension TabBarFoldController {
         let now = CACurrentMediaTime()
         autoHide.setBlocked(.motionRunning, isDragging || motion.isSettling, at: now)
         autoHide.setBlocked(.notShown, state != .shown, at: now)
-    }
-
-    static func hiddenTranslationX(availableWidth: CGFloat) -> CGFloat {
-        -barMaxX(availableWidth: availableWidth)
-    }
-
-    /// Trailing edge of the bar, which is centred and capped at `DSTabBarStyle.maxWidth`.
-    static func barMaxX(availableWidth: CGFloat) -> CGFloat {
-        let width = DSTabBarStyle.rowWidth(inAvailableWidth: availableWidth)
-        return ((availableWidth - width) / 2).rounded() + width
     }
 }
 
