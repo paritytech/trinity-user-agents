@@ -1,0 +1,77 @@
+/*
+ * The inspector's Products view, in the Statements view's look. Narrow: the
+ * product takes the first line and each value under it names its column.
+ * Wide: one row per load, under a header.
+ */
+.products-inspector {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.pi-list {
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+}
+
+.pi-head {
+  display: none;
+}
+
+.statements-inspector .pi-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px 10px;
+  width: 100%;
+  padding: 5px 6px;
+  border-bottom: 1px solid rgb(255 255 255 / 0.04);
+}
+
+.statements-inspector .pi-row:hover {
+  background: rgb(255 255 255 / 0.04);
+}
+
+.statements-inspector .pi-row[aria-pressed="true"] {
+  background: rgb(74 222 128 / 0.13);
+  box-shadow: inset 2px 0 0 var(--si-on);
+}
+
+.pi-row .pi-name {
+  grid-column: 1 / -1;
+}
+
+.pi-row .si-cell:not(.pi-name)::before {
+  content: attr(data-label) " ";
+  color: var(--si-meta);
+  opacity: 0.7;
+}
+
+.pi-row[data-outcome="failed"] .si-cell:last-child {
+  color: var(--si-failed);
+}
+
+.pi-row .si-badge {
+  white-space: nowrap;
+}
+
+@container (min-width: 640px) {
+  .statements-inspector .pi-row,
+  .pi-head {
+    grid-template-columns: minmax(0, 2fr) repeat(6, minmax(0, 1fr));
+  }
+
+  .pi-head {
+    display: grid;
+    gap: 2px 10px;
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--si-line);
+    color: var(--si-meta);
+  }
+
+  .pi-row .pi-name {
+    grid-column: auto;
+  }
+
+  .pi-row .si-cell:not(.pi-name)::before {
+    content: none;
+  }
+}

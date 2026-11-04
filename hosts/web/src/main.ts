@@ -122,6 +122,7 @@ import {
 } from "./app/navigation.js";
 import { SessionMembership, WalletSession } from "./app/session.js";
 import { mountTools } from "../tools/mount.js";
+import { ProductLoadLog } from "../tools/products/log.js";
 import { ActivityLog } from "../tools/activity/log.js";
 import { StatementLedger } from "../tools/statements/ledger.js";
 import type { PeopleAccess } from "../tools/statements/actions.js";
@@ -236,6 +237,8 @@ pocketStatus.className = "pocket-status";
 pocketStatus.setAttribute("role", "status");
 /** What the product workers write to their consoles, for the inspector's Workers view. */
 const workerConsole = new WorkerConsoleLog();
+/** What each mounted product's load resolved and fetched, for the inspector's Products view. */
+const productLoads = new ProductLoadLog();
 /** Rooms that product workers keep, and the workers that keep them. */
 const productChat = new ProductChat(localStorage);
 /**
@@ -272,6 +275,7 @@ const productWorkers = new ProductWorkers({
   activity: activity.record,
   observer: workerConsole,
   diagnostics: statements.diagnostics,
+  loads: productLoads.record,
   chatV2: {
     connect: (productId, port) =>
       chatV2.connect(productId, messagePortBridge(port)),
@@ -595,6 +599,7 @@ const tools = mountTools({
   statements,
   people: () => peopleAccess,
   network: () => activeNetwork.id,
+  productLoads,
 });
 
 const versionsList = element("versions");
@@ -721,6 +726,7 @@ const navigation: ProductNavigation = new ProductNavigation({
     renderProductRecents();
   },
   activity: activity.record,
+  loads: productLoads.record,
 });
 /** The signed-in wallet, and how it changes. */
 const walletSession: WalletSession = new WalletSession({

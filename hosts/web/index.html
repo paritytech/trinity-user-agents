@@ -875,6 +875,16 @@
             >
               Chat
             </button>
+            <button
+              type="button"
+              role="tab"
+              data-inspector-view="products"
+              aria-selected="false"
+              aria-controls="products-inspector"
+              tabindex="-1"
+            >
+              Products
+            </button>
           </div>
           <p id="inspector-note" class="note">
             Frames stay in this tab and may carry sensitive payloads.
@@ -909,6 +919,13 @@
           class="statements-inspector chat-inspector"
           role="tabpanel"
           aria-label="Chat"
+          hidden
+        ></div>
+        <div
+          id="products-inspector"
+          class="statements-inspector products-inspector"
+          role="tabpanel"
+          aria-label="Products"
           hidden
         ></div>
       </section>

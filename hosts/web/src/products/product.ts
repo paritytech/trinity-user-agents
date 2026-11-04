@@ -8,6 +8,7 @@ import {
   type DiagnosticsReport,
 } from "./diagnostics.js";
 import { isProductHello as isInvitationsHello } from "../invitations/contract.js";
+import { readLoadMessage, type ProductLoadSummary } from "./load-observer.js";
 import {
   readConsoleMessage,
   type WorkerConsoleEntry,
@@ -91,6 +92,15 @@ export interface OpenProductOptions {
    */
   onSandboxStatus?(state: "loading" | "error", detail: string): void;
   /**
+   * Called with the loader's summary of its load (`load-observer.ts`).
+   * Heard as {@link onSandboxStatus} is, and once per frame: the first
+   * summary is the loader's, sent before it hands the frame to the product,
+   * which runs on the same origin and is not heard after it.
+   */
+  onLoadSummary?(summary: ProductLoadSummary): void;
+  /** Called once, when the frame is closed. */
+  onClose?(): void;
+  /**
    * Allow `url` on this page's own origin. Only a product mounted by this host
    * from a verified archive is opened that way; any other address on this
    * origin is refused.
@@ -153,6 +163,8 @@ export async function openProduct(
     tap,
     onFrameLoad,
     onSandboxStatus,
+    onLoadSummary,
+    onClose,
     mounted = false,
     executionKind = "App",
     onChatV2Port,
@@ -195,6 +207,8 @@ export async function openProduct(
     onFrameLoad?.(loads);
   };
   frame.iframe.addEventListener("load", onLoad);
+  let summarized = false;
+  let closed = false;
   const onWindowMessage = (event: MessageEvent): void => {
     if (event.source !== frame.iframe.contentWindow) return;
     if (event.origin !== url.origin) return;
@@ -226,6 +240,14 @@ export async function openProduct(
         return;
       }
     }
+    if (onLoadSummary !== undefined) {
+      const summary = readLoadMessage(data);
+      if (summary !== null) {
+        if (!summarized) onLoadSummary(summary);
+        summarized = true;
+        return;
+      }
+    }
     if (isInvitationsHello(data, event.ports)) {
       if (onInvitationsPort === undefined) event.ports[0].close();
       else onInvitationsPort(event.ports[0]);
@@ -238,6 +260,7 @@ export async function openProduct(
   };
   if (
     onSandboxStatus ||
+    onLoadSummary ||
     onChatV2Port ||
     onInvitationsPort ||
     onConsole ||
@@ -260,6 +283,8 @@ export async function openProduct(
       }
     },
     dispose() {
+      if (!closed) onClose?.();
+      closed = true;
       window.removeEventListener("message", onWindowMessage);
       frame.iframe.removeEventListener("load", onLoad);
       unsubscribe();

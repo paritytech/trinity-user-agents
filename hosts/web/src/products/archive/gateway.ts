@@ -78,6 +78,80 @@ const CACHE_BYTES = 8 * 1024 * 1024;
 /** The part of `fetch` the gateway reader uses, so a test can stand in for it. */
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
+/** What {@link gatewayBlocks} did for one load, counted as it happens. */
+export interface RawCounts {
+  /** Requests sent, retries included. */
+  requests: number;
+  /** Blocks that arrived and matched their identifier. */
+  blocks: number;
+  /** Bytes of those blocks. */
+  bytes: number;
+  /** Blocks asked for a second time. */
+  retries: number;
+  /** Reads answered from the blocks the load keeps. */
+  cacheHits: number;
+  /** Reads that waited on a request already open for the same block. */
+  joined: number;
+}
+
+/** Counts for a load that has read nothing yet. */
+export function rawCounts(): RawCounts {
+  return {
+    requests: 0,
+    blocks: 0,
+    bytes: 0,
+    retries: 0,
+    cacheHits: 0,
+    joined: 0,
+  };
+}
+
+/**
+ * How a CAR stream ended. `refused`: the gateway answered with something
+ * other than a 2xx CAR. `failed`: the request did not complete, or the
+ * stream broke off, held a block that did not match, named another root or
+ * passed a limit.
+ */
+export type CarEnd = "complete" | "slow" | "refused" | "failed" | "cancelled";
+
+/** What {@link carBlocks} did for one load, counted as it happens. */
+export interface CarCounts {
+  /** Whether the stream was asked for. */
+  requested: boolean;
+  /** The gateway's HTTP status, once it answered. */
+  status?: number;
+  /** Milliseconds from the request to the first body byte. */
+  firstByteMs?: number;
+  /** Body bytes that arrived. */
+  bytes: number;
+  /** Blocks the stream brought, each matched to its identifier. */
+  blocks: number;
+  /** Milliseconds the stream ran, once it ended. */
+  ms?: number;
+  /** Why it ended; absent while it runs. */
+  end?: CarEnd;
+  /** The error that ended it, for `refused` and `failed`. */
+  reason?: string;
+  /** The hedge time passed while the stream ran, so reads stopped waiting for it. */
+  hedged: boolean;
+  /** Reads the stream answered. */
+  fromCar: number;
+  /** Reads sent to the block-by-block reader instead. */
+  fallback: number;
+}
+
+/** Counts for a stream not yet asked for. */
+export function carCounts(): CarCounts {
+  return {
+    requested: false,
+    bytes: 0,
+    blocks: 0,
+    hedged: false,
+    fromCar: 0,
+    fallback: 0,
+  };
+}
+
 /**
  * Fetch one block from the gateway and check it against `cid`. The gateway is
  * a transport: what it sends is trusted only as far as the hash says.
@@ -90,12 +164,13 @@ export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
  * A verified block is kept, up to a small byte cap, and a block already being
  * fetched is not asked for again, so links that repeat a block cost one
  * request. The returned reader belongs to one load, whose reads share one
- * signal.
+ * signal. What it does is added to `counts`.
  */
 export function gatewayBlocks(
   gateway: string,
   limits: Pick<ArchiveLimits, "maxBlockBytes" | "blockTimeoutMs">,
   fetchFn: FetchLike = fetch,
+  counts: RawCounts = rawCounts(),
 ): GetBlock {
   const cache = new Map<string, Uint8Array>();
   const fetching = new Map<string, Promise<Uint8Array>>();
@@ -108,10 +183,14 @@ export function gatewayBlocks(
   ): Promise<Uint8Array> {
     const url = new URL(`/ipfs/${cidToString(cid)}`, gateway);
     url.searchParams.set("format", "raw");
-    const attempt = () => requestBlock(url.href, limits, fetchFn, signal);
+    const attempt = () => {
+      counts.requests += 1;
+      return requestBlock(url.href, limits, fetchFn, signal);
+    };
     const outcome = await requests(async () => {
       const first = await attempt();
       if (!("retry" in first)) return first;
+      counts.retries += 1;
       if (first.afterMs > 0) await pause(first.afterMs, signal);
       return attempt();
     });
@@ -120,6 +199,8 @@ export function gatewayBlocks(
       throw new Error(
         "the gateway sent a block that does not match its identifier",
       );
+    counts.blocks += 1;
+    counts.bytes += outcome.block.length;
     if (cachedBytes + outcome.block.length <= CACHE_BYTES) {
       cache.set(cidKey(cid), outcome.block);
       cachedBytes += outcome.block.length;
@@ -130,9 +211,15 @@ export function gatewayBlocks(
   return (cid: Cid, signal?: AbortSignal) => {
     const key = cidKey(cid);
     const hit = cache.get(key);
-    if (hit !== undefined) return Promise.resolve(hit);
+    if (hit !== undefined) {
+      counts.cacheHits += 1;
+      return Promise.resolve(hit);
+    }
     const pending = fetching.get(key);
-    if (pending !== undefined) return pending;
+    if (pending !== undefined) {
+      counts.joined += 1;
+      return pending;
+    }
     const read = fetchBlock(cid, signal).finally(() => fetching.delete(key));
     fetching.set(key, read);
     return read;
@@ -265,6 +352,27 @@ export async function readCapped(
 export const FETCH_CAR = true;
 const CAR_TYPE = "application/vnd.ipld.car";
 
+/** Why a load does not ask for a CAR stream. */
+export type CarSkip =
+  /** {@link FETCH_CAR} is off. */
+  | "off"
+  /**
+   * The blocks come from the host's own origin, such as Contact Chat's
+   * worker archive or a shipped seed. A static server there answers a CAR
+   * request with a raw block, so the request would only be refused.
+   */
+  | "host-origin";
+
+/** Why a load from `gateway` does not ask for a CAR stream, or null when it does. */
+export function carSkip(
+  gateway: string,
+  origin: string,
+  enabled: boolean = FETCH_CAR,
+): CarSkip | null {
+  if (!enabled) return "off";
+  return gateway === origin ? "host-origin" : null;
+}
+
 /**
  * Read the DAG under `root` from one `?format=car` stream, and the blocks the
  * stream does not bring from `fallback`.
@@ -286,7 +394,8 @@ const CAR_TYPE = "application/vnd.ipld.car";
  * The stream holds at most `maxBytes` of blocks, the size of the largest
  * archive file, as well as `maxBlocks` and `maxBlockBytes`. A site with more
  * block bytes than that gets the rest through `fallback`. The traversal still
- * charges each reference to its own limits.
+ * charges each reference to its own limits. What the stream and the reads did
+ * is added to `counts`.
  */
 export function carBlocks(
   root: Cid,
@@ -302,6 +411,7 @@ export function carBlocks(
   >,
   fallback: GetBlock,
   fetchFn: FetchLike = fetch,
+  counts: CarCounts = carCounts(),
 ): GetBlock {
   const received = new Map<string, Uint8Array>();
   const waiting = new Map<string, (() => void)[]>();
@@ -321,15 +431,24 @@ export function carBlocks(
 
   async function stream(signal: AbortSignal | undefined): Promise<void> {
     const stop = new AbortController();
+    const started = performance.now();
+    counts.requested = true;
     let arrived = 0;
+    let slow = false;
     let pace: ReturnType<typeof setInterval> | undefined;
     let hedge: ReturnType<typeof setTimeout> | undefined;
     try {
       pace = setInterval(() => {
-        if (arrived < limits.carWindowBytes) stop.abort();
+        if (arrived < limits.carWindowBytes) {
+          slow = true;
+          stop.abort();
+        }
         arrived = 0;
       }, limits.carWindowMs);
-      hedge = setTimeout(release, limits.carHedgeMs);
+      hedge = setTimeout(() => {
+        counts.hedged = true;
+        release();
+      }, limits.carHedgeMs);
       const url = new URL(`/ipfs/${cidToString(root)}`, gateway);
       url.searchParams.set("format", "car");
       const body = carBody(
@@ -338,20 +457,31 @@ export function carBlocks(
         signal === undefined
           ? stop.signal
           : AbortSignal.any([signal, stop.signal]),
-        (bytes) => (arrived += bytes),
+        counts,
+        (bytes) => {
+          counts.firstByteMs ??= performance.now() - started;
+          counts.bytes += bytes;
+          arrived += bytes;
+        },
       );
       const blocks = readCarStream(body, root, limits);
       for await (const { cid, data } of blocks) {
         const key = cidKey(cid);
         received.set(key, data);
+        counts.blocks += 1;
         wake(key);
       }
-    } catch {
+      counts.end = "complete";
+    } catch (error) {
       // However the stream ended, the reads it did not answer go to the fallback.
+      counts.end ??= slow ? "slow" : signal?.aborted ? "cancelled" : "failed";
+      if (counts.end === "failed")
+        counts.reason = error instanceof Error ? error.message : String(error);
     } finally {
       clearInterval(pace);
       clearTimeout(hedge);
       stop.abort();
+      counts.ms = performance.now() - started;
       release();
     }
   }
@@ -363,24 +493,32 @@ export function carBlocks(
       await new Promise<void>((resolve) =>
         waiting.set(key, [...(waiting.get(key) ?? []), resolve]),
       );
-    return received.get(key) ?? fallback(cid, signal);
+    const block = received.get(key);
+    if (block !== undefined) {
+      counts.fromCar += 1;
+      return block;
+    }
+    counts.fallback += 1;
+    return fallback(cid, signal);
   };
 }
 
 /**
  * The body of a CAR response, chunk by chunk, with each chunk's size told to
- * `arrived`. Anything but a 2xx CAR is an error.
+ * `arrived`. Anything but a 2xx CAR is an error, and `refused` in `counts`.
  */
 async function* carBody(
   url: string,
   fetchFn: FetchLike,
   signal: AbortSignal,
+  counts: CarCounts,
   arrived: (bytes: number) => void,
 ): AsyncGenerator<Uint8Array> {
   const response = await fetchFn(url, {
     signal,
     headers: { accept: CAR_TYPE },
   });
+  counts.status = response.status;
   const type = response.headers
     .get("content-type")
     ?.split(";")[0]
@@ -388,6 +526,8 @@ async function* carBody(
     .toLowerCase();
   if (!response.ok || type !== CAR_TYPE || response.body === null) {
     await response.body?.cancel();
+    counts.end = "refused";
+    counts.reason = `the gateway answered ${response.status} ${type ?? "with no content type"}`;
     throw new Error("the gateway did not send a CAR");
   }
   const reader = response.body.getReader();

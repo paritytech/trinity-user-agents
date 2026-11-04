@@ -1,12 +1,20 @@
 import { parseCidString } from "../archive/cid.js";
 import {
   ARCHIVE_LIMITS,
-  FETCH_CAR,
   carBlocks,
+  carCounts,
+  carSkip,
   gatewayBlocks,
   loadArchive,
   loadSite,
+  rawCounts,
 } from "../archive/gateway.js";
+import {
+  type ProductLoadSummary,
+  type ReadTiming,
+  postLoadSummary,
+  timeReads,
+} from "../load-observer.js";
 import { hostBase, parseMountScope } from "./mount.js";
 import { archivePath } from "./serve.js";
 import { storeArchive } from "./store.js";
@@ -64,6 +72,24 @@ async function startWorker(scope: string): Promise<void> {
   });
 }
 
+/** What this load has counted so far, posted once when it ends. */
+const counted: Omit<ProductLoadSummary, "outcome" | "totalMs"> = {};
+const loaderStart = performance.now();
+
+/** Tell the host what this load did, once, before the frame moves on or stops. */
+function summarize(
+  outcome: ProductLoadSummary["outcome"],
+  reason?: string,
+): void {
+  if (window.parent === window) return;
+  postLoadSummary({
+    ...counted,
+    outcome,
+    totalMs: performance.now() - loaderStart,
+    ...(reason === undefined ? {} : { reason }),
+  });
+}
+
 async function load(): Promise<void> {
   if (window.parent === window)
     throw new Error("The loader runs only inside the host, never on its own.");
@@ -99,38 +125,73 @@ async function load(): Promise<void> {
     throw new Error("The entry is not a path inside the content.");
 
   report("loading", "Starting the product worker.");
+  const workerStart = performance.now();
   await startWorker(scope);
+  counted.workerMs = performance.now() - workerStart;
 
-  const { reused } = await storeArchive(
+  const { reused, files, storeMs } = await storeArchive(
     cid,
     location.origin,
     async () => {
       report("loading", `Fetching ${cid} from ${gateway.origin}.`);
-      const raw = gatewayBlocks(gateway.origin, ARCHIVE_LIMITS);
-      const blocks = FETCH_CAR
-        ? carBlocks(root, gateway.origin, ARCHIVE_LIMITS, raw)
-        : raw;
-      const { files } = await (kind === "car" ? loadArchive : loadSite)(
-        cid,
-        blocks,
+      const loadStart = performance.now();
+      const timing: ReadTiming = { reads: 0, waitMs: 0 };
+      const rawBlocks = gatewayBlocks(
+        gateway.origin,
         ARCHIVE_LIMITS,
-        undefined,
-        entry,
+        fetch,
+        (counted.raw = rawCounts()),
       );
-      report("loading", `Verified ${files.size} files.`);
-      return files;
+      const skip = carSkip(gateway.origin, location.origin);
+      if (skip !== null) counted.carSkipped = skip;
+      const blocks = timeReads(
+        skip === null
+          ? carBlocks(
+              root,
+              gateway.origin,
+              ARCHIVE_LIMITS,
+              rawBlocks,
+              fetch,
+              (counted.car = carCounts()),
+            )
+          : rawBlocks,
+        loadStart,
+        timing,
+      );
+      try {
+        const { files } = await (kind === "car" ? loadArchive : loadSite)(
+          cid,
+          blocks,
+          ARCHIVE_LIMITS,
+          undefined,
+          entry,
+        );
+        report("loading", `Verified ${files.size} files.`);
+        return files;
+      } finally {
+        counted.loadMs = performance.now() - loadStart;
+        counted.reads = timing.reads;
+        if (kind === "site") counted.waitMs = timing.waitMs;
+        else if (timing.lastBlockMs !== undefined)
+          counted.fetchMs = timing.lastBlockMs;
+      }
     },
     { caches, locks: navigator.locks },
   );
+  if (files !== null) counted.files = files;
+  if (storeMs !== undefined) counted.storeMs = storeMs;
   report(
     "loading",
     reused
       ? "Using the verified copy. Starting the product."
       : "Starting the product.",
   );
+  summarize(reused ? "cached" : "fetched");
   location.replace(start.href);
 }
 
-load().catch((error: unknown) =>
-  report("error", error instanceof Error ? error.message : String(error)),
-);
+load().catch((error: unknown) => {
+  const detail = error instanceof Error ? error.message : String(error);
+  report("error", detail);
+  summarize("failed", detail);
+});
