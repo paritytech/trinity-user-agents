@@ -51,6 +51,11 @@ export async function connectNetwork(config: NetworkConfig): Promise<Network> {
     bulletin: chains.bulletin as HexString,
   };
   chains.free();
+  // Asset Hub goes through its RPC node, as the native hosts reach it: the
+  // light client cannot validate the PGAS claim against Asset Hub (its call
+  // proof misses entries), so it drops the claim before broadcast. Asset Hub
+  // answers are then trusted from that node, not checked by the light client.
+  builder.addRpcChain(genesis.assetHub, config.dotns.assetHubRpc);
   const provider = builder.build();
 
   const open = new Set<JsonRpcConnection>();
