@@ -4,14 +4,15 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import io.paritytech.polkadotapp.database.model.ProductIntegrationLocal
 import io.paritytech.polkadotapp.database.model.ProductLocal
 import kotlinx.coroutines.flow.Flow
 
 @Dao
-interface ProductIntegrationDao {
+abstract class ProductIntegrationDao {
     @Query("SELECT * FROM product_integrations WHERE productId = :productId")
-    fun observeByProduct(productId: String): Flow<List<ProductIntegrationLocal>>
+    abstract fun observeByProduct(productId: String): Flow<List<ProductIntegrationLocal>>
 
     @Query(
         """
@@ -20,20 +21,25 @@ interface ProductIntegrationDao {
         WHERE pi.type = :type
         """
     )
-    fun observeProductsByIntegrationType(type: String): Flow<List<ProductLocal>>
+    abstract fun observeProductsByIntegrationType(type: String): Flow<List<ProductLocal>>
 
     @Query("SELECT * FROM product_integrations WHERE productId = :productId AND type = :type")
-    suspend fun get(productId: String, type: String): ProductIntegrationLocal?
+    abstract suspend fun get(productId: String, type: String): ProductIntegrationLocal?
 
     @Query("SELECT * FROM product_integrations WHERE type = :type")
-    fun observeByType(type: String): Flow<List<ProductIntegrationLocal>>
+    abstract fun observeByType(type: String): Flow<List<ProductIntegrationLocal>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insert(integration: ProductIntegrationLocal)
+    abstract suspend fun insert(integration: ProductIntegrationLocal)
 
     @Query("DELETE FROM product_integrations WHERE productId = :productId AND type = :type")
-    suspend fun delete(productId: String, type: String)
+    abstract suspend fun delete(productId: String, type: String)
 
     @Query("DELETE FROM product_integrations WHERE productId = :productId")
-    suspend fun deleteAllByProduct(productId: String)
+    abstract suspend fun deleteAllByProduct(productId: String)
+
+    @Transaction
+    open suspend fun withTransaction(action: suspend () -> Unit) {
+        return action()
+    }
 }

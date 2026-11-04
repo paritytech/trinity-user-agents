@@ -64,6 +64,19 @@ struct LeaveChatServiceTests {
         #expect(cleanupService.cleanupCount == 0)
     }
 
+    /// The room and the product go in one save: a failure between two separate writes would leave
+    /// the product installed without rooms, and its worker would boot only to recreate the room.
+    @Test func leavingTheLastRoomDeletesItAndTheProductInOneSave() async throws {
+        try await saveProduct()
+        let room = try await saveRoom(roomId)
+        let writerSaves = try await WriterSaveCounter(facade: facade)
+
+        try await makeService().leaveChat(room)
+
+        #expect(writerSaves.count == 1)
+        #expect(try await storedProduct() == nil)
+    }
+
     /// The other rooms still need the product's worker, so the product stays installed.
     @Test func leavingOneRoomOfSeveralKeepsTheProduct() async throws {
         try await saveProduct()
@@ -106,7 +119,6 @@ private extension LeaveChatServiceTests {
             outboxService: StubLeaveOutbox(),
             allowanceCleanupService: cleanupService,
             signingConsentStore: consentStore(),
-            productRepository: productRepository,
             storageFacade: facade
         )
     }
@@ -194,6 +206,37 @@ private extension LeaveChatServiceTests {
         try await productRepository
             .fetchOperation(by: { extensionId }, options: RepositoryFetchOptions())
             .asyncExecute()
+    }
+}
+
+/// Counts the saves of the facade's writer context from creation on.
+private final class WriterSaveCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var saves = 0
+    private var observer: NSObjectProtocol?
+
+    var count: Int {
+        lock.withLock { saves }
+    }
+
+    init(facade: StorageFacadeProtocol) async throws {
+        let writer = try await facade.databaseService.performWrite { context in context }
+
+        observer = NotificationCenter.default.addObserver(
+            forName: .NSManagedObjectContextDidSave,
+            object: writer,
+            queue: nil
+        ) { [weak self] _ in
+            self?.recordSave()
+        }
+    }
+
+    deinit {
+        observer.map(NotificationCenter.default.removeObserver)
+    }
+
+    private func recordSave() {
+        lock.withLock { saves += 1 }
     }
 }
 

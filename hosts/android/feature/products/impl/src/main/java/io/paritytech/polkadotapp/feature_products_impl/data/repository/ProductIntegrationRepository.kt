@@ -25,6 +25,9 @@ interface ProductIntegrationRepository {
     suspend fun uninstall(productId: ProductId, type: IntegrationType)
 
     suspend fun uninstallAll(productId: ProductId)
+
+    /** Runs [action] in one database transaction, which also covers writes through other repositories. */
+    suspend fun <R> withTransaction(action: suspend () -> R): R
 }
 
 @Singleton
@@ -64,6 +67,14 @@ class RealProductIntegrationRepository @Inject constructor(
 
     override suspend fun uninstallAll(productId: ProductId) {
         dao.deleteAllByProduct(productId.value)
+    }
+
+    override suspend fun <R> withTransaction(action: suspend () -> R): R {
+        var result: R? = null
+        dao.withTransaction { result = action() }
+
+        @Suppress("UNCHECKED_CAST")
+        return result as R
     }
 
     private fun IntegrationType.toLocal(): String = when (this) {

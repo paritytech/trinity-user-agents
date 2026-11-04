@@ -7,7 +7,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIntegrationRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.IntegrationType
-import kotlinx.coroutines.flow.first
 import javax.inject.Inject
 
 interface ProductChatMenuInteractor {
@@ -21,13 +20,16 @@ class RealProductChatMenuInteractor @Inject constructor(
 ) : ProductChatMenuInteractor {
     override suspend fun removeChat(productId: ProductId, chatId: ChatId): Result<Unit> {
         return runCatching {
-            deleteRoomUseCase.invoke(chatId)
+            productIntegrationRepository.withTransaction {
+                deleteRoomUseCase.invoke(chatId)
 
-            // The integration keeps the product's worker driving its other rooms. With none
-            // left it would only boot to recreate the room the user just removed.
-            val remainingRooms = chatRoomRepository.subscribeRoomsByExtension(productId.toChatExtensionId()).first()
-            if (remainingRooms.isEmpty()) {
-                productIntegrationRepository.uninstall(productId, IntegrationType.Chat)
+                // The integration keeps the product's worker driving its other rooms. With none left
+                // it would only boot to recreate the room the user just removed, so the check and the
+                // uninstall share the room's transaction.
+                val remainingRooms = chatRoomRepository.getRoomsByExtension(productId.toChatExtensionId())
+                if (remainingRooms.isEmpty()) {
+                    productIntegrationRepository.uninstall(productId, IntegrationType.Chat)
+                }
             }
         }
     }

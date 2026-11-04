@@ -2,7 +2,6 @@ import CoreData
 import Foundation
 import MessageExchangeKit
 import Operation_iOS
-import Products
 import SubstrateSdk
 
 protocol LeaveChatServicing {
@@ -16,21 +15,18 @@ final class LeaveChatService {
     private let removedChatRepository: AnyDataProviderRepository<Chat.RemovedChat>
     private let allowanceCleanupService: AllowanceCleanupServicing
     private let signingConsentStore: ChatSigningConsentStoring
-    private let productRepository: AnyDataProviderRepository<Product>
-    private let storageFacade: StorageFacadeProtocol
+    private let databaseService: CoreDataServiceProtocol
 
     init(
         outboxService: ChatOutboxServicing,
         allowanceCleanupService: AllowanceCleanupServicing,
         signingConsentStore: ChatSigningConsentStoring,
-        productRepository: AnyDataProviderRepository<Product>,
         storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared
     ) {
         self.outboxService = outboxService
         self.allowanceCleanupService = allowanceCleanupService
         self.signingConsentStore = signingConsentStore
-        self.productRepository = productRepository
-        self.storageFacade = storageFacade
+        databaseService = storageFacade.databaseService
 
         chatRepository = AnyDataProviderRepository(
             storageFacade.createRepository(
@@ -77,7 +73,7 @@ private extension LeaveChatService {
             }
         }
 
-        try await deleteChat(chat)
+        try await chatRepository.saveOperation({ [] }, { [chat.chatId.rawRepresentation] }).asyncExecute()
         try await contactRepository.saveOperation({ [] }, { [contact.identifier] }).asyncExecute()
 
         try await saveRemovedChatTombstoneIfNeeded(for: contact)
@@ -88,31 +84,28 @@ private extension LeaveChatService {
 
     /// A product learns of the removal from its room list, so nothing is sent. Its last chat takes
     /// the product with it, or the worker would boot again only to recreate the room; opening the
-    /// product's app installs it again.
+    /// product's app installs it again. The chat and the product are deleted in one write, so a
+    /// failure cannot leave the product installed without chats.
     func leaveRoom(_ chat: Chat.LocalModel, of extensionId: ChatExtension.Id) async throws {
-        try await deleteChat(chat)
+        let chatId = chat.chatId.rawRepresentation
 
-        guard try await chatCount(of: extensionId) == 0 else {
-            return
+        try await databaseService.performWrite { context in
+            if let room: CDChat = try context.first(for: .chat(for: chatId)) {
+                context.delete(room)
+            }
+
+            let remainingChats = CDChat.fetchRequest()
+            remainingChats.predicate = .chatsForExtension(extensionId)
+
+            guard try context.count(for: remainingChats) == 0 else {
+                return
+            }
+
+            let productMatch = NSPredicate(format: "%K == %@", #keyPath(CDProduct.identifier), extensionId)
+            if let product: CDProduct = try context.first(for: productMatch) {
+                context.delete(product)
+            }
         }
-
-        try await productRepository.saveOperation({ [] }, { [extensionId] }).asyncExecute()
-    }
-
-    func deleteChat(_ chat: Chat.LocalModel) async throws {
-        try await chatRepository.saveOperation({ [] }, { [chat.chatId.rawRepresentation] }).asyncExecute()
-    }
-
-    func chatCount(of extensionId: ChatExtension.Id) async throws -> Int {
-        let extensionChatRepository = AnyDataProviderRepository(
-            storageFacade.createRepository(
-                filter: .chatsForExtension(extensionId),
-                sortDescriptors: [],
-                mapper: AnyCoreDataMapper(ChatModelMapper())
-            )
-        )
-
-        return try await extensionChatRepository.fetchCountOperation().asyncExecute()
     }
 
     func saveRemovedChatTombstoneIfNeeded(for contact: Chat.Contact) async throws {
