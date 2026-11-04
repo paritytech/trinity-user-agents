@@ -19,16 +19,17 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import kotlinx.collections.immutable.toImmutableList
 import java.time.LocalDate
 import java.time.ZoneId
+import java.time.chrono.IsoChronology
 import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeFormatterBuilder
 import java.time.format.FormatStyle
 import java.util.Locale
 import kotlin.time.Instant
 import kotlin.time.toJavaInstant
-import android.text.format.DateFormat as AndroidDateFormat
 
 /**
  * Builds the CASH card's funding lists, dated against [now] in [zone], amounts in [asset] under its [symbol]. A
- * day this year reads by [dayPattern], the locale's own month-and-day.
+ * day this year reads by [dayPattern], the locale's medium date without its year.
  *
  * In progress, a delayed session comes first, then the newest; completed ones are newest first.
  */
@@ -38,7 +39,7 @@ class FundingActivityMapper(
     private val now: Instant,
     private val zone: ZoneId = ZoneId.systemDefault(),
     private val locale: Locale = Locale.getDefault(),
-    dayPattern: String = AndroidDateFormat.getBestDateTimePattern(locale, "MMMd"),
+    dayPattern: String = dayPattern(locale),
 ) {
     private val timeFormat = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withLocale(locale)
     private val dayFormat = DateTimeFormatter.ofPattern(dayPattern, locale)
@@ -127,3 +128,13 @@ class FundingActivityMapper(
 
     private fun localDate(instant: Instant): LocalDate = instant.toJavaInstant().atZone(zone).toLocalDate()
 }
+
+// The year with what ties it on: ", y" in "MMM d, y", ".y" in "dd.MM.y", "y年" in "y年M月d日", " y 'г'." in Russian and
+// " 'de' y" in Portuguese. Separators may be non-breaking spaces, which `\s` leaves out.
+private val YEAR_FIELD = Regex("""[\s\h]*(?:'[^']*'[\s\h]*)?[,./-]?[\s\h]*y+[年년]?(?:[\s\h]*'[^']*'\.?)?[\s\h]*[,./-]?[\s\h]*""")
+
+/** The locale's medium date with the year left out: "MMM d" in English, "d MMM" in British English. */
+internal fun dayPattern(locale: Locale): String =
+    DateTimeFormatterBuilder.getLocalizedDateTimePattern(FormatStyle.MEDIUM, null, IsoChronology.INSTANCE, locale)
+        .replace(YEAR_FIELD, " ")
+        .trim()
