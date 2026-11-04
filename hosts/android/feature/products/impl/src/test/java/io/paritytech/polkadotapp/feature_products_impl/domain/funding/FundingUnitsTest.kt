@@ -1,9 +1,12 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.FundingDirection
 import java.math.BigDecimal
+import java.text.Collator
 import java.util.Locale
 
 class FundingUnitsTest {
@@ -51,7 +54,28 @@ class FundingUnitsTest {
     }
 
     @Test
+    fun `only an ISO 3166 alpha-2 code is a country`() {
+        assertNull(FundingCountries.country("DEU", Locale.US))
+        assertNull(FundingCountries.country("1A", Locale.US))
+    }
+
+    @Test
+    fun `countries are listed by name in the user's language`() {
+        val names = FundingCountries.all(Locale.US).map { it.name }
+
+        assertTrue("Germany" in names)
+        assertEquals(names.sortedWith(Collator.getInstance(Locale.US)), names)
+    }
+
+    @Test
     fun `an unknown network is shown capitalised`() {
         assertEquals(listOf("Polkadot", "Avalanche"), listOf(FundingNetwork("polkadot"), FundingNetwork("avalanche")).map { it.name })
+    }
+
+    @Test
+    fun `networks and tokens show their first letter as a monogram`() {
+        assertEquals("P", FundingNetwork("polkadot").monogram)
+        assertEquals("A", FundingNetwork("avalanche").monogram)
+        assertEquals("U", FundingToken("usdt").monogram)
     }
 }
