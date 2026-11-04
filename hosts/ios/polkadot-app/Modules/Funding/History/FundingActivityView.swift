@@ -306,7 +306,10 @@ enum FundingActivityDate {
             return String(localized: .Funding.dateYesterdayAt(time: time))
         }
         if calendar.isDate(date, equalTo: now, toGranularity: .year) {
-            return String(localized: .Funding.dateDayAt(day: format(date, template: "MMMd", calendar: calendar), time: time))
+            return String(localized: .Funding.dateDayAt(
+                day: format(date, template: "MMMd", calendar: calendar),
+                time: time
+            ))
         }
         return format(date, template: "yMMMd", calendar: calendar)
     }
