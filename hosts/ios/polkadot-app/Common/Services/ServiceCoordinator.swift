@@ -327,7 +327,11 @@ extension ServiceCoordinator {
         // nothing left stops starting it.
         if FundingResumeMarker.inProgress {
             Task.detached {
-                _ = try? truapiRuntimeProvider.sharedRuntime()
+                do {
+                    _ = try truapiRuntimeProvider.sharedRuntime()
+                } catch {
+                    logger.error("[funding] starting the core to resume funding failed: \(error)")
+                }
             }
         }
 
