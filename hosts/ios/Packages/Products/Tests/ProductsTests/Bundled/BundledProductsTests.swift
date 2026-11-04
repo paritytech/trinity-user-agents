@@ -12,15 +12,16 @@ struct BundledProductsTests {
         try write("<html></html>", to: root, "provider.dot/app/index.html")
         try write("ignored", to: root, ".staging/worker/index.js")
 
+        let id = try ProductId("provider.dot")
         let products = BundledProducts(root: root)
-        let product = try #require(try products.product(ProductId("provider.dot")))
+        let product = try #require(try products.product(id))
 
         #expect(products.all.map(\.id.rawValue) == ["provider.dot"])
         #expect(product.workerManifest() == "{\"kind\":\"worker\"}")
         #expect(product.hasWorker())
         #expect(product.hasApp())
         #expect(ProductWorkerSource.bundled(product) == ProductWorkerSource(
-            contentId: ProductId("provider.dot"),
+            contentId: id,
             entryRelativePath: "worker/index.js"
         ))
     }

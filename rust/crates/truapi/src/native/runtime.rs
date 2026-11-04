@@ -11,7 +11,7 @@ use crate::platform::{
 	ProductContext, ProductId,
 };
 use parity_scale_codec::Encode;
-use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
+use truapi::{Bytes32, api::Permissions, latest, v01, versioned::IntoLatest};
 
 use super::{
 	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},
@@ -440,7 +440,7 @@ impl NativeTrUApiHostRuntime {
 	/// host asks for another `ask`, or calls [`Self::stop_funding_quotes`].
 	/// Returns the request id every list of this request carries, so the
 	/// host shows only the latest request's lists.
-	pub fn get_funding_quote(&self, intent: String, ask: v01::FundingQuoteAsk) -> u64 {
+	pub fn get_funding_quote(&self, intent: String, ask: latest::FundingQuoteAsk) -> u64 {
 		self.runtime.request_funding_quotes(&intent, ask)
 	}
 
