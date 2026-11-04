@@ -358,10 +358,10 @@ private extension TabBarFoldController {
 
     /// The only writer of the chrome's transform. The Edge glow and Grab zone follow the same progress.
     func writeTransform(_ transform: CGAffineTransform) {
-        let geometry = geometry
+        let drawbridge = DockletDrawbridge(geometry: geometry)
         foldSurface.transform = transform
-        outputs.glow(geometry.edgeGlowRect, glowOpacity)
-        outputs.grabZone(motion.destination == .tucked ? geometry.grabZoneRect : .zero)
+        outputs.glow(drawbridge.edgeGlowRect, glowOpacity)
+        outputs.grabZone(motion.destination == .tucked ? drawbridge.grabZoneRect : .zero)
     }
 
     /// Sends the content fade target to the chrome when a transition has changed it. Called only from the transition
@@ -391,7 +391,8 @@ private extension TabBarFoldController {
             angle: pose.angle,
             offset: CGVector(dx: pose.offset.dx - nudge.inset(at: CACurrentMediaTime()), dy: pose.offset.dy)
         )
-        return geometry.transform(nudgedPose, anchor: CGPoint(x: bounds.midX, y: bounds.midY))
+        let drawbridge = DockletDrawbridge(geometry: geometry)
+        return drawbridge.transform(nudgedPose, anchor: CGPoint(x: bounds.midX, y: bounds.midY))
     }
 
     func hiddenTransform() -> CGAffineTransform {

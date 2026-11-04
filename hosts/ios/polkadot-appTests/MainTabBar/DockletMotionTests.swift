@@ -10,6 +10,10 @@ struct DockletMotionTests {
         bounds: CGRect(x: 0, y: 0, width: 402, height: 874)
     )
 
+    private var drawbridge: DockletDrawbridge {
+        DockletDrawbridge(geometry: geometry)
+    }
+
     /// Drags from `touchX` by `translationX`, then releases with no velocity at time zero.
     private func release(from touchX: CGFloat, translationX: CGFloat, reduceMotion: Bool = false) -> DockletMotion {
         var motion = DockletMotion()
@@ -107,32 +111,32 @@ struct DockletMotionTests {
     @Test("Shown is the identity pose")
     func shownPoseIsIdentity() {
         let point = CGPoint(x: 306, y: 816)
-        #expect(point.applying(geometry.transform(progress: 0, anchor: .zero)) == point)
+        #expect(point.applying(drawbridge.transform(progress: 0, anchor: .zero)) == point)
     }
 
     @Test("Tucked turns the bar a quarter about the pivot with the leading end up, then slides it out")
     func tuckedPoseIsQuarterTurnAndSlide() {
-        let transform = geometry.transform(progress: 1, anchor: .zero)
-        let pivot = geometry.pivot
+        let transform = drawbridge.transform(progress: 1, anchor: .zero)
+        let pivot = drawbridge.pivot
         let leadingEnd = CGPoint(x: pivot.x - 100, y: pivot.y)
-        #expect(isNear(pivot.applying(transform), CGPoint(x: pivot.x + geometry.slideOut, y: pivot.y)))
+        #expect(isNear(pivot.applying(transform), CGPoint(x: pivot.x + drawbridge.slideOut, y: pivot.y)))
         #expect(isNear(
             leadingEnd.applying(transform),
-            CGPoint(x: pivot.x + geometry.slideOut, y: pivot.y - 100)
+            CGPoint(x: pivot.x + drawbridge.slideOut, y: pivot.y - 100)
         ))
     }
 
     @Test("Halfway slides an eighth of the slide out")
     func halfwaySlidesAnEighth() {
-        let pivot = geometry.pivot
-        let transform = geometry.transform(progress: 0.5, anchor: .zero)
-        #expect(isNear(pivot.applying(transform), CGPoint(x: pivot.x + geometry.slideOut / 8, y: pivot.y)))
+        let pivot = drawbridge.pivot
+        let transform = drawbridge.transform(progress: 0.5, anchor: .zero)
+        #expect(isNear(pivot.applying(transform), CGPoint(x: pivot.x + drawbridge.slideOut / 8, y: pivot.y)))
     }
 
     @Test("The Edge glow and Grab zone sit on the right edge at the tucked bar's top")
     func glowAndGrabZoneFollowTuckedBar() {
-        #expect(geometry.edgeGlowRect == CGRect(x: 378, y: 420, width: 24, height: 200))
-        #expect(geometry.grabZoneRect == CGRect(x: 355, y: 420, width: 47, height: 200))
+        #expect(drawbridge.edgeGlowRect == CGRect(x: 378, y: 420, width: 24, height: 200))
+        #expect(drawbridge.grabZoneRect == CGRect(x: 355, y: 420, width: 47, height: 200))
     }
 
     @Test("A drag past either limit is rubber banded, so it saturates")
@@ -179,7 +183,7 @@ struct DockletMotionTests {
 
     @Test("Out to 0.8, back to 0.55 and a pause settles shown, though 0.55 alone would tuck")
     func turnBackBelowHalfSettlesShown() {
-        let travel = geometry.hideTravel(touchX: 40)
+        let travel = drawbridge.hideTravel(touchX: 40)
         var motion = DockletMotion()
         motion.begin(touch: CGPoint(x: 40, y: 816), time: 0, geometry: geometry)
         _ = motion.move(location: CGPoint(x: 40 + 0.8 * travel, y: 816), translationX: 0.8 * travel, time: 0.1)
@@ -207,22 +211,22 @@ struct DockletMotionTests {
         var motion = DockletMotion()
         motion.begin(touch: CGPoint(x: 200, y: 816), time: 0, geometry: geometry)
         _ = motion.move(location: CGPoint(x: 230, y: 800), translationX: 0, time: 0.01)
-        let grabbed = CGPoint(x: 200, y: 816).applying(geometry.absolute(motion.pose(geometry: geometry)))
+        let grabbed = CGPoint(x: 200, y: 816).applying(drawbridge.absolute(motion.pose(geometry: geometry)))
         #expect(abs(grabbed.x - 230) < 0.5)
         #expect(abs(grabbed.y - 800) < 0.5)
     }
 
     @Test("A bar caught mid-settle follows a finger dragged back to where its progress reaches shown")
     func caughtBarFollowsFingerDraggedBack() {
-        var motion = release(from: 40, translationX: 0.6 * geometry.hideTravel(touchX: 40))
+        var motion = release(from: 40, translationX: 0.6 * drawbridge.hideTravel(touchX: 40))
         _ = motion.tick(now: 0.01)
         #expect(abs(motion.progress - 0.6) < 0.05)
-        let touch = CGPoint(x: 306, y: 816).applying(geometry.absolute(motion.pose(geometry: geometry)))
+        let touch = CGPoint(x: 306, y: 816).applying(drawbridge.absolute(motion.pose(geometry: geometry)))
         motion.begin(touch: touch, time: 0.01, geometry: geometry)
-        let travel = geometry.hideTravel(touchX: touch.x)
+        let travel = drawbridge.hideTravel(touchX: touch.x)
         let finger = CGPoint(x: touch.x - 0.6 * travel, y: touch.y)
         _ = motion.move(location: finger, translationX: -0.6 * travel, time: 0.02)
-        let grabbed = CGPoint(x: 306, y: 816).applying(geometry.absolute(motion.pose(geometry: geometry)))
+        let grabbed = CGPoint(x: 306, y: 816).applying(drawbridge.absolute(motion.pose(geometry: geometry)))
         #expect(abs(grabbed.x - finger.x) < 0.5)
         #expect(abs(grabbed.y - finger.y) < 0.5)
     }
@@ -232,7 +236,7 @@ struct DockletMotionTests {
         var motion = DockletMotion()
         motion.begin(touch: CGPoint(x: 200, y: 800), time: 0, geometry: geometry)
         _ = motion.move(location: CGPoint(x: 350, y: 830), translationX: 150, time: 0.01)
-        #expect(geometry.lowestY(motion.pose(geometry: geometry)) <= geometry.bounds.maxY + 1e-6)
+        #expect(drawbridge.lowestY(motion.pose(geometry: geometry)) <= geometry.bounds.maxY + 1e-6)
     }
 
     @Test("A bar caught mid-settle keeps the pose it was on screen with")
@@ -240,7 +244,7 @@ struct DockletMotionTests {
         var motion = release(from: 40, translationX: 200)
         _ = motion.tick(now: 0.05)
         let before = motion.pose(geometry: geometry)
-        let touch = CGPoint(x: 306, y: 816).applying(geometry.absolute(before))
+        let touch = CGPoint(x: 306, y: 816).applying(drawbridge.absolute(before))
         motion.begin(touch: touch, time: 0.05, geometry: geometry)
         #expect(isNear(motion.pose(geometry: geometry), before))
     }
@@ -433,7 +437,7 @@ struct DockletMotionTests {
 
     @Test("A Reduce Motion drag moves the bar with the finger, and only the release starts the fade")
     func reducedDragFollowsFingerUntilRelease() {
-        let travel = geometry.hideTravel(touchX: 40)
+        let travel = drawbridge.hideTravel(touchX: 40)
         var motion = DockletMotion()
         motion.begin(touch: CGPoint(x: 40, y: 816), time: 0, geometry: geometry)
         _ = motion.move(location: CGPoint(x: 40 + 0.5 * travel, y: 816), translationX: 0.5 * travel, time: 0.1)

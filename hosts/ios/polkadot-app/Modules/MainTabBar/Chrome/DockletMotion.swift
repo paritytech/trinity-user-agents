@@ -106,13 +106,14 @@ struct DockletMotion {
 
     /// Starts a drag at `touch`. A touch on a moving bar catches it where it is.
     mutating func begin(touch: CGPoint, time: TimeInterval, geometry: DockletGeometry) {
-        let travel = geometry.hideTravel(touchX: touch.x)
+        let drawbridge = DockletDrawbridge(geometry: geometry)
+        let travel = drawbridge.hideTravel(touchX: touch.x)
         let hold = DockletHold(
             touch: touch,
             progress: progress,
             travel: travel,
             screenPose: pose(geometry: geometry),
-            geometry: geometry
+            drawbridge: drawbridge
         )
         startDrag(touch: touch, time: time, travel: travel, grip: .hold(hold))
     }
@@ -120,8 +121,14 @@ struct DockletMotion {
     /// Starts a drag at a touch in the Grab zone, where the bar turns to point at the finger. A bar still settling
     /// toward tucked is caught where it is.
     mutating func beginAim(touch: CGPoint, time: TimeInterval, geometry: DockletGeometry) {
-        let aim = DockletAim(touch: touch, progress: progress, screenPose: pose(geometry: geometry), geometry: geometry)
-        startDrag(touch: touch, time: time, travel: geometry.hideTravel(touchX: touch.x), grip: .aim(aim))
+        let drawbridge = DockletDrawbridge(geometry: geometry)
+        let aim = DockletAim(
+            touch: touch,
+            progress: progress,
+            screenPose: pose(geometry: geometry),
+            drawbridge: drawbridge
+        )
+        startDrag(touch: touch, time: time, travel: drawbridge.hideTravel(touchX: touch.x), grip: .aim(aim))
     }
 
     /// Follows the finger. Returns a selection tick when the projected rest crosses a mark.
@@ -165,7 +172,7 @@ struct DockletMotion {
         if case let .fade(fade) = settle, fade.rest == .shown {
             return
         }
-        releaseExtra = heldPose.minus(geometry.plainPose(progress: progress))
+        releaseExtra = heldPose.minus(DockletDrawbridge(geometry: geometry).plainPose(progress: progress))
         unwindFactor = 1
     }
 
@@ -202,7 +209,8 @@ struct DockletMotion {
 
     /// The Docklet's pose now: the plain pose, or the held pose while a finger holds the bar, plus any unwinding.
     func pose(geometry: DockletGeometry) -> DockletPose {
-        let base = drag?.grip.pose(geometry: geometry) ?? geometry.plainPose(progress: progress)
+        let drawbridge = DockletDrawbridge(geometry: geometry)
+        let base = drag?.grip.pose(drawbridge: drawbridge) ?? drawbridge.plainPose(progress: progress)
         return base.plus(releaseExtra, scaledBy: unwindFactor)
     }
 
@@ -215,10 +223,10 @@ struct DockletMotion {
         case hold(DockletHold)
         case aim(DockletAim)
 
-        func pose(geometry: DockletGeometry) -> DockletPose {
+        func pose(drawbridge: DockletDrawbridge) -> DockletPose {
             switch self {
             case let .hold(hold):
-                hold.pose(geometry: geometry)
+                hold.pose(drawbridge: drawbridge)
             case let .aim(aim):
                 aim.pose()
             }

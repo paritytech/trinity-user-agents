@@ -98,7 +98,7 @@ struct DockletGlowProfileTests {
             dockFrame: CGRect(x: 10, y: 100, width: 382, height: 62),
             bounds: screen
         )
-        #expect(geometry.edgeGlowRect == CGRect(x: 378, y: 56, width: 24, height: 200))
+        #expect(DockletDrawbridge(geometry: geometry).edgeGlowRect == CGRect(x: 378, y: 56, width: 24, height: 200))
     }
 
     @Test("On a short screen the glow shortens to keep 8 pt above the bottom")
@@ -107,7 +107,7 @@ struct DockletGlowProfileTests {
             dockFrame: CGRect(x: 10, y: 600, width: 382, height: 62),
             bounds: CGRect(x: 0, y: 0, width: 402, height: 300)
         )
-        #expect(geometry.edgeGlowRect == CGRect(x: 378, y: 235, width: 24, height: 57))
+        #expect(DockletDrawbridge(geometry: geometry).edgeGlowRect == CGRect(x: 378, y: 235, width: 24, height: 57))
     }
 
     @Test("A grey keeps zero saturation")

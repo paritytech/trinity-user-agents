@@ -7,7 +7,7 @@ struct DockletAim {
     /// Distance the finger may travel from the grab before the grab's progress and pose have blended out.
     private static let blendDistance: CGFloat = 80
 
-    private let geometry: DockletGeometry
+    private let drawbridge: DockletDrawbridge
     private let touch: CGPoint
     private let startProgress: CGFloat
     /// The progress the finger aims at when it grabs the bar.
@@ -17,12 +17,12 @@ struct DockletAim {
     private var finger: CGPoint
     private(set) var progress: CGFloat
 
-    init(touch: CGPoint, progress: CGFloat, screenPose: DockletPose, geometry: DockletGeometry) {
-        self.geometry = geometry
+    init(touch: CGPoint, progress: CGFloat, screenPose: DockletPose, drawbridge: DockletDrawbridge) {
+        self.drawbridge = drawbridge
         self.touch = touch
         startProgress = progress
-        startAim = Self.aimedProgress(at: touch, progress: progress, geometry: geometry)
-        startResidual = screenPose.minus(geometry.plainPose(progress: progress))
+        startAim = Self.aimedProgress(at: touch, progress: progress, drawbridge: drawbridge)
+        startResidual = screenPose.minus(drawbridge.plainPose(progress: progress))
         finger = touch
         self.progress = progress
     }
@@ -30,13 +30,13 @@ struct DockletAim {
     /// Follows the finger to a new progress.
     mutating func track(finger location: CGPoint) {
         finger = location
-        let aimed = Self.aimedProgress(at: location, progress: progress, geometry: geometry)
+        let aimed = Self.aimedProgress(at: location, progress: progress, drawbridge: drawbridge)
         progress = (aimed + (startProgress - startAim) * blend).clampedToUnit
     }
 
     /// The plain pose at the progress, plus the grab's residual while the finger is near the grab point.
     func pose() -> DockletPose {
-        geometry.plainPose(progress: progress).plus(startResidual, scaledBy: blend)
+        drawbridge.plainPose(progress: progress).plus(startResidual, scaledBy: blend)
     }
 }
 
@@ -48,16 +48,16 @@ private extension DockletAim {
     }
 
     /// The aim solved twice, because the pivot slides out with progress and the first pass estimates that slide.
-    static func aimedProgress(at point: CGPoint, progress: CGFloat, geometry: DockletGeometry) -> CGFloat {
-        let estimate = rawProgress(at: point, progress: progress, geometry: geometry)
-        return rawProgress(at: point, progress: estimate, geometry: geometry)
+    static func aimedProgress(at point: CGPoint, progress: CGFloat, drawbridge: DockletDrawbridge) -> CGFloat {
+        let estimate = rawProgress(at: point, progress: progress, drawbridge: drawbridge)
+        return rawProgress(at: point, progress: estimate, drawbridge: drawbridge)
     }
 
     /// The progress at which the bar, turned about the pivot and slid out to `progress`, points at `point`.
-    static func rawProgress(at point: CGPoint, progress: CGFloat, geometry: DockletGeometry) -> CGFloat {
-        let pivot = geometry.pivot
-        let slidPivotX = pivot.x + geometry.plainPose(progress: progress).offset.dx
+    static func rawProgress(at point: CGPoint, progress: CGFloat, drawbridge: DockletDrawbridge) -> CGFloat {
+        let pivot = drawbridge.pivot
+        let slidPivotX = pivot.x + drawbridge.plainPose(progress: progress).offset.dx
         let angle = atan2(max(0, pivot.y - point.y), max(1, slidPivotX - point.x))
-        return angle / DockletGeometry.quarterTurn
+        return angle / DockletDrawbridge.quarterTurn
     }
 }

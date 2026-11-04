@@ -1,6 +1,6 @@
 import CoreGraphics
 
-/// The Docklet's pose: a turn about its pivot, then an offset. `DockletGeometry.absolute(_:)` turns it into a screen
+/// The Docklet's pose: a turn about its pivot, then an offset. `DockletDrawbridge.absolute(_:)` turns it into a screen
 /// transform.
 struct DockletPose: Equatable {
     static let zero = DockletPose(angle: 0, offset: .zero)
@@ -51,9 +51,9 @@ struct DockletHold {
     private var finger: CGPoint
     private var progress: CGFloat
 
-    init(touch: CGPoint, progress: CGFloat, travel: CGFloat, screenPose: DockletPose, geometry: DockletGeometry) {
-        let local = touch.applying(geometry.absolute(screenPose).inverted())
-        let reach = geometry.dockFrame.insetBy(dx: -Self.grabSlop, dy: -Self.grabSlop)
+    init(touch: CGPoint, progress: CGFloat, travel: CGFloat, screenPose: DockletPose, drawbridge: DockletDrawbridge) {
+        let local = touch.applying(drawbridge.absolute(screenPose).inverted())
+        let reach = drawbridge.geometry.dockFrame.insetBy(dx: -Self.grabSlop, dy: -Self.grabSlop)
         grabbed = reach.contains(local) ? local : nil
         zeroX = touch.x - progress * travel
         startAngle = screenPose.angle
@@ -68,14 +68,15 @@ struct DockletHold {
     }
 
     /// The held pose, or the plain pose when the grab missed the bar.
-    func pose(geometry: DockletGeometry) -> DockletPose {
+    func pose(drawbridge: DockletDrawbridge) -> DockletPose {
         guard let grabbed else {
-            return geometry.plainPose(progress: progress)
+            return drawbridge.plainPose(progress: progress)
         }
-        let floor = geometry.bounds.maxY + max(0, finger.y - geometry.bounds.maxY).rubberBanded(limit: Self.floorLimit)
-        let share = fittingTurnShare(grabbed: grabbed, allowedBottom: floor, geometry: geometry)
-        var pose = heldPose(grabbed: grabbed, turnShare: share, geometry: geometry)
-        let sink = geometry.lowestY(pose) - floor
+        let bounds = drawbridge.geometry.bounds
+        let floor = bounds.maxY + max(0, finger.y - bounds.maxY).rubberBanded(limit: Self.floorLimit)
+        let share = fittingTurnShare(grabbed: grabbed, allowedBottom: floor, drawbridge: drawbridge)
+        var pose = heldPose(grabbed: grabbed, turnShare: share, drawbridge: drawbridge)
+        let sink = drawbridge.lowestY(pose) - floor
         if sink > 0 {
             pose.offset.dy -= sink
         }
@@ -84,17 +85,18 @@ struct DockletHold {
 }
 
 private extension DockletHold {
-    func fittingTurnShare(grabbed: CGPoint, allowedBottom: CGFloat, geometry: DockletGeometry) -> CGFloat {
+    func fittingTurnShare(grabbed: CGPoint, allowedBottom: CGFloat, drawbridge: DockletDrawbridge) -> CGFloat {
         let fullShare = Self.turnShare
-        let fullPose = heldPose(grabbed: grabbed, turnShare: fullShare, geometry: geometry)
-        guard geometry.lowestY(fullPose) > allowedBottom else {
+        let fullPose = heldPose(grabbed: grabbed, turnShare: fullShare, drawbridge: drawbridge)
+        guard drawbridge.lowestY(fullPose) > allowedBottom else {
             return fullShare
         }
         var fitting: CGFloat = 0
         var overflowing = fullShare
         for _ in 0 ..< Self.fitSteps {
             let middle = (fitting + overflowing) / 2
-            if geometry.lowestY(heldPose(grabbed: grabbed, turnShare: middle, geometry: geometry)) <= allowedBottom {
+            let middlePose = heldPose(grabbed: grabbed, turnShare: middle, drawbridge: drawbridge)
+            if drawbridge.lowestY(middlePose) <= allowedBottom {
                 fitting = middle
             } else {
                 overflowing = middle
@@ -104,10 +106,10 @@ private extension DockletHold {
     }
 
     /// Turns by `turnShare` of the progress made since the grab, then offsets so the grabbed point sits at the target.
-    func heldPose(grabbed: CGPoint, turnShare: CGFloat, geometry: DockletGeometry) -> DockletPose {
-        let angle = startAngle + turnShare * DockletGeometry.quarterTurn * (progress - startProgress)
-        let target = targetPoint(grabbed: grabbed, geometry: geometry)
-        let pivot = geometry.pivot
+    func heldPose(grabbed: CGPoint, turnShare: CGFloat, drawbridge: DockletDrawbridge) -> DockletPose {
+        let angle = startAngle + turnShare * DockletDrawbridge.quarterTurn * (progress - startProgress)
+        let target = targetPoint(grabbed: grabbed, drawbridge: drawbridge)
+        let pivot = drawbridge.pivot
         let turned = CGPoint(x: grabbed.x - pivot.x, y: grabbed.y - pivot.y)
             .applying(CGAffineTransform(rotationAngle: angle))
         return DockletPose(
@@ -116,22 +118,22 @@ private extension DockletHold {
         )
     }
 
-    func targetPoint(grabbed: CGPoint, geometry: DockletGeometry) -> CGPoint {
-        let glowTop = geometry.glowTop
+    func targetPoint(grabbed: CGPoint, drawbridge: DockletDrawbridge) -> CGPoint {
+        let glowTop = drawbridge.glowTop
         let fingerX = finger.x >= zeroX
             ? finger.x
             : zeroX - (zeroX - finger.x).rubberBanded(limit: Self.wrongWayLimit)
         let fingerY = finger.y < glowTop
             ? glowTop - (glowTop - finger.y).rubberBanded(limit: Self.ceilingLimit)
             : finger.y
-        return CGPoint(x: fingerX + lead(grabbed: grabbed, geometry: geometry), y: fingerY)
+        return CGPoint(x: fingerX + lead(grabbed: grabbed, drawbridge: drawbridge), y: fingerY)
     }
 
     /// How far the bar leads the finger towards the right edge. The lead builds from the progress made since the
     /// grab, and the finger stays inside the bar's leading end.
-    func lead(grabbed: CGPoint, geometry: DockletGeometry) -> CGFloat {
+    func lead(grabbed: CGPoint, drawbridge: DockletDrawbridge) -> CGFloat {
         let cue = Self.leadDistance * (progress.smoothstepped - startProgress.smoothstepped)
-        let cap = grabbed.x - geometry.dockFrame.minX - Self.leadInset
+        let cap = grabbed.x - drawbridge.geometry.dockFrame.minX - Self.leadInset
         return max(0, min(cue, cap))
     }
 }
