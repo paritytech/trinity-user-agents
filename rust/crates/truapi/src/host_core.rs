@@ -1126,6 +1126,15 @@ impl SigningHostRuntime {
 		self.services.core_db()?.status().await
 	}
 
+	/// The image `reference` names, checked against its CID and the image policy.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn load_image(
+		&self,
+		reference: crate::ImageReference,
+	) -> Result<crate::LoadedImage, crate::ImageError> {
+		crate::image_loader::load_image(&self.services, &crate::time::RealTimer, reference).await
+	}
+
 	/// Build a product-facing runtime from this signing host.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.product_runtime"))]
 	pub fn product_runtime(
