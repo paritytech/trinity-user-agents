@@ -238,6 +238,15 @@ purse item keys are derived under with `set_installation_provider`, and the
 the database. `core_database_status()` reports the SQLite version, schema
 version and path. Web hosts do not compile the store.
 
+The database also holds the Pocket collection (`pocket_cards` module): the
+cards in the Pocket and the newest face of each. The host lists the cards it
+pins in `HostRuntimeConfig.pinned_pocket_cards`, adds the cards the user
+approves with `add_pocket_card`, and follows the collection with
+`observe_pocket_cards`. A card no longer pinned stays only if the user added
+it. The core keeps the newest face of a card from every
+`RenderContext::PocketCard` render, at most every two seconds and once more
+when the render stops, so a card has a face offline and at cold start.
+
 Secrets the database must not hold go to the host's `EncryptedStorage`: the
 Keychain on iOS, encrypted preferences on Android, a plaintext file in the CLI.
 It reads, writes and deletes values by key and cannot list them, so a feature
@@ -464,8 +473,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
 - `PermissionStatusHost`: report the OS status of a device capability without
   prompting, so a stored grant can be revalidated before it is acted on.
 - `PocketPlatform`: stream the product's Pocket card collection and remove a
-  card from it. The host owns the collection and decides which cards are
-  privileged.
+  card from it. Native hosts do not implement it: the core serves it from its
+  own database (see Core database). The CLI host passes an in-memory one.
 - `FundingPlatform`: show the native funding overlay for a session, with its
   direction and amount and the product that opened it, and report whether the
   user started or dismissed it. Installed with `set_funding_platform`; the

@@ -41,14 +41,8 @@ class RealPocketFaceSourceTest {
     private val streams = FakeStreams()
     private val source = RealPocketFaceSource(store, streams, NoImages())
 
-    // The store writes to Room, and the flow it feeds is shared into a ViewModel scope with no
-    // handler, so a failing write would take the process down rather than the card's freshness.
-    private class FailingStore(private val delegate: PocketCardStore) : PocketCardStore by delegate {
-        override suspend fun cacheFace(key: PocketCardKey, face: RendererNode) = throw IllegalStateException("disk full")
-    }
-
     @Test
-    fun `shows the cached face first, then every live face, and remembers the newest`() = runTest {
+    fun `shows the kept face first, then every live face`() = runTest {
         store.addCard(loyalty)
         val shown = mutableListOf<JsWidget>()
 
@@ -60,7 +54,6 @@ class RealPocketFaceSourceTest {
 
         assertEquals(listOf(loyalty.face, faceOf("live 1"), faceOf("live 2")).map { it.toJsWidget() }, shown)
         assertEquals("the live stream is opened once per face on screen", 1, streams.collectors)
-        assertEquals(faceOf("live 2"), store.cachedFace(loyalty.card.key))
         onScreen.cancel()
     }
 
@@ -82,44 +75,5 @@ class RealPocketFaceSourceTest {
         source.sendAction(loyalty.card.key, "stamp", "value".toByteArray())
 
         assertEquals(listOf(Triple(loyalty.card.key, "stamp", "value")), streams.actions)
-    }
-
-    @Test
-    fun `a face that cannot be kept is still drawn`() = runTest {
-        val shown = mutableListOf<JsWidget>()
-        val failing = RealPocketFaceSource(FailingStore(store), streams, NoImages())
-
-        val onScreen = failing.observeFace(loyalty.card.key).onEach { shown += it }.launchIn(this)
-        advanceUntilIdle()
-        streams.faces.emit(faceOf("live"))
-        advanceUntilIdle()
-
-        assertEquals(listOf(faceOf("live").toJsWidget()), shown)
-        onScreen.cancel()
-    }
-
-    // A face is what the user is waiting for; keeping it is bookkeeping. Drawing only after the row
-    // is written puts a SQLite transaction in front of every frame, and puts a face that throws
-    // while drawing into the database before anyone finds out.
-    @Test
-    fun `a face is drawn before it is kept`() = runTest {
-        val order = mutableListOf<String>()
-        val recording = object : PocketCardStore by store {
-            override suspend fun cacheFace(key: PocketCardKey, face: RendererNode) {
-                order += "kept"
-                store.cacheFace(key, face)
-            }
-        }
-
-        val onScreen = RealPocketFaceSource(recording, streams, NoImages())
-            .observeFace(loyalty.card.key)
-            .onEach { order += "drawn" }
-            .launchIn(this)
-        advanceUntilIdle()
-        streams.faces.emit(faceOf("live"))
-        advanceUntilIdle()
-
-        assertEquals(listOf("drawn", "kept"), order)
-        onScreen.cancel()
     }
 }
