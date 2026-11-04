@@ -8,42 +8,39 @@ status: draft
 
 ## Summary
 
-The core resolves product-selected image references into bytes that a host can render. The host identifies the surface and fetches raw bytes when requested, while the core validates them. This applies to Bulletin blobs, files in a product's Worker archive, inline `data:` images, and NFT item images.
+The core turns an image reference into verified bytes a host can draw, through one call. A reference is a Bulletin CID, or an on-chain source that names one, such as a dotNS profile record or NFT item metadata. The core reads the blob over its own Bulletin connection and checks it against the CID and an image policy.
 
 ## Motivation
 
-Today, iOS and Android independently resolve images for chat cards and Pocket faces through gateway conversions, without verifying that the returned bytes match the CID. This allows a gateway to substitute arbitrary images for those selected by a product. There are also no limits on image size, format, or dimensions. NFT purses ([#1509](https://github.com/paritytech/trinity-user-agents/issues/1509)) would introduce yet another resolver.
+Every feature that shows an image builds its own loader. iOS and Android each resolve chat card and Pocket face images, [core-resolved public profiles](https://github.com/paritytech/trinity-user-agents/pull/1709) adds a core resolver for contact avatars, and NFT purses ([#1509](https://github.com/paritytech/trinity-user-agents/issues/1509)) would add another. Each decides separately how bytes are fetched, verified, limited and cached. One entry point and one implementation replace them.
 
 ## Approach
 
-The host calls `load_image(product_id, surface, reference)` on the runtime through UniFFI or the WASM bridge. The core checks the reference against the surface's policy, requests the bytes through a host callback, validates them, and returns either `Ready` with the bytes and a content key or `Unavailable` with a reason. Failed images display a placeholder without affecting the card or tree. The renderer wire type remains unchanged.
+The host calls `load_image(reference)` on the runtime through UniFFI or the WASM bridge. The call is async and cancellable: cancelling it stops the fetch. It returns either `Ready` with the bytes and a content key, the blob's CID, or `Unavailable` with a reason. A failed image draws as a placeholder without affecting the card or tree. The renderer wire type remains unchanged.
 
-Accepted references and byte cap by surface:
+References the core loads, and where it finds each one's CID:
 
-| Surface | Accepted | Byte cap |
+| Reference | CID source | Drawn on |
 | --- | --- | --- |
-| Renderer tree (chat card, Pocket face, face preview) | Bulletin, archive | 2 MiB |
-| Chat room and bot icon | inline `data:` | 64 KiB |
-| NFT item (purse, purse confirmation, NFT chat message) | Bulletin, via item metadata | 2 MiB |
-| Product icon from the manifest | none until the core reads DAGs | none |
+| Bulletin CID | the reference itself | renderer tree (chat card, Pocket face, face preview), product icon from the manifest |
+| Username | the `profile` text record under the dotNS name | contact avatar |
+| NFT item | the item's Scarcity metadata | NFT purse, purse confirmation, NFT chat message |
 
 The design has four parts:
 
-- **Policy**: Before fetching, the core rejects references not allowed by the surface. All images must be PNG, JPEG, GIF, or WebP, identified by their bytes, within the surface's byte cap, and no larger than 4096 pixels per side. SVG is rejected everywhere.
-- **Bulletin**: References use raw blake2b-256 CIDs, which the core decodes into preimage keys and resolves through the existing `lookup_preimage`. Bytes that fail hash verification are discarded, preventing gateways from substituting images. Hosts limit reads to 2 MiB, the maximum size of a Bulletin blob.
-- **Archive and inline**: Archive files are loaded through a new optional host callback that receives the product, path, and surface byte cap. Inline `data:` images are decoded directly in the core. Neither source is hash-verified. Chat icon registration applies the same `data:` checks, so an icon that registers passes the same checks as one that draws. `https` icons stay accepted at registration and outside the loader.
-- **NFT items**: The core resolves Scarcity metadata in order of precedence: instance, item, then collection. Only the collection owner can write this metadata. The `image` key points to a Bulletin blob, while a Stash item's `manifest` key points to Bulletin JSON containing a picture and thumbnail. Both ultimately follow the Bulletin loading path.
-
-Verified Bulletin bytes are stored in a core cache inaccessible to products and cleared on sign-out. Hosts maintain their disk caches using the content key. iOS and Android implement `lookup_preimage` and the archive callback on the runtime bridge, and replace their Kingfisher and Coil fetchers with `load_image`.
+- **Policy**: Images must be PNG, JPEG, GIF or WebP, identified by their bytes, no larger than a Bulletin blob (2 MiB), and no larger than 4096 pixels per side. SVG is rejected everywhere. When the source declares a format, as a manifest icon or a profile record does, bytes in another format are rejected.
+- **Bulletin**: Only raw blake2b-256 CIDs load. The core decodes the CID into its preimage key and reads the blob with `bitswap_v1_get` over the Bulletin connection it already holds for preimage submission. Bytes that do not hash to the key are discarded.
+- **On-chain sources**: For a username, the core reads the `profile` record as [core-resolved public profiles](https://github.com/paritytech/trinity-user-agents/pull/1709) defines it. For an NFT item, the core resolves Scarcity metadata in order of precedence: instance, item, then collection. Only the collection owner can write this metadata. The `image` key names a Bulletin blob, while a Stash item's `manifest` key names Bulletin JSON containing a picture and thumbnail. The caller can ask for chain state to be read again rather than served from cache.
+- **Cache**: Verified bytes are kept in a core cache keyed by CID, inaccessible to products and cleared on sign-out. Hosts key their disk caches by the content key.
 
 ## Compatibility
 
-This introduces breaking changes for products and host app testers. AVIF and non-base64 inline icons fail registration as soon as the core ships. Once hosts adopt the loader, SVG, non-raw-blake2b-256 Bulletin CIDs, and images exceeding the byte caps will no longer render. Existing host code still compiles without changes.
+This introduces breaking changes for products and host app testers. Once hosts adopt the loader, SVG, Bulletin CIDs other than raw blake2b-256, and images over 2 MiB no longer render. The core loader and the iOS and Android switch from their Kingfisher and Coil fetchers to `load_image` merge together.
 
-This also amends [unified-renderer.md](unified-renderer.md), where `ImageSource` lists SVG and fetches any CID through the gateway.
+This also amends [unified-renderer.md](unified-renderer.md), where `ImageSource` lists SVG and fetches any CID through the gateway, and [core-resolved public profiles](https://github.com/paritytech/trinity-user-agents/pull/1709), whose avatars load through `load_image`.
 
 ## Trade-offs
 
-- Archive and `data:` images are validated but not hash-verified. Products requiring immutable images should use Bulletin.
-- Images exceeding a single Bulletin transaction, including manifest product icons, remain unsupported until the core can read DAGs.
-- Dropped: HTTP fetching in the core, which has no HTTP client; host-side byte verification; and widening the renderer wire type in place, which would cause deployed hosts to reject entire trees containing unknown variants.
+- Archive images in a renderer tree and inline `data:` chat icons stay outside the loader. Moving archive resolution into the core is a separate RFC.
+- Images stored as a DAG rather than a single Bulletin blob do not load until the core can read DAGs.
+- Dropped: HTTP fetching in the core, which has no HTTP client; reading Bulletin through the host's `lookup_preimage`, which iOS and Android answer from an IPFS gateway; host-side byte verification; and widening the renderer wire type in place, which would cause deployed hosts to reject entire trees containing unknown variants.
