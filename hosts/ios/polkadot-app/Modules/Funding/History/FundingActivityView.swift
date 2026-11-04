@@ -306,9 +306,9 @@ enum FundingActivityDate {
             return String(localized: .Funding.dateYesterdayAt(time: time))
         }
         if calendar.isDate(date, equalTo: now, toGranularity: .year) {
-            return String(localized: .Funding.dateDayAt(day: format(date, "MMM d", calendar: calendar), time: time))
+            return String(localized: .Funding.dateDayAt(day: format(date, template: "MMMd", calendar: calendar), time: time))
         }
-        return format(date, "MMM d, yyyy", calendar: calendar)
+        return format(date, template: "yMMMd", calendar: calendar)
     }
 
     private static func isYesterday(_ date: Date, now: Date, calendar: Calendar) -> Bool {
@@ -316,12 +316,13 @@ enum FundingActivityDate {
         return calendar.isDate(date, inSameDayAs: yesterday)
     }
 
-    private static func format(_ date: Date, _ pattern: String, calendar: Calendar) -> String {
+    /// `template` names the fields; the locale orders and punctuates them.
+    private static func format(_ date: Date, template: String, calendar: Calendar) -> String {
         let formatter = DateFormatter()
         formatter.calendar = calendar
         formatter.locale = calendar.locale ?? .current
         formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = pattern
+        formatter.setLocalizedDateFormatFromTemplate(template)
         return formatter.string(from: date)
     }
 }
