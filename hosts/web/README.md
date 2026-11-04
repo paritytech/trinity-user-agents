@@ -168,10 +168,11 @@ IPFS gateway and checked, and it is served from a path of this host. The product
    the site's directory, stored as one chunked UnixFS file. A website is a UnixFS directory. Both open. A record that is
    neither is skipped and listed.
 3. It opens the loader, `<base>truapi-sandbox/index.html`, in the product frame. The loader registers a service worker
-   for the mount `<base>product/<wallet>/<product>/<content>/`, fetches the blocks with `?format=raw`, checks each one
-   against its CID, unpacks the site in memory and stores the files in Cache Storage under the content id. Then it moves
-   the frame to the start path inside the mount. The worker serves the files as they are, with their type and no
-   sniffing.
+   for the mount `<base>product/<wallet>/<product>/<content>/`, fetches the blocks with `?format=raw`, up to 6 at a
+   time, and asks once more for a block whose request times out, fails on the network, or gets status 408, 429, 500,
+   502, 503 or 504, checks each one against its CID, unpacks the site in memory and stores the files in Cache Storage
+   under the content id. Then it moves the frame to the start path inside the mount. The worker serves the files as they
+   are, with their type and no sniffing.
 
 The mount path holds a hash of the wallet id, a readable form of the product id with its hash, and the content id. A
 different wallet, product or content is a different mount, with its own worker. The same wallet opening the same content
