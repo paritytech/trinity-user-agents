@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 73,
-    "identityHash": "d9cd159dd7b647bbcefe9d834edd08c1",
+    "identityHash": "9cf779237fece3fd3a27b46c281da020",
     "entities": [
       {
         "tableName": "product_funding_operations",
@@ -3111,175 +3111,11 @@
             ]
           }
         ]
-      },
-      {
-        "tableName": "pocket_cards",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`productId` TEXT NOT NULL, `cardId` TEXT NOT NULL, `title` TEXT NOT NULL, PRIMARY KEY(`productId`, `cardId`))",
-        "fields": [
-          {
-            "fieldPath": "productId",
-            "columnName": "productId",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "cardId",
-            "columnName": "cardId",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "title",
-            "columnName": "title",
-            "affinity": "TEXT",
-            "notNull": true
-          }
-        ],
-        "primaryKey": {
-          "autoGenerate": false,
-          "columnNames": [
-            "productId",
-            "cardId"
-          ]
-        }
-      },
-      {
-        "tableName": "pocket_card_faces",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`productId` TEXT NOT NULL, `cardId` TEXT NOT NULL, `face` BLOB NOT NULL, PRIMARY KEY(`productId`, `cardId`))",
-        "fields": [
-          {
-            "fieldPath": "productId",
-            "columnName": "productId",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "cardId",
-            "columnName": "cardId",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "face",
-            "columnName": "face",
-            "affinity": "BLOB",
-            "notNull": true
-          }
-        ],
-        "primaryKey": {
-          "autoGenerate": false,
-          "columnNames": [
-            "productId",
-            "cardId"
-          ]
-        }
-      },
-      {
-        "tableName": "product_funding_records",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`intent` TEXT NOT NULL, `direction` TEXT NOT NULL, `rail` TEXT, `asset` TEXT, `providerId` TEXT, `requestedPlanks` TEXT, `settledPlanks` TEXT, `outcome` TEXT NOT NULL, `failureCode` TEXT, `failureMessage` TEXT, `payout` TEXT, `payoutFailureReason` TEXT, `refundedPlanks` TEXT, `transactionId` TEXT, `reference` TEXT, `openedAtMillis` INTEGER NOT NULL, `settledAtMillis` INTEGER NOT NULL, PRIMARY KEY(`intent`))",
-        "fields": [
-          {
-            "fieldPath": "intent",
-            "columnName": "intent",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "direction",
-            "columnName": "direction",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "rail",
-            "columnName": "rail",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "asset",
-            "columnName": "asset",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "providerId",
-            "columnName": "providerId",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "requestedPlanks",
-            "columnName": "requestedPlanks",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "settledPlanks",
-            "columnName": "settledPlanks",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "outcome",
-            "columnName": "outcome",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "failureCode",
-            "columnName": "failureCode",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "failureMessage",
-            "columnName": "failureMessage",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "payout",
-            "columnName": "payout",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "payoutFailureReason",
-            "columnName": "payoutFailureReason",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "refundedPlanks",
-            "columnName": "refundedPlanks",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "transactionId",
-            "columnName": "transactionId",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "reference",
-            "columnName": "reference",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "openedAtMillis",
-            "columnName": "openedAtMillis",
-            "affinity": "INTEGER",
-            "notNull": true
-          },
-          {
-            "fieldPath": "settledAtMillis",
-            "columnName": "settledAtMillis",
-            "affinity": "INTEGER",
-            "notNull": true
-          }
-        ],
-        "primaryKey": {
-          "autoGenerate": false,
-          "columnNames": [
-            "intent"
-          ]
-        }
       }
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'd9cd159dd7b647bbcefe9d834edd08c1')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '9cf779237fece3fd3a27b46c281da020')"
     ]
   }
 }
