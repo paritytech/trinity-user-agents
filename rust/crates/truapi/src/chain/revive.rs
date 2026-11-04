@@ -62,11 +62,8 @@ pub enum EvmContractError {
 ///
 /// The request owns the calldata and limits. Its nonce, mortal era and
 /// signature are selected when it is executed.
-#[derive(derive_more::Debug)]
 pub struct PreparedEvmTransaction<'a> {
-	#[debug(skip)]
 	caller: &'a EvmContractCaller,
-	#[debug(skip)]
 	signer: &'a SubstrateSigner,
 	call: ReviveCallArgs,
 }
@@ -114,10 +111,10 @@ impl EvmContractCaller {
 			signer,
 			call: ReviveCallArgs {
 				dest: *contract,
+				value: 0,
 				weight_limit: simulation.weight_required,
 				storage_deposit_limit: simulation.storage_deposit,
 				data: input.to_vec(),
-				..Default::default()
 			},
 		})
 	}
@@ -151,8 +148,10 @@ async fn simulate(
 	let args = ReviveApiCallArgs {
 		origin: *origin,
 		dest: *contract,
+		value: 0,
+		gas_limit: None,
+		storage_deposit_limit: None,
 		input_data: input,
-		..Default::default()
 	};
 	let output = runtime
 		.call("ReviveApi_call", &args.encode())
@@ -192,7 +191,7 @@ async fn submit_until_finalized(
 }
 
 /// `sp_weights::Weight`.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Encode, Decode, EncodeAsType)]
+#[derive(Debug, Default, PartialEq, Eq, Encode, Decode, EncodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 pub struct Weight {
 	/// Computation time.
@@ -282,7 +281,7 @@ pub struct ContractResult {
 }
 
 /// Arguments of the `ReviveApi_call` runtime API.
-#[derive(Default, Encode)]
+#[derive(Encode)]
 struct ReviveApiCallArgs<'a> {
 	/// Account the call is simulated from.
 	origin: [u8; 32],
@@ -336,7 +335,7 @@ impl Simulation {
 }
 
 /// Arguments of the `Revive.call` extrinsic.
-#[derive(Debug, Default, EncodeAsType)]
+#[derive(EncodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
 struct ReviveCallArgs {
 	dest: [u8; 20],
@@ -394,10 +393,10 @@ mod tests {
 		let metadata = Metadata::decode(&mut &ASSET_HUB_METADATA[..]).unwrap();
 		let args = ReviveCallArgs {
 			dest: [0x44; 20],
+			value: 0,
 			weight_limit: Weight { ref_time: 456_789, proof_size: 12_345 },
 			storage_deposit_limit: 987_654_321,
 			data: vec![1, 2, 3],
-			..Default::default()
 		};
 
 		let encoded =
