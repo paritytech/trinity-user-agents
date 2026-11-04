@@ -905,7 +905,10 @@ mod tests {
 	}
 	use crate::{
 		host_logic::statement_store::decode_verified_statement_data,
-		platform::{HostInfo, Platform, PlatformInfo, SigningHostConfig},
+		platform::{
+			CreateTransactionReview, HostInfo, LegacySigningAccount, Platform, PlatformInfo,
+			SigningHostConfig,
+		},
 		runtime::{HostSession, authority::ProductAuthority, services::RuntimeServices},
 		test_support::{StubPlatform, test_spawner},
 	};
@@ -1678,11 +1681,12 @@ mod tests {
 
 	#[test]
 	fn legacy_transaction_request_uses_the_controlled_identity_account() {
-		let (_, signing_host) = signing_fixture(Arc::new(StubPlatform {
+		let platform = Arc::new(StubPlatform {
 			create_transaction_confirmed: true,
 			chain_connect_error: Some("fixture has no live chain"),
 			..StubPlatform::default()
-		}));
+		});
+		let (_, signing_host) = signing_fixture(platform.clone());
 		let identity = derive_identity_keypair(&ENTROPY, NETWORK_SUFFIX).unwrap();
 		let payload = api::LegacyAccountTxPayload {
 			signer: identity.public.to_bytes(),
@@ -1701,7 +1705,7 @@ mod tests {
 			"legacy-tx-1",
 			v1::RemoteMessage::CreateTransactionWithLegacyAccountRequest(
 				sso_messages::CreateTransactionWithLegacyAccountRequest {
-					payload: sso_messages::CreateTransactionLegacyPayload::V1(payload),
+					payload: sso_messages::CreateTransactionLegacyPayload::V1(payload.clone()),
 				},
 			),
 		);
@@ -1713,6 +1717,13 @@ mod tests {
 		// the runtime metadata.
 		let error = response.payload.expect_err("fixture has no chain metadata");
 		assert!(format!("{error:?}").contains("cannot load chain metadata"), "{error:?}");
+		assert_eq!(
+			*platform.create_transaction_reviews.lock().unwrap(),
+			vec![CreateTransactionReview::LegacyAccount {
+				account: LegacySigningAccount::Identity,
+				payload,
+			}]
+		);
 	}
 
 	#[test]
