@@ -11,7 +11,8 @@
 //!
 //! Contract calls are the exception: a [`RuntimeApiCaller`] is taken as
 //! `&mut impl` and its transport selects the chain and block, and an
-//! [`EvmContractCaller`] serves the one chain it was built for.
+//! [`EvmContractCaller`] prepares and executes writes on the one chain it
+//! was built for.
 //!
 //! `Ok(None)` means the node knows the block, or the extrinsic in it, does
 //! not exist. A read the node cannot serve, such as the body or events of a

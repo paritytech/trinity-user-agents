@@ -32,7 +32,8 @@ pub enum EvmContractError {
 	/// kept out of the message, which SCALE renders across several lines.
 	#[error("ReviveApi_call output is not a ContractResult")]
 	Malformed(parity_scale_codec::Error),
-	/// The runtime rejected the call before reaching the contract.
+	/// The call ended in a `DispatchError`: the runtime rejected it, or the
+	/// contract trapped or exhausted a limit. A revert is [`Self::Reverted`].
 	#[error("ReviveApi_call dispatch failed: {detail}")]
 	Dispatch {
 		/// Raw hex of the `DispatchError` payload.
