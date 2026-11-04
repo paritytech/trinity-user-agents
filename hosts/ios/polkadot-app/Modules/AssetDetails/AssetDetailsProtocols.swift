@@ -5,7 +5,6 @@ import Coinage
 import UIKitExt
 import ChainRegistry
 import Products
-import TrUAPIHost
 
 protocol AssetDetailsViewProtocol: ControllerBackedProtocol {
     func didSetCards(viewModels: [WalletCardCreateViewModel])
@@ -16,7 +15,7 @@ protocol AssetDetailsViewProtocol: ControllerBackedProtocol {
     func didShowBackupNotification()
     func didHideBackupNotification()
 
-    func didReceive(fundingLoading direction: FundingDirection, isLoading: Bool)
+    func didReceive(topUpLoading: Bool)
 
     func didReceive(coinageBreakdown: CoinageBalanceBreakdownViewModel)
     #if TESTNET_FEATURE
@@ -44,7 +43,7 @@ protocol AssetDetailsInteractorInputProtocol: AnyObject {
     func triggerSync()
     func cancelBackupNotification()
 
-    func openFunding(_ direction: FundingDirection)
+    func openTopUpProduct()
 
     #if TESTNET_FEATURE
         func topUp()
@@ -59,7 +58,7 @@ protocol AssetDetailsInteractorOutputProtocol: AnyObject {
     func didReceive(isRecoveryInProgress: Bool)
     func didReceive(showsRecoveredBalance: Bool)
 
-    func didCompleteFunding(_ direction: FundingDirection, result: Result<Void, Error>)
+    func didResolveTopUpProduct(_ result: Result<ProductPage, Error>)
 
     /// One call, because the presenter rebuilds the whole breakdown on receipt: delivering the
     /// figures and the holdings separately would render the new totals beside the previous
@@ -79,4 +78,6 @@ protocol AssetDetailsWireframeProtocol: AlertPresentable, ErrorPresentable, Back
     func showTransfer(from view: ControllerBackedProtocol?, chainAsset: ChainAsset)
 
     func showAddTokens(from view: ControllerBackedProtocol?)
+
+    func showProduct(page: ProductPage)
 }

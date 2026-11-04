@@ -19,7 +19,6 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
     private let contentLoader: any ProductContentLoading
     private let dotNsResolver: any DotNsResolverProtocol
     private let productFileProvider: any ChatProductFileProviding
-    private let bundledProducts: BundledProducts
     private let logger: LoggerProtocol
 
     init(
@@ -27,14 +26,12 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
         contentLoader: any ProductContentLoading,
         dotNsResolver: any DotNsResolverProtocol,
         productFileProvider: any ChatProductFileProviding,
-        bundledProducts: BundledProducts = .app,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.environment = environment
         self.contentLoader = contentLoader
         self.dotNsResolver = dotNsResolver
         self.productFileProvider = productFileProvider
-        self.bundledProducts = bundledProducts
         self.logger = logger
     }
 
@@ -43,11 +40,13 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
         context: ProductWorkerContext,
         pocket: ProductPocketHostBridge
     ) async throws -> TrUAPIWorkerRuntime {
-        let (source, files) = try await workerSource(for: productId)
+        // Its 1 s and 2 s backoffs fit inside the manager's startup window.
+        let resolved = try await contentLoader.openWorker(productId, policy: .attempts(3))
+        let source = try await workerSource(for: resolved, productId: productId)
 
         let engine = try ChatProductEngineFactory.makeContext(
             source: source,
-            productFileProvider: files,
+            productFileProvider: productFileProvider,
             logger: logger
         )
 
@@ -62,20 +61,6 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
             engineFactory: engine.engineFactory,
             logger: logger
         )
-    }
-
-    /// The worker the app ships for the product, read from its own files with
-    /// no dotNS lookup, and the files it is served from.
-    private func workerSource(
-        for productId: ProductId
-    ) async throws -> (ProductWorkerSource, any ProductFileProviding) {
-        if let bundled = bundledProducts.product(productId), bundled.hasWorker() {
-            return (.bundled(bundled), DotNsFileProvider(contentURL: bundled.directory))
-        }
-
-        // Its 1 s and 2 s backoffs fit inside the manager's startup window.
-        let resolved = try await contentLoader.openWorker(productId, policy: .attempts(3))
-        return try await (workerSource(for: resolved, productId: productId), productFileProvider)
     }
 
     /// The product's published worker, or the script installed by hand through

@@ -22,6 +22,7 @@ final class APPersonhoodHandlerFactory: @unchecked Sendable {
     private let entropyManager: RootEntropyManaging
     private let tldProvider: DotNsTldProviding
     private let permissionRepository: ProductPermissionRepositoryProtocol
+    private let fundingProvider: FundingDomainProviding
     private let operationQueue: OperationQueue
     private let logger: LoggerProtocol
 
@@ -31,6 +32,7 @@ final class APPersonhoodHandlerFactory: @unchecked Sendable {
         entropyManager: RootEntropyManaging = RootEntropyManager.shared,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         permissionRepository: ProductPermissionRepositoryProtocol = ProductPermissionRepository(),
+        fundingProvider: FundingDomainProviding? = nil,
         operationQueue: OperationQueue = OperationManagerFacade.sharedDefaultQueue,
         logger: LoggerProtocol = Logger.shared
     ) {
@@ -39,6 +41,8 @@ final class APPersonhoodHandlerFactory: @unchecked Sendable {
         self.entropyManager = entropyManager
         self.tldProvider = tldProvider
         self.permissionRepository = permissionRepository
+        self.fundingProvider = fundingProvider
+            ?? FundingDomainProvider(hostProvider: ProductHostFactory(tldProvider: tldProvider))
         self.operationQueue = operationQueue
         self.logger = logger
     }
@@ -73,7 +77,10 @@ extension APPersonhoodHandlerFactory: APPersonhoodHandlerMaking {
             depsResolver: makeDepsResolver(),
             accountAccessHandler: AccountAccessPermissionHandler(
                 repository: permissionRepository,
-                requester: ProductPermissionRequesterFactory.create(router: routers.productsRouter)
+                requester: ProductPermissionRequesterFactory.create(
+                    router: routers.productsRouter,
+                    fundingProvider: fundingProvider
+                )
             ),
             logger: logger
         )

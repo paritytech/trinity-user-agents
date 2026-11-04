@@ -168,12 +168,13 @@ Optional — an absent key disables or degrades the feature it drives:
 | Parameter | Type | Used for |
 |-----------|------|----------|
 | `latest_ios_version` | string | Latest published app version; logged only. |
+| `funding_config` | JSON object | `{"onrampUrl": "getcash.dot", "offrampUrl": "https://getcash.dot/offramp"}` — the dApp destinations the CASH card opens for top up and withdraw, each a dot-domain or a full URL. Without them the CASH card entry points report unavailable. |
+| `funding_domain` | string | Legacy DotNS label of the funding dApp; read only when `funding_config.onrampUrl` is absent. |
 | `cross_chain_transfers`, `xcm_general_config` | JSON | XCM transfer routes for the deposit flow (`XcmTransfersSyncService`). Deposits via XCM stay unavailable without them. |
 | `transaction_extension_versions` | JSON object | `{"<chainId>": <uint8>}` — transaction-extension version per chain; defaults to `0`. |
 | `collectibles_enabled` | bool | Feature gate for the Collectibles card on the Pocket tab. The card opens the `stash` product on the network's dotNS suffix. |
 | `payment_asset_config` | JSON object | `{"symbol": "CASH", "iconSquareUrl": "https://…/square.svg", "iconWideUrl": "https://…/wide.svg"}` — the payment asset's symbol and logos: a square mark for amounts and payment messages, a wide mark-plus-wordmark for the balance card, as absolute web URLs (SVG or PNG; an SVG must not set `fill="none"` on its root element, which the iOS renderer cannot draw). Each field is optional; anything missing or failing to load falls back to the bundled brand (`BRAND_CASH_SYMBOL` and the built-in mark). Logos are fetched as soon as the config is applied and kept cached by URL, so a change shows on the next config refresh without an app update; publish a changed logo under a new URL. Test assets live in `docs/assets/payment-asset/`. |
 | `app_sharing_url` | string | Download link included in the message the ID card's Share button composes ("Download it at {link} and add me – my username is {username}."). Without it the message is shared without the link sentence. |
-| `funding_config` | JSON object | `{"providers": ["ramp.dot", …]}` — `providers` are the dotNS names of the funding providers the overlay offers; the host lists only these, and the core reads each one's manifest and Worker from dotNS. Names that are not product ids are skipped and logged; repeats count once. A config refresh relists them without a restart. Without it no published provider is offered (test builds still offer the providers they bundle). The object is shared with Android, which also reads `onrampUrl` and `offrampUrl`; iOS ignores those. |
 
 **Chain ids per environment.** `KnownChainId` (`polkadot-app/AppConfig/KnownChains.swift`)
 hardcodes the `chainId` strings the app looks up in `chains_v2`, and

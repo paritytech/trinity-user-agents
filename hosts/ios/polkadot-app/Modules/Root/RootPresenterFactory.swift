@@ -60,7 +60,7 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
         let chainRegistryClosure = { ChainRegistryFacade.sharedRegistry }
 
         let productPrewarmer = ProductContentPrewarmer(
-            makeLabels: { createProductLabels() },
+            makeLabels: { await createProductLabels(flowStateProvider: flowStateProvider) },
             chainRegistryClosure: chainRegistryClosure,
             flowStateProvider: flowStateProvider
         )
@@ -98,9 +98,19 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
         return presenter
     }
 
-    private static func createProductLabels() -> [String] {
+    @MainActor
+    private static func createProductLabels(flowStateProvider: SPAFlowStateProviding) async -> [String] {
         let staticProducts = [AppConfig.DotNs.dotNsBrowse]
 
-        return staticProducts
+        let fundingProvider = FundingDomainProvider(
+            hostProvider: flowStateProvider.flowState().hostProvider
+        )
+
+        let fundingPages = await [
+            try? fundingProvider.fundingPage(),
+            try? fundingProvider.offrampPage()
+        ]
+
+        return staticProducts + fundingPages.compactMap { $0?.host.name }
     }
 }

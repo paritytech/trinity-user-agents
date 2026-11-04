@@ -46,6 +46,8 @@ private func makeConfig(appSharingUrl: URL?) -> RemoteAppConfig {
         dotNsResolver: nil,
         dotNsNameRegistry: nil,
         coinageInstanceId: nil,
+        fundingUrl: nil,
+        offrampUrl: nil,
         accountDataStoreContract: nil,
         paymentAsset: nil,
         appSharingUrl: appSharingUrl

@@ -1,6 +1,5 @@
 import Foundation
 import Products
-import UIKitExt
 
 /// What a product's worker is served through, made on first ask and kept for
 /// the session.
@@ -11,9 +10,5 @@ import UIKitExt
 /// and one set of routers across restarts.
 final class ProductWorkerContext: @unchecked Sendable {
     let chat = ProductChatSurface()
-    let routers: ProductRoutersFacadeProtocol
-
-    init(presentationFallback: (@MainActor @Sendable () -> ControllerBackedProtocol?)? = nil) {
-        routers = ProductRoutersFacade.worker(fallback: presentationFallback)
-    }
+    let routers: ProductRoutersFacadeProtocol = ProductRoutersFacade.worker()
 }

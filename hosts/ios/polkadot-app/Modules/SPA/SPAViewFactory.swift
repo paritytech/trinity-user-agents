@@ -19,7 +19,7 @@ enum SPAViewFactory {
     ) -> SPAViewProtocol? {
         let truapiEnabled = SettingsManager.shared.isTrUAPIRuntimeEnabled
 
-        if truapiEnabled || configuration.contentSource.isRustOnly {
+        if truapiEnabled {
             return createRustView(configuration: configuration, flowState: flowState)
         }
 
