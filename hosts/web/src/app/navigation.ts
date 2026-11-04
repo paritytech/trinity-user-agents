@@ -12,12 +12,12 @@ import {
   DESTINATION_LABELS,
   destinationOf,
   isProductDestination,
-  defaultAddresses,
   loadAddresses,
   resolveNavigation,
   type Destination,
   type DockAddresses,
 } from "./shell.js";
+import { defaultAddresses } from "./dock-defaults.js";
 import { resolveSource } from "../products/dotns.js";
 import {
   documentsBeforeProduct,
@@ -34,6 +34,7 @@ import {
   type ProductLoadObserver,
   type ProductLoadSummary,
 } from "../products/load-observer.js";
+import { blockGateway } from "../products/seed.js";
 import { notOpenableText, type Opened } from "../products/status.js";
 import type { FrameTap } from "../products/tap.js";
 import type { ActivityDetail, ActivitySink } from "../platform/activity.js";
@@ -717,7 +718,11 @@ export class ProductNavigation {
         base: this.deps.base,
         origin: window.location.origin,
         scope,
-        gateway: network.dotns.contentGateway,
+        gateway: blockGateway(
+          source.cid,
+          network.dotns.contentGateway,
+          window.location.origin,
+        ),
         kind: source.kind,
         start: `/${address.suffix}`,
       }),

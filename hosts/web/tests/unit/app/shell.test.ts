@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { NETWORKS } from "../../../src/platform/network-config.js";
+import { defaultAddresses } from "../../../src/app/dock-defaults.js";
 import {
-  defaultAddresses,
   destinationOf,
   loadAddresses,
   resolveNavigation,

@@ -117,6 +117,10 @@ under a path, run `npx vite preview --base /<repo>/` and open `http://localhost:
 The one thing the base must match is where the files are served. A build made for `/repo/` served at `/` loads no
 assets.
 
+A build served from the root also ships the Browse app, as described in [The Browse seed](#the-browse-seed). It reads
+Paseo Next v2 and its gateway while it builds, and fails if it cannot; `WEB_SIGNING_SEED_BROWSE=0 npm run build` builds
+offline without it.
+
 ## Opening a product
 
 The address bar takes a web address or a product name.
@@ -201,6 +205,26 @@ does not let a page read whether the CAR is cached. `FETCH_CAR` in `src/products
 off. A load whose blocks come from this host's own origin, such as Contact Chat's worker archive, does not ask for the
 stream and reads block by block: a static server there has no CAR to send, and the Products view says the stream was not
 tried.
+
+#### The Browse seed
+
+A build ships the Browse app (`browse.paseo`, the dock's Browse address on the default network) beside the page, so a
+first open does not wait on the gateway. `browse-seed-plugin.ts` resolves the name on Asset Hub as the host does, reads
+its content from the gateway block by block, checks every block against its CID, unpacks the whole archive, and writes
+the blocks at `/ipfs/<cid>` on the origin, as Contact Chat's are. `browse-seed.json` beside the page names the record,
+the CID, the network, when it was fetched, its size and its blocks. The seed may add at most 16 MiB; the Browse archive
+was 5.8 MB in 10 blocks when this was set.
+
+The seed is a cache filled ahead of time, not a source. Opening Browse still resolves the name on chain. Only when the
+record points at the seeded CID does the host skip the gateway's content check and give the loader its own origin as the
+gateway, and the loader checks each block against its CID as it does any gateway's. When the record points elsewhere,
+the content comes from the gateway as for any name, and when the chain cannot be read, the open fails as it would
+without a seed. The inspector's Products view shows a seeded load as **seed (host origin)**.
+
+`WEB_SIGNING_SEED_BROWSE` controls it. A build seeds unless it is `0`, and fails if the seed cannot be fetched, so a
+deploy does not go out without it unnoticed; set `0` for an offline or repeatable build. The dev server seeds only when
+it is `1`, and then answers the blocks itself. The blocks are read at the origin's root, so a build under another base
+path, such as a GitHub Pages project site, has no seed, and `1` with such a base fails the build.
 
 The mount path holds a hash of the wallet id, a readable form of the product id with its hash, and the content id. A
 different wallet, product or content is a different mount, with its own worker. The same wallet opening the same content
@@ -1427,6 +1451,10 @@ block by block, one read block by block only, one that failed), the cache marker
 summary heard only from its own frame, once. `browser/build.spec.ts` checks that the built loader posts it and that the
 built host's Products view shows Contact Chat's load.
 
+`browser/build.spec.ts` builds the host, so it fetches the [Browse seed](#the-browse-seed) and checks that its blocks
+load as the archive its CID names. With `WEB_SIGNING_SEED_BROWSE=0` it builds offline and checks that no seed was
+written. The unit tests use a fake gateway and reach no network.
+
 `npm run test:browser` is a headless-Chrome smoke test of the host page. It needs the linked packages and both WASM
 bundles built (see [Run it](#run-it)) and a Chromium: install one with `npx playwright-core install chromium`, or set
 `CHROMIUM_PATH`. It starts the host with Vite on loopback, a counting target server and product fixtures, stands in for
@@ -1670,9 +1698,10 @@ nothing else of it.
   - `navigation.ts`: the product in front, the ones held behind it, the dock destinations, and opening a name, a URL, a
     Pocket card or a product's `navigateTo`. `session.ts`: the signed-in wallet, how a change closes and reopens
     products, and the order a session reaches everything that belongs to it.
-  - `shell.ts`, `address.ts`, `address-recents.ts`, `recents.ts`, `search-card.ts`, `apps-shelf.ts`, `chrome.ts`,
-    `layout.ts`, `device-mode.ts`, `keyboard-viewport.ts`: the dock, the address bar and its grammar, the Pill's card,
-    the Apps shelf, the developer tools' zone, the phone browser mode and the area an on-screen keyboard leaves.
+  - `shell.ts`, `dock-defaults.ts`, `address.ts`, `address-recents.ts`, `recents.ts`, `search-card.ts`, `apps-shelf.ts`,
+    `chrome.ts`, `layout.ts`, `device-mode.ts`, `keyboard-viewport.ts`: the dock, the address bar and its grammar, the
+    Pill's card, the Apps shelf, the developer tools' zone, the phone browser mode and the area an on-screen keyboard
+    leaves.
   - `callbacks.ts`, `prompt.ts`, `reviews.ts`: the host callbacks the core calls, and the prompts it asks through.
   - `wallet-label.ts`, `wallet-panel.ts`, `account-status.ts`, `permissions-status.ts`, `product-chain.ts`,
     `versions.ts`: the Account and Product tabs' wallet controls and status rows, and the build's versions.
@@ -1733,6 +1762,8 @@ nothing else of it.
   Chat reaches one through TrUAPI).
 - `browser/`: the browser tests, with their Playwright setup and page harnesses under `browser/support/`.
 - `contact-chat-plugin.ts`: Contact Chat's worker archive, served by the dev server and written beside a build.
+- `browse-seed-plugin.ts`: the [Browse seed](#the-browse-seed), fetched and checked when the host is built and written
+  beside the build. `src/products/seed.ts` is what the host reads of it.
 - `username-search-plugin.ts`: the dev server's username route.
 
 ## Not supported

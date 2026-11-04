@@ -1,14 +1,23 @@
 /**
  * The production build, served as a static site: Contact Chat's worker
- * archive is beside the page and checks against its CID, the dev server's
- * demos and controls are not in it, and a fresh wallet signed in to it runs
- * Contact Chat on the network delivery with nothing turned on. Every socket is
- * closed and every request outside the preview server is refused, so no chain
- * is reached and nothing is published. It needs a Chromium: playwright-core
- * finds the one it installs, or set CHROMIUM_PATH.
+ * archive and the Browse seed are beside the page and check against their
+ * CIDs, the dev server's demos and controls are not in it, and a fresh wallet
+ * signed in to it runs Contact Chat on the network delivery with nothing
+ * turned on. Every socket is closed and every request outside the preview
+ * server is refused, so no chain is reached and nothing is published. It needs
+ * a Chromium: playwright-core finds the one it installs, or set CHROMIUM_PATH.
+ * The build itself fetches the Browse seed from Paseo Next v2, read-only; with
+ * WEB_SIGNING_SEED_BROWSE=0 it builds offline and the test checks that no seed
+ * was written.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,7 +27,17 @@ import {
   CONTACT_CHAT_PATH,
   type ContactChatWorkerAnswer,
 } from "../src/chat/contact-chat/route.js";
-import { parseCidString, verifyBlock } from "../src/products/archive/cid.js";
+import {
+  cidToString,
+  parseCidString,
+  verifyBlock,
+} from "../src/products/archive/cid.js";
+import {
+  ARCHIVE_LIMITS,
+  loadArchive,
+} from "../src/products/archive/gateway.js";
+import { SEED_MANIFEST_PATH } from "../src/products/seed.js";
+import { SEED_ENV, type SeedManifest } from "../browse-seed-plugin.js";
 import { PRODUCT_LOAD } from "../src/products/load-observer.js";
 import {
   closeTools,
@@ -72,14 +91,29 @@ afterAll(async () => {
   rmSync(outDir, { recursive: true, force: true });
 });
 
-/** Every file the build wrote, as text, but the WebAssembly and the archive's blocks. */
+/**
+ * Every file the build wrote, as text, but the WebAssembly, images, fonts and
+ * the Browse seed's blocks, which are the Browse app's code, not this host's.
+ */
 function builtText(): string {
+  const seeded = new Set(
+    existsSync(join(outDir, SEED_MANIFEST_PATH))
+      ? (
+          JSON.parse(
+            readFileSync(join(outDir, SEED_MANIFEST_PATH), "utf8"),
+          ) as SeedManifest
+        ).blocks
+      : [],
+  );
   const texts: string[] = [];
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const path = join(dir, entry.name);
       if (entry.isDirectory()) walk(path);
-      else if (!/\.(wasm|png|webp|woff2)$/.test(entry.name))
+      else if (
+        !/\.(wasm|png|webp|woff2)$/.test(entry.name) &&
+        !seeded.has(entry.name)
+      )
         texts.push(readFileSync(path, "latin1"));
     }
   };
@@ -128,6 +162,33 @@ describe("the production build", () => {
         absent,
         found: false,
       });
+  });
+
+  test("ships the Browse seed's blocks, which load as the archive its CID names", async () => {
+    const manifestPath = join(outDir, SEED_MANIFEST_PATH);
+    if (process.env[SEED_ENV] === "0") {
+      expect(existsSync(manifestPath)).toBe(false);
+      return;
+    }
+    const manifest = JSON.parse(
+      readFileSync(manifestPath, "utf8"),
+    ) as SeedManifest;
+    expect(manifest).toMatchObject({ record: "browse.paseo", kind: "car" });
+    const read: string[] = [];
+    const { files } = await loadArchive(
+      manifest.cid,
+      async (cid) => {
+        const name = cidToString(cid);
+        read.push(name);
+        const data = new Uint8Array(readFileSync(join(outDir, "ipfs", name)));
+        if (!verifyBlock(cid, data)) throw new Error(`${name} does not verify`);
+        return data;
+      },
+      ARCHIVE_LIMITS,
+    );
+    expect(files.has("index.html")).toBe(true);
+    expect(new Set(read)).toEqual(new Set(manifest.blocks));
+    expect(builtText()).toContain(manifest.cid);
   });
 
   test(

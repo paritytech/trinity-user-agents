@@ -1,4 +1,5 @@
 import { parseAddress, parseTypedAddress } from "./address.js";
+import { defaultAddresses } from "./dock-defaults.js";
 import type { NetworkConfig } from "../platform/network-config.js";
 import {
   DEFAULT_NETWORK,
@@ -30,18 +31,6 @@ export const DESTINATION_LABELS: Record<Destination, string> = {
 
 /** The product each product destination opens: a name or URL, or empty for none yet. */
 export type DockAddresses = Record<ProductDestination, string>;
-
-/** What a destination opens before the user chooses. Only names known to be published are listed. */
-const DEFAULTS: Record<string, Partial<DockAddresses>> = {
-  paseo: { browse: "browse.paseo" },
-};
-
-export function defaultAddresses(network: string): DockAddresses {
-  return {
-    browse: "",
-    ...DEFAULTS[normalizeNetwork(network)],
-  };
-}
 
 /**
  * Where a browser can point a destination elsewhere, per network, read only
