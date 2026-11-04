@@ -740,6 +740,10 @@ fn core_key(key: &CoreStorageKey) -> String {
 		CoreStorageKey::ProductManifest { product_label } => {
 			format!("core:product-manifest:{product_label}")
 		},
+		CoreStorageKey::WorkerManifest { product_label } => {
+			format!("core:worker-manifest:{product_label}")
+		},
+		CoreStorageKey::FundingSupport => "core:funding-support".to_string(),
 		CoreStorageKey::AllowanceKeys { session_id } => {
 			format!("core:allowance-keys:{session_id}")
 		},

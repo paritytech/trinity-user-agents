@@ -38,19 +38,20 @@ use truapi::{
 	latest::{
 		AllocatableResource, ChainIdentifier, ChatAction, ChatActions, ChatCustomMessage, ChatFile,
 		ChatMedia, ChatMessageContent, ChatReaction, ChatRichText, CodeFormat, FundingDirection,
-		GenericError, HostChatCreateRoomError, HostChatCreateRoomRequest,
-		HostChatCreateRoomResponse, HostChatListSubscribeItem, HostChatPostMessageError,
-		HostChatPostMessageRequest, HostChatPostMessageResponse, HostChatRegisterBotError,
-		HostChatRegisterBotRequest, HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
-		HostDevicePermissionRequest, HostFeatureSupportedRequest, HostFeatureSupportedResponse,
-		HostFundingStatusSubscribeItem, HostLocalStorageChangeItem, HostLocaleSubscribeItem,
-		HostNavigateToError, HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem,
-		HostPaymentError, HostPaymentRequest, HostPaymentStatusSubscribeError,
-		HostPaymentStatusSubscribeItem, HostPaymentTopUpError, HostPaymentTopUpRequest,
-		HostPaymentTopUpStatusSubscribeError, HostPaymentTopUpStatusSubscribeItem, HostPlatform,
-		HostPocketListSubscribeItem, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
-		HostPushNotificationRequest, HostPushNotificationResponse, HostScannerScanRequest,
-		HostSignPayloadRequest, HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
+		FundingQuote, FundingQuoteRefusal, GenericError, HostChatCreateRoomError,
+		HostChatCreateRoomRequest, HostChatCreateRoomResponse, HostChatListSubscribeItem,
+		HostChatPostMessageError, HostChatPostMessageRequest, HostChatPostMessageResponse,
+		HostChatRegisterBotError, HostChatRegisterBotRequest, HostChatRegisterBotResponse,
+		HostChatSetRoomFooterRequest, HostDevicePermissionRequest, HostFeatureSupportedRequest,
+		HostFeatureSupportedResponse, HostFundingStatusSubscribeItem, HostLocalStorageChangeItem,
+		HostLocaleSubscribeItem, HostNavigateToError, HostPaymentBalanceSubscribeError,
+		HostPaymentBalanceSubscribeItem, HostPaymentError, HostPaymentRequest,
+		HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem, HostPaymentTopUpError,
+		HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
+		HostPaymentTopUpStatusSubscribeItem, HostPlatform, HostPocketListSubscribeItem,
+		HostPocketRemoveCardError, HostPocketRemoveCardRequest, HostPushNotificationRequest,
+		HostPushNotificationResponse, HostScannerScanRequest, HostSignPayloadRequest,
+		HostSignPayloadWithLegacyAccountRequest, HostSignRawRequest,
 		HostSignRawWithLegacyAccountRequest, HostThemeSubscribeItem,
 		HostWorkerBeginOperationResponse, HostWorkerOperationError, LegacyAccountTxPayload,
 		NftPurseOwner, ProductAccountId, ProductAccountTxPayload, ProductProofContext,
@@ -1287,6 +1288,17 @@ pub enum CoreStorageKey {
 		/// Bare product label whose manifest was cached.
 		product_label: String,
 	},
+	/// A product's Worker executable manifest as last read from dotNS, and when,
+	/// cached for the same lifetime as [`Self::ProductManifest`].
+	#[codec(index = 14)]
+	WorkerManifest {
+		/// Bare label of the product whose Worker manifest was cached.
+		product_label: String,
+	},
+	/// What funding providers' quote answers showed about what they serve,
+	/// each record trusted for twelve hours.
+	#[codec(index = 15)]
+	FundingSupport,
 }
 
 /// Permission storage payload, whose targets can be bare manifest labels.
@@ -1398,6 +1410,10 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::ProductManifest { product_label } => {
 			("ProductManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
 		},
+		CoreStorageKey::WorkerManifest { product_label } => {
+			("WorkerManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
+		},
+		CoreStorageKey::FundingSupport => ("FundingSupport", None),
 	};
 	Ok(CoreStorageKeyDescription { kind, owner })
 }
@@ -2241,6 +2257,12 @@ mod tests {
 				"SsoResponderRequestLedger",
 				None,
 			),
+			(
+				CoreStorageKey::WorkerManifest { product_label: "ramp".to_string() },
+				"WorkerManifest",
+				Some(CoreStorageKeyOwner::ProductLabel("ramp".to_string())),
+			),
+			(CoreStorageKey::FundingSupport, "FundingSupport", None),
 		] {
 			let description = describe_core_storage_key(&key.encode()).expect("valid key");
 			assert_eq!(description, CoreStorageKeyDescription { kind, owner });
@@ -3131,6 +3153,48 @@ pub struct FundingPresentation {
 	pub amount: Option<u128>,
 }
 
+/// One provider's place in the list a quote request fills in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingQuoteRow {
+	/// The provider.
+	pub provider_id: ProductId,
+	/// Where its quote stands.
+	pub state: FundingQuoteState,
+}
+
+/// Where a provider's quote stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingQuoteState {
+	/// Asked, not answered yet.
+	Pending,
+	/// The provider's price.
+	Quoted {
+		/// The quote.
+		quote: FundingQuote,
+	},
+	/// The provider cannot be offered for this ask; the host shows it
+	/// disabled.
+	Unavailable {
+		/// Why.
+		reason: FundingQuoteUnavailable,
+	},
+}
+
+/// Why a provider cannot be offered for an ask.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingQuoteUnavailable {
+	/// The provider refused to price it.
+	Refused {
+		/// Why.
+		reason: FundingQuoteRefusal,
+	},
+	/// The provider did not answer in time.
+	Timeout,
+}
+
 /// How the user left the funding overlay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
@@ -3171,14 +3235,19 @@ pub trait FundingPlatform: Send + Sync {
 	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
 		let _ = (intent, status);
 	}
+
+	/// Observe one provider's row of a quote list the host requested, for the
+	/// provider list. Each provider's row arrives `Pending`, then once more
+	/// with its quote or why it is unavailable.
+	fn funding_quote_changed(&self, intent: String, row: FundingQuoteRow) {
+		let _ = (intent, row);
+	}
 }
 
-/// Host-implemented adapter through which product Pocket calls reach the
-/// host's card collection. Optional: a host that omits it leaves Pocket
-/// requests answered `Unsupported`. See [`OptionalPlatform`].
-///
-/// The host owns the collection: it decides which cards are privileged and
-/// keeps each card's newest face. A face does not cross this boundary.
+/// Adapter through which product Pocket calls reach the card collection.
+/// Optional: a host that omits it leaves Pocket requests answered
+/// `Unsupported`. See [`OptionalPlatform`]. Native hosts are served by the
+/// core's own collection in its database.
 #[async_trait]
 pub trait PocketPlatform: Send + Sync {
 	/// Emit the calling product's current cards and every later replacement.
