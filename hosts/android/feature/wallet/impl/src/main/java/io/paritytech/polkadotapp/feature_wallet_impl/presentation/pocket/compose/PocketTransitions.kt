@@ -29,6 +29,7 @@ import androidx.compose.ui.zIndex
 import io.paritytech.polkadotapp.design.utils.noLocalProvidedFor
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketScreenState
+import kotlin.time.Duration.Companion.milliseconds
 
 internal const val POCKET_ANIM_DURATION_MS = 500
 
@@ -44,9 +45,9 @@ internal const val COLLECTIBLES_PRESS_DURATION_MS = 80
 internal const val COLLECTIBLES_COLOUR_DURATION_MS = 170
 internal const val COLLECTIBLES_LIFT_DURATION_MS = 400
 
-internal const val COLLECTIBLES_LIFT_REQUEST_DELAY_MS = 65L
+internal val CollectiblesLiftRequestDelay = 65.milliseconds
 internal const val COLLECTIBLES_LIFT_TILT_DEGREES = -4f
-private const val COLLECTIBLES_POCKET_DIM_DURATION_MS = 180
+internal const val COLLECTIBLES_POCKET_DIM_DURATION_MS = 180
 
 private const val COLLECTIBLES_LIFT_STIFFNESS = 260f
 
@@ -68,13 +69,9 @@ internal fun pocketSlideIn(initialOffsetY: (fullHeight: Int) -> Int): EnterTrans
 internal fun pocketSlideOut(targetOffsetY: (fullHeight: Int) -> Int): ExitTransition =
     slideOutVertically(tween(POCKET_ANIM_DURATION_MS, easing = PocketOvershootEasing), targetOffsetY)
 
-internal fun pocketFadeIn(): EnterTransition = fadeIn(tween(POCKET_ANIM_DURATION_MS))
+internal fun pocketFadeIn(durationMillis: Int = POCKET_ANIM_DURATION_MS): EnterTransition = fadeIn(tween(durationMillis))
 
-internal fun pocketFadeOut(): ExitTransition = fadeOut(tween(POCKET_ANIM_DURATION_MS))
-
-internal fun collectiblesLiftFadeIn(): EnterTransition = fadeIn(tween(COLLECTIBLES_POCKET_DIM_DURATION_MS))
-
-internal fun collectiblesLiftFadeOut(): ExitTransition = fadeOut(tween(COLLECTIBLES_POCKET_DIM_DURATION_MS))
+internal fun pocketFadeOut(durationMillis: Int = POCKET_ANIM_DURATION_MS): ExitTransition = fadeOut(tween(durationMillis))
 
 internal fun pocketScaleIn(): EnterTransition =
     scaleIn(tween(POCKET_ANIM_DURATION_MS), initialScale = POCKET_PUSHED_SCALE)

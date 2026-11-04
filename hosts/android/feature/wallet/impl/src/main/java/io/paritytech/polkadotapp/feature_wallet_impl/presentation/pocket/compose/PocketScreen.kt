@@ -143,7 +143,7 @@ private fun PocketScreenInternal(
                 transition.AnimatedContent(
                     transitionSpec = {
                         if (targetState is PocketScreenState.Collectibles) {
-                            collectiblesLiftFadeIn() togetherWith collectiblesLiftFadeOut()
+                            pocketFadeIn(COLLECTIBLES_POCKET_DIM_DURATION_MS) togetherWith pocketFadeOut(COLLECTIBLES_POCKET_DIM_DURATION_MS)
                         } else {
                             pocketFadeIn() togetherWith pocketFadeOut()
                         }
@@ -166,7 +166,7 @@ private fun PocketScreenInternal(
                                             collectiblesColour.animateTo(1f, tween(COLLECTIBLES_COLOUR_DURATION_MS))
                                         }
                                         colourScope.launch {
-                                            delay(COLLECTIBLES_LIFT_REQUEST_DELAY_MS)
+                                            delay(CollectiblesLiftRequestDelay)
                                             onSketchbookSelected()
                                         }
                                     },

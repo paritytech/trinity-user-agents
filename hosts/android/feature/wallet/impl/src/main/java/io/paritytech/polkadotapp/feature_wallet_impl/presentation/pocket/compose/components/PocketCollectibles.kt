@@ -65,6 +65,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -81,6 +82,7 @@ private const val SKELETON_DOT_ALPHA = 0.25f
 private const val SKELETON_DOT_COLUMNS = 12
 
 private val PageCornerRadius = 20.dp
+private val AttachedWebViewSize = 1.dp
 private val SkeletonTitleSize = DpSize(136.dp, 16.dp)
 private val SkeletonSubtitleSize = DpSize(180.dp, 10.dp)
 private val SkeletonButtonSize = 40.dp
@@ -108,21 +110,18 @@ fun PocketCollectibles(
     val webView by (product?.session?.webView ?: noWebViewYet).collectAsStateWithLifecycle()
 
     val book = remember { CollectiblesBookMotion() }
-    var failed by remember { mutableStateOf(false) }
-    var webViewExpanded by remember { mutableStateOf(false) }
-    var sweeping by remember { mutableStateOf(false) }
+    var stage by remember { mutableStateOf(BookStage.Closed) }
 
     LaunchedEffect(book) {
         launch { book.lift() }
-        delay(COLLECTIBLES_LIFT_DURATION_MS.toLong())
-        sweeping = true
+        delay(COLLECTIBLES_LIFT_DURATION_MS.milliseconds)
+        stage = BookStage.Opened
         book.openCover()
-        webViewExpanded = true
 
         val outcome = withTimeoutOrNull(ReadyTimeout) {
             snapshotFlow { loadProgress }.first { it is DotNsLoadProgress.Completed || it is DotNsLoadProgress.Failed }
         }
-        if (outcome is DotNsLoadProgress.Completed) book.handOff() else failed = true
+        if (outcome is DotNsLoadProgress.Completed) book.handOff() else stage = BookStage.Failed
     }
 
     Column(
@@ -145,11 +144,8 @@ fun PocketCollectibles(
                 modifier = Modifier
                     .fillMaxSize()
                     .collectiblesPageLayer(book, inset = PolkadotTheme.spacings.mediumIncreased),
-                book = book,
                 webView = webView,
-                webViewExpanded = webViewExpanded,
-                sweeping = sweeping,
-                failed = failed
+                stage = stage
             )
 
             CollectiblesSketchbook(
@@ -177,28 +173,25 @@ fun PocketCollectibles(
 @Composable
 private fun CollectiblesPage(
     modifier: Modifier,
-    book: CollectiblesBookMotion,
     webView: WebView?,
-    webViewExpanded: Boolean,
-    sweeping: Boolean,
-    failed: Boolean,
+    stage: BookStage,
 ) {
     Box(
         modifier = modifier.background(PolkadotTheme.colors.bg.surface.main),
         contentAlignment = Alignment.Center
     ) {
-        if (failed) {
+        if (stage == BookStage.Failed) {
             NovaText(
                 text = stringResource(RCommon.string.product_resolution_error_unknown),
                 style = PolkadotTheme.typography.body.medium,
                 color = PolkadotTheme.colors.fg.secondary
             )
         } else {
-            CollectiblesSkeleton(modifier = Modifier.fillMaxSize(), sweeping = sweeping)
+            CollectiblesSkeleton(modifier = Modifier.fillMaxSize(), sweeping = stage == BookStage.Opened)
 
             // The first full-size paint of the page blocks the UI thread for ~300 ms and would freeze the sweep.
             ProductWebViewHost(
-                modifier = if (webViewExpanded) Modifier.fillMaxSize() else Modifier.size(1.dp),
+                modifier = if (stage == BookStage.Opened) Modifier.fillMaxSize() else Modifier.size(AttachedWebViewSize),
                 webView = webView
             )
         }
@@ -320,6 +313,8 @@ private fun Modifier.collectiblesPageLayer(book: CollectiblesBookMotion, inset: 
     shape = RoundedCornerShape(PageCornerRadius.toPx() * (1f - expansion) / scale)
     clip = true
 }
+
+private enum class BookStage { Closed, Opened, Failed }
 
 @Stable
 private class CollectiblesBookMotion {
