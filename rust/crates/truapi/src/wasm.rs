@@ -1356,7 +1356,7 @@ impl WasmSigningHostRuntime {
 	/// Revoke one product's grants from the current local activation.
 	#[wasm_bindgen(js_name = clearProductState)]
 	pub async fn clear_product_state(&self, raw_product_id: String) -> Result<(), JsValue> {
-		self.runtime.clear_product_state(&product_id_from_js(&raw_product_id)?).await;
+		self.runtime.clear_product_state(&product_id_from_js(&raw_product_id)?).await?;
 		Ok(())
 	}
 

@@ -8,6 +8,7 @@
 #[cfg(not(target_arch = "wasm32"))]
 pub mod attestation;
 pub mod contact_substitution;
+pub mod secrets_storage;
 // Only native hosts open a page from a development server.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod dev_server;
