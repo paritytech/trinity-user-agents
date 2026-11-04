@@ -61,11 +61,14 @@ final class TabBarBottomChromeController: UIViewController {
                 }
                 self?.applyAccessibility(for: state)
             },
-            contentOpacity: { [weak self] opacity in
-                // The write comes from the display-link tick inside UIKit's update cycle. An @Observable write there
-                // makes SwiftUI read the old value in the first observer, so the write waits for the next main turn.
+            contentFade: { [weak self] target in
+                // Some targets are emitted inside UIKit's update cycle (layout, transition coordinator). An @Observable
+                // write
+                // there can leave the first observer on the old value, and an endpoint write is not corrected by a
+                // later
+                // frame. The write waits for the next main turn, and the animation is applied inside that block.
                 DispatchQueue.main.async { [weak self] in
-                    self?.barModel.contentFade.opacity = opacity
+                    self?.applyContentFade(target)
                 }
             },
             tuckLanded: { [weak self] kind in
@@ -494,5 +497,37 @@ private extension TabBarBottomChromeController {
                 cap
             }
         return contentHeight != barModel.centerContentHeight ? contentHeight : nil
+    }
+
+    /// Starts the content fade toward `target` with the animation of the transition that set it. A shown or hidden
+    /// target lands at once.
+    func applyContentFade(_ target: DockletContentFadeTarget) {
+        switch target {
+        case .shown,
+             .hidden:
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                barModel.contentFade.opacity = target.opacity
+            }
+        case .quietFadeOut:
+            let framesPerSecond = view.window?.windowScene?.screen.maximumFramesPerSecond ?? 60
+            let delay = Double(DockletContentFade.quietFadeLeadFrames) / Double(framesPerSecond)
+            let curve = Animation.timingCurve(
+                DockletContentFade.quietFadeFirstControl.x,
+                DockletContentFade.quietFadeFirstControl.y,
+                DockletContentFade.quietFadeSecondControl.x,
+                DockletContentFade.quietFadeSecondControl.y,
+                duration: DockletContentFade.quietFadeDuration
+            ).delay(delay)
+            withAnimation(curve) {
+                barModel.contentFade.opacity = target.opacity
+            }
+        case .reducedFadeOut,
+             .reducedFadeIn:
+            withAnimation(.linear(duration: DockletReducedFade.duration)) {
+                barModel.contentFade.opacity = target.opacity
+            }
+        }
     }
 }

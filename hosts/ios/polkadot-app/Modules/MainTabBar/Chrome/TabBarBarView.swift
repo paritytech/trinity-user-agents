@@ -40,7 +40,7 @@ struct TabBarBarView: View {
     }
 }
 
-/// The centre control. It reads the content fade through its own leaf view, so a fade frame does not re-run it.
+/// The centre control. It reads the content fade through its own leaf view, so a fade does not re-run it.
 private struct TabBarCenterSlot: View {
     @Bindable var model: TabBarBarViewModel
 
@@ -131,7 +131,7 @@ private extension TabBarSlotView {
     }
 }
 
-/// Applies the bar's content fade. Its body reads the fade, so a fade frame re-runs only the views that use it.
+/// Applies the bar's content fade. Its body reads the fade, so a fade re-runs only the views that use it.
 private struct TabBarContentFadeModifier: ViewModifier {
     let fade: DSTabBarContentFade
 

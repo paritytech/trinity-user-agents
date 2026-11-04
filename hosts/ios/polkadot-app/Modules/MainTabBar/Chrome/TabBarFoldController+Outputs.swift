@@ -23,8 +23,8 @@ extension TabBarFoldController {
         let closePanel: () -> Void
         /// Reports each committed state.
         let state: (TabBarVisibilityState) -> Void
-        /// Receives the content opacity each time the transform is written.
-        let contentOpacity: (CGFloat) -> Void
+        /// Receives the content fade's target each time a transition starts it. The chrome animates the content to it.
+        let contentFade: (DockletContentFadeTarget) -> Void
         /// Receives the kind of tuck that has just landed tucked.
         let tuckLanded: (DockletTuckKind) -> Void
     }

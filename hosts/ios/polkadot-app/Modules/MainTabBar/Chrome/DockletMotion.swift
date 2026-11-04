@@ -52,8 +52,11 @@ struct DockletMotion {
     /// The held pose's extra turn and offset over the plain pose at release. It fades as the settle runs.
     private var releaseExtra: DockletPose = .zero
     private var unwindFactor: CGFloat = 0
-    /// Whether the bar is in a quiet hide, or rests tucked after one. Only that fades the content inside the glass.
+    /// Whether the content inside the glass fades with the hide progress. A quiet hide sets it, and so does a Reduce
+    /// Motion tuck once it lands. A drag and a non-quiet settle clear it.
     private var isQuietHide = false
+    /// Where the content inside the glass is headed. Only a drag, settle or snap sets it, so a tick never changes it.
+    private(set) var contentFadeTarget: DockletContentFadeTarget = .shown
     /// The Reduce Motion settle that is running, in place of a spring.
     private var fade: DockletReducedFade?
 
@@ -66,7 +69,8 @@ struct DockletMotion {
         fade != nil
     }
 
-    /// Opacity of the content inside the glass. A Reduce Motion fade sets it; otherwise only a quiet hide fades it.
+    /// Opacity of the content inside the glass. A Reduce Motion fade sets it; otherwise a quiet hide, or a tuck that
+    /// has landed under Reduce Motion, fades it.
     var contentOpacity: CGFloat {
         if let fade {
             return fade.contentOpacity
@@ -86,6 +90,7 @@ struct DockletMotion {
         if rest != .tucked {
             isQuietHide = false
         }
+        contentFadeTarget = contentOpacity == 0 ? .hidden : .shown
     }
 
     /// Starts a drag at `touch`. A touch on a moving bar catches it where it is.
@@ -235,6 +240,44 @@ enum DockletContentFade {
     static func opacity(progress: CGFloat) -> CGFloat {
         max(0, 1 - scale * pow(max(0, progress), exponent))
     }
+
+    /// Length of the quiet hide's content fade. The quiet spring, critically damped with a 0.42 s period, reaches
+    /// the fade's zero at progress 0.906 after about 0.265 s.
+    static let quietFadeDuration: TimeInterval = 0.265
+    /// Control points of the timing curve that runs the quiet fade in SwiftUI over `quietFadeDuration`. The curve
+    /// matches the spring's opacity within about 0.6 %.
+    static let quietFadeFirstControl = (x: 0.25, y: 0.0)
+    static let quietFadeSecondControl = (x: 0.4, y: 0.8)
+    /// Frames the quiet fade waits after its trigger. The quiet spring's first frame only starts its clock, so the
+    /// bar moves one frame after the trigger.
+    static let quietFadeLeadFrames = 1
+}
+
+/// Where the content inside the glass is headed, and how it gets there. A transition sets it once, when it starts.
+enum DockletContentFadeTarget: Equatable {
+    /// Full opacity at once.
+    case shown
+    /// No opacity at once.
+    case hidden
+    /// To zero on the quiet hide's timing curve.
+    case quietFadeOut
+    /// To zero, linearly, over `DockletReducedFade.duration`.
+    case reducedFadeOut
+    /// To full opacity, linearly, over `DockletReducedFade.duration`.
+    case reducedFadeIn
+
+    /// The opacity the transition lands on.
+    var opacity: CGFloat {
+        switch self {
+        case .shown,
+             .reducedFadeIn:
+            1
+        case .hidden,
+             .quietFadeOut,
+             .reducedFadeOut:
+            0
+        }
+    }
 }
 
 private extension DockletMotion {
@@ -259,6 +302,7 @@ private extension DockletMotion {
         releaseExtra = .zero
         unwindFactor = 0
         isQuietHide = false
+        contentFadeTarget = .shown
         drag = Drag(
             startProgress: progress,
             travel: travel,
@@ -309,6 +353,7 @@ private extension DockletMotion {
         releaseExtra = .zero
         unwindFactor = 0
         isQuietHide = isQuiet
+        contentFadeTarget = isQuiet ? .quietFadeOut : .shown
         spring = DockletSpring(
             start: now,
             rest: rest,
@@ -360,6 +405,7 @@ private extension DockletMotion {
         spring = nil
         destination = rest
         fade = DockletReducedFade(start: now, rest: rest, landingHaptic: landingHaptic, isQuiet: isQuiet)
+        contentFadeTarget = rest == .tucked ? .reducedFadeOut : .reducedFadeIn
         guard rest == .shown else {
             return
         }
@@ -375,7 +421,7 @@ private extension DockletMotion {
         }
         guard !fade.hasLanded(at: now) else {
             progress = fade.rest.progress
-            isQuietHide = fade.isQuiet
+            isQuietHide = fade.rest == .tucked
             releaseExtra = .zero
             unwindFactor = 0
             self.fade = nil

@@ -368,7 +368,7 @@ struct DockletMotionTests {
         #expect(motion.progress == 1)
     }
 
-    @Test("Only a quiet hide fades the content, and a swipe tuck keeps it")
+    @Test("A quiet hide fades the content, and a swipe tuck keeps it")
     func onlyQuietHideFadesContent() {
         var quiet = DockletMotion()
         quiet.quietSettle(to: .tucked, now: 0)
@@ -413,7 +413,7 @@ struct DockletMotionTests {
         #expect(motion.tick(now: 0.22) == .heavy)
         #expect(!motion.isSettling)
         #expect(motion.progress == 1)
-        #expect(motion.contentOpacity == 1)
+        #expect(motion.contentOpacity == 0)
     }
 
     @Test("A Reduce Motion restore places the bar at shown at once and fades the content in over 0.22 s")
@@ -455,5 +455,145 @@ struct DockletMotionTests {
         #expect(!motion.isSettling)
         #expect(motion.progress == 1)
         #expect(motion.contentOpacity == 0)
+    }
+
+    /// The transitions whose content fade target must hold through every later tick.
+    enum FadeScenario: CaseIterable {
+        case quietHide
+        case reducedQuietHide
+        case swipeTuck
+        case reducedSwipeTuck
+        case restore
+    }
+
+    private func scenarioMotion(_ scenario: FadeScenario) -> DockletMotion {
+        switch scenario {
+        case .quietHide:
+            var motion = DockletMotion()
+            motion.quietSettle(to: .tucked, now: 0)
+            return motion
+        case .reducedQuietHide:
+            var motion = DockletMotion()
+            motion.quietSettle(to: .tucked, now: 0, reduceMotion: true)
+            return motion
+        case .swipeTuck:
+            return release(from: 40, translationX: 200)
+        case .reducedSwipeTuck:
+            return release(from: 40, translationX: 200, reduceMotion: true)
+        case .restore:
+            var motion = DockletMotion()
+            motion.snap(to: .tucked)
+            motion.settle(to: .shown, now: 0, isUserDriven: true)
+            return motion
+        }
+    }
+
+    @Test("A quiet hide fades the content out from its start and keeps that target until it lands at zero")
+    func quietHideTargetsFadeOut() {
+        var motion = DockletMotion()
+        motion.quietSettle(to: .tucked, now: 0)
+        #expect(motion.contentFadeTarget == .quietFadeOut)
+        _ = motion.tick(now: 1.0 / 60)
+        _ = motion.tick(now: 0.5)
+        #expect(motion.contentFadeTarget == .quietFadeOut)
+        _ = motion.tick(now: 0.7)
+        #expect(!motion.isSettling)
+        #expect(motion.contentOpacity == motion.contentFadeTarget.opacity)
+    }
+
+    @Test("A grab during a quiet fade targets shown, so the content does not keep fading under the finger")
+    func grabDuringQuietFadeTargetsShown() {
+        var motion = DockletMotion()
+        motion.quietSettle(to: .tucked, now: 0)
+        _ = motion.tick(now: 1.0 / 60)
+        _ = motion.tick(now: 0.15)
+        motion.beginAim(touch: CGPoint(x: 390, y: 500), time: 0.15, geometry: geometry)
+        #expect(motion.contentFadeTarget == .shown)
+    }
+
+    @Test("Restoring a quiet-hidden bar targets shown, or a linear fade in under Reduce Motion")
+    func restoreTargetsShownOrFadeIn() {
+        var motion = DockletMotion()
+        motion.quietSettle(to: .tucked, now: 0)
+        _ = motion.tick(now: 1.0 / 60)
+        _ = motion.tick(now: 0.7)
+        var restored = motion
+        restored.settle(to: .shown, now: 0.7, isUserDriven: true)
+        #expect(restored.contentFadeTarget == .shown)
+
+        motion.settle(to: .shown, now: 0.7, isUserDriven: true, reduceMotion: true)
+        #expect(motion.contentFadeTarget == .reducedFadeIn)
+        _ = motion.tick(now: 1.0)
+        #expect(motion.contentOpacity == 1)
+    }
+
+    @Test("Under Reduce Motion a quiet hide and a swipe tuck both fade the content out and rest with it at zero")
+    func reducedTucksTargetFadeOut() {
+        var quiet = DockletMotion()
+        quiet.quietSettle(to: .tucked, now: 0, reduceMotion: true)
+        #expect(quiet.contentFadeTarget == .reducedFadeOut)
+        _ = quiet.tick(now: 0.22)
+        #expect(quiet.contentOpacity == 0)
+
+        var swipe = release(from: 40, translationX: 200, reduceMotion: true)
+        #expect(swipe.contentFadeTarget == .reducedFadeOut)
+        _ = swipe.tick(now: 0.22)
+        #expect(swipe.contentOpacity == 0)
+    }
+
+    @Test("A swipe tuck keeps the content shown while it lands, since only a tuck under Reduce Motion fades it")
+    func swipeTuckTargetsShown() {
+        var motion = release(from: 40, translationX: 200)
+        #expect(motion.contentFadeTarget == .shown)
+        _ = motion.tick(now: 0.7)
+        #expect(motion.contentFadeTarget == .shown)
+        _ = motion.tick(now: 1.4)
+        #expect(motion.contentFadeTarget == .shown)
+        #expect(motion.contentOpacity == 1)
+    }
+
+    @Test("Snapping a quiet hide to tucked hides the content at once, and to shown restores it at once")
+    func snapTargetsFollowRest() {
+        var motion = DockletMotion()
+        motion.quietSettle(to: .tucked, now: 0)
+        _ = motion.tick(now: 1.0 / 60)
+        _ = motion.tick(now: 0.15)
+
+        var tucked = motion
+        tucked.snap(to: .tucked)
+        #expect(tucked.contentFadeTarget == .hidden)
+        #expect(tucked.contentOpacity == 0)
+
+        motion.snap(to: .shown)
+        #expect(motion.contentFadeTarget == .shown)
+        #expect(motion.contentOpacity == 1)
+    }
+
+    @Test("A tick never changes the content fade target", arguments: FadeScenario.allCases)
+    func tickNeverChangesFadeTarget(scenario: FadeScenario) {
+        var motion = scenarioMotion(scenario)
+        let target = motion.contentFadeTarget
+        for step in 1 ... 90 {
+            _ = motion.tick(now: Double(step) / 60)
+            #expect(motion.contentFadeTarget == target)
+        }
+    }
+
+    @Test("The quiet fade reaches zero about its duration after the bar starts moving")
+    func quietFadeTimingMatchesCurve() {
+        var motion = DockletMotion()
+        motion.quietSettle(to: .tucked, now: 0)
+        _ = motion.tick(now: 1.0 / 60)
+        var zeroTime: TimeInterval?
+        for step in 1 ... 360 {
+            let now = 1.0 / 60 + Double(step) / 240
+            _ = motion.tick(now: now)
+            if motion.contentOpacity == 0 {
+                zeroTime = now
+                break
+            }
+        }
+        let elapsed = (zeroTime ?? .infinity) - 1.0 / 60
+        #expect(abs(elapsed - DockletContentFade.quietFadeDuration) <= 1.0 / 120)
     }
 }

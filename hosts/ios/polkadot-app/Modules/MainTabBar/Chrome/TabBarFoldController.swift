@@ -28,6 +28,8 @@ final class TabBarFoldController {
     /// The user's tuck or restore. Only a tucked value carries across navigation.
     private var userOverride: TabBarFoldOverride = .none
     private var motion = DockletMotion()
+    /// The content fade target last sent to the chrome. Sent only when a transition changes it.
+    private var emittedContentFade: DockletContentFadeTarget = .shown
     /// Decides when the auto-hide tucks the bar. The drag, settle and state blockers are read from this controller.
     private var autoHide = DockletAutoHide(startedAt: CACurrentMediaTime())
     /// The one wake-up that runs the auto-hide tuck at its deadline.
@@ -109,6 +111,7 @@ final class TabBarFoldController {
         cancelFoldAnimator()
         cancelNudge()
         motion.snap(to: state == .tucked ? .tucked : .shown)
+        syncContentFade()
         writeTransform(pose(for: state))
         rescheduleAutoHide()
     }
@@ -125,12 +128,14 @@ final class TabBarFoldController {
     func foldPanBegan(location: CGPoint) {
         prepareDrag()
         motion.begin(touch: location, time: CACurrentMediaTime(), geometry: geometry)
+        syncContentFade()
     }
 
     /// A touch in the Grab zone catches a tucked bar, or one still settling toward tucked, and turns it to the finger.
     func grabPanBegan(location: CGPoint) {
         prepareDrag()
         motion.beginAim(touch: location, time: CACurrentMediaTime(), geometry: geometry)
+        syncContentFade()
     }
 
     func foldPanChanged(location: CGPoint, translationX: CGFloat) {
@@ -145,6 +150,7 @@ final class TabBarFoldController {
     func foldPanEnded() {
         isDragging = false
         motion.end(time: CACurrentMediaTime(), geometry: geometry, reduceMotion: isReduceMotionEnabled)
+        syncContentFade()
         if motion.isSettling {
             startSettling()
         }
@@ -167,6 +173,7 @@ final class TabBarFoldController {
             return
         }
         motion.snap(to: motion.destination)
+        syncContentFade()
         writeTransform(dockletTransform())
     }
 
@@ -244,6 +251,7 @@ private extension TabBarFoldController {
         foldOffsetWidth = chromeBounds().width
         stopSettling()
         cancelFoldAnimator()
+        defer { syncContentFade() }
 
         let rest: DockletRest = state == .tucked ? .tucked : .shown
         guard animated, !TabBarVisibilityPolicy.isOffScreenSwap(from: previous, to: state) else {
@@ -319,6 +327,7 @@ private extension TabBarFoldController {
     }
 
     func tickSettle(at time: CFTimeInterval) {
+        assert(motion.contentFadeTarget == emittedContentFade)
         let wasSettling = motion.isSettling
         let haptic = motion.tick(now: time)
         writeTransform(dockletTransform())
@@ -353,7 +362,16 @@ private extension TabBarFoldController {
         foldSurface.transform = transform
         outputs.glow(geometry.edgeGlowRect, glowOpacity)
         outputs.grabZone(motion.destination == .tucked ? geometry.grabZoneRect : .zero)
-        outputs.contentOpacity(motion.contentOpacity)
+    }
+
+    /// Sends the content fade target to the chrome when a transition has changed it. Called only from the transition
+    /// sites, so a tick never sends it.
+    func syncContentFade() {
+        guard motion.contentFadeTarget != emittedContentFade else {
+            return
+        }
+        emittedContentFade = motion.contentFadeTarget
+        outputs.contentFade(emittedContentFade)
     }
 
     /// The Edge glow follows the hide progress while a finger drags the bar or it settles toward tucked. A settle
@@ -391,6 +409,7 @@ private extension TabBarFoldController {
         commit(.tucked)
         cancelFoldAnimator()
         motion.quietSettle(to: .tucked, now: CACurrentMediaTime(), reduceMotion: isReduceMotionEnabled)
+        syncContentFade()
         startSettling()
         rescheduleAutoHide()
     }
