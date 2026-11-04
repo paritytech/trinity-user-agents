@@ -14,7 +14,7 @@ use parity_scale_codec::Encode;
 use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
 
 use super::{
-	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},
+	pocket::{NativePocketObserver, card_side, keeping_faces, observe_pocket_cards},
 	reject_undecodable_deeplink,
 	renderer::{NativeRendererObserver, NativeSubscription, observe_renderer},
 	ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError},
@@ -1138,15 +1138,7 @@ impl NativeProductExecution {
 			.expect("native product control mutex poisoned")
 			.clone()
 			.ok_or(crate::ProductRuntimeError::NotConnected)?;
-		let card = match &request.context {
-			truapi::latest::RenderContext::PocketCard { card_id } => {
-				Some((card_id.clone(), PocketCardSide::Front))
-			},
-			truapi::latest::RenderContext::PocketCardBack { card_id } => {
-				Some((card_id.clone(), PocketCardSide::Back))
-			},
-			_ => None,
-		};
+		let card = card_side(&request.context);
 		let stream = control.render(request)?;
 		let observer: Arc<dyn NativeRendererObserver> = match card {
 			Some((card_id, side)) => keeping_faces(

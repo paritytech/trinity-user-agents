@@ -7,7 +7,7 @@ use futures::{
 	StreamExt,
 	channel::mpsc::{UnboundedSender, unbounded},
 };
-use truapi::latest::ProductRendererRenderItem;
+use truapi::latest::{ProductRendererRenderItem, RenderContext};
 
 use super::renderer::{NativeRendererObserver, NativeSubscription, spawn_observation};
 use crate::{
@@ -43,6 +43,15 @@ pub fn observe_pocket_cards(
 			}
 		}
 	})
+}
+
+/// The card and side a render draws, when it draws one of a Pocket card's faces.
+pub fn card_side(context: &RenderContext) -> Option<(String, PocketCardSide)> {
+	match context {
+		RenderContext::PocketCard { card_id } => Some((card_id.clone(), PocketCardSide::Front)),
+		RenderContext::PocketCardBack { card_id } => Some((card_id.clone(), PocketCardSide::Back)),
+		_ => None,
+	}
 }
 
 /// Wraps the observer of one card's render so every face it draws is also
@@ -121,11 +130,12 @@ mod tests {
 		let card = || "stamps".to_string();
 		block_on(cards.add(product.clone(), card(), "Stamps".into(), RendererNode::Nil)).unwrap();
 		let drawn = Arc::new(Drawn::default());
-		let render = |side| {
+		let render = |context| {
+			let (card_id, side) = card_side(&context).expect("a Pocket card context names a side");
 			keeping_faces(
 				cards.clone(),
 				product.clone(),
-				card(),
+				card_id,
 				side,
 				drawn.clone(),
 				&test_spawner(),
@@ -134,8 +144,8 @@ mod tests {
 		let front = RendererNode::String { text: "Stamps: 3".into() };
 		let back = RendererNode::String { text: "Code".into() };
 
-		render(PocketCardSide::Front).on_update(front.clone());
-		render(PocketCardSide::Back).on_update(back.clone());
+		render(RenderContext::PocketCard { card_id: card() }).on_update(front.clone());
+		render(RenderContext::PocketCardBack { card_id: card() }).on_update(back.clone());
 
 		assert_eq!(*drawn.0.lock().unwrap(), vec![front.clone(), back.clone()]);
 		let kept = |side| block_on(cards.face(product.clone(), card(), side)).unwrap();
