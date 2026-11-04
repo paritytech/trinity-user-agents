@@ -196,9 +196,7 @@ private fun CollectiblesPage(
         } else {
             CollectiblesSkeleton(modifier = Modifier.fillMaxSize(), sweeping = sweeping)
 
-            // Laid out at full size from the start and only scaled, so the page never reflows on the way up.
-            // The page's first paint at full size blocks the UI thread for about 300 ms, which freezes the
-            // sweep; attached at 1 dp from the start it paints for free, and is only enlarged once the cover is open.
+            // The first full-size paint of the page blocks the UI thread for ~300 ms and would freeze the sweep.
             ProductWebViewHost(
                 modifier = if (webViewExpanded) Modifier.fillMaxSize() else Modifier.size(1.dp),
                 webView = webView
