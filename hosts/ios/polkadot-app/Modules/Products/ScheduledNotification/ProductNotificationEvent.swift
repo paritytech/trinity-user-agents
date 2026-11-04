@@ -9,11 +9,6 @@ struct ProductNotificationEvent: Equatable {
         case tapped
     }
 
-    enum SeenVia: String {
-        case foreground
-        case nextLaunch = "next_launch"
-    }
-
     let productId: String
     let deeplink: String?
     let deliveredAt: Date
@@ -36,35 +31,15 @@ struct ProductNotificationEvent: Equatable {
         self.deliveredAt = deliveredAt
     }
 
-    /// A notification stays in Notification Center across launches, including one shown in the foreground, so each
-    /// one is reported once. On the first scan, when nothing is recorded yet, only those from the last day count.
-    static func identifiersToReport(
-        delivered: [(identifier: String, deliveredAt: Date)],
-        alreadyReported: Set<String>?,
-        now: Date
-    ) -> Set<String> {
-        let oldest = now.addingTimeInterval(-24 * 60 * 60)
-        let unreported = delivered.filter { notification in
-            guard let alreadyReported else {
-                return notification.deliveredAt > oldest
-            }
-            return !alreadyReported.contains(notification.identifier)
-        }
-        return Set(unreported.map(\.identifier))
-    }
-
     func hostEvent(
         step: Step,
-        seenVia: SeenVia? = nil,
         origin: HostEventOrigin,
         monotonicMilliseconds: Int
     ) -> HostEvent {
-        var tags = [
+        let tags = [
             "host.os_version": origin.osVersion,
             "product_notification.product_id": productId
         ]
-        tags["product_notification.seen_via"] = seenVia?.rawValue
-
         var extras = [
             "app.launch_id": HostEventValue.string(origin.launchID.uuidString.lowercased()),
             "product_notification.delivered_at_unix_ms": .integer(Int(deliveredAt.timeIntervalSince1970 * 1_000))

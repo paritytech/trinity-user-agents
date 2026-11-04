@@ -17,7 +17,6 @@ enum SettingsKey: String {
     case nextSyncUpdateId = "nextSyncUpdateId.v3"
     case themeSelected = "themeSelected.v3"
     case gameCalendarReminder
-    case productNotificationsReported
     case localNetworkPermissionRequested
     case backendSessionId = "backendSessionId.v3"
     case showTransferStrategyDebug

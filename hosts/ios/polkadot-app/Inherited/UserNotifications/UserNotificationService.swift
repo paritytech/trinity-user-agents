@@ -133,9 +133,6 @@ final class UserNotificationService: NSObject {
 
     func startGatheringNotifications() {
         center.delegate = self
-        productNotificationDiagnostics.reportDeliveredSinceLastLaunch { [center] in
-            await center.deliveredNotifications()
-        }
     }
 
     func setupHandlers(
@@ -261,7 +258,11 @@ extension UserNotificationService: UNUserNotificationCenterDelegate {
     ) {
         let presentationOptions = foregroundPresentationDecider?.presentationOptions(for: notification) ?? []
         if !presentationOptions.isEmpty {
-            productNotificationDiagnostics.shownInForeground(notification)
+            productNotificationDiagnostics.shown(
+                identifier: notification.request.identifier,
+                userInfo: notification.request.content.userInfo,
+                deliveredAt: notification.date
+            )
         }
         completionHandler(presentationOptions)
     }
@@ -271,7 +272,11 @@ extension UserNotificationService: UNUserNotificationCenterDelegate {
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        productNotificationDiagnostics.tapped(response.notification)
+        productNotificationDiagnostics.tapped(
+            identifier: response.notification.request.identifier,
+            userInfo: response.notification.request.content.userInfo,
+            deliveredAt: response.notification.date
+        )
         guard canHandlePushNotifications, let pushTapHandler else {
             pendingResponses.append(response)
             completionHandler()
