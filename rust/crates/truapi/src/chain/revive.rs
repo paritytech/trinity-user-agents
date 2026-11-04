@@ -122,6 +122,9 @@ impl EvmContractCaller {
 	/// Simulates as the signer and retains the exact call and required limits.
 	///
 	/// Nothing is signed or submitted. Chain state can change before execution.
+	/// Writes rely on the runtime's `Revive.AutoMap`: the simulation maps its
+	/// origin, so it cannot detect an unmapped signer on a runtime without
+	/// `AutoMap`.
 	pub async fn dry_run<'a>(
 		&'a self,
 		signer: &'a SubstrateSigner,

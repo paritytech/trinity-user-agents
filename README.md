@@ -328,8 +328,10 @@ let transaction = contracts.dry_run(&signer, &contract, &input).await?;
 transaction.execute_and_watch().await?;
 ```
 
-The request borrows the caller and its signer and owns its calldata. Simulation describes the state read at that time;
-execution uses its limits without repeating the simulation. Revive's wire types and resource estimates are private.
+The request borrows the caller and the signer and owns its calldata. Simulation describes the state read at that time;
+execution uses its limits without repeating the simulation. Writes rely on the runtime's `Revive.AutoMap`: the dry run
+maps its origin while it simulates, so it cannot detect an unmapped signer on a runtime without `AutoMap`. Revive's
+wire types and resource estimates are private.
 A read or simulation that reverts is `Reverted` with the decoded revert reason. The `ExtrinsicFailed` event does not
 carry that reason, so a contract that reverts on chain surfaces as `DispatchFailed` with the module error
 `Revive::ContractReverted`, which tells it apart from `Revive::OutOfGas` or `Revive::StorageDepositLimitExhausted`.
