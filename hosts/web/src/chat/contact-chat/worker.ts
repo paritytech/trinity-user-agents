@@ -147,6 +147,7 @@ async function run(): Promise<void> {
       messages: (id) => engine.messages(id),
       send: (id, text) => engine.send(id, text),
       retry: (id, messageId) => engine.retry(id, messageId),
+      act: (id, actionId) => engine.act(id, actionId),
       start: (target, welcome) => {
         state.starts = [...state.starts, JSON.stringify(target)];
         return engine.start(target, welcome);

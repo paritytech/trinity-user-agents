@@ -21,6 +21,7 @@ import {
   type ChatRoomFeatures,
   type ChatRoomMetadata,
   type ChatRoomPreview,
+  type ChatRoomAction,
   type ChatRoomContact,
   type ChatV2Envelope,
   type HostChatCapabilitiesResponse,
@@ -87,6 +88,8 @@ export interface V2Room {
   call?: ChatRoomCall;
   /** The one person the room is a conversation with, for a product that may declare one. */
   contact?: ChatRoomContact;
+  /** The product's entries of the room's options menu. */
+  actions?: ChatRoomAction[];
   /** The messages the host has seen, by id. Only a cache: the product keeps them. */
   cache: Map<string, ChatMessage>;
 }
@@ -152,6 +155,10 @@ const CONTACT_STATES: readonly ChatRoomContact["state"][] = [
   "PeerLeft",
 ];
 const HELD_SIGNALS_MAX = 32;
+const ROOM_ACTIONS_MAX = 4;
+const ROOM_ACTION_LABEL_MAX = 64;
+/** The host's own entries of a room's options menu, in lower case: no product entry may read as one of them. */
+const HOST_MENU_LABELS = ["block", "unblock", "cancel"];
 const BYTES32 = /^0x[0-9a-fA-F]{64}$/;
 
 /** Who a declared contact names, in lower case, or null when it names no one this host reads. */
@@ -237,6 +244,8 @@ class Link {
   private nextId = 1;
   readonly pending = new Map<number, PendingQuery>();
   subscribed = false;
+  /** The product opened `action_subscribe`: room menu choices reach it. */
+  actions = false;
   closed = false;
 
   constructor(
@@ -346,8 +355,11 @@ export class ChatV2Host {
     this.links.delete(productId);
     link.close(reason);
     this.stopMedia(productId);
-    for (const room of this.roomsOf(productId))
+    // A menu entry is the running worker's: a choice could reach no one now.
+    for (const room of this.roomsOf(productId)) {
       if (room.call !== undefined) delete room.call;
+      delete room.actions;
+    }
     this.bump(productId);
     this.emit({ type: "call", productId });
   }
@@ -532,6 +544,35 @@ export class ChatV2Host {
     this.queues.set(productId, queue);
   }
 
+  /**
+   * Give the product the user's choice of `actionId` in the options menu of
+   * one of its rooms, as `RoomActionTriggered` on its `action_subscribe`
+   * stream. Only an entry the room offers now is sent, and only once the
+   * product subscribed; a choice is not queued. Answers why it was not sent,
+   * or null.
+   */
+  triggerRoomAction(
+    productId: string,
+    roomId: string,
+    actionId: string,
+  ): string | null {
+    const link = this.links.get(productId);
+    if (link === undefined) return "The product's worker is not running.";
+    if (!link.actions) return "The product takes no menu choices.";
+    const offered = this.room(productId, roomId)?.actions ?? [];
+    if (!offered.some((action) => action.actionId === actionId))
+      return "This option is not offered any more.";
+    link.post({
+      kind: "action",
+      item: {
+        roomId,
+        peer: "user",
+        payload: { tag: "RoomActionTriggered", value: { actionId } },
+      },
+    });
+    return null;
+  }
+
   /** The media the host runs for `productId`'s call, or null. */
   heldMedia(productId: string): HeldMedia | null {
     return this.media.get(productId) ?? null;
@@ -612,6 +653,9 @@ export class ChatV2Host {
       case "roomEventsSubscribe":
         link.subscribed = true;
         return ok({});
+      case "actionSubscribe":
+        link.actions = true;
+        return ok({});
       case "deleteRoom": {
         const { roomId } = request as ProductCalls["deleteRoom"][0];
         if (!this.declared.get(productId)?.delete(roomId)) return ok({});
@@ -642,6 +686,12 @@ export class ChatV2Host {
         this.emit({ type: "rooms", productId });
         this.emit({ type: "call", productId });
         return ok({});
+      case "setRoomActions":
+        return this.setRoomActions(
+          productId,
+          room,
+          (request as ProductCalls["setRoomActions"][0]).actions,
+        );
       case "setRoomContact":
         return this.setRoomContact(
           productId,
@@ -718,6 +768,37 @@ export class ChatV2Host {
     });
     this.emit({ type: "rooms", productId });
     return ok({ status: "New" });
+  }
+
+  private setRoomActions(
+    productId: string,
+    room: V2Room,
+    actions: ChatRoomAction[],
+  ): CallAnswer<"setRoomActions"> {
+    const ids = new Set(actions.map((action) => action.actionId));
+    if (
+      actions.length > ROOM_ACTIONS_MAX ||
+      ids.size !== actions.length ||
+      actions.some(
+        (action) =>
+          action.actionId === "" ||
+          action.label.trim() === "" ||
+          utf8Length(action.label) > ROOM_ACTION_LABEL_MAX ||
+          HOST_MENU_LABELS.includes(action.label.trim().toLowerCase()),
+      )
+    )
+      return err(
+        unknown(
+          `a room has at most ${ROOM_ACTIONS_MAX} menu entries, each with its own id and a label of 1 to ${ROOM_ACTION_LABEL_MAX} bytes that is not one of the host's own (${HOST_MENU_LABELS.join(", ")})`,
+        ),
+      );
+    room.actions = actions.map(({ actionId, label, destructive }) => ({
+      actionId,
+      label,
+      destructive,
+    }));
+    this.emit({ type: "rooms", productId });
+    return ok({});
   }
 
   private setRoomContact(

@@ -7,7 +7,10 @@ import type {
 import { cryptoRandom, toHex } from "../../../../src/invitations/sealing.js";
 import { settle } from "../../../support/test-support.js";
 import { KeptStorage } from "../../../support/product-storage.js";
-import { ContactChat } from "../../../../src/chat/contact-chat/engine.js";
+import {
+  ContactChat,
+  START_OVER,
+} from "../../../../src/chat/contact-chat/engine.js";
 import type { RequestCall } from "../../../../src/chat/contact-chat/requests.js";
 import {
   simpleText,
@@ -52,6 +55,7 @@ async function engine(
   storage: KeptStorage,
   requests: ReturnType<typeof host>,
   reports: string[] = [],
+  now: () => number = () => 1,
 ) {
   return new ContactChat({
     requests: requests.requests,
@@ -61,7 +65,7 @@ async function engine(
     report: (reason) => reports.push(reason),
     recordKey: "record",
     random: cryptoRandom,
-    now: () => 1,
+    now,
   });
 }
 
@@ -117,6 +121,10 @@ describe("Contact Chat across a restart", () => {
       ["self", notice],
       ["participant", "hello"],
       ["system", "Your message was not sent: no slot"],
+    ]);
+    // A connection kept from before Start over existed offers it in its menu.
+    expect(chat.conversations()[0]!.actions).toEqual([
+      { id: START_OVER, label: "Start over" },
     ]);
     // Nothing is taken out of what is kept.
     expect(chat.stored()[0]!.messages).toHaveLength(5);
@@ -420,5 +428,254 @@ describe("Contact Chat across a restart", () => {
     expect(again.messages(roomId).find((m) => m.id === id)!.state).toBe(
       "failed",
     );
+  });
+
+  describe("Start over", () => {
+    const NEW_HANDLE = `0x${"dd".repeat(16)}`;
+    const view = (handle: string, createdAt: number) => ({
+      handle,
+      contact: { bytes: CONTACT },
+      purpose: "Hi",
+      createdAt,
+      status: "waiting" as const,
+    });
+
+    /** Alice connected to the contact over `storage`, as her engine kept it, and what her side would answer. */
+    async function connectedAlice(storage: KeptStorage) {
+      let invited = "";
+      const setup = host((call) => {
+        if (call.call !== "request") return { ok: true };
+        invited = (call.request as { payload: string }).payload;
+        return { ok: true, request: view(HANDLE, 1) };
+      });
+      const alice = await engine(storage, setup);
+      alice.run();
+      const roomId = await alice.start({ handle: { bytes: CONTACT } }, "");
+      await settle();
+      const response = simpleText.respond(
+        invited,
+        toHex(cryptoRandom(32)),
+        cryptoRandom,
+      )!.response;
+      setup.tell({ kind: "response", handle: HANDLE, payload: response });
+      await settle();
+      alice.stop();
+      return { roomId, response };
+    }
+
+    test("a request the host took while the engine stopped is matched from its replay; until then the connection stays, and a late reply of the old request changes nothing", async () => {
+      const storage = new KeptStorage();
+      const { roomId, response } = await connectedAlice(storage);
+      const asking = host(() => null);
+      const first = await engine(storage, asking);
+      first.run();
+      const before = structuredClone(first.stored()[0]!);
+      void first.act(roomId, START_OVER);
+      await settle();
+      // The host is asking the user: nothing has changed but the kept candidate.
+      expect(asking.calls.map((call) => call.call)).toEqual(["request"]);
+      const { restart, ...kept } = first.stored()[0]!;
+      expect(kept).toEqual(before);
+      expect(restart).toBeDefined();
+      first.stop();
+
+      // The engine ended there; the host took the request and replays it.
+      const replayed = host(() => ({ ok: true }));
+      const second = await engine(storage, replayed);
+      expect(second.stored()[0]!.status).toBe("connected");
+      second.run();
+      replayed.tell({ kind: "outgoing", request: view(NEW_HANDLE, 1) });
+      await settle();
+      const after = second.stored()[0]!;
+      expect({
+        status: after.status,
+        request: after.request,
+        index: after.index,
+        session: after.session,
+        restart: after.restart,
+      }).toEqual({
+        status: "waiting",
+        request: NEW_HANDLE,
+        index: restart!.index,
+        session: undefined,
+        restart: undefined,
+      });
+
+      // The old request's reply, told again, does not reconnect the old session.
+      replayed.tell({ kind: "response", handle: HANDLE, payload: response });
+      replayed.tell({
+        kind: "replied",
+        request: { handle: HANDLE, sender: { bytes: CONTACT }, repliedAt: 1 },
+      });
+      await settle();
+      expect([second.stored()[0]!.status, second.stored()[0]!.session]).toEqual(
+        ["waiting", undefined],
+      );
+    });
+
+    test("a request the host refuses says why and keeps the connection; a candidate the host never took is replaced by the next Start over", async () => {
+      const storage = new KeptStorage();
+      const { roomId } = await connectedAlice(storage);
+      const refusing = host((call) =>
+        call.call === "request"
+          ? { ok: false, reason: "Refused", detail: "No free slot" }
+          : { ok: true },
+      );
+      const alice = await engine(storage, refusing);
+      alice.run();
+      const before = structuredClone(alice.stored()[0]!);
+      await alice.act(roomId, START_OVER);
+      const { messages, ...kept } = alice.stored()[0]!;
+      const { messages: earlier, ...was } = before;
+      expect(kept).toEqual(was);
+      expect(messages.slice(earlier.length).map((m) => m.text)).toEqual([
+        "Start over did not happen: No free slot. This chat is as it was.",
+      ]);
+      // Only Start over is offered, and only while connected.
+      await expect(alice.act(roomId, "block")).rejects.toThrow(
+        "This option is not offered any more.",
+      );
+      alice.stop();
+
+      // A candidate kept from a run whose request never reached the host.
+      const silent = host(() => null);
+      const second = await engine(storage, silent);
+      second.run();
+      void second.act(roomId, START_OVER);
+      await settle();
+      second.stop();
+      const sending = host((call) =>
+        call.call === "request"
+          ? { ok: true, request: view(NEW_HANDLE, 1) }
+          : { ok: true },
+      );
+      const third = await engine(storage, sending);
+      third.run();
+      const stale = third.stored()[0]!.restart!;
+      await third.act(roomId, START_OVER);
+      const after = third.stored()[0]!;
+      expect([
+        after.status,
+        after.request,
+        after.index === stale.index,
+        after.restart,
+      ]).toEqual(["waiting", NEW_HANDLE, false, undefined]);
+    });
+
+    test("a replayed request made before the Start over is not taken for it; one made at or after it is", async () => {
+      const storage = new KeptStorage();
+      const { roomId } = await connectedAlice(storage);
+      const first = await engine(
+        storage,
+        host(() => null),
+        [],
+        () => 100,
+      );
+      first.run();
+      void first.act(roomId, START_OVER);
+      await settle();
+      expect(first.stored()[0]!.restart!.at).toBe(100);
+      first.stop();
+
+      const replayed = host(() => ({ ok: true }));
+      const second = await engine(storage, replayed, [], () => 100);
+      second.run();
+      replayed.tell({ kind: "outgoing", request: view(NEW_HANDLE, 99) });
+      await settle();
+      expect([
+        second.stored()[0]!.status,
+        second.stored()[0]!.request,
+        second.stored()[0]!.restart?.at,
+      ]).toEqual(["connected", HANDLE, 100]);
+      replayed.tell({ kind: "outgoing", request: view(NEW_HANDLE, 100) });
+      await settle();
+      expect([second.stored()[0]!.status, second.stored()[0]!.request]).toEqual(
+        ["waiting", NEW_HANDLE],
+      );
+    });
+
+    test("while a Start over waits for the user the menu does not offer it again, and an Accept meanwhile replaces it before any request leaves", async () => {
+      const storage = new KeptStorage();
+      const { roomId } = await connectedAlice(storage);
+      const asking = host(() => null);
+      const alice = await engine(storage, asking);
+      alice.run();
+      void alice.act(roomId, START_OVER);
+      await settle();
+      expect(alice.conversations()[0]!.actions).toBeUndefined();
+      // A second choice from a menu drawn earlier sends nothing, and the room says why.
+      await alice.act(roomId, START_OVER);
+      expect([
+        asking.calls.map((call) => call.call),
+        alice.messages(roomId).at(-1)!.text,
+      ]).toEqual([
+        ["request"],
+        "Start over is already waiting for your answer.",
+      ]);
+      alice.stop();
+
+      // A run where their request is accepted while the Start over is being saved.
+      const calls = host(() => ({ ok: true }));
+      const again = await engine(storage, calls);
+      again.run();
+      const before = again.stored()[0]!.restart;
+      void again.act(roomId, START_OVER);
+      calls.tell({
+        kind: "acceptIntent",
+        request: {
+          handle: NEW_HANDLE,
+          sender: { bytes: CONTACT },
+          payload: invitation(),
+        },
+      });
+      await settle();
+      const after = again.stored()[0]!;
+      expect({
+        calls: calls.calls.map((call) => call.call),
+        status: after.status,
+        request: after.request,
+        restart: after.restart,
+        replacedEarlier: before !== undefined,
+      }).toEqual({
+        calls: ["reply"],
+        status: "connected",
+        request: NEW_HANDLE,
+        restart: undefined,
+        replacedEarlier: true,
+      });
+    });
+
+    test("an Accept that replaces a connection fails this side's messages still sending in it; they stay in the history and are not sent again", async () => {
+      const storage = new KeptStorage();
+      const { roomId } = await connectedAlice(storage);
+      const calls = host((call) =>
+        call.call === "chatAccount" ? null : { ok: true },
+      );
+      const alice = await engine(storage, calls);
+      alice.run();
+      const id = await alice.send(roomId, "Still there?");
+      await settle();
+      expect(alice.messages(roomId).find((m) => m.id === id)!.state).toBe(
+        "sending",
+      );
+      calls.tell({
+        kind: "acceptIntent",
+        request: {
+          handle: NEW_HANDLE,
+          sender: { bytes: CONTACT },
+          payload: invitation(),
+        },
+      });
+      await settle();
+      const after = alice.stored()[0]!;
+      expect([
+        after.status,
+        alice.messages(roomId).find((m) => m.id === id)!.state,
+        after.windowStart,
+      ]).toEqual(["connected", "failed", after.messages.length - 1]);
+      await expect(alice.retry(roomId, id)).rejects.toThrow(
+        "This message was written in an earlier connection.",
+      );
+    });
   });
 });

@@ -473,12 +473,12 @@ host asks it for pages, where a TrUAPI Chat room has the host store what the pro
 TrUAPI codegen gives them. Nothing in this repository's Rust crates, codegen or packages changes.
 
 - **How a product connects.** Only a product `Worker` whose manifest includes chat, run by the ordinary worker loader.
-  Its frame posts `{ type: "truapi-chat-v2-draft", protocol: "truapi-chat-v2-draft/0" }` to the host page with one
+  Its frame posts `{ type: "truapi-chat-v2-draft", protocol: "truapi-chat-v2-draft/1" }` to the host page with one
   `MessagePort`; the host takes it only from that worker's own frame and origin, binds it to that product id, and ends
   it when the worker stops or the session changes. A product uses `connectChatV2()` from `src/chat/draft/product.ts`,
   whose methods carry the contract's names (`createRoom`, `updateFeed`, `setRoomPreview`, `setRoomFeatures`,
-  `setRoomCall`, `deleteRoom`, `capabilities`, `roomEventsSubscribe`, `onMessagesQuery`, `onUserAction`,
-  `onParticipantsQuery`, `callMedia.start/signal/stop`).
+  `setRoomCall`, `deleteRoom`, `capabilities`, `roomEventsSubscribe`, `actionSubscribe`, `onMessagesQuery`,
+  `onUserAction`, `onParticipantsQuery`, `callMedia.start/signal/stop`).
 - **Scoping.** The host, not the core, scopes the bridge: a product reaches only the rooms it declared through its own
   link, and its rooms are not TrUAPI Chat rooms. The core runs the worker as a `Worker` execution but sees none of the
   bridge's messages and grants nothing for them. The bridge carries no keys, entropy or grants.
@@ -508,6 +508,16 @@ TrUAPI codegen gives them. Nothing in this repository's Rust crates, codegen or 
   the call buttons of a room without calls are disabled, not hidden. Each would need one optional addition to
   `src/chat/provider.ts` (a removed message id on the `messages` event, and an `offered` check on `CallSupport` and
   `FileTransfer`), which is not made. `Actions` buttons draw disabled and `Custom` bodies show their preview text.
+- **Room menu entries** (draft, in no proposal). `setRoomActions { roomId, actions }` puts up to four of the product's
+  entries (`actionId`, `label`, `destructive`, the shape of the reference's `ChatProductAction` with a `Callback`
+  handler and no icon) in the room's **Chat options** menu, above the host's own **Block**; an empty list removes them.
+  Choosing one sends `RoomActionTriggered { actionId }` from the peer `user` on the product's `actionSubscribe` stream,
+  the reference's `action_subscribe`, whose payload has no room entry. Only an entry the room offers now is sent, and
+  only once the product subscribed; a choice is not queued, and one the host refuses shows its reason under the
+  conversation. A label that reads as one of the host's own entries (**Block**, **Unblock**, **Cancel**, in any case) is
+  refused. Entries belong to the running worker: they go when it stops, and a worker declares its own, an empty list
+  too, for every room it serves, including one that already exists. What an entry does is the product's; the host draws
+  it and passes the choice on.
 - **Not covered.** Host-store v2 rooms (their composer says the draft host keeps no messages), `reactions_query`,
   `message_actions_query`, `search_query`, `open_link`, `room_calls` and the Media service, preimage and sealed
   attachments, bots, mute and archive, wakes, replies and edits by the user, `allowedReactions`, pinned ordering, rate
@@ -686,6 +696,18 @@ agreed API.
   neither worker gets a name, username, account, identity key, request id or route. Contact Chat can also ask
   `contacts.pick` itself and send its request to the handle it gets, and cancel its own request through its host; only
   the browser test drives these, as the v2 draft has no action for them.
+  - **Start over.** A connected room offers **Start over** in its **Chat options** menu (**⋯**), a room menu entry of
+    Contact Chat's own. It is for a connection whose messages no longer get through, such as after the other side
+    accepted another request from this person. Choosing it sends a new request on a new conversation account, through
+    the host's usual **Send invitation** prompt and costs, with a purpose that asks the other side to accept it. Until
+    the host holds the request, nothing changes: Cancel in the prompt, or a request the host refuses, leaves the
+    connection as it was. Once the host holds it, the room keeps its history, marks where the earlier connection ended,
+    stops reading it, and waits; the other side must accept exactly this new request, which replaces their connection
+    too. While the prompt is open the menu does not offer Start over again; a choice from a menu drawn earlier sends
+    nothing, and the room says why. Any new connection, from Start over or from an Accept that replaces one, starts
+    after the history: this side's messages still sending in the earlier one show failed, and earlier messages are kept
+    but neither posted nor retried in the new one. Nothing tells the earlier connection, and nothing is cancelled or
+    synced on the other side.
   - **Text.** Once connected, both sides write and read plain text (`simple-text/1`), through the product's own TrUAPI
     `statementStore`. Each side keeps one statement up, on its own topic and channel (Alice on `T_AB`, Bob on `T_BA`,
     with channels Bob's response names), signed by its conversation account. Each post holds that side's last 20
