@@ -102,7 +102,7 @@ impl LearnedSupport {
 	}
 
 	/// Whether the provider quoted the ask, rather than refusing it.
-	pub fn quoted(&self) -> bool {
+	pub fn is_quoted(&self) -> bool {
 		self.supported && self.min.is_none() && self.max.is_none()
 	}
 
@@ -111,7 +111,7 @@ impl LearnedSupport {
 	/// contradict it: a quote at an amount below a known minimum, or above a
 	/// known maximum, shows that limit no longer holds.
 	pub fn keep_limits_of(&mut self, known: &Self) {
-		let quoted = self.quoted();
+		let quoted = self.is_quoted();
 		let now_ms = self.learned_at_ms;
 		if self.min.is_none() {
 			self.min = known.min.filter(|min| {
@@ -307,6 +307,17 @@ pub struct FundingAmountLimits {
 	/// The largest amount any provider takes, in balance units, when every
 	/// provider showed a maximum.
 	pub max: Option<u128>,
+}
+
+impl FundingAmountLimits {
+	/// The range that admits an amount either this or `other` admits: the
+	/// smaller bound on each side, or none when either has none.
+	pub fn widest(self, other: Self) -> Self {
+		Self {
+			min: self.min.zip(other.min).map(|(a, b)| a.min(b)),
+			max: self.max.zip(other.max).map(|(a, b)| a.max(b)),
+		}
+	}
 }
 
 /// One ask's rail, asset, network and country, as limits are kept by.

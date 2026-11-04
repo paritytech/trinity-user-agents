@@ -3046,7 +3046,7 @@ fn funding_resumes_by_announcing_sessions_a_provider_still_works_on() {
 		std::thread::sleep(core::time::Duration::from_millis(5));
 	}
 
-	assert_eq!((announced(), after.funding().in_progress()), (vec![intent], true));
+	assert_eq!((announced(), after.funding().is_in_progress()), (vec![intent], true));
 }
 
 // A host's history writes one row per outcome, so an ended session it has
@@ -9388,7 +9388,7 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 	))
 	.expect("opened")
 	.intent;
-	let unassigned_in_progress = before.funding().in_progress();
+	let unassigned_in_progress = before.funding().is_in_progress();
 	assert!(
 		futures::executor::block_on(before.select_funding_provider(
 			&intent,
@@ -9397,7 +9397,7 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 		))
 		.expect("selected")
 	);
-	let assigned_in_progress = before.funding().in_progress();
+	let assigned_in_progress = before.funding().is_in_progress();
 	let worker = provider_worker(&before, "ramp.dot");
 	let assigned = connect_provider(&before, "ramp.dot").calls(1).into_iter().next();
 	let assigned_at = before.funding().get(&intent).expect("kept").assigned_at_ms;
@@ -9416,7 +9416,7 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 	let after = start(&db);
 	let restarted = provider_worker(&after, "ramp.dot");
 	let replayed = connect_provider(&after, "ramp.dot").calls(1).into_iter().next();
-	let restarted_in_progress = after.funding().in_progress();
+	let restarted_in_progress = after.funding().is_in_progress();
 	report_funding(
 		&restarted,
 		&intent,
@@ -9449,7 +9449,7 @@ fn a_provider_worker_delivers_a_session_across_a_restart() {
 			unassigned_in_progress,
 			assigned_in_progress,
 			restarted_in_progress,
-			after.funding().in_progress()
+			after.funding().is_in_progress()
 		),
 		(false, true, true, false)
 	);

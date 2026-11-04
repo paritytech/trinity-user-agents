@@ -483,7 +483,7 @@ impl RuntimeServices {
 					if let Some(answer) = &answer {
 						quotes.remember(intent, provider_id, &ask, now_ms, answer.clone());
 						if let Some(supported) = shows_support(answer, ask.country.is_some()) {
-							let (min, max) = limits_shown(answer);
+							let (min, max) = answer.limits_shown();
 							let limit = |amount| LearnedLimit { amount, learned_at_ms: now_ms };
 							self.learn_funding_support(LearnedSupport {
 								provider_id: provider_id.clone(),
@@ -564,16 +564,18 @@ fn shows_support(answer: &FundingQuoteAnswer, names_country: bool) -> Option<boo
 	}
 }
 
-/// The minimum or maximum a refusal of only the amount showed.
-fn limits_shown(answer: &FundingQuoteAnswer) -> (Option<u128>, Option<u128>) {
-	match answer {
-		FundingQuoteAnswer::Refused { reason: FundingQuoteRefusal::BelowMinimum { min } } => {
-			(Some(*min), None)
-		},
-		FundingQuoteAnswer::Refused { reason: FundingQuoteRefusal::AboveMaximum { max } } => {
-			(None, Some(*max))
-		},
-		_ => (None, None),
+impl FundingQuoteAnswer {
+	/// The minimum or maximum a refusal of only the amount showed.
+	fn limits_shown(&self) -> (Option<u128>, Option<u128>) {
+		match self {
+			FundingQuoteAnswer::Refused { reason: FundingQuoteRefusal::BelowMinimum { min } } => {
+				(Some(*min), None)
+			},
+			FundingQuoteAnswer::Refused { reason: FundingQuoteRefusal::AboveMaximum { max } } => {
+				(None, Some(*max))
+			},
+			_ => (None, None),
+		}
 	}
 }
 
