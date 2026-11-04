@@ -15,14 +15,18 @@ import uniffi.truapi.FundingSelection
 import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.ProductId
+import uniffi.truapi.U128
 
 /**
  * The part of the TrUAPI core the funding screens drive. The core owns every session and pushes what the screens
  * draw; the screens report what the user picked, price the session and hand it to a provider.
  */
 interface FundingRuntime {
-    /** Opens a session on the host's own behalf, which the core then shows the overlay for. */
-    suspend fun openFunding(direction: FundingDirection): Result<String?>
+    /**
+     * Opens a session on the host's own behalf, which the core then shows the overlay for, for [amount] in the CASH
+     * asset's planks; `null` lets the user choose. Answers the session id, or `null` when the user dismissed it.
+     */
+    suspend fun openFunding(direction: FundingDirection, amount: U128? = null): Result<String?>
 
     /** Starts the core, which then pushes every session in flight and every ended one the host has not acknowledged. */
     suspend fun start(): Result<Unit>

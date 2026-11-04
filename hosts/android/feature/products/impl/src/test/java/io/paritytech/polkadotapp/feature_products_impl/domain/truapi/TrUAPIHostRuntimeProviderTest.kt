@@ -114,6 +114,15 @@ class TrUAPIHostRuntimeProviderTest {
 
     // The Pocket is read from the runtime, so a runtime that waits on the chain for the network's
     // name shows no cards offline. The name an earlier run read is the one this build's network has.
+    // Products open through the runtime this hands out, so the core must already have the funding callbacks: a product
+    // asking for funding before them would be told the host does not support it.
+    @Test
+    fun `installs the funding callbacks before handing the runtime out`() = runTest {
+        provider().runtime().getOrThrow()
+
+        verify(exactly = 1) { nativeRuntime.setFundingCallbacks(any()) }
+    }
+
     @Test
     fun `boots offline on the network name an earlier run saved`() = runTest {
         provider(saved = paseo, read = Result.failure(IllegalStateException("offline"))).runtime().getOrThrow()
