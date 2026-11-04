@@ -40,8 +40,7 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
 
     func makeRuntime(
         productId: ProductId,
-        context: ProductWorkerContext,
-        pocket: ProductPocketHostBridge
+        context: ProductWorkerContext
     ) async throws -> TrUAPIWorkerRuntime {
         let (source, files) = try await workerSource(for: productId)
 
@@ -56,8 +55,7 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
             executionModel: environment().makeWorkerExecution(
                 productId: productId,
                 routers: context.routers,
-                chatMessaging: context.chat,
-                pocket: pocket
+                chatMessaging: context.chat
             ),
             engineFactory: engine.engineFactory,
             logger: logger
