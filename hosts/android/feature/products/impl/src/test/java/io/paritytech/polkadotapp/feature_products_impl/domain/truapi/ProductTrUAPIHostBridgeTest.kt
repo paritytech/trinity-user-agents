@@ -51,7 +51,6 @@ class ProductTrUAPIHostBridgeTest {
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
         networkStateService = mockk { every { defaultNetwork } returns MutableStateFlow(null) },
         dotNsTldProvider = mock(DotNsTldProvider::class.java),
-        pocketCardStore = mockk { every { observeCards() } returns emptyFlow() },
         productGameReminder = gameReminder,
         extensionVersions = mockk(),
         scope = scope,
@@ -81,7 +80,7 @@ class ProductTrUAPIHostBridgeTest {
             every { startWsBridge(any()) } returns WsBridgeEndpoint(port = 1u, token = "token")
         }
         val runtime = mockk<TrUAPIHostRuntime> {
-            every { openProductExecution(any(), any(), any(), any(), any()) } returns execution
+            every { openProductExecution(any(), any(), any(), any()) } returns execution
         }
         val bridge = bridge(scope, hostApiInteractor = mockk { every { subscribeTheme() } returns emptyFlow() })
 
