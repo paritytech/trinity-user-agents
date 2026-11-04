@@ -1,68 +1,46 @@
 package io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs
 
 import android.net.Uri
-import io.novasama.substrate_sdk_android.extensions.fromHex
-import io.novasama.substrate_sdk_android.extensions.toHexString
-import io.paritytech.polkadotapp.chains.network.binding.DispatchError
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.KeyedMutex
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.flattenResult
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.mapAsync
-import io.paritytech.polkadotapp.common.utils.mapNotNull
 import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
-import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
-import io.paritytech.polkadotapp.common.utils.network.retrying
-import io.paritytech.polkadotapp.common.utils.requireNotNull
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
-import io.paritytech.polkadotapp.feature_dotns_impl.data.contract.DotNsContractApi
-import io.paritytech.polkadotapp.feature_dotns_impl.data.ipfs.CarFetcher
-import io.paritytech.polkadotapp.feature_dotns_impl.data.ipfs.IpfsHttpException
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.ContentHash
-import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.ContentHashOverrides
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsBuild
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsBuildStorage
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsContentStorage
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsNameChange
 import io.paritytech.polkadotapp.feature_dotns_impl.data.storage.DotNsNameVersion
-import io.paritytech.polkadotapp.feature_revive_api.ReviveContractReverted
-import io.paritytech.polkadotapp.tools_car_parser.CarParser
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeoutException
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.minutes
-import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeMark
 import kotlin.time.TimeSource
 
 private typealias DomainName = String
 
-@OptIn(ExperimentalStdlibApi::class)
 internal class RealDotNsResolver @Inject constructor(
-    private val contractApi: DotNsContractApi,
-    private val carFetcher: CarFetcher,
+    private val chainReader: DotNsChainReader,
+    private val contentDownloader: DotNsContentDownloader,
+    private val progressRegistry: DotNsLoadProgressRegistry,
     private val contentStorage: DotNsContentStorage,
     private val buildStorage: DotNsBuildStorage,
-    private val contentHashOverrides: ContentHashOverrides,
-    private val networkStateService: NetworkStateService,
     private val dispatchers: CoroutineDispatchers
 ) : DotNsResolver {
-    private val progressRegistry = DotNsLoadProgressRegistry()
-
     private val firstLoadLocks = KeyedMutex<DomainName>()
-
-    private val downloadLocks = KeyedMutex<ContentHash>()
 
     private val buildsLock = Mutex()
 
@@ -78,9 +56,9 @@ internal class RealDotNsResolver @Inject constructor(
                 return@withLock Result.success(directory)
             }
 
-            readContentHash(dotNsName, retryPolicy).flatMap { contentHash ->
-                contentDirectory(contentHash, reportedAs = dotNsName, retryPolicy)
-                    .onSuccess { changeServed(dotNsName) { it.copy(contentHash = contentHash) } }
+            chainReader.readContentHash(dotNsName, retryPolicy).flatMap { contentHash ->
+                contentDownloader.download(contentHash, retryPolicy, progressDomain = dotNsName)
+                    .onSuccess { changeServed(dotNsName) { served -> served.copy(contentHash = contentHash) } }
             }
         }
             .map(Uri::fromFile)
@@ -96,7 +74,7 @@ internal class RealDotNsResolver @Inject constructor(
         val servedRecords = buildStorage.get(dotNsName)?.served?.records.orEmpty()
         if (key in servedRecords) return@withContext Result.success(servedRecords[key])
 
-        readOnChain(retryPolicy) { contractApi.getMetadata(dotNsName, key) }
+        chainReader.readRecord(dotNsName, key, retryPolicy)
             .onSuccess { value -> changeServed(dotNsName) { it.copy(records = it.records + (key to value)) } }
     }
 
@@ -154,14 +132,14 @@ internal class RealDotNsResolver @Inject constructor(
         }
 
         return served.records.keys
-            .mapAsync { key -> readOnChain(NetworkRetryPolicy.DEFAULT) { contractApi.getMetadata(dotNsName, key) }.map { key to it } }
+            .mapAsync { key -> chainReader.readRecord(dotNsName, key, NetworkRetryPolicy.DEFAULT).map { key to it } }
             .flattenResult()
             .map { records -> DotNsNameChange(contentHash = contentHash, records = records.toMap()) }
     }
 
     private suspend fun downloadLatestContent(dotNsName: DomainName): Result<ContentHash> {
-        return readContentHash(dotNsName, NetworkRetryPolicy.DEFAULT).flatMap { contentHash ->
-            contentDirectory(contentHash, reportedAs = null, NetworkRetryPolicy.DEFAULT).map { contentHash }
+        return chainReader.readContentHash(dotNsName, NetworkRetryPolicy.DEFAULT).flatMap { contentHash ->
+            contentDownloader.download(contentHash, NetworkRetryPolicy.DEFAULT, progressDomain = null).map { contentHash }
         }
     }
 
@@ -203,77 +181,7 @@ internal class RealDotNsResolver @Inject constructor(
         return buildStorage.get(dotNsName)?.served?.contentHash?.let(contentStorage::getContentDirectory)
     }
 
-    private suspend fun readContentHash(domainName: DomainName, retryPolicy: NetworkRetryPolicy): Result<ContentHash> {
-        Timber.d("resolving content hash for $domainName")
-
-        return resolveContentHash(domainName, retryPolicy)
-            .logFailure("failed to resolve content hash for $domainName")
-            .requireNotNull { IllegalStateException("Domain $domainName is not registered or has no content") }
-    }
-
-    private suspend fun resolveContentHash(domainName: DomainName, retryPolicy: NetworkRetryPolicy): Result<ContentHash?> {
-        val override = contentHashOverrides.getContentHashOverride(domainName)
-        if (override != null) return Result.success(override)
-
-        return readOnChain(retryPolicy) { contractApi.resolveContentHash(domainName) }
-            .mapNotNull { it.toHexString() }
-    }
-
-    private suspend fun <T> readOnChain(retryPolicy: NetworkRetryPolicy, read: suspend () -> Result<T>): Result<T> {
-        return networkStateService.retrying(retryPolicy, ::isWorthRetrying) {
-            withTimeoutOrNull(CHAIN_READ_TIMEOUT) { read() }
-                ?: Result.failure(TimeoutException("Chain did not answer within $CHAIN_READ_TIMEOUT"))
-        }
-    }
-
-    private suspend fun contentDirectory(
-        contentHashHex: ContentHash,
-        reportedAs: DomainName?,
-        retryPolicy: NetworkRetryPolicy,
-    ): Result<File> {
-        return downloadLocks.withLock(contentHashHex) {
-            contentStorage.getContentDirectory(contentHashHex)?.let { directory ->
-                reportedAs?.let(progressRegistry::markCompleted)
-                return@withLock Result.success(directory)
-            }
-
-            download(contentHashHex, reportedAs, retryPolicy)
-        }
-    }
-
-    private suspend fun download(contentHashHex: ContentHash, reportedAs: DomainName?, retryPolicy: NetworkRetryPolicy): Result<File> {
-        Timber.d("content $contentHashHex not on the device, fetching CAR")
-        reportedAs?.let(progressRegistry::markResolving)
-
-        return networkStateService.retrying(retryPolicy, ::isWorthRetrying) {
-            carFetcher.fetchCarToFile(
-                contentHash = contentHashHex.fromHex(),
-                onProgress = { downloaded, total -> reportedAs?.let { progressRegistry.markDownloadProgress(it, downloaded, total) } }
-            )
-        }
-            .mapCatching { carFile ->
-                reportedAs?.let(progressRegistry::markUnpacking)
-                try {
-                    contentStorage.saveContentStreaming(contentHashHex) { writer ->
-                        CarParser.unpack(carFile) { path, content -> writer.write(path, content) }
-                    }
-                    requireNotNull(contentStorage.getContentDirectory(contentHashHex)) { "nothing unpacked for $contentHashHex" }
-                } finally {
-                    carFile.delete()
-                }
-            }
-            .onSuccess { reportedAs?.let(progressRegistry::markCompleted) }
-            .logFailure("failed to download $contentHashHex")
-    }
-
-    private fun isWorthRetrying(error: Throwable): Boolean = when (error) {
-        is ReviveContractReverted, is DispatchError, is IllegalArgumentException -> false
-        is IpfsHttpException -> error.isTransient
-        else -> true
-    }
-
     private companion object {
-        val CHAIN_READ_TIMEOUT = 30.seconds
         val MIN_TIME_BETWEEN_CHAIN_READS = 1.minutes
     }
 }
