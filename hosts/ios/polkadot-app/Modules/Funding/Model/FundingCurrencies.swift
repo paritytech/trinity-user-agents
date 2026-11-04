@@ -31,10 +31,7 @@ struct FundingAssetUnit: Equatable {
 
     func format(decimal value: Decimal) -> String {
         if isFiat {
-            let formatter = NumberFormatter()
-            formatter.numberStyle = .currency
-            formatter.currencyCode = code
-            formatter.locale = .current
+            let formatter = FundingNumberFormatters.currency(code: code)
             return formatter.string(from: NSDecimalNumber(decimal: value)) ?? "\(value) \(code)"
         }
 
@@ -51,11 +48,10 @@ private extension FundingAssetUnit {
     static let isoCurrencyCodes = Set(Locale.Currency.isoCurrencies.map(\.identifier))
 
     static func plain(_ value: Decimal, maximumDigits: Int, minimumDigits: Int = 0) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.locale = Locale(identifier: "en_US")
-        formatter.minimumFractionDigits = min(minimumDigits, maximumDigits)
-        formatter.maximumFractionDigits = maximumDigits
+        let formatter = FundingNumberFormatters.decimal(
+            minimumDigits: min(minimumDigits, maximumDigits),
+            maximumDigits: maximumDigits
+        )
         return formatter.string(from: NSDecimalNumber(decimal: value)) ?? "\(value)"
     }
 }

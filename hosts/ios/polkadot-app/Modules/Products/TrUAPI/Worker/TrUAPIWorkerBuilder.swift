@@ -64,7 +64,7 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
 
     /// The worker the app ships for the product, read from its own files with
     /// no dotNS lookup, and the files it is served from.
-    private func workerSource(
+    func workerSource(
         for productId: ProductId
     ) async throws -> (ProductWorkerSource, any ProductFileProviding) {
         if let bundled = bundledProducts.product(productId), bundled.hasWorker() {

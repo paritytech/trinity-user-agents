@@ -169,11 +169,9 @@ private extension FirebaseApplicationService {
     }
 
     /// One JSON object shared with Android, passed through as published:
-    /// `{ "onrampUrl": "getcash.dot", "offrampUrl": "https://getcash.dot/offramp" }`.
+    /// `{ "onrampUrl": "getcash.dot", "offrampUrl": "https://getcash.dot/offramp", "providers": […] }`.
     func fundingConfigValue(_ field: String) -> String? {
-        let json = remoteConfig[.fundingConfig].jsonValue as? [String: String]
-        guard let value = json?[field], !value.isEmpty else { return nil }
-        return value
+        FundingConfig.string(field, in: remoteConfig[.fundingConfig].jsonValue as? [String: Any])
     }
 
     /// One JSON object shared with Android: `{ "contractAddress": "0x…" }`, decoded to an EVM address

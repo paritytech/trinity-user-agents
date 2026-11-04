@@ -81,10 +81,8 @@ private extension PocketCardOpening {
             contentSource: widgetURL.map(SPAContentSource.directURL) ?? .dotNs
         )
 
-        // The native runtime cannot load a page by its address.
-        return widgetURL == nil
-            ? SPAViewFactory.createView(configuration: configuration, flowState: flowState)
-            : SPAViewFactory.createRustView(configuration: configuration, flowState: flowState)
+        // A page loaded by its address goes to the Rust runtime on its own.
+        return SPAViewFactory.createView(configuration: configuration, flowState: flowState)
     }
 
     func debugWidgetURL(for key: PocketCardKey, pageQuery: String) -> URL? {

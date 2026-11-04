@@ -37,7 +37,7 @@ DEST="$DEST_ROOT/$PRODUCT_ID"
 WORK_DIR="${FUNDTEST_WORK_DIR:-${TMPDIR:-/tmp}/polkadot-app-bundled-products/source}"
 
 if [ "${1:-}" = "--clean" ]; then
-  rm -rf "$DEST"
+  rm -rf "$DEST" "$DEST_ROOT/.$PRODUCT_ID.staging"
   echo "bundle-funding-provider: removed $DEST"
   exit 0
 fi

@@ -1,3 +1,4 @@
+import AsyncExtensions
 import Foundation
 import UIKit
 import UIKitExt
@@ -221,6 +222,27 @@ extension TrUAPIHostRuntimeProvider {
         return published + bundled.filter { !configuredIds.contains($0.productId) }
     }
 
+    /// Hands `list` the providers of each remote config refresh that changes
+    /// them from the ones last listed, starting from `listed`. Returns when
+    /// the stream ends, which the app's remote config stream does not, or
+    /// when `list` answers false because the runtime is gone; throws when
+    /// the stream fails.
+    static func followRefreshes(
+        of configs: AnyAsyncSequence<RemoteAppConfig>,
+        listed initial: [FundingProviderEntry],
+        bundled: [FundingProviderEntry],
+        list: ([FundingProviderEntry]) -> Bool
+    ) async throws {
+        var listed = initial
+        for try await config in configs {
+            let providers = fundingProviders(configured: config.fundingProviders, bundled: bundled)
+            guard providers != listed else { continue }
+            guard list(providers) else { return }
+
+            listed = providers
+        }
+    }
+
     /// Assemble the immutable host-wide config. Genesis hashes are fetched from
     /// the registry and must resolve; a missing hash fails explicitly rather
     /// than degrading. `networkSuffix` is the dotNS TLD the core derives the
@@ -303,16 +325,12 @@ private extension TrUAPIHostRuntimeProvider {
 
         fundingProvidersObservation?.cancel()
         fundingProvidersObservation = Task { [weak self, weak runtime] in
-            var listed = initial
             do {
-                for try await config in stream {
-                    guard let self, let runtime, !Task.isCancelled else { return }
-
-                    let providers = Self.fundingProviders(configured: config.fundingProviders, bundled: bundled)
-                    guard providers != listed else { continue }
+                try await Self.followRefreshes(of: stream, listed: initial, bundled: bundled) { providers in
+                    guard let self, let runtime, !Task.isCancelled else { return false }
 
                     apply(fundingProviders: providers, on: runtime)
-                    listed = providers
+                    return true
                 }
             } catch {
                 self?.logger.error("[truapi] funding providers stopped following remote config: \(error)")
