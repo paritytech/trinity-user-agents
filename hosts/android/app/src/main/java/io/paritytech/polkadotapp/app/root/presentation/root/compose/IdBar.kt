@@ -47,9 +47,6 @@ fun IdBar(
 ) {
     val backdrop = rememberDockletBackdrop(backdropSource)
     val slidePx = with(LocalDensity.current) { IdBarSlide.roundToPx() }
-    val plateBackground = remember(scroll.contentUnderBar, backdrop) {
-        IdBarPlateBackground(scrolled = scroll.contentUnderBar, backdrop = backdrop)
-    }
 
     Box {
         if (showsScrim) {
@@ -61,7 +58,7 @@ fun IdBar(
             enter = slideInVertically(tween(ID_BAR_SLIDE_MILLIS)) { -slidePx } + fadeIn(tween(ID_BAR_SLIDE_MILLIS)),
             exit = slideOutVertically(tween(ID_BAR_SLIDE_MILLIS)) { -slidePx } + fadeOut(tween(ID_BAR_SLIDE_MILLIS)),
         ) {
-            CompositionLocalProvider(LocalIdBarPlateBackground provides plateBackground) {
+            CompositionLocalProvider(LocalIdBarPlateBackground provides IdBarPlateBackground(scrolled = scroll.contentUnderBar, backdrop = backdrop)) {
                 Box(modifier = Modifier.padding(bottom = PolkadotTheme.spacings.extraTiny)) {
                     bar()
                 }

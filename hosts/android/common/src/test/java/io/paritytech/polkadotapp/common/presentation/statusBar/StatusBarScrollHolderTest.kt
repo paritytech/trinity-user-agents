@@ -41,6 +41,21 @@ class StatusBarScrollHolderTest {
     }
 
     @Test
+    fun `content counts as under the bar only past the bar's height and stays so until the top`() {
+        // Given
+        holder.onScroll(downwardDp = 15f, atTop = false)
+        val withinTheBarsHeight = holder.state.value
+
+        // When
+        holder.onScroll(downwardDp = 10f, atTop = false)
+        holder.onScroll(downwardDp = -10f, atTop = false)
+
+        // Then
+        assertEquals(StatusBarScrollState.AtRest, withinTheBarsHeight)
+        assertEquals(StatusBarScrollState(idBarHidden = false, contentUnderBar = true), holder.state.value)
+    }
+
+    @Test
     fun `reaching the top shows the bar without a plate`() {
         // Given
         holder.onScroll(downwardDp = 100f, atTop = false)

@@ -16,7 +16,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.paritytech.polkadotapp.common.presentation.statusBar.LocalStatusBarScroll
 import io.paritytech.polkadotapp.common.presentation.statusBar.ReportsWebViewScrollToStatusBar
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
@@ -27,6 +29,7 @@ import io.paritytech.polkadotapp.design.components.icon.vectors.Refreshing
 import io.paritytech.polkadotapp.design.components.progress.NovaLinearProgressIndicator
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthBarDefaults
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.ProductWebViewHost
@@ -40,6 +43,7 @@ import io.paritytech.polkadotapp.common.R as RCommon
 fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val webView by viewModel.webView.collectAsStateWithLifecycle()
+    val pageUnderIdBar = LocalStatusBarScroll.current?.state?.collectAsStateWithLifecycle()?.value?.contentUnderBar == true
 
     BackHandler {
         viewModel.onBackPressed()
@@ -50,6 +54,7 @@ fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
     SpaBrowserScreenInternal(
         state = state,
         webView = webView,
+        pageUnderIdBar = pageUnderIdBar,
         onRefresh = viewModel::onRefresh,
     )
 }
@@ -58,14 +63,18 @@ fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
 internal fun SpaBrowserScreenInternal(
     state: SpaBrowserUiState,
     webView: WebView?,
+    pageUnderIdBar: Boolean,
     onRefresh: () -> Unit,
 ) {
+    val idBarOverlap = if (pageUnderIdBar) ChainHealthBarDefaults.ContentHeight else 0.dp
+
     PolkadotSurface(color = PolkadotTheme.colors.bg.surface.main) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
+                .windowInsetsPadding(WindowInsets.safeDrawing.exclude(WindowInsets(top = idBarOverlap)))
         ) {
+            DotNsLoadProgressBar(progress = state.loadProgress)
             PolkadotSurface(
                 modifier = Modifier.weight(1f),
                 color = PolkadotTheme.colors.bg.surface.container,
@@ -74,14 +83,6 @@ internal fun SpaBrowserScreenInternal(
                     SpaBrowserPageContent(
                         pageState = state.pageState,
                         webView = webView,
-                    )
-
-                    DotNsLoadProgressBar(
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .statusBarsPadding()
-                            .fillMaxWidth(),
-                        progress = state.loadProgress,
                     )
 
                     if (state.isDevServer) {
@@ -102,7 +103,7 @@ internal fun SpaBrowserScreenInternal(
 }
 
 /**
- * Thin progress bar shown over the top of the page while the `.dot` content loads. The phases map onto
+ * Thin progress bar shown under the top bar while the `.dot` content loads. The phases map onto
  * fixed regions of the bar so it only ever fills forward:
  * - **Resolving** animates `0 → [RESOLVE_BAND_END]` over [BAND_ANIM_MILLIS]ms,
  * - **Downloading** tracks bytes across the middle band `[RESOLVE_BAND_END, DOWNLOAD_BAND_END]`,
@@ -111,7 +112,7 @@ internal fun SpaBrowserScreenInternal(
  * Hidden when idle / completed / failed.
  */
 @Composable
-private fun DotNsLoadProgressBar(modifier: Modifier = Modifier, progress: DotNsLoadProgress) {
+private fun DotNsLoadProgressBar(progress: DotNsLoadProgress) {
     val target = when (progress) {
         DotNsLoadProgress.Resolving -> RESOLVE_BAND_END
         is DotNsLoadProgress.Downloading ->
@@ -139,7 +140,7 @@ private fun DotNsLoadProgressBar(modifier: Modifier = Modifier, progress: DotNsL
     if (isLoading) {
         NovaLinearProgressIndicator(
             progress = animatedFraction,
-            modifier = modifier,
+            modifier = Modifier.fillMaxWidth(),
             color = PolkadotTheme.colors.fg.link
         )
     }
@@ -187,6 +188,7 @@ private fun SpaBrowserScreenPreview() {
                 loadProgress = DotNsLoadProgress.Downloading(0.4f),
             ),
             webView = null,
+            pageUnderIdBar = false,
             onRefresh = {},
         )
     }

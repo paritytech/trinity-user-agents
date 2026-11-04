@@ -91,23 +91,18 @@ internal fun SearchRevealContainer(
                 .fillMaxWidth()
                 .statusBarsPadding()
                 .clipToBounds()
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .layout { measurable, constraints ->
-                        val placeable = measurable.measure(constraints)
-                        // Placement uses the measured height directly so the header never flashes
-                        // at the top before its size is known.
-                        state.maxOffsetPx = placeable.height.toFloat()
+                .layout { measurable, constraints ->
+                    val placeable = measurable.measure(constraints)
+                    // Placement uses the measured height directly so the header never flashes
+                    // at the top before its size is known.
+                    state.maxOffsetPx = placeable.height.toFloat()
 
-                        layout(placeable.width, placeable.height) {
-                            placeable.place(0, (state.offsetPx - placeable.height).roundToInt())
-                        }
+                    layout(placeable.width, placeable.height) {
+                        placeable.place(0, (state.offsetPx - placeable.height).roundToInt())
                     }
-            ) {
-                header()
-            }
+                }
+        ) {
+            header()
         }
 
         Box(

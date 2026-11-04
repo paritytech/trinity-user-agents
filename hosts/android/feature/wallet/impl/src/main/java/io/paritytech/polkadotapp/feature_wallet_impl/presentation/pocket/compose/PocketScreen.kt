@@ -236,49 +236,49 @@ private fun PocketList(
     val navigationBarInsets = LocalAppNavigationBarInsets.current
 
     Box {
-        Column(modifier = Modifier.fillMaxSize()) {
-            LazyColumn(
-                modifier = Modifier.reportsScrollToStatusBar(listState),
-                state = listState,
-                verticalArrangement = Arrangement.spacedBy(-CardSizes.OVERLAP),
-                contentPadding = WindowInsets(
-                    top = PolkadotTheme.spacings.mediumIncreased,
-                    bottom = PolkadotTheme.spacings.mediumIncreased,
-                    left = PolkadotTheme.spacings.mediumIncreased,
-                    right = PolkadotTheme.spacings.mediumIncreased
-                ).add(navigationBarInsets)
-                    .add(WindowInsets.statusBars.only(WindowInsetsSides.Top))
-                    .asPaddingValues()
-            ) {
-                // Keyed: a product card holds a face subscription and its resolved images, so
-                // positional identity would make every card below an insertion drop and re-subscribe.
-                itemsIndexed(cards, key = { _, card -> card.id }) { index, card ->
-                    val cardModifier = Modifier.pocketListCardSharedElement(
-                        card = card,
-                        index = index,
-                        anchorCard = anchorCard,
-                        anchorIndex = anchorIndex
-                    )
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .reportsScrollToStatusBar(listState),
+            state = listState,
+            verticalArrangement = Arrangement.spacedBy(-CardSizes.OVERLAP),
+            contentPadding = WindowInsets(
+                top = PolkadotTheme.spacings.mediumIncreased,
+                bottom = PolkadotTheme.spacings.mediumIncreased,
+                left = PolkadotTheme.spacings.mediumIncreased,
+                right = PolkadotTheme.spacings.mediumIncreased
+            ).add(navigationBarInsets)
+                .add(WindowInsets.statusBars.only(WindowInsetsSides.Top))
+                .asPaddingValues()
+        ) {
+            // Keyed: a product card holds a face subscription and its resolved images, so
+            // positional identity would make every card below an insertion drop and re-subscribe.
+            itemsIndexed(cards, key = { _, card -> card.id }) { index, card ->
+                val cardModifier = Modifier.pocketListCardSharedElement(
+                    card = card,
+                    index = index,
+                    anchorCard = anchorCard,
+                    anchorIndex = anchorIndex
+                )
 
-                    when (card) {
-                        is PocketCardUiModel.DigitalDollar -> {
-                            DigitalDollarCard(
-                                modifier = cardModifier,
-                                card = card,
-                                onSelected = onCardSelected,
-                                isExpanded = false
-                            )
-                        }
+                when (card) {
+                    is PocketCardUiModel.DigitalDollar -> {
+                        DigitalDollarCard(
+                            modifier = cardModifier,
+                            card = card,
+                            onSelected = onCardSelected,
+                            isExpanded = false
+                        )
+                    }
 
-                        is PocketCardUiModel.ProductCard -> {
-                            ProductPocketCard(
-                                modifier = cardModifier,
-                                card = card,
-                                bindings = bindingsOf(card),
-                                onOpen = onCardSelected,
-                                onRemoveRequested = onProductCardRemovalRequested
-                            )
-                        }
+                    is PocketCardUiModel.ProductCard -> {
+                        ProductPocketCard(
+                            modifier = cardModifier,
+                            card = card,
+                            bindings = bindingsOf(card),
+                            onOpen = onCardSelected,
+                            onRemoveRequested = onProductCardRemovalRequested
+                        )
                     }
                 }
             }

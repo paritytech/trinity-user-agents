@@ -41,7 +41,7 @@ class ProductStatusBarViewModel @Inject constructor(
 
     private val reloads = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
-    // The browser opens its payload's tab once its own screen composes, after this bar has subscribed.
+    // activeTab still names the previous product until the controller opens this payload's tab.
     private val activeTab: Flow<BrowserSessionInfo?> = productSessionController.activeTab
         .dropWhile { tab -> !isOpenedTab(tab) }
 

@@ -97,6 +97,7 @@ dependencies {
     implementation(project(":feature:usernames:api"))
     implementation(project(":feature:dotns:api"))
     implementation(project(":feature:coinage:api"))
+    implementation(project(":feature:connection-status:api"))
 
     implementation(libs.squareup.okhttp3.core)
 

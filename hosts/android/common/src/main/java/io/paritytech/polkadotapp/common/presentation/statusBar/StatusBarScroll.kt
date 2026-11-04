@@ -22,6 +22,9 @@ private const val HIDE_AFTER_OFFSET_DP = 40f
 private const val HIDE_AFTER_SCROLL_DP = 16f
 private const val SHOW_AFTER_SCROLL_DP = 10f
 
+// At least the ID bar's height: a page that grows by the bar once content is under it must not clamp back to the top.
+private const val UNDER_BAR_AFTER_OFFSET_DP = 20f
+
 @Immutable
 data class StatusBarScrollState(
     val idBarHidden: Boolean,
@@ -48,13 +51,13 @@ class StatusBarScrollHolder @Inject constructor() {
             offsetDp = (offsetDp + downwardDp).coerceAtLeast(0f)
             runDp = if (runDp * downwardDp > 0f) runDp + downwardDp else downwardDp
 
-            val hidden = state.value.idBarHidden
+            val current = state.value
             state.value = StatusBarScrollState(
                 idBarHidden = when {
-                    !hidden -> offsetDp > HIDE_AFTER_OFFSET_DP && runDp >= HIDE_AFTER_SCROLL_DP
+                    !current.idBarHidden -> offsetDp > HIDE_AFTER_OFFSET_DP && runDp >= HIDE_AFTER_SCROLL_DP
                     else -> -runDp < SHOW_AFTER_SCROLL_DP
                 },
-                contentUnderBar = true,
+                contentUnderBar = current.contentUnderBar || offsetDp > UNDER_BAR_AFTER_OFFSET_DP,
             )
         }
     }
@@ -88,7 +91,7 @@ fun Modifier.reportsScrollToStatusBar(state: ScrollableState): Modifier {
         onDispose { holder?.reset() }
     }
 
-    return if (holder != null) nestedScroll(connection) else this
+    return nestedScroll(connection)
 }
 
 @Composable

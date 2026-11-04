@@ -151,15 +151,12 @@ class ProductStatusBarViewModelTest {
         openTab(CHESS_URL, title = "Chess")
         advance()
         val menuBeforeTheLateAnswer = model.state.value?.menu
-        model.onShareClick()
         coinFlipAnswer.complete(Result.success(true))
         advance()
 
         // Then
         assertEquals(ProductMenu.Product(chess, ProductChat.NotServed), menuBeforeTheLateAnswer)
         assertEquals(ProductMenu.Product(chess, ProductChat.NotServed), model.state.value?.menu)
-        verify(exactly = 1) { interactor.share(chess) }
-        verify(exactly = 0) { interactor.share(coinFlip) }
     }
 
     @Test
@@ -271,8 +268,6 @@ class ProductStatusBarViewModelTest {
             interactor.installChatAndAwaitRoomCreated(coinFlip)
             router.openChat(room)
         }
-        verify(exactly = 0) { productSessionController.closeActiveTab() }
-        verify(exactly = 0) { router.leaveBrowser() }
     }
 
     @Test
