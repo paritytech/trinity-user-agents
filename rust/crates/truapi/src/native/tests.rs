@@ -79,6 +79,7 @@ pub fn text_chat_action(text: &str) -> v01::HostChatActionSubscribeItem {
 pub struct EventCallbacks {
 	pub logs: Mutex<Vec<(String, String)>>,
 	pub face_requests: Mutex<Vec<bool>>,
+	pub back_requests: Mutex<Vec<bool>>,
 	pub chat_room_status: Mutex<v01::ChatRoomRegistrationStatus>,
 	pub chat_created_rooms: Mutex<Vec<(String, String, String)>>,
 	pub chat_bot_status: Mutex<v01::ChatBotRegistrationStatus>,
@@ -165,7 +166,16 @@ impl EventCallbacks {
 			device_permission_calls: std::sync::atomic::AtomicUsize::new(0),
 			remote_permission_products: Mutex::new(Vec::new()),
 			face_requests: Mutex::new(Vec::new()),
+			back_requests: Mutex::new(Vec::new()),
 		}
+	}
+
+	pub fn face_requests(&self) -> Vec<bool> {
+		self.face_requests.lock().expect("face requests mutex poisoned").clone()
+	}
+
+	pub fn back_requests(&self) -> Vec<bool> {
+		self.back_requests.lock().expect("back requests mutex poisoned").clone()
 	}
 }
 
@@ -243,6 +253,13 @@ impl HostCallbacks for EventCallbacks {
 		shown: bool,
 	) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
 		self.face_requests.lock().expect("face requests mutex poisoned").push(shown);
+		Ok(crate::platform::ExpandedCardFaceOutcome::Applied)
+	}
+	async fn set_expanded_card_back_shown(
+		&self,
+		shown: bool,
+	) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
+		self.back_requests.lock().expect("back requests mutex poisoned").push(shown);
 		Ok(crate::platform::ExpandedCardFaceOutcome::Applied)
 	}
 	async fn remote_permission(
@@ -1967,6 +1984,12 @@ fn start_ws_bridge_twice_returns_already_running() {
 		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
 			Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
 		}
+		async fn set_expanded_card_back_shown(
+			&self,
+			_shown: bool,
+		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
+			Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
+		}
 		async fn remote_permission(
 			&self,
 			_product: ProductExecutionConfig,
@@ -2154,6 +2177,12 @@ fn pending_permission_decision_does_not_stall_bridge() {
 			Ok(DevicePermissionStatus::NotApplicable)
 		}
 		async fn set_expanded_card_face_shown(
+			&self,
+			_shown: bool,
+		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {
+			Ok(crate::platform::ExpandedCardFaceOutcome::Unsupported)
+		}
+		async fn set_expanded_card_back_shown(
 			&self,
 			_shown: bool,
 		) -> Result<crate::platform::ExpandedCardFaceOutcome, HostRejection> {

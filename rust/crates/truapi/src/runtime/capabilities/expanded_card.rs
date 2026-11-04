@@ -4,7 +4,10 @@ use tracing::instrument;
 use truapi::{
 	CallContext, CallError,
 	api::ExpandedCard,
-	latest::HostExpandedCardSetFaceShownError as FaceShownError,
+	latest::{
+		HostExpandedCardSetBackShownError as BackShownError,
+		HostExpandedCardSetFaceShownError as FaceShownError,
+	},
 	versioned::expanded_card::{
 		HostExpandedCardSetBackShownError, HostExpandedCardSetBackShownRequest,
 		HostExpandedCardSetBackShownResponse, HostExpandedCardSetFaceShownError,
@@ -41,6 +44,11 @@ impl ExpandedCard for ProductRuntimeHost {
 						Err(CallError::Domain(FaceShownError::UserMoving))
 					},
 					Ok(ExpandedCardFaceOutcome::Unsupported) => Err(CallError::Unsupported),
+					Ok(ExpandedCardFaceOutcome::NoBack) => {
+						Err(CallError::Domain(FaceShownError::Unknown {
+							reason: "the host answered a face request with NoBack".into(),
+						}))
+					},
 					Err(error) => {
 						Err(CallError::Domain(FaceShownError::Unknown { reason: error.reason }))
 					},
@@ -49,8 +57,6 @@ impl ExpandedCard for ProductRuntimeHost {
 			.await
 	}
 
-	// This runtime has no way to turn a card, so a Widget reads "not supported" rather than a
-	// failure.
 	#[instrument(skip_all, fields(runtime.method = "expanded_card.set_back_shown"))]
 	async fn set_back_shown(
 		&self,
@@ -59,9 +65,27 @@ impl ExpandedCard for ProductRuntimeHost {
 	) -> Result<HostExpandedCardSetBackShownResponse, CallError<HostExpandedCardSetBackShownError>>
 	{
 		version(request)
-			.exec(|_request| async move {
+			.exec(|request| async move {
 				self.require_widget()?;
-				Err(CallError::Unsupported)
+				let Some(card) = &self.connection.expanded_card else {
+					return Err(CallError::Unsupported);
+				};
+				match card.set_expanded_card_back_shown(request.shown).await {
+					Ok(ExpandedCardFaceOutcome::Applied) => Ok(()),
+					Ok(ExpandedCardFaceOutcome::NotPresented) => {
+						Err(CallError::Domain(BackShownError::NotPresented))
+					},
+					Ok(ExpandedCardFaceOutcome::UserMoving) => {
+						Err(CallError::Domain(BackShownError::UserMoving))
+					},
+					Ok(ExpandedCardFaceOutcome::NoBack) => {
+						Err(CallError::Domain(BackShownError::NoBack))
+					},
+					Ok(ExpandedCardFaceOutcome::Unsupported) => Err(CallError::Unsupported),
+					Err(error) => {
+						Err(CallError::Domain(BackShownError::Unknown { reason: error.reason }))
+					},
+				}
 			})
 			.await
 	}

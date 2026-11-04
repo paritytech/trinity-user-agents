@@ -236,6 +236,18 @@ interface HostBridge {
         ExpandedCardFaceOutcome.UNSUPPORTED
 
     /**
+     * Turn this execution's expanded card so its back (`true`) or its front
+     * (`false`) is up. Answers [ExpandedCardFaceOutcome.NO_BACK] when the card
+     * has no back to show, and the face call's outcomes otherwise. Returns
+     * without waiting for the animation.
+     *
+     * Defaults to [ExpandedCardFaceOutcome.UNSUPPORTED], so an app that cannot
+     * turn cards says so.
+     */
+    suspend fun setExpandedCardBackShown(shown: Boolean): ExpandedCardFaceOutcome =
+        ExpandedCardFaceOutcome.UNSUPPORTED
+
+    /**
      * Prompt for a remote permission bundle [product] requested on the main
      * thread, suspending until the user decides.
      */
@@ -581,6 +593,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
 
     override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
         withHostRejection { bridge.setExpandedCardFaceShown(shown) }
+
+    override suspend fun setExpandedCardBackShown(shown: Boolean): ExpandedCardFaceOutcome =
+        withHostRejection { bridge.setExpandedCardBackShown(shown) }
 
     override suspend fun remotePermission(
         product: ProductExecutionConfig,

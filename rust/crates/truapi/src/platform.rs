@@ -3349,6 +3349,8 @@ pub enum ExpandedCardFaceOutcome {
 	UserMoving,
 	/// The host cannot move the face at all.
 	Unsupported,
+	/// The card has no back to show right now. Only a turn answers it.
+	NoBack,
 }
 
 /// Host control of the card face drawn above an opened card's Widget.
@@ -3360,6 +3362,13 @@ pub enum ExpandedCardFaceOutcome {
 pub trait ExpandedCardHost: Send + Sync {
 	/// Show (`true`) or hide (`false`) the face above the calling Widget.
 	async fn set_expanded_card_face_shown(
+		&self,
+		shown: bool,
+	) -> Result<ExpandedCardFaceOutcome, GenericError>;
+
+	/// Turn the card above the calling Widget so its back (`true`) or its
+	/// front (`false`) is up.
+	async fn set_expanded_card_back_shown(
 		&self,
 		shown: bool,
 	) -> Result<ExpandedCardFaceOutcome, GenericError>;

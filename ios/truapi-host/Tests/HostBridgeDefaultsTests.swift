@@ -18,13 +18,14 @@ struct HostBridgeDefaultsTests {
         #expect(second != 0)
     }
 
-    /// An app that never implemented cards must say so, not pretend it moved one.
+    /// An app that never implemented cards must say so, not pretend it moved or turned one.
     @Test
-    func defaultExpandedCardFaceIsUnsupported() async throws {
+    func defaultExpandedCardIsUnsupported() async throws {
         let bridge: HostBridge = StubHostBridge()
 
-        let outcome = try await bridge.setExpandedCardFaceShown(shown: false)
+        let face = try await bridge.setExpandedCardFaceShown(shown: false)
+        let back = try await bridge.setExpandedCardBackShown(shown: true)
 
-        #expect(outcome == .unsupported)
+        #expect(face == .unsupported && back == .unsupported)
     }
 }

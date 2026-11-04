@@ -1469,7 +1469,7 @@ mod tests {
 	}
 
 	#[test]
-	fn an_expanded_card_face_request_reaches_only_the_execution_that_made_it() {
+	fn an_expanded_card_request_reaches_only_the_execution_that_made_it() {
 		let host = NativeTrUApiHostRuntime::with_runtime_config(
 			Arc::new(EventCallbacks::new()),
 			native_host_runtime_config(),
@@ -1497,11 +1497,24 @@ mod tests {
 			v01::HostExpandedCardSetFaceShownRequest { shown: false }.into(),
 		));
 
-		assert!(reply.is_ok(), "the card's own host applied the request: {reply:?}");
-		assert_eq!(*card_callbacks.face_requests.lock().expect("face requests"), [false]);
+		let turned = futures::executor::block_on(truapi::api::ExpandedCard::set_back_shown(
+			admin.product_runtime().as_ref(),
+			&truapi::CallContext::default(),
+			v01::HostExpandedCardSetBackShownRequest { shown: true }.into(),
+		));
+
 		assert!(
-			other_callbacks.face_requests.lock().expect("face requests").is_empty(),
-			"another product's card must not be asked to move its face"
+			reply.is_ok() && turned.is_ok(),
+			"the card's own host applied both: {reply:?} {turned:?}"
+		);
+		assert_eq!(
+			(card_callbacks.face_requests(), card_callbacks.back_requests()),
+			(vec![false], vec![true])
+		);
+		assert!(
+			other_callbacks.face_requests().is_empty() &&
+				other_callbacks.back_requests().is_empty(),
+			"another product's card must not be asked to move its face or turn"
 		);
 	}
 
