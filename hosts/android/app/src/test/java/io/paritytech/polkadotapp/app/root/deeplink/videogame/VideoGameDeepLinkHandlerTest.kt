@@ -28,6 +28,7 @@ import uniffi.truapi.ProductId
 class VideoGameDeepLinkHandlerTest {
     private val tld = requireNotNull(DotNsTld.parse("dot"))
     private val game = ReservedProductIds.game(tld)
+    private val humanity = ReservedProductIds.personhood(tld)
     private val other = ProductId.parse("acme.dot").getOrThrow()
 
     private val router: VideoGameRouter = mock(VideoGameRouter::class.java)
@@ -69,6 +70,23 @@ class VideoGameDeepLinkHandlerTest {
         order.verify(router).openGameProduct(game)
         order.verify(reminder).cancel(game)
         order.verify(telemetry).report(GameReminderEvent.ProductOpened(game, START))
+    }
+
+    // Humanity books the reminder for the game it runs in the Polkadot room. The tap still opens
+    // the game product, where the game is played, and drops Humanity's reminder, not the game's.
+    @Test
+    fun `a tap on Humanity's reminder opens the game product and cancels Humanity's reminder`() = runBlocking<Unit> {
+        whenever(reminder.scheduledStartFor(humanity)).thenReturn(START)
+
+        handle(reminderLink(humanity))
+
+        val order = inOrder(reminder, telemetry, router)
+        order.verify(telemetry).report(GameReminderEvent.Tapped(humanity, START))
+        order.verify(router).openGameProduct(game)
+        order.verify(reminder).cancel(humanity)
+        order.verify(telemetry).report(GameReminderEvent.ProductOpened(humanity, START))
+        verify(router, never()).openGameProduct(humanity)
+        verify(reminder, never()).cancel(game)
     }
 
     @Test

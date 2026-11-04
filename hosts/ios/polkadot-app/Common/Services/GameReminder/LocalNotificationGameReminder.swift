@@ -94,7 +94,7 @@ private extension LocalNotificationGameReminder {
         // PushRouteBuilder opens a scheme-less product deeplink as https://<productId>.
         content.userInfo = [
             PushNotificationKeys.pushSource: PushNotificationSource.products.rawValue,
-            PushNotificationKeys.deeplink: productId.rawValue
+            PushNotificationKeys.deeplink: GameReminderOpenTarget.product(toOpenFor: productId).rawValue
         ]
         return content
     }

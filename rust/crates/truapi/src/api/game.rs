@@ -16,8 +16,8 @@ pub trait Game: Send + Sync {
 	/// Remind the user when this product's next game starts.
 	///
 	/// Replaces the reminder this product already holds. Served only to the
-	/// game product: any other product, or a host that cannot hold reminders,
-	/// gets `Unsupported`. A `startsAt` that is not in the future fails with
+	/// game product and to Humanity, each holding its own reminder: any other
+	/// product, or a host that cannot hold reminders, gets `Unsupported`. A `startsAt` that is not in the future fails with
 	/// `StartsInPast`, and a reminder the host cannot hold fails as a host
 	/// failure carrying its reason.
 	///

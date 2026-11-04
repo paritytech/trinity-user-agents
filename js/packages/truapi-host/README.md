@@ -142,11 +142,11 @@ product's held reminder, and `cancelGameReminder` drops it. The core asks for
 no per-product consent, so the host asks the platform for what the reminder
 needs, and a rejected schedule reaches the product as a host failure. A host
 keeps one reminder per product. The core serves
-`game` to the game product, `dim2`, alone. The mock test host
-(`@parity/truapi-host/testing`) accepts every reminder and cancel without
-holding them once it runs as that product; its default `mock.dot` gets
-`Unsupported`, so a suite that exercises `game` passes
-`productId: "dim2.dot"`.
+`game` to the game product, `dim2`, and Humanity, `peopl`, alone. The mock
+test host (`@parity/truapi-host/testing`) accepts every reminder and cancel
+without holding them once it runs as either product; its default `mock.dot`
+gets `Unsupported`, so a suite that exercises `game` passes
+`productId: "dim2.dot"` (or `"peopl.dot"`).
 
 Under `createWebWorkerPairingHostRuntime` the presence of each optional group is
 reported to the worker in its `init` message, so the core sees the same

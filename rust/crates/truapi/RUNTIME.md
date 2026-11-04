@@ -586,7 +586,7 @@ for raw bytes signed inside the `<Bytes>` watermark.
   resolved handles; a host calls `notify_contacts_changed` on its runtime when
   a contact is removed or blocked.
 - `GamePlatform`: hold the game product's next-game reminder and drop it.
-  The core serves Game only to `dim2`, on every network, and answers
+  The core serves Game only to `dim2` and `peopl`, on every network, and answers
   `Unsupported` to any other product without calling the host. A host
   keeps one reminder per product: a schedule replaces the reminder the same
   product already holds. The core asks for no per-product consent: the host

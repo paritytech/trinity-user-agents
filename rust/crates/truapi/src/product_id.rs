@@ -20,10 +20,19 @@ pub const PRODUCT_ID_MAX_BYTES: usize = 256;
 /// permissions still need the OS grant.
 ///
 /// [`DOTNS_TLDS`]: crate::dotns_name::DOTNS_TLDS
-pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", GAME_PRODUCT_LABEL, "stash"];
+pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] =
+	&[PERSONHOOD_PRODUCT_LABEL, GAME_PRODUCT_LABEL, "stash"];
 
 /// The bare label of the game product, Jollity, on every network.
 const GAME_PRODUCT_LABEL: &str = "dim2";
+
+/// The bare label of the personhood product, Humanity, on every network.
+const PERSONHOOD_PRODUCT_LABEL: &str = "peopl";
+
+/// Products the host holds a next-game reminder for: the game product, and
+/// Humanity, whose worker runs the weekly game in its Polkadot room
+/// (individuality-apps#1281). Each holds its own reminder.
+const GAME_REMINDER_LABELS: &[&str] = &[GAME_PRODUCT_LABEL, PERSONHOOD_PRODUCT_LABEL];
 
 /// The label a development product identifier is served under.
 const LOCALHOST_PRODUCT_LABEL: &str = "localhost";
@@ -204,10 +213,11 @@ impl ProductId {
 		product_id.parse::<Self>().is_ok_and(|id| id.has_trusted_remote_permissions())
 	}
 
-	/// Whether this is the game product, Jollity, on any network. `app.dim2.dot`
-	/// is not.
-	pub fn is_game_product(&self) -> bool {
-		self.dotns_name() == Some(GAME_PRODUCT_LABEL)
+	/// Whether the host holds next-game reminders for this product: the game
+	/// product, Jollity, or Humanity, on any network. Matches the whole label,
+	/// so `app.dim2.dot` and `app.peopl.dot` do not.
+	pub fn holds_game_reminders(&self) -> bool {
+		self.dotns_name().is_some_and(|label| GAME_REMINDER_LABELS.contains(&label))
 	}
 }
 
@@ -342,6 +352,37 @@ mod tests {
 				!ProductId::normalizes_to_trusted_remote_permissions(product_id),
 				"{product_id} is a separate product and must prompt"
 			);
+		}
+	}
+
+	/// Humanity runs the weekly game in its Polkadot room
+	/// (individuality-apps#1281), so it books the reminder alongside Jollity.
+	/// Nothing else does, not even a subname of either.
+	#[test]
+	fn game_reminders_are_held_for_the_game_and_humanity_alone() {
+		for product_id in [
+			"dim2.dot",
+			"dim2.paseo",
+			"dim2.testnet",
+			"peopl.dot",
+			"peopl.paseo",
+			"peopl.testnet",
+		] {
+			assert!(ProductId::for_test(product_id).holds_game_reminders(), "{product_id}");
+		}
+		for product_id in [
+			"app.dim2.dot",
+			"app.peopl.paseo",
+			"worker.peopl.dot",
+			"dim2x.dot",
+			"peoplx.paseo",
+			"my-peopl.dot",
+			"stash.dot",
+			"game.dot",
+			"localhost",
+			"localhost:3000",
+		] {
+			assert!(!ProductId::for_test(product_id).holds_game_reminders(), "{product_id}");
 		}
 	}
 

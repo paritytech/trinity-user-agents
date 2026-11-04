@@ -7,7 +7,7 @@ import TrUAPIHost
 /// derivation layout for now.
 public enum BuiltInProduct {
     /// Game (DIM2). `@Sendable` so the value of this function can be stored in a
-    /// `Sendable` type, which is how `HostPlacedProducts` names its backing product.
+    /// `Sendable` type, which is how `HostPlacedProducts` names its backing products.
     @Sendable public static func dim2(for tld: String) throws -> ProductId {
         try productIdFromName(name: "dim2", networkSuffix: tld)
     }
@@ -32,8 +32,9 @@ public enum BuiltInProduct {
         try productIdFromName(name: "chat", networkSuffix: tld)
     }
 
-    /// Personhood — ring-VRF key domain for full/light person keys.
-    public static func personhood(for tld: String) throws -> ProductId {
+    /// Personhood — ring-VRF key domain for full/light person keys, and Humanity, whose worker
+    /// `HostPlacedProducts` places in chat. `@Sendable` for the same reason as ``dim2(for:)``.
+    @Sendable public static func personhood(for tld: String) throws -> ProductId {
         try productIdFromName(name: "peopl", networkSuffix: tld)
     }
 }

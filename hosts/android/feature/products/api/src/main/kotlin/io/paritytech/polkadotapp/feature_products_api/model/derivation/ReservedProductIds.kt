@@ -20,4 +20,16 @@ object ReservedProductIds {
     fun personhood(tld: DotNsTld): ProductId = ProductId.fromName("peopl", tld.value).getOrThrow()
 
     fun chat(tld: DotNsTld): ProductId = ProductId.fromName("chat", tld.value).getOrThrow()
+
+    /**
+     * The product a game reminder booked by [bookedBy] opens. Humanity books the reminder once it
+     * runs the weekly game in its Polkadot room (individuality-apps#1281), but the game is still
+     * played in the game product, so Humanity's reminder opens the game product of the same
+     * network. Any other product opens itself. The reminder itself stays [bookedBy]'s.
+     */
+    fun gameReminderOpenTarget(bookedBy: ProductId): ProductId {
+        val tld = DotNsTld.parse(bookedBy.value.substringAfterLast('.', missingDelimiterValue = "")) ?: return bookedBy
+        val isHumanity = ProductId.fromName("peopl", tld.value).getOrNull() == bookedBy
+        return if (isHumanity) ProductId.fromName("dim2", tld.value).getOrNull() ?: bookedBy else bookedBy
+    }
 }

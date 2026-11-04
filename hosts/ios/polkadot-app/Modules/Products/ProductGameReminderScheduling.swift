@@ -20,6 +20,8 @@ protocol ProductGameReminderScheduling: AnyObject {
 
 /// The countdown a product's reminder asks the UI to show in the last minutes before its game.
 struct ProductGamePill: Equatable {
+    /// The product the pill opens, which is the game product for a reminder Humanity booked
+    /// (``GameReminderOpenTarget``).
     let productId: ProductId
     let startsAt: Date
 }

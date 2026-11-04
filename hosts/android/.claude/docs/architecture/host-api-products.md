@@ -369,12 +369,15 @@ draws its face live and gives it up on its Remove button.
 ### Host-placed chat
 
 The chat analogue of the pinned card. `HostPlacedProducts` (`feature/products/impl/.../domain/bot/external/`) names
-the products the host itself puts in chat, Jollity on the reserved game product, and `ProductExternalExtensionProvider`
-unions them with the installed chat products, placed first and listed once when the user also installed one. Nothing
-is written to the product tables, so nothing can uninstall them, and the product the registry sees never changes, so
-the worker is not restarted over a resolved name. A placed product's chat extension holds the worker like any other,
-and the product registers its rooms through its own `createRoom`. A host-placed chat is pinned above the rest
-(`ProductChatPreviewDelegate`, through `Order.PinToTop`, for the `PlacedByHost` origin) and its menu offers no removal.
+the products the host itself puts in chat, each with the one room it places: Humanity's `polkadot` on the reserved
+personhood product and Jollity's `jollity` on the reserved game product, both placed while the Polkadot room moves
+from the game to Humanity (individuality-apps#1281). `ProductExternalExtensionProvider` unions them with the installed
+chat products, placed first and listed once when the user also installed one. Nothing is written to the product
+tables, so nothing can uninstall them, and the product the registry sees never changes, so the worker is not restarted
+over a resolved name. A placed product's chat extension holds the worker like any other, and the product registers its
+rooms through its own `createRoom`; the host creates no room for it. The placed room is pinned above the rest
+(`ProductChatPreviewDelegate`, through `Order.PinToTop`, for the room the `PlacedByHost` origin names); the product's
+other rooms compete on recency. No room of a placed product offers removal.
 
 ---
 

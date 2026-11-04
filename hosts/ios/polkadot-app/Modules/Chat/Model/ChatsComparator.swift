@@ -36,15 +36,16 @@ enum ChatsComparator {
 }
 
 extension Chat.Peer {
-    /// A host-placed bot is pinned because the host put it there, so it does not compete on
-    /// recency. A product bot's extension id is its product id.
+    /// A host-placed room is pinned because the host put it there, so it does not compete on
+    /// recency. Only the placed room: another room of the same product competes like any chat.
+    /// A product bot's extension id is its product id.
     ///
-    /// Not gated on the host-placement switch: with it off there is no placed bot to pin anyway,
+    /// Not gated on the host-placement switch: with it off there is no placed room to pin anyway,
     /// so reading it would only make sorting depend on a singleton.
     var isPinnedToTop: Bool {
-        if case let .chatExtension(extensionId, _) = self,
+        if case let .chatExtension(extensionId, roomId) = self,
            let productId = try? ProductId(extensionId) {
-            return HostPlacedProducts.contains(productId: productId)
+            return HostPlacedProducts.placesRoom(roomId, of: productId)
         }
         return false
     }

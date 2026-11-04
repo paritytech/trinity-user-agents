@@ -6,6 +6,7 @@ import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.Product
+import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIntegrationRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotFactory
@@ -25,6 +26,9 @@ import uniffi.truapi.ProductIdException
 class ProductExternalExtensionProviderTest {
     private val tld = requireNotNull(DotNsTld.parse("paseo"))
     private val jollity = Product(ReservedProductIds.game(tld), "Jollity", icon = null)
+    private val jollityRoom = ProductChatIdParameter("jollity")
+    private val polkadot = Product(ReservedProductIds.personhood(tld), "Polkadot", icon = null)
+    private val polkadotRoom = ProductChatIdParameter("polkadot")
     private val playground = Product(ProductId.parse("truapi-playground.paseo").getOrThrow(), "TrUAPI Playground", icon = null)
 
     private val integrationRepository: ProductIntegrationRepository = mockk()
@@ -35,7 +39,7 @@ class ProductExternalExtensionProviderTest {
         hostPlacedProducts,
     )
 
-    private suspend fun extensions(stored: List<Product>, placed: List<Product>): List<ProductChatExtension> {
+    private suspend fun extensions(stored: List<Product>, placed: List<HostPlacedProduct>): List<ProductChatExtension> {
         every { integrationRepository.observeProductsByType(IntegrationType.Chat) } returns flowOf(stored)
         every { hostPlacedProducts.observe() } returns flowOf(placed)
 
@@ -70,11 +74,18 @@ class ProductExternalExtensionProviderTest {
     // Unioned rather than written to the product tables, as Pocket does with its pinned card:
     // nothing installs it, so nothing can uninstall it either.
     @Test
-    fun `a host-placed product is listed with no stored row, marked as placed`() = runTest {
-        val extensions = extensions(stored = listOf(playground), placed = listOf(jollity))
+    fun `a host-placed product is listed with no stored row, marked as placed with its room`() = runTest {
+        val extensions = extensions(
+            stored = listOf(playground),
+            placed = listOf(HostPlacedProduct(polkadot, polkadotRoom), HostPlacedProduct(jollity, jollityRoom)),
+        )
 
         assertEquals(
-            listOf(jollity to ProductChatExtensionOrigin.PlacedByHost, playground to ProductChatExtensionOrigin.InstalledByUser),
+            listOf(
+                polkadot to ProductChatExtensionOrigin.PlacedByHost(polkadotRoom),
+                jollity to ProductChatExtensionOrigin.PlacedByHost(jollityRoom),
+                playground to ProductChatExtensionOrigin.InstalledByUser,
+            ),
             extensions.map { it.product to it.origin },
         )
     }
@@ -86,7 +97,7 @@ class ProductExternalExtensionProviderTest {
     fun `a host-placed product the user also installed is listed once, as the placed one`() = runTest {
         val installed = Product(jollity.id, "DIM2", icon = null)
 
-        val extensions = extensions(stored = listOf(installed), placed = listOf(jollity))
+        val extensions = extensions(stored = listOf(installed), placed = listOf(HostPlacedProduct(jollity, jollityRoom)))
 
         assertEquals(listOf(jollity), extensions.map { it.product })
     }

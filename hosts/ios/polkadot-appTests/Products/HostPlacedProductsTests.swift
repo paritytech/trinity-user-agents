@@ -5,22 +5,43 @@ import Keystore_iOS
 
 @Suite("Host-placed products")
 struct HostPlacedProductsTests {
-    /// The Jollity leg of #562: a Release build has to carry the game's chat with no add, install
-    /// or discover step. The list is what the host places; whether it places at all is the setting.
-    @Test("Jollity is the host-placed product")
-    func jollityIsTheHostPlacedProduct() throws {
-        let hostPlaced = try #require(HostPlacedProducts.all.first)
+    /// The first stage of individuality-apps#1281: Humanity's `polkadot` room is placed beside the
+    /// game's `jollity`, which stays placed so the game's worker can hand over before a later
+    /// release stops placing it. The room ids are the contract with each product's worker.
+    @Test("Humanity's Polkadot room is placed beside the game's Jollity room")
+    func humanityIsPlacedBesideTheGame() throws {
+        let placed = try HostPlacedProducts.all.map { try ($0.productId("paseo").rawValue, $0.roomId, $0.fallbackName) }
 
-        #expect(HostPlacedProducts.all.count == 1)
-        #expect(hostPlaced.fallbackName == "Jollity")
+        #expect(placed.count == 2)
+        #expect(placed.contains { $0 == ("peopl.paseo", "polkadot", "Polkadot") })
+        #expect(placed.contains { $0 == ("dim2.paseo", "jollity", "Jollity") })
     }
 
     /// A reserved identity lives in each network's own namespace, so one entry has to answer for
     /// whichever chain the build is pointed at. Writing the product id out would silently stop
     /// placing it on Paseo.
-    @Test("A reserved identity matches across TLDs", arguments: ["dim2.dot", "dim2.paseo", "dim2.testnet"])
-    func reservedIdentityMatchesEveryTld(input: String) throws {
-        #expect(try HostPlacedProducts.contains(productId: ProductId(input)))
+    @Test(
+        "A placed room matches across TLDs",
+        arguments: [
+            ("dim2.dot", "jollity"), ("dim2.paseo", "jollity"), ("dim2.testnet", "jollity"),
+            ("peopl.dot", "polkadot"), ("peopl.paseo", "polkadot"), ("peopl.testnet", "polkadot")
+        ]
+    )
+    func placedRoomMatchesEveryTld(input: String, roomId: String) throws {
+        #expect(try HostPlacedProducts.placesRoom(roomId, of: ProductId(input)))
+    }
+
+    /// Only the room the host placed: Humanity's earlier `humanity` room, a room named after the
+    /// other placed product, and a product's roomless chat are not placed.
+    @Test(
+        "Only the placed room of a placed product is placed",
+        arguments: [
+            ("peopl.paseo", "humanity"), ("peopl.paseo", "jollity"), ("dim2.paseo", "polkadot"), ("dim2.dot", "game")
+        ]
+    )
+    func otherRoomsOfAPlacedProductAreNotPlaced(input: String, roomId: String) throws {
+        #expect(try !HostPlacedProducts.placesRoom(roomId, of: ProductId(input)))
+        #expect(try !HostPlacedProducts.placesRoom(nil, of: ProductId(input)))
     }
 
     /// An exact match, so a subdomain is a separate product and a separate publisher, and a bare
@@ -28,10 +49,16 @@ struct HostPlacedProductsTests {
     /// in `truapi::platform::has_trusted_remote_permissions`.
     @Test(
         "Only the reserved identity itself is host-placed",
-        arguments: ["app.dim2.dot", "dim2x.dot", "xdim2.dot", "notdim2.paseo", "localhost", "localhost:3000"]
+        arguments: [
+            "app.dim2.dot", "dim2x.dot", "xdim2.dot", "notdim2.paseo", "app.peopl.paseo", "peoplx.dot",
+            "localhost", "localhost:3000"
+        ]
     )
     func neighbouringIdentifiersAreNotHostPlaced(input: String) throws {
-        #expect(try !HostPlacedProducts.contains(productId: ProductId(input)))
+        let productId = try ProductId(input)
+
+        #expect(!HostPlacedProducts.placesRoom("jollity", of: productId))
+        #expect(!HostPlacedProducts.placesRoom("polkadot", of: productId))
     }
 }
 
@@ -56,21 +83,31 @@ struct HostPlacementSettingTests {
     }
 }
 
-@Suite("Pinning a host-placed bot to the top of the chat list")
+@Suite("Pinning a host-placed room to the top of the chat list")
 struct HostPlacedChatPinningTests {
-    /// The host placed the bot, so it holds the top of the list rather than competing for it on
+    /// The host placed the room, so it holds the top of the list rather than competing for it on
     /// recency. Without this the placed room sinks under any chat that got a message later, which
     /// on a fresh install is every chat.
-    @Test("A host-placed product's bot is pinned")
-    func hostPlacedBotIsPinned() throws {
-        let hostPlaced = try #require(HostPlacedProducts.all.first)
-        let peer = try Chat.Peer.chatExtension(hostPlaced.productId("paseo").rawValue, roomId: nil)
+    @Test("Every host-placed room is pinned")
+    func hostPlacedRoomIsPinned() throws {
+        for hostPlaced in HostPlacedProducts.all {
+            let peer = try Chat.Peer.chatExtension(hostPlaced.productId("paseo").rawValue, roomId: hostPlaced.roomId)
 
-        #expect(peer.isPinnedToTop)
+            #expect(peer.isPinnedToTop, "\(hostPlaced.roomId)")
+        }
     }
 
-    @Test("An ordinary product's bot is not pinned")
+    /// Placing Humanity lists every room it has, including the `humanity` room its worker
+    /// registered before; that one must not sit pinned and empty beside Polkadot.
+    @Test("Another room of a placed product is not pinned")
+    func anotherRoomOfAPlacedProductIsNotPinned() {
+        #expect(!Chat.Peer.chatExtension("peopl.paseo", roomId: "humanity").isPinnedToTop)
+        #expect(!Chat.Peer.chatExtension("peopl.paseo", roomId: nil).isPinnedToTop)
+    }
+
+    @Test("An ordinary product's room is not pinned")
     func ordinaryProductIsNotPinned() {
         #expect(!Chat.Peer.chatExtension("coinflip.paseo", roomId: nil).isPinnedToTop)
+        #expect(!Chat.Peer.chatExtension("coinflip.paseo", roomId: "polkadot").isPinnedToTop)
     }
 }

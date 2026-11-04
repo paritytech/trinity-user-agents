@@ -2804,11 +2804,18 @@ fn game_host_failures_reach_the_product_with_their_reason() {
 	);
 }
 
-/// The Game API serves Jollity alone: a subname of the game product is a
+/// The Game API serves Jollity and Humanity alone: a subname of either is a
 /// different publisher, and so is every other product.
 #[test]
-fn game_is_unsupported_for_every_product_but_the_game() {
-	for product_id in ["game.dot", "app.dim2.dot", "dim2x.paseo"] {
+fn game_is_unsupported_for_every_product_but_the_game_and_humanity() {
+	for product_id in [
+		"game.dot",
+		"app.dim2.dot",
+		"dim2x.paseo",
+		"app.peopl.paseo",
+		"peoplx.dot",
+		"stash.dot",
+	] {
 		let game = Arc::new(RecordingGamePlatform::default());
 		let host = game_host_for(
 			product_id,
@@ -2822,7 +2829,14 @@ fn game_is_unsupported_for_every_product_but_the_game() {
 		assert_eq!(scheduled(&game), vec![], "{product_id}");
 	}
 
-	for product_id in ["dim2.dot", "dim2.paseo", "dim2.testnet"] {
+	for product_id in [
+		"dim2.dot",
+		"dim2.paseo",
+		"dim2.testnet",
+		"peopl.dot",
+		"peopl.paseo",
+		"peopl.testnet",
+	] {
 		let game = Arc::new(RecordingGamePlatform::default());
 		let host = game_host_for(
 			product_id,
@@ -2832,6 +2846,36 @@ fn game_is_unsupported_for_every_product_but_the_game() {
 		);
 		assert_eq!(remind(&host, FUTURE_START), Ok(HostRemindNextGameResponse::V1), "{product_id}");
 	}
+}
+
+/// Humanity's worker books the reminder once it runs the game in the Polkadot
+/// room (individuality-apps#1281). The host keys it to Humanity, so it neither
+/// replaces nor cancels the reminder Jollity's worker may still hold: each
+/// product cancels only its own.
+#[test]
+fn humanitys_reminder_is_held_and_cancelled_under_humanity() {
+	let game = Arc::new(RecordingGamePlatform::default());
+	let host = game_host_for(
+		"peopl.paseo",
+		crate::platform::ExecutableKind::Worker,
+		stub_platform(),
+		Some(game.clone()),
+	);
+
+	assert_eq!(
+		(
+			remind(&host, FUTURE_START),
+			cancel(&host),
+			scheduled(&game),
+			game.cancelled.lock().expect("cancelled mutex poisoned").clone(),
+		),
+		(
+			Ok(HostRemindNextGameResponse::V1),
+			Ok(HostCancelNextGameResponse::V1),
+			vec![("peopl.paseo".to_string(), FUTURE_START)],
+			vec!["peopl.paseo".to_string()],
+		)
+	);
 }
 
 struct RecordingFundingPlatform {
