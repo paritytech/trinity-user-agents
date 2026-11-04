@@ -4,9 +4,9 @@
 //! A marker is a dotted target such as `truapi.chain.follow_budget_reached`.
 //! The core raises it, [`crate::logging`] hands it to the host, and the host
 //! decides what to do with it by looking it up here rather than by matching a
-//! prefix of its own. A target this table does not list is
-//! [`MarkerClass::Local`]: it stays on the device until someone says what it
-//! carries.
+//! prefix of its own. A host-addressed target this table does not list never
+//! reaches a host at all: [`class_of`] has no class for it and the host sink
+//! refuses it, because nothing downstream knows what its detail carries.
 //!
 //! Each entry's doc comment says what its detail may contain. That is the
 //! prose a reviewer reads when deciding whether a marker may be exported, and
@@ -20,7 +20,10 @@ pub enum MarkerClass {
 	/// Stays on the device. Its detail may name what the person is doing.
 	Local,
 	/// May be shipped off-device, at the given severity.
-	Export(Severity),
+	Export {
+		/// How loud the marker is once a host's logger has it.
+		severity: Severity,
+	},
 }
 
 /// How loud an exported marker is once it reaches a host's logger.
@@ -63,15 +66,15 @@ macro_rules! markers {
 			$(#[$entry])*
 			pub const $name: Marker = Marker {
 				target: $target,
-				class: MarkerClass::$class $((Severity::$severity))?,
+				class: MarkerClass::$class $({ severity: Severity::$severity })?,
 			};
 		)*
 
 		/// Every marker the core addresses to a host, grouped by subsystem.
 		///
-		/// A host reads this once and matches a target exactly. Anything missing
-		/// is [`MarkerClass::Local`], so a marker added later stays on the device
-		/// until it is listed here.
+		/// A host reads this once and matches a target exactly. A marker the core
+		/// raises without listing here is refused on its way out, so forgetting
+		/// this table costs the line rather than exporting it.
 		pub const MARKERS: &[Marker] = &[$($name,)*];
 
 		/// The class of `target`, or `None` when the table does not list it.
@@ -80,7 +83,7 @@ macro_rules! markers {
 		/// the compiler rejects.
 		pub fn class_of(target: &str) -> Option<MarkerClass> {
 			match target {
-				$($target => Some(MarkerClass::$class $((Severity::$severity))?),)*
+				$($target => Some(MarkerClass::$class $({ severity: Severity::$severity })?),)*
 				_ => None,
 			}
 		}
@@ -277,8 +280,14 @@ mod tests {
 	#[test]
 	fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
 		let exported = crate::native::core_markers();
-		assert_eq!(exported.get(TRACING_ERROR.target), Some(&MarkerClass::Export(Severity::Error)));
-		assert_eq!(exported.get(TRACING_WARN.target), Some(&MarkerClass::Export(Severity::Warn)));
+		assert_eq!(
+			exported.get(TRACING_ERROR.target),
+			Some(&MarkerClass::Export { severity: Severity::Error })
+		);
+		assert_eq!(
+			exported.get(TRACING_WARN.target),
+			Some(&MarkerClass::Export { severity: Severity::Warn })
+		);
 		assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
 	}
 

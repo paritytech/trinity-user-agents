@@ -29,7 +29,7 @@ Three things follow from that shape.
 
 The detail string is also built at the call site, so what a marker may carry is decided there rather than by its type. `account_handle` (`logging.rs:116`) exists for exactly this and shortens an account id before it is formatted. Making that the only shape a detail can take is step 2 of the delivery below.
 
-## Current state
+## The shape this replaces
 
 The pipeline has two stages, and which one governs depends on who raised the line.
 
@@ -71,15 +71,15 @@ pub enum MarkerClass {
     /// Stays on the device.
     Local,
     /// May be shipped off-device, at the given severity.
-    Export(Severity),
+    Export { severity: Severity },
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum Severity { Info, Warn, Error }
 
 /// Every marker the core may address to a host, keyed by its dotted target.
-/// A host reads this once and looks up each marker it is handed; a target the
-/// map does not hold is `Local`.
+/// A host reads this once and looks up each marker it is handed. A target the
+/// map does not hold stays on the device.
 #[uniffi::export]
 pub fn core_markers() -> HashMap<String, MarkerClass> { /* ... */ }
 ```
@@ -98,7 +98,7 @@ An unregistered target is caught three times over, in this order:
 
 The layer is what actually enforces it. The constants make a typo a build failure rather than a silent drop, and the host check is the backstop for bindings older than the core.
 
-**What this changes.** Exact-match lookup replaces prefix matching, so a marker absent from the table is local. `MarkerClass::Export(Severity)` means a core error is no longer a core warning in Sentry. Both host allowlists are deleted.
+**What this changes.** Exact-match lookup replaces prefix matching, so a marker absent from the table is local. `MarkerClass::Export { severity }` means a core error is no longer a core warning in Sentry. Both host allowlists are deleted.
 
 The two tag filters stay. They are the only gate on host-originated lines such as `truapi.payments`, which the core table says nothing about. Deleting them would ship every host debug line on any tag.
 
@@ -118,4 +118,4 @@ The benefit is that the number of places the rule is written stays at one as hos
 
 ## Delivery
 
-The Rust table lands first. Until a host reads it, both hosts keep their own allowlists and still flatten core severity to info, so nothing about what reaches Sentry changes yet. Tracked on #1796, which carries a task per host alongside the Rust ones.
+The Rust table lands first, then iOS and Android read it and their own lists go with it. Desktop and dot.li read the same table once they have a core-log channel to carry it on. Tracked on #1796, which carries a task per host alongside the Rust ones.

@@ -25,15 +25,16 @@ class CoreLogLineTest {
         Timber.uprootAll()
     }
 
-    /** Info lines go to Sentry, and a push notification body must never leave the device. */
+    /**
+     * A local marker's detail describes what the person is doing, so it is logged below the level
+     * `SentryLogTree` forwards.
+     */
     @Test
-    fun `only allowed core markers are logged at info`() {
+    fun `a local marker stays on the device`() {
         logCoreLine("truapi.native.callback.push_notification", "hello")
-        logCoreLine("truapi.tracing.warn", "truapi::runtime: chain call failed")
 
         verify(exactly = 1) {
             tree.log(Log.DEBUG, "truapi.core", "truapi.native.callback.push_notification: hello", null)
-            tree.log(Log.INFO, "truapi.core", "truapi.tracing.warn: truapi::runtime: chain call failed", null)
         }
         // Stated as its own negative, because a notification body reaching info is the leak this
         // test exists to catch. `confirmVerified` cannot stand in for it: Timber calls
@@ -45,20 +46,36 @@ class CoreLogLineTest {
     }
 
     /**
-     * The markers the core addresses to a host are the reason it raises them. Reaching only the
-     * device log would make marking an event for the host cost it the reach an ordinary warning
-     * already has.
+     * The severity comes from the core's table, so an error is alerted on separately rather than
+     * arriving as one more info line.
      */
     @Test
-    fun `core markers addressed to the host are logged at info`() {
-        logCoreLine("truapi.chain.follow_budget_reached", "four of four")
+    fun `an exported marker is logged at its own severity`() {
         logCoreLine("truapi.core.started", "truapi 0.0.0")
         logCoreLine("truapi.ws_bridge.connection_open", "one of eight")
+        logCoreLine("truapi.chain.follow_budget_reached", "four of four")
+        logCoreLine("truapi.tracing.warn", "truapi::runtime: retrying")
+        logCoreLine("truapi.tracing.error", "truapi::runtime: chain call failed")
 
         verify(exactly = 1) {
-            tree.log(Log.INFO, "truapi.core", "truapi.chain.follow_budget_reached: four of four", null)
             tree.log(Log.INFO, "truapi.core", "truapi.core.started: truapi 0.0.0", null)
             tree.log(Log.INFO, "truapi.core", "truapi.ws_bridge.connection_open: one of eight", null)
+            tree.log(Log.WARN, "truapi.core", "truapi.chain.follow_budget_reached: four of four", null)
+            tree.log(Log.WARN, "truapi.core", "truapi.tracing.warn: truapi::runtime: retrying", null)
+            tree.log(Log.ERROR, "truapi.core", "truapi.tracing.error: truapi::runtime: chain call failed", null)
+        }
+    }
+
+    /**
+     * Nothing downstream knows what an unlisted marker carries, so it is treated as local rather
+     * than exported on the strength of its prefix.
+     */
+    @Test
+    fun `a marker the table does not list stays on the device`() {
+        logCoreLine("truapi.chain.not_registered", "whatever this is")
+
+        verify(exactly = 1) {
+            tree.log(Log.DEBUG, "truapi.core", "truapi.chain.not_registered: whatever this is", null)
         }
     }
 }
