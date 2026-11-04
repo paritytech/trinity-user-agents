@@ -95,7 +95,7 @@ private extension FundingFeesView {
         guard cashSide > 0 else { return nil }
 
         let perCash = model.quoteUnit(quote).format(decimal: (providerSide / cashSide).fundingRounded(scale: 4))
-        return "\(model.cash.label(1)) ≈ \(perCash)"
+        return String(localized: .Funding.feesRateValue(cash: model.cash.label(1), value: perCash))
     }
 
     func line(_ title: String, _ value: String, emphasized: Bool = true) -> some View {
