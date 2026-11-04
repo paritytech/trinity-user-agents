@@ -32,7 +32,10 @@ struct RuntimeFundingOpener: FundingOpening {
     }
 
     func openFunding(direction: FundingDirection) async throws -> String? {
-        guard let runtimeProvider else { throw FundingOpeningError.runtimeUnavailable }
+        guard let runtimeProvider else {
+            Logger.shared.error("[funding] opening the overlay failed: no runtime provider")
+            throw FundingOpeningError.runtimeUnavailable
+        }
         if await showPending(direction) { return nil }
 
         do {
