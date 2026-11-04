@@ -149,7 +149,7 @@
   <!-- ===================== PANEL B : NOW ===================== -->
   <rect x="24" y="714" width="1432" height="356" rx="10" fill="#ffffff" stroke="#dde3e9"/>
   <text x="44" y="748" class="ptitle">NOW</text>
-  <text x="120" y="748" class="sub" style="font-size:13px">one table in the core, read by every host through the bindings that already existed</text>
+  <text x="120" y="748" class="sub" style="font-size:13px">one table in the core, read by iOS and Android through the bindings that already existed</text>
 
   <text x="44"   y="778" class="lane">CORE &#183; RUST</text>
   <text x="334"  y="778" class="lane">BOUNDARY</text>
@@ -184,7 +184,7 @@
   <circle cx="806" cy="914" r="9" fill="#1f7a4d"/><text x="806" y="918" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">&#10003;</text>
   <text x="604" y="921" class="mono" style="font-size:12px;font-weight:600">#[uniffi::export]</text>
   <text x="604" y="939" class="mono" style="font-size:12px;font-weight:600">core_markers()</text>
-  <text x="604" y="957" class="sub">the 14th such function</text>
+  <text x="604" y="957" class="sub">the 25th such function</text>
 
   <rect x="850" y="900" width="300" height="64" rx="6" fill="#ffffff" stroke="#5a6472" stroke-width="1.6"/>
   <text x="864" y="923" class="monob">uniffi-bindgen</text>
@@ -207,11 +207,11 @@
   <text x="428"  y="1020" class="numl">capture senders, unchanged,</text>
   <text x="428"  y="1037" class="numl">still the next step on #1796</text>
   <text x="736"  y="1028" class="numg">1</text>
-  <text x="768"  y="1020" class="numl">gate, owned by the core</text>
-  <text x="768"  y="1037" class="numl">and read by every host</text>
+  <text x="768"  y="1020" class="numl">export decision, owned by the core,</text>
+  <text x="768"  y="1037" class="numl">with the two tag filters still after it</text>
   <text x="1076" y="1028" class="numg">&#10003;</text>
   <text x="1114" y="1020" class="numl">severity survives, a core error is alertable,</text>
-  <text x="1114" y="1037" class="numl">and marker 49 stays local by construction</text>
+  <text x="1114" y="1037" class="numl">and marker 46 is refused by construction</text>
 
   <text x="40" y="1104" class="sub">Verified against the tree</text>
   <text x="1440" y="1104" text-anchor="end" class="sub">logging.rs &#183; ProductTrUAPIHostBridge.kt &#183; LoggerProtocol+CoreLog.swift &#183; SentryLogTree.kt &#183; HostLogSinkDestination.swift</text>

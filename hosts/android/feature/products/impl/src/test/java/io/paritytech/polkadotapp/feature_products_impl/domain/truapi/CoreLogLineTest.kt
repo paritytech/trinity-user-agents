@@ -64,6 +64,12 @@ class CoreLogLineTest {
             tree.log(Log.WARN, "truapi.core", "truapi.tracing.warn: truapi::runtime: retrying", null)
             tree.log(Log.ERROR, "truapi.core", "truapi.tracing.error: truapi::runtime: chain call failed", null)
         }
+        // The iOS twin gets this from comparing the whole recorded array. Here it is stated,
+        // because a marker logged at its own level and at info as well would satisfy every
+        // positive above while putting the severity decision back in two places.
+        verify(exactly = 0) {
+            tree.log(Log.INFO, "truapi.core", "truapi.tracing.error: truapi::runtime: chain call failed", null)
+        }
     }
 
     /**

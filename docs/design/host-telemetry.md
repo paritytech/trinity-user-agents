@@ -17,21 +17,21 @@ One table in the core decides which diagnostics may leave a device. Every host r
 
 ## Motivation
 
-The rule for which core markers may be exported is written out by hand once per host, in `LoggerProtocol+CoreLog.swift:9-14` and `ProductTrUAPIHostBridge.kt:448-453`. Two more restatements sit in prose, in `hosts/ios/.claude/docs/code/error-handling.md:47` and `hosts/android/.claude/docs/code/naming-and-hygiene.md:240`. Nothing compares any of them.
+The rule for which core markers may be exported was written out by hand once per host, once in Swift and once in Kotlin, with two more restatements in prose in the agent docs beside them. Nothing compared any of them.
 
-Three things follow from that shape.
+Three things followed from that shape.
 
-**It grows with the host count.** Two hosts mean two copies. Desktop and dot.li would make four, in three languages. Nothing in CI would notice them diverging.
+**It grew with the host count.** Two hosts meant two copies. Desktop and dot.li would have made four, in three languages. Nothing in CI would have noticed them diverging.
 
-**Prefix matching exports by default.** Each host matches `truapi.chain.` and three sibling prefixes, so a marker added under one of them later is exported with no review and no test change. There are 48 distinct `truapi.*` markers today, 45 of them in production.
+**Prefix matching exported by default.** Each host matched `truapi.chain.` and three sibling prefixes, so a marker added under one of them later was exported with no review and no test change. There are 48 distinct `truapi.*` markers, 45 of them in production.
 
-**Severity does not survive the crossing.** `ProductTrUAPIHostBridge.kt:441` and `LoggerProtocol+CoreLog.swift:20` both collapse every allowlisted marker to info, so `truapi.tracing.error` and `truapi.tracing.warn` arrive identically and a core error cannot be alerted on. Host-originated lines keep their severity, so two lines under one tag namespace mean different things depending on who raised them.
+**Severity did not survive the crossing.** Both hosts collapsed every allowlisted marker to info, so `truapi.tracing.error` and `truapi.tracing.warn` arrived identically and a core error could not be alerted on. Host-originated lines kept their severity, so two lines under one tag namespace meant different things depending on who raised them.
 
-The detail string is also built at the call site, so what a marker may carry is decided there rather than by its type. `account_handle` (`logging.rs:116`) exists for exactly this and shortens an account id before it is formatted. Making that the only shape a detail can take is step 2 of the delivery below.
+The detail string is also built at the call site, so what a marker may carry is decided there rather than by its type. `account_handle` (`logging.rs:116`) exists for exactly this and shortens an account id before it is formatted. Making that the only shape a detail can take is its own item on #1796.
 
 ## The shape this replaces
 
-The pipeline has two stages, and which one governs depends on who raised the line.
+The pipeline had two stages, and which one governed depended on who raised the line.
 
 ```
  CORE (rust)                   BOUNDARY          HOST stage 1          HOST stage 2         SENTRY
@@ -45,13 +45,15 @@ The pipeline has two stages, and which one governs depends on who raised the lin
    join at stage 2 and never cross the boundary -----------------------> logs
 ```
 
-For a core line, stage 1 is the decision. `logCoreLine` logs an allowlisted marker at info and everything else at debug, and every core line carries the same `truapi.core` tag, so stage 2's `priority >= Log.INFO && tag.startsWith("truapi.")` (`SentryLogTree.kt:15-16`, and `minLevel = .info` plus the same tag guard at `HostLogSinkDestination.swift:13,25`) only executes what the allowlist already chose. Delete the allowlist and every core marker exports.
+For a core line, stage 1 was the decision. `logCoreLine` logged an allowlisted marker at info and everything else at debug, and every core line carries the same `truapi.core` tag, so stage 2 only executed what the allowlist had already chosen. Deleting the allowlist on its own would have exported every core marker, which is why the table replaces it rather than the filters.
 
-For a host-originated line, stage 2 is the only gate there is. Those lines carry their own tags and their own severities, and nothing upstream filters them.
+## What this does not touch
+
+For a host-originated line, stage 2 is the only gate there is. Those lines carry their own tags and their own severities, and nothing upstream filters them, which is why the two tag filters stay (`SentryLogTree.kt:15-16`, and `minLevel = .info` plus the same tag guard at `HostLogSinkDestination.swift:13,25`).
 
 Telemetry also leaves through eight capture senders, four per platform, with seven distinct signatures between them and four unrelated protocols on iOS (`HostEventRecording`, `IssueReporting`, `HostLogSink`, `DeviceReadingsMonitoring`). The pattern is that a feature wanting telemetry writes its own sender.
 
-**The web host has no core-log channel at all.** `on_core_log` is declared in `native/callbacks.rs:37`, inside `truapi::native`, which is `#[cfg(not(target_arch = "wasm32"))]` at `lib.rs:793-794`. There is no `onCoreLog` in any TypeScript source, and `truapi-codegen` walks the `platform` modules (`truapi-codegen/src/platform.rs:1-10`), never `native`. So Desktop and dot.li receive no core diagnostics today, under any design.
+**The web host has no core-log channel at all.** `on_core_log` is declared in `native/callbacks.rs:37`, inside `truapi::native`, which is `#[cfg(not(target_arch = "wasm32"))]` at `lib.rs:898`. There is no `onCoreLog` in any TypeScript source, and `truapi-codegen` walks the `platform` modules, never `native`. So Desktop and dot.li receive no core diagnostics, under any design.
 
 ## Approach
 

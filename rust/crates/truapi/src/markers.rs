@@ -4,9 +4,11 @@
 //! A marker is a dotted target such as `truapi.chain.follow_budget_reached`.
 //! The core raises it, [`crate::logging`] hands it to the host, and the host
 //! decides what to do with it by looking it up here rather than by matching a
-//! prefix of its own. A host-addressed target this table does not list never
-//! reaches a host at all: [`class_of`] has no class for it and the host sink
-//! refuses it, because nothing downstream knows what its detail carries.
+//! prefix of its own. A host-addressed target this table does not list has no
+//! class, and nothing downstream knows what its detail carries. Every call
+//! site names a constant from here, so an unlisted target cannot be written by
+//! accident, and the tracing layer and the bridge both refuse one they cannot
+//! find in the table.
 //!
 //! Each entry's doc comment says what its detail may contain. That is the
 //! prose a reviewer reads when deciding whether a marker may be exported, and
