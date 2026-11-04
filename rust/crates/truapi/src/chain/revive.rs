@@ -16,6 +16,11 @@ use super::{
 };
 use crate::chain_runtime::{ChainRuntime, RuntimeFailure};
 
+#[cfg(test)]
+mod fixtures;
+#[cfg(test)]
+pub use fixtures::{contract_dispatch_error, contract_output};
+
 const REVIVE_PALLET: &str = "Revive";
 
 // Eth-derived origins are implicitly mapped; a nonzero address also passes

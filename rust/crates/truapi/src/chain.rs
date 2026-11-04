@@ -51,6 +51,9 @@ pub use storage_watch::{
 pub use tx_submitter::{TxSubmitter, WatchEvent};
 pub use tx_validator::TxValidator;
 
+#[cfg(test)]
+pub use revive::{contract_dispatch_error, contract_output};
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
 #[cfg(all(test, not(target_arch = "wasm32")))]

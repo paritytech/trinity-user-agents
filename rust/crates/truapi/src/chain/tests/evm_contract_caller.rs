@@ -18,7 +18,10 @@ use subxt::{
 
 use super::*;
 use crate::{
-	chain::{EvmContractCaller, EvmContractError, ExtrinsicService},
+	chain::{
+		EvmContractCaller, EvmContractError, ExtrinsicService, contract_dispatch_error,
+		contract_output,
+	},
 	host_internal::extrinsic::{Sr25519Signer, tests::split_v4},
 };
 
@@ -195,19 +198,7 @@ fn hex_bytes(value: &Value) -> Vec<u8> {
 }
 
 fn simulation_output(flags: u32) -> Vec<u8> {
-	simulation_result(Ok((flags, vec![0x80u8])))
-}
-
-fn simulation_result(result: Result<(u32, Vec<u8>), u8>) -> Vec<u8> {
-	(
-		(Compact(10u64), Compact(20u64)),
-		(Compact(300u64), Compact(400u64)),
-		(0u8, 500u128),
-		(1u8, 600u128),
-		70u128,
-		result,
-	)
-		.encode()
+	contract_output(flags, vec![0x80])
 }
 
 fn dispatch_events(event: Option<&str>) -> Vec<u8> {
@@ -572,7 +563,7 @@ fn a_reverted_simulation_never_produces_a_transaction_to_submit() {
 fn runtime_rejections_and_malformed_simulations_produce_no_transaction() {
 	let signer = RecordingSigner::new();
 	for (output, expected) in [
-		(simulation_result(Err(0)), ("dispatch", "0x00".to_string())),
+		(contract_dispatch_error(vec![0]), ("dispatch", "0x00".to_string())),
 		(vec![0xff], ("malformed", String::new())),
 	] {
 		let mut node = EvmNode::new(None);
