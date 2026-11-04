@@ -20,6 +20,8 @@ mod chat;
 pub mod contacts;
 mod dotns_lookup;
 mod funding;
+mod funding_providers;
+mod funding_quotes;
 mod host_session;
 mod identity;
 pub mod login_failure;
@@ -64,7 +66,7 @@ use authority::{AccountCaller, AuthorityCancelError, AuthoritySession};
 pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
-pub use funding::FundingProviderLink;
+pub use funding::{FundingFeed, FundingProviderLink};
 pub use host_session::HostSession;
 
 /// The host's contact picker plus the key its handles are minted under:
@@ -1667,7 +1669,7 @@ impl FundingProvider for ProductRuntimeHost {
 					.connection
 					.services
 					.funding()
-					.is_serving(self.connection.product.product_id.as_str(), &intent)
+					.is_serving(&self.connection.product.product_id, &intent)
 				{
 					return Err(domain(latest::HostFundingPresentFrameError::NotFound));
 				}

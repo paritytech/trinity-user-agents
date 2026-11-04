@@ -776,13 +776,24 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 		target: v01::FundingFrameTarget,
 	) -> Result<v01::FundingFrameOutcome, v01::GenericError> {
 		self.funding
-			.present_provider_frame(provider.product_id.to_string(), intent, target)
+			.present_provider_frame(provider.product_id.clone(), intent, target)
 			.await
 			.map_err(v01::GenericError::from)
 	}
 
-	fn funding_session_changed(&self, intent: String, status: v01::HostFundingStatusSubscribeItem) {
-		self.funding.funding_session_changed(intent, status);
+	fn funding_quote_changed(&self, intent: String, row: crate::platform::FundingQuoteRow) {
+		self.funding.funding_quote_changed(intent, row);
+	}
+}
+
+impl crate::runtime::FundingFeed for FundingCallbackPlatform {
+	fn funding_session_changed(
+		&self,
+		intent: String,
+		status: v01::HostFundingStatusSubscribeItem,
+		progress: Option<crate::host_logic::funding::FundingProgress>,
+	) {
+		self.funding.funding_session_changed(intent, status, progress);
 	}
 }
 

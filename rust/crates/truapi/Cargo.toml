@@ -92,11 +92,11 @@ wasm-signing-host = ["runtime"]
 # resource allocation as granted without allocating anything.
 test-host = ["runtime"]
 # In-memory `MockPlatform` for tests and host simulators.
-mock = ["runtime", "dep:strum"]
+mock = ["runtime"]
 
 [dependencies]
 truapi-macros = { path = "../truapi-macros" }
-strum = { workspace = true, optional = true }
+strum = { workspace = true }
 async-trait = { workspace = true }
 derive_more = { workspace = true, features = ["debug", "display", "error", "from"] }
 futures = { workspace = true }
@@ -170,7 +170,6 @@ web-sys = { workspace = true, features = ["console"], optional = true }
 [dev-dependencies]
 bip39 = { workspace = true }
 scale-info = { workspace = true, features = ["std"] }
-strum = { workspace = true }
 
 [[test]]
 name = "device_permission_revalidation"

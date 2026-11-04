@@ -102,9 +102,11 @@ pub mod latest {
 		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
 		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
 		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, FundingAssignment, FundingCancelAnswer,
-		FundingCancelDecision, FundingDirection, FundingFailure, FundingFrameOutcome,
-		FundingFrameTarget, FundingInboundUpdate, FundingOutboundUpdate, FundingUpdate,
+		Dimensions, Effect, EffectProps, FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES,
+		FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer, FundingCancelDecision,
+		FundingDeposit, FundingDirection, FundingFailure, FundingFrameOutcome, FundingFrameTarget,
+		FundingInboundUpdate, FundingOutboundUpdate, FundingQuote, FundingQuoteAnswer,
+		FundingQuoteAsk, FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate,
 		GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
 		HostAccountGetAliasRequest, HostAccountGetError, HostAccountListRingVrfKeysRequest,
 		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
@@ -973,7 +975,7 @@ pub use runtime::contacts::contact_handle;
 #[cfg(feature = "runtime")]
 pub use runtime::login_failure::reports_exhausted_period;
 #[cfg(feature = "runtime")]
-pub use runtime::product_manifest::encode_cached_root_manifest;
+pub use runtime::product_manifest::{encode_cached_root_manifest, worker_manifest_cache_key};
 #[cfg(feature = "runtime")]
 pub use runtime::statement_allowance;
 #[cfg(feature = "runtime")]
