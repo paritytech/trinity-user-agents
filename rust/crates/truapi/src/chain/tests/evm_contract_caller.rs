@@ -19,8 +19,8 @@ use subxt::{
 use super::*;
 use crate::{
 	chain::{
-		EvmContractCaller, EvmContractError, ExtrinsicService, contract_dispatch_error,
-		contract_output,
+		ContractResult, EvmContractCaller, EvmContractError, ExecReturnValue, ExtrinsicService,
+		RawDispatchError, StorageDeposit, Weight,
 	},
 	host_internal::extrinsic::{Sr25519Signer, tests::split_v4},
 };
@@ -198,7 +198,19 @@ fn hex_bytes(value: &Value) -> Vec<u8> {
 }
 
 fn simulation_output(flags: u32) -> Vec<u8> {
-	contract_output(flags, vec![0x80])
+	simulation_result(Ok(ExecReturnValue { flags, data: vec![0x80] }))
+}
+
+fn simulation_result(result: Result<ExecReturnValue, RawDispatchError>) -> Vec<u8> {
+	ContractResult {
+		_weight_consumed: Weight { ref_time: 10, proof_size: 20 },
+		weight_required: Weight { ref_time: 300, proof_size: 400 },
+		storage_deposit: StorageDeposit::Refund { _amount: 500 },
+		max_storage_deposit: StorageDeposit::Charge(600),
+		_gas_consumed: 70,
+		result,
+	}
+	.encode()
 }
 
 fn dispatch_events(event: Option<&str>) -> Vec<u8> {
@@ -563,7 +575,7 @@ fn a_reverted_simulation_never_produces_a_transaction_to_submit() {
 fn runtime_rejections_and_malformed_simulations_produce_no_transaction() {
 	let signer = RecordingSigner::new();
 	for (output, expected) in [
-		(contract_dispatch_error(vec![0]), ("dispatch", "0x00".to_string())),
+		(simulation_result(Err(RawDispatchError(vec![0]))), ("dispatch", "0x00".to_string())),
 		(vec![0xff], ("malformed", String::new())),
 	] {
 		let mut node = EvmNode::new(None);

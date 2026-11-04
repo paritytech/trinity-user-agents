@@ -16,11 +16,6 @@ use super::{
 };
 use crate::chain_runtime::{ChainRuntime, RuntimeFailure};
 
-#[cfg(test)]
-mod fixtures;
-#[cfg(test)]
-pub use fixtures::{contract_dispatch_error, contract_output};
-
 const REVIVE_PALLET: &str = "Revive";
 
 // Eth-derived origins are implicitly mapped; a nonzero address also passes
@@ -278,21 +273,24 @@ async fn submit_until_finalized(
 /// `sp_weights::Weight`.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Encode, Decode, EncodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
-struct Weight {
+pub struct Weight {
 	/// Computation time.
 	#[codec(compact)]
-	ref_time: u64,
+	pub ref_time: u64,
 	/// Proof size in bytes.
 	#[codec(compact)]
-	proof_size: u64,
+	pub proof_size: u64,
 }
 
 /// `pallet_revive::StorageDeposit` over a `u128` balance.
 #[derive(Decode)]
 #[cfg_attr(test, derive(Encode))]
-enum StorageDeposit {
+pub enum StorageDeposit {
 	/// Balance returned to the origin.
-	Refund { _amount: u128 },
+	Refund {
+		/// Amount refunded.
+		_amount: u128,
+	},
 	/// Balance charged to the origin.
 	Charge(u128),
 }
@@ -310,11 +308,11 @@ impl StorageDeposit {
 /// `pallet_revive::ExecReturnValue`.
 #[derive(Decode)]
 #[cfg_attr(test, derive(Encode))]
-struct ExecReturnValue {
+pub struct ExecReturnValue {
 	/// `ReturnFlags` bits; [`REVERT_FLAG`] marks a revert.
-	flags: u32,
+	pub flags: u32,
 	/// The contract's return data.
-	data: Vec<u8>,
+	pub data: Vec<u8>,
 }
 
 /// `ReturnFlags::REVERT`.
@@ -323,7 +321,10 @@ const REVERT_FLAG: u32 = 1;
 /// A `DispatchError` kept as its raw bytes, since naming the error needs the
 /// runtime's metadata. It is the last field of a `ContractResult`, so it takes
 /// the rest of the input.
-struct RawDispatchError(Vec<u8>);
+pub struct RawDispatchError(
+	/// Encoded runtime error.
+	pub Vec<u8>,
+);
 
 impl Decode for RawDispatchError {
 	fn decode<I: Input>(input: &mut I) -> Result<Self, parity_scale_codec::Error> {
@@ -344,19 +345,19 @@ impl Encode for RawDispatchError {
 /// `pallet_revive::ContractResult<ExecReturnValue, u128>`.
 #[derive(Decode)]
 #[cfg_attr(test, derive(Encode))]
-struct ContractResult {
+pub struct ContractResult {
 	/// Weight the call consumed.
-	_weight_consumed: Weight,
+	pub _weight_consumed: Weight,
 	/// Weight the call needs as its limit.
-	weight_required: Weight,
+	pub weight_required: Weight,
 	/// Storage deposit the call charged or refunded.
-	storage_deposit: StorageDeposit,
+	pub storage_deposit: StorageDeposit,
 	/// Largest storage deposit the call needed while it ran.
-	max_storage_deposit: StorageDeposit,
+	pub max_storage_deposit: StorageDeposit,
 	/// Gas the call consumed.
-	_gas_consumed: u128,
+	pub _gas_consumed: u128,
 	/// What the contract returned, or why the runtime rejected the call.
-	result: Result<ExecReturnValue, RawDispatchError>,
+	pub result: Result<ExecReturnValue, RawDispatchError>,
 }
 
 /// Arguments of the `ReviveApi_call` runtime API.

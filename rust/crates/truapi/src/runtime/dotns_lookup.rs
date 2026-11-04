@@ -249,14 +249,27 @@ fn started_operation_id(operation: OperationStartedResult) -> Result<String, Str
 mod tests {
 	use super::*;
 	use crate::{
-		chain::contract_output,
+		chain::{ContractResult, ExecReturnValue, StorageDeposit, Weight},
 		test_support::{ScriptedProvider, test_spawner},
 	};
+	use parity_scale_codec::Encode;
 	use serde_json::{Value, json};
 	use std::sync::Arc;
 
 	const FOLLOW_ID: &str = "lookup-follow";
 	const PINNED_BLOCK: [u8; 32] = [0x22; 32];
+
+	fn contract_output(flags: u32, data: Vec<u8>) -> Vec<u8> {
+		ContractResult {
+			_weight_consumed: Weight::default(),
+			weight_required: Weight::default(),
+			storage_deposit: StorageDeposit::Refund { _amount: 0 },
+			max_storage_deposit: StorageDeposit::Refund { _amount: 0 },
+			_gas_consumed: 0,
+			result: Ok(ExecReturnValue { flags, data }),
+		}
+		.encode()
+	}
 
 	fn lookup_provider(output: Result<Vec<u8>, &'static str>) -> Arc<ScriptedProvider> {
 		Arc::new(ScriptedProvider::with_frames(move |request| {

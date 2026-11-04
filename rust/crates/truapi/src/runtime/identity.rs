@@ -208,7 +208,7 @@ mod tests {
 
 	use super::*;
 	use crate::{
-		chain::{account_to_h160, contract_output},
+		chain::{ContractResult, ExecReturnValue, StorageDeposit, Weight, account_to_h160},
 		chain_runtime::{RuntimeChainProvider, RuntimeFailure},
 		host_logic::dotns_gateway::{
 			DotnsPopController, LabelStore, ProtocolRegistry, RootGatewayDispatcher, StoreFactory,
@@ -221,7 +221,7 @@ mod tests {
 	use alloy_sol_types::{SolCall, SolInterface};
 	use async_trait::async_trait;
 	use futures::{StreamExt, channel::mpsc, stream::BoxStream};
-	use parity_scale_codec::Decode;
+	use parity_scale_codec::{Decode, Encode};
 	use serde_json::{Value as JsonValue, json};
 	use std::sync::{Arc, Mutex};
 
@@ -311,7 +311,15 @@ mod tests {
 			SQUATTER_STORE => labels_page(input, &["squatter.paseo"]),
 			dest => panic!("unscripted view {} on 0x{}", hex::encode(input), hex::encode(dest)),
 		};
-		contract_output(u32::from(reverted), data)
+		ContractResult {
+			_weight_consumed: Weight::default(),
+			weight_required: Weight::default(),
+			storage_deposit: StorageDeposit::Charge(0),
+			max_storage_deposit: StorageDeposit::Charge(0),
+			_gas_consumed: 0,
+			result: Ok(ExecReturnValue { flags: u32::from(reverted), data }),
+		}
+		.encode()
 	}
 
 	struct ScriptedAssetHub {

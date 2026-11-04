@@ -52,7 +52,7 @@ pub use tx_submitter::{TxSubmitter, WatchEvent};
 pub use tx_validator::TxValidator;
 
 #[cfg(test)]
-pub use revive::{contract_dispatch_error, contract_output};
+pub use revive::{ContractResult, ExecReturnValue, RawDispatchError, StorageDeposit, Weight};
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;
