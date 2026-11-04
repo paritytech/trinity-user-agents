@@ -92,7 +92,7 @@ extension FundingEndedSession {
     }
 
     var steps: [FundingStep] {
-        reportedSteps?.map(\.step) ?? Self.steps(direction: direction, rail: record.rail)
+        reportedSteps?.map(\.step) ?? Self.steps(direction: direction)
     }
 
     /// The milestone the session stopped on: the first one a failed session
@@ -128,7 +128,7 @@ private extension FundingEndedSession {
 
     /// The milestones the core reports for a session of this direction, for
     /// a record drawn from the core's summary.
-    static func steps(direction: FundingDirection, rail _: FundingRail?) -> [FundingStep] {
+    static func steps(direction: FundingDirection) -> [FundingStep] {
         switch direction {
         case .out: [.started, .received, .sent]
         case .in: [.started, .received, .added]
