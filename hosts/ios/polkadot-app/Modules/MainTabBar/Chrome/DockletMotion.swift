@@ -59,7 +59,8 @@ struct DockletMotion {
     private(set) var progress: CGFloat = 0
     private(set) var destination: DockletRest = .shown
     private var drag: Drag?
-    private var spring: DockletSpring?
+    /// The settle that is running: a spring, or a Reduce Motion fade in its place.
+    private var settle: Settle?
     /// The held pose's extra turn and offset over the plain pose at release. It fades as the settle runs.
     private var releaseExtra: DockletPose = .zero
     private var unwindFactor: CGFloat = 0
@@ -68,22 +69,22 @@ struct DockletMotion {
     private var isQuietHide = false
     /// Where the content inside the glass is headed. Only a drag, settle or snap sets it, so a tick never changes it.
     private(set) var contentFadeTarget: DockletContentFadeTarget = .shown
-    /// The Reduce Motion settle that is running, in place of a spring.
-    private var fade: DockletReducedFade?
-
     var isSettling: Bool {
-        spring != nil || fade != nil
+        settle != nil
     }
 
     /// Whether a Reduce Motion fade is running. The Edge glow follows the content while it runs.
     var isFading: Bool {
-        fade != nil
+        guard case .fade = settle else {
+            return false
+        }
+        return true
     }
 
     /// Opacity of the content inside the glass. A Reduce Motion fade sets it; otherwise a quiet hide, or a tuck that
     /// has landed under Reduce Motion, fades it.
     var contentOpacity: CGFloat {
-        if let fade {
+        if case let .fade(fade) = settle {
             return fade.contentOpacity
         }
         return isQuietHide ? DockletContentFade.opacity(progress: progress) : 1
@@ -92,8 +93,7 @@ struct DockletMotion {
     /// Jumps to `rest` with no motion, for changes the caller animates itself.
     mutating func snap(to rest: DockletRest) {
         drag = nil
-        spring = nil
-        fade = nil
+        settle = nil
         releaseExtra = .zero
         unwindFactor = 0
         progress = rest.progress
@@ -162,7 +162,7 @@ struct DockletMotion {
         } else {
             startSpring(to: rest, velocity: velocity, now: time, landingHaptic: haptic)
         }
-        guard fade?.rest != .shown else {
+        if case let .fade(fade) = settle, fade.rest == .shown {
             return
         }
         releaseExtra = heldPose.minus(geometry.plainPose(progress: progress))
@@ -194,7 +194,7 @@ struct DockletMotion {
 
     /// Advances the settle to `now`. Returns the haptic when a user-started settle lands on a new rest.
     mutating func tick(now: TimeInterval) -> DockletHaptic? {
-        if fade != nil {
+        if case .fade = settle {
             return tickFade(now: now)
         }
         return tickSpring(now: now)
@@ -204,6 +204,11 @@ struct DockletMotion {
     func pose(geometry: DockletGeometry) -> DockletPose {
         let base = drag?.grip.pose(geometry: geometry) ?? geometry.plainPose(progress: progress)
         return base.plus(releaseExtra, scaledBy: unwindFactor)
+    }
+
+    private enum Settle {
+        case spring(DockletSpring)
+        case fade(DockletReducedFade)
     }
 
     private enum Grip {
@@ -305,8 +310,7 @@ private extension DockletMotion {
 
     /// Stops any settle and takes the bar under the finger from its current progress.
     private mutating func startDrag(touch: CGPoint, time: TimeInterval, travel: CGFloat, grip: Grip) {
-        spring = nil
-        fade = nil
+        settle = nil
         releaseExtra = .zero
         unwindFactor = 0
         isQuietHide = false
@@ -362,7 +366,7 @@ private extension DockletMotion {
         unwindFactor = 0
         isQuietHide = isQuiet
         contentFadeTarget = isQuiet ? .quietFadeOut : .shown
-        spring = DockletSpring(
+        let spring = DockletSpring(
             start: now,
             rest: rest,
             initialOffset: progress - rest.progress,
@@ -372,17 +376,18 @@ private extension DockletMotion {
             angularFrequency: isQuiet ? DockletSpring.quietAngularFrequency : DockletSpring.angularFrequency,
             isAwaitingFirstFrame: isQuiet
         )
+        settle = .spring(spring)
     }
 
     /// Moves the spring to `now`. The bar lands on its rest once the spring has settled or run out of time.
     mutating func tickSpring(now: TimeInterval) -> DockletHaptic? {
-        guard var spring else {
+        guard case var .spring(spring) = settle else {
             return nil
         }
         if spring.isAwaitingFirstFrame {
             spring.isAwaitingFirstFrame = false
             spring.start = now
-            self.spring = spring
+            settle = .spring(spring)
             return nil
         }
         let elapsed = now - spring.start
@@ -393,7 +398,7 @@ private extension DockletMotion {
             return nil
         }
         progress = spring.rest.progress
-        self.spring = nil
+        settle = nil
         releaseExtra = .zero
         unwindFactor = 0
         return spring.landingHaptic
@@ -401,9 +406,8 @@ private extension DockletMotion {
 
     /// Starts a Reduce Motion settle. A restore puts the bar at shown at once, so the glass never animates.
     mutating func startFade(to rest: DockletRest, now: TimeInterval, landingHaptic: DockletHaptic?, isQuiet: Bool) {
-        spring = nil
         destination = rest
-        fade = DockletReducedFade(start: now, rest: rest, landingHaptic: landingHaptic, isQuiet: isQuiet)
+        settle = .fade(DockletReducedFade(start: now, rest: rest, landingHaptic: landingHaptic, isQuiet: isQuiet))
         contentFadeTarget = rest == .tucked ? .reducedFadeOut : .reducedFadeIn
         guard rest == .shown else {
             return
@@ -415,7 +419,7 @@ private extension DockletMotion {
 
     /// Holds the pose while the fade runs. At its landing the bar lands on its rest and the landing haptic is returned.
     mutating func tickFade(now: TimeInterval) -> DockletHaptic? {
-        guard var fade else {
+        guard case var .fade(fade) = settle else {
             return nil
         }
         guard !fade.hasLanded(at: now) else {
@@ -423,11 +427,11 @@ private extension DockletMotion {
             isQuietHide = fade.rest == .tucked
             releaseExtra = .zero
             unwindFactor = 0
-            self.fade = nil
+            settle = nil
             return fade.landingHaptic
         }
         fade.advance(to: now)
-        self.fade = fade
+        settle = .fade(fade)
         return nil
     }
 }
