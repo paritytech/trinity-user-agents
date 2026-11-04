@@ -31,8 +31,8 @@ import uniffi.truapi.FundingProviderEntry
 import uniffi.truapi.FundingProviderOrigin
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.NativeTrUApiHostRuntime
-import uniffi.truapi.ProductId
 import uniffi.truapi.PinnedPocketCard
+import uniffi.truapi.ProductId
 
 class TrUAPIHostRuntimeProviderTest {
     @get:Rule
