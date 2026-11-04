@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "9fd16d55156e4210";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "378fc51b2fbca98f";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -590,6 +590,12 @@ pub const EXPANDED_CARD_SET_BACK_SHOWN: MethodIds = MethodIds {
     method_id: 1,
 };
 
+/// Wire discriminants for `funding_provider_quote`.
+pub const FUNDING_PROVIDER_QUOTE: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 0,
+};
+
 /// Wire discriminants for `funding_provider_assign`.
 pub const FUNDING_PROVIDER_ASSIGN: MethodIds = MethodIds {
     trait_id: 24,
@@ -1083,6 +1089,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "expanded_card_set_back_shown",
         kind: WireKind::Request(EXPANDED_CARD_SET_BACK_SHOWN),
+    },
+    WireEntry {
+        method: "funding_provider_quote",
+        kind: WireKind::Subscription(FUNDING_PROVIDER_QUOTE),
     },
     WireEntry {
         method: "funding_provider_assign",

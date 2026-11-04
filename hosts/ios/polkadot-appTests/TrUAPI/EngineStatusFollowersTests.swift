@@ -154,7 +154,10 @@ struct EngineStatusFollowersTests {
     func onlyTheMostRecentFinalStatusesAreKept() async throws {
         let engine = FakeEngine()
         let followers = engine.followers(finalCapacity: 2)
-        let keys = (1 ... 3).map { EngineStatusKey(productId: try! ProductId("wallet.dot"), id: Data(repeating: UInt8($0), count: 32)) }
+        let keys = (1 ... 3).map { EngineStatusKey(
+            productId: try! ProductId("wallet.dot"),
+            id: Data(repeating: UInt8($0), count: 32)
+        ) }
 
         for (index, key) in keys.enumerated() {
             followers.follow(key)

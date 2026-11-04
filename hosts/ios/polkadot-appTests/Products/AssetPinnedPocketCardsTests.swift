@@ -2,6 +2,7 @@ import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import Testing
+import TrUAPIHost
 @testable import polkadot_app
 
 struct AssetPinnedPocketCardsTests {
@@ -11,13 +12,7 @@ struct AssetPinnedPocketCardsTests {
     /// id is a function of the network the app is on.
     @Test
     func placesHumanityOnThePersonhoodProduct() async {
-        #expect(await pinned.cards() == [
-            PocketCardEntry(
-                key: PocketCardKey(productId: try! ProductId("peopl.paseo"), cardId: PocketCardId(value: "humanity")),
-                title: "Humanity",
-                privileged: true
-            )
-        ])
+        #expect(pinned.cards() == [PinnedPocketCard(productId: try! ProductId("peopl.paseo"), cardId: "humanity", title: "Humanity")])
     }
 
     @Test
