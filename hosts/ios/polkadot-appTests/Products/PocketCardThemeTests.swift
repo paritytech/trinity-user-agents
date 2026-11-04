@@ -49,18 +49,18 @@ struct PocketCardThemeTests {
     }
 
     @Test
-    func aProductCardIsDrawnInBerlinNightWhateverThemeTheUserPicked() throws {
+    func aProductCardIsDrawnInBerlinNightWhateverThemeTheUserPicked() async throws {
         let frame = PocketCardSize.testFrame
         let face = try #require(faceUsingThemeDefaults.toWidgetNode(resolver: WidgetDesignTokenResolver()))
         let card = PocketProductCardView(title: "Loyalty", face: face, resolveImage: nil)
-        let inBerlinNight = try WidgetNodeRaster.pixels(of: card, in: frame, under: .berlinNight)
+        let inBerlinNight = try await WidgetNodeRaster.pixels(of: card, in: frame, under: .berlinNight)
 
         let centreOfFgPrimaryBox = (fgPrimaryBoxHeight / 2 * Int(frame.width) + Int(frame.width) / 2) * 4
         let fgPrimary = Array(inBerlinNight[centreOfFgPrimaryBox ..< centreOfFgPrimaryBox + 3])
         #expect(fgPrimary == [0xF4, 0xF4, 0xF5], "the RFC's FgPrimary")
 
         for theme in ThemeSelection.allCases where theme != .berlinNight {
-            let looksTheSame = try WidgetNodeRaster.pixels(of: card, in: frame, under: theme) == inBerlinNight
+            let looksTheSame = try await WidgetNodeRaster.pixels(of: card, in: frame, under: theme) == inBerlinNight
             #expect(looksTheSame, "\(theme)")
         }
     }
