@@ -59,6 +59,9 @@ impl Signer<SubstrateConfig> for RecordingSigner {
 enum Outcome {
 	Succeeded,
 	DispatchFailed,
+	/// `ExtrinsicFailed` with `DispatchError::Trie`, which the runtime has and
+	/// subxt's `DispatchError` lacks.
+	UndecodableDispatchError,
 	MissingEvent,
 	MissingExtrinsic,
 	Dropped,
@@ -126,13 +129,17 @@ impl EvmNode {
 					vec![bytes.clone()]
 				};
 				self.node.bodies.insert(block, body);
-				let event = match outcome {
-					Outcome::Succeeded | Outcome::Dropped => Some("ExtrinsicSuccess"),
-					Outcome::DispatchFailed => Some("ExtrinsicFailed"),
+				let dispatch = match outcome {
+					Outcome::Succeeded | Outcome::Dropped => Some(Ok(())),
+					Outcome::DispatchFailed => Some(Err(contract_reverted())),
+					Outcome::UndecodableDispatchError => {
+						let cause = ScaleValue::unnamed_variant("InvalidStateRoot", []);
+						Some(Err(ScaleValue::unnamed_variant("Trie", [cause])))
+					},
 					Outcome::MissingEvent | Outcome::MissingExtrinsic => None,
 					Outcome::SubmitError => unreachable!(),
 				};
-				self.node.events.insert(block, dispatch_events(event));
+				self.node.events.insert(block, dispatch_events(dispatch));
 				frames.extend([
 					follow_event(json!({"event": "newBlock", "blockHash": block, "parentBlockHash": parent, "newRuntime": null})),
 					follow_event(json!({"event": "bestBlockChanged", "bestBlockHash": block})),
@@ -189,41 +196,48 @@ fn simulation_result(result: Result<ExecReturnValue, RawDispatchError>) -> Vec<u
 	.encode()
 }
 
-fn dispatch_events(event: Option<&str>) -> Vec<u8> {
-	let Some(event_name) = event else {
+/// `DispatchError::Module` for `Revive::ContractReverted`.
+fn contract_reverted() -> ScaleValue {
+	let metadata = Metadata::decode_from(ASSET_HUB_METADATA).unwrap();
+	let revive = metadata.pallet_by_name("Revive").unwrap();
+	let reverted = revive
+		.error_variants()
+		.unwrap()
+		.iter()
+		.find(|error| error.name == "ContractReverted")
+		.unwrap();
+	let module_error = ScaleValue::unnamed_composite([
+		ScaleValue::u128(revive.error_index().into()),
+		ScaleValue::unnamed_composite(
+			[reverted.index, 0, 0, 0].map(|byte| ScaleValue::u128(byte.into())),
+		),
+	]);
+	ScaleValue::unnamed_variant("Module", [module_error])
+}
+
+/// `System.Events` with the event reporting `dispatch` of the first
+/// extrinsic, or no events when `dispatch` is `None`.
+fn dispatch_events(dispatch: Option<Result<(), ScaleValue>>) -> Vec<u8> {
+	let Some(dispatch) = dispatch else {
 		return Compact(0u32).encode();
 	};
 	let metadata = Metadata::decode_from(ASSET_HUB_METADATA).unwrap();
 	let system = metadata.pallet_by_name("System").unwrap();
+	let info = ScaleValue::unnamed_composite([
+		ScaleValue::unnamed_composite([ScaleValue::u128(0), ScaleValue::u128(0)]),
+		ScaleValue::unnamed_variant("Normal", []),
+		ScaleValue::unnamed_variant("Yes", []),
+	]);
+	let (event_name, values) = match dispatch {
+		Ok(()) => ("ExtrinsicSuccess", vec![info]),
+		Err(error) => ("ExtrinsicFailed", vec![error, info]),
+	};
 	let event = system
 		.event_variants()
 		.unwrap()
 		.iter()
 		.find(|event| event.name == event_name)
 		.unwrap();
-	let info = ScaleValue::unnamed_composite([
-		ScaleValue::unnamed_composite([ScaleValue::u128(0), ScaleValue::u128(0)]),
-		ScaleValue::unnamed_variant("Normal", []),
-		ScaleValue::unnamed_variant("Yes", []),
-	]);
-	let values = if event_name == "ExtrinsicFailed" {
-		let revive = metadata.pallet_by_name("Revive").unwrap();
-		let reverted = revive
-			.error_variants()
-			.unwrap()
-			.iter()
-			.find(|error| error.name == "ContractReverted")
-			.unwrap();
-		let module_error = ScaleValue::unnamed_composite([
-			ScaleValue::u128(revive.error_index().into()),
-			ScaleValue::unnamed_composite(
-				[reverted.index, 0, 0, 0].map(|byte| ScaleValue::u128(byte.into())),
-			),
-		]);
-		vec![ScaleValue::unnamed_variant("Module", [module_error]), info]
-	} else {
-		vec![info]
-	};
 	let mut bytes =
 		(Compact(1u32), Phase::ApplyExtrinsic(0), system.event_index(), event.index).encode();
 	let mut fields =
@@ -361,21 +375,28 @@ fn execution_uses_the_prepared_call_and_limits_with_a_fresh_nonce_and_era() {
 }
 
 /// A revert during execution, running out of gas and an exhausted deposit
-/// limit all fail the dispatch; only the module error tells them apart.
+/// limit all fail the dispatch; only the module error tells them apart. The
+/// event alone proves the failure, so an error that does not decode still
+/// fails the write, with its bytes.
 #[test]
-fn a_failed_dispatch_carries_its_module_error() {
+fn a_failed_dispatch_carries_its_dispatch_error() {
 	let signer = RecordingSigner::new();
-	let mut node = EvmNode::new();
-	node.outcomes.push_back(Outcome::DispatchFailed);
-	let (_, _, caller) = serve_contracts(node);
-	let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
+	for (outcome, expected) in [
+		(Outcome::DispatchFailed, "Pallet error: Revive::ContractReverted"),
+		(Outcome::UndecodableDispatchError, "undecodable dispatch error 0x0e0000000000: "),
+	] {
+		let mut node = EvmNode::new();
+		node.outcomes.push_back(outcome);
+		let (_, _, caller) = serve_contracts(node);
+		let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
 
-	let result = block_on(prepared.execute_and_watch());
+		let result = block_on(prepared.execute_and_watch());
 
-	let Err(EvmContractError::DispatchFailed { detail }) = result else {
-		panic!("unexpected failed dispatch: {result:?}");
-	};
-	assert_eq!(detail, "Pallet error: Revive::ContractReverted");
+		let Err(EvmContractError::DispatchFailed { detail }) = result else {
+			panic!("unexpected failed dispatch: {result:?}");
+		};
+		assert!(detail.starts_with(expected), "{detail}");
+	}
 }
 
 /// A dropped extrinsic, or one whose submission returned an error, may have
