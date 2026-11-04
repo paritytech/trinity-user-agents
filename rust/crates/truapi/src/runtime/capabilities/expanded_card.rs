@@ -16,7 +16,7 @@ use crate::{
 	runtime::{ProductRuntimeHost, versioning::version},
 };
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl ExpandedCard for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "expanded_card.set_face_shown"))]
 	async fn set_face_shown(

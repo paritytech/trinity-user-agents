@@ -44,7 +44,7 @@ impl FrameSink for RecordingSink {
 /// Status adapter that reports one fixed answer for every capability.
 struct FixedStatus(DevicePermissionStatus);
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl PermissionStatusHost for FixedStatus {
 	async fn device_permission_status(
 		&self,
