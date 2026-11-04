@@ -30,18 +30,18 @@ use truapi::{
 	latest as api,
 	platform::{
 		AuthState, ChainProvider, CoreStorage, CoreStorageKey, CreateTransactionReview,
-		DevicePermissionStatus, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
-		PermissionDecision, PermissionStatusHost, Permissions, PreimageHost, ProductContext,
-		ProductId, ProductOperations, ProductStorage, ProductStorageKey, ProviderError,
-		SessionUiInfo, SignPayloadReview, SignRawReview, ThemeHost, UserConfirmation,
-		UserConfirmationReview,
+		DevicePermissionStatus, Features, JsonRpcConnection, LocaleHost, Navigation,
+		NftPurseDrainDestination, Notifications, PermissionDecision, PermissionStatusHost,
+		Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
+		ProductStorageKey, ProviderError, SessionUiInfo, SignPayloadReview, SignRawReview,
+		ThemeHost, UserConfirmation, UserConfirmationReview,
 	},
 	v01,
 };
 
 use crate::{
 	bulletin_lookup::{BitswapRpc, BulletinLookup},
-	chain::WsChainProvider,
+	chain::CliChainProvider,
 	terminal_ui::{ApprovalKind, SystemEvent, UiHandle},
 };
 
@@ -167,7 +167,7 @@ impl CliStoragePaths {
 
 /// Headless-host platform shared by both roles.
 pub struct CliPlatform {
-	chain: WsChainProvider,
+	chain: Arc<CliChainProvider>,
 	/// Chain roles this host serves, answered by `Features::supported_chains`.
 	chains: truapi::platform::HostChainSet,
 	extension_versions: truapi::platform::ExtensionVersionMap,
@@ -203,7 +203,7 @@ impl CliPlatform {
 	/// rather than assume it.
 	#[cfg(test)]
 	pub fn routed_url(&self, genesis_hash: &[u8; 32]) -> &str {
-		self.chain.routed_url(genesis_hash)
+		self.chain.location(*genesis_hash)
 	}
 
 	/// Build a platform whose chain provider connects to the network's People
@@ -253,8 +253,10 @@ impl CliPlatform {
 		let device_storage =
 			device_storage_path.as_deref().map(load_hex_key_map).unwrap_or_default();
 
+		let chain = Arc::new(CliChainProvider::new(&network));
+		let bitswap = BitswapRpc::new(Arc::clone(&chain), network.bulletin_genesis);
 		Arc::new(Self {
-			chain: WsChainProvider::new(network.people_ws, network.live_chain_endpoints),
+			chain,
 			chains: network.host_chain_set(),
 			extension_versions: network.extension_versions(),
 			product_storage: Mutex::new(product_storage),
@@ -265,7 +267,7 @@ impl CliPlatform {
 			device_storage_path,
 			state_dir: Mutex::new(storage.as_ref().map(|paths| paths.state_dir.clone())),
 			pairing_scope: storage.and_then(|paths| paths.pairing_scope),
-			bulletin: Arc::new(BulletinLookup::new(BitswapRpc::new(network.bulletin_ws))),
+			bulletin: Arc::new(BulletinLookup::new(bitswap)),
 			next_notification_id: AtomicU32::new(1),
 			scheduled_notifications: Arc::new(Mutex::new(HashMap::new())),
 			approval: Mutex::new(approval),
@@ -1005,7 +1007,27 @@ fn approval_summary(review: &UserConfirmationReview) -> (&'static str, String) {
                 review.product_id
             ),
         ),
+        UserConfirmationReview::NftPurseDrain(review) => (
+            "move NFT purse items",
+            format!(
+                "Product {} requested to move {} item(s) out of purse {}, owned by {}, to {}.",
+                review.calling_product_id,
+                review.item_count,
+                review.from_purse,
+                review.owner,
+                drain_destination(&review.destination),
+            ),
+        ),
     }
+}
+
+fn drain_destination(destination: &NftPurseDrainDestination) -> String {
+	match destination {
+		NftPurseDrainDestination::Purse { purse } => format!("purse {purse}"),
+		NftPurseDrainDestination::ExternalKey { key } => format!("key 0x{}", hex::encode(key)),
+		NftPurseDrainDestination::Cheque => "a cheque".to_owned(),
+		NftPurseDrainDestination::Refund => "the sender of a deposited cheque".to_owned(),
+	}
 }
 
 impl ThemeHost for CliPlatform {
@@ -1049,7 +1071,7 @@ struct JsonMap {
 #[serde(rename_all = "camelCase")]
 struct ProductStorageDocument {
 	version: u32,
-	product_id: String,
+	product_id: ProductId,
 	values: HashMap<String, String>,
 }
 
@@ -1112,17 +1134,7 @@ fn load_product_storage_file(path: &Path) -> Option<(ProductId, HashMap<String, 
 		);
 		return None;
 	}
-	let normalized = document
-		.product_id
-		.parse::<ProductId>()
-		.inspect_err(|error| {
-			tracing::warn!(
-				path = %path.display(),
-				%error,
-				"product storage contains an invalid product id"
-			);
-		})
-		.ok()?;
+
 	let values = document
 		.values
 		.into_iter()
@@ -1136,7 +1148,7 @@ fn load_product_storage_file(path: &Path) -> Option<(ProductId, HashMap<String, 
 			);
 		})
 		.ok()?;
-	Some((normalized, values))
+	Some((document.product_id, values))
 }
 
 fn save_product_storage(
@@ -1150,7 +1162,7 @@ fn save_product_storage(
 	})?;
 	let document = ProductStorageDocument {
 		version: 1,
-		product_id: product_id.to_string(),
+		product_id: product_id.clone(),
 		values: values.iter().map(|(key, value)| (key.clone(), hex::encode(value))).collect(),
 	};
 	let text = serde_json::to_string_pretty(&document)?;

@@ -9,13 +9,15 @@ import java.io.ByteArrayOutputStream
 import javax.inject.Inject
 
 interface FileUploadPreProcessor {
-    fun preProcess(file: ByteArray, mimeType: String): ByteArray
+    fun appliesTo(mimeType: String): Boolean
+
+    fun preProcess(file: ByteArray): ByteArray
 }
 
 class CompressImages @Inject constructor() : FileUploadPreProcessor {
-    override fun preProcess(file: ByteArray, mimeType: String): ByteArray {
-        if (!mimeType.startsWith("image/") || mimeType == "image/gif") return file
+    override fun appliesTo(mimeType: String): Boolean = mimeType.startsWith("image/") && mimeType != "image/gif"
 
+    override fun preProcess(file: ByteArray): ByteArray {
         val decoded = BitmapFactory.decodeByteArray(file, 0, file.size) ?: return file
         val bitmap = applyExifRotation(decoded, file)
         val output = ByteArrayOutputStream()

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import CoreData
 import Foundation
 import MessageExchangeKit
@@ -176,7 +177,7 @@ private extension LeaveChatServiceTests {
     }
 
     func saveProduct() async throws {
-        let product = Product(id: extensionId, name: "Coinflip")
+        let product = try Product(id: ProductId(extensionId), name: "Coinflip")
         try await productRepository.saveOperation({ [product] }, { [] }).asyncExecute()
     }
 

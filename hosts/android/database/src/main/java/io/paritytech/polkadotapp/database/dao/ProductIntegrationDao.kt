@@ -8,11 +8,12 @@ import androidx.room.Transaction
 import io.paritytech.polkadotapp.database.model.ProductIntegrationLocal
 import io.paritytech.polkadotapp.database.model.ProductLocal
 import kotlinx.coroutines.flow.Flow
+import uniffi.truapi.ProductId
 
 @Dao
 abstract class ProductIntegrationDao {
     @Query("SELECT * FROM product_integrations WHERE productId = :productId")
-    abstract fun observeByProduct(productId: String): Flow<List<ProductIntegrationLocal>>
+    abstract fun observeByProduct(productId: ProductId): Flow<List<ProductIntegrationLocal>>
 
     @Query(
         """
@@ -24,7 +25,7 @@ abstract class ProductIntegrationDao {
     abstract fun observeProductsByIntegrationType(type: String): Flow<List<ProductLocal>>
 
     @Query("SELECT * FROM product_integrations WHERE productId = :productId AND type = :type")
-    abstract suspend fun get(productId: String, type: String): ProductIntegrationLocal?
+    abstract suspend fun get(productId: ProductId, type: String): ProductIntegrationLocal?
 
     @Query("SELECT * FROM product_integrations WHERE type = :type")
     abstract fun observeByType(type: String): Flow<List<ProductIntegrationLocal>>
@@ -33,10 +34,10 @@ abstract class ProductIntegrationDao {
     abstract suspend fun insert(integration: ProductIntegrationLocal)
 
     @Query("DELETE FROM product_integrations WHERE productId = :productId AND type = :type")
-    abstract suspend fun delete(productId: String, type: String)
+    abstract suspend fun delete(productId: ProductId, type: String)
 
     @Query("DELETE FROM product_integrations WHERE productId = :productId")
-    abstract suspend fun deleteAllByProduct(productId: String)
+    abstract suspend fun deleteAllByProduct(productId: ProductId)
 
     @Transaction
     open suspend fun withTransaction(action: suspend () -> Unit) {

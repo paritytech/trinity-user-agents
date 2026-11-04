@@ -2,9 +2,11 @@ package io.paritytech.polkadotapp.common.presentation.paymentAsset.compose
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import io.paritytech.polkadotapp.common.R
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetLogo
@@ -22,7 +24,7 @@ fun PaymentAssetLogoImage(
     variant: PaymentAssetLogoVariant,
 ) {
     val brand = LocalPaymentAssetBrand.current
-    val bundled = rememberVectorPainter(variant.bundled)
+    val bundled = variant.bundledPainter()
 
     NovaAsyncImage(
         modifier = modifier,
@@ -36,13 +38,16 @@ fun PaymentAssetLogoImage(
 
 /** Width to height of the bundled mark for [this] variant; published logos are letterboxed into the same box. */
 val PaymentAssetLogoVariant.aspectRatio: Float
-    get() = bundled.defaultWidth / bundled.defaultHeight
-
-private val PaymentAssetLogoVariant.bundled: ImageVector
     get() = when (this) {
-        PaymentAssetLogoVariant.Square -> BundledPaymentAssetLogos.Square
-        PaymentAssetLogoVariant.Wide -> BundledPaymentAssetLogos.Wide
+        PaymentAssetLogoVariant.Square -> 1f
+        PaymentAssetLogoVariant.Wide -> BundledPaymentAssetLogos.Wide.defaultWidth / BundledPaymentAssetLogos.Wide.defaultHeight
     }
+
+@Composable
+private fun PaymentAssetLogoVariant.bundledPainter(): Painter = when (this) {
+    PaymentAssetLogoVariant.Square -> painterResource(R.drawable.img_payment_asset_logo_square)
+    PaymentAssetLogoVariant.Wide -> rememberVectorPainter(BundledPaymentAssetLogos.Wide)
+}
 
 private fun PaymentAssetBrand.logo(variant: PaymentAssetLogoVariant): PaymentAssetLogo = when (variant) {
     PaymentAssetLogoVariant.Square -> squareLogo

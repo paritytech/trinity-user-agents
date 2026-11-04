@@ -36,7 +36,6 @@ protocol WalletViewModelProtocol: AnyObject, Observation.Observable {
     var onBalance: (() -> Void)? { get set }
     var onCollapse: (() -> Void)? { get set }
     var onCollectibles: (() -> Void)? { get set }
-    var onViewCollectibles: (() -> Void)? { get set }
     var onOpenPocketCard: ((PocketCardViewModel) -> Void)? { get set }
     var onRemovePocketCard: ((PocketCardViewModel) -> Void)? { get set }
 }
@@ -62,7 +61,6 @@ class WalletViewModel: WalletViewModelProtocol {
     var onBalance: (() -> Void)?
     var onCollapse: (() -> Void)?
     var onCollectibles: (() -> Void)?
-    var onViewCollectibles: (() -> Void)?
     var onOpenPocketCard: ((PocketCardViewModel) -> Void)?
     var onRemovePocketCard: ((PocketCardViewModel) -> Void)?
 }

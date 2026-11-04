@@ -5,7 +5,6 @@ import io.mockk.mockk
 import io.paritytech.polkadotapp.feature_chats_api.domain.ReadOnlyChatRoomRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.DeleteRoomUseCase
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIntegrationRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.IntegrationType
@@ -13,9 +12,10 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 class RealProductChatMenuInteractorTest {
-    private val productId = ProductId.fromStoredValue("jollity.dot")
+    private val productId = ProductId.parse("jollity.dot").getOrThrow()
     private val extensionId = productId.toChatExtensionId()
     private val removedRoom = ChatId.forExtensionRoom(extensionId, "game-1")
     private val otherRoom = ChatId.forExtensionRoom(extensionId, "game-2")

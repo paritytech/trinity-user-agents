@@ -2,14 +2,14 @@
 
 Reads, verifies, signs and publishes Trinity stack descriptors, as
 [RFC: Trinity stack descriptor](https://github.com/paritytech/trinity-user-agents/blob/main/docs/rfcs/trinity-stack-descriptor.md)
-defines them. Every rule a reader applies runs in the
+defines them. Every rule a reader applies to a descriptor runs in the
 [`trinity-stack`](https://github.com/paritytech/trinity-user-agents/tree/main/rust/crates/trinity-stack) Rust crate,
 compiled to WebAssembly, so this package and the host core accept and refuse the same descriptors.
 
 ## Reading a stack
 
 ```ts
-import { decodeLink, memoryStore, read } from "@parity/trinity-stack";
+import { decodeLink, memoryStore, read, webUrl } from "@parity/trinity-stack";
 
 const pointer = decodeLink("polkadotapp://stack?key=0x3b6a…&url=https%3A%2F%2F…");
 const store = memoryStore(); // or your own: get/set bytes by stack
@@ -19,11 +19,57 @@ stack.descriptor.chains; // checked against the pointer's key
 stack.status; // updated | unchanged | conflict | rollback | unreachable | refused
 stack.newGeneration; // the chains restarted: drop cached chain data
 stack.stale; // past validUntil
+webUrl(stack.descriptor, "my-app"); // https://my-app.testnet.li/?network=previewnet, from its web-gateway
 ```
 
 `read` fetches and stores; `accept(pointer, stored, fetched, now)` is the same decision with no I/O. A reader with no
 store gets no rollback protection. Errors from a rule of the RFC carry a `code`, such as `bad-signature`, which
 `isTrinityStackError` recognises.
+
+## Running from build copies
+
+A project ships the stacks it uses, so it keeps working when a descriptor's server is down:
+
+```sh
+npx trinity-stack add previewnet "polkadotapp://stack?key=0x4d43…&url=…"
+npx trinity-stack update   # exits 2 when a committed file changed, so a scheduled job can open a pull request
+```
+
+They write `.trinity/`: `stacks.json` and each stack's signed copy, committed with the project, and an `index.js` and
+`index.d.ts` that bundle them, which `.trinity/.gitignore` leaves out of git. `trinity-stack generate` rebuilds those
+two from the committed files without fetching, so a project runs it on install, as dotns-sdk runs `papi generate`:
+
+```json
+{ "scripts": { "prepare": "trinity-stack generate" } }
+```
+
+`prepare` runs on the project's own installs and before it publishes, never when someone installs the published package.
+Yarn Berry does not run `prepare`, so a Yarn Berry app that is never published uses `postinstall`. A build that installs
+with scripts turned off runs `npx trinity-stack generate` before it builds. `add` writes `.gitignore` and an empty
+`.npmignore` only when they are missing, and the `.npmignore` keeps the module in a package the project publishes.
+
+A stack that fails to update is left as it was, and `update` exits 1. The copies of the stacks that did move are written
+all the same, so a job that opens its pull request from the git diff still picks them up. At run time a reader serves
+those copies and refreshes them by the policy the project picks:
+
+```ts
+import { createStackReader, service } from "@parity/trinity-stack/reader";
+import { stacks } from "../.trinity/index.js";
+
+const reader = createStackReader({ bundled: stacks, refresh: "once" }); // "never" | "once" | { maxAgeMs }
+const { descriptor } = await reader.get(stacks.previewnet, {
+  require: { chains: ["AssetHub"], services: ["eth-rpc"] },
+});
+const ethRpc = service(descriptor, "eth-rpc");
+reader.onChange(({ newGeneration }) => {
+  /* reconnect, and drop cached chain data on a new generation */
+});
+```
+
+It never fetches per request. A fetch that fails leaves the copy it has in use, and a `store` of the project's own lets
+a restart start from the last copy fetched. A conditional fetch the server's CORS blocks is retried at once without
+`If-None-Match`. Every other decision is the crate's `StackReader`, so a host that drives the same reader behaves the
+same way.
 
 ## Publishing a stack
 
