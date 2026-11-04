@@ -67,9 +67,16 @@ interface FundingRuntime {
     /** Records that the user was shown how ended session [intent] went; until then the core pushes it again on each resume. */
     suspend fun acknowledge(intent: String): Result<Boolean>
 
+    /**
+     * Each quote list the core pushes for session [intent] from when it is collected on; a list pushed before is not
+     * replayed. Never completes: the collector stops it.
+     */
     fun quoteLists(intent: String): Flow<FundingQuoteList>
 
-    /** Emits the intent of every session whose status changed, once [sessions] holds the change. */
+    /**
+     * Emits the intent of every session whose status changed, once [sessions] holds the change; look the session up
+     * there. A change before collection is not replayed, and it never completes.
+     */
     fun sessionChanges(): Flow<String>
 }
 
