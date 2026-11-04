@@ -36,6 +36,22 @@ struct FundingConfigTests {
         #expect(FundingConfig.providers(in: ["providers": "ramp.dot"], logger: nil).isEmpty)
     }
 
+    @Test("Reads the destinations next to the providers list")
+    func readsDestinationsBesideProviders() {
+        let json: [String: Any] = [
+            "onrampUrl": "getcash.dot",
+            "offrampUrl": "",
+            "providers": ["ramp.dot"],
+            "other": 42
+        ]
+
+        #expect(FundingConfig.string("onrampUrl", in: json) == "getcash.dot")
+        #expect(FundingConfig.string("offrampUrl", in: json) == nil)
+        #expect(FundingConfig.string("providers", in: json) == nil)
+        #expect(FundingConfig.string("other", in: json) == nil)
+        #expect(FundingConfig.string("onrampUrl", in: nil) == nil)
+    }
+
     @Test("Configured providers come first; a bundled one they name is not listed twice")
     func mergesWithBundledProviders() throws {
         let ramp = try ProductId("ramp.dot")
