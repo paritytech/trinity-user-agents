@@ -5,6 +5,34 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [0.29.0] - 2026-11-04
+
+### Added
+
+- open Pocket Collectibles with one tap on its card (#1859)
+- open collectibles with one tap on its card (#1855)
+- fade the pocket in place when collectibles open (#1834)
+- connect through truapi-provider, with a light-client backend (#1664)
+- reload spa and worker on archive changes (#1817)
+- load products from cache first (#1756)
+
+### Changed
+
+- keep the Pocket collection in the core database (#1757)
+- encode dotNS contract calls with alloy sol! (#1845)
+- funding provider trait, reports and settlement (#1317)
+- typed ProductId across hosts (#1721)
+
+### Fixed
+
+- name a follow that has ended, and stop serving spent ids (#1665)
+- ask for cleanup when the core database cannot be opened (#1860)
+- Pocket card serves as app (#1858)
+- push an opened Pocket card onto the Wallet tab so the tab bar stays (#1617)
+- open Stash full screen from the Pocket Collectibles card (#1801)
+- present the pairing sheet over settings (#1835)
+- show the expanded pocket collectibles card in color (#1784)
+
 ## [0.28.0] - 2026-10-31
 
 ### Added
@@ -31,6 +59,7 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- @parity/truapi 0.28.0, @parity/truapi-host 0.28.0, @parity/trinity-stack 0.2.0 (#1829)
 - serve NFT purse rebalance_purse, transfer_item and operation status (#1696)
 - run the retry loops through one retry function (#1702)
 
