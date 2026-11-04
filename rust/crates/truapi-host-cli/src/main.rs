@@ -25,6 +25,7 @@ mod frame_server;
 mod funding_host;
 mod game;
 mod installation;
+mod local_network;
 mod network;
 mod platform;
 mod pocket;
@@ -247,8 +248,10 @@ impl LogController {
 
 #[derive(Subcommand)]
 enum Command {
-	/// Resolve the network and print its routing as JSON, without contacting
-	/// any chain.
+	/// Resolve the network, with any `HOST_CLI_*_WS` or
+	/// `HOST_CLI_LOCAL_NETWORK_CONFIG` routing, and print it as JSON without
+	/// contacting any chain.
+	#[command(alias = "local-network-check")]
 	NetworkCheck,
 	/// Run a seedless pairing host for product scripts or interactive pairing.
 	///

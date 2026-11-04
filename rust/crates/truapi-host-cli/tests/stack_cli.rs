@@ -376,3 +376,82 @@ fn test_blank_stack_variable() {
 	let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
 	assert_eq!(report["network"], "previewnet");
 }
+
+/// Runs `truapi-host <args>` with `env` set and no other routing variable inherited.
+fn host_with_env(args: &[&str], env: &[(&str, &str)]) -> Output {
+	let mut command = Command::new(env!("CARGO_BIN_EXE_truapi-host"));
+	command.args(args).env("TRUAPI_HOST_NO_UPDATE", "1");
+	for name in [
+		"HOST_CLI_STACK",
+		"HOST_CLI_PEOPLE_WS",
+		"HOST_CLI_ASSET_HUB_WS",
+		"HOST_CLI_BULLETIN_WS",
+		"HOST_CLI_LOCAL_NETWORK_CONFIG",
+		"HOST_CLI_IDENTITY_BACKEND_BASE",
+	] {
+		command.env_remove(name);
+	}
+	command.envs(env.iter().copied()).output().expect("truapi-host did not start")
+}
+
+/// A chain URL override reroutes one role of a stack and keeps the stack's genesis.
+#[test]
+fn test_network_check_chain_override_on_stack() {
+	let dir = tempfile::tempdir().unwrap();
+	let file = write_descriptor(dir.path(), &local_descriptor(|_| {}));
+	let output = host_with_env(
+		&["--stack", &file, "network-check"],
+		&[("HOST_CLI_BULLETIN_WS", "ws://127.0.0.1:9")],
+	);
+	assert!(output.status.success());
+	let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+	assert_eq!(report["bulletin"]["ws"], "ws://127.0.0.1:9");
+	assert_eq!(report["bulletin"]["genesis"], format!("0x{}", "04".repeat(32)));
+	assert_eq!(report["people"]["ws"], "ws://127.0.0.1:2");
+}
+
+/// The local-network file routes every chain of the built-in network it names, under that
+/// network's namespace, and `local-network-check` still prints it.
+#[test]
+fn test_local_network_check() {
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("local-network.json");
+	let chain = |port: u16, byte: &str| serde_json::json!({ "ws": format!("ws://127.0.0.1:{port}"), "genesis": format!("0x{}", byte.repeat(32)) });
+	let local = serde_json::json!({
+		"network": "previewnet",
+		"identity_backend_base": "http://127.0.0.1:8092/api/v1",
+		"people": chain(10010, "11"),
+		"asset_hub": chain(10020, "22"),
+		"bulletin": chain(10030, "33"),
+	});
+	fs::write(&path, local.to_string()).unwrap();
+	let path = path.to_str().unwrap();
+	let output = host_with_env(
+		&["--network", "previewnet", "local-network-check"],
+		&[("HOST_CLI_LOCAL_NETWORK_CONFIG", path)],
+	);
+	assert!(output.status.success());
+	let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+	assert_eq!(report["network"], "previewnet");
+	assert_eq!(report["people"], chain(10010, "11"));
+	assert_eq!(report["identity_backend_base"], "http://127.0.0.1:8092/api/v1");
+
+	let stack = write_descriptor(dir.path(), &local_descriptor(|_| {}));
+	let with_stack = host_with_env(
+		&["--stack", &stack, "network-check"],
+		&[("HOST_CLI_LOCAL_NETWORK_CONFIG", path)],
+	);
+	assert!(!with_stack.status.success());
+	let message = stderr(&with_stack);
+	assert!(message.contains("HOST_CLI_LOCAL_NETWORK_CONFIG") && message.contains("--stack"));
+
+	let with_override = host_with_env(
+		&["--network", "previewnet", "network-check"],
+		&[("HOST_CLI_LOCAL_NETWORK_CONFIG", path), ("HOST_CLI_PEOPLE_WS", "ws://127.0.0.1:9")],
+	);
+	assert!(!with_override.status.success());
+	let message = stderr(&with_override);
+	assert!(
+		message.contains("HOST_CLI_LOCAL_NETWORK_CONFIG") && message.contains("HOST_CLI_PEOPLE_WS")
+	);
+}

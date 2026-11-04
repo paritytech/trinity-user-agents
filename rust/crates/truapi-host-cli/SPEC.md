@@ -289,7 +289,7 @@ Commands:
 | `alloc-check` | Inspect or submit Statement Store allowance registration. |
 | `pgas-check` | Inspect or submit an Asset Hub PGAS allowance claim. |
 | `attest` | Attest a given mnemonic's identity, wait for its ring membership, and print it as JSON. Disposable-identity networks only. |
-| `network-check` | Resolve the network and print its routing as JSON, without contacting a chain. |
+| `network-check` | Resolve the network, with any override, and print its routing as JSON, without contacting a chain. `local-network-check` is an alias. |
 | `stack` | Create, publish, check and bundle Trinity stack descriptors (section 6.7). |
 
 ### 4.1 Global logging option
@@ -1737,10 +1737,33 @@ refused with `--stack`, since the light client syncs only the networks
 state directory) is the descriptor's `id` without a trailing `-fork`, which must
 be a lowercase label.
 
-`network-check` resolves the network as any command does, fetching only the
-descriptor, and prints as JSON `schema_version`, `network` (the product
-namespace), `namespace` (the network's TLD), `identity_backend_base`, and `ws`
-and `genesis` for `people`, `asset_hub` and `bulletin`.
+#### Overrides
+
+Two env vars route chains on top of the network a command resolves (§21).
+
+`HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS` and `HOST_CLI_BULLETIN_WS` swap one
+role's URL on a built-in network or a `--stack`, for a fork that has the same
+genesis hashes. Each must be a `ws://` or `wss://` URL; blank is unset.
+
+`HOST_CLI_LOCAL_NETWORK_CONFIG` names a JSON file that routes every role and the
+identity backend of the built-in network `--network` selects (paseo-next-v2 by
+default) to loopback endpoints with their own genesis hashes, under that
+network's product namespace (`docs/local-network.md`). Its `network` must match
+`--network`, every field is required, and an invalid file is an error; blank is
+unset. It cannot be combined with `--stack` or with a `HOST_CLI_*_WS` override:
+the command fails with an error naming both.
+
+Neither override can be combined with `--chain-backend light-client`. Before a
+command runs, every endpoint an override reroutes is asked for its genesis, as a
+`--stack` endpoint is: one that reports a genesis other than the one it is routed
+as is an error, and one that does not answer is logged and left to fail on first
+use. The disposable-identity checks above apply to the result.
+
+`network-check` (alias `local-network-check`) resolves the network as any
+command does, overrides included, fetching only the descriptor, and prints as
+JSON `schema_version`, `network` (the product namespace), `namespace` (the
+network's TLD), `identity_backend_base`, and `ws` and `genesis` for `people`,
+`asset_hub` and `bulletin`.
 
 #### `polkadot`
 
@@ -1775,8 +1798,9 @@ itself through the backend's `auth/challenges` → `auth/token` handshake
 (§12.3), or takes one from `HOST_CLI_IDENTITY_BACKEND_TOKEN`, so auto-managed
 account creation works here.
 
-There are no public endpoint override flags besides `--stack`.
-`HOST_CLI_IDENTITY_BACKEND_BASE` replaces the identity backend base URL (§21).
+There are no public endpoint override flags besides `--stack`; the env vars
+above reroute chains, and `HOST_CLI_IDENTITY_BACKEND_BASE` replaces the identity
+backend base URL (§21).
 
 Every role the network serves (People, Bulletin and Asset Hub) is always routed,
 because host internals require all three: statement-store traffic addressed to the
@@ -1838,7 +1862,7 @@ Every chain connection the CLI makes goes through `CliChainProvider`
 (`src/chain.rs`) over `truapi-provider`, on the backend `--chain-backend` selects
 (§4.3). Routing (§14.1) is the same on both. Only a routed genesis reaches the
 provider, which would otherwise look the hash up in its bundled catalog and
-start the light client. The genesis check of a `--stack` endpoint (§14.1) uses a
+start the light client. The genesis check of a `--stack` or overridden endpoint (§14.1) uses a
 provider for that endpoint alone, over RPC. A request from one of the CLI's own
 commands, or the setup of a subscription, fails once its connection has
 delivered nothing for 30 seconds while it waits.
@@ -1854,7 +1878,7 @@ next call for that chain.
 
 With `light-client`, the embedded smoldot light client syncs the chains from the
 specs `truapi-provider` bundles, which cover `paseo-next-v2` and `previewnet`. It
-cannot be combined with `--stack`, nor with a built-in stack that restarted after
+cannot be combined with `--stack` or an override, nor with a built-in stack that restarted after
 those specs were bundled (§14.1). One light client per network serves the process
 and keeps one idle connection per chain, since smoldot stops a chain when its
 last connection closes.
@@ -2314,8 +2338,10 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `TRUAPI_HOST_VERSION` | Version the installer installs, instead of the current stable one. |
 | `TRUAPI_HOST_RELEASE_BASE_URL` | Release host for the installer and the updater, for mirrors and tests. |
 | `HOST_CLI_SIGNER_MNEMONIC` | Mnemonic for `dev`, `signing-host`, `identity-check`, `register-name`, `alloc-check`, `pgas-check` and `attest` when `--mnemonic` is omitted. |
-| `HOST_CLI_IDENTITY_BACKEND_BASE` | Identity backend base URL override, including `/api/v1`, for instance a local backend. Applies with or without `--stack`. |
+| `HOST_CLI_IDENTITY_BACKEND_BASE` | Identity backend base URL override, including `/api/v1`, for instance a local backend. Applies to a built-in network or a `--stack`; `HOST_CLI_LOCAL_NETWORK_CONFIG` takes precedence. |
 | `HOST_CLI_STACK` | Default `--stack`: a descriptor URL, a stack link or a local descriptor file (§14.1). Blank is unset; combined with `--network`, it is an error. |
+| `HOST_CLI_PEOPLE_WS`, `HOST_CLI_ASSET_HUB_WS`, `HOST_CLI_BULLETIN_WS` | A chain's `ws://` or `wss://` URL override on a built-in network or a `--stack`, for a fork with the same genesis hashes; each rerouted endpoint must report that genesis before a command runs (§14.1). Blank is unset. Cannot be set together with `HOST_CLI_LOCAL_NETWORK_CONFIG` or `--chain-backend light-client`. |
+| `HOST_CLI_LOCAL_NETWORK_CONFIG` | Path of a JSON file that routes every chain role (People, Asset Hub, Bulletin) and the identity backend of the `--network` built-in network to loopback endpoints with their own genesis hashes, under that network's product namespace; see `docs/local-network.md`. Blank is unset; an invalid file is an error, and so is setting it together with `--stack`, a `HOST_CLI_*_WS` override or `--chain-backend light-client`. |
 | `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `uid.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
 | `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. A stack's `dotns.popController` and the polkadot network's manifest supply the fallback (§14.1). `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
 | `XDG_STATE_HOME` | Preferred default state parent. |

@@ -45,6 +45,63 @@ pub const IDENTITY_BACKEND_BASE_ENV: &str = "HOST_CLI_IDENTITY_BACKEND_BASE";
 /// Env var supplying `--stack` when the flag is absent; a blank value is unset.
 pub const STACK_ENV: &str = "HOST_CLI_STACK";
 
+/// Env vars overriding one chain's WebSocket URL, for a fork of the resolved
+/// network. The genesis hashes stay the network's, as a fork has the same ones.
+pub const PEOPLE_WS_ENV: &str = "HOST_CLI_PEOPLE_WS";
+pub const ASSET_HUB_WS_ENV: &str = "HOST_CLI_ASSET_HUB_WS";
+pub const BULLETIN_WS_ENV: &str = "HOST_CLI_BULLETIN_WS";
+
+/// Chain URL overrides; `None` keeps the network's URL.
+#[derive(Debug, Default)]
+struct ChainOverrides {
+	people_ws: Option<String>,
+	asset_hub_ws: Option<String>,
+	bulletin_ws: Option<String>,
+}
+
+impl ChainOverrides {
+	fn from_env() -> Result<Self> {
+		Self::parse(
+			[PEOPLE_WS_ENV, ASSET_HUB_WS_ENV, BULLETIN_WS_ENV].map(|name| std::env::var(name).ok()),
+		)
+	}
+
+	/// Blank values keep the network's URL. Anything else must be a `ws` or
+	/// `wss` URL.
+	fn parse([people_ws, asset_hub_ws, bulletin_ws]: [Option<String>; 3]) -> Result<Self> {
+		let url = |name: &str, value: Option<String>| -> Result<Option<String>> {
+			let Some(value) = value.map(|value| value.trim().to_string()).filter(|v| !v.is_empty())
+			else {
+				return Ok(None);
+			};
+			let url = reqwest::Url::parse(&value)
+				.map_err(|err| anyhow!("{name} is not a URL ({err}): {value}"))?;
+			ensure!(
+				matches!(url.scheme(), "ws" | "wss"),
+				"{name} must be a ws:// or wss:// URL: {value}"
+			);
+			Ok(Some(value))
+		};
+		Ok(Self {
+			people_ws: url(PEOPLE_WS_ENV, people_ws)?,
+			asset_hub_ws: url(ASSET_HUB_WS_ENV, asset_hub_ws)?,
+			bulletin_ws: url(BULLETIN_WS_ENV, bulletin_ws)?,
+		})
+	}
+
+	/// The env vars behind the overrides that are set.
+	fn set_names(&self) -> Vec<&'static str> {
+		[
+			(PEOPLE_WS_ENV, &self.people_ws),
+			(ASSET_HUB_WS_ENV, &self.asset_hub_ws),
+			(BULLETIN_WS_ENV, &self.bulletin_ws),
+		]
+		.into_iter()
+		.filter_map(|(name, value)| value.is_some().then_some(name))
+		.collect()
+	}
+}
+
 /// How long a built-in stack's published descriptor may take before the
 /// bundled copy is used instead.
 const BUILT_IN_REFRESH_TIMEOUT: Duration = Duration::from_secs(3);
@@ -90,38 +147,63 @@ pub enum NetworkSelection {
 }
 
 impl NetworkSource {
-	/// The network a command runs against.
+	/// The network a command runs against: the built-in network or the stack,
+	/// then `HOST_CLI_*_WS` or `HOST_CLI_LOCAL_NETWORK_CONFIG` on top.
 	///
 	/// Fails when a `--stack` descriptor is unreachable, when the descriptor in
 	/// use is expired or lacks a role, when a disposable-identity network
-	/// carries Polkadot's genesis hashes, TLD or namespace, when the light
-	/// client cannot serve the network, and when an endpoint of a `--stack`
-	/// reports a genesis other than the descriptor's. A built-in network whose
-	/// published descriptor is unreachable runs on its bundled copy.
+	/// carries Polkadot's genesis hashes, TLD or namespace, when the overrides
+	/// cannot be combined, when the light client cannot serve the network, and
+	/// when an endpoint of a `--stack` or an override reports a genesis other
+	/// than the one it is routed as. A built-in network whose published
+	/// descriptor is unreachable runs on its bundled copy.
 	pub async fn cli_config(&self) -> Result<NetworkConfig> {
-		let config = self.resolve().await?;
-		if let NetworkSelection::Stack(_) = self.selection {
-			verify_endpoint_genesis(&config).await?;
-		}
+		let (config, unverified) = self.resolve_routes().await?;
+		verify_endpoint_genesis(&config, &unverified).await?;
 		Ok(config)
 	}
 
 	/// [`Self::cli_config`] without contacting any chain; only a descriptor is
 	/// fetched. An unreachable descriptor fails only for `--stack`.
 	pub async fn resolve(&self) -> Result<NetworkConfig> {
-		let (config, stack) = match &self.selection {
+		Ok(self.resolve_routes().await?.0)
+	}
+
+	/// The network and the endpoints no signed source vouches for: every
+	/// endpoint of a `--stack`, or those an override reroutes.
+	async fn resolve_routes(&self) -> Result<(NetworkConfig, Vec<&'static ChainEndpoint>)> {
+		let overrides = ChainOverrides::from_env()?;
+		let set = overrides.set_names();
+		let (base, stack) = match &self.selection {
 			NetworkSelection::Stack(stack) => {
+				ensure!(
+					crate::local_network::config_path().is_none(),
+					"{} and --stack cannot be used together: both route every chain; unset one \
+					 of them",
+					crate::local_network::CONFIG_ENV
+				);
 				let descriptor = crate::stack::load_descriptor(stack).await?;
 				(stack_network_config(&descriptor)?, Some(stack.as_str()))
 			},
 			NetworkSelection::BuiltIn(network) => (network.resolve_built_in().await?, None),
 		};
-		let mut config =
-			apply_backend_override(config, std::env::var(IDENTITY_BACKEND_BASE_ENV).ok());
+		let mut config = apply_chain_overrides(
+			apply_backend_override(base, std::env::var(IDENTITY_BACKEND_BASE_ENV).ok()),
+			overrides,
+		);
 		config.chain_backend = self.chain_backend;
-		refuse_light_client(&config, stack)?;
+		refuse_light_client(&config, stack, &set)?;
+		let config = crate::local_network::resolve(config, &set)?;
 		ensure_no_real_identity_values(&config)?;
-		Ok(config)
+		let unverified = config
+			.live_chain_endpoints
+			.iter()
+			.filter(|endpoint| {
+				stack.is_some() ||
+					!base.live_chain_endpoints.iter().any(|chain| chain.ws == endpoint.ws)
+			})
+			.collect();
+		Ok((config, unverified))
 	}
 }
 
@@ -350,8 +432,13 @@ fn leak_str(value: &str) -> &'static str {
 
 /// The light client knows only the networks `truapi-provider` bundles, by
 /// genesis hash, so it can serve neither another network nor a `--stack`, nor
-/// a built-in stack that restarted after this build's chain specs.
-fn refuse_light_client(config: &NetworkConfig, stack: Option<&str>) -> Result<()> {
+/// a rerouted chain, nor a built-in stack that restarted after this build's
+/// chain specs.
+fn refuse_light_client(
+	config: &NetworkConfig,
+	stack: Option<&str>,
+	chain_overrides: &[&str],
+) -> Result<()> {
 	if config.chain_backend != ChainBackend::LightClient {
 		return Ok(());
 	}
@@ -362,6 +449,12 @@ fn refuse_light_client(config: &NetworkConfig, stack: Option<&str>) -> Result<()
 			 the networks truapi-provider bundles ({bundled}); use --chain-backend rpc"
 		);
 	}
+	ensure!(
+		chain_overrides.is_empty(),
+		"{} and --chain-backend light-client cannot be used together: the light client syncs \
+		 the live chains by genesis hash; unset one of them",
+		chain_overrides.join(", ")
+	);
 	let (_, catalog) = truapi_provider::EmbeddedChainProviderBuilder::new()
 		.add_network(config.id)
 		.map_err(|error| {
@@ -386,6 +479,37 @@ fn apply_backend_override(mut config: NetworkConfig, base: Option<String>) -> Ne
 			config.identity_backend_base = Some(leak_str(trimmed));
 		}
 	}
+	config
+}
+
+/// Points each overridden role at its new URL, in both the role field and the
+/// genesis-keyed routing table, so the two cannot disagree.
+fn apply_chain_overrides(mut config: NetworkConfig, overrides: ChainOverrides) -> NetworkConfig {
+	let leak = |value: Option<String>| value.map(|url| leak_str(&url));
+	let routes = [
+		(leak(overrides.people_ws), config.people_genesis),
+		(leak(overrides.asset_hub_ws), config.asset_hub_genesis),
+		(leak(overrides.bulletin_ws), config.bulletin_genesis),
+	];
+	if routes.iter().all(|(url, _)| url.is_none()) {
+		return config;
+	}
+	let [(people, _), (asset_hub, _), (bulletin, _)] = routes;
+	config.people_ws = people.unwrap_or(config.people_ws);
+	config.asset_hub_ws = asset_hub.unwrap_or(config.asset_hub_ws);
+	config.bulletin_ws = bulletin.unwrap_or(config.bulletin_ws);
+	let endpoints: Vec<ChainEndpoint> = config
+		.live_chain_endpoints
+		.iter()
+		.map(|endpoint| {
+			let ws = routes
+				.iter()
+				.find_map(|(url, genesis)| (*genesis == endpoint.genesis).then_some(*url).flatten())
+				.unwrap_or(endpoint.ws);
+			ChainEndpoint { ws, ..*endpoint }
+		})
+		.collect();
+	config.live_chain_endpoints = Box::leak(endpoints.into_boxed_slice());
 	config
 }
 
@@ -422,12 +546,16 @@ fn ensure_no_real_identity_values(config: &NetworkConfig) -> Result<()> {
 	Ok(())
 }
 
-/// Fails when an endpoint reports a genesis other than the one it is routed as;
-/// an endpoint that does not answer is logged and left to fail on first use.
-async fn verify_endpoint_genesis(config: &NetworkConfig) -> Result<()> {
+/// Fails when one of `endpoints` reports a genesis other than the one it is
+/// routed as; an endpoint that does not answer is logged and left to fail on
+/// first use.
+async fn verify_endpoint_genesis(
+	config: &NetworkConfig,
+	endpoints: &[&'static ChainEndpoint],
+) -> Result<()> {
 	use truapi::statement_allowance as alloc;
 
-	let checks = config.live_chain_endpoints.iter().map(|endpoint| async move {
+	let checks = endpoints.iter().map(|&endpoint| async move {
 		let provider = crate::chain::CliChainProvider::for_endpoint(config, endpoint);
 		let reported = async {
 			let client =
@@ -1181,7 +1309,10 @@ mod tests {
 	#[tokio::test]
 	async fn test_stack_endpoint_unreachable() {
 		let config = stack_network_config(&stack_on_closed_ports()).unwrap();
-		verify_endpoint_genesis(&config).await.expect("unreachable endpoint rejected");
+		let endpoints: Vec<_> = config.live_chain_endpoints.iter().collect();
+		verify_endpoint_genesis(&config, &endpoints)
+			.await
+			.expect("unreachable endpoint rejected");
 	}
 
 	/// The case the endpoint check exists for: an endpoint that answers as a
@@ -1197,7 +1328,10 @@ mod tests {
 			.expect("People missing")
 			.rpc = vec![url.clone()];
 		let config = stack_network_config(&descriptor).unwrap();
-		let error = verify_endpoint_genesis(&config).await.expect_err("wrong genesis accepted");
+		let endpoints: Vec<_> = config.live_chain_endpoints.iter().collect();
+		let error = verify_endpoint_genesis(&config, &endpoints)
+			.await
+			.expect_err("wrong genesis accepted");
 		assert!(error.to_string().contains(&url));
 		assert!(error.to_string().contains("reports genesis"));
 	}
@@ -1241,10 +1375,74 @@ mod tests {
 	fn test_light_client_with_stack_error() {
 		let rpc = Network::PaseoNextV2.config();
 		let light = NetworkConfig { chain_backend: ChainBackend::LightClient, ..rpc };
-		let error = refuse_light_client(&light, Some("https://stack.example/s.json")).unwrap_err();
+		let error =
+			refuse_light_client(&light, Some("https://stack.example/s.json"), &[]).unwrap_err();
 		assert!(error.to_string().contains("--stack"));
-		assert!(refuse_light_client(&light, None).is_ok());
-		assert!(refuse_light_client(&rpc, Some("https://stack.example/s.json")).is_ok());
+		assert!(refuse_light_client(&light, None, &[]).is_ok());
+		assert!(refuse_light_client(&rpc, Some("https://stack.example/s.json"), &[]).is_ok());
+	}
+
+	/// The light client syncs the chains by genesis from its bundled specs, so
+	/// it cannot follow a chain rerouted to another URL.
+	#[test]
+	fn test_light_client_with_overrides_error() {
+		let rpc = Network::PaseoNextV2.config();
+		let light = NetworkConfig { chain_backend: ChainBackend::LightClient, ..rpc };
+		let error = refuse_light_client(&light, None, &[PEOPLE_WS_ENV]).unwrap_err();
+		assert!(error.to_string().contains(PEOPLE_WS_ENV));
+		assert!(refuse_light_client(&rpc, None, &[PEOPLE_WS_ENV]).is_ok());
+	}
+
+	#[test]
+	fn test_chain_overrides_blank_unset() {
+		let overrides =
+			ChainOverrides::parse([None, Some(String::new()), Some("  ".to_string())]).unwrap();
+		assert!(overrides.set_names().is_empty());
+		let paseo = Network::PaseoNextV2.config();
+		let resolved = apply_chain_overrides(paseo, overrides);
+		assert!(std::ptr::eq(resolved.live_chain_endpoints, paseo.live_chain_endpoints));
+	}
+
+	#[test]
+	fn test_chain_overrides_websocket_only() {
+		for value in ["127.0.0.1:10010", "http://127.0.0.1:10010"] {
+			let error = ChainOverrides::parse([None, None, Some(value.to_string())])
+				.expect_err("non-ws override accepted");
+			assert!(error.to_string().contains(BULLETIN_WS_ENV));
+		}
+	}
+
+	/// An override reroutes one role of a built-in network or a stack, in both
+	/// its field and the genesis-keyed routing table, and the genesis stays the
+	/// network's, as a fork has the same one.
+	#[test]
+	fn test_chain_overrides_field_and_route() {
+		let stack = stack_network_config(&edit_stack(|_| {})).unwrap();
+		for network in [Network::Previewnet.config(), stack] {
+			let overrides = ChainOverrides::parse([
+				Some(" ws://127.0.0.1:10010 ".to_string()),
+				Some(" ".to_string()),
+				None,
+			])
+			.unwrap();
+			assert_eq!(overrides.set_names(), [PEOPLE_WS_ENV]);
+			let overridden = apply_chain_overrides(network, overrides);
+			let route = |genesis: [u8; 32]| {
+				overridden
+					.live_chain_endpoints
+					.iter()
+					.find(|endpoint| endpoint.genesis == genesis)
+					.map(|endpoint| endpoint.ws)
+			};
+
+			assert_eq!(overridden.people_ws, "ws://127.0.0.1:10010");
+			assert_eq!(overridden.asset_hub_ws, network.asset_hub_ws);
+			assert_eq!(overridden.bulletin_ws, network.bulletin_ws);
+			assert_eq!(overridden.people_genesis, network.people_genesis);
+			assert_eq!(route(network.people_genesis), Some("ws://127.0.0.1:10010"));
+			assert_eq!(route(network.asset_hub_genesis), Some(network.asset_hub_ws));
+			assert_eq!(route(network.bulletin_genesis), Some(network.bulletin_ws));
+		}
 	}
 
 	/// A built-in stack that restarted from genesis after this build has chains
@@ -1256,7 +1454,7 @@ mod tests {
 			people_genesis: [0x5a; 32],
 			..Network::PaseoNextV2.config()
 		};
-		let error = refuse_light_client(&restarted, None).unwrap_err();
+		let error = refuse_light_client(&restarted, None, &[]).unwrap_err();
 		assert!(error.to_string().contains("--chain-backend rpc"));
 	}
 
@@ -1266,7 +1464,7 @@ mod tests {
 			chain_backend: ChainBackend::LightClient,
 			..Network::Polkadot.config()
 		};
-		let error = refuse_light_client(&polkadot, None).unwrap_err();
+		let error = refuse_light_client(&polkadot, None, &[]).unwrap_err();
 		assert!(error.to_string().contains("no chain specs for polkadot"), "{error}");
 	}
 
@@ -1283,7 +1481,7 @@ mod tests {
 		assert!(!bundled.is_empty());
 		for config in bundled {
 			let light = NetworkConfig { chain_backend: ChainBackend::LightClient, ..config };
-			refuse_light_client(&light, None).expect("light-client catalog differs");
+			refuse_light_client(&light, None, &[]).expect("light-client catalog differs");
 		}
 	}
 
