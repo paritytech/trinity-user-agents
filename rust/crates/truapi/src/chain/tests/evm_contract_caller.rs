@@ -361,7 +361,7 @@ fn execution_uses_the_prepared_call_and_limits_with_a_fresh_nonce_and_era() {
 		node.simulations.clone()
 	};
 
-	block_on(prepared.execute_and_watch()).unwrap();
+	block_on(prepared.execute_until_finalized()).unwrap();
 
 	assert_eq!(
 		activity(&node, &provider, &signer),
@@ -390,7 +390,7 @@ fn a_failed_dispatch_carries_its_dispatch_error() {
 		let (_, _, caller) = serve_contracts(node);
 		let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
 
-		let result = block_on(prepared.execute_and_watch());
+		let result = block_on(prepared.execute_until_finalized());
 
 		let Err(EvmContractError::DispatchFailed { detail }) = result else {
 			panic!("unexpected failed dispatch: {result:?}");
@@ -417,7 +417,7 @@ fn an_unfinalized_write_returns_the_submitted_extrinsic_and_its_era() {
 		let (node, _, caller) = serve_contracts(node);
 		let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
 
-		let result = block_on(prepared.execute_and_watch());
+		let result = block_on(prepared.execute_until_finalized());
 
 		let Err(EvmContractError::NotFinalized { extrinsic, event }) = result else {
 			panic!("unexpected unfinalized write: {result:?}");
@@ -446,7 +446,7 @@ fn an_unreadable_outcome_names_the_finalized_block_the_watch_reported() {
 		let (node, _, caller) = serve_contracts(node);
 		let prepared = block_on(caller.dry_run(&signer, &CONTRACT, INPUT)).unwrap();
 
-		let result = block_on(prepared.execute_and_watch());
+		let result = block_on(prepared.execute_until_finalized());
 
 		let (extrinsic, block) = match result {
 			Err(EvmContractError::OutcomeUnreadable { extrinsic, block, reason })

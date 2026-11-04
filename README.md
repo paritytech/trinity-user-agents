@@ -316,7 +316,7 @@ and storage reads at the same block; a plain RPC transport reads the node's curr
 signer or extrinsic builder.
 
 For writes, `dry_run` simulates as the signer and returns an opaque `PreparedEvmTransaction` that binds the signer,
-chain, contract, calldata and required limits. It signs and submits nothing. `PreparedEvmTransaction::execute_and_watch`
+chain, contract, calldata and required limits. It signs and submits nothing. `PreparedEvmTransaction::execute_until_finalized`
 consumes the request, then builds and signs with a fresh nonce and mortal era using the prepared limits. It completes
 only after a finalized block reports successful dispatch. An error that leaves the write possibly on chain carries the
 submitted extrinsic and its era: `NotFinalized` when sending failed or the watch ended before finality, so a block can
@@ -327,7 +327,7 @@ before following it can run it twice.
 
 ```rust
 let transaction = contracts.dry_run(&signer, &contract, &input).await?;
-transaction.execute_and_watch().await?;
+transaction.execute_until_finalized().await?;
 ```
 
 The request borrows the caller and the signer and owns its calldata. Simulation describes the state read at that time;

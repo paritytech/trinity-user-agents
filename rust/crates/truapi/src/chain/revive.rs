@@ -168,7 +168,7 @@ impl PreparedEvmTransaction<'_> {
 	/// on chain carries the submitted extrinsic, as
 	/// [`EvmContractError::NotFinalized`] or
 	/// [`EvmContractError::OutcomeUnreadable`].
-	pub async fn execute_and_watch(self) -> Result<(), EvmContractError> {
+	pub async fn execute_until_finalized(self) -> Result<(), EvmContractError> {
 		let Self { caller, signer, call } = self;
 		let extrinsic = caller
 			.extrinsics
