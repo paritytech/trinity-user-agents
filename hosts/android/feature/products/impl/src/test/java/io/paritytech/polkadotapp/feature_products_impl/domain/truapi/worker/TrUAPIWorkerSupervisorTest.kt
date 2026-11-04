@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledPro
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.InMemoryBundledProductFiles
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
+import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
@@ -49,6 +50,8 @@ class TrUAPIWorkerSupervisorTest {
     private var includesChat = true
     private var attachFailure: Throwable? = null
     private val runtime = mockk<TrUAPIHostRuntime>(relaxed = true)
+    private var resolvedWorkers = 0
+    private val configs = mutableListOf<ChatWebViewConfig>()
 
     @Before
     fun parseScriptUrls() {
@@ -58,6 +61,12 @@ class TrUAPIWorkerSupervisorTest {
             every { host } returns "worker.paseo"
             every { port } returns -1
             every { path } returns "/worker.js"
+        }
+        every { Uri.parse(BUNDLED_SCRIPT_URL) } returns mockk {
+            every { scheme } returns "https"
+            every { host } returns "worker.worker.paseo"
+            every { port } returns -1
+            every { path } returns "/index.js"
         }
     }
 
@@ -154,7 +163,33 @@ class TrUAPIWorkerSupervisorTest {
         assertEquals(listOf(workerPolicy) to workerScopes, policies to policyScopes)
     }
 
-    private fun TestScope.supervisor() = TrUAPIWorkerSupervisor(
+    // A worker the app ships boots from its own files: nothing asks dotNS where its script is, and its
+    // WebView serves the script from the bundle under the worker's own subname.
+    @Test
+    fun `a bundled worker boots from its files without resolving its script`() = runTest {
+        val bundled = BundledProducts(
+            InMemoryBundledProductFiles(
+                mapOf(
+                    "bundled-products/worker.paseo/worker-manifest.json" to """{"includes":{"chat":true}}""",
+                    "bundled-products/worker.paseo/worker/index.js" to "export {}",
+                ),
+            ),
+            enabled = true,
+        )
+        val supervisor = supervisor(bundled)
+
+        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
+        advanceUntilIdle()
+
+        assertEquals(0, resolvedWorkers)
+        assertEquals(WorkerScript("https://worker.worker.paseo", "index.js"), configs.single().workerScript)
+        assertEquals("worker.worker.paseo", configs.single().bundledContent?.host)
+        assertEquals(1, chatBridges.filterNotNull().size)
+    }
+
+    private fun TestScope.supervisor(
+        bundledProducts: BundledProducts = BundledProducts(InMemoryBundledProductFiles(emptyMap()), enabled = true),
+    ) = TrUAPIWorkerSupervisor(
         runtimeProvider = {
             mockk<TrUAPIHostRuntimeProvider> { coEvery { runtime() } returns Result.success(runtime) }
         },
@@ -165,16 +200,20 @@ class TrUAPIWorkerSupervisorTest {
         scriptResolver = object : ProductScriptResolver {
             override suspend fun resolveWorker(productId: ProductId) = Result.success(
                 mockk<ProductExecutable.Worker> {
+                    resolvedWorkers++
                     every { scriptUrl } returns SCRIPT_URL
                     every { includesChat } returns this@TrUAPIWorkerSupervisorTest.includesChat
                 },
             )
         },
         webViewProviderFactory = object : ChatWebViewProvider.Factory {
-            override fun create(config: ChatWebViewConfig, scope: CoroutineScope) = provider().also { workerScopes += scope }
+            override fun create(config: ChatWebViewConfig, scope: CoroutineScope) = provider().also {
+                workerScopes += scope
+                configs += config
+            }
         },
         bootstrapInstaller = bootstrapInstaller,
-        bundledProducts = BundledProducts(InMemoryBundledProductFiles(emptyMap()), enabled = true),
+        bundledProducts = bundledProducts,
         refCounter = { mockk(relaxed = true) },
         navigation = mockk { every { policy(PRODUCT, capture(policyScopes)) } returns workerPolicy },
         dispatchers = testDispatchers(),
@@ -205,5 +244,6 @@ class TrUAPIWorkerSupervisorTest {
     private companion object {
         val PRODUCT = ProductId.parse("worker.paseo").getOrThrow()
         const val SCRIPT_URL = "https://worker.paseo/worker.js"
+        const val BUNDLED_SCRIPT_URL = "https://worker.worker.paseo/index.js"
     }
 }

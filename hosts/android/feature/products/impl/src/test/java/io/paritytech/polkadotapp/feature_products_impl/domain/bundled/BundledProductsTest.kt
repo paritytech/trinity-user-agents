@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bundled
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -34,6 +36,8 @@ class BundledProductsTest {
             "bundled-products/provider.dot/app/assets/main.js" to "export {}",
             "bundled-products/chat.dot/worker-manifest.json" to """{"${'$'}v":1,"kind":"worker","includes":{"chat":true}}""",
             "bundled-products/chat.dot/worker/index.js" to "export {}",
+            "bundled-products/quiet.dot/worker-manifest.json" to """{"${'$'}v":1,"kind":"worker","includes":{"chat":false}}""",
+            "bundled-products/quiet.dot/worker/index.js" to "export {}",
             "bundled-products/.provider.dot.staging/worker/index.js" to "ignored",
         ),
     )
@@ -44,7 +48,8 @@ class BundledProductsTest {
     fun `reads each product under the root`() {
         val product = products.product(ProductId.parse("provider.dot").getOrThrow())!!
 
-        assertEquals(listOf("chat.dot", "provider.dot"), products.all.map { it.id.value })
+        assertNotNull(products.product(ProductId.parse("chat.dot").getOrThrow()))
+        assertNull(products.product(ProductId.parse("coinflip.dot").getOrThrow()))
         assertEquals(manifest, products.workerManifest(product))
         assertTrue(products.hasWorker(product))
         assertTrue(products.hasApp(product))
@@ -57,6 +62,13 @@ class BundledProductsTest {
             listOf(FundingProviderEntry(productId = ProductId.parse("provider.dot").getOrThrow(), workerManifest = manifest, origin = FundingProviderOrigin.BUNDLED)),
             products.fundingProviders(),
         )
+    }
+
+    @Test
+    fun `includes chat only when the manifest sets it`() {
+        assertTrue(products.includesChat(products.product(ProductId.parse("chat.dot").getOrThrow())!!))
+        assertFalse(products.includesChat(products.product(ProductId.parse("quiet.dot").getOrThrow())!!))
+        assertFalse(products.includesChat(products.product(ProductId.parse("provider.dot").getOrThrow())!!))
     }
 
     @Test
@@ -78,9 +90,78 @@ class BundledProductsTest {
     }
 
     @Test
-    fun `ships nothing without the bundle or outside testnet builds`() {
-        assertTrue(BundledProducts(InMemoryBundledProductFiles(emptyMap()), enabled = true).all.isEmpty())
-        assertTrue(BundledProducts(files, enabled = false).all.isEmpty())
+    fun `ships nothing without the bundle or in a build that leaves it out`() {
+        val provider = ProductId.parse("provider.dot").getOrThrow()
+
+        assertNull(BundledProducts(InMemoryBundledProductFiles(emptyMap()), enabled = true).product(provider))
+        assertNull(BundledProducts(files, enabled = false).product(provider))
         assertTrue(BundledProducts(files, enabled = false).fundingProviders().isEmpty())
+    }
+}
+
+class BundledProductContentTest {
+    private val files = InMemoryBundledProductFiles(
+        mapOf(
+            "bundled-products/provider.dot/worker/index.js" to "export {}",
+            "bundled-products/provider.dot/app/index.html" to "<html></html>",
+            "bundled-products/provider.dot/app/assets/main.js" to "export {}",
+            "bundled-products/provider.dot/app/assets/core.wasm" to "wasm",
+        ),
+    )
+    private val products = BundledProducts(files, enabled = true)
+    private val product = products.product(ProductId.parse("provider.dot").getOrThrow())!!
+    private val headers = mapOf("Content-Security-Policy" to "frame-ancestors *")
+    private val app = BundledProductContent.app(product, products, headers)
+
+    @Test
+    fun `leaves another host to the other clients`() {
+        assertNull(app.answer("coinflip.dot", "/", isMainFrame = true))
+        assertNull(app.answer("worker.provider.dot", "/index.js", isMainFrame = false))
+        assertNull(app.answer(null, "/", isMainFrame = true))
+    }
+
+    @Test
+    fun `answers its own host whatever the case`() {
+        assertEquals(
+            BundledProductContent.Answer.File("${product.appRoot}/index.html", "text/html", headers),
+            app.answer("Provider.DOT", "/", isMainFrame = true),
+        )
+    }
+
+    @Test
+    fun `a missing file is not found`() {
+        assertEquals(BundledProductContent.Answer.NotFound, app.answer("provider.dot", "/assets/missing.js", isMainFrame = false))
+    }
+
+    @Test
+    fun `serves module scripts and wasm with the types that run`() {
+        assertEquals(
+            BundledProductContent.Answer.File("${product.appRoot}/assets/main.js", "text/javascript", emptyMap()),
+            app.answer("provider.dot", "/assets/main.js", isMainFrame = false),
+        )
+        assertEquals(
+            "application/wasm",
+            (app.answer("provider.dot", "/assets/core.wasm", isMainFrame = false) as BundledProductContent.Answer.File).mimeType,
+        )
+    }
+
+    @Test
+    fun `only the main document carries the frame headers`() {
+        val route = app.answer("provider.dot", "/card", isMainFrame = true) as BundledProductContent.Answer.File
+        val script = app.answer("provider.dot", "/assets/main.js", isMainFrame = false) as BundledProductContent.Answer.File
+
+        assertEquals(headers, route.headers)
+        assertEquals(emptyMap<String, String>(), script.headers)
+    }
+
+    @Test
+    fun `serves the worker under its own subname`() {
+        val worker = BundledProductContent.worker(product, products)
+
+        assertEquals(
+            BundledProductContent.Answer.File("${product.workerRoot}/index.js", "text/javascript", emptyMap()),
+            worker.answer("worker.provider.dot", "/index.js", isMainFrame = false),
+        )
+        assertNull(worker.answer("provider.dot", "/index.js", isMainFrame = false))
     }
 }
