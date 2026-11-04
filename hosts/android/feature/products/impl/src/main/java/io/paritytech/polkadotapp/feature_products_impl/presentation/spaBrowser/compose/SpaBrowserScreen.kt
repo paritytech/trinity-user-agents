@@ -16,9 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import io.paritytech.polkadotapp.common.presentation.statusBar.LocalStatusBarScroll
 import io.paritytech.polkadotapp.common.presentation.statusBar.ReportsWebViewScrollToStatusBar
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
@@ -29,10 +27,10 @@ import io.paritytech.polkadotapp.design.components.icon.vectors.Refreshing
 import io.paritytech.polkadotapp.design.components.progress.NovaLinearProgressIndicator
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
-import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthBarDefaults
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.ProductWebViewHost
+import io.paritytech.polkadotapp.feature_products_impl.presentation.compose.idBarInsetsPadding
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserPageState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserViewModel
@@ -43,7 +41,6 @@ import io.paritytech.polkadotapp.common.R as RCommon
 fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val webView by viewModel.webView.collectAsStateWithLifecycle()
-    val pageUnderIdBar = LocalStatusBarScroll.current?.state?.collectAsStateWithLifecycle()?.value?.contentUnderBar == true
 
     BackHandler {
         viewModel.onBackPressed()
@@ -54,7 +51,6 @@ fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
     SpaBrowserScreenInternal(
         state = state,
         webView = webView,
-        pageUnderIdBar = pageUnderIdBar,
         onRefresh = viewModel::onRefresh,
     )
 }
@@ -63,16 +59,13 @@ fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
 internal fun SpaBrowserScreenInternal(
     state: SpaBrowserUiState,
     webView: WebView?,
-    pageUnderIdBar: Boolean,
     onRefresh: () -> Unit,
 ) {
-    val idBarOverlap = if (pageUnderIdBar) ChainHealthBarDefaults.ContentHeight else 0.dp
-
     PolkadotSurface(color = PolkadotTheme.colors.bg.surface.main) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing.exclude(WindowInsets(top = idBarOverlap)))
+                .idBarInsetsPadding(WindowInsets.safeDrawing)
         ) {
             DotNsLoadProgressBar(progress = state.loadProgress)
             PolkadotSurface(
@@ -188,7 +181,6 @@ private fun SpaBrowserScreenPreview() {
                 loadProgress = DotNsLoadProgress.Downloading(0.4f),
             ),
             webView = null,
-            pageUnderIdBar = false,
             onRefresh = {},
         )
     }

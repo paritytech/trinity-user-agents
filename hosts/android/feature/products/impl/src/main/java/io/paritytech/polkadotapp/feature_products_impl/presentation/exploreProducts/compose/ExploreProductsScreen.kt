@@ -2,8 +2,11 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.exploreProd
 
 import android.webkit.WebView
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -14,9 +17,11 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.paritytech.polkadotapp.common.presentation.statusBar.ReportsWebViewScrollToStatusBar
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.feature_products_impl.presentation.compose.idBarInsetsPadding
 import io.paritytech.polkadotapp.feature_products_impl.presentation.exploreProducts.ExploreProductsViewModel
 
 @Composable
@@ -27,6 +32,8 @@ fun ExploreProductsScreen() {
     LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) { viewModel.pauseConnections() }
 
     val webView by viewModel.webViewFlow.collectAsStateWithLifecycle()
+
+    ReportsWebViewScrollToStatusBar(webView)
 
     ExploreProductsScreenInternal(
         webView = webView
@@ -42,7 +49,7 @@ private fun ExploreProductsScreenInternal(
     ) {
         Column(
             modifier = Modifier
-                .statusBarsPadding()
+                .idBarInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
                 .windowInsetsPadding(LocalAppNavigationBarInsets.current)
         ) {
             if (webView != null) {
