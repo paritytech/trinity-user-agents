@@ -14,7 +14,7 @@ use parity_scale_codec::Encode;
 use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
 
 use super::{
-	pocket::{LiveBacks, NativePocketObserver, keeping_faces, observe_pocket_cards},
+	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},
 	reject_undecodable_deeplink,
 	renderer::{NativeRendererObserver, NativeSubscription, observe_renderer},
 	ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError},
@@ -236,7 +236,6 @@ impl NativeTrUApiHostRuntime {
 			ws_bridge: self.ws_bridge.clone(),
 			bridge_token: Mutex::new(None),
 			product_control: Arc::new(Mutex::new(None)),
-			live_backs: LiveBacks::default(),
 		});
 
 		if product.execution_kind == ExecutableKind::Worker {
@@ -912,9 +911,6 @@ pub struct NativeProductExecution {
 	ws_bridge: Arc<SharedWsBridge>,
 	bridge_token: Mutex<Option<String>>,
 	product_control: Arc<Mutex<Option<crate::ProductRuntimeControl>>>,
-	/// Cards whose back the current product connection has drawn; reset with
-	/// each new product connection.
-	live_backs: LiveBacks,
 }
 
 impl NativeProductExecution {
@@ -1153,44 +1149,26 @@ impl NativeProductExecution {
 		};
 		let stream = control.render(request)?;
 		let observer: Arc<dyn NativeRendererObserver> = match card {
-			Some((card_id, side)) => {
-				let observer = match side {
-					PocketCardSide::Back => {
-						self.live_backs.marking(card_id.clone(), observer.into())
-					},
-					PocketCardSide::Front => observer.into(),
-				};
-				keeping_faces(
-					self.pocket.clone(),
-					self.product.product_id.clone(),
-					card_id,
-					side,
-					observer,
-					&self.spawner,
-				)
-			},
+			Some((card_id, side)) => keeping_faces(
+				self.pocket.clone(),
+				self.product.product_id.clone(),
+				card_id,
+				side,
+				observer.into(),
+				&self.spawner,
+			),
 			None => observer.into(),
 		};
 		Ok(observe_renderer(stream, observer, self.spawner.clone()))
 	}
 
 	/// Publish one action triggered inside a product-rendered body, buffering
-	/// it until the product connection subscribes. A press on a card's back is
-	/// dropped until the product has drawn that back on this connection.
+	/// it until the product connection subscribes.
 	pub fn publish_renderer_action(
 		&self,
 		item: v01::HostRendererActionSubscribeItem,
 	) -> Result<(), crate::ProductRuntimeError> {
 		self.require_renderer()?;
-		if let v01::RenderContext::PocketCardBack { card_id } = &item.context &&
-			!self.live_backs.contains(card_id)
-		{
-			self.callbacks.on_core_log(
-				"truapi.native.renderer.back_press_dropped".to_string(),
-				card_id.clone(),
-			);
-			return Ok(());
-		}
 		self.renderer_connection.publish(item.into())
 	}
 
@@ -1232,13 +1210,11 @@ impl NativeProductExecution {
 		let product = self.product.clone();
 		let adapters = self.adapters();
 		let product_control = self.product_control.clone();
-		let live_backs = self.live_backs.clone();
 		let runtime_factory = Arc::new(move |sink| {
 			let product_runtime =
 				runtime.product_runtime_with(product.clone(), adapters.clone(), sink);
 			*product_control.lock().expect("native product control mutex poisoned") =
 				Some(product_runtime.control());
-			live_backs.reset();
 			product_runtime
 		});
 		let endpoint = self.ws_bridge.register(bind_port, runtime_factory, logger)?;
@@ -1450,53 +1426,6 @@ mod tests {
 		replacement
 			.publish_chat_action(text_chat_action("fresh"))
 			.expect("replacement execution has a fresh buffer");
-	}
-
-	#[test]
-	fn a_back_press_reaches_the_product_only_once_that_back_is_drawn() {
-		// A product that cannot decode a back press would lose every later
-		// press, so the core holds them back until the product drew the back.
-		let host = NativeTrUApiHostRuntime::with_runtime_config(
-			Arc::new(EventCallbacks::new()),
-			native_host_runtime_config(),
-		)
-		.expect("host runtime config should be valid");
-		let execution = host
-			.open_product_execution(
-				Arc::new(EventCallbacks::new()),
-				None,
-				None,
-				native_execution_config("loyalty.dot", ExecutableKind::Worker),
-			)
-			.expect("Worker execution should open");
-		let admin = execution.admin();
-		let mut actions = futures::executor::block_on(truapi::api::Renderer::action_subscribe(
-			admin.product_runtime().as_ref(),
-			&truapi::CallContext::with_request_id("renderer-1".to_string()),
-			truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1,
-		));
-		let press = |card_id: &str| v01::HostRendererActionSubscribeItem {
-			context: v01::RenderContext::PocketCardBack { card_id: card_id.to_string() },
-			action_id: "stamp".to_string(),
-			payload: Vec::new(),
-		};
-		let publish = |card_id: &str| {
-			execution.publish_renderer_action(press(card_id)).expect("a Worker may publish");
-		};
-
-		publish("stamps");
-		execution.live_backs.mark("other");
-		publish("stamps");
-		execution.live_backs.mark("stamps");
-		publish("stamps");
-
-		let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
-		let delivered = match actions.poll_next_unpin(&mut cx) {
-			core::task::Poll::Ready(Some(item)) => item.expect("a renderer action").into_latest(),
-			other => panic!("the press after the back was drawn must be ready, got {other:?}"),
-		};
-		assert_eq!(delivered, press("stamps"));
-		assert!(actions.poll_next_unpin(&mut cx).is_pending(), "the earlier presses were dropped");
 	}
 
 	#[test]
