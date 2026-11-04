@@ -142,41 +142,96 @@ function readUnixfsNode(
   return { node, unixfs: decodeUnixfs(node.data) };
 }
 
+/** Reads one node's links keep in flight, counting the one being joined. */
+export const LINKS_IN_FLIGHT = 6;
+
 /**
  * One load's reads. Every reference the traversal follows is charged here, so
- * a crafted DAG cannot expand past the limits or outlast the signal.
+ * a crafted DAG cannot expand past the limits or outlast the signal. The first
+ * read that fails ends the traversal: the reads still in flight are cancelled
+ * and report that failure.
  */
 class Traversal {
   private nodes = 0;
   private bytes = 0;
+  private failure: { error: unknown } | undefined;
+  private readonly stopped = new AbortController();
+  private readonly signal: AbortSignal;
 
   constructor(
     private readonly getBlock: GetBlock,
     private readonly limits: Pick<UnpackLimits, "maxNodes" | "maxTotalBytes">,
-    private readonly signal: AbortSignal | undefined,
-  ) {}
+    signal: AbortSignal | undefined,
+  ) {
+    this.signal =
+      signal === undefined
+        ? this.stopped.signal
+        : AbortSignal.any([signal, this.stopped.signal]);
+  }
+
+  /** Run `work`, then cancel any reads it left in flight. */
+  async run<T>(work: () => Promise<T>): Promise<T> {
+    try {
+      return await work();
+    } finally {
+      this.stopped.abort();
+    }
+  }
 
   async visit(cid: Cid): Promise<Uint8Array> {
     this.checkSignal();
     this.nodes += 1;
     if (this.nodes > this.limits.maxNodes)
-      throw new Error("the content has more blocks than this host accepts");
+      this.fail(
+        new Error("the content has more blocks than this host accepts"),
+      );
     let block: Uint8Array;
     try {
       block = await this.getBlock(cid, this.signal);
     } catch (error) {
       this.checkSignal();
-      throw error;
+      this.fail(error);
     }
     this.checkSignal();
     this.bytes += block.length;
     if (this.bytes > this.limits.maxTotalBytes)
-      throw new Error("the content is larger than this host accepts");
+      this.fail(new Error("the content is larger than this host accepts"));
     return block;
   }
 
+  /**
+   * Visit `cids` and yield their blocks in order, with up to
+   * {@link LINKS_IN_FLIGHT} of them in flight.
+   */
+  async *visitInOrder(
+    cids: readonly Cid[],
+  ): AsyncGenerator<{ cid: Cid; block: Uint8Array; index: number }> {
+    const reads: Promise<Uint8Array>[] = [];
+    for (const [index, cid] of cids.entries()) {
+      while (
+        reads.length < cids.length &&
+        reads.length < index + LINKS_IN_FLIGHT
+      ) {
+        const read = this.visit(cids[reads.length]);
+        // Reads ahead of a failure settle with no one waiting for them.
+        read.catch(() => {});
+        reads.push(read);
+      }
+      yield { cid, block: await reads[index], index };
+    }
+  }
+
+  private fail(error: unknown): never {
+    if (this.failure === undefined) {
+      this.failure = { error };
+      this.stopped.abort();
+    }
+    throw error;
+  }
+
   private checkSignal(): void {
-    if (this.signal?.aborted)
+    if (this.failure !== undefined) throw this.failure.error;
+    if (this.signal.aborted)
       throw new Error("loading the content took too long or was cancelled");
   }
 }
@@ -221,15 +276,19 @@ async function readFileFrom(
     out.push(unixfs.data);
     length += unixfs.data.length;
   }
-  for (const [index, link] of node.links.entries()) {
-    const read = await readFileInto(
+  if (node.links.length > 0 && depth + 1 > maxDepth)
+    throw new Error("a file is nested too deeply");
+  const chunks = traversal.visitInOrder(node.links.map((link) => link.cid));
+  for await (const chunk of chunks) {
+    const read = await readFileFrom(
       traversal,
-      link.cid,
+      chunk.cid,
+      chunk.block,
       depth + 1,
       maxDepth,
       out,
     );
-    const declared = unixfs.blockSizes[index];
+    const declared = unixfs.blockSizes[chunk.index];
     if (declared !== undefined && declared !== read)
       throw new Error("a file chunk is not the size its parent records");
     length += read;
@@ -257,12 +316,9 @@ export async function readFile(
   signal?: AbortSignal,
 ): Promise<Uint8Array> {
   const parts: Uint8Array[] = [];
-  const length = await readFileInto(
-    new Traversal(getBlock, limits, signal),
-    cid,
-    0,
-    limits.maxFileTreeDepth,
-    parts,
+  const traversal = new Traversal(getBlock, limits, signal);
+  const length = await traversal.run(() =>
+    readFileInto(traversal, cid, 0, limits.maxFileTreeDepth, parts),
   );
   return concat(parts, length);
 }
@@ -300,6 +356,7 @@ export async function unpackDirectory(
       throw new Error(`${path || "the root"} is not a directory`);
     }
     const seen = new Set<string>();
+    const children: string[] = [];
     for (const link of parsed.node.links) {
       if (!isSafeName(link.name))
         throw new Error(`unsafe file name in ${path || "the root"}`);
@@ -309,18 +366,24 @@ export async function unpackDirectory(
       const child = path === "" ? link.name : `${path}/${link.name}`;
       if (new TextEncoder().encode(child).length > limits.maxPathBytes)
         throw new Error("a file path is too long");
-      const target = await traversal.visit(link.cid);
-      const kind = readUnixfsNode(link.cid, target);
+      children.push(child);
+    }
+    const targets = traversal.visitInOrder(
+      parsed.node.links.map((link) => link.cid),
+    );
+    for await (const target of targets) {
+      const child = children[target.index];
+      const kind = readUnixfsNode(target.cid, target.block);
       if (kind?.unixfs.type === DIRECTORY || kind?.unixfs.type === HAMT_SHARD)
-        await walk(link.cid, target, child, depth + 1);
+        await walk(target.cid, target.block, child, depth + 1);
       else {
         if (files.size >= limits.maxFiles)
           throw new Error("the site has more files than this host accepts");
         const parts: Uint8Array[] = [];
         const length = await readFileFrom(
           traversal,
-          link.cid,
-          target,
+          target.cid,
+          target.block,
           0,
           limits.maxFileTreeDepth,
           parts,
@@ -330,6 +393,8 @@ export async function unpackDirectory(
     }
   }
 
-  await walk(root, await traversal.visit(root), "", 0);
+  await traversal.run(async () =>
+    walk(root, await traversal.visit(root), "", 0),
+  );
   return files;
 }

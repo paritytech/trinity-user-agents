@@ -12,11 +12,14 @@ import {
 import { parseCar } from "../../../../src/products/archive/car.js";
 import {
   ARCHIVE_LIMITS,
+  BUSY_RETRY_MS,
+  MAX_BLOCK_REQUESTS,
   gatewayBlocks,
   loadArchive,
   loadSite,
 } from "../../../../src/products/archive/gateway.js";
 import {
+  LINKS_IN_FLIGHT,
   readFile,
   unpackDirectory,
 } from "../../../../src/products/archive/unixfs.js";
@@ -148,7 +151,7 @@ describe("loading an archive", () => {
     const { outerRoot } = publish({ "index.html": "<p>ok</p>" });
     const gateway = gatewayBlocks(
       "https://gateway.test",
-      { maxBlockBytes: 8 },
+      { ...ARCHIVE_LIMITS, maxBlockBytes: 8 },
       async () => new Response(new Uint8Array(64)),
     );
     await expect(loadArchive(cidToString(outerRoot), gateway)).rejects.toThrow(
@@ -525,6 +528,378 @@ describe("bounding the work of a load", () => {
     );
     await expect(loadSite(cidToString(root), gateway)).rejects.toThrow(
       "does not match its identifier",
+    );
+  });
+});
+
+interface GatewayRequest {
+  key: string;
+  /** 1 for the first request for this block, 2 for its retry. */
+  attempt: number;
+  signal: AbortSignal;
+  /** When the request was made, in `performance.now()` time. */
+  at: number;
+}
+
+/**
+ * A gateway over `blocks` that records every request and how many were open at
+ * once. `respond` decides an answer; without one, or when it gives
+ * `undefined`, the block is served as stored.
+ */
+function scriptedGateway(
+  blocks: Blocks,
+  respond?: (
+    request: GatewayRequest,
+  ) => Promise<Response | undefined> | undefined,
+) {
+  const requests: GatewayRequest[] = [];
+  let open = 0;
+  let mostOpen = 0;
+  const fetchFn = async (url: string, init?: RequestInit) => {
+    const cid = parseCidString(new URL(url).pathname.slice("/ipfs/".length));
+    const key = cidKey(cid);
+    const request = {
+      key,
+      attempt: requests.filter((earlier) => earlier.key === key).length + 1,
+      signal: init!.signal!,
+      at: performance.now(),
+    };
+    requests.push(request);
+    open += 1;
+    mostOpen = Math.max(mostOpen, open);
+    try {
+      return (
+        (await respond?.(request)) ??
+        new Response(blocks.all.get(key)!.data as BodyInit)
+      );
+    } finally {
+      open -= 1;
+    }
+  };
+  return { requests, fetchFn, mostOpen: () => mostOpen };
+}
+
+/** An answer that never comes, rejected only when the request is aborted. */
+const noAnswer = (signal: AbortSignal) =>
+  new Promise<Response>((_resolve, reject) =>
+    signal.addEventListener("abort", () => reject(signal.reason), {
+      once: true,
+    }),
+  );
+const after = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Serve the stored block after `ms`, unless the request is aborted first. */
+const storedAfter = (ms: number, signal: AbortSignal) =>
+  Promise.race([after(ms).then(() => undefined), noAnswer(signal)]);
+/** Bytes whose 100-byte chunks all differ, and differ again for another `seed`. */
+const pattern = (length: number, seed = 0) =>
+  new Uint8Array(length).map((_, index) => (index * 7 + seed * 31) % 251);
+
+describe("fetching blocks from the gateway", () => {
+  test("requests a file's chunks at once, up to the cap, and joins them in order", async () => {
+    const blocks = new Blocks();
+    const bytes = pattern(2000);
+    const file = blocks.file(bytes, 100);
+    const gateway = scriptedGateway(blocks, (request) => {
+      if (request.key === cidKey(file)) return undefined;
+      // Later requests answer first, so arrival order is not chunk order.
+      const position = gateway.requests.indexOf(request);
+      return after(20 - (position % 7) * 3).then(
+        () => new Response(blocks.all.get(request.key)!.data as BodyInit),
+      );
+    });
+    const read = await readFile(
+      file,
+      gatewayBlocks("https://gateway.test", ARCHIVE_LIMITS, gateway.fetchFn),
+      ARCHIVE_LIMITS,
+    );
+    expect(read).toEqual(bytes);
+    expect(gateway.requests.length).toBe(21);
+    expect(gateway.mostOpen()).toBe(MAX_BLOCK_REQUESTS);
+  });
+
+  test("keeps at most six links of one node in flight, counting the one it joins", async () => {
+    const blocks = new Blocks();
+    const bytes = pattern(2000);
+    const file = blocks.file(bytes, 100);
+    let open = 0;
+    let mostOpen = 0;
+    const getBlock = async (cid: Parameters<typeof cidKey>[0]) => {
+      open += 1;
+      mostOpen = Math.max(mostOpen, open);
+      await after(2);
+      open -= 1;
+      return fromBlocks(blocks)(cid);
+    };
+    expect(await readFile(file, getBlock, ARCHIVE_LIMITS)).toEqual(bytes);
+    expect(mostOpen).toBe(LINKS_IN_FLIGHT);
+  });
+
+  test("keeps the request cap across directories that each read ahead", async () => {
+    const files: Record<string, Uint8Array> = {};
+    for (const directory of ["a", "b", "c"])
+      for (const name of ["1", "2", "3", "4", "5", "6", "7"])
+        files[`${directory}/${name}.bin`] = pattern(400 + name.charCodeAt(0));
+    files["index.html"] = text("<p>ok</p>");
+    const blocks = new Blocks();
+    const root = blocks.tree(files);
+    const gateway = scriptedGateway(blocks, () =>
+      after(2).then(() => undefined),
+    );
+    const loaded = await loadSite(
+      cidToString(root),
+      gatewayBlocks("https://gateway.test", ARCHIVE_LIMITS, gateway.fetchFn),
+    );
+    expect(new Map([...loaded.files].sort())).toEqual(
+      new Map(Object.entries(files).sort()),
+    );
+    expect(gateway.mostOpen()).toBe(MAX_BLOCK_REQUESTS);
+  });
+
+  test("asks for a block once more when its request times out, and uses the second answer", async () => {
+    const blocks = new Blocks();
+    const root = blocks.tree({ "index.html": "x" });
+    const gateway = scriptedGateway(blocks, (request) =>
+      request.attempt === 1 ? noAnswer(request.signal) : undefined,
+    );
+    const loaded = await loadSite(
+      cidToString(root),
+      gatewayBlocks(
+        "https://gateway.test",
+        { ...ARCHIVE_LIMITS, blockTimeoutMs: 20 },
+        gateway.fetchFn,
+      ),
+    );
+    expect(decode(loaded.files.get("index.html"))).toBe("x");
+    expect(gateway.requests.every((request) => request.attempt <= 2)).toBe(
+      true,
+    );
+  });
+
+  test("gives up on a block after one retry, and says why", async () => {
+    const blocks = new Blocks();
+    const root = blocks.tree({ "index.html": "x" });
+    for (const [respond, message] of [
+      [(request: GatewayRequest) => noAnswer(request.signal), "within"],
+      [
+        () => Promise.reject(new TypeError("connection reset")),
+        "could not be reached: connection reset",
+      ],
+      [
+        () => Promise.resolve(new Response("busy", { status: 503 })),
+        "answered 503",
+      ],
+    ] as const) {
+      const gateway = scriptedGateway(blocks, respond);
+      await expect(
+        loadSite(
+          cidToString(root),
+          gatewayBlocks(
+            "https://gateway.test",
+            { ...ARCHIVE_LIMITS, blockTimeoutMs: 20 },
+            gateway.fetchFn,
+          ),
+        ),
+      ).rejects.toThrow(message);
+      expect(gateway.requests.map((request) => request.attempt)).toEqual([
+        1, 2,
+      ]);
+    }
+  });
+
+  test("does not ask again after a status that will not change", async () => {
+    const blocks = new Blocks();
+    const root = blocks.tree({ "index.html": "x" });
+    const gateway = scriptedGateway(blocks, () =>
+      Promise.resolve(new Response("gone", { status: 404 })),
+    );
+    await expect(
+      loadSite(
+        cidToString(root),
+        gatewayBlocks("https://gateway.test", ARCHIVE_LIMITS, gateway.fetchFn),
+      ),
+    ).rejects.toThrow("answered 404");
+    expect(gateway.requests.length).toBe(1);
+  });
+
+  test("does not ask again for a block that does not match, and cancels the others", async () => {
+    const blocks = new Blocks();
+    const file = blocks.file(pattern(2000), 100);
+    const leaves = [...blocks.all.keys()].filter((key) => key !== cidKey(file));
+    const forged = leaves[2];
+    const gateway = scriptedGateway(blocks, (request) => {
+      if (request.key === cidKey(file)) return undefined;
+      if (request.key === forged)
+        return after(5).then(() => new Response(text("forged")));
+      return noAnswer(request.signal);
+    });
+    await expect(
+      readFile(
+        file,
+        gatewayBlocks("https://gateway.test", ARCHIVE_LIMITS, gateway.fetchFn),
+        ARCHIVE_LIMITS,
+      ),
+    ).rejects.toThrow("does not match its identifier");
+    await after(5);
+    expect(
+      gateway.requests.filter((request) => request.key === forged).length,
+    ).toBe(1);
+    expect(gateway.requests.length).toBe(1 + MAX_BLOCK_REQUESTS);
+    expect(
+      gateway.requests
+        .filter((request) => request.key !== cidKey(file))
+        .every((request) => request.signal.aborted),
+    ).toBe(true);
+  });
+
+  test("starts no request after the load is cancelled, even one waiting for a slot", async () => {
+    const blocks = new Blocks();
+    const files = Object.fromEntries(
+      ["a", "b", "c", "d", "e", "f", "g"].map((name, index) => [
+        `${name}.bin`,
+        blocks.file(pattern(300, index), 100),
+      ]),
+    );
+    const root = blocks.directory(files);
+    const answered = new Set([cidKey(root), cidKey(files["a.bin"])]);
+    const controller = new AbortController();
+    // The root and a.bin answer. The other file nodes hold five requests, and
+    // a.bin's three chunks need three more: one gets the last slot, two wait.
+    const gateway = scriptedGateway(blocks, (request) => {
+      if (answered.has(request.key)) return undefined;
+      if (gateway.requests.length === 2 + MAX_BLOCK_REQUESTS)
+        queueMicrotask(() => controller.abort());
+      return noAnswer(request.signal);
+    });
+    await expect(
+      unpackDirectory(
+        root,
+        gatewayBlocks("https://gateway.test", ARCHIVE_LIMITS, gateway.fetchFn),
+        ARCHIVE_LIMITS,
+        controller.signal,
+      ),
+    ).rejects.toThrow("cancelled");
+    await after(5);
+    expect(gateway.requests.length).toBe(2 + MAX_BLOCK_REQUESTS);
+    expect(gateway.requests.every((request) => request.attempt === 1)).toBe(
+      true,
+    );
+  });
+
+  test("waits before asking again after 429 or 503, and asks at once after 408", async () => {
+    const blocks = new Blocks();
+    const root = blocks.tree({ "index.html": "x" });
+    for (const [status, waits] of [
+      [429, true],
+      [503, true],
+      [408, false],
+    ] as const) {
+      const gateway = scriptedGateway(blocks, (request) =>
+        request.key === cidKey(root) && request.attempt === 1
+          ? Promise.resolve(new Response("busy", { status }))
+          : undefined,
+      );
+      const loaded = await loadSite(
+        cidToString(root),
+        gatewayBlocks("https://gateway.test", ARCHIVE_LIMITS, gateway.fetchFn),
+      );
+      expect(decode(loaded.files.get("index.html"))).toBe("x");
+      const [first, retry] = gateway.requests.filter(
+        (request) => request.key === cidKey(root),
+      );
+      expect(retry.attempt).toBe(2);
+      const waited = retry.at - first.at;
+      // Timers may fire a few milliseconds early.
+      if (waits) expect(waited).toBeGreaterThanOrEqual(BUSY_RETRY_MS - 5);
+      else expect(waited).toBeLessThan(BUSY_RETRY_MS / 2);
+    }
+  });
+
+  test("does not ask again for a block over the size cap", async () => {
+    const blocks = new Blocks();
+    const file = blocks.file(pattern(2000), 100);
+    const leaves = [...blocks.all.keys()].filter((key) => key !== cidKey(file));
+    const oversized = leaves[2];
+    const gateway = scriptedGateway(blocks, (request) =>
+      request.key === oversized
+        ? Promise.resolve(new Response(new Uint8Array(8192)))
+        : undefined,
+    );
+    await expect(
+      readFile(
+        file,
+        gatewayBlocks(
+          "https://gateway.test",
+          { ...ARCHIVE_LIMITS, maxBlockBytes: 4096 },
+          gateway.fetchFn,
+        ),
+        ARCHIVE_LIMITS,
+      ),
+    ).rejects.toThrow("larger than this host accepts");
+    expect(
+      gateway.requests.filter((request) => request.key === oversized).length,
+    ).toBe(1);
+  });
+
+  test("cancels the reads in flight when the content itself is wrong", async () => {
+    const blocks = new Blocks();
+    const leaves = Array.from({ length: 10 }, (_, index) =>
+      blocks.add(RAW, pattern(100, index)),
+    );
+    const file = blocks.add(
+      DAG_PB,
+      dagPb(
+        { type: 2, fileSize: 1000, blockSizes: [99, ...Array(9).fill(100)] },
+        leaves.map((cid) => ({ cid, name: "" })),
+      ),
+    );
+    const answered = new Set([cidKey(file), cidKey(leaves[0])]);
+    const gateway = scriptedGateway(blocks, (request) =>
+      answered.has(request.key) ? undefined : noAnswer(request.signal),
+    );
+    await expect(
+      readFile(
+        file,
+        gatewayBlocks("https://gateway.test", ARCHIVE_LIMITS, gateway.fetchFn),
+        ARCHIVE_LIMITS,
+      ),
+    ).rejects.toThrow("chunk is not the size");
+    const waiting = gateway.requests.filter(
+      (request) => !answered.has(request.key),
+    );
+    expect(waiting.length).toBe(LINKS_IN_FLIGHT - 1);
+    expect(waiting.every((request) => request.signal.aborted)).toBe(true);
+  });
+
+  test("starts a request's timer when it leaves the queue, not when it joins", async () => {
+    const blocks = new Blocks();
+    const files = Object.fromEntries(
+      ["a", "b", "c", "d", "e", "f", "g"].map((name, index) => [
+        `${name}.bin`,
+        blocks.file(pattern(300, index), 100),
+      ]),
+    );
+    const root = blocks.directory(files);
+    // The root and a.bin answer at once; every other block takes 150 ms
+    // against a 200 ms timer. b.bin to f.bin hold five slots, so a.bin's
+    // second and third chunks queue for 150 ms before they are sent. Timed
+    // from the queue, they would run out in flight and be retried.
+    const quick = new Set([cidKey(root), cidKey(files["a.bin"])]);
+    const gateway = scriptedGateway(blocks, (request) =>
+      quick.has(request.key) ? undefined : storedAfter(150, request.signal),
+    );
+    const read = await unpackDirectory(
+      root,
+      gatewayBlocks(
+        "https://gateway.test",
+        { ...ARCHIVE_LIMITS, blockTimeoutMs: 200 },
+        gateway.fetchFn,
+      ),
+      ARCHIVE_LIMITS,
+    );
+    expect(read.size).toBe(7);
+    expect(gateway.mostOpen()).toBe(MAX_BLOCK_REQUESTS);
+    expect(gateway.requests.every((request) => request.attempt === 1)).toBe(
+      true,
     );
   });
 });
