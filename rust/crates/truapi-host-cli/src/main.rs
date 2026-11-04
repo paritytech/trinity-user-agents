@@ -1889,7 +1889,7 @@ fn build_signing_runtime(
 	let core_db = futures::executor::block_on(truapi::store::Db::open(
 		truapi::store::core_db_config(&storage_path),
 	))
-	.with_context(|| format!("opening the core database in {}", storage_path.display()))?;
+	.with_context(|| core_db_cleanup_request(&storage_path))?;
 	let installation_path = storage_path.join("installation");
 	let installation = Arc::new(installation::CliInstallation::new(installation_path));
 	let cleartext_storage_path = storage_path.join("cleartext-storage.json");
@@ -1931,6 +1931,18 @@ fn build_signing_runtime(
 	runtime.start_core_services();
 	runtime.start_statement_allowance_renewal();
 	Ok((runtime, platform))
+}
+
+fn core_db_cleanup_request(storage_path: &Path) -> String {
+	let database = storage_path.join(truapi::store::CORE_DB_FILE).display().to_string();
+	let files = ["", "-wal", "-shm"].map(|suffix| format!("{database}{suffix}"));
+	let cleanup = shlex::try_join(["rm", "-f"].into_iter().chain(files.iter().map(String::as_str)))
+		.expect("paths contain no NUL byte");
+	format!(
+		"cannot open the core database {database}. A newer truapi-host may have written it, \
+		 or it is damaged. Run a newer truapi-host, or delete it to start clean; the session \
+		 keeps its accounts and pairings:\n  {cleanup}"
+	)
 }
 
 impl Drop for SigningHostSession {
@@ -4426,6 +4438,47 @@ mod cli_tests {
 			Some(file.to_string_lossy().into_owned()),
 			"the core database lives in the profile directory"
 		);
+	}
+
+	#[tokio::test]
+	async fn a_core_database_this_build_cannot_open_asks_for_cleanup() {
+		// Running an older build on a session a newer build migrated must tell
+		// the user how to restart cleanly instead of only reporting the failure.
+		let root = tempfile::tempdir().unwrap();
+		let profile = root.path().join("my session");
+		std::fs::create_dir_all(&profile).unwrap();
+		let database = profile.join(truapi::store::CORE_DB_FILE);
+		rusqlite::Connection::open(&database)
+			.unwrap()
+			.pragma_update(None, "user_version", 1000)
+			.unwrap();
+		let build = || {
+			build_signing_runtime(
+				crate::network::Network::PaseoNextV2.config(),
+				profile.clone(),
+				profile.join("storage"),
+				ApprovalPolicy::AutoAccept,
+				None,
+				None,
+				None,
+			)
+		};
+
+		let error = build().err().expect("a newer schema is rejected");
+
+		let database = database.display();
+		let cleanup = format!("rm -f '{database}' '{database}-wal' '{database}-shm'");
+		assert_eq!(
+			error.to_string(),
+			format!(
+				"cannot open the core database {database}. A newer truapi-host may have \
+				 written it, or it is damaged. Run a newer truapi-host, or delete it to \
+				 start clean; the session keeps its accounts and pairings:\n  {cleanup}"
+			)
+		);
+		let status = std::process::Command::new("sh").arg("-c").arg(&cleanup).status().unwrap();
+		assert!(status.success());
+		build().expect("the session starts cleanly after cleanup");
 	}
 
 	#[test]

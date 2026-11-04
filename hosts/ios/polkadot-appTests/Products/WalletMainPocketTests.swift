@@ -51,7 +51,7 @@ struct WalletMainPocketTests {
         try await presenter.waitForCards { $0.contains(loyalty.key) }
         #expect(presenter.pocketCards.last?.contains { $0.key == loyalty.key } == true)
 
-        _ = try await collection.removeCard(loyalty.key)
+        try await collection.removeCard(loyalty.key)
         try await presenter.waitForCards { !$0.contains(loyalty.key) }
 
         #expect(presenter.pocketCards.last?.contains { $0.key == loyalty.key } == false)
@@ -70,7 +70,7 @@ struct WalletMainPocketTests {
         screen.presenter.showCollectibles()
 
         #expect(screen.view.showsCollectibles)
-        #expect(screen.wireframe.openedProduct == (try ProductId("stash.\(network)")))
+        #expect(try screen.wireframe.openedProduct == ProductId("stash.\(network)"))
     }
 
     /// The remote switch pulls the card from every installed app without a
@@ -217,6 +217,7 @@ private final class RecordingWalletView: UIViewController, WalletMainViewProtoco
     func didReceive(pocketCards _: [PocketCardViewModel]) {}
     func didReceive(titleViewModel _: NetworkStatusTitleView.ViewModel) {}
     func frame(of _: PocketCardKey) -> CGRect? { nil }
+    var openCard: PocketCardKey? { nil }
     func setOpenCard(_: PocketCardKey?) {}
     func moveOpenCard(by _: CGSize, clearingPocket _: Bool, animated _: Bool) {}
 }
@@ -229,7 +230,7 @@ private final class RecordingWireframe: WalletMainWireframeProtocol {
         openedProduct = page.host.toDotDomain()
     }
 
-    func showPocketCard(_: PocketCardViewModel, from _: WalletMainViewProtocol?) {}
+    func showPocketCard(_: PocketCardViewModel) {}
     func confirmPocketCardRemoval(_: PocketCardViewModel, onConfirm _: @escaping () -> Void) {}
 }
 
