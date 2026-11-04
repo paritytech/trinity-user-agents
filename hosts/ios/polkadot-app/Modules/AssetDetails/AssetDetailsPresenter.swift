@@ -68,19 +68,6 @@ final class AssetDetailsPresenter {
         .value(for: .current)
 
         view?.didReceiveData(viewModel: .token(balanceViewModel), index: 0)
-
-        guard let coinageAmounts, coinageAmounts.hasFundsNotReady else {
-            view?.didReceive(readyAmount: nil)
-            return
-        }
-
-        let readyViewModel = balanceViewModelFactory.balanceFromPrice(
-            coinageAmounts.availableNow,
-            priceData: price
-        )
-        .value(for: .current)
-
-        view?.didReceive(readyAmount: readyViewModel)
     }
 }
 
