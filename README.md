@@ -560,7 +560,8 @@ resting on the product's word. The report lands at
 Pocket compatibility matrix.
 
 `Game` (`remind_next_game`, `cancel_next_game`) serves only the game product,
-`dim2` on every network, and answers `Unsupported` to any other. The battery
+`dim2`, and Humanity, `peopl`, on every network, each holding its own reminder,
+and answers `Unsupported` to any other. The battery
 runs as another product, so it skips the `Game` service, and so does the
 playground's Diagnosis, since dot.li serves no `Game` surface. Both CLI host
 roles still install an in-memory `CliGameHost` that never rings anything. The

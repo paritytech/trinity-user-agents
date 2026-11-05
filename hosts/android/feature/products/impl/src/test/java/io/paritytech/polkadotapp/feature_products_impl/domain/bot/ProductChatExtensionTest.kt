@@ -47,13 +47,20 @@ import org.junit.Test
 import uniffi.truapi.ProductId
 
 private const val ROOM = "truapi-playground"
+private const val PLACED_ROOM = "polkadot"
 
 class ProductChatExtensionTest {
     private val product = Product(ProductId.parse("truapi-playground.dot").getOrThrow(), "TrUAPI Playground", icon = null)
     private val extensionId = product.id.toChatExtensionId()
 
-    private fun placedByHost(refCounter: ProductWorkerRefCounter) =
-        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk(), ProductChatExtensionOrigin.PlacedByHost)
+    private fun placedByHost(refCounter: ProductWorkerRefCounter) = ProductChatExtension(
+        mockk<Context>(relaxed = true),
+        product,
+        refCounter,
+        mockk(),
+        mockk(),
+        ProductChatExtensionOrigin.PlacedByHost(ProductChatIdParameter(PLACED_ROOM)),
+    )
 
     private class FakeRefCounter(
         private val booted: ProductWorker? = null,
@@ -204,12 +211,28 @@ class ProductChatExtensionTest {
     // and nobody can remove it: a removal would only hide the row until the next launch while
     // its worker kept running.
     @Test
-    fun `a host-placed chat is pinned above the rest and offers no removal`() = runTest {
+    fun `a host-placed room is pinned above the rest and offers no removal`() = runTest {
         val extension = placedByHost(FakeRefCounter(RecordingWorker()))
 
         assertEquals(
             ChatPreview.Custom(Order.PinToTop, CustomPreviewData.FromMessage, ChatPreview.Custom.BadgeStyle.UNREAD) to false,
-            extension.pinnedAndRemovable(ChatId.forExtensionRoom(extensionId, "jollity")),
+            extension.pinnedAndRemovable(ChatId.forExtensionRoom(extensionId, PLACED_ROOM)),
+        )
+    }
+
+    // Placing a product lists every room it ever created, such as the `humanity` room Humanity's
+    // worker registered before it took the Polkadot room. Only the placed room holds the top; the
+    // others compete on recency, and none can be removed while the product is placed.
+    @Test
+    fun `a host-placed product's other rooms are not pinned and offer no removal`() = runTest {
+        val extension = placedByHost(FakeRefCounter(RecordingWorker()))
+
+        assertEquals(
+            listOf(null to false, null to false),
+            listOf(
+                extension.pinnedAndRemovable(ChatId.forExtensionRoom(extensionId, "humanity")),
+                extension.pinnedAndRemovable(ChatId.forExtension(extensionId)),
+            ),
         )
     }
 

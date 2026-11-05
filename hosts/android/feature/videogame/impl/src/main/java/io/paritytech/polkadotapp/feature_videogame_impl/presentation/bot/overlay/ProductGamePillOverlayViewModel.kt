@@ -9,7 +9,7 @@ import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameRouter
 import io.paritytech.polkadotapp.feature_videogame_impl.data.VideoGameTimings
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealProductGameReminder
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ScheduledProductGame
-import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.product
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.productToOpen
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -34,7 +34,7 @@ internal class ProductGamePillOverlayViewModel @Inject constructor(
         .stateInBackground(SharingStarted.WhileSubscribed(), VideoGamePillState.Hidden)
 
     override fun onPillClicked() = launchUnit {
-        countdown.value?.let { router.openGameProduct(it.game.product()) }
+        countdown.value?.let { router.openGameProduct(it.game.productToOpen()) }
     }
 
     private fun ScheduledProductGame.countdownAt(nowMillis: Long): Countdown? {

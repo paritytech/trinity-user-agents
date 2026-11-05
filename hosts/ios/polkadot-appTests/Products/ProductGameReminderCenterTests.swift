@@ -188,6 +188,27 @@ struct ProductGameReminderCenterTests {
         #expect(fakes.alarm(for: other).cancelCount == 0)
     }
 
+    /// Humanity books the reminder once it runs the game in its Polkadot room
+    /// (individuality-apps#1281); the game is still played in the game product, so that is what
+    /// the pill and the start open. The slot stays Humanity's.
+    @Test("Humanity's reminder points its pill and its start at the game product")
+    func humanitysReminderOpensTheGame() async throws {
+        let humanity = try ProductId("peopl.paseo")
+        let game = try ProductId("dim2.paseo")
+        let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-6 * 60))
+        await center.schedule(productId: humanity, startsAt: startsAt, addCalendarEvent: false)
+
+        fakes.now = startsAt.addingTimeInterval(-4 * 60)
+        center.refresh()
+        #expect(center.pill == ProductGamePill(productId: game, startsAt: startsAt))
+        #expect(center.slots == [.init(productId: humanity, startsAt: startsAt)])
+
+        fakes.now = startsAt.addingTimeInterval(1)
+        center.refresh()
+        #expect(fakes.opened == [game])
+        #expect(center.slots.isEmpty)
+    }
+
     @Test("Reached in the background, the start keeps the slot and opens once the app is active within the grace")
     func opensWhenActiveAfterBackgroundStart() async {
         let (center, fakes) = makeSUT(now: startsAt.addingTimeInterval(-60))

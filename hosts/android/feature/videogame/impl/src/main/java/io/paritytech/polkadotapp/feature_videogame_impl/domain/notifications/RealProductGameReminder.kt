@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
 import io.paritytech.polkadotapp.feature_products_api.model.ProductIdSerializer
+import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPublisher
 import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.VideoGameSettingsPreferences
 import kotlinx.coroutines.flow.Flow
@@ -121,3 +122,6 @@ class RealProductGameReminder @Inject constructor(
 }
 
 fun ScheduledProductGame.product(): ProductId = productId
+
+/** The product opened for this game: the game product for a reminder Humanity booked, else [product]. */
+fun ScheduledProductGame.productToOpen(): ProductId = ReservedProductIds.gameReminderOpenTarget(productId)

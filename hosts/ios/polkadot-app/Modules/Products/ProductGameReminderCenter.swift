@@ -171,7 +171,7 @@ final class ProductGameReminderCenter: ProductGameReminderScheduling, ProductGam
                 drop(slot.productId)
                 if !isLate, !opened {
                     opened = true
-                    if productOpener.open(productId: slot.productId) {
+                    if productOpener.open(productId: GameReminderOpenTarget.product(toOpenFor: slot.productId)) {
                         diagnostics.productOpened(productId: slot.productId, startsAt: slot.startsAt, source: .autoOpen)
                     }
                 }
@@ -278,7 +278,9 @@ private extension ProductGameReminderCenter {
     }
 
     func publish(_ slot: Slot?) {
-        let pill = slot.map { ProductGamePill(productId: $0.productId, startsAt: $0.startsAt) }
+        let pill = slot.map {
+            ProductGamePill(productId: GameReminderOpenTarget.product(toOpenFor: $0.productId), startsAt: $0.startsAt)
+        }
         guard pill != pillSubject.value else {
             return
         }

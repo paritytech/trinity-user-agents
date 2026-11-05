@@ -24,7 +24,7 @@ struct GameAlarmPlayIntent: LiveActivityIntent {
             let diagnostics = GameReminderDiagnostics(recorder: IssueMonitoringFactory.createHostEventRecorder())
             diagnostics.tapped(productId: productId, startsAt: storedStartsAt(productId: productId))
 
-            if ProductOpener().open(productId: productId) {
+            if ProductOpener().open(productId: GameReminderOpenTarget.product(toOpenFor: productId)) {
                 diagnostics.productOpened(
                     productId: productId,
                     startsAt: storedStartsAt(productId: productId),

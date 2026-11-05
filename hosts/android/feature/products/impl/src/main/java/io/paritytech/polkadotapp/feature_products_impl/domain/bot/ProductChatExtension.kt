@@ -61,8 +61,8 @@ import timber.log.Timber
  *
  * Each instance is created by [ProductBotFactory] for a specific [Product].
  *
- * A product the host placed ([ProductChatExtensionOrigin.PlacedByHost]) has its rooms pinned above
- * the rest and offers no removal.
+ * A product the host placed ([ProductChatExtensionOrigin.PlacedByHost]) has its placed room pinned
+ * above the rest and offers no removal.
  */
 class ProductChatExtension(
     appContext: Context,
@@ -100,12 +100,16 @@ class ProductChatExtension(
         return listOf(messageRenderer)
     }
 
-    private val chatPreviewDelegate = ProductChatPreviewDelegate(origin)
+    private val pinnedPreviewDelegate = ProductChatPreviewDelegate(pinned = true)
+    private val unpinnedPreviewDelegate = ProductChatPreviewDelegate(pinned = false)
 
     override fun customMenuRenderer(chatId: ChatId): CustomChatMenuRenderer =
         ProductChatMenuRenderer(product, chatId, removable = origin == ProductChatExtensionOrigin.InstalledByUser)
 
-    override fun customChatPreviewDelegate(chatId: ChatId): CustomChatPreviewDelegate<*> = chatPreviewDelegate
+    override fun customChatPreviewDelegate(chatId: ChatId): CustomChatPreviewDelegate<*> {
+        val placed = origin is ProductChatExtensionOrigin.PlacedByHost && chatId.productRoomId(id) == origin.placedRoom
+        return if (placed) pinnedPreviewDelegate else unpinnedPreviewDelegate
+    }
 
     context(chatExtensionContext: ChatExtensionContext)
     override fun startGlobalWork() {

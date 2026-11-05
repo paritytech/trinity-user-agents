@@ -10,7 +10,7 @@ import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameRouter
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealProductGameReminder
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ScheduledProductGame
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.isLiveAt
-import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.product
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.productToOpen
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
@@ -41,7 +41,7 @@ class ProductGameAutoOpener @Inject constructor(
 
     private suspend fun openAtStart(game: ScheduledProductGame) {
         delay(game.startsAtMillis - timeProvider.now().toEpochMilliseconds())
-        router.openGameProduct(game.product())
+        router.openGameProduct(game.productToOpen())
         reminder.clear(game)
     }
 }

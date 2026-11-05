@@ -3268,8 +3268,8 @@ pub trait PocketPlatform: Send + Sync {
 /// Optional: a host that omits it leaves Game requests answered `Unsupported`.
 /// See [`OptionalPlatform`].
 ///
-/// The core serves only the game product and refuses a start that is not in
-/// the future before it calls here; it asks for no per-product consent. The
+/// The core serves only the game product and Humanity, and refuses a start
+/// that is not in the future before it calls here; it asks for no per-product consent. The
 /// host asks the OS for what the reminder needs, rings an alarm where the OS
 /// allows one and delivers an ordinary notification otherwise, and may add the
 /// game to the user's calendar. A host keeps one reminder per product: a

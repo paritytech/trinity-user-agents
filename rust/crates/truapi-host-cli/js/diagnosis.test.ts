@@ -56,7 +56,7 @@ describe("generated-example battery", () => {
       ["Scanner", "Scanner service not yet wired up by hosts"],
       [
         "Game",
-        "Game serves only the game product; the truapi runtime tests cover it",
+        "Game serves only the game product and Humanity; the truapi runtime tests cover it",
       ],
       [
         "Nft Purse",

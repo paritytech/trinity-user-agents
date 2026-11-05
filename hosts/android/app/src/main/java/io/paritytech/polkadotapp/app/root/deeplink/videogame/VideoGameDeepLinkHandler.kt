@@ -40,13 +40,17 @@ class VideoGameDeepLinkHandler @Inject constructor(
             val productId = ProductId.parse(productIdValue).getOrElse { return@withContext Result.failure(it) }
             val tld = dotNsTldProvider.getTld().logFailure("game product deeplink tld").getOrNull()
                 ?: return@runCancellableCatching DeeplinkProcessingOutcome.NoOp
-            if (productId != ReservedProductIds.game(tld)) return@runCancellableCatching DeeplinkProcessingOutcome.NoOp
+            // Humanity books the reminder once it runs the game in its Polkadot room
+            // (individuality-apps#1281); the game itself is still played in the game product.
+            if (productId != ReservedProductIds.game(tld) && productId != ReservedProductIds.personhood(tld)) {
+                return@runCancellableCatching DeeplinkProcessingOutcome.NoOp
+            }
             val startsAtMillis = productGameReminder.scheduledStartFor(productId)
 
             telemetry.report(GameReminderEvent.Tapped(productId, startsAtMillis))
             accountRepository.awaitAccountsInitialized()
 
-            videoGameRouter.openGameProduct(productId)
+            videoGameRouter.openGameProduct(ReservedProductIds.gameReminderOpenTarget(productId))
             productGameReminder.cancel(productId)
             telemetry.report(GameReminderEvent.ProductOpened(productId, startsAtMillis))
 

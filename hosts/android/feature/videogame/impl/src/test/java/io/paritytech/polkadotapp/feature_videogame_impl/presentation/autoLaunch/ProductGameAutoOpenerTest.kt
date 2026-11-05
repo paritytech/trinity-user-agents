@@ -47,6 +47,23 @@ class ProductGameAutoOpenerTest {
         verify(router, never()).openGameProduct(other)
     }
 
+    // Humanity books the reminder once it runs the game in its Polkadot room
+    // (individuality-apps#1281); the game is played in the game product, so that is what opens.
+    @Test
+    fun `Humanity's reminder opens the game product at its start and clears Humanity's reminder`() = runTest {
+        val humanity = ProductId.parse("peopl.paseo").getOrThrow()
+        val gameProduct = ProductId.parse("dim2.paseo").getOrThrow()
+        val scheduledHumanity = ScheduledProductGame(humanity, startsAtMillis = 60_000)
+        startOpener(scheduledHumanity)
+
+        advanceTimeBy(60_000)
+        runCurrent()
+
+        verify(router).openGameProduct(gameProduct)
+        verify(router, never()).openGameProduct(humanity)
+        verify(reminder).clear(scheduledHumanity)
+    }
+
     @Test
     fun `opens a game whose start passed within the grace`() = runTest {
         advanceTimeBy(scheduledGame.startsAtMillis + 29_999)
